@@ -8,6 +8,10 @@
 - [aios-networking.md](./aios-networking.md) — Network Translation Module deep dive
 - [aios-subsystem-framework.md](./aios-subsystem-framework.md) — Universal hardware abstraction architecture
 - [aios-browser-architecture.md](./aios-browser-architecture.md) — Decomposed web content runtime
+- [aios-boot.md](./aios-boot.md) — Boot sequence and init system deep dive
+- [aios-memory.md](./aios-memory.md) — Memory management architecture
+- [aios-agents.md](./aios-agents.md) — Agent framework and SDK specification
+- [aios-security.md](./aios-security.md) — Eight-layer security model deep dive
 
 -----
 
