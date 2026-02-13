@@ -754,7 +754,7 @@ pub struct AdversarialDefense {
 |PAC (Pointer Authentication)      |Sign return addresses, mitigate ROP  |Phase 2 (kernel), Phase 13 (enforce)|
 |BTI (Branch Target Identification)|Mitigate JOP attacks                 |Phase 2 (kernel), Phase 13 (enforce)|
 |MTE (Memory Tagging Extension)    |Hardware use-after-free detection    |Phase 13                            |
-|TrustZone (EL3)                   |Isolated secure world for key storage|Phase 12 (identity)                 |
+|TrustZone (EL3)                   |Isolated secure world for key storage|Phase 24 (Secure Boot)              |
 |TTBR0/TTBR1 separation            |User/kernel address space isolation  |Phase 2                             |
 |W^X enforcement                   |Prevent code injection               |Phase 2                             |
 |KASLR                             |Randomize kernel base address        |Phase 2                             |
@@ -892,53 +892,331 @@ Available always, used by those who want transparency into the system.
 
 -----
 
-## 6. Production OS Requirements
+## 6. System Lifecycle
+
+### 6.1 Boot Sequence
+
+```
+┌─ UEFI Firmware ─────────────────────────────────────────────┐
+│  Hardware init, memory map, framebuffer, device tree        │
+│  Load kernel ELF from EFI System Partition                  │
+└──────────────────────┬──────────────────────────────────────┘
+                       ▼
+┌─ Kernel Early Boot ─────────────────────────────────────────┐
+│  1. Exception vectors, GICv3 init, timer init               │
+│  2. Page table setup (TTBR0/TTBR1, W^X, KASLR)             │
+│  3. Heap allocator init                                     │
+│  4. Capability manager init (root capability created)       │
+│  5. IPC subsystem init                                      │
+│  6. Audit log init (kernel ring buffer until storage ready) │
+│  7. Process manager init                                    │
+│  8. Provenance chain init                                   │
+└──────────────────────┬──────────────────────────────────────┘
+                       ▼
+┌─ Service Manager ───────────────────────────────────────────┐
+│  Spawned as first userspace process with root capabilities  │
+│                                                              │
+│  Phase 1 — Storage (no dependencies):                        │
+│    Block Engine → Object Store → Space Storage Service       │
+│    System spaces created: system/devices, system/audit       │
+│                                                              │
+│  Phase 2 — Core services (depends on storage):               │
+│    Device Registry → Subsystem Framework init                │
+│    Input subsystem → Display subsystem → Compositor          │
+│    Network subsystem (basic TCP/IP)                          │
+│                                                              │
+│  Phase 3 — AI services (depends on storage + compute):       │
+│    AIRS loads → model registry scanned → default model loaded│
+│    Space Indexer starts background indexing                   │
+│    Context Engine begins signal collection                   │
+│                                                              │
+│  Phase 4 — User services (depends on all above):             │
+│    Identity service → user authenticated                     │
+│    Preference service → user settings applied                │
+│    Attention manager → notification pipeline ready           │
+│    Agent runtime → ready to spawn agents                     │
+│                                                              │
+│  Phase 5 — Experience (depends on compositor + services):    │
+│    Workspace (home view) displayed                           │
+│    Conversation bar available                                │
+│    Boot complete                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key invariant:** The system is usable at each phase boundary. If AIRS fails to load, the system still boots to a functional desktop — semantic search degrades to keyword search, intent verification is skipped (capability checks still enforced), and the conversation bar shows an "AI unavailable" status. Users can still launch agents, browse the web, and use BSD tools.
+
+### 6.2 Graceful Degradation Without AIRS
+
+AIRS is infrastructure, not a hard dependency. Every AIRS-dependent feature has a non-AI fallback:
+
+| Feature | With AIRS | Without AIRS |
+|---|---|---|
+| Space search | Semantic (embedding similarity) | Keyword (full-text index, always maintained) |
+| Intent verification (Layer 1) | AI compares actions against declared intent | Skipped — capability check (Layer 2) still enforced |
+| Behavioral monitoring (Layer 3) | Anomaly detection via baseline comparison | Rate limits still enforced, anomaly detection disabled |
+| Context Engine | Infers work/leisure from signals | Falls back to time-of-day heuristic + explicit overrides |
+| Attention management | AI-triaged urgency assessment | Rule-based: source priority + keyword matching |
+| Object metadata | AI-generated summaries, tags, embeddings | User-provided tags only, no embeddings |
+| Conversation bar | Natural language interaction | Disabled — shows "AI service unavailable" |
+| Adversarial defense (Layer 5) | Prompt injection detection | Disabled — other 7 layers still active |
+
+**When AIRS goes down at runtime:** Active inference requests return `AirsUnavailable`. Agents handle this like any service error. The Context Engine freezes its last known state. The Attention Manager falls back to rules. No user-visible crash — the system becomes slightly less intelligent but fully functional.
+
+**During early boot:** AIRS loads after storage but before the desktop. If model loading takes too long (>5 seconds), the Service Manager proceeds without it and AIRS loads in the background. The user sees the desktop immediately.
+
+### 6.3 Agent Sandbox and Execution Model
+
+Agents are the primary execution model for user-facing work. Each agent runs as an isolated OS process with a restricted capability set:
+
+```rust
+pub struct AgentProcess {
+    pid: ProcessId,
+    agent_id: AgentId,
+    capabilities: CapabilitySet,       // kernel-enforced
+    memory_limit: usize,               // max RSS
+    cpu_quota: CpuQuota,               // fair-share scheduling
+    ipc_channels: Vec<ChannelId>,      // registered IPC endpoints
+    space_access: Vec<SpaceMount>,     // mounted spaces
+    manifest: AgentManifest,           // declared capabilities + metadata
+}
+```
+
+**Isolation mechanisms:**
+- **Memory isolation:** Each agent has its own address space (TTBR0). No shared memory except through explicit IPC shared regions, which require capability grants.
+- **Capability confinement:** An agent cannot forge capabilities. Capabilities are kernel objects — agents hold references (tokens), not the capabilities themselves. The kernel validates every token on every syscall.
+- **IPC mediation:** All inter-agent communication goes through kernel IPC. No direct memory sharing, no signals, no pipes between agents. The kernel logs every message exchange.
+- **Resource limits:** Each agent has memory and CPU quotas. An agent that exceeds its memory limit is paused and the user is notified. An agent that spins CPU gets deprioritized by the scheduler.
+
+**Language support:** The agent SDK has first-class support for:
+- **Rust** — native, highest performance, direct syscall access
+- **Python** — embedded interpreter (CPython or RustPython), SDK bindings, popular for AI/ML agents
+- **TypeScript** — embedded V8 or QuickJS runtime, SDK bindings, popular for web-adjacent agents
+- **WASM** — sandboxed execution, any language that compiles to WASM
+
+All language runtimes run within the agent process. The SDK abstracts the syscall layer so agents written in Python or TypeScript use the same capability system as Rust agents.
+
+### 6.4 Agent Update and Migration
+
+When an agent is updated to a new version:
+
+```
+1. New manifest compared against old manifest
+2. If capabilities unchanged → hot-swap: new code loads, existing sessions preserved
+3. If capabilities expanded → user re-approval required
+4. If capabilities reduced → auto-approved, old tokens revoked
+5. Agent data in spaces is preserved (spaces belong to the user, not the agent)
+6. Active sessions are drained gracefully (agent gets shutdown signal, 5s to clean up)
+7. New version spawned with fresh capability tokens
+```
+
+**Key principle:** Spaces belong to users, not agents. An agent's data lives in spaces the user granted access to. Updating or removing an agent never deletes user data. The user can revoke an agent's space access at any time, and the data remains in the space.
+
+### 6.5 Multi-Identity and Shared Devices
+
+AIOS supports multiple identities on a single device:
+
+```rust
+pub struct DeviceIdentities {
+    owner: IdentityId,               // device owner, full admin
+    active: IdentityId,              // currently active identity
+    registered: Vec<IdentityProfile>,
+}
+
+pub struct IdentityProfile {
+    identity: IdentityId,
+    spaces: Vec<SpaceId>,            // this identity's spaces
+    agents: Vec<AgentManifest>,      // this identity's approved agents
+    preferences: PreferenceSet,
+    security_zone: SecurityZone,
+}
+```
+
+**Identity switching:** When the active identity changes, the OS:
+1. Suspends all agents belonging to the previous identity
+2. Unmounts previous identity's spaces (encrypted at rest — inaccessible without identity keys)
+3. Loads new identity's spaces and preferences
+4. Resumes new identity's agents
+5. Compositor switches to new identity's workspace
+
+**Shared device mode (family computer):**
+- Each family member has their own identity, spaces, and agents
+- A shared space can be created with multiple identity access
+- Children can have restricted capability sets (no agent installation, content filtering)
+- The device owner can manage all identities
+
+**Guest mode:** Ephemeral identity with minimal capabilities. All data in ephemeral space — deleted on logout. No agent installation. Network access through shared credential space only (WiFi).
+
+### 6.6 Space Query Language
+
+Spaces support three query modes:
+
+```rust
+/// Programmatic queries (always available, even without AIRS)
+pub enum SpaceQuery {
+    /// Exact match on metadata fields
+    Filter {
+        content_type: Option<ContentType>,
+        tags: Vec<String>,
+        created_after: Option<Timestamp>,
+        created_before: Option<Timestamp>,
+        modified_after: Option<Timestamp>,
+        relations: Vec<(RelationKind, ObjectId)>,
+    },
+
+    /// Full-text search on content and metadata
+    TextSearch {
+        query: String,
+        fields: Vec<SearchField>,  // Content, Summary, Tags, Entities
+    },
+
+    /// Semantic similarity (requires AIRS)
+    Semantic {
+        query: String,              // natural language
+        threshold: f32,             // minimum similarity score
+    },
+
+    /// Graph traversal
+    Traverse {
+        start: ObjectId,
+        relation: RelationKind,
+        depth: u32,
+        direction: TraversalDirection,  // Outgoing, Incoming, Both
+    },
+}
+```
+
+**Filter and TextSearch** work without AIRS — they use B-tree indexes and a full-text index maintained by the Space Storage service. **Semantic** queries require AIRS to generate query embeddings and compute similarity against the embedding index. **Traverse** queries walk the relationship graph.
+
+The Conversation Bar translates natural language to `SpaceQuery` via AIRS:
+```
+User: "Find my notes about transformer architectures from last month"
+  → SpaceQuery::Semantic {
+      query: "transformer architectures",
+      threshold: 0.7,
+    } AND SpaceQuery::Filter {
+      content_type: Some(Note),
+      created_after: Some(one_month_ago),
+    }
+```
+
+### 6.7 Content-Addressed Storage and Mutability
+
+Objects have two identifiers:
+
+```rust
+pub struct Object {
+    id: ObjectId,          // stable, mutable reference (UUID)
+    content_hash: Hash,    // content-addressed, changes with content (SHA-256)
+    // ...
+}
+```
+
+- **`ObjectId`** is a stable UUID assigned at creation. It never changes. References between objects use `ObjectId`. Space queries return `ObjectId`.
+- **`content_hash`** is the SHA-256 hash of the object's content. It changes every time the content is modified. The Version Store records each `(ObjectId, content_hash, timestamp)` tuple.
+
+**How mutations work:**
+```
+1. Agent calls space.write(object_id, new_content)
+2. Space Storage hashes new_content → new_hash
+3. If new_hash == old_hash → no-op (content unchanged, deduplicated)
+4. Store new content block at new_hash
+5. Update object's content_hash pointer to new_hash
+6. Append to Version Store: (object_id, new_hash, timestamp, agent_id)
+7. Old content block is NOT deleted — it's still referenced by the version history
+8. Garbage collection reclaims unreferenced blocks when version history is pruned
+```
+
+**Deduplication:** If two objects have identical content, they share the same content block. The block is reference-counted. Writing the same document twice doesn't double storage usage.
+
+### 6.8 Error Recovery and System Resilience
+
+**Service crash recovery:** The Service Manager monitors all services. If a service crashes:
+```
+1. Service Manager detects process exit
+2. Active sessions on that service are terminated (clients get ServiceUnavailable)
+3. Service is restarted with exponential backoff (immediate, 1s, 2s, 4s, max 30s)
+4. After restart, service reloads state from its space (spaces survive crashes)
+5. If service fails 5 times in 60 seconds → mark as degraded, notify user
+6. Dependent services fall back to degraded mode (see §6.2 for AIRS example)
+```
+
+**Space corruption recovery:**
+- Write-ahead log (WAL) ensures crash consistency — incomplete writes are rolled back on recovery
+- Content-addressed storage provides integrity verification — hash mismatch = corruption detected
+- Version history enables rollback — corrupt objects can be reverted to any previous version
+- Block-level checksums detect storage media errors
+
+**Kernel panic handling:**
+- Kernel panics dump register state and backtrace to UART and a reserved memory region
+- On reboot, the kernel checks the reserved region and saves the panic log to `system/crash/`
+- The Space Storage WAL ensures no data loss from in-flight writes
+
+### 6.9 Performance Targets
+
+| Metric | Target | Rationale |
+|---|---|---|
+| Boot to desktop | < 3 seconds | Competitive with mobile, faster than most Linux distros |
+| Compositor frame rate | 60 fps sustained | Smooth visual experience, no dropped frames |
+| IPC round-trip latency | < 5 microseconds | Microkernel viability — services communicate via IPC constantly |
+| Agent spawn time | < 50 milliseconds | Agents should feel instant to the user |
+| Space object read | < 1 millisecond | Storage should not be a bottleneck for UI |
+| Semantic search (AIRS) | < 500 milliseconds | Natural language queries must feel responsive |
+| LLM inference (first token) | < 500 milliseconds | Conversation bar must respond quickly |
+| Context switch | < 10 microseconds | Scheduler must be efficient with many agents |
+| Memory per agent (minimum) | < 4 MB | Lightweight agents should be cheap |
+| Minimum system RAM | 2 GB | Pi 4 baseline (4 GB recommended, 8 GB ideal) |
+| Kernel image size | < 2 MB | Microkernel should be small |
+| Base system disk usage | < 500 MB | Reasonable for embedded/Pi targets |
+
+-----
+
+## 7. Production OS Requirements
 
 Beyond the MVP, a production OS requires these additional subsystems. Each implements the subsystem framework (see [aios-subsystem-framework.md](./aios-subsystem-framework.md)) — the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem. See [aios-development-plan.md](./aios-development-plan.md) for implementation phases.
 
-### 6.1 Power Management
+### 7.1 Power Management (Phase 19)
 
 CPU frequency scaling (DVFS), display power management, device suspend, sleep/hibernate, thermal management. Without this, AIOS is tethered to a power outlet.
 
-### 6.2 USB Stack
+### 7.2 USB Stack (Phase 17)
 
 xHCI host controller, USB hub support, mass storage, HID (keyboard, mouse, controllers), audio, video (webcams), serial, device hotplug. Real hardware uses USB for nearly everything.
 
-### 6.3 WiFi & Bluetooth
+### 7.3 WiFi & Bluetooth (Phase 18)
 
 WiFi: firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth: HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware.
 
-### 6.4 Secure Boot & Updates
+### 7.4 Secure Boot & Updates (Phase 24)
 
 Verified boot chain (firmware → bootloader → kernel → AIRS → services). A/B partition scheme for atomic updates. Delta updates. Automatic rollback on failure. Separate model and agent update channels.
 
-### 6.5 Display Protocol Compatibility
+### 7.5 Display Protocol Compatibility (Phase 25)
 
 Wayland compatibility layer for existing Linux GUI applications. XWayland for X11 apps. This gives access to thousands of existing applications.
 
-### 6.6 Accessibility
+### 7.6 Accessibility (Phase 23)
 
-Screen reader support with semantic accessibility tree. Full keyboard navigation. High contrast / large text modes. Voice control. Switch access. Must be designed into compositor and toolkit from Phase 7, not retrofitted.
+Screen reader support with semantic accessibility tree. Full keyboard navigation. High contrast / large text modes. Voice control. Switch access. Must be designed into compositor and toolkit from Phase 6, not retrofitted.
 
-### 6.7 Internationalization
+### 7.7 Internationalization (Phase 23)
 
 Full Unicode everywhere. Input methods for CJK and complex scripts. Locale support (date, number, currency formats). UI string externalization for translation. Right-to-left layout support.
 
-### 6.8 Printing & Peripherals
+### 7.8 Printing & Peripherals (Phase 22)
 
 CUPS port for printer support. Scanner support. Camera support. All require working network stack and USB stack.
 
-### 6.9 Linux Binary Compatibility
+### 7.9 Linux Binary Compatibility (Phase 25)
 
 Compatibility layer for running unmodified Linux ELF binaries. Translates Linux syscalls to AIOS syscalls. Eliminates the app gap entirely. Long-term goal.
 
-### 6.10 Enterprise Features
+### 7.10 Enterprise Features (Phase 26)
 
 MDM (Mobile Device Management), fleet management, remote wipe, compliance reporting, centralized policy enforcement. Required for organizational adoption.
 
 -----
 
-## 7. App Ecosystem Strategy
+## 8. App Ecosystem Strategy
 
 ### Tier 1: BSD Command-Line Tools
 
@@ -960,7 +1238,7 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 -----
 
-## 8. Hardware Strategy
+## 9. Hardware Strategy
 
 **Phase 1: QEMU aarch64 (development target).** All development and testing. HVF acceleration on macOS for near-native speed.
 

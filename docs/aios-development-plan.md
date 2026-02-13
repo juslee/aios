@@ -1,0 +1,299 @@
+# AIOS Development Plan
+
+## Timeline, Risks, Dependencies, and Decision Gates
+
+**Parent document:** [00-architecture-overview.md](./00-architecture-overview.md)
+**Related:** All architecture documents
+
+-----
+
+## 1. Overview
+
+28 phases across ~130 weeks (~2.5 years). Organized into 7 tiers, each delivering a usable milestone. The plan is designed so that each tier builds on the previous one and produces something demonstrable.
+
+```
+Tier 1: Hardware Foundation    (Phases 0–3)    Weeks 1–16     Boot, memory, IPC
+Tier 2: Core System Services   (Phases 4–7)    Weeks 17–34    Storage, GPU, compositor, networking
+Tier 3: AI & Intelligence      (Phases 8–11)   Weeks 35–54    AIRS, semantic search, agents
+Tier 4: Platform Maturity      (Phases 12–15)  Weeks 55–74    SDK, security, performance, POSIX
+Tier 5: Hardware & Connectivity(Phases 16–19)  Weeks 75–92    Full NTM, USB, wireless, power
+Tier 6: Rich Experience        (Phases 20–23)  Weeks 93–112   UI toolkit, browser, media, a11y
+Tier 7: Production OS          (Phases 24–27)  Weeks 113–130  Secure boot, Linux compat, launch
+```
+
+-----
+
+## 2. Tier Milestones
+
+Each tier produces a demonstrable result:
+
+| Tier | Milestone | Demo |
+|---|---|---|
+| 1 | Microkernel boots on QEMU | UART output, memory allocation, IPC ping-pong benchmark |
+| 2 | Graphical desktop with shell | Window compositor, terminal emulator, basic networking (curl works) |
+| 3 | AI-enhanced OS | Conversation bar, semantic search, agents running with capability gates |
+| 4 | Developer platform | SDK published, BSD tools functional, security hardened, boot <3s |
+| 5 | Hardware-ready OS | WiFi, Bluetooth, USB, power management — runs on Raspberry Pi |
+| 6 | Daily-driver OS | Web browser, media player, accessibility, internationalization |
+| 7 | Production OS | Secure boot, Linux app compat, enterprise features, shipping |
+
+-----
+
+## 3. Phase Dependencies
+
+```
+Phase 0: Foundation & Tooling
+  └─→ Phase 1: Boot & First Pixels
+       └─→ Phase 2: Memory Management
+            └─→ Phase 3: IPC & Capability System
+                 ├─→ Phase 4: Block Storage & Object Store
+                 │    ├─→ Phase 5: GPU & Display
+                 │    │    └─→ Phase 6: Window Compositor & Shell
+                 │    │         └─→ Phase 7: Input, Terminal & Basic Networking
+                 │    │              ├─→ Phase 8: AIRS Core
+                 │    │              │    └─→ Phase 9: Space Intelligence & Conversation
+                 │    │              │         └─→ Phase 10: Agent Framework
+                 │    │              │              └─→ Phase 11: Tasks, Flow & Attention
+                 │    │              │                   └─→ Phase 12: Developer Experience & SDK
+                 │    │              │
+                 │    │              └─→ Phase 16: Network Translation Module
+                 │    │
+                 │    └─→ Phase 13: Security Hardening (requires 8, 10)
+                 │
+                 └─→ Phase 14: Performance & Optimization (requires 6, 8)
+                      └─→ Phase 15: POSIX Compatibility & BSD Userland
+
+Phase 16 ──→ Phase 17: USB Stack & Hotplug
+              └─→ Phase 18: WiFi, Bluetooth & Wireless
+                   └─→ Phase 19: Power Management & Thermal
+
+Phase 12 ──→ Phase 20: Portable UI Toolkit
+              └─→ Phase 21: Web Browser (Servo)
+Phase 18 ──→ Phase 22: Media, Audio & Camera Subsystems
+              └─→ Phase 23: Accessibility & Internationalization
+
+Phase 19 ──→ Phase 24: Secure Boot & Update System
+              └─→ Phase 25: Linux Binary & Wayland Compatibility
+                   └─→ Phase 26: Enterprise & Multi-Device
+                        └─→ Phase 27: Real Hardware, Certification & Launch
+```
+
+**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21
+
+The web browser (Phase 21) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
+
+-----
+
+## 4. Risk Register
+
+### 4.1 Technical Risks
+
+| Risk | Impact | Likelihood | Mitigation |
+|---|---|---|---|
+| IPC performance < 5μs target | High — microkernel viability | Medium | Prototype IPC in Phase 3, benchmark before proceeding. Fallback: hybrid kernel with in-kernel filesystem |
+| GGML/llama.cpp aarch64 performance insufficient | High — AI features unusable | Low | GGML is proven on aarch64 (runs on phones). Mitigation: quantization, smaller models, NPU offload |
+| Servo build complexity | High — browser delayed | Medium | Servo is modular but massive. Mitigation: start integration early (Phase 21 prep in Phase 16), maintain Servo fork |
+| smoltcp limitations | Medium — networking incomplete | Low | smoltcp handles TCP/UDP well. Missing: advanced congestion control, some edge cases. Mitigation: contribute upstream, fork if needed |
+| GPU driver complexity (real hardware) | High — no display on Pi | Medium | VirtIO-GPU works in QEMU. Pi GPU (VC4/V3D) has open-source driver but is complex. Mitigation: start with framebuffer fallback |
+| Memory pressure on 2GB devices | Medium — degraded experience | Medium | Models need 4+ GB RAM. Mitigation: aggressive quantization, model eviction, swap space, 4GB minimum recommended |
+| Firmware blob licensing | Medium — WiFi/BT unusable | Low | Most WiFi/BT chips need proprietary firmware. Mitigation: redistribute under manufacturer license (standard practice), document clearly |
+| Kernel memory safety despite unsafe Rust | High — security compromise | Medium | Kernel code requires `unsafe` for hardware access. Mitigation: minimize unsafe, document all unsafe blocks, fuzz all syscalls, formal verification for critical paths |
+
+### 4.2 Schedule Risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Phase 3 (IPC) takes longer than 6 weeks | Delays everything downstream | IPC is the hardest kernel component. Budget 2 weeks of slack. Prototype early. |
+| Phase 8 (AIRS) underestimated | AI features delayed | GGML integration is well-understood. Context management and indexing are the unknowns. |
+| Phase 21 (Browser) underestimated | Daily-driver delayed | Servo integration is the highest-risk single phase. 5 weeks may not be enough. Budget 2 weeks slack. |
+| Scope creep in any phase | Timeline extends | Each phase has a strict deliverable. Feature requests go to future phases. |
+
+### 4.3 Ecosystem Risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| No developers build agents | Empty ecosystem | Tier 2 (web apps) covers most use cases. Build compelling demo agents. |
+| Model quality/size tradeoff | Poor AI experience | Model ecosystem is improving rapidly. Today's 8B models were impossible 2 years ago. |
+| Hardware vendor engagement | No partner hardware | Pi and QEMU are sufficient for years. Pine64 is developer-friendly. |
+
+-----
+
+## 5. Decision Gates
+
+Major decisions that must be made during development:
+
+### Gate 1: Kernel Architecture (after Phase 3)
+
+**Decision:** Is IPC performance acceptable? Does the microkernel architecture work?
+
+**Criteria:**
+- IPC round-trip < 10 μs (target: < 5 μs)
+- Context switch < 20 μs
+- No pathological performance cliffs
+
+**If NO:** Consider hybrid kernel (move Space Storage into kernel space). This is a significant architectural change but recoverable at this stage.
+
+### Gate 2: AI Viability (after Phase 8)
+
+**Decision:** Can we run useful LLM inference on target hardware?
+
+**Criteria:**
+- 7B model runs at > 5 tokens/second on Pi 4 (4GB)
+- Time to first token < 2 seconds
+- Memory usage within budget (leaves >1 GB for OS + apps)
+
+**If NO:** Scale down AI features. Use smaller models (1-3B). Focus on embedding/classification rather than generation. Conversation bar becomes a search interface rather than a conversational one.
+
+### Gate 3: Daily Driver (after Phase 21)
+
+**Decision:** Can someone use AIOS as their only computer for basic tasks?
+
+**Criteria:**
+- Web browsing works (Gmail, YouTube, basic sites)
+- Terminal works (development possible)
+- Files are accessible (spaces + POSIX bridge)
+- System is stable (no crashes in 8-hour session)
+
+**If NO:** Identify blocking issues and allocate additional time before Tier 7.
+
+-----
+
+## 6. Staffing Model
+
+### Solo Developer (Realistic)
+
+All 28 phases are designed to be achievable by a single experienced systems programmer:
+- Average phase: 4-5 weeks
+- Total: ~130 weeks (~2.5 years)
+- Assumes full-time, focused work
+
+### Small Team (Accelerated)
+
+With 2-3 developers, phases can be parallelized:
+- Developer A: kernel (Phases 0-3), then performance (14), then security (13)
+- Developer B: storage + GPU (Phases 4-6), then browser (21), then UI toolkit (20)
+- Developer C: AI (Phases 8-11), then networking (16), then agent ecosystem (12)
+
+Estimated timeline with 3 developers: ~50-60 weeks (~1 year).
+
+-----
+
+## 7. Technology Stack Summary
+
+| Layer | Technology | License |
+|---|---|---|
+| Language | Rust | MIT/Apache-2.0 |
+| Build system | just + cargo | MIT |
+| Bootloader | UEFI (custom) | BSD-2-Clause |
+| TCP/IP | smoltcp | BSD-2-Clause |
+| TLS | rustls | Apache-2.0/MIT |
+| HTTP | h2, hyper | MIT |
+| QUIC | quinn | Apache-2.0/MIT |
+| DNS | hickory-dns | Apache-2.0/MIT |
+| GPU | wgpu | Apache-2.0/MIT |
+| UI toolkit | iced | MIT |
+| Font rendering | fontdue or ab_glyph | MIT |
+| Browser engine | Servo (Servo's layout + SpiderMonkey) | MPL-2.0 |
+| AI inference | GGML / llama.cpp | MIT |
+| Model format | GGUF | MIT |
+| C library | musl | MIT |
+| Userland tools | FreeBSD | BSD-2-Clause |
+| Shell | FreeBSD /bin/sh | BSD-2-Clause |
+| Compiler | LLVM/clang | Apache-2.0 |
+| Certificates | webpki-roots | MPL-2.0 |
+
+All permissively licensed. No GPL dependencies in the core OS.
+
+-----
+
+## 8. Phase Detail Reference
+
+Each phase's detailed technical design and step-by-step implementation guide lives in its own directory:
+
+| Phase | Directory | Status |
+|---|---|---|
+| 0 | `00 - Foundation and Tooling/` | Planned |
+| 1 | `01 - Boot and First Pixels/` | Planned |
+| 2 | `02 - Memory Management/` | Planned |
+| 3 | `03 - IPC and Capability System/` | Planned |
+| 4 | `04 - Block Storage and Object Store/` | Planned |
+| 5 | `05 - GPU and Display/` | Planned |
+| 6 | `06 - Window Compositor and Shell/` | Planned |
+| 7 | `07 - Input Terminal and Basic Networking/` | Planned |
+| 8 | `08 - AIRS Core/` | Planned |
+| 9 | `09 - Space Intelligence and Conversation/` | Planned |
+| 10 | `10 - Agent Framework/` | Planned |
+| 11 | `11 - Tasks Flow and Attention/` | Planned |
+| 12 | `12 - Developer Experience and SDK/` | Planned |
+| 13 | `13 - Security Hardening/` | Planned |
+| 14 | `14 - Performance and Optimization/` | Planned |
+| 15 | `15 - POSIX Compatibility and BSD Userland/` | Planned |
+| 16 | `16 - Network Translation Module/` | Planned |
+| 17 | `17 - USB Stack and Hotplug/` | Planned |
+| 18 | `18 - WiFi Bluetooth and Wireless/` | Planned |
+| 19 | `19 - Power Management and Thermal/` | Planned |
+| 20 | `20 - Portable UI Toolkit/` | Planned |
+| 21 | `21 - Web Browser/` | Planned |
+| 22 | `22 - Media Audio and Camera/` | Planned |
+| 23 | `23 - Accessibility and Internationalization/` | Planned |
+| 24 | `24 - Secure Boot and Update System/` | Planned |
+| 25 | `25 - Linux Binary and Wayland Compatibility/` | Planned |
+| 26 | `26 - Enterprise and Multi-Device/` | Planned |
+| 27 | `27 - Real Hardware Certification and Launch/` | Planned |
+
+Each directory will contain:
+- `phase-detail.md` — Technical design, architecture decisions, data models, interfaces
+- `milestone-steps.md` — Step-by-step implementation with acceptance criteria and tests
+
+-----
+
+## 9. Success Metrics Per Tier
+
+### Tier 1 Complete (Week 16)
+- [ ] Kernel boots on QEMU aarch64
+- [ ] Virtual memory with W^X and KASLR
+- [ ] IPC round-trip < 10 μs (target < 5 μs)
+- [ ] Capability system enforces access control
+- [ ] Service manager spawns and monitors services
+
+### Tier 2 Complete (Week 34)
+- [ ] Persistent spaces with content-addressing and versioning
+- [ ] GPU-accelerated compositor at 60 fps
+- [ ] Window management (floating + tiling)
+- [ ] Terminal emulator with keyboard/mouse input
+- [ ] TCP/IP networking (curl works from terminal)
+
+### Tier 3 Complete (Week 54)
+- [ ] Local LLM inference with streaming responses
+- [ ] Semantic search across spaces
+- [ ] Conversation bar for natural language interaction
+- [ ] Capability-gated agents with intent verification
+- [ ] Task decomposition and Flow (smart clipboard)
+- [ ] AI-triaged attention management
+
+### Tier 4 Complete (Week 74)
+- [ ] Multi-language SDK (Rust, Python, TypeScript)
+- [ ] `aios agent dev/test/audit/publish` workflow
+- [ ] All syscalls fuzzed, ARM PAC/BTI/MTE enabled
+- [ ] Boot to desktop < 3 seconds
+- [ ] FreeBSD tools, musl libc, self-hosting capability
+
+### Tier 5 Complete (Week 92)
+- [ ] Full NTM: space resolver, shadow engine, capability gate
+- [ ] USB: xHCI, HID, mass storage, hotplug
+- [ ] WiFi (WPA2/WPA3) and Bluetooth (audio, HID)
+- [ ] Power management: sleep, hibernate, thermal throttling
+- [ ] Runs on Raspberry Pi 4/5
+
+### Tier 6 Complete (Week 112)
+- [ ] Cross-platform UI toolkit (iced on AIOS/Linux/macOS)
+- [ ] Servo-based browser with tab-per-agent isolation
+- [ ] Media player, audio subsystem, camera subsystem
+- [ ] Screen reader, keyboard navigation, Unicode/i18n
+
+### Tier 7 Complete (Week 130)
+- [ ] Verified boot chain with A/B updates
+- [ ] Linux binary compatibility (ELF)
+- [ ] Wayland compatibility (Linux GUI apps)
+- [ ] MDM, fleet management, cross-device sync
+- [ ] Pi 4/5 certified, Pine64 support, VM images published
