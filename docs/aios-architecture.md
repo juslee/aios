@@ -5,13 +5,22 @@
 **Related documents:**
 
 - [aios-development-plan.md](./aios-development-plan.md) — Phase plan, timeline, risks
+- [aios-ipc-syscalls.md](./aios-ipc-syscalls.md) — IPC and syscall interface deep dive
+- [aios-scheduler.md](./aios-scheduler.md) — Scheduler deep dive
+- [aios-memory.md](./aios-memory.md) — Memory management architecture
+- [aios-boot.md](./aios-boot.md) — Boot sequence and init system deep dive
+- [aios-spaces.md](./aios-spaces.md) — Space storage system deep dive
+- [aios-compositor.md](./aios-compositor.md) — GPU compositor and window management
 - [aios-networking.md](./aios-networking.md) — Network Translation Module deep dive
 - [aios-subsystem-framework.md](./aios-subsystem-framework.md) — Universal hardware abstraction architecture
-- [aios-browser-architecture.md](./aios-browser-architecture.md) — Decomposed web content runtime
-- [aios-boot.md](./aios-boot.md) — Boot sequence and init system deep dive
-- [aios-memory.md](./aios-memory.md) — Memory management architecture
+- [aios-airs.md](./aios-airs.md) — AI Runtime Service deep dive
 - [aios-agents.md](./aios-agents.md) — Agent framework and SDK specification
 - [aios-security.md](./aios-security.md) — Eight-layer security model deep dive
+- [aios-flow.md](./aios-flow.md) — Flow system deep dive
+- [aios-context-engine.md](./aios-context-engine.md) — Context Engine deep dive
+- [aios-posix.md](./aios-posix.md) — POSIX compatibility layer deep dive
+- [aios-experience.md](./aios-experience.md) — Experience layer and UI design
+- [aios-browser-architecture.md](./aios-browser-architecture.md) — Decomposed web content runtime
 
 -----
 
