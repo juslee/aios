@@ -3,7 +3,7 @@
 ## Design Document — Deep Technical Architecture
 
 **Parent document:** [aios-architecture.md](./aios-architecture.md)
-**Related:** [aios-development-plan.md](./aios-development-plan.md) — Phase 6.5, [aios-subsystem-framework.md](./aios-subsystem-framework.md) — Universal hardware abstraction
+**Related:** [aios-development-plan.md](./aios-development-plan.md) — Phase 7 (basic networking), Phase 16 (full NTM), [aios-subsystem-framework.md](./aios-subsystem-framework.md) — Universal hardware abstraction
 
 **Note:** The networking subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the network-specific design decisions and architecture.
 
@@ -555,20 +555,20 @@ Credentials flow from the credential space to the Network Translation Module. Th
 
 ## 7. Implementation Order
 
-Each sub-phase delivers usable functionality independently:
+Each sub-phase delivers usable functionality independently. Basic networking is part of Phase 7 (Input, Terminal & Basic Networking). The full Network Translation Module is Phase 16.
 
 ```
-Phase 6.5a: smoltcp + VirtIO-Net driver    → raw TCP/IP works
-Phase 6.5b: rustls + DNS/DHCP              → TLS and name resolution work
-Phase 6.5c: POSIX socket emulation          → BSD tools with networking (curl, ssh)
-Phase 6.5d: Connection Manager + Protocol   → HTTP/2, WebSocket work
-Phase 6.5e: Space Resolver + Capability Gate→ space operations over network
-Phase 6.5f: Shadow Engine                   → offline support
-Phase 6.5g: Resilience + Bandwidth Scheduler→ production-grade
-Phase 17:   AIOS Peer Protocol              → AIOS-to-AIOS communication
+Phase 7a:  smoltcp + VirtIO-Net driver     → raw TCP/IP works
+Phase 7b:  rustls + DNS/DHCP               → TLS and name resolution work
+Phase 7c:  POSIX socket emulation           → BSD tools with networking (curl, ssh)
+Phase 16a: Connection Manager + Protocol    → HTTP/2, WebSocket work
+Phase 16b: Space Resolver + Capability Gate → space operations over network
+Phase 16c: Shadow Engine                    → offline support
+Phase 16d: Resilience + Bandwidth Scheduler → production-grade
+Phase 16e: AIOS Peer Protocol               → AIOS-to-AIOS communication
 ```
 
-After 6.5c, a developer can `curl` from the AIOS shell. After 6.5e, agents can reach remote spaces. After 6.5f, the system works offline. Each layer is testable independently.
+After Phase 7c, a developer can `curl` from the AIOS shell. After Phase 16b, agents can reach remote spaces. After 16c, the system works offline. Each layer is testable independently.
 
 -----
 
@@ -623,13 +623,13 @@ pub struct Shadow {
 }
 
 pub enum ShadowPolicy {
-    None,                            // Never shadow (live API)
-    Pinned,                          // Shadow explicitly pinned objects
-    TtlBased { ttl: Duration },      // Shadow with time-to-live
-    Full { conflict: ConflictPolicy },// Full shadow + offline writes
+    None,                                // Never shadow (live API)
+    Pinned,                              // Shadow explicitly pinned objects
+    TtlBased { ttl: Duration },          // Shadow with time-to-live
+    Full { conflict: SyncConflictPolicy },// Full shadow + offline writes
 }
 
-pub enum ConflictPolicy {
+pub enum SyncConflictPolicy {
     LastWriteWins,
     CrdtMerge,
     ManualResolve,
