@@ -254,7 +254,6 @@ All subsystems at a glance:
 | Storage | ByteStream | Share (filesystem layer) | /dev/sd*, block | 4 |
 | USB | Varies by class | Varies by class | /dev/usb* | 17 |
 | Bluetooth | ByteStream/Events | Per-profile | /dev/bluetooth* | 18 |
-| WiFi | ByteStream | Share (multiplex) | socket API | 18 |
 | Print | Frames (pages) | Queue (FIFO) | /dev/lp*, CUPS | 22 |
 | GPS | Events (location) | Share (read-only) | — | 22 |
 | Power | Control commands | Exclusive (kernel) | /sys/power/* | 19 |
@@ -389,9 +388,14 @@ Each phase has its own directory containing two companion documents:
 docs/
 ├── 00-architecture-overview.md                        ← This document
 ├── aios-architecture.md                               System architecture deep dive
+├── aios-airs.md                                       AI Runtime Service deep dive
+├── aios-spaces.md                                     Space Storage deep dive
+├── aios-compositor.md                                 Compositor and Display deep dive
+├── aios-ipc-syscalls.md                               IPC and Syscall interface
 ├── aios-subsystem-framework.md                        Universal hardware abstraction
 ├── aios-networking.md                                 Network Translation Module
 ├── aios-browser-architecture.md                       Decomposed web browser
+├── aios-development-plan.md                           Timeline, risks, dependencies
 │
 ├── 00 - Foundation and Tooling/
 │   ├── phase-detail.md                                Technical design
@@ -483,10 +487,15 @@ docs/
 These companion documents provide deep-dive technical specifications:
 | Document | Scope |
 |---|---|
-| `aios-architecture.md` | Original comprehensive architecture with full data models and code examples |
+| `aios-architecture.md` | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
+| `aios-airs.md` | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
+| `aios-spaces.md` | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
+| `aios-compositor.md` | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
+| `aios-ipc-syscalls.md` | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
 | `aios-subsystem-framework.md` | Universal hardware abstraction — traits, types, patterns for every subsystem |
-| `aios-networking.md` | Network Translation Module deep dive — Space Resolver, Shadow Engine, protocols |
-| `aios-browser-architecture.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging |
+| `aios-networking.md` | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
+| `aios-browser-architecture.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
+| `aios-development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
 ---
 ## 13. Success Criteria (Full Production OS)
 **Core OS:**

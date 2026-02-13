@@ -500,15 +500,15 @@ Every hardware access from web content goes through the same subsystem framework
 
 ## 11. Implementation Plan
 
-Integrates with the existing phase plan at Phase 11:
+Integrates with the existing phase plan at Phase 21 (Web Browser):
 
-### Phase 11A: Servo Integration (3 weeks)
+### Phase 21A: Servo Integration (3 weeks)
 
 - Build Servo's layout engine, CSS engine, SpiderMonkey for aarch64-aios target
 - Strip Servo's networking and storage layers
 - Create Tab Agent scaffold that hosts Servo's rendering
 
-### Phase 11B: Web API Bridge (3 weeks)
+### Phase 21B: Web API Bridge (3 weeks)
 
 - `fetch()` → OS HTTP service via network subsystem
 - `localStorage` / `IndexedDB` → web-storage space
@@ -516,7 +516,7 @@ Integrates with the existing phase plan at Phase 11:
 - Permissions API → OS capability requests via subsystem framework
 - Service Worker → persistent Tab Agent with constrained capabilities
 
-### Phase 11C: Browser Shell (2 weeks)
+### Phase 21C: Browser Shell (2 weeks)
 
 - Tab management UI (portable toolkit / iced)
 - URL bar, navigation, bookmarks (stored in bookmarks space)
@@ -524,7 +524,7 @@ Integrates with the existing phase plan at Phase 11:
 - Origin capability derivation from URL
 - Cross-origin capability grants (CORS → capability)
 
-### Phase 11D: Integration (2 weeks)
+### Phase 21D: Integration (2 weeks)
 
 - Tab Agent spawning and lifecycle management
 - Multi-tab compositor integration
@@ -532,7 +532,7 @@ Integrates with the existing phase plan at Phase 11:
 - Ad/tracker blocking at capability level
 - Resource accounting per Tab Agent
 
-### Phase 11E: AIOS Web API Extensions (1 week)
+### Phase 21E: AIOS Web API Extensions (1 week)
 
 - `aios.space()` API for PWA space access
 - `aios.flow()` API for PWA ↔ native agent communication
