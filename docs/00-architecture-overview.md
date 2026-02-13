@@ -379,73 +379,104 @@ Year 2.5 (Weeks 93-130): Tiers 6-7 — Production OS ready for daily use
 ```
 ---
 ## 11. Document Index
-Each phase has two companion documents:
+Each phase has its own directory containing two companion documents:
 | Document | Purpose |
 |---|---|
-| `phases/phase-NN-detail.md` | Comprehensive technical design, architecture decisions, data models, interfaces, risks |
-| `milestones/phase-NN-steps.md` | Step-by-step implementation guide with concrete tasks, acceptance criteria, and testing |
+| `phase-detail.md` | Comprehensive technical design, architecture decisions, data models, interfaces, risks |
+| `milestone-steps.md` | Step-by-step implementation guide with concrete tasks, acceptance criteria, and testing |
 ### Full Document List
 ```
 docs/
-├── 00-architecture-overview.md           ← This document
-├── phases/
-│   ├── phase-00-detail.md                Foundation & Tooling
-│   ├── phase-01-detail.md                Boot & First Pixels
-│   ├── phase-02-detail.md                Memory Management
-│   ├── phase-03-detail.md                IPC & Capability System
-│   ├── phase-04-detail.md                Block Storage & Object Store
-│   ├── phase-05-detail.md                GPU & Display
-│   ├── phase-06-detail.md                Window Compositor & Shell
-│   ├── phase-07-detail.md                Input, Terminal & Basic Networking
-│   ├── phase-08-detail.md                AIRS Core (Inference Engine)
-│   ├── phase-09-detail.md                Space Intelligence & Conversation
-│   ├── phase-10-detail.md                Agent Framework
-│   ├── phase-11-detail.md                Tasks, Flow & Attention
-│   ├── phase-12-detail.md                Developer Experience & SDK
-│   ├── phase-13-detail.md                Security Hardening
-│   ├── phase-14-detail.md                Performance & Optimization
-│   ├── phase-15-detail.md                POSIX Compatibility & BSD Userland
-│   ├── phase-16-detail.md                Network Translation Module
-│   ├── phase-17-detail.md                USB Stack & Hotplug
-│   ├── phase-18-detail.md                WiFi, Bluetooth & Wireless
-│   ├── phase-19-detail.md                Power Management & Thermal
-│   ├── phase-20-detail.md                Portable UI Toolkit
-│   ├── phase-21-detail.md                Web Browser (Servo)
-│   ├── phase-22-detail.md                Media, Audio & Camera
-│   ├── phase-23-detail.md                Accessibility & Internationalization
-│   ├── phase-24-detail.md                Secure Boot & Update System
-│   ├── phase-25-detail.md                Linux Binary & Wayland Compatibility
-│   ├── phase-26-detail.md                Enterprise & Multi-Device
-│   └── phase-27-detail.md                Real Hardware, Certification & Launch
-└── milestones/
-    ├── phase-00-steps.md                 Step-by-step: Foundation & Tooling
-    ├── phase-01-steps.md                 Step-by-step: Boot & First Pixels
-    ├── phase-02-steps.md                 Step-by-step: Memory Management
-    ├── phase-03-steps.md                 Step-by-step: IPC & Capability System
-    ├── phase-04-steps.md                 Step-by-step: Block Storage
-    ├── phase-05-steps.md                 Step-by-step: GPU & Display
-    ├── phase-06-steps.md                 Step-by-step: Compositor & Shell
-    ├── phase-07-steps.md                 Step-by-step: Input, Terminal & Network
-    ├── phase-08-steps.md                 Step-by-step: AIRS Core
-    ├── phase-09-steps.md                 Step-by-step: Space Intelligence
-    ├── phase-10-steps.md                 Step-by-step: Agent Framework
-    ├── phase-11-steps.md                 Step-by-step: Tasks, Flow & Attention
-    ├── phase-12-steps.md                 Step-by-step: Developer Experience
-    ├── phase-13-steps.md                 Step-by-step: Security Hardening
-    ├── phase-14-steps.md                 Step-by-step: Performance
-    ├── phase-15-steps.md                 Step-by-step: POSIX Compatibility
-    ├── phase-16-steps.md                 Step-by-step: Network Translation
-    ├── phase-17-steps.md                 Step-by-step: USB Stack
-    ├── phase-18-steps.md                 Step-by-step: WiFi & Bluetooth
-    ├── phase-19-steps.md                 Step-by-step: Power Management
-    ├── phase-20-steps.md                 Step-by-step: UI Toolkit
-    ├── phase-21-steps.md                 Step-by-step: Web Browser
-    ├── phase-22-steps.md                 Step-by-step: Media & Audio
-    ├── phase-23-steps.md                 Step-by-step: Accessibility & i18n
-    ├── phase-24-steps.md                 Step-by-step: Secure Boot
-    ├── phase-25-steps.md                 Step-by-step: Linux Compatibility
-    ├── phase-26-steps.md                 Step-by-step: Enterprise
-    └── phase-27-steps.md                 Step-by-step: Hardware & Launch
+├── 00-architecture-overview.md                        ← This document
+├── aios-architecture.md                               System architecture deep dive
+├── aios-subsystem-framework.md                        Universal hardware abstraction
+├── aios-networking.md                                 Network Translation Module
+├── aios-browser-architecture.md                       Decomposed web browser
+│
+├── 00 - Foundation and Tooling/
+│   ├── phase-detail.md                                Technical design
+│   └── milestone-steps.md                             Implementation steps
+├── 01 - Boot and First Pixels/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 02 - Memory Management/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 03 - IPC and Capability System/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 04 - Block Storage and Object Store/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 05 - GPU and Display/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 06 - Window Compositor and Shell/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 07 - Input Terminal and Basic Networking/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 08 - AIRS Core/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 09 - Space Intelligence and Conversation/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 10 - Agent Framework/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 11 - Tasks Flow and Attention/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 12 - Developer Experience and SDK/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 13 - Security Hardening/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 14 - Performance and Optimization/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 15 - POSIX Compatibility and BSD Userland/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 16 - Network Translation Module/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 17 - USB Stack and Hotplug/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 18 - WiFi Bluetooth and Wireless/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 19 - Power Management and Thermal/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 20 - Portable UI Toolkit/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 21 - Web Browser/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 22 - Media Audio and Camera/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 23 - Accessibility and Internationalization/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 24 - Secure Boot and Update System/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 25 - Linux Binary and Wayland Compatibility/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+├── 26 - Enterprise and Multi-Device/
+│   ├── phase-detail.md
+│   └── milestone-steps.md
+└── 27 - Real Hardware Certification and Launch/
+    ├── phase-detail.md
+    └── milestone-steps.md
 ```
 ---
 ## 12. Related Architecture Documents
