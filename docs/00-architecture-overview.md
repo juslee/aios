@@ -395,6 +395,7 @@ docs/
 ├── aios-subsystem-framework.md                        Universal hardware abstraction
 ├── aios-networking.md                                 Network Translation Module
 ├── aios-browser-architecture.md                       Decomposed web browser
+├── aios-experience.md                                 GUI experience and unique surfaces
 ├── aios-development-plan.md                           Timeline, risks, dependencies
 │
 ├── 00 - Foundation and Tooling/
@@ -495,6 +496,7 @@ These companion documents provide deep-dive technical specifications:
 | `aios-subsystem-framework.md` | Universal hardware abstraction — traits, types, patterns for every subsystem |
 | `aios-networking.md` | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
 | `aios-browser-architecture.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
+| `aios-experience.md` | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
 | `aios-development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
 ---
 ## 13. Success Criteria (Full Production OS)
