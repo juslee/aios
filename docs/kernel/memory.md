@@ -274,6 +274,16 @@ Total RAM   Kernel    Model     User      DMA       Reserved    Tier
  and the browser more breathing room than the previous 768 MB.
 ```
 
+**AIRS resource orchestration scope:** AIRS resource directives can only adjust the boundary between the **Model Pool** and **User Pool**. The Kernel Pool, DMA Pool, and Reserved regions are fixed at boot and are not subject to AIRS directives:
+
+| Pool | AIRS Can Resize? | Reason |
+|---|---|---|
+| Kernel | No | AIRS itself lives here. Fixed at boot. |
+| Model | Yes (boundary with User) | AIRS grows model pool when loading models, shrinks when evicting. Constrained by `security_floor` (§12.2). |
+| User | Yes (boundary with Model) | Inverse of model pool adjustments. Per-agent limits still enforced by blast radius (Layer 8). |
+| DMA | No | Fixed at boot. Device I/O buffers require physically contiguous, stable pages. Not addressable by AIRS directives. |
+| Reserved | No | Firmware/MMIO regions. Hardware-defined, immutable. |
+
 ```rust
 pub enum Pool {
     /// Kernel data structures, page tables, slab caches
@@ -1048,6 +1058,46 @@ impl ModelMapping {
 
 **Reference counting:** When multiple inference sessions (conversation bar, space indexer, intent verifier) all use the same model, they share the same physical memory region. The refcount tracks how many sessions hold a reference. The model is evicted only when the refcount drops to zero AND memory pressure requires it.
 
+#### 6.2.1 Model Page Pinning and Inference Safety
+
+Model pages are pinned for their **entire resident lifetime**, not just during active inference:
+
+```rust
+impl ModelMemoryRegion {
+    /// Model frames are pinned from the moment they are loaded
+    /// until the model is explicitly evicted. They are NEVER on
+    /// the free list. Page reclamation cannot touch them.
+    ///
+    /// Pinning invariants:
+    /// 1. All frames have VmFlags::PINNED set at allocation time
+    /// 2. Pinned frames are excluded from the page reclaimer's scan
+    /// 3. The model pool pressure calculation ignores pinned pages
+    ///    (model pool pressure = 0 when all pages are model weights)
+    /// 4. Dynamic pool resizing (§12.2) cannot reclaim pinned frames
+    ///    — it only moves the pool boundary using FREE pages
+    /// 5. Eviction requires refcount == 0 (no active sessions)
+    ///    AND an explicit eviction decision by AIRS or the kernel
+    ///
+    /// During active inference, model pages are accessed read-only.
+    /// Since they are pinned, mapped read-only, and shared:
+    /// - No page fault can occur (pages are always resident)
+    /// - No eviction can occur (pinned frames are never reclaimed)
+    /// - No corruption can occur (read-only mapping, W^X enforced)
+    /// - No concurrent modification is possible (no writer exists)
+    pub fn is_safe_for_inference(&self) -> bool {
+        self.frames.iter().all(|f| f.flags().contains(VmFlags::PINNED))
+            && self.refcount.load(Ordering::Acquire) > 0
+    }
+}
+```
+
+**Inference-critical invariant:** An LLM inference session that begins with a loaded model will never observe model page eviction, corruption, or stale data, regardless of concurrent memory pressure on the user pool. This is guaranteed by three properties:
+1. Model pages are pinned (never reclaimable by the page reclaimer)
+2. Model pages are read-only (no writer can modify weights during inference)
+3. Model eviction requires refcount == 0 (impossible while any session is active)
+
+**Interaction with dynamic pool resizing (§12.2):** When AIRS resource orchestration resizes the model pool / user pool boundary, only FREE pages participate. Model weight pages have nonzero refcounts and the `PINNED` flag — they are never on the free list and cannot be moved by pool boundary adjustment. The `security_floor` invariant (§12.2) additionally prevents the pool from shrinking below the primary model's footprint while security services are active.
+
 ### 6.3 KV Cache Management
 
 KV caches are the per-session cost of maintaining conversation context. Unlike model weights (which are static and shared), KV caches are dynamic, per-session, and can grow large:
@@ -1284,6 +1334,50 @@ pub fn map_space_object(
 ```
 
 Immutable objects (most space content) are mapped read-only and shared across any agents that map them — same physical pages, multiple virtual mappings. If an agent needs to modify the content, it gets a COW mapping: reads see the shared pages, writes trigger a page fault that allocates private copies.
+
+#### 7.2.1 Page Fault Re-Verification
+
+When an agent accesses a mapped space object page that is not currently resident (evicted during memory pressure, or not yet demand-paged), the page fault handler **re-verifies the agent's capability** before loading the page:
+
+```rust
+/// Page fault handler for MappedObject regions.
+/// Called by the kernel when an agent accesses a non-resident page
+/// in a VmRegion of kind MappedObject.
+fn handle_mapped_object_fault(
+    agent: AgentId,
+    region: &VmRegion,
+    fault_addr: VirtualAddress,
+) -> Result<PhysicalFrame, FaultError> {
+    let space = region.source_space();
+    let object = region.source_object();
+
+    // Step 1: Re-verify capability.
+    // The agent may have had its ReadSpace token revoked since the
+    // initial map_space_object() call. A revoked capability means
+    // the agent no longer has the right to read this data.
+    if !capability_table.check(agent, Capability::ReadSpace(space)) {
+        // Capability revoked — unmap the entire region.
+        // Agent receives SIGSEGV (or AIOS equivalent).
+        unmap_region(agent, region);
+        return Err(FaultError::CapabilityRevoked);
+    }
+
+    // Step 2: Load page through Space Storage read path.
+    // This includes checksum verification and decryption.
+    let frame = space_storage.read_page(space, object, fault_addr.page_offset())?;
+
+    // Step 3: Map the frame into the agent's address space.
+    map_page(agent, fault_addr, frame, region.flags());
+
+    Ok(frame)
+}
+```
+
+**Why re-verify on every fault:** The initial `map_space_object()` call establishes a virtual mapping, but pages are demand-loaded. Between the initial map and a page fault, the agent's capability may have been revoked (user removed the agent's access via Inspector, capability expired, cascade revocation from parent token). Without re-verification, a revoked agent could continue reading data from pages that happen to fault in — the mapping itself would be a stale privilege.
+
+**When capability is revoked:** If the check fails, the kernel unmaps the entire `MappedObject` region from the agent's address space. The agent receives a fault signal. The provenance chain records the denied access. This is the same behavior as a denied `SpaceRead` syscall — just triggered by a page fault instead of an explicit read.
+
+**Performance:** The capability re-check is O(1) in the kernel `CapabilityTable` — a hash lookup, not an IPC round-trip. It adds ~50 ns to a page fault that already costs ~100 μs (SD card read) or ~5 μs (NVMe). The security cost is negligible.
 
 -----
 
