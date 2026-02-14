@@ -71,6 +71,131 @@ AIOS inverts this. The AI Runtime Service (AIRS) is a **privileged system servic
     transfer)      index spaces)    GPU, NPU)
 ```
 
+### 2.1 Why a Single Service (Monolith Now, Structured Split Later)
+
+AIRS is a single process containing the inference engine, model registry, all intelligence services (indexer, context engine, attention manager, intent verifier, behavioral monitor, adversarial defense, tool manager, conversation manager), and the resource orchestrator. This is a deliberate architectural choice, not an accident.
+
+**Why monolithic on 4-8 GB hardware:**
+
+The inference engine is the scarce resource. Seven subsystems all need LLM inference, and they all share one model loaded in RAM. Splitting AIRS into separate processes doesn't create more inference capacity — it just adds IPC serialization overhead to access the same bottleneck.
+
+```
+Monolithic (current):
+  Subsystem → function call → Inference Engine → result
+  Cost: ~0 (in-process call)
+
+Split (hypothetical):
+  Subsystem → IPC serialize → kernel mediate → IPC deserialize
+    → Inference Engine → IPC serialize → kernel mediate
+    → IPC deserialize → result
+  Cost: ~50-100 μs per inference request (IPC round-trip)
+  × thousands of requests/day = measurable overhead for no benefit
+```
+
+On 8 GB hardware with one 4.5 GB model, there is no memory for multiple processes each holding a model copy. Shared memory could avoid duplication of model weights, but the KV cache (per-session state) cannot be shared — each inference session mutates its own cache during generation. If the intent verifier and conversation manager run in separate processes, they need separate KV caches for the same model, doubling the cache memory cost.
+
+The model pool holds 4 GB. KV cache budget is 25% of that (1 GB). Splitting that 1 GB across two processes means 500 MB each — cutting the practical context window in half for both security checks and conversation. On constrained hardware, this is an unacceptable tradeoff.
+
+**Internal structure designed for eventual separation:**
+
+The monolithic process is not monolithic code. Each subsystem is a Rust module with a defined interface. The security path and resource path share no mutable state (§10.1). IPC channels are already defined per-function (security gets a dedicated high-priority channel). The internal architecture is a set of components that happen to share an address space today.
+
+```
+Phase 1 (4-8 GB) — Single process, internal isolation:
+  ┌─────────────────────────────────────────────────┐
+  │                  AIRS Process                     │
+  │  ┌──────────────┐  ┌──────────────────────────┐ │
+  │  │ Security Path │  │ Intelligence + Resource  │ │
+  │  │ (intent,      │  │ (indexer, context,       │ │
+  │  │  behavioral,  │  │  attention, conversation,│ │
+  │  │  adversarial) │  │  resource orchestrator)  │ │
+  │  └──────┬───────┘  └──────────┬───────────────┘ │
+  │         │     shared model     │                  │
+  │         └────────┬─────────────┘                  │
+  │          Inference Engine                         │
+  └─────────────────────────────────────────────────┘
+
+Phase 2 (16 GB) — Single process, multiple models:
+  Same structure, but primary + specialist models loaded.
+  Security tasks can use a dedicated small model (~1B)
+  alongside the primary conversation model (~8B).
+  No process split yet — shared address space still wins.
+
+Phase 3 (32+ GB) — Separate processes become viable:
+  ┌──────────────────┐  ┌──────────────────────────┐
+  │  AIRS-Security   │  │  AIRS-Intelligence       │
+  │  (intent,        │  │  (indexer, context,       │
+  │   behavioral,    │  │   attention, conversation)│
+  │   adversarial)   │  │                          │
+  │  Own model (3B)  │  │  Own model (8B+)         │
+  │  Own caps        │  │  Own caps                │
+  │  Own failure     │  │  Own failure domain      │
+  │  domain          │  │                          │
+  └──────────────────┘  └──────────────────────────┘
+  ┌──────────────────┐
+  │  AIRS-Resource   │
+  │  (orchestrator,  │
+  │   hint processor)│
+  │  Mostly stats,   │
+  │  minimal LLM     │
+  │  Own caps        │
+  └──────────────────┘
+```
+
+At 32 GB, the split is worth it because:
+- A security intent check shouldn't wait behind a 2000-token conversation generation — separate models eliminate this contention
+- Each service gets its own failure domain — resource orchestrator crash doesn't affect security verification
+- The kernel enforces separation with distinct capability sets per service, rather than relying on AIRS-internal discipline
+- Each service has its own behavioral baseline monitored by the kernel independently
+
+The split is not worth it at 8 GB because:
+- One model serves all functions — splitting processes doesn't give each a better model, it gives each the same model with more overhead
+- KV cache memory is halved per process — degrading both security and conversation quality
+- IPC overhead on every inference request — measurable on a Pi's SD-card-bound system
+- Single point of coordination is simpler — context engine feeds attention manager feeds conversation manager, all in-process with zero serialization
+
+**The monolith does not compromise security.** The kernel monitors AIRS externally (§10.3), enforces capabilities regardless of AIRS's internal structure (security.md §2.2), and can disable resource orchestration while keeping security active (§10.3 fallback mode). Whether AIRS is one process or three, the kernel's enforcement is identical — it sees processes making syscalls, validates capability tokens, and logs everything to the provenance chain.
+
+### 2.2 Relationship to the Microkernel
+
+AIOS is a microkernel OS. The kernel is ~20 syscalls: capabilities, IPC mediation, page tables, process lifecycle. Everything else — AIRS, Space Storage, Network Translation Module, Compositor — runs in userspace as Trust Level 1 services. AIRS being monolithic or split is a userspace concern that does not affect the kernel's architecture.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Microkernel (~20 syscalls)                          │
+│  ProcessCreate, ProcessTerminate                     │
+│  CapabilityGrant, CapabilityRevoke, CapabilityCheck  │
+│  IpcSend, IpcReceive, ChannelCreate                  │
+│  MemoryMap, MemoryUnmap, MemoryProtect               │
+│  SpaceRead, SpaceWrite (mediated)                    │
+│  ...                                                 │
+│                                                      │
+│  Does not care how many processes AIRS uses.          │
+│  Sees: processes with capability sets making syscalls.│
+│  Enforces: the same rules regardless of AIRS layout. │
+└─────────────────────────────────────────────────────┘
+        │
+        │  stable syscall interface
+        │
+        ▼
+┌─────────────────────────────────────────────────────┐
+│  Userspace Services (Trust Level 1)                  │
+│  ├── AIRS (1 process today, maybe 3 later)           │
+│  ├── Space Storage                                   │
+│  ├── Network Translation Module                      │
+│  ├── Compositor                                      │
+│  └── Service Manager                                 │
+│                                                      │
+│  Can restructure freely.                             │
+│  Kernel interface is stable.                         │
+│  AIRS can split without touching the kernel.          │
+└─────────────────────────────────────────────────────┘
+```
+
+AIRS as a resource orchestrator reinforces the microkernel choice. In a monolithic kernel (Linux), resource management intelligence tends to migrate into the kernel itself — Linux's memory compaction heuristics, pressure stall information, and cgroup controllers grow ever more complex inside kernel space. In AIOS, that intelligence lives in userspace where it can crash, be monitored, and be disabled without affecting kernel stability. The kernel does plain LRU and fixed pools — simple, correct, boring. AIRS makes it smarter from userspace. If AIRS crashes, the kernel keeps working with static heuristics.
+
+This separation is why the damage ceiling for a compromised AIRS resource orchestrator is denial of service, not data breach (security.md §9.6). The kernel's enforcement mechanisms — page table isolation, capability validation, cryptographic key management — are independent of AIRS. They don't get smarter when AIRS works, and they don't get weaker when AIRS fails.
+
 -----
 
 ## 3. Inference Engine
