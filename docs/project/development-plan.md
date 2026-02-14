@@ -2,7 +2,7 @@
 
 ## Timeline, Risks, Dependencies, and Decision Gates
 
-**Parent document:** [00-architecture-overview.md](./00-architecture-overview.md)
+**Parent document:** [overview.md](./overview.md)
 **Related:** All architecture documents
 
 -----

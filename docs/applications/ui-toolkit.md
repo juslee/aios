@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-compositor.md](../platform/aios-compositor.md) — Compositor protocol, [aios-experience.md](../experience/aios-experience.md) — Experience layer surfaces, [aios-agents.md](./aios-agents.md) — Agent SDK, [aios-flow.md](../storage/aios-flow.md) — Flow drag/drop integration, [aios-context-engine.md](../intelligence/aios-context-engine.md) — Context-aware adaptation
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [experience.md](../experience/experience.md) — Experience layer surfaces, [agents.md](./agents.md) — Agent SDK, [flow.md](../storage/flow.md) — Flow drag/drop integration, [context-engine.md](../intelligence/context-engine.md) — Context-aware adaptation
 
 -----
 

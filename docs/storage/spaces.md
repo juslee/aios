@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-airs.md](../intelligence/aios-airs.md) — AI Runtime Service (Space Indexer), [aios-ipc-syscalls.md](../kernel/aios-ipc-syscalls.md) — Syscall interface
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [airs.md](../intelligence/airs.md) — AI Runtime Service (Space Indexer), [ipc.md](../kernel/ipc.md) — Syscall interface
 
 -----
 
@@ -541,7 +541,7 @@ pub struct SyncConflict {
     object: ObjectId,
     local_version: Version,
     remote_version: Version,
-    resolution: SyncConflictPolicy,     // from aios-networking.md
+    resolution: SyncConflictPolicy,     // from networking.md
 }
 ```
 

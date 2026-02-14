@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-security.md](../security/aios-security.md) — Capability system and trust boundaries, [aios-spaces.md](../storage/aios-spaces.md) — Space sharing and provenance, [aios-networking.md](../platform/aios-networking.md) — Peer protocol and credential isolation, [aios-agents.md](../applications/aios-agents.md) — Agent identity and delegation, [aios-airs.md](../intelligence/aios-airs.md) — Relationship-aware AI behavior
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [security.md](../security/security.md) — Capability system and trust boundaries, [spaces.md](../storage/spaces.md) — Space sharing and provenance, [networking.md](../platform/networking.md) — Peer protocol and credential isolation, [agents.md](../applications/agents.md) — Agent identity and delegation, [airs.md](../intelligence/airs.md) — Relationship-aware AI behavior
 
 -----
 

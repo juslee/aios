@@ -2,8 +2,8 @@
 
 ## Decomposed Web Content Runtime
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md), [aios-networking.md](../platform/aios-networking.md)
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [subsystem-framework.md](../platform/subsystem-framework.md), [networking.md](../platform/networking.md)
 
 -----
 

@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-ipc-syscalls.md](../kernel/aios-ipc-syscalls.md) — Syscall interface and POSIX translation table, [aios-subsystem-framework.md](./aios-subsystem-framework.md) — PosixBridge trait and /dev nodes, [aios-spaces.md](../storage/aios-spaces.md) — Space-to-path mapping, [aios-flow.md](../storage/aios-flow.md) — Clipboard POSIX bridge
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [ipc.md](../kernel/ipc.md) — Syscall interface and POSIX translation table, [subsystem-framework.md](./subsystem-framework.md) — PosixBridge trait and /dev nodes, [spaces.md](../storage/spaces.md) — Space-to-path mapping, [flow.md](../storage/flow.md) — Clipboard POSIX bridge
 
 -----
 

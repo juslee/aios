@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-subsystem-framework.md](./aios-subsystem-framework.md) — Display subsystem, [aios-ipc-syscalls.md](../kernel/aios-ipc-syscalls.md) — IPC protocol
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [subsystem-framework.md](./subsystem-framework.md) — Display subsystem, [ipc.md](../kernel/ipc.md) — IPC protocol
 
 -----
 

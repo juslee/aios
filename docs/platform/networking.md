@@ -2,8 +2,8 @@
 
 ## Design Document — Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-development-plan.md](../project/aios-development-plan.md) — Phase 7 (basic networking), Phase 16 (full NTM), [aios-subsystem-framework.md](./aios-subsystem-framework.md) — Universal hardware abstraction
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [development-plan.md](../project/development-plan.md) — Phase 7 (basic networking), Phase 16 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction
 
 **Note:** The networking subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the network-specific design decisions and architecture.
 

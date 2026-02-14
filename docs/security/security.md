@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) — Capability gate, [aios-airs.md](../intelligence/aios-airs.md) — Intent verification, behavioral monitoring, [aios-spaces.md](../storage/aios-spaces.md) — Encryption, provenance, [aios-ipc-syscalls.md](../kernel/aios-ipc-syscalls.md) — Syscall validation
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [subsystem-framework.md](../platform/subsystem-framework.md) — Capability gate, [airs.md](../intelligence/airs.md) — Intent verification, behavioral monitoring, [spaces.md](../storage/spaces.md) — Encryption, provenance, [ipc.md](../kernel/ipc.md) — Syscall validation
 
 -----
 
