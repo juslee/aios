@@ -161,7 +161,7 @@ Replaces the traditional filesystem. Objects instead of files. Semantic relation
 │  Provenance chain per version               │
 ├─────────────────────────────────────────────┤
 │         Block Engine                         │
-│  B-tree indexed blocks on raw device        │
+│  LSM-tree indexed blocks on raw device      │
 │  No intermediate filesystem layer           │
 │  Write-ahead log for crash recovery         │
 │  Encryption at rest (per-space keys)        │
@@ -1098,7 +1098,7 @@ pub enum SpaceQuery {
 }
 ```
 
-**Filter and TextSearch** work without AIRS — they use B-tree indexes and a full-text index maintained by the Space Storage service. **Semantic** queries require AIRS to generate query embeddings and compute similarity against the embedding index. **Traverse** queries walk the relationship graph.
+**Filter and TextSearch** work without AIRS — they use LSM-tree indexes and a full-text index maintained by the Space Storage service. **Semantic** queries require AIRS to generate query embeddings and compute similarity against the embedding index. **Traverse** queries walk the relationship graph.
 
 The Conversation Bar translates natural language to `SpaceQuery` via AIRS:
 ```

@@ -248,7 +248,7 @@ impl FrameAllocator {
         match free_pct {
             21..=100 => MemoryPressure::Normal,
             11..=20  => MemoryPressure::Low,
-            6..=10   => MemoryPressure::Critical,
+            5..=10   => MemoryPressure::Critical,
             _        => MemoryPressure::Oom,
         }
     }
@@ -1208,10 +1208,11 @@ pub enum CachePriority {
 /// For Llama 3.1 8B (32 layers, 8 KV heads, 128 head_dim, Q8):
 ///   Per-token KV size = 2 × 32 × 8 × 128 × 1 byte = 64 KB
 ///   Block size = 16 tokens × 64 KB = 1 MB per block
-/// This matches the medium THP page size (64 KB) for efficient allocation.
+/// Backed by 64 KB medium THP pages for efficient TLB usage.
 const KV_TOKENS_PER_BLOCK: u32 = 16;
 const KV_BLOCK_SIZE: usize = 1 * MB; // 1 MB blocks (model-dependent)
-const FRAMES_PER_KV_BLOCK: usize = KV_BLOCK_SIZE / PAGE_SIZE;
+const KV_MEDIUM_PAGE_SIZE: usize = 64 * KB; // 64 KB medium THP
+const FRAMES_PER_KV_BLOCK: usize = KV_BLOCK_SIZE / KV_MEDIUM_PAGE_SIZE; // 16 medium pages per block
 ```
 
 **PagedAttention memory savings:**
@@ -1250,7 +1251,7 @@ With prefix sharing:     1 × 200 tokens × 64 KB = 12.8 MB (shared via COW)
 Savings: 25.6 MB — significant when model pool is 2-4 GB
 ```
 
-**KV cache eviction** follows priority ordering when the model pool is under pressure:
+**KV cache eviction** follows priority ordering when the model pool is under pressure. **Important:** KV cache "eviction" means **deallocation back to the model pool free list** — not MGLRU-based page reclamation. KV cache blocks live in the pinned model pool, which is excluded from MGLRU tracking entirely. MGLRU governs user pool pages (agent heaps, page cache, shared memory). The KV cache eviction policy below is a separate, AIRS-driven mechanism:
 
 ```
 Eviction order (first evicted → last evicted):
@@ -1262,6 +1263,8 @@ Eviction order (first evicted → last evicted):
 Within a priority level, partially-filled blocks are evicted first (least
 tokens stored = least re-computation cost to reconstruct).
 ```
+
+**DAMON integration for KV caches:** While MGLRU does not track model pool pages, DAMON (§10.9) can still monitor access patterns on KV cache memory regions. DAMON detects when a KV cache transitions from active (inference in progress) to idle (session waiting), enabling AIRS to make proactive eviction decisions. DAMON reports access frequency; AIRS decides whether to evict; the kernel executes the deallocation. The feedback path is: DAMON → AIRS resource orchestration → kernel KV cache eviction → model pool free list.
 
 When a KV cache is evicted, the session's conversation history is still in a space object. The cache can be reconstructed by re-processing the conversation — slower than keeping it in RAM, but not data-losing. With prefix caching, reconstruction is faster: only the session-specific suffix needs recomputation; the shared prefix blocks may still be resident from another session.
 
@@ -1828,6 +1831,44 @@ Agent address space with guard pages:
 
 Stack overflow is the most common case. Without a guard page, a stack overflow silently writes into adjacent memory (heap or other data), causing corruption that may not be detected until much later. With a guard page, the overflow triggers an immediate, clean page fault. The kernel terminates the offending thread with a clear error message.
 
+### 9.6 Speculative Execution Mitigations
+
+The Cortex-A76 (Pi 5) is affected by Spectre variant 1 (bounds check bypass), variant 2 (branch target injection), and variant 4 (speculative store bypass). Model weights in the shared model pool are a high-value speculative side-channel target — a malicious agent could potentially leak model data through speculative execution. AIOS applies the following hardware and software mitigations:
+
+```
+Vulnerability     Mitigation                           Mechanism
+─────────────     ──────────                           ─────────
+Spectre v1        CSDB barriers after bounds checks    Compiler inserts CSDB (Consumption of
+(bounds bypass)   in kernel syscall paths              Speculative Data Barrier) after array
+                                                       index validation. Prevents speculative
+                                                       loads past bounds checks.
+
+Spectre v2        CSV2 (Cache Speculation Variant 2)   Cortex-A76 implements CSV2: branch
+(branch target    hardware hardening + SMCCC           predictors are context-aware and do not
+injection)        firmware interface                    use predictions from other contexts.
+                                                       The kernel verifies CSV2 support at boot
+                                                       via SMCCC and falls back to software
+                                                       retpoline-equivalent if absent.
+
+Spectre v4        SSBS (Speculative Store Bypass Safe) The kernel sets PSTATE.SSBS = 0 on
+(store bypass)    bit in PSTATE on kernel entry        kernel entry (disabling speculative
+                                                       store bypass for kernel code).
+                                                       Agents run with SSBS = 1 (speculative
+                                                       stores allowed — performance sensitive).
+
+Meltdown          Not applicable on Cortex-A76         ARM's Cortex-A76 and later cores are
+                                                       not affected by Meltdown (CVE-2017-5754).
+                                                       Kernel/user page table isolation is NOT
+                                                       required (unlike some x86 processors).
+```
+
+**Model pool side-channel hardening:** The model pool is mapped read-only into the AIRS address space with separate ASID. Speculative reads from agent address spaces cannot reach model pool pages because:
+1. Agent PTEs do not contain model pool mappings (separate TTBR0 entries)
+2. ASID tagging prevents speculative TLB hits across address spaces
+3. CSV2 hardware prevents branch predictor poisoning across contexts
+
+**Syscall boundary barriers:** Every syscall entry point inserts a speculation barrier (`SB` instruction) after validating arguments. This prevents speculative execution from progressing past argument validation with attacker-controlled values.
+
 -----
 
 ## 10. Swap and Compression
@@ -2154,13 +2195,13 @@ The zram pool is capped at a percentage of the user pool. There's no benefit to 
 ```
 Device RAM   User Pool   zram Max (25%)   Effective Capacity
 ─────────    ─────────   ─────────────    ──────────────────
-2 GB         1 GB        256 MB           1 GB user + ~400 MB virtual (2.5:1)
-4 GB         2 GB        512 MB           2 GB user + ~1 GB virtual
+2 GB         1.75 GB     448 MB           1.75 GB user + ~900 MB virtual (2.5:1)
+4 GB         1.5 GB      384 MB           1.5 GB user + ~750 MB virtual
 8 GB         3.5 GB      896 MB           3.5 GB user + ~1.8 GB virtual
-16 GB        11.5 GB     2.8 GB           11.5 GB user + ~5.6 GB virtual
+16 GB        7.5 GB      1.9 GB           7.5 GB user + ~3.8 GB virtual
 ```
 
-**Incompressible page handling:** Not all data compresses well. Encrypted data, already-compressed media, and random bytes may compress to larger than the original. If a page compresses to more than 75% of its original size (ratio below 1.33:1), the reclaimer marks it as incompressible and does not store it in zram. These pages remain on the inactive LRU list and will be swapped to disk (tier 3) if memory pressure continues. The `pages_incompressible` counter in `ZramStats` tracks how often this occurs — a high value suggests agents are working with encrypted or pre-compressed data, and the reclaimer should favor disk swap earlier.
+**Incompressible page handling:** Not all data compresses well. Encrypted data, already-compressed media, and random bytes may compress to larger than the original. If a page compresses to more than 75% of its original size (ratio below 1.33:1), the reclaimer marks it as incompressible and does not store it in zram. These pages remain in their current MGLRU generation and will be swapped to disk (tier 3) if memory pressure continues. The `pages_incompressible` counter in `ZramStats` tracks how often this occurs — a high value suggests agents are working with encrypted or pre-compressed data, and the reclaimer should favor disk swap earlier.
 
 ### 10.4 Swap Device
 
@@ -2339,8 +2380,8 @@ pub fn handle_page_fault(
             frame.copy_from(&compressed);
             process.address_space.map_page(fault_addr, frame, vma.permissions());
             process.memory_stats.record_minor_fault();
-            // Page starts on active list — it was just accessed
-            RECLAIMER.lock().lru.push_active(frame);
+            // Page enters MGLRU generation 0 (youngest — just accessed)
+            RECLAIMER.lock().mglru.insert_gen0(frame);
             Ok(())
         }
 
@@ -2353,7 +2394,7 @@ pub fn handle_page_fault(
             frame.copy_from(&data);
             process.address_space.map_page(fault_addr, frame, vma.permissions());
             process.memory_stats.record_major_fault();
-            RECLAIMER.lock().lru.push_active(frame);
+            RECLAIMER.lock().mglru.insert_gen0(frame);
             Ok(())
         }
 
@@ -2368,7 +2409,7 @@ pub fn handle_page_fault(
             file.read_page(offset, &mut frame)?;
             process.address_space.map_page(fault_addr, frame, vma.permissions());
             process.memory_stats.record_major_fault();
-            RECLAIMER.lock().lru.push_active(frame);
+            RECLAIMER.lock().mglru.insert_gen0(frame);
             Ok(())
         }
 
