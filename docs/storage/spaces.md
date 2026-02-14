@@ -203,6 +203,83 @@ pub enum EntityType {
 }
 ```
 
+### 3.3.1 Compact vs Full Objects
+
+By default, every new object is created as a **CompactObject** — a lightweight representation with minimal metadata overhead. Compact objects are promoted to full `Object` representation when the system determines they would benefit from rich metadata.
+
+This is the storage-conservative default. On constrained devices, the overhead of embeddings (~1.5 KB per object at 384 dimensions × f32), provenance chains, AI-generated summaries, and entity extraction adds up quickly across thousands of objects. Most objects (config files, small notes, web storage entries, game saves, temp files) never benefit from this metadata.
+
+```rust
+/// Lightweight object representation — the default for all new objects.
+/// Supports text search and basic queries. No embedding, no AI metadata.
+pub struct CompactObject {
+    id: ObjectId,
+    content_hash: Hash,
+    content_type: ContentType,
+    content_size: u64,
+    created_at: Timestamp,
+    modified_at: Timestamp,
+    created_by: AgentId,
+    modified_by: AgentId,
+    /// Minimal text for full-text index (always maintained)
+    text_content: Option<String>,
+}
+
+/// Promotion criteria — when a CompactObject becomes a full Object
+pub struct PromotionPolicy {
+    /// Promote when a user explicitly searches for and opens the object
+    on_user_interaction: bool,          // default: true
+    /// Promote when the object is edited more than N times
+    edit_threshold: u32,                // default: 3
+    /// Promote when the object exceeds N bytes (suggests meaningful content)
+    size_threshold: u64,                // default: 4 KB
+    /// Promote when another object creates a Relation to this one
+    on_relation_created: bool,          // default: true
+    /// Never promote these content types (even if other criteria are met)
+    exempt_types: Vec<ContentType>,     // default: [Config, GameSave, CacheEntry]
+}
+
+impl PromotionPolicy {
+    pub fn default() -> Self {
+        Self {
+            on_user_interaction: true,
+            edit_threshold: 3,
+            size_threshold: 4 * KB,
+            on_relation_created: true,
+            exempt_types: vec![
+                ContentType::Config,
+                ContentType::GameSave,
+                ContentType::CacheEntry,
+                ContentType::SessionToken,
+                ContentType::Cookie,
+            ],
+        }
+    }
+}
+```
+
+**Promotion flow:**
+```
+1. Object created → stored as CompactObject
+   (text extracted for full-text index, no embedding, no AI metadata)
+     ↓
+2. Promotion trigger fires (user opens object, edit threshold, size threshold)
+     ↓
+3. Space Indexer queues the object for full indexing:
+   - Generate embedding vector (384 dimensions)
+   - Extract entities (people, places, concepts)
+   - Generate AI summary and tags
+   - Build provenance chain
+     ↓
+4. Object upgraded to full Object in-place (same ObjectId, same content_hash)
+```
+
+**Storage savings:** A CompactObject uses ~200 bytes of metadata vs ~2-6 KB for a full Object (with embedding + provenance + AI metadata). For a space with 10,000 objects where 80% remain compact, this saves 14-46 MB of metadata overhead — significant on a device with a 32 GB SD card.
+
+**CompactObjects are still searchable.** Full-text search works on compact objects (the text index is always maintained). Semantic search (embedding-based) only works on promoted full objects. This means the system is fully functional with compact defaults — semantic search coverage grows organically as users interact with their data.
+
+**Web storage is always compact.** Objects in `web-storage/` spaces (cookies, localStorage, sessionStorage, IndexedDB entries, Cache API responses) are never promoted. They are high-volume, low-value for semantic search, and typically accessed by origin rather than by meaning. The `PromotionPolicy.exempt_types` list ensures these stay lightweight regardless of other triggers.
+
 ### 3.4 Relations
 
 ```rust
@@ -327,6 +404,114 @@ pub struct GarbageCollector {
 ```
 
 GC runs in the background and never blocks reads or writes.
+
+### 4.6 Block-Level Compression
+
+AIOS compresses data blocks on disk to extend storage lifetime on capacity-constrained devices (SD cards, small SSDs). Compression operates at the block level — transparent to the Object Store and everything above it.
+
+```rust
+pub enum CompressionStrategy {
+    /// No compression (already-compressed content: images, video, encrypted data)
+    None,
+    /// LZ4 — fast compression/decompression, moderate ratio (~2:1)
+    /// Used for recently written and frequently accessed blocks
+    Lz4,
+    /// Zstd — slower compression, better ratio (~3-4:1)
+    /// Used for cold data (old versions, inactive spaces, audit archives)
+    Zstd { level: u8 },                // 1-19, default 3 for warm, 9 for cold
+}
+
+pub struct BlockHeader {
+    content_hash: Hash,
+    uncompressed_size: u32,
+    compressed_size: u32,
+    compression: CompressionStrategy,
+    checksum: u32,                      // CRC-32C of compressed data
+}
+
+impl BlockEngine {
+    fn write_block(&self, data: &[u8], tier: StorageTier) -> BlockId {
+        let strategy = self.select_compression(data, tier);
+        let compressed = match strategy {
+            CompressionStrategy::None => data.to_vec(),
+            CompressionStrategy::Lz4 => lz4::compress(data),
+            CompressionStrategy::Zstd { level } => zstd::compress(data, level),
+        };
+
+        // Only use compression if it actually saves space
+        let (stored, used_strategy) = if compressed.len() < data.len() {
+            (compressed, strategy)
+        } else {
+            (data.to_vec(), CompressionStrategy::None)
+        };
+
+        self.write_raw_block(stored, used_strategy)
+    }
+
+    fn select_compression(&self, data: &[u8], tier: StorageTier) -> CompressionStrategy {
+        match tier {
+            StorageTier::Hot => CompressionStrategy::Lz4,
+            StorageTier::Warm => CompressionStrategy::Zstd { level: 3 },
+            StorageTier::Cold => CompressionStrategy::Zstd { level: 9 },
+        }
+    }
+}
+```
+
+**Why block-level:** Content-addressed blocks are immutable after write — ideal for compression. The decompression cost is paid once on read and amortized across multiple accesses by the page cache. On a Pi 5, LZ4 decompresses at ~4 GB/s (faster than SD card read speed), so compression is effectively free on the read path.
+
+**Incompressible content:** Encrypted blocks and already-compressed media (JPEG, MP4, FLAC) don't benefit from compression. The `select_compression` heuristic samples the first 4 KB — if the sample compresses poorly (<5% savings), the block is stored uncompressed to avoid wasting CPU.
+
+**Security: compress before encrypt.** The Block Engine compresses data before the Encryption Layer encrypts it (see architecture diagram in section 2). This ordering is critical — compressing ciphertext is useless (encrypted data is indistinguishable from random), and encrypting compressed data avoids CRIME/BREACH-style attacks where compression ratio changes leak information about plaintext. Since AIOS uses content-addressed blocks (each block has a unique content_hash), an attacker cannot perform the chosen-plaintext injection required for CRIME-style attacks. The compress-then-encrypt ordering is safe.
+
+### 4.7 Tiered Storage
+
+Blocks are classified into temperature tiers based on access patterns. The tier determines compression strategy, and on systems with multiple storage devices, placement:
+
+```rust
+pub enum StorageTier {
+    /// Recently written or frequently accessed — LZ4 or uncompressed
+    Hot,
+    /// Older versions, inactive spaces — zstd level 3
+    Warm,
+    /// Audit archives >30 days, old version history, cold spaces — zstd level 9
+    Cold,
+}
+
+pub struct TierPolicy {
+    /// Objects accessed in the last N hours are Hot
+    hot_window: Duration,               // default: 24 hours
+    /// Objects accessed in the last N days are Warm
+    warm_window: Duration,              // default: 30 days
+    /// Everything else is Cold
+    /// Minimum time before an object can be demoted from Hot → Warm
+    demotion_grace: Duration,           // default: 6 hours
+}
+
+pub struct TierManager {
+    policy: TierPolicy,
+    /// Background thread that recompresses blocks when demoted
+    recompressor: RecompressorThread,
+    /// Statistics for monitoring
+    stats: TierStats,
+}
+
+pub struct TierStats {
+    hot_blocks: u64,
+    hot_bytes: u64,
+    warm_blocks: u64,
+    warm_bytes: u64,
+    cold_blocks: u64,
+    cold_bytes: u64,
+    bytes_saved_by_compression: u64,
+}
+```
+
+**Tier transitions:** A background thread scans block access timestamps. When a Hot block hasn't been accessed within `warm_window`, it is recompressed with zstd and demoted to Warm. When a Warm block hasn't been accessed within `warm_window`, it is recompressed at a higher zstd level and demoted to Cold. Promotion (Cold → Hot) happens automatically on access — the block is decompressed and rewritten with LZ4.
+
+**Recompression is lazy.** The recompressor runs at lowest I/O priority and yields to any foreground read or write. On a Pi with an SD card, recompression is throttled to avoid wearing the card. Tier transitions are batched — the recompressor processes blocks in groups during idle periods.
+
+**Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 14 optimization — single-device tiering via compression is the Phase 4 implementation.
 
 -----
 
@@ -636,9 +821,13 @@ Phase 4b:  Object store + content addressing        → objects with deduplicati
 Phase 4c:  Space API + basic queries (Filter)       → spaces usable by services
 Phase 4d:  Version store + Merkle DAG               → full version history
 Phase 4e:  POSIX bridge + path mapping              → BSD tools work
+Phase 4f:  CompactObject + promotion policy          → storage-efficient default objects
+Phase 4g:  Block-level compression (LZ4/zstd)        → 2-4x storage savings
 Phase 9a:  Full-text index + text search            → keyword search
-Phase 9b:  Embedding index + semantic search        → semantic search (requires AIRS)
+Phase 9b:  Embedding index + selective embedding     → semantic search (promoted objects only)
 Phase 9c:  Space Sync protocol                      → cross-device sync
 Phase 13a: Encryption layer + key management        → encrypted spaces
+Phase 14a: Tiered storage (hot/warm/cold)            → automatic tier migration + recompression
+Phase 14b: Audit retention + chain compaction        → bounded audit storage growth
 Phase 24a: Secure Boot integration + key escrow     → TrustZone key storage
 ```
