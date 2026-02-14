@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-airs.md](./aios-airs.md) — Urgency inference and summarization, [aios-context-engine.md](./aios-context-engine.md) — Context-aware filtering, [aios-experience.md](../experience/aios-experience.md) — Attention Panel UI, [aios-agents.md](../applications/aios-agents.md) — Agent attention posting, [aios-security.md](../security/aios-security.md) — Capability enforcement
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [airs.md](./airs.md) — Urgency inference and summarization, [context-engine.md](./context-engine.md) — Context-aware filtering, [experience.md](../experience/experience.md) — Attention Panel UI, [agents.md](../applications/agents.md) — Agent attention posting, [security.md](../security/security.md) — Capability enforcement
 
 -----
 

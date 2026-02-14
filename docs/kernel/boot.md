@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md) — Section 6.1 Boot Sequence
-**Related:** [aios-ipc-syscalls.md](./aios-ipc-syscalls.md) — IPC and syscalls, [aios-spaces.md](../storage/aios-spaces.md) — Space Storage, [aios-airs.md](../intelligence/aios-airs.md) — AI Runtime Service, [aios-development-plan.md](../project/aios-development-plan.md) — Phase plan
+**Parent document:** [architecture.md](../project/architecture.md) — Section 6.1 Boot Sequence
+**Related:** [ipc.md](./ipc.md) — IPC and syscalls, [spaces.md](../storage/spaces.md) — Space Storage, [airs.md](../intelligence/airs.md) — AI Runtime Service, [development-plan.md](../project/development-plan.md) — Phase plan
 
 -----
 

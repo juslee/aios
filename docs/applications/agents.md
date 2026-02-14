@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-ipc-syscalls.md](../kernel/aios-ipc-syscalls.md) — IPC and syscall interface, [aios-spaces.md](../storage/aios-spaces.md) — Space storage, [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) — Hardware abstraction, [aios-networking.md](../platform/aios-networking.md) — Network Translation Module
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [ipc.md](../kernel/ipc.md) — IPC and syscall interface, [spaces.md](../storage/spaces.md) — Space storage, [subsystem-framework.md](../platform/subsystem-framework.md) — Hardware abstraction, [networking.md](../platform/networking.md) — Network Translation Module
 
 -----
 

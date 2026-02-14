@@ -4,23 +4,23 @@
 
 **Related documents:**
 
-- [aios-development-plan.md](./aios-development-plan.md) — Phase plan, timeline, risks
-- [aios-ipc-syscalls.md](../kernel/aios-ipc-syscalls.md) — IPC and syscall interface deep dive
-- [aios-scheduler.md](../kernel/aios-scheduler.md) — Scheduler deep dive
-- [aios-memory.md](../kernel/aios-memory.md) — Memory management architecture
-- [aios-boot.md](../kernel/aios-boot.md) — Boot sequence and init system deep dive
-- [aios-spaces.md](../storage/aios-spaces.md) — Space storage system deep dive
-- [aios-compositor.md](../platform/aios-compositor.md) — GPU compositor and window management
-- [aios-networking.md](../platform/aios-networking.md) — Network Translation Module deep dive
-- [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) — Universal hardware abstraction architecture
-- [aios-airs.md](../intelligence/aios-airs.md) — AI Runtime Service deep dive
-- [aios-agents.md](../applications/aios-agents.md) — Agent framework and SDK specification
-- [aios-security.md](../security/aios-security.md) — Eight-layer security model deep dive
-- [aios-flow.md](../storage/aios-flow.md) — Flow system deep dive
-- [aios-context-engine.md](../intelligence/aios-context-engine.md) — Context Engine deep dive
-- [aios-posix.md](../platform/aios-posix.md) — POSIX compatibility layer deep dive
-- [aios-experience.md](../experience/aios-experience.md) — Experience layer and UI design
-- [aios-browser-architecture.md](../applications/aios-browser-architecture.md) — Decomposed web content runtime
+- [development-plan.md](./development-plan.md) — Phase plan, timeline, risks
+- [ipc.md](../kernel/ipc.md) — IPC and syscall interface deep dive
+- [scheduler.md](../kernel/scheduler.md) — Scheduler deep dive
+- [memory.md](../kernel/memory.md) — Memory management architecture
+- [boot.md](../kernel/boot.md) — Boot sequence and init system deep dive
+- [spaces.md](../storage/spaces.md) — Space storage system deep dive
+- [compositor.md](../platform/compositor.md) — GPU compositor and window management
+- [networking.md](../platform/networking.md) — Network Translation Module deep dive
+- [subsystem-framework.md](../platform/subsystem-framework.md) — Universal hardware abstraction architecture
+- [airs.md](../intelligence/airs.md) — AI Runtime Service deep dive
+- [agents.md](../applications/agents.md) — Agent framework and SDK specification
+- [security.md](../security/security.md) — Eight-layer security model deep dive
+- [flow.md](../storage/flow.md) — Flow system deep dive
+- [context-engine.md](../intelligence/context-engine.md) — Context Engine deep dive
+- [posix.md](../platform/posix.md) — POSIX compatibility layer deep dive
+- [experience.md](../experience/experience.md) — Experience layer and UI design
+- [browser.md](../applications/browser.md) — Decomposed web content runtime
 
 -----
 
@@ -403,7 +403,7 @@ pub enum PreferenceSource {
 
 ### 2.9 Network Translation Module
 
-Replaces application-level networking. Applications see spaces; the OS handles all networking transparently. **Full design in [aios-networking.md](../platform/aios-networking.md).**
+Replaces application-level networking. Applications see spaces; the OS handles all networking transparently. **Full design in [networking.md](../platform/networking.md).**
 
 **Core principle:** Applications never see the network. There are only space operations — some of which happen to involve remote spaces — and the OS handles everything else.
 
@@ -437,7 +437,7 @@ Interface Drivers: VirtIO-Net │ Ethernet │ WiFi │ Bluetooth │ Cellular
 - Per-space capability enforcement — no default network access
 - Trust labeling — agents using OS TLS get higher trust rating than self-managed TLS
 - AIOS Peer Protocol for native device-to-device communication with capability exchange
-- Implements the subsystem framework (see [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md))
+- Implements the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md))
 
 ### 2.10 BSD Compatibility Layer
 
@@ -557,7 +557,7 @@ fn view(state: &AppState) -> Element {
 
 ### 2.12 Subsystem Framework
 
-**Full design in [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md).**
+**Full design in [subsystem-framework.md](../platform/subsystem-framework.md).**
 
 Every hardware subsystem in AIOS (networking, audio, USB, display, cameras, Bluetooth, printers, GPS, etc.) implements the same framework of traits and types. The framework handles everything generic — capability enforcement, session lifecycle, audit logging, power management, POSIX bridge, device registry, hotplug. Subsystem-specific code is the minimal amount needed for the domain.
 
@@ -608,7 +608,7 @@ Hardware Driver        → VirtIO, USB, PCI, platform-specific
 
 ### 2.13 Browser Architecture
 
-**Full design in [aios-browser-architecture.md](../applications/aios-browser-architecture.md).**
+**Full design in [browser.md](../applications/browser.md).**
 
 Traditional browsers are mini-operating systems because the actual OS provides nothing for web security. AIOS already has capabilities, isolation, audited networking, spaces, and Flow. The browser doesn't rebuild all of that — it uses what the OS provides and focuses on the one thing only a browser can do: **execute web content.**
 
@@ -742,7 +742,7 @@ pub struct CapabilityToken {
 }
 ```
 
-All subsystem capabilities pass through the same kernel-enforced gate (see [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) §5). The gate checks: does this agent hold the required capability? Does the capability permit this specific intent? Is it still valid? Is the resource budget exceeded? Every check is audited regardless of outcome.
+All subsystem capabilities pass through the same kernel-enforced gate (see [subsystem-framework.md](../platform/subsystem-framework.md) §5). The gate checks: does this agent hold the required capability? Does the capability permit this specific intent? Is it still valid? Is the resource budget exceeded? Every check is audited regardless of outcome.
 
 ### 3.3 Adversarial AI Defense
 
@@ -877,7 +877,7 @@ Does NOT: Pop up uninvited. Suggest things unprompted. Interrupt activities. Req
 
 ### 5.3 Web Browser
 
-**Full architecture in [aios-browser-architecture.md](../applications/aios-browser-architecture.md).**
+**Full architecture in [browser.md](../applications/browser.md).**
 
 Decomposed web content runtime based on Servo (Rust-based, embeddable). Each tab is a literal AIOS agent with capabilities derived from the URL origin. The Browser Shell manages tabs, bookmarks, history — all stored in spaces. Looks and feels like a normal browser to users.
 
@@ -1185,7 +1185,7 @@ pub struct Object {
 
 ## 7. Production OS Requirements
 
-Beyond the MVP, a production OS requires these additional subsystems. Each implements the subsystem framework (see [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md)) — the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem. See [aios-development-plan.md](./aios-development-plan.md) for implementation phases.
+Beyond the MVP, a production OS requires these additional subsystems. Each implements the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) — the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem. See [development-plan.md](./development-plan.md) for implementation phases.
 
 ### 7.1 Power Management (Phase 19)
 

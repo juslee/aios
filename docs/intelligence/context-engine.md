@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-airs.md](./aios-airs.md) — AI Runtime Service, [aios-compositor.md](../platform/aios-compositor.md) — Compositor and display, [aios-agents.md](../applications/aios-agents.md) — Agent framework
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [airs.md](./airs.md) — AI Runtime Service, [compositor.md](../platform/compositor.md) — Compositor and display, [agents.md](../applications/agents.md) — Agent framework
 
 -----
 

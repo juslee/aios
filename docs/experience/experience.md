@@ -2,8 +2,8 @@
 
 ## What Makes the GUI Unique
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-compositor.md](../platform/aios-compositor.md) — Compositor and display, [aios-airs.md](../intelligence/aios-airs.md) — AI Runtime Service, [aios-spaces.md](../storage/aios-spaces.md) — Space Storage
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [compositor.md](../platform/compositor.md) — Compositor and display, [airs.md](../intelligence/airs.md) — AI Runtime Service, [spaces.md](../storage/spaces.md) — Space Storage
 
 -----
 

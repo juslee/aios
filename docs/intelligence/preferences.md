@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-airs.md](./aios-airs.md) — Behavioral inference, [aios-context-engine.md](./aios-context-engine.md) — Context-driven preference adaptation, [aios-experience.md](../experience/aios-experience.md) — Conversation Bar configuration, [aios-spaces.md](../storage/aios-spaces.md) — Preference storage and sync, [aios-agents.md](../applications/aios-agents.md) — Agent preference scoping
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [airs.md](./airs.md) — Behavioral inference, [context-engine.md](./context-engine.md) — Context-driven preference adaptation, [experience.md](../experience/experience.md) — Conversation Bar configuration, [spaces.md](../storage/spaces.md) — Preference storage and sync, [agents.md](../applications/agents.md) — Agent preference scoping
 
 -----
 

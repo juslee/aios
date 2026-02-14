@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-compositor.md](../platform/aios-compositor.md) — Drag/drop integration, [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) — DataChannel/Flow pipes, [aios-agents.md](../applications/aios-agents.md) — SDK FlowClient, [aios-spaces.md](./aios-spaces.md) — History storage, [aios-experience.md](../experience/aios-experience.md) — Flow Tray UI
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [compositor.md](../platform/compositor.md) — Drag/drop integration, [subsystem-framework.md](../platform/subsystem-framework.md) — DataChannel/Flow pipes, [agents.md](../applications/agents.md) — SDK FlowClient, [spaces.md](./spaces.md) — History storage, [experience.md](../experience/experience.md) — Flow Tray UI
 
 -----
 
@@ -572,7 +572,7 @@ AIRS indexes Flow history like any other space. Users can search semantically: "
 
 ### 5.2 History UI
 
-The Flow Tray (see [aios-experience.md](../experience/aios-experience.md)) provides the user-facing history interface:
+The Flow Tray (see [experience.md](../experience/experience.md)) provides the user-facing history interface:
 
 ```
 ┌─ FLOW HISTORY (Ctrl+Shift+V) ──────────────────────────────────┐
@@ -793,7 +793,7 @@ The drag preview is generated from `ContentMetadata.thumbnail` if available, or 
 
 ### 7.1 How Subsystems Connect to Flow
 
-Every subsystem's DataChannel (see [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md)) has a `connect_flow()` method. This is the bridge between hardware data streams and the Flow system:
+Every subsystem's DataChannel (see [subsystem-framework.md](../platform/subsystem-framework.md)) has a `connect_flow()` method. This is the bridge between hardware data streams and the Flow system:
 
 ```rust
 /// From the subsystem framework DataChannel trait
@@ -950,7 +950,7 @@ Only Agent B (or an agent with elevated FlowRead that covers this transfer) can 
 Flow access is governed by two capabilities defined in the system capability enum:
 
 ```rust
-// From aios-architecture.md §2.11
+// From architecture.md §2.11
 pub enum Capability {
     // ...
     FlowRead,
@@ -1011,7 +1011,7 @@ Device A (laptop)                               Device B (tablet)
       │                                               │
 ```
 
-**Transport:** Cross-device Flow uses the AIOS Peer Protocol (defined in [aios-networking.md](../platform/aios-networking.md)). Content is encrypted in transit using the shared identity's keys. The Peer Protocol handles device discovery, connection establishment, and reliable delivery.
+**Transport:** Cross-device Flow uses the AIOS Peer Protocol (defined in [networking.md](../platform/networking.md)). Content is encrypted in transit using the shared identity's keys. The Peer Protocol handles device discovery, connection establishment, and reliable delivery.
 
 **What syncs:**
 - Active transfers (target: Any) are replicated to all devices

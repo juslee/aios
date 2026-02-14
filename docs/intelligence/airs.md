@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-spaces.md](../storage/aios-spaces.md) — Space Storage, [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) — Universal hardware abstraction
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [spaces.md](../storage/spaces.md) — Space Storage, [subsystem-framework.md](../platform/subsystem-framework.md) — Universal hardware abstraction
 
 -----
 
