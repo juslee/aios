@@ -85,6 +85,16 @@ pub enum Syscall {
         recv_len: usize,
     },
 
+    /// Reply to the last IpcCall received on the current channel.
+    /// No channel capability required — the kernel tracks the caller.
+    /// Can only be used once per received IpcCall (enforced by kernel).
+    /// Saves ~30 cycles per round-trip by skipping reply-path capability
+    /// validation. Also prevents misrouted replies structurally.
+    IpcReply {
+        reply_buf: *const u8,
+        reply_len: usize,
+    },
+
     /// Wait for a message on any of multiple channels
     IpcSelect {
         channels: *const ChannelId,
@@ -166,13 +176,18 @@ pub enum Syscall {
 
     // === Process Management ===
 
-    /// Spawn a new process
+    /// Spawn a new process.
+    /// resource_limits are mandatory — derived from the agent's trust level
+    /// and blast radius policy. The kernel rejects ProcessCreate if limits
+    /// are missing or exceed the parent's own limits (zero trust: no
+    /// implicit resource authority — see §12.2 Gap 5, security.md §10.3 Gap 4).
     ProcessCreate {
         image: ContentHash,            // content-addressed executable
         capabilities: *const CapabilityTokenId,
         cap_count: usize,
         args: *const u8,
         args_len: usize,
+        resource_limits: KernelResourceLimits,
     },
 
     /// Terminate the calling process
@@ -241,9 +256,35 @@ Syscall convention (aarch64):
   x1:  secondary return value (e.g., bytes transferred)
 ```
 
-### 3.3 Syscall Count
+### 3.3 Kernel Resource Limits
 
-Total: ~20 syscalls. Compare with Linux (~450) or even seL4 (~12). AIOS targets the sweet spot: enough for a full-featured OS, few enough that every syscall can be audited and fuzz-tested exhaustively.
+Every process has hard limits on kernel object creation. Limits are set at `ProcessCreate` and cannot be increased after creation. A child process cannot exceed its parent's limits (monotonic restriction, same principle as capability attenuation).
+
+```rust
+pub struct KernelResourceLimits {
+    max_channels: u32,                       // default: 64
+    max_shared_regions: u32,                 // default: 32
+    max_pending_messages: u32,               // default: 256
+    max_notification_subscriptions: u32,     // default: 16
+    max_child_processes: u32,                // default: 8
+}
+```
+
+Defaults by trust level:
+
+| Resource | Level 1 (System) | Level 2 (Native) | Level 3 (Third-party) | Level 4 (Web) |
+|---|---|---|---|---|
+| `max_channels` | 256 | 128 | 64 | 16 |
+| `max_shared_regions` | 128 | 64 | 32 | 8 |
+| `max_pending_messages` | 1024 | 512 | 256 | 64 |
+| `max_notification_subscriptions` | 64 | 32 | 16 | 4 |
+| `max_child_processes` | 32 | 16 | 8 | 0 |
+
+The kernel's total heap usage is bounded by: `sum(per-process limits) * per-object size`. This guarantees that no combination of userspace actions can exhaust the kernel heap.
+
+### 3.4 Syscall Count
+
+Total: ~22 syscalls (including `IpcReply` and `NotificationSignal`/`NotificationWait`). Compare with Linux (~450) or even seL4 (~12). AIOS targets the sweet spot: enough for a full-featured OS, few enough that every syscall can be audited and fuzz-tested exhaustively.
 
 -----
 
@@ -259,10 +300,35 @@ pub struct Channel {
     endpoint_a: ProcessId,
     endpoint_b: ProcessId,
     capability: ChannelCapability,
+    /// The capability token that authorized this channel's creation.
+    /// On revocation, the kernel walks all channels and destroys any whose
+    /// creation_capability has been revoked (zero trust: §10.3 Gap 1 in
+    /// security.md). This ensures cached channel access cannot outlive
+    /// the credential that granted it.
+    creation_capability: CapabilityTokenId,
     message_queue: RingBuffer<Message>,
-    shared_regions: Vec<SharedMemoryId>,
+    /// Fixed-size array. Bounded per-channel to prevent kernel heap
+    /// exhaustion from userspace (zero trust: §10.3 Gap 4 in security.md).
+    shared_regions: [Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL],
+    /// Registered protocol — valid message_type values per direction.
+    /// Kernel rejects messages with unregistered types before delivery.
+    /// None for untyped channels (e.g., POSIX pipes).
+    protocol: Option<ChannelProtocol>,
     audit: bool,                        // log all messages?
 }
+
+const MAX_SHARED_REGIONS_PER_CHANNEL: usize = 16;
+
+pub struct ChannelProtocol {
+    /// Valid message_type values for direction A→B.
+    valid_types_a_to_b: [u32; MAX_PROTOCOL_TYPES],
+    valid_types_a_to_b_count: u8,
+    /// Valid message_type values for direction B→A.
+    valid_types_b_to_a: [u32; MAX_PROTOCOL_TYPES],
+    valid_types_b_to_a_count: u8,
+}
+
+const MAX_PROTOCOL_TYPES: usize = 32;
 
 pub struct ChannelFlags {
     /// Maximum message size
@@ -305,7 +371,8 @@ Agent                           Service
 - No memory allocation in the IPC path
 - No context switch overhead (direct thread switch from sender to receiver)
 - Message copied once (sender buffer → receiver buffer) or zero-copy via shared memory
-- Capability validation cached per-channel (checked at creation, not per-message)
+- Capability validation cached per-channel (checked at creation, not per-message;
+  revocation propagates to channels — see security.md §10.3 Gap 1)
 
 ### 4.3 Message Format
 
@@ -561,11 +628,15 @@ Full message content is NOT logged by default (privacy). Content logging can be 
 
 ### 8.3 Capability Enforcement
 
-The IPC system enforces capabilities at two levels:
-1. **Channel capability:** Does this agent have the right to use this channel? (Checked at IpcCall)
-2. **Service capability:** Does this agent have the right to perform this operation? (Checked by the service)
+The IPC system enforces capabilities at five levels (zero trust enforcement stack — see security.md §10.4):
 
-Level 1 is in the kernel. Level 2 is in the service. Both must pass.
+1. **Structural check (kernel):** Does this agent hold a valid, non-expired, non-revoked capability for this channel? Cached per-channel; revocation invalidates the channel.
+2. **Protocol check (kernel):** Does the `message_type` match the channel's registered protocol for this direction? Rejects malformed or misrouted messages before delivery.
+3. **Behavioral check (kernel, AIRS-informed):** Is this agent's IPC pattern consistent with its behavioral baseline? Rate-limits or suspends anomalous agents. Degrades to pass-through if AIRS is unavailable.
+4. **Service check (service):** Does this agent's operation-level capability permit this specific action?
+5. **Audit (kernel):** Log source, destination, message type, timestamp, capability used, success/failure.
+
+Levels 1, 2, and 5 are always active (kernel-enforced). Level 3 is active when AIRS is available (graceful fallback). Level 4 is always active (service-enforced). All five must pass for an IPC call to succeed.
 
 -----
 
@@ -577,14 +648,29 @@ The IPC fast path (synchronous call/reply, small message, no capability transfer
 ```
 1. SVC trap to kernel                    ~20 cycles
 2. Validate syscall + parameters          ~30 cycles
-3. Find destination thread                ~10 cycles (direct lookup)
-4. Copy message (≤ 256 bytes in-line)     ~50 cycles
-5. Switch to destination thread           ~100 cycles (TTBR swap if needed)
-6. Service processes request              (variable)
-7. Reply: same path in reverse            ~210 cycles
+3. Behavioral gate check                  ~15 cycles (see below)
+4. Protocol type check (if registered)    ~10 cycles
+5. Find destination thread                ~10 cycles (direct lookup)
+6. Copy message (≤ 256 bytes in-line)     ~50 cycles
+7. Switch to destination thread           ~100 cycles (TTBR swap if needed)
+8. Service processes request              (variable)
+9. IpcReply: kernel-tracked caller        ~180 cycles (no cap check on reply)
                                           ─────────
-Total kernel overhead:                    ~420 cycles (~0.2 μs at 2 GHz)
+Total kernel overhead:                    ~415 cycles (~0.2 μs at 2 GHz)
 ```
+
+**Step 3: Behavioral gate.** The kernel maintains a per-process `behavioral_state` byte, written by AIRS via lightweight notification (see security.md §10.3 Gap 3). Values:
+
+| State | Meaning | Kernel action |
+|---|---|---|
+| `0x00` NORMAL | Baseline behavior | IPC proceeds |
+| `0x01` ELEVATED | Minor anomaly detected | IPC proceeds; audit flag forced on |
+| `0x02` RATE_LIMITED | Significant anomaly | IPC rate-limited (token bucket) |
+| `0x03` SUSPENDED | Critical anomaly | IPC rejected with `EACCES` |
+
+The check is a single byte comparison (~15 cycles). In the common case (NORMAL), it's a branch-not-taken. When AIRS is unavailable (fallback mode), all agents default to NORMAL — behavioral gating degrades gracefully to structural-only checks. This is consistent with the principle that AIRS is an optimization layer, not a security dependency (security.md §9.2).
+
+**Step 4: Protocol type check.** If the channel has a registered `ChannelProtocol`, the kernel checks that `message_type` is in the valid set for this direction. This is a linear scan of a small array (~10 cycles for typical protocol sizes of 5-15 types). Channels without a registered protocol (e.g., POSIX pipes) skip this step.
 
 ### 9.2 Optimizations
 

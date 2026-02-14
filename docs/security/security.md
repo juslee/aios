@@ -1481,14 +1481,23 @@ impl BlastRadiusTracker {
 **Step by step:**
 
 ```rust
-// 1. CREATE: kernel creates token during agent installation
+// 1. CREATE: kernel creates token during agent installation.
+//    Expiry is MANDATORY — the kernel enforces a maximum TTL per trust level
+//    (see §10.3 Gap 2). capability_create() rejects expires: None.
+//
+//    Maximum TTL by trust level:
+//      Level 0 (Kernel):      N/A (kernel does not hold capability tokens)
+//      Level 1 (System):      365 days (renewed at boot)
+//      Level 2 (Native):      365 days (renewed at boot)
+//      Level 3 (Third-party): 90 days  (re-requested from Service Manager)
+//      Level 4 (Web content): 24 hours (re-requested per session)
 let token = kernel.capability_create(CapabilityToken {
     id: TokenId::new(),
     capability: Capability::ReadSpace(SpaceId("research")),
     holder: agent_id,
     granted_by: user_identity,
     created_at: now(),
-    expires: Some(now() + Duration::days(365)),
+    expires: now() + Duration::days(90),  // mandatory; agent is Trust Level 3
     delegatable: true,
     attenuations: vec![],
     revoked: false,
@@ -1585,7 +1594,9 @@ impl CapabilityTable {
         Ok(handle)
     }
 
-    /// Revoke cascades to all delegates
+    /// Revoke cascades to all delegates AND invalidates channels.
+    /// Zero trust invariant: a revoked capability must immediately lose
+    /// all access, including cached channel access (see §10.3 Gap 1).
     pub fn revoke(&mut self, token_id: TokenId) {
         for slot in self.tokens.iter_mut() {
             if let Some(token) = slot {
@@ -1603,6 +1614,9 @@ impl CapabilityTable {
                 );
             }
         }
+        // Zero trust: invalidate all channels created with this capability.
+        // Without this, a revoked token could still be used on a cached channel.
+        kernel.invalidate_channels_for_capability(token_id);
     }
 }
 ```
@@ -2644,15 +2658,19 @@ This section documents zero trust as a formal design principle, maps it to AIOS'
 
 **Why AIOS is naturally zero trust.** In Linux, if a process runs as root, it can do anything — that is implicit trust based on identity. There is no equivalent in AIOS. There is no `root`, no `sudo`, no ambient authority. An agent can only perform operations that its explicit capability tokens permit. Every IPC call passes through kernel-mediated capability validation. Every memory access is bounded by the agent's page table (TTBR0). Every space access requires a capability scoped to that space. The kernel is the universal policy enforcement point — there is no "inside the perimeter" where checks are relaxed.
 
-### 10.3 Gap Analysis: Where AIOS Falls Short of Pure Zero Trust
+### 10.3 Gap Analysis (Resolved)
 
-#### Gap 1: Capability caching relaxes continuous verification
+The following gaps were identified and have been addressed in the design specs. Each gap lists the resolution and the locations where the fix is integrated.
 
-**Current state.** ipc.md Section 4.2 states: "Capability validation cached per-channel (checked at creation, not per-message)." Once a channel is created with a valid capability, subsequent IPC calls on that channel skip capability revalidation.
+#### Gap 1: Capability caching relaxes continuous verification — RESOLVED
 
-**Zero trust violation.** If a capability is revoked after channel creation, does the channel continue to work? If so, a revoked credential still grants access — the defining failure mode that zero trust prevents.
+**Problem.** Capability validation was cached per-channel (checked at creation, not per-message). A revoked capability could continue to grant access on cached channels.
 
-**Resolution.** Capability revocation MUST invalidate all channels that were created with the revoked capability. The kernel's `capability_revoke()` function must walk the channel table and destroy (or suspend) any channel whose creation capability has been revoked. This is the equivalent of token revocation invalidating all active sessions.
+**Resolution.** Capability revocation now invalidates all channels created with the revoked capability. Integrated at:
+- **security.md §3.2**: `revoke()` calls `kernel.invalidate_channels_for_capability(token_id)`
+- **ipc.md §4.1**: `Channel` struct now tracks `creation_capability: CapabilityTokenId`
+- **ipc.md §4.2**: Latency target notes revocation propagation
+- **ipc.md §8.3**: Five-level enforcement stack documents the structural check
 
 ```rust
 impl CapabilityTable {
@@ -2667,13 +2685,15 @@ impl CapabilityTable {
 
 The per-message capability check can remain cached (it's a valid performance optimization) as long as revocation propagates to channels. This is analogous to network zero trust systems that cache authentication for a session but invalidate the session when the token is revoked.
 
-#### Gap 2: No mandatory capability rotation
+#### Gap 2: No mandatory capability rotation — RESOLVED
 
-**Current state.** Capabilities have an `expires` field (Section 3.1, line 1491) but expiry is optional (`Some(now() + Duration::days(365))`). A capability created with `expires: None` lives forever.
+**Problem.** Capability `expires` field was optional. A capability created with `expires: None` lived forever.
 
-**Zero trust violation.** Long-lived credentials are antithetical to zero trust. A compromised agent holding a non-expiring capability has permanent access until someone manually revokes it.
+**Resolution.** Expiry is now mandatory. `capability_create()` rejects `expires: None`. Integrated at:
+- **security.md §3.1**: Token creation example uses mandatory expiry (`expires: now() + Duration::days(90)`) with trust-level TTL comment
+- **security.md §3.1**: `capability_create()` documented as rejecting missing expiry
 
-**Resolution.** Enforce mandatory expiry with maximum TTL per trust level:
+Maximum TTL per trust level:
 
 ```rust
 pub const MAX_CAPABILITY_TTL: [Duration; 5] = [
@@ -2689,13 +2709,16 @@ When a capability approaches expiry, the agent must re-request it from the Servi
 
 For system services (Trust Level 1), capabilities are renewed at every boot — the boot sequence is the rotation event.
 
-#### Gap 3: No behavioral gating on IPC
+#### Gap 3: No behavioral gating on IPC — RESOLVED
 
-**Current state.** Layer 3 (Behavioral Monitoring) observes agent behavior and can flag anomalies, but enforcement is reactive — the security event response (Section 6) suspends agents after detection. Capabilities are checked structurally (does the agent hold the right token?) but not behaviorally (is this pattern of access normal?).
+**Problem.** Layer 3 (Behavioral Monitoring) was reactive only — flagging anomalies after the fact. No active enforcement at the IPC boundary based on behavioral context.
 
-**Zero trust violation.** Modern zero trust systems don't just check credentials — they check context. Is this request coming from an unusual location? At an unusual time? At an unusual rate? A valid credential used anomalously should be challenged.
+**Resolution.** AIRS behavioral state now feeds into the IPC fast path as a per-process gate. Integrated at:
+- **ipc.md §9.1**: Fast path step 3 checks `behavioral_state` byte (NORMAL/ELEVATED/RATE_LIMITED/SUSPENDED)
+- **ipc.md §8.3**: Five-level enforcement stack includes behavioral check as Level 3
+- Degrades gracefully: all agents default to NORMAL when AIRS is unavailable
 
-**Resolution.** AIRS behavioral monitoring should feed directly into IPC gating:
+Example flow:
 
 ```
 Normal behavior:
@@ -2714,13 +2737,15 @@ This is not just logging — it is active enforcement based on behavioral contex
 
 **Implementation note.** Behavioral gating must be optional and degradable. If AIRS is unavailable (fallback mode), the kernel falls back to structural capability checks only. Behavioral gating is an optimization for security, not a dependency. This is consistent with the principle in Section 9.2: "Resource Intelligence as Optimization, Not Security."
 
-#### Gap 4: Kernel resource quotas as zero trust for the kernel itself
+#### Gap 4: Kernel resource quotas as zero trust for the kernel itself — RESOLVED
 
-**Current state.** No per-process limits on kernel object creation (channels, shared memory regions, pending messages). The kernel trusts that processes will not abuse resource creation.
+**Problem.** No per-process limits on kernel object creation. The kernel implicitly trusted userspace not to exhaust kernel resources.
 
-**Zero trust violation.** The kernel is implicitly trusting userspace not to exhaust kernel resources. This is ambient trust — the exact thing zero trust eliminates.
-
-**Resolution.** Per-process kernel resource limits (see ipc.md Section 12.2, Gap 5). Every process has hard limits on kernel object creation, derived from its trust level and blast radius policy. The kernel cannot be resource-exhausted by any userspace action.
+**Resolution.** Per-process `KernelResourceLimits` are now mandatory at process creation. Integrated at:
+- **ipc.md §3.1**: `ProcessCreate` syscall requires `resource_limits: KernelResourceLimits`
+- **ipc.md §3.3**: `KernelResourceLimits` struct with defaults per trust level
+- **ipc.md §4.1**: `Channel.shared_regions` changed from `Vec` to fixed-size array
+- Kernel heap bounded by `sum(per-process limits) * per-object size`
 
 ### 10.4 Zero Trust Enforcement Architecture
 
