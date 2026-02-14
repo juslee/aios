@@ -51,9 +51,11 @@ AIOS replaces this with **spaces** — collections of typed objects with semanti
 │  Transparent encrypt/decrypt on read/write                   │
 ├─────────────────────────────────────────────────────────────┤
 │                    Block Engine                               │
-│  B-tree indexed blocks on raw storage device                 │
+│  LSM-tree indexed blocks on raw storage device               │
 │  Write-ahead log (WAL) for crash consistency                 │
-│  Block-level checksums (CRC-32C)                             │
+│  Flash-aware zone allocation (hot/warm/cold separation)      │
+│  Sub-block dedup (Rabin rolling hash, content-defined chunks)│
+│  Block-level checksums (CRC-32C), WAF tracking               │
 │  No intermediate filesystem — AIOS owns the device           │
 ├─────────────────────────────────────────────────────────────┤
 │                    Storage Drivers                            │
@@ -328,37 +330,207 @@ The Block Engine manages raw storage directly — no ext4, no ZFS, no intermedia
 ┌──────────────────────────────────────────────────────────┐
 │  Superblock (4 KB)                                        │
 │  Magic, version, block size, total blocks, free blocks,   │
-│  root B-tree offset, WAL offset, checksum                 │
+│  LSM-tree L0 offset, WAL offset, checksum                 │
 ├──────────────────────────────────────────────────────────┤
 │  Write-Ahead Log (configurable, default 64 MB)            │
 │  Circular buffer of pending writes                        │
 │  Each entry: block_id, old_data, new_data, checksum       │
 ├──────────────────────────────────────────────────────────┤
-│  Block Index (B-tree)                                     │
+│  Block Index (LSM-tree)                                   │
 │  Maps: content_hash → (block_offset, block_size, refcount)│
 │  Also maps: ObjectId → (metadata_block, content_hash)     │
+│  L0: in-memory MemTable (sorted, ~4 MB)                   │
+│  L1-L3: on-disk SSTables with bloom filters               │
 ├──────────────────────────────────────────────────────────┤
 │  Data Blocks (remainder of partition)                      │
 │  Content-addressed blocks, variable size                  │
 │  Each block: header (hash, size, checksum) + data          │
+│  Hot/cold zone separation for flash-friendly write patterns│
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 Write Path
+**Why LSM-tree instead of B-tree?** The Block Engine's index was originally designed as a B-tree. B-trees are excellent for read-heavy workloads with random access, but on flash storage (SD cards, eMMC, consumer SSDs), B-tree updates cause **random writes** — each index update modifies an arbitrary node in the tree, requiring a read-modify-write cycle on the flash translation layer. This causes write amplification (WAF 10-30x on SD cards) and accelerates flash wear.
+
+An LSM-tree (Log-Structured Merge-tree) converts random writes into sequential writes:
+
+```rust
+/// LSM-tree block index: all writes go to an in-memory MemTable,
+/// which is periodically flushed as an immutable SSTable to disk.
+/// Sequential writes only — no in-place updates on flash.
+pub struct LsmBlockIndex {
+    /// Active MemTable (sorted in-memory tree, receives all writes)
+    memtable: MemTable,
+    /// Immutable MemTable being flushed to disk (if any)
+    immutable_memtable: Option<MemTable>,
+    /// On-disk levels of sorted SSTables
+    levels: [Vec<SSTable>; LSM_MAX_LEVELS],
+    /// Bloom filters per SSTable (avoid unnecessary disk reads)
+    bloom_filters: HashMap<SsTableId, BloomFilter>,
+    /// Write amplification tracker (§4.8)
+    waf_tracker: WriteAmplificationTracker,
+}
+
+const LSM_MAX_LEVELS: usize = 4; // L0 (memory) + L1-L3 (disk)
+const MEMTABLE_SIZE: usize = 4 * MB; // Flush to disk when full
+
+pub struct MemTable {
+    /// Sorted key-value pairs (content_hash → BlockLocation)
+    entries: BTreeMap<Hash, BlockLocation>,
+    /// Current size in bytes
+    size: usize,
+}
+
+pub struct SSTable {
+    /// On-disk sorted table of key-value pairs
+    id: SsTableId,
+    /// Level in the LSM-tree (1-3)
+    level: u8,
+    /// Key range [min_key, max_key] for binary search across SSTables
+    key_range: (Hash, Hash),
+    /// Disk offset and size
+    offset: u64,
+    size: u64,
+    /// Number of entries
+    entry_count: u64,
+}
+```
+
+**LSM-tree write path:**
+
+```
+Index update (e.g., new block stored):
+  1. Insert (content_hash, block_location) into MemTable (in-memory, O(log n))
+  2. If MemTable size >= 4 MB:
+     a. Freeze current MemTable → immutable_memtable
+     b. Create new empty MemTable for incoming writes
+     c. Background: flush immutable_memtable to disk as L1 SSTable
+        → single sequential write (flash-friendly)
+  3. If L1 has too many SSTables (> 4):
+     a. Background: merge L1 SSTables into L2 (compaction)
+     b. Compaction produces sorted, deduplicated SSTables
+     c. Old L1 SSTables deleted after compaction completes
+  4. Same compaction process for L2 → L3 when L2 grows too large
+```
+
+**LSM-tree read path:**
+
+```
+Index lookup (e.g., find block for content_hash):
+  1. Check MemTable (in-memory, O(log n)) → found? return
+  2. Check immutable_memtable (if exists) → found? return
+  3. For each level L1, L2, L3:
+     a. Check bloom filter: is key possibly in this SSTable?
+        → NO (99.9% of non-matches): skip SSTable entirely
+        → YES: binary search within SSTable
+     b. Found? return
+  4. Key not found (block doesn't exist)
+```
+
+**Read performance:** Bloom filters (10 bits per key, ~1% false positive rate) ensure that reads rarely touch disk unnecessarily. A typical lookup checks the MemTable (microseconds), then 1-2 bloom filters (microseconds), and at most one SSTable disk read. On average, LSM-tree reads are within 2x of B-tree reads — a small price for 10-30x write amplification reduction.
+
+**Compaction scheduling:** Compaction runs at lowest I/O priority and is paused during active inference (when SD card bandwidth is needed for model loading). On battery-powered future devices, compaction can be deferred to charging periods.
+
+### 4.2 Write Path (Flash-Aware)
+
+The write path is designed with **F2FS-style flash awareness** — writes are append-preferred and zone-separated to minimize flash wear and write amplification. Traditional filesystems scatter writes randomly across the device, causing the flash translation layer (FTL) to perform expensive read-modify-erase cycles. AIOS structures writes to work *with* the flash, not against it.
 
 ```
 Agent writes object:
   1. Content hashed (SHA-256) → content_hash
-  2. Check block index: does content_hash already exist?
+  2. Check block index (LSM-tree): does content_hash already exist?
      YES → increment refcount, skip write (deduplication)
      NO  → continue to step 3
-  3. WAL entry written: (new_block_id, content, metadata)
-  4. WAL entry fsynced to disk (crash-safe point)
-  5. Data block written to free space
-  6. Block index updated: content_hash → block location
-  7. Object metadata updated: ObjectId → content_hash
-  8. Version store appended: (ObjectId, content_hash, timestamp, agent_id)
-  9. WAL entry marked committed
+  3. Classify write temperature (hot/warm/cold) based on content type and access prediction
+  4. WAL entry written: (new_block_id, content, metadata)
+     → WAL is append-only circular buffer (sequential writes only)
+  5. WAL entry fsynced to disk (crash-safe point)
+  6. Data block written to temperature-appropriate zone:
+     → Hot zone: recently created objects, frequently modified metadata
+     → Cold zone: version history, audit logs, model files
+     → Append-preferred: new blocks written to the end of the zone's free region
+  7. Block index updated via LSM-tree MemTable insertion (in-memory, no disk I/O)
+  8. Object metadata updated: ObjectId → content_hash
+  9. Version store appended: (ObjectId, content_hash, timestamp, agent_id)
+ 10. WAL entry marked committed
+```
+
+**Hot/cold zone separation:**
+
+Flash storage wears unevenly when hot data (frequently modified) and cold data (rarely modified) share the same erase blocks. The FTL must copy cold data out of the way every time it erases a block to make room for hot writes. F2FS-style zone separation places hot and cold data on different regions of the device, reducing this unnecessary copying:
+
+```rust
+/// Zone allocation for flash-aware write placement
+pub struct FlashZoneAllocator {
+    /// Hot zone: metadata, recently written objects, active space indexes
+    /// Expect high rewrite rate — placed on fresh erase blocks
+    hot_zone: Zone,
+    /// Warm zone: user data, version history < 7 days, KV cache blocks
+    /// Moderate rewrite rate
+    warm_zone: Zone,
+    /// Cold zone: old versions, audit archives, model files, backups
+    /// Rarely rewritten — placed on worn erase blocks (flash wear leveling)
+    cold_zone: Zone,
+    /// WAL zone: dedicated sequential write region
+    wal_zone: Zone,
+}
+
+pub struct Zone {
+    /// Start and end offsets on the block device
+    start: u64,
+    end: u64,
+    /// Next write position (append pointer)
+    write_head: u64,
+    /// Free space in this zone
+    free_bytes: u64,
+    /// Write count for WAF tracking
+    bytes_written: u64,
+}
+
+impl FlashZoneAllocator {
+    /// Classify a write into a temperature zone
+    fn classify(&self, content_type: ContentType, tier: StorageTier) -> &mut Zone {
+        match tier {
+            StorageTier::Hot => &mut self.hot_zone,
+            StorageTier::Warm => &mut self.warm_zone,
+            StorageTier::Cold => &mut self.cold_zone,
+        }
+    }
+
+    /// Allocate space for a new block — always append-preferred.
+    /// Returns the write offset within the appropriate zone.
+    fn allocate(&mut self, size: usize, tier: StorageTier) -> Result<u64, AllocError> {
+        let zone = self.classify_mut(tier);
+        if zone.free_bytes < size as u64 {
+            return Err(AllocError::ZoneFull);
+        }
+        let offset = zone.write_head;
+        zone.write_head += size as u64;
+        zone.free_bytes -= size as u64;
+        zone.bytes_written += size as u64;
+        Ok(offset)
+    }
+}
+```
+
+**Why append-preferred writes matter for SD cards:**
+
+```
+Random write (B-tree index update, traditional filesystem):
+  1. FTL reads entire erase block (128-512 KB) into buffer
+  2. FTL modifies the target 4 KB page in buffer
+  3. FTL erases the block (~2 ms, wears one P/E cycle)
+  4. FTL writes back entire buffer (~1 ms)
+  Total: ~3 ms, 128-512 KB written for a 4 KB change (WAF: 32-128x)
+
+Append-preferred write (LSM-tree + zone allocation):
+  1. New data appended to zone's write head (sequential)
+  2. FTL writes directly to fresh page in current erase block
+  3. No erase needed until block is full
+  Total: ~0.1 ms, 4 KB written for a 4 KB change (WAF: ~1x)
+
+On a consumer SD card (TLC, ~1000 P/E cycles):
+  Random writes: card degradation in weeks of heavy use
+  Append-preferred: card lasts years under same workload
 ```
 
 ### 4.3 Read Path
@@ -479,19 +651,74 @@ impl BlockEngine {
         self.write_raw_block(stored, used_strategy)
     }
 
+    /// Adaptive compression selection: detects already-compressed,
+    /// encrypted, or random data and skips compression to avoid
+    /// wasting CPU. Uses byte entropy estimation on a 4 KB sample.
     fn select_compression(&self, data: &[u8], tier: StorageTier) -> CompressionStrategy {
+        // Fast entropy check: sample first 4 KB and estimate Shannon entropy.
+        // High entropy (> 7.5 bits/byte) indicates encrypted, compressed, or
+        // random data — compression will not help.
+        let sample = &data[..data.len().min(4096)];
+        let entropy = self.estimate_entropy(sample);
+
+        if entropy > 7.5 {
+            // Already compressed, encrypted, or random — skip entirely
+            return CompressionStrategy::None;
+        }
+
+        if entropy > 6.5 {
+            // Moderately complex data — only use fast LZ4 (low CPU cost)
+            // Zstd won't achieve meaningfully better ratio on high-entropy data
+            return CompressionStrategy::Lz4;
+        }
+
+        // Low-entropy data: full compression benefit available
         match tier {
             StorageTier::Hot => CompressionStrategy::Lz4,
             StorageTier::Warm => CompressionStrategy::Zstd { level: 3 },
             StorageTier::Cold => CompressionStrategy::Zstd { level: 9 },
         }
     }
+
+    /// Estimate Shannon entropy of a byte sample.
+    /// Returns bits per byte (0.0 = all identical, 8.0 = perfectly random).
+    fn estimate_entropy(&self, sample: &[u8]) -> f32 {
+        let mut counts = [0u32; 256];
+        for &byte in sample {
+            counts[byte as usize] += 1;
+        }
+        let len = sample.len() as f32;
+        let mut entropy: f32 = 0.0;
+        for &count in &counts {
+            if count > 0 {
+                let p = count as f32 / len;
+                entropy -= p * p.log2();
+            }
+        }
+        entropy
+    }
 }
 ```
 
-**Why block-level:** Content-addressed blocks are immutable after write — ideal for compression. The decompression cost is paid once on read and amortized across multiple accesses by the page cache. On a Pi 5, LZ4 decompresses at ~4 GB/s (faster than SD card read speed), so compression is effectively free on the read path.
+**Why block-level:** Content-addressed blocks are immutable after write — ideal for compression. The decompression cost is paid once on read and amortized across multiple accesses by the page cache. On a laptop SSD, LZ4 decompresses at ~4 GB/s (faster than most SATA SSD read speeds), so compression is effectively free on the read path.
 
-**Incompressible content:** Encrypted blocks and already-compressed media (JPEG, MP4, FLAC) don't benefit from compression. The `select_compression` heuristic samples the first 4 KB — if the sample compresses poorly (<5% savings), the block is stored uncompressed to avoid wasting CPU.
+**Adaptive compression — why entropy estimation matters:**
+
+Encrypted blocks and already-compressed media (JPEG, MP4, FLAC) have high byte entropy (> 7.5 bits/byte). Attempting to compress them wastes CPU and may actually *increase* the stored size (compression overhead > savings). The entropy check takes ~2 microseconds on a 4 KB sample — negligible compared to the 50-500 microsecond cost of running LZ4/Zstd on incompressible data that produces no savings.
+
+```
+Content Type         Entropy (bits/byte)   Compression Action        Savings
+────────────         ───────────────────   ──────────────────        ───────
+Text / JSON          3.0 - 5.0             Zstd (tier-appropriate)   60-80%
+Code / markup        4.0 - 5.5             Zstd (tier-appropriate)   50-70%
+Structured data      4.5 - 6.0             LZ4 or Zstd              40-60%
+Already-LZ4'd data   6.5 - 7.5             LZ4 only (fast check)    5-15%
+Encrypted data       7.8 - 8.0             None (skip)              0%
+JPEG / MP4           7.5 - 7.9             None (skip)              0%
+Random bytes         ~8.0                  None (skip)              0%
+```
+
+The `CompressionStrategy::None` fast path means that spaces storing encrypted data (Personal zone) or media-heavy content (photos, video) pay zero compression CPU. Only spaces with compressible content (documents, code, conversations, config) invest CPU in compression.
 
 **Security: compress before encrypt.** The Block Engine compresses data before the Encryption Layer encrypts it (see architecture diagram in section 2). This ordering is critical — compressing ciphertext is useless (encrypted data is indistinguishable from random), and encrypting compressed data avoids CRIME/BREACH-style attacks where compression ratio changes leak information about plaintext. Since AIOS uses content-addressed blocks (each block has a unique content_hash), an attacker cannot perform the chosen-plaintext injection required for CRIME-style attacks. The compress-then-encrypt ordering is safe.
 
@@ -575,6 +802,197 @@ AIRS compression directive:
 **Why no shortcut:** As with prefetch (§4.3.1), there is no bypass path. AIRS compression directives are advisory — "compress this block at zstd level 9" — not operational. Space Storage does the work through its existing, checksum-verified, WAL-protected write path.
 
 **Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 14 optimization — single-device tiering via compression is the Phase 4 implementation.
+
+### 4.8 Write Amplification Tracking
+
+Write amplification factor (WAF) is the ratio of data written to the flash device versus data written by the application. A WAF of 10x means the device writes 10 bytes of flash for every byte the application intended to write — the other 9 bytes are overhead from the FTL's garbage collection, index updates, and journaling. On consumer SD cards with ~1000 P/E cycles per cell, high WAF directly shortens device lifetime.
+
+AIOS tracks WAF continuously to validate that the flash-aware write strategies (LSM-tree, zone separation, append-preferred allocation) are actually working:
+
+```rust
+pub struct WriteAmplificationTracker {
+    /// Bytes logically written by the application (object data + metadata)
+    app_bytes_written: AtomicU64,
+    /// Bytes physically written to the device (from device SMART data or
+    /// kernel block layer accounting). Includes FTL overhead.
+    device_bytes_written: AtomicU64,
+    /// WAF history (rolling window, last 24 hours, hourly samples)
+    history: [WafSample; 24],
+    /// Alert threshold: warn if WAF exceeds this value
+    alert_threshold: f32,           // default: 5.0 (WAF > 5x triggers alert)
+}
+
+pub struct WafSample {
+    /// Timestamp of this sample
+    timestamp: Timestamp,
+    /// Application bytes in this interval
+    app_bytes: u64,
+    /// Device bytes in this interval
+    device_bytes: u64,
+}
+
+impl WriteAmplificationTracker {
+    /// Current instantaneous WAF
+    pub fn current_waf(&self) -> f32 {
+        let app = self.app_bytes_written.load(Ordering::Relaxed) as f32;
+        let device = self.device_bytes_written.load(Ordering::Relaxed) as f32;
+        if app == 0.0 { return 1.0; }
+        device / app
+    }
+
+    /// Record an application-level write
+    pub fn record_app_write(&self, bytes: u64) {
+        self.app_bytes_written.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Record a device-level write (from block layer or SMART)
+    pub fn record_device_write(&self, bytes: u64) {
+        self.device_bytes_written.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Check if WAF exceeds threshold and emit warning
+    pub fn check_alert(&self) -> Option<WafAlert> {
+        let waf = self.current_waf();
+        if waf > self.alert_threshold {
+            Some(WafAlert {
+                current_waf: waf,
+                threshold: self.alert_threshold,
+                recommendation: if waf > 15.0 {
+                    "WAF critically high. Check for non-AIOS writes or compaction storms."
+                } else {
+                    "WAF elevated. Consider reducing compaction frequency."
+                },
+            })
+        } else {
+            None
+        }
+    }
+}
+```
+
+**Target WAF by device class:**
+
+```
+Device              Target WAF   Max Acceptable   Notes
+──────              ──────────   ──────────────   ─────
+Laptop SSD (NVMe)   1.5 - 3x     5x              NVMe has built-in wear leveling
+Laptop SSD (SATA)   2 - 4x       8x              SATA FTL less efficient
+SD card (consumer)   1.5 - 3x     5x              Critical — low P/E endurance
+SD card (industrial) 2 - 5x      10x              Higher endurance tolerates more
+eMMC                 2 - 4x       8x              Similar to SATA SSD
+```
+
+The LSM-tree block index (§4.1), append-preferred write allocation (§4.2), and hot/cold zone separation together target a WAF of 1.5-3x — a 5-20x improvement over the B-tree random-write approach. The WAF tracker validates this in production and alerts if unexpected write patterns (e.g., a compaction storm, or a misbehaving agent writing excessive small updates) push WAF above the threshold.
+
+**Inspector integration:** WAF data is exposed in the Storage Dashboard (§10.8) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
+
+### 4.9 Sub-Block Deduplication
+
+Standard content-addressed deduplication (§4.2) identifies identical blocks via SHA-256 hash comparison. This works perfectly when two objects contain the same content — the block is stored once and referenced by both objects. But it fails for **near-duplicate content**: if a user edits one paragraph in a 100 KB document, the entire block is stored again because the SHA-256 hash changed, even though 99% of the content is identical.
+
+Sub-block deduplication uses a **rolling hash (Rabin fingerprint)** to identify shared sub-block regions between near-duplicate objects, reducing storage for common edit patterns by 60-80%:
+
+```rust
+/// Sub-block deduplication using content-defined chunking.
+/// Splits objects into variable-size chunks at content-defined boundaries,
+/// then deduplicates individual chunks via SHA-256.
+pub struct SubBlockDedup {
+    /// Rolling hash window size (bytes)
+    window_size: usize,             // default: 48 bytes
+    /// Target chunk size (bytes) — average, actual varies 50-200% of target
+    target_chunk_size: usize,       // default: 4 KB
+    /// Minimum chunk size (never split below this)
+    min_chunk_size: usize,          // default: 2 KB
+    /// Maximum chunk size (force split above this)
+    max_chunk_size: usize,          // default: 16 KB
+    /// Bitmask for Rabin fingerprint boundary detection
+    /// When (fingerprint & mask) == 0, this is a chunk boundary
+    boundary_mask: u64,             // tuned for target_chunk_size
+}
+
+pub struct Chunk {
+    /// SHA-256 of chunk content
+    hash: Hash,
+    /// Offset within the original object
+    offset: u64,
+    /// Size of this chunk
+    size: u32,
+}
+
+impl SubBlockDedup {
+    /// Split an object into content-defined chunks using Rabin rolling hash.
+    /// Chunk boundaries are determined by content, not position — so if content
+    /// is inserted in the middle, only the surrounding chunks change. Chunks
+    /// before and after the edit remain identical and deduplicate.
+    pub fn chunk(&self, data: &[u8]) -> Vec<Chunk> {
+        let mut chunks = Vec::new();
+        let mut chunk_start = 0;
+        let mut hasher = RabinHasher::new(self.window_size);
+
+        for i in self.min_chunk_size..data.len() {
+            hasher.slide(data[i]);
+
+            let at_boundary = (hasher.fingerprint() & self.boundary_mask) == 0;
+            let at_max = (i - chunk_start) >= self.max_chunk_size;
+
+            if at_boundary || at_max {
+                let chunk_data = &data[chunk_start..=i];
+                chunks.push(Chunk {
+                    hash: sha256(chunk_data),
+                    offset: chunk_start as u64,
+                    size: chunk_data.len() as u32,
+                });
+                chunk_start = i + 1;
+                hasher.reset();
+            }
+        }
+
+        // Final chunk
+        if chunk_start < data.len() {
+            let chunk_data = &data[chunk_start..];
+            chunks.push(Chunk {
+                hash: sha256(chunk_data),
+                offset: chunk_start as u64,
+                size: chunk_data.len() as u32,
+            });
+        }
+
+        chunks
+    }
+}
+```
+
+**How it works with content-addressed storage:**
+
+```
+Original document (100 KB):
+  Chunked into: [A, B, C, D, E, F, G, H, I, J] — 10 chunks, ~10 KB each
+  Each chunk stored once, addressed by SHA-256 hash
+  Object metadata: ObjectId → [hash_A, hash_B, ..., hash_J]
+
+User edits paragraph in chunk D (new version):
+  Chunked into: [A, B, C, D', E, F, G, H, I, J] — chunks A-C, E-J unchanged
+  New chunks stored: only D' (10 KB)
+  Old version: ObjectId_v1 → [hash_A, ..., hash_D, ..., hash_J]
+  New version: ObjectId_v2 → [hash_A, ..., hash_D', ..., hash_J]
+
+Storage used: 100 KB (original) + 10 KB (changed chunk) = 110 KB
+Without sub-block dedup: 100 KB + 100 KB = 200 KB
+Savings: 90 KB (45%)
+```
+
+**When sub-block dedup is applied:**
+
+| Object Size | Dedup Strategy | Rationale |
+|---|---|---|
+| < 4 KB | Whole-block SHA-256 only | Too small to benefit from chunking overhead |
+| 4 KB - 1 MB | Sub-block chunking | Sweet spot for document edits, code changes |
+| > 1 MB | Sub-block chunking | Large files benefit the most from partial dedup |
+| Binary blobs (JPEG, MP4) | Whole-block only | Compressed/encrypted content has no shared chunks after edits |
+
+**Content-defined boundaries vs fixed-size blocks:** The Rabin rolling hash creates chunk boundaries based on content, not position. This is critical: if a user inserts 10 bytes at the beginning of a file, fixed-size chunking would shift every chunk boundary, making all chunks "new" and defeating dedup. Content-defined boundaries remain stable — only chunks near the insertion point change, while distant chunks stay identical and deduplicate.
+
+**Integration with version history (§5):** Sub-block dedup multiplies the effectiveness of version history storage. Where whole-block dedup saves storage only when entire blocks are identical across versions, sub-block dedup captures partial overlaps — the common case for document editing, code modification, and configuration changes. Combined with the Merkle DAG (§5.1), each version stores only its unique chunk hashes.
 
 -----
 
@@ -1241,11 +1659,11 @@ Storage Dashboard (example: 512 GB laptop):
 1. **Find by meaning, not by path.** Semantic search, relationship traversal, and entity queries replace directory navigation.
 2. **Never lose data silently.** Version history, content-addressing, and WAL ensure no data loss from crashes, bugs, or user mistakes. Under storage pressure, version retention is reduced transparently — the user is always informed.
 3. **Encryption is structural.** Per-space encryption is a property of the space, not an afterthought. Identity change = spaces lock automatically.
-4. **Deduplication is free.** Content-addressing means identical content is stored once, regardless of how many objects reference it.
+4. **Deduplication is deep.** Content-addressing deduplicates identical blocks. Sub-block deduplication (Rabin rolling hash) deduplicates shared regions within near-duplicate content — capturing 60-80% savings from typical document edits.
 5. **Indexes are always current.** Full-text index updates synchronously. Embedding index updates asynchronously but as fast as compute allows.
 6. **POSIX is a view.** The filesystem is a compatibility layer over spaces, not the other way around. Spaces are the truth; paths are a translation.
 7. **Spaces belong to users.** Agents access spaces via capabilities. Removing an agent never removes user data.
-8. **Storage-aware by default.** CompactObjects minimize metadata overhead. Block compression extends capacity. Adaptive retention responds to storage pressure. AI models are reproducible and evictable — user data is not. Device profiles adapt the system from laptop SSDs (256 GB - 2 TB, initial target) to future constrained devices (phones, TVs, SBCs).
+8. **Storage-aware by default.** CompactObjects minimize metadata overhead. Adaptive block compression (entropy-based selection) extends capacity. Flash-aware writes (LSM-tree, zone separation, append-preferred allocation) minimize device wear. Write amplification is tracked and bounded. Adaptive retention responds to storage pressure. AI models are reproducible and evictable — user data is not. Device profiles adapt the system from laptop SSDs (256 GB - 2 TB, initial target) to future constrained devices (phones, TVs, SBCs).
 9. **Reproducible data yields first.** Under storage pressure, reproducible data (model files, embeddings, web caches) is reclaimed before user data. Downloaded models can be re-fetched. Embeddings can be regenerated. Version history is compressed. User files are never touched without explicit user action.
 
 -----
@@ -1253,15 +1671,18 @@ Storage Dashboard (example: 512 GB laptop):
 ## 12. Implementation Order
 
 ```
-Phase 4a:  Block engine + WAL                      → raw persistent storage
-Phase 4b:  Object store + content addressing        → objects with deduplication
+Phase 4a:  Block engine + WAL + LSM-tree index      → raw persistent storage with flash-friendly index
+Phase 4b:  Object store + content addressing        → objects with whole-block deduplication
 Phase 4c:  Space API + basic queries (Filter)       → spaces usable by services
 Phase 4d:  Version store + Merkle DAG               → full version history
 Phase 4e:  POSIX bridge + path mapping              → BSD tools work
 Phase 4f:  CompactObject + promotion policy           → storage-efficient default objects
 Phase 4g:  Block-level compression (LZ4/zstd)         → 2-4x storage savings
-Phase 4h:  Storage budget + quotas + pressure levels  → bounded storage per category
-Phase 4i:  Adaptive version retention                 → pressure-responsive history pruning
+           + adaptive entropy-based selection          → skip incompressible content
+Phase 4h:  Flash-aware zone allocation (hot/warm/cold) → append-preferred writes, reduced WAF
+Phase 4i:  Storage budget + quotas + pressure levels  → bounded storage per category
+Phase 4j:  Adaptive version retention                 → pressure-responsive history pruning
+Phase 4k:  Write amplification tracking (§4.8)        → continuous WAF monitoring + alerts
 Phase 9a:  Full-text index + text search              → keyword search
 Phase 9b:  Embedding index + selective embedding      → semantic search (promoted objects only)
 Phase 9c:  Space Sync protocol                        → cross-device sync
@@ -1270,5 +1691,6 @@ Phase 14a: Tiered storage (hot/warm/cold)             → automatic tier migrati
 Phase 14b: Audit retention + chain compaction         → bounded audit storage growth
 Phase 14c: Model disk eviction + streaming download   → reclaim model storage under pressure
 Phase 14d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
+Phase 14e: Sub-block deduplication (§4.9)             → Rabin rolling hash for near-duplicate savings
 Phase 24a: Secure Boot integration + key escrow       → TrustZone key storage
 ```
