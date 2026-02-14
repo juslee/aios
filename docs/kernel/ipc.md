@@ -1210,13 +1210,47 @@ Phase 15:  POSIX translation layer + shim caching         → BSD tools work fas
 | Inference-aware batching | Novel | **Specified** (§13.3) | High |
 | Context-adaptive IPC scheduling | Novel | **Specified** (§13.4) | Medium |
 | Provenance-carrying IPC | Novel | **Specified** (§13.5) | High |
-| Semantic capability negotiation | Novel | **Specified** (§13.6) | Medium |
+| Semantic capability activation (not negotiation) | Novel | **Specified** (§13.6) | Medium |
 
 -----
 
 ## 13. AI-Native IPC: What Only AIOS Can Do
 
 Every IPC technique in §12 exists in at least one other kernel. This section describes capabilities that are unique to AIOS — possible only because the kernel has an integrated AI runtime (AIRS) with semantic understanding of agents, tasks, and user intent. No existing OS kernel has these capabilities, and they cannot be retrofitted onto Linux, seL4, or Fuchsia without an equivalent AI runtime.
+
+### 13.0 Kernel Independence Guarantee
+
+**AIRS is advisory. The kernel is authoritative.** This is the inviolable architectural constraint for every feature in this section. It extends security.md §9.2 ("Resource Intelligence as Optimization, Not Security") to AI-native IPC:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  AIRS CAN:                                                        │
+│    ├── Suggest IPC routes (§13.1)                                │
+│    ├── Predict future channel needs (§13.2)                      │
+│    ├── Recommend batch parameters (§13.3)                        │
+│    ├── Publish context hints for scheduling (§13.4)              │
+│    └── Screen data provenance for taint (§13.5)                  │
+│                                                                   │
+│  AIRS CANNOT:                                                     │
+│    ├── Grant, create, or expand capabilities (NEVER)             │
+│    ├── Bypass kernel capability checks on any IPC path           │
+│    ├── Route an agent to a service the agent has no cap for      │
+│    ├── Override kernel resource limits or blast radius policies   │
+│    ├── Suppress provenance tags or audit logging                 │
+│    └── Prevent the kernel from falling back to static behavior   │
+│                                                                   │
+│  IF AIRS IS DISABLED OR COMPROMISED:                              │
+│    ├── Intent routing: returns ENOTSUP, agent uses direct IPC    │
+│    ├── Predictive warming: no pre-warming, cold-start latency    │
+│    ├── Inference batching: no batching, sequential processing    │
+│    ├── Context scheduling: all agents run at their static class  │
+│    ├── Provenance taint screening: tags still propagated by      │
+│    │   kernel, but AIRS-based screening disabled                 │
+│    └── System is SLOWER but EQUALLY SECURE                       │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Every subsection below includes a **"Damage ceiling"** analysis: the worst-case outcome if AIRS is compromised or an agent attempts to exploit the feature. If the damage ceiling for any feature exceeds "degraded performance / wrong optimization," that feature violates this guarantee and must be redesigned or removed.
 
 ### 13.1 Intent-Aware IPC Routing
 
@@ -1266,7 +1300,13 @@ Agent: "find similar images in my photos"
   → Agent doesn't need to know the implementation pipeline
 ```
 
-**Security.** Intent routing passes through all five enforcement levels (§8.3). The agent's capabilities still constrain what services it can reach. AIRS can route, but cannot grant capabilities the agent doesn't hold. Intent routing is an optimization for developer ergonomics and adaptability — it does not bypass security.
+**Security.** Intent routing passes through all five enforcement levels (§8.3). The agent's capabilities still constrain what services it can reach. AIRS can route, but cannot grant capabilities the agent doesn't hold. If AIRS routes to a service the agent has no capability for, the kernel returns EPERM — same as a direct call. Intent routing is an optimization for developer ergonomics and adaptability — it does not bypass security.
+
+**Damage ceiling if AIRS compromised:** Misrouting — an agent's request goes to the wrong service. The wrong service either (a) rejects it (wrong protocol/capability) or (b) processes it incorrectly (wrong answer). **No capability breach, no data leak.** The agent still only reaches services it has capabilities for.
+
+**Agent exploitation vector:** An agent crafts a misleading intent description to be routed to a service it shouldn't access. **Blocked by kernel:** the agent's capability set doesn't change based on the intent description. AIRS can choose among services the agent *already* has access to — it cannot route to services outside the agent's capability set.
+
+**Fallback:** If AIRS is unavailable, `IntentRoute` returns `ENOTSUP`. Agent uses direct IPC with explicit service endpoints. All existing direct IPC paths remain available.
 
 **Why this is future-oriented.** As agent ecosystems grow, hard-coded service endpoints become brittle. Intent routing means agents written today work with services that don't exist yet, as long as the new service can fulfill the intent. This is how operating systems should work when the application layer is autonomous agents rather than deterministic programs.
 
@@ -1308,6 +1348,12 @@ const MAX_WARMING_SERVICES: usize = 8;
 
 **Degradation.** If the prediction is wrong, nothing bad happens — channels that aren't used are cleaned up by the idle timeout. The warming work is speculative and cancellable. This is the scheduling equivalent of CPU branch prediction: predict the common path, execute speculatively, discard if wrong.
 
+**Damage ceiling if AIRS compromised:** Wasted resources — channels pre-established that nobody uses, pages prefetched that nobody reads. **No capability breach.** Pre-warming still requires the agent to hold the relevant capabilities. The kernel validates capabilities during channel creation regardless of whether the request came from the Service Manager (normal) or from an AIRS warming hint. A compromised AIRS cannot pre-warm channels to services the agent has no access to.
+
+**Agent exploitation vector:** An agent behaves in patterns designed to trigger warming for channels it wants but doesn't have capabilities for. **Blocked by kernel:** warming hints are issued by AIRS (Trust Level 1), not by agents. Agents cannot publish `WarmingHint`. An agent's behavior can influence AIRS's prediction, but the kernel validates capabilities on every channel creation regardless.
+
+**Fallback:** If AIRS is unavailable, no warming hints are issued. Channels are established on first use (cold-start). Performance degrades; security is unchanged.
+
 ### 13.3 Inference-Aware IPC Batching
 
 **Problem in every other kernel.** When multiple agents all need LLM inference simultaneously (code completion, email summarization, search indexing), each agent submits an independent `IpcCall` to AIRS. AIRS processes them sequentially. GPU/NPU throughput is wasted — modern inference hardware is optimized for batch processing, where processing 8 requests takes barely longer than processing 1.
@@ -1348,6 +1394,12 @@ pub struct BatchConfig {
 
 **Why this matters.** On a device with a GPU or NPU, batching can double or triple inference throughput without any change to agent code. Agents submit individual requests; the kernel and AIRS collaborate to batch them. This is transparent optimization at the system level — exactly what a kernel should do.
 
+**Damage ceiling if AIRS compromised:** A compromised AIRS sets `batch_window_ms` to a large value → all inference requests are delayed. Or sets `max_batch_size` to 1 → no batching, wasted throughput. **Damage is DoS (slower inference), not data breach.** The kernel caps `batch_window_ms` at a hard maximum (e.g., 50ms) regardless of what AIRS requests. Individual agents' `IpcCall` timeouts bound their maximum wait.
+
+**Agent exploitation vector:** An agent floods inference requests to manipulate batch composition (e.g., include adversarial prompts in a batch with other agents' prompts). **Blocked by kernel:** each agent's requests are independent. AIRS processes them in the same batch but with separate KV caches and separate security screening. Batching is a scheduling optimization for the compute hardware — it does not merge or mix agents' data.
+
+**Fallback:** If AIRS is unavailable, `BatchConfig` is ignored. Requests are delivered to AIRS sequentially as they arrive. No batching, no delay. Throughput is lower; correctness is unchanged.
+
 ### 13.4 Context-Adaptive IPC Scheduling
 
 **Problem in every other kernel.** IPC priority is static — determined by the caller's scheduling class and the channel's configuration. A background indexing agent has the same IPC behavior whether the user is actively working or the device is idle on a desk.
@@ -1373,6 +1425,12 @@ Context: MEDIA (user watching video, listening to music)
 ```
 
 **Integration with behavioral gating (§9.1, step 3).** The `behavioral_state` byte already modulates IPC per-process. Context-adaptive scheduling extends this to modulate IPC system-wide based on what the user is doing. The two are complementary: behavioral gating catches anomalous agents; context scheduling optimizes normal agents.
+
+**Damage ceiling if AIRS compromised:** A compromised Context Engine publishes wrong context hints → IPC priorities are wrong. The foreground agent runs at Idle priority (sluggish UI), or background agents run at Interactive priority (wasted CPU). **Damage is quality-of-service degradation, not security breach.** The kernel enforces hard bounds: context hints can promote an agent at most one scheduling class above its static assignment, and can never promote to RT class (RT is reserved for compositor and audio, set at process creation, not by context hints).
+
+**Agent exploitation vector:** Not applicable — agents cannot publish context hints. Only AIRS (Trust Level 1) publishes `ContextHint` to the scheduler. An agent cannot spoof the context to get itself promoted.
+
+**Fallback:** If AIRS is unavailable, no context hints are published. All agents run at their statically assigned scheduling class. The scheduler already works without context hints (scheduler.md §8.1). Performance is less adaptive; security is unchanged.
 
 ### 13.5 Provenance-Carrying IPC
 
@@ -1418,49 +1476,84 @@ pub enum ProvenanceOrigin {
 
 **Developer application.** Agent developers can inspect the provenance tag of received data to make trust decisions. An email agent receiving an attachment can check: did this come from a known space (trusted), or was it downloaded from a web page by a tab agent (untrusted)? The tag is available in the SDK as a first-class field on every received message.
 
-### 13.6 Semantic Capability Negotiation
+**Damage ceiling if AIRS compromised:** Provenance tags are **kernel-maintained** — AIRS reads them but does not write them. The kernel computes `chain_hash`, sets `origin`, increments `hop_count`, and updates `max_trust_exposure` on every IPC hop. AIRS uses provenance tags for screening decisions (Layer 5), but a compromised AIRS cannot forge, suppress, or modify tags. If AIRS screening is disabled, tags still propagate — they just aren't acted on by Layer 5. **No damage to provenance integrity.** AIRS screening of tainted data degrades (less adversarial defense), but the tags themselves are correct.
 
-**Problem in every other kernel.** Capability systems are structural — an agent either has `ReadSpace("photos")` or it doesn't. If an agent needs access it doesn't have, the only option is to ask the user for a capability grant (a permission prompt). Users are bad at evaluating permission prompts — they either approve everything or deny everything.
+**Agent exploitation vector:** An agent cannot modify its outgoing provenance tags — the kernel writes them. An agent receiving data with `max_trust_exposure: 4` (web content) cannot "launder" the taint by forwarding it through itself — the kernel preserves the maximum trust exposure across hops. The taint is monotonic: once data touches a low-trust agent, it stays tainted forever.
 
-**What AIOS can do.** AIRS can mediate capability negotiation with semantic understanding:
+**Fallback:** Provenance tags propagate regardless of AIRS availability (kernel-enforced). Without AIRS, Layer 5 screening is disabled — tainted data still flows but isn't screened for adversarial content. Tags remain available to services and agents for their own trust decisions.
+
+### 13.6 Semantic Capability Activation
+
+~~**Previous design (REMOVED): Semantic Capability Negotiation.**~~ An earlier version of this section proposed that AIRS could *grant* capabilities to agents based on conversation context. This was removed because it violates the Kernel Independence Guarantee (§13.0): **AIRS cannot grant, create, or expand capabilities.** If AIRS were compromised, it could grant any capability to any agent — making AIRS a security dependency, not an optimization layer. This is the one §13 feature that failed the damage ceiling test.
+
+**Corrected design: Semantic Capability Activation.** AIRS does not grant new capabilities. Instead, it activates *dormant capabilities* that the user already approved.
+
+**How it works.** At install time, the user approves the agent's manifest, which declares the maximum capability set:
 
 ```
-Agent: IpcCall(SpaceService, Read{space: "photos", object: "vacation.jpg"})
-  → Kernel: agent does not hold ReadSpace("photos") capability
-  → Traditional OS: EPERM. Agent fails. User gets a permission prompt.
-
-AIOS with semantic negotiation:
-  → Kernel: agent does not hold ReadSpace("photos") capability
-  → Kernel asks AIRS: "Agent X wants to read photos/vacation.jpg. Context?"
-  → AIRS: Agent X's current task is "create a photo collage."
-          User's conversation: "make a collage of my vacation photos."
-          This access is consistent with the user's expressed intent.
-  → AIRS creates a SCOPED, ATTENUATED, TEMPORARY capability:
-     ReadSpace("photos/vacation/") with 5-minute expiry, read-only
-  → Kernel delivers the attenuated capability to the agent
-  → Agent proceeds. No user prompt. Capability auto-expires.
-  → Provenance chain records: "capability granted by AIRS intent verification,
-     conversation context [hash], expires [timestamp]"
+Agent "Photo Collage" manifest:
+  Capabilities requested:
+    - ReadSpace("photos")          ← user approves at install
+    - ReadSpace("documents")       ← user approves at install
+    - WriteSpace("creations")      ← user approves at install
+    - UseInference                  ← user approves at install
 ```
 
-**When user approval is still required:**
-- Agent wants access outside the current conversation context
-- Agent wants write access (higher risk)
-- Agent's behavioral profile shows anomalies (elevated/rate-limited state)
-- Capability scope exceeds automatic grant threshold (system-wide setting)
-- First-time access to a security zone (Personal, System)
+Traditionally, all approved capabilities are active immediately and permanently. The agent holds `ReadSpace("photos")` from the moment it's installed until it's uninstalled — whether or not it's actually working on photos.
 
-**Why this is fundamentally different.** In traditional OS security, the user is the policy engine — every access decision is a prompt. In AIOS, AIRS is the policy engine for routine operations, and the user is the policy engine for exceptional operations. The user sets high-level intent ("make a collage of my vacation photos"), and AIRS translates that into fine-grained capabilities. This is zero-trust with semantic context — the most granular, least disruptive permission model possible.
+With semantic activation, approved capabilities start **dormant** and are activated just-in-time:
+
+```
+Install time:
+  Kernel creates tokens for all approved capabilities, but marks them DORMANT.
+  Agent cannot use dormant capabilities — IPC returns ECAP_DORMANT.
+
+Runtime — agent starts a task:
+  User: "make a collage of my vacation photos"
+  AIRS: task requires ReadSpace("photos") + WriteSpace("creations") + UseInference
+  AIRS sends ActivationRequest to kernel via ring buffer:
+    { agent: collage_agent,
+      capabilities: [ReadSpace("photos"), WriteSpace("creations"), UseInference],
+      scope_narrowing: ReadSpace("photos") → ReadSpace("photos/vacation/"),
+      ttl: Duration::minutes(30),
+      conversation_context_hash: H(conversation) }
+  Kernel validates:
+    1. Every requested capability is in the agent's APPROVED manifest (user-approved)
+    2. Every scope narrowing is a strict subset (attenuation, not expansion)
+    3. TTL does not exceed MAX_CAPABILITY_TTL for the agent's trust level
+    4. The agent is not in SUSPENDED behavioral state
+  Kernel activates the capabilities with the narrowed scope and TTL.
+
+Task complete:
+  AIRS sends DeactivationRequest → kernel returns capabilities to DORMANT.
+  Or: TTL expires → kernel automatically deactivates.
+```
+
+**What AIRS can do:** Activate a subset of user-approved capabilities, narrow their scope, and set a short TTL.
+
+**What AIRS cannot do:** Grant capabilities the user didn't approve. Expand scope beyond the manifest. Activate capabilities for agents in SUSPENDED state. Override the kernel's TTL limits.
+
+**Damage ceiling if AIRS compromised:** A compromised AIRS activates ALL of an agent's manifest-approved capabilities with maximum scope and maximum TTL. This is equivalent to the traditional model (all capabilities active at install). **The damage ceiling is: the system behaves like a traditional capability OS.** No capability is granted that the user didn't already approve. The semantic activation layer degrades to always-on — worse than designed, but no worse than the baseline.
+
+**Agent exploitation vector:** An agent crafts task descriptions designed to trick AIRS into activating capabilities the agent wants. AIRS may activate `ReadSpace("photos")` when the agent's real intent is data exfiltration. **Bounded by:** (a) only manifest-approved capabilities can activate, (b) behavioral monitoring (Layer 3) detects anomalous access patterns after activation, (c) short TTLs limit exposure window, (d) all activations are logged in the provenance chain.
+
+**Fallback:** If AIRS is unavailable, two options (configurable by user):
+1. **Conservative (default):** All capabilities remain dormant. Agent cannot start new tasks until AIRS recovers. Existing active capabilities continue until TTL expires.
+2. **Permissive:** All manifest-approved capabilities activate with maximum scope. System behaves like a traditional capability OS. Less secure but functional.
+
+**Why this is better than the status quo.** In a traditional capability OS (seL4, Fuchsia), agents hold all their permissions all the time. A compromised agent has full access to everything in its manifest from the moment it's compromised. With semantic activation, the exposure window is limited to the current task's scope and duration. A compromised photo agent during a "vacation collage" task can read `photos/vacation/` for 30 minutes — not all photos forever.
 
 ### 13.7 What Makes These Novel
 
-| Capability | Why no existing OS can do this | AIOS enabler |
-|---|---|---|
-| Intent-aware routing | Requires semantic understanding of requests | AIRS inference engine |
-| Predictive warming | Requires behavioral model + context awareness | AIRS behavioral monitoring + Context Engine |
-| Inference batching | Requires kernel awareness of ML batch semantics | AIRS co-designed with kernel IPC |
-| Context-adaptive scheduling | Requires continuous user activity inference | Context Engine (AIRS subsystem) |
-| Provenance-carrying IPC | Could be done without AI, but *taint-based screening* requires ML | AIRS adversarial defense (Layer 5) |
-| Semantic capability negotiation | Requires understanding *why* an agent needs access | AIRS intent verification (Layer 1) + conversation context |
+| Capability | Why no existing OS can do this | AIOS enabler | Damage ceiling if AIRS compromised |
+|---|---|---|---|
+| Intent-aware routing | Requires semantic understanding of requests | AIRS inference engine | Misrouting (wrong answer, not capability breach) |
+| Predictive warming | Requires behavioral model + context awareness | AIRS behavioral monitoring + Context Engine | Wasted resources (no capability breach) |
+| Inference batching | Requires kernel awareness of ML batch semantics | AIRS co-designed with kernel IPC | Slower inference (DoS, not data breach) |
+| Context-adaptive scheduling | Requires continuous user activity inference | Context Engine (AIRS subsystem) | Wrong priorities (QoS degradation) |
+| Provenance-carrying IPC | Could be done without AI, but *taint-based screening* requires ML | AIRS adversarial defense (Layer 5) | Taint screening disabled (tags still propagate) |
+| Semantic capability activation | Requires understanding *why* an agent needs access | AIRS intent verification (Layer 1) + conversation context | All manifest caps active = traditional OS behavior |
 
-These capabilities are why AIOS exists as a new OS rather than a Linux distribution. They require co-design between the kernel's IPC layer and the AI runtime — something that cannot be achieved by adding an AI service on top of an existing kernel. The kernel must understand inference latency, batch semantics, behavioral baselines, and conversation context at the IPC scheduling level. That is only possible when the AI runtime is a first-class kernel citizen.
+**Every feature degrades to "traditional OS behavior" when AIRS fails.** None of the §13 features create new attack surfaces that don't exist in a traditional capability OS. They are strictly additive — they make the system better when AIRS works, and no worse when AIRS doesn't.
+
+These capabilities are why AIOS exists as a new OS rather than a Linux distribution. They require co-design between the kernel's IPC layer and the AI runtime — something that cannot be achieved by adding an AI service on top of an existing kernel. The kernel must understand inference latency, batch semantics, behavioral baselines, and conversation context at the IPC scheduling level. That is only possible when the AI runtime is a first-class kernel citizen. But at no point does the kernel *trust* AIRS — it validates every hint, caps every parameter, and falls back to static behavior if AIRS is unavailable. The relationship is: AIRS advises, the kernel decides.
