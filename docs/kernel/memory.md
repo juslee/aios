@@ -1233,6 +1233,37 @@ Agent A wants to share 1 MB with Agent B:
 
 Both agents access the same physical memory. The kernel enforces that the receiver's mapping flags are at most as permissive as what the sender granted. If the sender shares as read-only, the receiver cannot write.
 
+**Stability during pool boundary resizing:** Shared memory regions are allocated from the user pool. When AIRS resource orchestration resizes the model pool / user pool boundary (see [airs.md §10](../intelligence/airs.md), [security.md §9](../security/security.md)), shared memory physical frames are **never reclaimed or relocated**:
+
+```rust
+impl DynamicModelPool {
+    /// When shrinking the user pool (growing model pool), the kernel
+    /// can only reclaim FREE pages from the user pool. Pages that are:
+    ///   - Mapped by any agent (including shared memory)
+    ///   - Pinned for DMA
+    ///   - Part of an active page cache entry
+    /// are NOT eligible for reclamation. The kernel moves the pool
+    /// boundary only as far as free pages allow.
+    ///
+    /// Shared memory frames have refcount >= 2 (multiple mappers).
+    /// They are never on the free list. Pool resizing cannot touch them.
+    pub fn shrink_user_pool(&self, target_delta: usize) -> usize {
+        let mut reclaimed = 0;
+        for frame in self.user_pool.free_list() {
+            if reclaimed >= target_delta { break; }
+            // Only FREE frames — never mapped, pinned, or shared
+            self.transfer_to_model_pool(frame);
+            reclaimed += frame.size;
+        }
+        reclaimed  // may be less than target_delta if not enough free frames
+    }
+}
+```
+
+Pool boundary resizing operates exclusively on the **free page list**. Shared memory regions are backed by physical frames that are mapped into at least one (usually two or more) agent address spaces. These frames have nonzero reference counts and are never on the free list. There is no mechanism by which pool resizing can fragment, relocate, or reclaim shared memory. The physical frames backing shared regions are stable for their entire lifetime, regardless of pool boundary movement.
+
+If AIRS requests a pool resize larger than the available free pages, the resize is partially fulfilled — the boundary moves as far as free pages allow, and the remaining shortfall is logged as a resource pressure event. This prevents pool resizing from evicting active mappings to satisfy the request.
+
 ### 7.2 Memory-Mapped Space Objects
 
 Space objects can be memory-mapped into an agent's address space, avoiding the overhead of IPC read calls for large objects (images, documents, model files):
@@ -2361,7 +2392,15 @@ On current hardware, the model pool is fixed at boot. As devices gain more RAM, 
 ```rust
 pub struct DynamicModelPool {
     /// Minimum model pool size (always reserved)
-    minimum: usize,                     // enough for companion embedding model
+    /// Must be >= companion embedding model (~100 MB)
+    minimum: usize,
+    /// Security floor: minimum size when security models are active
+    /// Must be >= primary model footprint + companion model
+    /// The kernel enforces this floor — AIRS cannot resize below it
+    /// while intent verification or behavioral monitoring are enabled.
+    /// This prevents AIRS resource orchestration from inadvertently
+    /// disabling its own security functions.
+    security_floor: usize,
     /// Maximum model pool size (never exceed)
     maximum: usize,                     // cap at 50% of total RAM
     /// Current allocated size
@@ -2373,9 +2412,31 @@ pub struct DynamicModelPool {
     /// Idle timeout before shrinking
     idle_timeout: Duration,             // default: 10 minutes
 }
+
+impl DynamicModelPool {
+    /// Kernel-enforced: AIRS cannot shrink below security_floor
+    /// while security services are active. This prevents a compromised
+    /// or confused resource orchestrator from starving security inference.
+    pub fn validate_resize(&self, requested_size: usize) -> Result<usize> {
+        let floor = if self.security_services_active {
+            self.security_floor  // primary model + companion must fit
+        } else {
+            self.minimum         // only embedding model needs to fit
+        };
+        if requested_size < floor {
+            return Err(PoolResizeError::BelowSecurityFloor {
+                requested: requested_size,
+                floor,
+            });
+        }
+        Ok(requested_size.min(self.maximum))
+    }
+}
 ```
 
 **Phase 14 optimization:** The model pool grows when AIRS loads a model (stealing pages from the user pool) and shrinks when the model is evicted (returning pages to the user pool). This eliminates the waste of pinning 4 GB for a model that may not be used for hours. The minimum reservation (enough for the embedding model) ensures Space Indexer can always operate.
+
+**Security floor invariant:** The `security_floor` is distinct from `minimum`. The `minimum` guarantees the embedding model fits (~100 MB) — enough for Space Indexer. The `security_floor` guarantees the primary model fits alongside the companion — enough for intent verification, behavioral analysis, and adversarial defense. When AIRS security services are active (which is always during normal operation), the kernel refuses to shrink the model pool below `security_floor`. This prevents a compromised AIRS resource orchestrator from starving its own security functions — the damage ceiling remains denial of service against non-security tasks, never against security itself. See [security.md §9.6](../security/security.md).
 
 **Huge page management:** Dynamic growth requires available 2 MB contiguous regions. The buddy allocator naturally maintains these through coalescing. If fragmentation prevents a 2 MB allocation, the kernel can compact the user pool (migrate pages, update PTEs) to create contiguous regions — a slow but rare operation.
 
