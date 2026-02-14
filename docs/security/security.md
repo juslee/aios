@@ -241,6 +241,50 @@ Result: system remains responsive. Other agents unaffected.
 User is notified: "Agent X is using unusual resources. Paused."
 ```
 
+#### Scenario 5: Resource manipulation via AIRS hints
+
+A malicious agent attempts to manipulate AIRS's resource orchestration to degrade other agents or leak information about their activity. The agent sends crafted resource hints claiming it needs massive memory prefetches, hoping to either starve other agents of resources or observe how pool sizes change in response.
+
+```
+Layer 5 — Adversarial Defense (hint screening):
+    Agent submits resource hint: { memory_need: "4 GB", prefetch: ["*"] }
+    Hint screening detects:
+    - Requested memory (4 GB) exceeds agent's blast radius limit (256 MB)
+    - Wildcard prefetch pattern is over-broad
+    - Hint is inconsistent with agent's declared capabilities
+    Result: hint REJECTED, agent flagged for suspicious hinting
+
+Layer 2 — Capability Check:
+    Even if the hint were accepted, AIRS resource directives pass through
+    the kernel capability system. AIRS cannot allocate agent A more memory
+    than agent A's BlastRadiusPolicy.max_memory allows.
+    The kernel enforces the ceiling regardless of what AIRS requests.
+
+Layer 3 — Behavioral Boundary:
+    Hint submission rate: 50 hints/second (baseline: 0-2/minute)
+    Statistical detection: z-score >> 3σ for hint submission frequency
+    Result: agent rate-limited, then paused
+
+Resource Allocation Opacity:
+    Agent attempts to infer other agents' activity by observing its own
+    allocation changes (memory pressure, page fault rates).
+    Mitigation: agents see their own per-agent limits (set by blast radius
+    policy), not physical pool boundaries. Pool resizing is a kernel-internal
+    operation on physical page ranges — invisible to userspace.
+    Page fault timing is inherently noisy on SD card media (~100 μs variance)
+    and does not reliably leak cross-agent information.
+
+Kernel AIRS Monitoring:
+    AIRS directive rate: 200 directives/second (baseline: 5-15/second)
+    Kernel detects AIRS anomaly → falls back to static heuristics
+    (plain LRU, no prefetch, fixed pool sizes)
+    System gets slower but security is preserved.
+
+Result: malicious hints are screened. Resource limits are kernel-enforced.
+Pool changes are invisible to agents. AIRS anomalies trigger safe fallback.
+No information leaked, no resources stolen, no degradation achieved.
+```
+
 -----
 
 ## 2. The Eight Security Layers (Deep Dive)
@@ -367,6 +411,23 @@ Agent requests action
 ```
 
 **Caching:** High-frequency actions (repeated reads from the same space) are cached after the first verification. The cache key is `(agent_id, action_type, target)`. Cache entries expire after 5 minutes or when the agent's task changes. Destructive actions (writes, deletes, network sends) are never cached if `always_verify` includes them.
+
+**Isolation from AIRS resource orchestration:** AIRS performs two distinct functions — security verification (Layers 1, 3, 5) and resource orchestration (memory pool directives, prefetching, compression scheduling). These operate on separate code paths with a strict priority fence:
+
+```rust
+pub enum AirsRequestPriority {
+    /// Security checks (intent verification, behavioral analysis, injection detection)
+    /// ALWAYS preempt resource operations. Never delayed, never queued behind them.
+    Security,
+    /// Resource orchestration (pool resize, prefetch, compress)
+    /// Yields to security. If AIRS compute is saturated, resource directives
+    /// are dropped — the system falls back to static heuristics. Security
+    /// checks are never dropped.
+    Resource,
+}
+```
+
+The security path and resource path share no mutable state. A resource decision (e.g., "prefetch this object") never influences an intent verification result, and vice versa. If the resource path is under load — handling memory pressure, processing telemetry — the security path must still respond within its SLA (< 10 ms for synchronous intent checks). The kernel enforces this by routing security IPC on a dedicated high-priority channel separate from the resource directive channel.
 
 ### 2.2 Layer 2: Capability Check
 
@@ -601,6 +662,68 @@ pub enum EscalationAction {
 
 **Baseline building:** A new agent starts with no baseline. For the first `observation_days` (default: 7), the monitor operates in `AuditOnly` mode — logging behavior but not blocking. Hard limits are still enforced. After the baseline period, statistical detection activates.
 
+#### 2.3.1 AIRS Self-Monitoring (Who Watches the Watcher)
+
+AIRS issues resource orchestration directives (memory pool resizing, prefetch requests, compression scheduling). These directives are themselves actions that can be anomalous — a compromised or confused AIRS could issue pathological directives that degrade system performance. The behavioral monitoring of AIRS itself is handled by the **kernel**, not by AIRS:
+
+```rust
+/// Kernel-side monitor for AIRS resource directive behavior.
+/// This is NOT part of AIRS — it runs in kernel context.
+/// Simple statistical checks, no AI, no LLM inference.
+pub struct AirsDirectiveMonitor {
+    /// Baseline for AIRS directive rates (built during first 24 hours)
+    baseline: AirsDirectiveBaseline,
+    /// Hard limits (never exceeded regardless of baseline)
+    hard_limits: AirsDirectiveLimits,
+    /// Current state
+    state: AirsMonitorState,
+}
+
+pub struct AirsDirectiveBaseline {
+    /// Directives per second by type
+    prefetch_rate: RunningStats,
+    pool_resize_rate: RunningStats,
+    compress_rate: RunningStats,
+    /// Total directives per minute
+    total_rate: RunningStats,
+    /// Typical directive sizes (bytes requested for prefetch, pool delta)
+    typical_sizes: RunningStats,
+    observation_hours: u32,
+}
+
+pub struct AirsDirectiveLimits {
+    /// Maximum directives per second (all types combined)
+    max_directives_per_second: u32,         // default: 100
+    /// Maximum single pool resize delta
+    max_pool_resize_bytes: usize,           // default: 64 MB
+    /// Maximum prefetch batch size
+    max_prefetch_objects: u32,              // default: 50
+    /// Maximum fraction of user pool AIRS can direct
+    max_user_pool_fraction: f32,           // default: 0.5
+}
+
+pub enum AirsMonitorState {
+    /// Normal operation — AIRS directives accepted
+    Normal,
+    /// AIRS directives are rate-limited (mild anomaly detected)
+    RateLimited { factor: f32 },
+    /// AIRS resource orchestration disabled — kernel uses static heuristics
+    /// (plain LRU eviction, no prefetch, fixed pool boundaries)
+    Fallback { reason: String, since: Timestamp },
+}
+```
+
+**Fallback mode:** When the kernel detects anomalous AIRS directive patterns (z-score > 3σ for directive rate, or any hard limit exceeded), it transitions to `Fallback` mode. In fallback:
+- Memory management uses plain LRU page eviction (no AI-driven prefetch)
+- Pool boundaries remain at their last known-good sizes (no dynamic resizing)
+- Compression uses fixed policies (age-based, no AI prioritization)
+- AIRS security functions (intent verification, behavioral monitoring, adversarial defense) continue operating — only resource orchestration is disabled
+- The system is slower but equally secure
+
+The kernel logs the fallback transition as a security event in the provenance chain and notifies the user: "AIRS resource orchestration paused due to anomalous behavior. Security services remain active."
+
+**Recovery:** AIRS exits fallback mode when its directive rates return to within 2σ of baseline for 10 consecutive minutes. The kernel re-enables resource directives incrementally — first prefetch (lowest risk), then compression scheduling, then pool resizing (highest risk).
+
 ### 2.4 Layer 4: Security Zones
 
 Spaces are organized into security zones that determine the base level of protection applied to their contents. Zones create concentric rings of trust — data flows inward (from Untrusted to Core) only through explicit promotion, never automatically.
@@ -819,6 +942,55 @@ pub struct InjectionDetector {
    - Decrypt spaces it has no key for (Layer 6)
    - Avoid being logged (Layer 7)
    - Write more than the blast radius limit (Layer 8)
+
+#### 2.5.1 Agent Hint Screening
+
+AIRS resource orchestration accepts optional **hints** from agents — lightweight signals about anticipated resource needs (e.g., "I'm about to process a large batch" or "I need embedding model access soon"). These hints are a new input vector from untrusted agents into a privileged system service. They receive the same adversarial screening as web content:
+
+```rust
+/// Screens resource hints before AIRS considers them.
+/// Part of the InputScreener pipeline (Layer 5).
+pub struct HintScreener {
+    /// Rate limit: max hints per agent per minute
+    max_hints_per_minute: u32,              // default: 10
+    /// Consistency checker: does the hint match the agent's capabilities?
+    capability_validator: CapabilityValidator,
+    /// Anomaly checker: is the hint consistent with the agent's history?
+    history_checker: HintHistoryChecker,
+}
+
+pub struct HintValidation {
+    /// Is the requested resource within the agent's blast radius limits?
+    within_blast_radius: bool,
+    /// Does the agent hold capabilities for the resources it's hinting about?
+    capabilities_match: bool,
+    /// Is the hint volume/rate consistent with the agent's behavioral baseline?
+    baseline_consistent: bool,
+    /// Is the hint structurally valid (no injection patterns, no probing)?
+    structurally_valid: bool,
+}
+
+pub enum HintScreeningResult {
+    /// Hint is valid — AIRS may consider it for resource optimization
+    Accept,
+    /// Hint exceeds agent's limits — silently ignored, logged
+    Ignore { reason: String },
+    /// Hint pattern is suspicious — agent flagged for monitoring
+    Flag { reason: String },
+    /// Hint rate exceeded — agent's hint channel throttled
+    Throttle { until: Timestamp },
+}
+```
+
+**Screening rules:**
+
+1. **Blast radius ceiling.** A hint requesting more resources than the agent's `BlastRadiusPolicy` allows is silently ignored. The agent doesn't learn whether its hint was rejected — it just doesn't observe any change (resource allocation opacity).
+
+2. **Capability consistency.** A hint about space objects the agent has no `ReadSpace` token for is rejected and logged as a security event. This pattern (hinting about resources you can't access) suggests probing.
+
+3. **Rate limiting.** More than `max_hints_per_minute` hints triggers throttling. An agent submitting 50 hints/second is either broken or probing AIRS's response behavior.
+
+4. **No feedback channel.** Agents submit hints via a fire-and-forget IPC message. There is no response — AIRS never confirms or denies that a hint was acted upon. This prevents agents from using hints as a side channel to probe system state.
 
 ### 2.6 Layer 6: Cryptographic Enforcement
 
@@ -1061,7 +1233,55 @@ pub struct AuditQuery {
 
 **Performance:** Provenance records are written to a kernel ring buffer first (non-blocking, ~100ns), then flushed to the audit space asynchronously. The ring buffer holds 10,000 records. If the flush falls behind, the oldest unflushed records are prioritized. Provenance recording never blocks the critical path of an agent's syscall.
 
-#### 2.7.1 Audit Retention and Chain Compaction
+#### 2.7.1 AIRS Resource Directive Provenance
+
+AIRS resource orchestration directives — prefetch requests, pool resize commands, compression scheduling decisions — are logged in the provenance chain alongside agent actions. Every directive that AIRS issues is a `ProvenanceAction`:
+
+```rust
+/// Resource orchestration directives, logged in the provenance chain.
+/// The agent_id field is set to AIRS's service AgentId.
+pub enum ProvenanceAction {
+    // ... existing variants ...
+
+    /// AIRS directed a prefetch of space objects into memory
+    ResourcePrefetch {
+        objects: Vec<ObjectId>,
+        reason: PrefetchReason,
+        triggered_by: Option<AgentId>,      // which agent's activity triggered this
+    },
+    /// AIRS resized a memory pool boundary
+    ResourcePoolResize {
+        pool: PoolId,
+        old_size: usize,
+        new_size: usize,
+        reason: ResizeReason,
+    },
+    /// AIRS scheduled compression of space blocks
+    ResourceCompress {
+        space: SpaceId,
+        blocks: u32,
+        algorithm: CompressionAlgorithm,
+        reason: CompressReason,
+    },
+    /// AIRS entered or exited kernel-imposed fallback mode
+    ResourceFallbackTransition {
+        entered: bool,
+        reason: String,
+    },
+    /// AIRS processed an agent resource hint
+    ResourceHintReceived {
+        from_agent: AgentId,
+        hint_summary: String,
+        screening_result: HintScreeningResult,
+    },
+}
+```
+
+**Why log resource directives:** If the system behaves unexpectedly — an agent runs slower than usual, a space object takes longer to load, memory pressure increases without obvious cause — the provenance chain shows exactly what AIRS decided and when. The Inspector displays resource directive history alongside agent action history, making it possible to correlate "Research Assistant slowed down" with "AIRS resized Model Pool +512 MB at the same time."
+
+**Directive provenance is compactable.** Unlike security events (which are never compacted), resource directives follow the standard tiered retention: full detail for 7 days, summarized for 90 days, hash-only after that. Resource directives are high-volume, low-severity events — useful for debugging but not forensically critical.
+
+#### 2.7.2 Audit Retention and Chain Compaction
 
 The append-only Merkle chain grows without bound — a busy system with many agents can generate millions of records per day. On a Pi with a 32 GB SD card, unbounded audit storage would eventually consume all available space. AIOS uses **tiered retention** to manage audit storage while preserving the chain's tamper-evidence guarantees.
 
@@ -2263,7 +2483,143 @@ Formal verification provides mathematical guarantees about security properties. 
 
 -----
 
-## 9. Comparison to Existing Security Models
+## 9. AIRS Resource Orchestration Security
+
+AIRS acts as the central resource orchestrator — directing memory pool boundaries, prefetching space objects, scheduling compression, and accepting agent hints about anticipated needs. This section documents how the security model absorbs this additional responsibility without weakening any existing layer.
+
+### 9.1 Security Impact Summary
+
+| Layer | Impact | Change Required |
+|---|---|---|
+| Layer 1: Intent Verification | Medium | Priority fence isolates security path from resource path (§2.1) |
+| Layer 2: Capability Check | None | Every AIRS directive still passes kernel capability validation |
+| Layer 3: Behavioral Monitoring | Medium | Kernel monitors AIRS directive behavior (§2.3.1) |
+| Layer 4: Security Zones | None | Zone boundaries are structural — directives cannot cross zones |
+| Layer 5: Adversarial Defense | Medium | Agent hints screened as untrusted input (§2.5.1) |
+| Layer 6: Cryptographic Enforcement | None | AIRS never touches encryption keys or crypto operations |
+| Layer 7: Provenance Recording | Low | Resource directives added to provenance chain (§2.7.1) |
+| Layer 8: Blast Radius | None | AIRS cannot exceed per-agent blast radius limits |
+| Hardware (PAC/BTI/MTE/W^X) | None | Hardware enforcement is orthogonal to AIRS |
+
+Four layers are completely unchanged (2, 4, 6, 8). Four layers receive targeted extensions (1, 3, 5, 7). No layer is weakened.
+
+### 9.2 Design Principle: Resource Intelligence as Optimization, Not Security
+
+AIRS resource orchestration is an **optimization layer** — it makes the system faster, not safer. If AIRS resource orchestration is completely disabled, the system falls back to:
+
+- **Memory:** Plain LRU page eviction, no prefetching, fixed pool boundaries
+- **Storage:** Age-based compression, no semantic priority
+- **Agents:** No hint processing, static resource limits only
+
+The system is slower in this mode but **equally secure**. Security never depends on AIRS making correct resource decisions. This is enforced by the kernel fallback mechanism (§2.3.1): the kernel can unilaterally disable AIRS resource orchestration while keeping all security layers active.
+
+### 9.3 AIRS Resource Privilege Boundaries
+
+AIRS is a Trust Level 1 system service. Its resource orchestration capabilities are bounded:
+
+```
+AIRS resource orchestration CAN:
+  ├── Direct memory pool boundary adjustments
+  │   (kernel validates: within global limits, within pool min/max)
+  ├── Request prefetch of space objects
+  │   (kernel validates: AIRS holds ReadSpace cap for the target space)
+  ├── Schedule block compression
+  │   (kernel validates: compression doesn't exceed CPU quota)
+  └── Accept and process agent hints
+      (screened by Layer 5 before consideration)
+
+AIRS resource orchestration CANNOT:
+  ├── Allocate more memory than an agent's blast radius allows
+  │   (Layer 8 enforced by kernel, not AIRS)
+  ├── Prefetch objects from spaces AIRS has no capability for
+  │   (Layer 2 enforced by kernel)
+  ├── Access encrypted data without key release
+  │   (Layer 6 — AIRS operates on decrypted pages already in memory)
+  ├── Modify its own kernel pool reservation
+  │   (AIRS memory is in kernel pool, not subject to AIRS directives)
+  ├── Override page table isolation between agents
+  │   (TTBR0 per-process — hardware-enforced, not software)
+  └── Suppress provenance logging of its own directives
+      (Layer 7 records all directives — kernel-enforced, append-only)
+```
+
+### 9.4 Resource Allocation Opacity
+
+Agents must not be able to observe resource allocation changes made by AIRS, as these could leak information about other agents' activity.
+
+**What agents can observe:**
+- Their own memory allocation limits (set by blast radius policy — static, not dynamic)
+- Page faults when they exceed their allocation (normal OS behavior)
+- Their own IPC latency (affected by system load, but not attributable to specific agents)
+
+**What agents cannot observe:**
+- Physical memory pool boundaries or their changes
+- Which pages are being prefetched for other agents
+- Other agents' resource consumption or hint patterns
+- AIRS directive rates or types
+- Pool resize events (kernel-internal operation on physical page ranges)
+
+This opacity is achieved through standard OS memory isolation: each agent has its own page table (TTBR0) and sees only its virtual address space. The kernel's physical page allocator, pool boundary manager, and AIRS directive handler are kernel-internal — invisible to userspace.
+
+**Timing side channels.** An agent could theoretically measure page fault latency variations to infer memory pressure caused by other agents. On SD card media (~100 μs per page fault with high variance), this signal is extremely noisy. On NVMe (~5 μs with lower variance), the signal is cleaner but still requires sustained measurement that would trigger Layer 3 behavioral anomaly detection (unusual access patterns). This is acknowledged as a residual risk in §1.3 (side-channel attacks).
+
+### 9.5 Circular Dependency Resolution
+
+AIRS needs memory to run. AIRS controls memory allocation. This creates a potential circular dependency.
+
+**Resolution:** AIRS's own memory lives in the **kernel pool** (128-256 MB fixed reservation). The kernel pool is:
+- Sized at boot based on hardware tier
+- Never subject to AIRS resource directives
+- Never resized by AIRS (only the kernel can adjust it, based on boot configuration)
+- Protected from OOM (kernel pool agents are OOM-kill exempt)
+
+AIRS can resize the **model pool** and **user pool** — but not the kernel pool where AIRS itself resides. The circular dependency is broken by this structural separation: AIRS lives in a pool it cannot control.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Kernel Pool (128-256 MB)                            │
+│  ├── AIRS process memory                             │
+│  ├── Kernel data structures                          │
+│  └── System service memory                           │
+│  NOT subject to AIRS directives. Fixed at boot.      │
+├─────────────────────────────────────────────────────┤
+│  Model Pool (0-8 GB)                                 │
+│  ├── LLM weights (pinned, 2 MB huge pages)           │
+│  └── KV caches                                       │
+│  AIRS can resize boundary with User Pool.            │
+├─────────────────────────────────────────────────────┤
+│  User Pool (1.75-7.5 GB)                             │
+│  ├── Agent heaps                                     │
+│  ├── Shared memory regions                           │
+│  └── Page cache                                      │
+│  AIRS can resize boundary with Model Pool.           │
+│  Per-agent limits enforced by blast radius (Layer 8). │
+├─────────────────────────────────────────────────────┤
+│  DMA Pool (64-128 MB)                                │
+│  └── Device I/O buffers                              │
+│  NOT subject to AIRS directives. Fixed at boot.      │
+└─────────────────────────────────────────────────────┘
+```
+
+AIRS controls the boundary between Model Pool and User Pool. It does not control the Kernel Pool or DMA Pool boundaries. This limits AIRS's resource authority to a well-defined surface area: the tradeoff between model memory and agent memory.
+
+### 9.6 Damage Ceiling Analysis
+
+If AIRS resource orchestration is fully compromised (worst case), what is the maximum damage?
+
+| Attack | Damage Ceiling | Why It's Bounded |
+|---|---|---|
+| Pathological prefetching (prefetch everything, thrash memory) | **Performance degradation** | Kernel fallback mode disables prefetching (§2.3.1). No data breach. |
+| Starving one agent's pool to favor another | **Unfairness** | Per-agent blast radius limits are kernel-enforced. Agent still gets its minimum. |
+| Issuing no directives (neglect attack) | **Slower system** | Static heuristics work without AIRS. System degrades to plain LRU. |
+| Leaking resource telemetry to agents | **Information leak** | Allocation opacity prevents agents from observing pool state. AIRS doesn't respond to hints — fire-and-forget only. |
+| Corrupting compression scheduling | **Wasted CPU/storage** | Compression operates on already-capability-checked data. Cannot access data it shouldn't. |
+
+**The damage ceiling is denial of service, not data breach.** A compromised AIRS resource orchestrator can waste resources, slow things down, or make suboptimal allocation decisions. It cannot break capability isolation, forge tokens, cross security zones, decrypt data, or avoid being logged. The kernel's hardware-enforced boundaries (page tables, capabilities, crypto) are independent of AIRS.
+
+-----
+
+## 10. Comparison to Existing Security Models
 
 | Model | Strengths | Weaknesses | What AIOS Adds |
 |---|---|---|---|
@@ -2278,7 +2634,7 @@ Formal verification provides mathematical guarantees about security properties. 
 
 -----
 
-## 10. Implementation Order
+## 11. Implementation Order
 
 Security is not a phase — it's built in from the start. But different layers mature at different times:
 
@@ -2307,7 +2663,16 @@ Phase 8: AI Security Layers (requires AIRS)
   ├── Behavioral monitoring (Layer 3) — baseline building begins
   ├── Input screening (Layer 5) — injection pattern detection
   ├── Adversarial defense framework — control/data separation enforced
-  └── Blast radius policies — per-agent resource limits
+  ├── Blast radius policies — per-agent resource limits
+  ├── Security/resource path priority fence in AIRS
+  └── Agent hint screening (Layer 5 extension)
+
+Phase 14b: Resource Orchestration Security (requires AIRS resource orchestrator)
+  ├── Kernel AIRS directive monitor — baseline building, anomaly detection
+  ├── Kernel fallback mode — static heuristics when AIRS anomalous
+  ├── Resource directive provenance — directives logged in Merkle chain
+  ├── Resource allocation opacity — agents cannot observe pool state
+  └── Hint screening integration with behavioral monitoring (Layer 3)
 
 Phase 10: Agent Security
   ├── Agent manifest verification (developer signature check)
