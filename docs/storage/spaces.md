@@ -373,6 +373,37 @@ Agent reads object:
   6. Return content to agent
 ```
 
+#### 4.3.1 AIRS Prefetch Path
+
+AIRS resource orchestration can direct Space Storage to prefetch objects into the page cache before an agent requests them. Prefetch uses the **same read path** as normal agent reads — there is no shortcut that bypasses decryption, capability checks, or checksum verification.
+
+```
+AIRS prefetch directive:
+  1. AIRS sends ResourcePrefetch { objects, reason, triggered_by } to kernel
+  2. Kernel validates: AIRS holds ReadSpace capability for the target space
+  3. Kernel forwards prefetch request to Space Storage
+  4. Space Storage executes the NORMAL read path for each object:
+     a. Object metadata lookup: ObjectId → content_hash
+     b. Block index lookup: content_hash → block location
+     c. Read block from disk into page cache
+     d. Verify checksum (CRC-32C)
+     e. If encrypted space: decrypt with space key (Space Storage holds key)
+     f. Decrypted content sits in page cache (user pool)
+  5. No content is returned to AIRS — prefetch is fire-and-forget
+  6. When agent later reads the object, step 3 hits page cache → fast
+  7. Provenance chain records: ResourcePrefetch event (logged by kernel)
+```
+
+**Why AIRS never touches keys:** AIRS does not hold space decryption keys. It does not need them. AIRS sends a directive to the kernel, which forwards it to Space Storage. Space Storage holds the space keys (released by the kernel after authentication + capability verification) and performs the decryption. The decrypted content enters the page cache, where it is accessible to any agent that holds the appropriate `ReadSpace` capability. AIRS's role is purely advisory — "this object will likely be needed soon" — not operational.
+
+**Why no shortcut:** A prefetch shortcut that bypasses the normal read path would be a security regression:
+- Skipping checksum verification (step 4) would allow corrupted blocks into the page cache
+- Skipping decryption (step 5) would place encrypted blocks in the cache, useless to agents
+- Skipping capability validation (step 2) would allow AIRS to prefetch objects from spaces it shouldn't access
+- Skipping provenance logging would hide AIRS's prefetch activity from the audit trail
+
+The normal read path is the only read path. Prefetch is just "read it now instead of later."
+
 ### 4.4 Crash Recovery
 
 On boot, the Block Engine replays the WAL:

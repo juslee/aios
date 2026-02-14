@@ -2523,6 +2523,8 @@ AIRS resource orchestration CAN:
   │   (kernel validates: within global limits, within pool min/max)
   ├── Request prefetch of space objects
   │   (kernel validates: AIRS holds ReadSpace cap for the target space)
+  │   (prefetch uses the NORMAL Space Storage read path — see spaces.md §4.3.1)
+  │   (AIRS never touches decryption keys — Space Storage decrypts)
   ├── Schedule block compression
   │   (kernel validates: compression doesn't exceed CPU quota)
   └── Accept and process agent hints
