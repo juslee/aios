@@ -430,6 +430,69 @@ Index lookup (e.g., find block for content_hash):
 
 **Compaction scheduling:** Compaction runs at lowest I/O priority and is paused during active inference (when SD card bandwidth is needed for model loading). On battery-powered future devices, compaction can be deferred to charging periods.
 
+**SSTable manifest for crash safety:** Production LSM-trees (LevelDB, RocksDB) use a manifest file to track which SSTables are live. AIOS maintains an `SsTableManifest` that records the current set of valid SSTables per level:
+
+```rust
+pub struct SsTableManifest {
+    /// Current live SSTables per level
+    levels: [Vec<SsTableId>; LSM_MAX_LEVELS],
+    /// Manifest version (incremented on every compaction)
+    version: u64,
+    /// Written atomically to a dedicated manifest block on disk.
+    /// On crash recovery, the manifest identifies which SSTables are
+    /// live and which are orphaned (partially-written compaction output).
+    /// Orphaned SSTables are deleted during recovery.
+}
+```
+
+A crash during compaction (between writing new SSTables and updating the manifest) leaves orphaned SSTable files on disk. Recovery detects these by comparing on-disk SSTables against the manifest and deletes any not listed. The old SSTables (compaction inputs) remain valid until the manifest atomically switches to the new set.
+
+**WAL captures index entries:** The WAL entry format includes both data block writes and their corresponding LSM-tree index entries. On crash recovery, the WAL replay re-inserts any index entries that were in the MemTable at crash time but not yet flushed to an SSTable:
+
+```
+WAL entry format (extended for LSM-tree):
+  block_id | new_data | content_hash | block_location | checksum
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        These fields reconstruct the MemTable entry
+                        during crash recovery.
+```
+
+**Tombstone handling for block deletion:** When a block is deleted (refcount reaches 0), the LSM-tree writes a tombstone marker instead of immediately removing the entry:
+
+```rust
+pub enum IndexEntry {
+    /// Live block: content_hash maps to a block location
+    Live(BlockLocation),
+    /// Tombstone: block was deleted. Shadows any Live entry in lower levels.
+    /// Removed during compaction when no lower level contains the key.
+    Tombstone,
+}
+```
+
+Without tombstones, a deleted key in L1 would still be found in L2 or L3 during reads, returning a block that should have been garbage collected. Tombstones are written to the MemTable and flushed to SSTables like normal entries. Compaction removes tombstones when no lower level contains the corresponding key.
+
+**Write stall for compaction backlog:** If compaction falls behind (e.g., paused during inference, or sustained burst of writes), L0 accumulates unbounded SSTables. AIOS implements write stalling to prevent this:
+
+```rust
+impl LsmBlockIndex {
+    const L0_SLOWDOWN_THRESHOLD: usize = 8;  // 8 SSTables in L0: slow writes
+    const L0_STOP_THRESHOLD: usize = 12;     // 12 SSTables in L0: stall writes
+
+    fn check_write_stall(&self) -> WriteStallAction {
+        let l0_count = self.levels[0].len();
+        if l0_count >= Self::L0_STOP_THRESHOLD {
+            WriteStallAction::Stall  // block writes until compaction catches up
+        } else if l0_count >= Self::L0_SLOWDOWN_THRESHOLD {
+            WriteStallAction::Slowdown  // rate-limit writes to compaction throughput
+        } else {
+            WriteStallAction::None
+        }
+    }
+}
+```
+
+When stalled, the Block Engine queues incoming writes in the WAL (which is sequential and low-WAF) and returns to the caller once the WAL entry is fsynced. The writes are applied to the MemTable when compaction reduces L0 below the threshold. Agents see slightly increased write latency during stalls but never lose data.
+
 ### 4.2 Write Path (Flash-Aware)
 
 The write path is designed with **F2FS-style flash awareness** — writes are append-preferred and zone-separated to minimize flash wear and write amplification. Traditional filesystems scatter writes randomly across the device, causing the flash translation layer (FTL) to perform expensive read-modify-erase cycles. AIOS structures writes to work *with* the flash, not against it.
@@ -488,7 +551,7 @@ pub struct Zone {
 
 impl FlashZoneAllocator {
     /// Classify a write into a temperature zone
-    fn classify(&self, content_type: ContentType, tier: StorageTier) -> &mut Zone {
+    fn zone_for_tier(&mut self, tier: StorageTier) -> &mut Zone {
         match tier {
             StorageTier::Hot => &mut self.hot_zone,
             StorageTier::Warm => &mut self.warm_zone,
@@ -498,16 +561,55 @@ impl FlashZoneAllocator {
 
     /// Allocate space for a new block — always append-preferred.
     /// Returns the write offset within the appropriate zone.
+    /// If the target zone is full, attempts zone overflow (steal from
+    /// a colder zone with available space).
     fn allocate(&mut self, size: usize, tier: StorageTier) -> Result<u64, AllocError> {
-        let zone = self.classify_mut(tier);
-        if zone.free_bytes < size as u64 {
-            return Err(AllocError::ZoneFull);
+        // Try the target zone first
+        let zone = self.zone_for_tier(tier);
+        if zone.free_bytes >= size as u64 {
+            let offset = zone.write_head;
+            zone.write_head += size as u64;
+            zone.free_bytes -= size as u64;
+            zone.bytes_written += size as u64;
+            return Ok(offset);
         }
-        let offset = zone.write_head;
-        zone.write_head += size as u64;
-        zone.free_bytes -= size as u64;
-        zone.bytes_written += size as u64;
-        Ok(offset)
+
+        // Target zone full — attempt overflow allocation.
+        // Hot can overflow into Warm; Warm can overflow into Cold.
+        // Cold zone full is a true disk-full condition.
+        let overflow_tier = match tier {
+            StorageTier::Hot => Some(StorageTier::Warm),
+            StorageTier::Warm => Some(StorageTier::Cold),
+            StorageTier::Cold => None,
+        };
+
+        if let Some(fallback) = overflow_tier {
+            let zone = self.zone_for_tier(fallback);
+            if zone.free_bytes >= size as u64 {
+                let offset = zone.write_head;
+                zone.write_head += size as u64;
+                zone.free_bytes -= size as u64;
+                zone.bytes_written += size as u64;
+                // Track overflow writes for zone rebalancing
+                self.overflow_count += 1;
+                return Ok(offset);
+            }
+        }
+
+        // All zones exhausted — trigger zone-aware GC before failing
+        Err(AllocError::ZoneFull)
+    }
+
+    /// Rebalance zones: compact live blocks within each zone to reclaim
+    /// fragmented space from deleted blocks. Run by the GC (§4.5).
+    fn compact_zone(&mut self, tier: StorageTier) -> usize {
+        let zone = self.zone_for_tier(tier);
+        // Walk the zone from start to write_head.
+        // Live blocks (refcount > 0) are compacted toward the start.
+        // Dead blocks (refcount == 0) are reclaimed.
+        // Returns bytes reclaimed.
+        // After compaction, write_head is reset to end of live data.
+        zone.compact_live_blocks()
     }
 }
 ```
@@ -597,16 +699,23 @@ Content-addressed blocks are reference-counted. When an object is modified (cont
 
 ```rust
 pub struct GarbageCollector {
-    /// Blocks with refcount 0
-    pending: Vec<BlockId>,
+    /// Blocks with refcount 0, organized by zone for targeted reclamation
+    pending_by_zone: [Vec<BlockId>; 3],  // [hot, warm, cold]
     /// Grace period before reclaiming (allows version history to reference old blocks)
     grace_period: Duration,
     /// Run GC when free space drops below threshold
     trigger_threshold: f64,         // fraction of total space
+    /// Per-zone trigger: run zone-specific GC when a zone's free space is low
+    zone_trigger_threshold: f64,    // default: 0.10 (10% free in any zone)
 }
 ```
 
-GC runs in the background and never blocks reads or writes.
+**Zone-aware GC:** When a specific zone runs low on space (e.g., the hot zone fills up from frequent metadata writes), GC targets that zone specifically — it reclaims dead blocks in the hot zone and optionally compacts live blocks to defragment the zone's append region. This is more efficient than global GC because:
+- Only the affected zone is scanned (less I/O)
+- Zone compaction restores the append-preferred write pattern for that zone
+- Other zones are undisturbed (no unnecessary I/O on cold data)
+
+GC runs in the background and never blocks reads or writes. When the zone allocator returns `AllocError::ZoneFull` (§4.2), the Block Engine triggers zone-specific GC before failing the write.
 
 ### 4.6 Block-Level Compression
 
@@ -629,7 +738,15 @@ pub struct BlockHeader {
     uncompressed_size: u32,
     compressed_size: u32,
     compression: CompressionStrategy,
-    checksum: u32,                      // CRC-32C of compressed data
+    checksum: u32,                      // CRC-32C of compressed data (integrity for non-encrypted blocks)
+    /// AES-256-GCM nonce (96 bits). Unique per block write under the same key.
+    /// Stored alongside ciphertext — nonces are not secret.
+    /// Only present for blocks in encrypted spaces (Personal, Collaborative, Untrusted).
+    nonce: Option<[u8; 12]>,
+    /// AES-256-GCM authentication tag (128 bits). Verifies both ciphertext
+    /// integrity and authenticity. Replaces CRC-32C for encrypted blocks —
+    /// CRC-32C is retained as a secondary check for storage-level corruption.
+    auth_tag: Option<[u8; 16]>,
 }
 
 impl BlockEngine {
@@ -765,7 +882,7 @@ pub struct TierStats {
 }
 ```
 
-**Tier transitions:** A background thread scans block access timestamps. When a Hot block hasn't been accessed within `warm_window`, it is recompressed with zstd and demoted to Warm. When a Warm block hasn't been accessed within `warm_window`, it is recompressed at a higher zstd level and demoted to Cold. Promotion (Cold → Hot) happens automatically on access — the block is decompressed and rewritten with LZ4.
+**Tier transitions:** A background thread scans block access timestamps. When a Hot block hasn't been accessed within `hot_window` (24 hours), it is recompressed with zstd and demoted to Warm. When a Warm block hasn't been accessed within `warm_window` (30 days), it is recompressed at a higher zstd level and demoted to Cold. Promotion (Cold → Hot) happens automatically on access — the block is decompressed and rewritten with LZ4.
 
 **Recompression is lazy.** The recompressor runs at lowest I/O priority and yields to any foreground read or write. On a Pi with an SD card, recompression is throttled to avoid wearing the card. Tier transitions are batched — the recompressor processes blocks in groups during idle periods.
 
@@ -1092,7 +1209,97 @@ pub enum EncryptionAlgorithm {
 5. Spaces become accessible
 ```
 
-**Key rotation:** Space keys can be rotated without re-encrypting all data. New writes use the new key. Old data is re-encrypted in the background. The rotation is atomic — at no point is data unencrypted on disk.
+**Key rotation:** Space keys can be rotated without re-encrypting all data. New writes use the new key. Old data is re-encrypted in the background. The rotation is tracked by a `KeyRotationManifest` in the WAL — if the system crashes during rotation, recovery resumes re-encryption from the last checkpointed block. Both old and new keys are retained until re-encryption completes, ensuring all blocks are always decryptable.
+
+### 6.1.1 Nonce Management
+
+AES-256-GCM requires a unique nonce (initialization vector) for every encryption operation under the same key. Reusing a nonce under the same key is catastrophic — it breaks GCM authentication and enables plaintext recovery via ciphertext XOR.
+
+```rust
+/// Counter-based nonce generation. Each space key tracks a monotonically
+/// increasing counter. The nonce is constructed from the counter + a random
+/// component to prevent nonce reuse across crash/recovery boundaries.
+pub struct NonceGenerator {
+    /// Monotonic counter, persisted to disk with the space key metadata.
+    /// Incremented on every block write. On crash recovery, the counter
+    /// is advanced by a safety margin (1000) to ensure no reuse.
+    counter: AtomicU64,
+    /// Random prefix (32 bits), generated at key creation time.
+    /// Combined with the 64-bit counter to fill the 96-bit nonce.
+    random_prefix: u32,
+}
+
+impl NonceGenerator {
+    /// Generate the next nonce. MUST be called exactly once per encryption.
+    pub fn next_nonce(&self) -> [u8; 12] {
+        let count = self.counter.fetch_add(1, Ordering::SeqCst);
+        let mut nonce = [0u8; 12];
+        nonce[..4].copy_from_slice(&self.random_prefix.to_le_bytes());
+        nonce[4..].copy_from_slice(&count.to_le_bytes());
+        nonce
+    }
+
+    /// On crash recovery: advance counter by safety margin to guarantee
+    /// no nonce reuse, even if some writes were lost.
+    pub fn recover(&self, last_persisted: u64) {
+        self.counter.store(last_persisted + 1000, Ordering::SeqCst);
+    }
+}
+```
+
+**Why counter-based, not random?** Random 96-bit nonces have a birthday collision probability of ~2^-32 after 2^32 encryptions. For a space with millions of blocks across years of edits, this is uncomfortably close. Counter-based nonces guarantee uniqueness as long as the counter never repeats — which the monotonic counter + crash recovery margin ensures.
+
+### 6.1.2 Key Zeroization and Memory Protection
+
+Decrypted space keys are security-critical material. AIOS ensures they cannot leak to swap, remain in memory longer than needed, or be observable via side channels:
+
+```rust
+/// A decrypted space key in memory. Automatically zeroized on drop.
+pub struct DecryptedSpaceKey {
+    /// Key material — allocated on a dedicated kernel page that is:
+    /// 1. mlock'd (pinned, never paged to swap or zram)
+    /// 2. mprotect'd PROT_READ only (writes go through dedicated API)
+    /// 3. Excluded from core dumps
+    key_bytes: ZeroizeBox<[u8; 32]>,
+    /// Space this key belongs to
+    space_id: SpaceId,
+    /// Key version (for rotation tracking)
+    version: u32,
+}
+
+impl Drop for DecryptedSpaceKey {
+    fn drop(&mut self) {
+        // Zeroize key material before deallocation.
+        // Uses volatile writes to prevent compiler optimization.
+        self.key_bytes.zeroize();
+    }
+}
+```
+
+**Key lifetime policy:**
+- Decrypted keys are loaded when the user authenticates and a space is accessed
+- Keys are zeroized when the user locks the screen, logs out, or the space is unmounted
+- Keys are stored on pinned kernel pages — never eligible for zram compression or swap
+- The kernel page holding key material is mapped with `VmFlags::PINNED | VmFlags::NO_DUMP`
+
+### 6.1.3 Cross-Zone Deduplication Boundaries
+
+Content-addressed storage deduplicates identical blocks — but deduplication across security zones creates a side channel. An agent with access to the Untrusted zone could write known content and check whether the refcount is >1, leaking whether that content exists in an encrypted Personal zone.
+
+**AIOS deduplication is scoped per security zone:**
+
+```
+Dedup scope          Blocks compared against     Side channel risk
+──────────           ───────────────────────     ────────────────
+Core ↔ Core          Yes (same zone)             None (system data, not sensitive)
+Personal ↔ Personal  Yes (same zone)             Low (all user's own data)
+Untrusted ↔ Untrusted Yes (same zone)            Low (all web-origin data)
+Core ↔ Personal      NO (cross-zone)             Blocked
+Untrusted ↔ Personal NO (cross-zone)             Blocked
+Collaborative ↔ any  Per-space only              Blocked across spaces
+```
+
+Each security zone maintains its own content-hash → block mapping in the LSM-tree index. An `Untrusted` block write checks dedup only against other `Untrusted` blocks. This means the same content stored in both `Personal` and `Untrusted` zones is stored twice — a space cost of up to ~5-10% duplication in practice, acceptable for eliminating the side channel.
 
 ### 6.2 Encryption Zones
 

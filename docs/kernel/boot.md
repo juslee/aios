@@ -724,7 +724,7 @@ Each service receives exactly the capabilities it needs. No service holds the `S
 
 Storage is the first service phase because almost everything else depends on persistent state. Before storage, the system has only the initramfs (read-only, in memory).
 
-**Block Engine** starts first. It takes ownership of the raw block device (VirtIO-Blk on QEMU, SD/eMMC on Pi). On first boot, it formats the device: writes the superblock, initializes the WAL region, creates the empty B-tree index. On subsequent boots, it reads the superblock, replays the WAL to recover from any incomplete writes, and verifies the B-tree root.
+**Block Engine** starts first. It takes ownership of the raw block device (VirtIO-Blk on QEMU, SD/eMMC on Pi). On first boot, it formats the device: writes the superblock, initializes the WAL region, creates the empty LSM-tree index (empty MemTable, no SSTables). On subsequent boots, it reads the superblock, replays the WAL to recover from any incomplete writes, and verifies the SSTable manifest.
 
 ```
 Block Engine startup:
@@ -736,7 +736,7 @@ Block Engine startup:
      - Scan WAL from tail to head
      - Apply committed entries not yet in main storage
      - Discard uncommitted entries
-  4. Verify B-tree root page
+  4. Verify SSTable manifest (which SSTables are live)
   5. Report healthy to Service Manager
   Target: ~100ms (dominated by device I/O)
 ```
@@ -945,7 +945,7 @@ Several techniques keep boot under budget:
 
 **Deferred indexing.** The Space Indexer doesn't run during boot. It starts background work after the desktop is visible.
 
-**Warm page cache.** On repeated boots, frequently accessed blocks (superblock, B-tree root, model metadata) are likely in the storage device's internal cache, making reads faster.
+**Warm page cache.** On repeated boots, frequently accessed blocks (superblock, SSTable manifest, model metadata) are likely in the storage device's internal cache, making reads faster.
 
 -----
 
@@ -1374,7 +1374,7 @@ Phase 3: IPC & Capability System (Weeks 13-16)
   - Provenance chain (first entry)
 
 Phase 4: Block Storage & Object Store (Weeks 17-20)
-  - Block Engine (superblock, WAL, B-tree)
+  - Block Engine (superblock, WAL, LSM-tree)
   - Object Store (content-addressing, dedup)
   - Space Storage (system spaces, Space API)
   - Kernel audit log flush to space storage
