@@ -265,6 +265,14 @@ pub enum ModelSource {
 }
 ```
 
+**Disk storage reality:** Model GGUF files are the largest single item on disk. A single 8B Q4 model is 4.5 GB — 15% of a 32 GB SD card. AIRS coordinates with the Space Storage system's storage budget (see [spaces.md §10.2](../storage/spaces.md)) to respect model disk quotas:
+
+- **32 GB devices:** Only one model stored on disk at a time. Switching models means downloading the new one and deleting the old one.
+- **64 GB devices:** 2-3 models cached on disk. LRU eviction when the model quota is exceeded.
+- **128 GB+ devices:** Full model library on disk. No eviction unless the user explicitly requests cleanup.
+
+Downloaded models are **always evictable** — they can be re-fetched from the model registry. User-provided models (local fine-tunes, custom GGUF files) are **never automatically deleted** because they may not be reproducible.
+
 ### 4.2 Model Profiles
 
 Different tasks need different models. AIRS maps tasks to models:
