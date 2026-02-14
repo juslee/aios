@@ -1543,27 +1543,198 @@ Tier 3: Disk swap (if enabled)
   → Only for 2 GB devices under heavy load
 ```
 
-### 10.2 Page Reclamation
+### 10.2 Page Aging and LRU
 
-The page reclaimer runs when memory pressure reaches `Low` or worse:
+Every reclaimable page in the user pool is tracked in a multi-generation LRU (Least Recently Used) structure. The LRU determines which pages are "cold" (good candidates for compression or swap) and which are "hot" (recently accessed, should stay in physical RAM).
+
+**Two-list LRU with aging:**
+
+Pages move between an active list and an inactive list based on access patterns. The key hardware mechanism is the **Access flag** in aarch64 page table entries (PTE bit [10]). When the CPU accesses a page for the first time after the flag is cleared, it sets the flag automatically. The kernel periodically sweeps PTEs, reads the flag, and clears it — this is the aging clock.
 
 ```rust
-pub struct PageReclaimer {
-    /// LRU list of reclaimable pages
-    lru: LruList<PhysicalFrame>,
-    /// Compressed memory backend
-    zram: ZramBackend,
-    /// Swap device (if configured)
-    swap: Option<SwapDevice>,
+pub struct LruList<T> {
+    /// Recently accessed pages — protected from reclamation
+    active: LinkedList<LruEntry<T>>,
+    /// Not recently accessed — candidates for reclamation
+    inactive: LinkedList<LruEntry<T>>,
+    /// Pages in active list
+    active_count: usize,
+    /// Pages in inactive list
+    inactive_count: usize,
 }
 
+pub struct LruEntry<T> {
+    frame: T,
+    /// Page type for reclamation priority
+    page_type: PageType,
+    /// Number of aging cycles since last access
+    age: u8,
+    /// Referenced since last aging scan?
+    referenced: bool,
+    /// Dirty (modified since last writeback)?
+    dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageType {
+    /// File-backed page cache (clean: free immediately, dirty: write back first)
+    PageCache,
+    /// Anonymous page (agent heap, stack) — must compress or swap
+    Anonymous,
+    /// Shared memory region — only reclaimable if all mappers are idle
+    Shared,
+}
+```
+
+**Aging algorithm — periodic scan (runs every 200 ms under normal pressure, 50 ms under critical):**
+
+```
+For each page on the ACTIVE list:
+  1. Read PTE Access flag
+  2. If Access flag SET:
+       → Clear Access flag (start new observation window)
+       → Reset age to 0
+       → Page stays on active list
+  3. If Access flag CLEAR:
+       → Increment age
+       → If age >= AGE_THRESHOLD (default: 3 scans = 600 ms idle):
+           Move page to INACTIVE list (tail)
+
+For each page on the INACTIVE list:
+  1. Read PTE Access flag
+  2. If Access flag SET:
+       → Page was accessed while on inactive list — promote back to ACTIVE list
+       → Clear Access flag, reset age
+  3. If Access flag CLEAR:
+       → Page remains on inactive list
+       → Available for reclamation (clean pages first, then dirty)
+```
+
+**Why two lists instead of one?** A single LRU is vulnerable to scanning — if an agent reads through a large file once, those pages push out frequently-used pages. The two-list design requires a page to survive on the inactive list and be re-accessed before it earns active list protection. One-time scans never reach the active list.
+
+**Active/inactive balance:** The kernel targets a ratio of roughly 2:1 (active:inactive). If the active list grows too large relative to the inactive list, the aging threshold is lowered (pages demoted faster). If the inactive list is oversized, the threshold is raised. This ensures there are always enough candidates for reclamation without evicting too aggressively.
+
+```rust
+impl<T> LruList<T> {
+    const TARGET_ACTIVE_RATIO: f32 = 0.67;   // 2/3 active, 1/3 inactive
+    const MIN_AGE_THRESHOLD: u8 = 2;          // minimum scans before demotion
+    const MAX_AGE_THRESHOLD: u8 = 8;          // maximum scans before demotion
+    const DEFAULT_AGE_THRESHOLD: u8 = 3;
+
+    fn adaptive_threshold(&self) -> u8 {
+        let total = self.active_count + self.inactive_count;
+        if total == 0 { return Self::DEFAULT_AGE_THRESHOLD; }
+
+        let active_ratio = self.active_count as f32 / total as f32;
+        if active_ratio > Self::TARGET_ACTIVE_RATIO + 0.1 {
+            // Active list too large — demote faster
+            Self::MIN_AGE_THRESHOLD
+        } else if active_ratio < Self::TARGET_ACTIVE_RATIO - 0.1 {
+            // Active list too small — demote slower
+            Self::MAX_AGE_THRESHOLD
+        } else {
+            Self::DEFAULT_AGE_THRESHOLD
+        }
+    }
+
+    /// Pop the coldest clean page from the inactive list
+    pub fn pop_clean(&mut self) -> Option<PhysicalFrame> {
+        self.inactive.iter()
+            .position(|e| !e.dirty && e.page_type == PageType::PageCache)
+            .map(|pos| self.inactive.remove(pos).frame)
+    }
+
+    /// Pop the coldest dirty anonymous page from the inactive list
+    pub fn pop_inactive_dirty(&mut self) -> Option<PhysicalFrame> {
+        self.inactive.iter()
+            .position(|e| e.page_type == PageType::Anonymous)
+            .map(|pos| self.inactive.remove(pos).frame)
+    }
+
+    /// Pop any remaining reclaimable page (used by tier 3 swap)
+    pub fn pop_any(&mut self) -> Option<PhysicalFrame> {
+        self.inactive.pop_front().map(|e| e.frame)
+    }
+}
+```
+
+### 10.3 Compressed Memory (zram)
+
+zram provides the second tier of memory reclamation. Instead of writing inactive pages to a slow SD card, zram compresses them and stores the compressed data in a reserved region of RAM. A 4 KB page typically compresses to 1–2 KB (agent heap data — structs, strings, JSON — is highly compressible). This effectively doubles the amount of data that can reside in RAM without any I/O.
+
+**Architecture:**
+
+```
+Before compression:                    After compression:
+
+┌───────────┐                          ┌───────────┐
+│ Page A     │  4 KB                   │ Page A     │  compressed: 1.2 KB ──┐
+│ (inactive) │                         │ (freed)    │                       │
+├───────────┤                          ├───────────┤    ┌─────────────────┐ │
+│ Page B     │  4 KB                   │ Page B     │    │ zram pool       │ │
+│ (inactive) │                         │ (freed)    │    │                 │ │
+├───────────┤                          ├───────────┤    │ ┌─A─┬─B─┬─C─┐  │◄┘
+│ Page C     │  4 KB                   │ Page C     │    │ │1.2│0.8│1.5│  │
+│ (inactive) │                         │ (freed)    │    │ │KB │KB │KB │  │
+├───────────┤                          ├───────────┤    │ └───┴───┴───┘  │
+│ ...        │                         │ (free)     │    │ 3.5 KB used    │
+│            │                         │ 12 KB free │    │ (was 12 KB)    │
+└───────────┘                          └───────────┘    └─────────────────┘
+
+12 KB occupied  →  3.5 KB occupied  (3.4:1 ratio, 8.5 KB freed)
+```
+
+**Compression algorithm selection:**
+
+```rust
+#[derive(Debug, Clone, Copy)]
+pub enum CompressionAlgorithm {
+    /// LZ4: ~500 MB/s compress, ~2 GB/s decompress on Cortex-A76
+    /// Ratio: 2:1 to 2.5:1 typical. Best for latency-sensitive paths.
+    Lz4,
+    /// Zstd (level 1): ~300 MB/s compress, ~1 GB/s decompress
+    /// Ratio: 2.5:1 to 3.5:1 typical. Better ratio at higher CPU cost.
+    ZstdFast,
+}
+```
+
+AIOS uses **LZ4 as the default** compression algorithm. The reasoning:
+
+- **Decompression speed is critical.** When an agent accesses a compressed page, the page fault handler must decompress it before the agent can proceed. LZ4 decompresses at ~2 GB/s on Cortex-A76 — a 4 KB page decompresses in ~2 microseconds. The agent barely notices.
+- **Compression speed matters too.** When the reclaimer compresses pages under memory pressure, every microsecond counts. LZ4 compresses at ~500 MB/s — roughly 8 microseconds per page.
+- **The ratio tradeoff is acceptable.** LZ4's 2:1 to 2.5:1 ratio is worse than Zstd's 2.5:1 to 3.5:1, but the speed difference is large. On a 4-core Cortex-A76 where one core is running inference, CPU time is scarce. LZ4 minimizes CPU steal.
+
+**When Zstd is used:** Under sustained Critical pressure (section 8.1), the reclaimer switches to ZstdFast for newly compressed pages. The reasoning: if we're already critically low on memory, squeezing an extra 20-40% ratio is worth the CPU cost. Pages that were already compressed with LZ4 are not recompressed — the benefit doesn't justify decompressing and recompressing every existing page.
+
+```rust
 pub struct ZramBackend {
     /// Compressed page storage (in RAM)
     compressed: HashMap<PhysicalFrame, CompressedPage>,
-    /// Compression algorithm (LZ4 for speed)
+    /// Active compression algorithm (switches under pressure)
     algorithm: CompressionAlgorithm,
-    /// Memory saved by compression
+    /// Memory saved by compression (bytes_original - bytes_compressed)
     bytes_saved: usize,
+    /// Total compressed bytes stored
+    bytes_stored: usize,
+    /// Maximum zram pool size (percentage of user pool)
+    max_pool_bytes: usize,
+    /// Compression statistics for monitoring
+    stats: ZramStats,
+}
+
+pub struct ZramStats {
+    /// Total pages compressed
+    pages_compressed: u64,
+    /// Total pages decompressed (on access fault)
+    pages_decompressed: u64,
+    /// Pages that didn't compress well (ratio < 1.5:1, stored uncompressed)
+    pages_incompressible: u64,
+    /// Average compression ratio (original / compressed)
+    avg_ratio: f32,
+    /// Total CPU time spent compressing (microseconds)
+    compress_time_us: u64,
+    /// Total CPU time spent decompressing (microseconds)
+    decompress_time_us: u64,
 }
 
 pub struct CompressedPage {
@@ -1573,6 +1744,477 @@ pub struct CompressedPage {
     owner: ProcessId,
     /// Virtual address in owner's space
     vaddr: VirtualAddress,
+    /// Algorithm used (needed for decompression)
+    algorithm: CompressionAlgorithm,
+    /// Original size (always PAGE_SIZE, but stored for validation)
+    original_size: usize,
+}
+```
+
+**Per-device zram pool sizing:**
+
+The zram pool is capped at a percentage of the user pool. There's no benefit to allowing zram to consume all of RAM — at some point the overhead of compressed page metadata and fragmenting the remaining free memory is worse than just swapping to disk or killing an agent.
+
+```
+Device RAM   User Pool   zram Max (25%)   Effective Capacity
+─────────    ─────────   ─────────────    ──────────────────
+2 GB         1 GB        256 MB           1 GB user + ~400 MB virtual (2.5:1)
+4 GB         2 GB        512 MB           2 GB user + ~1 GB virtual
+8 GB         3.5 GB      896 MB           3.5 GB user + ~1.8 GB virtual
+16 GB        11.5 GB     2.8 GB           11.5 GB user + ~5.6 GB virtual
+```
+
+**Incompressible page handling:** Not all data compresses well. Encrypted data, already-compressed media, and random bytes may compress to larger than the original. If a page compresses to more than 75% of its original size (ratio below 1.33:1), the reclaimer marks it as incompressible and does not store it in zram. These pages remain on the inactive LRU list and will be swapped to disk (tier 3) if memory pressure continues. The `pages_incompressible` counter in `ZramStats` tracks how often this occurs — a high value suggests agents are working with encrypted or pre-compressed data, and the reclaimer should favor disk swap earlier.
+
+### 10.4 Swap Device
+
+Disk swap is tier 3 — the last resort before the OOM killer. It exists primarily for 2 GB devices where the user pool is small enough that even zram can't keep up with heavy workloads.
+
+**Swap partition sizing and initialization:**
+
+AIOS uses a dedicated swap partition rather than a swap file. A swap partition avoids filesystem overhead and provides predictable I/O patterns. The partition is created during installation and sized based on device RAM:
+
+```
+Device RAM   Swap Partition   Rationale
+─────────    ──────────────   ─────────
+2 GB         512 MB           Essential — user pool is only 1 GB
+4 GB         256 MB           Safety net — rarely used if zram is effective
+8 GB+        0 (disabled)     Not needed — zram provides sufficient expansion
+```
+
+On 8 GB+ devices, swap is **disabled by default**. The reasoning: on an 8 GB device the user pool is 3.5 GB, zram adds ~1.8 GB of virtual capacity, and the model pool already handles AI memory separately. Swap would only activate in pathological scenarios where the OOM killer is a better response. Disabling swap also eliminates SD card wear from swap I/O entirely on these devices.
+
+```rust
+pub struct SwapDevice {
+    /// Block device path (e.g., /dev/mmcblk0p3 — third partition on SD card)
+    device: BlockDeviceHandle,
+    /// Total swap slots (one slot = one 4 KB page)
+    total_slots: usize,
+    /// Free slot bitmap
+    free_bitmap: BitVec,
+    /// Number of currently used slots
+    used_slots: usize,
+    /// I/O statistics
+    stats: SwapStats,
+    /// Throttle state for wear leveling
+    throttle: SwapThrottle,
+}
+
+pub struct SwapStats {
+    /// Total pages written to swap (swap-out)
+    pages_out: u64,
+    /// Total pages read from swap (swap-in, on page fault)
+    pages_in: u64,
+    /// Total bytes written to the device
+    bytes_written: u64,
+    /// Write errors (bad blocks, I/O failures)
+    write_errors: u64,
+    /// Average swap-in latency (microseconds)
+    avg_swapin_latency_us: u64,
+}
+
+impl SwapDevice {
+    /// Initialize swap from a dedicated partition
+    pub fn init(device: BlockDeviceHandle, partition_size: usize) -> Result<Self, SwapError> {
+        let total_slots = partition_size / PAGE_SIZE;
+
+        // Write a swap header to the first page (magic number, version, slot count).
+        // The header allows the kernel to validate the partition at boot and detect
+        // corruption or a misidentified partition.
+        let header = SwapHeader {
+            magic: AIOS_SWAP_MAGIC,
+            version: 1,
+            total_slots: total_slots as u32,
+            page_size: PAGE_SIZE as u32,
+        };
+        device.write_block(0, &header.to_bytes())?;
+
+        let mut free_bitmap = BitVec::with_capacity(total_slots);
+        free_bitmap.set_all(true);
+        free_bitmap.set(0, false); // slot 0 is the header
+
+        Ok(SwapDevice {
+            device,
+            total_slots,
+            free_bitmap,
+            used_slots: 0,
+            stats: SwapStats::default(),
+            throttle: SwapThrottle::new(),
+        })
+    }
+
+    /// Write a page to swap. Returns the swap slot index.
+    pub fn write_page(&mut self, frame: PhysicalFrame) -> Result<SwapSlot, SwapError> {
+        // Check throttle — refuse if we've exceeded the write budget
+        if self.throttle.is_throttled() {
+            return Err(SwapError::Throttled);
+        }
+
+        let slot = self.free_bitmap.first_set()
+            .ok_or(SwapError::Full)?;
+
+        let offset = slot * PAGE_SIZE;
+        self.device.write_block(offset, frame.as_slice())?;
+
+        self.free_bitmap.set(slot, false);
+        self.used_slots += 1;
+        self.stats.pages_out += 1;
+        self.stats.bytes_written += PAGE_SIZE as u64;
+        self.throttle.record_write();
+
+        Ok(SwapSlot(slot))
+    }
+
+    /// Read a page back from swap (called from page fault handler).
+    pub fn read_page(&mut self, slot: SwapSlot) -> Result<PageData, SwapError> {
+        let offset = slot.0 * PAGE_SIZE;
+        let data = self.device.read_block(offset, PAGE_SIZE)?;
+
+        self.free_bitmap.set(slot.0, true);
+        self.used_slots -= 1;
+        self.stats.pages_in += 1;
+
+        Ok(data)
+    }
+}
+```
+
+### 10.5 Page Fault Handling for Compressed and Swapped Pages
+
+When an agent accesses a page that has been compressed (zram) or swapped to disk, the CPU raises a page fault because the PTE has been invalidated. The page fault handler must detect the cause, retrieve the data, and make the page accessible again — all transparently to the agent.
+
+**PTE encoding for compressed and swapped pages:**
+
+When a page is reclaimed, its PTE is modified to indicate where the data went. The PTE's "valid" bit is cleared (causing a fault on access), and the remaining bits encode the location:
+
+```
+Valid PTE (page in physical RAM):
+  ┌─────────────────────────────────────────────────────────┐
+  │ Physical Frame Number (bits 47:12) │ Flags │ V=1        │
+  └─────────────────────────────────────────────────────────┘
+
+Compressed PTE (page in zram):
+  ┌─────────────────────────────────────────────────────────┐
+  │ zram index (bits 47:2)             │ Type=01 │ V=0      │
+  └─────────────────────────────────────────────────────────┘
+
+Swapped PTE (page on disk):
+  ┌─────────────────────────────────────────────────────────┐
+  │ Swap slot number (bits 47:2)       │ Type=10 │ V=0      │
+  └─────────────────────────────────────────────────────────┘
+
+Zero PTE (never accessed — demand-zero on first fault):
+  ┌─────────────────────────────────────────────────────────┐
+  │ 0000000000000000000000000000000000 │ Type=00 │ V=0      │
+  └─────────────────────────────────────────────────────────┘
+```
+
+**Page fault handler — full path:**
+
+```rust
+pub fn handle_page_fault(
+    fault_addr: VirtualAddress,
+    fault_type: FaultType,
+    process: &mut Process,
+) -> Result<(), FaultError> {
+    let vma = process.address_space.find_vma(fault_addr)
+        .ok_or(FaultError::SegmentationFault)?;
+
+    // Permission check: is the access type valid for this VMA?
+    if !vma.permits(fault_type) {
+        return Err(FaultError::ProtectionFault);
+    }
+
+    let pte = process.address_space.walk_page_table(fault_addr)?;
+
+    match pte.state() {
+        // Case 1: Demand-zero page (first access to anonymous mapping)
+        PteState::Zero => {
+            let frame = alloc_zeroed_page()?;
+            process.address_space.map_page(fault_addr, frame, vma.permissions());
+            process.memory_stats.record_minor_fault();
+            Ok(())
+        }
+
+        // Case 2: Compressed page in zram
+        PteState::Compressed { zram_index } => {
+            let frame = alloc_page()?;
+            let compressed = RECLAIMER.lock().zram.decompress(zram_index)?;
+            frame.copy_from(&compressed);
+            process.address_space.map_page(fault_addr, frame, vma.permissions());
+            process.memory_stats.record_minor_fault();
+            // Page starts on active list — it was just accessed
+            RECLAIMER.lock().lru.push_active(frame);
+            Ok(())
+        }
+
+        // Case 3: Swapped page on disk
+        PteState::Swapped { swap_slot } => {
+            let frame = alloc_page()?;
+            let data = RECLAIMER.lock().swap.as_mut()
+                .ok_or(FaultError::SwapDeviceMissing)?
+                .read_page(swap_slot)?;
+            frame.copy_from(&data);
+            process.address_space.map_page(fault_addr, frame, vma.permissions());
+            process.memory_stats.record_major_fault();
+            RECLAIMER.lock().lru.push_active(frame);
+            Ok(())
+        }
+
+        // Case 4: COW page (handled in section 5.4)
+        PteState::CopyOnWrite { original_frame } => {
+            handle_cow_fault(fault_addr, original_frame, process, vma)
+        }
+
+        // Case 5: File-backed page (page cache miss)
+        PteState::FileBacked { file, offset } => {
+            let frame = alloc_page()?;
+            file.read_page(offset, &mut frame)?;
+            process.address_space.map_page(fault_addr, frame, vma.permissions());
+            process.memory_stats.record_major_fault();
+            RECLAIMER.lock().lru.push_active(frame);
+            Ok(())
+        }
+
+        _ => Err(FaultError::UnexpectedPteState),
+    }
+}
+```
+
+**Minor vs. major faults:**
+
+- **Minor fault:** Data is still in RAM (demand-zero, zram, COW). Resolved in microseconds. No disk I/O.
+- **Major fault:** Data must be read from disk (swap, file-backed page cache miss). Resolved in milliseconds. The faulting thread is blocked until I/O completes.
+
+On 8 GB devices running normal workloads, virtually all faults are minor (demand-zero or COW). Major faults should be rare. If `major_faults` is climbing, the system is swapping — the memory pressure system (section 8) should already be responding.
+
+**Readahead on swap-in:** When a page fault reads one page from swap, adjacent pages (in the agent's virtual address space) are likely to be needed soon. The swap-in path reads up to 8 contiguous swap slots in a single I/O operation, decompresses them, and maps them into the agent's address space. This amortizes the SD card's high seek latency across multiple pages. The readahead window is adaptive — it starts at 1 page and doubles on each sequential fault, resetting to 1 on a non-sequential fault.
+
+```rust
+pub struct SwapReadahead {
+    /// Current readahead window (pages)
+    window: usize,
+    /// Maximum readahead window
+    max_window: usize,          // default: 8 pages (32 KB)
+    /// Last swap-in virtual address (for sequential detection)
+    last_fault_addr: Option<VirtualAddress>,
+}
+
+impl SwapReadahead {
+    pub fn compute_range(
+        &mut self,
+        fault_addr: VirtualAddress,
+        swap_slot: SwapSlot,
+    ) -> Range<SwapSlot> {
+        if let Some(last) = self.last_fault_addr {
+            if fault_addr == last + PAGE_SIZE {
+                // Sequential access — grow window
+                self.window = (self.window * 2).min(self.max_window);
+            } else {
+                // Random access — reset window
+                self.window = 1;
+            }
+        }
+        self.last_fault_addr = Some(fault_addr);
+
+        let start = swap_slot;
+        let end = SwapSlot(swap_slot.0 + self.window);
+        start..end
+    }
+}
+```
+
+### 10.6 Swap Thrashing Prevention
+
+Thrashing occurs when the system continuously swaps pages in and out — an agent accesses page A (swapped in), which evicts page B (swapped out), then the agent accesses page B (swapped in), which evicts page A (swapped out), and so on. The system spends all its time doing I/O and makes no forward progress. On an SD card with ~10 ms latency per I/O, thrashing is catastrophic.
+
+**Detection:**
+
+The kernel monitors the ratio of swap-in events to useful CPU cycles. Thrashing is detected when:
+
+```rust
+pub struct ThrashDetector {
+    /// Swap-in events in the current window
+    swapins_this_window: u64,
+    /// Window duration (default: 1 second)
+    window_duration: Duration,
+    /// Threshold: swap-ins per second that indicates thrashing
+    thrash_threshold: u64,       // default: 50 swap-ins/sec
+    /// Consecutive windows above threshold before declaring thrash
+    consecutive_above: u32,
+    /// Threshold for consecutive windows
+    consecutive_required: u32,   // default: 3 (3 seconds sustained)
+    /// Current thrash state
+    state: ThrashState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThrashState {
+    /// Normal operation
+    Normal,
+    /// Elevated swap activity — monitoring
+    Elevated,
+    /// Thrashing detected — intervention required
+    Thrashing,
+}
+```
+
+**Response — escalating interventions:**
+
+When thrashing is detected, the kernel does not simply continue reclaiming and swapping. It intervenes to break the thrash cycle:
+
+```
+ThrashState::Elevated (1-2 seconds of high swap activity):
+  1. Increase zram pool cap by 10% (allow more compressed pages)
+  2. Reduce aging scan interval to 50 ms (find cold pages faster)
+  3. Notify memory pressure system: transition to Critical if not already
+
+ThrashState::Thrashing (3+ seconds sustained):
+  1. Identify the agent causing the most swap-ins (from per-process fault stats)
+  2. SUSPEND that agent (stop its execution, freeze its pages in place)
+  3. Notify user: "Agent 'research-assistant' suspended — system is low on memory.
+     Close some agents or restart with more available memory."
+  4. If multiple agents are thrashing, suspend in priority order (lowest first)
+  5. Resume suspended agents only when memory pressure drops to Normal
+```
+
+**Why suspend instead of kill?** The OOM killer (section 8.2) is for when memory is truly exhausted. Thrashing is different — there may be enough total memory, but the working sets of running agents exceed physical RAM. Suspending one agent freezes its working set, allowing others to make progress. The suspended agent's state is preserved — it can resume later without losing work. Killing is permanent; suspending is reversible.
+
+**Per-agent working set tracking:** The thrash detector maintains a per-agent swap-in counter. An agent that generates 80% of swap-ins while using 20% of memory is the likely thrash culprit — its working set doesn't fit. The suspension decision uses both swap-in frequency and agent priority:
+
+```rust
+impl ThrashDetector {
+    fn select_suspend_candidate(&self, agents: &[AgentProcess]) -> Option<ProcessId> {
+        agents.iter()
+            .filter(|a| a.priority() != AgentPriority::Critical)
+            .filter(|a| !a.is_suspended())
+            .max_by_key(|a| {
+                let swapin_rate = a.memory_stats.major_faults_per_sec();
+                let priority_weight = match a.priority() {
+                    AgentPriority::Background => 4,
+                    AgentPriority::Normal     => 2,
+                    AgentPriority::System     => 1,
+                    AgentPriority::Critical   => 0,
+                };
+                swapin_rate * priority_weight
+            })
+            .map(|a| a.pid)
+    }
+}
+```
+
+### 10.7 SD Card Wear Mitigation
+
+SD cards and eMMC storage use NAND flash, which has a limited number of write/erase cycles per cell:
+
+```
+Storage Type          Write Endurance         Practical Lifetime (swap use)
+────────────          ───────────────         ────────────────────────────
+Consumer SD (TLC)     ~1,000 P/E cycles       Destroyed in weeks of heavy swap
+Industrial SD (pSLC)  ~30,000 P/E cycles      Months of sustained swap
+eMMC (typical Pi 5)   ~3,000 P/E cycles       Weeks to months depending on load
+NVMe (if available)   ~600 TBW (128 GB)       Years — not a concern
+```
+
+Heavy swap traffic on consumer SD cards is one of the fastest ways to destroy flash storage. A 512 MB swap partition with 50 pages/sec swap-out would write ~800 MB/hour — enough to cycle through every cell multiple times per day. AIOS addresses this with a write throttle and strict swap budgeting.
+
+**Write throttle:**
+
+```rust
+pub struct SwapThrottle {
+    /// Maximum bytes written per hour (rolling window)
+    hourly_budget: u64,           // default: 200 MB/hour
+    /// Maximum bytes written per day
+    daily_budget: u64,            // default: 2 GB/day
+    /// Bytes written in the current hour window
+    hourly_written: u64,
+    /// Bytes written in the current day window
+    daily_written: u64,
+    /// Window start timestamps
+    hourly_start: Instant,
+    daily_start: Instant,
+    /// Throttle state
+    throttled: bool,
+}
+
+impl SwapThrottle {
+    pub fn new() -> Self {
+        SwapThrottle {
+            hourly_budget: 200 * 1024 * 1024,     // 200 MB/hour
+            daily_budget: 2 * 1024 * 1024 * 1024,  // 2 GB/day
+            hourly_written: 0,
+            daily_written: 0,
+            hourly_start: Instant::now(),
+            daily_start: Instant::now(),
+            throttled: false,
+        }
+    }
+
+    pub fn record_write(&mut self) {
+        self.hourly_written += PAGE_SIZE as u64;
+        self.daily_written += PAGE_SIZE as u64;
+
+        // Roll over windows
+        if self.hourly_start.elapsed() > Duration::from_secs(3600) {
+            self.hourly_written = 0;
+            self.hourly_start = Instant::now();
+        }
+        if self.daily_start.elapsed() > Duration::from_secs(86400) {
+            self.daily_written = 0;
+            self.daily_start = Instant::now();
+        }
+
+        // Check budgets
+        if self.hourly_written >= self.hourly_budget
+            || self.daily_written >= self.daily_budget
+        {
+            self.throttled = true;
+        }
+    }
+
+    pub fn is_throttled(&self) -> bool {
+        self.throttled
+    }
+}
+```
+
+**What happens when the throttle engages?** The swap device refuses new writes. The reclaimer is limited to tier 1 (clean pages) and tier 2 (zram). If that's not enough, the memory pressure system escalates to Critical and eventually OOM. This is intentional: **it is better to kill an agent than to destroy the storage device.** The user is notified:
+
+```
+"Swap write limit reached (storage protection). Background agents may be
+ suspended or terminated to free memory. Consider closing unused agents."
+```
+
+**Wear estimation and reporting:** At boot, the kernel reads the swap device's lifetime write counter (via eMMC SMART data or SD card status registers where available). AIOS estimates remaining device lifetime and exposes it through the system status API:
+
+```
+Storage health:
+  Device: Samsung EVO 64 GB (SD)
+  Estimated wear: 12% (based on total bytes written)
+  Swap writes today: 340 MB / 2 GB budget
+  Swap writes this hour: 45 MB / 200 MB budget
+```
+
+If estimated wear exceeds 80%, AIOS disables swap entirely and logs a warning recommending device replacement. The system continues to function — zram and the OOM killer handle memory pressure without disk swap.
+
+### 10.8 Page Reclamation
+
+The page reclaimer ties sections 10.2 through 10.7 together. It runs when memory pressure reaches `Low` or worse, walks the LRU lists, and frees pages through the three-tier hierarchy:
+
+```rust
+pub struct PageReclaimer {
+    /// Two-list LRU of reclaimable pages (section 10.2)
+    lru: LruList<PhysicalFrame>,
+    /// Compressed memory backend (section 10.3)
+    zram: ZramBackend,
+    /// Swap device, if configured (section 10.4)
+    swap: Option<SwapDevice>,
+    /// Swap readahead state (section 10.5)
+    readahead: SwapReadahead,
+    /// Thrash detector (section 10.6)
+    thrash_detector: ThrashDetector,
+    /// Scan interval (adaptive based on pressure)
+    scan_interval: Duration,
 }
 
 impl PageReclaimer {
@@ -1589,13 +2231,20 @@ impl PageReclaimer {
             }
         }
 
-        // Tier 2: compress dirty pages
+        // Tier 2: compress dirty pages into zram
         while reclaimed < target_pages {
             if let Some(frame) = self.lru.pop_inactive_dirty() {
-                if let Ok(saved) = self.zram.compress(frame) {
-                    reclaimed += 1;
-                } else {
-                    break; // zram full
+                match self.zram.compress(frame) {
+                    Ok(_) => {
+                        reclaimed += 1;
+                    }
+                    Err(ZramError::Full) => break,
+                    Err(ZramError::Incompressible) => {
+                        // Page doesn't compress well — leave for tier 3
+                        self.lru.push_inactive_back(frame);
+                        continue;
+                    }
+                    Err(_) => break,
                 }
             } else {
                 break;
@@ -1607,10 +2256,20 @@ impl PageReclaimer {
             if let Some(ref mut swap) = self.swap {
                 while reclaimed < target_pages {
                     if let Some(frame) = self.lru.pop_any() {
-                        if swap.write_page(frame).is_ok() {
-                            reclaimed += 1;
-                        } else {
-                            break; // swap full
+                        match swap.write_page(frame) {
+                            Ok(_) => {
+                                reclaimed += 1;
+                            }
+                            Err(SwapError::Throttled) => {
+                                // Write budget exhausted — stop swapping
+                                self.lru.push_inactive_back(frame);
+                                break;
+                            }
+                            Err(SwapError::Full) => {
+                                self.lru.push_inactive_back(frame);
+                                break;
+                            }
+                            Err(_) => break,
                         }
                     } else {
                         break;
@@ -1619,10 +2278,18 @@ impl PageReclaimer {
             }
         }
 
+        // Update thrash detector
+        self.thrash_detector.update();
+
         reclaimed
     }
+
+    fn free_clean_page(&self, frame: PhysicalFrame) {
+        // Page is clean (unmodified page cache) — just free the frame.
+        // If the file is accessed again, it will be re-read from storage.
+        frame_allocator::free(frame);
+    }
 }
-```
 
 -----
 
@@ -1801,8 +2468,15 @@ Phase 14 — Performance and Optimization:
   ├── Background page zeroing thread
   ├── Cache coloring in buddy allocator
   ├── NEON-accelerated memory operations (memcpy, memset, zeroing)
-  ├── zram compressed memory backend
-  ├── Page reclamation and pressure monitoring
+  ├── Two-list LRU with PTE Access flag aging (§10.2)
+  ├── zram compressed memory backend with LZ4/Zstd (§10.3)
+  ├── Swap device initialization and slot management (§10.4)
+  ├── Page fault paths for compressed/swapped pages (§10.5)
+  ├── Swap readahead (adaptive sequential detection)
+  ├── Thrash detection and agent suspension (§10.6)
+  ├── SD card write throttle and wear monitoring (§10.7)
+  ├── Page reclamation with three-tier hierarchy (§10.8)
+  ├── Memory pressure monitoring
   └── OOM killer
 
 Phase 15 — POSIX Compatibility:
