@@ -130,6 +130,56 @@ pub enum Syscall {
         channel: ChannelId,
     },
 
+    /// Create a shared-memory ring buffer channel for high-frequency,
+    /// low-overhead messaging. No SVC trap per entry — producer/consumer
+    /// use atomic pointer advance. A lightweight notification (see below)
+    /// wakes the consumer when new entries arrive. Suitable for: AIRS
+    /// directives, streaming inference tokens, agent telemetry, metrics.
+    /// NOT suitable for: request/reply (use IpcCall), capability transfer
+    /// (requires kernel mediation), security-sensitive operations.
+    RingChannelCreate {
+        submission_queue_size: u32,  // entries (power of 2)
+        completion_queue_size: u32,
+        entry_size: u32,            // max bytes per entry
+        flags: RingChannelFlags,
+    },
+
+    /// Destroy a ring buffer channel
+    RingChannelDestroy {
+        ring: RingChannelId,
+    },
+
+    // === Lightweight Notifications (seL4-style bitmap signals) ===
+
+    /// Create a lightweight notification object (single-word bitmap).
+    /// No message body. Each bit position is a signal.
+    NotificationCreate {},
+
+    /// Signal a notification: atomic OR of bits into the notification word.
+    /// ~10 cycles. No message allocation, no queue, no serialization.
+    NotificationSignal {
+        id: NotificationId,
+        bits: u64,
+    },
+
+    /// Wait until any bit in mask is set. Returns the set bits and
+    /// atomically clears them. Blocks if no bits are set.
+    NotificationWait {
+        id: NotificationId,
+        mask: u64,
+    },
+
+    // === Channel Introspection ===
+
+    /// Query channel statistics (latency, throughput, error counts).
+    /// Returns ChannelStats. Used by AIRS behavioral monitoring and
+    /// by the Inspector agent for debugging.
+    ChannelStats {
+        channel: ChannelId,
+        buf: *mut u8,
+        buf_len: usize,
+    },
+
     // === Capability Operations ===
 
     /// Transfer a capability to another agent via IPC
@@ -298,7 +348,9 @@ The kernel's total heap usage is bounded by: `sum(per-process limits) * per-obje
 
 ### 3.4 Syscall Count
 
-Total: ~22 syscalls (including `IpcReply` and `NotificationSignal`/`NotificationWait`). Compare with Linux (~450) or even seL4 (~12). AIOS targets the sweet spot: enough for a full-featured OS, few enough that every syscall can be audited and fuzz-tested exhaustively.
+Total: 32 syscalls. IPC: 6 (`IpcCall`, `IpcSend`, `IpcRecv`, `IpcReply`, `IpcCancel`, `IpcSelect`). Channels: 4 (`ChannelCreate`, `ChannelDestroy`, `RingChannelCreate`, `RingChannelDestroy`). Notifications: 3 (`NotificationCreate`, `NotificationSignal`, `NotificationWait`). Introspection: 1 (`ChannelStats`). Capabilities: 4 (`CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList`). Memory: 5 (`MemoryMap`, `MemoryUnmap`, `SharedMemoryCreate`, `SharedMemoryMap`, `SharedMemoryShare`). Process: 3 (`ProcessCreate`, `ProcessExit`, `ProcessWait`). Time: 3 (`TimeGet`, `TimeSleep`, `TimerSet`). Audit: 1 (`AuditLog`). Debug: 1 (`DebugPrint`). DebugPrint is development-only and excluded from production builds.
+
+Compare with Linux (~450) or even seL4 (~12). AIOS targets the sweet spot: enough for a full-featured OS, few enough that every syscall can be audited and fuzz-tested exhaustively.
 
 -----
 
@@ -335,8 +387,8 @@ pub struct Channel {
     /// None for untyped channels (e.g., POSIX pipes).
     protocol: Option<ChannelProtocol>,
     /// Per-channel statistics. Updated by kernel on every IPC operation.
-    /// Queryable via IpcChannelStats syscall. Feeds AIRS behavioral monitoring.
-    stats: ChannelStats,
+    /// Queryable via ChannelStats syscall (§3.1). Feeds AIRS behavioral monitoring.
+    stats: ChannelStatsData,
     audit: bool,                        // log all messages?
 }
 
@@ -345,11 +397,12 @@ pub enum EndpointState {
     Active,
     /// Process has exited or been killed. Peer gets EPIPE on all operations.
     Dead,
-    /// Process suspended by behavioral gating. Peer gets EAGAIN.
+    /// Process suspended by behavioral gating. Peer gets EACCES.
+    /// Same error code as §9.1 behavioral gate SUSPENDED state.
     Suspended,
 }
 
-pub struct ChannelStats {
+pub struct ChannelStatsData {
     messages_sent_a_to_b: u64,
     messages_sent_b_to_a: u64,
     bytes_transferred: u64,
@@ -978,7 +1031,7 @@ Phase 8:   AI-native IPC (requires AIRS)
 Phase 10:  Agent IPC extensions (requires Agent SDK)
            Intent-aware IPC routing (§13.1)
            Predictive channel warming (§13.2)
-           Semantic capability negotiation (§13.6)
+           Semantic capability activation (§13.6)
            → IPC that anticipates agents
 
 Phase 15:  POSIX syscall translation layer + shim caching
@@ -1085,61 +1138,24 @@ IpcReply {
 
 This saves ~30 cycles per round-trip (skipped capability validation) and prevents misrouted replies. The fast path cycle count drops from ~420 to ~390.
 
-#### Gap 4: Kernel-enforced protocol types
+#### Gap 4: Kernel-enforced protocol types — RESOLVED
 
-**Problem.** Messages are "untyped byte buffers" at the kernel level (Section 4.3). Type safety comes from `TypedMessage<T>` in the SDK — voluntary, not enforced. A malicious or buggy agent can send raw bytes that don't match the expected type. The service must defensively deserialize and handle all malformed input.
+**Problem.** Messages were "untyped byte buffers" at the kernel level. Type safety was SDK-only.
 
-**Modern precedent.** Fuchsia's FIDL (Fuchsia Interface Definition Language) generates marshaling code from interface definitions. The kernel validates that messages conform to the registered protocol before delivery. This prevents protocol confusion attacks at the kernel level.
-
-**Recommendation.** At minimum, enforce a message type tag per-channel:
-
-```rust
-pub struct ChannelProtocol {
-    /// Valid message_type values for this channel direction (A→B).
-    /// Kernel rejects messages with unregistered types.
-    valid_types_a_to_b: Vec<u32>,
-    /// Valid message_type values for the reverse direction (B→A).
-    valid_types_b_to_a: Vec<u32>,
-    /// Maximum message size per type (optional).
-    max_size_per_type: HashMap<u32, usize>,
-}
-```
-
-The Service Manager registers valid protocol types when creating channels. The kernel checks `message_type` against the channel's protocol before delivery. This is a lightweight check (one lookup in a small set) that catches protocol confusion without the full complexity of FIDL-style validation.
+**Resolution.** `ChannelProtocol` integrated into §4.1 with bounded fixed-size arrays (not `Vec`/`HashMap`). The kernel checks `message_type` against the channel's registered protocol before delivery. Returns `EPROTO` on mismatch. Protocol validation adds ~10 cycles to the fast path (§9.1 step 4). Channels without a registered protocol (e.g., POSIX pipes) skip the check.
 
 Full FIDL-style typed marshaling (generated code, wire format validation) can be added later as a Phase 3 enhancement.
 
-#### Gap 5: Kernel heap bounds and per-process resource limits
+#### Gap 5: Kernel heap bounds and per-process resource limits — RESOLVED
 
-**Problem.** Channel contains `Vec<SharedMemoryId>` (Section 4.1), implying heap allocation. No per-process limits on kernel object creation are specified. A malicious process creating thousands of channels, shared memory regions, or pending messages can exhaust the kernel heap.
+**Problem.** Channel contained `Vec<SharedMemoryId>`, implying unbounded heap allocation. No per-process limits on kernel object creation.
 
-**Modern precedent.** Hubris (Oxide Computer's embedded Rust kernel) does zero heap allocation after boot — all resources are statically declared. This is extreme for a general-purpose OS, but the principle of bounded kernel resources is sound.
-
-**Recommendation.** Add per-process kernel resource limits:
-
-```rust
-pub struct KernelResourceLimits {
-    max_channels: u32,              // default: 64
-    max_shared_regions: u32,        // default: 32
-    max_pending_messages: u32,      // default: 256
-    max_notification_subscriptions: u32, // default: 16
-    max_child_processes: u32,       // default: 8
-}
-```
-
-These limits are set at process creation (derived from the agent's trust level and blast radius policy) and enforced by the kernel. The kernel's total heap usage is bounded by: `sum(per-process limits) * per-object size`. This provides a hard ceiling that prevents kernel OOM from any userspace action.
-
-Additionally, replace `Vec<SharedMemoryId>` in the Channel struct with a fixed-size array:
-
-```rust
-pub struct Channel {
-    // ...
-    shared_regions: [Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL],
-    // ...
-}
-```
-
-This eliminates dynamic allocation in the channel hot path entirely.
+**Resolution.** Both issues are integrated:
+- §4.1: `Channel.shared_regions` is now `[Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL]` (fixed-size array, no heap)
+- §4.3: `RawMessage` uses fixed-size arrays for capabilities and shared memory
+- §3.1: `ProcessCreate` requires `KernelResourceLimits`
+- §3.3: `KernelResourceLimits` struct with per-trust-level defaults
+- Kernel heap bounded by `sum(per-process limits) * per-object size`
 
 #### Gap 6: POSIX translation performance
 
@@ -1186,9 +1202,9 @@ Phase 15:  POSIX translation layer + shim caching         → BSD tools work fas
 | Zero-copy shared memory | All microkernels | **Done** | — |
 | **Adopted from modern kernels (§12.2)** | | | |
 | `IpcReply` syscall | seL4 | **Integrated** (§3.1) | High |
-| Shared-memory ring buffer channels | Linux io_uring | **Specified** (§12.2) | High |
-| Lightweight notification (bitmap) | seL4 | **Specified** (§12.2) | Medium |
-| Kernel-enforced protocol types | Fuchsia FIDL | **Integrated** (§4.1) | Medium |
+| Shared-memory ring buffer channels | Linux io_uring | **Integrated** (§3.1 `RingChannelCreate`) | High |
+| Lightweight notification (bitmap) | seL4 | **Integrated** (§3.1 `NotificationSignal`/`Wait`) | Medium |
+| Kernel-enforced protocol types | Fuchsia FIDL | **Integrated** (§4.1 `ChannelProtocol`) | Medium |
 | Per-process kernel resource limits | Hubris, general | **Integrated** (§3.3) | Medium |
 | POSIX shim caching | QNX, Fuchsia | **Specified** (§12.2) | High |
 | **Reliability and correctness (this revision)** | | | |
