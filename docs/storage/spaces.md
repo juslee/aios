@@ -801,15 +801,275 @@ BSD tools never know they're not on a traditional filesystem. `ls /spaces/resear
 
 -----
 
-## 10. Design Principles
+## 10. Storage Budget and Pressure Management
+
+### 10.1 Storage Budget by Device
+
+AIOS's storage overhead is fundamentally different from traditional operating systems. Phones and desktops spend 50-70% of storage on apps and games. AIOS replaces that with AI models and gains new overhead from version history, semantic indexes, and audit logs. Agents are lightweight (manifests + code, typically <10 MB each), but models are massive.
+
+```
+Storage budget by device (estimated, after OS and partition overhead):
+
+                        16 GB SD     32 GB SD     64 GB SD     128 GB+ SSD
+                        ────────     ────────     ────────     ───────────
+Usable after format:    ~14.5 GB     ~29.5 GB     ~59.5 GB     ~119 GB
+
+AI models:               2 GB         4.5 GB       8 GB         15 GB
+  (1 small model)       (1 × 8B Q4)  (1 × 8B +    (2-3 models)
+                                      1 vision)
+
+OS + system spaces:      1.5 GB       2 GB         2.5 GB       3 GB
+  (kernel, agents,
+   credentials, config)
+
+Indexes + audit:         0.5 GB       1 GB         2 GB         4 GB
+  (FTI, HNSW, audit
+   Merkle chain)
+
+Version history:         1 GB         2-5 GB       5-10 GB      10-20 GB
+  (depends on editing
+   frequency)
+
+User data:               3-5 GB       8-12 GB      20-30 GB     50-70 GB
+  (documents, media,
+   conversations)
+
+Web storage:             0.5-1 GB     1-3 GB       2-5 GB       5-10 GB
+  (per-origin storage,
+   browser cache)
+
+Free headroom:           3-6 GB       5-12 GB      10-22 GB     17-57 GB
+  (target: ≥15% free)
+```
+
+**16 GB is not recommended.** A single 8B Q4 model (4.5 GB) consumes 31% of usable space. With OS, indexes, and minimal user data, free headroom drops below the 15% target. AIOS should warn at first boot: "16 GB storage detected. Storage will be constrained. 32 GB or larger is recommended."
+
+**32 GB is the practical minimum** for the full AI-native experience. One model, moderate user data, version history, and reasonable headroom.
+
+### 10.2 Storage Quotas by Category
+
+Each storage category has a quota to prevent any single concern from consuming the device:
+
+```rust
+pub struct StorageBudget {
+    total_usable: u64,
+    quotas: StorageQuotas,
+}
+
+pub struct StorageQuotas {
+    /// AI model storage — GGUF files on disk
+    /// Default: 30% of usable space
+    models: StorageQuota,
+
+    /// System spaces (OS, agents, credentials, config)
+    /// Default: 10% of usable space, minimum 1.5 GB
+    system: StorageQuota,
+
+    /// Indexes and audit (FTI, HNSW, Merkle chain)
+    /// Default: 8% of usable space, minimum 500 MB
+    indexes_audit: StorageQuota,
+
+    /// Version history (Merkle DAG, old content blocks)
+    /// Default: 15% of usable space
+    versions: StorageQuota,
+
+    /// User data (personal spaces — documents, media, conversations)
+    /// Default: no hard limit — gets whatever is left
+    user_data: StorageQuota,
+
+    /// Web storage (per-origin: cookies, localStorage, IndexedDB, cache)
+    /// Default: 10% of usable space, max 5 GB per origin
+    web_storage: StorageQuota,
+
+    /// Minimum free headroom — triggers pressure response when breached
+    /// Default: 15% of usable space
+    free_headroom_target: f64,
+}
+
+pub struct StorageQuota {
+    /// Percentage of total usable space
+    percentage: f64,
+    /// Absolute minimum (never go below this)
+    minimum: Option<u64>,
+    /// Absolute maximum (never exceed this)
+    maximum: Option<u64>,
+    /// Current usage
+    used: u64,
+}
+```
+
+**User data has no hard cap.** The user's own files are the reason the device exists. Every other category has a ceiling; user data gets whatever isn't claimed by quotas and headroom. If a user fills their device with photos and documents, that's their choice — the system adapts by tightening version retention and deferring index work.
+
+### 10.3 Storage Pressure Response
+
+Like memory pressure (see [memory.md §8](../kernel/memory.md)), storage has pressure levels with escalating responses:
+
+```rust
+pub enum StoragePressure {
+    /// > 20% free — normal operation
+    Normal,
+    /// 10-20% free — start reclaiming
+    Low,
+    /// 5-10% free — aggressive reclamation
+    Critical,
+    /// < 5% free — emergency mode
+    Emergency,
+}
+```
+
+```
+Pressure response table:
+
+Level       Free %    Actions
+──────────  ──────    ──────────────────────────────────────────────────────
+Normal      > 20%     Normal operation. GC runs on schedule.
+                      Version retention per space quota.
+
+Low         10-20%    - Tighten version retention: KeepLast(10) → KeepLast(5)
+                      - Run GC immediately (don't wait for threshold)
+                      - Evict embedding index entries for cold objects
+                        (regenerated on demand)
+                      - Compress warm blocks → cold (zstd level 9)
+                      - Notify user: "Storage getting low. [X] GB free."
+
+Critical    5-10%     - Tighten version retention: KeepLast(5) → KeepLast(2)
+                      - Purge web-storage caches (Cache API, not localStorage)
+                      - Compact audit logs (force summary tier for >3 days)
+                      - Evict all non-primary model files from disk
+                        (re-download on demand)
+                      - Pause Space Indexer (no new embeddings)
+                      - Notify user: "Storage critically low. Free up space
+                        or data may be affected."
+
+Emergency   < 5%      - Version retention: KeepLast(1) (current version only)
+                      - Purge ALL web-storage except localStorage
+                      - Delete all non-primary model files
+                      - Halt all background writes (indexing, audit flush)
+                      - Block new object creation from background agents
+                      - Interactive writes still allowed (user comes first)
+                      - Notify user: "Storage full. Only essential operations
+                        are possible. Please free space immediately."
+```
+
+### 10.4 Model Storage Strategy
+
+AI model files are the single largest storage consumer and unlike user data, they are **reproducible** — a deleted model can be re-downloaded. This makes them the best target for reclamation under storage pressure.
+
+```rust
+pub struct ModelStoragePolicy {
+    /// Maximum disk space for all model files combined
+    max_disk: u64,                      // from StorageQuotas.models
+    /// Models currently on disk
+    on_disk: Vec<ModelDiskEntry>,
+    /// Keep only the active model + companion on constrained devices
+    aggressive_eviction: bool,          // true when storage < 32 GB
+}
+
+pub struct ModelDiskEntry {
+    model_id: ModelId,
+    file_size: u64,
+    last_loaded: Timestamp,
+    source: ModelSource,                // Bundled, Downloaded, UserProvided
+    /// Can this model be re-downloaded if deleted?
+    reproducible: bool,
+}
+
+impl ModelStoragePolicy {
+    /// Select models to delete from disk when storage is under pressure
+    pub fn select_eviction(&self) -> Vec<ModelId> {
+        // Never delete the primary model
+        // Never delete user-provided models (not re-downloadable)
+        // Delete downloaded models that haven't been loaded recently
+        // Prefer deleting larger models first (more space recovered)
+        self.on_disk.iter()
+            .filter(|m| m.reproducible && !self.is_primary(m.model_id))
+            .sorted_by(|a, b| b.file_size.cmp(&a.file_size))
+            .map(|m| m.model_id)
+            .collect()
+    }
+}
+```
+
+**On 32 GB devices:** Only one model is kept on disk at a time. When the user switches models, the old model file is deleted after the new one finishes downloading. Two 4.5 GB model files simultaneously would consume 30% of a 32 GB card.
+
+**On 64 GB+ devices:** Multiple models can be cached on disk. LRU eviction removes the least recently used model file when the model storage quota is exceeded.
+
+**Streaming model download:** Instead of downloading the entire GGUF file before starting inference, AIOS can stream model weights via mmap over a network-backed file. The NTM fetches blocks on demand as page faults occur. This eliminates the need to store the full model file on disk at the cost of inference speed (network latency per page fault). Useful as a fallback when storage is critically low but the network is available.
+
+### 10.5 Version History Budget
+
+Version history is the hidden storage multiplier. A user who edits a 1 MB document daily for a year generates 365 MB of version data for that one file (before deduplication). Across thousands of objects, this adds up fast.
+
+```rust
+pub struct AdaptiveRetention {
+    /// Base policy (from space quota)
+    base: RetentionPolicy,
+    /// Adjusted policy under storage pressure
+    pressure_adjusted: Option<RetentionPolicy>,
+}
+
+impl AdaptiveRetention {
+    pub fn effective_policy(&self, pressure: StoragePressure) -> RetentionPolicy {
+        match pressure {
+            StoragePressure::Normal => self.base.clone(),
+            StoragePressure::Low => match &self.base {
+                RetentionPolicy::KeepAll => RetentionPolicy::KeepLast(10),
+                RetentionPolicy::KeepLast(n) => RetentionPolicy::KeepLast((*n).min(5)),
+                other => other.clone(),
+            },
+            StoragePressure::Critical => RetentionPolicy::KeepLast(2),
+            StoragePressure::Emergency => RetentionPolicy::KeepLast(1),
+        }
+    }
+}
+```
+
+**Deduplication helps significantly.** Content-addressed blocks mean that small edits to a large file only store the changed blocks, not the entire file again. A 1 MB document with a one-line edit stores ~4 KB of new data (one changed block), not 1 MB. For typical editing patterns, deduplication reduces version history from 365× to ~20-50× the original size over a year.
+
+**Space-level retention is configurable.** User-facing spaces default to `KeepLast(20)` — the last 20 versions of each object. System spaces default to `KeepLast(5)`. Web storage defaults to `KeepLast(1)` (current version only — no version history for cookies). Users can override these per space.
+
+### 10.6 Storage Monitoring
+
+The Inspector exposes real-time storage analytics:
+
+```
+Storage Dashboard:
+┌──────────────────────────────────────────────┐
+│  Total: 29.5 GB   Used: 18.2 GB   Free: 11.3 GB (38%)  │
+│                                                           │
+│  ██████████████████░░░░░░░░░░  62% used                  │
+│                                                           │
+│  AI Models          4.5 GB  ████████░░░  15%             │
+│  User Data          6.2 GB  ████████████░  21%           │
+│  Version History    3.1 GB  ██████░░░░░░  11%            │
+│  Web Storage        1.8 GB  ████░░░░░░░  6%              │
+│  Indexes + Audit    1.1 GB  ██░░░░░░░░░  4%              │
+│  System             1.5 GB  ███░░░░░░░░  5%              │
+│                                                           │
+│  Biggest spaces:                                          │
+│    user/media/       3.1 GB  (photos, 2,400 objects)     │
+│    user/documents/   1.8 GB  (docs, 340 objects)         │
+│    web-storage/      1.8 GB  (12 origins)                │
+│                                                           │
+│  Version history savings:                                 │
+│    Deduplication saved: 8.4 GB (73% of version data)     │
+│    Compression saved:   2.1 GB (across all tiers)        │
+└──────────────────────────────────────────────┘
+```
+
+-----
+
+## 11. Design Principles
 
 1. **Find by meaning, not by path.** Semantic search, relationship traversal, and entity queries replace directory navigation.
-2. **Never lose data.** Version history, content-addressing, and WAL ensure no data loss from crashes, bugs, or user mistakes.
+2. **Never lose data silently.** Version history, content-addressing, and WAL ensure no data loss from crashes, bugs, or user mistakes. Under storage pressure, version retention is reduced transparently — the user is always informed.
 3. **Encryption is structural.** Per-space encryption is a property of the space, not an afterthought. Identity change = spaces lock automatically.
 4. **Deduplication is free.** Content-addressing means identical content is stored once, regardless of how many objects reference it.
 5. **Indexes are always current.** Full-text index updates synchronously. Embedding index updates asynchronously but as fast as compute allows.
 6. **POSIX is a view.** The filesystem is a compatibility layer over spaces, not the other way around. Spaces are the truth; paths are a translation.
 7. **Spaces belong to users.** Agents access spaces via capabilities. Removing an agent never removes user data.
+8. **Storage-aware by default.** CompactObjects minimize metadata overhead. Block compression extends capacity. Adaptive retention responds to storage pressure. AI models are reproducible and evictable — user data is not. The system works on a 32 GB SD card and scales to 128 GB+ SSDs.
+9. **Reproducible data yields first.** Under storage pressure, reproducible data (model files, embeddings, web caches) is reclaimed before user data. Downloaded models can be re-fetched. Embeddings can be regenerated. Version history is compressed. User files are never touched without explicit user action.
 
 -----
 
@@ -821,13 +1081,17 @@ Phase 4b:  Object store + content addressing        → objects with deduplicati
 Phase 4c:  Space API + basic queries (Filter)       → spaces usable by services
 Phase 4d:  Version store + Merkle DAG               → full version history
 Phase 4e:  POSIX bridge + path mapping              → BSD tools work
-Phase 4f:  CompactObject + promotion policy          → storage-efficient default objects
-Phase 4g:  Block-level compression (LZ4/zstd)        → 2-4x storage savings
-Phase 9a:  Full-text index + text search            → keyword search
-Phase 9b:  Embedding index + selective embedding     → semantic search (promoted objects only)
-Phase 9c:  Space Sync protocol                      → cross-device sync
-Phase 13a: Encryption layer + key management        → encrypted spaces
-Phase 14a: Tiered storage (hot/warm/cold)            → automatic tier migration + recompression
-Phase 14b: Audit retention + chain compaction        → bounded audit storage growth
-Phase 24a: Secure Boot integration + key escrow     → TrustZone key storage
+Phase 4f:  CompactObject + promotion policy           → storage-efficient default objects
+Phase 4g:  Block-level compression (LZ4/zstd)         → 2-4x storage savings
+Phase 4h:  Storage budget + quotas + pressure levels  → bounded storage per category
+Phase 4i:  Adaptive version retention                 → pressure-responsive history pruning
+Phase 9a:  Full-text index + text search              → keyword search
+Phase 9b:  Embedding index + selective embedding      → semantic search (promoted objects only)
+Phase 9c:  Space Sync protocol                        → cross-device sync
+Phase 13a: Encryption layer + key management          → encrypted spaces
+Phase 14a: Tiered storage (hot/warm/cold)             → automatic tier migration + recompression
+Phase 14b: Audit retention + chain compaction         → bounded audit storage growth
+Phase 14c: Model disk eviction + streaming download   → reclaim model storage under pressure
+Phase 14d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
+Phase 24a: Secure Boot integration + key escrow       → TrustZone key storage
 ```
