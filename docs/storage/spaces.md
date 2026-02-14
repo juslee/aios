@@ -542,6 +542,38 @@ pub struct TierStats {
 
 **Recompression is lazy.** The recompressor runs at lowest I/O priority and yields to any foreground read or write. On a Pi with an SD card, recompression is throttled to avoid wearing the card. Tier transitions are batched — the recompressor processes blocks in groups during idle periods.
 
+#### 4.7.1 AIRS-Directed Compression Scheduling
+
+Compression scheduling can be initiated by two sources:
+
+1. **Automatic tier demotion** (TierManager, independent of AIRS) — the normal background recompressor described above. Runs on access-time heuristics, no AI involvement. Always operational.
+
+2. **AIRS resource directives** (during storage pressure or semantic prioritization) — AIRS can request that specific blocks be recompressed at a different level, or that compression be prioritized for blocks that AIRS predicts won't be accessed soon.
+
+```
+AIRS compression directive:
+  1. AIRS sends ResourceCompress { space, blocks, algorithm, reason }
+     to kernel via resource directive channel
+  2. Kernel validates:
+     a. AIRS holds ReadSpace capability for the target space
+     b. Compression CPU quota not exceeded (blast radius for AIRS)
+     c. Directive rate within AirsDirectiveMonitor baseline (§security.md 2.3.1)
+  3. Kernel forwards directive to Space Storage
+  4. Space Storage executes compression through the NORMAL Block Engine path:
+     a. Read block from disk
+     b. Verify checksum (CRC-32C) — reject if corrupted
+     c. Decompress existing content
+     d. Recompress with requested algorithm
+     e. Verify round-trip: decompress(recompressed) == original
+     f. Write new block (new checksum computed)
+     g. Update block index atomically (WAL-protected)
+  5. Provenance chain records: ResourceCompress event
+```
+
+**Why AIRS cannot corrupt data:** Compression operates through the Block Engine, which verifies checksums on read and computes new checksums on write. The round-trip verification (step 4e) catches any compression error before the block is committed. If verification fails, the original block is retained unchanged and a storage integrity event is logged. AIRS never touches raw block data — it only specifies *which* blocks to compress and *with what algorithm*. The Block Engine does the actual I/O.
+
+**Why no shortcut:** As with prefetch (§4.3.1), there is no bypass path. AIRS compression directives are advisory — "compress this block at zstd level 9" — not operational. Space Storage does the work through its existing, checksum-verified, WAL-protected write path.
+
 **Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 14 optimization — single-device tiering via compression is the Phase 4 implementation.
 
 -----
