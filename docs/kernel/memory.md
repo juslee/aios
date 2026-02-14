@@ -16,9 +16,22 @@ The memory subsystem manages four concerns simultaneously:
 1. **Traditional OS memory** — page allocator, virtual memory, kernel heap, per-process address spaces
 2. **AI model memory** — large pinned regions for model weights, paged KV caches, embedding stores
 3. **Per-agent isolation** — each agent gets its own address space with enforced memory limits
-4. **Memory pressure on constrained devices** — 2 GB minimum, 4 GB recommended, 8 GB ideal, with a model that wants most of the RAM
+4. **Memory pressure on constrained devices** — 8 GB recommended minimum, 4 GB supported with constraints, 2 GB degraded mode, with a model that wants most of the RAM
 
 The target hardware is Raspberry Pi 4/5 (aarch64, 2–8 GB RAM). Every design decision is made with this constraint in mind.
+
+### Hardware Tier Classification
+
+| RAM | Tier | Experience | Local AI | Notes |
+|---|---|---|---|---|
+| 2 GB | **Degraded** | Basic OS, 1-2 browser tabs, limited agents | Cloud inference only (no local model fits alongside OS) | Not recommended for the full AIOS experience |
+| 4 GB | **Constrained** | Full OS, browser, agents | Small models only (1-3B Q4), limited KV cache | Functional but tight; model switching is slow on SD |
+| 8 GB | **Recommended** | Full OS, browser, many agents | 8B Q4_K_M model + embedding model simultaneously | The target for the "AI-native OS" promise |
+| 16 GB+ | **Comfortable** | Everything with headroom | 8B Q5_K_M/Q6_K + multiple specialist models | Future Pi hardware or alternative SBCs |
+
+**8 GB is the recommended minimum** for users who want the advertised AI-native experience. The model pool gets 4 GB on an 8 GB device, which fits a quantized 8B model with room for KV caches and embedding stores. At 4 GB, the model pool is only 2 GB — enough for a 3B model but not the 8B models that deliver meaningfully better reasoning. At 2 GB, the 1 GB model pool cannot fit any model alongside a running OS; AIOS falls back to cloud inference via the Network Translation Module.
+
+**Cloud inference fallback (2 GB devices):** When local inference is not viable, AIRS routes inference requests through the NTM to a configured cloud endpoint. The model pool is released to the user pool, giving agents and the browser more room. The system is fully functional — just slower (network latency) and dependent on connectivity. The user is informed at first boot: "This device has 2 GB RAM. AI features will use cloud processing. For local AI, 8 GB RAM is recommended."
 
 -----
 
@@ -249,11 +262,16 @@ Physical memory is divided into pools at boot based on total RAM. Each pool rese
 Pool sizing is determined at boot based on detected RAM:
 
 ```
-Total RAM   Kernel    Model     User      DMA       Reserved
-─────────   ──────    ──────    ──────    ──────    ────────
-  2 GB      128 MB    1 GB      768 MB    64 MB     64 MB
-  4 GB      256 MB    2 GB      1.5 GB    128 MB    128 MB
-  8 GB      256 MB    4 GB      3.5 GB    128 MB    128 MB
+Total RAM   Kernel    Model     User      DMA       Reserved    Tier
+─────────   ──────    ──────    ──────    ──────    ────────    ────
+  2 GB      128 MB    0 MB*     1.75 GB   64 MB     64 MB      Degraded
+  4 GB      256 MB    2 GB      1.5 GB    128 MB    128 MB     Constrained
+  8 GB      256 MB    4 GB      3.5 GB    128 MB    128 MB     Recommended
+ 16 GB      256 MB    8 GB      7.5 GB    128 MB    128 MB     Comfortable
+
+*2 GB devices: model pool is 0 — cloud inference only. The full 1.75 GB
+ (after kernel/DMA/reserved) is available to the user pool, giving agents
+ and the browser more breathing room than the previous 768 MB.
 ```
 
 ```rust
@@ -279,22 +297,33 @@ impl PagePools {
     /// Initialize pools based on total RAM
     pub fn init(total_ram: usize, regions: &[MemoryRegion]) -> Self {
         let config = match total_ram {
+            // Degraded tier: no model pool, cloud inference only
+            // All available RAM goes to user pool for agents/browser
             r if r <= 2 * GB => PoolConfig {
                 kernel: 128 * MB,
-                model: 1 * GB,
-                user: 768 * MB,
+                model: 0,
+                user: (r - 128 * MB - 64 * MB - 64 * MB),
                 dma: 64 * MB,
             },
+            // Constrained tier: small model pool (1-3B models)
             r if r <= 4 * GB => PoolConfig {
                 kernel: 256 * MB,
                 model: 2 * GB,
                 user: (r - 256 * MB - 2 * GB - 128 * MB - 128 * MB),
                 dma: 128 * MB,
             },
-            r => PoolConfig {
+            // Recommended tier: full model pool (8B Q4 models)
+            r if r <= 8 * GB => PoolConfig {
                 kernel: 256 * MB,
                 model: 4 * GB,
                 user: (r - 256 * MB - 4 * GB - 128 * MB - 128 * MB),
+                dma: 128 * MB,
+            },
+            // Comfortable tier: large model pool (8B Q5/Q6 + specialists)
+            r => PoolConfig {
+                kernel: 256 * MB,
+                model: 8 * GB,
+                user: (r - 256 * MB - 8 * GB - 128 * MB - 128 * MB),
                 dma: 128 * MB,
             },
         };
@@ -303,7 +332,9 @@ impl PagePools {
 }
 ```
 
-The model pool is the largest allocation on every configuration. This is intentional — AIRS model weights dominate memory usage on target hardware. On a 4 GB device, the 8B Q4 model occupies ~4.5 GB when fully loaded, which means it spills into user pool pages via memory-mapped file I/O. The 2 GB model pool on 4 GB devices fits smaller models or quantized variants.
+The model pool is the largest allocation on devices with 4 GB+ RAM. This is intentional — AIRS model weights dominate memory usage on target hardware. On a 4 GB device, the 2 GB model pool fits smaller models (1-3B at Q4) or heavily quantized variants of larger models. On 8 GB devices, the 4 GB model pool fits an 8B Q4_K_M model with room for KV caches.
+
+**2 GB devices are the exception:** the model pool is zero. No local model fits alongside a running OS in 2 GB. Instead of allocating 1 GB for a model that would be too small to be useful, that memory goes to the user pool (1.75 GB total), giving agents and the browser substantially more headroom. AIRS falls back to cloud inference via the NTM.
 
 -----
 
@@ -1138,7 +1169,9 @@ impl ModelEvictionPolicy {
 }
 ```
 
-**On 2 GB devices:** Only one small model fits at a time. Model switching requires full eviction and reload — an operation that takes several seconds from SD card storage. AIRS avoids unnecessary model switches by routing all task types to the single loaded model when only one fits.
+**On 2 GB devices:** No local model is loaded. The model pool is zero. All inference is routed to cloud endpoints via the NTM. This eliminates the memory pressure that model weights would cause on a 2 GB system.
+
+**On 4 GB devices:** Only one small model (1-3B at Q4) fits at a time. Model switching requires full eviction and reload — an operation that takes several seconds from SD card storage. AIRS avoids unnecessary model switches by routing all task types to the single loaded model.
 
 **On 8 GB devices:** A large model (8B Q4) and an embedding model can coexist simultaneously. Model switching is rare. The model pool has enough headroom for generous KV caches.
 
@@ -1638,7 +1671,92 @@ Under normal operation, the zero-page thread stays ahead of demand. Under heavy 
 
 -----
 
-## 12. Implementation Order
+## 12. Future Memory Scaling
+
+### 12.1 Hardware Trajectory
+
+RAM on single-board computers and consumer devices is growing rapidly:
+
+```
+Year    Pi / SBC RAM          Consumer Device RAM    Model Sizes (local)
+────    ────────────          ───────────────────    ───────────────────
+2024    2-8 GB                8-16 GB                7-8B at Q4 (4.5 GB)
+2025    4-16 GB (Pi 5 16GB)  16-32 GB               13B at Q4 (8 GB), 8B at F16 (16 GB)
+2026+   8-32 GB (projected)  32-64 GB               70B at Q4 (40 GB), 13B at F16 (26 GB)
+```
+
+The memory subsystem is designed to scale with this trajectory. The pool-based architecture adapts automatically — larger total RAM means larger model and user pools, not a different architecture.
+
+### 12.2 Dynamic Model Pool
+
+On current hardware, the model pool is fixed at boot. As devices gain more RAM, a static allocation becomes wasteful — a 32 GB device doesn't need 16 GB pinned for models when no inference is running.
+
+```rust
+pub struct DynamicModelPool {
+    /// Minimum model pool size (always reserved)
+    minimum: usize,                     // enough for companion embedding model
+    /// Maximum model pool size (never exceed)
+    maximum: usize,                     // cap at 50% of total RAM
+    /// Current allocated size
+    current: usize,
+    /// Grow model pool on demand (steal from user pool)
+    grow_on_demand: bool,
+    /// Shrink model pool when idle (return to user pool)
+    shrink_when_idle: bool,
+    /// Idle timeout before shrinking
+    idle_timeout: Duration,             // default: 10 minutes
+}
+```
+
+**Phase 14 optimization:** The model pool grows when AIRS loads a model (stealing pages from the user pool) and shrinks when the model is evicted (returning pages to the user pool). This eliminates the waste of pinning 4 GB for a model that may not be used for hours. The minimum reservation (enough for the embedding model) ensures Space Indexer can always operate.
+
+**Huge page management:** Dynamic growth requires available 2 MB contiguous regions. The buddy allocator naturally maintains these through coalescing. If fragmentation prevents a 2 MB allocation, the kernel can compact the user pool (migrate pages, update PTEs) to create contiguous regions — a slow but rare operation.
+
+### 12.3 Multi-Model Concurrency
+
+With 16-32 GB, multiple models can be loaded simultaneously:
+
+```
+32 GB device:
+  Kernel: 256 MB
+  Model pool: 16 GB
+    - Primary (13B Q4_K_M): 8 GB
+    - Vision specialist (3B): 2 GB
+    - Code specialist (7B Q4): 4.5 GB
+    - Embedding model: 100 MB
+    - KV caches: ~1.4 GB
+  User pool: 15.5 GB
+  DMA: 128 MB
+  Reserved: 128 MB
+```
+
+AIRS can route tasks to the best specialist model without switching. Intent verification uses the primary model. Code generation uses the code specialist. Image understanding uses the vision model. All loaded, all available, zero switching latency.
+
+### 12.4 Larger Context Windows
+
+Larger RAM enables longer KV caches, which means longer context windows:
+
+```
+KV cache scaling (8B model, Q4 KV):
+  8K context:    ~256 MB
+  32K context:   ~1 GB
+  128K context:  ~4 GB
+  256K context:  ~8 GB (requires 16+ GB device)
+```
+
+On 8 GB devices, 8K-32K context is practical. On 16-32 GB devices, 128K+ context windows allow AIRS to maintain rich conversation history, process entire documents in a single pass, and keep system service context (intent verifier, behavioral monitor) for longer periods without cache eviction.
+
+### 12.5 Design Principles for Forward Compatibility
+
+1. **Pool boundaries are configuration, not architecture.** Changing pool sizes is a boot parameter change, not a code change.
+2. **The buddy allocator scales to any RAM size.** MAX_ORDER can be increased if devices exceed the current 4 MB maximum contiguous allocation.
+3. **Model memory management is model-size-agnostic.** The same mmap + huge page + LRU eviction works for a 500 MB model or a 40 GB model.
+4. **Memory pressure thresholds are percentages, not absolute values.** "20% free" works at 2 GB and 32 GB alike.
+5. **The OOM killer's priority scoring is RAM-independent.** It selects victims by relative memory × priority, not absolute thresholds.
+
+-----
+
+## 13. Implementation Order
 
 Memory management spans several development phases:
 

@@ -1061,6 +1061,89 @@ pub struct AuditQuery {
 
 **Performance:** Provenance records are written to a kernel ring buffer first (non-blocking, ~100ns), then flushed to the audit space asynchronously. The ring buffer holds 10,000 records. If the flush falls behind, the oldest unflushed records are prioritized. Provenance recording never blocks the critical path of an agent's syscall.
 
+#### 2.7.1 Audit Retention and Chain Compaction
+
+The append-only Merkle chain grows without bound — a busy system with many agents can generate millions of records per day. On a Pi with a 32 GB SD card, unbounded audit storage would eventually consume all available space. AIOS uses **tiered retention** to manage audit storage while preserving the chain's tamper-evidence guarantees.
+
+```rust
+pub enum AuditRetentionTier {
+    /// Full detail — every field of every record preserved
+    /// Default: 7 days
+    Full { window: Duration },
+
+    /// Summarized — records grouped by agent and hour, individual records
+    /// replaced with aggregate summaries. Chain hashes preserved.
+    /// Default: 90 days
+    Summarized { window: Duration },
+
+    /// Hash-only — only the chain of record_hash + prev_hash + signature
+    /// is kept. Record payloads (agent_id, action, target, result) are dropped.
+    /// Tamper-evidence is preserved: the hash chain can still be verified.
+    /// Default: indefinite
+    HashOnly,
+}
+
+pub struct AuditRetentionPolicy {
+    full_window: Duration,              // default: 7 days
+    summary_window: Duration,           // default: 90 days
+    /// Security events are NEVER compacted (capability violations, injection
+    /// attempts, PAC/BTI faults, chain integrity violations)
+    exempt_events: Vec<SecurityEventType>,
+    /// Maximum total audit storage (triggers emergency compaction)
+    max_storage: u64,                   // default: 500 MB
+}
+
+pub struct AuditSummary {
+    /// Time range covered
+    time_range: (Timestamp, Timestamp),
+    /// Agent → action counts
+    agent_activity: HashMap<AgentId, ActionCounts>,
+    /// Security events (kept in full, never summarized)
+    security_events: Vec<ProvenanceRecord>,
+    /// Chain anchor: hash of the first record in this summary range
+    chain_start_hash: Hash,
+    /// Chain anchor: hash of the last record in this summary range
+    chain_end_hash: Hash,
+    /// Signature over the summary (kernel Ed25519)
+    signature: Signature,
+}
+
+pub struct ActionCounts {
+    space_reads: u64,
+    space_writes: u64,
+    space_deletes: u64,
+    network_connects: u64,
+    network_bytes_sent: u64,
+    inference_requests: u64,
+    capability_uses: u64,
+    denied_actions: u64,
+}
+```
+
+**How compaction preserves chain integrity:**
+
+```
+Full chain (Day 1-7):
+  R1 ← R2 ← R3 ← R4 ← R5 ← R6 ← R7 ← ... ← R_n
+  (all fields present, all verifiable)
+
+After compaction (Day 8+, records from Day 1 summarized):
+  [Summary(R1..R1000)] → H1 ← H2 ← H3 ← ... ← H1000
+  (summary has aggregate counts + security events in full)
+  (hash chain H1..H1000 still verifiable — prev_hash links intact)
+  (individual record payloads dropped — agent_id, action details gone)
+
+After deep compaction (Day 91+):
+  [chain_start_hash] → [chain_end_hash]
+  (only the hash chain endpoints are kept as anchors)
+  (tamper-evidence: any modification to records in the full or
+   summarized tiers would break the chain to these anchor points)
+```
+
+**Security events are exempt.** Capability violations, injection detections, PAC/BTI faults, authentication failures, and chain integrity alerts are never compacted — they remain in full detail indefinitely. These are the records most likely to be needed for forensic investigation.
+
+**Emergency compaction:** If audit storage exceeds `max_storage` (default 500 MB), the retention windows are compressed (full: 3 days, summary: 30 days) until storage drops below 80% of the limit. A notification is sent to the user: "Audit storage limit reached. Older audit records have been compacted."
+
 ### 2.8 Layer 8: Blast Radius Containment
 
 The last line of defense. Even if every other layer fails — if the agent has valid capabilities, passes intent verification, has a normal behavioral profile, is in the right zone, isn't injection-affected, has the decryption key, and its actions are being logged — the damage it can do in a given time window is still bounded.

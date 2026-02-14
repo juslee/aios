@@ -309,6 +309,64 @@ pub enum TaskType {
 - Users can download larger/specialized models from the model registry
 - System intelligently routes tasks to the best available model
 
+### 4.4 Quantization Strategy by Hardware Tier
+
+Different hardware tiers require different model quantization levels. AIRS selects the best model variant at first boot and when the user changes their model preferences.
+
+```
+RAM Tier        Model Pool   Quantization       Model Size    Quality       Notes
+──────────────  ──────────   ──────────────     ──────────    ────────      ─────
+2 GB Degraded      0 MB      N/A (cloud)        N/A          Cloud-level   No local inference
+4 GB Constrained   2 GB      Q3_K_S / Q4_K_S    1-3B params  Basic         Limited reasoning
+8 GB Recommended   4 GB      Q4_K_M             7-8B params  Good          Target experience
+16 GB+ Comfortable 8 GB      Q5_K_M / Q6_K      7-8B params  High          Best local quality
+```
+
+```rust
+pub struct QuantizationSelector {
+    model_pool_size: usize,
+    available_models: Vec<ModelEntry>,
+}
+
+impl QuantizationSelector {
+    /// Select the best model variant that fits in the model pool
+    /// alongside the embedding model and KV cache budget
+    pub fn select_best(&self) -> ModelSelection {
+        let embedding_overhead = 100 * MB;  // embedding model
+        let kv_budget = self.model_pool_size / 4;  // 25% for KV caches
+        let model_budget = self.model_pool_size - embedding_overhead - kv_budget;
+
+        match model_budget {
+            0 => ModelSelection::CloudOnly,
+            b if b < 1500 * MB => ModelSelection::Local {
+                // Small model, aggressive quantization
+                preferred_params: "1-3B",
+                min_quant: QuantFormat::Q3_K_S,
+                preferred_quant: QuantFormat::Q4_K_S,
+            },
+            b if b < 4000 * MB => ModelSelection::Local {
+                // Full-size model, standard quantization
+                preferred_params: "7-8B",
+                min_quant: QuantFormat::Q3_K_S,
+                preferred_quant: QuantFormat::Q4_K_M,
+            },
+            _ => ModelSelection::Local {
+                // Full-size model, high-quality quantization
+                preferred_params: "7-8B",
+                min_quant: QuantFormat::Q4_K_M,
+                preferred_quant: QuantFormat::Q5_K_M,
+            },
+        }
+    }
+}
+```
+
+**Quality vs fit tradeoffs:**
+- **Q3_K_S:** Aggressive quantization. Noticeable quality loss, but fits in tight memory. Acceptable for intent verification, metadata generation, and simple tasks. Not ideal for extended conversation.
+- **Q4_K_M:** Sweet spot for 8 GB devices. Minor quality loss from full precision. Good enough for all AIRS tasks including conversation.
+- **Q5_K_M / Q6_K:** Near-full-precision quality. Only fits on 16 GB+ devices alongside other system needs. Worth it if the hardware supports it.
+- **Cloud:** No local quality tradeoff. Latency and connectivity are the costs instead.
+
 ### 4.3 LRU Model Eviction
 
 Multiple models can't fit in RAM simultaneously on low-memory devices. The registry manages loading/unloading:
@@ -325,6 +383,64 @@ User opens a vision task → needs vision model (3 GB)
   3. When conversation bar is used again → evict vision, reload llama
   4. Model weights are memory-mapped — loading is fast (no parsing, just mmap)
 ```
+
+### 4.5 Model Switching Optimization
+
+Model switching (evict one model, load another) is the most expensive operation in AIRS. On an SD card, loading a 4 GB model takes 10-30 seconds. On NVMe, it takes 1-3 seconds. AIOS minimizes switching through several strategies:
+
+**1. Primary model residence:** The primary model (conversation bar, intent verification) is loaded at boot and stays resident. It is never evicted for a background task. If a specialist model is needed, AIRS checks whether the primary model can handle the task at acceptable quality first.
+
+```rust
+pub struct ModelResidencyPolicy {
+    /// Primary model — loaded at boot, never evicted for background work
+    primary: ModelId,
+    /// Companion model — small specialist that stays alongside primary
+    /// (e.g., embedding model at ~100 MB)
+    companion: Option<ModelId>,
+    /// Maximum time to keep a specialist model loaded after its task completes
+    specialist_ttl: Duration,           // default: 5 minutes
+}
+
+impl ModelResidencyPolicy {
+    pub fn can_evict(&self, model: &LoadedModel, reason: EvictionReason) -> bool {
+        match reason {
+            // Never evict primary for background work
+            EvictionReason::BackgroundTaskNeeds(_) => {
+                model.model_id != self.primary
+                    && Some(model.model_id) != self.companion
+            },
+            // Only evict primary for interactive user request
+            EvictionReason::InteractiveTaskNeeds(_) => {
+                model.active_sessions == 0
+            },
+        }
+    }
+}
+```
+
+**2. Small specialist alongside primary:** On 8 GB devices, a small specialist model (1-2B parameters, ~500 MB-1 GB) can stay loaded alongside the primary 8B model. This specialist handles focused tasks (classification, entity extraction, embedding) without requiring model switching. The Space Indexer's embedding model (~100 MB) is always the companion.
+
+**3. Task routing to avoid switching:** When a task requests a model that isn't loaded, AIRS first evaluates whether the primary model can handle the task:
+
+```
+Task: "Generate embedding for this document"
+Ideal model: embedding-model (loaded as companion)
+  → Route to companion. No switch needed.
+
+Task: "Classify this image"
+Ideal model: vision-model (not loaded)
+Primary model: llama-8b (loaded, no vision capability)
+  → Cannot route to primary. Must switch.
+  → Check: any queued vision tasks? Batch them.
+  → Evict least-recently-used non-primary model.
+  → Load vision model, process all queued vision tasks.
+  → Keep vision model loaded for specialist_ttl (5 min).
+  → If no more vision tasks: evict, reclaim memory.
+```
+
+**4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. Example: user opens a photo space → AIRS begins loading the vision model in a background thread while the user browses thumbnails.
+
+**SD card reality:** On a Pi with an SD card, even mmap-based loading is slow because every page fault requires an SD card read (~100 μs per 4 KB page, vs ~5 μs for NVMe). A 4 GB model requires ~1 million page faults to fully warm up. AIOS mitigates this with sequential pre-faulting — after the mmap, a background thread reads the model file sequentially (which aligns with SD card's best-case sequential read performance of ~90 MB/s) to populate all pages before inference begins. First-token latency is ~45 seconds on SD vs ~3 seconds on NVMe for a 4 GB model.
 
 -----
 
@@ -371,6 +487,26 @@ pub enum IndexTrigger {
 **Embedding index:** Uses HNSW (Hierarchical Navigable Small World) graph for fast approximate nearest-neighbor search. The index is stored in `system/index/embeddings/` as a space object. Semantic search queries compute an embedding of the query string and find the k nearest neighbors in the HNSW index.
 
 **Full-text index:** Maintained independently of AIRS. Uses an inverted index (term → document list) with BM25 ranking. Always available, even when AIRS is down. This is the fallback for search.
+
+**Selective embedding:** Not every object needs an embedding. The Space Indexer only generates embeddings for **promoted objects** (see [spaces.md §3.3.1](../storage/spaces.md) — CompactObject vs Full Object). New objects start as CompactObjects with only full-text indexing. When an object is promoted (user interaction, edit threshold, size threshold, or relation created), the Space Indexer generates its embedding, summary, tags, and entity extraction.
+
+```rust
+pub struct IndexPolicy {
+    /// Always index (full-text): all objects regardless of promotion status
+    always_text_index: bool,            // default: true
+    /// Embedding generation: only promoted objects
+    embed_only_promoted: bool,          // default: true
+    /// On-demand embedding: generate embedding when a semantic search
+    /// query has no good matches in the full-text index
+    on_demand_embed: bool,              // default: true
+    /// Batch re-embed: periodically scan for promoted objects missing embeddings
+    batch_reindex_interval: Duration,   // default: 1 hour
+}
+```
+
+**On-demand embedding:** When a user performs a semantic search and the full-text index returns poor results (BM25 score below threshold), the Space Indexer can generate embeddings for the top full-text candidates on the fly and re-rank by semantic similarity. This provides the semantic search experience without pre-embedding every object.
+
+**Embedding regeneration vs permanent storage:** Embeddings are deterministic — the same content with the same model produces the same vector. If storage pressure requires it, embeddings can be evicted and regenerated on demand (at the cost of slower first semantic search). The HNSW index stores only vectors and ObjectId mappings; the embedding model can reproduce any vector from the original content. This makes embeddings a cache, not a source of truth.
 
 ### 5.2 Context Engine
 
@@ -798,20 +934,107 @@ pub enum Role {
 5. **Security is not optional.** Intent verification and behavioral monitoring are always on (when AIRS is available). They can't be disabled by agents.
 6. **Models are replaceable.** Users can swap models. System services use model profiles, not hardcoded model names. A better model drops in seamlessly.
 7. **Indexing is continuous.** The Space Indexer runs whenever there's spare compute. The semantic index is always as up-to-date as resources allow.
+8. **Forward-compatible.** Model management is size-agnostic and hardware-tier-aware. The same architecture handles a 500 MB model on 4 GB and a 40 GB model on 64 GB.
 
 -----
 
-## 10. Implementation Order
+## 10. Future: Scaling with Hardware
+
+### 10.1 Model Capability Trajectory
+
+As SBC (single-board computer) RAM grows and model efficiency improves, AIRS capabilities scale with hardware:
 
 ```
-Phase 8a:  GGML integration + model loading        → inference works
-Phase 8b:  Compute scheduler + KV cache management  → concurrent sessions
+Hardware         Model Pool   What Fits                           User Experience
+──────────────   ──────────   ──────────────────────────────      ────────────────────────
+2 GB (degraded)    0 MB       Cloud inference only                Basic, connectivity-dependent
+4 GB (current)     2 GB       3B Q4 general-purpose               Functional AI, limited reasoning
+8 GB (target)      4 GB       8B Q4 + embedding model             Full AI-native experience
+16 GB (near)       8 GB       8B Q5 + code specialist + vision    Multi-model, no switching
+32 GB (future)    16 GB       13B Q4 + 3 specialists loaded       Desktop-class AI
+64 GB (future)    32 GB       70B Q4 or 13B F16 + specialists     Near-cloud-quality local AI
+```
+
+### 10.2 Multi-Model Architecture
+
+As RAM grows, AIRS evolves from single-model switching to multi-model concurrency:
+
+**Phase 1 (4-8 GB) — Single model, serial switching:**
+The current design. One primary model loaded at a time. Specialist tasks require eviction and reload. Acceptable on 8 GB, limiting on 4 GB.
+
+**Phase 2 (16 GB) — Primary + specialists:**
+Primary model stays resident. 1-2 small specialists (code, vision, embedding) loaded alongside. Most tasks are handled without any model switching. AIRS routes based on task type.
+
+**Phase 3 (32+ GB) — Model ensemble:**
+Multiple full-size models loaded simultaneously. AIRS routes each request to the best specialist. Intent verification uses a dedicated security model. Code generation uses a code-tuned model. Vision tasks use a multimodal model. Conversation uses a general-purpose model. Zero switching latency for any task type.
+
+```rust
+pub struct ModelEnsemble {
+    /// All currently loaded models with their specializations
+    loaded: Vec<(ModelId, Vec<TaskType>)>,
+    /// Routing table: task type → preferred model → fallback chain
+    routing: HashMap<TaskType, Vec<ModelId>>,
+    /// Total model memory used
+    total_memory: usize,
+    /// Budget remaining for additional models
+    budget_remaining: usize,
+}
+
+impl ModelEnsemble {
+    pub fn route(&self, task: TaskType) -> ModelId {
+        // Return the best loaded model for this task type
+        // Falls back through the chain if preferred model is busy
+        self.routing[&task].iter()
+            .find(|id| self.is_available(id))
+            .copied()
+            .unwrap_or(self.primary())
+    }
+}
+```
+
+### 10.3 Longer Context Windows
+
+More RAM directly enables longer conversations and richer context:
+
+| Device RAM | Practical Context | What It Enables |
+|---|---|---|
+| 4 GB | 4K-8K tokens | Short conversations, single-page documents |
+| 8 GB | 8K-32K tokens | Multi-turn conversations, short documents |
+| 16 GB | 32K-128K tokens | Extended conversations, full documents, rich system context |
+| 32 GB+ | 128K-256K+ tokens | Entire codebases in context, book-length documents, persistent agent memory |
+
+Longer context windows reduce the need for context compression (section 5.8) and allow system services (intent verifier, behavioral monitor, context engine) to maintain richer working memory, improving their accuracy.
+
+### 10.4 NPU and Accelerator Integration
+
+Future SBCs increasingly include Neural Processing Units (NPUs) and dedicated ML accelerators. AIRS's compute scheduler is already designed for heterogeneous compute:
+
+```
+Current (Pi 5):       CPU (NEON SIMD) — 4-8 tok/s for 8B model
+Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s
+Future:               CPU + NPU + GPU compute — 40-100+ tok/s
+```
+
+The `ComputeDevice` enum (section 3.2) already includes NPU as a variant. When NPU drivers are available through the subsystem framework, the compute scheduler routes small models and embedding generation to the NPU (where fixed-point arithmetic excels) and keeps large model inference on CPU/GPU.
+
+-----
+
+## 11. Implementation Order
+
+```
+Phase 8a:  GGML integration + model loading          → inference works
+Phase 8b:  Compute scheduler + KV cache management   → concurrent sessions
 Phase 8c:  Streaming output + conversation manager   → conversation bar works
 Phase 8d:  Model registry + LRU eviction             → multiple models supported
-Phase 9a:  Space Indexer + embedding generation       → semantic search works
+Phase 8e:  Quantization selector + hardware tier      → auto-select best model for device
+Phase 9a:  Space Indexer + selective embedding         → semantic search (promoted objects)
 Phase 9b:  Context Engine + Attention Manager         → context-aware behavior
 Phase 9c:  Conversation bar UI integration            → user-facing AI ready
 Phase 10a: Intent Verifier + Behavioral Monitor       → security layers 1 + 3
 Phase 10b: Adversarial Defense                        → security layer 5
 Phase 10c: Tool Manager + Agent Lifecycle             → full agent framework
+Phase 14a: Model residency policy + switching opt     → minimize model swap latency
+Phase 14b: Dynamic model pool (grow/shrink on demand) → efficient RAM use
+Phase 14c: Multi-model ensemble routing               → specialist routing (16+ GB)
+Phase 14d: NPU integration via subsystem framework    → hardware-accelerated inference
 ```
