@@ -2621,7 +2621,177 @@ If AIRS resource orchestration is fully compromised (worst case), what is the ma
 
 -----
 
-## 10. Comparison to Existing Security Models
+## 10. Zero Trust as Foundational Kernel Principle
+
+### 10.1 Core Thesis
+
+Zero trust is a security model that assumes no implicit trust — every access request must be verified regardless of origin. In network security, this means "never trust, always verify" instead of trusting traffic inside the corporate perimeter. In AIOS, zero trust is not a bolt-on overlay; it is the kernel's native operating model. The capability system, IPC mediation, and memory isolation together implement zero trust at the syscall boundary — every operation is verified, every boundary is enforced, and no ambient authority exists.
+
+This section documents zero trust as a formal design principle, maps it to AIOS's existing architecture, identifies where the implementation falls short, and specifies the changes needed to close the gaps.
+
+### 10.2 Zero Trust Principles Mapped to AIOS
+
+| Zero Trust Principle | Network Security Equivalent | AIOS Kernel Equivalent |
+|---|---|---|
+| **Never trust, always verify** | Every request authenticated at API gateway | Every IPC call checked against capability token |
+| **Least privilege** | Scoped API tokens, role-based access | Capability attenuation — narrow path, reduce expiry, remove write |
+| **Microsegmentation** | Network segments with firewall rules between them | Security zones (Personal, Shared, System) with capability gates |
+| **Assume breach** | Logging, monitoring, anomaly detection | Audit system (all IPC logged), provenance chain, MTE tagging |
+| **Short-lived credentials** | JWT with 15-minute expiry, rotating API keys | Capability expiry (`expires` field), temporal capabilities |
+| **Continuous verification** | Re-authenticate on every request, not just session start | Capability checked per-IPC (but see §10.3 — caching gap) |
+| **Behavioral analytics** | UEBA (User and Entity Behavior Analytics) | AIRS behavioral monitoring (Layer 3) |
+| **Mutual authentication** | mTLS — both client and server present certificates | Channel endpoints established by Service Manager at boot |
+
+**Why AIOS is naturally zero trust.** In Linux, if a process runs as root, it can do anything — that is implicit trust based on identity. There is no equivalent in AIOS. There is no `root`, no `sudo`, no ambient authority. An agent can only perform operations that its explicit capability tokens permit. Every IPC call passes through kernel-mediated capability validation. Every memory access is bounded by the agent's page table (TTBR0). Every space access requires a capability scoped to that space. The kernel is the universal policy enforcement point — there is no "inside the perimeter" where checks are relaxed.
+
+### 10.3 Gap Analysis: Where AIOS Falls Short of Pure Zero Trust
+
+#### Gap 1: Capability caching relaxes continuous verification
+
+**Current state.** ipc.md Section 4.2 states: "Capability validation cached per-channel (checked at creation, not per-message)." Once a channel is created with a valid capability, subsequent IPC calls on that channel skip capability revalidation.
+
+**Zero trust violation.** If a capability is revoked after channel creation, does the channel continue to work? If so, a revoked credential still grants access — the defining failure mode that zero trust prevents.
+
+**Resolution.** Capability revocation MUST invalidate all channels that were created with the revoked capability. The kernel's `capability_revoke()` function must walk the channel table and destroy (or suspend) any channel whose creation capability has been revoked. This is the equivalent of token revocation invalidating all active sessions.
+
+```rust
+impl CapabilityTable {
+    pub fn revoke(&mut self, token_id: TokenId) {
+        // ... existing revocation logic ...
+
+        // NEW: Invalidate channels created with this capability
+        kernel.invalidate_channels_for_capability(token_id);
+    }
+}
+```
+
+The per-message capability check can remain cached (it's a valid performance optimization) as long as revocation propagates to channels. This is analogous to network zero trust systems that cache authentication for a session but invalidate the session when the token is revoked.
+
+#### Gap 2: No mandatory capability rotation
+
+**Current state.** Capabilities have an `expires` field (Section 3.1, line 1491) but expiry is optional (`Some(now() + Duration::days(365))`). A capability created with `expires: None` lives forever.
+
+**Zero trust violation.** Long-lived credentials are antithetical to zero trust. A compromised agent holding a non-expiring capability has permanent access until someone manually revokes it.
+
+**Resolution.** Enforce mandatory expiry with maximum TTL per trust level:
+
+```rust
+pub const MAX_CAPABILITY_TTL: [Duration; 5] = [
+    Duration::MAX,              // Trust Level 0: Kernel (not applicable)
+    Duration::days(365),        // Trust Level 1: System services (renewed at boot)
+    Duration::days(365),        // Trust Level 2: Native experience agents (renewed at boot)
+    Duration::days(90),         // Trust Level 3: Third-party agents
+    Duration::hours(24),        // Trust Level 4: Web content / tab agents
+];
+```
+
+When a capability approaches expiry, the agent must re-request it from the Service Manager. The Service Manager re-evaluates the grant (checking whether the user has changed permissions, whether the agent's behavioral profile has changed, etc.) before issuing a new token. This is the kernel equivalent of OAuth token refresh.
+
+For system services (Trust Level 1), capabilities are renewed at every boot — the boot sequence is the rotation event.
+
+#### Gap 3: No behavioral gating on IPC
+
+**Current state.** Layer 3 (Behavioral Monitoring) observes agent behavior and can flag anomalies, but enforcement is reactive — the security event response (Section 6) suspends agents after detection. Capabilities are checked structurally (does the agent hold the right token?) but not behaviorally (is this pattern of access normal?).
+
+**Zero trust violation.** Modern zero trust systems don't just check credentials — they check context. Is this request coming from an unusual location? At an unusual time? At an unusual rate? A valid credential used anomalously should be challenged.
+
+**Resolution.** AIRS behavioral monitoring should feed directly into IPC gating:
+
+```
+Normal behavior:
+  Agent reads 5-10 objects/minute from "research" space → IPC proceeds
+
+Anomalous behavior:
+  Agent reads 500 objects/minute from "research" space →
+    1. AIRS flags anomaly (Layer 3)
+    2. Kernel receives behavioral alert via lightweight notification
+    3. Kernel applies rate limit to agent's IPC channels
+    4. If anomaly persists, kernel suspends agent's capabilities (soft revoke)
+    5. User notified via Attention system
+```
+
+This is not just logging — it is active enforcement based on behavioral context. The capability token is still valid, but the behavioral signal modulates whether the kernel honors it. This is the kernel equivalent of adaptive authentication.
+
+**Implementation note.** Behavioral gating must be optional and degradable. If AIRS is unavailable (fallback mode), the kernel falls back to structural capability checks only. Behavioral gating is an optimization for security, not a dependency. This is consistent with the principle in Section 9.2: "Resource Intelligence as Optimization, Not Security."
+
+#### Gap 4: Kernel resource quotas as zero trust for the kernel itself
+
+**Current state.** No per-process limits on kernel object creation (channels, shared memory regions, pending messages). The kernel trusts that processes will not abuse resource creation.
+
+**Zero trust violation.** The kernel is implicitly trusting userspace not to exhaust kernel resources. This is ambient trust — the exact thing zero trust eliminates.
+
+**Resolution.** Per-process kernel resource limits (see ipc.md Section 12.2, Gap 5). Every process has hard limits on kernel object creation, derived from its trust level and blast radius policy. The kernel cannot be resource-exhausted by any userspace action.
+
+### 10.4 Zero Trust Enforcement Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Zero Trust Enforcement                       │
+│                                                                  │
+│  Every IPC call passes through ALL of:                          │
+│                                                                  │
+│  1. STRUCTURAL CHECK (kernel, per-message)                      │
+│     └── Does the agent hold a valid, non-expired, non-revoked   │
+│         capability for this channel?                             │
+│                                                                  │
+│  2. PROTOCOL CHECK (kernel, per-message)                        │
+│     └── Does the message type match the channel's registered    │
+│         protocol? (See ipc.md §12.2, Gap 4)                    │
+│                                                                  │
+│  3. BEHAVIORAL CHECK (AIRS → kernel, continuous)                │
+│     └── Is this agent's IPC pattern consistent with its         │
+│         behavioral baseline? If anomalous, rate-limit or        │
+│         suspend. (Degrades gracefully if AIRS unavailable)      │
+│                                                                  │
+│  4. SERVICE CHECK (service, per-request)                        │
+│     └── Does the agent's operation-level capability permit      │
+│         this specific action? (Existing Layer 2)                │
+│                                                                  │
+│  5. AUDIT (kernel, per-message)                                 │
+│     └── Log source, destination, message type, timestamp,       │
+│         capability used, success/failure. (Existing Layer 7)    │
+│                                                                  │
+│  Checks 1, 2, and 5 are always active (kernel-enforced).       │
+│  Check 3 is active when AIRS is available (graceful fallback).  │
+│  Check 4 is always active (service-enforced).                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.5 Comparison: AIOS Zero Trust vs. Network Zero Trust
+
+| Aspect | Network Zero Trust (BeyondCorp, ZTNA) | AIOS Kernel Zero Trust |
+|---|---|---|
+| Trust boundary | Network perimeter → eliminated | Process address space (TTBR0) — hardware-enforced |
+| Identity | mTLS certificate, SAML assertion | Capability token (unforgeable, kernel-managed) |
+| Policy enforcement point | API gateway / proxy | Kernel syscall handler |
+| Credential lifetime | Short (minutes to hours) | Mandatory expiry per trust level (§10.3) |
+| Credential rotation | Automatic via OAuth refresh | Agent re-requests from Service Manager |
+| Behavioral analytics | UEBA (cloud-based, minutes latency) | AIRS Layer 3 (on-device, milliseconds latency) |
+| Microsegmentation | VLANs, firewalls, SDN | Security zones on spaces, capability scoping |
+| Breach containment | Lateral movement prevention | Blast radius policy (Layer 8), no ambient authority |
+| Mutual auth | mTLS (both sides present certs) | Channel endpoints established by trusted Service Manager |
+| Logging | SIEM, centralized log analysis | Provenance chain (Merkle-chain, tamper-evident, on-device) |
+
+**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (~20 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, formally verified (Phase 13), and fuzz-tested.
+
+**AIOS's unique contribution.** No existing kernel implements behavioral gating — the idea that a structurally valid capability can be modulated by behavioral context. This is the intersection of zero trust and AI-native security. Traditional kernels check "do you have permission?" AIOS checks "do you have permission AND is this consistent with how you normally behave?" The second check is only possible because AIRS has a behavioral model of every agent.
+
+### 10.6 Implementation Order
+
+Zero trust is not a separate phase — it emerges from capabilities, IPC mediation, and behavioral monitoring working together. But the gaps identified above require targeted work:
+
+```
+Phase 3b:  Capability revocation propagates to channels (Gap 1)
+Phase 3b:  Per-process kernel resource limits (Gap 4)
+Phase 8:   Mandatory capability expiry per trust level (Gap 2)
+Phase 8:   Behavioral gating integration: AIRS → kernel rate limiting (Gap 3)
+Phase 13:  Formal verification that revocation fully propagates
+Phase 13:  Formal verification that resource limits bound kernel heap
+```
+
+-----
+
+## 11. Comparison to Existing Security Models
 
 | Model | Strengths | Weaknesses | What AIOS Adds |
 |---|---|---|---|
@@ -2636,7 +2806,7 @@ If AIRS resource orchestration is fully compromised (worst case), what is the ma
 
 -----
 
-## 11. Implementation Order
+## 12. Implementation Order
 
 Security is not a phase — it's built in from the start. But different layers mature at different times:
 
