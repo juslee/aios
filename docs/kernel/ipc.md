@@ -617,3 +617,208 @@ Phase 3e:  Notification channels                     → async event delivery
 Phase 3f:  IPC performance optimization              → sub-5μs round-trip
 Phase 15:  POSIX syscall translation layer           → BSD tools work
 ```
+
+-----
+
+## 12. Modern Kernel Comparison and Gap Analysis
+
+This section compares the AIOS IPC design against state-of-the-art techniques from modern kernels (seL4, Linux 6.x, Fuchsia/Zircon, Hubris, Redox) and identifies gaps with concrete recommendations.
+
+### 12.1 What AIOS Gets Right
+
+**Direct thread switching (Section 9.2).** When Agent A calls Service B, the kernel switches directly from A's thread to B's thread — no scheduler invocation, no runqueue manipulation. This is the core L4 technique that enables sub-microsecond kernel overhead. The ~420 cycle / ~0.2 μs kernel overhead is competitive with seL4 on ARM.
+
+**Register-based small messages (Section 9.2).** Messages ≤ 64 bytes are passed in registers (x0-x7), avoiding memory copy entirely. This matches seL4's approach. Combined with direct switching, the fast path for small synchronous IPC is as good as it gets.
+
+**Capability caching per-channel (Section 4.2).** Channel capabilities are checked at creation, not per-message. This avoids a capability table lookup on the hot path. seL4 does the same with endpoint capabilities.
+
+**Zero-copy shared memory (Section 4.4).** Large data transfers use shared memory regions with pointer exchange instead of kernel-mediated copy. The 10 μs round-trip for a 1 MB transfer (versus 500 μs with copy) is correct.
+
+### 12.2 Gaps and Recommendations
+
+#### Gap 1: No shared-memory ring buffer channel
+
+**Problem.** The channel's `RingBuffer<Message>` (Section 4.1) is internal to the kernel, not a shared-memory ring buffer visible to userspace. Every IPC message — including high-frequency, low-priority traffic like AIRS resource directives, agent telemetry, and fire-and-forget hints — requires an SVC trap. For channels with thousands of messages per second, the syscall overhead accumulates.
+
+**Modern precedent.** Linux's io_uring uses shared-memory submission and completion queues. Userspace writes to the submission queue; the kernel reads it on its own schedule. No syscall per operation. This achieves millions of I/O operations per second with near-zero kernel entry overhead.
+
+**Recommendation.** Add a `ChannelCreateRing` variant that creates a shared-memory ring buffer channel:
+
+```rust
+/// Ring buffer channel: shared-memory submission/completion queues.
+/// No SVC trap per message. Kernel polls the submission queue.
+/// Suitable for: AIRS directives, agent hints, telemetry, metrics.
+RingChannelCreate {
+    submission_queue_size: u32,  // entries (power of 2)
+    completion_queue_size: u32,
+    entry_size: u32,            // max bytes per entry
+    flags: RingChannelFlags,
+},
+```
+
+The kernel maps the ring buffer into both address spaces. The producer writes entries and advances the tail pointer (atomic). The consumer reads entries and advances the head pointer (atomic). A lightweight notification (see Gap 2) wakes the consumer when new entries arrive.
+
+**Use cases:**
+- AIRS resource directive channel (high volume, batchable, kernel polls at tick rate)
+- Agent hint channel (fire-and-forget, no reply needed)
+- Telemetry/metrics channel (periodic, batchable)
+- Audit event batching (reduce per-event syscall overhead)
+
+**Not suitable for:** Request/reply IPC (use synchronous `IpcCall`), capability transfers (require kernel mediation), security-sensitive operations (need per-message validation).
+
+#### Gap 2: Heavyweight notification channels
+
+**Problem.** Section 6 defines notifications as full IPC channels with subscriber lists, filters, and rich typed payloads (`SpaceChanged`, `DeviceEvent`, `AttentionItem`). This is appropriate for application-level events but too expensive for kernel-level signals like memory pressure transitions (`Normal → Low → Critical → OOM`), ring buffer wakeups, or fallback mode triggers.
+
+**Modern precedent.** seL4's notification objects are a single machine word (bitmap) that can be set and waited on atomically. Setting a notification bit is a single atomic OR — no message allocation, no queue, no serialization. Orders of magnitude cheaper than a full IPC message.
+
+**Recommendation.** Add a lightweight notification primitive alongside the existing notification channels:
+
+```rust
+/// Lightweight notification: single-word bitmap, atomic set/wait.
+/// No message body. Each bit position is a signal.
+/// Suitable for: pressure transitions, wakeups, mode changes.
+pub struct LightNotification {
+    id: NotificationId,
+    word: AtomicU64,  // 64 signal bits
+}
+
+/// Syscalls:
+NotificationCreate {},
+NotificationSignal { id: NotificationId, bits: u64 },  // atomic OR
+NotificationWait { id: NotificationId, mask: u64 },    // block until any bit in mask is set
+```
+
+**Bit assignments (example for kernel → AIRS channel):**
+- Bit 0: Memory pressure changed
+- Bit 1: New entries in ring buffer
+- Bit 2: Fallback mode transition requested
+- Bit 3: Agent spawned/exited
+- Bits 4-63: Reserved
+
+This pairs naturally with ring buffer channels: the producer signals bit 1 after writing entries; the consumer waits on bit 1 and processes the batch.
+
+#### Gap 3: No `IpcReply` syscall
+
+**Problem.** The syscall table has `IpcCall`, `IpcSend`, `IpcRecv` — but no dedicated `IpcReply`. Services presumably reply using `IpcSend` on the same channel. This requires a capability check on the reply path (the service must hold the channel capability to send). It also creates a confused-deputy risk: a service could accidentally reply on the wrong channel.
+
+**Modern precedent.** seL4 has a separate `Reply` syscall that requires no capability. The kernel tracks "who called me" implicitly — a reply always goes back to the last caller. This eliminates one capability check per round-trip and makes it structurally impossible to reply to the wrong endpoint.
+
+**Recommendation.** Add `IpcReply` as a syscall:
+
+```rust
+/// Reply to the last IpcCall received on this channel.
+/// No capability required — the kernel knows the caller.
+/// Can only be used once per received IpcCall (enforced by kernel).
+IpcReply {
+    reply_buf: *const u8,
+    reply_len: usize,
+},
+```
+
+This saves ~30 cycles per round-trip (skipped capability validation) and prevents misrouted replies. The fast path cycle count drops from ~420 to ~390.
+
+#### Gap 4: Kernel-enforced protocol types
+
+**Problem.** Messages are "untyped byte buffers" at the kernel level (Section 4.3). Type safety comes from `TypedMessage<T>` in the SDK — voluntary, not enforced. A malicious or buggy agent can send raw bytes that don't match the expected type. The service must defensively deserialize and handle all malformed input.
+
+**Modern precedent.** Fuchsia's FIDL (Fuchsia Interface Definition Language) generates marshaling code from interface definitions. The kernel validates that messages conform to the registered protocol before delivery. This prevents protocol confusion attacks at the kernel level.
+
+**Recommendation.** At minimum, enforce a message type tag per-channel:
+
+```rust
+pub struct ChannelProtocol {
+    /// Valid message_type values for this channel direction (A→B).
+    /// Kernel rejects messages with unregistered types.
+    valid_types_a_to_b: Vec<u32>,
+    /// Valid message_type values for the reverse direction (B→A).
+    valid_types_b_to_a: Vec<u32>,
+    /// Maximum message size per type (optional).
+    max_size_per_type: HashMap<u32, usize>,
+}
+```
+
+The Service Manager registers valid protocol types when creating channels. The kernel checks `message_type` against the channel's protocol before delivery. This is a lightweight check (one lookup in a small set) that catches protocol confusion without the full complexity of FIDL-style validation.
+
+Full FIDL-style typed marshaling (generated code, wire format validation) can be added later as a Phase 3 enhancement.
+
+#### Gap 5: Kernel heap bounds and per-process resource limits
+
+**Problem.** Channel contains `Vec<SharedMemoryId>` (Section 4.1), implying heap allocation. No per-process limits on kernel object creation are specified. A malicious process creating thousands of channels, shared memory regions, or pending messages can exhaust the kernel heap.
+
+**Modern precedent.** Hubris (Oxide Computer's embedded Rust kernel) does zero heap allocation after boot — all resources are statically declared. This is extreme for a general-purpose OS, but the principle of bounded kernel resources is sound.
+
+**Recommendation.** Add per-process kernel resource limits:
+
+```rust
+pub struct KernelResourceLimits {
+    max_channels: u32,              // default: 64
+    max_shared_regions: u32,        // default: 32
+    max_pending_messages: u32,      // default: 256
+    max_notification_subscriptions: u32, // default: 16
+    max_child_processes: u32,       // default: 8
+}
+```
+
+These limits are set at process creation (derived from the agent's trust level and blast radius policy) and enforced by the kernel. The kernel's total heap usage is bounded by: `sum(per-process limits) * per-object size`. This provides a hard ceiling that prevents kernel OOM from any userspace action.
+
+Additionally, replace `Vec<SharedMemoryId>` in the Channel struct with a fixed-size array:
+
+```rust
+pub struct Channel {
+    // ...
+    shared_regions: [Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL],
+    // ...
+}
+```
+
+This eliminates dynamic allocation in the channel hot path entirely.
+
+#### Gap 6: POSIX translation performance
+
+**Problem.** Every POSIX `read(fd, buf, len)` becomes an IPC round-trip to the Space Service (~5 μs). Native Linux cached `read()` is ~0.2-0.5 μs. That's 10-25x slower. BSD tools (grep, find, cc) perform thousands of small reads — the IPC overhead dominates. These tools use POSIX syscalls directly; they don't use the AIOS SDK and can't benefit from SDK-level batching (Section 9.2).
+
+**Modern precedent.** POSIX shim layers in other microkernels (QNX, Fuchsia, Redox) use userspace caching to amortize IPC cost. QNX's resource managers maintain per-client read buffers. Fuchsia's fdio library caches directory entries.
+
+**Recommendation.** The POSIX translation library (musl libc shim) should include:
+
+1. **Read-ahead buffer.** On `read()`, request 64 KB from the Space Service even if the caller asked for 4 KB. Cache the remainder in the shim. Subsequent `read()` calls are satisfied from the buffer with no IPC. This converts sequential-read workloads from one IPC per read to one IPC per 64 KB.
+
+2. **Vnode cache.** Cache `stat()` results and directory listings in the shim. `stat()` on the same path within a TTL window returns the cached result. This eliminates IPC for repeated `stat()` calls (extremely common in build tools and shell operations).
+
+3. **Batched readdir.** On `opendir()` + `readdir()`, fetch the entire directory listing in one IPC call and iterate locally. This converts O(n) IPC calls to O(1) for directory traversal.
+
+4. **Write coalescing.** Buffer small `write()` calls and flush to the Space Service on `fsync()`, `close()`, or when the buffer is full. This is standard stdio behavior but should be in the POSIX shim for all file descriptors, not just buffered streams.
+
+These optimizations are invisible to POSIX callers and maintain correctness (cache invalidation via notification channels when objects change). Implementation belongs in Phase 15 alongside the POSIX translation layer.
+
+### 12.3 Revised Implementation Order
+
+```
+Phase 3a:  Syscall handler + basic IPC (send/recv)       → processes can communicate
+Phase 3b:  Channel management + capability transfer       → secure IPC
+Phase 3b':  Add IpcReply syscall                          → cheaper reply path
+Phase 3c:  Shared memory manager                          → zero-copy transfers
+Phase 3c':  Ring buffer channels                          → high-frequency bulk channel
+Phase 3d:  Service manager + service discovery            → services register and are findable
+Phase 3d':  Channel protocol registration                 → kernel-enforced message types
+Phase 3e:  Notification channels + light notifications    → async events + cheap signals
+Phase 3f:  IPC performance optimization                   → sub-5μs round-trip
+Phase 3f':  Per-process kernel resource limits             → bounded kernel heap
+Phase 15:  POSIX translation layer + shim caching         → BSD tools work fast
+```
+
+### 12.4 Summary
+
+| Technique | Source | Status | Priority |
+|---|---|---|---|
+| Direct thread switch | seL4, L4 | **Done** | — |
+| Register-based messages ≤ 64B | seL4 | **Done** | — |
+| Capability caching per-channel | seL4 | **Done** | — |
+| Zero-copy shared memory | All microkernels | **Done** | — |
+| `IpcReply` syscall | seL4 | **Add** | High (fast path improvement) |
+| Shared-memory ring buffer channels | Linux io_uring | **Add** | High (AIRS directive channel) |
+| Lightweight notification (bitmap) | seL4 | **Add** | Medium (pairs with ring buffers) |
+| Kernel-enforced protocol types | Fuchsia FIDL | **Add** | Medium (security hardening) |
+| Per-process kernel resource limits | Hubris, general | **Add** | Medium (DoS prevention) |
+| POSIX shim caching (readahead, vnode, batched readdir) | QNX, Fuchsia | **Add** | High (user-facing performance) |
