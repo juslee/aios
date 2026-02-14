@@ -2,8 +2,8 @@
 
 ## Universal Hardware Abstraction Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-networking.md](./aios-networking.md), [aios-browser-architecture.md](../applications/aios-browser-architecture.md)
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [networking.md](./networking.md), [browser.md](../applications/browser.md)
 
 -----
 
@@ -929,7 +929,7 @@ The OS power manager treats all devices identically. Check idle duration, apply 
 
 ## 16. Relationship to Networking
 
-The networking subsystem was the first to be designed in detail (see [aios-networking.md](./aios-networking.md)). The subsystem framework was derived from patterns that emerged from that design.
+The networking subsystem was the first to be designed in detail (see [networking.md](./networking.md)). The subsystem framework was derived from patterns that emerged from that design.
 
 Networking follows the framework with some domain-specific additions:
 

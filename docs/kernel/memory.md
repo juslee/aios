@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-ipc-syscalls.md](./aios-ipc-syscalls.md) — IPC shared memory, [aios-airs.md](../intelligence/aios-airs.md) — Model memory and KV caches, [aios-development-plan.md](../project/aios-development-plan.md) — Phase 2
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [ipc.md](./ipc.md) — IPC shared memory, [airs.md](../intelligence/airs.md) — Model memory and KV caches, [development-plan.md](../project/development-plan.md) — Phase 2
 
 -----
 

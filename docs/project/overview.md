@@ -386,17 +386,17 @@ Each phase has its own directory containing two companion documents:
 ### Full Document List
 ```
 docs/
-├── 00-architecture-overview.md                        ← This document
-├── aios-architecture.md                               System architecture deep dive
-├── aios-airs.md                                       AI Runtime Service deep dive
-├── aios-spaces.md                                     Space Storage deep dive
-├── aios-compositor.md                                 Compositor and Display deep dive
-├── aios-ipc-syscalls.md                               IPC and Syscall interface
-├── aios-subsystem-framework.md                        Universal hardware abstraction
-├── aios-networking.md                                 Network Translation Module
-├── aios-browser-architecture.md                       Decomposed web browser
-├── aios-experience.md                                 GUI experience and unique surfaces
-├── aios-development-plan.md                           Timeline, risks, dependencies
+├── overview.md                        ← This document
+├── architecture.md                               System architecture deep dive
+├── airs.md                                       AI Runtime Service deep dive
+├── spaces.md                                     Space Storage deep dive
+├── compositor.md                                 Compositor and Display deep dive
+├── ipc.md                               IPC and Syscall interface
+├── subsystem-framework.md                        Universal hardware abstraction
+├── networking.md                                 Network Translation Module
+├── browser.md                       Decomposed web browser
+├── experience.md                                 GUI experience and unique surfaces
+├── development-plan.md                           Timeline, risks, dependencies
 │
 ├── 00 - Foundation and Tooling/
 │   ├── phase-detail.md                                Technical design
@@ -488,16 +488,16 @@ docs/
 These companion documents provide deep-dive technical specifications:
 | Document | Scope |
 |---|---|
-| `aios-architecture.md` | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
-| `aios-airs.md` | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
-| `aios-spaces.md` | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
-| `aios-compositor.md` | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
-| `aios-ipc-syscalls.md` | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
-| `aios-subsystem-framework.md` | Universal hardware abstraction — traits, types, patterns for every subsystem |
-| `aios-networking.md` | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
-| `aios-browser-architecture.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
-| `aios-experience.md` | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
-| `aios-development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
+| `architecture.md` | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
+| `airs.md` | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
+| `spaces.md` | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
+| `compositor.md` | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
+| `ipc.md` | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
+| `subsystem-framework.md` | Universal hardware abstraction — traits, types, patterns for every subsystem |
+| `networking.md` | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
+| `browser.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
+| `experience.md` | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
+| `development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
 ---
 ## 13. Success Criteria (Full Production OS)
 **Core OS:**

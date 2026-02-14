@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-ipc-syscalls.md](./aios-ipc-syscalls.md) — IPC fast path and direct switch, [aios-compositor.md](../platform/aios-compositor.md) — Compositor frame deadlines, [aios-airs.md](../intelligence/aios-airs.md) — Inference scheduling, [aios-memory.md](./aios-memory.md) — Per-agent memory, [aios-agents.md](../applications/aios-agents.md) — Agent CPU quotas
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [ipc.md](./ipc.md) — IPC fast path and direct switch, [compositor.md](../platform/compositor.md) — Compositor frame deadlines, [airs.md](../intelligence/airs.md) — Inference scheduling, [memory.md](./memory.md) — Per-agent memory, [agents.md](../applications/agents.md) — Agent CPU quotas
 
 -----
 

@@ -2,8 +2,8 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [aios-architecture.md](../project/aios-architecture.md)
-**Related:** [aios-compositor.md](../platform/aios-compositor.md) — Compositor protocol, [aios-subsystem-framework.md](../platform/aios-subsystem-framework.md) — Subsystem sessions
+**Parent document:** [architecture.md](../project/architecture.md)
+**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — Subsystem sessions
 
 -----
 
@@ -459,7 +459,7 @@ pub enum AirsReply {
 
 ### 5.3 Compositor Protocol
 
-See [aios-compositor.md](../platform/aios-compositor.md) for the full protocol. The compositor uses the same IPC channel pattern as all other services.
+See [compositor.md](../platform/compositor.md) for the full protocol. The compositor uses the same IPC channel pattern as all other services.
 
 -----
 
