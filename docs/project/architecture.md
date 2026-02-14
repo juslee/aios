@@ -1253,6 +1253,8 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 ## 9. Hardware Strategy
 
+### 9.1 Development Roadmap
+
 **Phase 1: QEMU aarch64 (development target).** All development and testing. HVF acceleration on macOS for near-native speed.
 
 **Phase 2: Raspberry Pi 4/5 (first real hardware).** Proves the OS works on real silicon. Known, documented hardware. Large community.
@@ -1262,3 +1264,162 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 **Phase 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
 
 **Phase 5: Own hardware (maturity).** Only if AIOS becomes a real platform with users and funding.
+
+### 9.2 Initial Target: Laptops and PCs
+
+AIOS initially targets **laptops and PCs**. This is where the hardware is generous enough to deliver the full AI-native experience without compromise:
+
+| Resource | Typical Laptop (2024-2026) | What AIOS Gets |
+|---|---|---|
+| Storage | 256 GB - 2 TB NVMe SSD | Enough for multiple AI models, generous version history, full embedding indexes |
+| RAM | 8 - 64 GB | Load 8B-13B models fully in RAM. 70B models viable at 32 GB+ with quantization |
+| CPU | 4-16 cores, 2-5 GHz | Real parallelism for inference, indexing, and compositor simultaneously |
+| GPU/NPU | Integrated or discrete | Future: GPU-accelerated inference, NPU offload for always-on tasks |
+| Network | WiFi 6/6E, Gigabit Ethernet | Fast model downloads, low-latency sync |
+
+The laptop/PC target means storage pressure is low. A 256 GB SSD gives AIOS ~180 GB after the host OS and user apps. A 512 GB SSD gives ~350 GB. Storage budgeting still matters (see [spaces.md §10](../storage/spaces.md)) but the constraints are comfortable — multiple models, generous version retention, full indexes.
+
+### 9.3 Future Device Classes
+
+AIOS is architectured for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [spaces.md §10.1](../storage/spaces.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
+
+**Planned future targets (in rough priority order):**
+
+| Device | When | Why | Key Constraints |
+|---|---|---|---|
+| **Tablets** (iPad-class) | After laptop stabilizes | Same form factor, touch input, split-screen UX | RAM-limited (6-8 GB), apps consume 40-50% storage |
+| **Phones** | After tablet | Pocket AI assistant, always-on context | RAM-limited, 50-70% storage to apps/media, small screen |
+| **TVs / Set-top boxes** | After core is stable | Living room AI — voice-first, media-centric | Very limited storage (16-128 GB), streaming-first for models |
+| **Single-board computers** | Niche/enthusiast | Makers, kiosks, embedded AI | Tight on everything — 2-8 GB RAM, SD card storage |
+
+Each future target brings a unique constraint that the architecture must handle:
+
+- **Phones:** Apps and media consume 50-70% of storage. Today's iPhones have a minimum of 128 GB with 256 GB being the practical buy. AIOS competes for the remaining 30-50%. The storage budget and pressure system handles this, but the model strategy shifts to 1-2 small models with aggressive eviction.
+- **TVs:** Minimal local storage. Models are streamed from a hub device on the local network or downloaded on demand. The NTM's mmap-over-network capability enables this — model weights are fetched as page faults, block by block.
+- **SBCs:** The tightest constraints but also the simplest use case. Single model, minimal version history, aggressive compression.
+
+### 9.4 Hardware Trends and AIOS Adaptation
+
+Consumer hardware capabilities have grown exponentially and this trend shows no sign of slowing. AIOS's architecture is designed to ride this curve — what feels constrained on today's entry-level hardware will feel generous on tomorrow's baseline.
+
+#### Storage Trajectory
+
+```
+Storage trends (mainstream consumer devices):
+
+Year    Phone (base)    Phone (practical)   Laptop (base)    Laptop (practical)
+────    ────────────    ─────────────────   ─────────────    ──────────────────
+2020    64 GB           128 GB              256 GB           512 GB
+2022    128 GB          128-256 GB          256 GB           512 GB
+2024    128 GB          256 GB              256-512 GB       512 GB - 1 TB
+2026    128-256 GB      256-512 GB          512 GB           1-2 TB
+2028†   256 GB          512 GB - 1 TB       1 TB             2-4 TB
+2030†   512 GB          1-2 TB              2 TB             4-8 TB
+
+† Projections based on NAND flash pricing trends (~30-40% cost reduction per year
+  for equivalent capacity) and historical upgrade patterns.
+```
+
+**What this means for AIOS:**
+
+- **Today (2026):** A 256 GB laptop stores 3-6 AI models comfortably. A phone with 256 GB and 60% apps leaves ~100 GB for AIOS — workable but requires budgeting.
+- **2028:** A 512 GB phone with 60% apps leaves ~200 GB — enough for the full AI experience with multiple models. The phone profile starts to resemble today's laptop profile.
+- **2030:** Storage stops being a meaningful constraint on any mainstream device. Version history can default to `KeepAll`. Multiple large models fit on every device class. The storage pressure system still exists (users will always find ways to fill storage) but triggers rarely.
+
+#### RAM Trajectory
+
+RAM is the more critical constraint for AI workloads. Unlike storage (which is about caching and history), RAM directly determines what models can run and how fast:
+
+```
+RAM trends (mainstream consumer devices):
+
+Year    Phone       Tablet      Laptop (base)    Laptop (power)
+────    ─────       ──────      ─────────────    ──────────────
+2020    4-6 GB      4-6 GB      8 GB             16-32 GB
+2022    6-8 GB      6-8 GB      8-16 GB          32-64 GB
+2024    8 GB        8 GB        8-16 GB          32-64 GB
+2026    8-12 GB     8-12 GB     16-32 GB         64-128 GB
+2028†   12-16 GB    12-16 GB    32 GB            128-256 GB
+2030†   16-24 GB    16-24 GB    32-64 GB         128-512 GB
+
+† Projections based on LPDDR pricing trends and the AI hardware arms race
+  (Apple, Qualcomm, Samsung all investing in on-device AI RAM).
+```
+
+**What this means for AIOS:**
+
+| RAM Available | Models That Fit | Experience |
+|---|---|---|
+| 4-6 GB | 3B Q4 only (1.5-2 GB model) | Basic — simple queries, limited context |
+| 8 GB | 8B Q4 (4.5 GB model) | Good — conversational AI, summarization, search |
+| 16 GB | 8B Q6 + vision model simultaneously | Great — high-quality responses, multi-modal |
+| 32 GB | 13B Q6 or 70B Q4 (with quantization) | Excellent — near-cloud quality locally |
+| 64 GB+ | 70B Q6 or multiple models loaded | Outstanding — full model library in RAM |
+
+- **Today (2026):** 16 GB laptops are becoming baseline (Apple's M-series ships 16 GB minimum). This is the sweet spot for AIOS — one good 8B model fully loaded with room for the OS, compositor, browser, and agents.
+- **2028:** 32 GB laptops become common. 13B models or quantized 70B models become viable on mainstream hardware. Phones reach 12-16 GB — enough for 8B inference, making phone AIOS a real product.
+- **2030:** 64 GB laptops are mainstream. Full 70B inference without aggressive quantization. On-device AI quality approaches cloud. The distinction between "local AI" and "cloud AI" blurs for most tasks.
+
+#### Compute Trajectory (CPU, GPU, NPU)
+
+```
+Compute trends relevant to on-device AI:
+
+Capability            2024                   2028†                  2030†
+─────────────         ────                   ────                   ────
+CPU inference         ~10-15 tok/s (8B Q4)   ~25-40 tok/s (8B Q4)  ~40-60 tok/s
+  (laptop)            on M3/Snapdragon X     ISA improvements       Wider SIMD, more cores
+
+NPU (dedicated AI)    Apple Neural Engine    Pervasive in all SoCs  Standard co-processor
+                      Qualcomm Hexagon       40-100 TOPS            100-200+ TOPS
+                      Intel NPU              Standardized APIs      Unified memory w/ GPU
+                      10-40 TOPS
+
+GPU for inference     Offload possible       Better quantized       Real-time 13B on
+                      (Metal, Vulkan)        inference support      integrated GPU
+
+Memory bandwidth      50-100 GB/s (LPDDR5)   100-200 GB/s           200-400 GB/s
+  (determines         Bottleneck for         Bottleneck eases       70B models become
+   tok/s ceiling)     large models           for 13B+               truly interactive
+```
+
+**What this means for AIOS:**
+
+- **NPUs are the game changer.** Current NPUs (10-40 TOPS) are used for image processing and simple ML. By 2028, dedicated AI accelerators at 40-100+ TOPS will be standard in every laptop, tablet, and phone SoC. AIOS should detect and use NPUs via the subsystem framework — the inference engine talks to an abstract `AcceleratorDevice`, and the subsystem driver handles the hardware specifics.
+- **Memory bandwidth, not raw compute, is the bottleneck for LLM inference.** Token generation speed is primarily limited by how fast model weights can be read from RAM. LPDDR5x (2024) provides ~50-100 GB/s. LPDDR6 (2027-2028) will push 100-200 GB/s. This directly translates to faster inference without any software changes — AIOS just gets faster on newer hardware.
+- **Inference speed improves ~2-3x per generation.** An 8B model that runs at 15 tok/s today will run at 30-45 tok/s on 2028 hardware. This makes the AI experience feel increasingly native and instantaneous.
+
+#### Architectural Implications
+
+AIOS's architecture is designed to **scale with hardware** rather than target a fixed hardware generation:
+
+1. **Device profiles adapt automatically.** `DeviceProfile::detect()` examines actual hardware (RAM size, storage capacity, accelerator presence) rather than matching device labels. A phone from 2028 with 16 GB RAM and 512 GB storage will automatically get more generous quotas than a 2024 phone with 8 GB and 256 GB. No software update needed — the thresholds are capability-based.
+
+2. **The memory pool system scales.** The NTM's page-pool allocator (see [memory.md](../kernel/memory.md)) doesn't hardcode pool sizes. The inference pool, compositor pool, and agent pools are sized as percentages of available RAM. 8 GB machine → 4 GB inference pool. 64 GB machine → 32 GB inference pool. Bigger models load automatically.
+
+3. **Storage budgets are percentage-based.** Quotas like "20% for models" mean 48 GB on a 256 GB laptop and 400 GB on a 2 TB laptop. The architecture doesn't need to know the absolute size — it adapts.
+
+4. **The subsystem framework abstracts accelerators.** When NPUs become standard, AIOS adds an NPU subsystem driver. The inference engine doesn't change — it requests "accelerated matrix multiply" from the subsystem framework, which routes to CPU SIMD, GPU compute shader, or NPU depending on what's available. The best hardware wins automatically.
+
+5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q4 model. On a 2028 laptop with 32 GB, it loads a 13B Q6 — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
+
+6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)`. On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
+
+#### The Convergence Thesis
+
+By 2030, the hardware gap between device classes narrows dramatically:
+
+```
+2024:   Phone (8 GB / 256 GB)  ←——— huge gap ———→  Laptop (16 GB / 512 GB)
+2026:   Phone (12 GB / 256 GB) ←—— large gap ——→   Laptop (32 GB / 1 TB)
+2028:   Phone (16 GB / 512 GB) ←— moderate gap —→   Laptop (64 GB / 2 TB)
+2030:   Phone (24 GB / 1 TB)   ←— small gap ——→    Laptop (64 GB / 4 TB)
+```
+
+The phone of 2030 has the capabilities of a 2024 power-user laptop. This means:
+
+- **AIOS's device profiles converge.** What requires separate Phone/Tablet/Laptop profiles today may need only two profiles in 2030: "standard" and "constrained" (TVs, SBCs, legacy devices).
+- **On-device AI quality converges with cloud.** When every phone can run a 13B model at 30+ tok/s, the case for cloud inference weakens significantly for most tasks. AIOS's local-first architecture becomes the natural default, not a compromise.
+- **The multi-device experience becomes seamless.** When every device can run the same model at acceptable quality, the user experience is consistent everywhere. Space Sync handles data; AIRS handles intelligence; the device profile handles resource tuning. Same OS, same AI, same experience — just different screens.
+
+This is why AIOS invests in device profiles and adaptive systems now: the architecture built for 2024's hardware diversity gracefully handles 2030's hardware convergence. The code doesn't change — the profiles just get more generous.
