@@ -737,7 +737,7 @@ pub struct CapabilityToken {
     holder: AgentId,
     granted_by: Identity,
     created_at: Timestamp,
-    expires: Option<Timestamp>,
+    expires: Timestamp,
     delegatable: bool,
     attenuations: Vec<Attenuation>,
     revoked: bool,
