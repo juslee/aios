@@ -124,7 +124,7 @@ A clean-sheet microkernel operating system written in Rust for aarch64 where eve
 │  └── Process Manager (create, isolate, terminate)                   │
 │                                                                     │
 │  Hardware Abstraction                                               │
-│  ├── GICv3 Interrupt Controller                                     │
+│  ├── GIC (v2 on Pi 4, v3 on Pi 5) Interrupt Controller                                     │
 │  ├── ARM Generic Timer                                              │
 │  ├── PL011 UART                                                     │
 │  ├── UEFI Runtime Services                                          │
@@ -916,7 +916,7 @@ Available always, used by those who want transparency into the system.
 └──────────────────────┬──────────────────────────────────────┘
                        ▼
 ┌─ Kernel Early Boot ─────────────────────────────────────────┐
-│  1. Exception vectors, GICv3 init, timer init               │
+│  1. Exception vectors, GIC (v2 on Pi 4, v3 on Pi 5) init, timer init               │
 │  2. Page table setup (TTBR0/TTBR1, W^X, KASLR)             │
 │  3. Heap allocator init                                     │
 │  4. Capability manager init (root capability created)       │
@@ -1350,6 +1350,7 @@ Year    Phone       Tablet      Laptop (base)    Laptop (power)
 
 | RAM Available | Models That Fit | Experience |
 |---|---|---|
+| 2 GB | No local model pool | Cloud inference only, no local model pool, agents and browser share 1.75 GB user pool |
 | 4-6 GB | 3B Q4 only (1.5-2 GB model) | Basic — simple queries, limited context |
 | 8 GB | 8B Q4 (4.5 GB model) | Good — conversational AI, summarization, search |
 | 16 GB | 8B Q6 + vision model simultaneously | Great — high-quality responses, multi-modal |
@@ -1395,7 +1396,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 1. **Device profiles adapt automatically.** `DeviceProfile::detect()` examines actual hardware (RAM size, storage capacity, accelerator presence) rather than matching device labels. A phone from 2028 with 16 GB RAM and 512 GB storage will automatically get more generous quotas than a 2024 phone with 8 GB and 256 GB. No software update needed — the thresholds are capability-based.
 
-2. **The memory pool system scales.** The NTM's page-pool allocator (see [memory.md](../kernel/memory.md)) doesn't hardcode pool sizes. The inference pool, compositor pool, and agent pools are sized as percentages of available RAM. 8 GB machine → 4 GB inference pool. 64 GB machine → 32 GB inference pool. Bigger models load automatically.
+2. **The memory pool system scales.** The kernel's physical memory manager (see [memory.md](../kernel/memory.md) §2.4) doesn't hardcode pool sizes. The Kernel, User, Model, and DMA pools are sized as percentages of available RAM. 8 GB machine → 4 GB model pool. 16 GB machine → 8 GB model pool. Bigger models load automatically.
 
 3. **Storage budgets are percentage-based.** Quotas like "20% for models" mean 48 GB on a 256 GB laptop and 400 GB on a 2 TB laptop. The architecture doesn't need to know the absolute size — it adapts.
 

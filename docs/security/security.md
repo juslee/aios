@@ -2188,7 +2188,7 @@ The kernel's base address is randomized at each boot, making it harder for attac
 **Implementation:**
 - UEFI firmware provides entropy via `EFI_RNG_PROTOCOL` (hardware RNG)
 - Bootloader generates a random slide: `kernel_base = 0xFFFF000000000000 + (random % SLIDE_RANGE)`
-- `SLIDE_RANGE`: 256 MB (sufficient to make brute-forcing impractical)
+- `SLIDE_RANGE`: 128 MB, giving 64 positions at 2 MB alignment (sufficient to make brute-forcing impractical)
 - All kernel code is position-independent (compiled with `-fPIC` equivalent for kernel)
 - Kernel virtual addresses are randomized; physical addresses are not (hardware constraint)
 - KASLR slide is never leaked to userspace (no `/proc/kallsyms` equivalent)
@@ -2604,7 +2604,7 @@ AIRS can resize the **model pool** and **user pool** — but not the kernel pool
 │  └── KV caches                                       │
 │  AIRS can resize boundary with User Pool.            │
 ├─────────────────────────────────────────────────────┤
-│  User Pool (1.75-7.5 GB)                             │
+│  User Pool (1.5-7.5 GB)                              │
 │  ├── Agent heaps                                     │
 │  ├── Shared memory regions                           │
 │  └── Page cache                                      │
