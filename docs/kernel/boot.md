@@ -361,7 +361,7 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 5: Interrupt controller initialization.** GICv3 on QEMU and Pi 5. GICv2 on Pi 4. Configure the distributor and redistributor (GICv3) or distributor and CPU interface (GICv2). Enable the maintenance timer interrupt (for preemptive scheduling). All other device interrupts are disabled until the relevant driver is loaded.
 
-**Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a 10ms tick for the scheduler. Enable the timer interrupt in the GIC.
+**Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC.
 
 **Step 7: MMU enable — page table setup.** This is the most complex step:
 
@@ -439,7 +439,7 @@ The root capability is held by the kernel. The Service Manager receives a derive
 
 **Step 13: Audit log.** Initialize a kernel ring buffer (64 KiB, circular) for audit events. During early boot, events are buffered here. Once Space Storage is available (Phase 1 of the Service Manager), the ring buffer is flushed to `system/audit/boot/` and subsequent events are written to space storage in real time.
 
-**Step 14: Process manager.** Initialize the process table and scheduler. The scheduler uses priority + deadline scheduling: interactive processes get priority, background work gets deadline guarantees. The kernel itself runs as process 0.
+**Step 14: Process manager.** Initialize the process table and scheduler. The scheduler uses four scheduling classes — RT (EDF for compositor/audio deadlines), Interactive (priority round-robin with input boost), Normal (Weighted Fair Queuing for agents and inference), and Idle (FIFO for background maintenance). See scheduler.md §3.1. The kernel itself runs as process 0.
 
 **Step 15: Provenance chain.** Initialize the append-only Merkle-linked provenance log. The first entry records the kernel boot event, signed by the kernel's built-in key. All subsequent system events (service start, capability grant, agent spawn) are appended to this chain.
 
