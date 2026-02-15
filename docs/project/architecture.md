@@ -125,13 +125,14 @@ A clean-sheet microkernel operating system written in Rust for aarch64 where eve
 │  └── Process Manager (create, isolate, terminate)                   │
 │                                                                     │
 │  Hardware Abstraction Layer (hal.md)                                │
-│  ├── Platform trait (6 init methods, one per hardware class)        │
+│  ├── Platform trait (7 init methods, one per hardware class)        │
 │  ├── InterruptController (GICv2 on Pi 4, GICv3 on Pi 5/QEMU)      │
 │  ├── Timer (ARM Generic Timer, platform-specific frequency)         │
 │  ├── Uart (PL011 UART, platform-specific base address)             │
 │  ├── GpuDevice (VirtIO-GPU / VideoCore VI / VideoCore VII)         │
 │  ├── NetworkDevice (VirtIO-Net / Broadcom Genet)                   │
 │  ├── StorageDevice (VirtIO-Blk / Arasan SDHCI)                    │
+│  ├── RngDevice (VirtIO-RNG / bcm2835-rng)                         │
 │  ├── UEFI Runtime Services                                          │
 │  └── Device Tree Parsing + Platform Detection                       │
 ├─────────────────────────────────────────────────────────────────────┤
