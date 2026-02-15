@@ -213,7 +213,9 @@ pub trait Platform {
     fn init_interrupts(&self, dt: &DeviceTree) -> Result<InterruptController>;
     fn init_timer(&self, dt: &DeviceTree) -> Result<Timer>;
     fn init_uart(&self, dt: &DeviceTree) -> Result<Uart>;
-    fn platform_name(&self) -> &'static str;
+    fn init_gpu(&self, dt: &DeviceTree) -> Result<GpuDevice>;
+    fn init_network(&self, dt: &DeviceTree) -> Result<NetworkDevice>;
+    fn init_storage(&self, dt: &DeviceTree) -> Result<StorageDevice>;
 }
 
 pub struct QemuPlatform;
