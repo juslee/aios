@@ -9,6 +9,7 @@
 - [scheduler.md](../kernel/scheduler.md) — Scheduler deep dive
 - [memory.md](../kernel/memory.md) — Memory management architecture
 - [boot.md](../kernel/boot.md) — Boot sequence and init system deep dive
+- [hal.md](../kernel/hal.md) — Hardware Abstraction Layer (Platform trait, device drivers, porting guide)
 - [spaces.md](../storage/spaces.md) — Space storage system deep dive
 - [compositor.md](../platform/compositor.md) — GPU compositor and window management
 - [networking.md](../platform/networking.md) — Network Translation Module deep dive
@@ -123,12 +124,16 @@ A clean-sheet microkernel operating system written in Rust for aarch64 where eve
 │  ├── Audit Log (kernel-enforced, tamper-evident)                    │
 │  └── Process Manager (create, isolate, terminate)                   │
 │                                                                     │
-│  Hardware Abstraction                                               │
-│  ├── GIC (v2 on Pi 4, v3 on Pi 5) Interrupt Controller                                     │
-│  ├── ARM Generic Timer                                              │
-│  ├── PL011 UART                                                     │
+│  Hardware Abstraction Layer (hal.md)                                │
+│  ├── Platform trait (6 init methods, one per hardware class)        │
+│  ├── InterruptController (GICv2 on Pi 4, GICv3 on Pi 5/QEMU)      │
+│  ├── Timer (ARM Generic Timer, platform-specific frequency)         │
+│  ├── Uart (PL011 UART, platform-specific base address)             │
+│  ├── GpuDevice (VirtIO-GPU / VideoCore VI / VideoCore VII)         │
+│  ├── NetworkDevice (VirtIO-Net / Broadcom Genet)                   │
+│  ├── StorageDevice (VirtIO-Blk / Arasan SDHCI)                    │
 │  ├── UEFI Runtime Services                                          │
-│  └── Device Tree Parsing                                            │
+│  └── Device Tree Parsing + Platform Detection                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                          HARDWARE                                   │
 │  CPU (aarch64)  │  RAM  │  GPU  │  NPU  │  Storage  │  Network     │
