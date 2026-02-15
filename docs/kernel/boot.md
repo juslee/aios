@@ -216,6 +216,7 @@ pub trait Platform: Send + Sync {
     fn init_gpu(&self, dt: &DeviceTree) -> Result<GpuDevice>;
     fn init_network(&self, dt: &DeviceTree) -> Result<NetworkDevice>;
     fn init_storage(&self, dt: &DeviceTree) -> Result<StorageDevice>;
+    fn init_rng(&self, dt: &DeviceTree) -> Result<RngDevice>;
 }
 
 pub struct QemuPlatform;
@@ -234,7 +235,7 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
 }
 ```
 
-The six methods are called at different points during boot — UART, interrupts, and timer during kernel early boot (before heap), and GPU, network, and storage during service manager phases (after heap). See hal.md §3.2 for the full initialization order.
+The seven methods are called at different points during boot — UART, interrupts, timer, and RNG during kernel early boot (before heap), and GPU, network, and storage during service manager phases (after heap). See hal.md §3.2 for the full initialization order.
 
 -----
 
@@ -310,6 +311,7 @@ pub struct KernelState {
     pub interrupt_controller: Option<InterruptController>,
     pub timer: Option<Timer>,
     pub uart: Option<Uart>,
+    pub rng: Option<RngDevice>,
     pub gpu: Option<GpuDevice>,
     pub network: Option<NetworkDevice>,
     pub storage: Option<StorageDevice>,
@@ -405,11 +407,11 @@ The buddy allocator manages pages in orders 0 through 10 (4 KiB to 4 MiB blocks)
 
 **Step 9: Kernel heap.** Initialize a slab allocator on top of the buddy allocator. The slab allocator provides `alloc::alloc::GlobalAlloc` — from this point, `Box`, `Vec`, `String`, `HashMap`, and all other heap types work. The slab allocator has size classes: 32, 64, 128, 256, 512, 1024, 2048, 4096 bytes. Larger allocations go directly to the buddy allocator.
 
-**Step 10: KASLR.** If the `BootInfo.rng_seed` is non-zero, compute a random kernel base offset (aligned to 2 MiB). Remap the kernel at the new virtual address. Update all absolute address references (the kernel is compiled as position-independent). This makes kernel address prediction harder for exploits.
+**Step 10: Hardware RNG.** Call `platform.init_rng(dt)` to initialize the hardware random number generator. On QEMU this is VirtIO-RNG (virtqueue-based, entropy from host `/dev/urandom`). On Pi 4/5 this is the bcm2835-rng (MMIO TRNG). The returned `RngDevice` is stored in `KernelState.rng` and provides runtime entropy for KASLR, capability token generation, nonces, and key derivation — replacing reliance on the one-shot 32-byte UEFI seed.
 
-If no RNG seed is available (firmware doesn't support the UEFI RNG protocol), KASLR is skipped and a warning is logged. This happens on older QEMU versions; real Pi hardware provides an RNG.
+**Step 11: KASLR.** Use the hardware RNG to compute a random kernel base offset (aligned to 2 MiB). Remap the kernel at the new virtual address. Update all absolute address references (the kernel is compiled as position-independent). This makes kernel address prediction harder for exploits. Falls back to `BootInfo.rng_seed` if the hardware RNG init failed (should not happen on supported platforms).
 
-**Step 11: Capability manager.** Create the root capability — the single capability from which all others are derived:
+**Step 12: Capability manager.** Create the root capability — the single capability from which all others are derived:
 
 ```rust
 pub struct CapabilityManager {
@@ -445,15 +447,15 @@ impl CapabilityManager {
 
 The root capability is held by the kernel. The Service Manager receives a derived capability that can create any service-level capability but cannot modify the kernel itself.
 
-**Step 12: IPC subsystem.** Initialize the endpoint table and message buffer pools. No channels exist yet — they'll be created when the Service Manager spawns services. But the infrastructure must be ready.
+**Step 13: IPC subsystem.** Initialize the endpoint table and message buffer pools. No channels exist yet — they'll be created when the Service Manager spawns services. But the infrastructure must be ready.
 
-**Step 13: Audit log.** Initialize a kernel ring buffer (64 KiB, circular) for audit events. During early boot, events are buffered here. Once Space Storage is available (Phase 1 of the Service Manager), the ring buffer is flushed to `system/audit/boot/` and subsequent events are written to space storage in real time.
+**Step 14: Audit log.** Initialize a kernel ring buffer (64 KiB, circular) for audit events. During early boot, events are buffered here. Once Space Storage is available (Phase 1 of the Service Manager), the ring buffer is flushed to `system/audit/boot/` and subsequent events are written to space storage in real time.
 
-**Step 14: Process manager.** Initialize the process table and scheduler. The scheduler uses four scheduling classes — RT (EDF for compositor/audio deadlines), Interactive (priority round-robin with input boost), Normal (Weighted Fair Queuing for agents and inference), and Idle (FIFO for background maintenance). See scheduler.md §3.1. The kernel itself runs as process 0.
+**Step 15: Process manager.** Initialize the process table and scheduler. The scheduler uses four scheduling classes — RT (EDF for compositor/audio deadlines), Interactive (priority round-robin with input boost), Normal (Weighted Fair Queuing for agents and inference), and Idle (FIFO for background maintenance). See scheduler.md §3.1. The kernel itself runs as process 0.
 
-**Step 15: Provenance chain.** Initialize the append-only Merkle-linked provenance log. The first entry records the kernel boot event, signed by the kernel's built-in key. All subsequent system events (service start, capability grant, agent spawn) are appended to this chain.
+**Step 16: Provenance chain.** Initialize the append-only Merkle-linked provenance log. The first entry records the kernel boot event, signed by the kernel's built-in key. All subsequent system events (service start, capability grant, agent spawn) are appended to this chain.
 
-**Step 16: Early boot complete.** All kernel subsystems are initialized. The kernel is ready to create userspace processes.
+**Step 17: Early boot complete.** All kernel subsystems are initialized. The kernel is ready to create userspace processes.
 
 ```
 [boot] Complete — 180ms
