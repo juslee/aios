@@ -82,11 +82,16 @@ pub enum Syscall {
         send_len: usize,
     },
 
-    /// Wait for a message on a channel
+    /// Wait for a message on a channel.
+    /// timeout_ns: maximum time to block (nanoseconds).
+    /// 0 = non-blocking poll, u64::MAX = block indefinitely.
+    /// All blocking IPC operations require a timeout to prevent
+    /// indefinite resource lockup.
     IpcRecv {
         channel: ChannelId,
         recv_buf: *mut u8,
         recv_len: usize,
+        timeout_ns: u64,
     },
 
     /// Reply to the last IpcCall received on the current channel.
@@ -109,13 +114,15 @@ pub enum Syscall {
         channel: ChannelId,
     },
 
-    /// Wait for a message on any of multiple channels
+    /// Wait for a message on any of multiple channels.
+    /// On success, ready_channel is set to the channel that has data.
     IpcSelect {
         channels: *const ChannelId,
         channel_count: usize,
         recv_buf: *mut u8,
         recv_len: usize,
         timeout: Option<Duration>,
+        ready_channel: *mut ChannelId,
     },
 
     // === Channel Management ===
@@ -378,7 +385,7 @@ pub struct Channel {
     /// security.md). This ensures cached channel access cannot outlive
     /// the credential that granted it.
     creation_capability: CapabilityTokenId,
-    message_queue: RingBuffer<Message>,
+    message_queue: RingBuffer<RawMessage>,
     /// Fixed-size array. Bounded per-channel to prevent kernel heap
     /// exhaustion from userspace (zero trust: §10.3 Gap 4 in security.md).
     shared_regions: [Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL],
@@ -481,6 +488,7 @@ Messages are untyped byte buffers at the kernel level. The SDK provides typed wr
 /// Kernel-level message (untyped). All arrays are fixed-size to avoid
 /// kernel heap allocation on the IPC hot path.
 pub struct RawMessage {
+    channel: ChannelId,
     data: *const u8,
     len: usize,
     capabilities: [Option<CapabilityTokenId>; MAX_CAPS_PER_MESSAGE],
@@ -782,7 +790,7 @@ For asynchronous events (device hotplug, file system changes, attention items), 
 
 ```rust
 pub struct NotificationChannel {
-    id: ChannelId,
+    id: NotificationId,
     /// Bounded subscriber list. When full, Subscribe returns ENOSPC.
     /// System services (Level 1) have higher limits than agents.
     subscribers: [Option<ProcessId>; MAX_NOTIFICATION_SUBSCRIBERS],
@@ -930,7 +938,7 @@ When Interactive-class Agent A calls Normal-class Space Service B, the scheduler
 **Resolution: scheduling context inheritance.** When an `IpcCall` crosses scheduling classes, the kernel temporarily elevates the receiver to the caller's class for the duration of that request:
 
 ```rust
-unsafe fn ipc_direct_switch(sender: &mut Thread, receiver: &mut Thread, message: &Message) {
+unsafe fn ipc_direct_switch(sender: &mut Thread, receiver: &mut Thread, message: &RawMessage) {
     // ... existing copy and switch logic ...
 
     // Priority inheritance: receiver inherits caller's scheduling context.
@@ -946,11 +954,13 @@ unsafe fn ipc_direct_switch(sender: &mut Thread, receiver: &mut Thread, message:
     }
 }
 
-// On IpcReply: restore receiver's original scheduling context
+// On IpcReply: restore receiver's original scheduling context.
+// All three inherited fields must be cleared to prevent stale state.
 unsafe fn ipc_reply_switch(replier: &mut Thread, caller: &mut Thread) {
     replier.sched.effective_class = replier.sched.class;          // restore
     replier.sched.effective_priority = replier.sched.priority;    // restore
     replier.sched.inherited_class = None;
+    replier.sched.inherited_priority = None;
     replier.sched.inherited_deadline = None;
 }
 ```
@@ -1056,87 +1066,17 @@ This section compares the AIOS IPC design against state-of-the-art techniques fr
 
 ### 12.2 Gaps and Recommendations
 
-#### Gap 1: No shared-memory ring buffer channel
+#### Gap 1: No shared-memory ring buffer channel — RESOLVED
 
-**Problem.** The channel's `RingBuffer<Message>` (Section 4.1) is internal to the kernel, not a shared-memory ring buffer visible to userspace. Every IPC message — including high-frequency, low-priority traffic like AIRS resource directives, agent telemetry, and fire-and-forget hints — requires an SVC trap. For channels with thousands of messages per second, the syscall overhead accumulates.
+**Resolution.** `RingChannelCreate` and `RingChannelDestroy` integrated into the syscall table (§3.1). See §5.2 for streaming inference use case.
 
-**Modern precedent.** Linux's io_uring uses shared-memory submission and completion queues. Userspace writes to the submission queue; the kernel reads it on its own schedule. No syscall per operation. This achieves millions of I/O operations per second with near-zero kernel entry overhead.
+#### Gap 2: Heavyweight notification channels — RESOLVED
 
-**Recommendation.** Add a `ChannelCreateRing` variant that creates a shared-memory ring buffer channel:
+**Resolution.** Lightweight notification primitives (`NotificationCreate`, `NotificationSignal`, `NotificationWait`) integrated into the syscall table (§3.1). These use seL4-style single-word bitmap signals (~10 cycles). Application-level notification channels (§6) remain for rich typed events.
 
-```rust
-/// Ring buffer channel: shared-memory submission/completion queues.
-/// No SVC trap per message. Kernel polls the submission queue.
-/// Suitable for: AIRS directives, agent hints, telemetry, metrics.
-RingChannelCreate {
-    submission_queue_size: u32,  // entries (power of 2)
-    completion_queue_size: u32,
-    entry_size: u32,            // max bytes per entry
-    flags: RingChannelFlags,
-},
-```
+#### Gap 3: No `IpcReply` syscall — RESOLVED
 
-The kernel maps the ring buffer into both address spaces. The producer writes entries and advances the tail pointer (atomic). The consumer reads entries and advances the head pointer (atomic). A lightweight notification (see Gap 2) wakes the consumer when new entries arrive.
-
-**Use cases:**
-- AIRS resource directive channel (high volume, batchable, kernel polls at tick rate)
-- Agent hint channel (fire-and-forget, no reply needed)
-- Telemetry/metrics channel (periodic, batchable)
-- Audit event batching (reduce per-event syscall overhead)
-
-**Not suitable for:** Request/reply IPC (use synchronous `IpcCall`), capability transfers (require kernel mediation), security-sensitive operations (need per-message validation).
-
-#### Gap 2: Heavyweight notification channels
-
-**Problem.** Section 6 defines notifications as full IPC channels with subscriber lists, filters, and rich typed payloads (`SpaceChanged`, `DeviceEvent`, `AttentionItem`). This is appropriate for application-level events but too expensive for kernel-level signals like memory pressure transitions (`Normal → Low → Critical → OOM`), ring buffer wakeups, or fallback mode triggers.
-
-**Modern precedent.** seL4's notification objects are a single machine word (bitmap) that can be set and waited on atomically. Setting a notification bit is a single atomic OR — no message allocation, no queue, no serialization. Orders of magnitude cheaper than a full IPC message.
-
-**Recommendation.** Add a lightweight notification primitive alongside the existing notification channels:
-
-```rust
-/// Lightweight notification: single-word bitmap, atomic set/wait.
-/// No message body. Each bit position is a signal.
-/// Suitable for: pressure transitions, wakeups, mode changes.
-pub struct LightNotification {
-    id: NotificationId,
-    word: AtomicU64,  // 64 signal bits
-}
-
-/// Syscalls:
-NotificationCreate {},
-NotificationSignal { id: NotificationId, bits: u64 },  // atomic OR
-NotificationWait { id: NotificationId, mask: u64 },    // block until any bit in mask is set
-```
-
-**Bit assignments (example for kernel → AIRS channel):**
-- Bit 0: Memory pressure changed
-- Bit 1: New entries in ring buffer
-- Bit 2: Fallback mode transition requested
-- Bit 3: Agent spawned/exited
-- Bits 4-63: Reserved
-
-This pairs naturally with ring buffer channels: the producer signals bit 1 after writing entries; the consumer waits on bit 1 and processes the batch.
-
-#### Gap 3: No `IpcReply` syscall
-
-**Problem.** The syscall table has `IpcCall`, `IpcSend`, `IpcRecv` — but no dedicated `IpcReply`. Services presumably reply using `IpcSend` on the same channel. This requires a capability check on the reply path (the service must hold the channel capability to send). It also creates a confused-deputy risk: a service could accidentally reply on the wrong channel.
-
-**Modern precedent.** seL4 has a separate `Reply` syscall that requires no capability. The kernel tracks "who called me" implicitly — a reply always goes back to the last caller. This eliminates one capability check per round-trip and makes it structurally impossible to reply to the wrong endpoint.
-
-**Recommendation.** Add `IpcReply` as a syscall:
-
-```rust
-/// Reply to the last IpcCall received on this channel.
-/// No capability required — the kernel knows the caller.
-/// Can only be used once per received IpcCall (enforced by kernel).
-IpcReply {
-    reply_buf: *const u8,
-    reply_len: usize,
-},
-```
-
-This saves ~30 cycles per round-trip (skipped capability validation) and prevents misrouted replies. The fast path cycle count drops from ~420 to ~390.
+**Resolution.** `IpcReply` integrated into the syscall table (§3.1). No channel capability required on the reply path — the kernel tracks the caller. Saves ~30 cycles per round-trip.
 
 #### Gap 4: Kernel-enforced protocol types — RESOLVED
 
