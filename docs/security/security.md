@@ -1668,12 +1668,10 @@ impl CapabilityToken {
         // Expiry reduction: 1 year → 1 hour is OK
         //                    1 hour → 1 year is DENIED
         if let Some(new_expiry) = spec.reduce_expiry {
-            match self.expires {
-                Some(original) if new_expiry > original => {
-                    return Err(AttenuationViolation::ExpiryExpansion);
-                }
-                _ => new_token.expires = Some(new_expiry),
+            if new_expiry > self.expires {
+                return Err(AttenuationViolation::ExpiryExpansion);
             }
+            new_token.expires = new_expiry;
         }
 
         // Write removal: ReadWrite → Read is OK
@@ -1871,6 +1869,7 @@ impl TemporalCapability {
             deadline: now() + Duration::minutes(5),
             max_uses: Some(1),
             max_bytes: None,
+            bytes_transferred: 0,
         }
     }
 
