@@ -122,6 +122,10 @@ pub struct Identity {
     /// Spaces this identity has access to
     pub space_access: Vec<(SpaceId, AccessLevel)>,
 
+    /// Bound hardware keys (FIDO2) for additional authentication.
+    /// Added via bind_hardware_key() (§3.2).
+    pub hardware_keys: Vec<HardwareKeyBinding>,
+
     /// Trust model parameters
     pub trust: TrustModel,
 }
@@ -147,6 +151,9 @@ pub struct DeviceInfo {
     pub device_public_key: Ed25519PublicKey,
     /// Human-readable device name
     pub device_name: String,
+    /// Device certificate: primary key's signature over device_public_key.
+    /// Re-signed during key rotation (§3.1).
+    pub certificate: Signature,
     /// When this device was added
     pub added: SystemTime,
     /// Last sync time
@@ -161,6 +168,15 @@ pub struct DeviceInfo {
 Identity is created during first boot. No account registration. No email address. No phone number:
 
 ```rust
+/// Userspace identity service. Manages identity lifecycle, key rotation,
+/// relationships, and space sharing. Runs as a Trust Level 1 service.
+pub struct IdentityService {
+    /// The user's identity
+    pub identity: Identity,
+    /// History of key rotations for auditability (§3.1)
+    pub rotation_history: Vec<RotationCertificate>,
+}
+
 impl IdentityService {
     pub fn create_identity(display_name: &str) -> Identity {
         // 1. Generate primary Ed25519 key pair in kernel Crypto Core
@@ -1235,6 +1251,14 @@ pub struct PeerDisclosure {
     pub share_avatar: bool,
     pub share_device_count: bool,
     pub share_relationship_count: bool,
+}
+
+/// What identity information is disclosed to system services.
+pub struct ServiceDisclosure {
+    /// Share a stable pseudonymous ID (not the real IdentityId)
+    pub share_pseudonym: bool,
+    /// Share display name with the service
+    pub share_display_name: bool,
 }
 ```
 
