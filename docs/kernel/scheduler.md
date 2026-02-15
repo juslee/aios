@@ -172,6 +172,21 @@ pub struct Scheduler {
 
     /// Context hint from Context Engine (updated via IPC)
     context_hint: AtomicCell<ContextHint>,
+
+    /// Inference weight modifier (set by memory pressure §8.3 and thermal §8.4).
+    /// Applied as a multiplier to inference thread weights in calculate_weight().
+    /// When multiple subsystems set this, the minimum value wins (most restrictive).
+    inference_weight_modifier: AtomicF32,    // default: 1.0
+
+    /// Inference chunk size override (tokens per yield). Set by thermal (§8.4).
+    inference_chunk_modifier: AtomicU32,     // default: 8 (normal), reduced under thermal pressure
+
+    /// Whether idle-class threads are enabled (disabled during thermal warm state)
+    idle_enabled: AtomicBool,                // default: true
+
+    /// RT WCET scaling factor for thermal throttling (§8.4).
+    /// 1.0 at full frequency; increases proportionally when frequency drops.
+    rt_wcet_scale: AtomicF32,                // default: 1.0
 }
 
 /// Global scheduler tuning parameters
@@ -196,6 +211,10 @@ pub struct SchedulerConfig {
 
     /// Input boost duration (default: 8ms — two interactive slices)
     input_boost_duration: Duration,
+
+    /// Maximum CPU frequency in MHz (from device tree / firmware).
+    /// Used by thermal throttling (§8.4) to compute WCET scaling.
+    max_freq_mhz: u32,
 }
 ```
 
@@ -256,15 +275,28 @@ pub struct SchedEntity {
     /// Homogeneous on Pi 4/5; used for scheduling on asymmetric SoCs
     core_preference: CoreType,
 
-    /// Priority inheritance state (set during IPC direct switch
-    /// when a high-priority thread blocks on a low-priority server)
+    /// Priority inheritance state (set during IPC direct switch when a
+    /// high-priority thread blocks on a low-priority server — see ipc.md §9.2).
+    /// These fields temporarily elevate the receiver's effective priority.
     inherited_priority: Option<u8>,
     inherited_class: Option<SchedulerClass>,
+    inherited_deadline: Option<Timestamp>,
+
+    /// Effective scheduling parameters (base values overridden by inheritance).
+    /// The scheduler uses effective_* for all decisions. When no inheritance
+    /// is active, effective_* equals the base class/priority.
+    effective_class: SchedulerClass,
+    effective_priority: u8,
 
     /// Latency-nice: controls scheduling latency independent of weight.
     /// -20 (fast wakeup, latency-sensitive) to +19 (tolerant, throughput)
     /// Default: 0. See §7.2 for details.
     latency_nice: i8,
+
+    /// Preemption flag: set by the timer tick handler when a higher-priority
+    /// thread becomes runnable. Inference threads check this at preemption
+    /// points (layer/token boundaries) for cooperative preemption (§6.4).
+    preemption_flag: AtomicBool,
 
     /// Thread execution state
     state: ThreadState,
@@ -297,6 +329,10 @@ pub enum ThreadState {
     BlockedIo,
     /// Suspended by the kernel (memory limit, debugging)
     Suspended,
+    /// Waiting for GPU/NPU computation to complete (§6.5, future).
+    /// Not runnable — does not occupy a run queue position or count
+    /// toward PELT load. Wake-up triggered by accelerator interrupt.
+    BlockedAccelerator { device: AcceleratorId, job: JobId },
     /// Thread has exited
     Dead,
 }
@@ -310,6 +346,7 @@ pub struct CpuSet {
 impl CpuSet {
     pub fn all() -> Self { Self { mask: !0 } }
     pub fn single(cpu: CpuId) -> Self { Self { mask: 1 << cpu.0 } }
+    pub fn from_mask(mask: u64) -> Self { Self { mask } }
     pub fn contains(&self, cpu: CpuId) -> bool { self.mask & (1 << cpu.0) != 0 }
 }
 
@@ -605,6 +642,8 @@ pub struct RtTask {
     wcet: Duration,
     /// Deadline relative to period start (usually == period)
     relative_deadline: Duration,
+    /// CPU affinity — must be core 0 only (admission test is single-core)
+    affinity: CpuSet,
 }
 
 /// Admission controller for RT tasks
@@ -636,9 +675,13 @@ impl RtAdmissionController {
         (current_util + new_util) <= self.utilization_ceiling
     }
 
-    /// Admit a new RT task. Returns error if utilization would
-    /// exceed ceiling.
+    /// Admit a new RT task. Returns error if affinity is not core 0
+    /// or if utilization would exceed ceiling.
     pub fn admit(&mut self, task: RtTask) -> Result<(), SchedError> {
+        // Enforce single-core RT constraint — admission test is single-processor
+        if task.affinity != CpuSet::single(CpuId(0)) {
+            return Err(SchedError::RtMustPinToCore0);
+        }
         if !self.can_admit(&task) {
             return Err(SchedError::RtUtilizationExceeded {
                 current: self.current_utilization(),
@@ -673,23 +716,7 @@ Ceiling: 0.70. Remaining headroom: 0.259 (25.9%)
 
 This leaves 55.9% of CPU time for interactive, normal, and idle threads on the core that runs RT tasks. In the multi-core assignment (section 9.2), RT tasks are concentrated on core 0, leaving cores 1-3 fully available for inference and agents.
 
-**RT admission enforcement:** All RT tasks are pinned to core 0 via their CPU affinity mask (`CpuSet::single(CpuId(0))`). The admission controller's utilization bound test is a single-processor test — it is only valid when all RT tasks share one core. The `admit()` method enforces this:
-
-```rust
-impl RtAdmissionController {
-    pub fn admit(&mut self, task: RtTask) -> Result<(), SchedError> {
-        // Enforce single-core RT constraint
-        if task.affinity != CpuSet::single(CpuId(0)) {
-            return Err(SchedError::RtMustPinToCore0);
-        }
-        if !self.can_admit(&task) {
-            return Err(SchedError::RtUtilizationExceeded { /* ... */ });
-        }
-        self.tasks.push(task);
-        Ok(())
-    }
-}
-```
+**RT admission enforcement:** All RT tasks are pinned to core 0 via their CPU affinity mask (`CpuSet::single(CpuId(0))`). The admission controller's utilization bound test is a single-processor test — it is only valid when all RT tasks share one core. The `admit()` method above enforces this by rejecting any RT task with a non-core-0 affinity.
 
 ### 5.4 RT Deadline Miss Handling
 
@@ -953,21 +980,9 @@ impl InferenceThread {
 
 ### 6.5 Accelerator-Aware Scheduling (Future)
 
-On future hardware with GPU or NPU accelerators, inference may be partially or fully offloaded. The CPU scheduler must understand accelerator-bound thread states to avoid wasting CPU time on threads that are waiting for accelerator completion:
+On future hardware with GPU or NPU accelerators, inference may be partially or fully offloaded. The CPU scheduler must understand accelerator-bound thread states to avoid wasting CPU time on threads that are waiting for accelerator completion.
 
-```rust
-/// Extended thread state for accelerator-aware scheduling
-pub enum ThreadState {
-    // ... existing states ...
-    /// Thread is waiting for GPU/NPU computation to complete.
-    /// The thread is NOT runnable — it should not occupy a CPU run queue
-    /// position or count toward CPU load (PELT).
-    /// Wake-up is triggered by an accelerator interrupt.
-    BlockedAccelerator { device: AcceleratorId, job: JobId },
-}
-```
-
-**Why this matters:** Without accelerator awareness, a CPU thread that dispatches work to an NPU and then polls for completion wastes an entire CPU core spinning. With `BlockedAccelerator`, the thread is removed from the run queue (like `BlockedIpc`), freeing the core for other work. The NPU completion interrupt wakes the thread, which re-enters the run queue with its inference state intact.
+The `ThreadState::BlockedAccelerator` variant (defined in §3.3) handles this. Without accelerator awareness, a CPU thread that dispatches work to an NPU and then polls for completion wastes an entire CPU core spinning. With `BlockedAccelerator`, the thread is removed from the run queue (like `BlockedIpc`), freeing the core for other work. The NPU completion interrupt wakes the thread, which re-enters the run queue with its inference state intact.
 
 **Cooperative CPU/accelerator scheduling:** When both CPU and NPU are available, AIRS decides which device runs each inference layer based on the current load. The scheduler exposes CPU utilization (via PELT) to AIRS, enabling the decision: "CPU cores 1-2 are 90% utilized by interactive inference — offload background inference to NPU." This creates a closed-loop: scheduler reports load → AIRS decides placement → accelerator runs work → interrupt wakes thread → scheduler re-queues.
 
@@ -1098,14 +1113,39 @@ fn calculate_weight(entity: &SchedEntity, global_hint: ContextHint) -> u32 {
 /// Update virtual runtime after a thread runs for `delta` time.
 /// Threads with higher weight accumulate vruntime more slowly,
 /// so they get more real CPU time before being preempted.
-fn update_vruntime(entity: &mut SchedEntity, delta: Duration) {
-    let weight = calculate_weight(entity);
+fn update_vruntime(entity: &mut SchedEntity, delta: Duration, hint: ContextHint) {
+    let weight = calculate_weight(entity, hint);
     // vruntime increases inversely proportional to weight
     // Reference weight is WEIGHT_TABLE[120] (normal priority)
     let reference_weight = WEIGHT_TABLE[120] as u64;
     let vruntime_delta = (delta.as_nanos() as u64 * reference_weight)
         / weight as u64;
     entity.vruntime += vruntime_delta;
+
+    // Update per-entity PELT utilization (exponential decay, 32ms half-life).
+    // Tracks the fraction of time this entity has been running recently.
+    let decay = (-delta.as_secs_f32() / 0.032_f32).exp(); // e^(-dt/half_life)
+    entity.pelt_util = entity.pelt_util * decay
+        + (1.0 - decay) * 1.0; // 1.0 because the entity was running
+}
+
+/// Compute the virtual deadline for a waking thread.
+/// latency_nice controls how soon the thread is eligible to run
+/// after wakeup, independent of its weight (which controls total CPU share).
+fn compute_wakeup_vdeadline(entity: &SchedEntity, min_vruntime: u64) -> u64 {
+    // Base slice in vruntime units
+    let base_slice_ns = 10_000_000u64; // 10ms default slice
+    // Latency factor: latency_nice maps to a multiplier on virtual deadline.
+    // -20 → 0.1x (very short deadline, scheduled almost immediately)
+    //   0 → 1.0x (default)
+    // +19 → 4.0x (long deadline, tolerates waiting)
+    let latency_factor = match entity.latency_nice {
+        n if n <= -10 => 0.1 + (n + 20) as f32 * 0.09,  // -20..=-10 → 0.1..1.0
+        n if n <= 0   => 1.0,                              // -9..=0    → 1.0
+        n             => 1.0 + n as f32 * 0.16,            // 1..=19    → 1.16..4.0
+    };
+    let vdeadline = (base_slice_ns as f32 * latency_factor) as u64;
+    min_vruntime + vdeadline
 }
 
 /// Weight table: maps priority (0-255) to a scheduling weight.
@@ -1147,21 +1187,7 @@ The scheduler picks the thread with the lowest vruntime from the Normal queue's 
 
 **Latency-nice:** Weight controls how much CPU a thread gets, but not how quickly it gets it. Two threads with the same weight get equal CPU share, but one might need fast wake-up response (a system service handling IPC) while the other tolerates jitter (batch inference). The `latency_nice` field provides this orthogonal control — inspired by Linux 6.x's EEVDF (Earliest Eligible Virtual Deadline First):
 
-```rust
-/// Latency sensitivity hint, orthogonal to weight/priority.
-/// Controls how quickly a thread is scheduled after becoming runnable,
-/// without changing its total CPU share.
-///
-/// Low latency_nice → scheduled sooner after wakeup (shorter virtual deadline)
-/// High latency_nice → tolerates waiting (longer virtual deadline, less preemption)
-pub struct SchedLatency {
-    /// Latency-nice value: -20 (most latency-sensitive) to +19 (most tolerant)
-    /// Default: 0
-    latency_nice: i8,
-}
-```
-
-When a thread wakes up, the scheduler computes its virtual deadline as `vruntime + (base_slice * latency_factor)`. A thread with `latency_nice = -20` gets a tiny virtual deadline (scheduled almost immediately), while `latency_nice = +19` gets a large one (waits for current threads to finish their slices). The CPU share over time is unchanged — only the scheduling latency differs.
+The `latency_nice` field lives directly on `SchedEntity` (§3.3). When a thread wakes up, `compute_wakeup_vdeadline()` (§7.2) computes its virtual deadline as `min_vruntime + (base_slice * latency_factor)`. A thread with `latency_nice = -20` gets a tiny virtual deadline (scheduled almost immediately), while `latency_nice = +19` gets a large one (waits for current threads to finish their slices). The CPU share over time is unchanged — only the scheduling latency differs.
 
 ```
 Latency-nice assignments:
@@ -1256,19 +1282,22 @@ impl Scheduler {
     pub fn on_memory_pressure(&self, level: MemoryPressure) {
         match level {
             MemoryPressure::Normal => {
-                // No scheduling changes
+                self.memory_pressure_weight.store(1.0);
+                self.reconcile_inference_weight(); // take min with thermal
             }
             MemoryPressure::Low => {
                 // Reduce inference scheduling weight — inference is the
                 // largest memory consumer via KV caches. Reducing its
                 // weight slows KV cache growth rate.
-                self.inference_weight_modifier.store(0.5);
+                self.memory_pressure_weight.store(0.5);
+                self.reconcile_inference_weight();
             }
             MemoryPressure::Critical => {
                 // Pause background inference entirely.
                 // Interactive inference continues at reduced weight.
                 self.pause_background_inference();
-                self.inference_weight_modifier.store(0.25);
+                self.memory_pressure_weight.store(0.25);
+                self.reconcile_inference_weight();
             }
             MemoryPressure::Oom => {
                 // The OOM killer selects a victim agent. The scheduler
@@ -1299,6 +1328,21 @@ impl Scheduler {
 }
 ```
 
+**Inference weight reconciliation:** Both memory pressure and thermal throttling affect inference weight. To avoid race conditions where one subsystem's recovery undoes the other's throttling, each subsystem writes its own desired modifier. The scheduler takes the minimum (most restrictive):
+
+```rust
+impl Scheduler {
+    /// Reconcile inference weight from multiple pressure sources.
+    /// Each source stores its desired modifier independently.
+    /// The effective modifier is the minimum (most restrictive).
+    fn reconcile_inference_weight(&self) {
+        let mem_weight = self.memory_pressure_weight.load();
+        let thermal_weight = self.thermal_pressure_weight.load();
+        self.inference_weight_modifier.store(mem_weight.min(thermal_weight));
+    }
+}
+```
+
 **OOM victim selection coordination:** The OOM killer (memory.md) uses a score combining memory usage, priority, and age. The scheduler contributes the agent's current CPU quota usage and scheduling class — an agent in the Idle class with exhausted quota is a better OOM victim than an Interactive agent the user is actively using.
 
 ### 8.4 Thermal Throttling
@@ -1324,12 +1368,20 @@ pub enum ThermalState {
 impl Scheduler {
     pub fn on_thermal_change(&self, state: ThermalState) {
         match state {
-            ThermalState::Normal => { /* default behavior */ }
+            ThermalState::Normal => {
+                self.idle_enabled.store(true);
+                self.inference_chunk_modifier.store(8); // restore default
+                self.rt_wcet_scale.store(1.0);
+                self.thermal_pressure_weight.store(1.0);
+                self.reconcile_inference_weight();
+            }
             ThermalState::Warm => {
                 // Proactive: pause idle-class tasks, reduce inference chunk
                 // size (fewer tokens per burst = more cooling gaps)
                 self.idle_enabled.store(false);
                 self.inference_chunk_modifier.store(4); // 4 tokens instead of 8
+                self.thermal_pressure_weight.store(0.5);
+                self.reconcile_inference_weight();
             }
             ThermalState::Throttled { max_freq_mhz } => {
                 // Frequency dropped — WCET budgets must scale.
@@ -1337,14 +1389,15 @@ impl Scheduler {
                 let scale = self.config.max_freq_mhz as f32 / max_freq_mhz as f32;
                 self.rt_wcet_scale.store(scale);
 
-                // Re-evaluate RT admission with scaled WCETs
-                // If scaled utilization exceeds ceiling, defer lowest-priority
-                // RT task (typically timer service) to reduce load.
+                // Re-evaluate RT admission with scaled WCETs.
+                // Also scales per-task overrun thresholds (§5.4) to avoid
+                // false overrun penalties at reduced frequency.
                 self.rt_admission.reevaluate_with_scale(scale);
 
                 // Reduce inference to minimum: 2 tokens per chunk, lowest weight
                 self.inference_chunk_modifier.store(2);
-                self.inference_weight_modifier.store(0.25);
+                self.thermal_pressure_weight.store(0.25);
+                self.reconcile_inference_weight();
             }
             ThermalState::Critical => {
                 // Emergency: only RT (compositor) and interactive threads run.
@@ -2002,6 +2055,6 @@ No existing OS scheduler combines these capabilities. Linux CFS/EEVDF handles fa
 
 10. **Cooperative preemption at model boundaries.** Traditional preemptive scheduling interrupts threads at arbitrary points. For inference, this destroys cache locality and wastes partial computation. AIOS's inference threads voluntarily yield at transformer layer boundaries (during prompt eval) and after each token (during generation). The scheduler sets a preemption flag; the inference engine checks it at the next safe point. This cooperative model limits worst-case preemption delay to ~5ms while avoiding the cache re-warming cost of involuntary preemption.
 
-11. **Cross-subsystem scheduling integration.** The scheduler is not isolated — it responds to memory pressure (reducing inference weight when RAM is scarce), thermal state (scaling WCET budgets when frequency drops), storage I/O patterns (via AIRS resource orchestration), and user context (via the Context Engine). Traditional OS schedulers are CPU-only; AIOS's scheduler participates in system-wide resource orchestration through AIRS.
+11. **Cross-subsystem scheduling integration.** The scheduler is not isolated — it responds to memory pressure (reducing inference weight when RAM is scarce, §8.3), thermal state (scaling WCET budgets when frequency drops, §8.4), and user context (via the Context Engine, §8.1). Multiple pressure sources are reconciled via min-wins policy (§8.3) to prevent race conditions. Traditional OS schedulers are CPU-only; AIOS's scheduler participates in system-wide resource orchestration.
 
 12. **Latency-nice orthogonal to weight.** Borrowed from Linux 6.x EEVDF and adapted for AI workloads: system services that handle IPC get fast wakeup (`latency_nice = -10`) without getting more total CPU time, while batch inference tolerates scheduling jitter (`latency_nice = +15`) in exchange for fewer preemptions. This separates "how quickly should I be scheduled?" from "how much CPU should I get?" — essential when both low-latency IPC handlers and high-throughput inference share the Normal class.
