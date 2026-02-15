@@ -237,6 +237,11 @@ pub struct SchedEntity {
     /// Lower vruntime = less CPU used relative to weight = runs next
     vruntime: u64,
 
+    /// PELT-tracked utilization for this entity (0.0 - 1.0, decayed).
+    /// Used by the load balancer for migration decisions instead of
+    /// instantaneous runnable state. See §9.1.
+    pelt_util: f32,
+
     /// CPU affinity mask — which CPUs this thread may run on
     affinity: CpuSet,
 
@@ -255,6 +260,11 @@ pub struct SchedEntity {
     /// when a high-priority thread blocks on a low-priority server)
     inherited_priority: Option<u8>,
     inherited_class: Option<SchedulerClass>,
+
+    /// Latency-nice: controls scheduling latency independent of weight.
+    /// -20 (fast wakeup, latency-sensitive) to +19 (tolerant, throughput)
+    /// Default: 0. See §7.2 for details.
+    latency_nice: i8,
 
     /// Thread execution state
     state: ThreadState,
@@ -941,6 +951,26 @@ impl InferenceThread {
 
 **Quota exhaustion during prompt evaluation:** If the agent's quota runs out during the long prompt evaluation phase (100-500ms), the inference thread yields at the next layer boundary. It resumes in the next quota period (100ms later) from exactly where it left off — no recomputation needed. The user sees slightly slower first-token latency, but no wasted work.
 
+### 6.5 Accelerator-Aware Scheduling (Future)
+
+On future hardware with GPU or NPU accelerators, inference may be partially or fully offloaded. The CPU scheduler must understand accelerator-bound thread states to avoid wasting CPU time on threads that are waiting for accelerator completion:
+
+```rust
+/// Extended thread state for accelerator-aware scheduling
+pub enum ThreadState {
+    // ... existing states ...
+    /// Thread is waiting for GPU/NPU computation to complete.
+    /// The thread is NOT runnable — it should not occupy a CPU run queue
+    /// position or count toward CPU load (PELT).
+    /// Wake-up is triggered by an accelerator interrupt.
+    BlockedAccelerator { device: AcceleratorId, job: JobId },
+}
+```
+
+**Why this matters:** Without accelerator awareness, a CPU thread that dispatches work to an NPU and then polls for completion wastes an entire CPU core spinning. With `BlockedAccelerator`, the thread is removed from the run queue (like `BlockedIpc`), freeing the core for other work. The NPU completion interrupt wakes the thread, which re-enters the run queue with its inference state intact.
+
+**Cooperative CPU/accelerator scheduling:** When both CPU and NPU are available, AIRS decides which device runs each inference layer based on the current load. The scheduler exposes CPU utilization (via PELT) to AIRS, enabling the decision: "CPU cores 1-2 are 90% utilized by interactive inference — offload background inference to NPU." This creates a closed-loop: scheduler reports load → AIRS decides placement → accelerator runs work → interrupt wakes thread → scheduler re-queues.
+
 -----
 
 ## 7. Fair-Share and CPU Quotas
@@ -1114,6 +1144,33 @@ Over 100ms:
 ```
 
 The scheduler picks the thread with the lowest vruntime from the Normal queue's red-black tree. After running for a time slice (10ms default), the thread's vruntime is updated and it is reinserted into the tree. Because thread A's weight is higher, its vruntime grows slower, so it stays at the front of the tree more often.
+
+**Latency-nice:** Weight controls how much CPU a thread gets, but not how quickly it gets it. Two threads with the same weight get equal CPU share, but one might need fast wake-up response (a system service handling IPC) while the other tolerates jitter (batch inference). The `latency_nice` field provides this orthogonal control — inspired by Linux 6.x's EEVDF (Earliest Eligible Virtual Deadline First):
+
+```rust
+/// Latency sensitivity hint, orthogonal to weight/priority.
+/// Controls how quickly a thread is scheduled after becoming runnable,
+/// without changing its total CPU share.
+///
+/// Low latency_nice → scheduled sooner after wakeup (shorter virtual deadline)
+/// High latency_nice → tolerates waiting (longer virtual deadline, less preemption)
+pub struct SchedLatency {
+    /// Latency-nice value: -20 (most latency-sensitive) to +19 (most tolerant)
+    /// Default: 0
+    latency_nice: i8,
+}
+```
+
+When a thread wakes up, the scheduler computes its virtual deadline as `vruntime + (base_slice * latency_factor)`. A thread with `latency_nice = -20` gets a tiny virtual deadline (scheduled almost immediately), while `latency_nice = +19` gets a large one (waits for current threads to finish their slices). The CPU share over time is unchanged — only the scheduling latency differs.
+
+```
+Latency-nice assignments:
+  System services (IPC handlers):   latency_nice = -10  (fast wakeup)
+  Interactive inference:             latency_nice = -5   (responsive tokens)
+  Background agents:                 latency_nice = 0    (default)
+  Background inference:              latency_nice = +5   (throughput-oriented)
+  Batch inference / re-indexing:     latency_nice = +15  (maximum tolerance)
+```
 
 -----
 
@@ -1326,21 +1383,29 @@ pub struct LoadBalancer {
     imbalance_threshold: f32,
 }
 
+/// Per-Entity Load Tracking (PELT): exponentially-weighted moving average
+/// of utilization, updated per-entity and aggregated per-CPU. Provides
+/// stable load signals for balancing decisions — instantaneous runnable
+/// counts oscillate rapidly with bursty workloads (inference chunks,
+/// IPC bursts) and cause unnecessary migrations. PELT smooths this:
+/// a thread that ran for 10ms then slept contributes a decaying load
+/// that halves every 32ms, reflecting recent history, not just this instant.
 pub struct CpuLoad {
-    /// Weighted sum of runnable threads
-    load: u32,
-    /// Number of runnable threads
+    /// PELT-tracked load: sum of per-entity weighted utilization,
+    /// decayed with 32ms half-life. Used for migration decisions.
+    pelt_load: u64,
+    /// PELT-tracked utilization (0.0 - 1.0, smoothed)
+    pelt_util: f32,
+    /// Number of runnable threads (instantaneous, for idle detection only)
     nr_runnable: u32,
     /// Average vruntime (for fairness check)
     avg_vruntime: u64,
-    /// CPU utilization over last period (0.0 - 1.0)
-    utilization: f32,
 }
 ```
 
 **Three migration triggers:**
 
-1. **Periodic rebalance (every 4ms).** The load balancer compares CPU loads. If any CPU's load exceeds the average by more than 25%, threads are migrated from the busiest CPU to the least busy.
+1. **Periodic rebalance (every 4ms).** The load balancer compares PELT-smoothed CPU loads. If any CPU's `pelt_load` exceeds the average by more than 25%, threads are migrated from the busiest CPU to the least busy. PELT smoothing prevents a single inference chunk (40ms burst followed by 2ms yield) from triggering a migration — the balancer sees the averaged load, not the instantaneous spike.
 
 2. **Push migration (CPU overloaded).** When a new thread becomes runnable and the local CPU's queue is long, the scheduler immediately checks whether another CPU is idle and pushes the thread there.
 
@@ -1494,6 +1559,38 @@ pub enum CoreType {
 ```
 
 This is not implemented in the initial target (Pi 4/5 has homogeneous cores) but the data structures are designed to support it.
+
+### 9.4 Energy-Aware Scheduling (EAS)
+
+On heterogeneous SoCs, the load balancer integrates an energy model per core type. Instead of simply balancing load across CPUs, EAS asks: "which core placement minimizes total energy for this workload?"
+
+```rust
+/// Per-core-type energy model (from device tree or firmware tables)
+pub struct EnergyModel {
+    /// Energy cost per unit of compute at each operating point
+    /// Lower index = lower frequency = less energy per unit
+    opp_table: Vec<OperatingPoint>,
+}
+
+pub struct OperatingPoint {
+    freq_khz: u32,
+    /// Dynamic power (milliwatts) at this frequency under full load
+    dynamic_power_mw: u32,
+    /// Static/leakage power (milliwatts) at this frequency
+    static_power_mw: u32,
+}
+```
+
+**Placement decision:** When a thread wakes up, the load balancer evaluates the energy cost of placing it on each candidate core:
+
+```
+Energy cost = (dynamic_power at required OPP) × (estimated runtime at that OPP)
+            + (static_power × idle time lost on that core)
+```
+
+On a big.LITTLE SoC, a batch inference thread running on a LITTLE core at 1 GHz might use less total energy than running on a big core at 2.4 GHz — even though it takes 2.4x longer — because dynamic power scales as V^2 * f and voltage is lower on LITTLE cores. EAS makes this tradeoff quantitative rather than heuristic.
+
+On the initial Pi 4/5 target (homogeneous cores), EAS reduces to: "place the thread on the least-loaded core" — equivalent to the current load balancer. The energy model infrastructure is ready for heterogeneous targets without changing the balancer algorithm.
 
 -----
 
@@ -1879,18 +1976,32 @@ Each phase builds on the previous. The Phase 1 scheduler is trivial — just eno
 
 ## 14. Design Principles
 
+### Core Principles
+
 1. **Latency over throughput.** The scheduler optimizes for how fast things respond, not how much total work gets done. A user waiting for a conversation bar reply must never notice scheduler latency.
 
 2. **No global locks.** Per-CPU run queues with per-CPU locks. The scheduling hot path (pick next thread, context switch) never contends with another CPU.
 
 3. **Direct switch for IPC.** The most important optimization. Synchronous IPC must not touch the scheduler. Sender switches directly to receiver and back. This is what makes < 5 us IPC possible.
 
-4. **Inference is a first-class concern.** The scheduler understands that inference threads are compute-bound, cache-sensitive, and long-running. It pins them, chunks them, and weights them. No existing OS scheduler does this.
+4. **RT is bounded.** Admission control prevents RT tasks from consuming more than 70% of any core. Interactive and normal threads always get CPU time, even when the compositor and audio mixer are running.
 
-5. **Context is a scheduling input.** The Context Engine tells the scheduler what the user is doing. This is novel — traditional schedulers are context-blind. AIOS's scheduler gives more CPU to what matters right now.
+5. **Quotas prevent abuse.** No agent can monopolize CPU. Quotas are enforced, not advisory. An agent that exceeds its quota is deprioritized, not killed — the user's work is never lost.
 
-6. **RT is bounded.** Admission control prevents RT tasks from consuming more than 70% of any core. Interactive and normal threads always get CPU time, even when the compositor and audio mixer are running.
+6. **Power is a scheduling concern.** The scheduler does not just decide what runs; it decides how fast the CPU should be clocked and when cores should sleep. Power management is integrated, not an afterthought.
 
-7. **Quotas prevent abuse.** No agent can monopolize CPU. Quotas are enforced, not advisory. An agent that exceeds its quota is deprioritized, not killed — the user's work is never lost.
+### What Makes This Scheduler Novel
 
-8. **Power is a scheduling concern.** The scheduler does not just decide what runs; it decides how fast the CPU should be clocked and when cores should sleep. Power management is integrated, not an afterthought.
+No existing OS scheduler combines these capabilities. Linux CFS/EEVDF handles fair-share but has no concept of inference workloads. RT-Linux handles deadlines but not AI model characteristics. macOS Grand Central Dispatch manages async work but not model-aware preemption points. AIOS's scheduler is purpose-built for an AI-native OS:
+
+7. **Inference as a first-class workload type.** The scheduler understands that LLM inference is compute-bound, cache-sensitive, and long-running. It pins inference threads to specific cores for cache warmth, chunks token generation into cooperative yield intervals, and places preemption points between transformer layers — not at arbitrary timer ticks. The scheduler knows about model architecture (layers, tokens, prompt eval vs. generation) and adapts its behavior accordingly. No production OS scheduler has this awareness.
+
+8. **Inference priority integrated into fair-share.** The `InferencePriority` hierarchy (Interactive 4x, System 2x, Background 1x, Batch 0.5x) directly modifies WFQ weights. The scheduler distinguishes "user watching tokens stream in the conversation bar" from "background indexer generating embeddings for the space index" and gives proportionally different CPU time. Traditional schedulers see both as identical CPU-bound threads.
+
+9. **Context-aware weight adjustment.** The Context Engine tells the scheduler what the user is doing — working, relaxing, focused, or on battery. This is novel: traditional schedulers are context-blind. When the user enters focus mode, the foreground agent gets 3x weight while everything else drops to 0.5x. When the user opens a media player, media threads are boosted. The scheduler adapts to the user's intent, not just to CPU demand.
+
+10. **Cooperative preemption at model boundaries.** Traditional preemptive scheduling interrupts threads at arbitrary points. For inference, this destroys cache locality and wastes partial computation. AIOS's inference threads voluntarily yield at transformer layer boundaries (during prompt eval) and after each token (during generation). The scheduler sets a preemption flag; the inference engine checks it at the next safe point. This cooperative model limits worst-case preemption delay to ~5ms while avoiding the cache re-warming cost of involuntary preemption.
+
+11. **Cross-subsystem scheduling integration.** The scheduler is not isolated — it responds to memory pressure (reducing inference weight when RAM is scarce), thermal state (scaling WCET budgets when frequency drops), storage I/O patterns (via AIRS resource orchestration), and user context (via the Context Engine). Traditional OS schedulers are CPU-only; AIOS's scheduler participates in system-wide resource orchestration through AIRS.
+
+12. **Latency-nice orthogonal to weight.** Borrowed from Linux 6.x EEVDF and adapted for AI workloads: system services that handle IPC get fast wakeup (`latency_nice = -10`) without getting more total CPU time, while batch inference tolerates scheduling jitter (`latency_nice = +15`) in exchange for fewer preemptions. This separates "how quickly should I be scheduled?" from "how much CPU should I get?" — essential when both low-latency IPC handlers and high-throughput inference share the Normal class.
