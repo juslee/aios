@@ -937,10 +937,12 @@ GPU                     VirtIO-GPU          VideoCore VI        VideoCore VII
 Network                 VirtIO-Net          Genet (1 Gbps)      Genet (1 Gbps)
 Storage                 VirtIO-Blk          Arasan SDHCI        Arasan SDHCI
 RNG                     VirtIO-RNG          bcm2835-rng         bcm2835-rng
-──── Extension traits (optional, per-platform) ─────────────────────────────────
+──── Extension traits (see §12.6 for full matrix) ──────────────────────────────
 USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)
-WiFi                    None                None (external)      None (external)
-Bluetooth               None                None (external)      None (external)
+Audio                   VirtIO-Sound        HDMI + I2S           HDMI + I2S
+Camera                  None                CSI-2 (1 port)       CSI-2 (2 ports)
+PCIe                    Virtual root        Gen 2 x1             Gen 3 x4
+GPIO                    None                58 pins              28 pins (RP1)
 DTB compatible          qemu,virt           brcm,bcm2711        brcm,bcm2712
 ```
 
@@ -1070,12 +1072,466 @@ A hardware class belongs in an **extension trait** if:
 - The kernel can boot and function without it
 - Absence means "this feature is unavailable," not "the OS is broken"
 
-### 12.5 Current Extensions
+### 12.5 Extension Trait Catalog
 
-| Extension Trait | Provides | Platforms |
+Each extension trait follows the same pattern as §12.2. This catalog covers all optional hardware classes AIOS may support, organized by implementation priority.
+
+#### Tier 1 — Planned (all current platforms have the hardware)
+
+**`PlatformUsb`** — USB host controller.
+
+```rust
+pub trait PlatformUsb: Platform {
+    fn init_usb(&self, dt: &DeviceTree) -> Result<UsbController>;
+}
+```
+
+| Platform | Hardware | Notes |
 |---|---|---|
-| `PlatformUsb` | USB host controller | QEMU, Pi 4, Pi 5 |
-| `PlatformWifi` | WiFi interface | None (external dongles via USB) |
-| `PlatformBluetooth` | Bluetooth controller | None (external dongles via USB) |
+| QEMU | XHCI (virtual) | Emulated xHCI controller |
+| Pi 4 | VL805 XHCI | Via PCIe bridge on BCM2711 |
+| Pi 5 | RP1 XHCI | Integrated in RP1 south bridge |
 
-Note: WiFi and Bluetooth are currently external USB devices on all supported platforms, so they're discovered through the USB subsystem → Subsystem Framework path rather than through a platform extension trait. The extension traits exist for future platforms with built-in WiFi/BT hardware.
+USB is a meta-subsystem — plugging in a device can surface new hardware for any subsystem (a webcam → Camera, a headset → Audio, a flash drive → Storage). The USB subsystem discovers devices, matches class drivers, and routes them to the appropriate subsystem via the Subsystem Framework (see subsystem-framework.md §USB).
+
+**`PlatformAudio`** — Audio input/output.
+
+```rust
+pub trait PlatformAudio: Platform {
+    fn init_audio(&self, dt: &DeviceTree) -> Result<AudioDevice>;
+}
+
+pub struct AudioDevice {
+    variant: AudioVariant,
+    sample_rate: u32,
+    channels: u8,
+}
+
+enum AudioVariant {
+    HdmiAudio { base: *mut u8 },
+    I2s { base: *mut u8 },
+    VirtioSound { virtqueue: VirtioQueue },
+}
+
+impl AudioDevice {
+    /// Write PCM samples to the output buffer.
+    pub fn write_samples(&self, buffer: &[i16]) -> Result<usize>;
+
+    /// Read PCM samples from the input buffer (microphone).
+    pub fn read_samples(&self, buffer: &mut [i16]) -> Result<usize>;
+
+    /// Set the sample rate (e.g. 44100, 48000).
+    pub fn set_sample_rate(&self, rate: u32) -> Result<()>;
+
+    /// Set the number of channels (1 = mono, 2 = stereo).
+    pub fn set_channels(&self, channels: u8) -> Result<()>;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | VirtIO-Sound | Virtual audio device |
+| Pi 4 | HDMI audio + PWM + I2S | HDMI audio via VC4; I2S for external DACs |
+| Pi 5 | HDMI audio + I2S | HDMI audio via VC7; I2S for external DACs |
+
+Audio is critical for the assistant experience — speech-to-text, text-to-speech, alert sounds, and voice interaction all depend on it. The Audio subsystem provides mixing (multiple agents playing audio simultaneously) and routes through the Subsystem Framework. The scheduler reserves RT-class deadlines for audio (5ms period, 0.5ms WCET — see scheduler.md §6.3).
+
+**`PlatformCamera`** — Camera / image sensor.
+
+```rust
+pub trait PlatformCamera: Platform {
+    fn init_camera(&self, dt: &DeviceTree) -> Result<CameraDevice>;
+}
+
+pub struct CameraDevice {
+    variant: CameraVariant,
+    max_width: u32,
+    max_height: u32,
+}
+
+enum CameraVariant {
+    Csi { base: *mut u8 },
+    UsbUvc { usb_device: UsbDeviceHandle },
+}
+
+impl CameraDevice {
+    /// Start capturing frames at the given resolution and format.
+    pub fn start_capture(
+        &self,
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+    ) -> Result<()>;
+
+    /// Stop capturing.
+    pub fn stop_capture(&self) -> Result<()>;
+
+    /// Dequeue the next captured frame. Returns None if no frame is ready.
+    pub fn next_frame(&self, buffer: &mut [u8]) -> Result<Option<FrameInfo>>;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None | No camera emulation by default |
+| Pi 4 | CSI-2 (Unicam) | Supports Pi Camera Module v2/v3 |
+| Pi 5 | CSI-2 (Unicam, 2 ports) | Dual camera support |
+
+Camera data flows through the Flow framework (see flow.md) for streaming to vision agents. The browser's `getUserMedia()` API maps to `CameraCapability` (prompted — see browser.md §6).
+
+#### Tier 2 — Future (some current platforms, or expected on future boards)
+
+**`PlatformPcie`** — PCIe host controller.
+
+```rust
+pub trait PlatformPcie: Platform {
+    fn init_pcie(&self, dt: &DeviceTree) -> Result<PcieController>;
+}
+
+impl PcieController {
+    /// Enumerate devices on the PCIe bus.
+    pub fn enumerate(&self) -> Result<Vec<PcieDevice>>;
+
+    /// Read from a device's configuration space.
+    pub fn config_read32(&self, bdf: BusDeviceFunction, offset: u16) -> u32;
+
+    /// Write to a device's configuration space.
+    pub fn config_write32(&self, bdf: BusDeviceFunction, offset: u16, value: u32);
+
+    /// Map a device's BAR into kernel virtual address space.
+    pub fn map_bar(&self, bdf: BusDeviceFunction, bar: u8) -> Result<MappedBar>;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | Virtual PCIe root complex | Configurable |
+| Pi 4 | BCM2711 PCIe Gen 2 x1 | Used by VL805 USB controller |
+| Pi 5 | BCM2712 PCIe Gen 3 x4 | Exposed via RP1; external slot via FPC |
+
+PCIe is the foundation for NVMe storage, external GPUs, and high-speed networking on future boards. Pi 5's exposed PCIe slot makes this increasingly important. The `PlatformUsb` trait on Pi 4 currently initializes the VL805 through PCIe internally; with `PlatformPcie`, this becomes a proper enumerated bus.
+
+**`PlatformNvme`** — NVMe storage (via PCIe).
+
+```rust
+pub trait PlatformNvme: Platform {
+    fn init_nvme(&self, dt: &DeviceTree) -> Result<NvmeDevice>;
+}
+
+impl NvmeDevice {
+    /// Submit a read command to an I/O submission queue.
+    pub fn read_blocks(
+        &self,
+        namespace: u32,
+        lba: u64,
+        count: u32,
+        buffer: &mut [u8],
+    ) -> Result<()>;
+
+    /// Submit a write command.
+    pub fn write_blocks(
+        &self,
+        namespace: u32,
+        lba: u64,
+        count: u32,
+        buffer: &[u8],
+    ) -> Result<()>;
+
+    /// Flush volatile write cache.
+    pub fn flush(&self) -> Result<()>;
+
+    /// Return the namespace capacity in bytes.
+    pub fn capacity_bytes(&self, namespace: u32) -> u64;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | VirtIO-Blk or emulated NVMe | Via `-drive if=none -device nvme` |
+| Pi 4 | None | PCIe used by USB controller |
+| Pi 5 | Via PCIe Gen 3 x4 | With M.2 HAT or adapter |
+
+NVMe transforms model loading performance: 4.5 GB Q4_K_M in ~2 seconds vs ~45 seconds from SD card (see airs.md §5). The Block Engine can tier storage across NVMe and SD — hot data on NVMe, cold data on SD (see spaces.md §13).
+
+**`PlatformWatchdog`** — Hardware watchdog timer.
+
+```rust
+pub trait PlatformWatchdog: Platform {
+    fn init_watchdog(&self, dt: &DeviceTree) -> Result<WatchdogTimer>;
+}
+
+impl WatchdogTimer {
+    /// Start the watchdog with the given timeout.
+    pub fn start(&self, timeout: Duration) -> Result<()>;
+
+    /// Pet/kick the watchdog to prevent reset.
+    pub fn pet(&self) -> Result<()>;
+
+    /// Stop the watchdog (if hardware supports it).
+    pub fn stop(&self) -> Result<()>;
+
+    /// Return the remaining time before reset.
+    pub fn time_remaining(&self) -> Duration;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | Virtual watchdog | `-device i6300esb` or similar |
+| Pi 4 | BCM2835 watchdog | Shared PM/watchdog block |
+| Pi 5 | BCM2835 watchdog | Same IP block |
+
+The kernel sets a 15-second watchdog at shutdown start (see boot.md §shutdown). A watchdog provides last-resort recovery from kernel hangs in unattended deployments.
+
+**`PlatformGpio`** — General-purpose I/O pins.
+
+```rust
+pub trait PlatformGpio: Platform {
+    fn init_gpio(&self, dt: &DeviceTree) -> Result<GpioController>;
+}
+
+impl GpioController {
+    /// Configure a pin as input or output.
+    pub fn set_mode(&self, pin: u32, mode: GpioMode) -> Result<()>;
+
+    /// Set an output pin high or low.
+    pub fn write(&self, pin: u32, level: bool) -> Result<()>;
+
+    /// Read the current level of a pin.
+    pub fn read(&self, pin: u32) -> Result<bool>;
+
+    /// Register an interrupt handler for a pin edge/level.
+    pub fn set_interrupt(
+        &self,
+        pin: u32,
+        trigger: GpioTrigger,
+        handler: fn(u32),
+    ) -> Result<()>;
+}
+
+pub enum GpioMode { Input, Output, AltFunc(u8) }
+pub enum GpioTrigger { RisingEdge, FallingEdge, BothEdges, HighLevel, LowLevel }
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None | No GPIO emulation |
+| Pi 4 | BCM2711 GPIO (58 pins) | Alt functions for I2C, SPI, UART, PWM |
+| Pi 5 | RP1 GPIO (28 pins) | Via RP1 south bridge |
+
+GPIO is the gateway to physical computing — sensors, LEDs, buttons, relays. It also multiplexes as I2C, SPI, and PWM (below). On AIOS, GPIO access requires a capability token scoped to specific pins.
+
+#### Tier 3 — Speculative (future platforms or niche use cases)
+
+**`PlatformI2c`** — I2C bus controller.
+
+```rust
+pub trait PlatformI2c: Platform {
+    fn init_i2c(&self, dt: &DeviceTree, bus: u8) -> Result<I2cBus>;
+}
+
+impl I2cBus {
+    /// Write bytes to an I2C device at the given address.
+    pub fn write(&self, addr: u8, data: &[u8]) -> Result<()>;
+
+    /// Read bytes from an I2C device.
+    pub fn read(&self, addr: u8, buffer: &mut [u8]) -> Result<()>;
+
+    /// Write then read (combined transaction).
+    pub fn write_read(
+        &self,
+        addr: u8,
+        write_data: &[u8],
+        read_buffer: &mut [u8],
+    ) -> Result<()>;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None | No I2C emulation |
+| Pi 4 | BCM2711 BSC (6 buses) | Sensors, HATs, displays |
+| Pi 5 | RP1 I2C (6 buses) | Via RP1 south bridge |
+
+**`PlatformSpi`** — SPI bus controller.
+
+```rust
+pub trait PlatformSpi: Platform {
+    fn init_spi(&self, dt: &DeviceTree, bus: u8) -> Result<SpiBus>;
+}
+
+impl SpiBus {
+    /// Transfer: simultaneous write and read.
+    pub fn transfer(
+        &self,
+        write_data: &[u8],
+        read_buffer: &mut [u8],
+    ) -> Result<()>;
+
+    /// Set the clock speed.
+    pub fn set_clock_hz(&self, hz: u32) -> Result<()>;
+
+    /// Set SPI mode (CPOL/CPHA).
+    pub fn set_mode(&self, mode: SpiMode) -> Result<()>;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None | No SPI emulation |
+| Pi 4 | BCM2711 SPI (multiple) | External flash, ADCs, displays |
+| Pi 5 | RP1 SPI (multiple) | Via RP1 south bridge |
+
+**`PlatformPwm`** — PWM output channels.
+
+```rust
+pub trait PlatformPwm: Platform {
+    fn init_pwm(&self, dt: &DeviceTree) -> Result<PwmController>;
+}
+
+impl PwmController {
+    /// Set the PWM period and duty cycle for a channel.
+    pub fn configure(
+        &self,
+        channel: u8,
+        period_ns: u64,
+        duty_ns: u64,
+    ) -> Result<()>;
+
+    /// Enable a PWM channel.
+    pub fn enable(&self, channel: u8) -> Result<()>;
+
+    /// Disable a PWM channel.
+    pub fn disable(&self, channel: u8) -> Result<()>;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None | No PWM emulation |
+| Pi 4 | BCM2711 PWM (2 channels) | Audio out, LED brightness, servos |
+| Pi 5 | RP1 PWM (4 channels) | Via RP1 south bridge |
+
+**`PlatformCryptoAccel`** — Hardware cryptographic accelerator.
+
+```rust
+pub trait PlatformCryptoAccel: Platform {
+    fn init_crypto_accel(&self, dt: &DeviceTree) -> Result<CryptoAccelerator>;
+}
+
+impl CryptoAccelerator {
+    /// AES-256-GCM encrypt in hardware.
+    pub fn aes_gcm_encrypt(
+        &self,
+        key: &[u8; 32],
+        nonce: &[u8; 12],
+        plaintext: &[u8],
+        aad: &[u8],
+        ciphertext: &mut [u8],
+        tag: &mut [u8; 16],
+    ) -> Result<()>;
+
+    /// AES-256-GCM decrypt in hardware.
+    pub fn aes_gcm_decrypt(
+        &self,
+        key: &[u8; 32],
+        nonce: &[u8; 12],
+        ciphertext: &[u8],
+        aad: &[u8],
+        plaintext: &mut [u8],
+        tag: &[u8; 16],
+    ) -> Result<bool>; // false if tag mismatch
+
+    /// SHA-256 hash in hardware.
+    pub fn sha256(&self, data: &[u8], hash: &mut [u8; 32]) -> Result<()>;
+
+    /// Query which algorithms the hardware accelerates.
+    pub fn capabilities(&self) -> CryptoCapabilities;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None (or VirtIO-Crypto) | Optional with `-device virtio-crypto` |
+| Pi 4 | ARMv8 CE (AESCE, SHA) | CPU instruction extensions, not a separate device |
+| Pi 5 | ARMv8 CE (AESCE, SHA) | Cortex-A76 crypto extensions |
+
+Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (security.md §18) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
+
+**`PlatformNpu`** — Neural Processing Unit / ML accelerator.
+
+```rust
+pub trait PlatformNpu: Platform {
+    fn init_npu(&self, dt: &DeviceTree) -> Result<NpuDevice>;
+}
+
+impl NpuDevice {
+    /// Load a compiled model graph onto the NPU.
+    pub fn load_graph(&self, graph: &[u8]) -> Result<GraphHandle>;
+
+    /// Submit an inference job. Returns a handle to poll for completion.
+    pub fn submit_inference(
+        &self,
+        graph: GraphHandle,
+        inputs: &[TensorBuffer],
+    ) -> Result<InferenceHandle>;
+
+    /// Poll for inference completion. Returns output tensors when done.
+    pub fn poll_inference(
+        &self,
+        handle: InferenceHandle,
+    ) -> Result<Option<Vec<TensorBuffer>>>;
+
+    /// Query NPU compute capacity (TOPS).
+    pub fn compute_tops(&self) -> f32;
+}
+```
+
+| Platform | Hardware | Notes |
+|---|---|---|
+| QEMU | None | No NPU emulation |
+| Pi 4 | None | GPU compute only |
+| Pi 5 | None | GPU compute only |
+| Future | 10–40 TOPS NPU | Expected on next-gen SoCs |
+
+No current AIOS platform has a dedicated NPU, but the industry trend is clear — future aarch64 SoCs will include ML accelerators (see architecture.md §Future). AIRS currently runs inference on CPU (see airs.md), but an NPU extension trait would allow hardware-accelerated inference with the same AIRS API.
+
+### 12.6 Platform Comparison (Extension Traits)
+
+```
+                        QEMU virt           Raspberry Pi 4      Raspberry Pi 5
+──── Tier 1 ────────────────────────────────────────────────────────────────────
+USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)
+Audio                   VirtIO-Sound        HDMI + I2S           HDMI + I2S
+Camera                  None                CSI-2 (1 port)       CSI-2 (2 ports)
+──── Tier 2 ────────────────────────────────────────────────────────────────────
+PCIe                    Virtual root        Gen 2 x1             Gen 3 x4
+NVMe                    Emulated            None                 Via PCIe
+Watchdog                Virtual             BCM2835              BCM2835
+GPIO                    None                58 pins              28 pins (RP1)
+──── Tier 3 ────────────────────────────────────────────────────────────────────
+I2C                     None                6 buses              6 buses (RP1)
+SPI                     None                Multiple             Multiple (RP1)
+PWM                     None                2 channels           4 channels (RP1)
+Crypto accelerator      None                ARMv8 CE (CPU)       ARMv8 CE (CPU)
+NPU                     None                None                 None
+```
+
+### 12.7 WiFi and Bluetooth
+
+```rust
+pub trait PlatformWifi: Platform {
+    fn init_wifi(&self, dt: &DeviceTree) -> Result<WifiDevice>;
+}
+
+pub trait PlatformBluetooth: Platform {
+    fn init_bluetooth(&self, dt: &DeviceTree) -> Result<BluetoothController>;
+}
+```
+
+| Extension Trait | Current Platforms | Notes |
+|---|---|---|
+| `PlatformWifi` | None | External dongles via USB on all current platforms |
+| `PlatformBluetooth` | None | External dongles via USB on all current platforms |
+
+WiFi and Bluetooth are currently external USB devices on all supported platforms, so they're discovered through the USB subsystem → Subsystem Framework path rather than through a platform extension trait. The extension traits exist for future platforms with built-in WiFi/BT hardware (e.g., boards with on-SoC wireless like the ESP32 or future Broadcom SoCs with integrated WLAN).
