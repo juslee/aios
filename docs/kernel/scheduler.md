@@ -1406,7 +1406,7 @@ The memory subsystem (memory.md §8) defines four pressure levels: Normal, Low, 
 /// when pressure level changes. The scheduler adjusts its behavior
 /// to help alleviate pressure and stay consistent with memory actions.
 impl Scheduler {
-    pub fn on_memory_pressure(&self, level: MemoryPressure) {
+    pub fn on_memory_pressure(&mut self, level: MemoryPressure) {
         match level {
             MemoryPressure::Normal => {
                 self.memory_pressure_weight.store(1.0, Ordering::Relaxed);
