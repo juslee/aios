@@ -1281,11 +1281,12 @@ static WEIGHT_TABLE: [u32; 256] = {
     // Priority 255 = weight 65536 (maximum)
     let mut i = 0usize;
     while i < 256 {
-        // Approximate 2^(10 + (i-120)/12.8) using integer math:
+        // Geometric progression: weight = 1024 * 2^((i-120)/12.8)
         // ratio ≈ 1.0557 per step (2^(1/12.8))
-        // We use a lookup-free piecewise formula:
+        // Note: this table is pre-computed at build time by a build script;
+        // the const-eval form shown here is illustrative.
         let shift = (i as i32 - 120) as f64 / 12.8;
-        let w = (1024.0 * f64_exp2(shift)) as u32;
+        let w = (1024.0 * libm::exp2(shift)) as u32;
         table[i] = if w < 1 { 1 } else { w };
         i += 1;
     }
@@ -1455,7 +1456,7 @@ impl Scheduler {
     /// Foreground/interactive inference continues at reduced weight.
     /// Called under Critical memory pressure (§8.3).
     pub fn pause_background_inference(&mut self) {
-        for rq in &self.run_queues {
+        for rq in &mut self.run_queues {
             rq.remove_threads_matching(|e| {
                 e.role == ThreadRole::Inference
                     && e.inference_priority == Some(InferencePriority::Background)
@@ -1466,7 +1467,7 @@ impl Scheduler {
     /// Suspend all threads in a given scheduling class.
     /// Used by thermal Critical state to halt Idle-class work entirely.
     pub fn suspend_class(&mut self, class: SchedulerClass) {
-        for rq in &self.run_queues {
+        for rq in &mut self.run_queues {
             rq.suspend_threads_matching(|e| e.class == class);
         }
     }
@@ -1640,7 +1641,7 @@ After balance:
 impl Scheduler {
     /// Migrate a thread from src_cpu to dst_cpu.
     /// Locks are acquired in CPU ID order to prevent deadlock.
-    fn migrate(&self, thread: &SchedEntity, src: CpuId, dst: CpuId) {
+    fn migrate(&mut self, thread: &SchedEntity, src: CpuId, dst: CpuId) {
         let (first, second) = if src.0 < dst.0 {
             (&self.run_queues[src.0], &self.run_queues[dst.0])
         } else {

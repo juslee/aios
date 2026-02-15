@@ -407,7 +407,7 @@ If no RNG seed is available (firmware doesn't support the UEFI RNG protocol), KA
 ```rust
 pub struct CapabilityManager {
     root: CapabilityToken,
-    token_table: HashMap<CapabilityTokenId, CapabilityToken>,
+    token_table: HashMap<TokenId, CapabilityToken>,
     next_id: AtomicU64,
 }
 
@@ -419,7 +419,7 @@ impl CapabilityManager {
             holder: AgentId::KERNEL,
             granted_by: Identity::Kernel,
             created_at: Timestamp::BOOT,
-            expires: None,
+            expires: None, // Root token exempt from mandatory expiry (security.md §10.3)
             delegatable: true,
             attenuations: vec![],
             revoked: false,

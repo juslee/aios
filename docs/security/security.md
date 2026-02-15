@@ -1859,6 +1859,8 @@ pub struct TemporalCapability {
     max_uses: Option<u32>,
     /// Auto-revoke after this many bytes transferred
     max_bytes: Option<u64>,
+    /// Running total of bytes transferred under this capability
+    bytes_transferred: u64,
 }
 
 impl TemporalCapability {
@@ -1883,7 +1885,7 @@ impl TemporalCapability {
             }
         }
         if let Some(max) = self.max_bytes {
-            if self.token.bytes_transferred >= max {
+            if self.bytes_transferred >= max {
                 return Err(Error::CapabilityExhausted);
             }
         }
