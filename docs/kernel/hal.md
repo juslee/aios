@@ -11,7 +11,7 @@
 
 The HAL is the lowest layer of the AIOS kernel. It sits directly on hardware and exposes a uniform interface that the rest of the kernel programs against. The kernel never touches raw MMIO registers or device-specific data structures outside the HAL — all hardware access flows through trait implementations.
 
-The HAL has one design goal: **adding a new platform is implementing six traits.** A platform is a specific hardware board — QEMU virt, Raspberry Pi 4 (BCM2711), Raspberry Pi 5 (BCM2712), or any future aarch64 board. Each platform provides different hardware for the same logical functions (interrupts, timer, serial, GPU, network, storage). The HAL abstracts these differences behind a single `Platform` trait with six initialization methods.
+The HAL has one design goal: **adding a new platform is implementing seven methods.** A platform is a specific hardware board — QEMU virt, Raspberry Pi 4 (BCM2711), Raspberry Pi 5 (BCM2712), or any future aarch64 board. Each platform provides different hardware for the same logical functions (interrupts, timer, serial, GPU, network, storage, RNG). The HAL abstracts these differences behind a single `Platform` trait with seven initialization methods. For hardware that only some platforms provide (USB, WiFi, Bluetooth), the HAL uses extension traits that platforms opt into — see Section 12.
 
 ### 1.1 HAL Boundary
 
@@ -81,7 +81,7 @@ The detected platform is stored in `KernelState.platform` and used for all subse
 
 ## 3. Platform Trait
 
-The `Platform` trait is the core abstraction. Every supported platform implements exactly six methods — one for each hardware class the kernel needs during boot:
+The `Platform` trait is the core abstraction. Every supported platform implements exactly seven methods — one for each hardware class the kernel needs during boot:
 
 ```rust
 pub trait Platform: Send + Sync {
@@ -137,6 +137,16 @@ pub trait Platform: Send + Sync {
     /// Called during Phase 1 when the Block Engine starts.
     /// Returns a device handle for raw block I/O.
     fn init_storage(&self, dt: &DeviceTree) -> Result<StorageDevice>;
+
+    /// Initialize the hardware random number generator.
+    ///
+    /// QEMU: VirtIO-RNG (virtqueue-based).
+    /// Pi 4/5: bcm2835-rng (MMIO register).
+    ///
+    /// Called during early boot Step 10 (before KASLR). Supplements the
+    /// one-shot UEFI rng_seed with a persistent entropy source for runtime
+    /// crypto: capability token generation, nonces, key derivation.
+    fn init_rng(&self, dt: &DeviceTree) -> Result<RngDevice>;
 }
 ```
 
@@ -152,13 +162,15 @@ pub struct RaspberryPi5Platform;
 
 ### 3.2 Initialization Order
 
-The six methods are not called all at once. They're called at specific points during boot as their dependencies become available:
+The seven methods are not called all at once. They're called at specific points during boot as their dependencies become available:
 
 ```
-Early Boot (kernel space, no heap):
-  Step 3:  init_uart()        — first sign of life
-  Step 5:  init_interrupts()  — enables IRQ routing
-  Step 6:  init_timer()       — enables preemptive scheduling
+Early Boot (kernel space):
+  Step 3:  init_uart()        — first sign of life (no heap)
+  Step 5:  init_interrupts()  — enables IRQ routing (no heap)
+  Step 6:  init_timer()       — enables preemptive scheduling (no heap)
+  ──── Step 9: heap initialized ────
+  Step 10: init_rng()         — entropy for KASLR and runtime crypto
 
 Service Manager Phases (userspace, heap available):
   Phase 1: init_storage()     — Block Engine needs raw block access
@@ -166,7 +178,7 @@ Service Manager Phases (userspace, heap available):
   Phase 2: init_network()     — Network Subsystem needs NIC handle
 ```
 
-The early boot methods (UART, interrupts, timer) run before the heap exists and must use only static or stack allocation. The later methods (storage, GPU, network) run after the heap is available and can allocate freely.
+UART, interrupts, and timer run before the heap exists (Steps 3/5/6) and must use only stack and static allocation. RNG runs just after heap init (Step 10) so VirtIO-RNG can allocate its virtqueue; the bcm2835-rng is pure MMIO but uniformity keeps the code simple. Storage, GPU, and network run in userspace service manager phases and can allocate freely.
 
 -----
 
@@ -539,6 +551,57 @@ impl StorageDevice {
 | DMA | VirtIO scatter-gather | ADMA2 |
 | Typical speed | Host disk speed | ~90 MB/s (UHS-I) |
 
+### 4.7 RngDevice
+
+```rust
+/// Hardware random number generator abstraction.
+///
+/// Provides cryptographically secure random bytes for KASLR,
+/// capability token generation, nonce creation, and key derivation.
+/// Supplements the one-shot UEFI rng_seed from BootInfo.
+pub struct RngDevice {
+    variant: RngVariant,
+}
+
+enum RngVariant {
+    VirtioRng {
+        virtqueue: VirtioQueue,
+    },
+    Bcm2835 {
+        base: *mut u8,
+    },
+}
+
+impl RngDevice {
+    /// Fill `buffer` with cryptographically secure random bytes.
+    /// Blocks until the hardware RNG has enough entropy.
+    pub fn fill_bytes(&self, buffer: &mut [u8]) -> Result<()>;
+
+    /// Read a single random u64. Convenience wrapper.
+    pub fn next_u64(&self) -> Result<u64>;
+
+    /// Check if the RNG has entropy available (non-blocking).
+    pub fn entropy_available(&self) -> bool;
+}
+```
+
+**RNG differences by platform:**
+
+| Feature | QEMU (VirtIO-RNG) | Pi 4/5 (bcm2835-rng) |
+|---|---|---|
+| Interface | Virtqueue (1 queue) | MMIO (4 registers) |
+| Entropy source | Host `/dev/urandom` | Hardware TRNG |
+| Throughput | Host-dependent | ~1 MB/s |
+| Blocking | Via virtqueue completion | Poll RNG_STATUS register |
+
+**bcm2835-rng registers (offset from base):**
+
+| Register | Offset | Purpose |
+|---|---|---|
+| RNG_CTRL | 0x00 | Control register (enable bit) |
+| RNG_STATUS | 0x04 | Status (bits 24:0 = words available) |
+| RNG_DATA | 0x08 | Random data output (32 bits) |
+
 -----
 
 ## 5. MMIO Access
@@ -652,7 +715,7 @@ The HAL enumerates all `virtio,mmio` nodes, probes each one, and matches the dev
 
 ## 7. Adding a New Platform
 
-To add support for a new aarch64 board, implement the six `Platform` trait methods:
+To add support for a new aarch64 board, implement the seven `Platform` trait methods:
 
 ### 7.1 Steps
 
@@ -668,7 +731,7 @@ pub struct NewBoardPlatform;
 c if c.contains("vendor,board-soc") => Box::new(NewBoardPlatform),
 ```
 
-3. **Implement the six trait methods.** Each method reads the device tree to find the relevant hardware node and its MMIO base address, then initializes the device:
+3. **Implement the seven trait methods.** Each method reads the device tree to find the relevant hardware node and its MMIO base address, then initializes the device:
 
 ```rust
 impl Platform for NewBoardPlatform {
@@ -703,6 +766,11 @@ impl Platform for NewBoardPlatform {
         // Platform-specific storage driver
         // Must implement read_blocks + write_blocks + flush
     }
+
+    fn init_rng(&self, dt: &DeviceTree) -> Result<RngDevice> {
+        // Platform-specific hardware RNG
+        // Must implement fill_bytes
+    }
 }
 ```
 
@@ -731,8 +799,9 @@ The following kernel components are platform-independent and do not change when 
 | GPU | Entire driver (VirtIO vs VC4 vs V3D vs other) |
 | Network | Entire driver (VirtIO vs Genet vs other) |
 | Storage | Entire driver (VirtIO vs SDHCI vs NVMe vs other) |
+| RNG | Driver + register layout (VirtIO vs bcm2835 vs other) |
 
-The interrupt controller and timer are the simplest to port — only register addresses and minor protocol differences. GPU, network, and storage require full device drivers for each new hardware type.
+The interrupt controller, timer, and RNG are the simplest to port — only register addresses and minor protocol differences. GPU, network, and storage require full device drivers for each new hardware type.
 
 -----
 
@@ -752,6 +821,7 @@ pub struct KernelState {
     pub interrupt_controller: Option<InterruptController>,
     pub timer: Option<Timer>,
     pub uart: Option<Uart>,
+    pub rng: Option<RngDevice>,
     pub gpu: Option<GpuDevice>,
     pub network: Option<NetworkDevice>,
     pub storage: Option<StorageDevice>,
@@ -776,7 +846,7 @@ pub struct KernelState {
 }
 ```
 
-The `Option` wrappers reflect the incremental initialization during boot — UART is `Some` after Step 3, interrupts after Step 5, timer after Step 6, and so on. Accessing a device before its initialization step would panic.
+The `Option` wrappers reflect the incremental initialization during boot — UART is `Some` after Step 3, interrupts after Step 5, timer after Step 6, RNG after Step 10, and so on. Accessing a device before its initialization step would panic.
 
 ### 8.2 IRQ Flow
 
@@ -859,15 +929,15 @@ Complete hardware matrix for all supported platforms:
 SoC                     Virtual             BCM2711             BCM2712
 CPU                     Cortex-A72 (emu)    Cortex-A72 (4x)    Cortex-A76 (4x)
 RAM                     Configurable        1/2/4/8 GB          4/8 GB
-──── HAL Devices ───────────────────────────────────────────────────────────────
+──── HAL Devices (Platform trait, 7 methods) ───────────────────────────────────
 Interrupt controller    GICv3 (virtual)     GIC-400 (GICv2)     GICv3
 Timer frequency         62.5 MHz            54 MHz              54 MHz
 UART                    PL011               PL011               PL011
 GPU                     VirtIO-GPU          VideoCore VI        VideoCore VII
 Network                 VirtIO-Net          Genet (1 Gbps)      Genet (1 Gbps)
 Storage                 VirtIO-Blk          Arasan SDHCI        Arasan SDHCI
-──── Additional ────────────────────────────────────────────────────────────────
 RNG                     VirtIO-RNG          bcm2835-rng         bcm2835-rng
+──── Extension traits (optional, per-platform) ─────────────────────────────────
 USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)
 WiFi                    None                None (external)      None (external)
 Bluetooth               None                None (external)      None (external)
@@ -878,9 +948,134 @@ DTB compatible          qemu,virt           brcm,bcm2711        brcm,bcm2712
 
 ## 11. Design Principles
 
-1. **Six methods, one trait.** The Platform trait is intentionally narrow. Six init methods cover everything the kernel needs. Userspace devices (USB peripherals, Bluetooth, WiFi) are handled by the Subsystem Framework, not the HAL.
+1. **Seven methods, one trait.** The Platform trait covers exactly the hardware every AIOS platform must provide: interrupts, timer, UART, GPU, network, storage, and RNG. If a board can't provide all seven, it can't run AIOS. Optional hardware (USB, WiFi, Bluetooth) uses extension traits (Section 12).
 2. **Device tree as truth.** The HAL never hardcodes MMIO addresses. All addresses come from the device tree. This means the same binary can run on different revisions of the same board.
 3. **No runtime polymorphism in hot paths.** The `GicVariant` enum uses match statements, not trait objects, in the IRQ handler. The compiler inlines the correct path. Interrupt latency is the same as a hand-written driver.
-4. **Early boot is allocation-free.** UART, interrupt controller, and timer initialization use only stack and static memory. The heap doesn't exist yet when these run.
+4. **Early boot is allocation-free.** UART, interrupt controller, timer, and RNG initialization use only stack and static memory. The heap doesn't exist yet when these run.
 5. **Later devices can allocate.** GPU, network, and storage init happens after the heap is available (Phase 1/2). These drivers can use `Vec`, `Box`, and other heap types.
-6. **Platform structs are zero-sized.** All state lives in the returned device handles. The platform struct is just a namespace for the six init methods.
+6. **Platform structs are zero-sized.** All state lives in the returned device handles. The platform struct is just a namespace for the seven init methods.
+7. **Extension traits for optional hardware.** The core trait is stable. New optional hardware classes are added as extension traits — existing platforms don't break (Section 12).
+
+-----
+
+## 12. Extension Traits
+
+The core `Platform` trait has seven methods — the mandatory hardware every AIOS platform must provide. But some platforms have additional hardware that others don't. Extension traits handle this without bloating the core trait or breaking existing implementations.
+
+### 12.1 Why Not Add More Methods to Platform?
+
+Adding a method to `Platform` breaks every existing implementation. If we added `init_usb()` to the core trait, every platform would need to implement it — even platforms without USB. The choices would be:
+
+- Return an error (but then the method isn't really "mandatory")
+- Provide a default implementation that returns an error (hides the fact that the platform doesn't support it)
+- Break the compile for all existing platforms
+
+None of these are good. Extension traits solve this cleanly.
+
+### 12.2 The Pattern
+
+Extension traits extend `Platform` with optional capabilities. The kernel checks at runtime whether the current platform supports each extension:
+
+```rust
+/// Optional: platforms with a USB host controller implement this.
+pub trait PlatformUsb: Platform {
+    fn init_usb(&self, dt: &DeviceTree) -> Result<UsbController>;
+}
+
+/// Optional: platforms with WiFi hardware implement this.
+pub trait PlatformWifi: Platform {
+    fn init_wifi(&self, dt: &DeviceTree) -> Result<WifiDevice>;
+}
+
+/// Optional: platforms with Bluetooth hardware implement this.
+pub trait PlatformBluetooth: Platform {
+    fn init_bluetooth(&self, dt: &DeviceTree) -> Result<BluetoothController>;
+}
+```
+
+Platforms opt in by implementing the extension trait:
+
+```rust
+// QEMU has virtual XHCI, so it implements PlatformUsb
+impl PlatformUsb for QemuPlatform {
+    fn init_usb(&self, dt: &DeviceTree) -> Result<UsbController> {
+        // Initialize virtual XHCI controller
+    }
+}
+
+// Pi 4 has VL805 XHCI
+impl PlatformUsb for RaspberryPi4Platform {
+    fn init_usb(&self, dt: &DeviceTree) -> Result<UsbController> {
+        // Initialize VL805 XHCI via PCIe
+    }
+}
+
+// A hypothetical headless board with no USB wouldn't implement PlatformUsb at all.
+```
+
+### 12.3 Runtime Discovery
+
+The kernel uses `Any`-based downcasting to check if the platform supports an extension:
+
+```rust
+use core::any::Any;
+
+/// Check if the platform supports an extension trait and initialize if so.
+fn try_init_usb(platform: &dyn Platform, dt: &DeviceTree) -> Option<UsbController> {
+    // The platform object is stored as Box<dyn Platform>.
+    // We downcast to the concrete type, then check if it implements PlatformUsb.
+    let any = platform.as_any();
+
+    // Try each known platform type
+    if let Some(qemu) = any.downcast_ref::<QemuPlatform>() {
+        return Some(qemu.init_usb(dt).ok()?);
+    }
+    if let Some(pi4) = any.downcast_ref::<RaspberryPi4Platform>() {
+        return Some(pi4.init_usb(dt).ok()?);
+    }
+    if let Some(pi5) = any.downcast_ref::<RaspberryPi5Platform>() {
+        return Some(pi5.init_usb(dt).ok()?);
+    }
+
+    None // Platform doesn't support USB
+}
+```
+
+To support this, the core `Platform` trait includes an `as_any` method:
+
+```rust
+pub trait Platform: Send + Sync {
+    // ... the 7 core methods ...
+
+    /// Allows downcasting to concrete platform type for extension trait checks.
+    fn as_any(&self) -> &dyn Any;
+}
+
+// Every platform implements as_any trivially:
+impl Platform for QemuPlatform {
+    fn as_any(&self) -> &dyn Any { self }
+    // ... 7 init methods ...
+}
+```
+
+### 12.4 Core vs Extension Decision Rule
+
+A hardware class belongs in the **core trait** if:
+- Every realistic AIOS platform has it (interrupts, timer, UART, GPU, network, storage, RNG)
+- The kernel cannot boot or function without it
+- Absence means "this board cannot run AIOS"
+
+A hardware class belongs in an **extension trait** if:
+- Some platforms have it and others don't (USB, WiFi, Bluetooth, camera)
+- The kernel can boot and function without it
+- Absence means "this feature is unavailable," not "the OS is broken"
+
+### 12.5 Current Extensions
+
+| Extension Trait | Provides | Platforms |
+|---|---|---|
+| `PlatformUsb` | USB host controller | QEMU, Pi 4, Pi 5 |
+| `PlatformWifi` | WiFi interface | None (external dongles via USB) |
+| `PlatformBluetooth` | Bluetooth controller | None (external dongles via USB) |
+
+Note: WiFi and Bluetooth are currently external USB devices on all supported platforms, so they're discovered through the USB subsystem → Subsystem Framework path rather than through a platform extension trait. The extension traits exist for future platforms with built-in WiFi/BT hardware.
