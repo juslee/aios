@@ -36,7 +36,7 @@ AIOS runs autonomous agents that perform actions on behalf of the user. This is 
 │  TRUST LEVEL 0: Kernel                                          │
 │                                                                 │
 │  Full hardware access. Manages all memory, capabilities, IPC.   │
-│  Defines the rules everyone else follows. ~20 syscalls.         │
+│  Defines the rules everyone else follows. 31 syscalls.         │
 │  If this is compromised, all bets are off (see §1.3).           │
 │                                                                 │
 │  CAN: everything                                                │
@@ -92,7 +92,7 @@ Every boundary in this diagram is enforced by the kernel. Trust Level N cannot a
 
 ### 1.3 What We Don't Defend Against
 
-**Compromised kernel.** If the kernel itself is compromised (bug in the ~20 syscalls, hardware exploit that corrupts kernel memory), all security guarantees are void. Mitigation: Rust memory safety for most kernel code, `unsafe` blocks minimized and audited, syscall fuzzing, formal verification of capability system (Phase 13).
+**Compromised kernel.** If the kernel itself is compromised (bug in the 31 syscalls, hardware exploit that corrupts kernel memory), all security guarantees are void. Mitigation: Rust memory safety for most kernel code, `unsafe` blocks minimized and audited, syscall fuzzing, formal verification of capability system (Phase 13).
 
 **Compromised hardware or firmware.** A malicious SoC, compromised UEFI firmware, or backdoored GPU firmware can read all memory and bypass all software protections. Mitigation: verified boot chain (Phase 24), TrustZone attestation, but ultimately hardware trust is assumed.
 
@@ -439,10 +439,11 @@ The kernel validates capability tokens on every syscall. This is the hard enforc
 pub struct CapabilityTable {
     /// Agent that owns this table
     agent: AgentId,
-    /// Token slots — indexed by CapabilityHandle
-    tokens: Vec<Option<CapabilityToken>>,
-    /// Fast lookup: capability type → handle
-    type_index: BTreeMap<CapabilityType, Vec<CapabilityHandle>>,
+    /// Fixed-size array. Handle is index. O(1) lookup.
+    /// Maximum 256 capabilities per agent (configurable).
+    tokens: [Option<CapabilityToken>; MAX_CAPS_PER_AGENT],
+    /// Next free slot (for O(1) insertion)
+    next_free: u32,
     /// Delegation tracking: which tokens were delegated from this agent
     delegated: Vec<DelegationRecord>,
 }
@@ -2459,7 +2460,7 @@ Overall: PASS (2 warnings, 0 errors)
 - Buffer overflows (length > buffer, length = 0, length = MAX)
 - Invalid IPC channel IDs
 - Race conditions (concurrent syscalls on same capability)
-- All ~20 syscalls, all parameter combinations
+- All 31 syscalls, all parameter combinations
 
 **IPC message fuzzing:** Malformed messages sent to every system service:
 - Invalid message types
@@ -2556,8 +2557,8 @@ AIRS resource orchestration CANNOT:
   │   (Layer 2 enforced by kernel)
   ├── Access encrypted data without key release
   │   (Layer 6 — AIRS operates on decrypted pages already in memory)
-  ├── Modify its own kernel pool reservation
-  │   (AIRS memory is in kernel pool, not subject to AIRS directives)
+  ├── Evict its own process memory via pool resizing
+  │   (AIRS process memory has a kernel-enforced floor in the user pool — §9.5)
   ├── Override page table isolation between agents
   │   (TTBR0 per-process — hardware-enforced, not software)
   └── Suppress provenance logging of its own directives
@@ -2593,8 +2594,8 @@ AIRS needs memory to run. AIRS controls memory allocation. This creates a potent
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Kernel Pool (128-256 MB)                            │
-│  ├── Kernel data structures                          │
-│  └── System service memory                           │
+│  ├── Kernel data structures (page tables, slab caches)│
+│  └── Kernel heap                                     │
 │  NOT subject to AIRS directives. Fixed at boot.      │
 ├─────────────────────────────────────────────────────┤
 │  Model Pool (0-8 GB)                                 │
@@ -2796,7 +2797,7 @@ This is not just logging — it is active enforcement based on behavioral contex
 | Mutual auth | mTLS (both sides present certs) | Channel endpoints established by trusted Service Manager |
 | Logging | SIEM, centralized log analysis | Provenance chain (Merkle-chain, tamper-evident, on-device) |
 
-**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (~20 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, formally verified (Phase 13), and fuzz-tested.
+**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (31 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, formally verified (Phase 13), and fuzz-tested.
 
 **AIOS's unique contribution.** No existing kernel implements behavioral gating — the idea that a structurally valid capability can be modulated by behavioral context. This is the intersection of zero trust and AI-native security. Traditional kernels check "do you have permission?" AIOS checks "do you have permission AND is this consistent with how you normally behave?" The second check is only possible because AIRS has a behavioral model of every agent.
 

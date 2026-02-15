@@ -70,7 +70,7 @@ The kernel builds its initial free list from `Conventional` regions. `Loader Cod
 //   BuddyAllocator     — physical page allocator, orders 0–10 (§2.2)
 //   MemoryRegion       — UEFI memory map entry (§2.1, below)
 //   SlabCache          — fixed-size object cache with per-CPU magazines (§4.1)
-//   FaultError         — error enum for page fault outcomes (§5.5 / §10.5)
+//   FaultError         — error enum for page fault outcomes (§10.5)
 //   FaultType          — read / write / execute classification of a fault
 //   PteState           — decoded non-valid PTE state (§10.5)
 //   Vma                — alias for VmRegion (§3.2)
@@ -364,7 +364,7 @@ Total RAM   Kernel    Model     User      DMA       Reserved    Tier
 
 | Pool | AIRS Can Resize? | Reason |
 |---|---|---|
-| Kernel | No | AIRS itself lives here. Fixed at boot. |
+| Kernel | No | Kernel data structures only. Fixed at boot. |
 | Model | Yes (boundary with User) | AIRS grows model pool when loading models, shrinks when evicting. Constrained by `security_floor` (§12.2). |
 | User | Yes (boundary with Model) | Inverse of model pool adjustments. Per-agent limits still enforced by blast radius (Layer 8). |
 | DMA | No | Fixed at boot. Device I/O buffers require physically contiguous, stable pages. Not addressable by AIRS directives. |
@@ -1031,7 +1031,7 @@ pub struct AgentProcess {
     pub memory_limit: usize,           // max RSS in bytes
     pub memory_stats: AgentMemoryStats,
     /// Agent priority from manifest (§8.1).
-    /// Used by OOM scorer and thrash detector for victim selection.
+    /// Used by OOM scorer (§8.1) and thrash detector (§10.6) for victim selection.
     pub priority: AgentPriority,
     /// Whether this agent is currently suspended (e.g., by thrash detector).
     pub suspended: bool,
