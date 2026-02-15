@@ -205,6 +205,7 @@ impl IdentityService {
             devices: vec![DeviceInfo {
                 device_public_key: device_key.public,
                 device_name: hostname(),
+                certificate: device_cert,
                 added: SystemTime::now(),
                 last_sync: None,
                 is_current: true,
@@ -212,6 +213,7 @@ impl IdentityService {
             created: SystemTime::now(),
             relationships: Vec::new(),
             space_access: Vec::new(),
+            hardware_keys: Vec::new(),
             trust: TrustModel::default(),
         };
 
@@ -817,6 +819,7 @@ impl IdentityService {
         self.identity.devices.push(DeviceInfo {
             device_public_key: *new_device_pubkey,
             device_name: device_name.to_string(),
+            certificate: signature,
             added: SystemTime::now(),
             last_sync: None,
             is_current: false,
@@ -1342,6 +1345,7 @@ impl IdentityService {
             devices: vec![DeviceInfo {
                 device_public_key: device_key.public,
                 device_name: hostname(),
+                certificate: device_cert,
                 added: SystemTime::now(),
                 last_sync: None,
                 is_current: true,
@@ -1349,6 +1353,7 @@ impl IdentityService {
             created: SystemTime::now(), // original creation time restored from peers
             relationships: Vec::new(),  // restored from peers
             space_access: Vec::new(),   // restored from peers
+            hardware_keys: Vec::new(),
             trust: TrustModel::default(),
         };
 

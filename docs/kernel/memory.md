@@ -29,7 +29,7 @@ The target hardware is Raspberry Pi 4/5 (aarch64, 2–8 GB RAM). Every design de
 | 8 GB | **Recommended** | Full OS, browser, many agents | 8B Q4_K_M model + embedding model simultaneously | The target for the "AI-native OS" promise |
 | 16 GB+ | **Comfortable** | Everything with headroom | 8B Q5_K_M/Q6_K + multiple specialist models | Future Pi hardware or alternative SBCs |
 
-**8 GB is the recommended minimum** for users who want the advertised AI-native experience. The model pool gets 4 GB on an 8 GB device, which fits a quantized 8B model with room for KV caches and embedding stores. At 4 GB, the model pool is only 2 GB — enough for a 3B model but not the 8B models that deliver meaningfully better reasoning. At 2 GB, the 1 GB model pool cannot fit any model alongside a running OS; AIOS falls back to cloud inference via the Network Translation Module.
+**8 GB is the recommended minimum** for users who want the advertised AI-native experience. The model pool gets 4 GB on an 8 GB device, which fits a quantized 8B model with room for KV caches and embedding stores. At 4 GB, the model pool is only 2 GB — enough for a 3B model but not the 8B models that deliver meaningfully better reasoning. At 2 GB, there is no model pool (0 MB — see §2.4); AIOS falls back to cloud inference via the Network Translation Module.
 
 **Cloud inference fallback (2 GB devices):** When local inference is not viable, AIRS routes inference requests through the NTM to a configured cloud endpoint. The model pool is released to the user pool, giving agents and the browser more room. The system is fully functional — just slower (network latency) and dependent on connectivity. The user is informed at first boot: "This device has 2 GB RAM. AI features will use cloud processing. For local AI, 8 GB RAM is recommended."
 
@@ -88,18 +88,37 @@ pub struct MemoryRegion {
     pub kind: MemoryType,
 }
 
-/// Classification of physical memory
+/// Classification of physical memory (canonical definition — see also boot.md §3).
+/// Names match UEFI memory descriptor types.
 pub enum MemoryType {
     /// Usable RAM — available for allocation
     Conventional,
-    /// Kernel code/data — reclaimable after boot
+    /// Boot loader code — reclaimable after boot
     LoaderCode,
-    /// MMIO — device registers, never allocatable
-    Mmio,
-    /// ACPI tables — reclaimable after parsing
-    AcpiReclaim,
+    /// Boot loader data — reclaimable after boot
+    LoaderData,
+    /// UEFI boot services code — reclaimable after ExitBootServices
+    BootServicesCode,
+    /// UEFI boot services data — reclaimable after ExitBootServices
+    BootServicesData,
+    /// UEFI runtime services code — must preserve
+    RuntimeServicesCode,
+    /// UEFI runtime services data — must preserve
+    RuntimeServicesData,
     /// Firmware reserved — never touch
     Reserved,
+    /// ACPI tables — reclaimable after parsing
+    AcpiReclaimable,
+    /// ACPI NVS — must preserve
+    AcpiNvs,
+    /// MMIO — device registers, never allocatable
+    MemoryMappedIO,
+    /// Boot info struct — reclaimable after early boot
+    BootInfo,
+    /// Kernel image — text/data/bss loaded by bootloader
+    KernelImage,
+    /// Initial RAM filesystem
+    Initramfs,
 }
 ```
 
@@ -199,7 +218,7 @@ const MAX_ORDER: usize = 10; // 4 MB max contiguous
 
 impl BuddyAllocator {
     /// Allocate 2^order contiguous pages
-    pub fn alloc(&self, order: u32) -> Option<PhysicalFrame> {
+    pub fn alloc(&mut self, order: u32) -> Option<PhysicalFrame> {
         // Try the requested order first
         if let Some(frame) = self.free_lists[order as usize].pop() {
             self.free_pages.fetch_sub(1 << order, Ordering::Relaxed);
@@ -218,7 +237,7 @@ impl BuddyAllocator {
     }
 
     /// Free 2^order contiguous pages, merging buddies
-    pub fn free(&self, frame: PhysicalFrame, order: u32) {
+    pub fn free(&mut self, frame: PhysicalFrame, order: u32) {
         let mut current = frame;
         let mut current_order = order;
 
@@ -281,7 +300,7 @@ impl FrameAllocator {
     /// Computed from the user pool only — the model pool is statically
     /// allocated and excluded from pressure calculations (§8).
     pub fn pressure(&self) -> MemoryPressure {
-        let user_free = self.pools.user.free_pages;
+        let user_free = self.pools.user.free_pages.load(Ordering::Relaxed);
         let user_total = self.pools.user.total_pages;
         let free_pct = (user_free * 100) / user_total;
         match free_pct {
@@ -1011,15 +1030,15 @@ pub struct AgentProcess {
     pub address_space: AddressSpace,
     pub memory_limit: usize,           // max RSS in bytes
     pub memory_stats: AgentMemoryStats,
-    /// Agent priority from manifest (lower = more important).
+    /// Agent priority from manifest (§8.1).
     /// Used by OOM scorer and thrash detector for victim selection.
-    pub priority: u8,
+    pub priority: AgentPriority,
     /// Whether this agent is currently suspended (e.g., by thrash detector).
     pub suspended: bool,
 }
 
 impl AgentProcess {
-    pub fn priority(&self) -> u8 { self.priority }
+    pub fn priority(&self) -> AgentPriority { self.priority }
     pub fn is_suspended(&self) -> bool { self.suspended }
 }
 ```
@@ -2724,15 +2743,18 @@ impl ThrashDetector {
         agents.iter()
             .filter(|a| a.priority() != AgentPriority::Critical)
             .filter(|a| !a.is_suspended())
-            .max_by_key(|a| {
-                let swapin_rate = a.memory_stats.major_faults_per_sec();
-                let priority_weight = match a.priority() {
-                    AgentPriority::Background => 4,
-                    AgentPriority::Normal     => 2,
-                    AgentPriority::System     => 1,
-                    AgentPriority::Critical   => 0,
+            .max_by(|a, b| {
+                let score = |agent: &&AgentProcess| -> f64 {
+                    let swapin_rate = agent.memory_stats.major_faults_per_sec();
+                    let priority_weight: f64 = match agent.priority() {
+                        AgentPriority::Background => 4.0,
+                        AgentPriority::Normal     => 2.0,
+                        AgentPriority::System     => 1.0,
+                        AgentPriority::Critical   => 0.0,
+                    };
+                    swapin_rate * priority_weight
                 };
-                swapin_rate * priority_weight
+                score(a).partial_cmp(&score(b)).unwrap_or(core::cmp::Ordering::Equal)
             })
             .map(|a| a.pid)
     }

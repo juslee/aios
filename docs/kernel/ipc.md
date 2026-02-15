@@ -308,6 +308,7 @@ pub enum Syscall {
 }
 
 /// Error codes returned in x0 (negative values).
+#[repr(i32)]
 pub enum IpcError {
     ETIMEDOUT    = -1,  // IpcCall timeout elapsed
     EPIPE        = -2,  // peer endpoint is dead
@@ -485,7 +486,7 @@ Agent                           Service
   │ (agent thread blocks)         │
   │                                │ (service processes request)
   │                                │
-  │ ←── IpcReply(channel, reply)   │
+  │ ←── IpcReply(reply)            │
   │ (agent thread resumes)         │
   │                                │
 ```
