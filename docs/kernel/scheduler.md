@@ -116,6 +116,9 @@ pub enum SchedulerClass {
 Each CPU has its own set of run queues — one per scheduling class. No global run queue lock. The only cross-CPU coordination is the load balancer, which runs periodically (every 4ms) and on push/pull events (CPU going idle or overloaded).
 
 ```rust
+/// CPU identifier. Inner value is used as an array index into run_queues.
+pub struct CpuId(pub usize);
+
 /// Per-CPU scheduler state. Each CPU owns its run queues.
 /// Accessed only by the local CPU except during load balancing
 /// (which takes a per-CPU spinlock).
@@ -124,6 +127,7 @@ pub struct RunQueue {
     cpu_id: CpuId,
 
     /// Real-time queue: min-heap ordered by absolute deadline
+    // Custom kernel BinaryHeap supporting explicit comparator types (not std::collections::BinaryHeap).
     rt_queue: BinaryHeap<SchedEntity, DeadlineOrder>,
 
     /// Interactive queue: priority queue with round-robin within
@@ -156,6 +160,19 @@ pub struct RunQueue {
 /// CPU idle state: 0=running, 1=WFI, 2=power-gated
 type CpuIdleState = u8;
 
+impl RunQueue {
+    /// Remove all threads belonging to the given agent from this run queue.
+    fn remove_threads_for_agent(&mut self, agent_id: AgentId) { /* ... */ }
+
+    /// Remove threads matching the predicate from this run queue.
+    fn remove_threads_matching(&mut self, pred: impl Fn(&SchedEntity) -> bool) { /* ... */ }
+
+    /// Suspend (set state to Suspended) threads matching the predicate.
+    fn suspend_threads_matching(&mut self, pred: impl Fn(&SchedEntity) -> bool) { /* ... */ }
+}
+
+// Note: AtomicF32 is a kernel-internal wrapper around AtomicU32 using f32::to_bits()/from_bits().
+// AtomicCell<T> is a kernel-internal generic atomic wrapper (see kernel/sync/atomic_cell.rs).
 /// Top-level scheduler managing all CPUs
 pub struct Scheduler {
     /// Per-CPU run queues (indexed by CPU ID)
@@ -276,10 +293,6 @@ pub struct SchedEntity {
     /// Last CPU this thread ran on (for cache affinity)
     last_cpu: CpuId,
 
-    /// Thread role (compositor, inference, system service, etc.)
-    /// Used for CPU affinity defaults and inference-aware scheduling
-    role: ThreadRole,
-
     /// Core type preference for big.LITTLE (future)
     /// Homogeneous on Pi 4/5; used for scheduling on asymmetric SoCs
     core_preference: CoreType,
@@ -310,6 +323,11 @@ pub struct SchedEntity {
     /// Thread role hint — set at creation, determines context-aware
     /// weight adjustments (§7.2) and default core affinity (§9.2).
     role: ThreadRole,
+
+    /// For inference threads (role == ThreadRole::Inference): the inference
+    /// priority level from the owning InferenceTask. None for non-inference threads.
+    /// Used by pause_background_inference() (§8.3) to selectively pause.
+    inference_priority: Option<InferencePriority>,
 
     /// Whether this thread belongs to the foreground agent.
     /// Set by the window manager when agent focus changes.
@@ -665,14 +683,26 @@ pub struct RtTask {
     relative_deadline: Duration,
     /// CPU affinity — must be core 0 only (admission test is single-core)
     affinity: CpuSet,
+    /// Overrun tracking for this RT task (budget enforcement)
+    overrun: RtOverrunState,
+    /// Set to true by reevaluate_with_scale() when thermal throttling
+    /// causes scaled utilization to exceed the ceiling. The scheduler
+    /// skips deferred tasks until frequency recovers.
+    deferred: bool,
 }
 
 /// Admission controller for RT tasks
 pub struct RtAdmissionController {
     /// Currently admitted RT tasks
+    // Backed by kernel heap (available after Phase 1 boot). Max capacity bounded by admission control.
     tasks: Vec<RtTask>,
     /// Maximum total utilization (default: 0.70)
     utilization_ceiling: f32,
+}
+
+pub enum SchedError {
+    RtMustPinToCore0,
+    RtUtilizationExceeded { current: f32, requested: f32, ceiling: f32 },
 }
 
 impl RtAdmissionController {
@@ -735,6 +765,15 @@ impl RtAdmissionController {
                 self.tasks[idx].deferred = true;
             }
         }
+    }
+
+    /// Find the RT task with the longest period (least time-critical).
+    /// This is the best candidate for deferral under thermal throttling.
+    fn lowest_priority_task_index(&self) -> Option<usize> {
+        self.tasks.iter()
+            .enumerate()
+            .max_by_key(|(_, t)| t.period)
+            .map(|(i, _)| i)
     }
 }
 ```
@@ -892,7 +931,7 @@ pub struct InferenceTask {
     tokens_in_chunk: u32,
 
     /// Back-reference to this thread's SchedEntity for preemption checks
-    sched: SchedEntity,
+    sched: &SchedEntity, // borrows from Thread.sched, NOT a copy
 
     /// Tokens generated so far (total across all chunks)
     tokens_generated: u32,
@@ -1019,7 +1058,7 @@ impl InferenceTask {
             return PreemptAction::YieldChunkComplete;
         }
         // 3. Check preemption flag (higher-priority thread became runnable)
-        if self.sched.preemption_flag.load() {
+        if self.sched.preemption_flag.load(Ordering::Relaxed) {
             return PreemptAction::YieldPreempted;
         }
         PreemptAction::Continue
@@ -1132,9 +1171,15 @@ The implementation uses a virtual runtime (vruntime) approach, similar to Linux 
 ```rust
 /// Calculate the scheduling weight for a Normal-class thread.
 /// Higher weight = more CPU time = lower vruntime growth rate.
-/// Reads the global context hint (set by Context Engine via IPC),
-/// not a per-thread copy — context applies system-wide.
-fn calculate_weight(entity: &SchedEntity, global_hint: ContextHint) -> u32 {
+/// `global_hint`: context from Context Engine (set via IPC, applies system-wide).
+/// `inference_modifier`: weight scaling for inference threads, supplied by the
+/// Scheduler from its `inference_weight_modifier` field (min of memory/thermal).
+/// Non-inference callers pass 1.0.
+fn calculate_weight(
+    entity: &SchedEntity,
+    global_hint: ContextHint,
+    inference_modifier: f32,
+) -> u32 {
     // Base weight from priority (1-255 mapped to weight table)
     let base_weight = WEIGHT_TABLE[entity.priority as usize];
 
@@ -1169,14 +1214,14 @@ fn calculate_weight(entity: &SchedEntity, global_hint: ContextHint) -> u32 {
 
     // Inference weight modifier: applied by memory pressure (§8.3) and
     // thermal throttling (§8.4) to reduce inference scheduling weight.
-    // Non-inference threads always get 1.0 (no reduction).
-    let inference_modifier = if entity.role == ThreadRole::Inference {
-        entity.scheduler_ref.inference_weight_modifier.load()
+    // Non-inference threads always receive 1.0 from the caller.
+    let effective_inference_mod = if entity.role == ThreadRole::Inference {
+        inference_modifier
     } else {
         1.0
     };
 
-    let w = (base_weight as f32 * context_multiplier * quota_factor * inference_modifier) as u32;
+    let w = (base_weight as f32 * context_multiplier * quota_factor * effective_inference_mod) as u32;
     w.max(1) // minimum weight of 1 — no thread gets zero CPU time
 }
 
@@ -1210,7 +1255,7 @@ fn compute_wakeup_vdeadline(entity: &SchedEntity, min_vruntime: u64) -> u64 {
     // Latency factor: latency_nice maps to a multiplier on virtual deadline.
     // -20 → 0.1x (very short deadline, scheduled almost immediately)
     //   0 → 1.0x (default)
-    // +19 → 4.0x (long deadline, tolerates waiting)
+    // +19 → ~4.0x (long deadline, tolerates waiting)
     let latency_factor = match latency_nice {
         n if n < 0  => 0.1 + (n + 20) as f32 * 0.045,    // -20..=-1 → 0.1..~1.0
         0           => 1.0,                                 // 0        → 1.0
@@ -1225,10 +1270,20 @@ fn compute_wakeup_vdeadline(entity: &SchedEntity, min_vruntime: u64) -> u64 {
 /// Based on a geometric progression (each step ~1.25x).
 static WEIGHT_TABLE: [u32; 256] = {
     let mut table = [0u32; 256];
-    // Priority 0 = weight 1 (minimum)
-    // Priority 120 = weight 1024 (reference/"nice 0")
+    // Geometric progression: weight(i) = 2^(10 + (i-120)/12.8)
+    // Priority 0   = weight 1     (minimum)
+    // Priority 120 = weight 1024  (reference / "nice 0")
     // Priority 255 = weight 65536 (maximum)
-    // ...computed at compile time...
+    let mut i = 0usize;
+    while i < 256 {
+        // Approximate 2^(10 + (i-120)/12.8) using integer math:
+        // ratio ≈ 1.0557 per step (2^(1/12.8))
+        // We use a lookup-free piecewise formula:
+        let shift = (i as i32 - 120) as f64 / 12.8;
+        let w = (1024.0 * f64_exp2(shift)) as u32;
+        table[i] = if w < 1 { 1 } else { w };
+        i += 1;
+    }
     table
 };
 ```
@@ -1308,9 +1363,9 @@ Context hints adjust WFQ weights within the Normal and Idle classes. They never 
 /// Apply context hint to scheduling. This is called when the
 /// Context Engine publishes a new hint via IPC.
 impl Scheduler {
-    pub fn apply_context_hint(&self, hint: ContextHint) {
+    pub fn apply_context_hint(&mut self, hint: ContextHint) {
         // Store the new hint (atomic write, read by schedule())
-        self.context_hint.store(hint);
+        self.context_hint.store(hint, Ordering::Relaxed);
 
         // Adjust time slices if entering/leaving Focus mode
         match hint {
@@ -1354,21 +1409,21 @@ impl Scheduler {
     pub fn on_memory_pressure(&self, level: MemoryPressure) {
         match level {
             MemoryPressure::Normal => {
-                self.memory_pressure_weight.store(1.0);
+                self.memory_pressure_weight.store(1.0, Ordering::Relaxed);
                 self.reconcile_inference_weight(); // take min with thermal
             }
             MemoryPressure::Low => {
                 // Reduce inference scheduling weight — inference is the
                 // largest memory consumer via KV caches. Reducing its
                 // weight slows KV cache growth rate.
-                self.memory_pressure_weight.store(0.5);
+                self.memory_pressure_weight.store(0.5, Ordering::Relaxed);
                 self.reconcile_inference_weight();
             }
             MemoryPressure::Critical => {
                 // Pause background inference entirely.
                 // Interactive inference continues at reduced weight.
                 self.pause_background_inference();
-                self.memory_pressure_weight.store(0.25);
+                self.memory_pressure_weight.store(0.25, Ordering::Relaxed);
                 self.reconcile_inference_weight();
             }
             MemoryPressure::Oom => {
@@ -1382,7 +1437,7 @@ impl Scheduler {
 
     /// Remove a killed/suspended agent's threads from all run queues.
     /// Called by the memory subsystem after suspending or killing an agent.
-    pub fn remove_agent_threads(&self, agent_id: AgentId) {
+    pub fn remove_agent_threads(&mut self, agent_id: AgentId) {
         for cpu in 0..self.nr_cpus {
             let rq = &mut self.run_queues[cpu as usize];
             rq.lock.lock();
@@ -1394,7 +1449,7 @@ impl Scheduler {
     /// Pause all background inference threads (InferencePriority::Background).
     /// Foreground/interactive inference continues at reduced weight.
     /// Called under Critical memory pressure (§8.3).
-    pub fn pause_background_inference(&self) {
+    pub fn pause_background_inference(&mut self) {
         for rq in &self.run_queues {
             rq.remove_threads_matching(|e| {
                 e.role == ThreadRole::Inference
@@ -1405,7 +1460,7 @@ impl Scheduler {
 
     /// Suspend all threads in a given scheduling class.
     /// Used by thermal Critical state to halt Idle-class work entirely.
-    pub fn suspend_class(&self, class: SchedulerClass) {
+    pub fn suspend_class(&mut self, class: SchedulerClass) {
         for rq in &self.run_queues {
             rq.suspend_threads_matching(|e| e.class == class);
         }
@@ -1428,9 +1483,9 @@ impl Scheduler {
     /// Each source stores its desired modifier independently.
     /// The effective modifier is the minimum (most restrictive).
     fn reconcile_inference_weight(&self) {
-        let mem_weight = self.memory_pressure_weight.load();
-        let thermal_weight = self.thermal_pressure_weight.load();
-        self.inference_weight_modifier.store(mem_weight.min(thermal_weight));
+        let mem_weight = self.memory_pressure_weight.load(Ordering::Relaxed);
+        let thermal_weight = self.thermal_pressure_weight.load(Ordering::Relaxed);
+        self.inference_weight_modifier.store(mem_weight.min(thermal_weight), Ordering::Relaxed);
     }
 }
 ```
@@ -1458,28 +1513,28 @@ pub enum ThermalState {
 }
 
 impl Scheduler {
-    pub fn on_thermal_change(&self, state: ThermalState) {
+    pub fn on_thermal_change(&mut self, state: ThermalState) {
         match state {
             ThermalState::Normal => {
-                self.idle_enabled.store(true);
-                self.inference_chunk_modifier.store(8); // restore default
-                self.rt_wcet_scale.store(1.0);
-                self.thermal_pressure_weight.store(1.0);
+                self.idle_enabled.store(true, Ordering::Relaxed);
+                self.inference_chunk_modifier.store(8, Ordering::Relaxed); // restore default
+                self.rt_wcet_scale.store(1.0, Ordering::Relaxed);
+                self.thermal_pressure_weight.store(1.0, Ordering::Relaxed);
                 self.reconcile_inference_weight();
             }
             ThermalState::Warm => {
                 // Proactive: pause idle-class tasks, reduce inference chunk
                 // size (fewer tokens per burst = more cooling gaps)
-                self.idle_enabled.store(false);
-                self.inference_chunk_modifier.store(4); // 4 tokens instead of 8
-                self.thermal_pressure_weight.store(0.5);
+                self.idle_enabled.store(false, Ordering::Relaxed);
+                self.inference_chunk_modifier.store(4, Ordering::Relaxed); // 4 tokens instead of 8
+                self.thermal_pressure_weight.store(0.5, Ordering::Relaxed);
                 self.reconcile_inference_weight();
             }
             ThermalState::Throttled { max_freq_mhz } => {
                 // Frequency dropped — WCET budgets must scale.
                 // A 4ms WCET at 2.4 GHz becomes ~6.4ms at 1.5 GHz.
                 let scale = self.config.max_freq_mhz as f32 / max_freq_mhz as f32;
-                self.rt_wcet_scale.store(scale);
+                self.rt_wcet_scale.store(scale, Ordering::Relaxed);
 
                 // Re-evaluate RT admission with scaled WCETs.
                 // Also scales per-task overrun thresholds (§5.4) to avoid
@@ -1487,8 +1542,8 @@ impl Scheduler {
                 self.rt_admission.reevaluate_with_scale(scale);
 
                 // Reduce inference to minimum: 2 tokens per chunk, lowest weight
-                self.inference_chunk_modifier.store(2);
-                self.thermal_pressure_weight.store(0.25);
+                self.inference_chunk_modifier.store(2, Ordering::Relaxed);
+                self.thermal_pressure_weight.store(0.25, Ordering::Relaxed);
                 self.reconcile_inference_weight();
             }
             ThermalState::Critical => {

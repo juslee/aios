@@ -372,12 +372,10 @@ Before MMU reconfiguration:
 
 After:
   TTBR1_EL1 → Kernel page table (high-half mapping)
-    0xFFFF_0000_0000_0000 + offset → kernel text (RX)
-    0xFFFF_0000_0000_0000 + offset → kernel rodata (RO)
-    0xFFFF_0000_0000_0000 + offset → kernel data/bss (RW, NX)
-    0xFFFF_0000_0000_0000 + offset → boot stack (RW, NX)
-    0xFFFF_0000_0000_0000 + offset → MMIO regions (device memory)
-    0xFFFF_0000_0000_0000 + offset → BootInfo + memory map
+    0xFFFF_0000_0000_0000          → kernel text (RX) + rodata (RO) + data/bss (RW, NX)
+    0xFFFF_0000_4000_0000          → kernel heap
+    0xFFFF_0001_0000_0000          → physical memory direct map
+    0xFFFF_0002_0000_0000          → MMIO regions (device memory)
 
   TTBR0_EL1 → Temporary identity map (will be replaced per-process)
     Keep identity map active briefly so the instruction that
@@ -418,11 +416,16 @@ impl CapabilityManager {
         let root = CapabilityToken {
             id: CapabilityTokenId(0),
             capability: Capability::Root,     // can derive any capability
-            holder: ProcessId::KERNEL,
-            granted_by: ProcessId::KERNEL,
+            holder: AgentId::KERNEL,
+            granted_by: Identity::Kernel,
+            created_at: Timestamp::BOOT,
             expires: None,
             delegatable: true,
             attenuations: vec![],
+            revoked: false,
+            parent_token: None,
+            usage_count: 0,
+            last_used: Timestamp::BOOT,
         };
         Self {
             root,
