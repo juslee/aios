@@ -206,10 +206,10 @@ Acceleration            HVF (macOS), KVM (Linux) Native aarch64
 
 **Key difference for boot:** QEMU provides GICv3, Pi 4 provides GICv2 (GIC-400). The kernel's interrupt setup path branches based on the device tree. Pi 5 provides GICv3 natively.
 
-The kernel abstracts these differences behind a `Platform` trait initialized during early boot:
+The kernel abstracts these differences behind a `Platform` trait initialized during early boot. The full HAL specification — device abstractions, MMIO primitives, VirtIO transport, DMA, and the guide for adding new platforms — is in [hal.md](./hal.md).
 
 ```rust
-pub trait Platform {
+pub trait Platform: Send + Sync {
     fn init_interrupts(&self, dt: &DeviceTree) -> Result<InterruptController>;
     fn init_timer(&self, dt: &DeviceTree) -> Result<Timer>;
     fn init_uart(&self, dt: &DeviceTree) -> Result<Uart>;
@@ -233,6 +233,8 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
     }
 }
 ```
+
+The six methods are called at different points during boot — UART, interrupts, and timer during kernel early boot (before heap), and GPU, network, and storage during service manager phases (after heap). See hal.md §3.2 for the full initialization order.
 
 -----
 
@@ -304,10 +306,13 @@ pub struct KernelState {
     pub platform: &'static dyn Platform,
     pub boot_phase: EarlyBootPhase,
 
-    // Hardware
+    // HAL devices (see hal.md for type definitions)
     pub interrupt_controller: Option<InterruptController>,
     pub timer: Option<Timer>,
     pub uart: Option<Uart>,
+    pub gpu: Option<GpuDevice>,
+    pub network: Option<NetworkDevice>,
+    pub storage: Option<StorageDevice>,
 
     // Memory
     pub page_allocator: Option<BuddyAllocator>,
