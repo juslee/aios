@@ -734,7 +734,7 @@ Event loop:
 
 **Why single-threaded.** A service handling one request at a time is simpler, has no internal concurrency bugs, and is cache-friendly. The direct thread switch (§9.1) means only one client is active at a time anyway — the kernel switches directly from the client to the service and back. Multi-threading the service only helps if requests are long-running (e.g., inference). For typical IPC latencies (< 5 μs), single-threaded is optimal.
 
-**Exceptions.** AIRS uses an internal thread pool for inference requests (airs.md §2.1). The inference engine runs on dedicated CPU cores (scheduler.md §5). The AIRS main thread accepts requests via `IpcSelect` and dispatches to inference worker threads. The worker threads signal completion via internal synchronization (not IPC). Long-running inference does not block short requests like `SemanticSearch` or `ToolRegister`.
+**Exceptions.** AIRS uses an internal thread pool for inference requests (airs.md §2.1). The inference engine runs on dedicated CPU cores (scheduler.md §6). The AIRS main thread accepts requests via `IpcSelect` and dispatches to inference worker threads. The worker threads signal completion via internal synchronization (not IPC). Long-running inference does not block short requests like `SemanticSearch` or `ToolRegister`.
 
 **Fairness.** `IpcSelect` returns the *oldest* ready channel (FIFO). A client that sends many requests does not starve other clients — each client's channel has its own queue (bounded by `queue_depth`), and `IpcSelect` round-robins across ready channels.
 
