@@ -524,7 +524,7 @@ Agent A                    Kernel                     Service B
    │                         │             B processes request
    │                         │                            │
    │                         │ ←──────────────────────────│
-   │                         │  IPC_REPLY(channel, reply)  │
+   │                         │  IPC_REPLY(reply)             │
    │                         │  (SVC trap to EL1)          │
    │                         │                            │
    │                         │  9. Copy reply:            │
