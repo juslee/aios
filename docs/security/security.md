@@ -2583,18 +2583,11 @@ This opacity is achieved through standard OS memory isolation: each agent has it
 
 AIRS needs memory to run. AIRS controls memory allocation. This creates a potential circular dependency.
 
-**Resolution:** AIRS's own memory lives in the **kernel pool** (128-256 MB fixed reservation). The kernel pool is:
-- Sized at boot based on hardware tier
-- Never subject to AIRS resource directives
-- Never resized by AIRS (only the kernel can adjust it, based on boot configuration)
-- Protected from OOM (kernel pool agents are OOM-kill exempt)
-
-AIRS can resize the **model pool** and **user pool** — but not the kernel pool where AIRS itself resides. The circular dependency is broken by this structural separation: AIRS lives in a pool it cannot control.
+**Resolution:** AIRS is a Trust Level 1 userspace service, so its process memory lives in the **user pool**. However, the AIRS resource directives can only resize the boundary between the model pool and user pool — they cannot evict AIRS's own pages. The kernel enforces a per-agent memory floor for AIRS (configured at boot), ensuring AIRS always has enough memory to run. The circular dependency is broken by this structural separation: AIRS can resize pools but cannot evict itself.
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Kernel Pool (128-256 MB)                            │
-│  ├── AIRS process memory                             │
 │  ├── Kernel data structures                          │
 │  └── System service memory                           │
 │  NOT subject to AIRS directives. Fixed at boot.      │
@@ -2605,6 +2598,7 @@ AIRS can resize the **model pool** and **user pool** — but not the kernel pool
 │  AIRS can resize boundary with User Pool.            │
 ├─────────────────────────────────────────────────────┤
 │  User Pool (1.5-7.5 GB)                              │
+│  ├── AIRS process memory (protected floor)           │
 │  ├── Agent heaps                                     │
 │  ├── Shared memory regions                           │
 │  └── Page cache                                      │

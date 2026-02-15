@@ -306,6 +306,20 @@ pub enum Syscall {
         msg_len: usize,
     },
 }
+
+/// Error codes returned in x0 (negative values).
+pub enum IpcError {
+    ETIMEDOUT    = -1,  // IpcCall timeout elapsed
+    EPIPE        = -2,  // peer endpoint is dead
+    EAGAIN       = -3,  // queue full (IpcSend) or would block
+    ECANCELED    = -4,  // IpcCancel aborted the call
+    EACCES       = -5,  // behavioral gate SUSPENDED
+    EPERM        = -6,  // missing capability
+    ENOSPC       = -7,  // subscriber list full
+    EPROTO       = -8,  // message_type not in channel protocol
+    ENOTSUP      = -9,  // operation not available (e.g., AIRS offline)
+    ECAP_DORMANT = -10, // capability exists but is dormant
+}
 ```
 
 ### 3.2 Syscall ABI
@@ -321,6 +335,11 @@ Syscall convention (aarch64):
   x5:  argument 5
 
   SVC #0 instruction triggers trap to EL1
+
+  Struct-pointer convention: syscalls with aggregate or >6 scalar
+  parameters (e.g., ProcessCreate, IpcSelect) pass a pointer to a
+  packed argument struct in x0. The kernel copies the struct from
+  user memory before validation.
 
   Return:
   x0:  result (0 = success, negative = error code)
@@ -489,6 +508,9 @@ Messages are untyped byte buffers at the kernel level. The SDK provides typed wr
 /// kernel heap allocation on the IPC hot path.
 pub struct RawMessage {
     channel: ChannelId,
+    /// Discriminates message type at the kernel level. Used by the
+    /// kernel for ChannelProtocol validation (§8.3 level 2, §9.1 step 4).
+    message_type: u32,
     data: *const u8,
     len: usize,
     capabilities: [Option<CapabilityTokenId>; MAX_CAPS_PER_MESSAGE],
@@ -715,7 +737,7 @@ const MAX_SEARCH_RESULTS: usize = 64;
 5. AIRS writes a sentinel `STREAM_END` entry when generation is complete
 6. Agent destroys the ring buffer channel
 
-This reduces the per-token overhead from ~420 cycles (full IPC) to ~10 cycles (atomic write + pointer advance). For interactive agents that display tokens as they arrive, this is the difference between perceptible latency and invisible overhead.
+This reduces the per-token overhead from ~415 cycles (full IPC) to ~10 cycles (atomic write + pointer advance). For interactive agents that display tokens as they arrive, this is the difference between perceptible latency and invisible overhead.
 
 ### 5.3 Compositor Protocol
 
@@ -740,7 +762,7 @@ Event loop:
   }
 ```
 
-**Why single-threaded.** A service handling one request at a time is simpler, has no internal concurrency bugs, and is cache-friendly. The direct thread switch (§9.1) means only one client is active at a time anyway — the kernel switches directly from the client to the service and back. Multi-threading the service only helps if requests are long-running (e.g., inference). For typical IPC latencies (< 5 μs), single-threaded is optimal.
+**Why single-threaded.** A service handling one request at a time is simpler, has no internal concurrency bugs, and is cache-friendly. The direct thread switch (§9.3) means only one client is active at a time anyway — the kernel switches directly from the client to the service and back. Multi-threading the service only helps if requests are long-running (e.g., inference). For typical IPC latencies (< 5 μs), single-threaded is optimal.
 
 **Exceptions.** AIRS uses an internal thread pool for inference requests (airs.md §2.1). The inference engine runs on dedicated CPU cores (scheduler.md §6). The AIRS main thread accepts requests via `IpcSelect` and dispatches to inference worker threads. The worker threads signal completion via internal synchronization (not IPC). Long-running inference does not block short requests like `SemanticSearch` or `ToolRegister`.
 
@@ -985,7 +1007,7 @@ This is the seL4 MCS (Mixed Criticality System) approach, adapted for AIOS's fou
 1. **Synchronous by default.** Async adds complexity. Use synchronous IPC for all request/reply patterns. Use notifications for events.
 2. **Zero-copy for large data.** Shared memory for anything over 256 bytes. Never copy megabytes through the kernel.
 3. **Capabilities are first-class.** The IPC system carries capabilities alongside data. Services receive capabilities, not just requests.
-4. **Minimal kernel surface.** ~20 syscalls. Every syscall is fuzz-tested. Less surface = fewer bugs.
+4. **Minimal kernel surface.** 32 syscalls (§3.4). Every syscall is fuzz-tested. Less surface = fewer bugs.
 5. **Audit everything.** All IPC is logged at the metadata level. Content logging is opt-in.
 6. **POSIX is a library.** The POSIX translation layer is userspace code, not kernel code. The kernel only knows AIOS syscalls.
 
@@ -1056,9 +1078,9 @@ This section compares the AIOS IPC design against state-of-the-art techniques fr
 
 ### 12.1 What AIOS Gets Right
 
-**Direct thread switching (Section 9.2).** When Agent A calls Service B, the kernel switches directly from A's thread to B's thread — no scheduler invocation, no runqueue manipulation. This is the core L4 technique that enables sub-microsecond kernel overhead. The ~420 cycle / ~0.2 μs kernel overhead is competitive with seL4 on ARM.
+**Direct thread switching (Section 9.3).** When Agent A calls Service B, the kernel switches directly from A's thread to B's thread — no scheduler invocation, no runqueue manipulation. This is the core L4 technique that enables sub-microsecond kernel overhead. The ~415 cycle / ~0.2 μs kernel overhead is competitive with seL4 on ARM.
 
-**Register-based small messages (Section 9.2).** Messages ≤ 64 bytes are passed in registers (x0-x7), avoiding memory copy entirely. This matches seL4's approach. Combined with direct switching, the fast path for small synchronous IPC is as good as it gets.
+**Register-based small messages (Section 9.3).** Messages ≤ 64 bytes are passed in registers (x0-x7), avoiding memory copy entirely. This matches seL4's approach. Combined with direct switching, the fast path for small synchronous IPC is as good as it gets.
 
 **Capability caching per-channel (Section 4.2).** Channel capabilities are checked at creation, not per-message. This avoids a capability table lookup on the hot path. seL4 does the same with endpoint capabilities.
 
@@ -1099,7 +1121,7 @@ Full FIDL-style typed marshaling (generated code, wire format validation) can be
 
 #### Gap 6: POSIX translation performance
 
-**Problem.** Every POSIX `read(fd, buf, len)` becomes an IPC round-trip to the Space Service (~5 μs). Native Linux cached `read()` is ~0.2-0.5 μs. That's 10-25x slower. BSD tools (grep, find, cc) perform thousands of small reads — the IPC overhead dominates. These tools use POSIX syscalls directly; they don't use the AIOS SDK and can't benefit from SDK-level batching (Section 9.2).
+**Problem.** Every POSIX `read(fd, buf, len)` becomes an IPC round-trip to the Space Service (~5 μs). Native Linux cached `read()` is ~0.2-0.5 μs. That's 10-25x slower. BSD tools (grep, find, cc) perform thousands of small reads — the IPC overhead dominates. These tools use POSIX syscalls directly; they don't use the AIOS SDK and can't benefit from SDK-level batching (Section 9.3).
 
 **Modern precedent.** POSIX shim layers in other microkernels (QNX, Fuchsia, Redox) use userspace caching to amortize IPC cost. QNX's resource managers maintain per-client read buffers. Fuchsia's fdio library caches directory entries.
 
@@ -1115,23 +1137,7 @@ Full FIDL-style typed marshaling (generated code, wire format validation) can be
 
 These optimizations are invisible to POSIX callers and maintain correctness (cache invalidation via notification channels when objects change). Implementation belongs in Phase 15 alongside the POSIX translation layer.
 
-### 12.3 Revised Implementation Order
-
-```
-Phase 3a:  Syscall handler + basic IPC (send/recv)       → processes can communicate
-Phase 3b:  Channel management + capability transfer       → secure IPC
-Phase 3b':  Add IpcReply syscall                          → cheaper reply path
-Phase 3c:  Shared memory manager                          → zero-copy transfers
-Phase 3c':  Ring buffer channels                          → high-frequency bulk channel
-Phase 3d:  Service manager + service discovery            → services register and are findable
-Phase 3d':  Channel protocol registration                 → kernel-enforced message types
-Phase 3e:  Notification channels + light notifications    → async events + cheap signals
-Phase 3f:  IPC performance optimization                   → sub-5μs round-trip
-Phase 3f':  Per-process kernel resource limits             → bounded kernel heap
-Phase 15:  POSIX translation layer + shim caching         → BSD tools work fast
-```
-
-### 12.4 Summary
+### 12.3 Summary
 
 | Technique | Source | Status | Priority |
 |---|---|---|---|
