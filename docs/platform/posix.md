@@ -11,7 +11,7 @@
 
 An operating system with no software is a technology demo. AIOS can have the most elegant microkernel, the most innovative space storage, the most intelligent context engine — none of it matters if you cannot run `grep`, compile C code, or SSH into a server. Developer adoption requires immediate productivity, and immediate productivity requires Unix tools.
 
-AIOS solves this without carrying decades of Unix kernel baggage. The approach: take FreeBSD's userland — battle-tested tools under BSD license — and run them on top of a thin POSIX translation layer that converts POSIX system calls into AIOS's native IPC-based architecture. The kernel never sees a POSIX system call. It only sees its own ~20 AIOS syscalls. POSIX is a userspace library, not a kernel commitment.
+AIOS solves this without carrying decades of Unix kernel baggage. The approach: take FreeBSD's userland — battle-tested tools under BSD license — and run them on top of a thin POSIX translation layer that converts POSIX system calls into AIOS's native IPC-based architecture. The kernel never sees a POSIX system call. It only sees its own 31 AIOS syscalls. POSIX is a userspace library, not a kernel commitment.
 
 This is fundamentally different from Linux compatibility layers (WSL, Darling) that try to emulate an entire kernel interface. AIOS doesn't emulate Linux. It provides just enough POSIX semantics — file I/O, process management, pipes, sockets — for BSD tools to work. The translation layer is lean because AIOS's native syscalls were designed with this translation in mind: `ProcessCreate` maps cleanly to `fork()`/`exec()`, `ChannelCreate` maps to `pipe()`, IPC messages to Space Service map to `open()`/`read()`/`write()`.
 
@@ -64,7 +64,7 @@ The result: every FreeBSD command-line tool works. `ls`, `grep`, `awk`, `sed`, `
 │  │    Time ops    → Kernel direct (TimeGet/TimeSleep)            │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────────┤
-│                     AIOS Kernel (~20 syscalls)                       │
+│                     AIOS Kernel (31 syscalls)                       │
 │                                                                      │
 │  IpcCall  IpcSend  IpcRecv  IpcSelect  ChannelCreate                │
 │  CapabilityTransfer  CapabilityAttenuate  CapabilityRevoke          │

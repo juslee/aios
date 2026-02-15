@@ -158,11 +158,11 @@ The split is not worth it at 8 GB because:
 
 ### 2.2 Relationship to the Microkernel
 
-AIOS is a microkernel OS. The kernel is ~20 syscalls: capabilities, IPC mediation, page tables, process lifecycle. Everything else — AIRS, Space Storage, Network Translation Module, Compositor — runs in userspace as Trust Level 1 services. AIRS being monolithic or split is a userspace concern that does not affect the kernel's architecture.
+AIOS is a microkernel OS. The kernel is 31 syscalls: capabilities, IPC mediation, page tables, process lifecycle. Everything else — AIRS, Space Storage, Network Translation Module, Compositor — runs in userspace as Trust Level 1 services. AIRS being monolithic or split is a userspace concern that does not affect the kernel's architecture.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Microkernel (~20 syscalls)                          │
+│  Microkernel (31 syscalls)                          │
 │  ProcessCreate, ProcessTerminate                     │
 │  CapabilityGrant, CapabilityRevoke, CapabilityCheck  │
 │  IpcSend, IpcReceive, ChannelCreate                  │

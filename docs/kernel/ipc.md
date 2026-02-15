@@ -674,7 +674,7 @@ pub enum SpaceReply {
 
 ### 5.2 AIRS Service Protocol
 
-**No shared memory for AIRS.** AIRS is a Trust Level 1 service in the kernel pool (security.md §9.5). Agents submit prompts — which are untrusted, potentially adversarial input (security.md §1.1, prompt injection). Mapping an agent's shared memory region directly into AIRS's address space creates a TOCTOU (time-of-check/time-of-use) attack surface: the agent can mutate the shared region while AIRS is reading it. All data crossing the agent→AIRS boundary is **kernel-copied** into AIRS's own memory. This adds ~50 cycles per KB (copy cost) but eliminates the attack vector entirely. AIRS's own security.md §9.3 confirms this principle: AIRS prefetches "use the NORMAL Space Storage read path" — AIRS never maps external data directly.
+**No shared memory for AIRS.** AIRS is a Trust Level 1 system service (security.md §9.3). Agents submit prompts — which are untrusted, potentially adversarial input (security.md §1.1, prompt injection). Mapping an agent's shared memory region directly into AIRS's address space creates a TOCTOU (time-of-check/time-of-use) attack surface: the agent can mutate the shared region while AIRS is reading it. All data crossing the agent→AIRS boundary is **kernel-copied** into AIRS's own memory. This adds ~50 cycles per KB (copy cost) but eliminates the attack vector entirely. AIRS's own security.md §9.3 confirms this principle: AIRS prefetches "use the NORMAL Space Storage read path" — AIRS never maps external data directly.
 
 ```rust
 pub enum AirsRequest {
