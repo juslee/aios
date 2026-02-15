@@ -620,7 +620,7 @@ pub struct SharedSpaceConfig {
     /// Access level
     pub access: AccessLevel,
     /// Capability token (cryptographically bound to identity)
-    pub capability_token: CapabilityToken,
+    pub capability_token: SpaceCapabilityToken,
     /// When sharing was granted
     pub granted: SystemTime,
     /// Optional expiry
@@ -723,7 +723,10 @@ impl IdentityService {
 Capability tokens are cryptographically bound to identity:
 
 ```rust
-pub struct CapabilityToken {
+/// Space-sharing capability token. Distinct from the kernel-level
+/// CapabilityToken (security.md §4) — this is a higher-level
+/// identity-bound access grant for cross-space sharing.
+pub struct SpaceCapabilityToken {
     /// What this token grants access to
     pub space_id: SpaceId,
     /// Who this token is for (identity-bound, non-transferable)
@@ -738,7 +741,7 @@ pub struct CapabilityToken {
     pub token_id: TokenId,
 }
 
-impl CapabilityToken {
+impl SpaceCapabilityToken {
     pub fn verify(&self, owner_public_key: &Ed25519PublicKey) -> bool {
         let data = self.signable_bytes();
         crypto_core::verify(owner_public_key, &data, &self.owner_signature)
@@ -1014,7 +1017,7 @@ pub struct DelegatedAction {
     /// The agent that performed the action (delegate)
     pub agent_identity: AgentIdentity,
     /// User's signature authorizing the agent (capability grant)
-    pub delegation_proof: CapabilityToken,
+    pub delegation_proof: SpaceCapabilityToken,
     /// Agent's signature over the action
     pub agent_signature: Signature,
     /// Timestamp
@@ -1049,7 +1052,7 @@ pub enum ProvenanceActor {
     Agent {
         identity: IdentityId,
         agent: AgentIdentity,
-        delegation: CapabilityToken,
+        delegation: SpaceCapabilityToken,
     },
     /// Created by AI inference
     AiGenerated {
