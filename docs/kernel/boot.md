@@ -235,6 +235,38 @@ Acceleration            HVF (macOS), KVM (Linux) Native aarch64
 
 **Key difference for boot:** QEMU provides GICv3, Pi 4 provides GICv2 (GIC-400). The kernel's interrupt setup path branches based on the device tree. Pi 5 provides GICv3 natively.
 
+### 2.6 Exception Level Model
+
+AIOS runs at **EL1** (OS kernel privilege). It does not use EL2 (hypervisor) and does not act as a hypervisor. The levels below the kernel:
+
+```
+Exception Level     Who occupies it            AIOS's relationship
+────────────────────────────────────────────────────────────────────
+EL3 (Secure Monitor) ARM Trusted Firmware (ATF)  AIOS calls it via SMC for PSCI
+                     Present on Pi 4/5.          (CPU_ON, SYSTEM_RESET, etc.)
+                     Not present on QEMU.
+
+EL2 (Hypervisor)    KVM (if QEMU uses -enable-kvm) AIOS is unaware of EL2.
+                     Not used on Pi bare-metal.     UEFI drops to EL1 before
+                                                    jumping to kernel.
+
+EL1 (OS Kernel)     AIOS kernel                 This is where we run.
+                     Full access to page tables,
+                     interrupt controller, timers.
+
+EL0 (User)          Service Manager, all services, All userspace processes.
+                     agents, compositor.
+```
+
+**PSCI conduit selection:** The device tree `/psci` node specifies the conduit:
+- `method = "smc"` → Pi 4/5 (ATF at EL3 handles the call)
+- `method = "hvc"` → QEMU without KVM (QEMU emulates PSCI at EL2)
+- `method = "hvc"` → QEMU with KVM (KVM intercepts HVC and handles PSCI)
+
+The kernel reads this during Step 4 (device tree parse) and stores it for SMP bringup (§3.5). The choice of HVC vs SMC is the *only* place where exception levels affect AIOS — everything else runs at EL1/EL0 uniformly.
+
+**UEFI guarantees:** The UEFI firmware (edk2) always drops to EL1 before calling `ExitBootServices()`. By the time the kernel entry point runs, EL2 is either not present (bare metal Pi) or occupied by KVM/QEMU (transparent to the kernel). The kernel never touches EL2 registers.
+
 The kernel abstracts these differences behind a `Platform` trait initialized during early boot. The full HAL specification — device abstractions, MMIO primitives, VirtIO transport, DMA, and the guide for adding new platforms — is in [hal.md](./hal.md).
 
 ```rust
@@ -373,6 +405,24 @@ Each step below includes what it initializes and why it must happen at that poin
 
 **Step 1: Entry point.** The UEFI stub jumps here. The kernel is running on a temporary stack allocated by the UEFI stub. BSS is zeroed. `x0` holds the physical address of `BootInfo`. The processor is at EL1, MMU is on (UEFI's identity mapping), caches are on.
 
+Immediately at entry, before any other code runs:
+
+```asm
+// Enable FP/NEON (CPACR_EL1.FPEN = 0b11)
+// Without this, any floating-point or NEON instruction traps to EL1.
+// Rust's codegen freely uses NEON registers for memcpy/memset,
+// so this must happen before ANY Rust code executes.
+mrs  x1, CPACR_EL1
+orr  x1, x1, #(3 << 20)    // FPEN = 0b11: no trapping
+msr  CPACR_EL1, x1
+isb                          // ensure the change is visible
+
+// Save BootInfo pointer
+mov  x19, x0                // x19 is callee-saved
+```
+
+This enables the Advanced SIMD (NEON) and floating-point unit. On aarch64, NEON is mandatory (not optional like on ARMv7), but access still traps unless `CPACR_EL1.FPEN` is set. UEFI may or may not have enabled it — the kernel sets it unconditionally. NEON is later used by: GGML runtime (Phase 3 AIRS inference), `memcpy`/`memset` optimizations throughout the kernel, and cryptographic operations (AES-NI equivalent instructions via ARMv8 Crypto Extensions).
+
 **Step 2: Exception vectors.** Write `VBAR_EL1` to point to the kernel's exception vector table. This must happen first because any unexpected exception before this point would jump to whatever garbage is at the current `VBAR_EL1`. The vectors handle: synchronous exceptions (syscalls, page faults, alignment faults), IRQ, FIQ, and SError. All vectors initially point to a panic handler that dumps registers to UART.
 
 ```
@@ -403,6 +453,8 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC.
 
+**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's watchdog: SP805 on QEMU, bcm2835-wdt on Pi). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (§11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
+
 **Step 7: MMU enable — page table setup.** This is the most complex step:
 
 ```
@@ -414,6 +466,7 @@ After:
   TTBR1_EL1 → Kernel page table (high-half mapping)
     0xFFFF_0000_0000_0000          → kernel text (RX) + rodata (RO) + data/bss (RW, NX)
     0xFFFF_0000_4000_0000          → kernel heap
+    0xFFFF_0000_8000_0000          → kernel stacks (per-core + per-process, with guard pages)
     0xFFFF_0001_0000_0000          → physical memory direct map
     0xFFFF_0002_0000_0000          → MMIO regions (device memory)
 
@@ -431,6 +484,15 @@ W^X enforcement:
   Kernel rodata: PXN=1, UXN=1, AP=RO   (not executable, not writable)
   Kernel data:   PXN=1, UXN=1, AP=RW   (not executable, writable)
 ```
+
+**Kernel stack lifecycle:** At entry (Step 1), the boot CPU runs on a temporary stack allocated by the UEFI stub — typically 64 KiB, location unknown to the kernel. During Step 7, the kernel allocates a proper 16 KiB kernel stack at a known virtual address (`0xFFFF_0000_8000_0000 + core_id * 0x10000`) with a **guard page** — a 4 KiB page mapped as no-access immediately below the stack. Stack overflow writes to the guard page, triggering a page fault caught by the exception handler (instead of silently corrupting the heap). After the stack switch, the UEFI stub stack is released. Secondary cores (§3.5) receive their own 16 KiB stacks with guard pages at the same virtual base + offset. User processes receive stacks from the Process Manager (Step 15); user stacks are allocated in the process's TTBR0 address space, default 1 MiB, also with guard pages.
+
+**Cache coherency:** ARMv8 provides hardware cache coherency between cores (MOESI protocol via the Cache Coherent Interconnect). The kernel does *not* need explicit D-cache maintenance for inter-core communication — hardware handles it. However, two cache maintenance operations are required during boot:
+
+1. **After KASLR remapping (Step 11):** `IC IALLU` (Invalidate All to Point of Unification, inner shareable) + `ISB` — ensures the instruction cache reflects the new kernel virtual addresses. Without this, stale I-cache entries pointing at old addresses cause unpredictable execution.
+2. **After writing exception vectors (Step 2):** `DC CVAU` (Clean by VA to Point of Unification) on the vector table, then `IC IVAU` + `ISB` — ensures instruction cache sees the freshly written handlers. (On most ARMv8 implementations this is handled by hardware, but the architecture does not guarantee it — clean + invalidate is required for correctness.)
+
+MMIO regions (device memory) are mapped as `nGnRnE` (non-Gathering, non-Reordering, non-Early Write Acknowledgement) — strongly-ordered, uncacheable. This ensures device register accesses are not reordered or cached.
 
 **Step 8: Physical page allocator.** Initialize a buddy allocator using the free physical pages from the UEFI memory map. Pages of type `Conventional`, `LoaderCode`, `LoaderData`, `BootServicesCode`, and `BootServicesData` are added to the free pool. Pages occupied by the kernel, initramfs, BootInfo, UEFI Runtime, and MMIO are excluded.
 
@@ -585,6 +647,64 @@ Raspberry Pi 5      4      SMC             Cortex-A76
 **The `maxcpus=` command line option** limits how many secondary cores are brought online. `maxcpus=1` keeps the system single-core (useful for debugging race conditions). Default is all available cores.
 
 **Timing:** Secondary CPU bringup takes ~5ms total (PSCI call + per-core init). It happens between Step 15 (Process Manager) and Step 17 (Early boot complete). By the time the Service Manager launches, all cores are online and the scheduler can distribute work across them.
+
+### 3.6 SMMU / IOMMU: DMA Protection
+
+Without an IOMMU, any DMA-capable device can read or write arbitrary physical memory — effectively bypassing all kernel page table isolation. On a capability-based OS, this is a critical gap: a compromised USB or network device could read kernel memory, steal capability tokens, or corrupt the provenance chain.
+
+**ARM SMMU (System Memory Management Unit)** provides per-device address translation and access control for DMA transactions, analogous to Intel VT-d:
+
+```
+Without SMMU:
+  Device → DMA request (physical address) → RAM (any address!)
+
+With SMMU:
+  Device → DMA request (IOVA) → SMMU → translate via device page table
+                                       → check permissions
+                                       → physical address (restricted)
+                                       → RAM (only allowed regions)
+```
+
+**Per-platform status:**
+
+```
+Platform       SMMU Hardware          Status
+──────────────────────────────────────────────────
+QEMU           VirtIO IOMMU           Optional; enabled with -device virtio-iommu
+               (or iommu=smmuv3)      Required for testing DMA isolation.
+Pi 4           None                   No SMMU. DMA is unrestricted.
+                                      Mitigation: restricted device drivers,
+                                      bounce buffering for untrusted devices.
+Pi 5           SMMU (in BCM2712)      Available. Configured during boot.
+```
+
+**When SMMU is initialized:** After Step 8 (page allocator ready — SMMU page tables need physical pages) but before the Service Manager launches any device-accessing services. Specifically:
+
+1. **Step 8.5 (new, between page allocator and heap):** If the device tree contains an SMMU node (`/smmu` or `/iommu`), initialize the SMMU hardware: program the Stream Table (maps device stream IDs to per-device page tables), configure the Command Queue and Event Queue, and enable translation.
+2. **Per-device page tables** are created when device drivers initialize. Each device's DMA is restricted to specific physical regions: the Block Engine can DMA to/from its I/O buffers, but not to kernel text or capability tables.
+3. **On Pi 4 (no SMMU):** The kernel uses *bounce buffers* — all DMA goes through a dedicated physical region, and the kernel copies data in/out. This is slower but safe. Drivers for untrusted buses (USB) always use bounce buffers regardless of SMMU presence.
+
+```rust
+pub struct SmmuConfig {
+    /// Physical base address of SMMU registers (from device tree)
+    base: PhysicalAddress,
+    /// Stream table: maps StreamId → device context (page table, config)
+    stream_table: &'static mut [StreamTableEntry],
+    /// Command queue for SMMU configuration commands
+    cmd_queue: CommandQueue,
+    /// Event queue for SMMU faults (DMA access violations)
+    event_queue: EventQueue,
+}
+
+pub fn init_smmu(dt: &DeviceTree, page_allocator: &BuddyAllocator) -> Option<SmmuConfig> {
+    let smmu_node = dt.find_compatible("arm,smmu-v3")?;
+    let base = smmu_node.reg_base();
+    // ... configure stream table, queues, enable translation
+    Some(config)
+}
+```
+
+**SMMU faults** (device tries to DMA to an unauthorized address) are logged as audit events and the offending transaction is aborted. The kernel does not crash — the device driver receives an I/O error, and the Service Manager may restart the affected service.
 
 -----
 
@@ -937,15 +1057,52 @@ These services make the system interactive. After Phase 2, there's a screen with
 
 **Subsystem Framework** initializes next. It registers the framework's core traits and the capability gate for hardware access. All subsystems (input, display, network, audio, etc.) register through this framework.
 
-**Input Subsystem** registers with the framework and starts handling keyboard and mouse/touchpad events. On QEMU, this is VirtIO-Input. On Pi, this is USB HID via the USB host controller. Input events flow through the subsystem to the compositor's input router.
+**Input Subsystem** registers with the framework and starts handling keyboard and mouse/touchpad events. On QEMU, this is VirtIO-Input (paravirtualized, no USB stack needed). On Pi, input requires the USB host controller:
+
+```
+Pi 4/5 Input path:
+  1. USB host controller init (DesignWare xHCI on Pi 4, RP1 xHCI on Pi 5)
+     - Controller is discovered from Device Registry (device tree node)
+     - xHCI rings allocated from kernel DMA-safe memory (bounce buffer
+       region on Pi 4 where there's no SMMU; SMMU-mapped on Pi 5)
+     - Controller reset, port power-on, initial hub enumeration
+  2. USB hub enumeration
+     - Pi 4: integrated VL805 USB 3.0 hub (4 ports)
+     - Pi 5: RP1 southbridge (4 USB ports, 2× USB 3.0 + 2× USB 2.0)
+     - Enumerate all connected devices, match USB class codes
+  3. USB HID driver
+     - Claim keyboard (class 0x03, subclass 0x01, protocol 0x01)
+     - Claim mouse/touchpad (class 0x03, subclass 0x01, protocol 0x02)
+     - Set up interrupt transfers for input polling
+  4. Route events to compositor's input router
+
+Timing: USB enumeration takes 50-200ms (device-dependent).
+If USB fails on Pi, keyboard/mouse are unavailable — this is a
+Phase 2 critical failure on Pi (but not on QEMU, which uses VirtIO-Input).
+```
 
 **Display Subsystem** initializes the GPU driver. On QEMU, this is VirtIO-GPU: the driver negotiates display resolution, allocates scanout buffers, and sets up the rendering pipeline via wgpu. On Pi, this is the VC4/V3D driver (Pi 4) or V3D 7.1 (Pi 5), which provides Vulkan capabilities. The display subsystem takes over from the early framebuffer (see Section 7 for the handoff).
+
+**GPU memory on Pi:** VideoCore VI/VII shares system RAM with the CPU — there is no discrete VRAM. The Pi firmware reserves a contiguous region for the GPU (specified in `config.txt` as `gpu_mem`, default 76 MB on Pi 4, 64 MB on Pi 5). The kernel discovers this reservation via the device tree `/reserved-memory` node during Step 4 and excludes it from the buddy allocator. The Display Subsystem uses this region for scanout buffers, texture memory, and render targets. Importantly, the AIRS model selection thresholds (§5 Phase 3) account for GPU-reserved memory — "available RAM" means total RAM minus kernel minus GPU reservation:
+
+```
+Pi 4 (4 GB model):  4096 - ~2 (kernel) - 76 (GPU) = ~4018 MB available
+                     → selects 3B Q4_K_M (~2.0 GB)
+Pi 4 (8 GB model):  8192 - ~2 (kernel) - 76 (GPU) = ~8114 MB available
+                     → selects 8B Q4_K_M (~4.5 GB)
+Pi 5 (8 GB):        8192 - ~2 (kernel) - 64 (GPU) = ~8126 MB available
+                     → selects 8B Q4_K_M (~4.5 GB)
+QEMU (default 4 GB): no GPU reservation (VirtIO-GPU uses host memory)
+                     → selects 3B Q4_K_M (~2.0 GB)
+```
 
 **Compositor** starts after display. It creates the initial render pipeline, registers with the input subsystem for event routing, and presents the first composited frame. At this point, the splash screen transitions from the early framebuffer to the compositor.
 
 **Network Subsystem** starts in parallel with display/compositor. It initializes the network stack (smoltcp), configures the network interface (VirtIO-Net on QEMU, Genet Ethernet on Pi), and starts DHCP. Basic TCP/IP is available from this point — but the full Network Translation Module (space resolver, shadow engine, etc.) comes later (Phase 16 in the development plan).
 
 **POSIX Compatibility** starts in parallel with other Phase 2 services. It initializes the translation layer: mounts the POSIX filesystem view over spaces (`/spaces/`, `/home/`, `/tmp/`, `/dev/`, `/proc/`), sets up the C library (musl libc) shim, and makes BSD tools available.
+
+**Audio Subsystem** starts in parallel with network and POSIX. It registers with the Subsystem Framework and initializes the audio hardware: VirtIO-Sound on QEMU, or PWM/I2S via the BCM audio peripheral on Pi 4/5 (accessed through the DMA controller, PL330 on Pi 4, RP1 on Pi 5). The audio subsystem is **not critical** — if it fails, boot continues without sound. It provides: PCM output (mixing engine), optional input (microphone), and routing (HDMI audio vs 3.5mm jack vs Bluetooth). The scheduler grants audio threads RT class scheduling (same as compositor) to meet latency deadlines (scheduler.md §3.1).
 
 **Phase 2 budget: ~500ms.**
 
@@ -1814,7 +1971,74 @@ The boot sequence is built incrementally. After Phase 1, the kernel boots and sh
 
 -----
 
-## 13. Cross-Document Dependencies
+## 13. Boot Test Strategy
+
+The boot sequence is the most critical code path in AIOS — if it breaks, nothing works. Every change to boot-related code must be validated by automated tests before merging.
+
+### 13.1 CI Boot Smoke Test
+
+Every PR runs a QEMU boot smoke test:
+
+```
+Boot smoke test (runs in CI on every PR):
+
+1. Build kernel + initramfs + UEFI stub
+2. Launch QEMU (aarch64, no KVM, 4 GB RAM, VirtIO devices)
+3. Capture UART output
+4. Assert: "[boot] Complete" appears within 500ms (kernel early boot)
+5. Assert: "Phase 1 complete" appears within 1000ms
+6. Assert: "Phase 2 complete" appears within 2000ms
+7. Assert: "Phase 5 complete — boot to desktop" appears within 5000ms
+8. Assert: no "[PANIC]" in UART output
+9. Assert: "Services: N running, 0 failed, 0 degraded" (0 failures)
+10. Shutdown cleanly, verify "[shutdown] clean shutdown" in UART
+
+Total CI time: ~10 seconds per run (dominated by QEMU startup)
+```
+
+### 13.2 Platform Test Matrix
+
+```
+Test Level     QEMU (CI)       Pi 4 (manual/nightly)  Pi 5 (manual/nightly)
+──────────────────────────────────────────────────────────────────────────────
+Normal boot    Every PR        Nightly                 Nightly
+First boot     Every PR        Weekly                  Weekly
+Recovery mode  Every PR        Monthly                 Monthly
+Rollback       Every PR        Monthly                 Monthly
+Safe mode      Every PR        Monthly                 Monthly
+SMP (4 cores)  Every PR        Nightly                 Nightly
+maxcpus=1      Weekly          Monthly                 Monthly
+```
+
+Pi testing uses physical hardware connected to a CI runner via serial console (UART) and relay-controlled power for automated reboot. The relay allows hard power-cycle testing — essential for verifying watchdog and WAL recovery paths.
+
+### 13.3 Boot Timing Regression
+
+The CI records Phase 5 completion time from UART output. A **regression threshold** of +10% from the rolling average triggers a warning; +20% blocks the PR. This catches accidental performance regressions (e.g., a new service added to the critical path, or an accidentally-synchronous operation in Phase 2).
+
+```
+Tracked metrics (from UART timestamps):
+  - Kernel early boot (entry → Complete)
+  - Phase 1 duration (storage)
+  - Phase 2 duration (core services)
+  - Phase 4 duration (user services)
+  - Total boot-to-desktop (entry → Phase 5 complete)
+  - AIRS health time (Phase 3, non-critical but tracked)
+```
+
+### 13.4 Failure Injection Tests
+
+Run weekly in CI (slower, ~60 seconds each):
+
+- **Service crash during boot:** Kill a Phase 2 service mid-startup. Verify: Service Manager restarts it, boot completes, audit log records the failure.
+- **AIRS timeout:** Start QEMU with insufficient RAM for any model. Verify: Phase 3 times out, Phase 4-5 proceed, desktop appears without AIRS.
+- **Storage corruption:** Corrupt the WAL header before boot. Verify: Block Engine detects corruption, WAL replay recovers, boot completes.
+- **Three consecutive failures:** Kill the kernel three times before Phase 5. Verify: Fourth boot enters recovery mode, UART shows recovery shell prompt.
+- **Watchdog expiry:** Inject a `sleep(35s)` in Phase 1. Verify: Watchdog fires, system reboots, `consecutive_failures` increments.
+
+-----
+
+## 14. Cross-Document Dependencies
 
 This section tracks concepts that boot.md references which are defined (or need to be defined) in other documents. If you modify any of these, check the corresponding document for consistency.
 
@@ -1833,10 +2057,15 @@ This section tracks concepts that boot.md references which are defined (or need 
 | Preference Service, `user/preferences/` space | [preferences.md](../intelligence/preferences.md) | Phase 4 Preference startup and the preference space path must match preferences.md. |
 | `AgentManifest.persistent`, agent shutdown protocol, `ShutdownSignal` | [agents.md](../applications/agents.md) §2.4, §3 | The 5-second shutdown grace period (§11.3) and persistent agent relaunching must match agents.md's lifecycle model. |
 | Block Engine, Object Store, Space Storage, WAL, LSM-tree, system spaces | [spaces.md](../storage/spaces.md) | Phase 1 startup sequence and system space paths (`system/audit/`, `system/models/`, etc.) must agree with spaces.md's space hierarchy. |
+| ARM SMMU (SMMUv3), stream tables, DMA isolation, bounce buffers | [hal.md](./hal.md) | SMMU initialization (§3.6) and per-device DMA page tables must align with hal.md's DMA abstractions. Pi 4 bounce buffer strategy must match hal.md's DMA API. |
+| USB host controller (xHCI), USB HID, hub enumeration | [hal.md](./hal.md) | Phase 2 USB input path on Pi must match hal.md's USB abstraction (if defined). xHCI driver is platform-specific (DesignWare on Pi 4, RP1 on Pi 5). |
+| Audio subsystem (PCM, mixing, I2S/PWM, HDMI audio) | [compositor.md](../platform/compositor.md) or future `audio.md` | Phase 2 Audio Subsystem startup must match whatever audio document is created. RT scheduling class for audio threads must match scheduler.md. |
+| Watchdog timer (SP805, bcm2835-wdt), boot timeout, runtime ping | [hal.md](./hal.md) | Watchdog hardware abstraction and timeout values (30s boot, 60s runtime, 15s shutdown) must be consistent across hal.md and boot.md. |
+| GPU memory reservation (`/reserved-memory` node, `gpu_mem`), VideoCore carve-out | [compositor.md](../platform/compositor.md) | GPU memory split on Pi (76 MB Pi 4, 64 MB Pi 5) and its effect on available RAM must match compositor.md's VRAM requirements. |
 
 -----
 
-## 14. Documentation Gaps
+## 15. Documentation Gaps
 
 Concepts referenced in boot.md that do not yet have full documentation elsewhere. These are placeholders for future doc work.
 
@@ -1852,9 +2081,17 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 6. **Recovery mode and safe mode operational procedures** — §9 describes recovery mode commands and safe mode service lists, but there is no standalone troubleshooting or operations guide documenting: how to connect a UART console on each platform, how to diagnose common boot failures, or how to restore from backup after a factory reset. This could be a future `docs/operations/recovery.md`.
 
+7. **USB host controller driver** — Phase 2 describes USB enumeration for Pi input, but the xHCI driver itself is not documented anywhere. hal.md should add a USB section covering: xHCI ring buffer setup, USB descriptor parsing, hub enumeration, and HID class driver. This is Pi-specific (QEMU uses VirtIO-Input) and affects input latency on real hardware.
+
+8. **Audio subsystem architecture** — Phase 2 mentions Audio Subsystem startup but there is no `audio.md` document. Needed: PCM mixing engine, I2S/PWM driver for Pi, VirtIO-Sound for QEMU, HDMI audio routing, RT scheduling requirements, and how audio interacts with the compositor for A/V sync.
+
+9. **Measured boot and attestation** — Implementation Order lists "Phase 24: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
+
+10. **SMMU driver internals** — §3.6 describes when and why SMMU is initialized, but the SMMUv3 driver itself (stream table format, command/event queues, fault handling) needs documentation in hal.md. Pi 5's BCM2712 SMMU has platform-specific quirks that should be documented.
+
 -----
 
-## 15. Design Principles
+## 16. Design Principles
 
 1. **Usable at each phase boundary.** Every service is optional except storage and display. AIRS failure doesn't break boot. Network failure doesn't break boot.
 2. **Fast on the critical path.** Only the minimum services needed for a desktop are on the critical path. Everything else runs in parallel or deferred.
