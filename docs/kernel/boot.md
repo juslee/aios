@@ -74,25 +74,25 @@ pub struct BootInfo {
     /// ACPI RSDP (Root System Description Pointer).
     /// QEMU provides both DTB and ACPI. Pi provides DTB only.
     /// Kernel prefers DTB when both are present.
-    acpi_rsdp: Option<PhysAddr>,
+    acpi_rsdp: Option<PhysicalAddress>,
 
     /// UEFI Runtime Services function table.
     /// Provides: GetTime, SetTime, ResetSystem, GetVariable.
     /// Available after ExitBootServices (unlike Boot Services).
-    runtime_services: Option<PhysAddr>,
+    runtime_services: Option<PhysicalAddress>,
 
     /// Random seed from UEFI RNG protocol. Used for KASLR.
     /// If unavailable, kernel falls back to timer-based entropy.
     rng_seed: [u8; 32],
 
     /// Physical address where the kernel ELF was loaded.
-    kernel_phys_base: PhysAddr,
+    kernel_phys_base: PhysicalAddress,
 
     /// Size of kernel image in memory (text + rodata + data + bss).
     kernel_size: usize,
 
     /// Physical address of the initramfs (cpio archive).
-    initramfs_base: PhysAddr,
+    initramfs_base: PhysicalAddress,
     initramfs_size: usize,
 
     /// Command line arguments (from UEFI boot variable or config).
@@ -109,7 +109,7 @@ pub struct MemoryMap {
 #[repr(C)]
 pub struct MemoryDescriptor {
     memory_type: MemoryType,
-    physical_start: PhysAddr,
+    physical_start: PhysicalAddress,
     virtual_start: VirtAddr,    // unused, UEFI sets to 0
     page_count: u64,            // pages of 4 KiB each
     attributes: u64,            // cacheability, write-protection
@@ -134,7 +134,7 @@ pub enum MemoryType {
 
 #[repr(C)]
 pub struct FramebufferInfo {
-    base: PhysAddr,             // physical address of pixel buffer
+    base: PhysicalAddress,             // physical address of pixel buffer
     size: usize,                // total buffer size in bytes
     width: u32,                 // pixels
     height: u32,                // pixels
@@ -154,7 +154,7 @@ pub enum PixelFormat {
 
 #[repr(C)]
 pub struct DeviceTreeInfo {
-    base: PhysAddr,
+    base: PhysicalAddress,
     size: usize,
 }
 

@@ -911,7 +911,7 @@ Core 1 (pinned for inference):
 ```rust
 /// Inference task descriptor, created by AIRS when starting
 /// an inference session.
-pub struct InferenceTask {
+pub struct InferenceTask<'a> {
     /// Session identifier (from AIRS)
     session_id: SessionId,
 
@@ -931,7 +931,7 @@ pub struct InferenceTask {
     tokens_in_chunk: u32,
 
     /// Back-reference to this thread's SchedEntity for preemption checks
-    sched: &SchedEntity, // borrows from Thread.sched, NOT a copy
+    sched: &'a SchedEntity, // borrows from Thread.sched, NOT a copy
 
     /// Tokens generated so far (total across all chunks)
     tokens_generated: u32,
@@ -1474,7 +1474,7 @@ impl Scheduler {
 
     /// Resume a previously suspended agent's threads.
     /// Called when memory pressure drops and suspended agents can resume.
-    pub fn resume_agent_threads(&self, agent_id: AgentId) {
+    pub fn resume_agent_threads(&mut self, agent_id: AgentId) {
         // Threads transition from Suspended → Runnable
         // and are reinserted into appropriate run queues.
     }
@@ -1598,7 +1598,7 @@ pub struct LoadBalancer {
 /// that halves every 32ms, reflecting recent history, not just this instant.
 pub struct CpuLoad {
     /// PELT-tracked load: sum of per-entity weighted utilization,
-    /// decayed with 32ms half-life. Used for migration decisions.
+    /// decayed with 32ms time constant (~22ms half-life). Used for migration decisions.
     pelt_load: u64,
     /// PELT-tracked utilization (0.0 - 1.0, smoothed)
     pelt_util: f32,
