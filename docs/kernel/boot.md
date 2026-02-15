@@ -419,7 +419,7 @@ impl CapabilityManager {
             holder: AgentId::KERNEL,
             granted_by: Identity::Kernel,
             created_at: Timestamp::BOOT,
-            expires: None, // Root token exempt from mandatory expiry (security.md §10.3)
+            expires: Timestamp::MAX, // Trust Level 0: Duration::MAX (security.md §10.3)
             delegatable: true,
             attenuations: vec![],
             revoked: false,
