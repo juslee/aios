@@ -166,6 +166,16 @@ impl PhysicalFrame {
         PhysicalAddress(self.pfn << 12)
     }
 
+    /// Convert to a typed pointer via the direct-map region.
+    pub fn as_ptr<T>(&self) -> *const T {
+        (DIRECT_MAP_BASE + self.pfn * PAGE_SIZE) as *const T
+    }
+
+    /// Convert to a mutable typed pointer via the direct-map region.
+    pub fn as_mut_ptr<T>(&self) -> *mut T {
+        (DIRECT_MAP_BASE + self.pfn * PAGE_SIZE) as *mut T
+    }
+
     pub fn from_address(addr: PhysicalAddress) -> Self {
         Self { pfn: addr.0 >> 12 }
     }
@@ -559,6 +569,17 @@ impl PageTableEntry {
         self.0 |= Self::AP_RO;      // set read-only → not writable
         self.0 &= !Self::UXN;       // clear execute-never → executable
     }
+
+    /// Replace the physical frame address in this PTE.
+    pub fn set_frame(&mut self, frame: PhysicalFrame) {
+        self.0 = (self.0 & !0x0000_FFFF_FFFF_F000)
+            | (frame.address().0 as u64 & 0x0000_FFFF_FFFF_F000);
+    }
+
+    /// Clear the COW software bit (page is now exclusively owned).
+    pub fn clear_cow(&mut self) {
+        self.0 &= !Self::COW;
+    }
 }
 
 /// A page table (512 entries, 4 KB)
@@ -856,6 +877,14 @@ pub struct SlabAllocator {
 }
 
 impl SlabAllocator {
+    /// Allocate `size` bytes with `align` alignment.
+    /// Finds the smallest cache whose object size >= requested size.
+    /// Returns null if no cache fits (caller falls back to buddy allocator).
+    pub fn alloc(&self, size: usize, align: usize) -> *mut u8 { todo!() }
+
+    /// Free a previously allocated pointer of the given `size`.
+    pub fn free(&self, ptr: *mut u8, size: usize) { todo!() }
+
     /// Standard caches created at boot
     pub fn init(frame_allocator: &FrameAllocator) -> Self {
         Self {
@@ -885,7 +914,8 @@ The kernel provides a typed allocation interface built on top of the slab and bu
 // Each is protected by a spin-lock or is inherently lock-free.
 
 /// Physical page allocator — partitioned into Kernel/User/Model/DMA pools (§2.4).
-static FRAME_ALLOCATOR: PagePools = /* initialized by PagePools::init() at boot */;
+/// FrameAllocator wraps PagePools and provides alloc_page/free_pages (§2.3).
+static FRAME_ALLOCATOR: FrameAllocator = /* initialized at boot from PagePools::init() */;
 
 /// Per-frame reference counts for COW and shared mappings (§5.4).
 static FRAME_REFCOUNT: FrameRefCount = /* initialized at boot, one atomic counter per PFN */;
@@ -981,6 +1011,16 @@ pub struct AgentProcess {
     pub address_space: AddressSpace,
     pub memory_limit: usize,           // max RSS in bytes
     pub memory_stats: AgentMemoryStats,
+    /// Agent priority from manifest (lower = more important).
+    /// Used by OOM scorer and thrash detector for victim selection.
+    pub priority: u8,
+    /// Whether this agent is currently suspended (e.g., by thrash detector).
+    pub suspended: bool,
+}
+
+impl AgentProcess {
+    pub fn priority(&self) -> u8 { self.priority }
+    pub fn is_suspended(&self) -> bool { self.suspended }
 }
 ```
 
@@ -1018,6 +1058,10 @@ impl AgentMemoryStats {
     pub fn remaining(&self) -> usize {
         self.limit.saturating_sub(self.rss)
     }
+
+    /// Major fault rate (faults requiring disk I/O) over the last sampling window.
+    /// Used by ThrashDetector to identify agents causing excessive paging.
+    pub fn major_faults_per_sec(&self) -> f64 { todo!() }
 }
 ```
 
@@ -1546,7 +1590,7 @@ pub struct SharedMemoryRegion {
     pub max_flags: MemoryFlags,
     /// Capability required to access
     pub capability: CapabilityTokenId,
-    /// Per-mapping permissions (bounded; MAX_SHARED_MAPPINGS = 16)
+    /// Per-mapping permissions (bounded; MAX_SHARED_MAPPINGS = 8)
     pub mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
 }
 

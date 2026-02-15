@@ -374,7 +374,7 @@ The kernel's total heap usage is bounded by: `sum(per-process limits) * per-obje
 
 ### 3.4 Syscall Count
 
-Total: 32 syscalls. IPC: 6 (`IpcCall`, `IpcSend`, `IpcRecv`, `IpcReply`, `IpcCancel`, `IpcSelect`). Channels: 4 (`ChannelCreate`, `ChannelDestroy`, `RingChannelCreate`, `RingChannelDestroy`). Notifications: 3 (`NotificationCreate`, `NotificationSignal`, `NotificationWait`). Introspection: 1 (`ChannelStats`). Capabilities: 4 (`CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList`). Memory: 5 (`MemoryMap`, `MemoryUnmap`, `SharedMemoryCreate`, `SharedMemoryMap`, `SharedMemoryShare`). Process: 3 (`ProcessCreate`, `ProcessExit`, `ProcessWait`). Time: 3 (`TimeGet`, `TimeSleep`, `TimerSet`). Audit: 1 (`AuditLog`). Debug: 1 (`DebugPrint`). DebugPrint is development-only and excluded from production builds.
+Total: 31 syscalls. IPC: 6 (`IpcCall`, `IpcSend`, `IpcRecv`, `IpcReply`, `IpcCancel`, `IpcSelect`). Channels: 4 (`ChannelCreate`, `ChannelDestroy`, `RingChannelCreate`, `RingChannelDestroy`). Notifications: 3 (`NotificationCreate`, `NotificationSignal`, `NotificationWait`). Introspection: 1 (`ChannelStats`). Capabilities: 4 (`CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList`). Memory: 5 (`MemoryMap`, `MemoryUnmap`, `SharedMemoryCreate`, `SharedMemoryMap`, `SharedMemoryShare`). Process: 3 (`ProcessCreate`, `ProcessExit`, `ProcessWait`). Time: 3 (`TimeGet`, `TimeSleep`, `TimerSet`). Audit: 1 (`AuditLog`). Debug: 1 (`DebugPrint`). DebugPrint is development-only and excluded from production builds.
 
 Compare with Linux (~450) or even seL4 (~12). AIOS targets the sweet spot: enough for a full-featured OS, few enough that every syscall can be audited and fuzz-tested exhaustively.
 
@@ -755,8 +755,8 @@ Service startup:
 
 Event loop:
   loop {
-      let (channel, message) = IpcSelect(all_client_channels, timeout)?;
-      let reply = handle_request(channel.client_id, message);
+      let (channel_id, message) = IpcSelect(all_client_channels, timeout)?;
+      let reply = handle_request(channel_id, message);
       IpcReply(reply);
       // IpcSelect resumes — next ready channel is serviced
   }
@@ -1007,7 +1007,7 @@ This is the seL4 MCS (Mixed Criticality System) approach, adapted for AIOS's fou
 1. **Synchronous by default.** Async adds complexity. Use synchronous IPC for all request/reply patterns. Use notifications for events.
 2. **Zero-copy for large data.** Shared memory for anything over 256 bytes. Never copy megabytes through the kernel.
 3. **Capabilities are first-class.** The IPC system carries capabilities alongside data. Services receive capabilities, not just requests.
-4. **Minimal kernel surface.** 32 syscalls (§3.4). Every syscall is fuzz-tested. Less surface = fewer bugs.
+4. **Minimal kernel surface.** 31 syscalls (§3.4). Every syscall is fuzz-tested. Less surface = fewer bugs.
 5. **Audit everything.** All IPC is logged at the metadata level. Content logging is opt-in.
 6. **POSIX is a library.** The POSIX translation layer is userspace code, not kernel code. The kernel only knows AIOS syscalls.
 
