@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 6.1 Boot Sequence
-**Related:** [ipc.md](./ipc.md) — IPC and syscalls, [spaces.md](../storage/spaces.md) — Space Storage, [airs.md](../intelligence/airs.md) — AI Runtime Service, [development-plan.md](../project/development-plan.md) — Phase plan
+**Related:** [hal.md](./hal.md) — Platform trait, device abstractions, porting guide, [ipc.md](./ipc.md) — IPC and syscalls, [scheduler.md](./scheduler.md) — Scheduling classes and context multipliers, [memory.md](./memory.md) — Memory management and pool sizing, [spaces.md](../storage/spaces.md) — Space Storage, [airs.md](../intelligence/airs.md) — AI Runtime Service, [compositor.md](../platform/compositor.md) — Display handoff and framebuffer, [security.md](../security/security.md) — Capability system and trust levels, [identity.md](../experience/identity.md) — Identity initialization, [agents.md](../applications/agents.md) — Agent lifecycle and state persistence, [attention.md](../intelligence/attention.md) — Attention Manager initialization, [context-engine.md](../intelligence/context-engine.md) — Context Engine startup, [preferences.md](../intelligence/preferences.md) — Preference Service startup, [development-plan.md](../project/development-plan.md) — Phase plan
 
 -----
 
@@ -165,7 +165,36 @@ pub struct CommandLine {
 }
 ```
 
-### 2.3 EFI System Partition Layout
+### 2.3 Kernel Command Line
+
+The `CommandLine` in `BootInfo` is a UTF-8 string parsed by the kernel during Step 4 (device tree parse). It comes from `boot.cfg` on the ESP or from the UEFI `LoadOptions` variable. Recognized options:
+
+```
+Option              Default   Description
+────────────────────────────────────────────────────────────
+quiet               off       Suppress kernel log output to UART. Boot phase
+                              transitions are still logged; service logs are not.
+debug               off       Enable verbose kernel logging: page table setup
+                              details, capability minting, IPC channel creation.
+safe                off       Boot into safe mode (§9.3) — reduced service set,
+                              no AIRS, no agents, no network.
+console=<device>    uart0     Kernel log output device. Supported: uart0, none.
+                              "none" disables UART logging entirely.
+earlybreak          off       Halt after kernel early boot completes (before
+                              launching Service Manager). Drop to UART debug
+                              prompt. Useful for kernel debugging.
+maxcpus=<n>         all       Limit the number of secondary CPUs brought online
+                              via PSCI. 1 = boot CPU only (single-core mode).
+kaslr=<on|off>      on        Enable or disable KASLR. Off is useful for
+                              debugging with predictable addresses.
+airs.timeout=<ms>   5000      Override the AIRS health timeout. Set higher on
+                              slow storage (e.g., SD card on Pi 4).
+audit=<on|off>      on        Enable or disable the kernel audit log.
+```
+
+Unknown options are ignored and logged at `debug` level if `debug` is on. The command line is stored in `KernelState` and available to the Service Manager via its `ServiceManagerBootInfo`.
+
+### 2.4 EFI System Partition Layout
 
 The ESP is a FAT32 partition at the start of the boot device:
 
@@ -183,7 +212,7 @@ The ESP is a FAT32 partition at the start of the boot device:
 
 The ESP is small (64-256 MB). It holds only the boot chain. The OS itself lives in the AIOS partition (raw block device managed by the Block Engine). The `.prev` files support A/B rollback: if a new kernel fails to boot three times, the UEFI stub loads `.prev` instead.
 
-### 2.4 QEMU Boot vs Real Hardware
+### 2.5 QEMU Boot vs Real Hardware
 
 ```
                         QEMU                    Raspberry Pi 4/5
@@ -269,6 +298,8 @@ pub enum EarlyBootPhase {
     PageAllocatorReady,
     /// Kernel heap (slab allocator) initialized. alloc works.
     HeapReady,
+    /// Hardware RNG initialized. Runtime entropy available.
+    RngReady,
     /// KASLR slide applied (if RNG seed was available).
     KaslrApplied,
     /// Capability manager initialized. Root capability exists.
@@ -332,7 +363,7 @@ pub struct KernelState {
 
     // Boot timing
     pub boot_start: u64,           // timer counter value at entry
-    pub phase_timestamps: [u64; 16], // counter value at each phase transition
+    pub phase_timestamps: [u64; 17], // one per EarlyBootPhase variant; resize if enum grows
 }
 ```
 
@@ -470,7 +501,90 @@ The PL011 UART is the first and last resort for debugging. It's initialized befo
 
 The UART is configured at 115200 baud, 8N1, no flow control. The kernel's `kprintln!()` macro writes directly to the UART data register. In early boot (before the heap exists), formatting uses a small fixed buffer on the stack.
 
-During normal operation, the UART is used by the recovery shell (see Section 8). In production builds, kernel log output to UART can be disabled via the command line (`quiet` flag in `boot.cfg`).
+During normal operation, the UART is used by the recovery shell (see Section 9). In production builds, kernel log output to UART can be disabled via the command line (`quiet` flag in `boot.cfg`).
+
+### 3.5 SMP Boot: Secondary CPU Bringup
+
+The entire early boot sequence (Steps 1–17) runs on the boot CPU (core 0) only. Secondary cores are parked by firmware in a WFI (Wait For Interrupt) loop. They are brought online after the Process Manager and Scheduler are initialized (after Step 15), but before the Service Manager is launched.
+
+**Why not earlier?** Secondary cores need working page tables (Step 7), a heap (Step 9), and a scheduler (Step 15). Bringing them online before these exist would require separate bootstrap stacks and synchronization primitives that add complexity with no benefit — there's nothing for them to do during single-threaded init.
+
+**PSCI (Power State Coordination Interface):** AIOS uses the ARM PSCI interface to bring secondary cores online. PSCI is provided by firmware (EL3 on real hardware, or the hypervisor on QEMU). The kernel discovers the PSCI conduit (HVC or SMC) from the device tree `/psci` node.
+
+```rust
+pub fn bring_secondary_cpus_online(dt: &DeviceTree, scheduler: &Scheduler) {
+    let psci_method = dt.psci_conduit(); // HVC on QEMU, SMC on Pi
+    let cpu_nodes = dt.cpu_nodes();      // one per core
+
+    for (i, cpu) in cpu_nodes.iter().enumerate().skip(1) {
+        // Skip core 0 (boot CPU, already running)
+        let mpidr = cpu.mpidr();
+
+        // Allocate a per-core kernel stack (16 KiB)
+        let stack = alloc_kernel_stack(SECONDARY_STACK_SIZE);
+
+        // Set up a trampoline: the secondary core will jump here
+        // and find its stack pointer, page table, and entry function.
+        let trampoline = SecondaryTrampoline {
+            stack_top: stack.top(),
+            page_table: kernel_page_table_phys(),
+            entry: secondary_cpu_entry as usize,
+            core_id: i,
+        };
+        SECONDARY_TRAMPOLINES[i].store(trampoline);
+
+        // PSCI CPU_ON: wake the core
+        // target_cpu: MPIDR of the core to wake
+        // entry_point: physical address of trampoline code
+        // context_id: index into SECONDARY_TRAMPOLINES
+        psci_cpu_on(psci_method, mpidr, secondary_trampoline_phys(), i);
+
+        kprintln!("[boot] CPU {} online (MPIDR: {:#x})", i, mpidr);
+    }
+
+    // Wait for all secondaries to check in
+    while ONLINE_CPU_COUNT.load(Ordering::Acquire) < cpu_nodes.len() {
+        core::hint::spin_loop();
+    }
+    kprintln!("[boot] All {} CPUs online", cpu_nodes.len());
+}
+
+/// Entry point for secondary CPUs after trampoline sets up stack and MMU.
+fn secondary_cpu_entry(core_id: usize) {
+    // Install this core's exception vectors
+    write_vbar_el1(exception_vectors_phys());
+
+    // Enable this core's GIC redistributor (GICv3) or CPU interface (GICv2)
+    enable_gic_for_core(core_id);
+
+    // Enable the timer interrupt for this core (scheduler tick)
+    enable_timer_interrupt();
+
+    // Register this core with the scheduler
+    scheduler_register_core(core_id);
+
+    // Signal that this core is online
+    ONLINE_CPU_COUNT.fetch_add(1, Ordering::Release);
+
+    // Enter the scheduler idle loop — this core will pick up
+    // work when the Service Manager starts spawning services.
+    scheduler_idle_loop();
+}
+```
+
+**Per-platform core counts:**
+
+```
+Platform            Cores   PSCI Conduit    Notes
+──────────────────────────────────────────────────────────
+QEMU (default)      4      HVC             Configurable via -smp
+Raspberry Pi 4      4      SMC             Cortex-A72
+Raspberry Pi 5      4      SMC             Cortex-A76
+```
+
+**The `maxcpus=` command line option** limits how many secondary cores are brought online. `maxcpus=1` keeps the system single-core (useful for debugging race conditions). Default is all available cores.
+
+**Timing:** Secondary CPU bringup takes ~5ms total (PSCI call + per-core init). It happens between Step 15 (Process Manager) and Step 17 (Early boot complete). By the time the Service Manager launches, all cores are online and the scheduler can distribute work across them.
 
 -----
 
@@ -637,6 +751,8 @@ Health checks run every 10 seconds for critical services, every 30 seconds for n
 
 Services form a directed acyclic graph (DAG) where edges represent "must start after" relationships. The Service Manager uses topological sort within each phase to determine startup order, then starts independent services in parallel.
 
+**Cross-phase dependencies:** Each phase requires all services from every previous phase to be healthy before it starts. The graph below shows only intra-phase dependencies. Cross-phase dependencies are implicit: every Phase 2 service depends on `space_storage` (Phase 1), every Phase 3 service depends on Phase 2 core services (specifically `space_storage` for persistent state and `compositor` for display access where needed), and so on. Phase 3 (AI) and Phase 4 (User) run in parallel after Phase 2 completes — they depend on Phase 2 but not on each other (see §6.1 timeline).
+
 ```
 ╔═══════════════════════════════════════════════════════════════════╗
 ║  PHASE 1: STORAGE                                                  ║
@@ -657,25 +773,25 @@ Services form a directed acyclic graph (DAG) where edges represent "must start a
 ║                            └──→ network_subsystem                  ║
 ║                                                                    ║
 ╠═══════════════════════════════════════════════════════════════════╣
-║  PHASE 3: AI SERVICES (parallel with Phase 4 on non-critical path)║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  airs_core ──→ space_indexer                                      ║
-║      │                                                             ║
-║      └──→ context_engine                                          ║
-║                                                                    ║
-╠═══════════════════════════════════════════════════════════════════╣
-║  PHASE 4: USER SERVICES                                           ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  identity_service ──→ preference_service                          ║
-║                             │                                      ║
-║                             ├──→ attention_manager                 ║
-║                             │                                      ║
-║                             └──→ agent_runtime                     ║
-║                                                                    ║
-╠═══════════════════════════════════════════════════════════════════╣
-║  PHASE 5: EXPERIENCE                                               ║
+║  PHASE 3 + PHASE 4: CONCURRENT after Phase 2 completes            ║
+║  (Phase 3 is non-critical; Phase 4 does not wait for Phase 3)     ║
+╠═══════════════════════════╦═══════════════════════════════════════╣
+║  PHASE 3: AI SERVICES     ║  PHASE 4: USER SERVICES               ║
+║  (non-critical path)      ║  (critical path continues)            ║
+╠═══════════════════════════╬═══════════════════════════════════════╣
+║                            ║                                       ║
+║  airs_core ──→ space_indexer║  identity_service                     ║
+║      │                     ║       │                                ║
+║      └──→ context_engine   ║       ▼                                ║
+║                            ║  preference_service                    ║
+║  (5-second timeout: if     ║       │                                ║
+║   AIRS not healthy by then,║       ├──→ attention_manager           ║
+║   Phase 5 proceeds without ║       │                                ║
+║   it; AIRS loads in bg)    ║       └──→ agent_runtime               ║
+║                            ║                                       ║
+╠═══════════════════════════╩═══════════════════════════════════════╣
+║  PHASE 5: EXPERIENCE (starts when Phase 4 completes)              ║
+║  (Phase 3 may still be loading — that's OK)                       ║
 ╠═══════════════════════════════════════════════════════════════════╣
 ║                                                                    ║
 ║  workspace ──→ conversation_bar                                   ║
@@ -727,6 +843,44 @@ Service Manager holds: ServiceManagerCapability
 ```
 
 Each service receives exactly the capabilities it needs. No service holds the `ServiceManagerCapability` itself. Capability escalation is impossible — a compromised service cannot mint capabilities beyond its own set.
+
+### 4.8 Service Discovery
+
+When the Service Manager spawns a service, it creates IPC channels connecting that service to its dependencies. But a newly started service needs to know *which* channel connects to *which* dependency. This is the service discovery problem.
+
+**Solution: `ServiceBootInfo` channel table.** Each service receives a `ServiceBootInfo` structure (passed via `x0`, just like the kernel passes `BootInfo` to the Service Manager). It contains the service's capability tokens and a table mapping `ServiceId` → `ChannelId`:
+
+```rust
+pub struct ServiceBootInfo {
+    /// This service's identity
+    service_id: ServiceId,
+
+    /// Capability tokens granted to this service
+    capabilities: Vec<CapabilityToken>,
+
+    /// Channel table: maps dependency ServiceId to the ChannelId
+    /// for communicating with that dependency.
+    /// Example: space_storage's table contains:
+    ///   { ObjectStore → ChannelId(7), AuditLog → ChannelId(12) }
+    channels: HashMap<ServiceId, ChannelId>,
+
+    /// Channel for receiving health checks from Service Manager
+    health_channel: ChannelId,
+
+    /// Channel for sending lifecycle events to Service Manager
+    lifecycle_channel: ChannelId,
+}
+```
+
+**How it works:**
+
+1. Service Manager creates all IPC channels before starting the service.
+2. Each channel has two endpoints — one for the new service, one for the existing dependency.
+3. The dependency's endpoint is delivered to the already-running service via a `NewPeer` message on its lifecycle channel.
+4. The new service's endpoints are all packed into `ServiceBootInfo.channels`.
+5. The service looks up a dependency by `ServiceId` and gets back a `ChannelId` — no runtime discovery needed.
+
+**Late discovery:** If a service starts after its dependents (e.g., AIRS starts late due to the 5-second timeout), the Service Manager sends `ServiceAvailable { id, channel }` messages to all services that declared a soft dependency on it. Those services can then establish communication. This is how the Attention Manager picks up AIRS after boot.
 
 -----
 
@@ -830,7 +984,7 @@ User services personalize the system. They depend on storage (Phase 1) and core 
 
 **Preference Service** starts after Identity. It reads user preferences from the `user/preferences/` space. Display settings, notification thresholds, context overrides, keyboard layout, locale — all loaded and applied. If the preference space doesn't exist (first boot), defaults are used.
 
-**Attention Manager** starts after Preferences. It initializes the notification pipeline, loads attention rules from preferences, and begins accepting notifications from other services. If AIRS is available, it enables AI triage. Otherwise, it uses rule-based triage.
+**Attention Manager** starts after Preferences (see [attention.md](../intelligence/attention.md) for the full attention model). It initializes the notification pipeline, loads attention rules from preferences, and begins accepting notifications from other services. AIRS is a soft dependency: if available, the Attention Manager enables AI-powered triage; otherwise, it uses rule-based triage. This is why the Attention Manager is in Phase 4 (not Phase 3) — it must not block on AIRS loading.
 
 **Agent Runtime** starts last in this phase. It initializes the agent sandbox infrastructure, loads the list of approved agents from `system/agents/`, and prepares to spawn agents on request. It does not spawn agents yet — that happens in Phase 5.
 
@@ -840,7 +994,7 @@ User services personalize the system. They depend on storage (Phase 1) and core 
 
 The final phase makes the system user-facing.
 
-**Workspace** renders the home view. It queries the Task Manager for active tasks, Space Storage for recent spaces, and the Attention Manager for the notification digest. The first frame of the Workspace is the "boot complete" moment — the user sees a usable desktop.
+**Workspace** renders the home view. It queries the Agent Runtime for active agent tasks, Space Storage for recent spaces, and the Attention Manager for the notification digest. The first frame of the Workspace is the "boot complete" moment — the user sees a usable desktop.
 
 **Conversation Bar** initializes. If AIRS is available, it's fully functional. If AIRS is still loading, it shows a subtle "AI loading..." indicator and disables natural language features until AIRS reports healthy. Keyword search (via the full-text index) works immediately.
 
@@ -855,6 +1009,59 @@ The final phase makes the system user-facing.
 ```
 
 **Phase 5 budget: ~300ms (first frame).**
+
+### First Boot Experience
+
+Design principle 7 says "first boot and normal boot are the same code path." The code path is the same — but what the user *sees* is different, because there's no identity, no preferences, and no spaces yet.
+
+**What's different on first boot:**
+
+| Phase | Normal boot | First boot |
+|---|---|---|
+| Phase 1 | Verify existing spaces | **Format storage, create system spaces** (~200ms extra) |
+| Phase 2 | Normal startup | Same (compositor, input ready) |
+| Phase 3 | Load existing model | Same (or skip if no model pre-loaded in `system/models/`) |
+| Phase 4 Identity | Unlock with stored passphrase/biometric | **Setup flow: create new identity** |
+| Phase 4 Preferences | Load from space | Use defaults |
+| Phase 5 | Desktop with recent spaces | **Empty desktop → setup flow overlay** |
+
+**The setup flow** is a compositor overlay rendered by the Identity Service in coordination with the Workspace. It is *not* a separate installer binary — it runs inside the normal service pipeline, using the same compositor, input subsystem, and IPC channels as any other UI.
+
+```
+First Boot Setup Flow (compositor overlay):
+
+1. Language & Locale Selection
+   - Grid of language options, keyboard layout detection
+   - Selected via touchscreen, mouse, or keyboard arrows
+   - This sets initial preferences (written to user/preferences/ when created)
+
+2. Passphrase Creation
+   - "Create a passphrase to protect your data"
+   - Min 8 characters, strength meter
+   - This passphrase derives the master encryption key for user spaces
+   - Optionally: connect hardware security key (USB)
+   - On Pi 5: optionally enable fingerprint (if USB reader present)
+
+3. Wi-Fi Configuration (if network not already connected)
+   - Scan for networks, select, enter password
+   - Skippable — AIOS is fully functional offline
+   - If connected: time sync via NTP (see §6.5)
+
+4. AIRS Model Selection (if not pre-loaded)
+   - "AIOS includes a local AI assistant. Choose a model:"
+   - Options based on available RAM (same thresholds as §5 Phase 3)
+   - Download starts in background if network available
+   - Skippable — AIOS works without AIRS (conversation bar degraded)
+
+5. Complete
+   - Identity created, user space created, preferences written
+   - Setup overlay fades out, Workspace renders home view
+   - First provenance entry for user identity recorded
+```
+
+**Timing:** The setup flow adds user-wait time (passphrase typing, Wi-Fi selection) but no extra code path. Once complete, the system is in the same state as a normal boot — identity unlocked, preferences loaded, Workspace visible. Subsequent boots skip the setup flow entirely because `system/identity/` already exists.
+
+**Headless first boot (no display):** If no framebuffer is available (UEFI GOP absent), the setup flow runs on UART. The Identity Service detects the absence of the compositor and falls back to a text-mode setup. This is primarily for development (QEMU `-nographic` mode).
 
 -----
 
@@ -875,7 +1082,10 @@ Time (ms)     Phase                    What happens
  550          Interrupts + timer       GICv3 initialized
  600          MMU enabled              Page tables, W^X
  640          Page allocator + heap    Memory management ready
+ 645          Hardware RNG             RngDevice initialized, entropy available
+ 650          KASLR                    Kernel address randomized
  660          Core subsystems          Cap mgr, IPC, audit, procmgr
+ 665          SMP bringup              Secondary CPUs online via PSCI (~5ms)
  700          Kernel boot complete     Launch Service Manager
 ──────────────────────────────────────────────────────────────────
  710          Phase 1: Storage         Block Engine start
@@ -958,6 +1168,21 @@ Several techniques keep boot under budget:
 **Deferred indexing.** The Space Indexer doesn't run during boot. It starts background work after the desktop is visible.
 
 **Warm page cache.** On repeated boots, frequently accessed blocks (superblock, SSTable manifest, model metadata) are likely in the storage device's internal cache, making reads faster.
+
+### 6.5 Time and Timestamps
+
+**Before NTP:** From kernel entry until the Network Subsystem obtains an NTP response, all timestamps are *monotonic, relative to boot*. The ARM Generic Timer counter starts at an arbitrary value set by firmware; the kernel normalizes this to `0 = kernel entry`. All audit log entries, provenance records, and boot timing measurements use this monotonic counter.
+
+UEFI Runtime Services provide `GetTime()` which returns a wall-clock time from the platform's RTC (Real-Time Clock). On QEMU, this is the host's wall clock. On Pi 4/5, this is the hardware RTC if a battery-backed module is attached, or epoch (January 1, 2000) if not. The kernel reads UEFI `GetTime()` once during early boot (after Step 6, timer setup) and stores it as `boot_wall_time` in `KernelState`. This provides a *best-effort* wall-clock time that may be inaccurate but is not zero.
+
+**NTP sync:** The Network Subsystem initiates an NTP query as one of its first actions after DHCP completes (Phase 2). When the NTP response arrives:
+
+1. Compute the delta between NTP time and `boot_wall_time + elapsed_monotonic`.
+2. Store the delta in `KernelState.ntp_offset`.
+3. From this point, `wall_time() = boot_wall_time + elapsed_monotonic + ntp_offset`.
+4. Retroactively patch audit log entries? **No.** Audit entries keep their original monotonic timestamps. The NTP offset is recorded as a single audit event: `NtpSync { offset_ms: i64 }`. Log readers apply the offset when displaying wall-clock times.
+
+**If NTP never arrives** (offline system), wall-clock time is derived from the UEFI RTC. If the RTC has no battery (common on Pi 4), times are wrong but monotonically increasing — which is sufficient for audit ordering and provenance chain integrity.
 
 -----
 
@@ -1071,9 +1296,125 @@ On headless systems (no framebuffer from UEFI GOP), the early framebuffer is ski
 
 -----
 
-## 8. Recovery Mode
+## 8. Kernel Panic Handler
 
-### 8.1 Failure Detection
+When the kernel encounters an unrecoverable error — double fault, assertion failure, out-of-memory with no recourse, or an explicit `panic!()` — the panic handler takes over. Its job: capture maximum diagnostic information and persist it, even if the heap, storage, or display subsystem is broken.
+
+### 8.1 What Gets Captured
+
+```rust
+#[repr(C)]
+pub struct PanicDump {
+    magic: u64,                             // 0x41494F53_50414E43 ("AIOSPAN C")
+    boot_phase: EarlyBootPhase,             // how far boot got before panic
+    timestamp: u64,                         // timer counter value
+    panic_message: [u8; 512],               // truncated panic!() message
+    cpu_id: usize,                          // which core panicked
+
+    // Full register state at point of panic
+    registers: RegisterDump,
+
+    // Exception context (if panic was triggered by an exception)
+    exception: Option<ExceptionInfo>,
+
+    // Stack trace: return addresses from the stack
+    backtrace: [u64; 32],                   // up to 32 frames
+    backtrace_depth: usize,
+
+    // Last 16 KiB of the kernel log ring buffer
+    log_tail: [u8; 16384],
+    log_tail_len: usize,
+}
+
+pub struct RegisterDump {
+    x: [u64; 31],                           // x0–x30
+    sp: u64,
+    pc: u64,
+    pstate: u64,                            // CPSR/SPSR
+    esr_el1: u64,                           // Exception Syndrome Register
+    far_el1: u64,                           // Fault Address Register
+    elr_el1: u64,                           // Exception Link Register
+}
+```
+
+### 8.2 Persistence Strategy
+
+The panic handler cannot assume the heap, Space Storage, or even the Block Engine are functional. It uses a layered persistence strategy — try the best option, fall back:
+
+```
+Persistence priority (try in order):
+
+1. Reserved panic region on block device
+   - A 64 KiB region at a fixed LBA (right after the superblock)
+   - Written via raw block I/O (direct MMIO to the storage controller)
+   - Does NOT go through the Block Engine, Object Store, or WAL
+   - Works even if the entire storage stack is corrupt
+   - On next boot, the Block Engine reads this region and copies
+     the dump to system/crash/ if Space Storage is functional
+
+2. UEFI Runtime Variable
+   - If raw block I/O fails (storage hardware dead)
+   - Write a truncated dump (< 1 KiB: message, registers, PC, ESR)
+     to a UEFI variable via Runtime Services
+   - Survives power cycle (stored in SPI flash / NVRAM)
+   - Limited size, but captures the most critical info
+
+3. UART only
+   - If both of the above fail
+   - Dump everything to UART (serial console)
+   - Requires a connected terminal to capture output
+   - Always attempted regardless of other persistence
+```
+
+### 8.3 Panic Display
+
+If the early framebuffer is available (before compositor handoff) or can be reclaimed (after compositor, by reverting to the GOP framebuffer):
+
+```
+┌──────────────────────────────────────────────────┐
+│                                                    │
+│              AIOS KERNEL PANIC                     │
+│                                                    │
+│  Phase: HeapReady                                  │
+│  Message: out of memory: buddy allocator           │
+│           exhausted during slab refill             │
+│                                                    │
+│  PC:  0xffff0000_00042a8c                          │
+│  ESR: 0x00000000_96000045 (data abort, current EL) │
+│  FAR: 0x00000001_80000000                          │
+│                                                    │
+│  Backtrace:                                        │
+│    #0 0xffff0000_00042a8c slab_alloc+0x1c          │
+│    #1 0xffff0000_00038f10 box_new+0x28             │
+│    #2 0xffff0000_0001cd44 capability_create+0x54   │
+│    ...                                             │
+│                                                    │
+│  Crash dump saved to block device.                 │
+│  System will reboot in 10 seconds.                 │
+│  (Press any key for UART debug shell)              │
+│                                                    │
+└──────────────────────────────────────────────────┘
+```
+
+The panic screen is rendered with the same `EarlyFramebuffer` code used for the splash screen — direct pixel writes, no GPU driver, no heap allocation. The font is a compiled-in 8x16 bitmap font, not the TTF fonts from the initramfs.
+
+### 8.4 Multi-Core Panic
+
+If one core panics, it must stop the others:
+
+1. Panicking core sets a global `PANIC_FLAG` (atomic store, `Ordering::Release`).
+2. Panicking core sends an SGI (Software Generated Interrupt) to all other cores.
+3. Other cores receive the SGI, check `PANIC_FLAG`, and enter a `WFI` loop.
+4. Panicking core now has exclusive access to UART, framebuffer, and block device.
+5. Dump proceeds single-threaded.
+
+If the panicking core is unable to send SGIs (GIC not initialized yet), the other cores are still in their PSCI WFI loop from firmware and won't interfere.
+
+-----
+
+## 9. Recovery Mode
+
+### 9.1 Failure Detection
 
 The Service Manager tracks boot attempts using a counter stored in UEFI Runtime Variables (persistent across reboots):
 
@@ -1110,7 +1451,7 @@ Phase 5 completes?
             Loop back to top
 ```
 
-### 8.2 Recovery Shell
+### 9.2 Recovery Shell
 
 Recovery mode boots with minimal services: kernel + storage + UART console. No compositor, no networking, no AIRS.
 
@@ -1134,7 +1475,7 @@ recovery>
 
 The recovery shell is a minimal Rust binary compiled into the initramfs. It communicates with the kernel and storage via direct IPC. It does not require the compositor, networking, or any AI services.
 
-### 8.3 Safe Mode
+### 9.3 Safe Mode
 
 Safe mode boots with reduced services. It's triggered by the `safe-boot` command in the recovery shell, or by a keyboard shortcut held during boot (e.g., holding Shift):
 
@@ -1150,7 +1491,7 @@ Safe mode service list:
 
 Safe mode is useful for diagnosing issues caused by agents, broken preferences, or AIRS configuration problems. The user gets a functional desktop and can use the Inspector to diagnose what went wrong.
 
-### 8.4 Rollback
+### 9.4 Rollback
 
 If the current kernel or initramfs is broken, the UEFI stub can load the previous versions:
 
@@ -1169,7 +1510,7 @@ The `rollback` command in recovery mode:
 
 This restores the last known-good kernel and service binaries.
 
-### 8.5 Factory Reset
+### 9.5 Factory Reset
 
 Nuclear option. Wipes user spaces but preserves the system:
 
@@ -1189,11 +1530,58 @@ Factory reset:
 
 Factory reset requires confirmation (type "FACTORY RESET" on the UART console). It's irreversible. Models are preserved because they're large downloads that aren't user-sensitive.
 
+### 9.6 OTA Updates
+
+The A/B rollback mechanism (§9.4) protects against bad updates, but this section describes how updates arrive on the ESP in the first place.
+
+**Update delivery:** A system update is a signed archive containing any combination of: a new kernel ELF, a new initramfs, and new Phase 3-5 service binaries. Updates are fetched by the Network Translation Module (when available) from a configured update endpoint, or applied manually from a USB drive.
+
+```
+Update flow:
+
+1. Update agent (Phase 5 background agent) checks for updates
+   - Fetches update manifest from configured endpoint (HTTPS)
+   - Compares manifest version against current version
+   - If newer: downloads update archive to a temporary space
+
+2. Signature verification
+   - Archive is signed with AIOS release key (Ed25519)
+   - Public key is compiled into the kernel (immutable)
+   - If signature fails: discard archive, log audit event, done
+
+3. Stage the update (while system is running)
+   - Mount ESP (FAT32) via the Block Engine's ESP access path
+   - Rename current kernel → aios.elf.prev
+   - Rename current initramfs → initramfs.cpio.prev
+   - Write new kernel → aios.elf
+   - Write new initramfs → initramfs.cpio
+   - Sync ESP
+
+4. Stage service updates
+   - New Phase 3-5 service binaries → system/services/ space
+   - Old binaries are retained as previous versions (Object Store
+     keeps them as content-addressed objects; the old content hashes
+     remain valid until garbage collection)
+
+5. Trigger reboot (user-confirmed or automatic at next idle period)
+   - Boot counter is NOT reset — the new kernel must reach Phase 5
+   - If the new kernel fails 3 times, rollback to .prev (§9.4)
+
+6. Post-update verification
+   - New kernel boots, reaches Phase 5, clears boot counter
+   - Update agent records successful update in system/audit/
+   - .prev files remain on ESP as rollback targets
+```
+
+**ESP write access:** Only the update agent and the recovery shell can write to the ESP. The ESP is not mounted during normal operation. Write access requires a `EspWriteAccess` capability that the Service Manager mints only for the update agent.
+
+**Manual updates (USB):** Plug in a USB drive with a signed update archive at `/aios-update/`. The update agent detects it (via the device registry) and follows the same verification and staging flow. This works even without network.
+
 -----
 
-## 9. Initramfs and System Image
+## 10. Initramfs and System Image
 
-### 9.1 What's in the Initramfs
+### 10.1 What's in the Initramfs
 
 The initramfs is a cpio archive loaded into memory by the UEFI stub. It contains everything needed to reach the end of Phase 2 (core services running), at which point the system can access the persistent storage partition:
 
@@ -1225,7 +1613,7 @@ initramfs.cpio contents:
 
 Total initramfs size target: **< 32 MB**. The initramfs is compressed (zstd) to ~10 MB on the ESP.
 
-### 9.2 Boot Image Format
+### 10.2 Boot Image Format
 
 The kernel and initramfs are bundled as a single boot image by the build system:
 
@@ -1249,7 +1637,7 @@ AIOS Boot Image:
 
 The UEFI stub extracts the kernel and initramfs into separate physical memory regions, populates `BootInfo`, and jumps to the kernel. The boot manifest provides integrity verification — the stub checks hashes before jumping.
 
-### 9.3 Transition from Initramfs to System Space
+### 10.3 Transition from Initramfs to System Space
 
 Once Space Storage is running (end of Phase 1), services can be loaded from the persistent `system/services/` space instead of the initramfs. This transition matters for Phase 3-5 services:
 
@@ -1264,9 +1652,9 @@ On first boot, the Service Manager copies Phase 3-5 service binaries from the in
 
 -----
 
-## 10. Shutdown and Reboot
+## 11. Shutdown and Reboot
 
-### 10.1 Graceful Shutdown Sequence
+### 11.1 Graceful Shutdown Sequence
 
 Shutdown is the reverse of boot, with extra care for data integrity:
 
@@ -1318,7 +1706,7 @@ Shutdown is the reverse of boot, with extra care for data integrity:
    - (or ResetSystem(Reboot) for reboot)
 ```
 
-### 10.2 Forced Shutdown
+### 11.2 Forced Shutdown
 
 If graceful shutdown takes longer than 10 seconds, the kernel forces the issue:
 
@@ -1332,9 +1720,9 @@ If graceful shutdown takes longer than 10 seconds, the kernel forces the issue:
 
 The watchdog timer (ARM Generic Timer) is set to 15 seconds at shutdown start. If the kernel hangs during shutdown, the hardware watchdog forces a reset. On the next boot, the WAL replay recovers any incomplete writes.
 
-### 10.3 Agent State Persistence
+### 11.3 Agent State Persistence
 
-Agents that need to survive reboot use the `Persistence::Persistent` mode. Their state is stored in their designated space:
+Agents that need to survive reboot set `persistent: true` in their manifest (see [agents.md](../applications/agents.md) §2.4 `AgentManifest` and §3 Agent Lifecycle). Their state is stored in their designated space:
 
 ```
 Agent receives: ShutdownSignal { deadline: Timestamp }
@@ -1350,7 +1738,7 @@ On next boot: agent is relaunched and reads state from space
 
 -----
 
-## 11. Implementation Order
+## 12. Implementation Order
 
 The boot sequence maps to the earliest development phases:
 
@@ -1426,7 +1814,47 @@ The boot sequence is built incrementally. After Phase 1, the kernel boots and sh
 
 -----
 
-## 12. Design Principles
+## 13. Cross-Document Dependencies
+
+This section tracks concepts that boot.md references which are defined (or need to be defined) in other documents. If you modify any of these, check the corresponding document for consistency.
+
+| Concept used in boot.md | Defined in | What boot.md needs from it |
+|---|---|---|
+| `Platform` trait, 7 `init_*` methods, `InterruptController`, `Timer`, `Uart`, `GpuDevice`, `NetworkDevice`, `StorageDevice`, `RngDevice` | [hal.md](./hal.md) §2–3 | Device trait signatures must match §2.4 and §3.3 here. Initialization order (UART/interrupts/timer early, GPU/network/storage in service phases) must agree with hal.md §3.2. |
+| `Scheduler`, four scheduling classes (RT, Interactive, Normal, Idle), 1ms tick | [scheduler.md](./scheduler.md) §3.1, §10.1 | Timer tick rate (Step 6) and scheduling class names in Step 15 must stay consistent with scheduler.md. |
+| `BuddyAllocator`, `SlabAllocator`, slab size classes | [memory.md](./memory.md) | Buddy allocator order range (0–10) and slab size classes (32–4096 bytes) cited in Steps 8–9 must match memory.md. |
+| `CapabilityManager`, `CapabilityToken`, root capability, trust levels, `Capability::Root` | [security.md](../security/security.md) §10 | `Timestamp::MAX` for Trust Level 0 tokens (Step 12) and capability delegation model (§4.7) must stay aligned. |
+| `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check message format (§4.4) and Service Manager IPC channels (§4.1 step 5) must match ipc.md's channel semantics. |
+| Compositor framebuffer handoff, display subsystem, wgpu pipeline | [compositor.md](../platform/compositor.md) | Handoff sequence (§7.4) and Phase 2 display startup must match compositor.md's initialization. |
+| AIRS model selection by RAM, `system/models/` space, GGML runtime, 5-second timeout | [airs.md](../intelligence/airs.md) | Model size thresholds (§5 Phase 3: ≥8 GB → 8B, ≥4 GB → 3B, <4 GB → 1B) and the 5-second health timeout must stay consistent with airs.md's model registry. |
+| Identity Service, Ed25519 keypair, `system/identity/` space | [identity.md](../experience/identity.md) | Phase 4 Identity startup and identity unlock flow must match identity.md's key management. |
+| Attention Manager, AI triage vs rule-based fallback | [attention.md](../intelligence/attention.md) | The soft AIRS dependency described in Phase 4 must match attention.md's initialization requirements. |
+| Context Engine, signal collection, rule-based heuristic fallback | [context-engine.md](../intelligence/context-engine.md) | Phase 3 Context Engine startup and its AIRS dependency must match context-engine.md's fallback behavior. |
+| Preference Service, `user/preferences/` space | [preferences.md](../intelligence/preferences.md) | Phase 4 Preference startup and the preference space path must match preferences.md. |
+| `AgentManifest.persistent`, agent shutdown protocol, `ShutdownSignal` | [agents.md](../applications/agents.md) §2.4, §3 | The 5-second shutdown grace period (§11.3) and persistent agent relaunching must match agents.md's lifecycle model. |
+| Block Engine, Object Store, Space Storage, WAL, LSM-tree, system spaces | [spaces.md](../storage/spaces.md) | Phase 1 startup sequence and system space paths (`system/audit/`, `system/models/`, etc.) must agree with spaces.md's space hierarchy. |
+
+-----
+
+## 14. Documentation Gaps
+
+Concepts referenced in boot.md that do not yet have full documentation elsewhere. These are placeholders for future doc work.
+
+1. **Agent state persistence across reboot** — §10.3 describes the shutdown/relaunch protocol (agents save to spaces, then reload on next boot), but [agents.md](../applications/agents.md) does not yet document the relaunch-on-boot mechanism or how the Agent Runtime discovers which persistent agents to restart. Agents.md §3 (Agent Lifecycle) should add a "Reboot Recovery" subsection covering: how `system/agents/` tracks which agents were running, how agent spaces are re-mounted, and the order of agent relaunch relative to Phase 5 autostart.
+
+2. **Attention Manager initialization requirements** — Phase 4 mentions the Attention Manager loads rules from preferences and optionally connects to AIRS for AI triage. [attention.md](../intelligence/attention.md) documents the attention model thoroughly but does not have a section on boot-time initialization: what the minimal startup state is, what happens before AIRS is available, and how the notification pipeline connects to the compositor. Attention.md should add an "Initialization" section.
+
+3. **AIRS default model selection** — Phase 3 specifies RAM-based model selection thresholds (≥8 GB → 8B Q4_K_M, ≥4 GB → 3B Q4_K_M, <4 GB → 1B Q4_K_M). [airs.md](../intelligence/airs.md) should document these exact thresholds in its model registry section and specify what happens when no model files are present in `system/models/` (first boot with no pre-loaded models).
+
+4. **Context Engine boot behavior** — Phase 3 states the Context Engine falls back to "rule-based heuristics" if AIRS is unavailable. [context-engine.md](../intelligence/context-engine.md) documents `ContextMode` and signal fusion but does not specify what "rule-based heuristics" means concretely at boot time or which signals are available before user activity begins.
+
+5. **Task Manager service** — [overview.md](../project/overview.md) lists a "Task Manager" as a core service ("intent → subtasks, orchestrate") but it does not appear in this document's service dependency graph (§4.5) or in any boot phase. It needs its own document (potentially `docs/intelligence/task-manager.md` or `docs/applications/task-manager.md`) covering: what it manages, how it decomposes intents into subtasks, which boot phase it belongs to, and its dependencies. Until then, Phase 5 Workspace queries the Agent Runtime for active agent tasks instead.
+
+6. **Recovery mode and safe mode operational procedures** — §9 describes recovery mode commands and safe mode service lists, but there is no standalone troubleshooting or operations guide documenting: how to connect a UART console on each platform, how to diagnose common boot failures, or how to restore from backup after a factory reset. This could be a future `docs/operations/recovery.md`.
+
+-----
+
+## 15. Design Principles
 
 1. **Usable at each phase boundary.** Every service is optional except storage and display. AIRS failure doesn't break boot. Network failure doesn't break boot.
 2. **Fast on the critical path.** Only the minimum services needed for a desktop are on the critical path. Everything else runs in parallel or deferred.
