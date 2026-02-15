@@ -153,6 +153,9 @@ pub struct RunQueue {
     idle_state: CpuIdleState,
 }
 
+/// CPU idle state: 0=running, 1=WFI, 2=power-gated
+type CpuIdleState = u8;
+
 /// Top-level scheduler managing all CPUs
 pub struct Scheduler {
     /// Per-CPU run queues (indexed by CPU ID)
@@ -187,6 +190,12 @@ pub struct Scheduler {
     /// RT WCET scaling factor for thermal throttling (§8.4).
     /// 1.0 at full frequency; increases proportionally when frequency drops.
     rt_wcet_scale: AtomicF32,                // default: 1.0
+
+    /// Per-source weight modifiers for reconciliation (§8.3/§8.4).
+    /// Each subsystem writes its own desired modifier independently.
+    /// reconcile_inference_weight() takes min(memory, thermal) → inference_weight_modifier.
+    memory_pressure_weight: AtomicF32,       // default: 1.0
+    thermal_pressure_weight: AtomicF32,      // default: 1.0
 }
 
 /// Global scheduler tuning parameters
@@ -298,6 +307,15 @@ pub struct SchedEntity {
     /// points (layer/token boundaries) for cooperative preemption (§6.4).
     preemption_flag: AtomicBool,
 
+    /// Thread role hint — set at creation, determines context-aware
+    /// weight adjustments (§7.2) and default core affinity (§9.2).
+    role: ThreadRole,
+
+    /// Whether this thread belongs to the foreground agent.
+    /// Set by the window manager when agent focus changes.
+    /// Used by calculate_weight() for Focus context boost (§7.2).
+    is_foreground: bool,
+
     /// Thread execution state
     state: ThreadState,
 
@@ -332,13 +350,16 @@ pub enum ThreadState {
     /// Waiting for GPU/NPU computation to complete (§6.5, future).
     /// Not runnable — does not occupy a run queue position or count
     /// toward PELT load. Wake-up triggered by accelerator interrupt.
-    BlockedAccelerator { device: AcceleratorId, job: JobId },
+    BlockedAccelerator { device: AcceleratorId, job: JobId },  // see type aliases below
     /// Thread has exited
     Dead,
 }
 
+type AcceleratorId = u32;
+type JobId = u64;
+
 /// CPU affinity: a bitmask of allowed CPUs
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuSet {
     mask: u64, // bits 0..MAX_CPUS
 }
@@ -403,7 +424,7 @@ An aarch64 context switch saves and restores the following state:
 │    CNTV_CTL_EL0   (virtual timer control)                   │
 │                                                     16 bytes │
 │                                                              │
-│  Total (without FP): ~288 bytes                              │
+│  Total (without FP): ~296 bytes                              │
 │  Total (with FP):    ~808 bytes                              │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -699,6 +720,22 @@ impl RtAdmissionController {
             .map(|t| t.wcet.as_secs_f32() / t.period.as_secs_f32())
             .sum()
     }
+
+    /// Re-evaluate RT admission with scaled WCETs (thermal throttling §8.4).
+    /// When CPU frequency drops, effective WCET increases proportionally.
+    /// If scaled utilization exceeds ceiling, the lowest-priority RT task
+    /// (typically timer service) is deferred until frequency recovers.
+    pub fn reevaluate_with_scale(&mut self, scale: f32) {
+        let scaled_util: f32 = self.tasks.iter()
+            .map(|t| (t.wcet.as_secs_f32() * scale) / t.period.as_secs_f32())
+            .sum();
+        if scaled_util > self.utilization_ceiling {
+            // Defer lowest-priority RT task to reduce load
+            if let Some(idx) = self.lowest_priority_task_index() {
+                self.tasks[idx].deferred = true;
+            }
+        }
+    }
 }
 ```
 
@@ -735,6 +772,7 @@ pub enum RtOverrunPolicy {
     ForcePreempt { grace: Duration },
 }
 
+/// Stored per-RT-task inside the RT admission controller (`RtAdmissionController`).
 pub struct RtOverrunState {
     /// Number of consecutive overruns for this task
     consecutive_overruns: u32,
@@ -850,7 +888,13 @@ pub struct InferenceTask {
     /// Current state of inference
     state: InferenceState,
 
-    /// Tokens generated so far
+    /// Tokens generated in the current chunk (reset on yield)
+    tokens_in_chunk: u32,
+
+    /// Back-reference to this thread's SchedEntity for preemption checks
+    sched: SchedEntity,
+
+    /// Tokens generated so far (total across all chunks)
     tokens_generated: u32,
 
     /// Maximum tokens to generate
@@ -953,7 +997,16 @@ Inference threads are subject to their agent's CPU quota (§7.1), but quota exha
 **Inference quota is checked at preemption points, not at arbitrary timer ticks:**
 
 ```rust
-impl InferenceThread {
+/// Preemption action returned by check_preemption_point()
+#[derive(Debug, PartialEq)]
+pub enum PreemptAction {
+    Continue,
+    YieldForQuota,
+    YieldChunkComplete,
+    YieldPreempted,
+}
+
+impl InferenceTask {
     /// Called at each preemption point (between layers, between tokens).
     /// This is where quota is checked — NOT at the generic timer interrupt.
     fn check_preemption_point(&self) -> PreemptAction {
@@ -1085,17 +1138,24 @@ fn calculate_weight(entity: &SchedEntity, global_hint: ContextHint) -> u32 {
     // Base weight from priority (1-255 mapped to weight table)
     let base_weight = WEIGHT_TABLE[entity.priority as usize];
 
-    // Context multiplier from Context Engine (global, not per-thread)
+    // Context multiplier from Context Engine (global, not per-thread).
+    // ThreadRole (§9.2) determines which context boosts apply.
     let context_multiplier = match global_hint {
         ContextHint::None       => 1.0,
         ContextHint::Work       => {
-            if entity.is_productivity_agent() { 2.0 } else { 0.5 }
+            match entity.role {
+                ThreadRole::Productivity => 2.0,
+                _ => 0.5,
+            }
         }
         ContextHint::Leisure    => {
-            if entity.is_media_agent() { 2.0 } else { 0.5 }
+            match entity.role {
+                ThreadRole::Media => 2.0,
+                _ => 0.5,
+            }
         }
         ContextHint::Focus      => {
-            if entity.is_foreground() { 3.0 } else { 0.5 }
+            if entity.is_foreground { 3.0 } else { 0.5 }
         }
         ContextHint::LowBattery => 0.75, // slight reduction for all
     };
@@ -1107,7 +1167,17 @@ fn calculate_weight(entity: &SchedEntity, global_hint: ContextHint) -> u32 {
         1.0
     };
 
-    (base_weight as f32 * context_multiplier * quota_factor) as u32
+    // Inference weight modifier: applied by memory pressure (§8.3) and
+    // thermal throttling (§8.4) to reduce inference scheduling weight.
+    // Non-inference threads always get 1.0 (no reduction).
+    let inference_modifier = if entity.role == ThreadRole::Inference {
+        entity.scheduler_ref.inference_weight_modifier.load()
+    } else {
+        1.0
+    };
+
+    let w = (base_weight as f32 * context_multiplier * quota_factor * inference_modifier) as u32;
+    w.max(1) // minimum weight of 1 — no thread gets zero CPU time
 }
 
 /// Update virtual runtime after a thread runs for `delta` time.
@@ -1122,9 +1192,9 @@ fn update_vruntime(entity: &mut SchedEntity, delta: Duration, hint: ContextHint)
         / weight as u64;
     entity.vruntime += vruntime_delta;
 
-    // Update per-entity PELT utilization (exponential decay, 32ms half-life).
+    // Update per-entity PELT utilization (exponential decay, 32ms time constant (~22ms half-life)).
     // Tracks the fraction of time this entity has been running recently.
-    let decay = (-delta.as_secs_f32() / 0.032_f32).exp(); // e^(-dt/half_life)
+    let decay = (-delta.as_secs_f32() / 0.032_f32).exp(); // e^(-dt/tau), tau=32ms
     entity.pelt_util = entity.pelt_util * decay
         + (1.0 - decay) * 1.0; // 1.0 because the entity was running
 }
@@ -1133,16 +1203,18 @@ fn update_vruntime(entity: &mut SchedEntity, delta: Duration, hint: ContextHint)
 /// latency_nice controls how soon the thread is eligible to run
 /// after wakeup, independent of its weight (which controls total CPU share).
 fn compute_wakeup_vdeadline(entity: &SchedEntity, min_vruntime: u64) -> u64 {
+    // Clamp to valid range (field is i8 but only -20..+19 is meaningful)
+    let latency_nice = entity.latency_nice.clamp(-20, 19);
     // Base slice in vruntime units
     let base_slice_ns = 10_000_000u64; // 10ms default slice
     // Latency factor: latency_nice maps to a multiplier on virtual deadline.
     // -20 → 0.1x (very short deadline, scheduled almost immediately)
     //   0 → 1.0x (default)
     // +19 → 4.0x (long deadline, tolerates waiting)
-    let latency_factor = match entity.latency_nice {
-        n if n <= -10 => 0.1 + (n + 20) as f32 * 0.09,  // -20..=-10 → 0.1..1.0
-        n if n <= 0   => 1.0,                              // -9..=0    → 1.0
-        n             => 1.0 + n as f32 * 0.16,            // 1..=19    → 1.16..4.0
+    let latency_factor = match latency_nice {
+        n if n < 0  => 0.1 + (n + 20) as f32 * 0.045,    // -20..=-1 → 0.1..~1.0
+        0           => 1.0,                                 // 0        → 1.0
+        n           => 1.0 + n as f32 * 0.16,              // 1..=19   → 1.16..4.0
     };
     let vdeadline = (base_slice_ns as f32 * latency_factor) as u64;
     min_vruntime + vdeadline
@@ -1319,6 +1391,26 @@ impl Scheduler {
         }
     }
 
+    /// Pause all background inference threads (InferencePriority::Background).
+    /// Foreground/interactive inference continues at reduced weight.
+    /// Called under Critical memory pressure (§8.3).
+    pub fn pause_background_inference(&self) {
+        for rq in &self.run_queues {
+            rq.remove_threads_matching(|e| {
+                e.role == ThreadRole::Inference
+                    && e.inference_priority == Some(InferencePriority::Background)
+            });
+        }
+    }
+
+    /// Suspend all threads in a given scheduling class.
+    /// Used by thermal Critical state to halt Idle-class work entirely.
+    pub fn suspend_class(&self, class: SchedulerClass) {
+        for rq in &self.run_queues {
+            rq.suspend_threads_matching(|e| e.class == class);
+        }
+    }
+
     /// Resume a previously suspended agent's threads.
     /// Called when memory pressure drops and suspended agents can resume.
     pub fn resume_agent_threads(&self, agent_id: AgentId) {
@@ -1485,7 +1577,7 @@ After balance:
 **Lock ordering for deadlock prevention.** When the load balancer migrates a thread, it must lock both the source and destination CPU's run queues. To prevent ABBA deadlock (CPU 0 pulls from CPU 1 while CPU 1 pulls from CPU 0), locks are always acquired in ascending CPU ID order:
 
 ```rust
-impl LoadBalancer {
+impl Scheduler {
     /// Migrate a thread from src_cpu to dst_cpu.
     /// Locks are acquired in CPU ID order to prevent deadlock.
     fn migrate(&self, thread: &SchedEntity, src: CpuId, dst: CpuId) {
@@ -1566,8 +1658,10 @@ impl Scheduler {
     }
 }
 
-/// Thread role hint (provided at creation time)
-#[derive(Debug, Clone, Copy)]
+/// Thread role hint (provided at creation time).
+/// Used by calculate_weight() (§7.2) for context-aware weight adjustments
+/// and by default_affinity() (§9.2) for core assignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadRole {
     /// Compositor, audio mixing
     Compositor,
@@ -1577,6 +1671,12 @@ pub enum ThreadRole {
     Inference,
     /// System service (space storage, network, etc.)
     SystemService,
+    /// Productivity agent (document editing, coding, etc.)
+    /// Boosted under ContextHint::Work
+    Productivity,
+    /// Media agent (video, music, streaming, etc.)
+    /// Boosted under ContextHint::Leisure
+    Media,
     /// Background agent work
     BackgroundAgent,
     /// Idle/maintenance work

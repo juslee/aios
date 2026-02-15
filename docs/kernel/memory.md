@@ -242,9 +242,13 @@ impl FrameAllocator {
         self.pools.free(frame, order)
     }
 
-    /// Current memory pressure level
+    /// Current memory pressure level.
+    /// Computed from the user pool only — the model pool is statically
+    /// allocated and excluded from pressure calculations (§8).
     pub fn pressure(&self) -> MemoryPressure {
-        let free_pct = (self.stats.free_pages * 100) / self.stats.total_pages;
+        let user_free = self.pools.user.free_pages;
+        let user_total = self.pools.user.total_pages;
+        let free_pct = (user_free * 100) / user_total;
         match free_pct {
             21..=100 => MemoryPressure::Normal,
             11..=20  => MemoryPressure::Low,
@@ -331,6 +335,17 @@ pub struct PagePools {
     dma: BuddyAllocator,
 }
 
+/// Pool size configuration, computed at boot from detected RAM.
+/// Reserved memory (firmware tables, MMIO) is tracked explicitly
+/// to ensure the arithmetic in init() accounts for all RAM.
+struct PoolConfig {
+    kernel: usize,
+    model: usize,
+    user: usize,
+    dma: usize,
+    reserved: usize,
+}
+
 impl PagePools {
     /// Initialize pools based on total RAM
     pub fn init(total_ram: usize, regions: &[MemoryRegion]) -> Self {
@@ -342,6 +357,7 @@ impl PagePools {
                 model: 0,
                 user: (r - 128 * MB - 64 * MB - 64 * MB),
                 dma: 64 * MB,
+                reserved: 64 * MB,
             },
             // Constrained tier: small model pool (1-3B models)
             r if r <= 4 * GB => PoolConfig {
@@ -349,6 +365,7 @@ impl PagePools {
                 model: 2 * GB,
                 user: (r - 256 * MB - 2 * GB - 128 * MB - 128 * MB),
                 dma: 128 * MB,
+                reserved: 128 * MB,
             },
             // Recommended tier: full model pool (8B Q4 models)
             r if r <= 8 * GB => PoolConfig {
@@ -356,6 +373,7 @@ impl PagePools {
                 model: 4 * GB,
                 user: (r - 256 * MB - 4 * GB - 128 * MB - 128 * MB),
                 dma: 128 * MB,
+                reserved: 128 * MB,
             },
             // Comfortable tier: large model pool (8B Q5/Q6 + specialists)
             r => PoolConfig {
@@ -363,6 +381,7 @@ impl PagePools {
                 model: 8 * GB,
                 user: (r - 256 * MB - 8 * GB - 128 * MB - 128 * MB),
                 dma: 128 * MB,
+                reserved: 128 * MB,
             },
         };
         Self::partition(regions, config)
@@ -418,6 +437,8 @@ ARM64 with 48-bit virtual addresses provides 256 TB of virtual address space, sp
 │  0x0000_0000_1000_0000 ├────────────────────────────────┤  │
 │    TTBR0                │ Agent heap (grows up)           │  │
 │    (user, per-agent)    │ Agent data (.data, .bss)        │  │
+│  0x0000_0000_0040_1000 ├────────────────────────────────┤  │
+│                         │ Guard page (4 KB, unmapped)     │  │
 │  0x0000_0000_0040_0000 ├────────────────────────────────┤  │
 │                         │ Agent text (.text, read-only)   │  │
 │  0x0000_0000_0010_0000 ├────────────────────────────────┤  │
@@ -584,7 +605,7 @@ Boot sequence:
    - Preferred: UEFI RNG protocol (EFI_RNG_PROTOCOL)
    - Fallback: device tree /chosen/rng-seed property
    - Last resort: ARM generic counter (weak entropy)
-3. Compute slide: random value & ~(2MB - 1) within ±128 MB range
+3. Compute slide: random value & ~(2MB - 1) within 0..128 MB range
 4. Relocate kernel to: base_address + slide
 5. Fixup all kernel pointers (PIC — position-independent code)
 6. Set up TTBR1 page tables at randomized base
@@ -624,7 +645,7 @@ impl KaslrConfig {
 }
 ```
 
-The slide range provides 64 possible positions at 2 MB alignment within ±128 MB — enough to thwart automated attacks while keeping kernel virtual memory layout predictable for debugging.
+The slide range provides 64 possible positions at 2 MB alignment within a 128 MB window (unidirectional, starting from the base address) — enough to thwart automated attacks while keeping kernel virtual memory layout predictable for debugging.
 
 ### 3.4 TLB Management
 
@@ -852,7 +873,7 @@ Agent "research-assistant"              Agent "code-editor"
 │  TTBR0: 0x1A2B_0000     │            │  TTBR0: 0x3C4D_0000     │
 │  ASID: 42                │            │  ASID: 43                │
 │                          │            │                          │
-│  0x0040_0000  text  (R-X)│            │  0x0040_0000  text  (R-X)│
+│  0x0040_0000  data  (RW-)│            │  0x0040_0000  data  (RW-)│
 │  0x0080_0000  data  (RW-)│            │  0x0080_0000  data  (RW-)│
 │  0x0100_0000  heap  (RW-)│            │  0x0100_0000  heap  (RW-)│
 │       ...                │            │       ...                │
@@ -963,18 +984,23 @@ AIOS rarely forks processes (agents are typically spawned fresh from manifests),
 2. **Flow object transfer** — when an agent sends a large object through Flow, the kernel maps the object's pages into the receiver's address space with COW semantics. If the receiver only reads the data, no copy occurs. If the receiver writes, it gets a private copy.
 
 ```rust
-/// Handle a page fault on a COW page
+/// Handle a page fault on a COW page.
+/// Called from the page fault dispatcher (§5.5) with the faulting address,
+/// the original frame from the PTE, the owning process, and the VMA.
 fn handle_cow_fault(
-    addr_space: &mut AddressSpace,
     fault_addr: VirtualAddress,
+    original_frame: PhysicalFrame,
+    process: &mut Process,
+    vma: &Vma,
 ) -> Result<(), FaultError> {
+    let addr_space = &mut process.address_space;
     let pte = addr_space.lookup_pte(fault_addr)?;
 
     if !pte.is_cow() {
         return Err(FaultError::AccessViolation);
     }
 
-    let old_frame = pte.frame();
+    let old_frame = original_frame;
     let new_frame = FRAME_ALLOCATOR
         .alloc_page(Pool::User)
         .ok_or(FaultError::OutOfMemory)?;
@@ -1016,19 +1042,20 @@ On target hardware, AI model memory dominates everything else:
 Memory budget on a 4 GB Raspberry Pi 5:
 
 Total RAM:                              4096 MB
-  - Kernel + firmware reserved:          384 MB
+  - Kernel:                              256 MB
+  - Reserved (firmware tables, MMIO):    128 MB
   - DMA pool:                            128 MB
-  - OS services (compositor, space       200 MB
-    storage, network, etc.):
-  - Agent overhead (10 agents × 4 MB):    40 MB
-  - Free headroom:                       ~150 MB
+  - User pool (OS services, agents,     1536 MB
+    heap, browser, headroom):
   ─────────────────────────────────────────────
-  Available for model:                  ~3200 MB
+  Available for model:              2048 MB (2 GB)
 
 Llama 3.1 8B at Q4_K_M:               ~4500 MB  ← does not fit
-Llama 3.1 8B at Q3_K_S:               ~3200 MB  ← barely fits
-Phi-3 Mini 3.8B at Q4_K_M:            ~2300 MB  ← fits, some headroom
-Phi-3 Mini 3.8B at Q4_K_M + KV cache: ~2700 MB  ← fits, tight
+Llama 3.1 8B at Q3_K_S:               ~3200 MB  ← does not fit
+Phi-3 Mini 3.8B at Q4_K_M:            ~2300 MB  ← does not fit
+Phi-3 Mini 3.8B at Q4_K_M + KV cache: ~2700 MB  ← does not fit
+TinyLlama 1.1B at Q4_K_M:             ~700 MB   ← fits
+Phi-2 2.7B at Q4_K_M:                 ~1800 MB  ← fits
 
 On a 2 GB device:
   Available for model:                  ~1100 MB
@@ -1635,6 +1662,18 @@ pub enum OomPriority {
     LowestPriorityLargestMemory,
 }
 
+/// Agent scheduling/OOM priority level
+pub enum AgentPriority {
+    /// Kernel-critical services (compositor, service manager)
+    Critical,
+    /// Core OS services (space storage, network)
+    System,
+    /// User-facing agents with active sessions
+    Normal,
+    /// Inactive or suspended agents
+    Background,
+}
+
 /// Protected agents (never killed by OOM):
 /// - Kernel threads
 /// - Service Manager
@@ -2048,8 +2087,11 @@ impl MglruList {
         pressure: MemoryPressure,
         count: usize,
     ) -> Vec<PhysicalFrame> {
-        let max_gen = match pressure {
-            MemoryPressure::Normal   => 3, // only oldest gen
+        // min_gen: the youngest generation we're willing to reclaim from.
+        // Always start scanning from gen 3 (oldest/coldest) downward.
+        // Under higher pressure, we dip into younger (warmer) generations.
+        let min_gen = match pressure {
+            MemoryPressure::Normal   => 3, // only oldest gen (gen 3)
             MemoryPressure::Low      => 3, // oldest gen, more aggressively
             MemoryPressure::Critical => 2, // dip into gen 2
             MemoryPressure::Oom      => 1, // everything except gen 0
@@ -2057,8 +2099,9 @@ impl MglruList {
 
         let mut reclaimed = Vec::with_capacity(count);
 
-        // Scan from oldest to youngest, clean pages before dirty
-        for gen in (1..=max_gen).rev() {
+        // Scan from oldest (gen 3) to youngest allowed (min_gen),
+        // clean pages before dirty
+        for gen in (min_gen..=3).rev() {
             // First pass: clean PageCache (free immediately, no I/O)
             for entry in self.generations[gen].pages.iter() {
                 if reclaimed.len() >= count { break; }
@@ -2895,6 +2938,9 @@ pub struct DynamicModelPool {
     shrink_when_idle: bool,
     /// Idle timeout before shrinking
     idle_timeout: Duration,             // default: 10 minutes
+    /// Whether security services (intent verification, behavioral
+    /// monitoring) are currently active — gates the security_floor check
+    security_services_active: bool,
 }
 
 impl DynamicModelPool {
