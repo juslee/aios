@@ -243,8 +243,18 @@ pub struct SchedEntity {
     /// Last CPU this thread ran on (for cache affinity)
     last_cpu: CpuId,
 
-    /// Context hint from Context Engine
-    context_hint: ContextHint,
+    /// Thread role (compositor, inference, system service, etc.)
+    /// Used for CPU affinity defaults and inference-aware scheduling
+    role: ThreadRole,
+
+    /// Core type preference for big.LITTLE (future)
+    /// Homogeneous on Pi 4/5; used for scheduling on asymmetric SoCs
+    core_preference: CoreType,
+
+    /// Priority inheritance state (set during IPC direct switch
+    /// when a high-priority thread blocks on a low-priority server)
+    inherited_priority: Option<u8>,
+    inherited_class: Option<SchedulerClass>,
 
     /// Thread execution state
     state: ThreadState,
@@ -653,6 +663,84 @@ Ceiling: 0.70. Remaining headroom: 0.259 (25.9%)
 
 This leaves 55.9% of CPU time for interactive, normal, and idle threads on the core that runs RT tasks. In the multi-core assignment (section 9.2), RT tasks are concentrated on core 0, leaving cores 1-3 fully available for inference and agents.
 
+**RT admission enforcement:** All RT tasks are pinned to core 0 via their CPU affinity mask (`CpuSet::single(CpuId(0))`). The admission controller's utilization bound test is a single-processor test — it is only valid when all RT tasks share one core. The `admit()` method enforces this:
+
+```rust
+impl RtAdmissionController {
+    pub fn admit(&mut self, task: RtTask) -> Result<(), SchedError> {
+        // Enforce single-core RT constraint
+        if task.affinity != CpuSet::single(CpuId(0)) {
+            return Err(SchedError::RtMustPinToCore0);
+        }
+        if !self.can_admit(&task) {
+            return Err(SchedError::RtUtilizationExceeded { /* ... */ });
+        }
+        self.tasks.push(task);
+        Ok(())
+    }
+}
+```
+
+### 5.4 RT Deadline Miss Handling
+
+Admission control guarantees schedulability under declared WCETs, but runtime conditions (cache storms, memory contention, unexpectedly complex compositor scenes) can cause an RT task to overrun its budget. The scheduler must handle this gracefully:
+
+```rust
+/// RT overrun policy: what happens when an RT task exceeds its declared WCET
+pub enum RtOverrunPolicy {
+    /// Allow the task to finish, but log the overrun and charge it against
+    /// the next period's budget. If overruns are sustained (3+ consecutive),
+    /// reduce the task's priority within RT or escalate to the attention manager.
+    AllowWithPenalty,
+    /// Force-preempt the task at WCET + grace margin (default: 1ms).
+    /// The task receives a signal indicating it was preempted for overrun.
+    /// Used when other RT tasks' deadlines are at risk.
+    ForcePreempt { grace: Duration },
+}
+
+pub struct RtOverrunState {
+    /// Number of consecutive overruns for this task
+    consecutive_overruns: u32,
+    /// Total overrun time in the last accounting window
+    total_overrun: Duration,
+    /// Overrun policy (default: AllowWithPenalty for compositor,
+    /// ForcePreempt for less critical RT tasks)
+    policy: RtOverrunPolicy,
+}
+```
+
+**Overrun handling sequence:**
+
+```
+1. RT task's WCET budget expires (timer interrupt fires)
+2. Scheduler checks: has the task completed its work?
+   YES → normal completion, no action
+   NO  → overrun detected
+
+3. Apply overrun policy:
+   AllowWithPenalty:
+     a. Log overrun to diagnostics (§12)
+     b. Allow task to continue for up to 2x WCET
+     c. Deduct overrun from next period's budget
+     d. If 3+ consecutive overruns: alert Attention Manager
+        ("Compositor consistently exceeding frame budget —
+         reduce scene complexity or increase WCET")
+
+   ForcePreempt { grace }:
+     a. Start grace timer (default: 1ms)
+     b. Set preemption flag on the task
+     c. If task completes within grace: log warning, continue
+     d. If grace expires: force context switch, signal the task
+     e. Task is re-queued for its next period
+
+4. If total RT utilization including overruns exceeds 90% for > 1 second:
+   → Temporarily reduce RT utilization ceiling to 60%
+   → Defer lowest-priority RT task to next period
+   → Ensure interactive threads are not starved
+```
+
+**Compositor-specific:** The compositor uses `AllowWithPenalty` because a partially-rendered frame is worse than a late frame. If the compositor consistently overruns (complex scene, many surfaces), the Attention Manager notifies the user and suggests closing windows or reducing visual effects. The compositor is never force-preempted — it always completes its frame.
+
 -----
 
 ## 6. Inference Scheduling
@@ -821,6 +909,38 @@ Inference execution with preemption points:
 
 Resumption is cheap — no recomputation needed. The inference thread picks up exactly where it left off.
 
+### 6.4 Inference and CPU Quota Interaction
+
+Inference threads are subject to their agent's CPU quota (§7.1), but quota exhaustion during inference requires special handling. A generic timer-tick preemption in the middle of a matrix multiply wastes the partial computation and forces expensive cache re-warming.
+
+**Inference quota is checked at preemption points, not at arbitrary timer ticks:**
+
+```rust
+impl InferenceThread {
+    /// Called at each preemption point (between layers, between tokens).
+    /// This is where quota is checked — NOT at the generic timer interrupt.
+    fn check_preemption_point(&self) -> PreemptAction {
+        // 1. Check quota first
+        if self.sched.cpu_quota.is_exhausted() {
+            return PreemptAction::YieldForQuota;
+        }
+        // 2. Check chunk boundary (voluntary yield for fairness)
+        if self.tokens_in_chunk >= self.chunk_size {
+            return PreemptAction::YieldChunkComplete;
+        }
+        // 3. Check preemption flag (higher-priority thread became runnable)
+        if self.sched.preemption_flag.load() {
+            return PreemptAction::YieldPreempted;
+        }
+        PreemptAction::Continue
+    }
+}
+```
+
+**Why this matters:** The inference thread sets `CPACR_EL1` to disable preemption during inter-layer computation? No — it runs as a Normal-class thread and can be preempted involuntarily. But the scheduler's timer tick handler treats inference threads specially: instead of immediately preempting, it sets the `preemption_flag` and lets the inference thread reach its next preemption point (which it checks every ~5ms during prompt eval, or every ~5ms per token during generation). This cooperative approach limits preemption delay to at most one transformer layer (~5ms), which is acceptable for the Normal class.
+
+**Quota exhaustion during prompt evaluation:** If the agent's quota runs out during the long prompt evaluation phase (100-500ms), the inference thread yields at the next layer boundary. It resumes in the next quota period (100ms later) from exactly where it left off — no recomputation needed. The user sees slightly slower first-token latency, but no wasted work.
+
 -----
 
 ## 7. Fair-Share and CPU Quotas
@@ -914,12 +1034,14 @@ The implementation uses a virtual runtime (vruntime) approach, similar to Linux 
 ```rust
 /// Calculate the scheduling weight for a Normal-class thread.
 /// Higher weight = more CPU time = lower vruntime growth rate.
-fn calculate_weight(entity: &SchedEntity) -> u32 {
+/// Reads the global context hint (set by Context Engine via IPC),
+/// not a per-thread copy — context applies system-wide.
+fn calculate_weight(entity: &SchedEntity, global_hint: ContextHint) -> u32 {
     // Base weight from priority (1-255 mapped to weight table)
     let base_weight = WEIGHT_TABLE[entity.priority as usize];
 
-    // Context multiplier from Context Engine
-    let context_multiplier = match entity.context_hint {
+    // Context multiplier from Context Engine (global, not per-thread)
+    let context_multiplier = match global_hint {
         ContextHint::None       => 1.0,
         ContextHint::Work       => {
             if entity.is_productivity_agent() { 2.0 } else { 0.5 }
@@ -1065,6 +1187,121 @@ impl Scheduler {
 2. **No starvation.** Even with 0.5x weight, a thread still receives CPU time proportional to its weight. The minimum weight is 1 (not 0). A deprioritized thread might get 5% of a core instead of 15%, but it never gets zero.
 3. **Hints are advisory.** Under extreme load, the scheduler ignores context hints and falls back to pure weight-based scheduling. Hints are a refinement, not a mandate.
 
+### 8.3 Memory Pressure Integration
+
+The memory subsystem (memory.md §8) defines four pressure levels: Normal, Low, Critical, and OOM. The scheduler must coordinate with the memory subsystem because memory pressure actions (agent suspension, OOM kill) directly affect run queue state:
+
+```rust
+/// Memory pressure callback — invoked by the memory subsystem
+/// when pressure level changes. The scheduler adjusts its behavior
+/// to help alleviate pressure and stay consistent with memory actions.
+impl Scheduler {
+    pub fn on_memory_pressure(&self, level: MemoryPressure) {
+        match level {
+            MemoryPressure::Normal => {
+                // No scheduling changes
+            }
+            MemoryPressure::Low => {
+                // Reduce inference scheduling weight — inference is the
+                // largest memory consumer via KV caches. Reducing its
+                // weight slows KV cache growth rate.
+                self.inference_weight_modifier.store(0.5);
+            }
+            MemoryPressure::Critical => {
+                // Pause background inference entirely.
+                // Interactive inference continues at reduced weight.
+                self.pause_background_inference();
+                self.inference_weight_modifier.store(0.25);
+            }
+            MemoryPressure::Oom => {
+                // The OOM killer selects a victim agent. The scheduler
+                // provides CPU usage data to help select the best victim
+                // (high memory + low priority = best candidate).
+                // After the kill, remove dead threads from all run queues.
+            }
+        }
+    }
+
+    /// Remove a killed/suspended agent's threads from all run queues.
+    /// Called by the memory subsystem after suspending or killing an agent.
+    pub fn remove_agent_threads(&self, agent_id: AgentId) {
+        for cpu in 0..self.nr_cpus {
+            let rq = &mut self.run_queues[cpu as usize];
+            rq.lock.lock();
+            rq.remove_threads_for_agent(agent_id);
+            rq.lock.unlock();
+        }
+    }
+
+    /// Resume a previously suspended agent's threads.
+    /// Called when memory pressure drops and suspended agents can resume.
+    pub fn resume_agent_threads(&self, agent_id: AgentId) {
+        // Threads transition from Suspended → Runnable
+        // and are reinserted into appropriate run queues.
+    }
+}
+```
+
+**OOM victim selection coordination:** The OOM killer (memory.md) uses a score combining memory usage, priority, and age. The scheduler contributes the agent's current CPU quota usage and scheduling class — an agent in the Idle class with exhausted quota is a better OOM victim than an Interactive agent the user is actively using.
+
+### 8.4 Thermal Throttling
+
+The Pi 4 (Cortex-A72) throttles at 80C and the Pi 5 (Cortex-A76) at 85C with passive cooling. Under sustained inference + compositor load, thermal throttling is common and the scheduler must adapt:
+
+```rust
+/// Thermal state, reported by the kernel's thermal zone driver
+pub enum ThermalState {
+    /// Normal operating temperature (< 70C)
+    Normal,
+    /// Warm — approaching throttle point (70-78C)
+    /// Reduce background work proactively
+    Warm,
+    /// Throttling active — frequency reduced by firmware/hardware
+    /// Scheduler must adjust WCET budgets and inference chunks
+    Throttled { max_freq_mhz: u32 },
+    /// Critical — approaching shutdown temperature (> 90C)
+    /// Suspend all non-essential work immediately
+    Critical,
+}
+
+impl Scheduler {
+    pub fn on_thermal_change(&self, state: ThermalState) {
+        match state {
+            ThermalState::Normal => { /* default behavior */ }
+            ThermalState::Warm => {
+                // Proactive: pause idle-class tasks, reduce inference chunk
+                // size (fewer tokens per burst = more cooling gaps)
+                self.idle_enabled.store(false);
+                self.inference_chunk_modifier.store(4); // 4 tokens instead of 8
+            }
+            ThermalState::Throttled { max_freq_mhz } => {
+                // Frequency dropped — WCET budgets must scale.
+                // A 4ms WCET at 2.4 GHz becomes ~6.4ms at 1.5 GHz.
+                let scale = self.config.max_freq_mhz as f32 / max_freq_mhz as f32;
+                self.rt_wcet_scale.store(scale);
+
+                // Re-evaluate RT admission with scaled WCETs
+                // If scaled utilization exceeds ceiling, defer lowest-priority
+                // RT task (typically timer service) to reduce load.
+                self.rt_admission.reevaluate_with_scale(scale);
+
+                // Reduce inference to minimum: 2 tokens per chunk, lowest weight
+                self.inference_chunk_modifier.store(2);
+                self.inference_weight_modifier.store(0.25);
+            }
+            ThermalState::Critical => {
+                // Emergency: only RT (compositor) and interactive threads run.
+                // All normal and idle threads suspended until temperature drops.
+                self.suspend_class(SchedulerClass::Normal);
+                self.suspend_class(SchedulerClass::Idle);
+            }
+        }
+    }
+}
+```
+
+**WCET scaling under throttling:** When hardware or firmware reduces the CPU frequency, the effective WCET of all RT tasks increases proportionally. The compositor's 4ms budget at 2.4 GHz becomes ~6.4ms at 1.5 GHz. The scheduler scales all RT budgets by the frequency ratio and re-runs the admission test. If the scaled utilization exceeds the 70% ceiling, the lowest-priority RT task is temporarily deferred, ensuring the compositor's frame deadline is still met.
+
 -----
 
 ## 9. Multi-Core Load Balancing
@@ -1125,6 +1362,27 @@ After balance:
   CPU 1: load=3  (inference + 2 agents, 2 migrated away)
   CPU 2: load=2  (1 service + 1 migrated agent)
   CPU 3: load=3  (2 agents + 1 migrated agent)
+```
+
+**Lock ordering for deadlock prevention.** When the load balancer migrates a thread, it must lock both the source and destination CPU's run queues. To prevent ABBA deadlock (CPU 0 pulls from CPU 1 while CPU 1 pulls from CPU 0), locks are always acquired in ascending CPU ID order:
+
+```rust
+impl LoadBalancer {
+    /// Migrate a thread from src_cpu to dst_cpu.
+    /// Locks are acquired in CPU ID order to prevent deadlock.
+    fn migrate(&self, thread: &SchedEntity, src: CpuId, dst: CpuId) {
+        let (first, second) = if src.0 < dst.0 {
+            (&self.run_queues[src.0], &self.run_queues[dst.0])
+        } else {
+            (&self.run_queues[dst.0], &self.run_queues[src.0])
+        };
+        first.lock.lock();
+        second.lock.lock();
+        // ... perform migration ...
+        second.lock.unlock();
+        first.lock.unlock();
+    }
+}
 ```
 
 **Cache affinity.** Before migrating a thread, the balancer checks `last_cpu`. If the thread ran on its current CPU recently (within the last 10ms), migration is penalized — the thread's warm cache on the current CPU is worth more than perfect load balance. Migration only happens if the imbalance is significant enough to overcome the cache penalty.
@@ -1371,25 +1629,45 @@ High        2000 MHz     0.95V     8x
 Turbo       2400 MHz     1.00V     12x
 ```
 
-**Strategy: Race-to-idle.** When there is work to do, run at maximum frequency, finish quickly, and enter a deep idle state. Short high-power bursts followed by long idle periods use less total energy than sustained medium-frequency operation. This is counterintuitive but well-established in power management literature.
+**Strategy: Race-to-idle for latency-sensitive work, sustained-low for batch work.** The optimal DVFS strategy depends on the workload type:
 
 ```
-Race-to-idle vs. sustained:
+Race-to-idle vs. sustained (including idle leakage power):
 
-Approach A (race-to-idle):
-  [2.4 GHz for 5ms] [idle for 95ms]
-  Energy: 12x × 5ms + 0x × 95ms = 60 energy-units
+Assume: WFI idle leakage = 0.3x (ARM cores still draw ~30% of
+        minimum active power during WFI due to SRAM retention,
+        PLLs, and interconnect leakage)
+
+Approach A (race-to-idle, latency-sensitive):
+  [2.4 GHz for 5ms] [WFI idle for 95ms]
+  Energy: 12x × 5ms + 0.3x × 95ms = 60 + 28.5 = 88.5 energy-units
+  Latency: 5ms ← best
 
 Approach B (sustained medium):
-  [1.0 GHz for 12ms] [idle for 88ms]
-  Energy: 2.5x × 12ms + 0x × 88ms = 30 energy-units
+  [1.0 GHz for 12ms] [WFI idle for 88ms]
+  Energy: 2.5x × 12ms + 0.3x × 88ms = 30 + 26.4 = 56.4 energy-units
+  Latency: 12ms
 
-Approach C (sustained low):
-  [600 MHz for 20ms] [idle for 80ms]
-  Energy: 1x × 20ms + 0x × 80ms = 20 energy-units
+Approach C (sustained low, throughput-oriented):
+  [600 MHz for 20ms] [WFI idle for 80ms]
+  Energy: 1x × 20ms + 0.3x × 80ms = 20 + 24 = 44 energy-units
+  Latency: 20ms ← worst
+
+Approach D (deep idle state, if available):
+  [2.4 GHz for 5ms] [power-collapse for 95ms]
+  Energy: 12x × 5ms + 0.01x × 95ms = 60 + 0.95 = 60.95 energy-units
+  + wake-up penalty: ~200μs
+  Latency: 5ms + wake-up ← best energy when deep idle is available
 ```
 
-Race-to-idle is optimal when idle power is very low (true for WFI on ARM) and when latency matters. The scheduler signals the DVFS governor based on load:
+**Race-to-idle wins when:** (a) the work is latency-sensitive (user-facing), AND (b) deep idle states are available that reduce leakage below WFI levels. On ARM with power-collapse (cluster power-off), approach D achieves the best latency with competitive energy. **Sustained-low wins when:** the work is throughput-oriented (batch inference, indexing) and latency doesn't matter.
+
+AIOS applies each strategy based on scheduling class:
+- **RT and Interactive:** race-to-idle at max frequency (latency is paramount)
+- **Normal (inference):** on-demand frequency scaling (balance throughput and power)
+- **Idle (batch):** sustained-low frequency (energy matters, latency doesn't)
+
+The scheduler signals the DVFS governor based on load:
 
 ```rust
 /// DVFS governor policy, communicated to the power subsystem
