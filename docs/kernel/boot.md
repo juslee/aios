@@ -110,7 +110,7 @@ pub struct MemoryMap {
 pub struct MemoryDescriptor {
     memory_type: MemoryType,
     physical_start: PhysicalAddress,
-    virtual_start: VirtAddr,    // unused, UEFI sets to 0
+    virtual_start: VirtualAddress, // unused, UEFI sets to 0
     page_count: u64,            // pages of 4 KiB each
     attributes: u64,            // cacheability, write-protection
 }

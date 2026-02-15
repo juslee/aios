@@ -1808,6 +1808,7 @@ pub enum OomPriority {
 }
 
 /// Agent scheduling/OOM priority level
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentPriority {
     /// Kernel-critical services (compositor, service manager)
     Critical,
