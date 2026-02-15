@@ -591,7 +591,7 @@ Five mechanisms enforce agent isolation. All five are always active. Disabling a
 │     Inference: per-agent token quota.                    │
 ├─────────────────────────────────────────────────────────┤
 │  5. Syscall Whitelist                                    │
-│     Agents can only invoke AIOS syscalls (~20 total).    │
+│     Agents can only invoke AIOS syscalls (31 total).     │
 │     No raw Linux syscalls. No ioctl. No ptrace.          │
 │     W^X enforced: memory is writable XOR executable.     │
 └─────────────────────────────────────────────────────────┘
@@ -744,7 +744,7 @@ pub enum LogLevel {
 }
 ```
 
-Total: ~17 syscalls. Compare with Linux (~450). Every syscall is exhaustively fuzz-tested. The small surface area is a security property, not a limitation — everything agents need is accessible through IPC to userspace services.
+Total: 17 agent-facing syscalls (out of 31 kernel syscalls — see ipc.md §3.4). The remaining 14 are kernel-internal or service-only (ChannelCreate, ProcessCreate, IpcReply, AuditLog, etc.). Compare with Linux (~450). Every syscall is exhaustively fuzz-tested. The small surface area is a security property, not a limitation — everything agents need is accessible through IPC to userspace services.
 
 -----
 
