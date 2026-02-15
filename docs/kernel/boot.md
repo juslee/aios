@@ -414,7 +414,7 @@ pub struct CapabilityManager {
 impl CapabilityManager {
     fn bootstrap() -> Self {
         let root = CapabilityToken {
-            id: CapabilityTokenId(0),
+            id: TokenId(0),
             capability: Capability::Root,     // can derive any capability
             holder: AgentId::KERNEL,
             granted_by: Identity::Kernel,

@@ -1161,8 +1161,9 @@ pub struct MerkleChain {
     head_hash: Hash,
     /// Chain length
     length: u64,
-    /// Kernel signing key ID
-    signing_key: KeyId,
+    /// Kernel signing key for chain integrity (Ed25519).
+    /// Loaded from secure storage at boot; private key never leaves kernel.
+    signing_key: SigningKey,
 }
 
 impl MerkleChain {
@@ -1423,6 +1424,9 @@ pub struct BlastRadiusTracker {
     current_memory: usize,
     current_cpu: f32,
     child_count: u32,
+
+    /// Handle to the Space Service for auto-snapshot requests via IPC.
+    space_service: SpaceServiceHandle,
 }
 
 impl BlastRadiusTracker {
@@ -1442,7 +1446,7 @@ impl BlastRadiusTracker {
     pub fn check_delete(&mut self, count: u32) -> Result<()> {
         if count >= self.policy.bulk_delete_threshold && self.policy.auto_snapshot {
             // Trigger auto-snapshot before bulk delete
-            space_service.create_snapshot(SnapshotTrigger::PreBulkOperation)?;
+            self.space_service.create_snapshot(SnapshotTrigger::PreBulkOperation)?;
         }
         if self.deletes_in_window.count() + count
             > self.policy.max_deletes_per_window {

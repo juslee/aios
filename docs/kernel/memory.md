@@ -1531,23 +1531,29 @@ impl ModelEvictionPolicy {
 Shared memory enables zero-copy IPC. When an agent needs to transfer large data to a service (or to another agent), it writes the data into a shared memory region and sends the region ID over the IPC channel. The receiver maps the same physical pages into its own address space.
 
 ```rust
-/// A shared memory region managed by the kernel
+/// A shared memory region managed by the kernel.
+/// Canonical definition — must match ipc.md §4.5.
 pub struct SharedMemoryRegion {
     pub id: SharedMemoryId,
-    /// Physical frames backing this region
-    pub frames: Vec<PhysicalFrame>,
-    /// Total size
-    pub size: usize,
-    /// Agents currently mapping this region
-    pub mappings: Vec<SharedMapping>,
+    /// Physical frames backing this region (contiguous page range)
+    pub physical_pages: PageRange,
+    /// Reference count: incremented on map, decremented on unmap or
+    /// process death. Physical pages freed when count reaches 0.
+    pub ref_count: AtomicU32,
+    /// The process that created this region
+    pub creator: ProcessId,
+    /// Maximum permissions granted at creation time
+    pub max_flags: MemoryFlags,
     /// Capability required to access
     pub capability: CapabilityTokenId,
+    /// Per-mapping permissions (bounded; MAX_SHARED_MAPPINGS = 16)
+    pub mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
 }
 
 pub struct SharedMapping {
     pub process: ProcessId,
     pub vaddr: VirtualAddress,
-    pub flags: VmFlags,  // may be read-only for some mappers
+    pub flags: VmFlags,  // may be more restrictive than max_flags
 }
 ```
 
