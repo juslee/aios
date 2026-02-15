@@ -1228,8 +1228,13 @@ fn calculate_weight(
 /// Update virtual runtime after a thread runs for `delta` time.
 /// Threads with higher weight accumulate vruntime more slowly,
 /// so they get more real CPU time before being preempted.
-fn update_vruntime(entity: &mut SchedEntity, delta: Duration, hint: ContextHint) {
-    let weight = calculate_weight(entity, hint);
+fn update_vruntime(
+    entity: &mut SchedEntity,
+    delta: Duration,
+    hint: ContextHint,
+    inference_modifier: f32,
+) {
+    let weight = calculate_weight(entity, hint, inference_modifier);
     // vruntime increases inversely proportional to weight
     // Reference weight is WEIGHT_TABLE[120] (normal priority)
     let reference_weight = WEIGHT_TABLE[120] as u64;
