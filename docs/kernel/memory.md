@@ -56,6 +56,31 @@ UEFI Memory Map (example, 4 GB device):
 The kernel builds its initial free list from `Conventional` regions. `Loader Code` and `Loader Data` regions are reclaimed after early boot completes. `MMIO` and `Reserved` regions are never touched by the allocator.
 
 ```rust
+// ── Kernel-internal types used throughout this document ──────────────
+//
+// The following types are referenced in code blocks below but defined
+// elsewhere in the kernel or are opaque kernel primitives:
+//
+//   PhysicalAddress    — newtype wrapper around usize (defined in §3.2)
+//   PhysicalFrame      — single physical page frame, identified by PFN (§2.2)
+//   VirtualAddress     — newtype wrapper around usize (§3.2)
+//   PageTableEntry     — 64-bit aarch64 PTE with W^X helpers (§3.2)
+//   PageTable          — 512-entry page table (§3.2)
+//   AddressSpace       — per-process virtual address space (§3.2)
+//   BuddyAllocator     — physical page allocator, orders 0–10 (§2.2)
+//   MemoryRegion       — UEFI memory map entry (§2.1, below)
+//   SlabCache          — fixed-size object cache with per-CPU magazines (§4.1)
+//   FaultError         — error enum for page fault outcomes (§5.5 / §10.5)
+//   FaultType          — read / write / execute classification of a fault
+//   PteState           — decoded non-valid PTE state (§10.5)
+//   Vma                — alias for VmRegion (§3.2)
+//   SharedMemoryId     — opaque handle for shared memory regions (§7)
+//   MappedFile         — file-backed mapping descriptor
+//   PageType           — page classification for MGLRU reclaim (§9)
+//   FrameRefCount      — per-frame atomic reference counter (§4.2)
+//   Process            — kernel process descriptor (see scheduler.md)
+//   Pool               — memory pool discriminant: Kernel/User/Model/Dma (§2.4)
+
 /// Physical memory region from UEFI memory map
 pub struct MemoryRegion {
     pub base: PhysicalAddress,
@@ -590,6 +615,26 @@ pub enum VmRegionKind {
     /// Guard page (unmapped, triggers fault)
     Guard,
 }
+
+/// Alias used in COW and fault-handling code (§5.4).
+type Vma = VmRegion;
+
+impl AddressSpace {
+    /// Look up the PTE for a virtual address by walking the page table.
+    pub fn lookup_pte(&self, addr: VirtualAddress) -> Result<&PageTableEntry, FaultError> { todo!() }
+
+    /// Overwrite the PTE for a virtual address.
+    pub fn update_pte(&mut self, addr: VirtualAddress, pte: PageTableEntry) { todo!() }
+
+    /// Find the VmRegion (VMA) containing `addr`, if any.
+    pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> { todo!() }
+
+    /// Walk the page table and return the PTE (may be invalid/encoded).
+    pub fn walk_page_table(&self, addr: VirtualAddress) -> Result<PageTableEntry, FaultError> { todo!() }
+
+    /// Install a mapping: allocate intermediate tables as needed, write PTE.
+    pub fn map_page(&mut self, addr: VirtualAddress, frame: PhysicalFrame, perms: VmFlags) { todo!() }
+}
 ```
 
 **W^X enforcement** is built into the page table entry API. The `set_writable()` method automatically clears the executable bit. The `set_executable()` method automatically sets read-only. No page is ever both writable and executable. This is enforced at the lowest level — there is no API to create a writable+executable mapping.
@@ -791,6 +836,20 @@ pub struct MagazineRound {
 
 const MAGAZINE_SIZE: usize = 32;
 
+impl SlabCache {
+    /// Create a new slab cache for objects of `size` bytes.
+    pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self { todo!() }
+
+    /// Allocate one object from this cache (magazine fast-path, then slab).
+    pub fn alloc(&mut self) -> *mut u8 { todo!() }
+
+    /// Return an object to this cache.
+    pub fn free(&mut self, ptr: *mut u8) { todo!() }
+
+    /// Grow the cache by allocating a new backing slab from the frame allocator.
+    pub fn grow(&mut self, fa: &FrameAllocator) { todo!() }
+}
+
 /// Top-level slab allocator managing all caches
 pub struct SlabAllocator {
     caches: [SlabCache; NUM_CACHES],
@@ -820,6 +879,23 @@ The per-CPU magazine layer eliminates lock contention on the allocation hot path
 The kernel provides a typed allocation interface built on top of the slab and buddy allocators:
 
 ```rust
+// ── Kernel global singletons (initialized once during boot) ─────────
+//
+// These are module-level statics accessed throughout the kernel.
+// Each is protected by a spin-lock or is inherently lock-free.
+
+/// Physical page allocator — partitioned into Kernel/User/Model/DMA pools (§2.4).
+static FRAME_ALLOCATOR: PagePools = /* initialized by PagePools::init() at boot */;
+
+/// Per-frame reference counts for COW and shared mappings (§5.4).
+static FRAME_REFCOUNT: FrameRefCount = /* initialized at boot, one atomic counter per PFN */;
+
+/// Slab allocator for small fixed-size kernel objects (§4.1).
+static SLAB_ALLOCATOR: SlabAllocator = /* initialized by SlabAllocator::init() at boot */;
+
+/// Queue of frames awaiting asynchronous zeroing by the page-zero thread.
+static ZERO_QUEUE: PageZeroQueue = /* initialized at boot */;
+
 /// Typed kernel allocation — uses slab cache if size matches, buddy otherwise
 pub fn kalloc<T>() -> *mut T {
     let size = core::mem::size_of::<T>();
@@ -2389,6 +2465,35 @@ Zero PTE (never accessed — demand-zero on first fault):
   └─────────────────────────────────────────────────────────┘
 ```
 
+**PTE state classification and fault type:**
+
+```rust
+/// Decoded state of an invalid PTE (V=0). The encoding uses Type bits [1:0]
+/// as shown in the PTE diagrams above; CopyOnWrite and FileBacked are
+/// identified by additional software bits in the upper PTE word.
+pub enum PteState {
+    /// Type=00, all-zero — page has never been accessed (demand-zero).
+    Zero,
+    /// Type=01 — page was compressed into zram.
+    Compressed { zram_index: usize },
+    /// Type=10 — page was evicted to the swap device.
+    Swapped { swap_slot: SwapSlot },
+    /// Software COW bit set — page is a shared copy-on-write mapping.
+    CopyOnWrite { original_frame: PhysicalFrame },
+    /// Software file-backed bit — page is backed by a file in the page cache.
+    FileBacked { file: MappedFile, offset: u64 },
+    /// PTE is valid (V=1) — should not reach the non-present fault path.
+    Present,
+}
+
+/// Classification of the memory access that triggered the fault.
+pub enum FaultType {
+    Read,
+    Write,
+    Execute,
+}
+```
+
 **Page fault handler — full path:**
 
 ```rust
@@ -2456,7 +2561,8 @@ pub fn handle_page_fault(
             Ok(())
         }
 
-        _ => Err(FaultError::UnexpectedPteState),
+        // Case 6: PTE is actually valid — should not reach this path
+        PteState::Present => Err(FaultError::UnexpectedPteState),
     }
 }
 ```

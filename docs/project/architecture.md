@@ -736,9 +736,14 @@ pub struct CapabilityToken {
     capability: Capability,
     holder: AgentId,
     granted_by: Identity,
+    created_at: Timestamp,
     expires: Option<Timestamp>,
     delegatable: bool,
     attenuations: Vec<Attenuation>,
+    revoked: bool,
+    parent_token: Option<TokenId>,  // for delegation chains
+    usage_count: u64,
+    last_used: Timestamp,
 }
 ```
 
