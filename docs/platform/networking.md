@@ -49,7 +49,7 @@ The application doesn't know or care that `openai/v1/models` is on a server in S
                        ▼
 ┌─────────────────────────────────────────────────────────┐
 │              NETWORK TRANSLATION MODULE                   │
-│                  (kernel service)                         │
+│                  (userspace service)                       │
 │                                                          │
 │  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
 │  │   Space      │  │  Connection  │  │   Shadow      │  │

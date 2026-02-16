@@ -405,7 +405,7 @@ impl ContextFilter {
     }
 
     fn threshold_for_context(&self) -> UrgencyThreshold {
-        match self.context.mode {
+        match self.context.mode() {
             ContextMode::Work => UrgencyThreshold::NextBreak,
             ContextMode::Leisure => UrgencyThreshold::InterruptOnly,
             ContextMode::Focus => UrgencyThreshold::InterruptOnly,
