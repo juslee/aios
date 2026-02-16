@@ -11,33 +11,34 @@
 
 The HAL is the lowest layer of the AIOS kernel. It sits directly on hardware and exposes a uniform interface that the rest of the kernel programs against. The kernel never touches raw MMIO registers or device-specific data structures outside the HAL — all hardware access flows through trait implementations.
 
-The HAL has one design goal: **adding a new platform is implementing seven methods.** A platform is a specific hardware board — QEMU virt, Raspberry Pi 4 (BCM2711), Raspberry Pi 5 (BCM2712), or any future aarch64 board. Each platform provides different hardware for the same logical functions (interrupts, timer, serial, GPU, network, storage, RNG). The HAL abstracts these differences behind a single `Platform` trait with seven initialization methods. For hardware that only some platforms provide (USB, WiFi, Bluetooth), the HAL uses extension traits that platforms opt into — see Section 12.
+The HAL has one design goal: **adding a new platform is implementing seven methods.** A platform is a specific hardware board — QEMU virt, Raspberry Pi 4 (BCM2711), Raspberry Pi 5 (BCM2712), Apple Silicon Macs (M1–M4), or any future aarch64 board. Each platform provides different hardware for the same logical functions (interrupts, timer, serial, GPU, network, storage, RNG). The HAL abstracts these differences behind a single `Platform` trait with seven initialization methods. For hardware that only some platforms provide (USB, WiFi, Bluetooth), the HAL uses extension traits that platforms opt into — see Section 12.
 
 ### 1.1 HAL Boundary
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Kernel Core                                                │
-│  (scheduler, IPC, capability manager, memory manager)       │
-│                                                             │
-│  Programs against abstract types:                           │
-│  InterruptController, Timer, Uart, GpuDevice,               │
-│  NetworkDevice, StorageDevice                               │
-├─────────────────────────────────────────────────────────────┤
-│  HAL BOUNDARY — Platform trait + device traits              │
-├─────────────────────────────────────────────────────────────┤
-│  Platform Implementations                                   │
-│                                                             │
-│  QemuPlatform          │ Pi4Platform    │ Pi5Platform       │
-│  ├── GICv3             │ ├── GICv2     │ ├── GICv3         │
-│  ├── ARM Generic Timer │ ├── ARM Timer │ ├── ARM Timer     │
-│  ├── PL011 UART        │ ├── PL011    │ ├── PL011         │
-│  ├── VirtIO-GPU        │ ├── VC4/V3D  │ ├── V3D 7.1      │
-│  ├── VirtIO-Net        │ ├── Genet    │ ├── Genet         │
-│  └── VirtIO-Blk        │ └── SD/eMMC  │ └── SD/eMMC      │
-├─────────────────────────────────────────────────────────────┤
-│  Raw Hardware (MMIO registers, device memory, DMA)          │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Kernel Core                                                             │
+│  (scheduler, IPC, capability manager, memory manager)                    │
+│                                                                          │
+│  Programs against abstract types:                                        │
+│  InterruptController, Timer, Uart, GpuDevice,                            │
+│  NetworkDevice, StorageDevice, RngDevice                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│  HAL BOUNDARY — Platform trait + device traits                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Platform Implementations (aarch64)                                      │
+│                                                                          │
+│  QemuPlatform       │ Pi4Platform   │ Pi5Platform   │ AppleSilicon      │
+│  ├── GICv3          │ ├── GICv2    │ ├── GICv3    │ ├── AIC            │
+│  ├── ARM Gen Timer  │ ├── ARM Tmr │ ├── ARM Tmr  │ ├── ARM Timer      │
+│  ├── PL011 UART     │ ├── PL011   │ ├── PL011    │ ├── S5L UART       │
+│  ├── VirtIO-GPU     │ ├── VC4/V3D │ ├── V3D 7.1  │ ├── AGX GPU        │
+│  ├── VirtIO-Net     │ ├── Genet   │ ├── Genet    │ ├── PCIe NIC       │
+│  ├── VirtIO-Blk     │ ├── SD/eMMC │ ├── SD/eMMC  │ ├── ANS NVMe       │
+│  └── VirtIO-RNG     │ └── bcm2835 │ └── bcm2835  │ └── Apple TRNG     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Raw Hardware (MMIO registers, device memory, DMA)                       │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 1.2 What the HAL Is Not
@@ -62,6 +63,10 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
         c if c.contains("qemu") => Box::new(QemuPlatform),
         c if c.contains("brcm,bcm2711") => Box::new(RaspberryPi4Platform),
         c if c.contains("brcm,bcm2712") => Box::new(RaspberryPi5Platform),
+        c if c.contains("apple,t8103") => Box::new(AppleSiliconPlatform::new(AppleSoc::T8103)),
+        c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
+        c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
+        c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
         _ => panic!("Unknown platform: {}", compat),
     }
 }
@@ -74,6 +79,13 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
 | QEMU virt | `qemu,virt` | Virtual |
 | Raspberry Pi 4 | `brcm,bcm2711` | BCM2711 |
 | Raspberry Pi 5 | `brcm,bcm2712` | BCM2712 |
+| Apple M1 | `apple,t8103` | T8103 |
+| Apple M1 Pro/Max | `apple,t6000` | T6000 |
+| Apple M2 | `apple,t6020` | T6020 |
+| Apple M3 | `apple,t6031` | T6031 |
+| Apple M4 | `apple,t6040` | T6040 |
+
+Apple Silicon Macs use a device tree (ADT — Apple Device Tree) that the Asahi Linux bootloader (m1n1) converts to a standard flattened device tree format compatible with Linux/AIOS. The compatible strings follow the `apple,tXXXX` convention where the number identifies the SoC.
 
 The detected platform is stored in `KernelState.platform` and used for all subsequent hardware initialization.
 
@@ -89,6 +101,7 @@ pub trait Platform: Send + Sync {
     ///
     /// QEMU / Pi 5: GICv3 (distributor + redistributor per CPU).
     /// Pi 4: GICv2 GIC-400 (distributor + CPU interface).
+    /// Apple Silicon: AIC (Apple Interrupt Controller) — custom, not GIC.
     ///
     /// Called during early boot Step 5. The returned controller is stored
     /// in KernelState and used by the scheduler for IRQ routing.
@@ -97,15 +110,15 @@ pub trait Platform: Send + Sync {
     /// Initialize the system timer.
     ///
     /// All platforms use the ARM Generic Timer (CNTFRQ_EL0), but the
-    /// frequency varies. QEMU: 62.5 MHz. Pi 4: 54 MHz. Pi 5: 54 MHz.
+    /// frequency varies. QEMU: 62.5 MHz. Pi 4/5: 54 MHz. Apple: 24 MHz.
     ///
     /// Called during early boot Step 6. Configures the 1ms scheduler tick.
     fn init_timer(&self, dt: &DeviceTree) -> Result<Timer>;
 
     /// Initialize the serial console.
     ///
-    /// All supported platforms use PL011 UART at different MMIO base
-    /// addresses. The device tree provides the base address.
+    /// QEMU / Pi 4/5: PL011 UART (ARM standard).
+    /// Apple Silicon: S5L UART (Samsung-derived, Apple custom registers).
     ///
     /// Called during early boot Step 3. From this point kprintln!() works.
     fn init_uart(&self, dt: &DeviceTree) -> Result<Uart>;
@@ -115,6 +128,7 @@ pub trait Platform: Send + Sync {
     /// QEMU: VirtIO-GPU (virtqueue-based, wgpu backend).
     /// Pi 4: VideoCore VI (VC4/V3D, Vulkan 1.0).
     /// Pi 5: VideoCore VII (V3D 7.1, Vulkan 1.2).
+    /// Apple: AGX GPU (Apple custom, tile-based deferred renderer).
     ///
     /// Called during Phase 2 (core services) when the Display Subsystem
     /// starts. Returns a device handle the compositor programs against.
@@ -124,6 +138,7 @@ pub trait Platform: Send + Sync {
     ///
     /// QEMU: VirtIO-Net (virtqueue-based).
     /// Pi 4/5: Broadcom Genet (BCM54213PE Gigabit Ethernet).
+    /// Apple: PCIe Ethernet (Broadcom via Thunderbolt adapter or built-in).
     ///
     /// Called during Phase 2 when the Network Subsystem starts.
     /// Returns a device handle for the smoltcp network stack.
@@ -133,6 +148,7 @@ pub trait Platform: Send + Sync {
     ///
     /// QEMU: VirtIO-Blk (virtqueue-based).
     /// Pi 4/5: Arasan SDHCI (SD/eMMC) + XHCI (USB storage).
+    /// Apple: ANS NVMe (Apple custom NVMe controller).
     ///
     /// Called during Phase 1 when the Block Engine starts.
     /// Returns a device handle for raw block I/O.
@@ -142,6 +158,7 @@ pub trait Platform: Send + Sync {
     ///
     /// QEMU: VirtIO-RNG (virtqueue-based).
     /// Pi 4/5: bcm2835-rng (MMIO register).
+    /// Apple: Apple TRNG (hardware true random number generator).
     ///
     /// Called during early boot Step 10 (before KASLR). Supplements the
     /// one-shot UEFI rng_seed with a persistent entropy source for runtime
@@ -156,13 +173,31 @@ pub trait Platform: Send + Sync {
 
 ### 3.1 Platform Implementations
 
-Each platform struct is zero-sized. All state lives in the returned device handles, not in the platform struct itself:
+Platform structs are either zero-sized (boards with fixed SoCs) or carry minimal config (Apple SoC variant for driver selection). All device state lives in the returned device handles, not in the platform struct itself:
 
 ```rust
+// Fixed SoC, zero-sized
 pub struct QemuPlatform;
 pub struct RaspberryPi4Platform;
 pub struct RaspberryPi5Platform;
+
+// Apple Silicon — carries SoC variant for driver selection
+pub struct AppleSiliconPlatform {
+    soc: AppleSoc,
+}
+
+pub enum AppleSoc {
+    T8103,  // M1
+    T6000,  // M1 Pro/Max
+    T6020,  // M2
+    T6031,  // M3
+    T6040,  // M4
+}
 ```
+
+Apple Silicon carries the SoC variant because different generations have different GPU cores (AGX G13–G16), display controllers, and peripheral IP. The SoC enum selects the correct driver paths within each `init_*` method.
+
+> **Future:** The `Platform` trait is architecture-independent by design. If x86_64 support (Intel, AMD) is added in the future, it would require a parallel `kernel/arch/x86_64/` module and ACPI-based device discovery alongside the device tree path, but the same seven trait methods would apply.
 
 ### 3.2 Initialization Order
 
@@ -184,6 +219,8 @@ Service Manager Phases (userspace, heap available):
 
 UART, interrupts, and timer run before the heap exists (Steps 3/5/6) and must use only stack and static allocation. RNG runs just after heap init (Step 10) so VirtIO-RNG can allocate its virtqueue; the bcm2835-rng is pure MMIO but uniformity keeps the code simple. Storage, GPU, and network run in userspace service manager phases and can allocate freely.
 
+This initialization order is the same across all platforms. The only difference is what hardware each step initializes — GIC vs AIC for interrupts, PL011 vs S5L for UART, etc. The `Platform` trait ensures each implementation handles its own hardware correctly.
+
 -----
 
 ## 4. Device Abstractions
@@ -193,21 +230,36 @@ Each `init_*` method returns a device handle that abstracts the underlying hardw
 ### 4.1 InterruptController
 
 ```rust
-/// Abstraction over GICv2 and GICv3.
+/// Abstraction over GICv2, GICv3, and Apple AIC.
 pub struct InterruptController {
-    variant: GicVariant,
-    distributor_base: *mut u8,
+    variant: IrqControllerVariant,
     max_irqs: u32,
 }
 
-enum GicVariant {
-    V2 {
+enum IrqControllerVariant {
+    /// ARM GICv2 (Pi 4): distributor + CPU interface.
+    GicV2 {
+        distributor_base: *mut u8,
         cpu_interface_base: *mut u8,
     },
-    V3 {
+    /// ARM GICv3 (QEMU, Pi 5): distributor + per-CPU redistributor.
+    GicV3 {
+        distributor_base: *mut u8,
         redistributor_base: *mut u8,
         redistributor_stride: usize,
     },
+    /// Apple Interrupt Controller (Apple Silicon): single MMIO block,
+    /// event-driven model with hardware IRQ → event mapping.
+    Aic {
+        base: *mut u8,
+        version: AicVersion,
+        num_irqs: u32,
+    },
+}
+
+pub enum AicVersion {
+    V1,  // M1 family
+    V2,  // M2+ family (extended die support)
 }
 
 impl InterruptController {
@@ -235,38 +287,40 @@ impl InterruptController {
     /// Used for inter-processor interrupts (IPI) during SMP bringup.
     pub fn send_ipi(&self, target_cpu: u32, sgi_id: u32);
 
-    /// Return the GIC version for platform-specific paths.
-    pub fn version(&self) -> GicVersion;
+    /// Return the interrupt controller type for platform-specific paths.
+    pub fn controller_type(&self) -> IrqControllerType;
 }
 
-pub enum GicVersion {
-    V2,
-    V3,
+pub enum IrqControllerType {
+    GicV2,
+    GicV3,
+    Aic,
 }
 ```
 
-**GICv2 vs GICv3 differences handled internally:**
+**Interrupt controller differences handled internally:**
 
-| Operation | GICv2 (Pi 4) | GICv3 (QEMU, Pi 5) |
-|---|---|---|
-| Acknowledge IRQ | Read GICC_IAR | Read ICC_IAR1_EL1 (system register) |
-| End of interrupt | Write GICC_EOIR | Write ICC_EOIR1_EL1 |
-| CPU target | GICD_ITARGETSR (8-bit bitmap) | GICD_IROUTER (affinity value) |
-| Per-CPU config | GICC_* registers | GICR_* per redistributor |
-| Max SPIs | 1020 | 1020 (LPIs extend to millions) |
+| Operation | GICv2 (Pi 4) | GICv3 (QEMU, Pi 5) | AIC (Apple) |
+|---|---|---|---|
+| Acknowledge IRQ | Read GICC_IAR | Read ICC_IAR1_EL1 | Read AIC_EVENT |
+| End of interrupt | Write GICC_EOIR | Write ICC_EOIR1_EL1 | Write AIC_SW_CLR |
+| CPU target | GICD_ITARGETSR (bitmap) | GICD_IROUTER (affinity) | AIC_TARGET_CPU |
+| Per-CPU config | GICC_* registers | GICR_* per redistributor | Per-die AIC regs |
+| IPI mechanism | GICD_SGIR | ICC_SGI1R_EL1 | AIC_IPI_SEND |
+| Max IRQs | 1020 SPIs | 1020+ (LPIs) | ~1024 |
 
 ### 4.2 Timer
 
 ```rust
 /// ARM Generic Timer abstraction.
 ///
-/// All platforms use the ARM architectural timer. Differences are
-/// limited to frequency (read from CNTFRQ_EL0) and the GIC IRQ
+/// All aarch64 platforms use the ARM architectural timer. Differences are
+/// limited to frequency (read from CNTFRQ_EL0) and the GIC/AIC IRQ
 /// number for timer interrupts (read from device tree).
 pub struct Timer {
     frequency_hz: u64,
     tick_interval: u64,     // counter ticks per scheduler tick (1ms)
-    timer_irq: u32,         // GIC IRQ number for the physical timer
+    timer_irq: u32,         // IRQ number for the physical timer
 }
 
 impl Timer {
@@ -292,7 +346,7 @@ impl Timer {
     /// Return the timer frequency in Hz.
     pub fn frequency(&self) -> u64;
 
-    /// Return the GIC IRQ number for this timer.
+    /// Return the IRQ number for this timer.
     pub fn irq(&self) -> u32;
 }
 ```
@@ -304,16 +358,24 @@ impl Timer {
 | QEMU virt | 62,500,000 Hz | 62,500 |
 | Raspberry Pi 4 | 54,000,000 Hz | 54,000 |
 | Raspberry Pi 5 | 54,000,000 Hz | 54,000 |
+| Apple Silicon | 24,000,000 Hz | 24,000 |
 
 ### 4.3 Uart
 
 ```rust
-/// PL011 UART abstraction.
+/// Serial console abstraction.
 ///
-/// All supported platforms use the ARM PL011 UART. Only the MMIO
-/// base address differs (provided by the device tree).
+/// QEMU / Pi 4/5: PL011 (ARM standard UART).
+/// Apple Silicon: S5L UART (Samsung-derived, Apple custom).
 pub struct Uart {
-    base: *mut u8,
+    variant: UartVariant,
+}
+
+enum UartVariant {
+    /// ARM PL011 UART — MMIO at base address from device tree.
+    Pl011 { base: *mut u8 },
+    /// Apple S5L UART — MMIO, different register layout from PL011.
+    S5l { base: *mut u8 },
 }
 
 impl Uart {
@@ -336,7 +398,7 @@ impl Uart {
 
 The UART is initialized to 115200 baud, 8N1, no flow control on all platforms. Configuration is hardcoded — there's no need for runtime baud rate changes.
 
-**PL011 registers used (offset from base):**
+**PL011 registers used (offset from base) — QEMU, Pi 4/5:**
 
 | Register | Offset | Purpose |
 |---|---|---|
@@ -347,6 +409,19 @@ The UART is initialized to 115200 baud, 8N1, no flow control on all platforms. C
 | UARTLCR_H | 0x02C | Line control (8N1 config) |
 | UARTCR | 0x030 | Control register (enable TX/RX) |
 | UARTIMSC | 0x038 | Interrupt mask |
+
+**Apple S5L UART registers (offset from base) — Apple Silicon:**
+
+The S5L UART uses a Samsung-derived register layout documented in the Asahi Linux project:
+
+| Register | Offset | Purpose |
+|---|---|---|
+| ULCON | 0x000 | Line control (8N1 config) |
+| UCON | 0x004 | Control register (TX/RX mode) |
+| UFCON | 0x008 | FIFO control register |
+| UTRSTAT | 0x010 | TX/RX status (buffer empty/ready bits) |
+| UTXH | 0x020 | Transmit data register |
+| URXH | 0x024 | Receive data register |
 
 ### 4.4 GpuDevice
 
@@ -370,6 +445,12 @@ enum GpuVariant {
         hvs_base: *mut u8,
         version: VideoCoreVersion,
     },
+    /// Apple AGX GPU — custom command submission, tile-based deferred renderer.
+    AppleAgx {
+        sgx_base: *mut u8,        // GPU MMIO base
+        uat_base: *mut u8,        // Unified Address Translation (GPU page tables)
+        generation: AgxGeneration,
+    },
 }
 
 pub enum VideoCoreVersion {
@@ -377,6 +458,13 @@ pub enum VideoCoreVersion {
     V4,
     /// Raspberry Pi 5: V3D 7.1, Vulkan 1.2
     V7,
+}
+
+pub enum AgxGeneration {
+    G13,  // M1 family
+    G14,  // M2 family
+    G15,  // M3 family
+    G16,  // M4 family
 }
 
 pub struct GpuCapabilities {
@@ -416,13 +504,13 @@ impl GpuDevice {
 
 **GPU differences by platform:**
 
-| Feature | QEMU (VirtIO-GPU) | Pi 4 (VC4) | Pi 5 (V3D 7.1) |
-|---|---|---|---|
-| API | VirtIO virtqueues | V3D MMIO | V3D MMIO |
-| Vulkan | Via host GPU | 1.0 (conformant) | 1.2 (conformant) |
-| Compute shaders | Host-dependent | No | Yes |
-| Video memory | Shared (host) | 256 MB dedicated | 512 MB dedicated |
-| Max resolution | Host-dependent | 4K@60 (single) | 4K@60 (dual) |
+| Feature | QEMU (VirtIO-GPU) | Pi 4 (VC4) | Pi 5 (V3D 7.1) | Apple (AGX) |
+|---|---|---|---|---|
+| API | VirtIO virtqueues | V3D MMIO | V3D MMIO | AGX command buffers |
+| Vulkan | Via host GPU | 1.0 (conformant) | 1.2 (conformant) | 1.2 (via MoltenVK-like) |
+| Compute shaders | Host-dependent | No | Yes | Yes |
+| Video memory | Shared (host) | 256 MB dedicated | 512 MB dedicated | Unified (shared with CPU) |
+| Max resolution | Host-dependent | 4K@60 (single) | 4K@60 (dual) | 6K@60 (ProRes display) |
 
 ### 4.5 NetworkDevice
 
@@ -446,6 +534,11 @@ enum NetworkVariant {
         base: *mut u8,
         dma_base: *mut u8,
         phy_addr: u8,
+    },
+    /// Apple PCIe NIC — Broadcom BCM5719 via Thunderbolt Ethernet adapter
+    /// or built-in Ethernet on Mac mini/Mac Studio/Mac Pro.
+    ApplePcieNic {
+        mmio_base: *mut u8,
     },
 }
 
@@ -473,13 +566,13 @@ impl NetworkDevice {
 
 **Network differences by platform:**
 
-| Feature | QEMU (VirtIO-Net) | Pi 4/5 (Genet) |
-|---|---|---|
-| Interface | Virtqueue (2 queues) | MMIO + DMA rings |
-| Speed | Host-dependent | 1 Gbps |
-| MAC address | QEMU-assigned | OTP fuses |
-| Checksum offload | Via virtio features | Hardware |
-| MTU | 1500 (configurable) | 1500 |
+| Feature | QEMU (VirtIO-Net) | Pi 4/5 (Genet) | Apple (PCIe NIC) |
+|---|---|---|---|
+| Interface | Virtqueue (2 queues) | MMIO + DMA rings | PCIe BAR + DMA |
+| Speed | Host-dependent | 1 Gbps | 1–10 Gbps |
+| MAC address | QEMU-assigned | OTP fuses | EFI variable |
+| Checksum offload | Via virtio features | Hardware | Hardware |
+| MTU | 1500 (configurable) | 1500 | 1500 (9000 jumbo) |
 
 ### 4.6 StorageDevice
 
@@ -501,6 +594,12 @@ enum StorageVariant {
     SdMmc {
         sdhci_base: *mut u8,
         card_type: SdCardType,
+    },
+    /// Apple ANS NVMe — Apple's custom NVMe controller.
+    /// Uses Apple-specific command submission and power management.
+    AppleAns {
+        base: *mut u8,
+        ans_version: u32,
     },
 }
 
@@ -546,14 +645,14 @@ impl StorageDevice {
 
 **Storage differences by platform:**
 
-| Feature | QEMU (VirtIO-Blk) | Pi 4/5 (SD/eMMC) |
-|---|---|---|
-| Interface | Virtqueue (1 queue) | SDHCI (Arasan) |
-| Block size | 512 bytes | 512 bytes |
-| Max capacity | Host file size | Card dependent |
-| Flush semantics | Host fsync | CMD12/CMD23 |
-| DMA | VirtIO scatter-gather | ADMA2 |
-| Typical speed | Host disk speed | ~90 MB/s (UHS-I) |
+| Feature | QEMU (VirtIO-Blk) | Pi 4/5 (SD/eMMC) | Apple (ANS NVMe) |
+|---|---|---|---|
+| Interface | Virtqueue (1 queue) | SDHCI (Arasan) | Apple ANS |
+| Block size | 512 bytes | 512 bytes | 4096 bytes |
+| Max capacity | Host file size | Card dependent | Up to 8 TB |
+| Flush semantics | Host fsync | CMD12/CMD23 | NVMe flush |
+| DMA | VirtIO scatter-gather | ADMA2 | Apple IOMMU (DART) |
+| Typical speed | Host disk speed | ~90 MB/s (UHS-I) | ~3–7 GB/s |
 
 ### 4.7 RngDevice
 
@@ -574,6 +673,10 @@ enum RngVariant {
     Bcm2835 {
         base: *mut u8,
     },
+    /// Apple TRNG — hardware true random number generator.
+    AppleTrng {
+        base: *mut u8,
+    },
 }
 
 impl RngDevice {
@@ -591,12 +694,12 @@ impl RngDevice {
 
 **RNG differences by platform:**
 
-| Feature | QEMU (VirtIO-RNG) | Pi 4/5 (bcm2835-rng) |
-|---|---|---|
-| Interface | Virtqueue (1 queue) | MMIO (4 registers) |
-| Entropy source | Host `/dev/urandom` | Hardware TRNG |
-| Throughput | Host-dependent | ~1 MB/s |
-| Blocking | Via virtqueue completion | Poll RNG_STATUS register |
+| Feature | QEMU (VirtIO-RNG) | Pi 4/5 (bcm2835-rng) | Apple (TRNG) |
+|---|---|---|---|
+| Interface | Virtqueue (1 queue) | MMIO (4 registers) | MMIO |
+| Entropy source | Host `/dev/urandom` | Hardware TRNG | Hardware TRNG |
+| Throughput | Host-dependent | ~1 MB/s | ~10 MB/s |
+| Blocking | Via virtqueue completion | Poll RNG_STATUS register | Poll status register |
 
 **bcm2835-rng registers (offset from base):**
 
@@ -797,15 +900,15 @@ The following kernel components are platform-independent and do not change when 
 
 | Component | What varies |
 |---|---|
-| Interrupt controller | GICv2 vs GICv3 (register layout, acknowledge/EOI path) |
-| Timer | Frequency only (CNTFRQ_EL0 value) |
-| UART | Base address only (all platforms use PL011 currently) |
-| GPU | Entire driver (VirtIO vs VC4 vs V3D vs other) |
-| Network | Entire driver (VirtIO vs Genet vs other) |
-| Storage | Entire driver (VirtIO vs SDHCI vs NVMe vs other) |
-| RNG | Driver + register layout (VirtIO vs bcm2835 vs other) |
+| Interrupt controller | GICv2 vs GICv3 vs AIC (register layout, acknowledge/EOI path) |
+| Timer | Frequency only (CNTFRQ_EL0 value) — all aarch64 platforms use ARM Generic Timer |
+| UART | PL011 (QEMU, Pi) vs S5L (Apple) — different register layouts |
+| GPU | Entire driver (VirtIO vs VC4 vs V3D vs AGX) |
+| Network | Entire driver (VirtIO vs Genet vs PCIe NIC) |
+| Storage | Entire driver (VirtIO vs SDHCI vs ANS NVMe) |
+| RNG | Driver + register layout (VirtIO vs bcm2835 vs Apple TRNG) |
 
-The interrupt controller, timer, and RNG are the simplest to port — only register addresses and minor protocol differences. GPU, network, and storage require full device drivers for each new hardware type.
+The timer is the simplest to port — only the frequency changes (all aarch64 platforms share the ARM Generic Timer). The interrupt controller requires understanding GIC or AIC but follows a standard pattern. UART is straightforward if the platform uses PL011; Apple's S5L requires a new driver but is well-documented via Asahi Linux. GPU, network, and storage require full device drivers for each new hardware type.
 
 -----
 
@@ -928,26 +1031,26 @@ DMA buffers are mapped with non-cacheable attributes to ensure coherency between
 Complete hardware matrix for all supported platforms:
 
 ```
-                        QEMU virt           Raspberry Pi 4      Raspberry Pi 5
-─────────────────────────────────────────────────────────────────────────────────
-SoC                     Virtual             BCM2711             BCM2712
-CPU                     Cortex-A72 (emu)    Cortex-A72 (4x)    Cortex-A76 (4x)
-RAM                     Configurable        1/2/4/8 GB          4/8 GB
-──── HAL Devices (Platform trait, 7 methods) ───────────────────────────────────
-Interrupt controller    GICv3 (virtual)     GIC-400 (GICv2)     GICv3
-Timer frequency         62.5 MHz            54 MHz              54 MHz
-UART                    PL011               PL011               PL011
-GPU                     VirtIO-GPU          VideoCore VI        VideoCore VII
-Network                 VirtIO-Net          Genet (1 Gbps)      Genet (1 Gbps)
-Storage                 VirtIO-Blk          Arasan SDHCI        Arasan SDHCI
-RNG                     VirtIO-RNG          bcm2835-rng         bcm2835-rng
-──── Extension traits (see §12.6 for full matrix) ──────────────────────────────
-USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)
-Audio                   VirtIO-Sound        HDMI + I2S           HDMI + I2S
-Camera                  None                CSI-2 (1 port)       CSI-2 (2 ports)
-PCIe                    Virtual root        Gen 2 x1             Gen 3 x4
-GPIO                    None                58 pins              28 pins (RP1)
-DTB compatible          qemu,virt           brcm,bcm2711        brcm,bcm2712
+                        QEMU virt           Raspberry Pi 4      Raspberry Pi 5      Apple Silicon (M1–M4)
+─────────────────────────────────────────────────────────────────────────────────────────────────────────
+SoC                     Virtual             BCM2711             BCM2712             T8103/T6000/T6020+
+CPU                     Cortex-A72 (emu)    Cortex-A72 (4x)    Cortex-A76 (4x)    Firestorm+Icestorm+
+RAM                     Configurable        1/2/4/8 GB          4/8 GB              8/16/24/32/64/128 GB
+──── HAL Devices (Platform trait, 7 methods) ───────────────────────────────────────────────────────────
+Interrupt controller    GICv3 (virtual)     GIC-400 (GICv2)     GICv3               AIC (v1/v2)
+Timer frequency         62.5 MHz            54 MHz              54 MHz              24 MHz
+UART                    PL011               PL011               PL011               S5L UART
+GPU                     VirtIO-GPU          VideoCore VI        VideoCore VII       AGX (G13–G16)
+Network                 VirtIO-Net          Genet (1 Gbps)      Genet (1 Gbps)      PCIe NIC (1–10 Gbps)
+Storage                 VirtIO-Blk          Arasan SDHCI        Arasan SDHCI        ANS NVMe (3–7 GB/s)
+RNG                     VirtIO-RNG          bcm2835-rng         bcm2835-rng         Apple TRNG
+──── Extension traits (see §12.6 for full matrix) ──────────────────────────────────────────────────────
+USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)          XHCI (Thunderbolt)
+Audio                   VirtIO-Sound        HDMI + I2S           HDMI + I2S          HDMI + I2S + speakers
+Camera                  None                CSI-2 (1 port)       CSI-2 (2 ports)     FaceTime (ISP)
+PCIe                    Virtual root        Gen 2 x1             Gen 3 x4            Thunderbolt 3/4
+GPIO                    None                58 pins              28 pins (RP1)       None
+DTB compatible          qemu,virt           brcm,bcm2711        brcm,bcm2712        apple,t8103+
 ```
 
 -----
@@ -955,7 +1058,7 @@ DTB compatible          qemu,virt           brcm,bcm2711        brcm,bcm2712
 ## 11. Design Principles
 
 1. **Seven methods, one trait.** The Platform trait covers exactly the hardware every AIOS platform must provide: interrupts, timer, UART, GPU, network, storage, and RNG. If a board can't provide all seven, it can't run AIOS. Optional hardware (USB, WiFi, Bluetooth) uses extension traits (Section 12).
-2. **Device tree as truth.** The HAL never hardcodes MMIO addresses. All addresses come from the device tree. This means the same binary can run on different revisions of the same board.
+2. **Device tree as truth.** The HAL never hardcodes MMIO addresses. All addresses come from the device tree. This means the same binary can run on different revisions of the same board. Apple Silicon uses the Asahi Linux m1n1 bootloader to convert Apple's proprietary ADT into a standard flattened device tree.
 3. **No runtime polymorphism in hot paths.** The `GicVariant` enum uses match statements, not trait objects, in the IRQ handler. The compiler inlines the correct path. Interrupt latency is the same as a hand-written driver.
 4. **Early boot is allocation-free.** UART, interrupt controller, timer, and RNG initialization use only stack and static memory. The heap doesn't exist yet when these run.
 5. **Later devices can allocate.** GPU, network, and storage init happens after the heap is available (Phase 1/2). These drivers can use `Vec`, `Box`, and other heap types.
@@ -1496,29 +1599,32 @@ impl NpuDevice {
 | QEMU | None | No NPU emulation |
 | Pi 4 | None | GPU compute only |
 | Pi 5 | None | GPU compute only |
-| Future | 10–40 TOPS NPU | Expected on next-gen SoCs |
+| Apple M1 | Apple Neural Engine (16 TOPS) | 16-core NPU |
+| Apple M2 | Apple Neural Engine (15.8 TOPS) | 16-core NPU |
+| Apple M3 | Apple Neural Engine (18 TOPS) | 16-core NPU |
+| Apple M4 | Apple Neural Engine (38 TOPS) | 16-core NPU, enhanced |
 
-No current AIOS platform has a dedicated NPU, but the industry trend is clear — future aarch64 SoCs will include ML accelerators (see architecture.md §Future). AIRS currently runs inference on CPU (see airs.md), but an NPU extension trait would allow hardware-accelerated inference with the same AIRS API.
+Apple Silicon is the first AIOS platform with a dedicated NPU. The Apple Neural Engine (ANE) provides 16–38 TOPS of ML inference throughput, making it a strong candidate for on-device AIRS acceleration. The ANE is accessed through Apple-proprietary MMIO interfaces documented via Asahi Linux reverse engineering. AIRS currently runs inference on CPU (see airs.md), but the NPU extension trait would allow hardware-accelerated inference with the same AIRS API.
 
 ### 12.6 Platform Comparison (Extension Traits)
 
 ```
-                        QEMU virt           Raspberry Pi 4      Raspberry Pi 5
-──── Tier 1 ────────────────────────────────────────────────────────────────────
-USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)
-Audio                   VirtIO-Sound        HDMI + I2S           HDMI + I2S
-Camera                  None                CSI-2 (1 port)       CSI-2 (2 ports)
-──── Tier 2 ────────────────────────────────────────────────────────────────────
-PCIe                    Virtual root        Gen 2 x1             Gen 3 x4
-NVMe                    Emulated            None                 Via PCIe
-Watchdog                Virtual             BCM2835              BCM2835
-GPIO                    None                58 pins              28 pins (RP1)
-──── Tier 3 ────────────────────────────────────────────────────────────────────
-I2C                     None                6 buses              6 buses (RP1)
-SPI                     None                Multiple             Multiple (RP1)
-PWM                     None                2 channels           4 channels (RP1)
-Crypto accelerator      None                ARMv8 CE (CPU)       ARMv8 CE (CPU)
-NPU                     None                None                 None
+                        QEMU virt           Raspberry Pi 4      Raspberry Pi 5      Apple Silicon
+──── Tier 1 ────────────────────────────────────────────────────────────────────────────────────────
+USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)          XHCI (Thunderbolt)
+Audio                   VirtIO-Sound        HDMI + I2S           HDMI + I2S          HDMI + speakers + I2S
+Camera                  None                CSI-2 (1 port)       CSI-2 (2 ports)     FaceTime (Apple ISP)
+──── Tier 2 ────────────────────────────────────────────────────────────────────────────────────────
+PCIe                    Virtual root        Gen 2 x1             Gen 3 x4            Thunderbolt 3/4
+NVMe                    Emulated            None                 Via PCIe             ANS (built-in)
+Watchdog                Virtual             BCM2835              BCM2835              Apple WDT
+GPIO                    None                58 pins              28 pins (RP1)       None
+──── Tier 3 ────────────────────────────────────────────────────────────────────────────────────────
+I2C                     None                6 buses              6 buses (RP1)       I2C (internal)
+SPI                     None                Multiple             Multiple (RP1)      SPI (internal)
+PWM                     None                2 channels           4 channels (RP1)    None
+Crypto accelerator      None                ARMv8 CE (CPU)       ARMv8 CE (CPU)       ARMv8 CE + Secure Enclave
+NPU                     None                None                 None                 Apple Neural Engine (16 TOPS+)
 ```
 
 ### 12.7 WiFi and Bluetooth
@@ -1539,3 +1645,229 @@ pub trait PlatformBluetooth: Platform {
 | `PlatformBluetooth` | None | External dongles via USB on all current platforms |
 
 WiFi and Bluetooth are currently external USB devices on all supported platforms, so they're discovered through the USB subsystem → Subsystem Framework path rather than through a platform extension trait. The extension traits exist for future platforms with built-in WiFi/BT hardware (e.g., boards with on-SoC wireless like the ESP32 or future Broadcom SoCs with integrated WLAN).
+
+-----
+
+## 13. HAL Security
+
+The HAL is the lowest software layer — it directly touches hardware registers, DMA buffers, and interrupt controllers. A compromised HAL means a compromised system. This section documents the security properties the HAL enforces and the hardware security features each platform provides.
+
+### 13.1 IOMMU / DMA Protection
+
+DMA-capable devices can read and write physical memory without CPU involvement. Without an IOMMU, a malicious or buggy device (or a compromised driver) can DMA to arbitrary physical addresses — reading kernel secrets, overwriting page tables, or injecting code.
+
+The HAL uses the platform's IOMMU to constrain each device to a restricted set of physical pages:
+
+```rust
+/// IOMMU abstraction — restricts device DMA to explicitly mapped regions.
+pub struct Iommu {
+    variant: IommuVariant,
+}
+
+enum IommuVariant {
+    /// ARM SMMU (System MMU) — Pi 5, QEMU with smmuv3.
+    /// Per-device stream tables map Stream IDs to device page tables.
+    Smmu {
+        base: *mut u8,
+        stream_table: *mut u8,
+        command_queue: *mut u8,
+        event_queue: *mut u8,
+    },
+    /// Apple DART (Device Address Resolution Table) — Apple Silicon.
+    /// Each device has its own DART instance with per-device page tables.
+    Dart {
+        base: *mut u8,
+        num_streams: u32,
+    },
+    /// No IOMMU — Pi 4. Use bounce buffers as mitigation.
+    None,
+}
+
+impl Iommu {
+    /// Map a physical page for device DMA access.
+    /// The device can only DMA to pages explicitly mapped here.
+    pub fn map_for_device(
+        &self,
+        device_id: u32,
+        iova: u64,          // I/O virtual address (device sees this)
+        phys: u64,          // physical address (actual memory)
+        size: usize,
+        permissions: DmaPermissions,
+    ) -> Result<()>;
+
+    /// Unmap a previously mapped region. Device can no longer access it.
+    pub fn unmap_for_device(
+        &self,
+        device_id: u32,
+        iova: u64,
+        size: usize,
+    ) -> Result<()>;
+
+    /// Check if the IOMMU has logged any access violations.
+    /// Called periodically and on IOMMU fault interrupts.
+    pub fn check_faults(&self) -> Vec<IommuFault>;
+}
+
+pub struct DmaPermissions {
+    pub read: bool,     // Device can read from this region
+    pub write: bool,    // Device can write to this region
+}
+
+pub struct IommuFault {
+    pub device_id: u32,
+    pub address: u64,
+    pub was_write: bool,
+    pub timestamp: u64,
+}
+```
+
+**IOMMU support by platform:**
+
+| Platform | IOMMU Hardware | Protection Level |
+|---|---|---|
+| QEMU virt | VirtIO IOMMU or SMMUv3 (configurable) | Full — per-device page tables |
+| Raspberry Pi 4 | None | Bounce buffers only (weaker) |
+| Raspberry Pi 5 | ARM SMMU in BCM2712 | Full — per-device page tables |
+| Apple Silicon | Apple DART | Full — per-device DART instances |
+
+**DART (Apple)** is Apple's proprietary IOMMU. Each PCIe device, USB controller, and internal peripheral has its own DART instance. DART enforces that a device can only access memory regions the kernel has explicitly mapped for it. DART page tables use a two-level structure (similar to ARM stage-2 translation) and are managed entirely by the HAL. A DART fault (unauthorized DMA attempt) triggers an interrupt, logs an audit event, and aborts the transaction — the kernel does not crash.
+
+**Pi 4 mitigation:** On Pi 4 (no SMMU), the HAL uses **bounce buffers** — a dedicated physical memory region for all DMA. The kernel copies data between the bounce buffer and actual buffers before/after each DMA operation. This prevents devices from accessing arbitrary physical memory but adds latency. The bounce buffer region is configured at boot and is not accessible to userspace processes.
+
+### 13.2 MMIO Access Safety
+
+All MMIO access in the HAL goes through the safe primitives in §5 (`mmio_read32`, `mmio_write32`). These enforce:
+
+1. **Volatile semantics** — the compiler cannot optimize away or reorder MMIO accesses.
+2. **Device memory attributes** — nGnRnE mapping prevents the CPU from caching, reordering, or coalescing device register accesses.
+3. **Kernel-only access** — MMIO regions are mapped in the kernel address space only. Userspace processes cannot access device registers directly; they must go through the Subsystem Framework (subsystem-framework.md) which mediates access through capability-gated IPC.
+
+**Guard pages around MMIO regions:** Each MMIO mapping is surrounded by unmapped guard pages. An off-by-one error in a driver that reads past the end of a device's register space triggers an immediate page fault rather than silently accessing an adjacent device's registers.
+
+### 13.3 Platform Hardware Security Features
+
+Each aarch64 platform provides different hardware security primitives. The HAL exposes these through a `PlatformSecurity` extension trait:
+
+```rust
+/// Extension trait: platforms report their hardware security capabilities.
+pub trait PlatformSecurity: Platform {
+    /// Query which hardware security features this platform supports.
+    fn security_capabilities(&self) -> HardwareSecurityCaps;
+}
+
+pub struct HardwareSecurityCaps {
+    /// Pointer Authentication Codes (ARMv8.3-PAuth).
+    /// Signs return addresses and pointers to prevent ROP attacks.
+    pub pac: bool,
+
+    /// Branch Target Identification (ARMv8.5-BTI).
+    /// Marks valid indirect branch targets; fault on invalid jumps.
+    pub bti: bool,
+
+    /// Memory Tagging Extension (ARMv8.5-MTE).
+    /// 4-bit tags on pointers and memory granules; detect use-after-free,
+    /// buffer overflow, and type confusion at hardware speed.
+    pub mte: bool,
+
+    /// IOMMU available for DMA isolation.
+    pub iommu: bool,
+
+    /// Hardware cryptographic acceleration (ARMv8 CE: AES, SHA).
+    pub crypto_extensions: bool,
+
+    /// Secure Enclave or TrustZone available for key storage.
+    pub secure_enclave: bool,
+
+    /// Neural Processing Unit for on-device ML inference.
+    pub npu: bool,
+}
+```
+
+**Hardware security capabilities by platform:**
+
+| Feature | QEMU virt | Raspberry Pi 4 | Raspberry Pi 5 | Apple Silicon |
+|---|---|---|---|---|
+| **PAC** (Pointer Auth) | Emulated | No (Cortex-A72) | Yes (Cortex-A76) | Yes (all generations) |
+| **BTI** (Branch Target ID) | Emulated | No (Cortex-A72) | Yes (Cortex-A76) | Yes (all generations) |
+| **MTE** (Memory Tagging) | Emulated | No | No | Yes (M3/M4 only) |
+| **IOMMU** (DMA protection) | Configurable | No (bounce buffers) | Yes (SMMU) | Yes (DART) |
+| **Crypto Extensions** (AES/SHA) | Emulated | Yes (ARMv8 CE) | Yes (ARMv8 CE) | Yes (ARMv8 CE) |
+| **Secure Enclave** | No | No | No | Yes (SEP) |
+| **NPU** | No | No | No | Yes (ANE, 16–38 TOPS) |
+
+**Key observations:**
+
+- **PAC/BTI** require ARMv8.3+. Cortex-A72 (Pi 4) lacks them — the kernel must compile with `-mbranch-protection=none` for Pi 4 and `-mbranch-protection=pac-ret+bti` for Pi 5 and Apple Silicon. This is a compile-time decision per target platform.
+- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see security.md §13).
+- **Apple Secure Enclave Processor (SEP)** is a physically separate processor with its own encrypted memory. It stores cryptographic keys, biometric data, and performs attestation. The kernel communicates with SEP via a mailbox interface. SEP provides:
+  - Hardware key storage (keys never leave the SEP)
+  - Boot attestation (SEP verifies the boot chain before releasing disk encryption keys)
+  - Biometric authentication (Touch ID / Face ID)
+  - Secure credential storage for capability tokens
+
+### 13.4 DMA Buffer Zeroing
+
+The HAL zeroes all DMA buffers before returning them to the allocator. This prevents data leakage between devices and between driver invocations:
+
+```rust
+impl Drop for DmaBuffer {
+    fn drop(&mut self) {
+        // Zero the buffer before freeing to prevent data leakage.
+        // Uses volatile writes to prevent the compiler from optimizing away.
+        unsafe {
+            core::ptr::write_bytes(self.virt, 0, self.size);
+        }
+        kernel_unmap_dma(self.virt, self.size);
+        page_allocator.free_contiguous(self.phys, self.size);
+    }
+}
+```
+
+This is especially important for network buffers (which may contain credentials or session tokens) and storage buffers (which may contain user data). The zeroing uses volatile writes to prevent the compiler from optimizing it away.
+
+### 13.5 Interrupt Security
+
+The interrupt controller must be protected against:
+
+1. **IRQ flooding** — a device firing interrupts at maximum rate to starve the CPU. The HAL implements per-IRQ rate limiting: if an IRQ fires more than 10,000 times per second, the HAL disables it, logs an audit event, and notifies the Service Manager to investigate the device driver.
+
+2. **Spurious interrupts** — the HAL validates every acknowledged IRQ number against the expected range. Invalid IRQ numbers are logged and discarded, not dispatched to handlers.
+
+3. **IPI injection** — on multi-core systems, one CPU can send an IPI (inter-processor interrupt) to another. The HAL validates that IPIs originate from kernel code (not a compromised device) by checking the interrupt source register.
+
+### 13.6 Device Tree Validation
+
+The device tree is the HAL's source of truth for hardware addresses. A malformed or malicious device tree could direct the kernel to map MMIO at arbitrary physical addresses. The HAL validates device tree entries during platform detection:
+
+```rust
+/// Validate that a device tree MMIO region is within expected bounds.
+fn validate_mmio_region(phys: u64, size: usize) -> Result<()> {
+    // Reject regions that overlap with RAM (DRAM is not MMIO)
+    if overlaps_ram(phys, size) {
+        return Err(HalError::InvalidMmioRegion);
+    }
+    // Reject zero-sized regions
+    if size == 0 {
+        return Err(HalError::InvalidMmioRegion);
+    }
+    // Reject regions above the physical address space
+    if phys + size as u64 > MAX_PHYS_ADDR {
+        return Err(HalError::InvalidMmioRegion);
+    }
+    Ok(())
+}
+```
+
+On Apple Silicon, the device tree is produced by the m1n1 bootloader from Apple's proprietary ADT format. m1n1 is part of the trusted boot chain — if it's compromised, the device tree cannot be trusted regardless of validation. The HAL validation catches accidental misconfigurations, not adversarial compromise of the bootloader.
+
+### 13.7 Security Design Principles for Platform Implementations
+
+When implementing the `Platform` trait for a new board, follow these security requirements:
+
+1. **Enable IOMMU if available.** Always configure the SMMU/DART before initializing DMA-capable devices. Never allow unrestricted DMA.
+2. **Enable PAC/BTI if the CPU supports it.** Query the CPU feature registers (`ID_AA64ISAR1_EL1` for PAC, `ID_AA64PFR1_EL1` for BTI) and enable the corresponding features.
+3. **Enable MTE if the CPU supports it.** Query `ID_AA64PFR1_EL1` for MTE support. Configure the kernel for sync mode, userspace for async mode.
+4. **Zero all device state on init_*() failure.** If a device initialization fails, ensure no partial state leaks — zero any allocated buffers, unmap any mapped regions.
+5. **Validate all device tree addresses.** Never trust MMIO base addresses from the device tree without checking they don't overlap RAM or other sensitive regions.
+6. **Rate-limit interrupts.** Configure per-IRQ rate limiting in the interrupt controller to prevent IRQ flooding attacks.
+7. **Use bounce buffers on platforms without IOMMU.** Never allow untrusted devices to DMA directly to kernel memory.
