@@ -2065,7 +2065,1104 @@ This section tracks concepts that boot.md references which are defined (or need 
 
 -----
 
-## 15. Documentation Gaps
+## 15. Suspend, Resume, and Semantic State
+
+Users rarely cold boot. The daily experience is closing a lid, pressing a power button, or walking away. The system's job is to make returning feel instantaneous and *lossless* — nothing should ever be lost, regardless of how the system went down. AIOS provides four layers of state continuity, from fastest-cheapest to most-resilient:
+
+```
+Layer               Resume Time    Survives          State Fidelity
+──────────────────────────────────────────────────────────────────────
+S3 (Suspend-to-RAM)     < 200ms   Lid close/open    Perfect (RAM powered)
+S4 (Hibernate)          ~1.5s     Power loss         Perfect (RAM → disk)
+Semantic Resume         ~2.0s     Kernel update      Reconstructed (semantic)
+Ambient Continuity     (always on) Crash, panic, fire Continuous (Spaces)
+```
+
+### 15.1 Suspend-to-RAM (S3)
+
+The fastest resume path. CPU cores are powered down, DRAM stays in self-refresh, and all device state is saved to kernel memory. On wake, the kernel restores device state and resumes exactly where it left off.
+
+**Suspend sequence:**
+
+```
+1. User closes lid / presses power button / idle timeout
+     │
+     ▼
+2. Service Manager receives SuspendRequest
+   - Broadcasts SuspendPrepare to all running services (via lifecycle channel)
+   - Services have 2 seconds to:
+     ├── Flush pending I/O (Space Storage commits dirty buffers)
+     ├── Save volatile state (compositor saves scanout buffer hash)
+     ├── Park DMA engines (Block Engine quiesces controller)
+     └── Reply: SuspendReady
+   - Services that don't reply in 2 seconds are force-frozen
+     │
+     ▼
+3. Kernel suspend path
+   - Disable all interrupts except wake sources
+   - Save per-core state: VBAR_EL1, TTBR0_EL1, SP, callee-saved registers
+   - Save GIC state: distributor config, redistributor per-core state
+   - Save timer state: CNTV_CTL_EL0, CNTV_CVAL_EL0
+   - Call platform.suspend_devices():
+     ├── UART: save baud rate config (restore on wake)
+     ├── GPU: save mode/scanout state (VirtIO-GPU or VC4/V3D)
+     ├── Network: save MAC filters, link state (Genet or VirtIO-Net)
+     ├── Storage: controller quiesced (no DMA in flight)
+     └── RNG: no state to save
+   - Park secondary CPUs via PSCI CPU_SUSPEND
+   - Boot CPU enters PSCI SYSTEM_SUSPEND
+     │
+     ▼
+   DRAM in self-refresh. System draws < 50 mW.
+```
+
+**Wake sequence:**
+
+```
+Wake source fires (lid open, power button, RTC alarm, network wake-on-LAN)
+     │
+     ▼
+1. Firmware restarts boot CPU at the suspend resume entry point
+   - NOT the normal boot path — jumps to saved resume address
+   - Boot CPU restores: MMU (TTBR1_EL1), stack pointer, exception vectors
+     │
+     ▼
+2. Kernel resume path
+   - Restore GIC state (distribupts, redistributor)
+   - Restore timer state, re-arm scheduler tick
+   - Call platform.resume_devices() (reverse of suspend_devices)
+   - Resume secondary CPUs via PSCI CPU_ON (same trampoline as boot)
+     │
+     ▼
+3. Service Manager resumes
+   - Broadcasts ResumeNotify to all frozen services
+   - Services restore volatile state, re-establish connections
+   - Compositor presents the last frame immediately (no re-render needed)
+     │
+     ▼
+4. User sees their desktop — exactly as they left it
+   Total resume time: < 200ms (dominated by device re-init)
+```
+
+**Wake sources by platform:**
+
+```
+Platform    Wake Sources                                Notes
+──────────────────────────────────────────────────────────────
+QEMU        Keyboard, timer (RTC alarm)                 No lid, no real power mgmt
+Pi 4        GPIO (power button), USB (keyboard),        No built-in RTC; external
+            Genet (wake-on-LAN), timer (ext RTC)        RTC module needed for timed wake
+Pi 5        GPIO (power button), USB, Genet,            Built-in RTC with battery
+            RTC (built-in), PCIe wake                   connector — timed wake works
+```
+
+**PSCI power states:** ARM PSCI defines power states for suspend. AIOS uses the deepest state that preserves DRAM:
+
+```rust
+pub enum SuspendPowerState {
+    /// CPU cores off, L2 off, DRAM in self-refresh.
+    /// Deepest state that preserves memory. Used for S3.
+    DeepSleep,
+    /// CPU cores in WFI, L2 retained, DRAM active.
+    /// Used for short idle (< 30 seconds). Faster wake (~5ms).
+    LightSleep,
+}
+```
+
+### 15.2 Hibernate (S4)
+
+Hibernate writes the entire system state to persistent storage, then powers off completely. On wake, the state is read back and the system resumes. This survives complete power loss — pull the plug, replace the battery, come back a week later, everything is exactly where you left it.
+
+**Hibernate is S3 with a safety net.** AIOS enters S3 first (fast wake), and starts writing the hibernate image to storage *in the background while the system is suspended*. If power fails during S3 (DRAM loses content), the next boot detects the hibernate image and resumes from it. If S3 wake succeeds normally, the hibernate image is discarded.
+
+```
+Suspend Request
+  │
+  ├── Enter S3 (immediate, < 200ms)
+  │     User's screen off, system sleeping
+  │
+  └── Background: write hibernate image to block device
+      (DMA engine runs in sleep, writing DRAM pages to
+       a reserved partition: the hibernate image partition)
+        │
+        ├── Power stays on → S3 wake is used (fast, < 200ms)
+        │                     Hibernate image discarded
+        │
+        └── Power lost → next cold boot detects hibernate image
+                          Restore from disk (~1.5s)
+```
+
+**Hibernate image format:**
+
+```rust
+pub struct HibernateImage {
+    magic: u64,                         // 0x41494F53_48494245 ("AIOSHIBE")
+    version: u32,                       // format version
+    kernel_version: u64,                // must match running kernel
+    checksum: [u8; 32],                // SHA-256 of payload
+    page_count: u64,                   // number of pages saved
+    compressed_size: u64,              // zstd-compressed payload size
+
+    // CPU state for each core
+    cpu_states: [CpuSuspendState; MAX_CPUS],
+
+    // Device state snapshots
+    device_states: DeviceStateBlock,
+
+    // Compressed memory pages (zstd stream)
+    // Only dirty pages are saved — clean pages backed by
+    // Space Storage or mmap'd files are not included
+    // (they'll be demand-paged from storage on access).
+    pages: CompressedPageStream,
+}
+```
+
+**Key optimization:** Only dirty pages are written. Clean pages (kernel text, mmap'd model weights, read-only space data) are demand-paged from storage on resume. On a system with 4 GB RAM where 1.5 GB is clean file-backed pages, the hibernate image is ~2.5 GB uncompressed, ~1.2 GB compressed. At SD card write speeds (50 MB/s), that's ~24 seconds to write — which is fine because it happens in background during S3.
+
+**Hibernate partition:** A dedicated raw partition on the block device (not a Space — it must be accessible before Space Storage starts). The Block Engine reserves this during first-boot formatting:
+
+```
+Block device layout:
+  [Superblock] [Panic dump] [Hibernate partition] [WAL] [Main storage]
+                              └─ sized to match physical RAM
+```
+
+### 15.3 Semantic Resume
+
+This is where AIOS diverges from every other OS.
+
+Traditional hibernate saves raw memory — a perfect snapshot of RAM. But that snapshot is brittle: it's tied to a specific kernel version (data structures must match), specific hardware (device handles are meaningless after a hardware change), and a specific moment (no way to partially resume). If you update the kernel, the hibernate image is invalid. If you move the disk to a different machine, the image is useless.
+
+**Semantic Resume saves meaning, not bits.** Instead of dumping 4 GB of RAM, it captures a compact semantic description of the user's state:
+
+```rust
+pub struct SemanticSnapshot {
+    /// When this snapshot was taken
+    timestamp: Timestamp,
+
+    /// Active workspace layout
+    workspace: WorkspaceState,
+
+    /// Open spaces and cursor positions within each
+    open_spaces: Vec<OpenSpaceState>,
+
+    /// Active agents and their conversation context
+    active_agents: Vec<AgentSessionState>,
+
+    /// Compositor window geometry and z-order
+    window_layout: Vec<WindowState>,
+
+    /// Conversation bar state (draft text, history position)
+    conversation: ConversationBarState,
+
+    /// Context Engine's last inference (work/play/focus mode)
+    context_mode: ContextMode,
+
+    /// Attention Manager's pending notification queue
+    pending_notifications: Vec<NotificationState>,
+
+    /// Currently focused element (which window, which field)
+    focus: FocusState,
+
+    /// Scroll positions, selection ranges, cursor positions
+    /// across all visible content
+    view_states: Vec<ViewState>,
+}
+
+pub struct OpenSpaceState {
+    space_id: SpaceId,
+    /// Content hash of the object being viewed/edited
+    object_hash: ContentHash,
+    /// Cursor/selection within the content
+    cursor: CursorState,
+    /// Scroll position (normalized 0.0–1.0)
+    scroll: f64,
+    /// Unsaved edits (stored as a diff against the object)
+    pending_edits: Option<EditDiff>,
+}
+
+pub struct AgentSessionState {
+    agent_id: AgentId,
+    /// Conversation history (lightweight: just message IDs referencing Spaces)
+    conversation_ref: SpaceObjectRef,
+    /// Agent's declared resumable state (agent-specific, opaque to the kernel)
+    agent_state: Vec<u8>,
+    /// What the agent was doing when suspended
+    active_task: Option<TaskDescription>,
+}
+
+pub struct WindowState {
+    service_id: ServiceId,
+    /// Position and size (logical pixels)
+    geometry: Rect,
+    /// Z-order index
+    z_order: u32,
+    /// Minimized / maximized / floating
+    display_mode: WindowDisplayMode,
+    /// Content identity (which space/object/agent this window shows)
+    content_ref: ContentReference,
+}
+```
+
+**When Semantic Resume is used:**
+
+```
+Boot starts → check for semantic snapshot in system/session/
+  │
+  ├── Snapshot exists + kernel version matches → try S4 hibernate first
+  │     (hibernate is faster and preserves more state)
+  │
+  ├── Snapshot exists + kernel version CHANGED → semantic resume
+  │     1. Boot proceeds normally through all 5 phases
+  │     2. After Phase 5, Service Manager reads semantic snapshot
+  │     3. Workspace restores window layout from WindowState entries
+  │     4. Spaces are opened and scrolled to saved positions
+  │     5. Agents are relaunched and handed their AgentSessionState
+  │     6. Conversation bar restores draft text
+  │     7. Context Engine adopts saved mode (skips cold inference)
+  │     8. Focus is restored to the saved element
+  │     User sees their workspace reconstructed in ~500ms after desktop
+  │
+  └── No snapshot → fresh boot (first boot or after factory reset)
+```
+
+**Why this matters:**
+- **Kernel updates don't disrupt your session.** Update, reboot, everything is back. No other OS does this.
+- **Cross-device continuity.** Copy your Spaces to a new device, boot, and your workspace reconstructs itself. The semantic snapshot travels with your data because it's stored *in* Spaces.
+- **Crash recovery.** Even after a kernel panic, the last semantic snapshot (written continuously — see §15.4) restores context.
+- **Partial resume.** Semantic Resume can skip stale elements. If an agent was uninstalled since the snapshot, it's silently dropped. If a space was deleted, that window is omitted. The system doesn't crash on stale state — it adapts.
+
+**The semantic snapshot is written to `system/session/` as a Space object.** This means it's versioned, content-addressed, and encrypted (if user spaces are encrypted). The Service Manager writes a new snapshot every 60 seconds during normal operation, and immediately before suspend/shutdown. The overhead is negligible — it's typically < 50 KiB of structured data.
+
+### 15.4 Ambient State Continuity
+
+Semantic Resume captures state every 60 seconds. But what about the 59 seconds between snapshots? If the power cuts 30 seconds after the last snapshot, 30 seconds of work could be lost.
+
+**Ambient State Continuity** is the principle that user-visible state is *continuously* persisted. The system should *never* lose more than a few seconds of user activity, regardless of how it goes down.
+
+This is possible because Spaces already provides content-addressed, versioned storage. The missing piece is making writes *continuous* rather than batched:
+
+```
+Traditional OS:
+  User types → in-memory buffer → "Save" → disk
+  Power loss before save → data lost
+
+AIOS Ambient Continuity:
+  User types → in-memory buffer → continuous trickle to Space WAL
+  Power loss → WAL replay → at most ~2 seconds of keystrokes lost
+```
+
+**Implementation — three tiers:**
+
+**Tier 1: Edit Journal (< 2 second loss window).** Every user input event that modifies content (keystroke, paste, drag, delete) is appended to a per-space *edit journal* in the Block Engine's WAL. The WAL is designed for sequential appends and is fsynced every 2 seconds. On crash, WAL replay reapplies the journal to the last committed object version.
+
+```rust
+pub struct EditJournalEntry {
+    space_id: SpaceId,
+    object_hash: ContentHash,          // base version
+    timestamp: Timestamp,
+    operation: EditOperation,
+}
+
+pub enum EditOperation {
+    InsertText { offset: usize, text: String },
+    DeleteRange { offset: usize, len: usize },
+    ReplaceRange { offset: usize, len: usize, text: String },
+    // ... extensible per content type
+}
+```
+
+**Tier 2: Semantic Snapshot (60-second interval).** The full SemanticSnapshot from §15.3, capturing workspace layout, agent states, and view positions. Written to `system/session/` as a Space object.
+
+**Tier 3: Space Object Commits (application-driven).** Agents and services commit completed units of work to Spaces on their own schedule. A document agent commits after each paragraph. A music agent commits its playlist state after each track change. These are full content-addressed objects with version history.
+
+**On recovery (crash, panic, power loss):**
+
+```
+1. Block Engine starts, replays WAL
+   → Tier 1 edit journal entries applied to objects
+   → At most ~2 seconds of edits lost
+
+2. Space Storage starts, verifies objects
+   → Tier 3 committed objects are intact (content-addressed, checksummed)
+
+3. Phase 5 starts, reads semantic snapshot from system/session/
+   → Tier 2 workspace layout restored (at most ~60 seconds stale)
+   → Window positions may be slightly off; agents may ask
+     "Resume from where you left off?" if their state is stale
+
+4. User sees their workspace, with content intact
+   → The document they were typing has everything except
+     the last ~2 seconds of keystrokes
+```
+
+**Cost:** The WAL write overhead for Tier 1 is ~500 bytes per keystroke event, fsynced in batches every 2 seconds. On a 100 WPM typist, that's ~4 KB/s — negligible even on SD cards. The semantic snapshot (Tier 2) is < 50 KiB every 60 seconds. The total overhead of ambient continuity is unmeasurable in normal usage.
+
+### 15.5 Proactive Wake
+
+AIRS observes usage patterns over time: when the user typically wakes the device, how long boot takes, which services and models they use first. Proactive Wake uses this to pre-warm the system *before* the user arrives.
+
+```
+Monday–Friday:
+  User's alarm is 7:00 AM (calendar event in Spaces)
+  User typically opens the laptop at 7:15 AM
+  AIRS model load takes ~3 seconds
+
+  → System wakes at 7:12 AM (3 minutes before predicted use)
+  → Pre-loads AIRS model into memory (fault in pages from mmap)
+  → Warms Space index caches (recent workspaces)
+  → Checks for and downloads OTA updates (if idle window)
+  → NTP sync (clock may have drifted during sleep)
+  → Screen stays off — no power wasted on display
+  → When user opens lid at 7:15 → instant response, model warm
+```
+
+**How it works:**
+
+```rust
+pub struct ProactiveWakeConfig {
+    /// Whether proactive wake is enabled (user preference).
+    /// Default: on. Can be disabled for power savings.
+    enabled: bool,
+
+    /// Minimum confidence before scheduling a proactive wake.
+    /// Range: 0.0–1.0. Default: 0.7 (70% confidence).
+    confidence_threshold: f32,
+
+    /// How far ahead of predicted use to wake (for pre-warming).
+    /// Default: 180 seconds. Adjusted by AIRS based on observed
+    /// pre-warm duration (model load time + cache warming time).
+    lead_time: Duration,
+
+    /// Maximum time to stay awake if the user doesn't arrive.
+    /// Default: 600 seconds (10 minutes). After this, re-suspend.
+    max_idle_awake: Duration,
+
+    /// Power source requirement. Default: AcOrBatteryAbove50.
+    power_policy: ProactiveWakePowerPolicy,
+}
+
+pub enum ProactiveWakePowerPolicy {
+    /// Only proactive-wake on AC power
+    AcOnly,
+    /// AC or battery above threshold
+    AcOrBatteryAbove50,
+    /// Always (even on low battery)
+    Always,
+}
+```
+
+**Wake scheduling:** The kernel programs the RTC (Pi 5's built-in RTC, or an external RTC module on Pi 4) with a wake alarm. On QEMU, the UEFI RTC is used. The alarm fires, the system resumes from S3, runs the pre-warm tasks with the screen off, then either:
+- The user arrives → screen on, instant response
+- The timeout expires → re-suspend (cost: a few seconds of power)
+
+**Learning:** AIRS maintains a simple usage model in `system/session/proactive_wake`:
+
+```
+Day-of-week × hour-of-day → probability of first interaction
+```
+
+A 7×24 grid (168 cells), updated daily with exponential decay. After two weeks of consistent usage, predictions are reliable. No cloud needed — all local.
+
+**Privacy:** Proactive Wake schedules are stored locally in `system/session/` and never leave the device. The usage model is a simple probability grid, not a detailed activity log. The user can inspect and delete it via Preferences.
+
+-----
+
+## 16. Boot Intelligence
+
+### 16.1 Boot Intent Detection
+
+Not every boot should result in a full desktop. AIOS detects *why* it's booting and adapts the service graph accordingly:
+
+```rust
+pub enum BootIntent {
+    /// Normal boot — user pressed power button or opened lid.
+    /// Full service graph: Phases 1-5.
+    Interactive,
+
+    /// Resume from suspend — S3 or S4.
+    /// Skip Phases 1-5, restore from memory or disk image.
+    Resume,
+
+    /// Proactive wake — RTC alarm, no user yet.
+    /// Phase 1-2 only. Pre-warm caches. Screen off. Re-suspend after timeout.
+    ProactiveWake,
+
+    /// Scheduled task — calendar event, backup schedule, OTA check.
+    /// Phase 1-3 only. Run the task, then suspend.
+    ScheduledTask { task: ScheduledTaskId },
+
+    /// Recovery — three consecutive boot failures.
+    /// Minimal services, UART console.
+    Recovery,
+
+    /// Safe mode — user held Shift during boot.
+    /// Reduced services, no AIRS, no agents.
+    SafeMode,
+
+    /// Update — staged update, need to apply and verify.
+    /// Full boot but with update verification on Phase 5 completion.
+    Update,
+
+    /// Data transfer — USB device plugged into a powered-off device.
+    /// (Pi only: USB-C power + data) Phase 1-2 only, expose storage via USB gadget.
+    DataTransfer,
+}
+```
+
+**How intent is detected:**
+
+```
+Boot starts
+  │
+  ├── UEFI variable: consecutive_failures >= 3?
+  │     YES → BootIntent::Recovery
+  │
+  ├── Hibernate image present with valid kernel version?
+  │     YES → BootIntent::Resume (S4)
+  │
+  ├── S3 resume entry point? (resume from RAM)
+  │     YES → BootIntent::Resume (S3)
+  │
+  ├── RTC alarm triggered? (device tree / UEFI wake source register)
+  │     YES → check scheduled_tasks table in system/session/
+  │     ├── Proactive wake entry → BootIntent::ProactiveWake
+  │     └── Scheduled task entry → BootIntent::ScheduledTask
+  │
+  ├── Boot command line contains "safe"?
+  │     YES → BootIntent::SafeMode
+  │
+  ├── Staged update detected? (aios.elf is newer than last successful boot)
+  │     YES → BootIntent::Update
+  │
+  └── Default → BootIntent::Interactive
+```
+
+**Service graph adaptation:** The Service Manager reads `BootIntent` from `KernelState` and adjusts the phase plan:
+
+```
+Intent              Phases Run          Display   AIRS    Network   Services
+──────────────────────────────────────────────────────────────────────────────
+Interactive         1-5 (full)          On        Yes     Yes       All
+Resume              (skipped)           On        Warm    Restore   Restore
+ProactiveWake       1-2 (partial)       Off       Warm    Yes       Minimal
+ScheduledTask       1-3 (partial)       Off       Maybe   Yes       Task-specific
+Recovery            1 + recovery shell  UART      No      No        Minimal
+SafeMode            1-2, 4 (partial)    On        No      No        Reduced
+Update              1-5 (full)          On        Yes     Yes       All + verify
+DataTransfer        1-2 (partial)       Off       No      USB only  Storage + USB
+```
+
+### 16.2 Predictive Boot Configuration
+
+AIRS learns usage patterns and adjusts the boot configuration to optimize for expected use. This isn't about changing *which* services start — it's about changing *how* they start:
+
+**Model pre-selection:** If AIRS observes that the user always loads the coding agent on weekday mornings, and that agent benefits from the code-specialized model variant, AIRS can pre-select that model during Phase 3 instead of the general-purpose default. The model switch is seamless — by the time the user opens the coding agent, the right model is already loaded.
+
+**Cache warming:** The Block Engine can prefetch blocks that are likely to be needed. AIRS maintains a per-intent block access trace:
+
+```rust
+pub struct BootAccessTrace {
+    intent: BootIntent,
+    context: BootContext,           // day of week, time of day, peripherals
+    blocks_accessed: Vec<BlockId>,  // ordered by first access time
+    timestamp: Timestamp,
+}
+```
+
+On the next boot with a matching context, the Block Engine prefetches these blocks during Phase 1 (while other services are initializing). By the time Phase 5 renders the workspace, the hot data is already in the page cache. This is similar to Linux's `readahead` but context-aware — different prefetch sets for different usage patterns.
+
+**Agent prelaunch:** If the user always launches the same three agents after boot, the Agent Runtime can start them during Phase 5 before the workspace is visible. The agents are ready by the time the user sees the desktop. This is controlled by a frequency threshold — agents launched in 80%+ of recent boots are auto-prelaunch candidates (distinct from the explicit "autostart" flag in agent manifests).
+
+### 16.3 Readahead and Predictive I/O
+
+Beyond AIRS-driven prediction, the kernel itself performs boot readahead — a proven technique made smarter:
+
+**Boot trace recording:** During every boot, the Block Engine records which blocks are read, in what order, and at what time relative to boot start. This trace is saved to `system/session/boot_trace`:
+
+```rust
+pub struct BootTrace {
+    boot_id: u64,
+    intent: BootIntent,
+    entries: Vec<BootTraceEntry>,
+}
+
+pub struct BootTraceEntry {
+    block_id: BlockId,
+    time_offset_us: u64,    // microseconds since kernel entry
+    service: ServiceId,     // which service requested the read
+}
+```
+
+**Readahead replay:** On the next boot, the Block Engine starts a readahead thread immediately after init. It reads the previous boot trace and issues prefetch requests for blocks in the recorded order, staying ~500ms ahead of expected demand. The prefetch runs at the lowest I/O priority (below any foreground service reads).
+
+**Adaptive merging:** Over multiple boots, traces converge. The Block Engine merges the last 5 traces, keeping blocks that appear in 60%+ of them and ordering by median access time. Blocks unique to a single boot (one-time operations) are dropped.
+
+**Impact on SD card:** Random 4K reads on a Class 10 SD card: ~2 MB/s. Sequential reads: ~50 MB/s. By converting random boot reads into a sequential prefetch stream, readahead can reduce Phase 1 storage init from 300ms to ~100ms on SD-backed Pi devices.
+
+-----
+
+## 17. On-Demand Services (Socket Activation)
+
+Not every service needs to run from boot. Some services are used infrequently and waste memory and CPU time if started eagerly. AIOS supports *on-demand activation*: a service starts the first time something tries to communicate with it.
+
+### 17.1 Mechanism
+
+The Service Manager creates IPC channels for on-demand services at boot, but does *not* start the service process. When a message arrives on the channel, the Service Manager intercepts it, starts the service, delivers the buffered message, and connects the channel transparently:
+
+```rust
+pub struct ServiceDescriptor {
+    // ... existing fields ...
+
+    /// Activation mode for this service.
+    activation: ActivationMode,
+}
+
+pub enum ActivationMode {
+    /// Start during the assigned boot phase (current behavior).
+    Boot,
+    /// Start on first IPC message to this service's channel.
+    OnDemand {
+        /// Pre-create channels during boot so senders don't need
+        /// to know whether the service is running.
+        channel_count: usize,
+    },
+    /// Start on a timer (e.g., daily maintenance tasks).
+    Scheduled { interval: Duration },
+}
+```
+
+### 17.2 Which Services Benefit
+
+```
+Service               Default Mode   Why
+──────────────────────────────────────────────────────────────
+block_engine          Boot           Critical path. Must exist for everything.
+space_storage         Boot           Critical path. Storage for all services.
+compositor            Boot           Critical path. User needs to see something.
+airs_core             Boot           Loads asynchronously already. Model pre-warm.
+posix_compat          OnDemand       Only needed when running BSD/Linux binaries.
+                                     Many users may never need it.
+audio_subsystem       OnDemand       No audio until user plays media or receives
+                                     a notification sound. First audio event
+                                     triggers start (~100ms latency on first sound).
+browser_runtime       OnDemand       Only needed when opening web content.
+print_subsystem       OnDemand       Only needed when printing.
+bluetooth_subsystem   OnDemand       Only needed when connecting BT devices.
+```
+
+### 17.3 Impact
+
+Moving `posix_compat`, `audio_subsystem`, and `bluetooth_subsystem` from Boot to OnDemand saves:
+- ~80ms off Phase 2 critical path (three fewer services to health-check)
+- ~15 MB RSS on idle system (three fewer processes resident)
+
+The first activation of an on-demand service adds ~50-150ms latency (process create, ELF load, init). For POSIX compat this means the first Unix command takes an extra 100ms. For audio, the first notification sound has ~100ms extra latency. These are acceptable trade-offs for a faster boot and lower idle memory.
+
+-----
+
+## 18. Encrypted Storage Unlock
+
+AIOS encrypts user data at rest. The encryption key is derived from the user's passphrase (or biometric, or hardware key). The boot sequence must handle the unlock ceremony — the point where the user provides their credential so encrypted spaces become readable.
+
+### 18.1 What's Encrypted
+
+```
+Space                    Encrypted?   Why
+──────────────────────────────────────────────────────────
+system/config/           No          Needed before unlock (device settings)
+system/devices/          No          Hardware config, no user data
+system/audit/            No          Must be writable before unlock
+system/models/           No          AI models are not user-sensitive
+system/services/         No          Service binaries, no user data
+system/session/          Yes         Contains user activity patterns
+system/credentials/      Yes         Passwords, tokens, keys
+system/identity/         Yes*        Encrypted with hardware-derived key
+                                     (separate from user passphrase)
+user/                    Yes         All user data
+shared/                  Yes         Collaborative data
+web-storage/             Yes         Browser data
+```
+
+### 18.2 Key Derivation
+
+```
+User passphrase
+  │
+  ▼
+Argon2id (memory-hard KDF)
+  - 256 MB memory cost (tuned to take ~500ms on Pi 4)
+  - 3 iterations
+  - 32-byte salt (random, stored in system/identity/)
+  │
+  ▼
+Master Key (256-bit)
+  │
+  ├──→ HKDF("space-encryption") → Space Encryption Key
+  │     Used for per-space ChaCha20-Poly1305
+  │
+  ├──→ HKDF("identity-unlock") → Identity Unlock Key
+  │     Decrypts the Ed25519 private key in system/identity/
+  │
+  └──→ HKDF("credential-store") → Credential Store Key
+       Decrypts system/credentials/
+```
+
+### 18.3 Boot-Time Unlock Flow
+
+```
+Phase 4: Identity Service starts
+  │
+  ├── system/identity/ exists?
+  │     NO → first boot (§5 Phase 5 first boot setup flow)
+  │
+  ├── YES → read encrypted identity blob
+  │
+  ├── Attempt auto-unlock:
+  │   ├── Hardware security key present (USB FIDO2)?
+  │   │     → HMAC challenge-response → derive key → unlock
+  │   │     → no user interaction needed (~200ms)
+  │   │
+  │   ├── Biometric reader available?
+  │   │     → fingerprint scan → derive key → unlock
+  │   │     → minimal user interaction (~500ms)
+  │   │
+  │   └── Neither available → fall through to passphrase
+  │
+  ├── Passphrase required:
+  │   ├── Compositor is running (Phase 2 complete)
+  │   │     → render passphrase prompt overlay
+  │   │     → user types passphrase
+  │   │     → Argon2id derivation (~500ms on Pi 4)
+  │   │     → attempt decrypt
+  │   │     ├── Success → unlock, continue boot
+  │   │     └── Failure → "Incorrect passphrase", retry (max 10 attempts)
+  │   │
+  │   └── No compositor (headless) → passphrase via UART
+  │
+  ▼
+Identity unlocked → derive Space Encryption Key
+  → Space Storage unlocks encrypted spaces
+  → Phase 4 continues (Preferences, Attention Manager, etc.)
+```
+
+**Timing impact:** On a fast path (hardware key or biometric), unlock adds ~200-500ms. With a passphrase, it adds user-wait time (typing) + 500ms (Argon2id). The Argon2id cost is tunable — faster on powerful hardware, deliberately slow enough on all platforms to resist brute force.
+
+**Lock-on-suspend:** When the system enters S3/S4, the master key is zeroed from memory. On resume, the unlock ceremony runs again. For S3 resume (< 200ms), this means the user must authenticate again — but a hardware key or fingerprint makes this near-instant. The passphrase prompt appears on the compositor's first resume frame.
+
+-----
+
+## 19. Boot Accessibility
+
+AIOS is unusable if a user with a disability cannot complete the first boot experience. Accessibility must work from the *first frame* — before user preferences exist, before AIRS loads, before any setup occurs.
+
+### 19.1 Pre-Setup Accessibility
+
+The first-boot setup flow (§5 Phase 5) includes accessibility as its very first step — *before* language selection:
+
+```
+First Boot — Revised Setup Flow:
+
+0. Accessibility Detection (BEFORE any other UI)
+   │
+   ├── Check connected USB devices for assistive hardware:
+   │   ├── Braille display (USB HID, usage page 0x41)
+   │   │     → enable Braille output driver
+   │   ├── Switch access device (USB HID, specific vendor IDs)
+   │   │     → enable switch scanning mode
+   │   └── Screen reader request (special key held: F5 at boot)
+   │         → enable text-to-speech (built-in eSpeak-NG, no AIRS needed)
+   │
+   ├── Offer accessibility options on first frame:
+   │   "Press F5 for screen reader. Press F6 for high contrast.
+   │    Press F7 for large text. Press Enter to continue."
+   │   Displayed in large, high-contrast text by default (24pt, white on dark)
+   │   Spoken aloud if screen reader is active
+   │
+   └── Continue to Language Selection → Passphrase → Wi-Fi → AIRS → Complete
+
+1. Language & Locale Selection
+   (all subsequent screens respect accessibility choices from step 0)
+```
+
+### 19.2 Built-In Accessibility Engine
+
+The compositor includes a minimal accessibility engine that works without AIRS:
+
+```
+Accessibility Feature          AIRS Required?   Boot Availability
+──────────────────────────────────────────────────────────────────
+High contrast mode             No               From first frame
+Large text (2× font scaling)   No               From first frame
+Screen reader (eSpeak-NG TTS)  No               From first frame (initramfs)
+Braille display output         No               From first frame (USB HID)
+Switch scanning (single-switch No               From first frame
+  or two-switch navigation)
+Reduced motion                 No               From first frame
+AI-enhanced descriptions       Yes              After Phase 3 (AIRS)
+AI-powered voice control       Yes              After Phase 3 (AIRS)
+```
+
+**eSpeak-NG** is compiled into the initramfs (~800 KiB, supports 100+ languages). It provides functional (if robotic) text-to-speech from boot without requiring AIRS. When AIRS loads (Phase 3), voice output can be upgraded to neural TTS if the user prefers.
+
+### 19.3 Accessibility Persistence
+
+Once the user selects accessibility options during first boot, they're stored in `system/config/accessibility` (unencrypted — must be readable before identity unlock):
+
+```rust
+pub struct BootAccessibilityConfig {
+    screen_reader: bool,
+    high_contrast: bool,
+    large_text: bool,
+    reduced_motion: bool,
+    braille_display: bool,
+    switch_access: bool,
+    tts_voice: TtsVoice,           // eSpeak variant
+    tts_rate: f32,                 // speech rate multiplier
+    preferred_language: String,     // for TTS
+}
+```
+
+This config is read by the compositor during Phase 2, before the identity unlock prompt. This means the passphrase entry screen is already accessible — the screen reader is active, text is large, contrast is high — before the user has to type their passphrase.
+
+-----
+
+## 20. Hardware Boot Feedback
+
+### 20.1 The Problem
+
+Not every boot has a display. A headless Pi (server, IoT, NAS) has no monitor. Even on a display-equipped system, there's a gap between power-on and the first framebuffer pixel (~500ms firmware time). During this gap, the user has no indication that the system is alive.
+
+### 20.2 LED Status Indicators
+
+The Raspberry Pi has a green Activity LED (active-low GPIO on Pi 4, RP1-controlled on Pi 5). AIOS uses this LED to communicate boot progress via blink patterns:
+
+```
+Pattern                 Meaning                          Duration
+──────────────────────────────────────────────────────────────────
+Solid on                Firmware running                  0-500ms
+1 blink/sec             Kernel early boot                 500-700ms
+2 blinks/sec            Phase 1 (storage)                 700-1000ms
+3 blinks/sec            Phase 2 (core services)           1000-1500ms
+Solid on                Phase 5 complete (boot OK)        1500ms+
+SOS pattern             Kernel panic (... --- ...)        Until reboot
+Fast flash (10 Hz)      Recovery mode                     Until resolved
+```
+
+```rust
+pub struct LedBootIndicator {
+    gpio: GpioPin,      // Pi 4: GPIO 42, Pi 5: via RP1
+}
+
+impl LedBootIndicator {
+    /// Called by advance_boot_phase() alongside UART logging
+    fn indicate_phase(&mut self, phase: EarlyBootPhase) {
+        let pattern = match phase {
+            EarlyBootPhase::EntryPoint ..= EarlyBootPhase::TimerReady
+                => BlinkPattern::Hertz(1),
+            EarlyBootPhase::MmuEnabled ..= EarlyBootPhase::Complete
+                => BlinkPattern::Hertz(2),
+            _ => BlinkPattern::SolidOn,
+        };
+        self.set_pattern(pattern);
+    }
+
+    fn indicate_panic(&mut self) {
+        self.set_pattern(BlinkPattern::Sos);
+    }
+}
+```
+
+On QEMU, the LED indicator is a no-op (no physical LED). The UART output serves the same purpose.
+
+### 20.3 Audio Boot Chime
+
+If an audio output device is detected during Phase 2 (HDMI audio, 3.5mm jack, or USB audio), the kernel can play a short boot chime:
+
+```
+Boot chime timing:
+  Phase 2 complete → play a short tone (200ms, 440 Hz sine wave)
+                     Indicates: display + audio + input are working
+  Phase 5 complete → play completion chime (two ascending tones)
+                     Indicates: system fully booted, desktop visible
+  Panic            → play error tone (low descending tone)
+                     Indicates: something went very wrong
+```
+
+The boot chime is a generated waveform (no audio file needed), written directly to the audio hardware's PCM buffer. It works before the Audio Subsystem service starts — the HAL provides raw audio output for this purpose.
+
+**User preference:** The boot chime can be disabled via `system/config/boot` (`chime: false`). Default: on. It's one of the few settings read from unencrypted system config before identity unlock.
+
+-----
+
+## 21. First Boot as Conversation
+
+The traditional first-boot experience is a wizard: fixed steps, fixed order, multiple screens of settings the user doesn't understand. AIOS replaces this with a conversation — a natural language exchange that adapts to the user.
+
+### 21.1 How It Works
+
+The first-boot setup flow (§5 Phase 5) already describes the fixed steps: language, passphrase, Wi-Fi, AIRS model. The conversational first boot wraps these steps in a natural interaction:
+
+```
+[Screen: clean dark background with AIOS logo]
+[After Phase 3 AIRS loads (typically ~3 seconds into boot):]
+
+AIOS:  "Hello! I'm setting up your new computer.
+        What language do you prefer?"
+
+User:  "English"
+
+AIOS:  "Got it — English. I've also detected a US keyboard layout.
+        Does that look right?"
+
+User:  "Yes"
+
+AIOS:  "To protect your data, I'll encrypt everything on this device.
+        Please choose a passphrase — something you'll remember but
+        others won't guess."
+
+       [Passphrase input field appears]
+
+User:  [types passphrase]
+
+AIOS:  "Strong passphrase. I see a Wi-Fi network nearby — 'HomeNetwork'.
+        Want to connect?"
+
+User:  "Yes, the password is ..."
+
+AIOS:  "Connected. One last thing — I can help you find files, draft
+        text, and manage your work using a local AI model that runs
+        entirely on this device. Nothing leaves your computer.
+        Want to set that up? It'll take about a minute to download."
+
+User:  "Sure"
+
+AIOS:  "Downloading now. You're all set — your desktop is ready.
+        If you need anything, I'm in the bar at the bottom of the screen."
+
+       [Setup overlay fades out → Workspace]
+```
+
+### 21.2 Adaptive Flow
+
+The conversation adapts based on the user's responses and detected context:
+
+- **No network available?** Skip Wi-Fi, don't offer AIRS download: "No Wi-Fi detected. You can connect later from the network settings."
+- **User says "I'm blind"** → immediately activates screen reader + Braille if connected, continues setup via speech: "Screen reader activated. I'll speak all options aloud."
+- **User says "I don't want AI"** → AIRS download skipped, conversation bar configured for keyword search only: "No problem. You can always enable it later in preferences."
+- **User asks "What is this?"** → explains AIOS briefly: "AIOS is an operating system designed around you. Your files are organized by meaning, not folders. Everything is encrypted and runs locally."
+- **Young user / simple responses** → simplifies language. **Technical user** → offers advanced options (UART console access, developer mode, custom partitioning).
+
+### 21.3 Fallback: Fixed Wizard
+
+If AIRS fails to load during first boot (model not available, insufficient RAM, Phase 3 timeout), the setup falls back to the fixed step-by-step wizard described in §5. The wizard is functional but non-conversational — it uses standard UI elements (buttons, text fields, dropdowns) instead of natural language. The user experience is merely good instead of great.
+
+The conversational flow and the fixed wizard produce the same result: an identity, a passphrase, optional Wi-Fi, optional AIRS model. The difference is in the experience.
+
+-----
+
+## 22. Research Kernel Innovations
+
+Several ideas from research and niche kernels have proven valuable but never reached mainstream operating systems. AIOS adopts the best of these, adapted to its architecture.
+
+### 22.1 Orthogonal Persistence (from EROS / KeyKOS / Phantom OS)
+
+**The idea:** There is no "boot" — only resume. The entire system state (processes, capabilities, memory) is continuously checkpointed to persistent storage. Power loss is indistinguishable from a pause. The OS resumes from the last checkpoint as if nothing happened.
+
+**History:** KeyKOS (1983) introduced persistent capabilities that survived across reboots. EROS (Extremely Reliable Operating System, 1991) formalized this into *orthogonal persistence* — the programmer never explicitly saves or loads data. Phantom OS (2009, Russian research) extended this to a full persistent object space where processes literally cannot tell that the machine was powered off.
+
+None of these reached mainstream adoption. The reasons: performance overhead of continuous checkpointing, incompatibility with existing software that assumes volatile memory, and the difficulty of handling hardware state (device registers, DMA buffers) across power cycles.
+
+**What AIOS takes from this:**
+
+AIOS cannot adopt full orthogonal persistence (it needs to run legacy POSIX software, and device state is too complex to checkpoint). But it adopts the *user-facing* principle: **the user should never notice that the machine was off.**
+
+- **Ambient State Continuity (§15.4)** is AIOS's version of continuous checkpointing. User-visible state (edits, scroll positions, selections) trickles into the WAL continuously. The checkpoint granularity is ~2 seconds for keystrokes, ~60 seconds for workspace layout. This provides the *illusion* of orthogonal persistence without the overhead of checkpointing the entire address space.
+
+- **Semantic Resume (§15.3)** is AIOS's version of persistent capabilities. Instead of persisting raw memory (which breaks across kernel updates), AIOS persists *meaning*: which spaces are open, which agents are active, what the user was looking at. This is more resilient than EROS's approach because it survives kernel changes, hardware changes, and even cross-device migration.
+
+- **Space Storage** is inherently persistent and content-addressed. Objects are never lost once committed. Version history is preserved. This gives AIOS the storage semantics of a persistent OS without requiring the kernel to manage persistence.
+
+**What's different from EROS/Phantom:** Those systems persisted the entire process state (registers, stack, heap). AIOS persists only the *semantic* state and lets services reconstruct their process state from it. This means services can be updated, patched, or replaced between checkpoints — something impossible in EROS. The trade-off is that reconstruction takes ~500ms (vs. instant resume in EROS), but reconstruction survives changes that EROS cannot.
+
+### 22.2 Single-Address-Space Boot (from Singularity / Unikernels)
+
+**The idea:** During boot, there is only one process: the kernel. All boot-critical code — the Block Engine, Object Store, Space Storage — runs in kernel space with no context switches, no IPC overhead, no page table switches. After core services are initialized, the kernel "splits" them into separate isolated processes.
+
+**History:** Microsoft Research's Singularity OS (2003-2010) used Software Isolated Processes (SIPs) — processes that share a single address space but are isolated by the type system (Sing#, a dialect of C#). Boot was fast because there was no hardware isolation overhead. Unikernels (MirageOS, IncludeOS, Unikraft) take this further: the entire application is compiled into the kernel with no process boundary at all, booting in as little as 5ms.
+
+Mainstream OSes never adopted this because they rely on hardware isolation (page tables, privilege rings) for security. Running services in kernel space means a bug in any service can corrupt the kernel.
+
+**What AIOS takes from this — Phase 0 Boot Acceleration:**
+
+AIOS is written in Rust. Rust's ownership and borrowing system provides compile-time memory safety guarantees that are normally provided by hardware isolation (page tables). During early boot, when there's only one CPU and no untrusted code, this safety guarantee is sufficient.
+
+**The optimization:** Phase 1 services (Block Engine, Object Store, Space Storage) can be compiled as *kernel modules* that run in the kernel's address space during boot. No process creation, no context switches, no IPC — direct function calls:
+
+```rust
+/// During early boot, Phase 1 runs as direct function calls
+/// in the kernel's address space. No process isolation overhead.
+mod boot_phase1 {
+    pub fn init_storage(
+        platform: &dyn Platform,
+        dt: &DeviceTree,
+        allocator: &BuddyAllocator,
+    ) -> Result<SpaceStorageHandle> {
+        // These are direct function calls, not IPC:
+        let block_engine = block_engine::init(platform.init_storage(dt)?)?;
+        let object_store = object_store::init(&block_engine)?;
+        let space_storage = space_storage::init(&object_store)?;
+        Ok(space_storage)
+    }
+}
+
+/// After Phase 1, the kernel spawns these as separate processes
+/// with their own address spaces, capabilities, and IPC channels.
+/// The transition is seamless — the running state is handed off.
+fn transition_to_isolated(
+    space_storage: SpaceStorageHandle,
+    svcmgr: &ServiceManager,
+) {
+    // Create process for Block Engine
+    let be_proc = svcmgr.spawn_service(ServiceId::BlockEngine);
+    // Transfer device handle to the new process via capability
+    be_proc.grant_capability(space_storage.block_device_cap);
+    // The in-kernel Block Engine code is now unreachable
+    // and its memory is reclaimed.
+
+    // Repeat for Object Store and Space Storage...
+}
+```
+
+**Why this is safe in Rust:** The Block Engine, Object Store, and Space Storage are Rust crates with `#![forbid(unsafe_code)]` (except for the thin MMIO layer, which is audited). Rust's type system prevents them from corrupting the kernel's data structures. A logic bug in the Block Engine during boot might cause incorrect behavior, but it cannot overwrite kernel memory, jump to arbitrary addresses, or escalate privileges — the compiler prevents it.
+
+**Performance impact:** Eliminating process creation and IPC for Phase 1 saves:
+- ~3 context switches per service start (create process, switch to it, switch back) → 0
+- ~6 IPC round-trips for health checks and dependency signals → 0 (direct function calls)
+- Estimated savings: **50-80ms off Phase 1** (from ~300ms to ~220ms)
+
+**When isolation begins:** After Phase 1 completes and storage is healthy, the kernel transitions to normal isolated mode. Phase 2+ services always run as separate processes with hardware isolation — they interact with untrusted input (network, USB, user content) and must be sandboxed. The single-address-space optimization is *only* for Phase 1, which processes only trusted, integrity-checked data (the superblock, WAL, and content-addressed objects).
+
+**Build system support:** The same Rust crates are compiled twice:
+1. As `#[no_std]` kernel modules (for Phase 1 boot, linked into the kernel binary)
+2. As standalone ELF binaries (for post-boot isolated operation, in the initramfs)
+
+The dual-compilation is managed by the build system with feature flags:
+
+```toml
+# block_engine/Cargo.toml
+[features]
+default = ["standalone"]
+standalone = ["std", "ipc-client"]     # normal isolated mode
+kernel-module = ["no_std", "direct"]    # Phase 1 boot mode
+```
+
+### 22.3 Capability Persistence Across Reboot (from KeyKOS / EROS)
+
+**The idea:** In KeyKOS and EROS, capabilities are persistent — they survive reboots. A process holding a capability to access a file still holds that capability after a power cycle. The capability system is part of the persistent state.
+
+**Mainstream OSes don't do this.** On Linux/macOS/Windows, all permissions are re-established on every boot. File descriptors are gone. POSIX capabilities are reset. Every service re-authenticates, re-opens files, re-establishes connections.
+
+**What AIOS takes from this:**
+
+Agent capabilities are stored in Spaces. When an agent is shut down (§11.3), its capability set is serialized to `system/agents/<agent_id>/capabilities`. On relaunch, the Agent Runtime reads this set and re-mints equivalent capabilities — provided the capability policy still allows them.
+
+```rust
+pub struct PersistedCapabilitySet {
+    agent_id: AgentId,
+    /// Capabilities the agent held at shutdown.
+    /// These are capability *descriptions*, not live tokens.
+    /// Live tokens are re-minted on relaunch.
+    capabilities: Vec<CapabilityDescription>,
+    /// The manifest version that granted these capabilities.
+    /// If the manifest has changed (updated agent), capabilities
+    /// are re-evaluated against the new manifest.
+    manifest_version: ContentHash,
+}
+
+pub struct CapabilityDescription {
+    capability: Capability,
+    reason: String,
+    granted_at: Timestamp,
+    granted_by: Identity,
+}
+```
+
+**Key difference from EROS:** EROS persists the raw capability tokens. AIOS persists the *descriptions* and re-mints new tokens. This means:
+- A revoked capability stays revoked across reboots (the re-mint check catches it)
+- A policy change takes effect on the next boot (new manifest → re-evaluation)
+- Capability tokens have fresh nonces and timestamps (preventing replay attacks)
+- The capability system doesn't need to be part of the checkpoint (it's reconstructed)
+
+This gives AIOS the *user experience* of persistent capabilities (agents resume with their permissions intact) without the security risks of blindly restoring old tokens.
+
+### 22.4 Self-Healing Services (from MINIX 3)
+
+**The idea:** MINIX 3's Reincarnation Server monitors every driver and service. If one crashes, it is restarted transparently — the rest of the system never notices. This works because MINIX 3 is a microkernel: drivers run in userspace and communicate via IPC, so a crashed driver can be restarted without rebooting.
+
+**AIOS already has this.** The Service Manager (§4) monitors services via health checks and restarts them according to their `RestartPolicy`. But MINIX 3 adds one important detail that AIOS should adopt: **stateless restart with client-side retry.**
+
+In MINIX 3, IPC clients buffer their last request. When a service crashes and is restarted, clients automatically re-send their buffered request. The service restarts from a clean state, processes the request, and the client never sees an error — just a brief delay.
+
+AIOS adopts this for Phase 2+ services:
+
+```rust
+pub struct ResilientChannel {
+    channel: ChannelId,
+    /// Last sent message, buffered for retry
+    last_request: Option<Message>,
+    /// Service Manager notification channel for service restarts
+    svcmgr_events: ChannelId,
+}
+
+impl ResilientChannel {
+    pub fn send_and_recv(&mut self, msg: Message) -> Result<Message> {
+        self.last_request = Some(msg.clone());
+        match self.channel.call(msg) {
+            Ok(reply) => Ok(reply),
+            Err(ChannelError::PeerDied) => {
+                // Service crashed. Wait for Service Manager to restart it.
+                let new_channel = self.wait_for_service_restart()?;
+                self.channel = new_channel;
+                // Re-send the buffered request to the new instance
+                self.channel.call(self.last_request.take().unwrap())
+            }
+        }
+    }
+}
+```
+
+**Impact:** A transient crash in the Network Subsystem during boot doesn't fail the boot — the client (e.g., NTP sync) retries transparently after restart. A crash in the Display Subsystem triggers a restart and the compositor re-renders — the user sees a brief flicker instead of a failed boot.
+
+### 22.5 Incremental Boot (from Genode / seL4)
+
+**The idea:** In Genode (and other L4-family systems), the system starts with a tiny trusted computing base (TCB) and incrementally extends itself. Each new component runs in its own protection domain with only the capabilities explicitly granted to it. There is no "big bang" moment where the system suddenly becomes functional — functionality accumulates smoothly.
+
+AIOS's phased boot (§4-5) already follows this pattern, but Genode takes it further: **every component can be started, stopped, and replaced at any time**, not just during boot phases. The system is always in a partial state, and that's fine.
+
+**What AIOS takes from this:**
+
+The Service Manager already restarts failed services. Extending this to **live service replacement** — upgrading a running service without rebooting — is the natural next step:
+
+```
+Live service upgrade:
+  1. New binary placed in system/services/ (via OTA or manual update)
+  2. Service Manager notices the content hash changed
+  3. Service Manager spawns new instance alongside the old one
+  4. New instance initializes and reports healthy
+  5. Service Manager redirects IPC channels from old → new
+  6. Old instance receives GracefulStop, saves state, exits
+  7. New instance takes over seamlessly
+  No reboot. No downtime. No user disruption.
+```
+
+This is particularly valuable for AIRS model updates (swap in a new model without restarting the entire AI stack), compositor patches (fix a rendering bug without losing window state), and security patches (apply a fix to the Network Subsystem without dropping connections).
+
+**Constraint:** Live replacement only works for services whose state is serializable to Spaces. Kernel-level components (memory manager, IPC subsystem, scheduler) cannot be live-replaced — they require a reboot. But with Semantic Resume (§15.3), even kernel updates feel almost seamless.
+
+-----
+
+## 23. Documentation Gaps
 
 Concepts referenced in boot.md that do not yet have full documentation elsewhere. These are placeholders for future doc work.
 
@@ -2089,9 +3186,21 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 10. **SMMU driver internals** — §3.6 describes when and why SMMU is initialized, but the SMMUv3 driver itself (stream table format, command/event queues, fault handling) needs documentation in hal.md. Pi 5's BCM2712 SMMU has platform-specific quirks that should be documented.
 
+11. **Suspend/resume device state** — §15.1 describes the suspend/resume flow, but the per-device state save/restore for each HAL device (GIC, timer, UART, GPU, network, storage, RNG) needs detailed documentation in hal.md. Each device has different quiesce and restore requirements.
+
+12. **Hibernate image management** — §15.2 describes the hibernate image format and partition, but the background S3→S4 writeback mechanism (DMA engine writing DRAM during suspend) needs hardware-specific documentation per platform. Not all platforms support DMA during low-power states.
+
+13. **Proactive Wake scheduling** — §15.5 describes the concept, but the AIRS usage prediction model, RTC alarm programming per platform, and power policy interaction need a dedicated document, possibly `docs/intelligence/proactive-wake.md`.
+
+14. **Boot-time encryption unlock UX** — §18.3 describes the unlock flow, but the Argon2id tuning parameters per platform, hardware key (FIDO2) integration, and biometric reader support need documentation in `docs/security/encryption.md`.
+
+15. **Accessibility engine** — §19.2 lists built-in accessibility features, but the eSpeak-NG integration, Braille display protocol, and switch scanning input model need their own document, possibly `docs/experience/accessibility.md`.
+
+16. **Single-address-space boot validation** — §22.2 describes running Phase 1 services as kernel modules. The dual-compilation build system, the state handoff mechanism from kernel-module mode to isolated-process mode, and the safety audit requirements for `#![forbid(unsafe_code)]` enforcement need documentation in the build system guide.
+
 -----
 
-## 16. Design Principles
+## 24. Design Principles
 
 1. **Usable at each phase boundary.** Every service is optional except storage and display. AIRS failure doesn't break boot. Network failure doesn't break boot.
 2. **Fast on the critical path.** Only the minimum services needed for a desktop are on the critical path. Everything else runs in parallel or deferred.
@@ -2100,3 +3209,8 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 5. **Services are independent.** Each service has its own process, its own capabilities, its own restart policy. One service crashing doesn't take down the system.
 6. **Boot is audited.** Every phase transition, every service start, every failure is logged. The audit trail is queryable after boot via `system/audit/boot/`.
 7. **First boot and normal boot are the same code path.** The only difference is whether system spaces exist yet (first boot creates them). No separate "installer" or "setup wizard."
+8. **State is never lost.** Ambient continuity ensures the user never loses more than ~2 seconds of work, regardless of how the system goes down — crash, panic, power loss.
+9. **Boot adapts to context.** The system detects *why* it's booting and adapts the service graph. A proactive wake doesn't light the screen. A scheduled task doesn't load the compositor. Intent drives behavior.
+10. **The system learns.** Boot readahead, model pre-selection, and proactive wake improve over time as AIRS observes usage patterns. The 100th boot is faster and smarter than the first.
+11. **Accessibility from the first frame.** A user with a disability must be able to complete first boot independently. No accessibility feature requires AIRS, network, or user preferences to function.
+12. **Research ideas, pragmatically applied.** Orthogonal persistence, single-address-space boot, capability persistence, self-healing services, and live service replacement are adopted from research kernels — but adapted to work with real hardware, existing software, and Rust's safety guarantees.
