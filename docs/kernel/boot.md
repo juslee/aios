@@ -280,6 +280,10 @@ pub trait Platform: Send + Sync {
     fn init_network(&self, dt: &DeviceTree) -> Result<NetworkDevice>;
     fn init_storage(&self, dt: &DeviceTree) -> Result<StorageDevice>;
     fn init_rng(&self, dt: &DeviceTree) -> Result<RngDevice>;
+
+    /// Allows downcasting to concrete platform type for extension trait checks.
+    /// See hal.md §12.3 for the runtime discovery pattern.
+    fn as_any(&self) -> &dyn Any;
 }
 
 pub struct QemuPlatform;
@@ -298,7 +302,7 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
 }
 ```
 
-The seven methods are called at different points during boot — UART, interrupts, timer, and RNG during kernel early boot (before heap), and GPU, network, and storage during service manager phases (after heap). See hal.md §3.2 for the full initialization order.
+The seven `init_*` methods are called at different points during boot — UART, interrupts, timer, and RNG during kernel early boot (before heap), and GPU, network, and storage during service manager phases (after heap). The trait also includes `as_any()` for extension trait discovery (see hal.md §12). See hal.md §3.2 for the full initialization order.
 
 -----
 
@@ -455,7 +459,7 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC.
 
-**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's watchdog: SP805 on QEMU, bcm2835-wdt on Pi). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (§11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
+**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (§11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
 
 **Step 7: MMU enable — page table setup.** This is the most complex step:
 
@@ -500,7 +504,7 @@ MMIO regions (device memory) are mapped as `nGnRnE` (non-Gathering, non-Reorderi
 
 The buddy allocator manages pages in orders 0 through 10 (4 KiB to 4 MiB blocks). Allocation and deallocation are O(log n) in the number of orders.
 
-**Step 9: Kernel heap.** Initialize a slab allocator on top of the buddy allocator. The slab allocator provides `alloc::alloc::GlobalAlloc` — from this point, `Box`, `Vec`, `String`, `HashMap`, and all other heap types work. The slab allocator has size classes: 32, 64, 128, 256, 512, 1024, 2048, 4096 bytes. Larger allocations go directly to the buddy allocator.
+**Step 9: Kernel heap.** Initialize a slab allocator on top of the buddy allocator. The slab allocator provides `alloc::alloc::GlobalAlloc` — from this point, `Box`, `Vec`, `String`, `HashMap`, and all other heap types work. The slab allocator uses named object caches for common kernel types: `ipc_message` (64 bytes), `capability_token` (128 bytes), `channel` (256 bytes), `process_descriptor` (512 bytes), `vm_region` (128 bytes), `page_table` (4096 bytes). Allocations that don't fit any cache go directly to the buddy allocator. See memory.md §4.1 for the full cache definitions.
 
 **Step 10: Hardware RNG.** Call `platform.init_rng(dt)` to initialize the hardware random number generator. On QEMU this is VirtIO-RNG (virtqueue-based, entropy from host `/dev/urandom`). On Pi 4/5 this is the bcm2835-rng (MMIO TRNG). The returned `RngDevice` is stored in `KernelState.rng` and provides runtime entropy for KASLR, capability token generation, nonces, and key derivation — replacing reliance on the one-shot 32-byte UEFI seed.
 

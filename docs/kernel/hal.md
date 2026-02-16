@@ -81,7 +81,7 @@ The detected platform is stored in `KernelState.platform` and used for all subse
 
 ## 3. Platform Trait
 
-The `Platform` trait is the core abstraction. Every supported platform implements exactly seven methods — one for each hardware class the kernel needs during boot:
+The `Platform` trait is the core abstraction. Every supported platform implements seven `init_*` methods — one for each hardware class the kernel needs during boot — plus an `as_any()` method for extension trait discovery (§12.3):
 
 ```rust
 pub trait Platform: Send + Sync {
@@ -147,6 +147,10 @@ pub trait Platform: Send + Sync {
     /// one-shot UEFI rng_seed with a persistent entropy source for runtime
     /// crypto: capability token generation, nonces, key derivation.
     fn init_rng(&self, dt: &DeviceTree) -> Result<RngDevice>;
+
+    /// Allows downcasting to concrete platform type for extension trait checks.
+    /// See §12.3 for the runtime discovery pattern.
+    fn as_any(&self) -> &dyn Any;
 }
 ```
 
@@ -817,7 +821,7 @@ pub struct KernelState {
     pub platform: &'static dyn Platform,
     pub boot_phase: EarlyBootPhase,
 
-    // HAL devices (initialized during boot)
+    // HAL devices (see hal.md for type definitions)
     pub interrupt_controller: Option<InterruptController>,
     pub timer: Option<Timer>,
     pub uart: Option<Uart>,
@@ -826,7 +830,7 @@ pub struct KernelState {
     pub network: Option<NetworkDevice>,
     pub storage: Option<StorageDevice>,
 
-    // Memory management
+    // Memory
     pub page_allocator: Option<BuddyAllocator>,
     pub kernel_page_table: Option<PageTable>,
     pub heap: Option<SlabAllocator>,
@@ -842,7 +846,7 @@ pub struct KernelState {
 
     // Boot timing
     pub boot_start: u64,
-    pub phase_timestamps: [u64; 17], // one per EarlyBootPhase variant
+    pub phase_timestamps: [u64; 17], // indexed by EarlyBootPhase as usize (0-based); resize if enum grows
 }
 ```
 
