@@ -569,6 +569,19 @@ If the sustained signal is interrupted (user returns to coding during a pending 
 The `ContextState` is the engine's output. Every consumer reads this struct. It contains four fields, each driving different system behaviors.
 
 ```rust
+/// Discretized context mode, derived from the continuous work_engagement score.
+/// Used by the Attention Manager and compositor for coarse-grained decisions.
+pub enum ContextMode {
+    /// work_engagement < 0.3: gaming, media, casual browsing
+    Leisure,
+    /// work_engagement 0.3–0.7: mixed activity, light tasks
+    Focus,
+    /// work_engagement > 0.7: deep work, writing, coding
+    Work,
+    /// Detected via active game process or gamepad input
+    Gaming,
+}
+
 pub struct ContextState {
     /// 0.0 = deep leisure, 1.0 = deep work
     work_engagement: f32,
@@ -581,6 +594,17 @@ pub struct ContextState {
 
     /// Which scheduling class gets weight boost
     resource_priority: ResourcePriority,
+}
+
+impl ContextState {
+    /// Derive the discrete ContextMode from continuous work_engagement.
+    pub fn mode(&self) -> ContextMode {
+        match self.work_engagement {
+            x if x < 0.3 => ContextMode::Leisure,
+            x if x > 0.7 => ContextMode::Work,
+            _ => ContextMode::Focus,
+        }
+    }
 }
 
 pub enum AiEngagement {

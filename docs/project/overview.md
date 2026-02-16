@@ -114,12 +114,12 @@ The user never has to interact with AI to use the computer. AI enhances silently
 │  ├── Audit Log (kernel-enforced, tamper-evident)                    │
 │  └── Process Manager (create, isolate, terminate)                   │
 │                                                                     │
-│  Hardware Abstraction (hal.md)                                      │
+│  Hardware Abstraction Layer (hal.md)                                │
 │  ├── Platform trait (7 init methods, one per hardware class)        │
 │  ├── InterruptController (GICv2 on Pi 4, GICv3 on Pi 5/QEMU)      │
-│  ├── Timer (ARM Generic Timer)                                      │
+│  ├── Timer (ARM Generic Timer, platform-specific frequency)          │
 │  ├── Uart (PL011 UART)                                             │
-│  ├── GpuDevice (VirtIO-GPU / VideoCore VI / VII)                   │
+│  ├── GpuDevice (VirtIO-GPU / VideoCore VI / VideoCore VII)         │
 │  ├── NetworkDevice (VirtIO-Net / Broadcom Genet)                   │
 │  ├── StorageDevice (VirtIO-Blk / Arasan SDHCI)                    │
 │  ├── RngDevice (VirtIO-RNG / bcm2835-rng)                         │

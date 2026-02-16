@@ -2,7 +2,7 @@
 
 ## Deep Technical Architecture
 
-**Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Hardware Abstraction
+**Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Full Stack Overview (Hardware Abstraction Layer)
 **Related:** [boot.md](./boot.md) — Boot sequence and platform detection, [subsystem-framework.md](../platform/subsystem-framework.md) — Userspace device management, [scheduler.md](./scheduler.md) — Timer and GIC integration
 
 -----
@@ -809,7 +809,7 @@ The interrupt controller, timer, and RNG are the simplest to port — only regis
 
 ### 8.1 KernelState
 
-The HAL-initialized devices are stored in the global `KernelState` structure:
+The HAL-initialized devices are stored in the global `KernelState` structure (canonical definition in boot.md §3.2; reproduced here for HAL context):
 
 ```rust
 pub struct KernelState {
@@ -842,7 +842,7 @@ pub struct KernelState {
 
     // Boot timing
     pub boot_start: u64,
-    pub phase_timestamps: [u64; 16],
+    pub phase_timestamps: [u64; 17], // one per EarlyBootPhase variant
 }
 ```
 
@@ -1281,7 +1281,7 @@ impl WatchdogTimer {
 | Pi 4 | BCM2835 watchdog | Shared PM/watchdog block |
 | Pi 5 | BCM2835 watchdog | Same IP block |
 
-The kernel sets a 15-second watchdog at shutdown start (see boot.md §shutdown). A watchdog provides last-resort recovery from kernel hangs in unattended deployments.
+The kernel sets a 15-second watchdog at shutdown start (see [boot-lifecycle.md](./boot-lifecycle.md) §11). A watchdog provides last-resort recovery from kernel hangs in unattended deployments.
 
 **`PlatformGpio`** — General-purpose I/O pins.
 

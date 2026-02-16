@@ -9,6 +9,7 @@
 - [scheduler.md](../kernel/scheduler.md) — Scheduler deep dive
 - [memory.md](../kernel/memory.md) — Memory management architecture
 - [boot.md](../kernel/boot.md) — Boot sequence and init system deep dive
+- [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Boot lifecycle, advanced topics, and design principles
 - [hal.md](../kernel/hal.md) — Hardware Abstraction Layer (Platform trait, device drivers, porting guide)
 - [spaces.md](../storage/spaces.md) — Space storage system deep dive
 - [compositor.md](../platform/compositor.md) — GPU compositor and window management
@@ -199,24 +200,31 @@ pub struct Object {
 }
 
 pub struct SemanticMetadata {
-    summary: String,
+    summary: Option<String>,
     tags: Vec<String>,
-    embedding: Vec<f32>,
+    auto_tags: Vec<String>,
+    embedding: Option<Vec<f32>>,
     entities: Vec<Entity>,
-    description: String,
+    description: Option<String>,
+    auto_summary: Option<String>,
+    text_content: Option<String>,
+    indexed_at: Option<Timestamp>,
 }
 
 pub enum ContentType {
     Document, Code, Image, Audio, Video, Data,
     Conversation, Config, Agent, GameSave,
     WebPage, MediaReference, Task, Note,
+    CacheEntry, SessionToken, Cookie,
 }
 
 pub struct Relation {
+    source: ObjectId,
     target: ObjectId,
     kind: RelationKind,
     confidence: f32,
     explanation: Option<String>,
+    created_by: RelationSource,
 }
 
 pub enum RelationKind {
@@ -224,6 +232,7 @@ pub enum RelationKind {
     RelatedTo, CreatedBy, InputTo,
     OutputOf, ConversationContext,
     VersionOf, SiblingOf,
+    ChildOf, Attachment,
 }
 ```
 
@@ -926,15 +935,17 @@ Available always, used by those who want transparency into the system.
 │  Load kernel ELF from EFI System Partition                  │
 └──────────────────────┬──────────────────────────────────────┘
                        ▼
-┌─ Kernel Early Boot ─────────────────────────────────────────┐
-│  1. Exception vectors, GIC (v2 on Pi 4, v3 on Pi 5) init, timer init               │
-│  2. Page table setup (TTBR0/TTBR1, W^X, KASLR)             │
-│  3. Heap allocator init                                     │
-│  4. Capability manager init (root capability created)       │
-│  5. IPC subsystem init                                      │
-│  6. Audit log init (kernel ring buffer until storage ready) │
-│  7. Process manager init                                    │
-│  8. Provenance chain init                                   │
+┌─ Kernel Early Boot (summary — see boot.md §3.3 for full 17 steps) ──┐
+│  1. Exception vectors + UART init                             │
+│  2. Device tree parse + platform detection                    │
+│  3. GIC (v2 on Pi 4, v3 on Pi 5/QEMU) + timer init          │
+│  4. MMU + page tables (TTBR0/TTBR1, W^X)                     │
+│  5. Page allocator + heap init                                │
+│  6. RNG + KASLR                                               │
+│  7. Capability manager init (root capability created)         │
+│  8. IPC subsystem init                                        │
+│  9. Audit log init (kernel ring buffer until storage ready)   │
+│  10. Process manager + provenance + scheduler init            │
 └──────────────────────┬──────────────────────────────────────┘
                        ▼
 ┌─ Service Manager ───────────────────────────────────────────┐
@@ -993,15 +1004,21 @@ AIRS is infrastructure, not a hard dependency. Every AIRS-dependent feature has 
 Agents are the primary execution model for user-facing work. Each agent runs as an isolated OS process with a restricted capability set:
 
 ```rust
+/// Agent process — isolation-relevant fields shown here.
+/// Full struct also includes address_space, memory_stats, priority,
+/// and suspended flag (see memory.md §5.1 for memory-related fields).
 pub struct AgentProcess {
     pid: ProcessId,
     agent_id: AgentId,
     capabilities: CapabilitySet,       // kernel-enforced
+    address_space: AddressSpace,       // per-agent page tables (TTBR0)
     memory_limit: usize,               // max RSS
     cpu_quota: CpuQuota,               // fair-share scheduling
     ipc_channels: Vec<ChannelId>,      // registered IPC endpoints
     space_access: Vec<SpaceMount>,     // mounted spaces
     manifest: AgentManifest,           // declared capabilities + metadata
+    priority: AgentPriority,           // from manifest, for OOM scoring
+    suspended: bool,                   // e.g., by thrash detector
 }
 ```
 

@@ -969,7 +969,7 @@ Phase 15d: Device translation — /dev/* nodes routed to subsystem bridges
            Deliverable: BSD tools can access /dev/null, /dev/urandom, /dev/tty
 
 Phase 15e: Socket translation — network operations via Network Service
-           Depends on: Phase 15c, Phase 5 (Network Service)
+           Depends on: Phase 15c, Phase 7 (Network Subsystem)
            Deliverable: curl and ssh work
 
 Phase 15f: Full FreeBSD userland — all included tools compiled and tested
