@@ -1024,12 +1024,20 @@ When the kernel creates an agent process, it:
 5. Records the memory limit from the agent manifest (or system default)
 
 ```rust
+/// Agent process — memory-relevant fields shown here.
+/// Full struct includes additional fields for capabilities, IPC channels,
+/// CPU quota, space mounts, and manifest (see architecture.md §6.3).
 pub struct AgentProcess {
     pub pid: ProcessId,
     pub agent_id: AgentId,
+    pub capabilities: CapabilitySet,
     pub address_space: AddressSpace,
     pub memory_limit: usize,           // max RSS in bytes
     pub memory_stats: AgentMemoryStats,
+    pub cpu_quota: CpuQuota,
+    pub ipc_channels: Vec<ChannelId>,
+    pub space_access: Vec<SpaceMount>,
+    pub manifest: AgentManifest,
     /// Agent priority from manifest (§8.1).
     /// Used by OOM scorer (§8.1) and thrash detector (§10.6) for victim selection.
     pub priority: AgentPriority,
