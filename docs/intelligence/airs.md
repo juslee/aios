@@ -448,12 +448,13 @@ pub enum TaskType {
 Different hardware tiers require different model quantization levels. AIRS selects the best model variant at first boot and when the user changes their model preferences.
 
 ```
-RAM Tier        Model Pool   Quantization       Model Size    Quality       Notes
-──────────────  ──────────   ──────────────     ──────────    ────────      ─────
-2 GB Degraded      0 MB      N/A (cloud)        N/A          Cloud-level   No local inference
-4 GB Constrained   2 GB      Q3_K_S / Q4_K_S    1-3B params  Basic         Limited reasoning
-8 GB Recommended   4 GB      Q4_K_M             7-8B params  Good          Target experience
-16 GB+ Comfortable 8 GB      Q5_K_M / Q6_K      7-8B params  High          Best local quality
+RAM Tier            Model Pool   Quantization   Model Size    Quality       Notes
+─────────────────   ──────────   ────────────   ──────────    ────────      ─────
+< 2 GB Degraded        0 MB      N/A            N/A          Cloud-only    No local inference
+2-4 GB Minimal         1 GB      Q4_K_M         1B params    Minimal       Simple completions
+4-8 GB Constrained     2 GB      Q4_K_M         3B params    Basic         Limited reasoning
+8-16 GB Recommended    4 GB      Q4_K_M         8B params    Good          Target experience
+≥ 16 GB Comfortable    8 GB      Q5_K_M         8B params    High          Best local quality
 ```
 
 ```rust
@@ -1337,23 +1338,25 @@ The `ComputeDevice` enum (section 3.2) already includes NPU as a variant. When N
 
 ## 12. Implementation Order
 
+Development plan phases (see development-plan.md — not to be confused with boot phases):
+
 ```
-Phase 8a:  GGML integration + model loading          → inference works
-Phase 8b:  Compute scheduler + KV cache management   → concurrent sessions
-Phase 8c:  Streaming output + conversation manager   → conversation bar works
-Phase 8d:  Model registry + LRU eviction             → multiple models supported
-Phase 8e:  Quantization selector + hardware tier      → auto-select best model for device
-Phase 9a:  Space Indexer + selective embedding         → semantic search (promoted objects)
-Phase 9b:  Context Engine + Attention Manager         → context-aware behavior
-Phase 9c:  Conversation bar UI integration            → user-facing AI ready
-Phase 10a: Intent Verifier + Behavioral Monitor       → security layers 1 + 3
-Phase 10b: Adversarial Defense + hint screening        → security layer 5 + hint input vector
-Phase 10c: Tool Manager + Agent Lifecycle             → full agent framework
-Phase 14a: Model residency policy + switching opt     → minimize model swap latency
-Phase 14b: Dynamic model pool (grow/shrink on demand) → efficient RAM use
-Phase 14b+: Resource orchestration security            → kernel AIRS monitor, fallback mode,
-            (security/resource path isolation,            resource directive provenance,
-             agent hint screening, allocation opacity)    damage ceiling: DoS only, not breach
-Phase 14c: Multi-model ensemble routing               → specialist routing (16+ GB)
-Phase 14d: NPU integration via subsystem framework    → hardware-accelerated inference
+Dev Phase 8a:  GGML integration + model loading          → inference works
+Dev Phase 8b:  Compute scheduler + KV cache management   → concurrent sessions
+Dev Phase 8c:  Streaming output + conversation manager   → conversation bar works
+Dev Phase 8d:  Model registry + LRU eviction             → multiple models supported
+Dev Phase 8e:  Quantization selector + hardware tier      → auto-select best model for device
+Dev Phase 9a:  Space Indexer + selective embedding         → semantic search (promoted objects)
+Dev Phase 9b:  Context Engine + Attention Manager         → context-aware behavior
+Dev Phase 9c:  Conversation bar UI integration            → user-facing AI ready
+Dev Phase 10a: Intent Verifier + Behavioral Monitor       → security layers 1 + 3
+Dev Phase 10b: Adversarial Defense + hint screening        → security layer 5 + hint input vector
+Dev Phase 10c: Tool Manager + Agent Lifecycle             → full agent framework
+Dev Phase 14a: Model residency policy + switching opt     → minimize model swap latency
+Dev Phase 14b: Dynamic model pool (grow/shrink on demand) → efficient RAM use
+Dev Phase 14b+: Resource orchestration security            → kernel AIRS monitor, fallback mode,
+                (security/resource path isolation,            resource directive provenance,
+                 agent hint screening, allocation opacity)    damage ceiling: DoS only, not breach
+Dev Phase 14c: Multi-model ensemble routing               → specialist routing (16+ GB)
+Dev Phase 14d: NPU integration via subsystem framework    → hardware-accelerated inference
 ```

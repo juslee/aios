@@ -23,6 +23,7 @@
 - [posix.md](../platform/posix.md) — POSIX compatibility layer deep dive
 - [experience.md](../experience/experience.md) — Experience layer and UI design
 - [browser.md](../applications/browser.md) — Decomposed web content runtime
+- [ui-toolkit.md](../applications/ui-toolkit.md) — Portable UI toolkit specification
 - [attention.md](../intelligence/attention.md) — Attention Manager and notification triage
 - [preferences.md](../intelligence/preferences.md) — Preference Service
 - [identity.md](../experience/identity.md) — Identity and trust model
@@ -198,11 +199,15 @@ pub struct Space {
 
 pub struct Object {
     id: ObjectId,
+    content_hash: Hash,
     content_type: ContentType,
-    content: Content,
+    content_size: u64,
     semantic: SemanticMetadata,
     relations: Vec<Relation>,
-    versions: Vec<Version>,
+    created_at: Timestamp,
+    modified_at: Timestamp,
+    created_by: AgentId,
+    modified_by: AgentId,
     provenance: ProvenanceChain,
 }
 
@@ -1385,12 +1390,13 @@ Year    Phone       Tablet      Laptop (base)    Laptop (power)
 
 | RAM Available | Models That Fit | Experience |
 |---|---|---|
-| 2 GB | No local model pool | Cloud inference only, no local model pool, agents and browser share 1.75 GB user pool |
-| 4-6 GB | 3B Q4 only (1.5-2 GB model) | Basic — simple queries, limited context |
-| 8 GB | 8B Q4 (4.5 GB model) | Good — conversational AI, summarization, search |
-| 16 GB | 8B Q6 + vision model simultaneously | Great — high-quality responses, multi-modal |
-| 32 GB | 13B Q6 or 70B Q4 (with quantization) | Excellent — near-cloud quality locally |
-| 64 GB+ | 70B Q6 or multiple models loaded | Outstanding — full model library in RAM |
+| < 2 GB | No local model | Cloud-only or degraded — no local inference |
+| 2-4 GB | 1B Q4_K_M (~0.9 GB) | Minimal — simple completions, limited context |
+| 4-8 GB | 3B Q4_K_M (~2.0 GB) | Basic — simple queries, summarization |
+| 8-16 GB | 8B Q4_K_M (~4.5 GB) | Good — conversational AI, search |
+| ≥ 16 GB | 8B Q5_K_M (~4.5 GB, default) or Q6_K | Great — higher quality, room for vision model |
+| 32 GB+ | 13B Q6_K or 70B Q4_K_M | Excellent — near-cloud quality locally |
+| 64 GB+ | 70B Q6_K or multiple models loaded | Outstanding — full model library in RAM |
 
 - **Today (2026):** 16 GB laptops are becoming baseline (Apple's M-series ships 16 GB minimum). This is the sweet spot for AIOS — one good 8B model fully loaded with room for the OS, compositor, browser, and agents.
 - **2028:** 32 GB laptops become common. 13B models or quantized 70B models become viable on mainstream hardware. Phones reach 12-16 GB — enough for 8B inference, making phone AIOS a real product.
@@ -1437,7 +1443,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 4. **The subsystem framework abstracts accelerators.** When NPUs become standard, AIOS adds an NPU subsystem driver. The inference engine doesn't change — it requests "accelerated matrix multiply" from the subsystem framework, which routes to CPU SIMD, GPU compute shader, or NPU depending on what's available. The best hardware wins automatically.
 
-5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q4 model. On a 2028 laptop with 32 GB, it loads a 13B Q6 — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
+5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q5_K_M model. On a 2028 laptop with 32 GB, it loads a 13B Q6_K — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
 
 6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)`. On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
 

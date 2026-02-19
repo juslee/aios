@@ -49,7 +49,7 @@ No settings panel required. No config files to edit. No documentation to read. T
 │  │  │ NLU Resolver  │  │ Preference   │  │ Behavioral        │ ││
 │  │  │               │  │ Store        │  │ Observer          │ ││
 │  │  │ Natural lang  │  │              │  │                   │ ││
-│  │  │ → preference  │  │ system/      │  │ Watches user      │ ││
+│  │  │ → preference  │  │ user/        │  │ Watches user      │ ││
 │  │  │   change      │  │ preferences/ │  │ patterns, infers  │ ││
 │  │  │               │  │ space        │  │ preference changes│ ││
 │  │  └──────────────┘  └──────────────┘  └───────────────────┘ ││
@@ -630,7 +630,7 @@ impl PreferenceService {
 
         // 4. Persist to space
         space::write(
-            &format!("system/preferences/{}", id.to_path()),
+            &format!("user/preferences/{}", id.to_path()),
             pref,
         );
 
@@ -906,7 +906,7 @@ impl PreferenceService {
 
 ### 11.1 Sync Strategy
 
-Preferences are stored in `system/preferences/` space and sync via Space Mesh like all spaces:
+Preferences are stored in `user/preferences/` space and sync via Space Mesh like all spaces:
 
 ```rust
 pub struct PreferenceSyncPolicy {
@@ -1101,25 +1101,27 @@ The Settings agent is **not hardcoded**. It reads preference metadata from the P
 
 ## 14. Implementation Order
 
+Development plan phases (see development-plan.md — not to be confused with boot phases):
+
 ```
-Phase 5a:   Preference data model              → PreferenceId, PreferenceValue, storage
-Phase 5b:   Preference Service (basic)         → get/set/persist, system defaults
-Phase 5c:   Change propagation                 → IPC notification to components
+Dev Phase 5a:   Preference data model              → PreferenceId, PreferenceValue, storage
+Dev Phase 5b:   Preference Service (basic)         → get/set/persist, system defaults
+Dev Phase 5c:   Change propagation                 → IPC notification to components
 
-Phase 9a:   NLU resolver                       → Conversation Bar → preference changes
-Phase 9b:   Preference history                 → change records, explain, undo
-Phase 9c:   Conflict resolution                → source precedence, tradeoff dialogs
+Dev Phase 9a:   NLU resolver                       → Conversation Bar → preference changes
+Dev Phase 9b:   Preference history                 → change records, explain, undo
+Dev Phase 9c:   Conflict resolution                → source precedence, tradeoff dialogs
 
-Phase 13a:  Behavioral observer                → pattern detection, hypothesis generation
-Phase 13b:  Behavioral proposals               → AIRS-driven preference suggestions
-Phase 13c:  Agent preferences                  → manifest declaration, scoped storage
+Dev Phase 13a:  Behavioral observer                → pattern detection, hypothesis generation
+Dev Phase 13b:  Behavioral proposals               → AIRS-driven preference suggestions
+Dev Phase 13c:  Agent preferences                  → manifest declaration, scoped storage
 
-Phase 16a:  Settings Agent                     → visual preference browser
-Phase 16b:  Cross-device sync                  → universal vs per-device, conflict resolution
-Phase 16c:  Preference analytics               → usage patterns, recommendation engine
+Dev Phase 16a:  Settings Agent                     → visual preference browser
+Dev Phase 16b:  Cross-device sync                  → universal vs per-device, conflict resolution
+Dev Phase 16c:  Preference analytics               → usage patterns, recommendation engine
 
-Phase 20:   Full NLU coverage                  → handle ambiguous, complex, multi-preference changes
-Phase 23:   Accessibility preferences          → screen reader, high contrast, reduced motion
+Dev Phase 20:   Full NLU coverage                  → handle ambiguous, complex, multi-preference changes
+Dev Phase 23:   Accessibility preferences          → screen reader, high contrast, reduced motion
 ```
 
 -----
