@@ -1072,6 +1072,9 @@ impl PlatformBackend for LinuxBackend {
             flow_integration: false,
             space_backed_data: false,
             capability_aware_ui: false,
+            // gpu_rendering is true only if wgpu surface creation and GPU initialization
+            // succeeded during backend setup. In headless / no-GPU environments this
+            // will be false and the backend must fall back to a CPU renderer.
             gpu_rendering: true,
             high_dpi: true,
             touch_input: false,
