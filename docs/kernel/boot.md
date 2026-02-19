@@ -217,25 +217,25 @@ The ESP is small (64-256 MB). It holds only the boot chain. The OS itself lives 
 ### 2.5 QEMU Boot vs Real Hardware
 
 ```
-                        QEMU                    Raspberry Pi 4/5
-─────────────────────────────────────────────────────────────────
-Firmware                Built-in UEFI           VideoCore + UEFI
-                        (edk2-aarch64)          (via edk2-rpi)
-Boot device             VirtIO-Blk disk         SD card or USB
-Device discovery        DTB (QEMU-generated)    DTB (Pi firmware)
-ACPI                    Available               Not available
-Interrupt controller    GICv3 (virtual)         GIC-400 (GICv2)
-Timer                   ARM Generic Timer       ARM Generic Timer
-UART                    PL011 (MMIO)            PL011 (MMIO)
-GPU                     VirtIO-GPU              VideoCore VI/VII
-Network                 VirtIO-Net              Genet Ethernet
-Storage                 VirtIO-Blk              SD/eMMC + USB
-RNG                     VirtIO-RNG              bcm2835-rng
-Framebuffer             UEFI GOP (VirtIO-GPU)   UEFI GOP (HDMI)
-Acceleration            HVF (macOS), KVM (Linux) Native aarch64
+                        QEMU                    Raspberry Pi 4/5         Apple Silicon
+─────────────────────────────────────────────────────────────────────────────────────────
+Firmware                Built-in UEFI           VideoCore + UEFI         m1n1 + U-Boot + UEFI
+                        (edk2-aarch64)          (via edk2-rpi)           (Asahi Linux chain)
+Boot device             VirtIO-Blk disk         SD card or USB           NVMe (ANS)
+Device discovery        DTB (QEMU-generated)    DTB (Pi firmware)        ADT → FDT (m1n1)
+ACPI                    Available               Not available            Not available
+Interrupt controller    GICv3 (virtual)         GIC-400 (GICv2)          AIC (Apple custom)
+Timer                   ARM Generic Timer       ARM Generic Timer        ARM Generic Timer
+UART                    PL011 (MMIO)            PL011 (MMIO)             S5L UART (Apple)
+GPU                     VirtIO-GPU              VideoCore VI/VII         AGX (Apple custom)
+Network                 VirtIO-Net              Genet Ethernet           PCIe Ethernet
+Storage                 VirtIO-Blk              SD/eMMC + USB            NVMe (ANS)
+RNG                     VirtIO-RNG              bcm2835-rng              Apple TRNG
+Framebuffer             UEFI GOP (VirtIO-GPU)   UEFI GOP (HDMI)          simplefb (m1n1)
+Acceleration            HVF (macOS), KVM (Linux) Native aarch64          Native aarch64
 ```
 
-**Key difference for boot:** QEMU provides GICv3, Pi 4 provides GICv2 (GIC-400). The kernel's interrupt setup path branches based on the device tree. Pi 5 provides GICv3 natively.
+**Key difference for boot:** QEMU provides GICv3, Pi 4 provides GICv2 (GIC-400), Pi 5 provides GICv3 natively, and Apple Silicon uses AIC (Apple Interrupt Controller) — a completely different interrupt architecture requiring its own driver. The kernel's interrupt setup path branches based on the device tree. See hal.md §13 for AIC details.
 
 ### 2.6 Exception Level Model
 
@@ -264,6 +264,7 @@ EL0 (User)          Service Manager, all services, All userspace processes.
 - `method = "smc"` → Pi 4/5 (ATF at EL3 handles the call)
 - `method = "hvc"` → QEMU without KVM (QEMU emulates PSCI at EL2)
 - `method = "hvc"` → QEMU with KVM (KVM intercepts HVC and handles PSCI)
+- `method = "hvc"` → Apple Silicon (m1n1 hypervisor at EL2 handles PSCI)
 
 The kernel reads this during Step 4 (device tree parse) and stores it for SMP bringup (§3.5). The choice of HVC vs SMC is the *only* place where exception levels affect AIOS — everything else runs at EL1/EL0 uniformly.
 
@@ -289,14 +290,20 @@ pub trait Platform: Send + Sync {
 pub struct QemuPlatform;
 pub struct RaspberryPi4Platform;
 pub struct RaspberryPi5Platform;
+pub struct AppleSiliconPlatform { soc: AppleSoc }
 
 /// Selected at boot time by reading the DTB compatible string.
+/// See hal.md §2 for the full platform detection and compatible strings.
 pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
     let compat = dt.root_compatible();
     match compat {
         c if c.contains("qemu") => Box::new(QemuPlatform),
         c if c.contains("brcm,bcm2711") => Box::new(RaspberryPi4Platform),
         c if c.contains("brcm,bcm2712") => Box::new(RaspberryPi5Platform),
+        c if c.contains("apple,t8103") => Box::new(AppleSiliconPlatform::new(AppleSoc::T8103)),
+        c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
+        c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
+        c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
         _ => panic!("Unknown platform: {}", compat),
     }
 }
@@ -644,10 +651,13 @@ fn secondary_cpu_entry(core_id: usize) {
 
 ```
 Platform            Cores   PSCI Conduit    Notes
-──────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────
 QEMU (default)      4      HVC             Configurable via -smp
 Raspberry Pi 4      4      SMC             Cortex-A72
 Raspberry Pi 5      4      SMC             Cortex-A76
+Apple M1            8      HVC             4× Firestorm + 4× Icestorm (big.LITTLE)
+Apple M1 Pro/Max   10/10   HVC             8× Firestorm + 2× Icestorm (varies)
+Apple M2 Pro       12      HVC             8× Avalanche + 4× Blizzard
 ```
 
 **The `maxcpus=` command line option** limits how many secondary cores are brought online. `maxcpus=1` keeps the system single-core (useful for debugging race conditions). Default is all available cores.
@@ -1121,10 +1131,13 @@ AI services are **not on the critical boot path**. Phase 3 runs in parallel with
 ```
 AIRS startup:
   1. Read model registry from system/models/ space
-  2. Select default model based on available RAM:
-     >= 8 GB RAM: load 8B Q4_K_M  (~4.5 GB)
-     >= 4 GB RAM: load 3B Q4_K_M  (~2.0 GB)
-      < 4 GB RAM: load 1B Q4_K_M  (~0.7 GB)
+  2. Select default model based on available RAM
+     (see airs.md §4.6 for full thresholds):
+     >= 16 GB RAM: load 8B Q5_K_M  (~4.5 GB, higher quality)
+     >= 8 GB RAM:  load 8B Q4_K_M  (~4.5 GB)
+     >= 4 GB RAM:  load 3B Q4_K_M  (~2.0 GB)
+     >= 2 GB RAM:  load 1B Q4_K_M  (~0.9 GB)
+      < 2 GB RAM:  no local model (cloud-only or degraded)
   3. Memory-map model weights (mmap, lazy page-in)
   4. Initialize GGML runtime + NEON SIMD
   5. Warm up: run a short inference to fault in hot pages

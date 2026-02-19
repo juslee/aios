@@ -443,7 +443,7 @@ pub enum TaskType {
 - Users can download larger/specialized models from the model registry
 - System intelligently routes tasks to the best available model
 
-### 4.4 Quantization Strategy by Hardware Tier
+### 4.3 Quantization Strategy by Hardware Tier
 
 Different hardware tiers require different model quantization levels. AIRS selects the best model variant at first boot and when the user changes their model preferences.
 
@@ -501,7 +501,7 @@ impl QuantizationSelector {
 - **Q5_K_M / Q6_K:** Near-full-precision quality. Only fits on 16 GB+ devices alongside other system needs. Worth it if the hardware supports it.
 - **Cloud:** No local quality tradeoff. Latency and connectivity are the costs instead.
 
-### 4.3 LRU Model Eviction
+### 4.4 LRU Model Eviction
 
 Multiple models can't fit in RAM simultaneously on low-memory devices. The registry manages loading/unloading:
 
@@ -575,6 +575,112 @@ Primary model: llama-8b (loaded, no vision capability)
 **4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. Example: user opens a photo space → AIRS begins loading the vision model in a background thread while the user browses thumbnails.
 
 **SD card reality:** On a Pi with an SD card, even mmap-based loading is slow because every page fault requires an SD card read (~100 μs per 4 KB page, vs ~5 μs for NVMe). A 4 GB model requires ~1 million page faults to fully warm up. AIOS mitigates this with sequential pre-faulting — after the mmap, a background thread reads the model file sequentially (which aligns with SD card's best-case sequential read performance of ~90 MB/s) to populate all pages before inference begins. First-token latency is ~45 seconds on SD vs ~3 seconds on NVMe for a 4 GB model.
+
+### 4.6 Boot-Time Model Selection
+
+At boot (Phase 3), AIRS must select which model to load before any user interaction occurs. This selection is based on available RAM, detected compute hardware, and what model files exist in `system/models/`. The thresholds are hardcoded for deterministic boot behavior — no inference is needed to select the first model.
+
+**RAM-based default selection thresholds:**
+
+```
+Available RAM        Model Pool Alloc    Default Model Selection
+──────────────────   ─────────────────   ─────────────────────────────────────
+< 2 GB               0 MB                No local model. AIRS starts in
+                                          cloud-only mode. Intelligence services
+                                          that require inference are disabled.
+                                          Rule-based fallbacks active.
+
+2 GB – 3.9 GB        1 GB                1B parameter model, Q4_K_M quantization.
+                                          ~600 MB on disk, ~900 MB in RAM.
+                                          Sufficient for: context inference,
+                                          intent verification, metadata generation.
+                                          Insufficient for: extended conversation,
+                                          complex summarization.
+
+4 GB – 7.9 GB        2 GB                3B parameter model, Q4_K_M quantization.
+                                          ~1.7 GB on disk, ~2 GB in RAM.
+                                          Sufficient for: all AIRS tasks at
+                                          reduced quality. Conversation works
+                                          but with shorter context windows.
+
+≥ 8 GB (target)      4 GB                8B parameter model, Q4_K_M quantization.
+                                          ~4.5 GB on disk, ~4.5 GB in RAM.
+                                          Full quality for all AIRS tasks.
+                                          This is the target experience.
+
+≥ 16 GB              8 GB                8B parameter model, Q5_K_M or Q6_K.
+                                          Higher quantization = better quality.
+                                          Room for specialist models alongside
+                                          the primary model.
+```
+
+```rust
+pub struct BootModelSelector {
+    available_ram: usize,
+    model_catalog: Vec<ModelEntry>,
+}
+
+impl BootModelSelector {
+    /// Called during Phase 3 boot to select the initial model.
+    /// This function is deterministic — same RAM + same catalog = same selection.
+    pub fn select_boot_model(&self) -> BootModelDecision {
+        let model_pool = self.compute_model_pool();
+
+        if model_pool == 0 {
+            return BootModelDecision::CloudOnly;
+        }
+
+        // Find the best model that fits in the pool
+        let embedding_reserve = 100 * MB;
+        let kv_reserve = model_pool / 4;
+        let model_budget = model_pool - embedding_reserve - kv_reserve;
+
+        let candidates: Vec<&ModelEntry> = self.model_catalog.iter()
+            .filter(|m| m.ram_required <= model_budget)
+            .filter(|m| m.capabilities.contains(&ModelCapability::TextGeneration))
+            .collect();
+
+        if candidates.is_empty() {
+            return BootModelDecision::CloudOnly;
+        }
+
+        // Prefer larger parameter count, then better quantization
+        let best = candidates.iter()
+            .max_by_key(|m| (m.parameters, m.quantization.quality_rank()))
+            .unwrap();
+
+        BootModelDecision::Local {
+            model_id: best.id,
+            model_pool_size: model_pool,
+        }
+    }
+
+    fn compute_model_pool(&self) -> usize {
+        match self.available_ram {
+            r if r < 2 * GB => 0,
+            r if r < 4 * GB => 1 * GB,
+            r if r < 8 * GB => 2 * GB,
+            r if r < 16 * GB => 4 * GB,
+            _ => 8 * GB,
+        }
+    }
+}
+```
+
+**First boot with no model files.** On a completely fresh installation where `system/models/` is empty (no bundled models, no downloads):
+
+1. AIRS starts in **degraded mode** — inference engine is idle, no model loaded.
+2. All intelligence services fall back to rule-based operation:
+   - Context Engine: time-of-day heuristics (see [context-engine.md §8](./context-engine.md))
+   - Attention Manager: keyword + category triage (see [attention.md §15.2](./attention.md))
+   - Space Indexer: metadata extraction only (file type, size, dates — no semantic embeddings)
+   - Intent Verifier: disabled (capabilities enforced by kernel regardless)
+   - Behavioral Monitor: disabled (no baseline to compare against)
+3. The system is fully usable but not intelligent. The user sees a prompt in the Conversation Bar: "Download an AI model to enable intelligent features" with a one-tap action.
+4. When connected to the network, AIRS can download the recommended model for the device's RAM tier. The download progress is shown in the Status Strip.
+5. Once downloaded, AIRS loads the model and transitions from degraded to normal operation. No reboot required — services hot-switch from rule-based to AI-backed.
+
+**Model file integrity.** At boot, AIRS verifies each model file's SHA-256 hash against the hash stored in the `ModelEntry` space object. If a model file is corrupted (hash mismatch), AIRS skips it and tries the next candidate. If all local models are corrupted, AIRS enters degraded mode and logs a warning to `system/audit/airs/`.
 
 -----
 

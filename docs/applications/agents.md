@@ -523,7 +523,116 @@ pub enum TerminationReason {
 
 **Invariant:** After termination, the agent holds zero capabilities, zero IPC channels, zero memory. Nothing leaks. Spaces the agent wrote to are unaffected — spaces belong to the user.
 
-### 3.5 Update
+### 3.5 Reboot Recovery
+
+When the system reboots — whether from a clean shutdown, a crash, or a power loss — the Agent Runtime must restore the set of agents that were running. This is not session restore (the compositor handles window layout via Semantic Resume). This is process-level recovery: which agents should be re-launched, in what order, and with what state.
+
+**Persistent agent registry.** The Agent Runtime maintains a persistent record in `system/agents/running.manifest` — a space object listing every agent that was active, paused, or backgrounded at the time of the last checkpoint. This manifest is updated atomically on every agent state transition (start, pause, background, stop). On crash or power loss, the manifest reflects the last consistent state.
+
+```rust
+pub struct RunningManifest {
+    /// Agents that were active/paused/backgrounded at last checkpoint
+    entries: Vec<RunningEntry>,
+    /// Monotonic checkpoint sequence number
+    checkpoint_seq: u64,
+    /// Timestamp of last checkpoint
+    last_checkpoint: Timestamp,
+}
+
+pub struct RunningEntry {
+    agent_id: AgentId,
+    /// State at time of checkpoint
+    state: PreRebootState,
+    /// Space containing serialized agent state (if suspended)
+    state_space: Option<SpaceId>,
+    /// Whether the agent declared autostart in its manifest
+    autostart: bool,
+    /// Priority order for relaunch (system agents first)
+    relaunch_priority: u32,
+}
+
+pub enum PreRebootState {
+    /// Was actively running — relaunch and let it restore from its spaces
+    Active,
+    /// Was paused (user had switched away) — relaunch in paused state
+    Paused,
+    /// Was backgrounded — relaunch in background state
+    Background,
+    /// Was suspended with serialized state — relaunch from state snapshot
+    Suspended { state_space: SpaceId },
+}
+```
+
+**Relaunch order.** Agent recovery happens during boot Phase 5 (Workspace Restoration), after the compositor, AIRS, and Space Storage are running. The order:
+
+```
+Phase 5 agent relaunch:
+
+1. Read system/agents/running.manifest
+   Parse RunningManifest, validate entries against installed agents
+
+2. Filter: remove agents that were uninstalled during this boot cycle
+   (edge case: OTA update removed an agent)
+
+3. Sort by relaunch_priority:
+   a. System agents with autostart=true     (priority 0-99)
+   b. Native experience agents that were active  (priority 100-199)
+   c. Third-party agents that were active    (priority 200-299)
+   d. Agents that were paused/backgrounded   (priority 300-399)
+   e. Task agents are NOT relaunched         (ephemeral by definition)
+
+4. For each agent in priority order:
+   a. Re-mount the agent's spaces (Space Storage creates IPC channels)
+   b. Create agent process with standard startup (§3.2)
+   c. Pass reboot hint to agent via SDK event:
+      AgentEvent::SystemReboot { previous_state: PreRebootState }
+   d. Agent restores its own state from its spaces
+   e. If agent was Suspended: pass serialized state snapshot
+      Agent can deserialize and resume where it left off
+
+5. Rate-limit: max 4 agents launching concurrently
+   Prevents boot overload on low-memory devices
+   Each agent has 10 seconds to reach Active state before timeout
+```
+
+**Agent-side recovery.** Agents receive an `AgentEvent::SystemReboot` event during startup instead of the normal `AgentEvent::Started`. The event includes the agent's pre-reboot state. Well-written agents use this to restore:
+
+```rust
+// In agent's event handler:
+match event {
+    AgentEvent::SystemReboot { previous_state } => {
+        // Read our state from our spaces
+        let saved_state = ctx.spaces().read("state/session.json").await?;
+        self.restore_from(saved_state)?;
+
+        match previous_state {
+            PreRebootState::Active => {
+                // User was actively using us — resume interactive mode
+                self.resume_interactive();
+            }
+            PreRebootState::Paused | PreRebootState::Background => {
+                // User wasn't looking at us — resume quietly
+                self.resume_background();
+            }
+            PreRebootState::Suspended { state_space } => {
+                // We have a full state snapshot — deserialize it
+                let snapshot = ctx.spaces().read_space(state_space).await?;
+                self.restore_full_state(snapshot)?;
+            }
+        }
+    }
+    AgentEvent::Started => {
+        // Fresh start — no prior state
+        self.initialize_fresh();
+    }
+}
+```
+
+**Crash recovery vs. clean shutdown.** On clean shutdown, the Agent Runtime sends `ShutdownRequested` to each agent (§3.4), giving them 5 seconds to persist state. The running manifest is updated to reflect clean shutdown. On crash or power loss, agents had no warning — their spaces contain whatever they last wrote. The running manifest may be slightly stale (up to 2 seconds, matching the ambient continuity guarantee from [boot-lifecycle.md](../kernel/boot-lifecycle.md)). Agents that write state periodically (every few seconds) recover cleanly. Agents that only write on explicit save may lose recent work — this is the agent developer's responsibility, and the SDK documentation emphasizes periodic state persistence.
+
+**Task agents are not relaunched.** Task agents (§2.2) are ephemeral — they exist to perform a specific task and exit. If the system reboots mid-task, the task is lost. The Task Manager (or the user) can re-initiate the task after boot. This is intentional: task agents have no meaningful state to restore, and re-launching a half-completed task with stale intermediate results would produce incorrect output.
+
+### 3.6 Update
 
 When a new version of an agent is available:
 

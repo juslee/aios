@@ -2118,7 +2118,219 @@ The Inspector (system diagnostic tool) displays:
 
 -----
 
-## 13. Implementation Order
+## 13. Async Executor
+
+The AIOS kernel uses async/await for non-blocking operations: IPC message delivery, timer waits, device I/O completion, and service startup orchestration. This section specifies how the kernel's async executor interacts with the scheduler.
+
+### 13.1 Kernel Async Tasks vs Scheduler Tasks
+
+The kernel has two concurrent execution models:
+
+1. **Scheduler tasks (threads).** Preemptive, priority-based, run on the per-CPU run queues described in §3. Each thread has its own stack, register state, and address space. Context switches happen at timer ticks or voluntary yields.
+
+2. **Async tasks (futures).** Cooperative, poll-based, run within a kernel thread's context. An async task borrows the current thread's stack during `.poll()` and yields when it returns `Poll::Pending`. No context switch — just a function return.
+
+```
+Scheduler thread (preemptive)          Async task (cooperative)
+┌─────────────────────┐               ┌─────────────────────┐
+│ Has its own stack    │               │ Borrows thread stack │
+│ Own register state   │               │ No saved registers   │
+│ Context switch = save│               │ Yield = return Pending│
+│   registers, switch  │               │ Resume = poll() again│
+│   page tables, etc   │               │                      │
+│ Cost: ~1-10μs        │               │ Cost: ~50-100ns      │
+└─────────────────────┘               └─────────────────────┘
+```
+
+**Why both?** Scheduler tasks provide isolation and preemption — essential for untrusted code and fairness. Async tasks provide lightweight concurrency within trusted kernel code — essential for orchestrating boot services, IPC multiplexing, and interrupt-driven I/O without thread-per-operation overhead.
+
+### 13.2 Executor Architecture
+
+The kernel runs one async executor per CPU core. Each executor is embedded in the core's idle loop — when no scheduler tasks are runnable, the CPU polls async tasks before entering low-power idle.
+
+```rust
+pub struct KernelExecutor {
+    /// Ready queue of async tasks that have been woken
+    ready_queue: VecDeque<AsyncTaskId>,
+    /// All registered async tasks (indexed by ID)
+    tasks: BTreeMap<AsyncTaskId, AsyncTask>,
+    /// Waker storage — maps task IDs to waker registrations
+    wakers: BTreeMap<AsyncTaskId, Waker>,
+}
+
+pub struct AsyncTask {
+    id: AsyncTaskId,
+    /// The future being polled
+    future: Pin<Box<dyn Future<Output = ()> + Send>>,
+    /// Priority inherited from the thread that spawned this task
+    priority: Priority,
+    /// CPU affinity (which executor should run this task)
+    affinity: Option<CpuId>,
+}
+```
+
+### 13.3 Waker Registration
+
+When an async task returns `Poll::Pending`, it must register a waker so the executor knows when to poll it again. Waker sources include:
+
+- **IPC channel:** "Wake me when a message arrives on this channel"
+- **Timer:** "Wake me after 500ms"
+- **DMA completion:** "Wake me when this DMA transfer finishes"
+- **Device interrupt:** "Wake me when this interrupt fires"
+- **Service readiness:** "Wake me when this service reaches Ready state"
+
+```rust
+pub enum WakeSource {
+    IpcMessage { channel_id: ChannelId },
+    Timer { deadline: Instant },
+    DmaCompletion { dma_handle: DmaHandle },
+    Interrupt { irq: u32 },
+    ServiceReady { service_id: ServiceId },
+}
+
+impl KernelExecutor {
+    /// Register a waker for an async task.
+    /// When the wake source fires, the task is moved to the ready queue.
+    pub fn register_waker(&mut self, task_id: AsyncTaskId, source: WakeSource) {
+        match source {
+            WakeSource::Timer { deadline } => {
+                // Register with the timer subsystem
+                timer::register_callback(deadline, move || {
+                    self.wake(task_id);
+                });
+            }
+            WakeSource::IpcMessage { channel_id } => {
+                // Register with the IPC subsystem
+                ipc::register_notify(channel_id, move || {
+                    self.wake(task_id);
+                });
+            }
+            // ... other sources
+        }
+    }
+
+    fn wake(&mut self, task_id: AsyncTaskId) {
+        if !self.ready_queue.contains(&task_id) {
+            self.ready_queue.push_back(task_id);
+        }
+    }
+}
+```
+
+### 13.4 Priority Inheritance for Async Tasks
+
+Async tasks inherit priority from their spawning context. When the Service Manager spawns an async boot task for a system service, that task inherits the Service Manager's priority (high). When a background indexer spawns an async I/O task, it inherits idle priority.
+
+If a high-priority scheduler task blocks waiting for an async task's result, the async task's priority is temporarily boosted to the waiter's priority. This prevents priority inversion where a high-priority thread waits indefinitely for a low-priority async task.
+
+```rust
+impl KernelExecutor {
+    /// Boost an async task's priority because a high-priority thread is waiting for it.
+    pub fn boost_priority(&mut self, task_id: AsyncTaskId, waiter_priority: Priority) {
+        if let Some(task) = self.tasks.get_mut(&task_id) {
+            task.priority = task.priority.max(waiter_priority);
+            // Re-sort ready queue if the task is ready
+        }
+    }
+}
+```
+
+### 13.5 Service Manager Async Boot Loop
+
+The Service Manager (boot Phase 4-5) uses the async executor to start services concurrently. Each service starts as an async task that:
+
+1. Waits for its dependencies to become ready (`WakeSource::ServiceReady`)
+2. Spawns the service process
+3. Waits for the service's health check to pass
+4. Signals the service as ready (waking dependent tasks)
+
+```rust
+/// Service Manager boot loop — starts all services concurrently,
+/// respecting the dependency graph.
+async fn boot_services(services: &[ServiceManifest]) {
+    let mut handles = Vec::new();
+
+    for service in services {
+        let handle = kernel_spawn(async move {
+            // Wait for all dependencies
+            for dep in &service.dependencies {
+                wait_for_service_ready(dep).await;
+            }
+
+            // Start the service
+            let process = spawn_service(service).await?;
+
+            // Wait for health check
+            let healthy = wait_for_health_check(process, service.health_timeout).await;
+            if !healthy {
+                log!("Service {} failed health check", service.name);
+                return Err(BootError::ServiceFailed(service.name));
+            }
+
+            // Signal ready — this wakes all tasks waiting on this service
+            signal_service_ready(service.id);
+            Ok(())
+        });
+        handles.push(handle);
+    }
+
+    // All services start concurrently; the dependency waits
+    // serialize them into the correct order automatically.
+    for handle in handles {
+        handle.await;
+    }
+}
+```
+
+### 13.6 Async Yield vs Context Switch Cost
+
+| Operation | Cost | What happens |
+|---|---|---|
+| Async yield (return Pending) | ~50-100ns | Future returns, executor moves to next task |
+| Async resume (poll Ready) | ~50-100ns | Executor calls future.poll(), task continues |
+| Context switch (scheduler) | ~1-10μs | Save registers, switch page tables, restore |
+| IPC direct switch | ~3-5μs | Save registers, switch to receiver, skip scheduler |
+
+The async executor is 10-100x cheaper than a context switch because it never saves/restores register state or switches page tables. This makes it ideal for high-frequency kernel operations like IPC multiplexing and timer management.
+
+### 13.7 Interaction with Scheduler Run Queues
+
+The async executor and the scheduler run on the same CPU cores but at different levels:
+
+```
+Per-CPU execution loop:
+
+loop {
+    // 1. Check for pending interrupts
+    if pending_irq() { handle_irq(); }
+
+    // 2. Pick the highest-priority scheduler task
+    if let Some(thread) = run_queue.pick_next() {
+        // Run the scheduler task until it blocks or is preempted
+        context_switch_to(thread);
+        // ... thread runs ...
+        // Returns here when thread yields, blocks, or is preempted
+    }
+
+    // 3. No scheduler tasks runnable — poll async tasks
+    while let Some(task_id) = executor.ready_queue.pop_front() {
+        executor.poll(task_id);
+        // Check if a scheduler task became runnable (e.g., from IPC)
+        if run_queue.has_runnable() { break; }
+    }
+
+    // 4. Nothing to do — enter low-power idle
+    if run_queue.is_empty() && executor.ready_queue.is_empty() {
+        wfi(); // ARM Wait For Interrupt
+    }
+}
+```
+
+Scheduler tasks always preempt async tasks. If a thread becomes runnable (e.g., from IPC wakeup), the executor immediately stops polling async tasks and switches to the scheduler task. Async tasks only run when no scheduler tasks need the CPU.
+
+-----
+
+## 14. Implementation Order
 
 Scheduler development spans multiple phases, building from simple to sophisticated:
 
@@ -2188,7 +2400,7 @@ Each phase builds on the previous. The Phase 1 scheduler is trivial — just eno
 
 -----
 
-## 14. Design Principles
+## 15. Design Principles
 
 ### Core Principles
 

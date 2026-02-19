@@ -1871,3 +1871,500 @@ When implementing the `Platform` trait for a new board, follow these security re
 5. **Validate all device tree addresses.** Never trust MMIO base addresses from the device tree without checking they don't overlap RAM or other sensitive regions.
 6. **Rate-limit interrupts.** Configure per-IRQ rate limiting in the interrupt controller to prevent IRQ flooding attacks.
 7. **Use bounce buffers on platforms without IOMMU.** Never allow untrusted devices to DMA directly to kernel memory.
+
+-----
+
+## 14. USB Host Controller
+
+USB is the primary input device path on Raspberry Pi hardware and provides expansion connectivity on all platforms. The HAL provides a USB host controller abstraction that covers xHCI (USB 3.x) and the platform-specific DWC2 (DesignWare) controller on Pi 4.
+
+### 14.1 Controller Abstraction
+
+```rust
+/// USB host controller abstraction.
+pub trait UsbHostController {
+    /// Initialize the controller hardware.
+    /// Resets the controller, configures ring buffers, enables port power.
+    fn init(&mut self) -> Result<()>;
+
+    /// Enumerate devices on all root hub ports.
+    /// Returns a tree of discovered devices with their descriptors.
+    fn enumerate(&mut self) -> Result<Vec<UsbDevice>>;
+
+    /// Submit a transfer (control, bulk, interrupt, or isochronous).
+    fn submit_transfer(&mut self, transfer: UsbTransfer) -> Result<TransferHandle>;
+
+    /// Poll for completed transfers (non-blocking).
+    fn poll_completions(&mut self) -> Vec<TransferCompletion>;
+
+    /// Shutdown the controller, release all resources.
+    fn shutdown(&mut self);
+}
+```
+
+### 14.2 xHCI (USB 3.x)
+
+xHCI is the standard USB 3.x host controller interface, used on Pi 5 (VIA VL805 PCIe-USB bridge) and QEMU (emulated xHCI). The xHCI driver manages three ring buffer types:
+
+```
+xHCI Ring Buffer Architecture:
+
+  Command Ring (kernel → controller)
+  ├── Enable Slot
+  ├── Address Device
+  ├── Configure Endpoint
+  └── Evaluate Context
+
+  Transfer Rings (per-endpoint, kernel → controller)
+  ├── Normal TRB (bulk data)
+  ├── Setup Stage TRB (control transfers)
+  ├── Data Stage TRB (control data phase)
+  └── Status Stage TRB (control completion)
+
+  Event Ring (controller → kernel)
+  ├── Command Completion Event
+  ├── Transfer Event (transfer completed)
+  ├── Port Status Change Event (device connected/disconnected)
+  └── Host Controller Event (errors, bandwidth)
+```
+
+```rust
+pub struct XhciController {
+    /// MMIO base address of the xHCI capability registers
+    mmio_base: *mut u8,
+    /// Operational registers (offset from capability registers)
+    op_regs: *mut u8,
+    /// Runtime registers (for interrupter management)
+    rt_regs: *mut u8,
+    /// Doorbell registers (one per device slot + one for command ring)
+    db_regs: *mut u8,
+    /// Device Context Base Address Array (DCBAA)
+    dcbaa: DmaBuffer,
+    /// Command ring
+    command_ring: TransferRing,
+    /// Event ring (single interrupter for simplicity)
+    event_ring: EventRing,
+    /// Per-slot device state
+    slots: [Option<DeviceSlot>; 256],
+    /// Scratchpad buffers (required by some controllers)
+    scratchpad: Option<DmaBuffer>,
+}
+
+pub struct DeviceSlot {
+    slot_id: u8,
+    device: UsbDevice,
+    /// Device context (input/output context structures)
+    device_context: DmaBuffer,
+    /// Per-endpoint transfer rings
+    endpoint_rings: [Option<TransferRing>; 31],
+}
+```
+
+**xHCI initialization sequence:**
+
+```
+1. Reset controller (write USBCMD.HCRST, wait for USBSTS.CNR clear)
+2. Read capability registers: MaxSlots, MaxIntrs, MaxPorts
+3. Program MaxSlotsEn (we use 64, sufficient for hub topologies)
+4. Allocate DCBAA (Device Context Base Address Array) — DMA buffer
+5. Write DCBAA base address to DCBAAP register
+6. Allocate and initialize Command Ring — DMA buffer, set CCS=1
+7. Write Command Ring pointer to CRCR register
+8. Allocate and initialize Event Ring — DMA buffer, set interrupter
+9. Write Event Ring Segment Table to ERSTBA register
+10. Set Event Ring Dequeue Pointer (ERDP)
+11. Enable interrupter 0 (IMAN.IE = 1)
+12. Start controller (USBCMD.R/S = 1)
+13. Wait for USBSTS.HCH = 0 (controller running)
+14. Enable port power on all root hub ports
+15. Wait for port connect events on event ring
+```
+
+### 14.3 DWC2 (Pi 4)
+
+Raspberry Pi 4 uses a DesignWare DWC2 USB 2.0 controller connected to the BCM2711 SoC. This is a fundamentally different interface from xHCI — it uses a channel-based architecture instead of ring buffers.
+
+```rust
+pub struct Dwc2Controller {
+    mmio_base: *mut u8,
+    /// Host channels (Pi 4 has 16 channels)
+    channels: [HostChannel; 16],
+    /// Channel allocation bitmap
+    channel_alloc: u16,
+    /// Pending transfers waiting for a free channel
+    pending_queue: VecDeque<UsbTransfer>,
+}
+```
+
+DWC2 is only used on Pi 4. Pi 5 uses xHCI exclusively. QEMU can emulate either. The HAL abstracts both behind the `UsbHostController` trait so upper-layer drivers (HID, mass storage, audio) don't need to know which controller is in use.
+
+### 14.4 USB Device Enumeration and HID
+
+After a device connects, the enumeration sequence discovers its identity and capabilities:
+
+```
+1. Port status change event → device connected
+2. Reset the port (10ms reset, 10ms recovery)
+3. Read device speed (LS/FS/HS/SS from port status register)
+4. Assign a device address (Enable Slot → Address Device)
+5. Read Device Descriptor (8 bytes, then full 18 bytes)
+6. Read Configuration Descriptor (variable length)
+7. Parse Interface Descriptors to identify device class
+8. For HID devices: read HID Report Descriptor
+9. Configure the device (Set Configuration)
+10. For HID devices: set idle rate, select boot protocol if needed
+```
+
+**HID (Human Interface Device) class driver** handles keyboards, mice, and game controllers. On Pi hardware, this is the primary input path — there is no PS/2 or built-in keyboard.
+
+```rust
+pub struct HidDriver {
+    device: UsbDevice,
+    interface: u8,
+    /// Parsed HID report descriptor — describes the report format
+    report_descriptor: HidReportDescriptor,
+    /// Interrupt IN endpoint for polling input reports
+    interrupt_endpoint: EndpointAddress,
+    /// Poll interval from endpoint descriptor (in ms)
+    poll_interval_ms: u8,
+}
+
+impl HidDriver {
+    /// Parse an incoming HID input report into structured events.
+    pub fn parse_report(&self, report: &[u8]) -> Vec<InputEvent> {
+        // The report descriptor defines the layout:
+        // - Keyboard: modifier keys (byte 0), reserved (byte 1), keycodes (bytes 2-7)
+        // - Mouse: buttons (byte 0), X delta, Y delta, wheel delta
+        // - Gamepad: buttons bitmap, analog stick axes
+        self.report_descriptor.parse(report)
+    }
+}
+```
+
+**Input latency on real hardware.** USB HID devices poll at their declared interval (typically 1-8ms for keyboards, 1ms for gaming mice). The total input latency chain: USB poll (1-8ms) → xHCI event ring → IRQ → HAL input event → IPC to compositor → compositor frame → display scanout. Target: < 16ms total for keyboard-to-pixel on a 60Hz display.
+
+### 14.5 USB Hub Enumeration
+
+USB hubs create a tree topology. The HAL supports up to 5 levels of hub nesting (USB spec maximum). Hub enumeration is recursive:
+
+```
+For each port on the hub:
+  1. Check port status (powered, connected, enabled)
+  2. If device connected:
+     a. Reset port
+     b. Enumerate device (§14.4)
+     c. If device is a hub:
+        - Configure hub (Set Configuration)
+        - Read Hub Descriptor (number of ports, power characteristics)
+        - Recursively enumerate hub ports
+  3. Register for port status change interrupts (device connect/disconnect)
+```
+
+Hub hot-plug is supported: when a device connects or disconnects from a hub port, the hub sends a status change interrupt. The HAL re-enumerates the affected port and notifies the Subsystem Framework of the device change.
+
+-----
+
+## 15. SMMUv3 Driver Internals
+
+The ARM System MMU (SMMU) provides IOMMU functionality for DMA isolation on Pi 5 and QEMU. This section documents the SMMUv3 driver internals beyond the high-level IOMMU abstraction in §13.1.
+
+### 15.1 SMMUv3 Architecture
+
+```
+                    ┌──────────────────────────────────┐
+                    │           SMMUv3                  │
+                    │                                    │
+  Device ──DMA──→   │  Stream Table                     │
+  (StreamID)        │  ┌─────────────────────────────┐  │
+                    │  │ STE[StreamID]               │  │  ──→ Physical Memory
+                    │  │  → Stage 1 Page Tables      │  │      (translated address)
+                    │  │  → Stage 2 Page Tables      │  │
+                    │  │  → Configuration             │  │
+                    │  └─────────────────────────────┘  │
+                    │                                    │
+                    │  Command Queue (kernel → SMMU)     │
+                    │  Event Queue (SMMU → kernel)       │
+                    └──────────────────────────────────┘
+```
+
+### 15.2 Stream Table
+
+The Stream Table maps device IDs (StreamIDs) to Stream Table Entries (STEs). Each STE points to the device's page tables and configuration:
+
+```rust
+pub struct SmmuV3 {
+    mmio_base: *mut u8,
+    /// Linear stream table (one entry per StreamID)
+    stream_table: DmaBuffer,
+    /// Number of stream table entries
+    num_stes: u32,
+    /// Command queue for invalidation and configuration
+    command_queue: SmmuQueue,
+    /// Event queue for fault reports
+    event_queue: SmmuQueue,
+}
+
+/// Stream Table Entry — 64 bytes, 8-DWORD aligned
+#[repr(C, align(64))]
+pub struct StreamTableEntry {
+    /// Configuration: bypass, stage-1 only, stage-2 only, or both
+    config: SteConfig,
+    /// Pointer to Stage-1 Context Descriptor (CD) table
+    s1_ctxptr: u64,
+    /// Stage-2 translation table base (if using stage-2)
+    s2_ttb: u64,
+    /// VMID for stage-2 isolation
+    vmid: u16,
+    /// Stream world: secure or non-secure
+    ns: bool,
+}
+
+pub enum SteConfig {
+    /// All transactions bypass the SMMU (no translation)
+    Bypass,
+    /// Stage-1 translation only (device → IPA)
+    Stage1Only,
+    /// Stage-2 translation only (IPA → PA)
+    Stage2Only,
+    /// Nested: Stage-1 then Stage-2
+    Nested,
+    /// Abort: all transactions from this device are faulted
+    Abort,
+}
+```
+
+### 15.3 Command and Event Queues
+
+The SMMU uses circular queues for communication with the kernel:
+
+- **Command Queue:** The kernel writes commands (TLB invalidate, STE sync, prefetch) and the SMMU consumes them. The kernel updates CMDQ_PROD; the SMMU updates CMDQ_CONS.
+- **Event Queue:** The SMMU writes fault events (translation fault, permission fault, unknown StreamID) and the kernel consumes them. The kernel reads EVTQ_CONS and advances it.
+
+```rust
+impl SmmuV3 {
+    /// Invalidate TLB entries for a specific device after updating page tables.
+    pub fn invalidate_device_tlb(&mut self, stream_id: u32) {
+        self.command_queue.push(SmmuCommand::TlbiByStreamId {
+            stream_id,
+        });
+        self.command_queue.push(SmmuCommand::Sync);
+        // Ring the doorbell to notify SMMU of new commands
+        self.write_cmdq_prod();
+        // Wait for SMMU to consume the sync command
+        self.wait_for_sync();
+    }
+
+    /// Process fault events from the SMMU event queue.
+    pub fn drain_events(&mut self) -> Vec<SmmuFault> {
+        let mut faults = Vec::new();
+        while let Some(event) = self.event_queue.pop() {
+            faults.push(SmmuFault {
+                stream_id: event.stream_id,
+                address: event.address,
+                fault_type: event.fault_type, // TranslationFault, PermissionFault, etc.
+                was_write: event.was_write,
+            });
+            // Log to audit system
+            audit_log!(
+                "SMMU fault: device {} accessed {:#x} ({})",
+                event.stream_id, event.address,
+                if event.was_write { "write" } else { "read" }
+            );
+        }
+        faults
+    }
+}
+```
+
+### 15.4 Pi 5 BCM2712 SMMU Quirks
+
+The BCM2712 SoC in Pi 5 includes an ARM SMMUv3 implementation with several platform-specific behaviors:
+
+1. **Limited StreamID space.** BCM2712 supports fewer StreamIDs than a full SMMUv3 implementation. The HAL queries the IDR1 register for the actual StreamID width and sizes the stream table accordingly.
+2. **PCIe requester ID mapping.** PCIe devices present BDF (Bus:Device:Function) as their requester ID. The SMMU maps these to StreamIDs via the StreamID translation mechanism. On BCM2712, the PCIe root complex assigns predictable StreamIDs based on BDF.
+3. **Coherent DMA.** BCM2712 supports hardware cache coherency for DMA (ACE-Lite). When coherent DMA is available, the kernel can skip cache maintenance operations around DMA transfers, reducing CPU overhead. The HAL detects coherent DMA support from the device tree `dma-coherent` property.
+4. **SMMU bypass for VideoCore.** The VideoCore GPU on Pi 5 may bypass the SMMU for performance. The kernel must ensure VideoCore DMA buffers are in a pre-approved physical range. This is a trust boundary — VideoCore firmware is not fully open-source.
+
+-----
+
+## 16. Suspend/Resume Device State
+
+When the system enters S3 suspend (RAM stays powered, CPU off) or S4 hibernate (state written to storage, everything off), each HAL device must save its state and restore it on resume. This section specifies the per-device quiesce and restore requirements.
+
+### 16.1 Device Power State Machine
+
+```
+               ┌──────────┐
+               │  Active   │ ← normal operation
+               └────┬──────┘
+                    │ suspend()
+                    ▼
+               ┌──────────┐
+               │  Quiesced │ ← DMA stopped, interrupts masked, state saved
+               └────┬──────┘
+                    │ power_off() [S4 only]
+                    ▼
+               ┌──────────┐
+               │  Off      │ ← device powered down, state in RAM/storage
+               └────┬──────┘
+                    │ resume()
+                    ▼
+               ┌──────────┐
+               │  Active   │ ← state restored, device operational
+               └──────────┘
+```
+
+### 16.2 Per-Device Suspend/Resume
+
+```rust
+/// Every HAL device driver implements this trait for power transitions.
+pub trait DevicePowerManagement {
+    /// Save device state and quiesce hardware.
+    /// After this call, the device must not generate interrupts or DMA.
+    fn suspend(&mut self) -> Result<DeviceSavedState>;
+
+    /// Restore device state from a previous suspend.
+    /// Re-initializes hardware, restores configuration, re-enables interrupts.
+    fn resume(&mut self, state: &DeviceSavedState) -> Result<()>;
+
+    /// Estimated time to resume this device (for boot/resume planning).
+    fn resume_latency(&self) -> Duration;
+}
+```
+
+**Per-device requirements:**
+
+| Device | Suspend Action | Resume Action | Resume Latency |
+|---|---|---|---|
+| GIC (interrupt controller) | Save distributor + redistributor state, mask all IRQs | Restore distributor config, re-enable IRQs | < 1ms |
+| ARM Generic Timer | Save CNTV_CTL, CNTV_CVAL | Restore timer registers, re-arm tick | < 1ms |
+| UART (serial console) | Drain TX FIFO, save baud/config | Re-init UART with saved config | < 1ms |
+| GPU (framebuffer) | Flush pending draws, save FB base | Re-init display pipeline, restore FB | 10-50ms |
+| GPU (3D/compute) | Wait for command queue drain | Full re-init (context lost) | 50-200ms |
+| Network (VirtIO-Net) | Stop TX/RX queues, save MAC + config | Restore virtqueues, re-enable | 5-10ms |
+| Network (BCM GENET) | Save PHY state, disable DMA rings | Re-init PHY, restore DMA rings | 50-100ms (PHY link) |
+| Storage (VirtIO-Blk) | Drain request queue | Restore virtqueues | 1-5ms |
+| Storage (SD/eMMC) | Save clock/bus width config | Re-init controller, restore config | 10-50ms |
+| USB (xHCI) | Stop controller (USBCMD.R/S=0), save port state | Reset controller, re-enumerate ports | 100-500ms |
+| RNG | No state to save | Re-seed from hardware | < 1ms |
+| SMMU | Save stream table config | Restore stream table, invalidate TLB | 1-5ms |
+| Watchdog | Save timeout value | Restore and re-arm | < 1ms |
+
+### 16.3 Resume Ordering
+
+Devices must resume in dependency order:
+
+```
+1. Timer         — needed for timeouts in subsequent driver init
+2. GIC           — needed for interrupt-driven device init
+3. UART          — needed for debug output during resume
+4. SMMU          — needed before any DMA-capable device resumes
+5. Storage       — needed if hibernate image must be read (S4)
+6. RNG           — needed for security operations
+7. Network       — can be lazy-resumed (only if network needed)
+8. GPU           — re-init display pipeline, show resume splash
+9. USB           — re-enumerate devices (slowest, runs last)
+10. Watchdog     — re-arm after all devices are up
+```
+
+### 16.4 S3 vs S4 Differences
+
+- **S3 (Suspend to RAM):** RAM stays powered. Device register state may be lost (device powers off) but the saved state structures in RAM are preserved. Resume is fast because saved state is already in memory.
+- **S4 (Hibernate):** Everything powers off. The saved state must be written to storage as part of the hibernate image. Resume requires reading the image from storage, then restoring device state. This is slower but survives complete power loss.
+
+The HAL's `DeviceSavedState` is a serializable structure. For S3, it stays in RAM. For S4, the hibernate manager serializes all saved states to the hibernate partition alongside the memory image.
+
+-----
+
+## 17. Thermal Management
+
+AI inference generates significant heat, particularly on SBC hardware like Raspberry Pi. The HAL provides thermal zone monitoring and throttling interfaces that the scheduler and AIRS use to prevent thermal damage and maintain system stability.
+
+### 17.1 Thermal Zone Abstraction
+
+```rust
+/// Each platform defines its thermal zones — regions with temperature sensors.
+pub trait PlatformThermal: Platform {
+    /// List all thermal zones on this platform.
+    fn thermal_zones(&self) -> Vec<ThermalZone>;
+
+    /// Read current temperature from a thermal zone (millidegrees Celsius).
+    fn read_temperature(&self, zone: &ThermalZone) -> Result<i32>;
+
+    /// Get the throttling thresholds for a zone.
+    fn throttle_thresholds(&self, zone: &ThermalZone) -> ThermalThresholds;
+
+    /// Apply a frequency cap to reduce heat generation.
+    fn set_frequency_cap(&mut self, max_freq_mhz: u32) -> Result<()>;
+}
+
+pub struct ThermalZone {
+    pub name: &'static str,            // "cpu", "gpu", "pmic", "soc"
+    pub sensor_address: u64,           // MMIO address of temperature register
+    pub zone_type: ThermalZoneType,
+}
+
+pub struct ThermalThresholds {
+    /// Temperature at which throttling begins (passive cooling)
+    pub passive_trip: i32,             // millidegrees C (e.g., 80_000 = 80°C)
+    /// Temperature at which aggressive throttling kicks in
+    pub hot_trip: i32,                 // e.g., 90_000 = 90°C
+    /// Temperature at which the system must shut down to prevent damage
+    pub critical_trip: i32,            // e.g., 100_000 = 100°C
+}
+```
+
+### 17.2 Per-Platform Thermal Configuration
+
+| Platform | Thermal Zones | Passive Trip | Hot Trip | Critical Trip | Throttling Mechanism |
+|---|---|---|---|---|---|
+| QEMU | 1 (virtual) | N/A | N/A | N/A | No real throttling (emulated) |
+| Pi 4 | 1 (cpu) | 80°C | 85°C | 90°C | VideoCore firmware reduces `arm_freq` via mailbox |
+| Pi 5 | 2 (cpu, pmic) | 80°C | 85°C | 90°C | DVFS via SCMI (ARM System Control and Management Interface) |
+| Apple Silicon | 3+ (cpu, gpu, npu, soc) | 95°C | 100°C | 105°C | SMC frequency table, per-cluster P-state control |
+
+**Pi thermal reality:** On Pi 4/5 without a heatsink, sustained AI inference (100% CPU on all cores) reaches the passive trip point within 30-60 seconds. With the official heatsink, this extends to 2-5 minutes. With active cooling (fan), the CPU stays below 80°C indefinitely. The HAL reads the thermal sensor every 500ms during normal operation and every 100ms when above the passive trip point.
+
+### 17.3 Thermal-Aware Inference
+
+During AIRS model loading and inference, the HAL monitors thermal state and reports it to the scheduler:
+
+```rust
+pub struct ThermalState {
+    pub current_temp: i32,
+    pub throttle_level: ThrottleLevel,
+    pub frequency_cap: Option<u32>,
+    pub time_to_critical: Option<Duration>,
+}
+
+pub enum ThrottleLevel {
+    /// Below passive trip — full performance
+    None,
+    /// At passive trip — reduce frequency by 25%
+    Passive,
+    /// At hot trip — reduce frequency by 50%, pause background inference
+    Hot,
+    /// At critical trip — emergency: stop all inference, max fan
+    Critical,
+}
+```
+
+When `ThrottleLevel::Hot` is reached:
+1. The scheduler reduces inference thread priority to Idle class
+2. AIRS pauses background tasks (indexing, embedding generation)
+3. Interactive inference continues at reduced throughput (frequency cap)
+4. The Attention Manager posts a system notification: "System is running hot — AI tasks slowed"
+
+When `ThrottleLevel::Critical` is reached:
+1. All inference stops immediately
+2. The scheduler enters thermal emergency mode (only essential services run)
+3. The system logs the thermal event to `system/audit/thermal/`
+4. If temperature does not drop within 30 seconds: orderly shutdown
+
+### 17.4 Boot-Time Thermal Monitoring
+
+Thermal monitoring begins in Phase 2 (HAL initialization), before AIRS loads. During Phase 3 (AIRS model loading), the HAL provides temperature readings so the boot sequence can adapt:
+
+- If the device is already warm at boot (e.g., quick reboot after heavy use): delay model loading until temperature drops below passive trip
+- On first boot with no cooling solution: the boot sequence logs a warning if temperature rises rapidly during model pre-faulting
+- The AIRS model selection (see [airs.md §4.6](../intelligence/airs.md)) considers thermal headroom: on a Pi without a heatsink, selecting a smaller model reduces sustained thermal load

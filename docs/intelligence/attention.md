@@ -1167,7 +1167,177 @@ If the same agent posts the same type of content repeatedly (e.g., hourly build 
 
 -----
 
-## 15. Implementation Order
+## 15. Boot-Time Initialization
+
+The Attention Manager is a system service that starts during boot Phase 4 (Intelligence Services). Unlike most services, the Attention Manager must handle a bootstrapping problem: it depends on AIRS for urgency assessment, but AIRS may still be loading its model when the first attention items arrive. This section specifies the Attention Manager's initialization sequence, its minimal startup state, and how it connects to the compositor notification pipeline.
+
+### 15.1 Initialization Sequence
+
+```
+Boot Phase 4 — Attention Manager startup:
+
+1. Service Manager spawns Attention Manager process
+   Capabilities granted: PostAttention (receive), ContextRead,
+   CompositorNotify, AIRSInference (optional at this point)
+
+2. Load user preferences from system/preferences/attention/
+   - Per-agent suppression rules
+   - Per-person priority boosts
+   - Quiet hours schedule
+   - Digest frequency setting
+   If preferences don't exist (first boot): use built-in defaults
+
+3. Initialize intake queue
+   - Per-agent rate limiters (default: 10 items/minute/agent)
+   - Total queue depth: 1000 items
+   - Items arriving before AIRS is ready are queued, not dropped
+
+4. Initialize audit log writer
+   - Connect to system/audit/attention/ space
+   - All items logged regardless of AIRS availability
+
+5. Connect to Context Engine (if available)
+   - Subscribe to ContextState changes
+   - If Context Engine not yet ready: assume ContextMode::Default
+     (medium notification threshold, no context filtering)
+
+6. Probe AIRS availability
+   - Send a lightweight health check to AIRS inference endpoint
+   - If AIRS responds: enter AI-triage mode (normal operation)
+   - If AIRS not yet ready: enter rule-based triage mode (§15.2)
+
+7. Connect to Compositor notification pipeline
+   - Register as the notification source for Status Strip badge
+   - Register as the source for interrupt overlays
+   - If Compositor not yet ready (Phase 4 runs before Phase 5):
+     buffer presentation events until compositor connects
+
+8. Signal Service Manager: Attention Manager ready
+   - Other services can now post attention items via IPC
+```
+
+### 15.2 Pre-AIRS Triage (Rule-Based Mode)
+
+Before AIRS loads its model (which may take several seconds on slow storage), the Attention Manager uses rule-based urgency assessment. This is a simpler, faster evaluation that doesn't require LLM inference.
+
+```rust
+pub struct RuleBasedTriage {
+    /// Keyword patterns that indicate high urgency
+    urgent_keywords: Vec<&'static str>,
+    /// Agent categories with default urgency levels
+    agent_urgency_defaults: HashMap<AgentCategory, UrgencyLevel>,
+    /// Person priority from identity system (if available)
+    relationship_boosts: HashMap<PersonId, f32>,
+}
+
+impl RuleBasedTriage {
+    pub fn assess(&self, item: &AttentionItem) -> UrgencyAssessment {
+        let mut score: f32 = 0.0;
+
+        // 1. Agent category baseline
+        score += match item.source_agent.category {
+            AgentCategory::System => 0.8,       // system alerts are usually important
+            AgentCategory::Communication => 0.5, // messages vary
+            AgentCategory::Productivity => 0.3,  // typically low urgency
+            AgentCategory::Media => 0.1,         // almost never urgent
+            AgentCategory::Game => 0.05,         // never urgent
+            _ => 0.3,
+        };
+
+        // 2. Keyword scan (no AI, just pattern matching)
+        if self.urgent_keywords.iter().any(|kw| item.content.contains(kw)) {
+            score += 0.3;
+        }
+
+        // 3. Relationship boost (if identity service is up)
+        if let Some(person) = &item.sender_identity {
+            if let Some(boost) = self.relationship_boosts.get(&person.id) {
+                score += boost;  // e.g., +0.4 for family members
+            }
+        }
+
+        // 4. Declared urgency hint (agents can suggest, but this is just a hint)
+        score += match item.declared_urgency {
+            DeclaredUrgency::Critical => 0.2,
+            DeclaredUrgency::High => 0.1,
+            DeclaredUrgency::Normal => 0.0,
+            DeclaredUrgency::Low => -0.1,
+        };
+
+        score = score.clamp(0.0, 1.0);
+
+        UrgencyAssessment {
+            score,
+            delivery: if score > 0.8 {
+                DeliveryMode::Interrupt
+            } else if score > 0.5 {
+                DeliveryMode::NextBreak
+            } else if score > 0.2 {
+                DeliveryMode::Digest
+            } else {
+                DeliveryMode::Silent
+            },
+            confidence: Confidence::Low, // rule-based is always low confidence
+            method: TriageMethod::RuleBased,
+        }
+    }
+}
+```
+
+**Rule-based triage limitations:**
+- No content understanding — cannot distinguish "server is on fire" from "server deployed successfully"
+- No behavioral pattern learning — treats every notification from an app the same way
+- No cross-item correlation — cannot group "5 messages from the same thread" without reading them
+- Higher false-interrupt rate — more things get through that shouldn't
+
+**Transition to AI triage.** When AIRS becomes available, the Attention Manager:
+1. Switches to AI-triage mode for all new items
+2. Does **not** re-triage queued items that were already delivered (that would cause duplicate notifications)
+3. Re-triages queued items that are still in the intake queue (not yet delivered)
+4. Logs the mode transition in the audit log
+
+### 15.3 Minimal Startup State
+
+The Attention Manager is functional with zero configuration:
+
+| Dependency | Available at startup? | Fallback |
+|---|---|---|
+| AIRS | Maybe (loading model) | Rule-based triage (§15.2) |
+| Context Engine | Maybe (starting concurrently) | Assume ContextMode::Default — medium threshold |
+| Identity Service | Maybe (starting concurrently) | No relationship boosts; all senders treated equally |
+| Compositor | No (Phase 5) | Buffer presentation events; deliver when compositor connects |
+| User Preferences | Yes (loaded from space) | Built-in defaults if first boot |
+| Audit Log | Yes (space writer) | Always available after Phase 2 (storage) |
+
+**First-boot behavior.** On first boot, no user preferences exist. The Attention Manager uses conservative defaults: only system agents can interrupt, everything else goes to the digest. The user configures preferences through the Conversation Bar ("make messages from Mom always interrupt") or the Settings agent. Preferences are stored in `system/preferences/attention/` and loaded on subsequent boots.
+
+### 15.4 Compositor Connection
+
+The Attention Manager connects to the compositor's notification pipeline during Phase 5, when the compositor starts. Before that connection:
+
+- Items that would be interrupts are buffered (max 10 buffered interrupts)
+- Items that would be digest or silent are stored normally
+- When the compositor connects, buffered interrupts are delivered in chronological order
+- If more than 10 interrupts buffered: oldest are demoted to digest (the user wasn't looking at the screen anyway)
+
+The connection uses a dedicated IPC channel with the `CompositorNotify` capability. The Attention Manager sends structured presentation commands:
+
+```rust
+pub enum PresentationCommand {
+    /// Update the Status Strip badge count
+    UpdateBadge { unseen_count: u32, highest_urgency: UrgencyLevel },
+    /// Show an interrupt overlay (urgent item)
+    ShowInterrupt { item: PresentableItem, timeout: Duration },
+    /// Show a toast notification (NextBreak item, user is at a break)
+    ShowToast { item: PresentableItem, timeout: Duration },
+    /// Update the Attention Panel content (digest items changed)
+    RefreshPanel { items: Vec<PresentableItem> },
+}
+```
+
+-----
+
+## 16. Implementation Order
 
 ```
 Phase 9a:   Attention Manager service          → intake queue, audit log
@@ -1193,7 +1363,7 @@ Phase 24:   Attention analytics                → queryable history, trends
 
 -----
 
-## 16. Design Principles
+## 17. Design Principles
 
 1. **The AI decides importance, not the sender.** Agents describe events. AIRS assesses urgency. No agent can inflate its own priority.
 
