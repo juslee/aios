@@ -401,7 +401,8 @@ docs/
 ├── project/
 │   ├── overview.md                    ← This document
 │   ├── architecture.md               System architecture deep dive
-│   └── development-plan.md           Timeline, risks, dependencies
+│   ├── development-plan.md           Timeline, risks, dependencies
+│   └── lessons-learned.md            Design retrospective and audit findings
 │
 ├── kernel/
 │   ├── boot.md                       Boot sequence and service startup
@@ -462,6 +463,7 @@ These companion documents provide deep-dive technical specifications:
 | `browser.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
 | `experience.md` | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
 | `development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
+| `lessons-learned.md` | Design retrospective — strengths, anti-patterns, reusable patterns, open questions from documentation audit |
 ---
 ## 13. Success Criteria (Full Production OS)
 **Core OS:**
