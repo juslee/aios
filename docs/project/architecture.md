@@ -34,6 +34,31 @@
 
 -----
 
+## Terminology Glossary
+
+AIOS reuses common OS terms but gives them specific meanings. This glossary defines canonical types for each meaning. **In code and API documentation, always use the specific type name, never the bare term.**
+
+| Term | Context | Canonical Type | Definition |
+|---|---|---|---|
+| **Agent** | Installation | `AgentManifest` | Signed package declaring name, author, requested capabilities, code hash, dependencies, and AI security analysis |
+| **Agent** | Runtime | `AgentProcess` | A running process created from a manifest, with a PID, capability table, resource limits, and behavioral baseline |
+| **Task** | User-facing | `Task` | A user's goal decomposed into subtasks, with agents assigned, capabilities scoped, and activity logged |
+| **Task** | Kernel | `Thread` | A schedulable unit of work assigned to a scheduling class (RT, Interactive, Normal, Idle) |
+| **Session** | Hardware | `SubsystemSession` | A bounded interaction with a hardware subsystem (audio output session, camera capture session) |
+| **Session** | AIRS | `InferenceSession` | A single inference request with its own KV cache, priority, token callback, and stop sequences |
+| **Service** | System | Trust Level 1 process | A userspace daemon (AIRS, Space Storage, Compositor, NTM, Service Manager) with elevated capabilities |
+| **Service** | IPC | `ChannelId` + protocol | A capability-gated IPC channel with a registered protocol that clients call via `IpcCall` |
+| **Space** | Storage | `Space` | A named collection of typed objects with a security zone, encryption state, quota, and parent hierarchy |
+| **Space** | Security | `SecurityZone` | The zone classification of a space: Core, Personal, Collaborative, or Untrusted |
+
+**Usage rules:**
+- Write `AgentManifest`, not "agent," when referring to the installable package
+- Write `InferenceSession`, not "session," when referring to an AIRS inference context
+- Write `SubsystemSession`, not "session," when referring to a hardware interaction
+- The bare term is acceptable in user-facing UI and conversation, never in code or API docs
+
+-----
+
 ## 1. Vision
 
 A clean-sheet microkernel operating system written in Rust for aarch64 where every subsystem is designed assuming AI exists. AI is the infrastructure — invisible when not needed, available when invoked, and the reason everything works better than on any other OS.

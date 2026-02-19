@@ -1203,6 +1203,71 @@ pub enum AirsInternalPath {
 
 The security path and resource path share no mutable state. A resource decision never influences an intent verification, and vice versa. If the resource path is under load, the security path still meets its SLA (< 10 ms for synchronous intent checks).
 
+#### 10.1.1 Internal Crash Containment
+
+AIRS is a single process, but a panic in one subsystem must not crash all of AIRS. Each intelligence service runs within a `catch_unwind` boundary:
+
+```rust
+/// Each AIRS subsystem runs behind a panic boundary.
+/// A panic in the Space Indexer does not crash intent verification.
+pub struct SubsystemRunner {
+    name: &'static str,
+    state: SubsystemState,
+    consecutive_panics: u32,
+    last_panic: Option<Timestamp>,
+}
+
+pub enum SubsystemState {
+    Running,
+    /// Subsystem panicked, restarting
+    Restarting,
+    /// Subsystem panicked too many times, disabled until manual intervention
+    Disabled { reason: String },
+}
+
+impl SubsystemRunner {
+    /// Run a subsystem task within a panic boundary.
+    /// On panic: log, increment counter, restart subsystem.
+    /// On repeated panic (3x in 60s): disable subsystem, notify user.
+    pub fn run<F, R>(&mut self, f: F) -> Option<R>
+    where F: FnOnce() -> R + std::panic::UnwindSafe
+    {
+        match std::panic::catch_unwind(f) {
+            Ok(result) => Some(result),
+            Err(panic_info) => {
+                log_panic(self.name, &panic_info);
+                self.consecutive_panics += 1;
+                self.last_panic = Some(now());
+                if self.consecutive_panics >= 3 {
+                    self.state = SubsystemState::Disabled {
+                        reason: format!("{} panicked {} times", self.name, self.consecutive_panics),
+                    };
+                    notify_user(self.name);
+                } else {
+                    self.state = SubsystemState::Restarting;
+                }
+                None
+            }
+        }
+    }
+}
+```
+
+**Containment boundaries:**
+
+| Subsystem | On Panic | System Impact |
+|---|---|---|
+| Space Indexer | Restart indexer; semantic search degrades to text-only | Low — search still works via full-text index |
+| Context Engine | Fall back to rule-based heuristics | Low — context inference is less nuanced |
+| Attention Manager | Notifications pass through unfiltered | Medium — user sees more notifications |
+| Intent Verifier | Apply fallback policy (skip / block-all / read-only per agent) | Medium — security degrades to capability-only |
+| Behavioral Monitor | Rate limits still enforced by kernel | Medium — anomaly detection paused |
+| Adversarial Defense | Kernel structural checks still active | Medium — injection detection paused |
+| Inference Engine | All AIRS services degrade to non-AI fallbacks | High — equivalent to AIRS-down state |
+| Conversation Manager | Conversation bar unavailable; agents still functional | Low — agents work independently |
+
+If the Inference Engine itself panics, the entire AIRS process restarts via the Service Manager's reconnection protocol (ipc.md §5.5). Recovery target: < 500 ms.
+
 ### 10.2 Agent Hint Processing
 
 Agents may submit resource hints — lightweight signals about anticipated needs. These are untrusted input from potentially malicious agents:
