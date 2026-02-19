@@ -941,6 +941,27 @@ The IPC fast path (synchronous call/reply, small message, no capability transfer
 Total kernel overhead:                    ~415 cycles (~0.2 μs at 2 GHz)
 ```
 
+**Why < 5 microseconds.** The sub-5-μs round-trip target is not arbitrary. It is derived from the microkernel penalty chain:
+
+| | Monolithic (Linux) | Microkernel (AIOS) | Penalty |
+|---|---|---|---|
+| Cached `read()` | ~0.2–0.5 μs (function call) | ~5 μs (IPC round-trip) | 10–25x |
+| Build tool (thousands of small reads) | ~0.5 s total | ~5 s total (at 5 μs) | 10x |
+| Same build tool at 50 μs IPC | ~0.5 s total | ~50 s total | 100x |
+
+At 5 μs, the POSIX compatibility layer is noticeably slower but usable — the shim caching in §12.2 (Gap 6) mitigates this for common workloads. At 50 μs, POSIX tools (grep, find, cc) become unusable. The development-plan.md decision gate uses < 10 μs as the go/no-go threshold; the 5 μs target is aspirational.
+
+**Comparable systems:**
+
+| Microkernel | Raw IPC | Full round-trip | Notes |
+|---|---|---|---|
+| seL4 (ARM) | ~0.5–1 μs | ~2–4 μs | Formally verified, benchmark reference |
+| QNX (ARM) | ~1–2 μs | ~2–5 μs | Production microkernel, shipped in cars |
+| Fuchsia/Zircon | ~0.5–1 μs | ~1–3 μs | Google's capability OS |
+| AIOS (target) | ~0.2 μs | < 5 μs | Includes service processing time |
+
+AIOS's ~0.2 μs kernel overhead is competitive with seL4 on ARM. The gap between kernel overhead and 5 μs round-trip is service processing time (Space Service lookup, encryption, etc.). Optimization focus should be on service fast paths, not kernel IPC.
+
 **Step 3: Behavioral gate.** The kernel maintains a per-process `behavioral_state` byte, written by AIRS via lightweight notification (see security.md §10.3 Gap 3). Values:
 
 | State | Meaning | Kernel action |

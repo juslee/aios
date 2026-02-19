@@ -1315,6 +1315,32 @@ Each security zone maintains its own content-hash → block mapping in the LSM-t
 | Untrusted (web-storage/) | Yes | Per-origin key derived from master key |
 | Ephemeral (/tmp) | No | Temporary, auto-deleted |
 
+### 6.3 Key Escrow and Recovery
+
+**Key escrow** is optional and user-controlled. When enabled, a recovery key is generated alongside the master key at identity creation time:
+
+```
+Key escrow flow:
+  1. User creates identity → master key derived via Argon2id from passphrase
+  2. If escrow enabled: generate recovery key (256-bit random)
+  3. Encrypt master key with recovery key → escrowed_master
+  4. Store escrowed_master in system/identity/ (Core zone, not encrypted)
+  5. Present recovery key to user as 24-word mnemonic (BIP-39)
+  6. User stores mnemonic offline (paper, password manager)
+```
+
+**Recovery flow when user forgets passphrase:**
+
+| Escrow State | Recovery Path |
+|---|---|
+| Escrow enabled | User enters 24-word mnemonic → recovery key → decrypt escrowed_master → re-derive space keys → set new passphrase |
+| Escrow disabled | **Data is irrecoverable.** This is by design — the user chose maximum security over recoverability. The system warns at identity creation. |
+
+**Escrow key storage:**
+- `escrowed_master` is stored in `system/identity/` — the Core security zone, accessible only to the kernel and identity service
+- The recovery key itself is never stored on-device — the user's offline mnemonic is the only copy
+- Escrow can be disabled retroactively: deleting `escrowed_master` from `system/identity/` is irreversible
+
 -----
 
 ## 7. Query Engine
@@ -1379,6 +1405,39 @@ pub struct RelationshipGraph {
 ```
 
 Traverse queries walk this graph with configurable depth and direction. Used for provenance chains ("where did this data come from?"), dependency graphs ("what depends on this?"), and similarity exploration ("show me related objects").
+
+### 7.5 Query Composition and Latency
+
+Queries compose by intersecting result sets. Each sub-query runs against its own index, then results are combined:
+
+| Query Type | Backing Index | Always Available? | Expected Latency | Notes |
+|---|---|---|---|---|
+| `Filter` | Object metadata (in-memory hash maps) | Yes | < 1 ms | Field equality, range checks |
+| `TextSearch` | Inverted index (BM25) | Yes | < 50 ms | Full-text with ranking |
+| `Semantic` | HNSW embedding index | Requires AIRS | < 500 ms | Nearest-neighbor on embeddings |
+| `Traverse` | Relationship graph (adjacency lists) | Yes | < 10 ms/hop | Bidirectional graph walk |
+
+**Composition rules:**
+
+```
+AND (implicit):  query(space, Filter { type: "document" } + TextSearch { text: "budget" })
+                 → runs Filter (< 1ms), runs TextSearch (< 50ms), intersects results
+                 → total: < 51 ms
+
+OR:              union of two separate queries' result sets
+                 → run each query independently, merge results
+
+NOT:             difference of result sets
+                 → run positive query, run negative query, subtract
+
+Composed:        Filter + Semantic
+                 → runs Filter (< 1ms), runs Semantic (< 500ms), intersects
+                 → total: < 501 ms (parallel execution: < 500ms)
+```
+
+The SDK provides typed query builders that construct composed queries. Internally, the query engine runs independent sub-queries in parallel where possible and intersects the result `ObjectId` sets.
+
+**Graceful degradation:** If AIRS is unavailable, `Semantic` queries return an empty set. Composed queries containing a `Semantic` sub-query fall back to the non-semantic sub-queries only. A `Filter + Semantic` query degrades to `Filter` alone. This is consistent with the system-wide principle that AIRS enhances but is never required.
 
 -----
 

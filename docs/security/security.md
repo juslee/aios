@@ -285,6 +285,28 @@ Pool changes are invisible to agents. AIRS anomalies trigger safe fallback.
 No information leaked, no resources stolen, no degradation achieved.
 ```
 
+### 1.5 Attack Scenario Summary
+
+The following table consolidates all documented attack scenarios from this document and [ipc.md](../kernel/ipc.md) §13:
+
+| # | Scenario | Primary Defense Layer | Detection / Enforcement | Damage Ceiling |
+|---|----------|----------------------|------------------------|----------------|
+| 1 | Malicious agent reads banking data | Layer 2: Capability check (EPERM) | Kernel audit log — denied attempt recorded in provenance chain | None — blocked before reaching storage |
+| 2 | Prompt injection via web content | Layer 5: Control/data plane separation | AIRS injection detection module flags adversarial patterns | None — web content is data, not instructions |
+| 3 | Supply chain attack (compromised dependency) | Layer 3: Behavioral baseline deviation (z-score > 3σ) | New access patterns and destinations flagged | Rate-limited → paused → user notified |
+| 4 | Fork bomb / DoS | Layer 8: Blast radius (max_children: 4, max_memory: 128 MB) | Kernel resource limits, spawn denied at limit | System remains responsive; agent paused |
+| 5 | Resource manipulation via AIRS hints | Layer 5: Hint screening + Layer 2: kernel capability ceiling | AIRS anomaly rate detection (200/s vs baseline 5–15/s) | None — kernel enforces caps regardless of AIRS |
+| 6 | IPC misrouting via crafted intent | Layer 2: Capability set unchanged by intent metadata | Wrong service rejects (wrong protocol type) | None — capabilities are unforgeable |
+| 7 | Warming hint exploitation | Kernel validates caps on channel creation | Agents cannot publish WarmingHint (system-only) | None — requires Trust Level 1 |
+| 8 | Batch inference manipulation | Per-agent KV caches; kernel caps batch_window_ms | IpcCall timeouts bound maximum wait | Bounded wait; no data leak |
+| 9 | Context spoofing for priority boost | Only AIRS publishes ContextHint; max +1 class promotion | Agents cannot publish ContextHint | Bounded — max one scheduling class promotion |
+| 10 | Provenance tag laundering | Kernel writes tags; taint is monotonic (never decreases) | Tags are kernel-enforced, not agent-modifiable | None — provenance integrity preserved |
+| 11 | Dormant capability exploitation | Only manifest-approved caps can activate; kernel validates scope | Short TTLs, behavioral monitoring post-activation | Bounded by manifest-declared scope |
+
+**Key insight: defense in depth.** No scenario relies on a single layer. Every attack is caught by at least two independent mechanisms. The structural layers (2, 4, 8) are kernel-enforced and function even when AIRS is completely unavailable. The AI layers (1, 3, 5) provide additional detection for attacks that are structurally permitted but behaviorally anomalous.
+
+**Damage ceiling for a fully compromised AIRS:** The system behaves like a traditional capability OS — all manifest-approved capabilities active, no behavioral screening, no intent verification, no injection detection. Security degrades to Layer 2 (capabilities) + Layer 4 (security zones) + Layer 8 (blast radius). This is the security floor, not the security ceiling. The AI layers raise the ceiling; the kernel layers establish the floor.
+
 -----
 
 ## 2. The Eight Security Layers (Deep Dive)

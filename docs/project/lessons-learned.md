@@ -312,7 +312,20 @@ The syscall interface is the same regardless of language. Rust (native), Python 
 
 ## 4. Open Questions — Resolved
 
-These questions surfaced during the audit. All 10 have been resolved by cross-referencing the existing documentation. Each resolution cites the specific doc section that answers it.
+These questions surfaced during the audit. All 10 have been resolved by cross-referencing the existing documentation. Each resolution cites the specific doc section that answers it. Where the source documentation had gaps, the answers have been integrated directly into the relevant doc:
+
+| Question | Answer Integrated Into |
+|---|---|
+| Q1. IPC performance justification | [ipc.md](../kernel/ipc.md) §9.1 — new penalty chain table and comparable systems table |
+| Q2. Capability token structure | Already complete in [security.md](../security/security.md) §2.2 |
+| Q3. Space Query composition | [spaces.md](../storage/spaces.md) §7.5 — new composition rules and latency table |
+| Q4. Block engine details | Already complete in [spaces.md](../storage/spaces.md) §4 |
+| Q5. Encryption key management | [spaces.md](../storage/spaces.md) §6.3 — new key escrow and recovery section |
+| Q6. AIRS crash containment | [airs.md](../intelligence/airs.md) §10.1.1 — new internal crash containment with `catch_unwind` strategy |
+| Q7. AIRS split roadmap | Already complete in [airs.md](../intelligence/airs.md) §2.1 |
+| Q8. Context Engine algorithm | Already complete in [context-engine.md](../intelligence/context-engine.md) §3–4 |
+| Q9. Adversarial defense | [security.md](../security/security.md) §1.5 — new consolidated 11-scenario summary table |
+| Q10. Terminology glossary | [architecture.md](./architecture.md) Terminology Glossary — new section before §1 |
 
 ---
 
@@ -367,7 +380,7 @@ These questions surfaced during the audit. All 10 have been resolved by cross-re
 
 **Composition:** The `SpaceQuery` enum in [architecture.md](./architecture.md) §6.6 shows nested constructors (e.g., `SpaceQuery::Filter` combined with `SpaceQuery::Semantic`). The SDK provides typed query builders. The query engine evaluates composed queries by intersecting result sets — each sub-query runs against its index, then results are intersected. Boolean AND is implicit (all sub-queries must match); OR and NOT can be expressed as separate queries with result-set union/difference.
 
-**Remaining gap:** A formal query grammar (BNF-style) is still desirable for SDK documentation. This should be written during Phase 4 implementation. The architecture provides enough for implementation; the SDK needs a user-facing specification.
+**Composition rules** (now specified in [spaces.md](../storage/spaces.md) §7.5): AND is implicit (intersect result sets), OR via result-set union, NOT via result-set difference. Sub-queries run in parallel against their respective indices. Semantic sub-queries degrade gracefully (return empty set when AIRS unavailable). A formal BNF grammar for the SDK remains desirable for Phase 4.
 
 ---
 
@@ -403,12 +416,10 @@ These questions surfaced during the audit. All 10 have been resolved by cross-re
 - **Key escrow:** Optional, user-controlled. The user can choose to escrow recovery keys.
 - **Transparent operation:** Encrypt/decrypt happens transparently on read/write at the Encryption Layer, below the Object Store
 
-**Remaining gap:** The docs specify the *mechanism* but not the *operational details*:
-- Where are derived keys held in memory at runtime? (Should be: in AIRS/Space Storage process memory, zeroed on process death, never swapped to disk — mlock'd pages)
-- How is key escrow implemented? (Should be: split-key or threshold scheme, stored in `system/identity/` space which is in the Core security zone)
-- What happens if the user forgets? (Should be: if no escrow, data is irrecoverable by design — this is a feature, not a bug. If escrow exists, recovery flow via identity verification)
-
-**Action:** These operational details should be specified in a dedicated `encryption.md` or added as a section in `security.md` during Phase 4 implementation. The current spec is sufficient to begin implementation; the operational details become critical before Phase 13 (Security Hardening).
+**Operational details** (now specified in [spaces.md](../storage/spaces.md) §6.1.2 and §6.3):
+- **Key memory:** `DecryptedSpaceKey` stored on mlock'd kernel pages (`VmFlags::PINNED | VmFlags::NO_DUMP`), auto-zeroized on drop, zeroed on lock/logout/unmount
+- **Key escrow:** Master key encrypted with 256-bit recovery key, stored in `system/identity/` (Core zone). Recovery key presented as 24-word BIP-39 mnemonic, never stored on-device.
+- **Passphrase forgotten:** If escrow enabled → enter mnemonic → decrypt master → re-derive space keys → set new passphrase. If escrow disabled → data irrecoverable by design.
 
 ---
 
@@ -425,7 +436,7 @@ These questions surfaced during the audit. All 10 have been resolved by cross-re
 - **External monitoring:** The kernel monitors AIRS externally — AIRS is a Trust Level 1 process like any other. The kernel enforces capabilities regardless of AIRS's internal structure. If AIRS anomalous behavior is detected (e.g., 200 directives/second vs baseline 5–15/second), the kernel falls back to static heuristics.
 - **Service restart:** The microkernel's service restart protocol ([ipc.md](../kernel/ipc.md) §5.5) applies to AIRS. If AIRS crashes: kernel detects death, unblocks all clients with EPIPE, Service Manager restarts AIRS, rebuilds channels, clients retry via SDK auto-reconnection. Recovery target: < 500ms.
 
-**Remaining gap:** The docs describe the *infrastructure* for crash containment but not the *internal* Rust panic handling strategy. Recommendation: use `catch_unwind` at subsystem boundaries within AIRS. If the Space Indexer panics, catch it, log the panic, restart that module, continue serving inference and security checks. This should be specified in `airs.md` §2.1 before Phase 8 implementation.
+**Internal panic handling** (now specified in [airs.md](../intelligence/airs.md) §10.1.1): Each subsystem runs within a `catch_unwind` boundary via `SubsystemRunner`. On panic: log, increment counter, restart module. After 3 panics in 60 seconds: disable subsystem, notify user. The Inference Engine is the exception — if it panics, the full AIRS process restarts via Service Manager (< 500ms recovery).
 
 ---
 
@@ -542,7 +553,7 @@ These questions surfaced during the audit. All 10 have been resolved by cross-re
 
 **Implementation rule:** In code, always use the specific type name (`AgentManifest`, `InferenceSession`, `SubsystemSession`), never the bare term ("agent," "session"). The bare term is acceptable in user-facing UI and conversation but never in code or API documentation.
 
-**Action:** This glossary should be added to `architecture.md` §1 (before the stack diagram) during Phase 0 scaffolding. All subsequent docs should reference it.
+**Status:** This glossary has been added to [architecture.md](./architecture.md) as a dedicated section before §1 (Vision). All subsequent docs should reference it.
 
 ---
 
