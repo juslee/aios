@@ -145,12 +145,14 @@ The user never has to interact with AI to use the computer. AI enhances silently
 pub struct Space {
     id: SpaceId,
     name: String,
-    access: CapabilitySet,
     parent: Option<SpaceId>,
-    semantic_index: SemanticIndex,
-    history: VersionLog,
     security_zone: SecurityZone,
-    encryption_key: Option<SpaceKey>,
+    encryption: EncryptionState,
+    quota: SpaceQuota,
+    created_at: Timestamp,
+    modified_at: Timestamp,
+    object_count: u64,
+    total_size: u64,
 }
 pub struct Object {
     id: ObjectId,
@@ -391,111 +393,60 @@ Year 2.5 (Weeks 93-130): Tiers 6-7 — Production OS ready for daily use
 ```
 ---
 ## 11. Document Index
-Each phase has its own directory containing two companion documents:
-| Document | Purpose |
-|---|---|
-| `phase-detail.md` | Comprehensive technical design, architecture decisions, data models, interfaces, risks |
-| `milestone-steps.md` | Step-by-step implementation guide with concrete tasks, acceptance criteria, and testing |
-### Full Document List
+
+### Architecture Documents
+
 ```
 docs/
-├── overview.md                        ← This document
-├── architecture.md                               System architecture deep dive
-├── airs.md                                       AI Runtime Service deep dive
-├── spaces.md                                     Space Storage deep dive
-├── compositor.md                                 Compositor and Display deep dive
-├── ipc.md                               IPC and Syscall interface
-├── subsystem-framework.md                        Universal hardware abstraction
-├── networking.md                                 Network Translation Module
-├── browser.md                       Decomposed web browser
-├── experience.md                                 GUI experience and unique surfaces
-├── development-plan.md                           Timeline, risks, dependencies
+├── project/
+│   ├── overview.md                    ← This document
+│   ├── architecture.md               System architecture deep dive
+│   └── development-plan.md           Timeline, risks, dependencies
 │
-├── 00 - Foundation and Tooling/
-│   ├── phase-detail.md                                Technical design
-│   └── milestone-steps.md                             Implementation steps
-├── 01 - Boot and First Pixels/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 02 - Memory Management/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 03 - IPC and Capability System/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 04 - Block Storage and Object Store/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 05 - GPU and Display/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 06 - Window Compositor and Shell/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 07 - Input Terminal and Basic Networking/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 08 - AIRS Core/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 09 - Space Intelligence and Conversation/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 10 - Agent Framework/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 11 - Tasks Flow and Attention/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 12 - Developer Experience and SDK/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 13 - Security Hardening/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 14 - Performance and Optimization/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 15 - POSIX Compatibility and BSD Userland/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 16 - Network Translation Module/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 17 - USB Stack and Hotplug/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 18 - WiFi Bluetooth and Wireless/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 19 - Power Management and Thermal/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 20 - Portable UI Toolkit/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 21 - Web Browser/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 22 - Media Audio and Camera/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 23 - Accessibility and Internationalization/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 24 - Secure Boot and Update System/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 25 - Linux Binary and Wayland Compatibility/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-├── 26 - Enterprise and Multi-Device/
-│   ├── phase-detail.md
-│   └── milestone-steps.md
-└── 27 - Real Hardware Certification and Launch/
-    ├── phase-detail.md
-    └── milestone-steps.md
+├── kernel/
+│   ├── boot.md                       Boot sequence and service startup
+│   ├── boot-lifecycle.md             Boot lifecycle deep analysis
+│   ├── hal.md                        Hardware Abstraction Layer
+│   ├── ipc.md                        IPC and syscall interface
+│   ├── memory.md                     Memory management
+│   └── scheduler.md                  Process scheduler
+│
+├── intelligence/
+│   ├── airs.md                       AI Runtime Service
+│   ├── attention.md                  Attention Manager
+│   ├── context-engine.md             Context Engine
+│   ├── preferences.md                Preference Service
+│   └── task-manager.md               Task decomposition and orchestration
+│
+├── storage/
+│   ├── spaces.md                     Space Storage system
+│   └── flow.md                       Data flow patterns
+│
+├── platform/
+│   ├── compositor.md                 Compositor and display
+│   ├── subsystem-framework.md        Universal hardware abstraction
+│   ├── networking.md                 Network Translation Module
+│   ├── audio.md                      Audio subsystem
+│   ├── posix.md                      POSIX compatibility layer
+│   └── power-management.md           Power management and thermal
+│
+├── experience/
+│   ├── experience.md                 GUI experience and surfaces
+│   ├── identity.md                   Identity service
+│   └── accessibility.md              Accessibility features
+│
+├── applications/
+│   ├── agents.md                     Agent framework
+│   ├── browser.md                    Decomposed web browser
+│   └── ui-toolkit.md                 Portable UI toolkit
+│
+└── security/
+    └── security.md                   Security architecture
 ```
+
+### Phase Detail Documents (planned)
+
+Each development phase will have companion `phase-detail.md` and `milestone-steps.md` documents (see [development-plan.md](./development-plan.md) for phase list).
 ---
 ## 12. Related Architecture Documents
 These companion documents provide deep-dive technical specifications:

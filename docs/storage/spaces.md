@@ -141,6 +141,9 @@ system/                      ← Core zone, kernel-managed
   credentials/               ← Credential store (NTM)
   agents/                    ← Installed agent manifests
   context/                   ← Context Engine learned patterns
+  services/                  ← Service binaries (Phase 3-5, loaded from storage)
+  session/                   ← Semantic snapshots, boot traces, proactive wake data
+  identity/                  ← Identity keypairs and authentication state
 
 user/                        ← Personal zone, encrypted
   home/                      ← Default personal space
