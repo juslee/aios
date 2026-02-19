@@ -927,14 +927,21 @@ pub struct AttentionManager {
     next_digest: Timestamp,
 }
 
+/// See attention.md §3 for the full 12-field definition.
+/// Key fields used by the Context Engine's attention integration:
 pub struct AttentionItem {
-    source: AgentId,
-    content: TypedContent,
-    urgency: Urgency,                       // AI-assessed, not app-declared
-    relevance: f32,                         // 0.0-1.0, AIRS-computed
-    auto_actionable: Option<ProposedAction>,
-    group: Option<GroupId>,
-    timestamp: Timestamp,
+    pub id: AttentionId,
+    pub source: AgentId,
+    pub content: TypedContent,
+    pub urgency: Urgency,                   // AI-assessed, not app-declared
+    pub relevance: f32,                     // 0.0-1.0, AIRS-computed
+    pub auto_actionable: Option<ProposedAction>,
+    pub group: Option<GroupId>,
+    pub timestamp: SystemTime,
+    pub expiry: Option<SystemTime>,
+    pub seen: bool,
+    pub acted: bool,
+    pub triage: TriageMetadata,
 }
 
 impl AttentionManager {
@@ -1583,10 +1590,10 @@ pub struct ContextTransition {
 
 ## 11. Implementation Order
 
-The Context Engine is built incrementally. Each phase delivers testable functionality. Later phases add intelligence.
+The Context Engine is built incrementally. Each development phase (numbered per the project development plan in [development-plan.md](../project/development-plan.md), not to be confused with boot phases) delivers testable functionality. Later phases add intelligence.
 
 ```
-Phase 8: Basic Context Engine
+Dev Phase 8: Basic Context Engine
   ├── ContextState struct and IPC publishing
   ├── Signal Collector (ActiveSpace, RunningAgents, TimeOfDay)
   ├── Rule-based inference (weighted average, no AIRS)
@@ -1596,14 +1603,14 @@ Phase 8: Basic Context Engine
   ├── Scheduler integration (context multipliers)
   └── Inspector diagnostics (current state, signal values)
 
-Phase 8: AIRS Classifier Integration
+Dev Phase 8: AIRS Classifier Integration
   ├── Feature extractor (signals → fixed-length vector)
   ├── Context classifier model (small GGUF, ~2 MB)
   ├── AIRS inference integration (~1ms per inference)
   ├── Fallback detection (AIRS unavailable → rule-based)
   └── Classifier training pipeline (offline, ship with OS)
 
-Phase 8: Attention Manager Integration
+Dev Phase 8: Attention Manager Integration
   ├── AttentionItem processing pipeline
   ├── AIRS urgency re-assessment
   ├── Notification threshold filtering
@@ -1611,7 +1618,7 @@ Phase 8: Attention Manager Integration
   ├── Compositor notification routing
   └── Auto-action support
 
-Phase 14: Learning and Personalization
+Dev Phase 14: Learning and Personalization
   ├── Observation recording (context transitions, stability)
   ├── Pattern extraction (work hours, space associations)
   ├── Override correction learning
@@ -1619,7 +1626,7 @@ Phase 14: Learning and Personalization
   ├── Privacy controls (inspect, delete, disable)
   └── Pattern export for Inspector
 
-Phase 19: Power-Aware Context
+Dev Phase 19: Power-Aware Context
   ├── Battery level as signal (low battery → resource conservation)
   ├── Thermal state as signal (throttled → reduce background work)
   ├── Power source as signal (plugged in → less conservative)
@@ -1628,12 +1635,12 @@ Phase 19: Power-Aware Context
 
 **Critical dependencies:**
 
-- Context Engine requires IPC (Phase 3) — all signal collection and state publishing is IPC-based.
-- Context Engine requires Compositor (Phase 6) — ActiveSpace and InputPattern signals come from the compositor.
-- Context Engine requires Agent Runtime (Phase 7) — RunningAgents signal comes from the Agent Runtime.
-- AIRS classifier requires AIRS inference engine (Phase 8) — the classifier runs on AIRS.
-- Attention Manager requires AIRS (Phase 8) — urgency re-assessment needs inference.
-- Learning requires History Store in spaces (Phase 4) — patterns stored in `system/context/` space.
+- Context Engine requires IPC (dev phase 3) — all signal collection and state publishing is IPC-based.
+- Context Engine requires Compositor (dev phase 6) — ActiveSpace and InputPattern signals come from the compositor.
+- Context Engine requires Agent Runtime (dev phase 7) — RunningAgents signal comes from the Agent Runtime.
+- AIRS classifier requires AIRS inference engine (dev phase 8) — the classifier runs on AIRS.
+- Attention Manager requires AIRS (dev phase 8) — urgency re-assessment needs inference.
+- Learning requires History Store in spaces (dev phase 4) — patterns stored in `system/context/` space.
 
 **Testing strategy.** The rule-based fallback is tested first and serves as the reference implementation. The AIRS classifier must match or exceed the fallback's accuracy on a labeled test set before it replaces the fallback as the primary inference path. Both paths are always available — the system can switch between them at runtime.
 

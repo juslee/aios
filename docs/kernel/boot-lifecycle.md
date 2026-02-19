@@ -108,7 +108,7 @@ Phase 0: Foundation & Tooling (Weeks 1-4)
 Phase 1: Boot & First Pixels (Weeks 5-8)
   - UEFI stub: memory map, framebuffer, device tree, RNG
   - Kernel entry: exception vectors, UART, device tree parse
-  - GICv3 + timer
+  - Interrupt controller (GICv3/GICv2/AIC) + timer
   - MMU enable: page tables, W^X
   - Early framebuffer: splash screen
   - Kernel writes "Hello from AIOS" to screen and UART
@@ -245,11 +245,11 @@ This section tracks concepts that boot.md references which are defined (or need 
 |---|---|---|
 | `Platform` trait, 7 `init_*` methods, `InterruptController`, `Timer`, `Uart`, `GpuDevice`, `NetworkDevice`, `StorageDevice`, `RngDevice` | [hal.md](./hal.md) §2–3 | Device trait signatures must match §2.4 and §3.3 here. Initialization order (UART/interrupts/timer early, GPU/network/storage in service phases) must agree with hal.md §3.2. |
 | `Scheduler`, four scheduling classes (RT, Interactive, Normal, Idle), 1ms tick | [scheduler.md](./scheduler.md) §3.1, §10.1 | Timer tick rate (Step 6) and scheduling class names in Step 15 must stay consistent with scheduler.md. |
-| `BuddyAllocator`, `SlabAllocator`, slab size classes | [memory.md](./memory.md) | Buddy allocator order range (0–10) and slab size classes (32–4096 bytes) cited in Steps 8–9 must match memory.md. |
+| `BuddyAllocator`, `SlabAllocator`, slab size classes | [memory.md](./memory.md) | Buddy allocator order range (0–10) and slab size classes (64–4096 bytes) cited in Steps 8–9 must match memory.md. |
 | `CapabilityManager`, `CapabilityToken`, root capability, trust levels, `Capability::Root` | [security.md](../security/security.md) §10 | `Timestamp::MAX` for Trust Level 0 tokens (Step 12) and capability delegation model (§4.7) must stay aligned. |
 | `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check message format (§4.4) and Service Manager IPC channels (§4.1 step 5) must match ipc.md's channel semantics. |
 | Compositor framebuffer handoff, display subsystem, wgpu pipeline | [compositor.md](../platform/compositor.md) | Handoff sequence (§7.4) and Phase 2 display startup must match compositor.md's initialization. |
-| AIRS model selection by RAM, `system/models/` space, GGML runtime, 5-second timeout | [airs.md](../intelligence/airs.md) | Model size thresholds (§5 Phase 3: ≥8 GB → 8B, ≥4 GB → 3B, <4 GB → 1B) and the 5-second health timeout must stay consistent with airs.md's model registry. |
+| AIRS model selection by RAM, `system/models/` space, GGML runtime, 5-second timeout | [airs.md](../intelligence/airs.md) | Model size thresholds (§5 Phase 3: ≥16 GB → 8B Q5_K_M, ≥8 GB → 8B Q4_K_M, ≥4 GB → 3B, ≥2 GB → 1B, <2 GB → no local model) and the 5-second health timeout must stay consistent with airs.md §4.6. |
 | Identity Service, Ed25519 keypair, `system/identity/` space | [identity.md](../experience/identity.md) | Phase 4 Identity startup and identity unlock flow must match identity.md's key management. |
 | Attention Manager, AI triage vs rule-based fallback | [attention.md](../intelligence/attention.md) | The soft AIRS dependency described in Phase 4 must match attention.md's initialization requirements. |
 | Context Engine, signal collection, rule-based heuristic fallback | [context-engine.md](../intelligence/context-engine.md) | Phase 3 Context Engine startup and its AIRS dependency must match context-engine.md's fallback behavior. |
@@ -258,7 +258,7 @@ This section tracks concepts that boot.md references which are defined (or need 
 | Block Engine, Object Store, Space Storage, WAL, LSM-tree, system spaces | [spaces.md](../storage/spaces.md) | Phase 1 startup sequence and system space paths (`system/audit/`, `system/models/`, etc.) must agree with spaces.md's space hierarchy. |
 | ARM SMMU (SMMUv3), stream tables, DMA isolation, bounce buffers | [hal.md](./hal.md) | SMMU initialization (§3.6) and per-device DMA page tables must align with hal.md's DMA abstractions. Pi 4 bounce buffer strategy must match hal.md's DMA API. |
 | USB host controller (xHCI), USB HID, hub enumeration | [hal.md](./hal.md) | Phase 2 USB input path on Pi must match hal.md's USB abstraction (if defined). xHCI driver is platform-specific (DesignWare on Pi 4, RP1 on Pi 5). |
-| Audio subsystem (PCM, mixing, I2S/PWM, HDMI audio) | [compositor.md](../platform/compositor.md) or future `audio.md` | Phase 2 Audio Subsystem startup must match whatever audio document is created. RT scheduling class for audio threads must match scheduler.md. |
+| Audio subsystem (PCM, mixing, I2S/PWM, HDMI audio) | [audio.md](../platform/audio.md) | Phase 2 Audio Subsystem startup must match audio.md. RT scheduling class for audio threads must match scheduler.md. |
 | Watchdog timer (virtual watchdog on QEMU, bcm2835-wdt on Pi), boot timeout, runtime ping | [hal.md](./hal.md) | Watchdog hardware abstraction and timeout values (30s boot, 60s runtime, 15s shutdown) must be consistent across hal.md and boot.md. |
 | GPU memory reservation (`/reserved-memory` node, `gpu_mem`), VideoCore carve-out | [compositor.md](../platform/compositor.md) | GPU memory split on Pi (76 MB Pi 4, 64 MB Pi 5) and its effect on available RAM must match compositor.md's VRAM requirements. |
 
@@ -300,13 +300,16 @@ The fastest resume path. CPU cores are powered down, DRAM stays in self-refresh,
 3. Kernel suspend path
    - Disable all interrupts except wake sources
    - Save per-core state: VBAR_EL1, TTBR0_EL1, SP, callee-saved registers
-   - Save GIC state: distributor config, redistributor per-core state
+   - Save interrupt controller state: GIC distributor/redistributor (or AIC event masks)
    - Save timer state: CNTV_CTL_EL0, CNTV_CVAL_EL0
-   - Call platform.suspend_devices():
+   - Call platform.suspend_devices() (see hal.md §16 for per-device details):
      ├── UART: save baud rate config (restore on wake)
-     ├── GPU: save mode/scanout state (VirtIO-GPU or VC4/V3D)
+     ├── GPU: save mode/scanout state (VirtIO-GPU or VC4/V3D or AGX)
      ├── Network: save MAC filters, link state (Genet or VirtIO-Net)
      ├── Storage: controller quiesced (no DMA in flight)
+     ├── Audio: drain PCM buffers, mute outputs
+     ├── USB: stop xHCI controller, save port state
+     ├── SMMU: save stream table config
      └── RNG: no state to save
    - Park secondary CPUs via PSCI CPU_SUSPEND
    - Boot CPU enters PSCI SYSTEM_SUSPEND
@@ -327,7 +330,7 @@ Wake source fires (lid open, power button, RTC alarm, network wake-on-LAN)
      │
      ▼
 2. Kernel resume path
-   - Restore GIC state (distribupts, redistributor)
+   - Restore interrupt controller state (GIC distributor/redistributor, or AIC)
    - Restore timer state, re-arm scheduler tick
    - Call platform.resume_devices() (reverse of suspend_devices)
    - Resume secondary CPUs via PSCI CPU_ON (same trampoline as boot)
@@ -353,6 +356,8 @@ Pi 4        GPIO (power button), USB (keyboard),        No built-in RTC; externa
             Genet (wake-on-LAN), timer (ext RTC)        RTC module needed for timed wake
 Pi 5        GPIO (power button), USB, Genet,            Built-in RTC with battery
             RTC (built-in), PCIe wake                   connector — timed wake works
+Apple       Power button, USB, lid open,               SMC handles wake, always-on
+Silicon     Thunderbolt, RTC, network (WiFi/BT)        RTC, lid switch via SMC
 ```
 
 **PSCI power states:** ARM PSCI defines power states for suspend. AIOS uses the deepest state that preserves DRAM:
@@ -1820,7 +1825,7 @@ pub struct ServiceManifest {
     binary: ContentHash,
 
     /// Capabilities this service requires to function
-    required_capabilities: Vec<CapabilityRequest>,
+    required_capabilities: Vec<ServiceCapabilityRequest>,
 
     /// Services this service exposes to others
     exposed_services: Vec<ServiceInterface>,
@@ -1847,7 +1852,7 @@ pub struct ServiceManifest {
 
 pub struct CapabilityRoute {
     /// What the service requests (e.g., "storage:read")
-    request: CapabilityRequest,
+    request: ServiceCapabilityRequest,
     /// Where it comes from (e.g., from parent, from framework, from child)
     source: RouteSource,
     /// Attenuation applied during routing
@@ -1865,29 +1870,29 @@ pub struct CapabilityRoute {
 
 ## 23. Documentation Gaps
 
-Concepts referenced in boot.md that do not yet have full documentation elsewhere. These are placeholders for future doc work.
+Concepts referenced in boot.md that do not yet have full documentation elsewhere. These are placeholders for future doc work. Gaps marked **RESOLVED** have been addressed.
 
-1. **Agent state persistence across reboot** — §11.3 describes the shutdown/relaunch protocol (agents save to spaces, then reload on next boot), but [agents.md](../applications/agents.md) does not yet document the relaunch-on-boot mechanism or how the Agent Runtime discovers which persistent agents to restart. Agents.md §3 (Agent Lifecycle) should add a "Reboot Recovery" subsection covering: how `system/agents/` tracks which agents were running, how agent spaces are re-mounted, and the order of agent relaunch relative to Phase 5 autostart.
+1. **Agent state persistence across reboot** — **RESOLVED.** agents.md §3.5 now documents the Reboot Recovery mechanism: `RunningManifest` in `system/agents/running.manifest`, per-agent `PreRebootState`, Phase 5 relaunch order, and the `AgentEvent::SystemReboot` SDK event.
 
-2. **Attention Manager initialization requirements** — Phase 4 mentions the Attention Manager loads rules from preferences and optionally connects to AIRS for AI triage. [attention.md](../intelligence/attention.md) documents the attention model thoroughly but does not have a section on boot-time initialization: what the minimal startup state is, what happens before AIRS is available, and how the notification pipeline connects to the compositor. Attention.md should add an "Initialization" section.
+2. **Attention Manager initialization requirements** — **RESOLVED.** attention.md §15 now documents boot-time initialization: pre-AIRS rule-based triage (§15.2), minimal startup state table (§15.3), and compositor connection buffering (§15.4).
 
-3. **AIRS default model selection** — Phase 3 specifies RAM-based model selection thresholds (≥8 GB → 8B Q4_K_M, ≥4 GB → 3B Q4_K_M, <4 GB → 1B Q4_K_M). [airs.md](../intelligence/airs.md) should document these exact thresholds in its model registry section and specify what happens when no model files are present in `system/models/` (first boot with no pre-loaded models).
+3. **AIRS default model selection** — **RESOLVED.** airs.md §4.6 now documents full RAM-based thresholds (including <2 GB no-model and ≥16 GB higher-quantization tiers), the `BootModelSelector` implementation, first-boot degraded mode, and model integrity verification.
 
-4. **Context Engine boot behavior** — Phase 3 states the Context Engine falls back to "rule-based heuristics" if AIRS is unavailable. [context-engine.md](../intelligence/context-engine.md) documents `ContextMode` and signal fusion but does not specify what "rule-based heuristics" means concretely at boot time or which signals are available before user activity begins.
+4. **Context Engine boot behavior** — **RESOLVED.** context-engine.md §8.3 now documents boot-time signal availability, the `boot_context()` function, conservative defaults, and the transition from boot heuristics to AIRS inference.
 
-5. **Task Manager service** — [overview.md](../project/overview.md) lists a "Task Manager" as a core service ("intent → subtasks, orchestrate") but it does not appear in this document's service dependency graph (§4.5) or in any boot phase. It needs its own document (potentially `docs/intelligence/task-manager.md` or `docs/applications/task-manager.md`) covering: what it manages, how it decomposes intents into subtasks, which boot phase it belongs to, and its dependencies. Until then, Phase 5 Workspace queries the Agent Runtime for active agent tasks instead.
+5. **Task Manager service** — **RESOLVED.** [task-manager.md](../intelligence/task-manager.md) now documents: intent decomposition, task lifecycle, agent orchestration, Phase 5 boot assignment, and the SDK API.
 
 6. **Recovery mode and safe mode operational procedures** — §9 describes recovery mode commands and safe mode service lists, but there is no standalone troubleshooting or operations guide documenting: how to connect a UART console on each platform, how to diagnose common boot failures, or how to restore from backup after a factory reset. This could be a future `docs/operations/recovery.md`.
 
-7. **USB host controller driver** — Phase 2 describes USB enumeration for Pi input, but the xHCI driver itself is not documented anywhere. hal.md should add a USB section covering: xHCI ring buffer setup, USB descriptor parsing, hub enumeration, and HID class driver. This is Pi-specific (QEMU uses VirtIO-Input) and affects input latency on real hardware.
+7. **USB host controller driver** — **RESOLVED.** hal.md §14 now documents: xHCI ring buffer architecture (command/transfer/event rings), DWC2 controller for Pi 4, USB device enumeration sequence, HID class driver with input latency analysis, and hub enumeration.
 
-8. **Audio subsystem architecture** — Phase 2 mentions Audio Subsystem startup but there is no `audio.md` document. Needed: PCM mixing engine, I2S/PWM driver for Pi, VirtIO-Sound for QEMU, HDMI audio routing, RT scheduling requirements, and how audio interacts with the compositor for A/V sync.
+8. **Audio subsystem architecture** — **RESOLVED.** [audio.md](../platform/audio.md) now documents: PCM mixing engine, per-platform device drivers (VirtIO-Sound, I2S/PWM, HDMI audio), RT scheduling integration, A/V sync with compositor, and latency requirements.
 
 9. **Measured boot and attestation** — Implementation Order lists "Phase 24: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
 
-10. **SMMU driver internals** — §3.6 describes when and why SMMU is initialized, but the SMMUv3 driver itself (stream table format, command/event queues, fault handling) needs documentation in hal.md. Pi 5's BCM2712 SMMU has platform-specific quirks that should be documented.
+10. **SMMU driver internals** — **RESOLVED.** hal.md §15 now documents: SMMUv3 stream table architecture, command/event queues, per-device TLB invalidation, and BCM2712 platform-specific quirks.
 
-11. **Suspend/resume device state** — §15.1 describes the suspend/resume flow, but the per-device state save/restore for each HAL device (GIC, timer, UART, GPU, network, storage, RNG) needs detailed documentation in hal.md. Each device has different quiesce and restore requirements.
+11. **Suspend/resume device state** — **RESOLVED.** hal.md §16 now documents: per-device power state machine, suspend/resume actions for each HAL device (GIC, timer, UART, GPU, network, storage, USB, RNG, SMMU), resume ordering, and S3 vs S4 differences.
 
 12. **Hibernate image management** — §15.2 describes the hibernate image format and partition, but the background S3→S4 writeback mechanism (DMA engine writing DRAM during suspend) needs hardware-specific documentation per platform. Not all platforms support DMA during low-power states.
 
@@ -1895,7 +1900,7 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 14. **Boot-time encryption unlock UX** — §18.3 describes the unlock flow, but the Argon2id tuning parameters per platform, hardware key (FIDO2) integration, and biometric reader support need documentation in `docs/security/encryption.md`.
 
-15. **Accessibility engine** — §19.2 lists built-in accessibility features, but the eSpeak-NG integration, Braille display protocol, and switch scanning input model need their own document, possibly `docs/experience/accessibility.md`.
+15. **Accessibility engine** — **RESOLVED.** [accessibility.md](../experience/accessibility.md) now documents: screen reader (eSpeak-NG), Braille display support, switch scanning, high contrast/magnification, voice control, boot-time accessibility, accessibility tree integration, and AIRS enhancement with no-AIRS fallback.
 
 16. **Single-address-space boot validation** — §22.2 describes running Phase 1 services as kernel modules. The dual-compilation build system, the state handoff mechanism from kernel-module mode to isolated-process mode, and the safety audit requirements for `#![forbid(unsafe_code)]` enforcement need documentation in the build system guide.
 
@@ -1907,7 +1912,7 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 20. **Per-agent namespace implementation** — §22.9 describes Plan 9-style per-agent namespaces. The namespace creation during agent spawn, the mount table storage (kernel memory vs. space-backed), namespace inheritance rules, and the interaction with the POSIX compatibility layer (§posix.md) need documentation. When an agent makes a POSIX `open()` call, the path is resolved through its namespace — posix.md should document this resolution order and what happens when a path resolves to "not mounted" (ENOENT vs. EACCES).
 
-21. **Async kernel executor** — §22.10 describes async boot and non-blocking syscalls. The kernel's async executor (waker registration, task queue, cooperative yielding) is not documented. scheduler.md should add an "Async Executor" section covering: how kernel async tasks relate to scheduler tasks, the waker storage mechanism, priority inheritance for async waiters, and the cost of a context switch vs. an async yield. The relationship between the Service Manager's async boot loop and the scheduler's run queue needs clarification.
+21. **Async kernel executor** — **RESOLVED.** scheduler.md §13 now documents: kernel async tasks vs scheduler threads, per-CPU executor architecture, waker registration for IPC/timer/DMA/service-ready sources, priority inheritance for async tasks, the Service Manager's async boot loop, and the interaction between the executor and scheduler run queues (including cost comparison table).
 
 22. **Live kernel patch safety and rollback** — §22.11 describes function-level live patching. The safety constraints (which functions can be patched, how to verify ABI compatibility, how to handle in-flight calls to the patched function), the rollback mechanism (restoring the saved prologue), and the patch distribution format (how patches are delivered via OTA and verified) need documentation. security.md should cover the capability requirements for installing live patches (root-only, with audit logging).
 
@@ -1919,9 +1924,9 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 26. **Service manifest schema and static verification** — §22.15 describes Fuchsia-style service manifests. The manifest file format (TOML? embedded in binary? stored in Space?), the static verification tool (run at build time or boot time?), and the capability routing resolution algorithm need documentation. A future `docs/project/service-manifests.md` should specify the full manifest schema, provide examples for each system service, and document the verification errors and how to resolve them.
 
-27. **Power management policy engine** — Boot.md describes suspend/resume (§15), proactive wake (§15.5), and on-demand services (§17), but there is no unified power management policy document. The interactions between: idle timeout → light sleep, lid close → S3, low battery → hibernate, thermal throttle → frequency scaling, and AIRS predictions for proactive wake need a coherent policy engine. A future `docs/platform/power-management.md` should specify the state machine, the sensor inputs (battery SoC, thermal zone temperatures, lid switch, AC adapter), and the policy rules.
+27. **Power management policy engine** — **RESOLVED.** [power-management.md](../platform/power-management.md) now documents: unified power state machine (S0/S0ix/S3/S4/S5), sensor inputs, policy rules, thermal management, AIRS integration for predictive power management, battery management, per-platform behavior, and scheduler integration.
 
-28. **Thermal management during boot and inference** — AI inference generates significant heat. On Pi hardware, sustained inference can thermal-throttle the CPU within 30 seconds. Boot.md does not specify thermal monitoring during boot or how AIRS model selection (§Phase 3) accounts for thermal headroom. hal.md should document the thermal zone sensors per platform, the throttling thresholds, and how the scheduler reduces inference priority when approaching thermal limits.
+28. **Thermal management during boot and inference** — **RESOLVED.** hal.md §17 now documents: thermal zone abstraction, per-platform thermal configuration (thresholds for QEMU/Pi 4/Pi 5/Apple Silicon), thermal-aware inference (ThrottleLevel states and AIRS pause behavior), and boot-time thermal monitoring during Phase 2-3.
 
 29. **OTA update atomicity and rollback** — §9.6 describes OTA updates at a high level, but the atomic update mechanism (A/B partitions? overlay filesystem? content-addressed deduplication?), the update verification chain (signature verification, hash checking), the rollback trigger (failed health check after update), and the interaction with live kernel patching (§22.11) need comprehensive documentation. A future `docs/platform/ota-updates.md` should cover the end-to-end update flow from download to verification to installation to rollback.
 
