@@ -288,16 +288,16 @@ The runtime is the one part that doesn't decompose. JavaScript and WebAssembly m
 **SpiderMonkey through Servo.** Servo is a Rust-based browser engine that embeds SpiderMonkey (Mozilla's JS engine). Rather than embedding a JS engine from scratch, AIOS uses Servo's rendering engine and JS runtime as the core of the Tab Agent, with networking and storage layers replaced by AIOS service bridges.
 
 ```
-Servo Components Used              AIOS Replacement
-─────────────────────             ─────────────────
-SpiderMonkey (JS engine)       →  KEEP (no alternative)
-style (CSS engine)             →  KEEP
-layout (box/flex/grid)         →  KEEP
-WebRender (GPU rendering)      →  ADAPT to AIOS compositor
-                                  (WebRender already uses wgpu)
-net (network stack)            →  REPLACE with OS service channels
-storage (cookies, localStorage)→  REPLACE with web-storage space
-fetch (HTTP client)            →  REPLACE with OS HTTP service bridge
+Servo Components Used                AIOS Replacement
+──────────────────────────           ────────────────────────────────────────
+SpiderMonkey (JS engine)          →  KEEP (no alternative)
+style (CSS engine)                →  KEEP
+layout (box/flex/grid)            →  KEEP
+WebRender (GPU rendering)         →  ADAPT to AIOS compositor
+                                     (WebRender already uses wgpu)
+net (network stack)               →  REPLACE with OS service channels
+storage (cookies, localStorage)   →  REPLACE with web-storage space
+fetch (HTTP client)               →  REPLACE with OS HTTP service bridge
 ```
 
 Servo is the right choice because it's modular by design. The layout engine, CSS engine, and JS runtime are separable from the networking and storage layers.

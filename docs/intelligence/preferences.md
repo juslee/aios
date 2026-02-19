@@ -150,8 +150,8 @@ pub enum PreferenceSource {
 pub enum ExplicitMethod {
     /// Set via Conversation Bar ("make text bigger")
     ConversationBar,
-    /// Set via Settings Agent UI
-    SettingsAgent,
+    /// Set via Settings UI
+    SettingsUI,
     /// Set via agent-specific UI
     AgentUI { agent: AgentId },
     /// Set via SDK API

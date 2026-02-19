@@ -152,7 +152,7 @@ pub struct DeviceInfo {
     /// Human-readable device name
     pub device_name: String,
     /// Device certificate: primary key's signature over device_public_key.
-    /// Re-signed during key rotation (§3.1).
+    /// Re-signed during key rotation (§4.3).
     pub certificate: Signature,
     /// When this device was added
     pub added: SystemTime,
