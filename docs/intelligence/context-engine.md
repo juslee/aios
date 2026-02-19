@@ -1259,6 +1259,107 @@ The fallback works well for clear-cut situations: 9 AM on a Monday with an IDE o
 
 **When AIRS is unavailable, explicit overrides become more important.** The system should suggest overrides more proactively: if the fallback keeps getting it wrong, the user learns to say "heads down" or "gaming." This is still better than no context engine at all — the override system alone is more useful than manual mode-switching.
 
+### 8.3 Boot-Time Context Behavior
+
+During boot, the Context Engine faces a unique situation: it must publish a `ContextState` before any meaningful user signals exist. This section specifies exactly what happens between the Context Engine starting (Phase 3, after AIRS — see [boot.md §4.5](../kernel/boot.md) dependency graph) and the first real user activity.
+
+**Boot-time signal availability:**
+
+| Signal | Available at boot? | Value during boot |
+|---|---|---|
+| ActiveSpace | No (compositor not running) | `None` — no space is active |
+| RunningAgents | Partial (system agents only) | System agents starting; no user agents yet |
+| InputPattern | No (no user input yet) | `InputActivity::Idle` |
+| TimeOfDay | Yes | Current wall-clock time |
+| CalendarState | No (calendar agent not started) | `CalendarContext::Unknown` |
+| LocationContext | No (location service not started) | `LocationContext::Unknown` |
+| BatteryState | Yes (HAL provides at Phase 2) | Current battery level and AC state |
+| ExternalDisplay | Yes (HAL provides at Phase 2) | Whether external display is connected |
+
+**Boot-time inference.** With only TimeOfDay and hardware signals available, the Context Engine produces a conservative initial state:
+
+```rust
+impl ContextEngine {
+    /// Generate the initial ContextState during boot.
+    /// Called once during Phase 3 initialization, before any user signals.
+    fn boot_context(&self) -> ContextState {
+        let time_signal = self.signal_collector.time_of_day();
+        let battery = self.signal_collector.battery_state();
+
+        // Use time-of-day as the primary signal
+        let work_engagement = RuleBasedModel::time_of_day_score(&time_signal);
+
+        // Battery-aware adjustment: if battery is critical, reduce resource priority
+        let resource_priority = if battery.level < 0.10 && !battery.ac_connected {
+            ResourcePriority::Minimal
+        } else {
+            ResourcePriority::from_engagement(work_engagement)
+        };
+
+        ContextState {
+            context_mode: ContextMode::Default,
+            work_engagement,
+            ai_engagement: AiEngagement::Ambient, // conservative: don't pop up AI UI
+            notification_threshold: NotificationThreshold::Medium,
+            resource_priority,
+            confidence: ContextConfidence::Low,    // we know we're guessing
+            source: ContextSource::BootHeuristic,
+            active_override: None,
+        }
+    }
+}
+```
+
+**Key design decisions for boot context:**
+
+1. **`AiEngagement::Ambient`, not `Available`.** During boot, the system should not proactively show AI UI (Conversation Bar, suggestion panels). The user may be waiting for the desktop to appear. Once the user interacts and signals accumulate, the engagement level adjusts naturally.
+
+2. **`ContextConfidence::Low`.** The boot context explicitly marks itself as low-confidence. Consumers that check confidence (e.g., the scheduler's context multiplier) use a conservative default instead of the inferred value when confidence is low.
+
+3. **`ContextSource::BootHeuristic`.** The audit log records that this context state came from boot heuristics, not from real signal analysis. Useful for debugging context transitions.
+
+**Transition to real context.** Once the compositor starts (Phase 5) and the user begins interacting, real signals flow in. The Context Engine transitions from boot heuristics to normal inference:
+
+```
+Boot context lifecycle:
+
+Phase 3: Context Engine starts (after AIRS, non-critical path)
+  → Publishes BootHeuristic context (Low confidence)
+  → All consumers receive conservative defaults
+
+Phase 5: Compositor + agents start
+  → ActiveSpace signal arrives (user's last workspace)
+  → RunningAgents signal populates as agents launch
+  → Confidence rises to Medium
+
+Phase 5 + 30s: User interacts
+  → InputPattern signal activates
+  → Confidence rises to High
+  → Context Engine switches from rule-based to AIRS classifier
+    (if AIRS model is loaded by now)
+
+Phase 5 + 5min: Steady state
+  → All 8 signal sources active
+  → AIRS classifier running
+  → Learning engine observing
+  → Full confidence
+```
+
+**Semantic Resume integration.** When the system restores a previous session via Semantic Resume (see [boot-lifecycle.md §15.3](../kernel/boot-lifecycle.md)), the Context Engine receives a hint about the user's pre-reboot context from the resume state. If the user was in deep work before a crash, the Context Engine initializes with a work-biased context rather than a neutral boot context. This reduces the jarring transition of "I was coding, the system crashed, and now it thinks I'm leisuring."
+
+```rust
+pub enum BootContextHint {
+    /// Clean boot — no prior context information
+    ColdBoot,
+    /// Semantic Resume — we know what the user was doing
+    SemanticResume { previous_context: ContextState },
+    /// Recovery mode — system is in a degraded state
+    RecoveryMode,
+    /// Proactive wake — system woke up for a scheduled task
+    ProactiveWake { scheduled_task: TaskDescription },
+}
+```
+
 -----
 
 ## 9. SDK API
