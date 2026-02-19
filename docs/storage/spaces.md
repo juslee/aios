@@ -140,6 +140,7 @@ system/                      ← Core zone, kernel-managed
   config/                    ← System configuration
   credentials/               ← Credential store (NTM)
   agents/                    ← Installed agent manifests
+  context/                   ← Context Engine learned patterns
 
 user/                        ← Personal zone, encrypted
   home/                      ← Default personal space

@@ -332,7 +332,7 @@ pub enum EarlyBootPhase {
     UartReady,
     /// Device tree parsed. Platform detected.
     DeviceTreeParsed,
-    /// GICv3 (or GICv2) interrupt controller initialized.
+    /// Interrupt controller initialized (GICv3, GICv2, or AIC).
     InterruptsReady,
     /// ARM Generic Timer configured. Timer interrupts enabled.
     TimerReady,
@@ -462,11 +462,11 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 4: Device tree parse.** Full parse of the FDT (flattened device tree). Extract: CPU count, memory regions (cross-checked against UEFI memory map), interrupt controller type and base address, timer frequency, all device nodes. Platform detection happens here.
 
-**Step 5: Interrupt controller initialization.** GICv3 on QEMU and Pi 5. GICv2 on Pi 4. Configure the distributor and redistributor (GICv3) or distributor and CPU interface (GICv2). Enable the maintenance timer interrupt (for preemptive scheduling). All other device interrupts are disabled until the relevant driver is loaded.
+**Step 5: Interrupt controller initialization.** GICv3 on QEMU and Pi 5. GICv2 on Pi 4. AIC (Apple Interrupt Controller) on Apple Silicon — a completely different architecture that uses device tree–assigned hardware IRQ numbers directly (no SPI/PPI distinction), see hal.md §13. Configure the distributor and redistributor (GICv3) or distributor and CPU interface (GICv2), or the AIC event registers and per-CPU mask sets (Apple Silicon). Enable the maintenance timer interrupt (for preemptive scheduling). All other device interrupts are disabled until the relevant driver is loaded.
 
-**Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC.
+**Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC (or register it with AIC on Apple Silicon).
 
-**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (§11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
+**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi, SoC watchdog on Apple Silicon — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (§11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
 
 **Step 7: MMU enable — page table setup.** This is the most complex step:
 
@@ -629,8 +629,8 @@ fn secondary_cpu_entry(core_id: usize) {
     // Install this core's exception vectors
     write_vbar_el1(exception_vectors_phys());
 
-    // Enable this core's GIC redistributor (GICv3) or CPU interface (GICv2)
-    enable_gic_for_core(core_id);
+    // Enable this core's interrupt controller (GIC redistributor/CPU interface, or AIC)
+    enable_interrupts_for_core(core_id);
 
     // Enable the timer interrupt for this core (scheduler tick)
     enable_timer_interrupt();
@@ -692,6 +692,9 @@ Pi 4           None                   No SMMU. DMA is unrestricted.
                                       Mitigation: restricted device drivers,
                                       bounce buffering for untrusted devices.
 Pi 5           SMMU (in BCM2712)      Available. Configured during boot.
+Apple Silicon  DART (Apple IOMMU)     Available. Per-device DARTs configured
+                                      during boot. Different register interface
+                                      from ARM SMMU — requires dedicated driver.
 ```
 
 **When SMMU is initialized:** After Step 8 (page allocator ready — SMMU page tables need physical pages) but before the Service Manager launches any device-accessing services. Specifically:
@@ -776,7 +779,7 @@ pub struct ServiceDescriptor {
     dependencies: &'static [ServiceId],
 
     /// Capabilities this service needs.
-    capabilities: &'static [CapabilityRequest],
+    capabilities: &'static [ServiceCapabilityRequest],
 
     /// How to handle failures.
     restart_policy: RestartPolicy,
@@ -803,9 +806,12 @@ pub enum BootPhase {
     Phase5Experience,
 }
 
-pub struct CapabilityRequest {
+/// Capability request for system services (compiled into initramfs).
+/// Simpler than agent CapabilityRequest (agents.md §2.3) — system services
+/// are always required and have static justification strings.
+pub struct ServiceCapabilityRequest {
     capability: Capability,
-    reason: &'static str,
+    justification: &'static str,
 }
 
 pub enum RestartPolicy {
@@ -906,7 +912,9 @@ Services form a directed acyclic graph (DAG) where edges represent "must start a
 ║  posix_compat              │                                       ║
 ║                            ├──→ display_subsystem ──→ compositor   ║
 ║                            │                                       ║
-║                            └──→ network_subsystem                  ║
+║                            ├──→ network_subsystem                  ║
+║                            │                                       ║
+║                            └──→ audio_subsystem (non-critical)     ║
 ║                                                                    ║
 ╠═══════════════════════════════════════════════════════════════════╣
 ║  PHASE 3 + PHASE 4: CONCURRENT after Phase 2 completes            ║
@@ -1059,6 +1067,7 @@ First boot:
   system/crash/       — Kernel panic logs
   system/agents/      — Installed agent manifests
   system/credentials/ — Credential store
+  system/context/     — Context Engine learned patterns
 ```
 
 On normal boot, Space Storage verifies these spaces exist and are consistent, then reports healthy. At this point, the kernel's audit ring buffer is flushed to `system/audit/boot/`. From now on, all audit events are written to space storage in real time.
@@ -1097,9 +1106,9 @@ If USB fails on Pi, keyboard/mouse are unavailable — this is a
 Phase 2 critical failure on Pi (but not on QEMU, which uses VirtIO-Input).
 ```
 
-**Display Subsystem** initializes the GPU driver. On QEMU, this is VirtIO-GPU: the driver negotiates display resolution, allocates scanout buffers, and sets up the rendering pipeline via wgpu. On Pi, this is the VC4/V3D driver (Pi 4) or V3D 7.1 (Pi 5), which provides Vulkan capabilities. The display subsystem takes over from the early framebuffer (see Section 7 for the handoff).
+**Display Subsystem** initializes the GPU driver. On QEMU, this is VirtIO-GPU: the driver negotiates display resolution, allocates scanout buffers, and sets up the rendering pipeline via wgpu. On Pi, this is the VC4/V3D driver (Pi 4) or V3D 7.1 (Pi 5), which provides Vulkan capabilities. On Apple Silicon, this is the AGX GPU driver (~150ms init, custom command queue interface). The display subsystem takes over from the early framebuffer (see Section 7 for the handoff).
 
-**GPU memory on Pi:** VideoCore VI/VII shares system RAM with the CPU — there is no discrete VRAM. The Pi firmware reserves a contiguous region for the GPU (specified in `config.txt` as `gpu_mem`, default 76 MB on Pi 4, 64 MB on Pi 5). The kernel discovers this reservation via the device tree `/reserved-memory` node during Step 4 and excludes it from the buddy allocator. The Display Subsystem uses this region for scanout buffers, texture memory, and render targets. Importantly, the AIRS model selection thresholds (§5 Phase 3) account for GPU-reserved memory — "available RAM" means total RAM minus kernel minus GPU reservation:
+**GPU memory:** VideoCore VI/VII on Pi shares system RAM with the CPU — there is no discrete VRAM. The Pi firmware reserves a contiguous region for the GPU (specified in `config.txt` as `gpu_mem`, default 76 MB on Pi 4, 64 MB on Pi 5). The kernel discovers this reservation via the device tree `/reserved-memory` node during Step 4 and excludes it from the buddy allocator. The Display Subsystem uses this region for scanout buffers, texture memory, and render targets. On Apple Silicon, AGX uses unified memory with no static reservation — the GPU allocates from the same physical pages as the CPU, managed by DART (Apple's IOMMU). Importantly, the AIRS model selection thresholds (§5 Phase 3) account for GPU-reserved memory — "available RAM" means total RAM minus kernel minus GPU reservation:
 
 ```
 Pi 4 (4 GB model):  4096 - ~2 (kernel) - 76 (GPU) = ~4018 MB available
@@ -1108,6 +1117,11 @@ Pi 4 (8 GB model):  8192 - ~2 (kernel) - 76 (GPU) = ~8114 MB available
                      → selects 8B Q4_K_M (~4.5 GB)
 Pi 5 (8 GB):        8192 - ~2 (kernel) - 64 (GPU) = ~8126 MB available
                      → selects 8B Q4_K_M (~4.5 GB)
+Apple M1 (8 GB):    8192 - ~2 (kernel) = ~8190 MB available
+                     → selects 8B Q4_K_M (~4.5 GB)
+                     (unified memory — AGX GPU shares with CPU, no reservation)
+Apple M1 (16 GB):   16384 - ~2 (kernel) = ~16382 MB available
+                     → selects 8B Q5_K_M (~4.5 GB, higher quality)
 QEMU (default 4 GB): no GPU reservation (VirtIO-GPU uses host memory)
                      → selects 3B Q4_K_M (~2.0 GB)
 ```
@@ -1118,7 +1132,7 @@ QEMU (default 4 GB): no GPU reservation (VirtIO-GPU uses host memory)
 
 **POSIX Compatibility** starts in parallel with other Phase 2 services. It initializes the translation layer: mounts the POSIX filesystem view over spaces (`/spaces/`, `/home/`, `/tmp/`, `/dev/`, `/proc/`), sets up the C library (musl libc) shim, and makes BSD tools available.
 
-**Audio Subsystem** starts in parallel with network and POSIX. It registers with the Subsystem Framework and initializes the audio hardware: VirtIO-Sound on QEMU, or PWM/I2S via the BCM audio peripheral on Pi 4/5 (accessed through the DMA controller, PL330 on Pi 4, RP1 on Pi 5). The audio subsystem is **not critical** — if it fails, boot continues without sound. It provides: PCM output (mixing engine), optional input (microphone), and routing (HDMI audio vs 3.5mm jack vs Bluetooth). The scheduler grants audio threads RT class scheduling (same as compositor) to meet latency deadlines (scheduler.md §3.1).
+**Audio Subsystem** starts in parallel with network and POSIX. It registers with the Subsystem Framework and initializes the audio hardware: VirtIO-Sound on QEMU, or PWM/I2S via the BCM audio peripheral on Pi 4/5 (accessed through the BCM2711 DMA controller on Pi 4, RP1 I2S on Pi 5). The audio subsystem is **not critical** — if it fails, boot continues without sound. It provides: PCM output (mixing engine), optional input (microphone), and routing (HDMI audio vs 3.5mm jack vs Bluetooth). The scheduler grants audio threads RT class scheduling (same as compositor) to meet latency deadlines (scheduler.md §3.1).
 
 **Phase 2 budget: ~500ms.**
 
@@ -1180,11 +1194,11 @@ The final phase makes the system user-facing.
 
 ```
 [boot] Phase 5 complete — boot to desktop in 1,847ms
-[boot] Services: 18 running, 0 failed, 0 degraded
+[boot] Services: 20 running, 0 failed, 0 degraded
 [boot] AIRS: healthy (model: llama-3.1-8b-q4_k_m, loaded in 3,200ms)
 ```
 
-**Phase 5 budget: ~300ms (first frame).**
+**Phase 5 budget: ~150ms (first frame).**
 
 ### First Boot Experience
 
@@ -1255,7 +1269,7 @@ Time (ms)     Phase                    What happens
 ──────────────────────────────────────────────────────────────────
  510          Kernel entry             Exception vectors, UART
  530          Device tree parsed       Platform detected
- 550          Interrupts + timer       GICv3 initialized
+ 550          Interrupts + timer       Interrupt controller initialized
  600          MMU enabled              Page tables, W^X
  640          Page allocator + heap    Memory management ready
  645          Hardware RNG             RngDevice initialized, entropy available
@@ -1296,6 +1310,7 @@ Component                Target     Notes
 ─────────────────────────────────────────────────────────────────
 Firmware                 ~500ms     Not controllable. DRAM training dominates.
                                     QEMU is faster (~200ms). Pi 4 is ~500ms.
+                                    Apple Silicon is ~300ms (m1n1 + U-Boot).
 Kernel early boot         200ms     Most time in page table setup and
                                     device tree parsing.
 Phase 1 (storage)         300ms     WAL replay adds time after dirty shutdown.
@@ -1303,12 +1318,13 @@ Phase 1 (storage)         300ms     WAL replay adds time after dirty shutdown.
 Phase 2 (core services)   500ms     GPU init is the bottleneck.
                                     VirtIO-GPU is fast (~50ms).
                                     Pi VC4/V3D is slower (~200ms).
+                                    Apple AGX is ~150ms (custom init).
 Phase 4 (user services)   200ms     Identity unlock may block on user input
                                     (passphrase). Biometric is faster.
 Phase 5 (experience)      150ms     First compositor frame.
 ─────────────────────────────────────────────────────────────────
-Critical path total:    ~1,850ms    Well under 3-second target.
-With firmware:          ~2,350ms    Comfortable margin.
+Software critical path: ~1,350ms    Kernel + Phase 1–5, excludes firmware.
+Total (with firmware):  ~1,850ms    Well under 3-second target.
 ```
 
 ### 6.3 Parallel vs Sequential Timeline
@@ -1320,13 +1336,13 @@ Time: 0       500      1000      1500      2000      2500      3000
                ██████████                                         Kernel boot
                          ███████████                               Phase 1
                                     ████████████████               Phase 2
-                                    ·································> Phase 3 (AI)
+                                                   ·················> Phase 3 (AI, bg)
                                                    ███████         Phase 4
                                                           █████    Phase 5
                                                               ↑
                                                       BOOT COMPLETE
                                                         ~1,850ms
-                                                     (+ ~500ms firmware)
+                                                     (includes firmware)
 
 Legend: █ = on critical path    · = parallel (not blocking boot)
 ```
@@ -1579,12 +1595,12 @@ The panic screen is rendered with the same `EarlyFramebuffer` code used for the 
 If one core panics, it must stop the others:
 
 1. Panicking core sets a global `PANIC_FLAG` (atomic store, `Ordering::Release`).
-2. Panicking core sends an SGI (Software Generated Interrupt) to all other cores.
-3. Other cores receive the SGI, check `PANIC_FLAG`, and enter a `WFI` loop.
+2. Panicking core sends an SGI (Software Generated Interrupt) to all other cores (IPI on Apple Silicon via AIC).
+3. Other cores receive the SGI/IPI, check `PANIC_FLAG`, and enter a `WFI` loop.
 4. Panicking core now has exclusive access to UART, framebuffer, and block device.
 5. Dump proceeds single-threaded.
 
-If the panicking core is unable to send SGIs (GIC not initialized yet), the other cores are still in their PSCI WFI loop from firmware and won't interfere.
+If the panicking core is unable to send SGIs/IPIs (interrupt controller not initialized yet), the other cores are still in their PSCI WFI loop from firmware and won't interfere.
 
 -----
 
@@ -1774,6 +1790,7 @@ initramfs.cpio contents:
     display_subsystem     — Display subsystem service
     compositor            — Compositor service
     network_subsystem     — Network subsystem service
+    audio_subsystem       — Audio subsystem service
     posix_compat          — POSIX compatibility service
   /service_descriptors    — serialized Vec<ServiceDescriptor>
   /logo.bin               — splash screen bitmap (compiled-in fallback too)

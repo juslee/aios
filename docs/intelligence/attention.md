@@ -1169,7 +1169,7 @@ If the same agent posts the same type of content repeatedly (e.g., hourly build 
 
 ## 15. Boot-Time Initialization
 
-The Attention Manager is a system service that starts during boot Phase 4 (Intelligence Services). Unlike most services, the Attention Manager must handle a bootstrapping problem: it depends on AIRS for urgency assessment, but AIRS may still be loading its model when the first attention items arrive. This section specifies the Attention Manager's initialization sequence, its minimal startup state, and how it connects to the compositor notification pipeline.
+The Attention Manager is a system service that starts during boot Phase 4 (User Services). Unlike most services, the Attention Manager must handle a bootstrapping problem: it depends on AIRS for urgency assessment, but AIRS may still be loading its model when the first attention items arrive. This section specifies the Attention Manager's initialization sequence, its minimal startup state, and how it connects to the compositor notification pipeline.
 
 ### 15.1 Initialization Sequence
 
@@ -1180,7 +1180,7 @@ Boot Phase 4 — Attention Manager startup:
    Capabilities granted: PostAttention (receive), ContextRead,
    CompositorNotify, AIRSInference (optional at this point)
 
-2. Load user preferences from system/preferences/attention/
+2. Load user preferences from user/preferences/attention/
    - Per-agent suppression rules
    - Per-person priority boosts
    - Quiet hours schedule
@@ -1309,7 +1309,7 @@ The Attention Manager is functional with zero configuration:
 | User Preferences | Yes (loaded from space) | Built-in defaults if first boot |
 | Audit Log | Yes (space writer) | Always available after Phase 2 (storage) |
 
-**First-boot behavior.** On first boot, no user preferences exist. The Attention Manager uses conservative defaults: only system agents can interrupt, everything else goes to the digest. The user configures preferences through the Conversation Bar ("make messages from Mom always interrupt") or the Settings agent. Preferences are stored in `system/preferences/attention/` and loaded on subsequent boots.
+**First-boot behavior.** On first boot, no user preferences exist. The Attention Manager uses conservative defaults: only system agents can interrupt, everything else goes to the digest. The user configures preferences through the Conversation Bar ("make messages from Mom always interrupt") or the Settings agent. Preferences are stored in `user/preferences/attention/` and loaded on subsequent boots.
 
 ### 15.4 Compositor Connection
 
@@ -1339,26 +1339,28 @@ pub enum PresentationCommand {
 
 ## 16. Implementation Order
 
+Development plan phases (see development-plan.md — not to be confused with boot phases):
+
 ```
-Phase 9a:   Attention Manager service          → intake queue, audit log
-Phase 9b:   AIRS urgency assessment            → basic content analysis
-Phase 9c:   Context filtering                  → context-aware thresholds
-Phase 9d:   Status Strip badge                 → unseen count visible
+Dev Phase 9a:   Attention Manager service          → intake queue, audit log
+Dev Phase 9b:   AIRS urgency assessment            → basic content analysis
+Dev Phase 9c:   Context filtering                  → context-aware thresholds
+Dev Phase 9d:   Status Strip badge                 → unseen count visible
 
-Phase 11a:  Attention Panel UI                 → digest view with grouping
-Phase 11b:  Interrupt overlay                  → urgent items break through
-Phase 11c:  Toast notifications                → NextBreak delivery
-Phase 11d:  Grouping and summarization         → AI-generated summaries
+Dev Phase 11a:  Attention Panel UI                 → digest view with grouping
+Dev Phase 11b:  Interrupt overlay                  → urgent items break through
+Dev Phase 11c:  Toast notifications                → NextBreak delivery
+Dev Phase 11d:  Grouping and summarization         → AI-generated summaries
 
-Phase 14a:  Auto-actionable items              → one-click actions
-Phase 14b:  Relationship-aware priority        → identity integration
-Phase 14c:  User controls                      → per-agent, per-person settings
-Phase 14d:  Conversational configuration       → Conversation Bar integration
+Dev Phase 14a:  Auto-actionable items              → one-click actions
+Dev Phase 14b:  Relationship-aware priority        → identity integration
+Dev Phase 14c:  User controls                      → per-agent, per-person settings
+Dev Phase 14d:  Conversational configuration       → Conversation Bar integration
 
-Phase 17:   Break detection                    → idle-based NextBreak delivery
-Phase 19:   Pattern analysis                   → AIRS learns from engagement
-Phase 21:   Cross-device attention sync        → Space Mesh attention state
-Phase 24:   Attention analytics                → queryable history, trends
+Dev Phase 17:   Break detection                    → idle-based NextBreak delivery
+Dev Phase 19:   Pattern analysis                   → AIRS learns from engagement
+Dev Phase 21:   Cross-device attention sync        → Space Mesh attention state
+Dev Phase 24:   Attention analytics                → queryable history, trends
 ```
 
 -----

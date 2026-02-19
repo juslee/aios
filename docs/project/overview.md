@@ -154,19 +154,27 @@ pub struct Space {
 }
 pub struct Object {
     id: ObjectId,
+    content_hash: Hash,              // content stored separately (content-addressed)
     content_type: ContentType,
-    content: Content,
+    content_size: u64,
     semantic: SemanticMetadata,
     relations: Vec<Relation>,
-    versions: Vec<Version>,
+    created_at: Timestamp,
+    modified_at: Timestamp,
+    created_by: AgentId,
+    modified_by: AgentId,
     provenance: ProvenanceChain,
 }
 pub struct SemanticMetadata {
-    summary: String,
+    summary: Option<String>,          // AIRS-generated, may not exist yet
     tags: Vec<String>,
-    embedding: Vec<f32>,
+    auto_tags: Vec<String>,           // AIRS-generated tags
+    embedding: Option<Vec<f32>>,      // AIRS-generated embedding
     entities: Vec<Entity>,
-    description: String,
+    description: Option<String>,
+    auto_summary: Option<String>,
+    text_content: Option<String>,     // extracted text for indexing
+    indexed_at: Option<Timestamp>,
 }
 pub struct Task {
     id: TaskId,
