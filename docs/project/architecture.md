@@ -189,12 +189,14 @@ Replaces the traditional filesystem. Objects instead of files. Semantic relation
 pub struct Space {
     id: SpaceId,
     name: String,
-    access: CapabilitySet,
     parent: Option<SpaceId>,
-    semantic_index: SemanticIndex,
-    history: VersionLog,
     security_zone: SecurityZone,
-    encryption_key: Option<SpaceKey>,
+    encryption: EncryptionState,
+    quota: SpaceQuota,
+    created_at: Timestamp,
+    modified_at: Timestamp,
+    object_count: u64,
+    total_size: u64,
 }
 
 pub struct Object {

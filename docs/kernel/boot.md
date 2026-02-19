@@ -513,7 +513,7 @@ The buddy allocator manages pages in orders 0 through 10 (4 KiB to 4 MiB blocks)
 
 **Step 9: Kernel heap.** Initialize a slab allocator on top of the buddy allocator. The slab allocator provides `alloc::alloc::GlobalAlloc` — from this point, `Box`, `Vec`, `String`, `HashMap`, and all other heap types work. The slab allocator uses named object caches for common kernel types: `ipc_message` (64 bytes), `capability_token` (128 bytes), `channel` (256 bytes), `process_descriptor` (512 bytes), `vm_region` (128 bytes), `page_table` (4096 bytes). Allocations that don't fit any cache go directly to the buddy allocator. See memory.md §4.1 for the full cache definitions.
 
-**Step 10: Hardware RNG.** Call `platform.init_rng(dt)` to initialize the hardware random number generator. On QEMU this is VirtIO-RNG (virtqueue-based, entropy from host `/dev/urandom`). On Pi 4/5 this is the bcm2835-rng (MMIO TRNG). The returned `RngDevice` is stored in `KernelState.rng` and provides runtime entropy for KASLR, capability token generation, nonces, and key derivation — replacing reliance on the one-shot 32-byte UEFI seed.
+**Step 10: Hardware RNG.** Call `platform.init_rng(dt)` to initialize the hardware random number generator. On QEMU this is VirtIO-RNG (virtqueue-based, entropy from host `/dev/urandom`). On Pi 4/5 this is the bcm2835-rng (MMIO TRNG). On Apple Silicon this is the Apple TRNG (hardware true random number generator). The returned `RngDevice` is stored in `KernelState.rng` and provides runtime entropy for KASLR, capability token generation, nonces, and key derivation — replacing reliance on the one-shot 32-byte UEFI seed.
 
 **Step 11: KASLR.** Use the hardware RNG to compute a random kernel base offset (aligned to 2 MiB). Remap the kernel at the new virtual address. Update all absolute address references (the kernel is compiled as position-independent). This makes kernel address prediction harder for exploits. Falls back to `BootInfo.rng_seed` if the hardware RNG init failed (should not happen on supported platforms).
 
@@ -945,6 +945,8 @@ Services form a directed acyclic graph (DAG) where edges represent "must start a
 ╚═══════════════════════════════════════════════════════════════════╝
 ```
 
+**Service count:** The graph shows 21 nodes, but `autostart_agents` is a boot step (the Agent Runtime spawning user agents), not a persistent system service. The actual service count is **20** (3 + 8 + 3 + 4 + 2).
+
 ### 4.6 Parallel Startup Within Phases
 
 Within each phase, the Service Manager starts services in dependency order but launches independent services in parallel. For example, in Phase 2:
@@ -1101,9 +1103,15 @@ Pi 4/5 Input path:
      - Set up interrupt transfers for input polling
   4. Route events to compositor's input router
 
+Apple Silicon Input path:
+  External keyboards/mice use USB HID (same xHCI path as Pi 5).
+  Built-in keyboard and trackpad (on laptops) use SPI transport
+  — discovered from device tree, handled by a dedicated SPI HID driver.
+
 Timing: USB enumeration takes 50-200ms (device-dependent).
 If USB fails on Pi, keyboard/mouse are unavailable — this is a
 Phase 2 critical failure on Pi (but not on QEMU, which uses VirtIO-Input).
+On Apple Silicon laptops, the SPI keyboard provides a fallback.
 ```
 
 **Display Subsystem** initializes the GPU driver. On QEMU, this is VirtIO-GPU: the driver negotiates display resolution, allocates scanout buffers, and sets up the rendering pipeline via wgpu. On Pi, this is the VC4/V3D driver (Pi 4) or V3D 7.1 (Pi 5), which provides Vulkan capabilities. On Apple Silicon, this is the AGX GPU driver (~150ms init, custom command queue interface). The display subsystem takes over from the early framebuffer (see Section 7 for the handoff).
@@ -1132,7 +1140,7 @@ QEMU (default 4 GB): no GPU reservation (VirtIO-GPU uses host memory)
 
 **POSIX Compatibility** starts in parallel with other Phase 2 services. It initializes the translation layer: mounts the POSIX filesystem view over spaces (`/spaces/`, `/home/`, `/tmp/`, `/dev/`, `/proc/`), sets up the C library (musl libc) shim, and makes BSD tools available.
 
-**Audio Subsystem** starts in parallel with network and POSIX. It registers with the Subsystem Framework and initializes the audio hardware: VirtIO-Sound on QEMU, or PWM/I2S via the BCM audio peripheral on Pi 4/5 (accessed through the BCM2711 DMA controller on Pi 4, RP1 I2S on Pi 5). The audio subsystem is **not critical** — if it fails, boot continues without sound. It provides: PCM output (mixing engine), optional input (microphone), and routing (HDMI audio vs 3.5mm jack vs Bluetooth). The scheduler grants audio threads RT class scheduling (same as compositor) to meet latency deadlines (scheduler.md §3.1).
+**Audio Subsystem** starts in parallel with network and POSIX. It registers with the Subsystem Framework and initializes the audio hardware: VirtIO-Sound on QEMU, PWM/I2S via the BCM audio peripheral on Pi 4/5 (accessed through the BCM2711 DMA controller on Pi 4, RP1 I2S on Pi 5), or the Apple MCA (Multi-Channel Audio) codec on Apple Silicon. The audio subsystem is **not critical** — if it fails, boot continues without sound. It provides: PCM output (mixing engine), optional input (microphone), and routing (HDMI audio vs 3.5mm jack vs Bluetooth). The scheduler grants audio threads RT class scheduling (same as compositor) to meet latency deadlines (scheduler.md §3.1).
 
 **Phase 2 budget: ~500ms.**
 
@@ -1288,6 +1296,8 @@ Time (ms)     Phase                    What happens
 1150          Display ready            Compositor start
 1200          Network ready            (not on critical path)
 1300          Compositor healthy       Early framebuffer → compositor
+1350          Audio subsystem up       (non-critical, continues in bg)
+1400          POSIX compat ready       BSD userland bridge
 1500          Phase 2 complete
 ──────────────────────────────────────────────────────────────────
 1510          Phase 3: AI              AIRS starts (PARALLEL)
@@ -1310,7 +1320,8 @@ Component                Target     Notes
 ─────────────────────────────────────────────────────────────────
 Firmware                 ~500ms     Not controllable. DRAM training dominates.
                                     QEMU is faster (~200ms). Pi 4 is ~500ms.
-                                    Apple Silicon is ~300ms (m1n1 + U-Boot).
+                                    Pi 5 is ~400ms. Apple Silicon is ~300ms
+                                    (m1n1 + U-Boot).
 Kernel early boot         200ms     Most time in page table setup and
                                     device tree parsing.
 Phase 1 (storage)         300ms     WAL replay adds time after dirty shutdown.
@@ -1365,7 +1376,7 @@ Several techniques keep boot under budget:
 
 **Before NTP:** From kernel entry until the Network Subsystem obtains an NTP response, all timestamps are *monotonic, relative to boot*. The ARM Generic Timer counter starts at an arbitrary value set by firmware; the kernel normalizes this to `0 = kernel entry`. All audit log entries, provenance records, and boot timing measurements use this monotonic counter.
 
-UEFI Runtime Services provide `GetTime()` which returns a wall-clock time from the platform's RTC (Real-Time Clock). On QEMU, this is the host's wall clock. On Pi 4/5, this is the hardware RTC if a battery-backed module is attached, or epoch (January 1, 2000) if not. The kernel reads UEFI `GetTime()` once during early boot (after Step 6, timer setup) and stores it as `boot_wall_time` in `KernelState`. This provides a *best-effort* wall-clock time that may be inaccurate but is not zero.
+UEFI Runtime Services provide `GetTime()` which returns a wall-clock time from the platform's RTC (Real-Time Clock). On QEMU, this is the host's wall clock. On Pi 4/5, this is the hardware RTC if a battery-backed module is attached, or epoch (January 1, 2000) if not. On Apple Silicon, m1n1 provides an accurate RTC backed by the always-on SoC RTC block (battery-backed via the PMU). The kernel reads UEFI `GetTime()` once during early boot (after Step 6, timer setup) and stores it as `boot_wall_time` in `KernelState`. This provides a *best-effort* wall-clock time that may be inaccurate but is not zero.
 
 **NTP sync:** The Network Subsystem initiates an NTP query as one of its first actions after DHCP completes (Phase 2). When the NTP response arrives:
 
