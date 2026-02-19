@@ -23,6 +23,13 @@
 - [posix.md](../platform/posix.md) — POSIX compatibility layer deep dive
 - [experience.md](../experience/experience.md) — Experience layer and UI design
 - [browser.md](../applications/browser.md) — Decomposed web content runtime
+- [attention.md](../intelligence/attention.md) — Attention Manager and notification triage
+- [preferences.md](../intelligence/preferences.md) — Preference Service
+- [identity.md](../experience/identity.md) — Identity and trust model
+- [task-manager.md](../intelligence/task-manager.md) — Task decomposition and orchestration
+- [audio.md](../platform/audio.md) — Audio subsystem architecture
+- [accessibility.md](../experience/accessibility.md) — Accessibility engine
+- [power-management.md](../platform/power-management.md) — Power management policy engine
 
 -----
 
