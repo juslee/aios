@@ -1222,7 +1222,9 @@ Before AIRS loads its model (which may take several seconds on slow storage), th
 
 ```rust
 pub struct RuleBasedTriage {
-    /// Keyword patterns that indicate high urgency
+    /// Keyword patterns in item text that indicate high urgency,
+    /// e.g. "ASAP", "urgent", "down", "broken", "outage", "cannot log in".
+    /// Typically matched as simple case-insensitive substrings.
     urgent_keywords: Vec<&'static str>,
     /// Agent categories with default urgency levels
     agent_urgency_defaults: HashMap<AgentCategory, UrgencyLevel>,
