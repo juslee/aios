@@ -36,7 +36,7 @@ No settings panel required. No config files to edit. No documentation to read. T
 │                                                                   │
 │  User                                                             │
 │  ├── Conversation Bar: "Make the text bigger"                    │
-│  ├── Settings Agent: visual preference browser                   │
+│  ├── Settings UI: visual preference browser                      │
 │  └── Agent UI: agent-specific preference controls                │
 │                                                                   │
 │         │              │                │                         │
@@ -1030,12 +1030,12 @@ pub enum SyncConflictResolution {
 
 -----
 
-## 13. The Settings Agent
+## 13. The Settings UI
 
-For users who prefer a visual interface, the Settings agent provides a structured view of all preferences:
+For users who prefer a visual interface, the Settings UI provides a structured view of all preferences:
 
 ```rust
-pub struct SettingsAgent {
+pub struct SettingsUI {
     /// All preferences, grouped by category
     categories: Vec<PreferenceCategory>,
     /// Search index for finding preferences
@@ -1044,7 +1044,7 @@ pub struct SettingsAgent {
     selected_category: Option<PreferenceCategory>,
 }
 
-impl Application for SettingsAgent {
+impl Application for SettingsUI {
     fn view(&self) -> Element<Message> {
         let sidebar = column(
             self.categories.iter().map(|cat| {
@@ -1116,7 +1116,7 @@ Dev Phase 13a:  Behavioral observer                → pattern detection, hypoth
 Dev Phase 13b:  Behavioral proposals               → AIRS-driven preference suggestions
 Dev Phase 13c:  Agent preferences                  → manifest declaration, scoped storage
 
-Dev Phase 16a:  Settings Agent                     → visual preference browser
+Dev Phase 16a:  Settings UI                        → visual preference browser
 Dev Phase 16b:  Cross-device sync                  → universal vs per-device, conflict resolution
 Dev Phase 16c:  Preference analytics               → usage patterns, recommendation engine
 
