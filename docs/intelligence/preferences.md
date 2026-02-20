@@ -1095,7 +1095,7 @@ impl Application for SettingsUI {
 }
 ```
 
-The Settings agent is **not hardcoded**. It reads preference metadata from the Preference Service. When a new subsystem registers new preferences, they appear in Settings automatically. No Settings agent code change needed.
+The Settings UI is **not hardcoded**. It reads preference metadata from the Preference Service. When a new subsystem registers new preferences, they appear in Settings automatically. No Settings UI code change needed.
 
 -----
 
@@ -1128,7 +1128,7 @@ Dev Phase 23:   Accessibility preferences          → screen reader, high contr
 
 ## 15. Design Principles
 
-1. **Conversation first, panels last.** The primary interface for preferences is natural language. "Make the text bigger" is always easier than Settings → Display → Font Size → Scale Factor. The Settings agent is a fallback for browsing, not the default.
+1. **Conversation first, panels last.** The primary interface for preferences is natural language. "Make the text bigger" is always easier than Settings → Display → Font Size → Scale Factor. The Settings UI is a fallback for browsing, not the default.
 
 2. **Every change has a reason.** No silent changes. Every preference change records who changed it, when, why, and what the previous value was. "Why is my screen dim?" always has an answer.
 
