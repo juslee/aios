@@ -54,6 +54,7 @@ AIOS replaces this with **spaces** — collections of typed objects with semanti
 │  LSM-tree indexed blocks on raw storage device               │
 │  Write-ahead log (WAL) for crash consistency                 │
 │  Flash-aware zone allocation (hot/warm/cold separation)      │
+│  Device-level transparent encryption (AES-256-GCM)           │
 │  Sub-block dedup (Rabin rolling hash, content-defined chunks)│
 │  Block-level checksums (CRC-32C), WAF tracking               │
 │  No intermediate filesystem — AIOS owns the device           │
@@ -95,10 +96,14 @@ pub enum SecurityZone {
 }
 
 pub enum EncryptionState {
-    /// Not encrypted (system spaces, temporary data)
-    Plaintext,
-    /// Encrypted with space-specific key
-    Encrypted {
+    /// Device-encrypted only (Core, Ephemeral zones).
+    /// All blocks are encrypted with the device key (§4.10) regardless of this field.
+    /// DeviceOnly means no additional per-space encryption layer.
+    DeviceOnly,
+    /// Device-encrypted AND per-space encrypted (Personal, Collaborative, Untrusted).
+    /// Content is encrypted with the space key before reaching the Block Engine,
+    /// then the Block Engine encrypts the block envelope with the device key.
+    SpaceEncrypted {
         algorithm: EncryptionAlgorithm,
         key_id: KeyId,
     },
@@ -645,10 +650,11 @@ On a consumer SD card (TLC, ~1000 P/E cycles):
 Agent reads object:
   1. Object metadata lookup: ObjectId → content_hash
   2. Block index lookup: content_hash → block location
-  3. Read block from disk
-  4. Verify checksum (CRC-32C)
-  5. If encrypted space: decrypt with space key
-  6. Return content to agent
+  3. Read encrypted block from disk
+  4. Decrypt block envelope with device key (§4.10) — always, every block
+  5. Verify checksum (CRC-32C)
+  6. If space-encrypted (Personal, Collaborative, Untrusted): decrypt content with space key
+  7. Return content to agent
 ```
 
 #### 4.3.1 AIRS Prefetch Path
@@ -663,10 +669,11 @@ AIRS prefetch directive:
   4. Space Storage executes the NORMAL read path for each object:
      a. Object metadata lookup: ObjectId → content_hash
      b. Block index lookup: content_hash → block location
-     c. Read block from disk into page cache
-     d. Verify checksum (CRC-32C)
-     e. If encrypted space: decrypt with space key (Space Storage holds key)
-     f. Decrypted content sits in page cache (user pool)
+     c. Read encrypted block from disk
+     d. Decrypt block envelope with device key (§4.10)
+     e. Verify checksum (CRC-32C)
+     f. If space-encrypted: decrypt content with space key (Space Storage holds key)
+     g. Decrypted content sits in page cache (user pool)
   5. No content is returned to AIRS — prefetch is fire-and-forget
   6. When agent later reads the object, step 3 hits page cache → fast
   7. Provenance chain records: ResourcePrefetch event (logged by kernel)
@@ -743,14 +750,21 @@ pub struct BlockHeader {
     compressed_size: u32,
     compression: CompressionStrategy,
     checksum: u32,                      // CRC-32C of compressed data (integrity for non-encrypted blocks)
-    /// AES-256-GCM nonce (96 bits). Unique per block write under the same key.
+    /// Per-space AES-256-GCM nonce (96 bits). Unique per block write under the same key.
     /// Stored alongside ciphertext — nonces are not secret.
     /// Only present for blocks in encrypted spaces (Personal, Collaborative, Untrusted).
-    nonce: Option<[u8; 12]>,
-    /// AES-256-GCM authentication tag (128 bits). Verifies both ciphertext
+    space_nonce: Option<[u8; 12]>,
+    /// Per-space AES-256-GCM authentication tag (128 bits). Verifies both ciphertext
     /// integrity and authenticity. Replaces CRC-32C for encrypted blocks —
     /// CRC-32C is retained as a secondary check for storage-level corruption.
-    auth_tag: Option<[u8; 16]>,
+    space_auth_tag: Option<[u8; 16]>,
+    /// Device-level encryption nonce (96 bits). Always present — every block
+    /// on disk is encrypted with the device key (§4.10). This is the inner
+    /// encryption layer; space encryption (above) is the outer layer.
+    device_nonce: [u8; 12],
+    /// Device-level authentication tag (128 bits). Authenticates the block
+    /// envelope (header + data) under the device key.
+    device_auth_tag: [u8; 16],
 }
 
 impl BlockEngine {
@@ -841,7 +855,7 @@ Random bytes         ~8.0                  None (skip)              0%
 
 The `CompressionStrategy::None` fast path means that spaces storing encrypted data (Personal zone) or media-heavy content (photos, video) pay zero compression CPU. Only spaces with compressible content (documents, code, conversations, config) invest CPU in compression.
 
-**Security: compress before encrypt.** The Block Engine compresses data before the Encryption Layer encrypts it (see architecture diagram in section 2). This ordering is critical — compressing ciphertext is useless (encrypted data is indistinguishable from random), and encrypting compressed data avoids CRIME/BREACH-style attacks where compression ratio changes leak information about plaintext. Since AIOS uses content-addressed blocks (each block has a unique content_hash), an attacker cannot perform the chosen-plaintext injection required for CRIME-style attacks. The compress-then-encrypt ordering is safe.
+**Security: compress before encrypt.** The Block Engine compresses data before either encryption layer acts on it: per-space encryption (§6) encrypts object content above the Block Engine, and device encryption (§4.10) encrypts the block envelope below it. Compression operates on plaintext content (for non-space-encrypted zones) or per-space ciphertext (which is high-entropy and skipped by the adaptive entropy check). This ordering is critical — compressing ciphertext is useless (encrypted data is indistinguishable from random), and encrypting compressed data avoids CRIME/BREACH-style attacks where compression ratio changes leak information about plaintext. Since AIOS uses content-addressed blocks (each block has a unique content_hash), an attacker cannot perform the chosen-plaintext injection required for CRIME-style attacks. The compress-then-encrypt ordering is safe.
 
 ### 4.7 Tiered Storage
 
@@ -1115,6 +1129,278 @@ Savings: 90 KB (45%)
 
 **Integration with version history (§5):** Sub-block dedup multiplies the effectiveness of version history storage. Where whole-block dedup saves storage only when entire blocks are identical across versions, sub-block dedup captures partial overlaps — the common case for document editing, code modification, and configuration changes. Combined with the Merkle DAG (§5.1), each version stores only its unique chunk hashes.
 
+### 4.10 Device-Level Transparent Encryption
+
+Every block written to the storage device is encrypted with a device-bound key before it reaches the storage drivers. This is not per-space encryption (§6) — it is a lower layer. Per-space encryption protects cross-zone isolation within a running system. Device-level encryption protects against physical access to the storage medium: someone pulling the SD card, imaging the SSD, or analyzing flash chips.
+
+```
+Encryption layering (data flows top to bottom on writes, bottom to top on reads):
+
+  Object content (plaintext)
+         │
+         ▼
+  ┌─────────────────────────────────────┐
+  │  Encryption Layer (§6)              │
+  │  Per-space key (AES-256-GCM)        │  ← Only for Personal, Collaborative,
+  │  Encrypts object content            │     Untrusted zones. Core is plaintext
+  │  at this layer.                     │     at this layer.
+  └────────────────┬────────────────────┘
+         │ ciphertext (or plaintext for Core)
+         ▼
+  ┌─────────────────────────────────────┐
+  │  Block Engine (§4)                  │
+  │  Compression, chunking, indexing    │
+  └────────────────┬────────────────────┘
+         │ compressed block
+         ▼
+  ┌─────────────────────────────────────┐
+  │  Device Encryption (this section)   │
+  │  Device key (AES-256-GCM)           │  ← Always. Every block. No exceptions.
+  │  Encrypts the block envelope:       │
+  │  header + compressed data           │
+  └────────────────┬────────────────────┘
+         │ device-encrypted block
+         ▼
+  ┌─────────────────────────────────────┐
+  │  Storage Drivers                    │
+  │  VirtIO-Blk │ NVMe │ SD/eMMC │ USB │
+  └─────────────────────────────────────┘
+```
+
+**What this means for each security zone:**
+
+| Zone | Per-space encryption (§6) | Device encryption (§4.10) | On disk |
+|---|---|---|---|
+| Core (system/) | No | Yes | Single-layer ciphertext. Readable by the running system after boot unlock, unreadable to physical access. |
+| Personal (user/) | Yes (user key) | Yes (device key) | Double-layer ciphertext. Even with the device key, an attacker cannot read Personal data without the user's passphrase. |
+| Collaborative (shared/) | Yes (shared key) | Yes (device key) | Double-layer ciphertext. |
+| Untrusted (web-storage/) | Yes (per-origin key) | Yes (device key) | Double-layer ciphertext. |
+| Ephemeral (/tmp) | No | Yes | Single-layer ciphertext. Temporary data is still encrypted on the physical medium. |
+
+**Why this matters:** Without device-level encryption, `system/credentials/`, `system/identity/` (which contains the escrowed master key), `system/audit/`, and `system/session/` are plaintext on disk. An attacker with physical access to the storage device can read all Core zone data — including the encrypted-master-key blob that, combined with a brute-forced passphrase, unlocks everything. Device encryption eliminates this: the escrowed master key is encrypted under the device key, which is derived from hardware-bound secrets (TPM, TrustZone) or the user's boot passphrase. Physical access to the raw medium yields only ciphertext.
+
+#### 4.10.1 Device Key Hierarchy
+
+```rust
+/// Device-level encryption key management.
+/// The device key encrypts every block before it reaches storage drivers.
+/// It is derived from hardware-bound secrets when available, or from the
+/// user's boot passphrase on devices without a secure element.
+pub struct DeviceKeyManager {
+    /// The active device encryption key. Loaded at boot, zeroized at shutdown.
+    active_key: DecryptedDeviceKey,
+    /// Previous device key (retained during key rotation until all blocks
+    /// are re-encrypted during compaction).
+    previous_key: Option<DecryptedDeviceKey>,
+    /// Key derivation source — determines how the device key is unlocked at boot.
+    key_source: DeviceKeySource,
+    /// Epoch counter — incremented on each key rotation. Stored in the
+    /// superblock so the Block Engine knows which key version each block uses.
+    epoch: u64,
+}
+
+pub enum DeviceKeySource {
+    /// Hardware-bound key derivation via platform secure element.
+    /// The device key is sealed to the hardware — only this specific device
+    /// can unseal it. Unlocked automatically at boot (no user interaction).
+    /// Available on: ARM TrustZone (RPi 4/5), TPM 2.0 (laptops), Apple SEP.
+    HardwareBound {
+        /// Platform-specific handle to the sealed key blob.
+        sealed_blob: Vec<u8>,
+    },
+    /// Passphrase-derived device key. Used on devices without a secure element.
+    /// User enters a boot passphrase at startup; the device key is derived via
+    /// Argon2id. This is distinct from the identity passphrase (§6.1) —
+    /// the boot passphrase unlocks the device, the identity passphrase unlocks
+    /// per-space keys. They CAN be the same passphrase (single-passphrase mode)
+    /// but are derived independently with different salts.
+    PassphraseDerived {
+        salt: [u8; 32],
+        argon2_params: Argon2Params,
+    },
+    /// Combined: hardware-bound with passphrase fallback.
+    /// The device key is sealed to hardware AND encrypted with a passphrase.
+    /// Either can unlock it. Hardware binding provides convenience (auto-unlock
+    /// on the enrolled device); passphrase provides recovery if the secure
+    /// element fails or the storage is moved to a new device.
+    HardwareWithPassphraseFallback {
+        sealed_blob: Vec<u8>,
+        passphrase_salt: [u8; 32],
+        argon2_params: Argon2Params,
+    },
+}
+```
+
+**Boot sequence with device encryption:**
+
+```
+Cold boot:
+  1. Superblock read (first 4 KB — the ONLY plaintext on disk)
+     Contains: magic, version, device key source type, epoch, WAL offset
+  2. Device key unlock:
+     a. HardwareBound → unseal from TPM/TrustZone (automatic, no user input)
+     b. PassphraseDerived → prompt user for boot passphrase → Argon2id derive
+     c. HardwareWithPassphraseFallback → try hardware first, fall back to prompt
+  3. Device key loaded into kernel memory (pinned page, VmFlags::PINNED | VmFlags::NO_DUMP)
+  4. WAL replay (§4.4): WAL entries are device-encrypted; decrypt each during replay
+  5. Block Engine operational — all subsequent reads decrypt transparently
+  6. User authenticates (identity passphrase) → per-space keys unlocked (§6.1)
+  7. Encrypted spaces (Personal, Collaborative, Untrusted) become accessible
+```
+
+**Single-passphrase mode:** Most users don't want two passphrases. When the identity passphrase and device passphrase are the same, AIOS derives both keys from a single user input using different Argon2id salts:
+
+```rust
+// Single-passphrase derivation: one input, two independent keys
+let device_key = argon2id(passphrase, device_salt, device_params);  // unlocks the device
+let master_key = argon2id(passphrase, identity_salt, identity_params);  // unlocks spaces
+// Different salts → different keys. Compromising one does not reveal the other.
+```
+
+The user enters one passphrase at boot. Steps 2 and 6 of the boot sequence happen together. This is the default for devices without a secure element.
+
+#### 4.10.2 Encryption in the Write Path
+
+Device encryption integrates into the existing write path (§4.2) at the final step before I/O:
+
+```
+Agent writes object (updated write path with device encryption):
+  1-9. [Unchanged — content hashing, dedup, WAL, compression, zone allocation,
+        LSM-tree index update, version store append, all as described in §4.2]
+ 10.   Device encryption:
+       a. Generate device nonce (counter-based, same scheme as §6.1.1)
+       b. Encrypt block envelope (header + compressed data) with device key
+       c. Compute device auth tag over ciphertext
+       d. Write device_nonce and device_auth_tag into BlockHeader
+ 11.   Encrypted block written to storage driver
+ 12.   WAL entry marked committed
+```
+
+**Why encrypt after compression:** Compression operates on plaintext (or per-space ciphertext, which is already high-entropy and skipped by the entropy check — §4.6). Device encryption is the last transform before disk. This ordering preserves compression effectiveness: compressing after device encryption would be useless (encrypted data is incompressible).
+
+**WAL entries are also device-encrypted.** The WAL sits on the raw device and must not contain plaintext. Each WAL entry is encrypted with the device key before being appended. On crash recovery, the device key is unlocked first (boot step 2), then WAL replay proceeds normally (boot step 4).
+
+#### 4.10.3 Key Rotation via Compaction
+
+Traditional full-disk encryption (LUKS, dm-crypt) requires re-encrypting the entire device to rotate the master key — a multi-hour operation on large disks. AIOS avoids this by piggybacking on LSM compaction:
+
+```
+Device key rotation:
+  1. Generate new device key (epoch N+1)
+  2. Store new key alongside old key in DeviceKeyManager
+  3. Update superblock: epoch = N+1
+  4. All NEW writes use epoch N+1 key
+  5. Compaction naturally rewrites existing SSTables:
+     a. Read SSTable blocks → decrypt with epoch N key
+     b. Merge/compact as normal
+     c. Re-encrypt output blocks with epoch N+1 key
+     d. Write new SSTable
+  6. When all SSTables from epoch N have been compacted away:
+     a. Zeroize epoch N key
+     b. Rotation complete — only epoch N+1 key exists
+```
+
+**Cost:** Zero additional I/O. Compaction already reads and rewrites every block. Re-encrypting during compaction adds only the AES-256-GCM cost (~1 GB/s on ARMv8 crypto extensions, ~3+ GB/s on x86 AES-NI), which is negligible compared to disk I/O.
+
+**Time to complete:** A full key rotation completes when every SSTable has been compacted at least once. Under normal write load, this happens within days. The system can accelerate rotation by scheduling compaction of remaining old-epoch SSTables during idle periods.
+
+**Epoch tracking:** Each `BlockHeader` stores the epoch it was encrypted under. The Block Engine maintains a small map of `epoch → key` (at most 2 entries: current and previous). On read, the epoch in the block header selects the correct decryption key.
+
+```rust
+impl BlockEngine {
+    fn read_block_raw(&self, location: BlockLocation) -> Result<Vec<u8>, StorageError> {
+        let encrypted = self.storage_driver.read(location.offset, location.size)?;
+        let header = BlockHeader::parse(&encrypted)?;
+
+        // Select device key by epoch
+        let device_key = self.device_keys.key_for_epoch(header.device_epoch)?;
+
+        // Decrypt block envelope
+        let decrypted = aes_256_gcm_decrypt(
+            device_key,
+            &header.device_nonce,
+            &encrypted[BlockHeader::SIZE..],
+            &header.device_auth_tag,
+        )?;
+
+        // Verify CRC-32C (defense in depth — catches storage-level bit rot
+        // that GCM auth tag might not catch if corruption hits the nonce or tag itself)
+        verify_crc32c(&decrypted, header.checksum)?;
+
+        Ok(decrypted)
+    }
+}
+```
+
+#### 4.10.4 Crypto-Shredding
+
+When data must be irrecoverably destroyed — a space is deleted, old versions are garbage collected, or the user factory-resets the device — AIOS uses **crypto-shredding**: delete the key, not the data.
+
+```
+Why crypto-shredding is necessary on flash storage:
+
+  Traditional secure erase (overwrite with zeros):
+    1. Write zeros to block at logical address X
+    2. FTL maps logical X to NEW physical page (flash is write-once-per-erase)
+    3. OLD physical page still contains the original data
+    4. FTL may eventually erase the old page... or may not (wear leveling)
+    5. Data recoverable with flash chip imaging (academic attacks, forensics)
+
+  Crypto-shredding (AIOS approach):
+    1. All data was encrypted with a key
+    2. Zeroize the key (volatile write, immediate)
+    3. Ciphertext remains on flash — but without the key, it is computationally
+       indistinguishable from random data
+    4. No need to physically erase — the data is already destroyed
+    5. Flash wear: zero (no write operations required)
+```
+
+**Epoch-based forward secrecy:** Device key rotation creates epoch boundaries. Once all data from epoch N has been compacted to epoch N+1 and the epoch N key is zeroized, all deleted data from epoch N is permanently unrecoverable — even if the device is later compromised and the epoch N+1 key is extracted, it cannot decrypt blocks that were encrypted under epoch N and never re-encrypted (because they were garbage collected before compaction reached them).
+
+```
+Timeline:
+  Epoch 1: blocks [A, B, C, D, E] encrypted with key_1
+  User deletes object containing blocks [B, D] → GC marks them dead
+  Key rotation → epoch 2, key_2 generated
+  Compaction rewrites live blocks: [A, C, E] re-encrypted with key_2
+  Dead blocks [B, D] were never re-encrypted — still under key_1
+  key_1 zeroized → [B, D] permanently unrecoverable
+  Even if key_2 is later compromised: [B, D] remain safe
+```
+
+This gives AIOS **forward secrecy for deleted data** — a property that traditional FDE and per-space encryption alone cannot provide.
+
+#### 4.10.5 Performance
+
+Device encryption adds one AES-256-GCM operation per block read and per block write. On modern hardware:
+
+```
+Platform             AES-256-GCM throughput   Impact on Block Engine
+──────────           ─────────────────────    ─────────────────────
+x86-64 (AES-NI)     3-6 GB/s                 Negligible (<1% overhead)
+ARMv8 (crypto ext)   0.8-1.5 GB/s            Negligible — faster than SD/eMMC I/O
+ARMv8 (no crypto)    150-300 MB/s             Measurable on NVMe; unnoticed on SD
+
+Fallback: ChaCha20-Poly1305 (software-friendly)
+ARMv8 (no crypto)    400-600 MB/s            Better than AES without hardware support
+```
+
+On devices without AES hardware extensions, the Block Engine automatically selects ChaCha20-Poly1305 (same security level, faster in software on ARM):
+
+```rust
+pub fn select_device_cipher(cpu_features: &CpuFeatures) -> DeviceCipher {
+    if cpu_features.has_aes_ni() || cpu_features.has_arm_crypto() {
+        DeviceCipher::Aes256Gcm
+    } else {
+        DeviceCipher::ChaCha20Poly1305
+    }
+}
+```
+
+**Storage overhead:** Each block gains 28 bytes (12-byte nonce + 16-byte auth tag) from device encryption. For the average 4 KB block, this is 0.7% overhead. For the system overall (assuming 200,000 blocks on a 256 GB device), the total overhead is ~5.3 MB — negligible.
+
+**The superblock is the only plaintext on disk.** It contains: magic number, format version, device key source type, current epoch, WAL offset, and a checksum. No user data, no keys, no sensitive metadata. It is 4 KB. Everything else — WAL entries, LSM-tree SSTables, data blocks, index blocks — is device-encrypted.
+
 -----
 
 ## 5. Version Store
@@ -1307,13 +1593,15 @@ Each security zone maintains its own content-hash → block mapping in the LSM-t
 
 ### 6.2 Encryption Zones
 
-| Zone | Encrypted | Key Source |
-|---|---|---|
-| Core (system/) | No | System data, not user-sensitive |
-| Personal (user/) | Yes | User identity master key |
-| Collaborative (shared/) | Yes | Shared key (distributed via capability exchange) |
-| Untrusted (web-storage/) | Yes | Per-origin key derived from master key |
-| Ephemeral (/tmp) | No | Temporary, auto-deleted |
+| Zone | Space encryption (§6.1) | Device encryption (§4.10) | Key Source |
+|---|---|---|---|
+| Core (system/) | No | Yes | Device key (hardware-bound or boot passphrase) |
+| Personal (user/) | Yes | Yes | Space: user identity master key. Device: device key. |
+| Collaborative (shared/) | Yes | Yes | Space: shared key (capability exchange). Device: device key. |
+| Untrusted (web-storage/) | Yes | Yes | Space: per-origin key. Device: device key. |
+| Ephemeral (/tmp) | No | Yes | Device key only |
+
+All zones are encrypted at the device level. The "Encrypted" column in prior versions of this table referred only to per-space encryption. With device-level transparent encryption (§4.10), nothing is stored as plaintext on the physical medium. Per-space encryption provides additional cross-zone isolation within the running system.
 
 ### 6.3 Key Escrow and Recovery
 
@@ -1324,7 +1612,7 @@ Key escrow flow:
   1. User creates identity → master key derived via Argon2id from passphrase
   2. If escrow enabled: generate recovery key (256-bit random)
   3. Encrypt master key with recovery key → escrowed_master
-  4. Store escrowed_master in system/identity/ (Core zone, not encrypted)
+  4. Store escrowed_master in system/identity/ (Core zone, device-encrypted at rest per §4.10)
   5. Present recovery key to user as 24-word mnemonic (BIP-39)
   6. User stores mnemonic offline (paper, password manager)
 ```
@@ -1928,7 +2216,7 @@ Storage Dashboard (example: 512 GB laptop):
 
 1. **Find by meaning, not by path.** Semantic search, relationship traversal, and entity queries replace directory navigation.
 2. **Never lose data silently.** Version history, content-addressing, and WAL ensure no data loss from crashes, bugs, or user mistakes. Under storage pressure, version retention is reduced transparently — the user is always informed.
-3. **Encryption is structural.** Per-space encryption is a property of the space, not an afterthought. Identity change = spaces lock automatically.
+3. **Encryption is structural.** Device-level encryption (§4.10) ensures nothing is stored as plaintext on the physical medium — from Phase 4b onward, the system is encrypted at rest. Per-space encryption (§6) adds cross-zone isolation within the running system. Screen lock or logout zeroizes per-space keys; shutdown or device removal zeroizes the device key. No data survives physical access.
 4. **Deduplication is deep.** Content-addressing deduplicates identical blocks. Sub-block deduplication (Rabin rolling hash) deduplicates shared regions within near-duplicate content — capturing 60-80% savings from typical document edits.
 5. **Indexes are always current.** Full-text index updates synchronously. Embedding index updates asynchronously but as fast as compute allows.
 6. **POSIX is a view.** The filesystem is a compatibility layer over spaces, not the other way around. Spaces are the truth; paths are a translation.
@@ -1942,25 +2230,28 @@ Storage Dashboard (example: 512 GB laptop):
 
 ```
 Phase 4a:  Block engine + WAL + LSM-tree index      → raw persistent storage with flash-friendly index
-Phase 4b:  Object store + content addressing        → objects with whole-block deduplication
-Phase 4c:  Space API + basic queries (Filter)       → spaces usable by services
-Phase 4d:  Version store + Merkle DAG               → full version history
-Phase 4e:  POSIX bridge + path mapping              → BSD tools work
-Phase 4f:  CompactObject + promotion policy           → storage-efficient default objects
-Phase 4g:  Block-level compression (LZ4/zstd)         → 2-4x storage savings
+Phase 4b:  Device-level transparent encryption (§4.10) → every block encrypted before hitting disk
+           + device key derivation (passphrase mode) → no plaintext on the physical medium from day one
+Phase 4c:  Object store + content addressing        → objects with whole-block deduplication
+Phase 4d:  Space API + basic queries (Filter)       → spaces usable by services
+Phase 4e:  Version store + Merkle DAG               → full version history
+Phase 4f:  POSIX bridge + path mapping              → BSD tools work
+Phase 4g:  CompactObject + promotion policy           → storage-efficient default objects
+Phase 4h:  Block-level compression (LZ4/zstd)         → 2-4x storage savings
            + adaptive entropy-based selection          → skip incompressible content
-Phase 4h:  Flash-aware zone allocation (hot/warm/cold) → append-preferred writes, reduced WAF
-Phase 4i:  Storage budget + quotas + pressure levels  → bounded storage per category
-Phase 4j:  Adaptive version retention                 → pressure-responsive history pruning
-Phase 4k:  Write amplification tracking (§4.8)        → continuous WAF monitoring + alerts
+Phase 4i:  Flash-aware zone allocation (hot/warm/cold) → append-preferred writes, reduced WAF
+Phase 4j:  Storage budget + quotas + pressure levels  → bounded storage per category
+Phase 4k:  Adaptive version retention                 → pressure-responsive history pruning
+Phase 4l:  Write amplification tracking (§4.8)        → continuous WAF monitoring + alerts
 Phase 9a:  Full-text index + text search              → keyword search
 Phase 9b:  Embedding index + selective embedding      → semantic search (promoted objects only)
 Phase 9c:  Space Sync protocol                        → cross-device sync
-Phase 13a: Encryption layer + key management          → encrypted spaces
+Phase 13a: Per-space encryption layer + key management → encrypted Personal/Collaborative/Untrusted zones
 Phase 14a: Tiered storage (hot/warm/cold)             → automatic tier migration + recompression
 Phase 14b: Audit retention + chain compaction         → bounded audit storage growth
 Phase 14c: Model disk eviction + streaming download   → reclaim model storage under pressure
 Phase 14d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
 Phase 14e: Sub-block deduplication (§4.9)             → Rabin rolling hash for near-duplicate savings
-Phase 24a: Secure Boot integration + key escrow       → TrustZone key storage
+Phase 24a: Secure Boot integration + hardware key binding → TPM/TrustZone-sealed device keys
+           + key escrow improvements                  → hardware-bound device key auto-unlock
 ```
