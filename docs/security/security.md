@@ -1941,13 +1941,23 @@ impl TemporalCapability {
 
 ### 4.2 Key Storage
 
+The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces.md §6](../storage/spaces.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces.md §4.10](../storage/spaces.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces.md §4.10 single-passphrase mode).
+
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                    Key Hierarchy                          │
 │                                                          │
+│  Device Key (spaces.md §4.10)                            │
+│  ├── Location: kernel memory (pinned, no-dump)           │
+│  ├── Derived from: hardware TPM/TrustZone or             │
+│  │   Argon2id(boot_passphrase, device_salt)              │
+│  ├── Lifetime: boot to shutdown                          │
+│  ├── Encrypts: every block before storage drivers        │
+│  └── Destroyed: on shutdown / device removal             │
+│                                                          │
 │  Master Key                                              │
 │  ├── Location: kernel keyring (kernel memory only)       │
-│  ├── Derived from: Argon2id(password, device_salt)       │
+│  ├── Derived from: Argon2id(password, identity_salt)     │
 │  ├── Lifetime: in memory while user is authenticated     │
 │  └── Destroyed: on lock screen / identity switch         │
 │                                                          │
