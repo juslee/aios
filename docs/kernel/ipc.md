@@ -659,6 +659,16 @@ pub enum SpaceRequest {
     SpaceCreate { name: String, parent: Option<SpaceId>, zone: SecurityZone },
     SpaceList { parent: Option<SpaceId> },
     SpaceDelete { space: SpaceId },
+    /// Snapshot operations (spaces.md §5.2)
+    SnapshotCreate { space: SpaceId, trigger: SnapshotTrigger },
+    SnapshotRollback { space: SpaceId, snapshot: SnapshotId },
+    /// Diff between two versions of an object (spaces.md §5.3)
+    Diff { space: SpaceId, object: ObjectId, v1: Hash, v2: Hash },
+    /// Space Sync operations (spaces.md §8) — Phase 9c
+    SyncStart { space: SpaceId, remote: RemoteSpaceId, policy: SyncPolicy },
+    SyncStatus { space: SpaceId },
+    SyncCancel { space: SpaceId },
+    SyncResolveConflict { space: SpaceId, object: ObjectId, resolution: SyncConflictPolicy },
 }
 
 pub enum SpaceReply {
@@ -667,6 +677,9 @@ pub enum SpaceReply {
     ObjectList { objects: Vec<ObjectSummary> },
     VersionList { versions: Vec<VersionSummary> },
     SpaceList { spaces: Vec<SpaceSummary> },
+    SnapshotId { id: SnapshotId },
+    VersionDiff { diff: VersionDiff },              // spaces.md §5.3
+    SyncStatus { state: SyncState },                // spaces.md §8
     Ok,
     Error(SpaceError),
 }

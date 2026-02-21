@@ -1462,6 +1462,127 @@ pub enum SnapshotTrigger {
 
 **Blast radius containment (Security Layer 8):** Before any bulk operation (agent writing >10 objects, bulk delete, space import), the system automatically creates a snapshot. If the operation goes wrong, the user can roll back to the pre-operation state.
 
+### 5.3 DAG Operations
+
+The Version Store exposes traversal, diffing, and rollback operations over the Merkle DAG:
+
+```rust
+impl VersionStore {
+    /// Walk the version chain for an object, newest to oldest.
+    /// Returns an iterator that lazily loads version nodes from the LSM-tree
+    /// using the key `(space_id, object_id, reverse_timestamp)`.
+    fn log(&self, space: SpaceId, object: ObjectId) -> impl Iterator<Item = Version> {
+        self.lsm.range_scan(
+            VersionKey::prefix(space, object),
+            ScanDirection::NewestFirst,
+        )
+        .map(|entry| entry.decode::<Version>())
+    }
+
+    /// Compute the diff between two versions of the same object.
+    /// Uses content-hash comparison first — if hashes match, the versions are
+    /// identical (no diff). If hashes differ, performs block-level diff using
+    /// the content-addressed blocks from the Block Engine (§4).
+    fn diff(&self, v1: &Version, v2: &Version) -> VersionDiff {
+        if v1.content_hash == v2.content_hash {
+            return VersionDiff::Identical;
+        }
+        let blocks_v1 = self.block_engine.blocks_for(v1.content_hash);
+        let blocks_v2 = self.block_engine.blocks_for(v2.content_hash);
+        VersionDiff::Changed {
+            added: blocks_v2.difference(&blocks_v1).collect(),
+            removed: blocks_v1.difference(&blocks_v2).collect(),
+            size_delta: v2.content_size as i64 - v1.content_size as i64,
+        }
+    }
+
+    /// Rollback an object to a previous version. Creates a NEW version node
+    /// whose content_hash points to the old version's content. The DAG grows
+    /// forward — rollback never rewrites history.
+    fn rollback(&self, space: SpaceId, object: ObjectId, target: Hash) -> Result<Version> {
+        let target_version = self.get_version(target)?;
+        assert_eq!(target_version.object_id, object);
+        let new_version = Version {
+            hash: Hash::compute(&[
+                self.head(space, object)?.hash.as_bytes(),
+                target_version.content_hash.as_bytes(),
+            ]),
+            parent: Some(self.head(space, object)?.hash),
+            content_hash: target_version.content_hash,
+            object_id: object,
+            timestamp: Timestamp::now(),
+            author: current_agent(),
+            provenance: ProvenanceEntry::rollback(target),
+            message: Some(format!("rollback to {}", target)),
+        };
+        self.append(space, new_version.clone())?;
+        Ok(new_version)
+    }
+
+    /// Rollback an entire space to a snapshot. Iterates every object in the
+    /// snapshot and creates rollback version nodes for any that have diverged.
+    fn rollback_to_snapshot(&self, snapshot: &Snapshot) -> Result<u64> {
+        let mut rolled_back = 0u64;
+        for (object_id, version_hash) in &snapshot.object_versions {
+            let current_head = self.head(snapshot.space, *object_id)?;
+            if current_head.hash != *version_hash {
+                self.rollback(snapshot.space, *object_id, *version_hash)?;
+                rolled_back += 1;
+            }
+        }
+        Ok(rolled_back)
+    }
+}
+
+pub enum VersionDiff {
+    Identical,
+    Changed {
+        added: Vec<BlockId>,
+        removed: Vec<BlockId>,
+        size_delta: i64,
+    },
+}
+```
+
+**LSM-tree key layout for version nodes:** Each version is stored with key `(space_id, object_id, reverse_timestamp)` where `reverse_timestamp = u64::MAX - timestamp`. This layout means a prefix scan on `(space_id, object_id)` returns versions newest-first, which is the common access pattern for `log` and `head`. The LSM-tree's sorted structure gives O(log n) point lookups and efficient range scans without a secondary index.
+
+### 5.4 Adaptive Retention
+
+Under storage pressure (§10), the Version Store reduces history depth to reclaim space. Adaptive retention (Phase 4k, §12) governs which version nodes are pruned:
+
+1. **Exempt versions are never pruned:** Snapshot roots (§5.2), user-tagged versions (`message` is `Some`), and the current head of each object are always retained.
+2. **Pruning order:** Oldest intermediate versions (no tag, not a snapshot root) are pruned first. Within a single object's DAG, the chain is compacted: if versions A → B → C exist and B is prunable, A's parent pointer is rewritten to skip B, and B's content blocks are released if no other version references them (content-addressed dedup means shared blocks survive).
+3. **User notification:** Design Principle 2 ("Never lose data silently") requires that the user is informed when version retention is reduced. The storage budget system (§10) emits a `StoragePressureEvent::VersionRetentionReduced { space, old_depth, new_depth }` notification visible in the Inspector.
+4. **Minimum guarantee:** Even under maximum pressure, the system retains at least the current head and the most recent snapshot for each object. User data is never deleted — only version history depth is reduced.
+
+See §10 for storage pressure levels and §12 Phase 4k for the implementation timeline.
+
+### 5.5 Branching
+
+The Merkle DAG structure naturally supports branching: two version nodes can share the same parent. This occurs when the same object is modified on two devices while offline, producing a fork in the DAG:
+
+```
+        A (common ancestor)
+       / \
+      B   C       ← two devices diverged
+      |   |
+      D   E       ← continued independent edits
+       \ /
+        F         ← merge version (conflict resolved)
+```
+
+Branch creation is implicit — it happens whenever Space Sync (§8) discovers that both the local and remote DAGs have advanced past a common ancestor. The `SyncConflict` struct (§8) represents a detected fork, and resolution produces a merge version node with two parents:
+
+```rust
+pub struct Version {
+    // ... existing fields ...
+    parent: Option<Hash>,               // primary parent
+    merge_parent: Option<Hash>,         // second parent (only set for merge commits)
+}
+```
+
+Conflict resolution strategies are defined in §8. Branching semantics are Phase 9c work — single-device operation (Phases 4-8) always produces a linear chain.
+
 -----
 
 ## 6. Encryption
@@ -1731,6 +1852,8 @@ The SDK provides typed query builders that construct composed queries. Internall
 
 ## 8. Space Sync Protocol
 
+> **Implementation status:** Phase 9c. This section documents the design intent for cross-device synchronization. Single-device operation (Phases 4-8) does not use sync. The data structures and protocol described here are the target design, not current implementation.
+
 Spaces can synchronize across devices. This is how collaborative spaces work and how user data replicates across AIOS devices.
 
 ```rust
@@ -1765,11 +1888,86 @@ pub struct SyncConflict {
     object: ObjectId,
     local_version: Version,
     remote_version: Version,
-    resolution: SyncConflictPolicy,     // from networking.md
+    resolution: SyncConflictPolicy,
 }
 ```
 
-**Sync uses the Network Translation Module.** Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). The NTM handles the transport. The Space Sync protocol exchanges Merkle roots to efficiently determine what's changed, then syncs only the deltas.
+### 8.1 Merkle Exchange Protocol
+
+Sync proceeds in three rounds over the NTM transport:
+
+```
+Round 1 — Root exchange:
+  Local  → Remote:  { space_id, local_merkle_root, epoch }
+  Remote → Local:   { remote_merkle_root, epoch }
+  If roots match → spaces are identical, sync complete.
+
+Round 2 — Subtree diff:
+  Both sides walk their Merkle trees level by level, exchanging subtree hashes.
+  At each level, mismatched subtrees are expanded; matching subtrees are skipped.
+  This narrows the diff to the specific objects that changed.
+  Cost: O(changed_objects × tree_depth), not O(total_objects).
+
+Round 3 — Delta transfer:
+  For each changed object:
+    a. Sender transmits the Version chain (§5) from common ancestor to head
+    b. Receiver verifies each Version hash (Merkle chain integrity)
+    c. Content blocks are transferred only if not already present (content-addressing
+       means the receiver may already have the block from another object)
+    d. Receiver appends version nodes to its local DAG
+```
+
+**Bandwidth efficiency:** Content-addressed blocks mean identical content is never transferred twice, even across different objects. A 10 MB file that exists on both devices with different metadata requires only the version node transfer (~200 bytes), not the content.
+
+### 8.2 Conflict Resolution
+
+A conflict occurs when both sides have modified the same object since the last common ancestor (a DAG fork, §5.5). The `SyncConflictPolicy` determines resolution:
+
+```rust
+pub enum SyncConflictPolicy {
+    /// Last-writer-wins based on timestamp. Simple, non-interactive.
+    /// Risk: silently discards one side's changes.
+    LastWriterWins,
+    /// Keep both versions as branches. The user resolves manually.
+    /// The object has two heads until resolution.
+    Fork,
+    /// For structured content (e.g., JSON, key-value): attempt field-level
+    /// three-way merge using the common ancestor. Fall back to Fork if
+    /// the merge produces ambiguity.
+    ThreeWayMerge,
+    /// Defer to user. Sync pauses for this object; both versions are
+    /// available for inspection. User chooses via Inspector or CLI.
+    Manual,
+}
+```
+
+**Default policy per zone:**
+
+| Zone | Default policy | Rationale |
+|---|---|---|
+| Personal (`user/`) | `Manual` | User data is precious — never silently discard |
+| Collaborative (`shared/`) | `ThreeWayMerge`, fall back to `Fork` | Collaborative editing benefits from auto-merge |
+| Core (`system/`) | `LastWriterWins` | System config changes are idempotent |
+| Ephemeral (`/tmp`) | Not synced | Ephemeral data is device-local |
+
+### 8.3 Sync Security
+
+Sync introduces a network trust boundary. Before any data exchange:
+
+1. **Mutual identity verification.** Both devices perform an Ed25519 challenge-response using their device identity keys (§6.1). The remote device must present a key that the local device has previously authorized (via a pairing ceremony or shared-space invitation).
+2. **Capability check.** Initiating sync requires `SyncSpace(space_id)` capability. Accepting sync requires that the remote identity is in the space's sync ACL.
+3. **Encrypted transport.** All sync traffic is encrypted end-to-end by the NTM ([networking.md](../networking/networking.md)). The Space Sync protocol never sees plaintext on the wire — it hands structured messages to the NTM, which handles TLS/Noise encryption.
+4. **Content verification.** Every received version node and content block is verified against its content hash before being written to the local DAG. A malicious or corrupted remote cannot inject invalid data — the Merkle chain rejects it.
+
+### 8.4 Transport Failure Handling
+
+Network connections are unreliable. The sync protocol handles failures gracefully:
+
+- **Resumable transfers.** Sync state (§8 `SyncState`) tracks `pending_push` and `pending_pull` queues. If the connection drops mid-sync, the next sync attempt resumes from where it left off — already-transferred objects are not re-sent (content-hash dedup catches this).
+- **Exponential backoff.** Failed sync attempts retry with exponential backoff (30s, 1m, 2m, 5m, 15m, capped at 1h). Background sync is opportunistic — it does not burn battery or bandwidth on repeated failures.
+- **Bandwidth throttling.** Sync runs at `Idle` scheduling class (scheduler.md §4.2) and respects a configurable bandwidth ceiling. Interactive network traffic (agent API calls, web requests) always takes priority.
+
+**Sync uses the Network Translation Module.** Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). The NTM handles the transport. The Space Sync protocol exchanges Merkle roots to efficiently determine what's changed, then syncs only the deltas. Sync IPC messages are defined in [ipc.md §5.1](../kernel/ipc.md).
 
 -----
 
@@ -1837,6 +2035,171 @@ impl PosixSpaceBridge {
 ```
 
 BSD tools never know they're not on a traditional filesystem. `ls /spaces/research/` returns a directory listing. `grep` searches file content. `cat` reads objects. The translation is transparent.
+
+POSIX syscall translations are dispatched through IPC to the Space Service. See [ipc.md §12.2 Gap 6](../kernel/ipc.md) for the POSIX translation performance model (5 μs round-trip target) and the read-ahead, vnode cache, batched readdir, and write-coalescing optimizations that amortize IPC cost.
+
+### 9.3 Write Path
+
+The POSIX bridge translates mutation syscalls into space operations:
+
+```rust
+impl PosixSpaceBridge {
+    fn write(&self, fd: Fd, buf: &[u8]) -> Result<usize> {
+        let file = self.fd_table.get_mut(fd)?;
+        gate_check(current_agent(), Capability::WriteSpace(file.space))?;
+        // Buffer writes in the fd's write buffer (write coalescing —
+        // see ipc.md §12.2 Gap 6). Flush to Space Service on fsync/close
+        // or when buffer is full (default 64 KB).
+        file.write_buf.extend_from_slice(buf);
+        if file.write_buf.len() >= WRITE_COALESCE_THRESHOLD {
+            self.flush(fd)?;
+        }
+        file.cursor += buf.len() as u64;
+        Ok(buf.len())
+    }
+
+    fn close(&self, fd: Fd) -> Result<()> {
+        let file = self.fd_table.get(fd)?;
+        // Flush any buffered writes
+        if !file.write_buf.is_empty() {
+            self.flush(fd)?;
+        }
+        // Release the fd. If this is the last reference (no dup'd copies),
+        // the object handle is released back to the Space Service.
+        self.fd_table.release(fd)
+    }
+
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<()> {
+        let (src_space, src_obj_path) = self.resolve_path(old_path)?;
+        let (dst_space, dst_obj_path) = self.resolve_path(new_path)?;
+        gate_check(current_agent(), Capability::WriteSpace(src_space))?;
+        if src_space != dst_space {
+            gate_check(current_agent(), Capability::WriteSpace(dst_space))?;
+        }
+        // Rename is a metadata update — the content blocks are unchanged.
+        // Cross-space rename is a copy + delete (atomic via WAL).
+        src_space.rename_object(src_obj_path, dst_space, dst_obj_path)
+    }
+
+    fn unlink(&self, path: &str) -> Result<()> {
+        let (space, object_path) = self.resolve_path(path)?;
+        gate_check(current_agent(), Capability::WriteSpace(space))?;
+        // Unlink removes the object from the space. The version DAG (§5)
+        // is retained — the object can be recovered via rollback until
+        // version retention prunes the history (§5.4).
+        space.delete_object(object_path)
+    }
+
+    fn mkdir(&self, path: &str, _mode: Mode) -> Result<()> {
+        let (space, dir_path) = self.resolve_path(path)?;
+        gate_check(current_agent(), Capability::WriteSpace(space))?;
+        // Directories in spaces are implicit — they exist when objects
+        // have matching prefixes. mkdir creates a zero-length marker object
+        // with content_type Directory so that readdir returns the directory
+        // even when empty.
+        space.create_object(dir_path, ContentType::Directory, &[])
+    }
+}
+
+const WRITE_COALESCE_THRESHOLD: usize = 64 * 1024; // 64 KB
+```
+
+**Atomicity:** `rename` within a single space is atomic (single LSM-tree key update, WAL-protected). Cross-space rename is atomic via a WAL transaction that spans both the delete and create operations (§4.4). If the system crashes mid-rename, WAL replay completes or rolls back the operation.
+
+### 9.4 File Descriptor Lifecycle
+
+File descriptors are the POSIX bridge's core state. Each open fd tracks its object binding, cursor position, and buffered I/O state:
+
+```rust
+pub struct OpenFile {
+    fd: Fd,
+    space: SpaceId,
+    object: ObjectId,
+    /// The version hash this fd was opened against. Reads always see this
+    /// version's content, even if the object is modified by another agent
+    /// after open. This is snapshot isolation — consistent with POSIX
+    /// semantics where open() returns a stable file reference.
+    pinned_version: Hash,
+    cursor: u64,
+    flags: OpenFlags,
+    mode: AccessMode,
+    /// Reference count. Incremented by dup/dup2/fork. The fd is released
+    /// only when refcount drops to zero.
+    refcount: u32,
+    /// Write buffer for coalesced writes (§9.3).
+    write_buf: Vec<u8>,
+    /// Read-ahead buffer (ipc.md §12.2 Gap 6).
+    read_buf: ReadAheadBuffer,
+}
+
+pub struct ReadAheadBuffer {
+    data: [u8; READ_AHEAD_SIZE],
+    /// Range of the object currently cached in this buffer.
+    cached_range: Option<Range<u64>>,
+}
+
+const READ_AHEAD_SIZE: usize = 64 * 1024; // 64 KB
+```
+
+**Version pinning:** When a file is opened, the fd records the current head version of the object. All reads through this fd return data from the pinned version. If another agent modifies the object while the fd is open, the fd still sees the old content. This matches POSIX behavior where `open()` + `read()` is not affected by concurrent `write()` to the same file (assuming no shared mmap). New `open()` calls see the latest version.
+
+**dup / fork semantics:** `dup(fd)` increments the refcount on the `OpenFile` — the duplicate shares the same cursor, buffers, and pinned version. `fork()` duplicates the fd table for the child process, incrementing all refcounts. The `OpenFile` is released when all references are closed.
+
+**What happens on object deletion:** If another agent deletes the object while an fd is open, reads through the existing fd continue to work (the pinned version's content blocks are still in the Block Engine — version retention guarantees this). New `open()` calls to the same path return `ENOENT`. This matches POSIX unlink semantics where open file handles survive deletion.
+
+### 9.5 Error Mapping
+
+Space operations produce structured errors. The POSIX bridge maps them to errno values:
+
+| Space error | POSIX errno | Notes |
+|---|---|---|
+| `ObjectNotFound` | `ENOENT` | Object does not exist at this path |
+| `SpaceNotFound` | `ENOENT` | Space does not exist |
+| `CapabilityDenied` | `EACCES` | Agent lacks the required capability |
+| `ReadOnlySpace` | `EROFS` | Write to a pull-only synced or system space |
+| `SpaceFull` | `ENOSPC` | Space quota exceeded (§10) |
+| `DeviceFull` | `ENOSPC` | Device storage exhausted |
+| `ObjectLocked` | `EBUSY` | Object is exclusively locked by another operation |
+| `InvalidPath` | `EINVAL` | Path contains invalid characters or exceeds length |
+| `NameExists` | `EEXIST` | Object already exists at this path (for O_CREAT \| O_EXCL) |
+| `TooManyOpenFiles` | `EMFILE` | Process fd table full |
+| `VersionConflict` | `EAGAIN` | Concurrent modification detected; retry |
+| `EncryptionKeyUnavailable` | `EACCES` | Space is encrypted and the key is not loaded (screen locked) |
+| `IoError` | `EIO` | Block Engine or storage driver error |
+
+**Unmapped POSIX concepts:** Spaces do not have traditional POSIX mode bits (`rwxrwxrwx`). The `stat()` call (§9.2) synthesizes mode bits from capabilities: if the calling agent has `ReadSpace`, the read bits are set; if it has `WriteSpace`, the write bits are set. Group and other bits are not meaningful — the capability system replaces POSIX user/group/other permissions. `chmod` and `chown` are no-ops that return success (POSIX compliance without effect, since capabilities are the real access control).
+
+### 9.6 Change Notification
+
+POSIX tools expect filesystem event APIs (`inotify` on Linux, `kqueue` on BSD). The POSIX bridge maps these to space event subscriptions:
+
+```rust
+impl PosixSpaceBridge {
+    /// inotify_add_watch equivalent. Subscribes to changes on objects
+    /// matching a path prefix within a space.
+    fn watch(&self, path: &str, events: WatchEvents) -> Result<WatchId> {
+        let (space, prefix) = self.resolve_path(path)?;
+        gate_check(current_agent(), Capability::ReadSpace(space))?;
+        // The Version Store (§5) emits events whenever a new version node
+        // is appended. The watch subscription filters these events by
+        // object path prefix and event type.
+        let sub = space.subscribe(SpaceEventFilter {
+            prefix: Some(prefix),
+            event_types: events.to_space_events(),
+        })?;
+        Ok(self.watch_table.register(sub))
+    }
+}
+
+pub struct WatchEvents {
+    pub create: bool,    // IN_CREATE → new object in prefix
+    pub modify: bool,    // IN_MODIFY → new version appended
+    pub delete: bool,    // IN_DELETE → object deleted
+    pub rename: bool,    // IN_MOVED_FROM/TO → object renamed
+}
+```
+
+The Version Store already tracks every modification as a version node (§5). Change notification is a read-only view of version events filtered by path prefix — no new storage machinery is needed. Events are delivered asynchronously via the IPC notification mechanism (ipc.md §3.1 `NotificationSignal`). Tools like `tail -f`, `fswatch`, and build systems with file watchers work transparently.
 
 -----
 

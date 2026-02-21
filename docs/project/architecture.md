@@ -726,8 +726,9 @@ Every action by every agent passes through all eight layers. No single layer fai
 ├──────────────────────────────────────────────────────┤
 │  Layer 6: Cryptographic Enforcement                   │
 │  Does the agent have the decryption key?              │
-│  Spaces encrypted at rest with per-space keys.        │
-│  Keys released only after intent verification.        │
+│  Per-space encryption (spaces.md §6) + device-level   │
+│  encryption (spaces.md §4.10). Keys released only     │
+│  after intent verification.                           │
 ├──────────────────────────────────────────────────────┤
 │  Layer 7: Provenance Recording                        │
 │  Action logged to tamper-evident Merkle chain.        │

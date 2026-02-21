@@ -1184,6 +1184,8 @@ pub enum Role {
 
 AIRS serves as the central resource orchestrator — directing memory pool boundaries, prefetching space objects, scheduling compression, and processing agent hints about anticipated needs. This responsibility is bounded by the security model. Full details in [security.md §9](../security/security.md).
 
+**Encryption boundary:** Prefetch and compression directives operate through the normal Space Storage read/write path ([spaces.md §4.3.1](../storage/spaces.md)). Space Storage handles both per-space decryption ([spaces.md §6](../storage/spaces.md)) and device-level decryption ([spaces.md §4.10](../storage/spaces.md)) transparently. AIRS never holds space keys or device keys, and never sees plaintext of encrypted spaces unless it has been granted `ReadSpace` capability for that space. This is a structural guarantee enforced by the IPC boundary — AIRS cannot bypass Space Storage to access raw blocks.
+
 ### 10.1 Security Path Isolation
 
 AIRS performs two functions: security verification (Layers 1, 3, 5) and resource orchestration. These operate on separate code paths with a strict priority fence:
