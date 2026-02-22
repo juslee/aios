@@ -47,7 +47,7 @@ AIOS replaces this with **spaces** — collections of typed objects with semanti
 │                    Encryption Layer                           │
 │  Per-space encryption keys (AES-256-GCM)                     │
 │  Key derivation from identity (Argon2id)                     │
-│  Key escrow for recovery (optional, user-controlled)         │
+│  No key escrow — prevention-based recovery design (§6.3)     │
 │  Transparent encrypt/decrypt on read/write                   │
 ├─────────────────────────────────────────────────────────────┤
 │                    Block Engine                               │
@@ -1961,33 +1961,26 @@ Each security zone maintains its own content-hash → block mapping in the LSM-t
 
 All zones are encrypted at the device level. The "Encrypted" column in prior versions of this table referred only to per-space encryption. With device-level transparent encryption (§4.10), nothing is stored as plaintext on the physical medium. Per-space encryption provides additional cross-zone isolation within the running system.
 
-### 6.3 Key Escrow and Recovery
+### 6.3 Key Recovery: Prevention-Based Design
 
-**Key escrow** is optional and user-controlled. When enabled, a recovery key is generated alongside the master key at identity creation time:
+AIOS does not implement key escrow or key recovery. There is no seed phrase, no recovery key file, no mnemonic backup. If the user forgets their passphrase and the device is powered off, encrypted data is permanently irrecoverable. This follows the same model as full-disk encryption (LUKS without escrow, VeraCrypt, FileVault without iCloud recovery).
 
-```
-Key escrow flow:
-  1. User creates identity → master key derived via Argon2id from passphrase
-  2. If escrow enabled: generate recovery key (256-bit random)
-  3. Encrypt master key with recovery key → escrowed_master
-  4. Store escrowed_master in system/identity/ (Core zone, device-encrypted at rest per §4.10)
-  5. Present recovery key to user as 24-word mnemonic (BIP-39)
-  6. User stores mnemonic offline (paper, password manager)
-```
+**Why no recovery mechanism:** Every recovery mechanism is an attack surface. A 24-word mnemonic can be stolen, photographed, or socially engineered. A recovery file can be exfiltrated. Key escrow requires either a trusted server (contradicts local-first) or offline material that creates the same custodial burden recovery is supposed to eliminate. For a single-device, local-first, offline-capable system, the added complexity and failure modes outweigh the benefit.
 
-**Recovery flow when user forgets passphrase:**
+**Prevention-based approach (see [identity.md §14](../experience/identity.md)):**
 
-| Escrow State | Recovery Path |
+| Mechanism | Purpose |
 |---|---|
-| Escrow enabled | User enters 24-word mnemonic → recovery key → decrypt escrowed_master → re-derive space keys → set new passphrase |
-| Escrow disabled | **Data is irrecoverable.** This is by design — the user chose maximum security over recoverability. The system warns at identity creation. |
+| Aggressive session persistence | Master key sealed to TPM/Secure Enclave across sleep/wake. User re-enters passphrase only after cold reboot. Minimizes forgetting. |
+| Passphrase change while authenticated | While the session is live, the user can change their passphrase at any time. The "recovery" happens before the user forgets, not after. |
+| Clear warning at setup | "If you forget your passphrase and your device is powered off, your data cannot be recovered. This is by design." |
+| Multi-device escrow (Phase 9c+) | When multi-device support lands, Device A can hold an encrypted shard of Device B's master key. No seed phrases, no paper — just a second AIOS device. |
 
-**Escrow key storage:**
-- `escrowed_master` is stored in `system/identity/` — the Core security zone, accessible only to the kernel and identity service
-- The recovery key itself is never stored on-device — the user's offline mnemonic is the only copy
-- Escrow can be disabled retroactively: deleting `escrowed_master` from `system/identity/` is irreversible
-- The recovery key is displayed on screen as a 24-word mnemonic (BIP-39 encoding) and optionally as a QR code. The user writes this down or stores it offline
-- Key escrow protects against forgotten passphrase but NOT against device theft — the recovery key must be kept secure offline. The recovery key is NOT stored on-device
+**Security properties:**
+- No recovery key → no recovery key attack surface (theft, social engineering, phishing)
+- No escrowed key material on-device → no offline extraction target beyond the passphrase-derived master key
+- No external infrastructure dependency → works fully offline, single-device, from day one
+- Multi-device escrow (Phase 9c+) adds recovery without custodial burden — leverages Space Sync infrastructure already being built
 
 -----
 
@@ -3043,5 +3036,5 @@ Phase 14c: Model disk eviction + streaming download   → reclaim model storage 
 Phase 14d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
 Phase 14e: Sub-block deduplication (§4.9)             → Rabin rolling hash for near-duplicate savings
 Phase 24a: Secure Boot integration + hardware key binding → TPM/TrustZone-sealed device keys
-           + key escrow improvements                  → hardware-bound device key auto-unlock
+           + session persistence hardening            → hardware-bound device key auto-unlock
 ```
