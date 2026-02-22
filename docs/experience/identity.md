@@ -44,10 +44,10 @@ AIOS is a single-user operating system. There is no multi-user login. There are 
 │  ┌─────────────────────────────────────────────────────────────┐ │
 │  │                    Key Management                            │ │
 │  │                                                              │ │
-│  │  Primary Key      Device Keys      Recovery Key              │ │
-│  │  (Ed25519)        (per-device,     (offline backup,          │ │
-│  │                    signed by        generated at setup)       │ │
-│  │                    primary)                                   │ │
+│  │  Primary Key      Device Keys      Session                   │ │
+│  │  (Ed25519)        (per-device,     Persistence               │ │
+│  │                    signed by        (TPM/Secure Enclave       │ │
+│  │                    primary)         sealed session)            │ │
 │  │                                                              │ │
 │  │  Key Rotation     Hardware Key     Key Storage               │ │
 │  │  (re-sign         (FIDO2/WebAuthn  (kernel Crypto Core,      │ │
@@ -185,10 +185,7 @@ impl IdentityService {
         // 2. Derive identity ID from public key
         let id = IdentityId::from_public_key(&key_pair.public);
 
-        // 3. Generate recovery key (displayed once, stored offline by user)
-        let recovery_key = crypto_core::generate_recovery_key();
-
-        // 4. Generate device key for this device
+        // 3. Generate device key for this device
         let device_key = crypto_core::generate_ed25519();
         let device_cert = key_pair.sign(&DeviceCert {
             device_key: device_key.public,
@@ -196,7 +193,7 @@ impl IdentityService {
             issued: SystemTime::now(),
         });
 
-        // 5. Create identity
+        // 4. Create identity
         let identity = Identity {
             id,
             public_key: key_pair.public,
@@ -217,18 +214,18 @@ impl IdentityService {
             trust: TrustModel::default(),
         };
 
-        // 6. Store in system/identity/ space
+        // 5. Store in system/identity/ space
         space::write("system/identity/primary", &identity);
 
-        // 7. Display recovery key to user (ONE TIME)
-        display_recovery_key(&recovery_key);
+        // 6. Warn the user: no recovery mechanism exists by design (§14)
+        display_no_recovery_warning();
 
         identity
     }
 }
 ```
 
-The recovery key is a 24-word BIP-39 mnemonic. It's displayed once during setup. The user writes it down or stores it in a physical safe. It's never stored on the device. If the device is lost, the recovery key recreates the identity on a new device.
+AIOS does not generate a recovery key. There is no seed phrase, no mnemonic, and no offline backup of key material. If the user forgets their passphrase and the device is powered off, their data is irrecoverable. This is a deliberate design choice — see §14 for the rationale and the prevention-based approach AIOS uses instead.
 
 -----
 
@@ -252,10 +249,9 @@ Primary Identity Key (Ed25519)
 │   Signed by primary key (certificate)
 │   Used for: local signing, peer authentication
 │
-└── Recovery Key (derived from primary via BIP-39)
-    Generated at first boot
-    Stored OFFLINE by user
-    Reconstructs primary key if all devices are lost
+└── (No recovery key — see §14)
+    Recovery is prevention-based, not key-based
+    Multi-device escrow available in Phase 9c+
 ```
 
 ### 4.2 Kernel Crypto Core
@@ -1290,77 +1286,103 @@ Anonymous sessions use ephemeral keys that are not linked to the primary identit
 
 -----
 
-## 14. Recovery
+## 14. Recovery Design: Prevention, Not Restoration
 
-### 14.1 Recovery Key
+AIOS does not implement a key recovery mechanism. There is no seed phrase, no mnemonic backup, no key escrow, and no recovery file. If the user forgets their passphrase and the device is powered off, their encrypted data is permanently irrecoverable. This is a deliberate architectural decision.
 
-The recovery key is a BIP-39 24-word mnemonic generated at identity creation:
+### 14.1 Rationale
 
+Every recovery mechanism is an attack surface. A BIP-39 mnemonic can be stolen, photographed, or socially engineered. A recovery file can be exfiltrated. Key escrow requires trusting a third party or managing offline material that the user will lose, forget, or store insecurely. For a single-device, local-first system with no cloud infrastructure, every recovery scheme adds complexity and failure modes disproportionate to its benefit.
+
+**What we evaluated and rejected:**
+
+| Mechanism | Why rejected |
+|---|---|
+| BIP-39 seed phrase (24-word mnemonic) | Users lose paper. Photographing it defeats the purpose. Digital storage is just a key file with extra steps. |
+| Recovery key file (USB, printout) | Same custodial burden as seed phrase. Users store it next to the device or lose it entirely. |
+| OPAQUE (aPAKE) | Requires an online server. Contradicts local-first, offline-capable design. |
+| Shamir secret sharing | Requires N trusted parties who maintain availability. Social graph changes. Recombination is fragile. |
+| Social recovery (guardian model) | Requires infrastructure for guardian coordination. Guardians move, die, change devices. |
+| Secure enclave / TEE escrow | Platform-dependent. Ties recovery to specific hardware. Not portable. |
+
+The common failure mode: every scheme either requires infrastructure AIOS doesn't have (servers, guardians, blockchain), or shifts the custodial burden to the user (paper, USB drive, password manager) — which is exactly the problem recovery is supposed to solve.
+
+### 14.2 Prevention-Based Design
+
+Instead of recovering from a forgotten passphrase, AIOS prevents lockout through aggressive session persistence and low-friction passphrase management:
+
+**1. Aggressive session persistence.** Once authenticated, the session stays alive as long as possible. The master key is sealed to the current boot session using the device's TPM or Secure Enclave (when available). The user only re-enters their passphrase after a cold reboot — not on lid close, not on sleep, not on screen lock. The goal: minimize the number of times the user must recall their passphrase, so they don't forget it.
+
+```rust
+pub enum SessionPersistence {
+    /// Master key sealed to TPM/Secure Enclave for current boot session.
+    /// Key survives sleep/wake cycles. Destroyed only on shutdown/reboot.
+    /// This is the default on devices with a secure element.
+    HardwareSealed {
+        sealed_blob: Vec<u8>,
+    },
+    /// Master key kept in pinned kernel memory across sleep/wake.
+    /// Less secure than hardware sealing (vulnerable to cold boot attacks)
+    /// but available on all devices. Destroyed on shutdown/reboot.
+    KernelPinned,
+}
 ```
-abandon abandon abandon abandon abandon abandon abandon abandon
-abandon abandon abandon abandon abandon abandon abandon abandon
-abandon abandon abandon abandon abandon abandon abandon ability
-```
 
-(Example — real recovery keys use random entropy)
-
-### 14.2 Recovery Process
-
-```
-1. User loses all devices
-2. User obtains new AIOS device
-3. During first boot, selects "Recover existing identity"
-4. Enters 24-word recovery key
-5. Recovery key → primary key pair (deterministic derivation)
-6. Identity is restored with original IdentityId
-7. New device key is generated and added
-8. Relationships are notified: "I'm back on a new device"
-9. Space Mesh begins re-syncing from connected peers
-```
+**2. Passphrase change while authenticated.** While the session is live (master key in memory), the user can change their passphrase at any time via the Identity Service. This is the "recovery" path — it happens *before* the user forgets, not after. The system periodically reminds the user that their passphrase can be changed if they feel uncertain about it.
 
 ```rust
 impl IdentityService {
-    pub fn recover_from_mnemonic(mnemonic: &str) -> Result<Identity, Error> {
-        // 1. Derive primary key from mnemonic (deterministic)
-        let seed = bip39::mnemonic_to_seed(mnemonic)?;
-        let primary_key = ed25519_from_seed(&seed);
+    /// Change the identity passphrase while the session is active.
+    /// The master key is already in memory — re-derive it under the new passphrase.
+    pub fn change_passphrase(
+        &mut self,
+        current_passphrase: &str,
+        new_passphrase: &str,
+    ) -> Result<(), Error> {
+        // 1. Verify current passphrase (defense against unattended terminal)
+        let verify_key = derive_master_key(current_passphrase, &self.identity_salt);
+        if verify_key != self.master_key {
+            return Err(Error::InvalidPassphrase);
+        }
 
-        // 2. Verify identity ID matches
-        let id = IdentityId::from_public_key(&primary_key.public);
+        // 2. Generate new salt
+        let new_salt = crypto_core::random_bytes::<32>();
 
-        // 3. Generate new device key for this device
-        let device_key = crypto_core::generate_ed25519();
-        let device_cert = primary_key.sign(&DeviceCert {
-            device_key: device_key.public,
-            device_name: hostname(),
-            issued: SystemTime::now(),
-        });
+        // 3. Derive new master key from new passphrase
+        let new_master = derive_master_key(new_passphrase, &new_salt);
 
-        // 4. Create recovered identity (relationships restored via peer sync)
-        let identity = Identity {
-            id,
-            public_key: primary_key.public,
-            display_name: String::new(), // restored from peers
-            avatar: None,
-            devices: vec![DeviceInfo {
-                device_public_key: device_key.public,
-                device_name: hostname(),
-                certificate: device_cert,
-                added: SystemTime::now(),
-                last_sync: None,
-                is_current: true,
-            }],
-            created: SystemTime::now(), // original creation time restored from peers
-            relationships: Vec::new(),  // restored from peers
-            space_access: Vec::new(),   // restored from peers
-            hardware_keys: Vec::new(),
-            trust: TrustModel::default(),
-        };
+        // 4. Re-encrypt all space keys under new master key
+        for (space_id, encrypted_key) in &mut self.space_keys {
+            let decrypted = decrypt_space_key(&self.master_key, encrypted_key);
+            *encrypted_key = encrypt_space_key(&new_master, &decrypted);
+        }
 
-        Ok(identity)
+        // 5. Update stored salt and master key
+        self.identity_salt = new_salt;
+        self.master_key = new_master;
+
+        // 6. Persist updated key material
+        space::write("system/identity/key_metadata", &self.key_metadata());
+
+        Ok(())
     }
 }
 ```
+
+**3. Clear warning at setup.** During first boot, the system displays an unambiguous warning:
+
+```
+Your passphrase protects all data on this device.
+
+If you forget your passphrase and your device is powered off,
+your data cannot be recovered. This is by design.
+
+You can change your passphrase at any time while logged in.
+```
+
+The user must acknowledge this warning before identity creation proceeds.
+
+**4. Multi-device escrow (Phase 9c+).** When multi-device support lands, device-to-device key escrow becomes the natural recovery mechanism: Device A holds an encrypted shard of Device B's master key, and vice versa. This requires no seed phrases, no paper, no third-party infrastructure — just a second AIOS device. This is the real recovery story, deferred to the phase where it becomes architecturally possible.
 
 ### 14.3 Key Compromise
 
@@ -1403,10 +1425,6 @@ impl IdentityService {
         // 6. Rotate all shared space tokens
         self.rotate_all_space_tokens();
 
-        // 7. Generate new recovery key
-        let new_recovery = crypto_core::generate_recovery_key();
-        display_recovery_key(&new_recovery);
-
         Ok(())
     }
 }
@@ -1418,7 +1436,7 @@ impl IdentityService {
 
 ```
 Phase 4a:   Kernel Crypto Core                 → Ed25519 key generation, signing, verification
-Phase 4b:   Identity creation at first boot    → primary key, device key, recovery key
+Phase 4b:   Identity creation at first boot    → primary key, device key, no-recovery warning
 Phase 4c:   Identity storage in system space   → identity persisted
 
 Phase 8a:   Relationship data model            → relationship CRUD
@@ -1437,7 +1455,7 @@ Phase 18a:  Mutual introduction                → relationship via intermediary
 Phase 18b:  Privacy controls                   → disclosure settings, anonymous mode
 Phase 18c:  Key rotation                       → scheduled and emergency re-keying
 
-Phase 22:   Recovery flow                      → full identity recovery from mnemonic
+Phase 9c:   Multi-device key escrow            → device-to-device recovery (with Space Sync)
 Phase 25:   Agent delegation chains            → provenance with agent identity
 ```
 
@@ -1455,7 +1473,7 @@ Phase 25:   Agent delegation chains            → provenance with agent identit
 
 5. **Keys never leave the kernel.** Private keys are stored in the kernel Crypto Core. Userspace can request signatures but cannot read key material. A compromised userspace process cannot steal keys.
 
-6. **Recovery is possible but deliberate.** A lost device doesn't mean a lost identity. The recovery key (24-word mnemonic, stored offline) reconstructs the primary key. Recovery requires physical possession of the mnemonic — no "forgot password" email.
+6. **Prevention over recovery.** AIOS does not implement key recovery. Instead, it prevents lockout through aggressive session persistence, low-friction passphrase changes, and (in Phase 9c+) device-to-device escrow. No seed phrase, no recovery file, no custodial burden. If the user forgets their passphrase and the device is off, data is gone — the same model as full-disk encryption.
 
 7. **Provenance is identity-linked.** Every object in every space records who created it, how, and when. The provenance chain is signed and Merkle-linked. You can always answer "who did this?" and "did I write this or did the AI?"
 
