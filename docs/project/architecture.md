@@ -49,7 +49,7 @@ AIOS reuses common OS terms but gives them specific meanings. This glossary defi
 | **Service** | System | Trust Level 1 process | A userspace daemon (AIRS, Space Storage, Compositor, NTM, Service Manager) with elevated capabilities |
 | **Service** | IPC | `ChannelId` + protocol | A capability-gated IPC channel with a registered protocol that clients call via `IpcCall` |
 | **Space** | Storage | `Space` | A named collection of typed objects with a security zone, encryption state, quota, and parent hierarchy |
-| **Space** | Security | `SecurityZone` | The zone classification of a space: Core, Personal, Collaborative, or Untrusted |
+| **Space** | Security | `SecurityZone` | The zone classification of a space: Core, Personal, Collaborative, Untrusted, or Ephemeral |
 
 **Usage rules:**
 - Write `AgentManifest`, not "agent," when referring to the installable package
@@ -226,6 +226,8 @@ pub struct Space {
 
 pub struct Object {
     id: ObjectId,
+    /// Human-readable name (last path component)
+    name: String,
     content_hash: Hash,
     content_type: ContentType,
     content_size: u64,
@@ -716,7 +718,8 @@ Every action by every agent passes through all eight layers. No single layer fai
 ├──────────────────────────────────────────────────────┤
 │  Layer 4: Security Zone                               │
 │  Is this data in a zone this agent can reach?         │
-│  Core / Personal / Collaborative / Untrusted zones.   │
+│  Core / Personal / Collaborative / Untrusted /         │
+│  Ephemeral zones.                                      │
 │  Promotion between zones requires review.             │
 ├──────────────────────────────────────────────────────┤
 │  Layer 5: Adversarial Defense                         │
@@ -1146,14 +1149,16 @@ pub enum SpaceQuery {
 
     /// Full-text search on content and metadata
     TextSearch {
-        query: String,
-        fields: Vec<SearchField>,  // Content, Summary, Tags, Entities
+        text: String,
+        boost_recent: bool,
+        limit: Option<usize>,
     },
 
     /// Semantic similarity (requires AIRS)
     Semantic {
-        query: String,              // natural language
+        text: String,               // natural language
         threshold: f32,             // minimum similarity score
+        limit: usize,
     },
 
     /// Graph traversal
@@ -1161,7 +1166,7 @@ pub enum SpaceQuery {
         start: ObjectId,
         relation: RelationKind,
         depth: u32,
-        direction: TraversalDirection,  // Outgoing, Incoming, Both
+        direction: TraverseDirection,  // Forward, Reverse, Bidirectional
     },
 }
 ```
@@ -1245,7 +1250,8 @@ pub struct Object {
 | LLM inference (first token) | < 500 milliseconds | Conversation bar must respond quickly |
 | Context switch | < 10 microseconds | Scheduler must be efficient with many agents |
 | Memory per agent (minimum) | < 4 MB | Lightweight agents should be cheap |
-| Minimum system RAM | 2 GB | Pi 4 baseline (4 GB recommended, 8 GB ideal) |
+| Minimum system RAM (kernel) | 2 GB | Pi 4 baseline — kernel-only, no local AI |
+| Minimum for AI features | 4 GB | Local inference requires model pool (8 GB ideal) |
 | Kernel image size | < 2 MB | Microkernel should be small |
 | Base system disk usage | < 500 MB | Reasonable for embedded/Pi targets |
 
@@ -1473,7 +1479,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q5_K_M model. On a 2028 laptop with 32 GB, it loads a 13B Q6_K — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
 
-6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)`. On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
+6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)` (laptop profile override; base default is `KeepLast(20)` — see spaces.md §10.7). On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
 
 #### The Convergence Thesis
 

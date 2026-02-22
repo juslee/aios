@@ -218,7 +218,8 @@ Every action by every agent passes through all eight layers. No single layer fai
 ├──────────────────────────────────────────────────────┤
 │  Layer 4: Security Zone                               │
 │  Is this data in a zone this agent can reach?         │
-│  Core / Personal / Collaborative / Untrusted zones.   │
+│  Core / Personal / Collaborative / Untrusted /         │
+│  Ephemeral zones.                                      │
 ├──────────────────────────────────────────────────────┤
 │  Layer 5: Adversarial Defense                         │
 │  Is this action the result of prompt injection?       │

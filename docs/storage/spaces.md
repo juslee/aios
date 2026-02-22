@@ -60,7 +60,8 @@ AIOS replaces this with **spaces** — collections of typed objects with semanti
 │  No intermediate filesystem — AIOS owns the device           │
 ├─────────────────────────────────────────────────────────────┤
 │                    Storage Drivers                            │
-│  VirtIO-Blk (QEMU)  │  NVMe  │  SD/eMMC  │  USB Storage    │
+│  Core: VirtIO-Blk (QEMU) │ SD/eMMC │ Apple ANS              │
+│  Extension: NVMe (via PCIe) │ USB Mass Storage (via USB)    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -91,8 +92,14 @@ pub type AgentId = [u8; 32];          // Ed25519 public key
 /// User identity. Each identity has an Ed25519 keypair for provenance signing.
 pub type IdentityId = [u8; 32];       // Ed25519 public key
 
-/// Monotonic timestamp. Milliseconds since Unix epoch.
-pub type Timestamp = u64;
+/// Monotonic timestamp wrapper. Milliseconds since Unix epoch.
+/// Newtype struct (not a type alias) so it can carry associated functions.
+pub struct Timestamp(pub u64);
+
+impl Timestamp {
+    pub fn now() -> Self { Timestamp(/* kernel monotonic clock ms */) }
+    pub fn as_millis(&self) -> u64 { self.0 }
+}
 
 /// Task identifier for provenance tracking. Ties an action to an
 /// agent's in-progress task (if applicable).
@@ -329,6 +336,9 @@ This is the storage-conservative default. On constrained devices, the overhead o
 /// Supports text search and basic queries. No embedding, no AI metadata.
 pub struct CompactObject {
     id: ObjectId,
+    /// Human-readable name (last path component). Required for POSIX directory
+    /// listings and name-based lookup even before promotion to full Object.
+    name: String,
     content_hash: Hash,
     content_type: ContentType,
     content_size: u64,
@@ -351,7 +361,7 @@ pub struct PromotionPolicy {
     /// Promote when another object creates a Relation to this one
     on_relation_created: bool,          // default: true
     /// Never promote these content types (even if other criteria are met)
-    exempt_types: Vec<ContentType>,     // default: [Config, GameSave, CacheEntry, SessionToken, Cookie]
+    exempt_types: Vec<ContentType>,     // default: [Config, Credential, GameSave, CacheEntry, SessionToken, Cookie]
 }
 
 impl PromotionPolicy {
@@ -363,6 +373,7 @@ impl PromotionPolicy {
             on_relation_created: true,
             exempt_types: vec![
                 ContentType::Config,
+                ContentType::Credential,
                 ContentType::GameSave,
                 ContentType::CacheEntry,
                 ContentType::SessionToken,
@@ -393,7 +404,7 @@ impl PromotionPolicy {
 
 **Promotion atomicity:** Promotion is a single LSM-tree metadata update. The Space Indexer generates embedding, entities, and AI summary offline. Once ready, it writes a single Version node that adds the rich metadata to the object (same ObjectId, same content_hash). If the object is modified during embedding generation, the promotion applies to the version that was current when generation started; newer versions are promoted separately. If the object is deleted mid-promotion, the promotion is abandoned — no partial metadata is written.
 
-**Storage savings:** A CompactObject uses ~200 bytes of metadata (9 fields × variable encoding) vs ~2-6 KB for a full Object (with embedding at 384 × f32 = 1536 bytes + provenance + AI metadata). For a space with 10,000 objects where 80% remain compact, this saves 14-46 MB of metadata overhead — significant on a device with a 32 GB SD card.
+**Storage savings:** A CompactObject uses ~200 bytes of metadata (10 fields × variable encoding) vs ~2-6 KB for a full Object (with embedding at 384 × f32 = 1536 bytes + provenance + AI metadata). For a space with 10,000 objects where 80% remain compact, this saves 14-46 MB of metadata overhead — significant on a device with a 32 GB SD card.
 
 **CompactObjects are still searchable.** Full-text search works on compact objects (the text index is always maintained). Semantic search (embedding-based) only works on promoted full objects. This means the system is fully functional with compact defaults — semantic search coverage grows organically as users interact with their data.
 
@@ -539,17 +550,20 @@ Index update (e.g., new block stored):
 Index lookup (e.g., find block for content_hash):
   1. Check MemTable (in-memory, O(log n)) → found? return
   2. Check immutable_memtable (if exists) → found? return
-  3. For each level L1, L2, L3:
+  3. For each L0 SSTable (unsorted, may overlap):
+     a. Check bloom filter → skip or binary search within SSTable
+     b. Found? return
+  4. For each level L1, L2, L3:
      a. Check bloom filter: is key possibly in this SSTable?
-        → NO (99.9% of non-matches): skip SSTable entirely
+        → NO (~99% of non-matches): skip SSTable entirely
         → YES: binary search within SSTable
      b. Found? return
-  4. Key not found (block doesn't exist)
+  5. Key not found (block doesn't exist)
 ```
 
 **Read performance:** Bloom filters (10 bits per key, ~1% false positive rate) ensure that reads rarely touch disk unnecessarily. A typical lookup checks the MemTable (microseconds), then 1-2 bloom filters (microseconds), and at most one SSTable disk read. On average, LSM-tree reads are within 2x of B-tree reads — a small price for 10-30x write amplification reduction.
 
-**Compaction scheduling:** Compaction runs at lowest I/O priority and is paused during active inference (when SD card bandwidth is needed for model loading). On battery-powered future devices, compaction can be deferred to charging periods.
+**Compaction scheduling:** Compaction runs at the Block Engine's lowest internal I/O priority (distinct from CPU scheduling classes — see scheduler.md §3.1) and is paused during active inference (when SD card bandwidth is needed for model loading). On battery-powered future devices, compaction can be deferred to charging periods.
 
 **SSTable manifest for crash safety:** Production LSM-trees (LevelDB, RocksDB) use a manifest file to track which SSTables are live. AIOS maintains an `SsTableManifest` that records the current set of valid SSTables per level:
 
@@ -643,6 +657,25 @@ pub enum StorageError {
     /// Space or category quota exceeded.
     QuotaExceeded,
 }
+
+/// Space-level error enum. Used by Object Store, Version Store, POSIX bridge,
+/// and device key manager. Maps to POSIX errno via §9.5.
+pub enum Error {
+    ObjectNotFound,
+    SpaceNotFound,
+    CapabilityDenied,
+    ReadOnlySpace,
+    SpaceFull,
+    DeviceFull,
+    ObjectLocked,
+    InvalidPath,
+    NameExists,
+    TooManyOpenFiles,
+    VersionConflict,
+    EncryptionKeyUnavailable,
+    UnknownKeyEpoch(u64),
+    IoError(StorageError),
+}
 ```
 
 When stalled, the Block Engine queues incoming writes in the WAL (which is sequential and low-WAF) and returns to the caller once the WAL entry is fsynced. The writes are applied to the MemTable when compaction reduces L0 below the threshold. Agents see slightly increased write latency during stalls but never lose data.
@@ -663,7 +696,8 @@ Agent writes object:
   5. WAL entry fsynced to disk (crash-safe point)
   6. Data block written to temperature-appropriate zone:
      → Hot zone: recently created objects, frequently modified metadata
-     → Cold zone: version history, audit logs, model files
+     → Warm zone: user data, recent version history, KV cache blocks
+     → Cold zone: old version history, audit archives, model files
      → Append-preferred: new blocks written to the end of the zone's free region
   7. Block index updated via LSM-tree MemTable insertion (in-memory, no disk I/O)
   8. Object metadata updated: ObjectId → content_hash
@@ -710,7 +744,7 @@ impl Zone {
     /// Compact live blocks within this zone: walk from start to write_head,
     /// copy live blocks to the front, update write_head. Dead blocks (unreferenced
     /// by the LSM-tree index) are reclaimed. Called when zone free space is low.
-    fn compact_live_blocks(&mut self) { /* implementation omitted */ }
+    fn compact_live_blocks(&mut self) -> usize { /* implementation omitted */ 0 }
 }
 
 impl FlashZoneAllocator {
@@ -919,8 +953,8 @@ pub struct BlockHeader {
     /// Used during reads to select the correct device key after key rotation.
     device_epoch: u64,
     /// Device-level encryption nonce (96 bits). Always present — every block
-    /// on disk is encrypted with the device key (§4.10). This is the inner
-    /// encryption layer; space encryption (above) is the outer layer.
+    /// on disk is encrypted with the device key (§4.10). This is the outer
+    /// encryption layer; space encryption (above) is the inner layer.
     device_nonce: [u8; 12],
     /// Device-level authentication tag (128 bits). Authenticates the block
     /// envelope (header + data) under the device key.
@@ -1193,7 +1227,7 @@ pub struct WafAlert {
 
 **Device write accounting:** Device-level bytes written are measured via kernel block layer hooks — the Block Engine instruments all I/O requests to the storage driver, counting bytes submitted to the device. This captures both application writes and internal overhead (WAL, compaction, index flushes). On devices with SMART support (NVMe, enterprise SSDs), the Block Engine cross-references its count against the device's internal write counter for validation.
 
-**Inspector integration:** WAF data is exposed in the Storage Dashboard ([Inspector](../project/architecture.md), §10.8) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
+**Inspector integration:** WAF data is exposed in the Storage Dashboard ([Inspector](../project/architecture.md), §5.6) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
 
 ### 4.9 Sub-Block Deduplication
 
@@ -1278,20 +1312,20 @@ impl SubBlockDedup {
 **How it works with content-addressed storage:**
 
 ```
-Original document (100 KB):
-  Chunked into: [A, B, C, D, E, F, G, H, I, J] — 10 chunks, ~10 KB each
+Original document (100 KB, target_chunk_size = 4 KB):
+  Chunked into: [A, B, C, ..., Y] — ~25 chunks, ~4 KB each
   Each chunk stored once, addressed by SHA-256 hash
-  Object metadata: ObjectId → [hash_A, hash_B, ..., hash_J]
+  Object metadata: ObjectId → [hash_A, hash_B, ..., hash_Y]
 
 User edits paragraph in chunk D (new version):
-  Chunked into: [A, B, C, D', E, F, G, H, I, J] — chunks A-C, E-J unchanged
-  New chunks stored: only D' (10 KB)
-  Old version: ObjectId_v1 → [hash_A, ..., hash_D, ..., hash_J]
-  New version: ObjectId_v2 → [hash_A, ..., hash_D', ..., hash_J]
+  Chunked into: [A, B, C, D', E, ..., Y] — chunks A-C, E-Y unchanged
+  New chunks stored: only D' (~4 KB)
+  Old version: ObjectId_v1 → [hash_A, ..., hash_D, ..., hash_Y]
+  New version: ObjectId_v2 → [hash_A, ..., hash_D', ..., hash_Y]
 
-Storage used: 100 KB (original) + 10 KB (changed chunk) = 110 KB
+Storage used: 100 KB (original) + 4 KB (changed chunk) = 104 KB
 Without sub-block dedup: 100 KB + 100 KB = 200 KB
-Savings: 90 KB (45%)
+Savings: 96 KB (48%)
 ```
 
 **When sub-block dedup is applied:**
@@ -1320,10 +1354,10 @@ Encryption layering (data flows top to bottom on writes, bottom to top on reads)
   ┌─────────────────────────────────────┐
   │  Encryption Layer (§6)              │
   │  Per-space key (AES-256-GCM)        │  ← Only for Personal, Collaborative,
-  │  Encrypts object content            │     Untrusted zones. Core is plaintext
-  │  at this layer.                     │     at this layer.
+  │  Encrypts object content            │     Untrusted zones. Core and Ephemeral
+  │  at this layer.                     │     are plaintext at this layer.
   └────────────────┬────────────────────┘
-         │ ciphertext (or plaintext for Core)
+         │ ciphertext (or plaintext for Core/Ephemeral)
          ▼
   ┌─────────────────────────────────────┐
   │  Block Engine (§4)                  │
@@ -1414,8 +1448,20 @@ pub struct DecryptedDeviceKey {
     epoch: u64,
 }
 
+/// CPU feature detection for cipher selection. Wraps aarch64 ID_AA64ISAR0_EL1
+/// register fields. Populated by HAL during early boot (hal.md §3 init_rng path).
+pub struct CpuFeatures {
+    has_aes: bool,      // ID_AA64ISAR0_EL1.AES >= 1
+    has_sha2: bool,     // ID_AA64ISAR0_EL1.SHA2 >= 1
+}
+
+impl CpuFeatures {
+    pub fn has_aes_ni(&self) -> bool { self.has_aes }      // x86 naming convention
+    pub fn has_arm_crypto(&self) -> bool { self.has_aes }   // ARM naming convention
+}
+
 /// Cipher selection for device-level encryption.
-/// Chosen at boot time based on CPU feature detection (CpuFeatures from hal.md).
+/// Chosen at boot time based on CPU feature detection.
 pub enum DeviceCipher {
     Aes256Gcm,
     ChaCha20Poly1305,
@@ -1474,8 +1520,11 @@ Device encryption integrates into the existing write path (§4.2) at the final s
 
 ```
 Agent writes object (updated write path with device encryption):
-  1-9. [Unchanged — content hashing, dedup, WAL, compression, zone allocation,
-        LSM-tree index update, version store append, all as described in §4.2]
+  1-9. [Same logical operations as §4.2 — content hashing, dedup, WAL,
+        compression, zone allocation, LSM-tree index update, version store
+        append. Note: WAL entries (step 4-5) are device-encrypted before
+        being written to disk; data blocks (step 6) are device-encrypted
+        below. Encryption is transparent to the logical operation sequence.]
  10.   Device encryption:
        a. Generate device nonce (counter-based, same scheme as §6.1.1)
        b. Encrypt block envelope (header + compressed data) with device key
@@ -1608,7 +1657,7 @@ pub fn select_device_cipher(cpu_features: &CpuFeatures) -> DeviceCipher {
 }
 ```
 
-**Storage overhead:** Each block gains 28 bytes (12-byte nonce + 16-byte auth tag) from device encryption. For the average 4 KB block, this is 0.7% overhead. For the system overall (assuming 200,000 blocks on a 256 GB device), the total overhead is ~5.3 MB — negligible.
+**Storage overhead:** Each block gains 36 bytes (8-byte epoch + 12-byte nonce + 16-byte auth tag) from device encryption. For the average 4 KB block, this is 0.9% overhead. For the system overall (assuming 200,000 blocks on a 256 GB device), the total overhead is ~6.9 MB — negligible.
 
 **The superblock is the only plaintext on disk.** It contains: magic number, format version, device key source type, current epoch, WAL offset, and a checksum. No user data, no keys, no sensitive metadata. It is 4 KB. Everything else — WAL entries, LSM-tree SSTables, data blocks, index blocks — is device-encrypted.
 
@@ -2407,7 +2456,7 @@ impl Object {
     /// Convert to POSIX directory entry.
     pub fn to_dir_entry(&self) -> DirEntry {
         DirEntry {
-            name: self.path_component(),
+            name: self.name.clone(),
             object_id: self.id,
             content_type: self.content_type,
             size: self.content_size,
@@ -2856,7 +2905,7 @@ pub struct StorageQuotas {
     web_storage: StorageQuota,
 
     /// Minimum free headroom — triggers pressure response when breached
-    /// Default: 15% of usable space
+    /// Default: 20% of usable space (matches StoragePressure::Normal threshold)
     free_headroom_target: f64,
 }
 
@@ -2879,6 +2928,8 @@ pub struct StorageQuota {
 Like memory pressure (see [memory.md §8](../kernel/memory.md)), storage has pressure levels with escalating responses:
 
 ```rust
+/// Analogous to MemoryPressure in memory.md — same thresholds, but worst
+/// level is Emergency (not Oom), since storage exhaustion is recoverable.
 pub enum StoragePressure {
     /// > 20% free — normal operation
     Normal,
@@ -2973,13 +3024,25 @@ pub struct ModelStoragePolicy {
     on_disk: Vec<ModelDiskEntry>,
     /// Device profile determines eviction behavior
     profile: DeviceProfile,
+    /// The primary model (never evicted)
+    primary_model: ModelId,
+}
+
+impl ModelStoragePolicy {
+    fn is_primary(&self, id: &ModelId) -> bool { &self.primary_model == id }
+}
+
+pub enum ModelSource {
+    Bundled,
+    Downloaded,
+    UserProvided,
 }
 
 pub struct ModelDiskEntry {
     model_id: ModelId,
     file_size: u64,
     last_loaded: Timestamp,
-    source: ModelSource,                // Bundled, Downloaded, UserProvided
+    source: ModelSource,
     /// Can this model be re-downloaded if deleted?
     reproducible: bool,
 }
@@ -2992,9 +3055,9 @@ impl ModelStoragePolicy {
         // Delete downloaded models that haven't been loaded recently
         // Prefer deleting larger models first (more space recovered)
         self.on_disk.iter()
-            .filter(|m| m.reproducible && !self.is_primary(m.model_id))
+            .filter(|m| m.reproducible && !self.is_primary(&m.model_id))
             .sorted_by(|a, b| b.file_size.cmp(&a.file_size))
-            .map(|m| m.model_id)
+            .map(|m| m.model_id.clone())
             .collect()
     }
 }
@@ -3104,7 +3167,7 @@ Storage Dashboard (example: 512 GB laptop):
 
 ## 12. Implementation Order
 
-Phase numbering follows the AIOS-wide phase plan ([development-plan.md](../project/development-plan.md)). Phases 1-3 cover kernel initialization and basic services. Phase 4 is the storage system (this document). Phases 5-8 cover other system layers (Phase 5: GPU & Display, Phase 6: Experience Layer, Phase 7: AI Runtime, Phase 8: Identity & Relationships — see development-plan.md for details). "Single-device operation" refers to the Phase 4a-4l sub-phases below. Multi-device features begin in Phase 9c.
+Phase numbering follows the AIOS-wide phase plan ([development-plan.md](../project/development-plan.md)). Phases 1-3 cover kernel initialization and basic services. Phase 4 is the storage system (this document). Phases 5-8 cover other system layers (Phase 5: GPU & Display, Phase 6: Window Compositor & Shell, Phase 7: Input, Terminal & Basic Networking, Phase 8: AIRS Core — see development-plan.md for details). "Single-device operation" refers to the Phase 4a-4l sub-phases below. Multi-device features begin in Phase 9c.
 
 ```
 Phase 4a:  Block engine + WAL + LSM-tree index      → raw persistent storage with flash-friendly index
