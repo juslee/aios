@@ -304,6 +304,7 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
         c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
         c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
         c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
+        c if c.contains("apple,t6040") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6040)),
         _ => panic!("Unknown platform: {}", compat),
     }
 }
@@ -1070,6 +1071,9 @@ First boot:
   system/agents/      — Installed agent manifests
   system/credentials/ — Credential store
   system/context/     — Context Engine learned patterns
+  system/services/    — Service binaries (loaded in Phase 3-5)
+  system/session/     — Semantic snapshots, boot traces
+  system/identity/    — Identity keypairs, authentication state
 ```
 
 On normal boot, Space Storage verifies these spaces exist and are consistent, then reports healthy. At this point, the kernel's audit ring buffer is flushed to `system/audit/boot/`. From now on, all audit events are written to space storage in real time.

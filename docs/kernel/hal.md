@@ -67,6 +67,7 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
         c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
         c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
         c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
+        c if c.contains("apple,t6040") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6040)),
         _ => panic!("Unknown platform: {}", compat),
     }
 }

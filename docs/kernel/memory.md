@@ -636,6 +636,7 @@ bitflags::bitflags! {
         const SHARED   = 0b0001_0000;
         const PINNED   = 0b0010_0000;
         const HUGE     = 0b0100_0000;  // 2 MB pages
+        const NO_DUMP  = 0b1000_0000;  // Excluded from core dumps and zram compression (cryptographic keys)
     }
 }
 

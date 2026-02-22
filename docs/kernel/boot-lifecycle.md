@@ -903,7 +903,7 @@ Argon2id (memory-hard KDF)
 Master Key (256-bit)
   │
   ├──→ HKDF("space-encryption") → Space Encryption Key
-  │     Used for per-space ChaCha20-Poly1305
+  │     Used for per-space AES-256-GCM (or ChaCha20-Poly1305 on hardware without crypto extensions)
   │
   ├──→ HKDF("identity-unlock") → Identity Unlock Key
   │     Decrypts the Ed25519 private key in system/identity/

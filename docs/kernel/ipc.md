@@ -635,7 +635,7 @@ fn transfer_capability(channel: ChannelId, cap: CapabilityTokenId) -> Result<()>
 
 All system services follow the same request/reply protocol. The SDK provides typed bindings:
 
-### 5.1 Space Service Protocol
+### 5.1 Space Service Protocol (Space Storage Subsystem)
 
 ```rust
 pub enum SpaceRequest {
