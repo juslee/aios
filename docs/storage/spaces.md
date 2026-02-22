@@ -26,7 +26,7 @@ AIOS replaces this with **spaces** — collections of typed objects with semanti
 ├─────────────────────────────────────────────────────────────┤
 │                    Query Engine                               │
 │  SpaceQuery dispatch (Filter, TextSearch, Semantic, Traverse)│
-│  Full-text index (inverted, BM25) — always available         │
+│  Full-text index (inverted, BM25) — available from Phase 9a  │
 │  Embedding index (HNSW) — requires AIRS                      │
 │  Relationship graph (adjacency lists, bidirectional)         │
 │  Temporal index (B-tree on timestamps)                       │
@@ -107,6 +107,9 @@ pub type KeyId = u32;
 /// POSIX file descriptor for the POSIX compatibility layer (§9).
 pub type Fd = u32;
 
+/// Snapshot identifier. UUID v4.
+pub type SnapshotId = [u8; 16];
+
 /// LSM-tree SSTable identifier. Monotonically increasing per level.
 pub type SsTableId = u64;
 
@@ -123,8 +126,8 @@ pub struct BlockLocation {
     offset: u64,
     /// Total block size in bytes (header + compressed data).
     size: u32,
-    /// Which flash zone this block resides in (§4.2).
-    zone: StorageTier,
+    /// Which temperature tier this block resides in (defined in §4.7).
+    tier: StorageTier,
 }
 
 /// Serialization format: all structures in this document are serialized
@@ -157,6 +160,8 @@ pub enum SecurityZone {
     Collaborative { members: Vec<IdentityId> },
     /// Data from untrusted sources (web, unknown agents)
     Untrusted,
+    /// Ephemeral data (/tmp), auto-cleaned on shutdown
+    Ephemeral,
 }
 
 pub enum EncryptionState {
@@ -238,6 +243,7 @@ shared/                      ← Collaborative zone
 ```rust
 pub struct Object {
     id: ObjectId,                       // stable UUID, never changes
+    name: String,                       // human-readable name (last path component)
     content_hash: Hash,                 // SHA-256, changes with content
     content_type: ContentType,
     content_size: u64,                  // bytes
@@ -345,7 +351,7 @@ pub struct PromotionPolicy {
     /// Promote when another object creates a Relation to this one
     on_relation_created: bool,          // default: true
     /// Never promote these content types (even if other criteria are met)
-    exempt_types: Vec<ContentType>,     // default: [Config, GameSave, CacheEntry]
+    exempt_types: Vec<ContentType>,     // default: [Config, GameSave, CacheEntry, SessionToken, Cookie]
 }
 
 impl PromotionPolicy {
@@ -485,7 +491,7 @@ pub struct LsmBlockIndex {
     waf_tracker: WriteAmplificationTracker,
 }
 
-const LSM_MAX_LEVELS: usize = 4; // L0 (memory) + L1-L3 (disk)
+const LSM_MAX_LEVELS: usize = 4; // L0 (flushed MemTables, unsorted) + L1-L3 (sorted, compacted)
 const MEMTABLE_SIZE: usize = 4 * MB; // Flush to disk when full
 
 pub struct MemTable {
@@ -498,7 +504,7 @@ pub struct MemTable {
 pub struct SSTable {
     /// On-disk sorted table of key-value pairs
     id: SsTableId,
-    /// Level in the LSM-tree (1-3)
+    /// Level in the LSM-tree (0-3)
     level: u8,
     /// Key range [min_key, max_key] for binary search across SSTables
     key_range: (Hash, Hash),
@@ -518,13 +524,13 @@ Index update (e.g., new block stored):
   2. If MemTable size >= 4 MB:
      a. Freeze current MemTable → immutable_memtable
      b. Create new empty MemTable for incoming writes
-     c. Background: flush immutable_memtable to disk as L1 SSTable
+     c. Background: flush immutable_memtable to disk as L0 SSTable
         → single sequential write (flash-friendly)
-  3. If L1 has too many SSTables (> 4):
-     a. Background: merge L1 SSTables into L2 (compaction)
+  3. If L0 has too many SSTables (> 4):
+     a. Background: merge L0 SSTables into L1 (compaction)
      b. Compaction produces sorted, deduplicated SSTables
-     c. Old L1 SSTables deleted after compaction completes
-  4. Same compaction process for L2 → L3 when L2 exceeds 10 SSTables or 40 MB
+     c. Old L0 SSTables deleted after compaction completes
+  4. Same compaction process for L1 → L2, L2 → L3 when threshold exceeded
 ```
 
 **LSM-tree read path:**
@@ -675,7 +681,7 @@ pub struct FlashZoneAllocator {
     /// Hot zone: metadata, recently written objects, active space indexes
     /// Expect high rewrite rate — placed on fresh erase blocks
     hot_zone: Zone,
-    /// Warm zone: user data, version history < 7 days, KV cache blocks
+    /// Warm zone: user data, version history < 30 days, KV cache blocks
     /// Moderate rewrite rate
     warm_zone: Zone,
     /// Cold zone: old versions, audit archives, model files, backups
@@ -683,6 +689,9 @@ pub struct FlashZoneAllocator {
     cold_zone: Zone,
     /// WAL zone: dedicated sequential write region
     wal_zone: Zone,
+    /// Number of times a block was placed in an overflow zone
+    /// (allocated to a different tier than requested because the target zone was full)
+    overflow_count: u64,
 }
 
 pub struct Zone {
@@ -695,6 +704,13 @@ pub struct Zone {
     free_bytes: u64,
     /// Write count for WAF tracking
     bytes_written: u64,
+}
+
+impl Zone {
+    /// Compact live blocks within this zone: walk from start to write_head,
+    /// copy live blocks to the front, update write_head. Dead blocks (unreferenced
+    /// by the LSM-tree index) are reclaimed. Called when zone free space is low.
+    fn compact_live_blocks(&mut self) { /* implementation omitted */ }
 }
 
 impl FlashZoneAllocator {
@@ -711,6 +727,8 @@ impl FlashZoneAllocator {
     /// Returns the write offset within the appropriate zone.
     /// If the target zone is full, attempts zone overflow (steal from
     /// a colder zone with available space).
+    /// Thread safety: the Block Engine serializes all writes through the WAL
+    /// append lock, so allocate() is always called from a single writer thread.
     fn allocate(&mut self, size: usize, tier: StorageTier) -> Result<u64, AllocError> {
         // Try the target zone first
         let zone = self.zone_for_tier(tier);
@@ -821,9 +839,9 @@ AIRS prefetch directive:
 **Why AIRS never touches keys:** AIRS does not hold space decryption keys. It does not need them. AIRS sends a directive to the kernel, which forwards it to Space Storage. Space Storage holds the space keys (released by the kernel after authentication + capability verification) and performs the decryption. The decrypted content enters the page cache, where it is accessible to any agent that holds the appropriate `ReadSpace` capability. AIRS's role is purely advisory — "this object will likely be needed soon" — not operational.
 
 **Why no shortcut:** A prefetch shortcut that bypasses the normal read path would be a security regression:
-- Skipping checksum verification (step 4) would allow corrupted blocks into the page cache
-- Skipping decryption (step 5) would place encrypted blocks in the cache, useless to agents
-- Skipping capability validation (step 2) would allow AIRS to prefetch objects from spaces it shouldn't access
+- Skipping checksum verification would allow corrupted blocks into the page cache
+- Skipping decryption would place encrypted blocks in the cache, useless to agents
+- Skipping capability validation would allow AIRS to prefetch objects from spaces it shouldn't access
 - Skipping provenance logging would hide AIRS's prefetch activity from the audit trail
 
 The normal read path is the only read path. Prefetch is just "read it now instead of later."
@@ -865,7 +883,7 @@ pub struct GarbageCollector {
 - Zone compaction restores the append-preferred write pattern for that zone
 - Other zones are undisturbed (no unnecessary I/O on cold data)
 
-GC runs in the background and never blocks reads or writes. When the zone allocator returns `AllocError::ZoneFull` (§4.2), the Block Engine triggers zone-specific GC before failing the write. If zone compaction cannot free enough space (all blocks in the zone are live), the write fails with `StorageError::QuotaExceeded` and the system raises a `StoragePressureEvent` (§10.5) to trigger emergency reclamation. Interactive writes (user-initiated actions) always take priority over background operations, so at least one write path remains available. The grace period (default: 24 hours) prevents GC from reclaiming blocks that old versions or open file descriptors (§9.4) may still reference.
+GC runs in the background and never blocks reads or writes. When the zone allocator returns `AllocError::ZoneFull` (§4.2), the Block Engine triggers zone-specific GC before failing the write. If zone compaction cannot free enough space (all blocks in the zone are live), the write fails with `StorageError::QuotaExceeded` and the system raises a `StorageEvent::PressureChanged` (§10.5) to trigger emergency reclamation. Interactive writes (user-initiated actions) always take priority over background operations, so at least one write path remains available. The grace period (default: 24 hours) prevents GC from reclaiming blocks that old versions or open file descriptors (§9.4) may still reference. Under Critical/Emergency storage pressure (§10.5), the grace period is shortened to 1 hour/0 respectively — open file descriptors pinning old versions receive `EIO` on subsequent reads if their underlying blocks are reclaimed.
 
 ### 4.6 Block-Level Compression
 
@@ -897,6 +915,9 @@ pub struct BlockHeader {
     /// integrity and authenticity. Replaces CRC-32C for encrypted blocks —
     /// CRC-32C is retained as a secondary check for storage-level corruption.
     space_auth_tag: Option<[u8; 16]>,
+    /// Device key epoch under which this block was encrypted (§4.10).
+    /// Used during reads to select the correct device key after key rotation.
+    device_epoch: u64,
     /// Device-level encryption nonce (96 bits). Always present — every block
     /// on disk is encrypted with the device key (§4.10). This is the inner
     /// encryption layer; space encryption (above) is the outer layer.
@@ -1060,7 +1081,7 @@ AIRS compression directive:
   2. Kernel validates:
      a. AIRS holds ReadSpace capability for the target space
      b. Compression CPU quota not exceeded (blast radius for AIRS)
-     c. Directive rate within AirsDirectiveMonitor baseline (§security.md 2.3.1)
+     c. Directive rate within AirsDirectiveMonitor baseline ([security.md §2.3.1](../security/security.md))
   3. Kernel forwards directive to Space Storage
   4. Space Storage executes compression through the NORMAL Block Engine path:
      a. Read block from disk
@@ -1138,6 +1159,7 @@ impl WriteAmplificationTracker {
                 } else {
                     "WAF elevated. Consider reducing compaction frequency."
                 },
+                timestamp: Timestamp::now(),
             })
         } else {
             None
@@ -1171,7 +1193,7 @@ pub struct WafAlert {
 
 **Device write accounting:** Device-level bytes written are measured via kernel block layer hooks — the Block Engine instruments all I/O requests to the storage driver, counting bytes submitted to the device. This captures both application writes and internal overhead (WAL, compaction, index flushes). On devices with SMART support (NVMe, enterprise SSDs), the Block Engine cross-references its count against the device's internal write counter for validation.
 
-**Inspector integration:** WAF data is exposed in the Storage Dashboard ([Inspector](../platform/inspector.md), §10.8) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
+**Inspector integration:** WAF data is exposed in the Storage Dashboard ([Inspector](../project/architecture.md), §10.8) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
 
 ### 4.9 Sub-Block Deduplication
 
@@ -1221,8 +1243,10 @@ impl SubBlockDedup {
         for i in self.min_chunk_size..data.len() {
             hasher.slide(data[i]);
 
-            let at_boundary = (hasher.fingerprint() & self.boundary_mask) == 0;
-            let at_max = (i - chunk_start) >= self.max_chunk_size;
+            let chunk_len = i - chunk_start;
+            let at_boundary = (hasher.fingerprint() & self.boundary_mask) == 0
+                && chunk_len >= self.min_chunk_size;
+            let at_max = chunk_len >= self.max_chunk_size;
 
             if at_boundary || at_max {
                 let chunk_data = &data[chunk_start..=i];
@@ -1331,7 +1355,7 @@ Encryption layering (data flows top to bottom on writes, bottom to top on reads)
 | Untrusted (web-storage/) | Yes (per-origin key) | Yes (device key) | Double-layer ciphertext. |
 | Ephemeral (/tmp) | No | Yes | Single-layer ciphertext. Temporary data is still encrypted on the physical medium. |
 
-**Why this matters:** Without device-level encryption, `system/credentials/`, `system/identity/` (which contains the escrowed master key), `system/audit/`, and `system/session/` are plaintext on disk. An attacker with physical access to the storage device can read all Core zone data — including the encrypted-master-key blob that, combined with a brute-forced passphrase, unlocks everything. Device encryption eliminates this: the escrowed master key is encrypted under the device key, which is derived from hardware-bound secrets (TPM, TrustZone) or the user's boot passphrase. Physical access to the raw medium yields only ciphertext.
+**Why this matters:** Without device-level encryption, `system/credentials/`, `system/identity/` (which contains the encrypted master key blob), `system/audit/`, and `system/session/` are plaintext on disk. An attacker with physical access to the storage device can read all Core zone data — including the encrypted-master-key blob that, combined with a brute-forced passphrase, unlocks everything. Device encryption eliminates this: the encrypted master key blob is encrypted under the device key, which is derived from hardware-bound secrets (TPM, TrustZone) or the user's boot passphrase. Physical access to the raw medium yields only ciphertext.
 
 #### 4.10.1 Device Key Hierarchy
 
@@ -1382,6 +1406,37 @@ pub enum DeviceKeySource {
         passphrase_salt: [u8; 32],
         argon2_params: Argon2Params,
     },
+}
+
+/// The decrypted device key. Stored on a pinned kernel page, zeroized on drop.
+pub struct DecryptedDeviceKey {
+    key_bytes: ZeroizeBox<[u8; 32]>,
+    epoch: u64,
+}
+
+/// Cipher selection for device-level encryption.
+/// Chosen at boot time based on CPU feature detection (CpuFeatures from hal.md).
+pub enum DeviceCipher {
+    Aes256Gcm,
+    ChaCha20Poly1305,
+}
+
+impl DeviceKeyManager {
+    /// Return the device key for a given epoch. During key rotation, both
+    /// active_key and previous_key are available. Blocks encrypted under
+    /// the previous epoch can still be read until compaction re-encrypts them.
+    fn key_for_epoch(&self, epoch: u64) -> Result<&DecryptedDeviceKey> {
+        if self.active_key.epoch == epoch {
+            Ok(&self.active_key)
+        } else if let Some(ref prev) = self.previous_key {
+            if prev.epoch == epoch {
+                return Ok(prev);
+            }
+            Err(Error::UnknownKeyEpoch(epoch))
+        } else {
+            Err(Error::UnknownKeyEpoch(epoch))
+        }
+    }
 }
 ```
 
@@ -1570,6 +1625,7 @@ pub struct Version {
     hash: Hash,                         // SHA-256 of (parent_hash + content_hash + metadata)
     parent: Option<Hash>,               // previous version
     content_hash: Hash,                 // content at this version
+    content_size: u64,                  // size of content in bytes (for diff, quota tracking)
     object_id: ObjectId,
     timestamp: Timestamp,
     author: AgentId,
@@ -1655,6 +1711,14 @@ pub enum ScanDirection {
 ```
 
 ```rust
+/// Kernel-provided intrinsic: returns the AgentId of the currently executing process.
+/// Used throughout for provenance and capability checks. Defined in ipc.md.
+fn current_agent() -> AgentId;
+
+/// Kernel Crypto Core operation: signs data with the identity's Ed25519 key.
+/// Used for provenance chain signatures. See security.md §4.
+fn kernel_sign(data: &[u8]) -> Signature;
+
 impl VersionStore {
     /// Get a specific version by its hash. O(log n) LSM-tree point lookup.
     fn get_version(&self, hash: Hash) -> Result<Version, StorageError>;
@@ -1700,13 +1764,15 @@ impl VersionStore {
     fn rollback(&self, space: SpaceId, object: ObjectId, target: Hash) -> Result<Version> {
         let target_version = self.get_version(target)?;
         assert_eq!(target_version.object_id, object);
+        let current_head = self.head(space, object)?;
         let new_version = Version {
             hash: Hash::compute(&[
-                self.head(space, object)?.hash.as_bytes(),
+                current_head.hash.as_bytes(),
                 target_version.content_hash.as_bytes(),
             ]),
-            parent: Some(self.head(space, object)?.hash),
+            parent: Some(current_head.hash),
             content_hash: target_version.content_hash,
+            content_size: target_version.content_size,
             object_id: object,
             timestamp: Timestamp::now(),
             author: current_agent(),
@@ -1719,13 +1785,24 @@ impl VersionStore {
 
     /// Rollback an entire space to a snapshot. Iterates every object in the
     /// snapshot and creates rollback version nodes for any that have diverged.
+    /// Rollback an entire space to a snapshot. Objects deleted since the snapshot
+    /// are restored. Objects created after the snapshot are intentionally retained
+    /// (snapshot rollback is non-destructive for new content).
     fn rollback_to_snapshot(&self, snapshot: &Snapshot) -> Result<u64> {
         let mut rolled_back = 0u64;
         for (object_id, version_hash) in &snapshot.object_versions {
-            let current_head = self.head(snapshot.space, *object_id)?;
-            if current_head.hash != *version_hash {
-                self.rollback(snapshot.space, *object_id, *version_hash)?;
-                rolled_back += 1;
+            match self.head(snapshot.space, *object_id) {
+                Ok(current_head) if current_head.hash != *version_hash => {
+                    self.rollback(snapshot.space, *object_id, *version_hash)?;
+                    rolled_back += 1;
+                }
+                Ok(_) => {} // already at snapshot version
+                Err(Error::ObjectNotFound) => {
+                    // Object was deleted after snapshot — restore it
+                    self.rollback(snapshot.space, *object_id, *version_hash)?;
+                    rolled_back += 1;
+                }
+                Err(e) => return Err(e),
             }
         }
         Ok(rolled_back)
@@ -1769,7 +1846,7 @@ Under storage pressure (§10), the Version Store reduces history depth to reclai
 
 1. **Exempt versions are never pruned:** Snapshot roots (§5.2), user-tagged versions (`message` is `Some`), and the current head of each object are always retained.
 2. **Pruning order:** Oldest intermediate versions (no tag, not a snapshot root) are pruned first. Within a single object's DAG, the chain is compacted: if versions A → B → C exist and B is prunable, A's parent pointer is rewritten to skip B, and B's content blocks are released if no other version references them (content-addressed dedup means shared blocks survive).
-3. **User notification:** Design Principle 2 ("Never lose data silently") requires that the user is informed when version retention is reduced. The storage budget system (§10) emits a `StorageEvent::VersionRetentionReduced { space, old_depth, new_depth }` notification visible in the Inspector ([Inspector](../platform/inspector.md)).
+3. **User notification:** Design Principle 2 ("Never lose data silently") requires that the user is informed when version retention is reduced. The storage budget system (§10) emits a `StorageEvent::VersionRetentionReduced { space, old_depth, new_depth }` notification visible in the Inspector ([Inspector](../project/architecture.md)).
 4. **Minimum guarantee:** Even under maximum pressure, the system retains at least the current head and the most recent snapshot for each object. User data is never deleted — only version history depth is reduced.
 
 See §10 for storage pressure levels and §12 Phase 4k for the implementation timeline.
@@ -1951,6 +2028,8 @@ Each security zone maintains its own content-hash → block mapping in the LSM-t
 
 ### 6.2 Encryption Zones
 
+This table extends the §4.10 encryption zone table with key source information. §4.10 documents what is encrypted; this section documents where keys come from.
+
 | Zone | Space encryption (§6.1) | Device encryption (§4.10) | Key Source |
 |---|---|---|---|
 | Core (system/) | No | Yes | Device key (hardware-bound or boot passphrase) |
@@ -1974,13 +2053,13 @@ AIOS does not implement key escrow or key recovery. There is no seed phrase, no 
 | Aggressive session persistence | Master key sealed to TPM/Secure Enclave across sleep/wake. User re-enters passphrase only after cold reboot. Minimizes forgetting. |
 | Passphrase change while authenticated | While the session is live, the user can change their passphrase at any time. The "recovery" happens before the user forgets, not after. |
 | Clear warning at setup | "If you forget your passphrase and your device is powered off, your data cannot be recovered. This is by design." |
-| Multi-device escrow (Phase 9c+) | When multi-device support lands, Device A can hold an encrypted shard of Device B's master key. No seed phrases, no paper — just a second AIOS device. |
+| Multi-device key backup (Phase 9c+) | When multi-device support lands, Device A can hold an encrypted shard of Device B's master key. No seed phrases, no paper — just a second AIOS device. |
 
 **Security properties:**
 - No recovery key → no recovery key attack surface (theft, social engineering, phishing)
-- No escrowed key material on-device → no offline extraction target beyond the passphrase-derived master key
+- No recovery key material on-device → no offline extraction target beyond the passphrase-derived master key
 - No external infrastructure dependency → works fully offline, single-device, from day one
-- Multi-device escrow (Phase 9c+) adds recovery without custodial burden — leverages Space Sync infrastructure already being built
+- Multi-device key backup (Phase 9c+) adds recovery without custodial burden — leverages Space Sync infrastructure already being built
 
 -----
 
@@ -2123,7 +2202,7 @@ Queries compose by intersecting result sets. Each sub-query runs against its own
 | Query Type | Backing Index | Always Available? | Expected Latency | Notes |
 |---|---|---|---|---|
 | `Filter` | Object metadata (in-memory hash maps) | Yes | < 1 ms | Field equality, range checks |
-| `TextSearch` | Inverted index (BM25) | Yes | < 50 ms | Full-text with ranking |
+| `TextSearch` | Inverted index (BM25) | Yes (Phase 9a+) | < 50 ms | Full-text with ranking |
 | `Semantic` | HNSW embedding index | Requires AIRS | < 500 ms | Nearest-neighbor on embeddings |
 | `Traverse` | Relationship graph (adjacency lists) | Yes | < 10 ms/hop | Bidirectional graph walk |
 
@@ -2265,7 +2344,7 @@ Sync introduces a network trust boundary. Before any data exchange:
 
 1. **Mutual identity verification.** Both devices perform an Ed25519 challenge-response using their device identity keys (§6.1). The remote device must present a key that the local device has previously authorized via a pairing ceremony — manual confirmation on both devices (e.g., scan QR code, enter matching PIN, or biometric). Each space maintains a sync ACL: a list of `(device_id, permissions)` tuples authorized to participate in sync.
 2. **Capability check.** Initiating sync requires `SyncSpace(space_id)` capability. Accepting sync requires that the remote identity is in the space's sync ACL.
-3. **Encrypted transport.** All sync traffic is encrypted end-to-end by the NTM ([networking.md](../networking/networking.md)). The Space Sync protocol never sees plaintext on the wire — it hands structured messages to the NTM, which handles TLS/Noise encryption.
+3. **Encrypted transport.** All sync traffic is encrypted end-to-end by the NTM ([networking.md](../platform/networking.md)). The Space Sync protocol never sees plaintext on the wire — it hands structured messages to the NTM, which handles TLS/Noise encryption.
 4. **Content verification.** Every received version node and content block is verified against its content hash before being written to the local DAG. A malicious or corrupted remote cannot inject invalid data — the Merkle chain rejects it.
 
 ### 8.4 Transport Failure Handling
@@ -2274,11 +2353,11 @@ Network connections are unreliable. The sync protocol handles failures gracefull
 
 - **Resumable transfers.** Sync state (§8 `SyncState`) tracks `pending_push` and `pending_pull` queues. If the connection drops mid-sync, the next sync attempt resumes from where it left off — already-transferred objects are not re-sent (content-hash dedup catches this).
 - **Exponential backoff.** Failed sync attempts retry with exponential backoff (30s, 1m, 2m, 5m, 15m, capped at 1h). Background sync is opportunistic — it does not burn battery or bandwidth on repeated failures.
-- **Bandwidth throttling.** Sync runs at `Idle` scheduling class (scheduler.md §4.2) and respects a configurable bandwidth ceiling. Interactive network traffic (agent API calls, web requests) always takes priority.
+- **Bandwidth throttling.** Sync runs at `Idle` scheduling class (scheduler.md §3.1) and respects a configurable bandwidth ceiling. Interactive network traffic (agent API calls, web requests) always takes priority.
 
 **Encryption for synced spaces:** Personal spaces use per-device space keys — each device derives its own key from the user's passphrase (same passphrase, same derivation, same key). Collaborative spaces use a shared key distributed during the pairing ceremony (encrypted with the receiving device's public key). Untrusted spaces (web storage) are not synced.
 
-**Sync uses the Network Translation Module (NTM).** The NTM ([networking.md](../networking/networking.md)) provides encrypted point-to-point channels between devices. Space Sync sends structured messages to the NTM, which handles TLS/Noise encryption, routing, and retry logic. Space Sync code never deals with plaintext on the wire. Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). Sync IPC messages are defined in [ipc.md §5.1](../kernel/ipc.md).
+**Sync uses the Network Translation Module (NTM).** The NTM ([networking.md](../platform/networking.md)) provides encrypted point-to-point channels between devices. Space Sync sends structured messages to the NTM, which handles TLS/Noise encryption, routing, and retry logic. Space Sync code never deals with plaintext on the wire. Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). Sync IPC messages will be defined in ipc.md (Phase 9c, not yet specified).
 
 -----
 
@@ -2346,6 +2425,11 @@ impl Object {
 ```
 
 ```rust
+/// Standard POSIX types used in this section:
+///   OpenFlags — bitflags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, etc.)
+///   AccessMode, Mode — POSIX permission types
+///   CapabilitySet — kernel capability set (security.md §4)
+
 pub struct PosixSpaceBridge {
     mount_table: Vec<MountEntry>,
 }
@@ -2353,7 +2437,7 @@ pub struct PosixSpaceBridge {
 pub struct MountEntry {
     posix_path: String,                 // "/spaces/research"
     space: SpaceId,
-    capabilities: CapabilitySet,        // from calling process's agent
+    capabilities: CapabilitySet,        // from calling process's agent (security.md §4)
 }
 
 impl PosixSpaceBridge {
@@ -2365,7 +2449,18 @@ impl PosixSpaceBridge {
             Capability::ReadSpace(space)
         };
         gate_check(current_agent(), cap)?;
-        let object = space.resolve_object(object_path)?;
+        let object = match space.resolve_object(object_path) {
+            Ok(obj) => {
+                if flags.contains(O_CREAT | O_EXCL) {
+                    return Err(Error::NameExists); // EEXIST
+                }
+                obj
+            }
+            Err(Error::ObjectNotFound) if flags.contains(O_CREAT) => {
+                space.create_object(object_path, current_agent())?
+            }
+            Err(e) => return Err(e),
+        };
         Ok(self.create_fd(object, flags))
     }
 
@@ -2661,7 +2756,7 @@ Indexes + audit:         2-5 GB        4-10 GB       8-20 GB       15-40 GB
 
 Version history:         10-25 GB      20-50 GB      40-80 GB      50-100 GB
   (generous retention;
-   KeepLast(50) default)
+   KeepLast(50) laptop override; base default KeepLast(20))
 
 User data:               80-150 GB     200-300 GB    400-600 GB    800-1200 GB
   (documents, media,
@@ -2836,7 +2931,7 @@ Level       Free %    Actions
 Normal      > 20%     Normal operation. GC runs on schedule.
                       Version retention per space quota.
 
-Low         10-20%    - Tighten version retention: KeepLast(10) → KeepLast(5)
+Low         10-20%    - Tighten retention: KeepAll → KeepLast(10); KeepLast(n) → KeepLast(min(n, 5))
                       - Run GC immediately (don't wait for threshold)
                       - Evict embedding index entries for cold objects
                         (regenerated on demand)
@@ -3009,7 +3104,7 @@ Storage Dashboard (example: 512 GB laptop):
 
 ## 12. Implementation Order
 
-Phase numbering follows the AIOS-wide phase plan. Phases 1-3 cover kernel initialization and basic services. Phase 4 is the storage system (this document). Phases 5-8 are reserved for other system layers (scheduler, networking, etc.). "Single-device operation" or "Phases 4-8" refers to the Phase 4a-4l sub-phases below. Multi-device features begin in Phase 9c.
+Phase numbering follows the AIOS-wide phase plan ([development-plan.md](../project/development-plan.md)). Phases 1-3 cover kernel initialization and basic services. Phase 4 is the storage system (this document). Phases 5-8 cover other system layers (Phase 5: GPU & Display, Phase 6: Experience Layer, Phase 7: AI Runtime, Phase 8: Identity & Relationships — see development-plan.md for details). "Single-device operation" refers to the Phase 4a-4l sub-phases below. Multi-device features begin in Phase 9c.
 
 ```
 Phase 4a:  Block engine + WAL + LSM-tree index      → raw persistent storage with flash-friendly index
@@ -3022,7 +3117,7 @@ Phase 4f:  POSIX bridge + path mapping              → BSD tools work
 Phase 4g:  CompactObject + promotion policy           → storage-efficient default objects
 Phase 4h:  Block-level compression (LZ4/zstd)         → 2-4x storage savings
            + adaptive entropy-based selection          → skip incompressible content
-Phase 4i:  Flash-aware zone allocation (hot/warm/cold) → append-preferred writes, reduced WAF
+Phase 4i:  Flash-aware zone allocation (hot/warm/cold) → write-time zone placement, reduced WAF
 Phase 4j:  Storage budget + quotas + pressure levels  → bounded storage per category
 Phase 4k:  Adaptive version retention                 → pressure-responsive history pruning
 Phase 4l:  Write amplification tracking (§4.8)        → continuous WAF monitoring + alerts
@@ -3030,7 +3125,7 @@ Phase 9a:  Full-text index + text search              → keyword search
 Phase 9b:  Embedding index + selective embedding      → semantic search (promoted objects only)
 Phase 9c:  Space Sync protocol                        → cross-device sync
 Phase 13a: Per-space encryption layer + key management → encrypted Personal/Collaborative/Untrusted zones
-Phase 14a: Tiered storage (hot/warm/cold)             → automatic tier migration + recompression
+Phase 14a: Tiered storage (hot/warm/cold)             → background TierManager daemon + automatic tier migration + recompression
 Phase 14b: Audit retention + chain compaction         → bounded audit storage growth
 Phase 14c: Model disk eviction + streaming download   → reclaim model storage under pressure
 Phase 14d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
