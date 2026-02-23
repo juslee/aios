@@ -79,6 +79,27 @@ The six internal components:
 
 ## 3. Core Data Model
 
+### 3.0 External Types
+
+Flow uses types defined in other documents. Canonical definitions:
+
+| Type | Defined In | Description |
+|---|---|---|
+| `AgentId` | [spaces.md §3.0](./spaces.md) | Agent identity (Ed25519 public key, 32 bytes) |
+| `ObjectId` | [spaces.md §3.0](./spaces.md) | Object identifier (UUID v4, 16 bytes) |
+| `SpaceId` | [spaces.md §3.0](./spaces.md) | Space identifier (UUID v4, 16 bytes) |
+| `Hash` | [spaces.md §3.0](./spaces.md) | SHA-256 hash (32 bytes) |
+| `Timestamp` | [spaces.md §3.0](./spaces.md) | Milliseconds since Unix epoch |
+| `Signature` | [spaces.md §3.0](./spaces.md) | Ed25519 signature (64 bytes) |
+| `ObjectRef` | [spaces.md §3.2](./spaces.md) | Reference to a space object (SpaceId + ObjectId + optional version Hash) |
+| `SharedMemoryId` | [memory.md §7.1](../kernel/memory.md) | Kernel-issued handle for a shared memory region |
+| `ChannelId` | [ipc.md §3](../kernel/ipc.md) | IPC channel identifier |
+| `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
+| `DeviceId` | [subsystem-framework.md](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
+| `TrustLevel` | [security.md §2](../security/security.md) | Trust classification (0–3) for processes |
+
+Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.2), `TransformId` (§4.1).
+
 ### 3.1 FlowEntry
 
 Every completed transfer becomes a `FlowEntry` stored in the history:
