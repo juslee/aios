@@ -1564,7 +1564,7 @@ impl CryptoAccelerator {
 | Pi 4 | ARMv8 CE (AESCE, SHA) | CPU instruction extensions, not a separate device |
 | Pi 5 | ARMv8 CE (AESCE, SHA) | Cortex-A76 crypto extensions |
 
-Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (security.md §18) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
+Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (security.md §4, Cryptographic Foundations) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
 
 **`PlatformNpu`** — Neural Processing Unit / ML accelerator.
 
@@ -1799,7 +1799,7 @@ pub struct HardwareSecurityCaps {
 **Key observations:**
 
 - **PAC/BTI** require ARMv8.3+. Cortex-A72 (Pi 4) lacks them — the kernel must compile with `-mbranch-protection=none` for Pi 4 and `-mbranch-protection=pac-ret+bti` for Pi 5 and Apple Silicon. This is a compile-time decision per target platform.
-- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see security.md §13).
+- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see security.md §5, ARM Hardware Security Integration).
 - **Apple Secure Enclave Processor (SEP)** is a physically separate processor with its own encrypted memory. It stores cryptographic keys, biometric data, and performs attestation. The kernel communicates with SEP via a mailbox interface. SEP provides:
   - Hardware key storage (keys never leave the SEP)
   - Boot attestation (SEP verifies the boot chain before releasing disk encryption keys)
@@ -2331,7 +2331,10 @@ pub struct ThermalThresholds {
 During AIRS model loading and inference, the HAL monitors thermal state and reports it to the scheduler:
 
 ```rust
-pub struct ThermalState {
+/// Raw thermal readings from the HAL. The kernel converts this into the
+/// scheduler-facing `ThermalState` enum (see scheduler.md §8.4) using the
+/// threshold table below.
+pub struct ThermalReading {
     pub current_temp: i32,
     pub throttle_level: ThrottleLevel,
     pub frequency_cap: Option<u32>,

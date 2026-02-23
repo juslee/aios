@@ -3,7 +3,9 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — Subsystem sessions
+**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — Subsystem sessions, [memory.md](./memory.md) — Memory management, shared memory regions (§7)
+
+> **Naming note:** This document uses `MemoryFlags` for memory region permissions. This is a type alias for `VmFlags` defined in [memory.md §3.2](./memory.md): `type MemoryFlags = VmFlags;`. Both names refer to the same bitflags type (READ, WRITE, EXECUTE, USER, SHARED, PINNED, HUGE, NO_DUMP).
 
 -----
 
@@ -577,6 +579,7 @@ This is the fastest inter-agent data path — no kernel involvement after setup.
 Shared memory regions are reference-counted by the kernel. The reference count tracks how many processes have the region mapped:
 
 ```rust
+/// See memory.md §7.1 for the canonical definition.
 pub struct SharedMemoryRegion {
     id: SharedMemoryId,
     physical_pages: PageRange,
@@ -589,6 +592,8 @@ pub struct SharedMemoryRegion {
     creator: ProcessId,
     /// Maximum permissions granted at creation time.
     max_flags: MemoryFlags,
+    /// Capability required to access this shared region.
+    capability: CapabilityTokenId,
     /// Per-mapping permissions (may be more restrictive than max_flags).
     mappings: [Option<SharedMapping>; MAX_SHARED_MAPPINGS],
 }

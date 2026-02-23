@@ -2195,18 +2195,20 @@ pub enum WakeSource {
 impl KernelExecutor {
     /// Register a waker for an async task.
     /// When the wake source fires, the task is moved to the ready queue.
-    pub fn register_waker(&mut self, task_id: AsyncTaskId, source: WakeSource) {
+    /// Note: The KernelExecutor is wrapped in Arc<SpinLock<KernelExecutor>>
+    /// at the global level. Callbacks capture a clone of the Arc, not &mut self.
+    pub fn register_waker(self_ref: Arc<SpinLock<KernelExecutor>>, task_id: AsyncTaskId, source: WakeSource) {
         match source {
             WakeSource::Timer { deadline } => {
-                // Register with the timer subsystem
+                let executor = self_ref.clone();
                 timer::register_callback(deadline, move || {
-                    self.wake(task_id);
+                    executor.lock().wake(task_id);
                 });
             }
             WakeSource::IpcMessage { channel_id } => {
-                // Register with the IPC subsystem
+                let executor = self_ref.clone();
                 ipc::register_notify(channel_id, move || {
-                    self.wake(task_id);
+                    executor.lock().wake(task_id);
                 });
             }
             // ... other sources
