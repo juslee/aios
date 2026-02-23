@@ -74,7 +74,7 @@ pub enum Syscall {
         send_len: usize,
         recv_buf: *mut u8,
         recv_len: usize,
-        timeout: Duration,
+        timeout: Duration,      // SDK type; raw syscall uses timeout_ns: u64 in registers
     },
 
     /// Send a message without waiting for reply (asynchronous)
@@ -123,7 +123,7 @@ pub enum Syscall {
         channel_count: usize,
         recv_buf: *mut u8,
         recv_len: usize,
-        timeout: Option<Duration>,
+        timeout: Option<Duration>,     // SDK type; raw syscall: timeout_ns: u64 (0 = non-blocking, u64::MAX = indefinite)
         ready_channel: *mut ChannelId,
     },
 
@@ -150,12 +150,12 @@ pub enum Syscall {
         submission_queue_size: u32,  // entries (power of 2)
         completion_queue_size: u32,
         entry_size: u32,            // max bytes per entry
-        flags: RingChannelFlags,
+        flags: RingChannelFlags,    // see RingChannelFlags below
     },
 
     /// Destroy a ring buffer channel
     RingChannelDestroy {
-        ring: RingChannelId,
+        ring: RingChannelId,        // see RingChannelId below
     },
 
     // === Lightweight Notifications (seL4-style bitmap signals) ===
@@ -163,6 +163,7 @@ pub enum Syscall {
     /// Create a lightweight notification object (single-word bitmap).
     /// No message body. Each bit position is a signal.
     NotificationCreate {},
+
 
     /// Signal a notification: atomic OR of bits into the notification word.
     /// ~10 cycles. No message allocation, no queue, no serialization.
@@ -323,6 +324,17 @@ pub enum IpcError {
     ENOTSUP      = -9,  // operation not available (e.g., AIRS offline)
     ECAP_DORMANT = -10, // capability exists but is dormant
 }
+
+/// Ring buffer channel identifier (returned by RingChannelCreate).
+pub struct RingChannelId(u64);
+
+/// Flags for RingChannelCreate.
+pub struct RingChannelFlags(u32);
+// bit 0: NONBLOCKING — submission returns immediately even if queue is full
+// bit 1: SHARED_MEMORY — map the ring into both processes (for zero-copy)
+
+/// Lightweight notification object identifier (returned by NotificationCreate).
+pub struct NotificationId(u64);
 ```
 
 ### 3.2 Syscall ABI
@@ -600,7 +612,8 @@ pub struct SharedMemoryRegion {
 
 pub struct SharedMapping {
     process: ProcessId,
-    flags: MemoryFlags,    // must be subset of max_flags
+    vaddr: VirtualAddress,          // where mapped in this process's address space
+    flags: VmFlags,                 // must be subset of max_flags (VmFlags = MemoryFlags alias)
 }
 
 const MAX_SHARED_MAPPINGS: usize = 8;  // bounded: no heap growth

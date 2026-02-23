@@ -297,7 +297,7 @@ pub struct Task {
 /// Links a task to its surrounding context — the active space, identity,
 /// and Context Engine snapshot at the time the task was created. Used by
 /// agents to access contextual information without querying the Context
-/// Engine repeatedly. See context-engine.md §2 for ContextSnapshot.
+/// Engine repeatedly. The snapshot is a frozen ContextState (see §2.5 above).
 pub struct ContextLink {
     /// The space the task was initiated from
     space_id: SpaceId,
@@ -416,7 +416,7 @@ pub struct AgentManifest {
 /// Set of capabilities held by a task or agent process. Capabilities are
 /// kernel-managed tokens — agents hold references, not the capabilities
 /// themselves. The kernel validates every token on every syscall.
-/// See ipc.md §5 for capability transfer and boot.md §3.3 Step 12 for
+/// See ipc.md §4 for capability transfer and boot.md §3.3 Step 12 for
 /// the root capability from which all others derive.
 pub struct CapabilitySet {
     /// Active capability tokens, keyed by capability type for O(1) lookup
@@ -501,7 +501,7 @@ pub struct Flow {
 
 pub struct Transfer {
     source: ObjectRef,      // see spaces.md §3.0 for ObjectRef definition
-    content: TypedContent,  // see flow.md §3.3 for TypedContent definition
+    content: TypedContent,  // see flow.md §3.4 for TypedContent definition
     intent: TransferIntent,
     transformations: Vec<Transform>,
 }
@@ -588,7 +588,7 @@ pub struct AttentionManager {
 
 pub struct AttentionItem {
     source: AgentId,
-    content: TypedContent,  // attention.md §3 defines AttentionContent enum; flow.md §3.3 defines the Flow-specific TypedContent struct
+    content: TypedContent,  // attention.md §3 defines TypedContent enum; flow.md §3.4 defines the Flow-specific TypedContent struct
     urgency: Urgency,       // AI-assessed, not app-declared
     relevance: f32,
     auto_actionable: Option<ProposedAction>,
@@ -609,7 +609,7 @@ Replaces user accounts. Cryptographic identity, graduated trust, relationship-aw
 
 ```rust
 /// Ed25519 keypair for identity signing and verification.
-/// See identity.md §3 for key management and derivation.
+/// See identity.md §4 for key management and derivation.
 pub struct KeyPair {
     public: [u8; 32],   // Ed25519 public key
     private: [u8; 64],  // Ed25519 expanded private key (encrypted at rest)
@@ -619,14 +619,14 @@ pub struct Identity {
     id: IdentityId,
     keys: KeyPair,
     relationships: Vec<Relationship>,
-    space_access: Vec<(SpaceId, AccessLevel)>,  // see identity.md §8 for AccessLevel
-    trust: TrustModel,                          // see identity.md §7 for TrustModel
+    space_access: Vec<(SpaceId, AccessLevel)>,  // see identity.md §7 for AccessLevel
+    trust: TrustModel,                          // see identity.md §6 for TrustModel
 }
 
 pub struct Relationship {
     with: IdentityId,
     kind: RelationshipKind,  // see identity.md §5 for RelationshipKind
-    trust_level: TrustLevel, // see security.md §2 for TrustLevel (0-4)
+    trust_level: TrustLevel, // see identity.md §6 for TrustLevel (0-4)
     shared_spaces: Vec<SpaceId>,
 }
 ```
@@ -639,10 +639,10 @@ Replaces config files. Conversational configuration, AI-mediated, evolves throug
 pub struct Preference {
     id: PreferenceId,
     description: String,
-    value: PreferenceValue,       // see preferences.md §2 for PreferenceValue variants
+    value: PreferenceValue,       // see preferences.md §3 for PreferenceValue variants
     source: PreferenceSource,
     affects: Vec<SystemComponent>,// see preferences.md §3 for SystemComponent enum
-    history: Vec<PreferenceChange>,// see preferences.md §4 for PreferenceChange
+    history: Vec<PreferenceChange>,// see preferences.md §3 for PreferenceChange
 }
 
 pub enum PreferenceSource {
@@ -857,6 +857,8 @@ Hardware Driver        → VirtIO, USB, PCI, platform-specific
 |Bluetooth|ByteStream/Events|Per-profile                         |/dev/bluetooth*  |
 |Print    |Frames (pages)   |Queue (FIFO)                        |/dev/lp*, CUPS   |
 |GPS      |Events (location)|Share (read-only)                   |—                |
+|USB      |Varies by class  |Varies by class                     |/dev/usb*        |
+|Power    |Control commands |Exclusive (kernel)                  |/sys/power/*     |
 
 ### 2.13 Browser Architecture
 
@@ -993,7 +995,7 @@ pub struct CapabilityToken {
     created_at: Timestamp,
     expires: Timestamp,
     delegatable: bool,
-    attenuations: Vec<AttenuationSpec>,  // see security.md §5 for AttenuationSpec
+    attenuations: Vec<AttenuationSpec>,  // see security.md §3 for AttenuationSpec
     revoked: bool,
     parent_token: Option<TokenId>,  // for delegation chains
     usage_count: u64,
@@ -1079,7 +1081,7 @@ use aios_sdk::prelude::*;
     capabilities = [
         ReadSpace("research"),
         WriteSpace("research"),
-        Inference(Priority::Normal),
+        InferenceCpu(Priority::Normal),
         Network(services = ["api.anthropic.com", "arxiv.org"]),
     ]
 )]
@@ -1421,7 +1423,7 @@ The Conversation Bar translates natural language to `SpaceQuery` via AIRS:
 ```
 User: "Find my notes about transformer architectures from last month"
   → SpaceQuery::Semantic {
-      query: "transformer architectures",
+      text: "transformer architectures",
       threshold: 0.7,
     } AND SpaceQuery::Filter {
       content_type: Some(Note),
@@ -1567,7 +1569,7 @@ A compatibility layer that runs Linux ELF binaries on AIOS. Eliminates the app g
 
 ### Tier 5 (Future): Wayland Applications
 
-Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's Wayland-compatible surface management (see compositor.md §7).
+Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's Wayland-compatible surface management (see compositor.md §10).
 
 For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — it determines whether AIOS can be someone's only computer.
 
@@ -1577,11 +1579,11 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 ### 9.1 Development Roadmap
 
-**Stage 1: QEMU aarch64 (development target, dev Phases 0-14).** All development and testing. HVF acceleration on macOS for near-native speed.
+**Stage 1: QEMU aarch64 (development target, dev Phases 0-15).** All development and testing. HVF acceleration on macOS for near-native speed.
 
-**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 15+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §7 for the phase-aligned hardware timeline.
+**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 16+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §9 for the phase-aligned hardware timeline.
 
-**Stage 3: VM images (adoption path, dev Phase 23+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
+**Stage 3: VM images (adoption path, dev Phase 24+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
 
 **Stage 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
 

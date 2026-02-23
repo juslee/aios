@@ -389,8 +389,9 @@ The SDK provides inference, storage, security, networking, and context as system
 ## 9. Hardware Strategy
 | Stage | Target | Purpose |
 |---|---|---|
-| Phase 0-14 | QEMU aarch64 (HVF on macOS) | All development and testing |
+| Phase 0-15 | QEMU aarch64 (HVF on macOS) | All development and testing |
 | Phase 16-19 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
+| Phase 20-23 | QEMU + Raspberry Pi | Rich experience development on both targets |
 | Phase 24-27 | VM images (UTM/QEMU) | Low-barrier adoption path |
 | Post-MVP | Pine64, Framework Laptop | Open-hardware partners |
 | Maturity | Own hardware | Only if platform achieves critical mass |
@@ -421,7 +422,7 @@ This is where AIOS becomes what no other OS is.
 | 10 | Agent Framework | 5 weeks | Capability-gated agents with intent verification |
 | 11 | Tasks, Flow & Attention | 5 weeks | Task decomposition, smart clipboard, triaged notifications |
 ### Tier 4: Platform Maturity — Phases 12–15 (Weeks 55–74)
-Developer ecosystem, security hardening, performance, POSIX compatibility.
+Developer ecosystem, security hardening, performance, POSIX compatibility. Includes 3 weeks buffer for integration testing across phases.
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 12 | Developer Experience & SDK | 5 weeks | Multi-language SDK, CLI toolchain, documentation |

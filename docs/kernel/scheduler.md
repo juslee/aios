@@ -1825,8 +1825,8 @@ CNTFRQ_EL0          Counter frequency (typically 54 MHz on Pi 4)
 CNTVCT_EL0          Virtual counter value (monotonic, read-only)
 CNTV_CVAL_EL0       Virtual timer compare value (per-thread)
 CNTV_CTL_EL0        Virtual timer control (enable, mask, status)
-CNTP_CVAL_EL1       Physical timer compare value (kernel tick)
-CNTP_CTL_EL1        Physical timer control (kernel tick)
+CNTP_CVAL_EL0       Physical timer compare value (kernel tick)
+CNTP_CTL_EL0        Physical timer control (kernel tick)
 ```
 
 **Kernel tick:** The EL1 physical timer fires every 1ms (1000 Hz). This is the scheduler tick — the point where the scheduler checks whether to preempt the current thread, update accounting, and run the load balancer. 1000 Hz balances two concerns:
@@ -2153,6 +2153,13 @@ Scheduler thread (preemptive)          Async task (cooperative)
 The kernel runs one async executor per CPU core. Each executor is embedded in the core's idle loop — when no scheduler tasks are runnable, the CPU polls async tasks before entering low-power idle.
 
 ```rust
+/// Unique identifier for an async task within the kernel executor.
+pub struct AsyncTaskId(u64);
+
+/// Task priority level (0 = highest, 255 = lowest). Newtype wrapper
+/// over u8, matching ThreadControlBlock.priority representation.
+pub struct Priority(pub u8);
+
 pub struct KernelExecutor {
     /// Ready queue of async tasks that have been woken
     ready_queue: VecDeque<AsyncTaskId>,
@@ -2186,7 +2193,7 @@ When an async task returns `Poll::Pending`, it must register a waker so the exec
 ```rust
 pub enum WakeSource {
     IpcMessage { channel_id: ChannelId },
-    Timer { deadline: Instant },
+    Timer { deadline: Timestamp },
     DmaCompletion { dma_handle: DmaHandle },
     Interrupt { irq: u32 },
     ServiceReady { service_id: ServiceId },

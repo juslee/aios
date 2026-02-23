@@ -91,14 +91,14 @@ Flow uses types defined in other documents. Canonical definitions:
 | `Hash` | [spaces.md §3.0](./spaces.md) | SHA-256 hash (32 bytes) |
 | `Timestamp` | [spaces.md §3.0](./spaces.md) | Milliseconds since Unix epoch |
 | `Signature` | [spaces.md §3.0](./spaces.md) | Ed25519 signature (64 bytes) |
-| `ObjectRef` | [spaces.md §3.2](./spaces.md) | Reference to a space object (SpaceId + ObjectId + optional version Hash) |
+| `ObjectRef` | [spaces.md §3.0](./spaces.md) | Reference to a space object (SpaceId + ObjectId + optional version Hash) |
 | `SharedMemoryId` | [memory.md §7.1](../kernel/memory.md) | Kernel-issued handle for a shared memory region |
 | `ChannelId` | [ipc.md §3](../kernel/ipc.md) | IPC channel identifier |
 | `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
 | `DeviceId` | [subsystem-framework.md](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
 | `TrustLevel` | [security.md §2](../security/security.md) | Trust classification (0–4) for processes |
 
-Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.2), `TransformId` (§4.1).
+Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).
 
 ### 3.1 FlowEntry
 
@@ -152,6 +152,25 @@ pub struct TransferId(u128);
 
 /// Unique identifier for a registered content transform.
 pub struct TransformId(u64);
+
+/// Error type for Flow operations. Used by push(), pull(), transfer
+/// lifecycle management, and POSIX clipboard bridge.
+pub enum FlowError {
+    /// Agent does not hold the required FlowRead or FlowWrite capability.
+    PermissionDenied,
+    /// Source content type cannot be converted to any type the receiver accepts.
+    IncompatibleType,
+    /// The referenced TransferId does not exist or has already completed.
+    TransferNotFound,
+    /// A content transform failed during execution.
+    TransformFailed(String),
+    /// The transfer expired before a receiver claimed it.
+    Expired,
+    /// The agent's capability was revoked mid-transfer.
+    CapabilityRevoked,
+    /// Underlying I/O or IPC error.
+    IoError(String),
+}
 
 /// Links a Flow transfer to the provenance chain in the Version Store
 /// (see spaces.md §5.1). When a transfer creates or modifies a space object,
@@ -237,6 +256,8 @@ pub enum TransferState {
     Cancelled,
     /// Transfer expired (no receiver claimed it)
     Expired,
+    /// Transfer recorded in history (final state)
+    Recorded,
 }
 
 pub struct TransferEndpoint {
@@ -548,6 +569,16 @@ pub enum TransformProvider {
     Airs,
     /// Agent-provided transform (available when agent is running)
     Agent(AgentId),
+}
+
+/// Directed graph where nodes are content types and edges are transforms.
+/// Used by the Transform Engine to find cheapest conversion paths.
+/// Recomputed when transforms are added or removed.
+pub struct ConversionGraph {
+    /// Content type nodes (MIME types)
+    nodes: Vec<String>,
+    /// Edges: (source_index, target_index, transform_id, cost)
+    edges: Vec<(usize, usize, TransformId, u32)>,
 }
 
 pub struct TransformRegistry {
@@ -1321,6 +1352,7 @@ pub trait FlowClient: Send + Sync {
     ) -> Result<FlowPipe>;
 
     /// Register a transform with the Flow Service.
+    /// The handler implements the transform logic (see TransformHandler trait below).
     async fn register_transform(
         &self,
         transform: Transform,
@@ -1332,6 +1364,13 @@ pub trait FlowClient: Send + Sync {
         &self,
         filter: FlowFilter,
     ) -> Result<FlowSubscription>;
+}
+
+/// Trait implemented by agents that provide content transforms.
+/// Registered via FlowClient::register_transform().
+pub trait TransformHandler: Send + Sync {
+    /// Transform input content into the declared output type.
+    fn transform(&self, input: ContentPayload) -> Result<ContentPayload, FlowError>;
 }
 
 pub struct FlowOptions {
