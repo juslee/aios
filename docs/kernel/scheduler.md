@@ -975,7 +975,11 @@ pub enum InferenceState {
     TokenGeneration { tokens_so_far: u32 },
     /// Yielded between chunks (waiting for next scheduling)
     Yielded,
-    /// Paused by scheduler (higher priority work needed)
+    /// Paused by scheduler (higher priority work needed).
+    /// NOTE: This is the inference task's internal state, distinct from
+    /// ThreadState::Suspended (§3.3) which halts the entire thread.
+    /// A Paused inference task's thread may still be Runnable — it just
+    /// won't resume inference until the scheduler allows it.
     Paused,
     /// Completed
     Done,

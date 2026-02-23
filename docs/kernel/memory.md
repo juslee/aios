@@ -681,6 +681,25 @@ impl AddressSpace {
         Ok(l3.entry_ref(l3_idx))
     }
 
+    /// Mutable variant of lookup_pte. Walks the four-level page table
+    /// and returns a mutable reference to the leaf PTE. Used by update_pte()
+    /// and COW fault handling (§5.4) to modify PTEs in place.
+    pub fn lookup_pte_mut(&mut self, addr: VirtualAddress) -> Result<&mut PageTableEntry, FaultError> {
+        let l0_idx = (addr.0 >> 39) & 0x1FF;
+        let l1_idx = (addr.0 >> 30) & 0x1FF;
+        let l2_idx = (addr.0 >> 21) & 0x1FF;
+        let l3_idx = (addr.0 >> 12) & 0x1FF;
+
+        let l0 = &mut self.pgd;
+        let l1 = l0.entry_mut(l0_idx).table_mut().ok_or(FaultError::InvalidAddress)?;
+        let l2 = l1.entry_mut(l1_idx).table_mut().ok_or(FaultError::InvalidAddress)?;
+        if l2.entry(l2_idx).is_block() {
+            return Ok(l2.entry_mut(l2_idx));
+        }
+        let l3 = l2.entry_mut(l2_idx).table_mut().ok_or(FaultError::InvalidAddress)?;
+        Ok(l3.entry_mut(l3_idx))
+    }
+
     /// Overwrite the PTE for a virtual address. Caller must ensure the
     /// intermediate tables already exist (see map_page for auto-population).
     /// Issues a TLB invalidation for the affected VA after the write.
