@@ -81,15 +81,23 @@ pub struct Hash([u8; 32]);
 /// Unique identifier for an object within a space. 128-bit UUID (v4).
 /// Stable across versions — the same ObjectId refers to all versions of
 /// an object. Never reused after deletion.
+///
+/// NOTE: Shown as a type alias for clarity. In implementation, these MUST be
+/// newtypes (e.g., `pub struct ObjectId([u8; 16]);`) to prevent accidentally
+/// passing an ObjectId where a SpaceId is expected. The compiler cannot
+/// distinguish `[u8; 16]` aliases — newtypes provide compile-time safety.
 pub type ObjectId = [u8; 16];         // UUID v4
 
 /// Unique identifier for a space. 128-bit UUID (v4).
+/// Implementation: newtype `pub struct SpaceId([u8; 16]);`
 pub type SpaceId = [u8; 16];
 
 /// Agent or service identity. Derived from the agent's Ed25519 public key.
+/// Implementation: newtype `pub struct AgentId([u8; 32]);`
 pub type AgentId = [u8; 32];          // Ed25519 public key
 
 /// User identity. Each identity has an Ed25519 keypair for provenance signing.
+/// Implementation: newtype `pub struct IdentityId([u8; 32]);`
 pub type IdentityId = [u8; 32];       // Ed25519 public key
 
 /// Monotonic timestamp wrapper. Milliseconds since Unix epoch.
@@ -865,9 +873,16 @@ AIRS prefetch directive:
      e. Verify checksum (CRC-32C)
      f. If space-encrypted: decrypt content with space key (Space Storage holds key)
      g. Decrypted content sits in page cache (user pool)
-  5. No content is returned to AIRS — prefetch is fire-and-forget
-  6. When agent later reads the object, step 3 hits page cache → fast
-  7. Provenance chain records: ResourcePrefetch event (logged by kernel)
+  5. Error handling: if checksum verification fails at step (e):
+     - The corrupted block is NOT placed in the page cache
+     - An integrity error is logged to system/audit/ (CRC mismatch event)
+     - The prefetch for this specific object is silently dropped
+     - No error is propagated to AIRS (prefetch is advisory)
+     - If the agent later reads this object, the normal read path will
+       encounter the same corruption and return Err(IntegrityError) to the agent
+  6. No content is returned to AIRS — prefetch is fire-and-forget
+  7. When agent later reads the object, step 4 hits page cache → fast
+  8. Provenance chain records: ResourcePrefetch event (logged by kernel)
 ```
 
 **Why AIRS never touches keys:** AIRS does not hold space decryption keys. It does not need them. AIRS sends a directive to the kernel, which forwards it to Space Storage. Space Storage holds the space keys (released by the kernel after authentication + capability verification) and performs the decryption. The decrypted content enters the page cache, where it is accessible to any agent that holds the appropriate `ReadSpace` capability. AIRS's role is purely advisory — "this object will likely be needed soon" — not operational.
@@ -1673,6 +1688,12 @@ Every object modification creates a new version node in a Merkle DAG (like git):
 pub struct Version {
     hash: Hash,                         // SHA-256 of (parent_hash + content_hash + metadata)
     parent: Option<Hash>,               // previous version
+    /// Second parent for merge commits (Phase 9c — Space Sync conflict resolution).
+    /// Always None in single-device operation (Phases 4-8). When Space Sync detects
+    /// a fork (two devices edited the same object independently), the merge version
+    /// sets this field to the remote branch's head hash.
+    /// NOTE: Added to the struct now (as None) to avoid schema migration in Phase 9c.
+    merge_parent: Option<Hash>,
     content_hash: Hash,                 // content at this version
     content_size: u64,                  // size of content in bytes (for diff, quota tracking)
     object_id: ObjectId,
@@ -1812,7 +1833,12 @@ impl VersionStore {
     /// forward — rollback never rewrites history.
     fn rollback(&self, space: SpaceId, object: ObjectId, target: Hash) -> Result<Version> {
         let target_version = self.get_version(target)?;
-        assert_eq!(target_version.object_id, object);
+        if target_version.object_id != object {
+            return Err(VersionError::ObjectMismatch {
+                expected: object,
+                found: target_version.object_id,
+            });
+        }
         let current_head = self.head(space, object)?;
         let new_version = Version {
             hash: Hash::compute(&[
@@ -1923,6 +1949,8 @@ Conflict resolution strategies are defined in §8. Branching semantics are Phase
 ## 6. Encryption
 
 > **Implementation status:** Phase 13a (not active in Phase 4a-4l). This section documents the design for per-space encryption. Phase 4 uses device-level encryption only (§4.10). Per-space encryption for Personal/Collaborative/Untrusted zones will be added in Phase 13a, providing cross-zone isolation within the running system.
+>
+> **Security note for Phases 4-12:** During Phases 4-12, all spaces rely solely on device-level encryption (§4.10). This means an attacker who obtains the device key (e.g., via physical access after boot, when the TPM/TrustZone-sealed key is loaded into memory) can read plaintext from ALL spaces — Personal, Collaborative, and Untrusted zones are not individually encrypted. The 8-layer security model's Layer 6 (Cryptographic Enforcement) operates at device granularity only until Phase 13a adds per-space keys. The other 7 layers (capability checks, intent verification, behavioral monitoring, etc.) still provide defense-in-depth during this period.
 
 ### 6.1 Key Management
 
@@ -2003,14 +2031,28 @@ pub struct NonceGenerator {
     random_prefix: u32,
 }
 
+/// Overflow safety threshold. When the counter reaches this value,
+/// the space key MUST be rotated before any further encryption.
+/// Set to u64::MAX - 2^20 (~1 million operations of safety margin)
+/// to ensure no accidental wraparound. At 1 TB/month write rate with
+/// 4 KB blocks, this counter lasts ~2.3 billion years — but key rotation
+/// after device migration, crash recovery advances, or bulk re-encryption
+/// could consume counter space faster. The guard is cheap insurance.
+const NONCE_COUNTER_LIMIT: u64 = u64::MAX - (1 << 20);
+
 impl NonceGenerator {
     /// Generate the next nonce. MUST be called exactly once per encryption.
-    pub fn next_nonce(&self) -> [u8; 12] {
+    /// Returns Err if the counter has reached the overflow safety threshold,
+    /// requiring a space key rotation before further encryption.
+    pub fn next_nonce(&self) -> Result<[u8; 12], NonceExhausted> {
         let count = self.counter.fetch_add(1, Ordering::SeqCst);
+        if count >= NONCE_COUNTER_LIMIT {
+            return Err(NonceExhausted { space_key_id: self.key_id });
+        }
         let mut nonce = [0u8; 12];
         nonce[..4].copy_from_slice(&self.random_prefix.to_le_bytes());
         nonce[4..].copy_from_slice(&count.to_le_bytes());
-        nonce
+        Ok(nonce)
     }
 
     /// On crash recovery: advance counter by safety margin to guarantee
@@ -2019,6 +2061,10 @@ impl NonceGenerator {
         self.counter.store(last_persisted + 1000, Ordering::SeqCst);
     }
 }
+
+/// Error returned when the nonce counter approaches u64::MAX.
+/// The space key must be rotated (§4.10.3) before further encryption.
+pub struct NonceExhausted { pub space_key_id: KeyId }
 ```
 
 **Why counter-based, not random?** Random 96-bit nonces have a birthday collision probability of ~2^-32 after 2^32 encryptions. For a space with millions of blocks across years of edits, this is uncomfortably close. Counter-based nonces guarantee uniqueness as long as the counter never repeats — which the monotonic counter + crash recovery margin ensures.
