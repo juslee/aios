@@ -271,6 +271,26 @@ pub struct Object {
     provenance: ProvenanceChain,
 }
 
+/// Append-only Merkle-linked provenance chain for an object. Summarizes
+/// the full per-version ProvenanceEntry records (§5.1) for quick inspection
+/// without walking the entire version DAG.
+/// Canonical definition: architecture.md §2.3.
+pub struct ProvenanceChain {
+    /// Hash of the most recent ProvenanceEntry in the chain
+    head: Hash,
+    /// Total number of entries (versions) in the chain
+    length: u64,
+    /// Who originally created this object
+    origin: ProvenanceOrigin,
+}
+
+pub enum ProvenanceOrigin {
+    UserCreated { agent: AgentId },
+    AiGenerated { model: ModelId },
+    Imported { source: String },
+    DerivedFrom { source: ObjectId },
+}
+
 pub struct SemanticMetadata {
     /// Always available (set by creator or AIRS)
     summary: Option<String>,

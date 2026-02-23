@@ -229,6 +229,31 @@ pub struct AgentManifest {
     dependencies: Vec<ContentHash>,
     ai_analysis: SecurityAnalysis,
 }
+
+/// Set of kernel-managed capability tokens held by a task or agent.
+/// Full definition: architecture.md §2.3.
+pub struct CapabilitySet {
+    tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,
+}
+
+/// Entry in a task's activity log. Records what an agent did and when.
+/// Used by Intent Verification (Layer 1). Full definition: architecture.md §2.3.
+pub struct ActivityEntry {
+    timestamp: Timestamp,
+    agent: AgentId,
+    action: ActivityAction,
+    capability: CapabilityType,
+    duration: Option<Duration>,
+}
+
+/// Append-only Merkle-linked provenance chain for an object. Aggregates
+/// per-version ProvenanceEntry records (spaces.md §5.1) for quick inspection.
+/// Full definition: architecture.md §2.3.
+pub struct ProvenanceChain {
+    head: Hash,
+    length: u64,
+    origin: ProvenanceOrigin,
+}
 ```
 ---
 ## 3. Security Architecture

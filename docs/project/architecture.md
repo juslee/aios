@@ -399,6 +399,77 @@ pub struct AgentManifest {
     dependencies: Vec<ContentHash>,
     ai_analysis: SecurityAnalysis,
 }
+
+/// Set of capabilities held by a task or agent process. Capabilities are
+/// kernel-managed tokens — agents hold references, not the capabilities
+/// themselves. The kernel validates every token on every syscall.
+/// See ipc.md §5 for capability transfer and boot.md §3.3 Step 12 for
+/// the root capability from which all others derive.
+pub struct CapabilitySet {
+    /// Active capability tokens, keyed by capability type for O(1) lookup
+    tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,
+}
+
+pub enum CapabilityType {
+    ReadSpace(SpaceId),
+    WriteSpace(SpaceId),
+    FlowRead,
+    FlowWrite,
+    Network(NetworkScope),
+    Spawn,
+    DeviceAccess(DeviceClass),
+    IpcConnect(ServiceName),
+}
+
+/// A single entry in a task's activity log. Records what an agent did,
+/// when, and in what context. Used by Intent Verification (Layer 1) to
+/// compare observed actions against the task's declared Intent.
+pub struct ActivityEntry {
+    timestamp: Timestamp,
+    agent: AgentId,
+    action: ActivityAction,
+    /// Capability that authorized this action
+    capability: CapabilityType,
+    /// Time spent on this action (for CPU accounting)
+    duration: Option<Duration>,
+}
+
+pub enum ActivityAction {
+    SpaceRead { space: SpaceId, object: ObjectId },
+    SpaceWrite { space: SpaceId, object: ObjectId },
+    SpaceCreate { space: SpaceId, object: ObjectId },
+    SpaceDelete { space: SpaceId, object: ObjectId },
+    FlowTransfer { intent: TransferIntent },
+    NetworkRequest { endpoint: String },
+    InferenceRequest { model: ModelId },
+    AgentSpawn { child: AgentId },
+    IpcMessage { channel: ChannelId },
+}
+
+/// Append-only provenance chain for an object. Each entry links to the
+/// previous via hash, forming a Merkle chain. Stored in the Version Store
+/// (see spaces.md §5.1 for per-version ProvenanceEntry). The chain here
+/// is the object-level summary — it aggregates provenance across all
+/// versions for quick inspection without walking the full version DAG.
+pub struct ProvenanceChain {
+    /// Hash of the most recent provenance entry
+    head: Hash,
+    /// Total number of entries in the chain
+    length: u64,
+    /// Who originally created this object
+    origin: ProvenanceOrigin,
+}
+
+pub enum ProvenanceOrigin {
+    /// Created by a user action via an agent
+    UserCreated { agent: AgentId },
+    /// AI-generated content
+    AiGenerated { model: ModelId },
+    /// Imported from external source
+    Imported { source: String },
+    /// Derived from another object
+    DerivedFrom { source: ObjectId },
+}
 ```
 
 ### 2.4 Flow System
