@@ -1346,6 +1346,9 @@ impl SubBlockDedup {
         let mut chunk_start = 0;
         let mut hasher = RabinHasher::new(self.window_size);  // Rabin fingerprint rolling hash (custom AIOS impl)
 
+        // Bytes 0..min_chunk_size are included in the first chunk but not checked
+        // for boundaries (by design — prevents tiny chunks). The rolling hash window
+        // fills during bytes min_chunk_size..min_chunk_size+window_size.
         for i in self.min_chunk_size..data.len() {
             hasher.slide(data[i]);
 
@@ -1888,7 +1891,11 @@ impl VersionStore {
     /// Rollback an object to a previous version. Creates a NEW version node
     /// whose content_hash points to the old version's content. The DAG grows
     /// forward — rollback never rewrites history.
-    fn rollback(&self, space: SpaceId, object: ObjectId, target: Hash) -> Result<Version> {
+    /// Note: uses ? on StorageError returns from get_version()/head(),
+    /// requiring From<StorageError> for Error (via Error::IoError).
+    /// Returns VersionError::ObjectMismatch on mismatch, requiring
+    /// From<VersionError> for Error (via Error::VersionError).
+    fn rollback(&self, space: SpaceId, object: ObjectId, target: Hash) -> Result<Version, Error> {
         let target_version = self.get_version(target)?;
         if target_version.object_id != object {
             return Err(VersionError::ObjectMismatch {
@@ -1921,7 +1928,11 @@ impl VersionStore {
     /// Objects deleted since the snapshot are restored. Objects created after
     /// the snapshot are intentionally retained (snapshot rollback is
     /// non-destructive for new content).
-    fn rollback_to_snapshot(&self, snapshot: &Snapshot) -> Result<u64> {
+    /// Note: head() returns Result<_, StorageError>, but this method returns
+    /// Result<_, Error>. The ? operator relies on From<StorageError> for Error
+    /// (via Error::IoError(StorageError)). Similarly, rollback() may return
+    /// VersionError, converted via Error::VersionError(VersionError).
+    fn rollback_to_snapshot(&self, snapshot: &Snapshot) -> Result<u64, Error> {
         let mut rolled_back = 0u64;
         for (object_id, version_hash) in &snapshot.object_versions {
             match self.head(snapshot.space, *object_id) {
@@ -1930,12 +1941,12 @@ impl VersionStore {
                     rolled_back += 1;
                 }
                 Ok(_) => {} // already at snapshot version
-                Err(Error::ObjectNotFound) => {
-                    // Object was deleted after snapshot — restore it
+                Err(StorageError::BlockNotFound) => {
+                    // Object's version data was deleted after snapshot — restore it
                     self.rollback(snapshot.space, *object_id, *version_hash)?;
                     rolled_back += 1;
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(Error::IoError(e)),
             }
         }
         Ok(rolled_back)
@@ -2124,7 +2135,7 @@ impl NonceGenerator {
 }
 
 /// Error returned when the nonce counter approaches u64::MAX.
-/// The space key must be rotated (§4.10.3) before further encryption.
+/// The space key must be rotated (§6.1) before further encryption.
 pub struct NonceExhausted { pub space_key_id: KeyId }
 ```
 
@@ -2613,7 +2624,7 @@ impl PosixSpaceBridge {
                 obj
             }
             Err(Error::ObjectNotFound) if flags.contains(O_CREAT) => {
-                space.create_object(object_path, current_agent())?
+                space.create_object(object_path, ContentType::Document, &[])?
             }
             Err(e) => return Err(e),
         };
@@ -2622,10 +2633,14 @@ impl PosixSpaceBridge {
 
     fn readdir(&self, path: &str) -> Result<Vec<DirEntry>> {
         let (space, prefix) = self.resolve_path(path)?;
-        let objects = space.query(SpaceQuery::Filter {
+        let object_ids = space.query(SpaceQuery::Filter {
             parent: Some(prefix),
             ..default()
         })?;
+        // query() returns Vec<ObjectId>; resolve each to a full Object
+        let objects: Vec<Object> = object_ids.iter()
+            .filter_map(|id| space.get_object(*id).ok())
+            .collect();
         Ok(objects.iter().map(|o| o.to_dir_entry()).collect())
     }
 
@@ -2634,7 +2649,7 @@ impl PosixSpaceBridge {
         let object = space.resolve_object(object_path)?;
         Ok(Stat {
             size: object.content_size,
-            modified: object.modified_at.to_timespec(),
+            modified: object.modified_at.as_millis() / 1000, // seconds since epoch
             mode: object.to_posix_mode(),
             // ...
         })

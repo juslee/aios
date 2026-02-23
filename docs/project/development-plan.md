@@ -171,8 +171,9 @@ All 28 phases are designed to be achievable by a single experienced systems prog
 
 With 2-3 developers, phases can be parallelized:
 - Developer A: kernel (Phases 0-3), then performance (14), then security (13)
-- Developer B: storage + GPU (Phases 4-6), then UI toolkit (20), then browser (21) — ordered to respect dependency chain (Phase 12 → 20 → 21)
+- Developer B: storage + GPU (Phases 4-6), then input/networking (7), then UI toolkit (20), then browser (21) — ordered to respect dependency chain (Phase 7 → 8, Phase 12 → 20 → 21)
 - Developer C: AI (Phases 8-11), then networking (16), then agent ecosystem (12)
+- Note: Remaining phases (15, 17-19, 22-27) are assigned based on availability as earlier phases complete.
 
 Estimated timeline with 3 developers: ~50-60 weeks (~1 year).
 
