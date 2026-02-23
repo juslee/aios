@@ -26,8 +26,8 @@ The user never has to interact with AI to use the computer. AI enhances silently
 | Clipboard | Flow (context-aware data transfer) | Data transforms based on destination context |
 | Notifications | Attention management (AI-triaged) | AI filters noise, surfaces what matters |
 | Config files | Conversational preferences | Say what you want, AI translates to system parameters |
-| Package manager | Capability-gated agents | No installation — agents run within approved capability bounds |
-| Terminal shell | Conversation as interface | Natural language in, structured visual output |
+| Package manager | Capability-gated agents | No traditional installation — agents are signed, capability-scoped, and hot-swappable (see architecture.md §6.4) |
+| Terminal shell | Conversation bar + POSIX terminal | Natural language primary interface, full terminal still available (architecture.md §2.10) |
 | User accounts | Identity & relationships | Cryptographic identity, graduated trust |
 | Window manager | Semantic compositor (GPU-native) | AI understands window content, mediates interactions |
 | Filesystem permissions | 8-layer security model | Intent verification, behavioral boundaries, adversarial AI defense |
@@ -221,6 +221,13 @@ pub struct Task {
     persistence: Persistence,
     context: ContextLink,
 }
+/// Links a task to its surrounding context (space, identity, context snapshot).
+/// Full definition: architecture.md §2.3 (Task & Agent Model).
+pub struct ContextLink {
+    space_id: SpaceId,
+    identity_id: IdentityId,
+    snapshot_id: ObjectId,
+}
 pub struct AgentManifest {
     name: String,
     author: Identity,
@@ -231,7 +238,7 @@ pub struct AgentManifest {
 }
 
 /// Set of kernel-managed capability tokens held by a task or agent.
-/// Full definition: architecture.md §2.3.
+/// Full definition: architecture.md §2.3 (Task & Agent Model).
 pub struct CapabilitySet {
     tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,
 }
@@ -248,7 +255,7 @@ pub struct ActivityEntry {
 
 /// Append-only Merkle-linked provenance chain for an object. Aggregates
 /// per-version ProvenanceEntry records (spaces.md §5.1) for quick inspection.
-/// Full definition: architecture.md §2.3.
+/// Full definition: architecture.md §2.3 (Task & Agent Model).
 pub struct ProvenanceChain {
     head: Hash,
     length: u64,
@@ -361,13 +368,15 @@ The browser is a constellation of agents, not a monolithic application:
 Same-origin policy becomes kernel-enforced capability isolation. Web APIs bridge to OS subsystem services. Web storage maps to spaces (searchable, syncable, inspectable).
 ---
 ## 7. Developer Experience
-Developers build four things on AIOS:
+Developers build six things on AIOS (see architecture.md §4.3 for full details):
 | Type | Description | Example |
 |---|---|---|
-| **Agents** | Autonomous programs with capabilities | Research assistant, file organizer |
+| **Agents** | Autonomous domain-specific programs | Research assistant, file organizer |
 | **Tools** | Single-purpose functions agents can call | PDF parser, image classifier |
-| **Views** | UI components that render space objects | Markdown renderer, chart widget |
-| **Drivers** | Userspace device drivers | USB webcam, custom hardware |
+| **Workflows** | Orchestrate agents for a use case | Sales pipeline, academic research |
+| **Connectors** | Bridge external services into spaces | Slack, GitHub, Google Workspace |
+| **Space templates** | Pre-structured spaces for common needs | Project management, client onboarding |
+| **Experience plugins** | Custom compositor UI components (views, drivers) | Chart widget, USB webcam driver |
 The SDK provides inference, storage, security, networking, and context as system services. Developers write the domain-specific part.
 ---
 ## 8. App Ecosystem Strategy
@@ -380,8 +389,8 @@ The SDK provides inference, storage, security, networking, and context as system
 ## 9. Hardware Strategy
 | Stage | Target | Purpose |
 |---|---|---|
-| Phase 0-15 | QEMU aarch64 (HVF on macOS) | All development and testing |
-| Phase 15 | Raspberry Pi 4/5 | First real hardware validation |
+| Phase 0-14 | QEMU aarch64 (HVF on macOS) | All development and testing |
+| Phase 16-19 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
 | Phase 24-27 | VM images (UTM/QEMU) | Low-barrier adoption path |
 | Post-MVP | Pine64, Framework Laptop | Open-hardware partners |
 | Maturity | Own hardware | Only if platform achieves critical mass |
@@ -510,16 +519,16 @@ Each development phase will have companion `phase-detail.md` and `milestone-step
 These companion documents provide deep-dive technical specifications:
 | Document | Scope |
 |---|---|
-| `architecture.md` | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
-| `airs.md` | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
-| `spaces.md` | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
-| `compositor.md` | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
-| `ipc.md` | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
-| `subsystem-framework.md` | Universal hardware abstraction — traits, types, patterns for every subsystem |
-| `networking.md` | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
-| `browser.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
-| `experience.md` | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
-| `development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
+| [architecture.md](./architecture.md) | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
+| [airs.md](../intelligence/airs.md) | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
+| [spaces.md](../storage/spaces.md) | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
+| [compositor.md](../platform/compositor.md) | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
+| [ipc.md](../kernel/ipc.md) | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
+| [subsystem-framework.md](../platform/subsystem-framework.md) | Universal hardware abstraction — traits, types, patterns for every subsystem |
+| [networking.md](../platform/networking.md) | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
+| [browser.md](../applications/browser.md) | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
+| [experience.md](../experience/experience.md) | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
+| [development-plan.md](./development-plan.md) | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
 ---
 ## 13. Success Criteria (Full Production OS)
 **Core OS:**

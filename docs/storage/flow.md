@@ -96,7 +96,7 @@ Flow uses types defined in other documents. Canonical definitions:
 | `ChannelId` | [ipc.md §3](../kernel/ipc.md) | IPC channel identifier |
 | `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
 | `DeviceId` | [subsystem-framework.md](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
-| `TrustLevel` | [security.md §2](../security/security.md) | Trust classification (0–3) for processes |
+| `TrustLevel` | [security.md §2](../security/security.md) | Trust classification (0–4) for processes |
 
 Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.2), `TransformId` (§4.1).
 

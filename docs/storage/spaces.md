@@ -135,6 +135,17 @@ pub type BlockId = Hash;
 /// Signature type (Ed25519, 64 bytes).
 pub type Signature = [u8; 64];
 
+/// Reference to an object within a space. Used by Flow (flow.md §3.1),
+/// architecture.md §2.3, and boot-lifecycle.md §14 for cross-space
+/// object references without copying the object itself.
+pub struct ObjectRef {
+    pub space_id: SpaceId,
+    pub object_id: ObjectId,
+    /// Optional version hash — when set, pins this reference to a
+    /// specific version. When None, the reference tracks the latest.
+    pub version: Option<Hash>,
+}
+
 /// Physical location of a block on the storage device.
 pub struct BlockLocation {
     /// Byte offset on the raw device partition.
@@ -233,6 +244,8 @@ system/                      ← Core zone, kernel-managed
   services/                  ← Service binaries (Phase 3-5, loaded from storage)
   session/                   ← Semantic snapshots, boot traces, proactive wake data
   identity/                  ← Identity keypairs and authentication state
+  flow/                      ← Flow transfer history and provenance (flow.md §3.1)
+    history/                 ← Completed FlowEntry objects (content-addressed)
 
 user/                        ← Personal zone, encrypted
   home/                      ← Default personal space
@@ -686,6 +699,28 @@ pub enum StorageError {
     QuotaExceeded,
 }
 
+/// Version Store error enum. Used by rollback, merge, and version queries.
+pub enum VersionError {
+    /// Requested version hash not found in the DAG.
+    VersionNotFound,
+    /// Target version belongs to a different object than expected.
+    ObjectMismatch { expected: ObjectId, found: ObjectId },
+    /// Merge conflict cannot be auto-resolved.
+    MergeConflict,
+    /// Underlying storage failure.
+    IoError(StorageError),
+}
+
+/// Integrity verification error. Used by GC, compaction, and audit scans.
+pub enum IntegrityError {
+    /// Block content does not match its content-addressed hash.
+    HashMismatch { block: BlockId, expected: Hash, actual: Hash },
+    /// Merkle DAG parent reference points to a missing version node.
+    BrokenChain { object: ObjectId, missing_hash: Hash },
+    /// Reference count is negative or exceeds plausible bounds.
+    InvalidRefCount { block: BlockId, count: i64 },
+}
+
 /// Space-level error enum. Used by Object Store, Version Store, POSIX bridge,
 /// and device key manager. Maps to POSIX errno via §9.5.
 pub enum Error {
@@ -703,6 +738,8 @@ pub enum Error {
     EncryptionKeyUnavailable,
     UnknownKeyEpoch(u64),
     IoError(StorageError),
+    VersionError(VersionError),
+    IntegrityError(IntegrityError),
 }
 ```
 
@@ -997,7 +1034,7 @@ pub struct BlockHeader {
 }
 
 impl BlockEngine {
-    fn write_block(&self, data: &[u8], tier: StorageTier) -> BlockId {
+    fn write_block(&self, data: &[u8], tier: StorageTier) -> Result<BlockId, StorageError> {
         let strategy = self.select_compression(data, tier);
         let compressed = match strategy {
             CompressionStrategy::None => data.to_vec(),
@@ -1823,7 +1860,7 @@ impl VersionStore {
     /// Walk the version chain for an object, newest to oldest.
     /// Returns an iterator that lazily loads version nodes from the LSM-tree
     /// using the key `(space_id, object_id, reverse_timestamp)`.
-    fn log(&self, space: SpaceId, object: ObjectId) -> impl Iterator<Item = Version> {
+    fn log(&self, space: SpaceId, object: ObjectId) -> impl Iterator<Item = Result<Version, StorageError>> {
         self.lsm.range_scan(
             VersionKey::prefix(space, object),
             ScanDirection::NewestFirst,
@@ -1866,6 +1903,7 @@ impl VersionStore {
                 target_version.content_hash.as_bytes(),
             ]),
             parent: Some(current_head.hash),
+            merge_parent: None,  // rollback is linear, not a merge
             content_hash: target_version.content_hash,
             content_size: target_version.content_size,
             object_id: object,
@@ -1960,7 +1998,7 @@ The Merkle DAG structure naturally supports branching: two version nodes can sha
         F         ← merge version (conflict resolved)
 ```
 
-Branch creation is implicit — it happens whenever Space Sync (§8) discovers that both the local and remote DAGs have advanced past a common ancestor. The `SyncConflict` struct (§8) represents a detected fork, and resolution produces a merge version node with two parents. In Phase 9c, the `Version` struct (§5.1) will be extended with a `merge_parent: Option<Hash>` field — a second parent, only set for merge commits. Until then, single-device operation always produces a linear chain (every version has at most one parent).
+Branch creation is implicit — it happens whenever Space Sync (§8) discovers that both the local and remote DAGs have advanced past a common ancestor. The `SyncConflict` struct (§8) represents a detected fork, and resolution produces a merge version node with two parents. The `Version` struct (§5.1) already includes a `merge_parent: Option<Hash>` field (added early to avoid schema migration in Phase 9c) — a second parent, only set for merge commits. Single-device operation always produces a linear chain (every version has at most one parent; `merge_parent` is `None`).
 
 Conflict resolution strategies are defined in §8. Branching semantics are Phase 9c work — single-device operation (Phase 4a-4l) always produces a linear chain.
 
@@ -2049,6 +2087,9 @@ pub struct NonceGenerator {
     /// Random prefix (32 bits), generated at key creation time.
     /// Combined with the 64-bit counter to fill the 96-bit nonce.
     random_prefix: u32,
+    /// Key identifier for the space key this generator is bound to.
+    /// Used in NonceExhausted errors to identify which key needs rotation.
+    key_id: KeyId,
 }
 
 /// Overflow safety threshold. When the counter reaches this value,
@@ -2603,7 +2644,7 @@ impl PosixSpaceBridge {
 
 BSD tools never know they're not on a traditional filesystem. `ls /spaces/research/` returns a directory listing. `grep` searches file content. `cat` reads objects. The translation is transparent.
 
-POSIX syscall translations are dispatched through IPC to the Space Service. See [ipc.md §12.2 Gap 6](../kernel/ipc.md) for the POSIX translation performance model (5 μs round-trip target) and the read-ahead, vnode cache, batched readdir, and write-coalescing optimizations that amortize IPC cost.
+POSIX syscall translations are dispatched through IPC to the Space Storage service. See [ipc.md §12.2 Gap 6](../kernel/ipc.md) for the POSIX translation performance model (5 μs round-trip target) and the read-ahead, vnode cache, batched readdir, and write-coalescing optimizations that amortize IPC cost.
 
 ### 9.3 Write Path
 
@@ -2615,7 +2656,7 @@ impl PosixSpaceBridge {
         let file = self.fd_table.get_mut(fd)?;
         gate_check(current_agent(), Capability::WriteSpace(file.space))?;
         // Buffer writes in the fd's write buffer (write coalescing —
-        // see ipc.md §12.2 Gap 6). Flush to Space Service on fsync/close
+        // see ipc.md §12.2 Gap 6). Flush to Space Storage service on fsync/close
         // or when buffer is full (default 64 KB).
         file.write_buf.extend_from_slice(buf);
         if file.write_buf.len() >= WRITE_COALESCE_THRESHOLD {
@@ -2632,7 +2673,7 @@ impl PosixSpaceBridge {
             self.flush(fd)?;
         }
         // Release the fd. If this is the last reference (no dup'd copies),
-        // the object handle is released back to the Space Service.
+        // the object handle is released back to the Space Storage service.
         self.fd_table.release(fd)
     }
 
@@ -2887,7 +2928,7 @@ Free headroom:           35-70 GB      70-140 GB     140-280 GB    280-560 GB
 
 **Key differences from constrained devices:**
 - **Multiple models fit comfortably.** A 256 GB laptop can hold 3-6 models (15-30 GB) without meaningful pressure. A 1 TB laptop can store every model a user might want.
-- **Generous version history.** Default retention can be `KeepLast(50)` instead of `KeepLast(20)`. On 512 GB+, `KeepAll` is viable for spaces the user cares about.
+- **Generous version history.** Default retention is overridden to `KeepLast(50)` instead of the base `KeepLast(20)` (see §10.2 for base defaults). On 512 GB+, `KeepAll` is viable for spaces the user cares about.
 - **Full embedding index.** Enough space and RAM to maintain embeddings for all promoted objects, not just a subset.
 - **70B models become feasible.** A Q4-quantized 70B model is ~40 GB. On a 512 GB laptop with 64 GB RAM, this is the first device class where it's practical to store and run.
 
