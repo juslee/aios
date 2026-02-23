@@ -156,6 +156,8 @@ pub struct Space {
 }
 pub struct Object {
     id: ObjectId,
+    /// Human-readable name (last path component)
+    name: String,
     content_hash: Hash,              // content stored separately (content-addressed)
     content_type: ContentType,
     content_size: u64,
@@ -166,6 +168,36 @@ pub struct Object {
     created_by: AgentId,
     modified_by: AgentId,
     provenance: ProvenanceChain,
+}
+
+pub enum ContentType {
+    Document, Code, Image, Audio, Video, Data,
+    Conversation, Config, Agent, GameSave,
+    WebPage, MediaReference, Task, Note,
+    CacheEntry, SessionToken, Cookie,
+}
+
+pub struct Relation {
+    source: ObjectId,
+    target: ObjectId,
+    kind: RelationKind,
+    confidence: f32,
+    explanation: Option<String>,
+    created_by: RelationSource,
+}
+
+pub enum RelationKind {
+    DerivedFrom, References, DependsOn,
+    RelatedTo, CreatedBy, InputTo,
+    OutputOf, ConversationContext,
+    VersionOf, SiblingOf,
+    ChildOf, Attachment,
+}
+
+pub enum RelationSource {
+    Ai,               // created by AIRS during indexing
+    User,             // created explicitly by user action
+    Agent(AgentId),   // created by an agent during operation
 }
 pub struct SemanticMetadata {
     summary: Option<String>,          // AIRS-generated, may not exist yet

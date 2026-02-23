@@ -661,20 +661,62 @@ pub enum VmRegionKind {
 type Vma = VmRegion;
 
 impl AddressSpace {
-    /// Look up the PTE for a virtual address by walking the page table.
-    pub fn lookup_pte(&self, addr: VirtualAddress) -> Result<&PageTableEntry, FaultError> { todo!() }
+    /// Look up the PTE for a virtual address by walking the four-level page table.
+    /// Returns a reference to the leaf PTE, or FaultError::InvalidAddress if
+    /// any intermediate table is missing (no auto-population).
+    pub fn lookup_pte(&self, addr: VirtualAddress) -> Result<&PageTableEntry, FaultError> {
+        let l0_idx = (addr.0 >> 39) & 0x1FF;
+        let l1_idx = (addr.0 >> 30) & 0x1FF;
+        let l2_idx = (addr.0 >> 21) & 0x1FF;
+        let l3_idx = (addr.0 >> 12) & 0x1FF;
 
-    /// Overwrite the PTE for a virtual address.
-    pub fn update_pte(&mut self, addr: VirtualAddress, pte: PageTableEntry) { todo!() }
+        let l0 = &self.pgd;
+        let l1 = l0.entry(l0_idx).table().ok_or(FaultError::InvalidAddress)?;
+        let l2 = l1.entry(l1_idx).table().ok_or(FaultError::InvalidAddress)?;
+        // L2 entry may be a 2 MB block (huge page) — return it directly
+        if l2.entry(l2_idx).is_block() {
+            return Ok(l2.entry_ref(l2_idx));
+        }
+        let l3 = l2.entry(l2_idx).table().ok_or(FaultError::InvalidAddress)?;
+        Ok(l3.entry_ref(l3_idx))
+    }
+
+    /// Overwrite the PTE for a virtual address. Caller must ensure the
+    /// intermediate tables already exist (see map_page for auto-population).
+    /// Issues a TLB invalidation for the affected VA after the write.
+    pub fn update_pte(&mut self, addr: VirtualAddress, pte: PageTableEntry) {
+        // Walk to the leaf entry and overwrite it
+        let leaf = self.lookup_pte_mut(addr).expect("PTE must exist for update");
+        *leaf = pte;
+        // Single-entry TLBI for this ASID + VA
+        tlb_invalidate_page(self.asid, addr);
+    }
 
     /// Find the VmRegion (VMA) containing `addr`, if any.
-    pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> { todo!() }
+    /// VmRegions are stored in an interval tree sorted by base address.
+    pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> {
+        self.vm_regions.find_containing(addr)
+    }
 
     /// Walk the page table and return the PTE (may be invalid/encoded).
-    pub fn walk_page_table(&self, addr: VirtualAddress) -> Result<PageTableEntry, FaultError> { todo!() }
+    /// Unlike lookup_pte, this does not require the PTE to be valid —
+    /// it returns whatever bits are stored, including swap/compressed
+    /// encodings (see §10.5 for PteState decoding).
+    pub fn walk_page_table(&self, addr: VirtualAddress) -> Result<PageTableEntry, FaultError> {
+        self.lookup_pte(addr).copied()
+    }
 
-    /// Install a mapping: allocate intermediate tables as needed, write PTE.
-    pub fn map_page(&mut self, addr: VirtualAddress, frame: PhysicalFrame, perms: VmFlags) { todo!() }
+    /// Install a mapping: allocate intermediate page tables as needed, write the
+    /// leaf PTE with the given frame and permissions. Enforces W^X — the perms
+    /// argument must not set both WRITE and EXECUTE. Panics if W^X is violated.
+    pub fn map_page(&mut self, addr: VirtualAddress, frame: PhysicalFrame, perms: VmFlags) {
+        assert!(!perms.contains(VmFlags::WRITE | VmFlags::EXECUTE), "W^X violation");
+        // Ensure L0→L1→L2→L3 tables exist, allocating from frame allocator as needed
+        let l3_table = self.ensure_table_path(addr);
+        let l3_idx = (addr.0 >> 12) & 0x1FF;
+        l3_table.set_entry(l3_idx, PageTableEntry::page(frame, perms));
+        tlb_invalidate_page(self.asid, addr);
+    }
 }
 ```
 
@@ -879,16 +921,54 @@ const MAGAZINE_SIZE: usize = 32;
 
 impl SlabCache {
     /// Create a new slab cache for objects of `size` bytes.
-    pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self { todo!() }
+    /// Allocates one initial slab (one physical page) and fills
+    /// the per-CPU magazine for the boot CPU.
+    pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self {
+        let aligned_size = size.next_power_of_two().max(8); // minimum 8-byte alignment
+        let objects_per_slab = PAGE_SIZE / aligned_size;
+        let initial_page = fa.alloc_order(0).expect("slab init: OOM");
+        // Carve the page into a freelist of fixed-size objects
+        let freelist = Self::build_freelist(initial_page, aligned_size, objects_per_slab);
+        Self { name, object_size: aligned_size, objects_per_slab, freelist, magazine: Magazine::empty() }
+    }
 
-    /// Allocate one object from this cache (magazine fast-path, then slab).
-    pub fn alloc(&mut self) -> *mut u8 { todo!() }
+    /// Allocate one object from this cache.
+    /// Fast path: pop from per-CPU magazine (no lock, no atomic).
+    /// Slow path: refill magazine from shared freelist (lock required).
+    pub fn alloc(&mut self) -> *mut u8 {
+        // Fast path: per-CPU magazine
+        if let Some(ptr) = self.magazine.current.pop() {
+            return ptr;
+        }
+        // Swap current ↔ prev magazine
+        core::mem::swap(&mut self.magazine.current, &mut self.magazine.prev);
+        if let Some(ptr) = self.magazine.current.pop() {
+            return ptr;
+        }
+        // Slow path: refill magazine from shared freelist
+        self.refill_magazine();
+        self.magazine.current.pop().expect("slab: refill failed — OOM")
+    }
 
     /// Return an object to this cache.
-    pub fn free(&mut self, ptr: *mut u8) { todo!() }
+    /// Fast path: push to per-CPU magazine. If magazine is full,
+    /// swap with prev and push. If both full, flush prev to freelist.
+    pub fn free(&mut self, ptr: *mut u8) {
+        if self.magazine.current.push(ptr) { return; }
+        core::mem::swap(&mut self.magazine.current, &mut self.magazine.prev);
+        if self.magazine.current.push(ptr) { return; }
+        // Both magazines full — flush prev to shared freelist, then push
+        self.flush_magazine(&mut self.magazine.prev);
+        self.magazine.current.push(ptr);
+    }
 
     /// Grow the cache by allocating a new backing slab from the frame allocator.
-    pub fn grow(&mut self, fa: &FrameAllocator) { todo!() }
+    /// Called when the shared freelist is empty and a magazine refill is needed.
+    pub fn grow(&mut self, fa: &FrameAllocator) {
+        let page = fa.alloc_order(0).expect("slab grow: OOM");
+        let new_objects = Self::build_freelist(page, self.object_size, self.objects_per_slab);
+        self.freelist.extend(new_objects);
+    }
 }
 
 /// Top-level slab allocator managing all caches
@@ -899,11 +979,29 @@ pub struct SlabAllocator {
 impl SlabAllocator {
     /// Allocate `size` bytes with `align` alignment.
     /// Finds the smallest cache whose object size >= requested size.
-    /// Returns null if no cache fits (caller falls back to buddy allocator).
-    pub fn alloc(&self, size: usize, align: usize) -> *mut u8 { todo!() }
+    /// Returns null if no cache fits (caller falls back to buddy allocator
+    /// for allocations larger than the biggest slab cache).
+    pub fn alloc(&self, size: usize, align: usize) -> *mut u8 {
+        let effective_size = size.max(align);
+        for cache in &self.caches {
+            if cache.object_size >= effective_size {
+                return cache.alloc();
+            }
+        }
+        core::ptr::null_mut() // too large for slab — caller uses buddy allocator
+    }
 
     /// Free a previously allocated pointer of the given `size`.
-    pub fn free(&self, ptr: *mut u8, size: usize) { todo!() }
+    /// Routes to the correct slab cache based on size.
+    pub fn free(&self, ptr: *mut u8, size: usize) {
+        for cache in &self.caches {
+            if cache.object_size >= size {
+                cache.free(ptr);
+                return;
+            }
+        }
+        panic!("slab free: size {} exceeds all caches — was this allocated from buddy?", size);
+    }
 
     /// Standard caches created at boot
     pub fn init(frame_allocator: &FrameAllocator) -> Self {
@@ -1089,7 +1187,12 @@ impl AgentMemoryStats {
 
     /// Major fault rate (faults requiring disk I/O) over the last sampling window.
     /// Used by ThrashDetector to identify agents causing excessive paging.
-    pub fn major_faults_per_sec(&self) -> f64 { todo!() }
+    /// The sampling window is 1 second, updated on each major fault.
+    pub fn major_faults_per_sec(&self) -> f64 {
+        let elapsed = Timestamp::now().as_millis() - self.last_sample_time.as_millis();
+        if elapsed == 0 { return 0.0; }
+        (self.major_faults_in_window as f64) / (elapsed as f64 / 1000.0)
+    }
 }
 ```
 
@@ -1106,7 +1209,7 @@ When an agent's RSS exceeds its memory limit, the kernel does not silently kill 
 ```
 1. Agent's RSS crosses memory limit
      ↓
-2. Kernel sets agent state to Paused
+2. Kernel sets agent state to Suspended (scheduler.md §3.3 ThreadState::Suspended)
    (agent threads stop executing, no data loss)
      ↓
 3. Kernel sends notification to Attention Manager:

@@ -125,10 +125,18 @@ pub struct FlowEntry {
 
 pub struct FlowEntryId(u128);
 
+/// Links a Flow transfer to the provenance chain in the Version Store
+/// (see spaces.md §5.1). When a transfer creates or modifies a space object,
+/// a ProvenanceEntry is recorded in the object's Version node. This
+/// ProvenanceLink stores the hash of that entry, connecting the Flow history
+/// to the space's Merkle DAG. The `parent` field links to the previous
+/// FlowEntry's provenance (if the content was derived from a prior transfer),
+/// forming a separate Flow-level chain alongside the per-object Version chain.
 pub struct ProvenanceLink {
-    /// Hash of the provenance record in the provenance chain
+    /// Hash of the ProvenanceEntry recorded in the space Version Store
     hash: Hash,
-    /// Previous link in the chain (if this content was derived from another transfer)
+    /// Previous link in the Flow provenance chain (if this content was
+    /// derived from another transfer — e.g., Quote or Derive intent)
     parent: Option<Hash>,
 }
 ```
@@ -297,13 +305,15 @@ pub enum TransferIntent {
 
 **Intent behavior matrix:**
 
-| Intent | Content copied? | Source affected? | Relation created? | Provenance link? |
-|---|---|---|---|---|
-| Copy | Yes (full copy) | No | No | Yes (for history) |
-| Move | Yes (transferred) | Archived | No | Yes |
-| Reference | No (ObjectRef only) | No | References | Yes |
-| Quote | Yes (full copy) | No | DerivedFrom | Yes |
-| Derive | Yes (transformed) | No | DerivedFrom | Yes |
+| Intent | Content copied? | Source affected? | Relation created? | Provenance link? | Ephemeral interaction |
+|---|---|---|---|---|---|
+| Copy | Yes (full copy) | No | No | Yes (FlowEntry recorded, source/dest tracked for history search — no Relation object in the space) | If ephemeral=true, content block is zeroed after delivery; FlowEntry metadata remains for audit |
+| Move | Yes (transferred) | Archived (source object's state set to Archived) | No | Yes (full chain: source → transfer → destination) | ephemeral=true is disallowed for Move (Move implies persistence) |
+| Reference | No (ObjectRef only) | No | References (Relation created in destination space) | Yes (lightweight — only ObjectRef is tracked) | If source object is deleted, ObjectRef becomes dangling; receiver gets `ObjectNotFound` on access |
+| Quote | Yes (full copy) | No | DerivedFrom (Relation with attribution metadata) | Yes (includes source quote context) | Ephemeral=true allowed; DerivedFrom relation persists even after content is purged |
+| Derive | Yes (transformed copy) | No | DerivedFrom (Relation linking to original) | Yes (includes transform chain) | Ephemeral=true allowed; behaves like ephemeral Copy but with the DerivedFrom relation |
+
+**Key distinction — Copy vs Quote:** Copy creates no Relation between objects. Quote creates a `DerivedFrom` relation with attribution, linking the new object to its source. Use Copy for "I want this data." Use Quote for "I'm citing this data."
 
 ### 3.4 TypedContent
 
@@ -329,7 +339,15 @@ pub struct TypedContent {
 }
 
 pub struct ContentPayload {
-    /// Shared memory region containing the data
+    /// Shared memory region containing the data.
+    /// SharedMemoryId is a kernel-issued opaque handle (see memory.md §7.1)
+    /// identifying a reference-counted shared memory region. The region is
+    /// COW (copy-on-write): the source agent's content is not duplicated
+    /// until the receiver modifies it. The region's lifetime is managed by
+    /// the kernel — it is freed when all mapping agents unmap it AND the
+    /// Flow Service releases its reference (after the transfer completes
+    /// or the history entry is pruned). Maximum lifetime for unclaimed
+    /// transfers is controlled by Transfer.expires_at (default: 5 minutes).
     data: SharedMemoryId,
     /// Size in bytes
     size: u64,
@@ -512,6 +530,20 @@ pub struct TransformRegistry {
     /// Updated when transforms are registered/unregistered
     conversion_graph: ConversionGraph,
 }
+
+/// Transform selection tiebreaker rules (applied in order):
+///
+/// When multiple transforms match the same input → output type conversion:
+/// 1. **Lowest cost wins.** Compare TransformCost.time_ms first, then memory.
+/// 2. **Provider priority.** If costs are equal: System > Airs > Agent.
+///    System transforms are always preferred because they are deterministic,
+///    always available, and have no inference overhead.
+/// 3. **Agent tiebreaker.** If two Agent providers have equal cost:
+///    the agent with the longer runtime (more established) wins.
+///    This is a stable sort — the first registered agent wins if both
+///    started at the same time. No randomness.
+/// 4. **Lossless preferred.** If costs and providers are equal, prefer
+///    the non-lossy transform.
 
 pub struct TransformRecord {
     /// Which transform was applied

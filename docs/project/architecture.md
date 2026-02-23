@@ -304,6 +304,87 @@ pub enum TaskState {
     Failed(Error),
 }
 
+/// A user-facing question presented when a task needs input.
+pub struct Question {
+    text: String,
+    options: Option<Vec<String>>,
+    default: Option<String>,
+}
+
+/// Result of a successfully completed task.
+pub struct Outcome {
+    summary: String,
+    artifacts: Vec<ObjectId>,
+}
+
+/// Structured intent describing what a task or agent is trying to accomplish.
+/// Used by Intent Verification (Layer 1) to compare observed actions against
+/// declared goals. Distinct from TransferIntent (§2.4) which governs Flow.
+pub struct Intent {
+    /// Human-readable goal description (e.g., "organize research papers")
+    goal: String,
+    /// Structured action categories this intent permits
+    permitted_actions: Vec<ActionCategory>,
+    /// Maximum scope (spaces, object count) the intent covers
+    scope: IntentScope,
+}
+
+pub enum ActionCategory {
+    Read, Write, Delete, Create, Search, Infer, Network, Spawn,
+}
+
+pub struct IntentScope {
+    spaces: Vec<SpaceId>,
+    max_objects: Option<u64>,
+    max_network_requests: Option<u64>,
+}
+
+/// AI engagement level driven by Context Engine signals.
+pub enum AiEngagement {
+    /// Pure infrastructure — scheduling, security, indexing.
+    /// User sees no AI activity.
+    Invisible,
+    /// Results visible, process hidden — search works, defaults adapt.
+    Ambient,
+    /// Conversation bar responsive, suggestions ready.
+    Available,
+}
+
+/// Resource allocation priority driven by Context Engine.
+pub enum ResourcePriority {
+    /// Foreground task gets maximum resources
+    Foreground,
+    /// Background tasks get fair share
+    Background,
+    /// System is in low-power mode
+    LowPower,
+}
+
+/// A named entity extracted from content by AIRS (person, place,
+/// organization, date, concept, etc.).
+pub struct Entity {
+    name: String,
+    kind: EntityKind,
+    confidence: f32,
+    /// Byte offset range in the source content
+    span: Option<(usize, usize)>,
+}
+
+pub enum EntityKind {
+    Person, Organization, Location, Date, Concept,
+    Technology, Event, Product, Other(String),
+}
+
+/// Who created a relation between objects.
+pub enum RelationSource {
+    /// Created by AIRS during indexing
+    Ai,
+    /// Created explicitly by a user action
+    User,
+    /// Created by an agent during its operation
+    Agent(AgentId),
+}
+
 pub enum Persistence {
     Ephemeral,   // gone when done
     Session,     // lives until closed
@@ -335,6 +416,26 @@ pub struct Transfer {
     content: TypedContent,
     intent: TransferIntent,
     transformations: Vec<Transform>,
+}
+
+/// A content transformation applied during Flow transfer.
+/// Converts content from one type to another (e.g., rich text → plain text,
+/// image → thumbnail, audio → transcript).
+pub struct Transform {
+    id: TransformId,
+    name: String,
+    input_types: Vec<String>,    // MIME patterns
+    output_type: String,         // MIME type
+    provider: TransformProvider,
+}
+
+pub enum TransformProvider {
+    /// Built-in system transforms (e.g., text encoding conversion)
+    System,
+    /// AI-powered transforms via AIRS (e.g., audio → transcript)
+    Airs,
+    /// Agent-provided transforms
+    Agent(AgentId),
 }
 
 pub enum TransferIntent {
@@ -817,6 +918,40 @@ pub struct AdversarialDefense {
     injection_detection: InjectionDetector,
 }
 
+/// Screens agent inputs for known injection patterns before they reach
+/// the inference engine. Runs at the boundary between data and control planes.
+pub struct InputFilter {
+    /// Pattern-based detectors (regex, keyword, structural)
+    pattern_detectors: Vec<PatternDetector>,
+    /// ML-based detector trained on known injection corpora
+    ml_detector: Option<ModelId>,
+    /// Action on detection: block, sanitize, or flag for review
+    on_detection: FilterAction,
+}
+
+/// Validates agent outputs before they are committed to spaces or
+/// delivered via Flow. Catches data exfiltration and policy violations.
+pub struct OutputValidator {
+    /// Maximum output size per action
+    max_output_bytes: u64,
+    /// Forbidden content patterns (e.g., credential-shaped strings)
+    forbidden_patterns: Vec<PatternDetector>,
+    /// Space write rate limit (objects per minute)
+    write_rate_limit: u32,
+}
+
+/// Detects prompt injection attempts by analyzing the boundary between
+/// system instructions (from kernel/manifest) and user/data content.
+pub struct InjectionDetector {
+    /// Confidence threshold for flagging (0.0-1.0)
+    threshold: f32,
+    /// Whether to block or log-and-continue on detection
+    enforcement: EnforcementMode,
+}
+
+pub enum FilterAction { Block, Sanitize, FlagForReview }
+pub enum EnforcementMode { Block, LogOnly }
+
 // Critical principle: agent instructions come from kernel,
 // never from data objects. This is the control/data plane
 // separation that prevents prompt injection from escalating
@@ -1063,6 +1198,18 @@ pub struct AgentProcess {
     priority: AgentPriority,           // from manifest, for OOM scoring
     suspended: bool,                   // e.g., by thrash detector
 }
+
+/// A space mounted into an agent's namespace. Determines which spaces
+/// an agent can access and at what POSIX path they appear.
+pub struct SpaceMount {
+    space_id: SpaceId,
+    /// POSIX path where this space appears (e.g., "/spaces/research")
+    mount_point: String,
+    /// Access level: read-only or read-write
+    access: MountAccess,
+}
+
+pub enum MountAccess { ReadOnly, ReadWrite }
 ```
 
 **Isolation mechanisms:**
