@@ -1860,9 +1860,9 @@ impl VersionStore {
 
     /// Rollback an entire space to a snapshot. Iterates every object in the
     /// snapshot and creates rollback version nodes for any that have diverged.
-    /// Rollback an entire space to a snapshot. Objects deleted since the snapshot
-    /// are restored. Objects created after the snapshot are intentionally retained
-    /// (snapshot rollback is non-destructive for new content).
+    /// Objects deleted since the snapshot are restored. Objects created after
+    /// the snapshot are intentionally retained (snapshot rollback is
+    /// non-destructive for new content).
     fn rollback_to_snapshot(&self, snapshot: &Snapshot) -> Result<u64> {
         let mut rolled_back = 0u64;
         for (object_id, version_hash) in &snapshot.object_versions {
