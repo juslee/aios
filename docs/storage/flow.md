@@ -146,6 +146,13 @@ pub struct FlowEntry {
 
 pub struct FlowEntryId(u128);
 
+/// Unique identifier for an active transfer (in-flight, not yet recorded).
+/// Distinct from FlowEntryId which identifies completed/recorded transfers.
+pub struct TransferId(u128);
+
+/// Unique identifier for a registered content transform.
+pub struct TransformId(u64);
+
 /// Links a Flow transfer to the provenance chain in the Version Store
 /// (see spaces.md §5.1). When a transfer creates or modifies a space object,
 /// a ProvenanceEntry is recorded in the object's Version node. This
