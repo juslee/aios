@@ -294,6 +294,19 @@ pub struct Task {
     context: ContextLink,
 }
 
+/// Links a task to its surrounding context — the active space, identity,
+/// and Context Engine snapshot at the time the task was created. Used by
+/// agents to access contextual information without querying the Context
+/// Engine repeatedly. See context-engine.md §2 for ContextSnapshot.
+pub struct ContextLink {
+    /// The space the task was initiated from
+    space_id: SpaceId,
+    /// The identity that owns this task
+    identity_id: IdentityId,
+    /// Snapshot of context at task creation (focus state, recent activity)
+    snapshot_id: ObjectId,
+}
+
 pub enum TaskState {
     Active,
     WaitingForUser(Question),
@@ -410,6 +423,10 @@ pub struct CapabilitySet {
     tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,
 }
 
+/// Simplified capability discriminant for HashMap keying in CapabilitySet.
+/// Maps to the broader `Capability` enum (§3.2) which carries full parameters.
+/// CapabilityType identifies the *kind* of access; Capability carries the
+/// full token with specific parameters (e.g., AudioCapability details).
 pub enum CapabilityType {
     ReadSpace(SpaceId),
     WriteSpace(SpaceId),
@@ -483,8 +500,8 @@ pub struct Flow {
 }
 
 pub struct Transfer {
-    source: ObjectRef,
-    content: TypedContent,
+    source: ObjectRef,      // see spaces.md §3.0 for ObjectRef definition
+    content: TypedContent,  // see flow.md §3.3 for TypedContent definition
     intent: TransferIntent,
     transformations: Vec<Transform>,
 }
@@ -565,17 +582,17 @@ Replaces notifications. AI-triaged, context-aware, never interruptive during lei
 ```rust
 pub struct AttentionManager {
     incoming: PriorityQueue<AttentionItem>,
-    model: AttentionModel,
+    model: AttentionModel,   // see attention.md §4 for AttentionModel (urgency classification parameters)
     context: ContextState,
 }
 
 pub struct AttentionItem {
     source: AgentId,
-    content: TypedContent,
+    content: TypedContent,  // attention.md §3 defines AttentionContent enum; flow.md §3.3 defines the Flow-specific TypedContent struct
     urgency: Urgency,       // AI-assessed, not app-declared
     relevance: f32,
     auto_actionable: Option<ProposedAction>,
-    group: Option<GroupId>,
+    group: Option<GroupId>,  // opaque identifier for grouping related notifications
 }
 
 pub enum Urgency {
@@ -591,18 +608,25 @@ pub enum Urgency {
 Replaces user accounts. Cryptographic identity, graduated trust, relationship-aware sharing.
 
 ```rust
+/// Ed25519 keypair for identity signing and verification.
+/// See identity.md §3 for key management and derivation.
+pub struct KeyPair {
+    public: [u8; 32],   // Ed25519 public key
+    private: [u8; 64],  // Ed25519 expanded private key (encrypted at rest)
+}
+
 pub struct Identity {
     id: IdentityId,
-    keys: KeyPair,           // Ed25519
+    keys: KeyPair,
     relationships: Vec<Relationship>,
-    space_access: Vec<(SpaceId, AccessLevel)>,
-    trust: TrustModel,
+    space_access: Vec<(SpaceId, AccessLevel)>,  // see identity.md §8 for AccessLevel
+    trust: TrustModel,                          // see identity.md §7 for TrustModel
 }
 
 pub struct Relationship {
     with: IdentityId,
-    kind: RelationshipKind,  // Colleague, Family, Service, Unknown
-    trust_level: TrustLevel,
+    kind: RelationshipKind,  // see identity.md §5 for RelationshipKind
+    trust_level: TrustLevel, // see security.md §2 for TrustLevel (0-4)
     shared_spaces: Vec<SpaceId>,
 }
 ```
@@ -615,10 +639,10 @@ Replaces config files. Conversational configuration, AI-mediated, evolves throug
 pub struct Preference {
     id: PreferenceId,
     description: String,
-    value: PreferenceValue,
+    value: PreferenceValue,       // see preferences.md §2 for PreferenceValue variants
     source: PreferenceSource,
-    affects: Vec<SystemComponent>,
-    history: Vec<PreferenceChange>,
+    affects: Vec<SystemComponent>,// see preferences.md §3 for SystemComponent enum
+    history: Vec<PreferenceChange>,// see preferences.md §4 for PreferenceChange
 }
 
 pub enum PreferenceSource {
@@ -913,7 +937,7 @@ Every action by every agent passes through all eight layers. No single layer fai
 │  Layer 8: Blast Radius Containment                    │
 │  Even if all above fail, damage is bounded.           │
 │  Max objects writable, auto-snapshot before bulk ops. │
-│  Rollback window — changes reversible for N hours.    │
+│  Rollback window — changes reversible for 72 hours.   │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -969,7 +993,7 @@ pub struct CapabilityToken {
     created_at: Timestamp,
     expires: Timestamp,
     delegatable: bool,
-    attenuations: Vec<Attenuation>,
+    attenuations: Vec<AttenuationSpec>,  // see security.md §5 for AttenuationSpec
     revoked: bool,
     parent_token: Option<TokenId>,  // for delegation chains
     usage_count: u64,
@@ -1303,12 +1327,14 @@ When an agent is updated to a new version:
 
 ```
 1. New manifest compared against old manifest
-2. If capabilities unchanged → hot-swap: new code loads, existing sessions preserved
-3. If capabilities expanded → user re-approval required
-4. If capabilities reduced → auto-approved, old tokens revoked
+2. If capabilities unchanged → hot-swap path: active sessions are drained
+   gracefully (agent gets shutdown signal, 5s to clean up), then new code
+   loads and the agent is respawned. Session *state* (conversations, tasks)
+   is preserved in spaces — the new instance reads it back on startup.
+3. If capabilities expanded → user re-approval required before step 2
+4. If capabilities reduced → auto-approved, old tokens revoked, then step 2
 5. Agent data in spaces is preserved (spaces belong to the user, not the agent)
-6. Active sessions are drained gracefully (agent gets shutdown signal, 5s to clean up)
-7. New version spawned with fresh capability tokens
+6. New version spawned with fresh capability tokens
 ```
 
 **Key principle:** Spaces belong to users, not agents. An agent's data lives in spaces the user granted access to. Updating or removing an agent never deletes user data. The user can revoke an agent's space access at any time, and the data remains in the space.
@@ -1440,7 +1466,7 @@ pub struct Object {
 2. Active sessions on that service are terminated (clients get ServiceUnavailable)
 3. Service is restarted with exponential backoff (immediate, 1s, 2s, 4s, max 30s)
 4. After restart, service reloads state from its space (spaces survive crashes)
-5. If service fails 5 times in 60 seconds → mark as degraded, notify user
+5. If service fails 5 times in 60 seconds → mark as degraded, notify user via Attention Manager (Urgency::Interrupt). Thresholds (5 failures, 60s window) are constants in the Service Manager config; they are chosen to distinguish transient failures (1-2 crashes from bad input) from persistent bugs (rapid crash loops).
 6. Dependent services fall back to degraded mode (see §6.2 for AIRS example)
 ```
 
@@ -1539,6 +1565,10 @@ Purpose-built for AIOS, using the SDK. Start small (example agents) and grow as 
 
 A compatibility layer that runs Linux ELF binaries on AIOS. Eliminates the app gap entirely.
 
+### Tier 5 (Future): Wayland Applications
+
+Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's Wayland-compatible surface management (see compositor.md §7).
+
 For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — it determines whether AIOS can be someone's only computer.
 
 -----
@@ -1547,15 +1577,15 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 ### 9.1 Development Roadmap
 
-**Phase 1: QEMU aarch64 (development target).** All development and testing. HVF acceleration on macOS for near-native speed.
+**Stage 1: QEMU aarch64 (development target, dev Phases 0-14).** All development and testing. HVF acceleration on macOS for near-native speed.
 
-**Phase 2: Raspberry Pi 4/5 (first real hardware).** Proves the OS works on real silicon. Known, documented hardware. Large community.
+**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 15+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §7 for the phase-aligned hardware timeline.
 
-**Phase 3: VM images (adoption path).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
+**Stage 3: VM images (adoption path, dev Phase 23+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
 
-**Phase 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
+**Stage 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
 
-**Phase 5: Own hardware (maturity).** Only if AIOS becomes a real platform with users and funding.
+**Stage 5: Own hardware (maturity).** Only if AIOS becomes a real platform with users and funding.
 
 ### 9.2 Initial Target: Laptops and PCs
 

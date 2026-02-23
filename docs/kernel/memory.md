@@ -2693,6 +2693,36 @@ pub enum FaultType {
     Write,
     Execute,
 }
+
+/// Error outcomes for page fault resolution. Returned by the fault handler
+/// and propagated to the process as a signal (SIGSEGV, SIGBUS) or to the
+/// kernel for OOM handling.
+pub enum FaultError {
+    /// Access to an address not covered by any VMA — the process touched
+    /// unmapped memory. Delivered as SIGSEGV to the faulting process.
+    SegmentationFault,
+    /// VMA exists but does not permit the attempted access type
+    /// (e.g., write to a read-only mapping). Delivered as SIGSEGV.
+    ProtectionFault,
+    /// The capability that granted access to the underlying resource
+    /// was revoked between mapping creation and fault resolution.
+    CapabilityRevoked,
+    /// No physical frames available and reclamation failed.
+    OutOfMemory,
+    /// Address has no VMA mapping (more specific than SegmentationFault
+    /// for kernel-internal use — distinguishes "no VMA" from "VMA found
+    /// but address outside its range").
+    InvalidAddress,
+    /// No VMA covers the faulting address in find_vma().
+    UnmappedRegion,
+    /// Swap device is required but not configured or not available.
+    SwapDeviceMissing,
+    /// PTE was in an unexpected state for the current fault path
+    /// (e.g., valid PTE reaching the non-present handler).
+    UnexpectedPteState,
+    /// Generic write permission failure on a read-only address.
+    AccessViolation,
+}
 ```
 
 **Page fault handler — full path:**

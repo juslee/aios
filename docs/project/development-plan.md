@@ -78,7 +78,7 @@ Phase 19 ──→ Phase 24: Secure Boot & Update System
                         └─→ Phase 27: Real Hardware, Certification & Launch
 ```
 
-**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21
+**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21. Note: Phase 15 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 21) depends on the browser and UI toolkit chain (12 → 20 → 21), not POSIX tools. Phase 15 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
 
 The web browser (Phase 21) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
 
@@ -112,7 +112,7 @@ The web browser (Phase 21) is the last item on the critical path before the OS c
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| No developers build agents | Empty ecosystem | Tier 2 (web apps) covers most use cases. Build compelling demo agents. |
+| No developers build agents | Empty ecosystem | App Ecosystem Tier 2 (web apps, see architecture.md §8) covers most use cases. Build compelling demo agents. |
 | Model quality/size tradeoff | Poor AI experience | Model ecosystem is improving rapidly. Today's 8B models were impossible 2 years ago. |
 | Hardware vendor engagement | No partner hardware | Pi and QEMU are sufficient for years. Pine64 is developer-friendly. |
 
@@ -127,11 +127,11 @@ Major decisions that must be made during development:
 **Decision:** Is IPC performance acceptable? Does the microkernel architecture work?
 
 **Criteria:**
-- IPC round-trip < 10 μs (target: < 5 μs)
-- Context switch < 20 μs
+- IPC round-trip < 10 μs (target: < 5 μs). Note: architecture.md §6.9 lists the optimized target (< 5 μs); this gate uses the acceptance threshold (< 10 μs) that determines whether the architecture is viable at all.
+- Context switch < 20 μs (gate threshold). Note: architecture.md §6.9 lists the optimized target (< 10 μs); this gate uses a relaxed threshold since post-Phase 3 optimization (Phase 14) has not yet occurred.
 - No pathological performance cliffs
 
-**If NO:** Consider hybrid kernel (move Space Storage into kernel space). This is a significant architectural change but recoverable at this stage.
+**If NO:** Consider hybrid kernel (move Space Storage into kernel space). This is a significant architectural change but recoverable at this stage because no external users depend on the IPC interface yet, and only kernel and storage code has been written.
 
 ### Gate 2: AI Viability (after Phase 8)
 
@@ -139,7 +139,7 @@ Major decisions that must be made during development:
 
 **Criteria:**
 - 7B model runs at > 5 tokens/second on Pi 4 (4GB)
-- Time to first token < 2 seconds
+- Time to first token < 2 seconds (gate threshold). Note: architecture.md §6.9 lists the optimized target (< 500 ms); this gate uses a relaxed threshold since pre-optimization hardware (Pi 4 on SD card) has higher latency than the final target.
 - Memory usage within budget (leaves >1 GB for OS + apps)
 
 **If NO:** Scale down AI features. Use smaller models (1-3B). Focus on embedding/classification rather than generation. Conversation bar becomes a search interface rather than a conversational one.
@@ -171,7 +171,7 @@ All 28 phases are designed to be achievable by a single experienced systems prog
 
 With 2-3 developers, phases can be parallelized:
 - Developer A: kernel (Phases 0-3), then performance (14), then security (13)
-- Developer B: storage + GPU (Phases 4-6), then browser (21), then UI toolkit (20)
+- Developer B: storage + GPU (Phases 4-6), then UI toolkit (20), then browser (21) — ordered to respect dependency chain (Phase 12 → 20 → 21)
 - Developer C: AI (Phases 8-11), then networking (16), then agent ecosystem (12)
 
 Estimated timeline with 3 developers: ~50-60 weeks (~1 year).
