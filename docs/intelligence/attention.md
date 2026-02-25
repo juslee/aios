@@ -223,6 +223,39 @@ pub enum UrgencySignal {
 }
 ```
 
+### 4.1.1 AttentionModel
+
+The `AttentionModel` holds urgency classification parameters used by the Attention Manager
+to calibrate how incoming items are assessed (referenced by architecture.md §2.6 and
+context-engine.md).
+
+```rust
+pub struct AttentionModel {
+    /// Weights for each urgency signal type (tuned per-user over time)
+    pub signal_weights: HashMap<UrgencySignalKind, f32>,
+    /// Threshold above which an item is classified as Interrupt
+    pub interrupt_threshold: f32,
+    /// Threshold for NextBreak classification
+    pub next_break_threshold: f32,
+    /// Threshold for Digest classification (below this → Silent)
+    pub digest_threshold: f32,
+    /// Decay factor for historical engagement influence
+    pub engagement_decay: f32,
+    /// Maximum number of interrupts per hour before auto-dampening
+    pub interrupt_rate_limit: u32,
+}
+
+pub enum UrgencySignalKind {
+    RelationshipPriority,
+    ContentUrgencyMarkers,
+    SentimentAnalysis,
+    HistoricalEngagement,
+    TimeSensitivity,
+    AgentTrustLevel,
+    InherentUrgency,
+}
+```
+
 ### 4.2 Assessment Pipeline
 
 ```rust

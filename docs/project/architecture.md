@@ -1563,11 +1563,11 @@ Through Servo/browser, users can access Gmail, Google Docs, Slack, YouTube, Netf
 
 Purpose-built for AIOS, using the SDK. Start small (example agents) and grow as developers join.
 
-### Tier 4 (Future): Linux Application Compatibility
+### Tier 4: Linux Binary Compatibility
 
 A compatibility layer that runs Linux ELF binaries on AIOS. Eliminates the app gap entirely.
 
-### Tier 5 (Future): Wayland Applications
+### Tier 5: Wayland Applications
 
 Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's Wayland-compatible surface management (see compositor.md §10).
 
