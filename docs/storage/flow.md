@@ -62,7 +62,7 @@ Flow is the connective tissue of AIOS. It is how data moves between agents, betw
        FlowClient)   visual cues)     FlowPipes)
 ```
 
-The Flow Service runs as a system service registered at `sys.flow`. It starts during Phase 3 of boot (service initialization) alongside Space Storage, AIRS, and the Task Manager. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
+The Flow Service runs as a system service registered at `sys.flow`. It starts during boot Phase 2 (core services), after Space Storage (Phase 1) is available. AIRS transforms become available when AIRS completes Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
 
 The six internal components:
 
@@ -96,7 +96,7 @@ Flow uses types defined in other documents. Canonical definitions:
 | `ChannelId` | [ipc.md §3](../kernel/ipc.md) | IPC channel identifier |
 | `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
 | `DeviceId` | [subsystem-framework.md](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
-| `TrustLevel` | [security.md §2](../security/security.md) | Trust classification (0–4) for processes |
+| `TrustLevel` | [identity.md §5](../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
 
 Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).
 
@@ -927,14 +927,14 @@ pub struct TypedContentSpec {
 ```rust
 // Microphone → Flow → Speech-to-text agent
 let mic_session = audio.open_session(agent, mic_cap, &intent)?;
-let speech_pipe = flow.create_pipe(FlowPipeDirection::Sink, speech_agent)?;
+let speech_pipe = flow.create_pipe(FlowPipeDirection::Sink, FlowTarget::Agent(speech_agent))?;
 mic_session.channel().connect_flow(speech_pipe)?;
 // Audio samples flow from hardware → Flow Service → speech agent
 // Zero-copy if both are on the same device (shared memory)
 
 // Camera → Flow → Image analysis agent
 let cam_session = camera.open_session(agent, cam_cap, &intent)?;
-let analysis_pipe = flow.create_pipe(FlowPipeDirection::Sink, analysis_agent)?;
+let analysis_pipe = flow.create_pipe(FlowPipeDirection::Sink, FlowTarget::Agent(analysis_agent))?;
 cam_session.channel().connect_flow(analysis_pipe)?;
 
 // Clipboard (POSIX tools) → Flow → native agent
@@ -1041,7 +1041,7 @@ Only Agent B (or an agent with elevated FlowRead that covers this transfer) can 
 Flow access is governed by two capabilities defined in the system capability enum:
 
 ```rust
-// From architecture.md §2.11
+// From architecture.md §3.2
 pub enum Capability {
     // ...
     FlowRead,
@@ -1205,7 +1205,7 @@ impl PosixClipboardBridge {
 | `wl-copy` / `wl-paste` | Same via Wayland clipboard protocol |
 | `xdotool` (X11 drag/drop simulation) | Translated to compositor drag/drop events |
 
-**X11 selection protocol:** The X11 compatibility layer (Phase 25) translates X11's three selections (PRIMARY, SECONDARY, CLIPBOARD) into Flow operations. PRIMARY (select-to-copy) maps to `flow.push(intent: Copy)`. CLIPBOARD (explicit copy) maps to the same. SECONDARY is rarely used and maps to a targeted transfer.
+**X11 selection protocol:** The X11 compatibility layer (Phase 15) translates X11's three selections (PRIMARY, SECONDARY, CLIPBOARD) into Flow operations. PRIMARY (select-to-copy) maps to `flow.push(intent: Copy)`. CLIPBOARD (explicit copy) maps to the same. SECONDARY is rarely used and maps to a targeted transfer.
 
 **Wayland clipboard protocol:** The Wayland compatibility layer translates `wl_data_offer` / `wl_data_source` into Flow push/pull. MIME type negotiation in Wayland maps to Flow's type negotiation.
 

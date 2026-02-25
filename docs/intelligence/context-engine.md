@@ -932,7 +932,7 @@ pub struct AttentionManager {
 pub struct AttentionItem {
     pub id: AttentionId,
     pub source: AgentId,
-    pub content: TypedContent,
+    pub content: AttentionContent,
     pub urgency: Urgency,                   // AI-assessed, not app-declared
     pub relevance: f32,                     // 0.0-1.0, AIRS-computed
     pub auto_actionable: Option<ProposedAction>,
@@ -1418,7 +1418,7 @@ Agents post attention items through the Attention Manager. The agent declares th
 
 ```rust
 ctx.attention().post(AttentionItem {
-    content: TypedContent::text("Meeting in 5 minutes: Team Standup"),
+    content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
     urgency: Urgency::NextBreak,
     relevance: 0.8,
     auto_actionable: Some(ProposedAction::OpenCalendar),

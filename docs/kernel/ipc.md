@@ -325,6 +325,9 @@ pub enum IpcError {
     ECAP_DORMANT = -10, // capability exists but is dormant
 }
 
+/// IPC channel identifier. Uniquely identifies a channel endpoint.
+pub struct ChannelId(u64);
+
 /// Ring buffer channel identifier (returned by RingChannelCreate).
 pub struct RingChannelId(u64);
 

@@ -132,6 +132,13 @@ pub type SsTableId = u64;
 /// (SHA-256). Two blocks with identical content have the same BlockId.
 pub type BlockId = Hash;
 
+/// Content-addressed identifier for executable code, manifests, and
+/// dependencies. Aliases Hash for content-addressable lookups.
+pub type ContentHash = Hash;
+
+/// Unique identifier for a capability token in the kernel's capability table.
+pub type CapabilityTokenId = u64;
+
 /// Signature type (Ed25519, 64 bytes).
 pub type Signature = [u8; 64];
 
@@ -1033,6 +1040,10 @@ pub struct BlockHeader {
     device_auth_tag: [u8; 16],
 }
 
+/// Content-addressed block storage engine. Manages compression, encryption,
+/// deduplication, and tiered storage across backing devices.
+pub struct BlockEngine { /* internal state: WAL, LSM-tree, device handles, compression config */ }
+
 impl BlockEngine {
     fn write_block(&self, data: &[u8], tier: StorageTier) -> Result<BlockId, StorageError> {
         let strategy = self.select_compression(data, tier);
@@ -1849,6 +1860,10 @@ fn current_agent() -> AgentId;
 /// Used for provenance chain signatures. See security.md §4.
 fn kernel_sign(data: &[u8]) -> Signature;
 
+/// Version DAG storage. Manages version history, branching, merging,
+/// and retention policy enforcement for space objects.
+pub struct VersionStore { /* internal state: LSM-tree handle, retention config */ }
+
 impl VersionStore {
     /// Get a specific version by its hash. O(log n) LSM-tree point lookup.
     fn get_version(&self, hash: Hash) -> Result<Version, StorageError>;
@@ -2280,6 +2295,10 @@ pub enum TraverseDirection {
 ```
 
 ```rust
+/// Query execution engine. Handles filter, full-text, semantic, and graph
+/// traversal queries over the space object index.
+pub struct QueryEngine { /* internal state: LSM-tree, full-text index, HNSW index, graph store */ }
+
 impl QueryEngine {
     pub fn query(&self, space: SpaceId, query: SpaceQuery) -> Result<Vec<ObjectId>> {
         match query {
@@ -2943,7 +2962,7 @@ Free headroom:           35-70 GB      70-140 GB     140-280 GB    280-560 GB
 
 **Key differences from constrained devices:**
 - **Multiple models fit comfortably.** A 256 GB laptop can hold 3-6 models (15-30 GB) without meaningful pressure. A 1 TB laptop can store every model a user might want.
-- **Generous version history.** Default retention is overridden to `KeepLast(50)` instead of the base `KeepLast(20)` (see §10.2 for base defaults). On 512 GB+, `KeepAll` is viable for spaces the user cares about.
+- **Generous version history.** Default retention is overridden to `KeepLast(50)` instead of the base `KeepLast(20)` (see §10.7 for full retention policy). On 512 GB+, `KeepAll` is viable for spaces the user cares about.
 - **Full embedding index.** Enough space and RAM to maintain embeddings for all promoted objects, not just a subset.
 - **70B models become feasible.** A Q4-quantized 70B model is ~40 GB. On a 512 GB laptop with 64 GB RAM, this is the first device class where it's practical to store and run.
 

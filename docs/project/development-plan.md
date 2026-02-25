@@ -46,22 +46,22 @@ Phase 0: Foundation & Tooling
   └─→ Phase 1: Boot & First Pixels
        └─→ Phase 2: Memory Management
             └─→ Phase 3: IPC & Capability System
-                 ├─→ Phase 4: Block Storage & Object Store
-                 │    ├─→ Phase 5: GPU & Display
-                 │    │    └─→ Phase 6: Window Compositor & Shell
-                 │    │         └─→ Phase 7: Input, Terminal & Basic Networking
-                 │    │              ├─→ Phase 8: AIRS Core
-                 │    │              │    └─→ Phase 9: Space Intelligence & Conversation
-                 │    │              │         └─→ Phase 10: Agent Framework
-                 │    │              │              └─→ Phase 11: Tasks, Flow & Attention
-                 │    │              │                   └─→ Phase 12: Developer Experience & SDK
-                 │    │              │
-                 │    │              └─→ Phase 16: Network Translation Module
-                 │    │
-                 │    └─→ Phase 13: Security Hardening (requires 8, 10)
-                 │
-                 └─→ Phase 14: Performance & Optimization (requires 6, 8)
-                      └─→ Phase 15: POSIX Compatibility & BSD Userland
+                 └─→ Phase 4: Block Storage & Object Store
+                      └─→ Phase 5: GPU & Display
+                           └─→ Phase 6: Window Compositor & Shell
+                                └─→ Phase 7: Input, Terminal & Basic Networking
+                                     ├─→ Phase 8: AIRS Core
+                                     │    ├─→ Phase 9: Space Intelligence & Conversation
+                                     │    │    └─→ Phase 10: Agent Framework
+                                     │    │         ├─→ Phase 11: Tasks, Flow & Attention
+                                     │    │         │    └─→ Phase 12: Developer Experience & SDK
+                                     │    │         │
+                                     │    │         └─→ Phase 13: Security Hardening (also requires 4)
+                                     │    │
+                                     │    └─→ Phase 14: Performance & Optimization (also requires 6)
+                                     │         └─→ Phase 15: POSIX Compatibility & BSD Userland
+                                     │
+                                     └─→ Phase 16: Network Translation Module
 
 Phase 16 ──→ Phase 17: USB Stack & Hotplug
               └─→ Phase 18: WiFi, Bluetooth & Wireless

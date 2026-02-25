@@ -228,13 +228,14 @@ pub struct ContextLink {
     identity_id: IdentityId,
     snapshot_id: ObjectId,
 }
+/// Simplified; see agents.md §2.4 for full definition.
 pub struct AgentManifest {
     name: String,
     author: Identity,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
-    dependencies: Vec<ContentHash>,
-    ai_analysis: SecurityAnalysis,
+    dependencies: Vec<Dependency>,
+    ai_analysis: Option<SecurityAnalysis>,
 }
 
 /// Set of kernel-managed capability tokens held by a task or agent.
@@ -376,7 +377,7 @@ Developers build six things on AIOS (see architecture.md §4.3 for full details)
 | **Workflows** | Orchestrate agents for a use case | Sales pipeline, academic research |
 | **Connectors** | Bridge external services into spaces | Slack, GitHub, Google Workspace |
 | **Space templates** | Pre-structured spaces for common needs | Project management, client onboarding |
-| **Experience plugins** | Custom compositor UI components (views, drivers) | Chart widget, USB webcam driver |
+| **Experience plugins** | Custom compositor UI components (views, widgets) | Chart widget, domain-specific data visualization |
 The SDK provides inference, storage, security, networking, and context as system services. Developers write the domain-specific part.
 ---
 ## 8. App Ecosystem Strategy

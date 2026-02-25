@@ -252,6 +252,8 @@ pub struct SemanticMetadata {
     indexed_at: Option<Timestamp>,
 }
 
+/// Simplified content type enum; see spaces.md §3.3 for the full canonical definition
+/// with additional variants (Directory, Text, Markdown, Json, Xml, Credential, etc.).
 pub enum ContentType {
     Document, Code, Image, Audio, Video, Data,
     Conversation, Config, Agent, GameSave,
@@ -297,7 +299,7 @@ pub struct Task {
 /// Links a task to its surrounding context — the active space, identity,
 /// and Context Engine snapshot at the time the task was created. Used by
 /// agents to access contextual information without querying the Context
-/// Engine repeatedly. The snapshot is a frozen ContextState (see §2.5 above).
+/// Engine repeatedly. The snapshot is a frozen ContextState (see §2.5 below).
 pub struct ContextLink {
     /// The space the task was initiated from
     space_id: SpaceId,
@@ -404,13 +406,14 @@ pub enum Persistence {
     Persistent,  // survives reboot
 }
 
+/// Simplified; see agents.md §2.4 for full definition.
 pub struct AgentManifest {
     name: String,
     author: Identity,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
-    dependencies: Vec<ContentHash>,
-    ai_analysis: SecurityAnalysis,
+    dependencies: Vec<Dependency>,
+    ai_analysis: Option<SecurityAnalysis>,
 }
 
 /// Set of capabilities held by a task or agent process. Capabilities are
@@ -588,7 +591,7 @@ pub struct AttentionManager {
 
 pub struct AttentionItem {
     source: AgentId,
-    content: TypedContent,  // attention.md §3 defines TypedContent enum; flow.md §3.4 defines the Flow-specific TypedContent struct
+    content: AttentionContent,  // see attention.md §3 for AttentionContent enum (distinct from flow.md §3.4 TypedContent struct)
     urgency: Urgency,       // AI-assessed, not app-declared
     relevance: f32,
     auto_actionable: Option<ProposedAction>,
@@ -626,7 +629,7 @@ pub struct Identity {
 pub struct Relationship {
     with: IdentityId,
     kind: RelationshipKind,  // see identity.md §5 for RelationshipKind
-    trust_level: TrustLevel, // see identity.md §6 for TrustLevel (0-4)
+    trust_level: TrustLevel, // see identity.md §5 for TrustLevel
     shared_spaces: Vec<SpaceId>,
 }
 ```
@@ -988,7 +991,7 @@ pub enum Capability {
 }
 
 pub struct CapabilityToken {
-    id: TokenId,
+    id: CapabilityTokenId,
     capability: Capability,
     holder: AgentId,
     granted_by: Identity,

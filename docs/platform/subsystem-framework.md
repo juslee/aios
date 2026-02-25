@@ -69,6 +69,9 @@ These are the actual Rust traits that every subsystem implements. This isn't a g
 ### 4.1 The Subsystem Trait
 
 ```rust
+/// Unique identifier for a device within the subsystem framework.
+pub struct DeviceId(u64);
+
 /// Every hardware subsystem implements this.
 /// Registered with the kernel at boot.
 pub trait Subsystem: Send + Sync + 'static {
