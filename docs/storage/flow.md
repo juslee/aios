@@ -62,7 +62,7 @@ Flow is the connective tissue of AIOS. It is how data moves between agents, betw
        FlowClient)   visual cues)     FlowPipes)
 ```
 
-The Flow Service runs as a system service registered at `sys.flow`. It starts during boot Phase 2 (core services), after Space Storage (Phase 1) is available. AIRS transforms become available when AIRS completes Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
+The Flow Service runs as a system service registered at `sys.flow`. Once implemented (dev Phase 11), it will start during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
 
 The six internal components:
 
@@ -95,7 +95,8 @@ Flow uses types defined in other documents. Canonical definitions:
 | `SharedMemoryId` | [memory.md §7.1](../kernel/memory.md) | Kernel-issued handle for a shared memory region |
 | `ChannelId` | [ipc.md §3](../kernel/ipc.md) | IPC channel identifier |
 | `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
-| `DeviceId` | [subsystem-framework.md](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
+| `DeviceId` | [subsystem-framework.md §4](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
+| `IdentityId` | [spaces.md §3.0](./spaces.md) | Identity identifier (Ed25519 public key); used for cross-device sync |
 | `TrustLevel` | [identity.md §5](../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
 
 Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).
@@ -137,8 +138,9 @@ pub struct FlowEntry {
     source_object: Option<ObjectRef>,
     destination_object: Option<ObjectRef>,
 
-    /// Device that originated this entry (for multi-device history merge)
-    origin_device: DeviceId,
+    /// Identity of the AIOS device that originated this entry (for multi-device sync).
+    /// Uses IdentityId (globally unique Ed25519 key) rather than DeviceId (local hardware ID).
+    origin_device: IdentityId,
 
     /// Whether this entry's content has been pruned (large content retention policy)
     content_pruned: bool,
@@ -927,14 +929,14 @@ pub struct TypedContentSpec {
 ```rust
 // Microphone → Flow → Speech-to-text agent
 let mic_session = audio.open_session(agent, mic_cap, &intent)?;
-let speech_pipe = flow.create_pipe(FlowPipeDirection::Sink, FlowTarget::Agent(speech_agent))?;
+let speech_pipe = flow.create_pipe(FlowPipeDirection::Source, FlowTarget::Agent(speech_agent))?;
 mic_session.channel().connect_flow(speech_pipe)?;
 // Audio samples flow from hardware → Flow Service → speech agent
 // Zero-copy if both are on the same device (shared memory)
 
 // Camera → Flow → Image analysis agent
 let cam_session = camera.open_session(agent, cam_cap, &intent)?;
-let analysis_pipe = flow.create_pipe(FlowPipeDirection::Sink, FlowTarget::Agent(analysis_agent))?;
+let analysis_pipe = flow.create_pipe(FlowPipeDirection::Source, FlowTarget::Agent(analysis_agent))?;
 cam_session.channel().connect_flow(analysis_pipe)?;
 
 // Clipboard (POSIX tools) → Flow → native agent
@@ -1119,7 +1121,7 @@ Device A (laptop)                               Device B (tablet)
 
 Flow uses a simple conflict resolution model:
 
-**Active transfers:** Latest-write-wins. If both devices push content to the global clipboard (target: Any) simultaneously, the most recent push wins. The older push remains in history but is no longer the active transfer. Timestamps are synchronized via NTP; in case of exact tie, the device with the lower DeviceId wins (deterministic).
+**Active transfers:** Latest-write-wins. If both devices push content to the global clipboard (target: Any) simultaneously, the most recent push wins. The older push remains in history but is no longer the active transfer. Timestamps are synchronized via NTP; in case of exact tie, the device with the lower IdentityId wins (deterministic).
 
 **History merge:** History entries from all devices are merged into a unified timeline. Each entry carries its `origin_device` field. Entries are uniquely identified by `(FlowEntryId, origin_device)`, so there are no conflicts — just union. This is equivalent to a grow-only CRDT (each device's history is append-only, merge is union).
 
@@ -1127,10 +1129,10 @@ Flow uses a simple conflict resolution model:
 pub struct FlowHistorySync {
     /// Local history watermark per remote device
     /// "I have seen all entries from device X up to this timestamp"
-    watermarks: HashMap<DeviceId, Timestamp>,
+    watermarks: HashMap<IdentityId, Timestamp>,
 
     /// Pending entries to send to each device
-    outbound: HashMap<DeviceId, Vec<FlowEntryId>>,
+    outbound: HashMap<IdentityId, Vec<FlowEntryId>>,
 
     /// Entries received but not yet integrated
     inbound: Vec<FlowEntry>,
@@ -1629,7 +1631,7 @@ document.getElementById('input').value = entry.content;
 ## 13. Implementation Order
 
 ```
-Phase 3:   Basic Flow service
+Phase 11:  Basic Flow service
              Flow Service process, sys.flow IPC channel
              FlowWrite/FlowRead capability enforcement
              Simple push/pull (TypedContent with MIME type)

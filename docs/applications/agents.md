@@ -226,6 +226,18 @@ pub enum RuntimeType {
     Wasm,
 }
 
+/// A dependency on another agent bundle or shared library.
+pub struct Dependency {
+    /// Human-readable name of the dependency
+    name: String,
+    /// Required version (semver range)
+    version: String,
+    /// Content hash of the specific version (pinned after resolution)
+    content_hash: Option<ContentHash>,
+    /// Whether this dependency is optional
+    optional: bool,
+}
+
 pub struct CapabilityRequest {
     /// What capability is being requested
     capability: Capability,

@@ -143,7 +143,7 @@ pub type CapabilityTokenId = u64;
 pub type Signature = [u8; 64];
 
 /// Reference to an object within a space. Used by Flow (flow.md §3.1),
-/// architecture.md §2.3, and boot-lifecycle.md §14 for cross-space
+/// architecture.md §2.3, and boot-lifecycle.md §15 for cross-space
 /// object references without copying the object itself.
 pub struct ObjectRef {
     pub space_id: SpaceId,
@@ -2614,7 +2614,7 @@ impl Object {
 /// Standard POSIX types used in this section:
 ///   OpenFlags — bitflags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, etc.)
 ///   AccessMode, Mode — POSIX permission types
-///   CapabilitySet — kernel capability set (security.md §4)
+///   CapabilitySet — kernel capability set (architecture.md §3.2)
 
 pub struct PosixSpaceBridge {
     mount_table: Vec<MountEntry>,
