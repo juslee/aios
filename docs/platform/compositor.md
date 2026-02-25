@@ -85,6 +85,9 @@ The compositor is also the **display subsystem** in the subsystem framework. It 
 Agents communicate with the compositor via IPC. The protocol defines how surfaces are created, updated, and managed:
 
 ```rust
+/// Unique identifier for a compositor surface (window or layer).
+pub struct SurfaceId(u64);
+
 /// Messages from agent to compositor
 pub enum CompositorRequest {
     /// Create a new surface (window)

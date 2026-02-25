@@ -247,7 +247,7 @@ This section tracks concepts that boot.md references which are defined (or need 
 | `Scheduler`, four scheduling classes (RT, Interactive, Normal, Idle), 1ms tick | [scheduler.md](./scheduler.md) §3.1, §10.1 | Timer tick rate (Step 6) and scheduling class names in Step 15 must stay consistent with scheduler.md. |
 | `BuddyAllocator`, `SlabAllocator`, slab size classes | [memory.md](./memory.md) | Buddy allocator order range (0–10) and slab size classes (64–4096 bytes) cited in Steps 8–9 must match memory.md. |
 | `CapabilityManager`, `CapabilityToken`, root capability, trust levels, `Capability::Root` | [security.md](../security/security.md) §10 | `Timestamp::MAX` for Trust Level 0 tokens (Step 12) and capability delegation model (§4.7) must stay aligned. |
-| `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check message format (§4.4) and Service Manager IPC channels (§4.1 step 5) must match ipc.md's channel semantics. |
+| `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check protocol (boot.md §4.4) and Service Manager IPC channels (ipc.md §4.1) must match ipc.md's channel semantics. |
 | Compositor framebuffer handoff, display subsystem, wgpu pipeline | [compositor.md](../platform/compositor.md) | Handoff sequence (§7.4) and Phase 2 display startup must match compositor.md's initialization. |
 | AIRS model selection by RAM, `system/models/` space, GGML runtime, 5-second timeout | [airs.md](../intelligence/airs.md) | Model size thresholds (§5 Phase 3: ≥16 GB → 8B Q5_K_M, ≥8 GB → 8B Q4_K_M, ≥4 GB → 3B, ≥2 GB → 1B, <2 GB → no local model) and the 5-second health timeout must stay consistent with airs.md §4.6. |
 | Identity Service, Ed25519 keypair, `system/identity/` space | [identity.md](../experience/identity.md) | Phase 4 Identity startup and identity unlock flow must match identity.md's key management. |
@@ -256,7 +256,7 @@ This section tracks concepts that boot.md references which are defined (or need 
 | Preference Service, `user/preferences/` space | [preferences.md](../intelligence/preferences.md) | Phase 4 Preference startup and the preference space path must match preferences.md. |
 | `AgentManifest.persistent`, agent shutdown protocol, `ShutdownSignal` | [agents.md](../applications/agents.md) §2.4, §3 | The 5-second shutdown grace period (§11.3) and persistent agent relaunching must match agents.md's lifecycle model. |
 | Block Engine, Object Store, Space Storage, WAL, LSM-tree, system spaces | [spaces.md](../storage/spaces.md) | Phase 1 startup sequence and system space paths (`system/audit/`, `system/models/`, etc.) must agree with spaces.md's space hierarchy. |
-| ARM SMMU (SMMUv3), stream tables, DMA isolation, bounce buffers | [hal.md](./hal.md) | SMMU initialization (§3.6) and per-device DMA page tables must align with hal.md's DMA abstractions. Pi 4 bounce buffer strategy must match hal.md's DMA API. |
+| ARM SMMU (SMMUv3), stream tables, DMA isolation, bounce buffers | [hal.md](./hal.md) | SMMU initialization (hal.md §15) and per-device DMA page tables must align with hal.md's DMA abstractions. Pi 4 bounce buffer strategy must match hal.md's DMA API. |
 | USB host controller (xHCI), USB HID, hub enumeration | [hal.md](./hal.md) | Phase 2 USB input path on Pi must match hal.md's USB abstraction (if defined). xHCI driver is platform-specific (DesignWare on Pi 4, RP1 on Pi 5). |
 | Audio subsystem (PCM, mixing, I2S/PWM, HDMI audio) | [audio.md](../platform/audio.md) | Phase 2 Audio Subsystem startup must match audio.md. RT scheduling class for audio threads must match scheduler.md. |
 | Watchdog timer (virtual watchdog on QEMU, bcm2835-wdt on Pi), boot timeout, runtime ping | [hal.md](./hal.md) | Watchdog hardware abstraction and timeout values (30s boot, 60s runtime, 15s shutdown) must be consistent across hal.md and boot.md. |
@@ -1677,10 +1677,10 @@ Record-replay has been transformative for debugging. Mozilla used rr to find and
 
 Boot is the hardest thing to debug in an OS. It happens once, quickly, with limited diagnostic tools (no filesystem, no network, no debugger). A race condition during boot may appear once every 100 boots and vanish under debug instrumentation. Record-replay solves this:
 
-1. **Boot trace recording.** Every boot records a compact trace of non-deterministic events: timer interrupts, device responses, MMIO reads, scheduling decisions. The trace is stored in the panic dump partition (§8.2) — available before Space Storage starts.
+1. **Boot trace recording.** Every boot records a compact trace of non-deterministic events: timer interrupts, device responses, MMIO reads, scheduling decisions. The trace is stored in the panic dump partition (boot.md §8.2) — available before Space Storage starts.
 
 ```rust
-pub struct BootTrace {
+pub struct BootReplayTrace {
     /// Monotonic counter of recorded events
     sequence: u64,
     events: Vec<BootTraceEvent>,

@@ -1242,7 +1242,7 @@ impl AudioDevice {
 | Pi 4 | HDMI audio + PWM + I2S | HDMI audio via VC4; I2S for external DACs |
 | Pi 5 | HDMI audio + I2S | HDMI audio via VC7; I2S for external DACs |
 
-Audio is critical for the assistant experience — speech-to-text, text-to-speech, alert sounds, and voice interaction all depend on it. The Audio subsystem provides mixing (multiple agents playing audio simultaneously) and routes through the Subsystem Framework. The scheduler reserves RT-class deadlines for audio (5ms period, 0.5ms WCET — see scheduler.md §6.3).
+Audio is critical for the assistant experience — speech-to-text, text-to-speech, alert sounds, and voice interaction all depend on it. The Audio subsystem provides mixing (multiple agents playing audio simultaneously) and routes through the Subsystem Framework. The scheduler reserves RT-class deadlines for audio (5ms period, 0.5ms WCET — see scheduler.md §5.2).
 
 **`PlatformCamera`** — Camera / image sensor.
 
@@ -1285,7 +1285,7 @@ impl CameraDevice {
 | Pi 4 | CSI-2 (Unicam) | Supports Pi Camera Module v2/v3 |
 | Pi 5 | CSI-2 (Unicam, 2 ports) | Dual camera support |
 
-Camera data flows through the Flow framework (see flow.md) for streaming to vision agents. The browser's `getUserMedia()` API maps to `CameraCapability` (prompted — see browser.md §6).
+Camera data flows through the Flow framework (see flow.md) for streaming to vision agents. The browser's `getUserMedia()` API maps to `CameraCapability` (prompted — see browser.md §10).
 
 #### Tier 2 — Future (some current platforms, or expected on future boards)
 
@@ -1359,7 +1359,7 @@ impl NvmeDevice {
 | Pi 4 | None | PCIe used by USB controller |
 | Pi 5 | Via PCIe Gen 3 x4 | With M.2 HAT or adapter |
 
-NVMe transforms model loading performance: 4.5 GB Q4_K_M in ~2 seconds vs ~45 seconds from SD card (see airs.md §5). The Block Engine can tier storage across NVMe and SD — hot data on NVMe, cold data on SD (see spaces.md §13).
+NVMe transforms model loading performance: 4.5 GB Q4_K_M in ~2 seconds vs ~45 seconds from SD card (see airs.md §3). The Block Engine can tier storage across NVMe and SD — hot data on NVMe, cold data on SD (see spaces.md §10).
 
 **`PlatformWatchdog`** — Hardware watchdog timer.
 

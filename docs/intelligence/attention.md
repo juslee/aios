@@ -98,7 +98,7 @@ pub struct AttentionItem {
     pub source: AgentId,
 
     /// Structured content — not a free-form string
-    pub content: TypedContent,
+    pub content: AttentionContent,
 
     /// AI-assessed urgency (set by AIRS, not by the agent)
     pub urgency: Urgency,
@@ -128,7 +128,7 @@ pub struct AttentionItem {
     pub triage: TriageMetadata,
 }
 
-pub enum TypedContent {
+pub enum AttentionContent {
     /// Message from a person
     PersonMessage {
         sender: IdentityId,
@@ -264,7 +264,7 @@ impl AttentionManager {
         let mut signals = Vec::new();
 
         // 1. Check if sender is a known identity with high trust
-        if let TypedContent::PersonMessage { sender, .. } = &item.content {
+        if let AttentionContent::PersonMessage { sender, .. } = &item.content {
             if let Some(rel) = self.identity_service.get_relationship(sender).await {
                 let priority = match rel.kind {
                     RelationshipKind::Family => UrgencySignal::RelationshipPriority {
@@ -307,7 +307,7 @@ impl AttentionManager {
         }
 
         // 4. Time sensitivity
-        if let TypedContent::Schedule { time, .. } = &item.content {
+        if let AttentionContent::Schedule { time, .. } = &item.content {
             let until = time.duration_since(SystemTime::now()).unwrap_or_default();
             if until < Duration::from_secs(600) {
                 signals.push(UrgencySignal::TimeSensitivity { deadline: *time });
@@ -315,7 +315,7 @@ impl AttentionManager {
         }
 
         // 5. Inherent urgency from system events
-        if let TypedContent::SystemEvent { event_type, .. } = &item.content {
+        if let AttentionContent::SystemEvent { event_type, .. } = &item.content {
             match event_type {
                 SystemEventType::Error | SystemEventType::SecurityAlert => {
                     signals.push(UrgencySignal::InherentUrgency {
@@ -388,7 +388,7 @@ impl AttentionManager {
 If agents controlled their own urgency, every agent would set `Interrupt`. This is exactly the problem with traditional notifications. In AIOS:
 
 - The agent's `PostAttention` IPC message has no urgency field.
-- The agent provides `TypedContent` — a structured description of what happened.
+- The agent provides `AttentionContent` — a structured description of what happened.
 - AIRS assesses urgency based on content, sender, context, and history.
 - The agent never knows what urgency was assigned to its item.
 
@@ -588,19 +588,19 @@ impl AttentionManager {
 
     fn group_key(&self, item: &AttentionItem) -> GroupKey {
         match &item.content {
-            TypedContent::PersonMessage { channel, service, .. } => {
+            AttentionContent::PersonMessage { channel, service, .. } => {
                 GroupKey::Channel(service.clone(), channel.clone())
             }
-            TypedContent::SystemEvent { event_type, .. } => {
+            AttentionContent::SystemEvent { event_type, .. } => {
                 GroupKey::SystemEvent(*event_type)
             }
-            TypedContent::AgentReport { agent, .. } => {
+            AttentionContent::AgentReport { agent, .. } => {
                 GroupKey::Agent(*agent)
             }
-            TypedContent::ServiceUpdate { service, .. } => {
+            AttentionContent::ServiceUpdate { service, .. } => {
                 GroupKey::Service(service.clone())
             }
-            TypedContent::Schedule { .. } => {
+            AttentionContent::Schedule { .. } => {
                 GroupKey::Schedule
             }
         }
@@ -834,7 +834,7 @@ use aios_sdk::attention;
 
 pub async fn notify_results_ready(results: &[SpaceObjectId]) {
     attention::post(AttentionRequest {
-        content: TypedContent::AgentReport {
+        content: AttentionContent::AgentReport {
             agent: self_agent_id(),
             task: current_task_id(),
             summary: format!("Found {} papers matching your criteria", results.len()),

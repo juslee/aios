@@ -905,8 +905,8 @@ pub struct SlabCache {
     partial: LinkedList<Slab>,
     full: LinkedList<Slab>,
     empty: LinkedList<Slab>,
-    /// Per-CPU magazine for lock-free fast path
-    magazines: PerCpu<Magazine>,
+    /// Per-CPU magazine for lock-free fast path (simplified: single magazine shown)
+    magazine: Magazine,
     /// Name for debugging
     name: &'static str,
 }
@@ -925,8 +925,8 @@ pub struct Slab {
 
 /// Per-CPU magazine — lock-free fast path for alloc/free
 pub struct Magazine {
-    /// Loaded magazine (array of free object pointers)
-    loaded: MagazineRound,
+    /// Current magazine (array of free object pointers)
+    current: MagazineRound,
     /// Previous magazine (swap when loaded is empty)
     prev: MagazineRound,
 }
@@ -947,8 +947,10 @@ impl SlabCache {
         let objects_per_slab = PAGE_SIZE / aligned_size;
         let initial_page = fa.alloc_order(0).expect("slab init: OOM");
         // Carve the page into a freelist of fixed-size objects
-        let freelist = Self::build_freelist(initial_page, aligned_size, objects_per_slab);
-        Self { name, object_size: aligned_size, objects_per_slab, freelist, magazine: Magazine::empty() }
+        let initial_slab = Self::build_slab(initial_page, aligned_size, objects_per_slab);
+        Self { name, object_size: aligned_size, objects_per_slab,
+               partial: LinkedList::from(initial_slab), full: LinkedList::new(),
+               empty: LinkedList::new(), magazine: Magazine::empty() }
     }
 
     /// Allocate one object from this cache.
@@ -1000,7 +1002,7 @@ impl SlabAllocator {
     /// Finds the smallest cache whose object size >= requested size.
     /// Returns null if no cache fits (caller falls back to buddy allocator
     /// for allocations larger than the biggest slab cache).
-    pub fn alloc(&self, size: usize, align: usize) -> *mut u8 {
+    pub fn alloc(&mut self, size: usize, align: usize) -> *mut u8 {
         let effective_size = size.max(align);
         for cache in &self.caches {
             if cache.object_size >= effective_size {
@@ -1012,7 +1014,7 @@ impl SlabAllocator {
 
     /// Free a previously allocated pointer of the given `size`.
     /// Routes to the correct slab cache based on size.
-    pub fn free(&self, ptr: *mut u8, size: usize) {
+    pub fn free(&mut self, ptr: *mut u8, size: usize) {
         for cache in &self.caches {
             if cache.object_size >= size {
                 cache.free(ptr);
