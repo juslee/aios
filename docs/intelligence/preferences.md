@@ -193,6 +193,29 @@ pub enum PreferenceScope {
     /// Different value per device (e.g., display brightness)
     PerDevice,
 }
+
+/// System components that a preference can affect (referenced by architecture.md §2.8).
+pub enum SystemComponent {
+    Compositor,
+    Scheduler,
+    AttentionManager,
+    ContextEngine,
+    FlowService,
+    Airs,
+    SpaceStorage,
+    NetworkTranslation,
+    AudioService,
+    InputService,
+    PowerManager,
+    IdentityService,
+    PosixLayer,
+}
+
+/// Named collection of preferences associated with an identity profile
+/// (referenced by architecture.md §6.3 and agents.md).
+pub struct PreferenceSet {
+    pub preferences: Vec<Preference>,
+}
 ```
 
 ### 3.2 Preference Change Record
