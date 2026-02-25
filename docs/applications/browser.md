@@ -488,7 +488,7 @@ The browser uses the subsystem framework for all hardware access:
 |`getUserMedia()` (mic)   |Audio    |AudioCapability (prompted)    |
 |`navigator.geolocation`  |GPS      |GpsCapability (prompted)      |
 |`AudioContext`           |Audio    |AudioCapability (playback)    |
-|`WebGL` / `WebGPU`       |Display  |GpuCapability (limited)       |
+|`WebGL` / `WebGPU`       |Display  |DisplayCapability (limited)       |
 |`Bluetooth`              |Bluetooth|BluetoothCapability (prompted)|
 |`USB` (WebUSB)           |USB      |UsbCapability (prompted)      |
 |`Gamepad`                |Input    |InputCapability (gamepad)     |

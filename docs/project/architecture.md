@@ -435,11 +435,18 @@ pub enum CapabilityType {
     WriteSpace(SpaceId),
     FlowRead,
     FlowWrite,
-    Network(NetworkScope),
+    Network(NetworkScope),  // see networking.md for scope semantics
     Spawn,
     DeviceAccess(DeviceClass),
-    IpcConnect(ServiceName),
+    IpcConnect(ServiceName),  // service name string wrapper
 }
+
+/// Simple type aliases for capability parameters (full definitions in
+/// their respective subsystem documents where applicable).
+pub type NetworkScope = String;       // service name or wildcard pattern
+pub type ServiceName = String;        // registered IPC service name
+pub type Scope = SpaceId;             // audit read scope
+pub type CredentialId = u64;          // credential store identifier
 
 /// A single entry in a task's activity log. Records what an agent did,
 /// when, and in what context. Used by Intent Verification (Layer 1) to
@@ -885,7 +892,7 @@ Traditional browsers are mini-operating systems because the actual OS provides n
 |`getUserMedia()` (camera)   |Camera   |CameraCapability, user prompted              |
 |`getUserMedia()` (mic)      |Audio    |AudioCapability, user prompted               |
 |`navigator.geolocation`     |GPS      |GpsCapability, user prompted                 |
-|`WebGL` / `WebGPU`          |Display  |GpuCapability (limited)                      |
+|`WebGL` / `WebGPU`          |Display  |DisplayCapability (limited)                      |
 |`localStorage` / `IndexedDB`|Storage  |Web-storage space (origin sub-space)         |
 
 **Web storage is a space.** All web storage (cookies, localStorage, IndexedDB, Cache API) maps to sub-spaces within `web-storage/`, scoped by origin. Unified quota, searchable by AIRS, syncable across devices, fully inspectable by the user.
@@ -964,12 +971,14 @@ pub enum Capability {
     // Network capabilities (subsystem-specific)
     Network(NetworkCapability),     // per-service, per-method, per-path
 
-    // Hardware subsystem capabilities (via subsystem framework)
-    Audio(AudioCapability),         // direction, device, format constraints
+    // Hardware subsystem capabilities (via subsystem framework).
+    // Each *Capability type is defined by its subsystem doc; see
+    // subsystem-framework.md §5 for the universal capability gate pattern.
+    Audio(AudioCapability),         // direction, device, format constraints (audio.md §5)
     Camera(CameraCapability),       // resolution, frame rate limits
     Gps(GpsCapability),             // precision, update frequency
     Input(InputCapability),         // device types (keyboard, mouse, gamepad)
-    Display(GpuCapability),         // memory limits, shader constraints
+    Display(DisplayCapability),     // memory limits, shader constraints (compositor.md §3)
     Bluetooth(BluetoothCapability), // profile, device constraints
     Usb(UsbCapability),             // device class, raw access level
     Print(PrintCapability),         // printer, page limits
@@ -1000,7 +1009,7 @@ pub struct CapabilityToken {
     delegatable: bool,
     attenuations: Vec<AttenuationSpec>,  // see security.md §3 for AttenuationSpec
     revoked: bool,
-    parent_token: Option<TokenId>,  // for delegation chains
+    parent_token: Option<CapabilityTokenId>,  // for delegation chains
     usage_count: u64,
     last_used: Timestamp,
 }
@@ -1014,9 +1023,12 @@ All subsystem capabilities pass through the same kernel-enforced gate (see [subs
 pub struct AdversarialDefense {
     input_screening: InputFilter,
     output_validation: OutputValidator,
-    constraint_immutability: KernelEnforced,
+    constraint_immutability: KernelEnforced,  // marker: constraints are kernel-enforced, not modifiable by agents
     injection_detection: InjectionDetector,
 }
+
+/// Marker type indicating a constraint enforced by the kernel and immutable from userspace.
+pub struct KernelEnforced;
 
 /// Screens agent inputs for known injection patterns before they reach
 /// the inference engine. Runs at the boundary between data and control planes.
@@ -1051,6 +1063,13 @@ pub struct InjectionDetector {
 
 pub enum FilterAction { Block, Sanitize, FlagForReview }
 pub enum EnforcementMode { Block, LogOnly }
+
+/// A pattern-based detector for screening agent inputs/outputs.
+pub struct PatternDetector {
+    pattern: String,          // regex or structural pattern
+    category: String,         // e.g., "injection", "credential", "exfiltration"
+    severity: f32,            // 0.0–1.0
+}
 
 // Critical principle: agent instructions come from kernel,
 // never from data objects. This is the control/data plane
@@ -1572,7 +1591,7 @@ A compatibility layer that runs Linux ELF binaries on AIOS. Eliminates the app g
 
 ### Tier 5: Wayland Applications
 
-Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's Wayland-compatible surface management (see compositor.md §10).
+Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's display subsystem architecture that will underpin Wayland support (see compositor.md §10).
 
 For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — it determines whether AIOS can be someone's only computer.
 

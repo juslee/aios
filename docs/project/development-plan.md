@@ -15,7 +15,7 @@
 Tier 1: Hardware Foundation    (Phases 0–3)    Weeks 1–16     Boot, memory, IPC
 Tier 2: Core System Services   (Phases 4–7)    Weeks 17–34    Storage, GPU, compositor, networking
 Tier 3: AI & Intelligence      (Phases 8–11)   Weeks 35–54    AIRS, semantic search, agents
-Tier 4: Platform Maturity      (Phases 12–15)  Weeks 55–74    SDK, security, performance, POSIX
+Tier 4: Platform Maturity      (Phases 12–15)  Weeks 55–74    SDK, security, performance, POSIX (+3 wk buffer)
 Tier 5: Hardware & Connectivity(Phases 16–19)  Weeks 75–92    Full NTM, USB, wireless, power
 Tier 6: Rich Experience        (Phases 20–23)  Weeks 93–112   UI toolkit, browser, media, a11y
 Tier 7: Production OS          (Phases 24–27)  Weeks 113–130  Secure boot, Linux compat, launch
