@@ -964,8 +964,8 @@ Phase 15c: Process lifecycle — fork, exec, pipe, signal translation
            Depends on: Phase 15b
            Deliverable: shell pipelines work (ls | grep | sort)
 
-Phase 15d: Device translation — /dev/* nodes routed to subsystem bridges
-           Depends on: Phase 15c, subsystem framework (Phase 16+)
+Phase 15d: Device translation — virtual /dev/* nodes
+           Depends on: Phase 15c
            Deliverable: BSD tools can access /dev/null, /dev/urandom, /dev/tty
 
 Phase 15e: Socket translation — network operations via Network Service

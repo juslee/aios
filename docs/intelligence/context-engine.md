@@ -1279,9 +1279,9 @@ During boot, the Context Engine faces a unique situation: it must publish a `Con
 | InputPattern | No (no user input yet) | `InputActivity::Idle` |
 | TimeOfDay | Yes | Current wall-clock time |
 | CalendarState | No (calendar agent not started) | `CalendarContext::Unknown` |
-| LocationContext | No (location service not started) | `LocationContext::Unknown` |
-| BatteryState | Yes (HAL provides at Phase 2) | Current battery level and AC state |
-| ExternalDisplay | Yes (HAL provides at Phase 2) | Whether external display is connected |
+| MediaPlayback | No (media agents not started) | `MediaState::Idle` |
+| UserHistory | No (no recent interactions) | Empty pattern |
+| ExplicitIntent | No (no user input yet) | `None` |
 
 **Boot-time inference.** With only TimeOfDay and hardware signals available, the Context Engine produces a conservative initial state:
 
@@ -1298,20 +1298,16 @@ impl ContextEngine {
 
         // Battery-aware adjustment: if battery is critical, reduce resource priority
         let resource_priority = if battery.level < 0.10 && !battery.ac_connected {
-            ResourcePriority::Minimal
+            ResourcePriority::Balanced
         } else {
             ResourcePriority::from_engagement(work_engagement)
         };
 
         ContextState {
-            context_mode: ContextMode::Default,
             work_engagement,
             ai_engagement: AiEngagement::Ambient, // conservative: don't pop up AI UI
-            notification_threshold: NotificationThreshold::Medium,
+            notification_threshold: Urgency::NextBreak, // moderate filtering during boot
             resource_priority,
-            confidence: ContextConfidence::Low,    // we know we're guessing
-            source: ContextSource::BootHeuristic,
-            active_override: None,
         }
     }
 }
@@ -1321,9 +1317,9 @@ impl ContextEngine {
 
 1. **`AiEngagement::Ambient`, not `Available`.** During boot, the system should not proactively show AI UI (Conversation Bar, suggestion panels). The user may be waiting for the desktop to appear. Once the user interacts and signals accumulate, the engagement level adjusts naturally.
 
-2. **`ContextConfidence::Low`.** The boot context explicitly marks itself as low-confidence. Consumers that check confidence (e.g., the scheduler's context multiplier) use a conservative default instead of the inferred value when confidence is low.
+2. **Low confidence.** The boot context is inherently low-confidence — consumers that check confidence (e.g., the scheduler's context multiplier) should use a conservative default instead of the inferred value when few signals are available.
 
-3. **`ContextSource::BootHeuristic`.** The audit log records that this context state came from boot heuristics, not from real signal analysis. Useful for debugging context transitions.
+3. **Boot heuristic source.** The audit log records that this context state came from boot heuristics (via `ContextSource::Fallback`), not from real signal analysis. Useful for debugging context transitions.
 
 **Transition to real context.** Once the compositor starts (Phase 5) and the user begins interacting, real signals flow in. The Context Engine transitions from boot heuristics to normal inference:
 

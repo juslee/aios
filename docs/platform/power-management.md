@@ -82,7 +82,7 @@ The Policy Engine is a privileged userspace service that:
 
 ### 2.1 Service Position in Boot
 
-The Policy Engine starts during Phase 2 of the boot sequence (boot-lifecycle.md §Phase 2). It requires:
+The Policy Engine starts during Phase 2 of the boot sequence (see boot-lifecycle.md §12, Implementation Order). It requires:
 - HAL initialized (thermal sensors, battery fuel gauge, GPIO for lid switch)
 - Scheduler running (to receive DVFS policy updates)
 - Service Manager running (to coordinate suspend/resume)
@@ -757,7 +757,7 @@ impl PlatformThermal for RaspberryPi4Platform {
         // Returns raw ADC value, converted to millidegrees:
         //   temp_mdegc = (410_040 - adc_val * 487) / 1000
         let adc_val = self.mmio_read(TSENS_BASE + TSENS_DATA_OFFSET);
-        let temp_mdegc = (410_040i32 - (adc_val as i32) * 487) / 1;
+        let temp_mdegc = (410_040i32 - (adc_val as i32) * 487) / 1000;
 
         Ok(vec![ThermalZoneReading {
             zone_id: "cpu-thermal",

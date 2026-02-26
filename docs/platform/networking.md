@@ -668,13 +668,13 @@ pub enum CircuitState {
 ## 10. Design Principles
 
 1. **Applications see spaces, not sockets.** The network is an implementation detail of remote spaces.
-1. **The OS owns all connections.** No application opens sockets, negotiates TLS, or manages connection pools.
-1. **Offline is the default assumption.** Every remote space operation must have a defined offline behavior (shadow, fail, queue).
-1. **Credentials are infrastructure.** They flow through the OS, never through application code. Applications use credentials without possessing them.
-1. **Six errors, not six hundred.** The OS absorbs network complexity and presents a simple, consistent error model.
-1. **Network access requires capability.** No default network access. Every operation is audited.
-1. **Protocol choice is the OS's decision.** The OS picks the best protocol for each operation based on endpoint type, available interfaces, and conditions.
-1. **Location is transparent.** `space::read()` works identically whether the data is local, on the LAN, or across the internet.
+2. **The OS owns all connections.** No application opens sockets, negotiates TLS, or manages connection pools.
+3. **Offline is the default assumption.** Every remote space operation must have a defined offline behavior (shadow, fail, queue).
+4. **Credentials are infrastructure.** They flow through the OS, never through application code. Applications use credentials without possessing them.
+5. **Six errors, not six hundred.** The OS absorbs network complexity and presents a simple, consistent error model.
+6. **Network access requires capability.** No default network access. Every operation is audited.
+7. **Protocol choice is the OS's decision.** The OS picks the best protocol for each operation based on endpoint type, available interfaces, and conditions.
+8. **Location is transparent.** `space::read()` works identically whether the data is local, on the LAN, or across the internet.
 
 -----
 

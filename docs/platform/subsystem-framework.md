@@ -22,11 +22,11 @@ AIOS defines a **subsystem framework** — a set of traits, types, and patterns 
 Strip away domain-specific details from networking, USB, audio, display, storage, Bluetooth, cameras, and printers. The same structure appears every time:
 
 1. **Hardware produces or consumes data.** A network card receives packets. A microphone produces audio samples. A display consumes pixel buffers. A USB keyboard produces key events. The direction and shape of data varies, but data always flows between hardware and software.
-1. **Agents want to use that data without knowing the hardware.** An agent wants to play audio. It doesn't care whether the output is a USB headset, a Bluetooth speaker, or an HDMI monitor's built-in speakers. It has audio data and wants it to come out of something.
-1. **The OS must mediate access.** Multiple agents may want the microphone. One agent shouldn't be able to spy on another's audio. The user must consent to camera access. Some devices are shared (display), some are exclusive (printer during a job), some are multiplexed (audio mixer).
-1. **Everything must be auditable.** The user should be able to ask: "What has accessed my microphone?" just as easily as "What network connections were made?"
-1. **POSIX tools expect specific APIs.** BSD tools expect `/dev/` nodes, file descriptors, `ioctl()`. These must work even though the underlying model is different.
-1. **Power must be managed.** Every device has active, idle, suspended, and off states. The OS must transition between them uniformly.
+2. **Agents want to use that data without knowing the hardware.** An agent wants to play audio. It doesn't care whether the output is a USB headset, a Bluetooth speaker, or an HDMI monitor's built-in speakers. It has audio data and wants it to come out of something.
+3. **The OS must mediate access.** Multiple agents may want the microphone. One agent shouldn't be able to spy on another's audio. The user must consent to camera access. Some devices are shared (display), some are exclusive (printer during a job), some are multiplexed (audio mixer).
+4. **Everything must be auditable.** The user should be able to ask: "What has accessed my microphone?" just as easily as "What network connections were made?"
+5. **POSIX tools expect specific APIs.** BSD tools expect `/dev/` nodes, file descriptors, `ioctl()`. These must work even though the underlying model is different.
+6. **Power must be managed.** Every device has active, idle, suspended, and off states. The OS must transition between them uniformly.
 
 -----
 
@@ -565,11 +565,11 @@ pub struct DevNode {
 **Translation flow:** When a BSD tool does `open("/dev/audio0", O_RDONLY)`:
 
 1. POSIX emulation layer sees the `/dev/` path
-1. Routes to the audio subsystem's POSIX bridge
-1. Bridge checks: does this process's agent have an audio capture capability?
-1. If yes: opens a session internally, returns a file descriptor
-1. Subsequent `read()` calls on that fd return audio samples
-1. `close()` ends the session, logs to audit
+2. Routes to the audio subsystem's POSIX bridge
+3. Bridge checks: does this process's agent have an audio capture capability?
+4. If yes: opens a session internally, returns a file descriptor
+5. Subsequent `read()` calls on that fd return audio samples
+6. `close()` ends the session, logs to audit
 
 The tool thinks it's reading from a device file. The subsystem framework handles everything underneath.
 
@@ -787,7 +787,7 @@ impl Subsystem for AudioSubsystem {
         gate_check(agent, Self::ID, cap, intent)?;
 
         // 2. Find the right device
-        let device = match &cap.device {
+        let device = match &cap.target {
             AudioTarget::Default => self.default_device(intent.direction)?,
             AudioTarget::Specific(id) => self.get_device(id)?,
         };
@@ -840,10 +840,10 @@ impl Subsystem for AudioSubsystem {
     }
 }
 
-/// Audio-specific capability
+/// Audio-specific capability (simplified — see audio.md §3.2 for the canonical enum definition)
 pub struct AudioCapability {
     pub direction: DataDirection,    // capture, playback, or both
-    pub device: AudioTarget,         // specific device or default
+    pub target: AudioTarget,         // specific device or default
     pub max_channels: u16,           // e.g., stereo only
     pub max_sample_rate: u32,        // e.g., 48000
     pub exclusive: bool,             // can request exclusive access
@@ -891,11 +891,11 @@ Every row follows the same traits. The subsystem-specific code is the minimal am
 To add GPS support:
 
 1. Define `GpsCapability` (which agents can read location, how often, precision level)
-1. Define `GpsDevice` implementing `DeviceClass` (reports position + accuracy)
-1. Define `GpsSession` (active location tracking session)
-1. Data channel format: `Events(LocationEvent { lat, lon, altitude, accuracy, timestamp })`
-1. Conflict policy: `Share` (multiple agents can read location)
-1. Audit: which agents read location and when
+2. Define `GpsDevice` implementing `DeviceClass` (reports position + accuracy)
+3. Define `GpsSession` (active location tracking session)
+4. Data channel format: `Events(LocationEvent { lat, lon, altitude, accuracy, timestamp })`
+5. Conflict policy: `Share` (multiple agents can read location)
+6. Audit: which agents read location and when
 
 No new kernel code, no new IPC protocols, no new security model. GPS plugs into the same system as audio, network, and cameras.
 

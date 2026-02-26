@@ -554,7 +554,7 @@ impl BehavioralObserver {
 
     async fn propose_preference_change(&self, hypothesis: &PreferenceHypothesis) {
         attention::post(AttentionRequest {
-            content: TypedContent::AgentReport {
+            content: AttentionContent::AgentReport {
                 agent: self_agent_id(),
                 task: None,
                 summary: hypothesis.description.clone(),

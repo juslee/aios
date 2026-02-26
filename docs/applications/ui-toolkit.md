@@ -400,13 +400,13 @@ pub trait Widget<M, R: Renderer> {
 Agents extend the widget set by implementing the `Widget` trait. Custom widgets compose from primitives (rectangles, text, images, paths) and can contain child widgets:
 
 ```rust
-pub struct AgentStatusBadge {
+pub struct AgentStateBadge {
     agent_name: String,
-    status: AgentStatus,
+    status: AgentState,
     resource_usage: ResourceUsage,
 }
 
-impl<M, R: Renderer> Widget<M, R> for AgentStatusBadge {
+impl<M, R: Renderer> Widget<M, R> for AgentStateBadge {
     fn layout(&self, _renderer: &R, limits: &Limits) -> Node {
         Node::new(Size::new(
             limits.max().width.min(200.0),
@@ -427,9 +427,9 @@ impl<M, R: Renderer> Widget<M, R> for AgentStatusBadge {
 
         // Status indicator dot
         let dot_color = match self.status {
-            AgentStatus::Active => colors.active,
-            AgentStatus::Paused => colors.paused,
-            AgentStatus::Stopped => colors.stopped,
+            AgentState::Active => colors.active,
+            AgentState::Paused => colors.paused,
+            AgentState::Terminated => colors.stopped,
         };
         renderer.fill_quad(
             Quad::circle(bounds.position() + Vector::new(8.0, 16.0), 4.0),

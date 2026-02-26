@@ -80,7 +80,7 @@ The audio subsystem provides:
 │  ├── open_output(format) → PcmOutputStream                       │
 │  ├── open_input(format) → PcmInputStream                         │
 │  ├── set_volume(f32)                                              │
-│  └── properties() → AudioDeviceProperties                        │
+│  └── properties() → &DeviceProperties                            │
 └───────────────────────┬──────────────────────────────────────────┘
                         │
                         ▼
@@ -356,6 +356,7 @@ pub struct AudioSession {
     pub channel: AudioChannel,
     pub format: AudioFormat,
     pub intent: SessionIntent,
+    pub capability: AudioCapability,
     pub started_at: Timestamp,
     pub samples_processed: u64,
     pub peak_level: f32,
@@ -1402,7 +1403,7 @@ pub struct HdmiAudioCaps {
 
 pub struct HdmiAudioFormat {
     pub coding: AudioCoding,
-    pub channels: u8,           // max channels for this format
+    pub channels: u16,          // max channels for this format
     pub sample_rates: Vec<u32>, // supported sample rates
     pub bit_depths: Vec<u8>,    // for LPCM: 16, 20, 24
     pub max_bitrate: Option<u32>, // for compressed formats (AC3, DTS)
