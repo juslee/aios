@@ -173,7 +173,7 @@ Identity is created during first boot. No account registration. No email address
 pub struct IdentityService {
     /// The user's identity
     pub identity: Identity,
-    /// History of key rotations for auditability (§3.1)
+    /// History of key rotations for auditability (§4.3)
     pub rotation_history: Vec<RotationCertificate>,
 }
 
@@ -187,7 +187,7 @@ impl IdentityService {
 
         // 3. Generate device key for this device
         let device_key = crypto_core::generate_ed25519();
-        let device_cert = key_pair.sign(&DeviceCert {
+        let device_cert = key_pair.sign(&DeviceCertificate {
             device_key: device_key.public,
             device_name: hostname(),
             issued: SystemTime::now(),
@@ -738,7 +738,7 @@ Capability tokens are cryptographically bound to identity:
 
 ```rust
 /// Space-sharing capability token. Distinct from the kernel-level
-/// CapabilityToken (security.md §4) — this is a higher-level
+/// CapabilityToken (security.md §3) — this is a higher-level
 /// identity-bound access grant for cross-space sharing.
 pub struct SpaceCapabilityToken {
     /// What this token grants access to
@@ -1450,12 +1450,11 @@ Phase 12c:  Service identity modeling          → external services as identiti
 Phase 15a:  Cross-device identity              → device addition, revocation
 Phase 15b:  Space Mesh sync                    → space sync across devices
 Phase 15c:  Peer Protocol authentication       → mutual device authentication
+Phase 15d:  Multi-device key escrow            → device-to-device recovery (with Space Sync)
 
 Phase 18a:  Mutual introduction                → relationship via intermediary
 Phase 18b:  Privacy controls                   → disclosure settings, anonymous mode
 Phase 18c:  Key rotation                       → scheduled and emergency re-keying
-
-Phase 9c:   Multi-device key escrow            → device-to-device recovery (with Space Sync)
 Phase 25:   Agent delegation chains            → provenance with agent identity
 ```
 

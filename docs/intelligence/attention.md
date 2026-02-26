@@ -147,7 +147,7 @@ pub enum AttentionContent {
         agent: AgentId,
         task: Option<TaskId>,
         summary: String,
-        results: Option<Vec<SpaceObjectId>>,
+        results: Option<Vec<ObjectId>>,
     },
     /// Calendar/scheduling
     Schedule {
@@ -832,7 +832,7 @@ attention = "post"  # can post attention items
 // Agent code — posting an attention item
 use aios_sdk::attention;
 
-pub async fn notify_results_ready(results: &[SpaceObjectId]) {
+pub async fn notify_results_ready(results: &[ObjectId]) {
     attention::post(AttentionRequest {
         content: AttentionContent::AgentReport {
             agent: self_agent_id(),
@@ -1262,7 +1262,7 @@ pub struct RuleBasedTriage {
     /// Agent categories with default urgency levels
     agent_urgency_defaults: HashMap<AgentCategory, UrgencyLevel>,
     /// Person priority from identity system (if available)
-    relationship_boosts: HashMap<PersonId, f32>,
+    relationship_boosts: HashMap<IdentityId, f32>,
 }
 
 impl RuleBasedTriage {
@@ -1275,7 +1275,7 @@ impl RuleBasedTriage {
             AgentCategory::Communication => 0.5, // messages vary
             AgentCategory::Productivity => 0.3,  // typically low urgency
             AgentCategory::Media => 0.1,         // almost never urgent
-            AgentCategory::Game => 0.05,         // never urgent
+            AgentCategory::Gaming => 0.05,       // never urgent
             _ => 0.3,
         };
 

@@ -287,7 +287,7 @@ No information leaked, no resources stolen, no degradation achieved.
 
 ### 1.5 Attack Scenario Summary
 
-The following table consolidates all documented attack scenarios from this document and [ipc.md](../kernel/ipc.md) §13:
+The following table consolidates all documented attack scenarios from this document and the damage ceiling analyses in [ipc.md](../kernel/ipc.md) §13:
 
 | # | Scenario | Primary Defense Layer | Detection / Enforcement | Damage Ceiling |
 |---|----------|----------------------|------------------------|----------------|
@@ -747,7 +747,7 @@ The kernel logs the fallback transition as a security event in the provenance ch
 
 **Recovery:** AIRS exits fallback mode when its directive rates return to within 2σ of baseline for 10 consecutive minutes. The kernel re-enables resource directives incrementally — first prefetch (lowest risk), then compression scheduling, then pool resizing (highest risk).
 
-### 2.4 Layer 4: Security Zones
+### 2.4 Layer 4: Security Zone
 
 Spaces are organized into security zones that determine the base level of protection applied to their contents. Zones create concentric rings of trust — data flows inward (from Untrusted to Core) only through explicit promotion, never automatically.
 
@@ -768,6 +768,9 @@ pub enum SecurityZone {
     /// Data from untrusted sources.
     /// Web storage, downloaded files, data from unknown agents.
     Untrusted,
+
+    /// Ephemeral data (/tmp), auto-cleaned on shutdown.
+    Ephemeral,
 }
 
 pub struct ZonePolicy {
@@ -1027,7 +1030,7 @@ User password / biometric / hardware key
                 ▼
 ┌──────────────────────────────────────────┐
 │  Argon2id(password, device_salt,         │
-│           t=3, m=256MB, p=4)             │
+│           t=3, m=64MB, p=4)              │
 │                                          │
 │  → master_key (256-bit)                  │
 └──────────────────┬───────────────────────┘
@@ -1186,7 +1189,7 @@ pub struct MerkleChain {
     length: u64,
     /// Kernel signing key for chain integrity (Ed25519).
     /// Loaded from secure storage at boot; private key never leaves kernel.
-    signing_key: SigningKey,
+    signing_key: Ed25519SigningKey,
 }
 
 impl MerkleChain {
@@ -1262,10 +1265,9 @@ pub struct AuditQuery {
 AIRS resource orchestration directives — prefetch requests, pool resize commands, compression scheduling decisions — are logged in the provenance chain alongside agent actions. Every directive that AIRS issues is a `ProvenanceAction`:
 
 ```rust
-/// Resource orchestration directives, logged in the provenance chain.
-/// The agent_id field is set to AIRS's service AgentId.
-pub enum ProvenanceAction {
-    // ... existing variants ...
+/// Additional ProvenanceAction variants for resource orchestration directives,
+/// logged in the provenance chain. The agent_id field is set to AIRS's service AgentId.
+/// (See §2.7 above for the base ProvenanceAction enum definition.)
 
     /// AIRS directed a prefetch of space objects into memory
     ResourcePrefetch {
@@ -1398,7 +1400,7 @@ pub struct BlastRadiusPolicy {
 
     // --- Write limits ---
     /// Maximum objects writable per time window
-    max_writes_per_window: u32,         // default: 100
+    max_writes_per_window: u32,         // default: 1000
     /// Time window for write limit
     write_window: Duration,             // default: 1 hour
     /// Maximum total bytes writable per window
@@ -2531,7 +2533,7 @@ Formal verification provides mathematical guarantees about security properties. 
 - Property: No page table entry ever has both write and execute permissions simultaneously.
 - Approach: Exhaustive analysis of all `MemoryMap` code paths to verify PTE flag setting.
 
-**Timeline:** TLA+ models begin in Phase 13 (Security Hardening). Coq proofs for capability system and provenance chain target Phase 14. Full formal verification of W^X and IPC targeting Phase 24.
+**Timeline:** TLA+ models begin in Phase 13 (Security Hardening). Coq proofs for capability system and provenance chain target Phase 24. Full formal verification of W^X and IPC also targeting Phase 24.
 
 -----
 
@@ -2681,7 +2683,7 @@ This section documents zero trust as a formal design principle, maps it to AIOS'
 |---|---|---|
 | **Never trust, always verify** | Every request authenticated at API gateway | Every IPC call checked against capability token |
 | **Least privilege** | Scoped API tokens, role-based access | Capability attenuation — narrow path, reduce expiry, remove write |
-| **Microsegmentation** | Network segments with firewall rules between them | Security zones (Personal, Shared, System) with capability gates |
+| **Microsegmentation** | Network segments with firewall rules between them | Security zones (Core, Personal, Collaborative, Untrusted, Ephemeral) with capability gates |
 | **Assume breach** | Logging, monitoring, anomaly detection | Audit system (all IPC logged), provenance chain, MTE tagging |
 | **Short-lived credentials** | JWT with 15-minute expiry, rotating API keys | Capability expiry (`expires` field), temporal capabilities |
 | **Continuous verification** | Re-authenticate on every request, not just session start | Capability checked per-IPC (but see §10.3 — caching gap) |
@@ -2829,7 +2831,7 @@ This is not just logging — it is active enforcement based on behavioral contex
 | Mutual auth | mTLS (both sides present certs) | Channel endpoints established by trusted Service Manager |
 | Logging | SIEM, centralized log analysis | Provenance chain (Merkle-chain, tamper-evident, on-device) |
 
-**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (31 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, formally verified (Phase 13), and fuzz-tested.
+**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (31 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, with formal verification beginning in Phase 13 (TLA+ models) and Coq proofs in Phase 24, and fuzz-tested.
 
 **AIOS's unique contribution.** No existing kernel implements behavioral gating — the idea that a structurally valid capability can be modulated by behavioral context. This is the intersection of zero trust and AI-native security. Traditional kernels check "do you have permission?" AIOS checks "do you have permission AND is this consistent with how you normally behave?" The second check is only possible because AIRS has a behavioral model of every agent.
 
@@ -2838,8 +2840,8 @@ This is not just logging — it is active enforcement based on behavioral contex
 Zero trust is not a separate phase — it emerges from capabilities, IPC mediation, and behavioral monitoring working together. But the gaps identified above require targeted work:
 
 ```
-Phase 3b:  Capability revocation propagates to channels (Gap 1)
-Phase 3b:  Per-process kernel resource limits (Gap 4)
+Phase 3:   Capability revocation propagates to channels (Gap 1)
+Phase 3:   Per-process kernel resource limits (Gap 4)
 Phase 8:   Mandatory capability expiry per trust level (Gap 2)
 Phase 8:   Behavioral gating integration: AIRS → kernel rate limiting (Gap 3)
 Phase 13:  Formal verification that revocation fully propagates
@@ -2896,18 +2898,18 @@ Phase 8: AI Security Layers (requires AIRS)
   ├── Security/resource path priority fence in AIRS
   └── Agent hint screening (Layer 5 extension)
 
-Phase 14b: Resource Orchestration Security (requires AIRS resource orchestrator)
-  ├── Kernel AIRS directive monitor — baseline building, anomaly detection
-  ├── Kernel fallback mode — static heuristics when AIRS anomalous
-  ├── Resource directive provenance — directives logged in Merkle chain
-  ├── Resource allocation opacity — agents cannot observe pool state
-  └── Hint screening integration with behavioral monitoring (Layer 3)
-
 Phase 10: Agent Security
   ├── Agent manifest verification (developer signature check)
   ├── Capability approval UI flow
   ├── Agent audit tool (static analysis)
   └── Delegation chain tracking
+
+Phase 14: Resource Orchestration Security (requires AIRS resource orchestrator)
+  ├── Kernel AIRS directive monitor — baseline building, anomaly detection
+  ├── Kernel fallback mode — static heuristics when AIRS anomalous
+  ├── Resource directive provenance — directives logged in Merkle chain
+  ├── Resource allocation opacity — agents cannot observe pool state
+  └── Hint screening integration with behavioral monitoring (Layer 3)
 
 Phase 13: Security Hardening (full security milestone)
   ├── PAC enabled for all code (kernel + userspace)

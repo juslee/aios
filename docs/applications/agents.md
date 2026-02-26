@@ -575,7 +575,7 @@ pub enum PreRebootState {
 }
 ```
 
-**Relaunch order.** Agent recovery happens during boot Phase 5 (Workspace Restoration), after the compositor, AIRS, and Space Storage are running. The order:
+**Relaunch order.** Agent recovery happens during boot Phase 5 (Experience), after the compositor, AIRS, and Space Storage are running. The order:
 
 ```
 Phase 5 agent relaunch:
@@ -1227,6 +1227,14 @@ pub enum AgentEvent {
 
     /// The agent was resumed from paused/suspended state
     Resumed,
+
+    /// Fresh start — no prior state to restore
+    Started,
+
+    /// System rebooted — agent should restore state from spaces
+    SystemReboot {
+        previous_state: PreRebootState,
+    },
 
     // === User Input ===
 

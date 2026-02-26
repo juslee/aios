@@ -1610,49 +1610,36 @@ Every accessibility feature works without AIRS. This section documents the speci
 
 ### 11.1 Fallback Specifications
 
-```rust
-/// Fallback behavior when AIRS is unavailable.
-/// These are not degraded-mode afterthoughts — they are complete,
-/// usable implementations that happen to be less sophisticated.
-pub enum AirsFallback {
-    /// TTS: eSpeak-NG instead of neural voice
-    TextToSpeech {
-        engine: EspeakNg,
-        quality: "Robotic but clear, <10ms latency",
-        coverage: "100+ languages",
-    },
+```
+Fallback behavior when AIRS is unavailable.
+These are not degraded-mode afterthoughts — they are complete,
+usable implementations that happen to be less sophisticated.
 
-    /// Image descriptions: none auto-generated
-    ImageDescription {
-        behavior: "Only developer-provided alt text shown",
-        missing: "Screen reader says 'image' with no description",
-    },
+AirsFallback::TextToSpeech
+    engine:     EspeakNg
+    quality:    Robotic but clear, <10ms latency
+    coverage:   100+ languages
 
-    /// Voice control: keyword spotter
-    VoiceControl {
-        vocabulary: "~50 fixed commands",
-        recognition: "Phoneme pattern matching, no language model",
-        wake_word: "Required — 'Computer' by default",
-    },
+AirsFallback::ImageDescription
+    behavior:   Only developer-provided alt text shown
+    missing:    Screen reader says 'image' with no description
 
-    /// Content summaries: none
-    ContentSummary {
-        behavior: "Screen reader reads all content linearly",
-        workaround: "User can use heading navigation to skip sections",
-    },
+AirsFallback::VoiceControl
+    vocabulary:  ~50 fixed commands
+    recognition: Phoneme pattern matching, no language model
+    wake_word:   Required — 'Computer' by default
 
-    /// Smart navigation: standard focus order
-    SmartNavigation {
-        behavior: "Tab order follows widget hierarchy",
-        workaround: "User uses landmark navigation (jump to heading, list, form)",
-    },
+AirsFallback::ContentSummary
+    behavior:    Screen reader reads all content linearly
+    workaround:  User can use heading navigation to skip sections
 
-    /// Context adaptation: static settings
-    ContextAdaptation {
-        behavior: "Accessibility settings remain fixed",
-        workaround: "User manually adjusts via Conversation Bar or preferences",
-    },
-}
+AirsFallback::SmartNavigation
+    behavior:    Tab order follows widget hierarchy
+    workaround:  User uses landmark navigation (jump to heading, list, form)
+
+AirsFallback::ContextAdaptation
+    behavior:    Accessibility settings remain fixed
+    workaround:  User manually adjusts via Conversation Bar or preferences
 ```
 
 ### 11.2 Graceful Degradation at Runtime
@@ -1716,7 +1703,7 @@ Phase 9:   Experience Layer
            ├── BootAccessibilityConfig persistence
            └── Conversation Bar: "turn on screen reader" works
 
-Phase 15:  UI Toolkit Accessibility
+Phase 20:  UI Toolkit Accessibility
            ├── All widgets emit AccessNode automatically
            ├── AccessRole for every standard widget
            ├── Accessible label / description API for developers
