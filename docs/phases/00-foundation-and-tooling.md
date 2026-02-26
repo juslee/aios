@@ -31,7 +31,23 @@ These existing documents define the technical design. This phase doc focuses on 
 
 -----
 
-## Milestone Steps
+## Milestones
+
+Phase 0 has three internal milestones. Each builds on the previous and produces something observable.
+
+| Milestone | Steps | Target | Observable result |
+|---|---|---|---|
+| **M1 — Compiles** | 1–2 | Days 2–3 | `cargo build` produces an aarch64 ELF with zero warnings |
+| **M2 — Boots** | 3–6 | End of week 1 | `just run` prints "AIOS kernel booting..." in terminal |
+| **M3 — Scaffold complete** | 7–8 | End of week 2 | CI passes on clean checkout; panic prints to UART; VBAR_EL1 confirmed |
+
+-----
+
+## Milestone 1 — Compiles (Days 2–3)
+
+*Goal: `cargo build` produces an aarch64 ELF with zero warnings.*
+
+-----
 
 ### Step 1: Rust Toolchain and Target Setup
 
@@ -43,7 +59,7 @@ These existing documents define the technical design. This phase doc focuses on 
 - [ ] Add components: `rust-src`, `llvm-tools`, `clippy`, `rustfmt`
 - [ ] Verify `cargo build --target aarch64-unknown-none` produces an empty binary
 
-**Note:** `aarch64-unknown-none` uses the hard-float ABI — the compiler emits NEON/FP instructions freely. This is correct for AIOS (needed for GGML/NEON in later phases) but requires enabling the FPU in boot assembly before any Rust code executes (see Step 3).
+**Note:** `aarch64-unknown-none` uses the hard-float ABI — the compiler emits NEON/FP instructions freely. This is correct for AIOS (needed for GGML/NEON in later phases) but requires enabling the FPU in boot assembly before any Rust code executes (see Step 3). The alternative `aarch64-unknown-none-softfloat` avoids the FPU constraint but is not used here because it cannot run NEON-optimized inference code.
 
 **Acceptance:** `rustup show` displays the pinned nightly with aarch64-unknown-none. `cargo build` succeeds (even if the binary does nothing).
 
@@ -56,10 +72,10 @@ These existing documents define the technical design. This phase doc focuses on 
 **Tasks:**
 - [ ] Create root `Cargo.toml` as a workspace with `resolver = "2"` and `edition = "2021"`
 - [ ] Create `kernel/` crate — `#![no_std]`, `#![no_main]`, stub panic handler (`loop {}` — upgraded to UART output in Step 8 once UART exists)
-- [ ] Create `shared/` crate — `#![no_std]`, with the full `BootInfo` struct skeleton from boot.md §2.2 (all 12 fields, using `Option<T>` for optional fields). Phase 0 only populates `magic`; Phase 1 populates the rest. Starting with the full struct avoids an ABI-breaking change at the Phase 0/1 boundary.
-- [ ] Verify `shared/` compiles with `--target aarch64-unknown-none` (must not accidentally pull `std`)
+- [ ] Create `shared/` crate — `#![no_std]`, with the full `BootInfo` struct skeleton from boot.md §2.2 (all 12 fields). Use `Option<PhysAddr>` or `Option<u64>` stubs for fields that contain raw pointers in the final definition — raw `*const T` pointers make the struct non-`Send`/non-`Sync` and will fail to compile for the host target. Phase 1 will replace stubs with the real pointer types scoped behind `#[cfg(target_arch = "aarch64")]`. Phase 0 only populates `magic`; starting with the full field set avoids an ABI-breaking change at the Phase 0/1 boundary.
+- [ ] Verify `shared/` compiles with `--target aarch64-unknown-none` and with the host target (`cargo build` from workspace root)
 - [ ] Create `.cargo/config.toml` — set default target; use `build.rs` (not hardcoded `-T` in config.toml) to pass the linker script path, as config.toml paths are relative to the workspace root and break when building from subdirectories
-- [ ] Create `-C relocation-model=static` rustflag in `.cargo/config.toml` (correct for Phase 0 fixed load address; will change to PIE when KASLR is introduced in Phase 2 — that transition requires changes to the linker script, ELF type, and boot assembly, not just this flag)
+- [ ] Create `-C relocation-model=static` rustflag in `.cargo/config.toml` — correct for Phase 0's fixed load address. Note: KASLR (Phase 2) applies a random slide at boot-time on a static binary — it does not require switching to PIE. `relocation-model=static` remains correct beyond Phase 0.
 - [ ] Create `.gitignore` — ignore `target/`, QEMU disk images, editor files
 - [ ] Create `LICENSE` — BSD-2-Clause (per overview.md §1)
 - [ ] Create `README.md` — project name, one-line description, prerequisites (Rust nightly, QEMU 6.0+), build instructions (`just build && just run`)
@@ -98,7 +114,13 @@ aios/
 └── docs/                   (existing)
 ```
 
-**Acceptance:** `cargo build` compiles both crates with zero warnings. `file` on the kernel ELF shows "ELF 64-bit LSB executable, ARM aarch64". `shared/` compiles for both `aarch64-unknown-none` and the host target.
+**Acceptance:** `cargo build` compiles both crates with zero warnings. `file` on the kernel ELF shows "ELF 64-bit LSB executable, ARM aarch64". `shared/` compiles for both `aarch64-unknown-none` and the host target with zero warnings.
+
+-----
+
+## Milestone 2 — Boots (End of Week 1)
+
+*Goal: `just run` prints "AIOS kernel booting..." in the terminal.*
 
 -----
 
@@ -113,21 +135,21 @@ aios/
 - [ ] Set `.text` origin at `0x4008_0000` (512 KiB above QEMU virt RAM base at `0x4000_0000` — leaves room for the DTB QEMU typically places near RAM start; the actual DTB address is passed in `x0` at entry and may vary, see Decision Points)
 - [ ] Define sections in order: `.text`, `.rodata`, `.data`, `.bss`, stack region
 - [ ] Export `__bss_start` and `__bss_end` symbols (used by boot.S for BSS zeroing)
-- [ ] Place stub exception vector table in `.text.vectors` with `ALIGN(2048)` in the linker script (the section base must be 2048-byte aligned for `VBAR_EL1`). Within the assembly file, each of the 16 individual 128-byte entries also requires `.align 7` — both alignments are required simultaneously: the linker script aligns the section base, the assembly aligns each slot within it.
+- [ ] Place stub exception vector table in `.text.vectors` with `ALIGN(2048)` in the linker script — this aligns the section base to 2048 bytes as required by `VBAR_EL1`. Within the assembly file, each of the 16 individual 128-byte entries separately requires `.align 7` to ensure correct 128-byte slot alignment within the section. Both are needed: the linker script aligns the section base; the assembly aligns each slot within it.
 - [ ] Emit the linker script path via `build.rs` with `println!("cargo:rustc-link-arg=-T{}", ...)`
 
 **Assembly entry point tasks (`boot.S`):**
 
-The boot sequence must follow this exact order. The ordering is strict — FPU must be enabled before the compiler can generate any code that executes:
+The boot sequence must follow this exact order. The ordering is strict — FPU must be enabled before any Rust-generated code runs:
 
-- [ ] **1. Enable FP/NEON (must be first):** `mrs x0, CPACR_EL1; orr x0, x0, #(3 << 20); msr CPACR_EL1, x0; isb`. The hard-float ABI means the compiler emits NEON instructions for `memcpy`/`memset` — including during BSS zeroing. Any NEON instruction before this traps. This must run before anything else.
+- [ ] **1. Enable FP/NEON (must be first):** Use a callee-saved register (e.g. `x19`) to avoid clobbering `x0`, which holds the DTB pointer passed by QEMU at entry. Example: `mrs x19, CPACR_EL1; orr x19, x19, #(3 << 20); msr CPACR_EL1, x19; isb`. The hard-float ABI means the compiler emits NEON instructions for `memcpy`/`memset` — including during BSS zeroing. Any NEON instruction before this traps. Note: boot.md §3.3 uses `x1` as the scratch register because `x0` holds the `BootInfo` pointer at UEFI entry; Phase 0 uses `x19` for the same reason (preserving `x0`) even though the DTB pointer in `x0` is ultimately discarded.
 - [ ] **2. Install stub exception vectors:** Write address of the vector table to `VBAR_EL1`. Stub entries branch-to-self (`b .`) so any early fault halts deterministically instead of jumping to garbage memory. This is a temporary safety net — replaced with the Rust-defined table in Step 8.
 - [ ] **3. Park secondary cores:** Read `MPIDR_EL1`, extract core ID (Aff0 field). If not core 0, enter `wfe` loop. `wfe` (Wait For Event) is preferred over `wfi` because the boot CPU can wake all parked secondaries simultaneously with a single `sev` (Send Event) broadcast — no GIC configuration required. `wfi` can also be woken (by any pending interrupt, even masked ones), but waking secondaries that way requires the GIC to be configured to deliver an IPI to each core, which is Phase 1+ work.
 - [ ] **4. Set stack pointer:** Load stack top address from linker-script-defined symbol.
 - [ ] **5. Zero BSS:** Loop from `__bss_start` to `__bss_end` using `str xzr` (safe now that FPU is enabled in step 1).
 - [ ] **6. Branch to `kernel_main`:** The Rust entry point must be declared `#[no_mangle] pub extern "C" fn kernel_main() -> !` — without `#[no_mangle]`, the linker cannot find the symbol and will error.
 
-**QEMU boot protocol note:** QEMU `-kernel` loads the ELF at the virtual address in its ELF headers (`0x4008_0000` per the linker script). QEMU also generates a DTB and passes its physical address in register `x0` following the Linux arm64 boot protocol. Phase 0 does not parse the DTB — `x0` is ignored at entry.
+**QEMU boot protocol note:** QEMU `-kernel` loads the ELF at the physical address matching the ELF's load segment (`0x4008_0000` per the linker script — with MMU off, physical and virtual addresses are the same). QEMU generates a DTB and passes its physical address in `x0` following the Linux arm64 boot protocol. Phase 0 discards `x0` after the FPU enable sequence.
 
 **Acceptance:** `cargo objdump -- -d` shows `kernel_main` near `0x4008_0000`. `cargo objdump -- -h` shows `.text` at `0x4008_0000`, `.bss` after `.data`, no overlapping sections. Vector table section is 2048-byte aligned.
 
@@ -163,7 +185,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 - [ ] `just build` — compile kernel in debug mode
 - [ ] `just build-release` — compile kernel in release mode
 - [ ] `just run` — build + launch QEMU (see Step 6 for full invocation)
-- [ ] `just debug` — build + launch QEMU with GDB stub (`-s -S`)
+- [ ] `just debug` — build + launch QEMU with `-gdb tcp::1234 -S` (explicit port; do not use `-s` shorthand as behavior varies across QEMU versions)
 - [ ] `just test` — run `cargo test` on host (for unit tests that don't need QEMU)
 - [ ] `just clippy` — run clippy with `--deny warnings`
 - [ ] `just fmt` — run `cargo fmt` (reformats in place, for local use)
@@ -195,6 +217,12 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 -----
 
+## Milestone 3 — Scaffold Complete (End of Week 2)
+
+*Goal: CI passes on clean checkout; panic prints to UART; VBAR_EL1 confirmed.*
+
+-----
+
 ### Step 7: CI Pipeline (GitHub Actions)
 
 **What:** Set up CI that validates every push and PR.
@@ -216,7 +244,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Tasks:**
 - [ ] Upgrade `#[panic_handler]` from the Step 2 `loop {}` stub to print panic info (message, file, line) to UART, then halt (`loop { unsafe { core::arch::asm!("wfe") } }`)
-- [ ] Add `kernel/src/arch/aarch64/exceptions.rs` — define the full exception vector table (16 entries at 128-byte spacing, `.align 7` per entry, all entries branch-to-self for now; real handlers come in Phase 1)
+- [ ] Add `kernel/src/arch/aarch64/exceptions.rs` — define the full exception vector table (16 entries at 128-byte spacing, `.align 7` per entry in assembly, all entries branch-to-self for now; real handlers come in Phase 1). The section base alignment (`ALIGN(2048)` in the linker script, defined in Step 3) and per-entry alignment (`.align 7` here) are separate requirements — both must be present.
 - [ ] Reinstall `VBAR_EL1` from `kernel_main` pointing to the Rust-defined vector table. The boot.S stub from Step 3 is a temporary safety net for the window between entry and this point — any fault in that window causes a deterministic halt (branch-to-self), which is intentional. The boot.S stub is removed when Phase 1 installs real exception handlers.
 - [ ] Print boot diagnostics to UART: current EL (confirm it is 1), core ID from `MPIDR_EL1`, `VBAR_EL1` value (confirm it matches the vector table symbol address from `cargo objdump`)
 
@@ -228,8 +256,8 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 | Decision | Options | Recommendation |
 |---|---|---|
-| Boot method for Phase 0 | UEFI stub vs. ELF loaded by `-kernel` | ELF via `-kernel`. UEFI stub is Phase 1 work. QEMU loads the ELF at the address in its headers, drops to EL1, and passes a DTB pointer in x0. |
-| Kernel load address | `0x4008_0000` (512 KiB offset) vs. `0x4010_0000` (1 MiB offset) | `0x4008_0000`. The 512 KiB offset leaves room for QEMU's DTB at RAM base (`0x4000_0000`). The Phase 0 kernel is tiny. Move to `0x4010_0000` if DTB overlap is observed. |
+| Boot method for Phase 0 | UEFI stub vs. ELF loaded by `-kernel` | ELF via `-kernel`. UEFI stub is Phase 1 work. QEMU loads the ELF at the physical address from its ELF headers, drops to EL1, and passes a DTB pointer in x0. |
+| Kernel load address | `0x4008_0000` (512 KiB offset) vs. `0x4010_0000` (1 MiB offset) | `0x4008_0000`. The 512 KiB offset leaves room for QEMU's DTB near RAM base (`0x4000_0000`). The Phase 0 kernel is tiny. Move to `0x4010_0000` if DTB overlap is observed. |
 | Linker script wiring | `.cargo/config.toml` hardcoded `-T` vs. `build.rs` | `build.rs`. The config.toml path is relative to the workspace root and silently breaks when building from subdirectories. `build.rs` with `cargo:rustc-link-arg` is path-safe and idiomatic. |
 | UART approach | Hardcoded MMIO vs. HAL trait | Hardcoded for Phase 0. The HAL `Platform` trait and `detect_platform()` are Phase 1 work. Keep it simple now, refactor later. |
 | Test strategy | Host-only unit tests vs. QEMU integration tests | Host-only for Phase 0. QEMU integration tests (boot → check UART output) in Phase 1. |
@@ -238,11 +266,10 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 ## Phase Completion Criteria
 
-- [ ] `just build` compiles a `#![no_std]` aarch64 kernel with zero warnings
-- [ ] `just run` boots the kernel in QEMU and prints "AIOS kernel booting..." to UART
-- [ ] `just clippy` and `just fmt-check` pass cleanly
-- [ ] Panic handler prints location and message to UART
-- [ ] Boot diagnostics confirm EL = 1, core ID = 0, VBAR_EL1 matches vector table symbol
-- [ ] CI pipeline passes on clean checkout
+All three milestones complete:
+
+- [ ] **M1** — `cargo build` produces an aarch64 ELF with zero warnings; `shared/` compiles for both bare-metal and host targets
+- [ ] **M2** — `just run` boots in QEMU and prints "AIOS kernel booting..." to UART; `just check` passes without QEMU installed
+- [ ] **M3** — CI pipeline passes on clean checkout; panic handler prints to UART; boot diagnostics confirm EL = 1, core ID = 0, VBAR_EL1 matches vector table symbol
 - [ ] Project has LICENSE (BSD-2-Clause), README (with QEMU 6.0+ prerequisite), .gitignore
 - [ ] Adding a new crate to workspace `[members]` and running `cargo build --workspace` succeeds without restructuring
