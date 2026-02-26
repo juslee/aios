@@ -59,7 +59,7 @@ These existing documents define the technical design. This phase doc focuses on 
 - [ ] Create `shared/` crate — `#![no_std]`, with the full `BootInfo` struct skeleton from boot.md §2.2 (all 12 fields, using `Option<T>` for optional fields). Phase 0 only populates `magic`; Phase 1 populates the rest. Starting with the full struct avoids an ABI-breaking change at the Phase 0/1 boundary.
 - [ ] Verify `shared/` compiles with `--target aarch64-unknown-none` (must not accidentally pull `std`)
 - [ ] Create `.cargo/config.toml` — set default target; use `build.rs` (not hardcoded `-T` in config.toml) to pass the linker script path, as config.toml paths are relative to the workspace root and break when building from subdirectories
-- [ ] Create `-C relocation-model=static` rustflag in `.cargo/config.toml` (correct for Phase 0 fixed load address; will change to PIC when KASLR is introduced in Phase 1+)
+- [ ] Create `-C relocation-model=static` rustflag in `.cargo/config.toml` (correct for Phase 0 fixed load address; will change to PIE when KASLR is introduced in Phase 2 — that transition requires changes to the linker script, ELF type, and boot assembly, not just this flag)
 - [ ] Create `.gitignore` — ignore `target/`, QEMU disk images, editor files
 - [ ] Create `LICENSE` — BSD-2-Clause (per overview.md §1)
 - [ ] Create `README.md` — project name, one-line description, prerequisites (Rust nightly, QEMU 6.0+), build instructions (`just build && just run`)
@@ -106,14 +106,14 @@ aios/
 
 **What:** Write the linker script that places kernel sections at the correct addresses for QEMU virt machine, and the assembly stub that initializes the CPU state and jumps to Rust.
 
-**EL note:** QEMU `-kernel` on the virt machine boots directly to EL1. EL2→EL1 drop is not performed here — QEMU handles the transition, just as UEFI firmware does on real hardware (see boot.md §2.6: "the kernel never touches EL2 registers"). There is no EL2 setup in Phase 0's boot assembly.
+**EL and MMU note:** QEMU `-kernel` on the virt machine boots directly to EL1 with MMU off and caches off. There is no EL2 setup in Phase 0's boot assembly — QEMU handles the EL transition (see boot.md §2.6: "the kernel never touches EL2 registers"). Note that boot.md §3.3 Step 1 describes the UEFI handoff path where "MMU is on, caches are on" — that does not apply here. Phase 0's boot assembly runs with MMU off throughout; the load address `0x4008_0000` is a physical address, and MMIO access (e.g. UART at `0x0900_0000`) works correctly at EL1 with MMU off.
 
 **Linker script tasks:**
 - [ ] Create `kernel/src/arch/aarch64/linker.ld`
-- [ ] Set `.text` origin at `0x4008_0000` (512 KiB above QEMU virt RAM base at `0x4000_0000` — leaves room for the DTB QEMU places at RAM start; see Decision Points for rationale)
+- [ ] Set `.text` origin at `0x4008_0000` (512 KiB above QEMU virt RAM base at `0x4000_0000` — leaves room for the DTB QEMU typically places near RAM start; the actual DTB address is passed in `x0` at entry and may vary, see Decision Points)
 - [ ] Define sections in order: `.text`, `.rodata`, `.data`, `.bss`, stack region
 - [ ] Export `__bss_start` and `__bss_end` symbols (used by boot.S for BSS zeroing)
-- [ ] Place stub exception vector table in `.text.vectors` with `.align 11` (2048-byte alignment required by `VBAR_EL1`)
+- [ ] Place stub exception vector table in `.text.vectors` with `ALIGN(2048)` in the linker script (the section base must be 2048-byte aligned for `VBAR_EL1`). Within the assembly file, each of the 16 individual 128-byte entries also requires `.align 7` — both alignments are required simultaneously: the linker script aligns the section base, the assembly aligns each slot within it.
 - [ ] Emit the linker script path via `build.rs` with `println!("cargo:rustc-link-arg=-T{}", ...)`
 
 **Assembly entry point tasks (`boot.S`):**
@@ -122,7 +122,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 - [ ] **1. Enable FP/NEON (must be first):** `mrs x0, CPACR_EL1; orr x0, x0, #(3 << 20); msr CPACR_EL1, x0; isb`. The hard-float ABI means the compiler emits NEON instructions for `memcpy`/`memset` — including during BSS zeroing. Any NEON instruction before this traps. This must run before anything else.
 - [ ] **2. Install stub exception vectors:** Write address of the vector table to `VBAR_EL1`. Stub entries branch-to-self (`b .`) so any early fault halts deterministically instead of jumping to garbage memory. This is a temporary safety net — replaced with the Rust-defined table in Step 8.
-- [ ] **3. Park secondary cores:** Read `MPIDR_EL1`, extract core ID (Aff0 field). If not core 0, enter `wfe` loop. `wfe` (Wait For Event) is used instead of `wfi` because it allows the boot CPU to wake parked secondaries later via `sev` (Send Event) during SMP bringup in Phase 1+. `wfi` would require a configured interrupt source to return — not available yet.
+- [ ] **3. Park secondary cores:** Read `MPIDR_EL1`, extract core ID (Aff0 field). If not core 0, enter `wfe` loop. `wfe` (Wait For Event) is preferred over `wfi` because the boot CPU can wake all parked secondaries simultaneously with a single `sev` (Send Event) broadcast — no GIC configuration required. `wfi` can also be woken (by any pending interrupt, even masked ones), but waking secondaries that way requires the GIC to be configured to deliver an IPI to each core, which is Phase 1+ work.
 - [ ] **4. Set stack pointer:** Load stack top address from linker-script-defined symbol.
 - [ ] **5. Zero BSS:** Loop from `__bss_start` to `__bss_end` using `str xzr` (safe now that FPU is enabled in step 1).
 - [ ] **6. Branch to `kernel_main`:** The Rust entry point must be declared `#[no_mangle] pub extern "C" fn kernel_main() -> !` — without `#[no_mangle]`, the linker cannot find the symbol and will error.
@@ -182,9 +182,10 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 **Prerequisites:** QEMU 6.0+ (`qemu-system-aarch64`). Phase 1 UEFI boot will additionally require QEMU 7.0+ and the `edk2-aarch64` firmware package — install both now to avoid retrofitting CI later.
 
 **Tasks:**
-- [ ] QEMU invocation: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -smp 4 -m 2G -nographic -kernel <kernel-elf>`
+- [ ] QEMU invocation: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -smp 4 -m 2G -nographic -serial stdio -kernel <kernel-elf>`
   - `-cpu cortex-a72` matches the Raspberry Pi 4 target hardware
   - `-smp 4` emulates 4 cores so the secondary core parking code from Step 3 is exercised
+  - `-serial stdio` explicitly routes the PL011 UART to the terminal. `-nographic` implies `-serial mon:stdio` on most QEMU versions, but the behavior varies — explicit `-serial stdio` avoids silent failures where UART output never appears
   - On macOS with Apple Silicon, `-accel hvf` can be added for host-accelerated execution (optional for Phase 0)
 - [ ] Use `-kernel` with the ELF directly — no `objcopy` to flat binary needed. QEMU reads the ELF entry point from headers, and ELF preserves symbols for GDB debugging.
 - [ ] Wire into `just run` and `just debug` recipes from Step 5
