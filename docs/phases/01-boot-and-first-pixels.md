@@ -25,9 +25,9 @@ By the end of this phase, booting QEMU with edk2 firmware and a VirtIO-Blk disk 
 | Kernel early boot steps 1–9 | [boot.md](../kernel/boot.md) | §3.3 Steps 1–9 (entry through heap); §3.1 EarlyBootPhase enum; §3.2 KernelState struct |
 | SMP secondary core bringup | [boot.md](../kernel/boot.md) | §3.5 SMP Boot |
 | Platform trait and detection | [hal.md](../kernel/hal.md) | §2 Platform Detection; §3 Platform Trait; §3.2 Initialization Order |
-| PL011 UART (full init) | [hal.md](../kernel/hal.md) | §4 UART; §4.3 PL011 register map |
-| GICv3 interrupt controller | [hal.md](../kernel/hal.md) | §5 Interrupt Controller; §5.2 GICv3 |
-| ARM Generic Timer | [hal.md](../kernel/hal.md) | §6 Timer |
+| PL011 UART (full init) | [hal.md](../kernel/hal.md) | §4.3 Uart (PL011 register offsets and init sequence) |
+| GICv3 interrupt controller | [hal.md](../kernel/hal.md) | §4.1 InterruptController (GICv3 distributor, redistributor, CPU interface) |
+| ARM Generic Timer | [hal.md](../kernel/hal.md) | §4.2 Timer (CNTFRQ_EL0, tick calculation, PPI wiring) |
 | MMU and page tables | [memory.md](../kernel/memory.md) | §3 Virtual Memory; §3.1 Address Space Layout; §3.2 Page Table Format |
 | Buddy allocator | [memory.md](../kernel/memory.md) | §2 Physical Memory Manager; §2.2 Buddy Allocator |
 | Slab/heap | [memory.md](../kernel/memory.md) | §4 Kernel Heap; §4.1 Slab Allocator |
@@ -37,6 +37,8 @@ By the end of this phase, booting QEMU with edk2 firmware and a VirtIO-Blk disk 
 -----
 
 ## Milestones
+
+Milestones are numbered continuously across all phases. Phase 0 used M1–M3; Phase 1 continues with M4–M6.
 
 | Milestone | Steps | Target | Observable result |
 |---|---|---|---|
@@ -118,7 +120,7 @@ qemu-system-aarch64 \
 
 **Tasks:**
 - [ ] Add `fdt` crate (or implement a minimal parser) — must be `no_std` compatible. The parser needs: root `compatible` string, `/chosen/stdout-path`, CPU nodes (for SMP count and MPIDR values), `/psci` node (conduit and `cpu_on` function ID), memory nodes (base and size for each RAM region), GICv3 distributor and redistributor base addresses, ARM Generic Timer interrupt numbers
-- [ ] Implement `detect_platform(dt: &DeviceTree) -> Box<dyn Platform>` matching boot.md §2.6 and hal.md §2. For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
+- [ ] Implement `detect_platform(dt: &DeviceTree) -> Box<dyn Platform>` matching hal.md §2 (compatible string table) and §3 (Platform trait). For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
 - [ ] Implement `QemuPlatform` struct implementing the `Platform` trait skeleton (hal.md §3). Phase 1 only needs `init_uart`, `init_interrupts`, and `init_timer` — stub the remaining four with `unimplemented!()` for now
 - [ ] Advance `EarlyBootPhase` to `DeviceTreeParsed` and print to UART
 
