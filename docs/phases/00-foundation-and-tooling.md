@@ -23,7 +23,7 @@ These existing documents define the technical design. This phase doc focuses on 
 
 | Topic | Document | Relevant Sections |
 |---|---|---|
-| Boot sequence | [boot.md](../kernel/boot.md) | §3.3 Steps 1-2 (FPU enable, VBAR install; §2 Firmware Handoff is Phase 1 — QEMU `-kernel` handles the EL transition) |
+| Boot sequence | [boot.md](../kernel/boot.md) | §3.3 Steps 1-2 (FPU enable, VBAR install). boot.md §2 documents Phase 1's UEFI path; Phase 0 uses QEMU `-kernel` which bypasses UEFI entirely. |
 | HAL and platform trait | [hal.md](../kernel/hal.md) | §3 Platform Trait (`init_uart`, Uart trait; §2 Platform Detection is Phase 1) |
 | Memory layout | [memory.md](../kernel/memory.md) | §2 Physical Memory Manager, §2.1 Bootstrap (background only — explains the QEMU RAM base at `0x4000_0000` relevant to the load address decision; PMM implementation is Phase 2) |
 | Project overview | [overview.md](../project/overview.md) | §9 Hardware Strategy |
