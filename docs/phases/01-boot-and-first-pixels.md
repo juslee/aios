@@ -40,13 +40,13 @@ By the end of this phase, booting QEMU with edk2 firmware and a VirtIO-Blk disk 
 
 | Milestone | Steps | Target | Observable result |
 |---|---|---|---|
-| **M1 — UEFI stub runs** | 1–2 | End of week 1 | QEMU with edk2 prints "AIOS UEFI stub: ExitBootServices OK" to serial |
-| **M2 — Kernel boots to heap** | 3–6 | End of week 2 | Boot log shows all EarlyBootPhase transitions through HeapReady |
-| **M3 — First pixels** | 7–8 | End of week 4 | Coloured rectangle visible on QEMU virtual display; CI passes |
+| **M4 — UEFI stub runs** | 1–2 | End of week 1 | QEMU with edk2 prints "AIOS UEFI stub: ExitBootServices OK" to serial |
+| **M5 — Kernel boots to heap** | 3–6 | End of week 2 | Boot log shows all EarlyBootPhase transitions through HeapReady |
+| **M6 — First pixels** | 7–8 | End of week 4 | Coloured rectangle visible on QEMU virtual display; CI passes |
 
 -----
 
-## Milestone 1 — UEFI Stub Runs (End of Week 1)
+## Milestone 4 — UEFI Stub Runs (End of Week 1)
 
 *Goal: QEMU boots via edk2 and the UEFI stub successfully exits Boot Services and jumps to the kernel.*
 
@@ -106,7 +106,7 @@ qemu-system-aarch64 \
 
 -----
 
-## Milestone 2 — Kernel Boots to Heap (End of Week 2)
+## Milestone 5 — Kernel Boots to Heap (End of Week 2)
 
 *Goal: Boot log shows all EarlyBootPhase transitions through HeapReady.*
 
@@ -226,7 +226,7 @@ qemu-system-aarch64 \
 
 -----
 
-## Milestone 3 — First Pixels (End of Week 4)
+## Milestone 6 — First Pixels (End of Week 4)
 
 *Goal: Coloured rectangle visible on QEMU virtual display; CI passes.*
 
@@ -291,9 +291,9 @@ qemu-system-aarch64 \
 
 All three milestones complete:
 
-- [ ] **M1** — QEMU boots via edk2; stub prints banner and exits Boot Services; kernel entry is reached
-- [ ] **M2** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
-- [ ] **M3** — All 4 cores online; coloured rectangle visible on QEMU virtual display; CI passes on clean checkout
+- [ ] **M4** — QEMU boots via edk2; stub prints banner and exits Boot Services; kernel entry is reached
+- [ ] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
+- [ ] **M6** — All 4 cores online; coloured rectangle visible on QEMU virtual display; CI passes on clean checkout
 - [ ] `BootInfo.magic` is validated at kernel entry; mismatched magic halts with a UART error message
 - [ ] W^X enforced: `cargo objdump` shows no page is both writable and executable
 - [ ] `just disk` reproducibly builds the ESP image; `just run` boots end-to-end without manual steps
