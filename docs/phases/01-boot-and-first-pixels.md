@@ -164,7 +164,7 @@ qemu-system-aarch64 \
 
 **Tasks:**
 
-**GICv3 (hal.md §5.2):**
+**GICv3 (hal.md §4.1):**
 - [ ] Read GICv3 distributor base (`GICD`) and redistributor base (`GICR`) from DTB. On QEMU virt: `GICD` at `0x0800_0000`, `GICR` at `0x080A_0000` (8 redistributor frames × 128 KiB each for 4 cores)
 - [ ] Initialize distributor: set `GICD_CTLR.ARE_NS` (affinity routing enable), enable Group 1 non-secure interrupts
 - [ ] Initialize per-CPU redistributor: wake redistributor (clear `GICR_WAKER.ProcessorSleep`, wait for `ChildrenAsleep` to clear), enable Group 1 SGIs
