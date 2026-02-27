@@ -92,8 +92,8 @@ qemu-system-aarch64 \
 **What:** Implement the full BootInfo assembly sequence from boot.md §2.1–2.2: parse the UEFI memory map, acquire GOP framebuffer, acquire DTB, exit Boot Services, and jump to the kernel.
 
 **Tasks:**
-- [ ] Implement memory map acquisition: call `BootServices.get_memory_map()`, iterate over `MemoryDescriptor` entries, build the `BootInfo.memory_map` (boot.md §2.2). Store in a region allocated with `BootServices.allocate_pool(MemoryType::BootServicesData, ...)` — this region must be included in the memory map so the kernel can reclaim it
-- [ ] Implement GOP framebuffer acquisition: open `EFI_GRAPHICS_OUTPUT_PROTOCOL`, read `Mode.Info` for width/height/stride/format, fill `BootInfo.framebuffer` (boot.md §2.2 `FramebufferInfo`). `PixelFormat` mapping: `PixelRedGreenBlueReserved8BitPerColor` → `Rgb8`; `PixelBlueGreenRedReserved8BitPerColor` → `Bgr8`. Store framebuffer base as a `PhysicalAddress`.
+- [ ] Implement memory map acquisition: call `BootServices.get_memory_map()`, iterate over `MemoryDescriptor` entries, build the `BootInfo.memory_map` (boot.md §2.2). Store in a region allocated with `BootServices.allocate_pool(MemoryType::BootServicesData, ...)` — this region must be included in the memory map as type `BootInfo` so the buddy allocator excludes it from the free pool (the kernel reads it before reclaiming)
+- [ ] Implement GOP framebuffer acquisition: open `EFI_GRAPHICS_OUTPUT_PROTOCOL`, read `Mode.Info` for width/height/stride/format, fill `BootInfo.framebuffer` (boot.md §2.2 `FramebufferInfo`). `PixelFormat` mapping: `PixelRedGreenBlueReserved8BitPerColor` → `Rgb8`; `PixelBlueGreenRedReserved8BitPerColor` → `Bgr8`; `PixelBitMask` → `Bitmask { red, green, blue }` (read the per-channel bitmask fields from `EFI_PIXEL_BITMASK` and store them — fill_rect in Step 8 must decode them at draw time). Store framebuffer base as a `PhysicalAddress`.
 - [ ] Implement DTB location: QEMU passes the DTB address via the UEFI `EFI_DTB_TABLE_GUID` configuration table entry. Retrieve with `SystemTable.config_table()`. Fill `BootInfo.device_tree` with base and size.
 - [ ] Set `BootInfo.magic` = `0x41494F53_424F4F54` (`"AIOSBOOT"` as a u64)
 - [ ] Fill `BootInfo.rng_seed` from `EFI_RNG_PROTOCOL` if available; zero-fill if not (kernel falls back to timer entropy)
@@ -196,7 +196,7 @@ qemu-system-aarch64 \
 **Page table setup (memory.md §3):**
 - [ ] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, e.g. 64 KiB, for the initial page tables only)
 - [ ] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7:
-  - `0xFFFF_0000_0000_0000` — kernel text (PXN=0, UXN=1, AP=RO), rodata (PXN=1, UXN=1, AP=RO), data/bss (PXN=1, UXN=1, AP=RW, NX)
+  - `0xFFFF_0000_0000_0000` — kernel text (PXN=0, UXN=1, AP=RO), rodata (PXN=1, UXN=1, AP=RO), data/bss (PXN=1, UXN=1, AP=RW)
   - `0xFFFF_0000_4000_0000` — kernel heap region (reserved, not yet mapped)
   - `0xFFFF_0001_0000_0000` — physical memory direct map (all RAM, device memory)
   - `0xFFFF_0002_0000_0000` — MMIO (device memory, `nGnRnE` attribute)
@@ -271,7 +271,7 @@ qemu-system-aarch64 \
 - [ ] Print to UART: `[boot] Framebuffer: WxH stride=S format=Bgr8/Rgb8 at 0x...`
 - [ ] Update CI: add a QEMU headless screenshot step using `-display none -device virtio-gpu-pci` with `virtio-gpu` screendump via QEMU monitor, or skip framebuffer CI test (UART output is sufficient for CI; framebuffer is verified manually)
 
-**Framebuffer layout note:** The UEFI GOP framebuffer on QEMU virt is typically `800×600` or `1024×768` depending on the edk2 version. Stride may include padding: always compute pixel offset as `y * stride + x * 4` (for 32-bit formats), not `y * width * 4`. Using `width * 4` when stride > width will produce a diagonal smear.
+**Framebuffer layout note:** The UEFI GOP framebuffer on QEMU virt is typically `800×600` or `1024×768` depending on the edk2 version. `stride` is the **byte offset** from the start of one row to the start of the next — it is already in bytes, not pixels, and may include padding. Always compute pixel byte offset as `y * stride + x * 4` (for 32-bit formats), not `y * width * 4`. Using `width * 4` when stride > width will produce a diagonal smear.
 
 **Acceptance:** QEMU virtual display (viewed via VNC or SDL — add `-display gtk` to see it) shows a solid coloured rectangle on a black background. UART shows the framebuffer diagnostics line. CI passes without the framebuffer check (UART-only CI is acceptable).
 
