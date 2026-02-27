@@ -28,7 +28,7 @@ By the end of this phase, booting QEMU with edk2 firmware and a VirtIO-Blk disk 
 | PL011 UART (full init) | [hal.md](../kernel/hal.md) | §4.3 Uart (PL011 register offsets and init sequence) |
 | GICv3 interrupt controller | [hal.md](../kernel/hal.md) | §4.1 InterruptController (GICv3 distributor, redistributor, CPU interface) |
 | ARM Generic Timer | [hal.md](../kernel/hal.md) | §4.2 Timer (CNTFRQ_EL0, tick calculation, PPI wiring) |
-| MMU and page tables | [memory.md](../kernel/memory.md) | §3 Virtual Memory; §3.1 Address Space Layout; §3.2 Page Table Format |
+| MMU and page tables | [memory.md](../kernel/memory.md) | §3 Virtual Memory Manager; §3.1 Address Space Layout; §3.2 Page Tables |
 | Buddy allocator | [memory.md](../kernel/memory.md) | §2 Physical Memory Manager; §2.2 Buddy Allocator |
 | Slab/heap | [memory.md](../kernel/memory.md) | §4 Kernel Heap; §4.1 Slab Allocator |
 | QEMU vs real hardware | [boot.md](../kernel/boot.md) | §2.5 QEMU Boot vs Real Hardware |
@@ -140,7 +140,7 @@ qemu-system-aarch64 \
   1. Disable UART: clear CR.UARTEN (bit 0)
   2. Wait for any in-progress transmission to finish: poll UARTFR.BUSY (bit 3)
   3. Flush the FIFO: clear LCR_H.FEN (bit 4)
-  4. Program baud rate: `IBRD` = `clock_hz / (16 * baud_rate)`, `FBRD` = `round((clock_hz % (16 * baud_rate)) * 64 / (16 * baud_rate))`. QEMU PL011 clock: 24 MHz. For 115200 baud: IBRD=13, FBRD=1.
+  4. Program baud rate: `IBRD` = `clock_hz / (16 * baud_rate)`, `FBRD` = `round((clock_hz % (16 * baud_rate)) * 64 / (16 * baud_rate))`. QEMU PL011 UART clock: 24 MHz (this is the APB/UART peripheral clock — distinct from the ARM Generic Timer frequency of 62.5 MHz). For 115200 baud: IBRD=13, FBRD=1.
   5. Set line control: LCR_H = 0x70 (8-bit, 1 stop, no parity, FIFO enabled)
   6. Re-enable UART: CR = 0x301 (UARTEN | TXE | RXE)
 - [ ] Return `Uart` handle from `QemuPlatform::init_uart()`, store in `KernelState.uart`
@@ -172,7 +172,7 @@ qemu-system-aarch64 \
 - [ ] Store `InterruptController` handle in `KernelState.interrupt_controller`
 - [ ] Advance `EarlyBootPhase` to `InterruptsReady`
 
-**ARM Generic Timer (hal.md §6):**
+**ARM Generic Timer (hal.md §4.2):**
 - [ ] Read `CNTFRQ_EL0` for the timer frequency. QEMU virt default: 62.5 MHz
 - [ ] Calculate the 1 ms tick count: `tick_count = freq_hz / 1000`
 - [ ] Program `CNTP_TVAL_EL0 = tick_count` (physical timer compare value)
