@@ -213,7 +213,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | Phase | Name | Document | Status |
 |---|---|---|---|
 | 0 | Foundation & Tooling | [`00-foundation-and-tooling.md`](../phases/00-foundation-and-tooling.md) | Planned |
-| 1 | Boot & First Pixels | `01-boot-and-first-pixels.md` | Planned |
+| 1 | Boot & First Pixels | [`01-boot-and-first-pixels.md`](../phases/01-boot-and-first-pixels.md) | Planned |
 | 2 | Memory Management | `02-memory-management.md` | Planned |
 | 3 | IPC & Capability System | `03-ipc-and-capability-system.md` | Planned |
 | 4 | Block Storage & Object Store | `04-block-storage-and-object-store.md` | Planned |
