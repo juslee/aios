@@ -65,7 +65,7 @@ Milestones are numbered continuously across all phases. Phase 0 used M1–M3; Ph
 - [ ] Implement the UEFI entry point (`efi_main`): open `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` and print a banner to confirm the stub is reached
 - [ ] Implement ESP layout from boot.md §2.4: stub at `/EFI/AIOS/BOOTAA64.EFI`, kernel at `/EFI/AIOS/aios.elf`, config at `/EFI/AIOS/boot.cfg`
 - [ ] Add `just disk` recipe: creates a FAT32 disk image with the ESP, places stub and kernel ELF at the correct paths (requires `mformat` + `mcopy` from `mtools`, or equivalent)
-- [ ] Update `just run` to use edk2 firmware: `-bios /usr/share/qemu/OVMF.fd` (or `edk2-aarch64-code.fd` — package name varies by distro) and `-drive` instead of `-kernel`
+- [ ] Update `just run` to use edk2 firmware: `-bios /path/to/edk2-aarch64-code.fd` (or distro-specific aarch64 firmware such as `QEMU_EFI.fd` or `AAVMF_CODE.fd`) and `-drive` instead of `-kernel`
 
 **QEMU invocation change:** Phase 0 used `qemu-system-aarch64 -kernel <elf>`. Phase 1 switches to:
 ```
