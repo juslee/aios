@@ -98,7 +98,7 @@ Flow uses types defined in other documents. Canonical definitions:
 | `DeviceId` | [subsystem-framework.md §4](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
 | `IdentityId` | [spaces.md §3.0](./spaces.md) | Identity identifier (Ed25519 public key); shared across a user's devices |
 | `TrustLevel` | [identity.md §5](../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
-| `KeyId` | [identity.md](../experience/identity.md) | Identifier for a cryptographic key in the identity/key management system; used by §15.3 FlowEncryptionPolicy |
+| `KeyId` | [spaces.md §3.0](./spaces.md) | Cryptographic key identifier (`u32`); used by §15.3 FlowEncryptionPolicy |
 | `Duration` | Rust `core::time::Duration` | Time span; used for expiration, retention, and streaming durations |
 
 Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).
@@ -1897,7 +1897,7 @@ Users should be able to control the transform applied on paste, not just accept 
 
 ### 15.3 Encryption at Rest
 
-Flow history content should be encrypted at rest using the user's identity key. Currently §9.1 covers encryption in transit for multi-device sync and §11 covers capability enforcement, but content sitting in `system/flow/history/` is stored as content-addressed blocks without encryption.
+Flow history content should be encrypted at rest using the user's identity key. Currently §9.1 covers encryption in transit for multi-device sync and §11 covers capability enforcement. Content sitting in `system/flow/history/` benefits from device-level transparent encryption (spaces.md §4.10), but has no per-space encryption beyond that.
 
 ```rust
 pub struct FlowEncryptionPolicy {

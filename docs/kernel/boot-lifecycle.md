@@ -96,16 +96,16 @@ On next boot: agent is relaunched and reads state from space
 
 ## 12. Implementation Order
 
-The boot sequence maps to the earliest development phases:
+The boot sequence maps to the earliest development phases. Week ranges below match the canonical durations in overview.md §10. These are *development plan* phases, not boot phases — see §11 for runtime boot phases.
 
 ```
-Phase 0: Foundation & Tooling (Weeks 1-4)
+Phase 0: Foundation & Tooling (Weeks 1-2)
   - Cross-compilation toolchain (Rust → aarch64)
   - QEMU runner scripts
   - UEFI stub skeleton
   - Build system for kernel + initramfs
 
-Phase 1: Boot & First Pixels (Weeks 5-8)
+Phase 1: Boot & First Pixels (Weeks 3-6)
   - UEFI stub: memory map, framebuffer, device tree, RNG
   - Kernel entry: exception vectors, UART, device tree parse
   - Interrupt controller (GICv3/GICv2/AIC) + timer
@@ -113,14 +113,14 @@ Phase 1: Boot & First Pixels (Weeks 5-8)
   - Early framebuffer: splash screen
   - Kernel writes "Hello from AIOS" to screen and UART
 
-Phase 2: Memory Management (Weeks 9-12)
+Phase 2: Memory Management (Weeks 7-10)
   - Buddy allocator (physical pages)
   - Slab allocator (kernel heap)
   - KASLR
   - Per-process address spaces (TTBR0 switching)
   - Shared memory regions
 
-Phase 3: IPC & Capability System (Weeks 13-16)
+Phase 3: IPC & Capability System (Weeks 11-16)
   - Syscall handler (SVC trap)
   - IPC channels (send/recv/call)
   - Capability manager (create, transfer, revoke)
@@ -129,20 +129,20 @@ Phase 3: IPC & Capability System (Weeks 13-16)
   - Service Manager (PID 1)
   - Provenance chain (first entry)
 
-Phase 4: Block Storage & Object Store (Weeks 17-20)
+Phase 4: Block Storage & Object Store (Weeks 17-21)
   - Block Engine (superblock, WAL, LSM-tree)
   - Object Store (content-addressing, dedup)
   - Space Storage (system spaces, Space API)
   - Kernel audit log flush to space storage
   - Phase 1 boot sequence operational
 
-Phase 5-6: GPU, Display, Compositor (Weeks 21-28)
+Phase 5-6: GPU, Display, Compositor (Weeks 22-30)
   - VirtIO-GPU driver
   - Framebuffer handoff
   - Compositor
   - Phase 2 boot sequence operational
 
-Phase 7: Input, Terminal, Networking (Weeks 29-34)
+Phase 7: Input, Terminal, Networking (Weeks 31-34)
   - VirtIO-Input, keyboard/mouse
   - Network (smoltcp, VirtIO-Net)
   - Terminal emulator
@@ -152,7 +152,9 @@ Phase 8: AIRS Core (Weeks 35-39)
   - GGML integration, model loading
   - Phase 3 boot sequence operational
 
-Phase 14: Performance & Optimization (Weeks 55-58)
+(Phases 9-13 and 15-23 are defined in development-plan.md)
+
+Phase 14: Performance & Optimization (Weeks 64-66)
   - Boot time profiling and optimization
   - Achieve < 3 second boot target
   - Recovery mode implementation

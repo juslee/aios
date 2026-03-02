@@ -714,7 +714,7 @@ impl AddressSpace {
     /// Find the VmRegion (VMA) containing `addr`, if any.
     /// VmRegions are stored in an interval tree sorted by base address.
     pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> {
-        self.vm_regions.find_containing(addr)
+        self.regions.find_containing(addr)
     }
 
     /// Walk the page table and return the PTE (may be invalid/encoded).
@@ -945,7 +945,7 @@ impl SlabCache {
     pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self {
         let aligned_size = size.next_power_of_two().max(8); // minimum 8-byte alignment
         let objects_per_slab = PAGE_SIZE / aligned_size;
-        let initial_page = fa.alloc_order(0).expect("slab init: OOM");
+        let initial_page = fa.alloc_pages(Pool::Kernel, 0).expect("slab init: OOM");
         // Carve the page into a freelist of fixed-size objects
         let initial_slab = Self::build_slab(initial_page, aligned_size, objects_per_slab);
         Self { name, object_size: aligned_size, objects_per_slab,
@@ -986,9 +986,9 @@ impl SlabCache {
     /// Grow the cache by allocating a new backing slab from the frame allocator.
     /// Called when the shared freelist is empty and a magazine refill is needed.
     pub fn grow(&mut self, fa: &FrameAllocator) {
-        let page = fa.alloc_order(0).expect("slab grow: OOM");
-        let new_objects = Self::build_freelist(page, self.object_size, self.objects_per_slab);
-        self.freelist.extend(new_objects);
+        let page = fa.alloc_pages(Pool::Kernel, 0).expect("slab grow: OOM");
+        let new_slab = Self::build_slab(page, self.object_size, self.objects_per_slab);
+        self.partial.push_back(new_slab);
     }
 }
 
@@ -1329,9 +1329,9 @@ Phi-3 Mini 3.8B at Q4_K_M + KV cache: ~2700 MB  ← does not fit
 TinyLlama 1.1B at Q4_K_M:             ~700 MB   ← fits
 Phi-2 2.7B at Q4_K_M:                 ~1800 MB  ← fits
 
-On a 2 GB device:
-  Available for model:                  ~1100 MB
-  Smallest usable model: ~1B at Q4     ~700 MB   ← fits, limited capability
+On a 2 GB device (model pool is 0 — see §2.4):
+  Available for model:                  0 MB (cloud inference only)
+  All 1.75 GB (after kernel/DMA/reserved) is user pool
 ```
 
 The model IS the memory problem. Traditional OS memory management — where everything is fungible and swappable — does not work here. Model weights must stay in RAM. Swapping 3 GB of model data to an SD card would take tens of seconds and make inference unusable.
@@ -1891,7 +1891,7 @@ The frame allocator continuously tracks free page counts across all pools. Press
 pub enum MemoryPressure {
     /// > 20% free pages in user pool — normal operation
     Normal,
-    /// 10-20% free — start background reclamation
+    /// 11-20% free — start background reclamation
     Low,
     /// 5-10% free — aggressive reclamation, suspend background agents
     Critical,
@@ -1907,7 +1907,7 @@ Level     Free %    Actions
 ────────  ──────    ──────────────────────────────────────────────────
 Normal    > 20%     None — system operates normally
 
-Low       10-20%    - Reclaim clean page cache pages
+Low       11-20%    - Reclaim clean page cache pages
                     - Compress inactive agent pages (zram)
                     - Notify AIRS to evict background KV caches
                     - Zero-page thread paused (save CPU)

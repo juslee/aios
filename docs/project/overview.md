@@ -170,6 +170,7 @@ pub struct Object {
     provenance: ProvenanceChain,
 }
 
+/// Simplified; see spaces.md §3.3 for the canonical ContentType definition.
 pub enum ContentType {
     Document, Code, Image, Audio, Video, Data,
     Conversation, Config, Agent, GameSave,
@@ -194,13 +195,15 @@ pub enum RelationKind {
     ChildOf, Attachment,
 }
 
+/// Simplified; see spaces.md §3.4 for the canonical RelationSource definition
+/// (Explicit/AiInferred/SystemGenerated).
 pub enum RelationSource {
     Ai,               // created by AIRS during indexing
     User,             // created explicitly by user action
     Agent(AgentId),   // created by an agent during operation
 }
 pub struct SemanticMetadata {
-    summary: Option<String>,          // AIRS-generated, may not exist yet
+    summary: Option<String>,          // set by creator or AIRS (see spaces.md §3.3)
     tags: Vec<String>,
     auto_tags: Vec<String>,           // AIRS-generated tags
     embedding: Option<Vec<f32>>,      // AIRS-generated embedding
@@ -419,7 +422,7 @@ This is where AIOS becomes what no other OS is.
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 8 | AIRS Core (Inference Engine) | 5 weeks | Local LLM inference with streaming responses |
-| 9 | Space Intelligence & Conversation | 5 weeks | Semantic search, AI command bar, conversational config |
+| 9 | Space Intelligence & Conversation | 5 weeks | Semantic search, Conversation Bar, conversational config |
 | 10 | Agent Framework | 5 weeks | Capability-gated agents with intent verification |
 | 11 | Tasks, Flow & Attention | 5 weeks | Task decomposition, smart clipboard, triaged notifications |
 ### Tier 4: Platform Maturity — Phases 12–15 (Weeks 55–74)
@@ -550,7 +553,7 @@ These companion documents provide deep-dive technical specifications:
 - Encrypted spaces for personal security zone
 **AI:**
 - Local LLM inference with streaming responses
-- AI command bar for natural language interaction
+- Conversation Bar for natural language interaction
 - AI-generated metadata on all space objects
 - Intent verification and behavioral monitoring
 **Agents & Ecosystem:**
