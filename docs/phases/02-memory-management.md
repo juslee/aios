@@ -44,7 +44,7 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 |---|---|---|---|
 | **M7 — Physical memory manager** | 1–3 | End of week 1 | Buddy allocator initialised from UEFI memory map; pool stats printed to UART |
 | **M8 — Virtual memory & KASLR** | 4–7 | End of week 2 | Kernel mapped at randomised TTBR1 base with W^X; ASID allocator functional |
-| **M9 — Kernel heap & per-process address spaces** | 8–11 | End of week 4 | `kalloc`/`kfree` working; TTBR0 switching tested; CI passes |
+| **M9 — Kernel heap & per-agent address spaces** | 8–11 | End of week 4 | `kalloc`/`kfree` working; TTBR0 switching tested; CI passes |
 
 -----
 
@@ -149,7 +149,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 - [ ] Map kernel text section: read-only + executable (R-X)
 - [ ] Map kernel data/BSS sections: read-write + no-execute (RW-)
 - [ ] Map physical memory direct map at `0xFFFF_0001_0000_0000` — identity of all RAM, read-write + no-execute (memory.md §3.1)
-- [ ] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0010_0000_0000` with device memory attributes (nGnRnE)
+- [ ] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0002_0000_0000` with device memory attributes (nGnRnE)
 - [ ] Switch from Phase 1's identity/early page tables to the new TTBR1 tables: write `TTBR1_EL1`, issue `TLBI VMALLE1IS`, `DSB ISH`, `ISB`
 - [ ] Verify kernel continues executing after the switch (UART still works)
 
@@ -180,7 +180,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 ### Step 7: ASID Allocator and TLB Management
 
-**What:** Implement 16-bit ASID allocation and TLB invalidation primitives needed for per-process address spaces.
+**What:** Implement 16-bit ASID allocation and TLB invalidation primitives needed for per-agent address spaces.
 
 **Tasks:**
 - [ ] Create `kernel/src/mm/asid.rs` — `AsidAllocator` with generation tracking (memory.md §3.4)
@@ -199,9 +199,9 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 -----
 
-## Milestone 9 — Kernel Heap & Per-Process Address Spaces (End of Week 4)
+## Milestone 9 — Kernel Heap & Per-Agent Address Spaces (End of Week 4)
 
-*Goal: Slab allocator, `kalloc`/`kfree`, per-process TTBR0 switching, guard pages, and memory accounting. CI passes all gates.*
+*Goal: Slab allocator, `kalloc`/`kfree`, per-agent TTBR0 switching, guard pages, and memory accounting. CI passes all gates.*
 
 -----
 
@@ -243,7 +243,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 -----
 
-### Step 10: Per-Process Address Spaces and TTBR0 Switching
+### Step 10: Per-Agent Address Spaces and TTBR0 Switching
 
 **What:** Implement user-space address space creation (TTBR0) with ASID tagging, and a context-switch function that swaps TTBR0.
 
@@ -314,7 +314,7 @@ just run     → boot log shows: pool stats, KASLR base, heap ready, address spa
 - [ ] TLB invalidation primitives (`TLBI VAE1IS`, `TLBI ASIDE1IS`, `TLBI VMALLE1IS`)
 - [ ] Slab allocator with per-CPU magazines and standard kernel caches
 - [ ] `kalloc`/`kfree` and `#[global_allocator]` working
-- [ ] Per-process address spaces with TTBR0 switching
+- [ ] Per-agent address spaces with TTBR0 switching
 - [ ] Guard pages trigger synchronous exceptions
 - [ ] `just check` — zero warnings
 - [ ] `just test` — all unit tests pass
