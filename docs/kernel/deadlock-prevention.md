@@ -299,7 +299,7 @@ Everything else in the kernel is preemptible. A timer interrupt in preemptible k
 
 ### 9.3 Why This Works
 
-A preemptive kernel does not break Coffman's **no preemption** condition — preempting a thread reclaims CPU time but does not forcibly remove locks or other resources the thread is holding. Rather, preemption is a **liveness** mechanism: it ensures that no thread can monopolize the CPU indefinitely, so threads waiting for a lock-holder to release its lock are not starved of CPU time. Combined with priority inheritance (§5), high-priority waiters are guaranteed to receive CPU time within the duration of the non-preemptible regions — all of which are bounded to microseconds. This prevents the *starvation* scenario where a thread holding a resource never gets scheduled to completion, which would be operationally indistinguishable from a deadlock.
+A preemptive kernel does not break Coffman's **no preemption** condition — preempting a thread reclaims CPU time but does not forcibly remove locks or other resources the thread is holding. Rather, preemption is a **liveness** mechanism: it ensures that no thread can monopolize the CPU indefinitely. Threads blocked on a lock still cannot make progress until the lock holder runs and releases the lock, but the combination of preemption and priority inheritance (§9.2) ensures that a high-priority waiter can cause the lock holder to be scheduled and run promptly, within the bounds imposed by the non-preemptible regions — all of which are on the order of microseconds under the scheduler model in §10.3. This mitigates the *starvation* scenario where a thread holding a resource never gets scheduled to completion, which would be operationally indistinguishable from a deadlock.
 
 -----
 
