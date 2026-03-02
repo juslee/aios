@@ -224,12 +224,12 @@ Rather than reinvent agent orchestration, channel adapters, and LLM routing, AIO
 | 10 (Agent Framework) | Agent-to-Agent protocol | IPC channels with capability gates | A2A + OFP protocol patterns for inter-agent delegation |
 | 13 (Security) | Security layer mapping | Hardware capability tokens, MMU isolation | Taint tracking patterns, Merkle audit chain, prompt injection scanning |
 | 15 (POSIX) | Full binary compatibility | POSIX syscalls, musl libc | Unmodified OpenFang binary runs as AIOS process |
-| 16 (Networking) | Channel adapter support | TCP/IP + TLS stack | 40 channel adapters (Telegram, Discord, Slack, etc.) |
+| 16 (Network Translation Module) | Channel adapter support | TCP/IP + TLS stack | 40 channel adapters (Telegram, Discord, Slack, etc.) |
 
 ### OpenFang Concepts Adopted into AIOS
 
 - **Scheduled autonomous agents (Hands):** AIOS AgentManifest gains `schedule` field for cron-like autonomous execution — agents that wake, perform work, and sleep without user prompting. Modeled after OpenFang's HAND.toml.
-- **HAND.toml as candidate manifest format:** The AIOS `manifest.toml` format references OpenFang's HAND.toml for the `[schedule]`, `[guardrails]`, and `[dashboard]` sections. See [agents.md §2.4](../applications/agents.md).
+- **HAND.toml as candidate manifest format:** The AIOS `manifest.toml` format references OpenFang's HAND.toml for the `[agent.schedule]`, `[[agent.approval_gates]]`, and `[[agent.dashboard_metrics]]` sections. See [agents.md §2.4](../applications/agents.md).
 - **Cost-aware inference metering:** AIRS tracks per-model token costs and enforces budgets, inspired by OpenFang's per-model cost tracking and GCRA rate limiting. See [airs.md](../intelligence/airs.md).
 - **Information flow taint tracking:** The capability system labels secret data at introduction and tracks propagation, inspired by OpenFang's taint tracking system.
 - **Merkle hash-chain audit trail:** Every capability invocation is cryptographically chained for tamper-evident audit logs, inspired by OpenFang's audit system.
