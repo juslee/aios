@@ -32,10 +32,12 @@ AIOS breaks one or more of these conditions at every level of the system, supple
 | Lock-free per-CPU magazines | Mutual exclusion | §6 | [memory.md §4.1](./memory.md) |
 | Capability-based resource model | Circular wait (graph constraint) | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
 | Synchronous IPC (no callback chains) | Circular wait | §8 | [ipc.md §4.2](./ipc.md) |
-| Preemptive kernel | No preemption | §9 | [scheduler.md §10.3](./scheduler.md) |
+| Preemptive kernel‡ | *(liveness)* | §9 | [scheduler.md §10.3](./scheduler.md) |
 | Wait-Die / Wound-Wait | Circular wait | §10 | Future — resource arbitration layer |
 
 †Priority inheritance does not break a Coffman condition directly. It prevents unbounded priority inversion — a liveness hazard where a high-priority thread is indefinitely delayed by lower-priority work (§5.1). It is included here because unbounded priority inversion is operationally indistinguishable from deadlock.
+
+‡A preemptive kernel does not break Coffman's *no preemption* condition for lock-based deadlocks. Preempting a thread reclaims CPU time but does not forcibly strip locks or other resources the thread holds. Preemption is a **liveness** mechanism: it bounds how long any thread can monopolize the CPU, and — in combination with priority inheritance — ensures that high-priority waiters eventually get CPU time to make progress.
 
 -----
 
@@ -297,7 +299,7 @@ Everything else in the kernel is preemptible. A timer interrupt in preemptible k
 
 ### 9.3 Why This Works
 
-Preemption breaks the **no preemption** condition. If a thread holds a resource too long, the scheduler can preempt it and run the waiting thread (especially with priority inheritance). The only non-preemptible regions are bounded to microseconds — too short for any practical deadlock.
+A preemptive kernel does not break Coffman's **no preemption** condition — preempting a thread reclaims CPU time but does not forcibly remove locks or other resources the thread is holding. Rather, preemption is a **liveness** mechanism: it ensures that no thread can monopolize the CPU indefinitely, so threads waiting for a lock-holder to release its lock are not starved of CPU time. Combined with priority inheritance (§5), high-priority waiters are guaranteed to receive CPU time within the duration of the non-preemptible regions — all of which are bounded to microseconds. This prevents the *starvation* scenario where a thread holding a resource never gets scheduled to completion, which would be operationally indistinguishable from a deadlock.
 
 -----
 
@@ -375,11 +377,11 @@ Layer 3: Priority inheritance    → no priority inversion stalls
 Layer 4: Lock-free fast paths    → no contention on hot paths
 Layer 5: Capability restrictions → constrained dependency graph
 Layer 6: Synchronous IPC         → no callback cycles
-Layer 7: Preemptive kernel       → no indefinite resource holding
+Layer 7: Preemptive kernel       → liveness: no CPU starvation of lock waiters
 Layer 8: Wait-Die / Wound-Wait   → progress guarantee for contested resources (future)
 ```
 
-Layers 1 and 4–7 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layer 3 (priority inheritance) is a liveness mechanism that prevents unbounded priority inversion from mimicking deadlock. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
+Layers 1 and 4–6 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layers 3 and 7 are liveness mechanisms: Layer 3 (priority inheritance) prevents unbounded priority inversion from mimicking deadlock; Layer 7 (preemptive kernel) ensures that no thread can monopolize the CPU and starve lock waiters. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
 
 -----
 
