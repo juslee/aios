@@ -1,5 +1,7 @@
 #![no_std]
 
+use core::num::NonZeroU64;
+
 /// Physical address type alias.
 pub type PhysAddr = u64;
 
@@ -11,33 +13,44 @@ pub const BOOTINFO_MAGIC: u64 = 0x41494F53_424F4F54;
 
 /// Information passed from UEFI stub to kernel entry point.
 ///
-/// In Phase 0, only `magic` is populated. All pointer-containing fields
-/// use `Option<u64>` stubs to keep the struct `Send`/`Sync` and compilable
-/// on the host target. Phase 1 replaces stubs with real pointer types
-/// behind `#[cfg(target_arch = "aarch64")]`.
+/// Phase 0 contract:
+/// - `magic` is always populated and is the only field guaranteed to contain
+///   meaningful data.
+/// - All pointer-containing fields use `Option<NonZeroU64>` stubs and will be
+///   `None` in Phase 0.
+/// - Scalar, non-optional fields (`rng_seed`, `kernel_phys_base`,
+///   `kernel_size`) are present in the layout but must be treated as
+///   unspecified (typically zero-initialized) and must not be relied on
+///   until Phase 1.
+///
+/// All pointer-containing fields use `Option<NonZeroU64>` stubs, which have
+/// the same layout as a nullable `u64` (0 = None), keeping the struct
+/// FFI-safe, `Send`/`Sync`, and compilable on the host target. Phase 1
+/// replaces these stubs with real pointer types behind
+/// `#[cfg(target_arch = "aarch64")]`.
 #[repr(C)]
 pub struct BootInfo {
     /// Magic number for validation: 0x41494F53_424F4F54 ("AIOSBOOT")
     pub magic: u64,
 
-    /// UEFI memory map pointer (stub: address as u64).
-    pub memory_map_addr: Option<u64>,
+    /// UEFI memory map pointer (stub: address as NonZeroU64).
+    pub memory_map_addr: Option<NonZeroU64>,
     /// Number of memory map entries.
-    pub memory_map_count: Option<u64>,
+    pub memory_map_count: Option<NonZeroU64>,
     /// Size of each memory map entry.
-    pub memory_map_entry_size: Option<u64>,
+    pub memory_map_entry_size: Option<NonZeroU64>,
 
-    /// Framebuffer base address (stub: address as u64).
-    pub framebuffer: Option<u64>,
+    /// Framebuffer base address (stub: address as NonZeroU64).
+    pub framebuffer: Option<NonZeroU64>,
 
-    /// Device tree blob base address (stub: address as u64).
-    pub device_tree: Option<u64>,
+    /// Device tree blob base address (stub: address as NonZeroU64).
+    pub device_tree: Option<NonZeroU64>,
 
     /// ACPI RSDP physical address.
-    pub acpi_rsdp: Option<u64>,
+    pub acpi_rsdp: Option<NonZeroU64>,
 
     /// UEFI Runtime Services table address.
-    pub runtime_services: Option<u64>,
+    pub runtime_services: Option<NonZeroU64>,
 
     /// Random seed from UEFI RNG protocol for KASLR.
     pub rng_seed: [u8; 32],
@@ -49,14 +62,14 @@ pub struct BootInfo {
     pub kernel_size: u64,
 
     /// Physical address of the initramfs.
-    pub initramfs_base: Option<u64>,
+    pub initramfs_base: Option<NonZeroU64>,
     /// Size of the initramfs.
-    pub initramfs_size: Option<u64>,
+    pub initramfs_size: Option<NonZeroU64>,
 
-    /// Command line string address (stub: address as u64).
-    pub cmdline_addr: Option<u64>,
+    /// Command line string address (stub: address as NonZeroU64).
+    pub cmdline_addr: Option<NonZeroU64>,
     /// Command line length.
-    pub cmdline_len: Option<u64>,
+    pub cmdline_len: Option<NonZeroU64>,
 }
 
 /// Classification of physical memory regions.

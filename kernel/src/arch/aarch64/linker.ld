@@ -1,7 +1,7 @@
 /* AIOS Kernel Linker Script — Phase 0 stub */
 /* Full linker script with sections added in Step 3 */
 
-ENTRY(_start)
+ENTRY(kernel_main)
 
 SECTIONS
 {
