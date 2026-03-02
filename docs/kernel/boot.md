@@ -235,7 +235,7 @@ Framebuffer             UEFI GOP (VirtIO-GPU)   UEFI GOP (HDMI)          simplef
 Acceleration            HVF (macOS), KVM (Linux) Native aarch64          Native aarch64
 ```
 
-**Key difference for boot:** QEMU provides GICv3, Pi 4 provides GICv2 (GIC-400), Pi 5 provides GICv3 natively, and Apple Silicon uses AIC (Apple Interrupt Controller) — a completely different interrupt architecture requiring its own driver. The kernel's interrupt setup path branches based on the device tree. See hal.md §13 for AIC details.
+**Key difference for boot:** QEMU provides GICv3, Pi 4 provides GICv2 (GIC-400), Pi 5 provides GICv3 natively, and Apple Silicon uses AIC (Apple Interrupt Controller) — a completely different interrupt architecture requiring its own driver. The kernel's interrupt setup path branches based on the device tree. See hal.md §4.1 for AIC details.
 
 ### 2.6 Exception Level Model
 
@@ -304,6 +304,7 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
         c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
         c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
         c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
+        c if c.contains("apple,t6040") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6040)),
         _ => panic!("Unknown platform: {}", compat),
     }
 }
@@ -462,11 +463,11 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Step 4: Device tree parse.** Full parse of the FDT (flattened device tree). Extract: CPU count, memory regions (cross-checked against UEFI memory map), interrupt controller type and base address, timer frequency, all device nodes. Platform detection happens here.
 
-**Step 5: Interrupt controller initialization.** GICv3 on QEMU and Pi 5. GICv2 on Pi 4. AIC (Apple Interrupt Controller) on Apple Silicon — a completely different architecture that uses device tree–assigned hardware IRQ numbers directly (no SPI/PPI distinction), see hal.md §13. Configure the distributor and redistributor (GICv3) or distributor and CPU interface (GICv2), or the AIC event registers and per-CPU mask sets (Apple Silicon). Enable the maintenance timer interrupt (for preemptive scheduling). All other device interrupts are disabled until the relevant driver is loaded.
+**Step 5: Interrupt controller initialization.** GICv3 on QEMU and Pi 5. GICv2 on Pi 4. AIC (Apple Interrupt Controller) on Apple Silicon — a completely different architecture that uses device tree–assigned hardware IRQ numbers directly (no SPI/PPI distinction), see hal.md §4.1. Configure the distributor and redistributor (GICv3) or distributor and CPU interface (GICv2), or the AIC event registers and per-CPU mask sets (Apple Silicon). Enable the maintenance timer interrupt (for preemptive scheduling). All other device interrupts are disabled until the relevant driver is loaded.
 
 **Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC (or register it with AIC on Apple Silicon).
 
-**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi, SoC watchdog on Apple Silicon — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (§11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
+**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi, SoC watchdog on Apple Silicon — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (boot-lifecycle.md §11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
 
 **Step 7: MMU enable — page table setup.** This is the most complex step:
 
@@ -909,12 +910,12 @@ Services form a directed acyclic graph (DAG) where edges represent "must start a
 ║  device_registry ──→ subsystem_framework                          ║
 ║       │                    │                                       ║
 ║       ▼                    ├──→ input_subsystem                    ║
-║  posix_compat              │                                       ║
+║  posix_compat (on-demand)  │                                       ║
 ║                            ├──→ display_subsystem ──→ compositor   ║
 ║                            │                                       ║
 ║                            ├──→ network_subsystem                  ║
 ║                            │                                       ║
-║                            └──→ audio_subsystem (non-critical)     ║
+║                            └──→ audio_subsystem (on-demand)        ║
 ║                                                                    ║
 ╠═══════════════════════════════════════════════════════════════════╣
 ║  PHASE 3 + PHASE 4: CONCURRENT after Phase 2 completes            ║
@@ -953,7 +954,8 @@ Within each phase, the Service Manager starts services in dependency order but l
 
 ```
 t=0ms:   Start device_registry (no dependencies within phase)
-t=0ms:   Start posix_compat (depends only on Phase 1 services)
+         (posix_compat and audio_subsystem are on-demand — not started here;
+          see boot-lifecycle.md §17 for activation modes)
 t=50ms:  device_registry reports healthy
          Start subsystem_framework (depends on device_registry)
 t=80ms:  subsystem_framework reports healthy
@@ -1070,6 +1072,9 @@ First boot:
   system/agents/      — Installed agent manifests
   system/credentials/ — Credential store
   system/context/     — Context Engine learned patterns
+  system/services/    — Service binaries (loaded in Phase 3-5)
+  system/session/     — Semantic snapshots, boot traces
+  system/identity/    — Identity keypairs, authentication state
 ```
 
 On normal boot, Space Storage verifies these spaces exist and are consistent, then reports healthy. At this point, the kernel's audit ring buffer is flushed to `system/audit/boot/`. From now on, all audit events are written to space storage in real time.

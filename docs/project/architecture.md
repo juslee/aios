@@ -49,7 +49,7 @@ AIOS reuses common OS terms but gives them specific meanings. This glossary defi
 | **Service** | System | Trust Level 1 process | A userspace daemon (AIRS, Space Storage, Compositor, NTM, Service Manager) with elevated capabilities |
 | **Service** | IPC | `ChannelId` + protocol | A capability-gated IPC channel with a registered protocol that clients call via `IpcCall` |
 | **Space** | Storage | `Space` | A named collection of typed objects with a security zone, encryption state, quota, and parent hierarchy |
-| **Space** | Security | `SecurityZone` | The zone classification of a space: Core, Personal, Collaborative, or Untrusted |
+| **Space** | Security | `SecurityZone` | The zone classification of a space: Core, Personal, Collaborative, Untrusted, or Ephemeral |
 
 **Usage rules:**
 - Write `AgentManifest`, not "agent," when referring to the installable package
@@ -226,6 +226,8 @@ pub struct Space {
 
 pub struct Object {
     id: ObjectId,
+    /// Human-readable name (last path component)
+    name: String,
     content_hash: Hash,
     content_type: ContentType,
     content_size: u64,
@@ -250,6 +252,8 @@ pub struct SemanticMetadata {
     indexed_at: Option<Timestamp>,
 }
 
+/// Simplified content type enum; see spaces.md §3.3 for the full canonical definition
+/// with additional variants (Directory, Text, Markdown, Json, Xml, Credential, etc.).
 pub enum ContentType {
     Document, Code, Image, Audio, Video, Data,
     Conversation, Config, Agent, GameSave,
@@ -292,6 +296,19 @@ pub struct Task {
     context: ContextLink,
 }
 
+/// Links a task to its surrounding context — the active space, identity,
+/// and Context Engine snapshot at the time the task was created. Used by
+/// agents to access contextual information without querying the Context
+/// Engine repeatedly. The snapshot is a frozen ContextState (see §2.5 below).
+pub struct ContextLink {
+    /// The space the task was initiated from
+    space_id: SpaceId,
+    /// The identity that owns this task
+    identity_id: IdentityId,
+    /// Snapshot of context at task creation (focus state, recent activity)
+    snapshot_id: ObjectId,
+}
+
 pub enum TaskState {
     Active,
     WaitingForUser(Question),
@@ -302,19 +319,188 @@ pub enum TaskState {
     Failed(Error),
 }
 
+/// A user-facing question presented when a task needs input.
+pub struct Question {
+    text: String,
+    options: Option<Vec<String>>,
+    default: Option<String>,
+}
+
+/// Result of a successfully completed task.
+pub struct Outcome {
+    summary: String,
+    artifacts: Vec<ObjectId>,
+}
+
+/// Structured intent describing what a task or agent is trying to accomplish.
+/// Used by Intent Verification (Layer 1) to compare observed actions against
+/// declared goals. Distinct from TransferIntent (§2.4) which governs Flow.
+pub struct Intent {
+    /// Human-readable goal description (e.g., "organize research papers")
+    goal: String,
+    /// Structured action categories this intent permits
+    permitted_actions: Vec<ActionCategory>,
+    /// Maximum scope (spaces, object count) the intent covers
+    scope: IntentScope,
+}
+
+pub enum ActionCategory {
+    Read, Write, Delete, Create, Search, Infer, Network, Spawn,
+}
+
+pub struct IntentScope {
+    spaces: Vec<SpaceId>,
+    max_objects: Option<u64>,
+    max_network_requests: Option<u64>,
+}
+
+/// AI engagement level driven by Context Engine signals.
+pub enum AiEngagement {
+    /// Pure infrastructure — scheduling, security, indexing.
+    /// User sees no AI activity.
+    Invisible,
+    /// Results visible, process hidden — search works, defaults adapt.
+    Ambient,
+    /// Conversation bar responsive, suggestions ready.
+    Available,
+}
+
+/// Resource allocation priority driven by Context Engine.
+pub enum ResourcePriority {
+    /// Foreground task gets maximum resources
+    Foreground,
+    /// Background tasks get fair share
+    Background,
+    /// System is in low-power mode
+    LowPower,
+}
+
+/// A named entity extracted from content by AIRS (person, place,
+/// organization, date, concept, etc.).
+/// Named entity extracted from content by AIRS.
+/// Simplified; see spaces.md §3.3 for the canonical definition
+/// (uses entity_type: EntityType with fewer variants, no span field).
+pub struct Entity {
+    name: String,
+    kind: EntityKind,
+    confidence: f32,
+    /// Byte offset range in the source content
+    span: Option<(usize, usize)>,
+}
+
+pub enum EntityKind {
+    Person, Organization, Location, Date, Concept,
+    Technology, Event, Product, Other(String),
+}
+
+/// Who created a relation between objects.
+/// Simplified; see spaces.md §3.4 for the canonical definition
+/// (Explicit/AiInferred/SystemGenerated).
+pub enum RelationSource {
+    /// Created by AIRS during indexing
+    Ai,
+    /// Created explicitly by a user action
+    User,
+    /// Created by an agent during its operation
+    Agent(AgentId),
+}
+
 pub enum Persistence {
     Ephemeral,   // gone when done
     Session,     // lives until closed
     Persistent,  // survives reboot
 }
 
+/// Simplified; see agents.md §2.4 for full definition.
 pub struct AgentManifest {
     name: String,
     author: Identity,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
-    dependencies: Vec<ContentHash>,
-    ai_analysis: SecurityAnalysis,
+    dependencies: Vec<Dependency>,
+    ai_analysis: Option<SecurityAnalysis>,
+}
+
+/// Set of capabilities held by a task or agent process. Capabilities are
+/// kernel-managed tokens — agents hold references, not the capabilities
+/// themselves. The kernel validates every token on every syscall.
+/// See ipc.md §4 for capability transfer and boot.md §3.3 Step 12 for
+/// the root capability from which all others derive.
+pub struct CapabilitySet {
+    /// Active capability tokens, keyed by capability type for O(1) lookup
+    tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,
+}
+
+/// Simplified capability discriminant for HashMap keying in CapabilitySet.
+/// Maps to the broader `Capability` enum (§3.2) which carries full parameters.
+/// CapabilityType identifies the *kind* of access; Capability carries the
+/// full token with specific parameters (e.g., AudioCapability details).
+pub enum CapabilityType {
+    ReadSpace(SpaceId),
+    WriteSpace(SpaceId),
+    FlowRead,
+    FlowWrite,
+    Network(NetworkScope),  // see networking.md for scope semantics
+    Spawn,
+    DeviceAccess(DeviceClass),
+    IpcConnect(ServiceName),  // service name string wrapper
+}
+
+/// Simple type aliases for capability parameters (full definitions in
+/// their respective subsystem documents where applicable).
+pub type NetworkScope = String;       // service name or wildcard pattern
+pub type ServiceName = String;        // registered IPC service name
+pub type Scope = SpaceId;             // audit read scope
+pub type CredentialId = u64;          // credential store identifier
+
+/// A single entry in a task's activity log. Records what an agent did,
+/// when, and in what context. Used by Intent Verification (Layer 1) to
+/// compare observed actions against the task's declared Intent.
+pub struct ActivityEntry {
+    timestamp: Timestamp,
+    agent: AgentId,
+    action: ActivityAction,
+    /// Capability that authorized this action
+    capability: CapabilityType,
+    /// Time spent on this action (for CPU accounting)
+    duration: Option<Duration>,
+}
+
+pub enum ActivityAction {
+    SpaceRead { space: SpaceId, object: ObjectId },
+    SpaceWrite { space: SpaceId, object: ObjectId },
+    SpaceCreate { space: SpaceId, object: ObjectId },
+    SpaceDelete { space: SpaceId, object: ObjectId },
+    FlowTransfer { intent: TransferIntent },
+    NetworkRequest { endpoint: String },
+    InferenceRequest { model: ModelId },
+    AgentSpawn { child: AgentId },
+    IpcMessage { channel: ChannelId },
+}
+
+/// Append-only provenance chain for an object. Each entry links to the
+/// previous via hash, forming a Merkle chain. Stored in the Version Store
+/// (see spaces.md §5.1 for per-version ProvenanceEntry). The chain here
+/// is the object-level summary — it aggregates provenance across all
+/// versions for quick inspection without walking the full version DAG.
+pub struct ProvenanceChain {
+    /// Hash of the most recent provenance entry
+    head: Hash,
+    /// Total number of entries in the chain
+    length: u64,
+    /// Who originally created this object
+    origin: ProvenanceOrigin,
+}
+
+pub enum ProvenanceOrigin {
+    /// Created by a user action via an agent
+    UserCreated { agent: AgentId },
+    /// AI-generated content
+    AiGenerated { model: ModelId },
+    /// Imported from external source
+    Imported { source: String },
+    /// Derived from another object
+    DerivedFrom { source: ObjectId },
 }
 ```
 
@@ -329,10 +515,30 @@ pub struct Flow {
 }
 
 pub struct Transfer {
-    source: ObjectRef,
-    content: TypedContent,
+    source: ObjectRef,      // see spaces.md §3.0 for ObjectRef definition
+    content: TypedContent,  // see flow.md §3.4 for TypedContent definition
     intent: TransferIntent,
     transformations: Vec<Transform>,
+}
+
+/// A content transformation applied during Flow transfer.
+/// Converts content from one type to another (e.g., rich text → plain text,
+/// image → thumbnail, audio → transcript).
+pub struct Transform {
+    id: TransformId,
+    name: String,
+    input_types: Vec<String>,    // MIME patterns
+    output_type: String,         // MIME type
+    provider: TransformProvider,
+}
+
+pub enum TransformProvider {
+    /// Built-in system transforms (e.g., text encoding conversion)
+    System,
+    /// AI-powered transforms via AIRS (e.g., audio → transcript)
+    Airs,
+    /// Agent-provided transforms
+    Agent(AgentId),
 }
 
 pub enum TransferIntent {
@@ -391,17 +597,17 @@ Replaces notifications. AI-triaged, context-aware, never interruptive during lei
 ```rust
 pub struct AttentionManager {
     incoming: PriorityQueue<AttentionItem>,
-    model: AttentionModel,
+    model: AttentionModel,   // see attention.md §4 for AttentionModel (urgency classification parameters)
     context: ContextState,
 }
 
 pub struct AttentionItem {
     source: AgentId,
-    content: TypedContent,
+    content: AttentionContent,  // see attention.md §3 for AttentionContent enum (distinct from flow.md §3.4 TypedContent struct)
     urgency: Urgency,       // AI-assessed, not app-declared
     relevance: f32,
     auto_actionable: Option<ProposedAction>,
-    group: Option<GroupId>,
+    group: Option<GroupId>,  // opaque identifier for grouping related notifications
 }
 
 pub enum Urgency {
@@ -417,18 +623,25 @@ pub enum Urgency {
 Replaces user accounts. Cryptographic identity, graduated trust, relationship-aware sharing.
 
 ```rust
+/// Ed25519 keypair for identity signing and verification.
+/// See identity.md §4 for key management and derivation.
+pub struct KeyPair {
+    public: [u8; 32],   // Ed25519 public key
+    private: [u8; 64],  // Ed25519 expanded private key (encrypted at rest)
+}
+
 pub struct Identity {
     id: IdentityId,
-    keys: KeyPair,           // Ed25519
+    keys: KeyPair,
     relationships: Vec<Relationship>,
-    space_access: Vec<(SpaceId, AccessLevel)>,
-    trust: TrustModel,
+    space_access: Vec<(SpaceId, AccessLevel)>,  // see identity.md §7 for AccessLevel
+    trust: TrustModel,                          // see identity.md §6 for TrustModel
 }
 
 pub struct Relationship {
     with: IdentityId,
-    kind: RelationshipKind,  // Colleague, Family, Service, Unknown
-    trust_level: TrustLevel,
+    kind: RelationshipKind,  // see identity.md §5 for RelationshipKind
+    trust_level: TrustLevel, // see identity.md §5 for TrustLevel
     shared_spaces: Vec<SpaceId>,
 }
 ```
@@ -441,10 +654,10 @@ Replaces config files. Conversational configuration, AI-mediated, evolves throug
 pub struct Preference {
     id: PreferenceId,
     description: String,
-    value: PreferenceValue,
+    value: PreferenceValue,       // see preferences.md §3 for PreferenceValue variants
     source: PreferenceSource,
-    affects: Vec<SystemComponent>,
-    history: Vec<PreferenceChange>,
+    affects: Vec<SystemComponent>,// see preferences.md §3 for SystemComponent enum
+    history: Vec<PreferenceChange>,// see preferences.md §3 for PreferenceChange
 }
 
 pub enum PreferenceSource {
@@ -659,6 +872,8 @@ Hardware Driver        → VirtIO, USB, PCI, platform-specific
 |Bluetooth|ByteStream/Events|Per-profile                         |/dev/bluetooth*  |
 |Print    |Frames (pages)   |Queue (FIFO)                        |/dev/lp*, CUPS   |
 |GPS      |Events (location)|Share (read-only)                   |—                |
+|USB      |Varies by class  |Varies by class                     |/dev/usb*        |
+|Power    |Control commands |Exclusive (kernel)                  |/sys/power/*     |
 
 ### 2.13 Browser Architecture
 
@@ -682,7 +897,7 @@ Traditional browsers are mini-operating systems because the actual OS provides n
 |`getUserMedia()` (camera)   |Camera   |CameraCapability, user prompted              |
 |`getUserMedia()` (mic)      |Audio    |AudioCapability, user prompted               |
 |`navigator.geolocation`     |GPS      |GpsCapability, user prompted                 |
-|`WebGL` / `WebGPU`          |Display  |GpuCapability (limited)                      |
+|`WebGL` / `WebGPU`          |Display  |DisplayCapability (limited)                      |
 |`localStorage` / `IndexedDB`|Storage  |Web-storage space (origin sub-space)         |
 
 **Web storage is a space.** All web storage (cookies, localStorage, IndexedDB, Cache API) maps to sub-spaces within `web-storage/`, scoped by origin. Unified quota, searchable by AIRS, syncable across devices, fully inspectable by the user.
@@ -716,7 +931,8 @@ Every action by every agent passes through all eight layers. No single layer fai
 ├──────────────────────────────────────────────────────┤
 │  Layer 4: Security Zone                               │
 │  Is this data in a zone this agent can reach?         │
-│  Core / Personal / Collaborative / Untrusted zones.   │
+│  Core / Personal / Collaborative / Untrusted /         │
+│  Ephemeral zones.                                      │
 │  Promotion between zones requires review.             │
 ├──────────────────────────────────────────────────────┤
 │  Layer 5: Adversarial Defense                         │
@@ -726,8 +942,9 @@ Every action by every agent passes through all eight layers. No single layer fai
 ├──────────────────────────────────────────────────────┤
 │  Layer 6: Cryptographic Enforcement                   │
 │  Does the agent have the decryption key?              │
-│  Spaces encrypted at rest with per-space keys.        │
-│  Keys released only after intent verification.        │
+│  Per-space encryption (spaces.md §6) + device-level   │
+│  encryption (spaces.md §4.10). Keys released only     │
+│  after intent verification.                           │
 ├──────────────────────────────────────────────────────┤
 │  Layer 7: Provenance Recording                        │
 │  Action logged to tamper-evident Merkle chain.        │
@@ -737,7 +954,7 @@ Every action by every agent passes through all eight layers. No single layer fai
 │  Layer 8: Blast Radius Containment                    │
 │  Even if all above fail, damage is bounded.           │
 │  Max objects writable, auto-snapshot before bulk ops. │
-│  Rollback window — changes reversible for N hours.    │
+│  Rollback window — changes reversible for 72 hours.   │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -759,12 +976,14 @@ pub enum Capability {
     // Network capabilities (subsystem-specific)
     Network(NetworkCapability),     // per-service, per-method, per-path
 
-    // Hardware subsystem capabilities (via subsystem framework)
-    Audio(AudioCapability),         // direction, device, format constraints
+    // Hardware subsystem capabilities (via subsystem framework).
+    // Each *Capability type is defined by its subsystem doc; see
+    // subsystem-framework.md §5 for the universal capability gate pattern.
+    Audio(AudioCapability),         // direction, device, format constraints (audio.md §3)
     Camera(CameraCapability),       // resolution, frame rate limits
     Gps(GpsCapability),             // precision, update frequency
     Input(InputCapability),         // device types (keyboard, mouse, gamepad)
-    Display(GpuCapability),         // memory limits, shader constraints
+    Display(DisplayCapability),     // memory limits, shader constraints (compositor.md §10)
     Bluetooth(BluetoothCapability), // profile, device constraints
     Usb(UsbCapability),             // device class, raw access level
     Print(PrintCapability),         // printer, page limits
@@ -786,16 +1005,16 @@ pub enum Capability {
 }
 
 pub struct CapabilityToken {
-    id: TokenId,
+    id: CapabilityTokenId,
     capability: Capability,
     holder: AgentId,
     granted_by: Identity,
     created_at: Timestamp,
     expires: Timestamp,
     delegatable: bool,
-    attenuations: Vec<Attenuation>,
+    attenuations: Vec<AttenuationSpec>,  // see security.md §3 for AttenuationSpec
     revoked: bool,
-    parent_token: Option<TokenId>,  // for delegation chains
+    parent_token: Option<CapabilityTokenId>,  // for delegation chains
     usage_count: u64,
     last_used: Timestamp,
 }
@@ -809,8 +1028,52 @@ All subsystem capabilities pass through the same kernel-enforced gate (see [subs
 pub struct AdversarialDefense {
     input_screening: InputFilter,
     output_validation: OutputValidator,
-    constraint_immutability: KernelEnforced,
+    constraint_immutability: KernelEnforced,  // marker: constraints are kernel-enforced, not modifiable by agents
     injection_detection: InjectionDetector,
+}
+
+/// Marker type indicating a constraint enforced by the kernel and immutable from userspace.
+pub struct KernelEnforced;
+
+/// Screens agent inputs for known injection patterns before they reach
+/// the inference engine. Runs at the boundary between data and control planes.
+pub struct InputFilter {
+    /// Pattern-based detectors (regex, keyword, structural)
+    pattern_detectors: Vec<PatternDetector>,
+    /// ML-based detector trained on known injection corpora
+    ml_detector: Option<ModelId>,
+    /// Action on detection: block, sanitize, or flag for review
+    on_detection: FilterAction,
+}
+
+/// Validates agent outputs before they are committed to spaces or
+/// delivered via Flow. Catches data exfiltration and policy violations.
+pub struct OutputValidator {
+    /// Maximum output size per action
+    max_output_bytes: u64,
+    /// Forbidden content patterns (e.g., credential-shaped strings)
+    forbidden_patterns: Vec<PatternDetector>,
+    /// Space write rate limit (objects per minute)
+    write_rate_limit: u32,
+}
+
+/// Detects prompt injection attempts by analyzing the boundary between
+/// system instructions (from kernel/manifest) and user/data content.
+pub struct InjectionDetector {
+    /// Confidence threshold for flagging (0.0-1.0)
+    threshold: f32,
+    /// Whether to block or log-and-continue on detection
+    enforcement: EnforcementMode,
+}
+
+pub enum FilterAction { Block, Sanitize, FlagForReview }
+pub enum EnforcementMode { Block, LogOnly }
+
+/// A pattern-based detector for screening agent inputs/outputs.
+pub struct PatternDetector {
+    pattern: String,          // regex or structural pattern
+    category: String,         // e.g., "injection", "credential", "exfiltration"
+    severity: f32,            // 0.0–1.0
 }
 
 // Critical principle: agent instructions come from kernel,
@@ -845,7 +1108,7 @@ use aios_sdk::prelude::*;
     capabilities = [
         ReadSpace("research"),
         WriteSpace("research"),
-        Inference(Priority::Normal),
+        InferenceCpu(Priority::Normal),
         Network(services = ["api.anthropic.com", "arxiv.org"]),
     ]
 )]
@@ -1059,6 +1322,18 @@ pub struct AgentProcess {
     priority: AgentPriority,           // from manifest, for OOM scoring
     suspended: bool,                   // e.g., by thrash detector
 }
+
+/// A space mounted into an agent's namespace. Determines which spaces
+/// an agent can access and at what POSIX path they appear.
+pub struct SpaceMount {
+    space_id: SpaceId,
+    /// POSIX path where this space appears (e.g., "/spaces/research")
+    mount_point: String,
+    /// Access level: read-only or read-write
+    access: MountAccess,
+}
+
+pub enum MountAccess { ReadOnly, ReadWrite }
 ```
 
 **Isolation mechanisms:**
@@ -1081,12 +1356,14 @@ When an agent is updated to a new version:
 
 ```
 1. New manifest compared against old manifest
-2. If capabilities unchanged → hot-swap: new code loads, existing sessions preserved
-3. If capabilities expanded → user re-approval required
-4. If capabilities reduced → auto-approved, old tokens revoked
+2. If capabilities unchanged → hot-swap path: active sessions are drained
+   gracefully (agent gets shutdown signal, 5s to clean up), then new code
+   loads and the agent is respawned. Session *state* (conversations, tasks)
+   is preserved in spaces — the new instance reads it back on startup.
+3. If capabilities expanded → user re-approval required before step 2
+4. If capabilities reduced → auto-approved, old tokens revoked, then step 2
 5. Agent data in spaces is preserved (spaces belong to the user, not the agent)
-6. Active sessions are drained gracefully (agent gets shutdown signal, 5s to clean up)
-7. New version spawned with fresh capability tokens
+6. New version spawned with fresh capability tokens
 ```
 
 **Key principle:** Spaces belong to users, not agents. An agent's data lives in spaces the user granted access to. Updating or removing an agent never deletes user data. The user can revoke an agent's space access at any time, and the data remains in the space.
@@ -1145,14 +1422,16 @@ pub enum SpaceQuery {
 
     /// Full-text search on content and metadata
     TextSearch {
-        query: String,
-        fields: Vec<SearchField>,  // Content, Summary, Tags, Entities
+        text: String,
+        boost_recent: bool,
+        limit: Option<usize>,
     },
 
     /// Semantic similarity (requires AIRS)
     Semantic {
-        query: String,              // natural language
+        text: String,               // natural language
         threshold: f32,             // minimum similarity score
+        limit: usize,
     },
 
     /// Graph traversal
@@ -1160,7 +1439,7 @@ pub enum SpaceQuery {
         start: ObjectId,
         relation: RelationKind,
         depth: u32,
-        direction: TraversalDirection,  // Outgoing, Incoming, Both
+        direction: TraverseDirection,  // Forward, Reverse, Bidirectional
     },
 }
 ```
@@ -1171,7 +1450,7 @@ The Conversation Bar translates natural language to `SpaceQuery` via AIRS:
 ```
 User: "Find my notes about transformer architectures from last month"
   → SpaceQuery::Semantic {
-      query: "transformer architectures",
+      text: "transformer architectures",
       threshold: 0.7,
     } AND SpaceQuery::Filter {
       content_type: Some(Note),
@@ -1216,7 +1495,7 @@ pub struct Object {
 2. Active sessions on that service are terminated (clients get ServiceUnavailable)
 3. Service is restarted with exponential backoff (immediate, 1s, 2s, 4s, max 30s)
 4. After restart, service reloads state from its space (spaces survive crashes)
-5. If service fails 5 times in 60 seconds → mark as degraded, notify user
+5. If service fails 5 times in 60 seconds → mark as degraded, notify user via Attention Manager (Urgency::Interrupt). Thresholds (5 failures, 60s window) are constants in the Service Manager config; they are chosen to distinguish transient failures (1-2 crashes from bad input) from persistent bugs (rapid crash loops).
 6. Dependent services fall back to degraded mode (see §6.2 for AIRS example)
 ```
 
@@ -1244,7 +1523,8 @@ pub struct Object {
 | LLM inference (first token) | < 500 milliseconds | Conversation bar must respond quickly |
 | Context switch | < 10 microseconds | Scheduler must be efficient with many agents |
 | Memory per agent (minimum) | < 4 MB | Lightweight agents should be cheap |
-| Minimum system RAM | 2 GB | Pi 4 baseline (4 GB recommended, 8 GB ideal) |
+| Minimum system RAM (kernel) | 2 GB | Pi 4 baseline — kernel-only, no local AI |
+| Minimum for AI features | 4 GB | Local inference requires model pool (8 GB ideal) |
 | Kernel image size | < 2 MB | Microkernel should be small |
 | Base system disk usage | < 500 MB | Reasonable for embedded/Pi targets |
 
@@ -1310,9 +1590,13 @@ Through Servo/browser, users can access Gmail, Google Docs, Slack, YouTube, Netf
 
 Purpose-built for AIOS, using the SDK. Start small (example agents) and grow as developers join.
 
-### Tier 4 (Future): Linux Application Compatibility
+### Tier 4: Linux Binary Compatibility
 
 A compatibility layer that runs Linux ELF binaries on AIOS. Eliminates the app gap entirely.
+
+### Tier 5: Wayland Applications
+
+Native Wayland protocol support enables running existing Linux GUI applications that target the Wayland display protocol. This builds on Tier 4's Linux binary compatibility and the compositor's display subsystem architecture that will underpin Wayland support (see compositor.md §10).
 
 For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — it determines whether AIOS can be someone's only computer.
 
@@ -1322,15 +1606,15 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 ### 9.1 Development Roadmap
 
-**Phase 1: QEMU aarch64 (development target).** All development and testing. HVF acceleration on macOS for near-native speed.
+**Stage 1: QEMU aarch64 (development target, dev Phases 0-15).** All development and testing. HVF acceleration on macOS for near-native speed.
 
-**Phase 2: Raspberry Pi 4/5 (first real hardware).** Proves the OS works on real silicon. Known, documented hardware. Large community.
+**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 16+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §9 for the phase-aligned hardware timeline.
 
-**Phase 3: VM images (adoption path).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
+**Stage 3: VM images (adoption path, dev Phase 24+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
 
-**Phase 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
+**Stage 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
 
-**Phase 5: Own hardware (maturity).** Only if AIOS becomes a real platform with users and funding.
+**Stage 5: Own hardware (maturity).** Only if AIOS becomes a real platform with users and funding.
 
 ### 9.2 Initial Target: Laptops and PCs
 
@@ -1472,7 +1756,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q5_K_M model. On a 2028 laptop with 32 GB, it loads a 13B Q6_K — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
 
-6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)`. On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
+6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)` (laptop profile override; base default is `KeepLast(20)` — see spaces.md §10.7). On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
 
 #### The Convergence Thesis
 

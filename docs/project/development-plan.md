@@ -15,7 +15,7 @@
 Tier 1: Hardware Foundation    (Phases 0–3)    Weeks 1–16     Boot, memory, IPC
 Tier 2: Core System Services   (Phases 4–7)    Weeks 17–34    Storage, GPU, compositor, networking
 Tier 3: AI & Intelligence      (Phases 8–11)   Weeks 35–54    AIRS, semantic search, agents
-Tier 4: Platform Maturity      (Phases 12–15)  Weeks 55–74    SDK, security, performance, POSIX
+Tier 4: Platform Maturity      (Phases 12–15)  Weeks 55–74    SDK, security, performance, POSIX (+3 wk buffer)
 Tier 5: Hardware & Connectivity(Phases 16–19)  Weeks 75–92    Full NTM, USB, wireless, power
 Tier 6: Rich Experience        (Phases 20–23)  Weeks 93–112   UI toolkit, browser, media, a11y
 Tier 7: Production OS          (Phases 24–27)  Weeks 113–130  Secure boot, Linux compat, launch
@@ -46,22 +46,22 @@ Phase 0: Foundation & Tooling
   └─→ Phase 1: Boot & First Pixels
        └─→ Phase 2: Memory Management
             └─→ Phase 3: IPC & Capability System
-                 ├─→ Phase 4: Block Storage & Object Store
-                 │    ├─→ Phase 5: GPU & Display
-                 │    │    └─→ Phase 6: Window Compositor & Shell
-                 │    │         └─→ Phase 7: Input, Terminal & Basic Networking
-                 │    │              ├─→ Phase 8: AIRS Core
-                 │    │              │    └─→ Phase 9: Space Intelligence & Conversation
-                 │    │              │         └─→ Phase 10: Agent Framework
-                 │    │              │              └─→ Phase 11: Tasks, Flow & Attention
-                 │    │              │                   └─→ Phase 12: Developer Experience & SDK
-                 │    │              │
-                 │    │              └─→ Phase 16: Network Translation Module
-                 │    │
-                 │    └─→ Phase 13: Security Hardening (requires 8, 10)
-                 │
-                 └─→ Phase 14: Performance & Optimization (requires 6, 8)
-                      └─→ Phase 15: POSIX Compatibility & BSD Userland
+                 └─→ Phase 4: Block Storage & Object Store
+                      └─→ Phase 5: GPU & Display
+                           └─→ Phase 6: Window Compositor & Shell
+                                └─→ Phase 7: Input, Terminal & Basic Networking
+                                     ├─→ Phase 8: AIRS Core
+                                     │    ├─→ Phase 9: Space Intelligence & Conversation
+                                     │    │    └─→ Phase 10: Agent Framework
+                                     │    │         ├─→ Phase 11: Tasks, Flow & Attention
+                                     │    │         │    └─→ Phase 12: Developer Experience & SDK
+                                     │    │         │
+                                     │    │         └─→ Phase 13: Security Hardening (also requires 4)
+                                     │    │
+                                     │    └─→ Phase 14: Performance & Optimization (also requires 6)
+                                     │         └─→ Phase 15: POSIX Compatibility & BSD Userland
+                                     │
+                                     └─→ Phase 16: Network Translation Module
 
 Phase 16 ──→ Phase 17: USB Stack & Hotplug
               └─→ Phase 18: WiFi, Bluetooth & Wireless
@@ -78,7 +78,7 @@ Phase 19 ──→ Phase 24: Secure Boot & Update System
                         └─→ Phase 27: Real Hardware, Certification & Launch
 ```
 
-**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21
+**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21. Note: Phase 15 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 21) depends on the browser and UI toolkit chain (12 → 20 → 21), not POSIX tools. Phase 15 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
 
 The web browser (Phase 21) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
 
@@ -112,7 +112,7 @@ The web browser (Phase 21) is the last item on the critical path before the OS c
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| No developers build agents | Empty ecosystem | Tier 2 (web apps) covers most use cases. Build compelling demo agents. |
+| No developers build agents | Empty ecosystem | App Ecosystem Tier 2 (web apps, see architecture.md §8) covers most use cases. Build compelling demo agents. |
 | Model quality/size tradeoff | Poor AI experience | Model ecosystem is improving rapidly. Today's 8B models were impossible 2 years ago. |
 | Hardware vendor engagement | No partner hardware | Pi and QEMU are sufficient for years. Pine64 is developer-friendly. |
 
@@ -127,11 +127,11 @@ Major decisions that must be made during development:
 **Decision:** Is IPC performance acceptable? Does the microkernel architecture work?
 
 **Criteria:**
-- IPC round-trip < 10 μs (target: < 5 μs)
-- Context switch < 20 μs
+- IPC round-trip < 10 μs (target: < 5 μs). Note: architecture.md §6.9 lists the optimized target (< 5 μs); this gate uses the acceptance threshold (< 10 μs) that determines whether the architecture is viable at all.
+- Context switch < 20 μs (gate threshold). Note: architecture.md §6.9 lists the optimized target (< 10 μs); this gate uses a relaxed threshold since post-Phase 3 optimization (Phase 14) has not yet occurred.
 - No pathological performance cliffs
 
-**If NO:** Consider hybrid kernel (move Space Storage into kernel space). This is a significant architectural change but recoverable at this stage.
+**If NO:** Consider hybrid kernel (move Space Storage into kernel space). This is a significant architectural change but recoverable at this stage because no external users depend on the IPC interface yet, and only kernel and storage code has been written.
 
 ### Gate 2: AI Viability (after Phase 8)
 
@@ -139,7 +139,7 @@ Major decisions that must be made during development:
 
 **Criteria:**
 - 7B model runs at > 5 tokens/second on Pi 4 (4GB)
-- Time to first token < 2 seconds
+- Time to first token < 2 seconds (gate threshold). Note: architecture.md §6.9 lists the optimized target (< 500 ms); this gate uses a relaxed threshold since pre-optimization hardware (Pi 4 on SD card) has higher latency than the final target.
 - Memory usage within budget (leaves >1 GB for OS + apps)
 
 **If NO:** Scale down AI features. Use smaller models (1-3B). Focus on embedding/classification rather than generation. Conversation bar becomes a search interface rather than a conversational one.
@@ -171,8 +171,9 @@ All 28 phases are designed to be achievable by a single experienced systems prog
 
 With 2-3 developers, phases can be parallelized:
 - Developer A: kernel (Phases 0-3), then performance (14), then security (13)
-- Developer B: storage + GPU (Phases 4-6), then browser (21), then UI toolkit (20)
+- Developer B: storage + GPU (Phases 4-6), then input/networking (7), then UI toolkit (20), then browser (21) — ordered to respect dependency chain (Phase 7 → 8, Phase 12 → 20 → 21)
 - Developer C: AI (Phases 8-11), then networking (16), then agent ecosystem (12)
+- Note: Remaining phases (15, 17-19, 22-27) are assigned based on availability as earlier phases complete.
 
 Estimated timeline with 3 developers: ~50-60 weeks (~1 year).
 

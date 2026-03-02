@@ -31,38 +31,38 @@ Flow is the connective tissue of AIOS. It is how data moves between agents, betw
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                      Flow Service                          │
-│              (system service, always running)               │
-│                                                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │   Transfer    │  │   History    │  │   Transform    │  │
-│  │   Manager     │  │   Store      │  │   Engine       │  │
-│  │              │  │              │  │                │  │
-│  │  initiate    │  │  index       │  │  negotiate     │  │
-│  │  stage       │  │  search      │  │  select        │  │
-│  │  deliver     │  │  retain      │  │  execute       │  │
-│  │  cancel      │  │  prune       │  │  register      │  │
-│  └──────────────┘  └──────────────┘  └────────────────┘  │
-│                                                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │  Provenance   │  │   Type       │  │  Multi-Device  │  │
-│  │  Tracker      │  │   System     │  │  Sync          │  │
-│  │              │  │              │  │                │  │
-│  │  chain       │  │  MIME        │  │  replicate     │  │
-│  │  verify      │  │  semantic    │  │  merge         │  │
-│  │  inspect     │  │  negotiate   │  │  resolve       │  │
-│  └──────────────┘  └──────────────┘  └────────────────┘  │
-│                                                            │
-└───────────────────────┬──────────────────────────────────┘
-                        │ IPC (sys.flow channel)
-          ┌─────────────┼─────────────────┐
-          ▼             ▼                 ▼
-       Agents       Compositor       Subsystems
-       (SDK          (drag/drop,      (DataChannels,
-       FlowClient)   visual cues)     FlowPipes)
+│                       Flow Service                       │
+│              (system service, always running)            │
+│                                                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Transfer     │  │  History     │  │  Transform   │  │
+│  │  Manager      │  │  Store       │  │  Engine      │  │
+│  │               │  │              │  │              │  │
+│  │  initiate     │  │  index       │  │  negotiate   │  │
+│  │  stage        │  │  search      │  │  select      │  │
+│  │  deliver      │  │  retain      │  │  execute     │  │
+│  │  cancel       │  │  prune       │  │  register    │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                                                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Provenance   │  │  Type        │  │  Multi-Device│  │
+│  │  Tracker      │  │  System      │  │  Sync        │  │
+│  │               │  │              │  │              │  │
+│  │  chain        │  │  MIME        │  │  replicate   │  │
+│  │  verify       │  │  semantic    │  │  merge       │  │
+│  │  inspect      │  │  negotiate   │  │  resolve     │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                                                          │
+└───────────────────────────┬──────────────────────────────┘
+                            │ IPC (sys.flow channel)
+              ┌─────────────┼─────────────────┐
+              ▼             ▼                 ▼
+           Agents       Compositor       Subsystems
+           (SDK          (drag/drop,      (DataChannels,
+           FlowClient)   visual cues)     FlowPipes)
 ```
 
-The Flow Service runs as a system service registered at `sys.flow`. It starts during Phase 3 of boot (service initialization) alongside Space Storage, AIRS, and the Task Manager. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
+The Flow Service runs as a system service registered at `sys.flow`. The core service lands in dev Phase 11 (Tasks, Flow & Attention), with compositor drag/drop protocol scaffolded in Phase 6 and AIRS transform scaffolding in Phase 8 (see §13 for full implementation order). At runtime, it starts during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
 
 The six internal components:
 
@@ -79,6 +79,30 @@ The six internal components:
 
 ## 3. Core Data Model
 
+### 3.0 External Types
+
+Flow uses types defined in other documents. Canonical definitions:
+
+| Type | Defined In | Description |
+|---|---|---|
+| `AgentId` | [spaces.md §3.0](./spaces.md) | Agent identity (Ed25519 public key, 32 bytes) |
+| `ObjectId` | [spaces.md §3.0](./spaces.md) | Object identifier (UUID v4, 16 bytes) |
+| `SpaceId` | [spaces.md §3.0](./spaces.md) | Space identifier (UUID v4, 16 bytes) |
+| `Hash` | [spaces.md §3.0](./spaces.md) | SHA-256 hash (32 bytes) |
+| `Timestamp` | [spaces.md §3.0](./spaces.md) | Milliseconds since Unix epoch |
+| `Signature` | [spaces.md §3.0](./spaces.md) | Ed25519 signature (64 bytes) |
+| `ObjectRef` | [spaces.md §3.0](./spaces.md) | Reference to a space object (SpaceId + ObjectId + optional version Hash) |
+| `SharedMemoryId` | [memory.md §7](../kernel/memory.md) | Kernel-issued handle for a shared memory region |
+| `ChannelId` | [ipc.md §3.1](../kernel/ipc.md) | IPC channel identifier |
+| `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
+| `DeviceId` | [subsystem-framework.md §4](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
+| `IdentityId` | [spaces.md §3.0](./spaces.md) | Identity identifier (Ed25519 public key); shared across a user's devices |
+| `TrustLevel` | [identity.md §5](../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
+| `KeyId` | [spaces.md §3.0](./spaces.md) | Cryptographic key identifier (`u32`); used by §15.3 FlowEncryptionPolicy |
+| `Duration` | Rust `core::time::Duration` | Time span; used for expiration, retention, and streaming durations |
+
+Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).
+
 ### 3.1 FlowEntry
 
 Every completed transfer becomes a `FlowEntry` stored in the history:
@@ -94,8 +118,12 @@ pub struct FlowEntry {
     /// The agent that received the content (None if still in clipboard/unclaimed)
     destination_agent: Option<AgentId>,
 
-    /// The content that was transferred
-    content: TypedContent,
+    /// The content that was transferred. None when content has been pruned
+    /// by the retention policy (large content >10 MB under storage pressure,
+    /// or ephemeral transfers after delivery). The FlowEntry metadata
+    /// (type, agents, timestamps, provenance) is always retained even when
+    /// content is pruned. See §5.3 for retention rules.
+    content: Option<TypedContent>,
 
     /// What the sender intended (Copy, Move, Reference, Quote, Derive)
     intent: TransferIntent,
@@ -116,19 +144,64 @@ pub struct FlowEntry {
     source_object: Option<ObjectRef>,
     destination_object: Option<ObjectRef>,
 
-    /// Device that originated this entry (for multi-device history merge)
+    /// Device that originated this entry (for multi-device sync).
+    /// DeviceId is a per-device hardware identifier (see subsystem-framework.md §4).
+    /// Each physical device has a unique DeviceId even when multiple devices share
+    /// the same user IdentityId. This allows the sync protocol to distinguish
+    /// entries per device and track per-device watermarks.
     origin_device: DeviceId,
-
-    /// Whether this entry's content has been pruned (large content retention policy)
-    content_pruned: bool,
 }
 
 pub struct FlowEntryId(u128);
 
+/// Unique identifier for an active transfer (in-flight, not yet recorded).
+/// Distinct from FlowEntryId which identifies completed/recorded transfers.
+pub struct TransferId(u128);
+
+/// Unique identifier for a registered content transform.
+pub struct TransformId(u64);
+
+/// Error type for Flow operations. Used by push(), pull(), transfer
+/// lifecycle management, and POSIX clipboard bridge.
+pub enum FlowError {
+    /// Agent does not hold the required FlowRead or FlowWrite capability.
+    PermissionDenied,
+    /// Source content type cannot be converted to any type the receiver accepts.
+    IncompatibleType,
+    /// The referenced TransferId does not exist or has already completed.
+    TransferNotFound,
+    /// A content transform failed during execution.
+    TransformFailed(String),
+    /// The transfer expired before a receiver claimed it.
+    Expired,
+    /// The agent's capability was revoked mid-transfer.
+    CapabilityRevoked,
+    /// The FlowEntry exists but its content was removed by retention policy.
+    /// Unlike TransferNotFound, retrying will not help — the content is
+    /// permanently gone. The FlowEntry metadata is still available.
+    ContentPruned,
+    /// The agent has exceeded its rate limit (see §11.3).
+    RateLimited,
+    /// The transfer options are logically invalid (e.g., ephemeral=true
+    /// with Move intent, which is disallowed because Move implies persistence).
+    /// Distinct from PermissionDenied — this is a logic error, not a capability issue.
+    InvalidOptions(String),
+    /// Underlying I/O or IPC error.
+    IoError(String),
+}
+
+/// Links a Flow transfer to the provenance chain in the Version Store
+/// (see spaces.md §5.1). When a transfer creates or modifies a space object,
+/// a ProvenanceEntry is recorded in the object's Version node. This
+/// ProvenanceLink stores the hash of that entry, connecting the Flow history
+/// to the space's Merkle DAG. The `parent` field links to the previous
+/// FlowEntry's provenance (if the content was derived from a prior transfer),
+/// forming a separate Flow-level chain alongside the per-object Version chain.
 pub struct ProvenanceLink {
-    /// Hash of the provenance record in the provenance chain
+    /// Hash of the ProvenanceEntry recorded in the space Version Store
     hash: Hash,
-    /// Previous link in the chain (if this content was derived from another transfer)
+    /// Previous link in the Flow provenance chain (if this content was
+    /// derived from another transfer — e.g., Quote or Derive intent)
     parent: Option<Hash>,
 }
 ```
@@ -184,7 +257,13 @@ pub struct Transfer {
     /// Expiration time (for unclaimed transfers)
     expires_at: Option<Timestamp>,
 
-    /// Shared memory region holding the content (COW)
+    /// Flow Service's internal COW staging region for the transfer.
+    /// This is the service-side copy; the agent-facing handle is
+    /// content.primary.data (the SharedMemoryId inside TypedContent).
+    /// They start as the same physical pages (COW), but content_region
+    /// is owned by the Flow Service and survives even if the source
+    /// agent unmaps its side. The agent never sees this field — it is
+    /// internal to the Transfer Manager.
     content_region: SharedMemoryId,
 }
 
@@ -201,6 +280,10 @@ pub enum TransferState {
     Cancelled,
     /// Transfer expired (no receiver claimed it)
     Expired,
+    /// Transfer recorded in history (final state). Separate from Delivered
+    /// because history persistence is async and may fail or be skipped for
+    /// ephemeral transfers. See lifecycle step 7 for details.
+    Recorded,
 }
 
 pub struct TransferEndpoint {
@@ -260,6 +343,14 @@ pub enum FlowTarget {
    Provenance chain appended
    Content deduplicated in history (content-addressed)
    Transfer state → Recorded (final)
+
+   Note: Delivered and Recorded are separate states because recording
+   may fail (storage full, I/O error) or be skipped (ephemeral transfers
+   with ephemeral_retention=0 go directly to content pruning after
+   delivery). The separation also allows the Transfer Manager to release
+   the receiver immediately at Delivered without blocking on the
+   potentially slower history write. If recording fails, the transfer
+   remains in Delivered state and is retried on the next history flush.
 ```
 
 ### 3.3 TransferIntent
@@ -297,13 +388,15 @@ pub enum TransferIntent {
 
 **Intent behavior matrix:**
 
-| Intent | Content copied? | Source affected? | Relation created? | Provenance link? |
-|---|---|---|---|---|
-| Copy | Yes (full copy) | No | No | Yes (for history) |
-| Move | Yes (transferred) | Archived | No | Yes |
-| Reference | No (ObjectRef only) | No | References | Yes |
-| Quote | Yes (full copy) | No | DerivedFrom | Yes |
-| Derive | Yes (transformed) | No | DerivedFrom | Yes |
+| Intent | Content copied? | Source affected? | Relation created? | Provenance link? | Ephemeral interaction |
+|---|---|---|---|---|---|
+| Copy | Yes (full copy) | No | No | Yes (FlowEntry recorded, source/dest tracked for history search — no Relation object in the space) | If ephemeral=true, content is set to None after delivery; FlowEntry metadata remains for audit |
+| Move | Yes (transferred) | Archived (source object's state set to Archived) | No | Yes (full chain: source → transfer → destination) | ephemeral=true is disallowed for Move (Move implies persistence) |
+| Reference | No (ObjectRef only) | No | References (Relation created in destination space) | Yes (lightweight — only ObjectRef is tracked) | If source object is deleted, ObjectRef becomes dangling; receiver gets `ObjectNotFound` on access |
+| Quote | Yes (full copy) | No | DerivedFrom (Relation with attribution metadata) | Yes (includes source quote context) | Ephemeral=true allowed; DerivedFrom relation persists even after content is purged |
+| Derive | Yes (transformed copy) | No | DerivedFrom (Relation linking to original) | Yes (includes transform chain) | Ephemeral=true allowed; behaves like ephemeral Copy but with the DerivedFrom relation |
+
+**Key distinction — Copy vs Quote:** Copy creates no Relation between objects. Quote creates a `DerivedFrom` relation with attribution, linking the new object to its source. Use Copy for "I want this data." Use Quote for "I'm citing this data."
 
 ### 3.4 TypedContent
 
@@ -329,12 +422,29 @@ pub struct TypedContent {
 }
 
 pub struct ContentPayload {
-    /// Shared memory region containing the data
+    /// Shared memory region containing the data.
+    /// SharedMemoryId is a kernel-issued opaque handle (see memory.md §7)
+    /// identifying a reference-counted shared memory region. The region is
+    /// COW (copy-on-write): the source agent's content is not duplicated
+    /// until the receiver modifies it. The region's lifetime is managed by
+    /// the kernel — it is freed when all mapping agents unmap it AND the
+    /// Flow Service releases its reference (after the transfer completes
+    /// or the history entry is pruned). Maximum lifetime for unclaimed
+    /// transfers is controlled by Transfer.expires_at (default: 5 minutes).
     data: SharedMemoryId,
     /// Size in bytes
     size: u64,
     /// MIME type of this specific payload
     mime_type: String,
+}
+
+impl ContentPayload {
+    /// Create a ContentPayload from raw bytes (allocates a shared memory region).
+    /// Used by the POSIX clipboard bridge (§10) and SDK convenience methods.
+    pub fn from_bytes(data: &[u8], mime_type: &str) -> Self;
+
+    /// Read the content as a byte slice (maps the shared memory region).
+    pub fn as_bytes(&self) -> &[u8];
 }
 
 pub enum SemanticType {
@@ -373,11 +483,37 @@ pub struct ContentMetadata {
     content_hash: Hash,
     /// When the content was originally created (not when it was transferred)
     created_at: Option<Timestamp>,
-    /// Size of the primary payload
-    size: u64,
     /// Thumbnail (small preview image, ≤ 64KB)
     thumbnail: Option<Vec<u8>>,
 }
+```
+
+**Convenience constructors and defaults:**
+
+```rust
+impl TypedContent {
+    /// Create a TypedContent wrapping a plain text string.
+    /// Used by the SDK for simple copy/paste (see §12 usage examples).
+    pub fn plain_text(text: &str) -> Self;
+
+    /// Create a TypedContent wrapping rich text (HTML) with an optional source URL.
+    /// The source URL is recorded in ContentMetadata.source_description.
+    pub fn rich_text(html: &str, source_url: Option<&str>) -> Self;
+}
+
+impl SemanticType {
+    /// Infer a SemanticType from a MIME type string.
+    /// "text/plain" → PlainText, "text/html" → RichText, "image/*" → Image,
+    /// "audio/*" → Audio, "application/pdf" → Document, etc.
+    /// Falls back to File { extension } for unrecognized MIME types.
+    pub fn infer_from_mime(mime: &str) -> Self;
+}
+
+/// ContentMetadata, FlowFilter, and FlowQuery derive Default.
+/// ContentMetadata::default() sets content_hash to a zeroed Hash,
+/// all Option fields to None, and thumbnail to None.
+/// FlowFilter::default() and FlowQuery::default() set all filter
+/// fields to None / 0, matching all entries with no pagination offset.
 ```
 
 When a source agent pushes content, it provides the primary payload and optionally pre-computed alternatives. If the receiver cannot handle the primary type and no pre-computed alternative matches, the Transform Engine generates one on the fly.
@@ -495,6 +631,19 @@ pub struct TransformCost {
     lossy: bool,
 }
 
+impl TransformCost {
+    /// Reduce to a scalar for shortest-path computation in ConversionGraph.
+    /// Formula: time_ms + (memory / 1MB) + (50 if requires_airs) + (10 if lossy).
+    /// The AIRS and lossy penalties ensure the graph prefers local, lossless
+    /// transforms when multiple paths have similar time/memory costs.
+    pub fn as_scalar(&self) -> u32 {
+        self.time_ms
+            + (self.memory / (1024 * 1024)) as u32
+            + if self.requires_airs { 50 } else { 0 }
+            + if self.lossy { 10 } else { 0 }
+    }
+}
+
 pub enum TransformProvider {
     /// Built-in system transform (always available)
     System,
@@ -502,6 +651,17 @@ pub enum TransformProvider {
     Airs,
     /// Agent-provided transform (available when agent is running)
     Agent(AgentId),
+}
+
+/// Directed graph where nodes are content types and edges are transforms.
+/// Used by the Transform Engine to find cheapest conversion paths.
+/// Recomputed when transforms are added or removed.
+pub struct ConversionGraph {
+    /// Content type nodes (MIME types)
+    nodes: Vec<String>,
+    /// Edges: (source_index, target_index, transform_id, scalar_cost).
+    /// scalar_cost is computed via TransformCost::as_scalar().
+    edges: Vec<(usize, usize, TransformId, u32)>,
 }
 
 pub struct TransformRegistry {
@@ -512,6 +672,20 @@ pub struct TransformRegistry {
     /// Updated when transforms are registered/unregistered
     conversion_graph: ConversionGraph,
 }
+
+/// Transform selection tiebreaker rules (applied in order):
+///
+/// When multiple transforms match the same input → output type conversion:
+/// 1. **Lowest cost wins.** Compare TransformCost.time_ms first, then memory.
+/// 2. **Provider priority.** If costs are equal: System > Airs > Agent.
+///    System transforms are always preferred because they are deterministic,
+///    always available, and have no inference overhead.
+/// 3. **Agent tiebreaker.** If two Agent providers have equal cost:
+///    the agent with the longer runtime (more established) wins.
+///    This is a stable sort — the first registered agent wins if both
+///    started at the same time. No randomness.
+/// 4. **Lossless preferred.** If costs and providers are equal, prefer
+///    the non-lossy transform.
 
 pub struct TransformRecord {
     /// Which transform was applied
@@ -535,15 +709,21 @@ pub struct TransformRecord {
 PlainText ←──── RichText ←──── HTML
     │              │               ↑
     ▼              ▼               │
- Embedding     Markdown        Code (highlight)
-                   │
-                   ▼
-              FormattedHTML
+ Embedding     Markdown        Code ──→ FormattedHTML
+    ↑              │              (syntax highlight)
+    │              ▼
+    │         FormattedTable
+    │
+ Audio ──→ Transcript (AIRS)
 ```
+
+> **Note:** This graph is simplified for illustration. It omits several transform paths listed in the §4.1 table (e.g., PDF → PlainText, Image → Thumbnail, StructuredData → FormattedTable as a standalone path, URL → PageContent). See §4.1 for the full transform matrix.
 
 If a receiver needs Markdown but the source provides HTML, the engine walks: HTML → RichText → Markdown (two system transforms, no AIRS needed, fast).
 
-If a receiver needs an embedding but the source provides Audio, the engine walks: Audio → Transcript (AIRS) → Embedding (AIRS). The engine checks AIRS availability before committing to this path.
+If a receiver needs an embedding but the source provides Audio, the engine walks: Audio → Transcript (AIRS) → PlainText → Embedding (AIRS). The engine checks AIRS availability before committing to this path.
+
+Code → FormattedHTML uses syntax highlighting (a system transform, no AIRS needed). This is distinct from the HTML node, which represents generic HTML content — FormattedHTML is specifically syntax-highlighted markup.
 
 -----
 
@@ -634,10 +814,10 @@ pub struct FlowRetentionPolicy {
 **Retention rules:**
 
 1. **Default:** Keep the last 1000 entries or 30 days, whichever is more restrictive.
-2. **Large content (>10 MB):** The FlowEntry metadata and a thumbnail are kept. The full content block may be pruned if storage pressure exists. The entry shows "[Content pruned — original in source space]" with a link to the source object if it still exists.
-3. **Ephemeral transfers:** Content marked `ephemeral: true` is purged from history immediately after delivery. The FlowEntry metadata record remains (for audit trail) but the content block is zeroed and freed. Use case: password manager copying credentials into a form.
+2. **Large content (>10 MB):** The FlowEntry metadata and a thumbnail are kept. The full content block may be pruned if storage pressure exists (`content` set to `None`). The entry shows "[Content pruned — original in source space]" with a link to the source object if it still exists.
+3. **Ephemeral transfers:** Content marked `ephemeral: true` is purged from history immediately after delivery. The FlowEntry metadata record remains (for audit trail) but the `content` field is set to `None` and the shared memory region is zeroed and freed. Use case: password manager copying credentials into a form.
 4. **User override:** Users can pin specific entries (never pruned), delete entries manually, or adjust the retention policy through preferences.
-5. **Pruning order:** When the limit is reached, oldest unpinned entries are pruned first. Entries with `content_pruned: true` are pruned before entries with live content.
+5. **Pruning order:** When the limit is reached, oldest unpinned entries are pruned first. Entries with `content: None` (already pruned) are fully removed before entries with live content.
 
 -----
 
@@ -810,7 +990,10 @@ pub struct FlowPipe {
     /// The content type flowing through this pipe
     content_type: TypedContentSpec,
 
-    /// Back-pressure control
+    /// Back-pressure control: maximum bytes to buffer before applying
+    /// back-pressure to the source. This is a Flow-internal staging buffer
+    /// between the DataChannel and the Flow Service; it is separate from
+    /// the kernel's ring buffer used by the DataChannel itself.
     buffer_size: usize,
 
     /// The IPC channel to the Flow Service
@@ -836,14 +1019,14 @@ pub struct TypedContentSpec {
 ```rust
 // Microphone → Flow → Speech-to-text agent
 let mic_session = audio.open_session(agent, mic_cap, &intent)?;
-let speech_pipe = flow.create_pipe(FlowPipeDirection::Sink, speech_agent)?;
+let speech_pipe = flow.create_pipe(FlowPipeDirection::Source, FlowTarget::Agent(speech_agent))?;
 mic_session.channel().connect_flow(speech_pipe)?;
 // Audio samples flow from hardware → Flow Service → speech agent
 // Zero-copy if both are on the same device (shared memory)
 
 // Camera → Flow → Image analysis agent
 let cam_session = camera.open_session(agent, cam_cap, &intent)?;
-let analysis_pipe = flow.create_pipe(FlowPipeDirection::Sink, analysis_agent)?;
+let analysis_pipe = flow.create_pipe(FlowPipeDirection::Source, FlowTarget::Agent(analysis_agent))?;
 cam_session.channel().connect_flow(analysis_pipe)?;
 
 // Clipboard (POSIX tools) → Flow → native agent
@@ -888,6 +1071,8 @@ pub enum StreamState {
 ```
 
 **Back-pressure:** The receiver controls the data rate. When the receiver's buffer fills (pressure approaches 1.0), Flow signals the source to slow down. For subsystem DataChannels, this maps to the existing `pressure()` method on the DataChannel trait. Hardware that cannot be slowed (e.g., a live microphone) buffers in the kernel's ring buffer; if that fills, samples are dropped and the drop is logged.
+
+**History recording for streams:** When a stream reaches `Completed` state, the Flow Service records a single `FlowEntry` with aggregated metadata: total `bytes_delivered`, `chunks_delivered`, stream duration (first chunk timestamp to last), and the `chunk_transform` applied (if any). The entry's `content` field is set to `None` — the raw stream data is not persisted (it is typically too large and ephemeral). The FlowEntry metadata is sufficient for history search ("that audio stream from the meeting at 3pm") and provenance tracking. Streams that are `Aborted` before delivering any chunks are not recorded. Streams aborted after at least one chunk record a FlowEntry with a note in the metadata indicating partial delivery. Streaming transfers are device-local and are not replicated to other devices (see §9.1).
 
 **Per-chunk transforms:** For streaming data, transforms can be applied incrementally. Real-time transcription: each audio chunk is sent to AIRS for speech-to-text, and the text result is delivered to the receiver. The receiver sees a stream of text chunks, not audio. The transform overhead is amortized across the stream.
 
@@ -950,7 +1135,7 @@ Only Agent B (or an agent with elevated FlowRead that covers this transfer) can 
 Flow access is governed by two capabilities defined in the system capability enum:
 
 ```rust
-// From architecture.md §2.11
+// From architecture.md §3.2
 pub enum Capability {
     // ...
     FlowRead,
@@ -1030,7 +1215,7 @@ Flow uses a simple conflict resolution model:
 
 **Active transfers:** Latest-write-wins. If both devices push content to the global clipboard (target: Any) simultaneously, the most recent push wins. The older push remains in history but is no longer the active transfer. Timestamps are synchronized via NTP; in case of exact tie, the device with the lower DeviceId wins (deterministic).
 
-**History merge:** History entries from all devices are merged into a unified timeline. Each entry carries its `origin_device` field. Entries are uniquely identified by `(FlowEntryId, origin_device)`, so there are no conflicts — just union. This is equivalent to a grow-only CRDT (each device's history is append-only, merge is union).
+**History merge:** History entries from all devices are merged into a unified timeline. Each entry carries its `origin_device` field (a DeviceId). Entries are uniquely identified by `(FlowEntryId, origin_device)`, so there are no conflicts — just union. This is equivalent to a grow-only CRDT (each device's history is append-only, merge is union).
 
 ```rust
 pub struct FlowHistorySync {
@@ -1038,7 +1223,12 @@ pub struct FlowHistorySync {
     /// "I have seen all entries from device X up to this timestamp"
     watermarks: HashMap<DeviceId, Timestamp>,
 
-    /// Pending entries to send to each device
+    /// Pending entries to send to each device.
+    /// FlowEntryId is a UUIDv4, globally unique across devices, so bare
+    /// FlowEntryId is sufficient for routing. The (FlowEntryId, origin_device)
+    /// composite key is used only at the receiver for deduplication — not
+    /// needed in the outbound queue because each entry already carries its
+    /// origin_device inside the FlowEntry.
     outbound: HashMap<DeviceId, Vec<FlowEntryId>>,
 
     /// Entries received but not yet integrated
@@ -1081,7 +1271,7 @@ impl PosixClipboardBridge {
     /// (e.g., `echo "hello" | pbcopy`)
     fn clipboard_write(&self, data: &[u8], mime_type: &str) -> Result<()> {
         let content = TypedContent {
-            primary: ContentPayload::from_bytes(data),
+            primary: ContentPayload::from_bytes(data, mime_type),
             mime_type: mime_type.to_string(),
             semantic_type: SemanticType::infer_from_mime(mime_type),
             alternatives: vec![],
@@ -1099,7 +1289,8 @@ impl PosixClipboardBridge {
             ..Default::default()
         })?;
 
-        Ok(entry.content.primary.as_bytes().to_vec())
+        let content = entry.content.ok_or(FlowError::ContentPruned)?;
+        Ok(content.primary.as_bytes().to_vec())
     }
 }
 ```
@@ -1114,7 +1305,7 @@ impl PosixClipboardBridge {
 | `wl-copy` / `wl-paste` | Same via Wayland clipboard protocol |
 | `xdotool` (X11 drag/drop simulation) | Translated to compositor drag/drop events |
 
-**X11 selection protocol:** The X11 compatibility layer (Phase 25) translates X11's three selections (PRIMARY, SECONDARY, CLIPBOARD) into Flow operations. PRIMARY (select-to-copy) maps to `flow.push(intent: Copy)`. CLIPBOARD (explicit copy) maps to the same. SECONDARY is rarely used and maps to a targeted transfer.
+**X11 selection protocol:** The X11 compatibility layer (Phase 15) translates X11's three selections (PRIMARY, SECONDARY, CLIPBOARD) into Flow operations. PRIMARY (select-to-copy) maps to `flow.push(intent: Copy)`. CLIPBOARD (explicit copy) maps to the same. SECONDARY is rarely used and maps to a targeted transfer.
 
 **Wayland clipboard protocol:** The Wayland compatibility layer translates `wl_data_offer` / `wl_data_source` into Flow push/pull. MIME type negotiation in Wayland maps to Flow's type negotiation.
 
@@ -1206,6 +1397,52 @@ pub enum ScreenAction {
 
 **Inspector audit trail:** Every Flow transfer is logged to the audit space (`system/audit/flow/`). The Inspector shows the full trail: timestamp, source agent, destination agent, content type, intent, any transforms applied, any screening actions taken. This is the transparency mechanism — the user can always see what data moved where.
 
+### 11.3 Rate Limiting and Abuse Prevention
+
+A misbehaving or compromised agent could flood the Flow Service with transfers, consuming shared memory and filling history storage. Flow enforces per-agent rate limits:
+
+```rust
+pub struct FlowRatePolicy {
+    /// Maximum transfers an agent can initiate per minute
+    max_transfers_per_minute: u32,          // default: 120
+
+    /// Maximum total bytes an agent can stage concurrently
+    /// (across all in-flight transfers, before delivery)
+    max_staged_bytes: u64,                  // default: 256 MB
+
+    /// Maximum number of concurrent in-flight transfers per agent
+    max_concurrent_transfers: u32,          // default: 32
+
+    /// Maximum history entries an agent can create per hour
+    /// (prevents history spam from rapid automated copy/paste)
+    max_history_entries_per_hour: u32,      // default: 500
+
+    /// Cooldown period after hitting a rate limit
+    /// (agent must wait before retrying)
+    cooldown: Duration,                     // default: 5 seconds
+}
+
+pub enum RateLimitAction {
+    /// Transfer rejected, agent receives FlowError::RateLimited
+    Reject,
+    /// Transfer queued and delivered when budget allows
+    Queue,
+}
+```
+
+**Enforcement rules:**
+
+| Limit | Action when exceeded | System agents exempt? |
+|---|---|---|
+| Transfers per minute | Reject (FlowError::RateLimited) | Yes |
+| Staged bytes | Reject until existing transfers complete | Yes |
+| Concurrent transfers | Queue (deliver in order when slots free) | Yes |
+| History entries per hour | Entries still created but marked low-priority for pruning | Yes |
+
+**Escalation:** If an agent repeatedly hits rate limits (>10 rejections in 5 minutes), the Flow Service emits a `FlowAbuse` event to the Inspector and the Attention Panel. The user sees: "[Agent X] is making unusually frequent clipboard operations." The user can revoke the agent's FlowWrite capability from the Attention Panel.
+
+System agents (compositor, POSIX bridge) are exempt from rate limits because they are trusted and mediate on behalf of the user's direct actions.
+
 -----
 
 ## 12. SDK API
@@ -1261,6 +1498,7 @@ pub trait FlowClient: Send + Sync {
     ) -> Result<FlowPipe>;
 
     /// Register a transform with the Flow Service.
+    /// The handler implements the transform logic (see TransformHandler trait below).
     async fn register_transform(
         &self,
         transform: Transform,
@@ -1272,6 +1510,16 @@ pub trait FlowClient: Send + Sync {
         &self,
         filter: FlowFilter,
     ) -> Result<FlowSubscription>;
+}
+
+/// Trait implemented by agents that provide content transforms.
+/// Registered via FlowClient::register_transform().
+/// Async because transforms may call AIRS (speech-to-text, summarization)
+/// or perform I/O (network fetch, file conversion).
+#[async_trait]
+pub trait TransformHandler: Send + Sync {
+    /// Transform input content into the declared output type.
+    async fn transform(&self, input: ContentPayload) -> Result<ContentPayload, FlowError>;
 }
 
 pub struct FlowOptions {
@@ -1317,6 +1565,12 @@ pub struct FlowQuery {
 pub struct FlowSubscription {
     /// Channel that receives FlowEvent notifications
     channel: ChannelId,
+}
+
+impl FlowSubscription {
+    /// Wait for the next Flow event matching the subscription filter.
+    /// Blocks until an event is available.
+    pub async fn recv(&self) -> Result<FlowEvent, FlowError>;
 }
 
 pub enum FlowEvent {
@@ -1529,41 +1783,47 @@ document.getElementById('input').value = entry.content;
 
 ## 13. Implementation Order
 
+Phases reference the canonical project-wide phase numbers from [development-plan.md](../project/development-plan.md). The dependency chain for Flow is: Phase 6 (compositor scaffolds drag/drop protocol) → Phase 8 (AIRS scaffolds transform engine) → Phase 11 (Flow service lands, connects to compositor and AIRS) → later phases extend.
+
 ```
-Phase 3:   Basic Flow service
-             Flow Service process, sys.flow IPC channel
-             FlowWrite/FlowRead capability enforcement
-             Simple push/pull (TypedContent with MIME type)
-             In-memory transfer staging (no persistence)
-             Agents can copy/paste text between each other
+Phase 6:   Compositor drag/drop protocol scaffold
+             DragFlowRequest/DragFlowResponse message types defined
+             Drag preview generation and visual feedback framework
+             Drop target type query API (stubbed — real Flow negotiation
+             connects in Phase 11 when the Flow Service exists)
 
-Phase 6:   Compositor integration
-             Drag/drop protocol (DragFlowRequest/DragFlowResponse)
-             Visual feedback (compatible/incompatible/needs-transform indicators)
-             Drag preview generation
-             Drop target type negotiation (real-time, as cursor moves)
-
-Phase 8:   AIRS transforms
-             Transform Engine scaffold
-             AIRS-powered transforms: summarize, transcribe, translate, embed
+Phase 8:   AIRS transform scaffold
+             Transform Engine data structures and ConversionGraph
+             AIRS-powered transforms registered: summarize, transcribe,
+             translate, embed
              TransformRegistry with system + AIRS providers
-             Conversion graph and shortest-path selection
+             Conversion graph shortest-path selection algorithm
 
-Phase 10:  Full transform engine, history, provenance
+Phase 11:  Flow Service (core phase — most Flow work lands here)
+             Flow Service process, sys.flow IPC channel, boot Phase 4
+             FlowWrite/FlowRead capability enforcement
+             Push/pull with full TypedContent and type negotiation
+             Transfer lifecycle (Initiated → Staged → Delivered → Recorded)
+             In-memory transfer staging with COW shared memory
+             Connect to compositor: live drag/drop type negotiation,
+               visual feedback (compatible/incompatible/needs-transform)
+             Connect to AIRS: transform execution during type negotiation
              System transforms (text conversion, image resize, format conversion)
-             TransformRegistry with agent-contributed transforms
+             Agent-contributed transforms via TransformHandler trait
              Flow History Store (system/flow/ space, content-addressed)
-             Flow History UI (keyboard shortcut, search, re-send)
+             Flow History UI (Ctrl+Shift+V, search, re-send)
              Provenance chain (append-only, linked to space provenance)
              Retention policy and content pruning
              Semantic search over history (via AIRS)
              FlowEntry as space object with full metadata
+             Content screening for sensitive data (§11.2)
+             Rate limiting and per-agent transfer quotas (§11.3)
 
 Phase 15:  POSIX clipboard bridge
              pbcopy/pbpaste equivalents
              X11 selection protocol translation
              Wayland clipboard protocol translation
-             BSD tools see a standard clipboard, Flow sees typed transfers
+             POSIX tools see a standard clipboard, Flow sees typed transfers
 
 Phase 21:  Browser Flow integration
              aios.flow() Web API for PWAs
@@ -1590,3 +1850,279 @@ Phase 26:  Multi-device sync
 5. **Intent matters.** Copy, move, reference, quote, derive — these are fundamentally different operations. The clipboard treats them all as "copy." Flow distinguishes them because the distinction affects provenance, storage, and user expectations.
 6. **Ephemeral when needed.** Passwords, tokens, and sensitive credentials can flow between agents without persisting in history. The transfer happens; the content vanishes.
 7. **POSIX is a view.** The clipboard bridge makes BSD tools work. But the clipboard is a translation layer over Flow, not the other way around. Flow is the truth; the clipboard is a compatibility shim.
+
+-----
+
+## 15. Near-Term Extensions
+
+These are concrete extensions that fit within the current architecture and should be considered for Phase 11 or early follow-on work.
+
+### 15.1 Flow Batching
+
+Allow pushing multiple items in a single transfer. Drag-selecting 5 files, copying a table with multiple cells, or multi-selecting images should produce a single `BatchTransfer` with one `TransferId`, not 5 separate transfers.
+
+```rust
+pub struct BatchContent {
+    /// Ordered list of items in this batch
+    items: Vec<TypedContent>,
+
+    /// How the batch should be presented to the receiver
+    presentation: BatchPresentation,
+}
+
+pub enum BatchPresentation {
+    /// Items are independent (multi-select, e.g., 5 files)
+    Collection,
+    /// Items form a sequence (e.g., ordered steps, slides)
+    Sequence,
+    /// Items are alternatives (e.g., same image in multiple resolutions)
+    Alternatives,
+}
+```
+
+The receiver can accept the entire batch or pull individual items. The Flow Tray shows batches as a single expandable entry. History records one FlowEntry with `content: Some(TypedContent)` where the primary payload wraps the batch.
+
+### 15.2 Paste-as Shortcuts
+
+Users should be able to control the transform applied on paste, not just accept the automatic negotiation result.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+V | Default paste (automatic type negotiation) |
+| Ctrl+Shift+V | Open Flow History |
+| Ctrl+Alt+V | Paste as plain text (force strip-formatting transform) |
+| Ctrl+Alt+Shift+V | Paste-as menu (choose: plain text, markdown, reference, new note) |
+
+"Paste as reference" creates an ObjectRef to the source object instead of copying content. "Paste into new note" creates a new space object from the clipboard content and inserts a reference. These are user-initiated transform hints that override the default negotiation.
+
+### 15.3 Encryption at Rest
+
+Flow history content should be encrypted at rest using the user's identity key. Currently §9.1 covers encryption in transit for multi-device sync and §11 covers capability enforcement. Content sitting in `system/flow/history/` benefits from device-level transparent encryption (spaces.md §4.10), but has no per-space encryption beyond that.
+
+```rust
+pub struct FlowEncryptionPolicy {
+    /// Encrypt all Flow history content at rest
+    encrypt_history: bool,               // default: true
+
+    /// Key used for history encryption (derived from user's IdentityId keypair)
+    history_key: Option<KeyId>,
+
+    /// Encrypt ephemeral transfer content in shared memory
+    /// (defense-in-depth — shared memory is already capability-gated)
+    encrypt_staged: bool,                // default: false
+}
+```
+
+Content-addressed deduplication still works: the content hash is computed before encryption, and the encrypted block is stored under the same hash. Decryption happens on read. This adds negligible overhead for the common case (text snippets, small images) and protects against offline storage attacks.
+
+### 15.4 Undo Last Paste
+
+Flow knows exactly what was just delivered, where it came from, and what the intent was. This enables true undo-paste:
+
+- **Copy undo:** Remove the pasted content from the receiver. The receiver agent gets a `FlowUndoRequest` and can choose to honor it (remove the pasted text) or reject it (user has already modified the pasted content).
+- **Move undo:** Restore the source object from Archived state and remove the content from the receiver. This is a two-phase operation coordinated by the Flow Service.
+- **Quote undo:** Remove the pasted content and the DerivedFrom relation.
+
+The undo window is configurable (default: 30 seconds after paste). After the window, the transfer is final. Undo is triggered via Ctrl+Z when the Flow Tray has focus, or via the Flow Tray UI (each recent entry shows an [Undo] button within the undo window).
+
+```rust
+pub enum FlowEvent {
+    // ... existing variants ...
+
+    /// Undo requested for a recently delivered transfer.
+    /// The receiver agent should reverse the paste if possible.
+    UndoRequested { entry_id: FlowEntryId },
+}
+```
+
+### 15.5 Per-Agent Rate Visibility
+
+Extend the Inspector and Flow Tray to show per-agent Flow usage:
+
+- Which agents have FlowRead/FlowWrite capabilities
+- Transfer count per agent (last hour, last day)
+- Total bytes transferred per agent
+- Rate limit hits per agent
+
+This gives users visibility into which agents are active data consumers/producers and whether any agent is behaving unexpectedly. Accessible via the Inspector's Flow tab and summarized in the Flow Tray footer.
+
+-----
+
+## 16. Future Directions
+
+These are more ambitious extensions that would build on top of the Phase 11-26 implementation. They are not committed to any phase but are worth designing toward.
+
+### 16.1 Standing Flow Rules (Pipelines)
+
+Let users define persistent rules that automatically process content as it flows through the system:
+
+```
+Rule: "Browser → Research"
+  Trigger: Any transfer from browser-tab agents with intent Copy
+  Filter: content_type matches "text/*"
+  Transform: Summarize (AIRS) + add source URL attribution
+  Deliver to: research-agent
+  Auto-accept: true
+```
+
+This is analogous to email filters but for data flow. Rules are stored in `system/flow/config/rules/` and evaluated by the Flow Service on every push. Rules can chain: a transfer can match multiple rules and be delivered to multiple destinations (fan-out).
+
+The Conversation Bar provides a natural interface for creating rules: "Whenever I copy text from the browser, summarize it and save it to my research space." AIRS parses this into a FlowRule.
+
+```rust
+pub struct FlowRule {
+    /// Unique identifier
+    id: FlowRuleId,
+    /// Human-readable name
+    name: String,
+    /// When this rule triggers
+    trigger: FlowRuleTrigger,
+    /// Transforms to apply (in order)
+    transforms: Vec<TransformId>,
+    /// Where to deliver the result
+    destination: FlowTarget,
+    /// Whether the destination should auto-accept (skip pull())
+    auto_accept: bool,
+    /// Whether this rule is currently active
+    enabled: bool,
+}
+
+pub struct FlowRuleTrigger {
+    /// Source agent filter (specific agent, agent category, or any)
+    source: Option<AgentId>,
+    /// Content type filter
+    content_type: Option<String>,
+    /// Intent filter
+    intent: Option<TransferIntent>,
+    /// Semantic type filter
+    semantic_type: Option<SemanticType>,
+}
+
+pub struct FlowRuleId(u128);
+```
+
+### 16.2 Context-Aware Smart Paste
+
+When pasting into a specific context, Flow could apply context-aware transforms beyond just type matching. The receiver agent advertises not just what types it accepts, but *how* it wants content formatted for the current cursor position:
+
+| Source | Destination context | Smart transform |
+|---|---|---|
+| URL | Markdown editor | Format as `[page title](url)` |
+| Color hex string | Design tool | Convert to tool's native color format |
+| Date string | Calendar agent | Parse and create event draft |
+| Code snippet | Chat/email composer | Wrap in code fence with language tag |
+| Image | Terminal | Convert to ASCII art (AIRS) or show "image at path" |
+| Table (HTML) | Spreadsheet agent | Parse into cells |
+
+Smart paste requires the receiver to provide a `PasteContext` alongside its accepted types:
+
+```rust
+pub struct PasteContext {
+    /// What type of editing surface the cursor is in
+    surface_type: PasteSurfaceType,
+    /// Language/format of the surrounding content (if applicable)
+    content_language: Option<String>,
+    /// Additional context hints from the receiver
+    hints: HashMap<String, String>,
+}
+
+pub enum PasteSurfaceType {
+    PlainTextEditor,
+    RichTextEditor,
+    CodeEditor { language: String },
+    Terminal,
+    Spreadsheet,
+    Canvas,
+    FormField,
+}
+```
+
+### 16.3 Flow Analytics and Insights
+
+AIRS could analyze Flow patterns over time and surface actionable insights:
+
+- **Workflow detection:** "You copy between the browser and editor 40 times a day. Consider enabling the direct browser-to-editor Flow Rule."
+- **Redundancy detection:** "You keep re-copying the same 5 API keys. Consider using the credential manager agent."
+- **Privacy warnings:** "Agent X has read 200 clipboard entries in the last hour. This is unusual — review its permissions?"
+- **Content suggestions:** "You copied a paper abstract yesterday and a related diagram today. Link them?"
+
+Analytics are opt-in, computed locally by AIRS (never sent off-device), and presented in the Flow Tray as a collapsible "Insights" section. Users can dismiss individual insights or disable the feature entirely.
+
+### 16.4 Flow Reactions and Annotations
+
+Let users annotate Flow history entries beyond the automatic metadata:
+
+```rust
+pub struct FlowAnnotation {
+    /// The entry being annotated
+    entry_id: FlowEntryId,
+    /// Who created this annotation
+    author: AgentId,
+    /// Annotation type
+    kind: AnnotationKind,
+    /// When the annotation was created
+    created_at: Timestamp,
+}
+
+pub enum AnnotationKind {
+    /// Pin this entry (never prune)
+    Pin,
+    /// Star / favorite
+    Star,
+    /// Tag with a user-defined label
+    Tag(String),
+    /// Free-text note
+    Note(String),
+}
+```
+
+Annotations are searchable via AIRS: "find the Flow entries I starred last week" or "show me everything tagged 'project-alpha'." Annotations persist even when content is pruned — the metadata and annotation survive.
+
+### 16.5 Agent-to-Agent Flow Contracts
+
+Agents could declare persistent flow relationships — standing agreements to send and receive specific content types:
+
+```rust
+pub struct FlowContract {
+    /// The agent offering to send content
+    provider: AgentId,
+    /// The agent agreeing to receive content
+    consumer: AgentId,
+    /// Content types covered by this contract
+    content_types: Vec<TypeMatcher>,
+    /// Whether transfers under this contract skip the Flow Tray
+    /// (silent delivery for high-frequency automated pipelines)
+    silent: bool,
+    /// Maximum transfer rate (transfers per minute)
+    max_rate: u32,
+    /// Whether the user has approved this contract
+    user_approved: bool,
+}
+```
+
+Contracts enable autonomous data pipelines between agents without user interaction on each transfer. Example: a download agent has a contract with a document indexer — every downloaded PDF is automatically sent for indexing. Contracts require explicit user approval and are visible in the Inspector.
+
+### 16.6 Selective Multi-Device Content Sync
+
+Let users configure which types of content sync across devices, replacing the current all-or-nothing model (with the 10 MB size cutoff):
+
+```rust
+pub struct DeviceSyncPolicy {
+    /// Content types to sync (empty = sync everything)
+    sync_types: Vec<TypeMatcher>,
+
+    /// Content types to never sync (takes precedence over sync_types)
+    exclude_types: Vec<TypeMatcher>,
+
+    /// Maximum single-entry size for automatic sync
+    max_auto_sync_size: u64,           // default: 10 MB
+
+    /// Whether to sync history or only active transfers
+    sync_history: bool,                // default: true
+
+    /// Sync only when on WiFi (not cellular, if applicable)
+    wifi_only: bool,                   // default: false
+}
+```
+
+Example configuration: "Sync text and links everywhere. Sync images only on WiFi. Never sync video. Sync history for the last 24 hours only." This gives users fine-grained control over bandwidth and privacy trade-offs across their devices.

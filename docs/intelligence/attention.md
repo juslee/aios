@@ -98,7 +98,7 @@ pub struct AttentionItem {
     pub source: AgentId,
 
     /// Structured content — not a free-form string
-    pub content: TypedContent,
+    pub content: AttentionContent,
 
     /// AI-assessed urgency (set by AIRS, not by the agent)
     pub urgency: Urgency,
@@ -128,7 +128,7 @@ pub struct AttentionItem {
     pub triage: TriageMetadata,
 }
 
-pub enum TypedContent {
+pub enum AttentionContent {
     /// Message from a person
     PersonMessage {
         sender: IdentityId,
@@ -147,7 +147,7 @@ pub enum TypedContent {
         agent: AgentId,
         task: Option<TaskId>,
         summary: String,
-        results: Option<Vec<SpaceObjectId>>,
+        results: Option<Vec<ObjectId>>,
     },
     /// Calendar/scheduling
     Schedule {
@@ -223,6 +223,39 @@ pub enum UrgencySignal {
 }
 ```
 
+### 4.1.1 AttentionModel
+
+The `AttentionModel` holds urgency classification parameters used by the Attention Manager
+to calibrate how incoming items are assessed (referenced by architecture.md §2.6 and
+context-engine.md).
+
+```rust
+pub struct AttentionModel {
+    /// Weights for each urgency signal type (tuned per-user over time)
+    pub signal_weights: HashMap<UrgencySignalKind, f32>,
+    /// Threshold above which an item is classified as Interrupt
+    pub interrupt_threshold: f32,
+    /// Threshold for NextBreak classification
+    pub next_break_threshold: f32,
+    /// Threshold for Digest classification (below this → Silent)
+    pub digest_threshold: f32,
+    /// Decay factor for historical engagement influence
+    pub engagement_decay: f32,
+    /// Maximum number of interrupts per hour before auto-dampening
+    pub interrupt_rate_limit: u32,
+}
+
+pub enum UrgencySignalKind {
+    RelationshipPriority,
+    ContentUrgencyMarkers,
+    SentimentAnalysis,
+    HistoricalEngagement,
+    TimeSensitivity,
+    AgentTrustLevel,
+    InherentUrgency,
+}
+```
+
 ### 4.2 Assessment Pipeline
 
 ```rust
@@ -231,7 +264,7 @@ impl AttentionManager {
         let mut signals = Vec::new();
 
         // 1. Check if sender is a known identity with high trust
-        if let TypedContent::PersonMessage { sender, .. } = &item.content {
+        if let AttentionContent::PersonMessage { sender, .. } = &item.content {
             if let Some(rel) = self.identity_service.get_relationship(sender).await {
                 let priority = match rel.kind {
                     RelationshipKind::Family => UrgencySignal::RelationshipPriority {
@@ -274,7 +307,7 @@ impl AttentionManager {
         }
 
         // 4. Time sensitivity
-        if let TypedContent::Schedule { time, .. } = &item.content {
+        if let AttentionContent::Schedule { time, .. } = &item.content {
             let until = time.duration_since(SystemTime::now()).unwrap_or_default();
             if until < Duration::from_secs(600) {
                 signals.push(UrgencySignal::TimeSensitivity { deadline: *time });
@@ -282,7 +315,7 @@ impl AttentionManager {
         }
 
         // 5. Inherent urgency from system events
-        if let TypedContent::SystemEvent { event_type, .. } = &item.content {
+        if let AttentionContent::SystemEvent { event_type, .. } = &item.content {
             match event_type {
                 SystemEventType::Error | SystemEventType::SecurityAlert => {
                     signals.push(UrgencySignal::InherentUrgency {
@@ -355,7 +388,7 @@ impl AttentionManager {
 If agents controlled their own urgency, every agent would set `Interrupt`. This is exactly the problem with traditional notifications. In AIOS:
 
 - The agent's `PostAttention` IPC message has no urgency field.
-- The agent provides `TypedContent` — a structured description of what happened.
+- The agent provides `AttentionContent` — a structured description of what happened.
 - AIRS assesses urgency based on content, sender, context, and history.
 - The agent never knows what urgency was assigned to its item.
 
@@ -555,19 +588,19 @@ impl AttentionManager {
 
     fn group_key(&self, item: &AttentionItem) -> GroupKey {
         match &item.content {
-            TypedContent::PersonMessage { channel, service, .. } => {
+            AttentionContent::PersonMessage { channel, service, .. } => {
                 GroupKey::Channel(service.clone(), channel.clone())
             }
-            TypedContent::SystemEvent { event_type, .. } => {
+            AttentionContent::SystemEvent { event_type, .. } => {
                 GroupKey::SystemEvent(*event_type)
             }
-            TypedContent::AgentReport { agent, .. } => {
+            AttentionContent::AgentReport { agent, .. } => {
                 GroupKey::Agent(*agent)
             }
-            TypedContent::ServiceUpdate { service, .. } => {
+            AttentionContent::ServiceUpdate { service, .. } => {
                 GroupKey::Service(service.clone())
             }
-            TypedContent::Schedule { .. } => {
+            AttentionContent::Schedule { .. } => {
                 GroupKey::Schedule
             }
         }
@@ -799,9 +832,9 @@ attention = "post"  # can post attention items
 // Agent code — posting an attention item
 use aios_sdk::attention;
 
-pub async fn notify_results_ready(results: &[SpaceObjectId]) {
+pub async fn notify_results_ready(results: &[ObjectId]) {
     attention::post(AttentionRequest {
-        content: TypedContent::AgentReport {
+        content: AttentionContent::AgentReport {
             agent: self_agent_id(),
             task: current_task_id(),
             summary: format!("Found {} papers matching your criteria", results.len()),
@@ -1229,7 +1262,7 @@ pub struct RuleBasedTriage {
     /// Agent categories with default urgency levels
     agent_urgency_defaults: HashMap<AgentCategory, UrgencyLevel>,
     /// Person priority from identity system (if available)
-    relationship_boosts: HashMap<PersonId, f32>,
+    relationship_boosts: HashMap<IdentityId, f32>,
 }
 
 impl RuleBasedTriage {
@@ -1242,7 +1275,7 @@ impl RuleBasedTriage {
             AgentCategory::Communication => 0.5, // messages vary
             AgentCategory::Productivity => 0.3,  // typically low urgency
             AgentCategory::Media => 0.1,         // almost never urgent
-            AgentCategory::Game => 0.05,         // never urgent
+            AgentCategory::Gaming => 0.05,       // never urgent
             _ => 0.3,
         };
 

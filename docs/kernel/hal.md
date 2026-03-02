@@ -67,6 +67,7 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
         c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
         c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
         c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
+        c if c.contains("apple,t6040") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6040)),
         _ => panic!("Unknown platform: {}", compat),
     }
 }
@@ -1241,7 +1242,7 @@ impl AudioDevice {
 | Pi 4 | HDMI audio + PWM + I2S | HDMI audio via VC4; I2S for external DACs |
 | Pi 5 | HDMI audio + I2S | HDMI audio via VC7; I2S for external DACs |
 
-Audio is critical for the assistant experience — speech-to-text, text-to-speech, alert sounds, and voice interaction all depend on it. The Audio subsystem provides mixing (multiple agents playing audio simultaneously) and routes through the Subsystem Framework. The scheduler reserves RT-class deadlines for audio (5ms period, 0.5ms WCET — see scheduler.md §6.3).
+Audio is critical for the assistant experience — speech-to-text, text-to-speech, alert sounds, and voice interaction all depend on it. The Audio subsystem provides mixing (multiple agents playing audio simultaneously) and routes through the Subsystem Framework. The scheduler reserves RT-class deadlines for audio (5ms period, 0.5ms WCET — see scheduler.md §5.2).
 
 **`PlatformCamera`** — Camera / image sensor.
 
@@ -1284,7 +1285,7 @@ impl CameraDevice {
 | Pi 4 | CSI-2 (Unicam) | Supports Pi Camera Module v2/v3 |
 | Pi 5 | CSI-2 (Unicam, 2 ports) | Dual camera support |
 
-Camera data flows through the Flow framework (see flow.md) for streaming to vision agents. The browser's `getUserMedia()` API maps to `CameraCapability` (prompted — see browser.md §6).
+Camera data flows through the Flow framework (see flow.md) for streaming to vision agents. The browser's `getUserMedia()` API maps to `CameraCapability` (prompted — see browser.md §10).
 
 #### Tier 2 — Future (some current platforms, or expected on future boards)
 
@@ -1358,7 +1359,7 @@ impl NvmeDevice {
 | Pi 4 | None | PCIe used by USB controller |
 | Pi 5 | Via PCIe Gen 3 x4 | With M.2 HAT or adapter |
 
-NVMe transforms model loading performance: 4.5 GB Q4_K_M in ~2 seconds vs ~45 seconds from SD card (see airs.md §5). The Block Engine can tier storage across NVMe and SD — hot data on NVMe, cold data on SD (see spaces.md §13).
+NVMe transforms model loading performance: 4.5 GB Q4_K_M in ~2 seconds vs ~45 seconds from SD card (see airs.md §3). The Block Engine can tier storage across NVMe and SD — hot data on NVMe, cold data on SD (see spaces.md §10).
 
 **`PlatformWatchdog`** — Hardware watchdog timer.
 
@@ -1563,7 +1564,7 @@ impl CryptoAccelerator {
 | Pi 4 | ARMv8 CE (AESCE, SHA) | CPU instruction extensions, not a separate device |
 | Pi 5 | ARMv8 CE (AESCE, SHA) | Cortex-A76 crypto extensions |
 
-Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (security.md §18) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
+Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (security.md §4, Cryptographic Foundations) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
 
 **`PlatformNpu`** — Neural Processing Unit / ML accelerator.
 
@@ -1798,7 +1799,7 @@ pub struct HardwareSecurityCaps {
 **Key observations:**
 
 - **PAC/BTI** require ARMv8.3+. Cortex-A72 (Pi 4) lacks them — the kernel must compile with `-mbranch-protection=none` for Pi 4 and `-mbranch-protection=pac-ret+bti` for Pi 5 and Apple Silicon. This is a compile-time decision per target platform.
-- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see security.md §13).
+- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see security.md §5, ARM Hardware Security Integration).
 - **Apple Secure Enclave Processor (SEP)** is a physically separate processor with its own encrypted memory. It stores cryptographic keys, biometric data, and performs attestation. The kernel communicates with SEP via a mailbox interface. SEP provides:
   - Hardware key storage (keys never leave the SEP)
   - Boot attestation (SEP verifies the boot chain before releasing disk encryption keys)
@@ -2330,7 +2331,10 @@ pub struct ThermalThresholds {
 During AIRS model loading and inference, the HAL monitors thermal state and reports it to the scheduler:
 
 ```rust
-pub struct ThermalState {
+/// Raw thermal readings from the HAL. The kernel converts this into the
+/// scheduler-facing `ThermalState` enum (see scheduler.md §8.4) using the
+/// threshold table below.
+pub struct ThermalReading {
     pub current_temp: i32,
     pub throttle_level: ThrottleLevel,
     pub frequency_cap: Option<u32>,

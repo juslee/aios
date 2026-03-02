@@ -893,7 +893,7 @@ pub struct RetryPolicy {
     /// Backoff between retries
     backoff: BackoffStrategy,
     /// Which errors are retryable
-    retryable: Vec<SubTaskErrorType>,
+    retryable: Vec<SubTaskError>,
 }
 
 pub enum BackoffStrategy {

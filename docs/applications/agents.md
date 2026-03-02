@@ -226,6 +226,18 @@ pub enum RuntimeType {
     Wasm,
 }
 
+/// A dependency on another agent bundle or shared library.
+pub struct Dependency {
+    /// Human-readable name of the dependency
+    name: String,
+    /// Required version (semver range)
+    version: String,
+    /// Content hash of the specific version (pinned after resolution)
+    content_hash: Option<ContentHash>,
+    /// Whether this dependency is optional
+    optional: bool,
+}
+
 pub struct CapabilityRequest {
     /// What capability is being requested
     capability: Capability,
@@ -563,7 +575,7 @@ pub enum PreRebootState {
 }
 ```
 
-**Relaunch order.** Agent recovery happens during boot Phase 5 (Workspace Restoration), after the compositor, AIRS, and Space Storage are running. The order:
+**Relaunch order.** Agent recovery happens during boot Phase 5 (Experience), after the compositor, AIRS, and Space Storage are running. The order:
 
 ```
 Phase 5 agent relaunch:
@@ -1215,6 +1227,14 @@ pub enum AgentEvent {
 
     /// The agent was resumed from paused/suspended state
     Resumed,
+
+    /// Fresh start — no prior state to restore
+    Started,
+
+    /// System rebooted — agent should restore state from spaces
+    SystemReboot {
+        previous_state: PreRebootState,
+    },
 
     // === User Input ===
 

@@ -26,8 +26,8 @@ The user never has to interact with AI to use the computer. AI enhances silently
 | Clipboard | Flow (context-aware data transfer) | Data transforms based on destination context |
 | Notifications | Attention management (AI-triaged) | AI filters noise, surfaces what matters |
 | Config files | Conversational preferences | Say what you want, AI translates to system parameters |
-| Package manager | Capability-gated agents | No installation — agents run within approved capability bounds |
-| Terminal shell | Conversation as interface | Natural language in, structured visual output |
+| Package manager | Capability-gated agents | No traditional installation — agents are signed, capability-scoped, and hot-swappable (see architecture.md §6.4) |
+| Terminal shell | Conversation bar + POSIX terminal | Natural language primary interface, full terminal still available (architecture.md §2.10) |
 | User accounts | Identity & relationships | Cryptographic identity, graduated trust |
 | Window manager | Semantic compositor (GPU-native) | AI understands window content, mediates interactions |
 | Filesystem permissions | 8-layer security model | Intent verification, behavioral boundaries, adversarial AI defense |
@@ -156,6 +156,8 @@ pub struct Space {
 }
 pub struct Object {
     id: ObjectId,
+    /// Human-readable name (last path component)
+    name: String,
     content_hash: Hash,              // content stored separately (content-addressed)
     content_type: ContentType,
     content_size: u64,
@@ -167,8 +169,41 @@ pub struct Object {
     modified_by: AgentId,
     provenance: ProvenanceChain,
 }
+
+/// Simplified; see spaces.md §3.3 for the canonical ContentType definition.
+pub enum ContentType {
+    Document, Code, Image, Audio, Video, Data,
+    Conversation, Config, Agent, GameSave,
+    WebPage, MediaReference, Task, Note,
+    CacheEntry, SessionToken, Cookie,
+}
+
+pub struct Relation {
+    source: ObjectId,
+    target: ObjectId,
+    kind: RelationKind,
+    confidence: f32,
+    explanation: Option<String>,
+    created_by: RelationSource,
+}
+
+pub enum RelationKind {
+    DerivedFrom, References, DependsOn,
+    RelatedTo, CreatedBy, InputTo,
+    OutputOf, ConversationContext,
+    VersionOf, SiblingOf,
+    ChildOf, Attachment,
+}
+
+/// Simplified; see spaces.md §3.4 for the canonical RelationSource definition
+/// (Explicit/AiInferred/SystemGenerated).
+pub enum RelationSource {
+    Ai,               // created by AIRS during indexing
+    User,             // created explicitly by user action
+    Agent(AgentId),   // created by an agent during operation
+}
 pub struct SemanticMetadata {
-    summary: Option<String>,          // AIRS-generated, may not exist yet
+    summary: Option<String>,          // set by creator or AIRS (see spaces.md §3.3)
     tags: Vec<String>,
     auto_tags: Vec<String>,           // AIRS-generated tags
     embedding: Option<Vec<f32>>,      // AIRS-generated embedding
@@ -189,13 +224,46 @@ pub struct Task {
     persistence: Persistence,
     context: ContextLink,
 }
+/// Links a task to its surrounding context (space, identity, context snapshot).
+/// Full definition: architecture.md §2.3 (Task & Agent Model).
+pub struct ContextLink {
+    space_id: SpaceId,
+    identity_id: IdentityId,
+    snapshot_id: ObjectId,
+}
+/// Simplified; see agents.md §2.4 for full definition.
 pub struct AgentManifest {
     name: String,
     author: Identity,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
-    dependencies: Vec<ContentHash>,
-    ai_analysis: SecurityAnalysis,
+    dependencies: Vec<Dependency>,
+    ai_analysis: Option<SecurityAnalysis>,
+}
+
+/// Set of kernel-managed capability tokens held by a task or agent.
+/// Full definition: architecture.md §2.3 (Task & Agent Model).
+pub struct CapabilitySet {
+    tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,
+}
+
+/// Entry in a task's activity log. Records what an agent did and when.
+/// Used by Intent Verification (Layer 1). Full definition: architecture.md §2.3.
+pub struct ActivityEntry {
+    timestamp: Timestamp,
+    agent: AgentId,
+    action: ActivityAction,
+    capability: CapabilityType,
+    duration: Option<Duration>,
+}
+
+/// Append-only Merkle-linked provenance chain for an object. Aggregates
+/// per-version ProvenanceEntry records (spaces.md §5.1) for quick inspection.
+/// Full definition: architecture.md §2.3 (Task & Agent Model).
+pub struct ProvenanceChain {
+    head: Hash,
+    length: u64,
+    origin: ProvenanceOrigin,
 }
 ```
 ---
@@ -218,7 +286,8 @@ Every action by every agent passes through all eight layers. No single layer fai
 ├──────────────────────────────────────────────────────┤
 │  Layer 4: Security Zone                               │
 │  Is this data in a zone this agent can reach?         │
-│  Core / Personal / Collaborative / Untrusted zones.   │
+│  Core / Personal / Collaborative / Untrusted /         │
+│  Ephemeral zones.                                      │
 ├──────────────────────────────────────────────────────┤
 │  Layer 5: Adversarial Defense                         │
 │  Is this action the result of prompt injection?       │
@@ -303,13 +372,15 @@ The browser is a constellation of agents, not a monolithic application:
 Same-origin policy becomes kernel-enforced capability isolation. Web APIs bridge to OS subsystem services. Web storage maps to spaces (searchable, syncable, inspectable).
 ---
 ## 7. Developer Experience
-Developers build four things on AIOS:
+Developers build six things on AIOS (see architecture.md §4.3 for full details):
 | Type | Description | Example |
 |---|---|---|
-| **Agents** | Autonomous programs with capabilities | Research assistant, file organizer |
+| **Agents** | Autonomous domain-specific programs | Research assistant, file organizer |
 | **Tools** | Single-purpose functions agents can call | PDF parser, image classifier |
-| **Views** | UI components that render space objects | Markdown renderer, chart widget |
-| **Drivers** | Userspace device drivers | USB webcam, custom hardware |
+| **Workflows** | Orchestrate agents for a use case | Sales pipeline, academic research |
+| **Connectors** | Bridge external services into spaces | Slack, GitHub, Google Workspace |
+| **Space templates** | Pre-structured spaces for common needs | Project management, client onboarding |
+| **Experience plugins** | Custom compositor UI components (views, widgets) | Chart widget, domain-specific data visualization |
 The SDK provides inference, storage, security, networking, and context as system services. Developers write the domain-specific part.
 ---
 ## 8. App Ecosystem Strategy
@@ -323,7 +394,8 @@ The SDK provides inference, storage, security, networking, and context as system
 | Stage | Target | Purpose |
 |---|---|---|
 | Phase 0-15 | QEMU aarch64 (HVF on macOS) | All development and testing |
-| Phase 15 | Raspberry Pi 4/5 | First real hardware validation |
+| Phase 16-19 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
+| Phase 20-23 | QEMU + Raspberry Pi | Rich experience development on both targets |
 | Phase 24-27 | VM images (UTM/QEMU) | Low-barrier adoption path |
 | Post-MVP | Pine64, Framework Laptop | Open-hardware partners |
 | Maturity | Own hardware | Only if platform achieves critical mass |
@@ -350,11 +422,11 @@ This is where AIOS becomes what no other OS is.
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 8 | AIRS Core (Inference Engine) | 5 weeks | Local LLM inference with streaming responses |
-| 9 | Space Intelligence & Conversation | 5 weeks | Semantic search, AI command bar, conversational config |
+| 9 | Space Intelligence & Conversation | 5 weeks | Semantic search, Conversation Bar, conversational config |
 | 10 | Agent Framework | 5 weeks | Capability-gated agents with intent verification |
 | 11 | Tasks, Flow & Attention | 5 weeks | Task decomposition, smart clipboard, triaged notifications |
 ### Tier 4: Platform Maturity — Phases 12–15 (Weeks 55–74)
-Developer ecosystem, security hardening, performance, POSIX compatibility.
+Developer ecosystem, security hardening, performance, POSIX compatibility. Includes 3 weeks buffer for integration testing across phases.
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 12 | Developer Experience & SDK | 5 weeks | Multi-language SDK, CLI toolchain, documentation |
@@ -457,16 +529,16 @@ Each phase has a single implementation doc in `docs/phases/` with milestone step
 These companion documents provide deep-dive technical specifications:
 | Document | Scope |
 |---|---|
-| `architecture.md` | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
-| `airs.md` | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
-| `spaces.md` | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
-| `compositor.md` | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
-| `ipc.md` | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
-| `subsystem-framework.md` | Universal hardware abstraction — traits, types, patterns for every subsystem |
-| `networking.md` | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
-| `browser.md` | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
-| `experience.md` | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
-| `development-plan.md` | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
+| [architecture.md](./architecture.md) | Comprehensive system architecture with full data models, code examples, boot sequence, agent sandbox, graceful degradation, performance targets |
+| [airs.md](../intelligence/airs.md) | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, Attention Manager, intent verification, adversarial defense |
+| [spaces.md](../storage/spaces.md) | Space Storage — block engine, content-addressing, version store, encryption, query engine, POSIX compatibility, sync protocol |
+| [compositor.md](../platform/compositor.md) | Compositor and Display — render pipeline, semantic hints, layout engine, GPU abstraction, input routing, accessibility, multi-monitor |
+| [ipc.md](../kernel/ipc.md) | IPC and Syscall interface — syscall table, channel-based IPC, zero-copy shared memory, capability transfer, service protocols, POSIX translation |
+| [subsystem-framework.md](../platform/subsystem-framework.md) | Universal hardware abstraction — traits, types, patterns for every subsystem |
+| [networking.md](../platform/networking.md) | Network Translation Module — Space Resolver, Shadow Engine, Resilience Engine, Bandwidth Scheduler, AIOS Peer Protocol |
+| [browser.md](../applications/browser.md) | Decomposed web browser — Servo integration, tab-per-agent, Web API bridging, service workers, web storage as spaces |
+| [experience.md](../experience/experience.md) | Experience Layer — five surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), Space Navigator, Attention Panel, context transitions, design language |
+| [development-plan.md](./development-plan.md) | Development plan — timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
 ---
 ## 13. Success Criteria (Full Production OS)
 **Core OS:**
@@ -482,7 +554,7 @@ These companion documents provide deep-dive technical specifications:
 - Encrypted spaces for personal security zone
 **AI:**
 - Local LLM inference with streaming responses
-- AI command bar for natural language interaction
+- Conversation Bar for natural language interaction
 - AI-generated metadata on all space objects
 - Intent verification and behavioral monitoring
 **Agents & Ecosystem:**

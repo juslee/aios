@@ -636,6 +636,7 @@ bitflags::bitflags! {
         const SHARED   = 0b0001_0000;
         const PINNED   = 0b0010_0000;
         const HUGE     = 0b0100_0000;  // 2 MB pages
+        const NO_DUMP  = 0b1000_0000;  // Excluded from core dumps and zram compression (cryptographic keys)
     }
 }
 
@@ -660,20 +661,81 @@ pub enum VmRegionKind {
 type Vma = VmRegion;
 
 impl AddressSpace {
-    /// Look up the PTE for a virtual address by walking the page table.
-    pub fn lookup_pte(&self, addr: VirtualAddress) -> Result<&PageTableEntry, FaultError> { todo!() }
+    /// Look up the PTE for a virtual address by walking the four-level page table.
+    /// Returns a reference to the leaf PTE, or FaultError::InvalidAddress if
+    /// any intermediate table is missing (no auto-population).
+    pub fn lookup_pte(&self, addr: VirtualAddress) -> Result<&PageTableEntry, FaultError> {
+        let l0_idx = (addr.0 >> 39) & 0x1FF;
+        let l1_idx = (addr.0 >> 30) & 0x1FF;
+        let l2_idx = (addr.0 >> 21) & 0x1FF;
+        let l3_idx = (addr.0 >> 12) & 0x1FF;
 
-    /// Overwrite the PTE for a virtual address.
-    pub fn update_pte(&mut self, addr: VirtualAddress, pte: PageTableEntry) { todo!() }
+        let l0 = &self.pgd;
+        let l1 = l0.entry(l0_idx).table().ok_or(FaultError::InvalidAddress)?;
+        let l2 = l1.entry(l1_idx).table().ok_or(FaultError::InvalidAddress)?;
+        // L2 entry may be a 2 MB block (huge page) — return it directly
+        if l2.entry(l2_idx).is_block() {
+            return Ok(l2.entry_ref(l2_idx));
+        }
+        let l3 = l2.entry(l2_idx).table().ok_or(FaultError::InvalidAddress)?;
+        Ok(l3.entry_ref(l3_idx))
+    }
+
+    /// Mutable variant of lookup_pte. Walks the four-level page table
+    /// and returns a mutable reference to the leaf PTE. Used by update_pte()
+    /// and COW fault handling (§5.4) to modify PTEs in place.
+    pub fn lookup_pte_mut(&mut self, addr: VirtualAddress) -> Result<&mut PageTableEntry, FaultError> {
+        let l0_idx = (addr.0 >> 39) & 0x1FF;
+        let l1_idx = (addr.0 >> 30) & 0x1FF;
+        let l2_idx = (addr.0 >> 21) & 0x1FF;
+        let l3_idx = (addr.0 >> 12) & 0x1FF;
+
+        let l0 = &mut self.pgd;
+        let l1 = l0.entry_mut(l0_idx).table_mut().ok_or(FaultError::InvalidAddress)?;
+        let l2 = l1.entry_mut(l1_idx).table_mut().ok_or(FaultError::InvalidAddress)?;
+        if l2.entry(l2_idx).is_block() {
+            return Ok(l2.entry_mut(l2_idx));
+        }
+        let l3 = l2.entry_mut(l2_idx).table_mut().ok_or(FaultError::InvalidAddress)?;
+        Ok(l3.entry_mut(l3_idx))
+    }
+
+    /// Overwrite the PTE for a virtual address. Caller must ensure the
+    /// intermediate tables already exist (see map_page for auto-population).
+    /// Issues a TLB invalidation for the affected VA after the write.
+    pub fn update_pte(&mut self, addr: VirtualAddress, pte: PageTableEntry) {
+        // Walk to the leaf entry and overwrite it
+        let leaf = self.lookup_pte_mut(addr).expect("PTE must exist for update");
+        *leaf = pte;
+        // Single-entry TLBI for this ASID + VA
+        tlb_invalidate_page(self.asid, addr);
+    }
 
     /// Find the VmRegion (VMA) containing `addr`, if any.
-    pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> { todo!() }
+    /// VmRegions are stored in an interval tree sorted by base address.
+    pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> {
+        self.regions.find_containing(addr)
+    }
 
     /// Walk the page table and return the PTE (may be invalid/encoded).
-    pub fn walk_page_table(&self, addr: VirtualAddress) -> Result<PageTableEntry, FaultError> { todo!() }
+    /// Unlike lookup_pte, this does not require the PTE to be valid —
+    /// it returns whatever bits are stored, including swap/compressed
+    /// encodings (see §10.5 for PteState decoding).
+    pub fn walk_page_table(&self, addr: VirtualAddress) -> Result<PageTableEntry, FaultError> {
+        self.lookup_pte(addr).copied()
+    }
 
-    /// Install a mapping: allocate intermediate tables as needed, write PTE.
-    pub fn map_page(&mut self, addr: VirtualAddress, frame: PhysicalFrame, perms: VmFlags) { todo!() }
+    /// Install a mapping: allocate intermediate page tables as needed, write the
+    /// leaf PTE with the given frame and permissions. Enforces W^X — the perms
+    /// argument must not set both WRITE and EXECUTE. Panics if W^X is violated.
+    pub fn map_page(&mut self, addr: VirtualAddress, frame: PhysicalFrame, perms: VmFlags) {
+        assert!(!perms.contains(VmFlags::WRITE | VmFlags::EXECUTE), "W^X violation");
+        // Ensure L0→L1→L2→L3 tables exist, allocating from frame allocator as needed
+        let l3_table = self.ensure_table_path(addr);
+        let l3_idx = (addr.0 >> 12) & 0x1FF;
+        l3_table.set_entry(l3_idx, PageTableEntry::page(frame, perms));
+        tlb_invalidate_page(self.asid, addr);
+    }
 }
 ```
 
@@ -843,8 +905,8 @@ pub struct SlabCache {
     partial: LinkedList<Slab>,
     full: LinkedList<Slab>,
     empty: LinkedList<Slab>,
-    /// Per-CPU magazine for lock-free fast path
-    magazines: PerCpu<Magazine>,
+    /// Per-CPU magazine for lock-free fast path (simplified: single magazine shown)
+    magazine: Magazine,
     /// Name for debugging
     name: &'static str,
 }
@@ -863,8 +925,8 @@ pub struct Slab {
 
 /// Per-CPU magazine — lock-free fast path for alloc/free
 pub struct Magazine {
-    /// Loaded magazine (array of free object pointers)
-    loaded: MagazineRound,
+    /// Current magazine (array of free object pointers)
+    current: MagazineRound,
     /// Previous magazine (swap when loaded is empty)
     prev: MagazineRound,
 }
@@ -878,16 +940,56 @@ const MAGAZINE_SIZE: usize = 32;
 
 impl SlabCache {
     /// Create a new slab cache for objects of `size` bytes.
-    pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self { todo!() }
+    /// Allocates one initial slab (one physical page) and fills
+    /// the per-CPU magazine for the boot CPU.
+    pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self {
+        let aligned_size = size.next_power_of_two().max(8); // minimum 8-byte alignment
+        let objects_per_slab = PAGE_SIZE / aligned_size;
+        let initial_page = fa.alloc_pages(Pool::Kernel, 0).expect("slab init: OOM");
+        // Carve the page into a freelist of fixed-size objects
+        let initial_slab = Self::build_slab(initial_page, aligned_size, objects_per_slab);
+        Self { name, object_size: aligned_size, objects_per_slab,
+               partial: LinkedList::from(initial_slab), full: LinkedList::new(),
+               empty: LinkedList::new(), magazine: Magazine::empty() }
+    }
 
-    /// Allocate one object from this cache (magazine fast-path, then slab).
-    pub fn alloc(&mut self) -> *mut u8 { todo!() }
+    /// Allocate one object from this cache.
+    /// Fast path: pop from per-CPU magazine (no lock, no atomic).
+    /// Slow path: refill magazine from shared freelist (lock required).
+    pub fn alloc(&mut self) -> *mut u8 {
+        // Fast path: per-CPU magazine
+        if let Some(ptr) = self.magazine.current.pop() {
+            return ptr;
+        }
+        // Swap current ↔ prev magazine
+        core::mem::swap(&mut self.magazine.current, &mut self.magazine.prev);
+        if let Some(ptr) = self.magazine.current.pop() {
+            return ptr;
+        }
+        // Slow path: refill magazine from shared freelist
+        self.refill_magazine();
+        self.magazine.current.pop().expect("slab: refill failed — OOM")
+    }
 
     /// Return an object to this cache.
-    pub fn free(&mut self, ptr: *mut u8) { todo!() }
+    /// Fast path: push to per-CPU magazine. If magazine is full,
+    /// swap with prev and push. If both full, flush prev to freelist.
+    pub fn free(&mut self, ptr: *mut u8) {
+        if self.magazine.current.push(ptr) { return; }
+        core::mem::swap(&mut self.magazine.current, &mut self.magazine.prev);
+        if self.magazine.current.push(ptr) { return; }
+        // Both magazines full — flush prev to shared freelist, then push
+        self.flush_magazine(&mut self.magazine.prev);
+        self.magazine.current.push(ptr);
+    }
 
     /// Grow the cache by allocating a new backing slab from the frame allocator.
-    pub fn grow(&mut self, fa: &FrameAllocator) { todo!() }
+    /// Called when the shared freelist is empty and a magazine refill is needed.
+    pub fn grow(&mut self, fa: &FrameAllocator) {
+        let page = fa.alloc_pages(Pool::Kernel, 0).expect("slab grow: OOM");
+        let new_slab = Self::build_slab(page, self.object_size, self.objects_per_slab);
+        self.partial.push_back(new_slab);
+    }
 }
 
 /// Top-level slab allocator managing all caches
@@ -898,11 +1000,29 @@ pub struct SlabAllocator {
 impl SlabAllocator {
     /// Allocate `size` bytes with `align` alignment.
     /// Finds the smallest cache whose object size >= requested size.
-    /// Returns null if no cache fits (caller falls back to buddy allocator).
-    pub fn alloc(&self, size: usize, align: usize) -> *mut u8 { todo!() }
+    /// Returns null if no cache fits (caller falls back to buddy allocator
+    /// for allocations larger than the biggest slab cache).
+    pub fn alloc(&mut self, size: usize, align: usize) -> *mut u8 {
+        let effective_size = size.max(align);
+        for cache in &self.caches {
+            if cache.object_size >= effective_size {
+                return cache.alloc();
+            }
+        }
+        core::ptr::null_mut() // too large for slab — caller uses buddy allocator
+    }
 
     /// Free a previously allocated pointer of the given `size`.
-    pub fn free(&self, ptr: *mut u8, size: usize) { todo!() }
+    /// Routes to the correct slab cache based on size.
+    pub fn free(&mut self, ptr: *mut u8, size: usize) {
+        for cache in &self.caches {
+            if cache.object_size >= size {
+                cache.free(ptr);
+                return;
+            }
+        }
+        panic!("slab free: size {} exceeds all caches — was this allocated from buddy?", size);
+    }
 
     /// Standard caches created at boot
     pub fn init(frame_allocator: &FrameAllocator) -> Self {
@@ -1088,7 +1208,12 @@ impl AgentMemoryStats {
 
     /// Major fault rate (faults requiring disk I/O) over the last sampling window.
     /// Used by ThrashDetector to identify agents causing excessive paging.
-    pub fn major_faults_per_sec(&self) -> f64 { todo!() }
+    /// The sampling window is 1 second, updated on each major fault.
+    pub fn major_faults_per_sec(&self) -> f64 {
+        let elapsed = Timestamp::now().as_millis() - self.last_sample_time.as_millis();
+        if elapsed == 0 { return 0.0; }
+        (self.major_faults_in_window as f64) / (elapsed as f64 / 1000.0)
+    }
 }
 ```
 
@@ -1105,7 +1230,7 @@ When an agent's RSS exceeds its memory limit, the kernel does not silently kill 
 ```
 1. Agent's RSS crosses memory limit
      ↓
-2. Kernel sets agent state to Paused
+2. Kernel sets agent state to Suspended (scheduler.md §3.3 ThreadState::Suspended)
    (agent threads stop executing, no data loss)
      ↓
 3. Kernel sends notification to Attention Manager:
@@ -1204,9 +1329,9 @@ Phi-3 Mini 3.8B at Q4_K_M + KV cache: ~2700 MB  ← does not fit
 TinyLlama 1.1B at Q4_K_M:             ~700 MB   ← fits
 Phi-2 2.7B at Q4_K_M:                 ~1800 MB  ← fits
 
-On a 2 GB device:
-  Available for model:                  ~1100 MB
-  Smallest usable model: ~1B at Q4     ~700 MB   ← fits, limited capability
+On a 2 GB device (model pool is 0 — see §2.4):
+  Available for model:                  0 MB (cloud inference only)
+  All 1.75 GB (after kernel/DMA/reserved) is user pool
 ```
 
 The model IS the memory problem. Traditional OS memory management — where everything is fungible and swappable — does not work here. Model weights must stay in RAM. Swapping 3 GB of model data to an SD card would take tens of seconds and make inference unusable.
@@ -1766,7 +1891,7 @@ The frame allocator continuously tracks free page counts across all pools. Press
 pub enum MemoryPressure {
     /// > 20% free pages in user pool — normal operation
     Normal,
-    /// 10-20% free — start background reclamation
+    /// 11-20% free — start background reclamation
     Low,
     /// 5-10% free — aggressive reclamation, suspend background agents
     Critical,
@@ -1782,7 +1907,7 @@ Level     Free %    Actions
 ────────  ──────    ──────────────────────────────────────────────────
 Normal    > 20%     None — system operates normally
 
-Low       10-20%    - Reclaim clean page cache pages
+Low       11-20%    - Reclaim clean page cache pages
                     - Compress inactive agent pages (zram)
                     - Notify AIRS to evict background KV caches
                     - Zero-page thread paused (save CPU)
@@ -2569,6 +2694,36 @@ pub enum FaultType {
     Read,
     Write,
     Execute,
+}
+
+/// Error outcomes for page fault resolution. Returned by the fault handler
+/// and propagated to the process as a signal (SIGSEGV, SIGBUS) or to the
+/// kernel for OOM handling.
+pub enum FaultError {
+    /// Access to an address not covered by any VMA — the process touched
+    /// unmapped memory. Delivered as SIGSEGV to the faulting process.
+    SegmentationFault,
+    /// VMA exists but does not permit the attempted access type
+    /// (e.g., write to a read-only mapping). Delivered as SIGSEGV.
+    ProtectionFault,
+    /// The capability that granted access to the underlying resource
+    /// was revoked between mapping creation and fault resolution.
+    CapabilityRevoked,
+    /// No physical frames available and reclamation failed.
+    OutOfMemory,
+    /// Address has no VMA mapping (more specific than SegmentationFault
+    /// for kernel-internal use — distinguishes "no VMA" from "VMA found
+    /// but address outside its range").
+    InvalidAddress,
+    /// No VMA covers the faulting address in find_vma().
+    UnmappedRegion,
+    /// Swap device is required but not configured or not available.
+    SwapDeviceMissing,
+    /// PTE was in an unexpected state for the current fault path
+    /// (e.g., valid PTE reaching the non-present handler).
+    UnexpectedPteState,
+    /// Generic write permission failure on a read-only address.
+    AccessViolation,
 }
 ```
 

@@ -85,6 +85,9 @@ The compositor is also the **display subsystem** in the subsystem framework. It 
 Agents communicate with the compositor via IPC. The protocol defines how surfaces are created, updated, and managed:
 
 ```rust
+/// Unique identifier for a compositor surface (window or layer).
+pub struct SurfaceId(u64);
+
 /// Messages from agent to compositor
 pub enum CompositorRequest {
     /// Create a new surface (window)
@@ -540,7 +543,7 @@ pub struct DisplayCapability {
 1. **Semantic, not just spatial.** The compositor understands content types, not just rectangles.
 2. **60 fps or drop features.** Frame rate is sacred. If effects can't maintain 60fps, they're disabled automatically.
 3. **Zero-copy when possible.** Shared buffers, direct scanout, damage tracking — minimize GPU copies.
-4. **Accessibility from day one.** The accessibility tree is built during Phase 6, not Phase 23. Screen reader support is an early design constraint.
+4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 23. Screen reader support shapes early architectural decisions.
 5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without capability.
 6. **HiDPI is default.** Scaling is always active. 1x is just scale=1.0.
 

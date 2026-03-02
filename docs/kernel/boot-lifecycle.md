@@ -96,16 +96,16 @@ On next boot: agent is relaunched and reads state from space
 
 ## 12. Implementation Order
 
-The boot sequence maps to the earliest development phases:
+The boot sequence maps to the earliest development phases. Week ranges below match the canonical durations in overview.md §10. These are *development plan* phases, not boot phases — see §11 for runtime boot phases.
 
 ```
-Phase 0: Foundation & Tooling (Weeks 1-4)
+Phase 0: Foundation & Tooling (Weeks 1-2)
   - Cross-compilation toolchain (Rust → aarch64)
   - QEMU runner scripts
   - UEFI stub skeleton
   - Build system for kernel + initramfs
 
-Phase 1: Boot & First Pixels (Weeks 5-8)
+Phase 1: Boot & First Pixels (Weeks 3-6)
   - UEFI stub: memory map, framebuffer, device tree, RNG
   - Kernel entry: exception vectors, UART, device tree parse
   - Interrupt controller (GICv3/GICv2/AIC) + timer
@@ -113,14 +113,14 @@ Phase 1: Boot & First Pixels (Weeks 5-8)
   - Early framebuffer: splash screen
   - Kernel writes "Hello from AIOS" to screen and UART
 
-Phase 2: Memory Management (Weeks 9-12)
+Phase 2: Memory Management (Weeks 7-10)
   - Buddy allocator (physical pages)
   - Slab allocator (kernel heap)
   - KASLR
   - Per-process address spaces (TTBR0 switching)
   - Shared memory regions
 
-Phase 3: IPC & Capability System (Weeks 13-16)
+Phase 3: IPC & Capability System (Weeks 11-16)
   - Syscall handler (SVC trap)
   - IPC channels (send/recv/call)
   - Capability manager (create, transfer, revoke)
@@ -129,20 +129,20 @@ Phase 3: IPC & Capability System (Weeks 13-16)
   - Service Manager (PID 1)
   - Provenance chain (first entry)
 
-Phase 4: Block Storage & Object Store (Weeks 17-20)
+Phase 4: Block Storage & Object Store (Weeks 17-21)
   - Block Engine (superblock, WAL, LSM-tree)
   - Object Store (content-addressing, dedup)
   - Space Storage (system spaces, Space API)
   - Kernel audit log flush to space storage
   - Phase 1 boot sequence operational
 
-Phase 5-6: GPU, Display, Compositor (Weeks 21-28)
+Phase 5-6: GPU, Display, Compositor (Weeks 22-30)
   - VirtIO-GPU driver
   - Framebuffer handoff
   - Compositor
   - Phase 2 boot sequence operational
 
-Phase 7: Input, Terminal, Networking (Weeks 29-34)
+Phase 7: Input, Terminal, Networking (Weeks 31-34)
   - VirtIO-Input, keyboard/mouse
   - Network (smoltcp, VirtIO-Net)
   - Terminal emulator
@@ -152,7 +152,9 @@ Phase 8: AIRS Core (Weeks 35-39)
   - GGML integration, model loading
   - Phase 3 boot sequence operational
 
-Phase 14: Performance & Optimization (Weeks 55-58)
+(Phases 9-13 and 15-23 are defined in development-plan.md)
+
+Phase 14: Performance & Optimization (Weeks 64-66)
   - Boot time profiling and optimization
   - Achieve < 3 second boot target
   - Recovery mode implementation
@@ -243,11 +245,11 @@ This section tracks concepts that boot.md references which are defined (or need 
 
 | Concept used in boot.md | Defined in | What boot.md needs from it |
 |---|---|---|
-| `Platform` trait, 7 `init_*` methods, `InterruptController`, `Timer`, `Uart`, `GpuDevice`, `NetworkDevice`, `StorageDevice`, `RngDevice` | [hal.md](./hal.md) §2–3 | Device trait signatures must match §2.4 and §3.3 here. Initialization order (UART/interrupts/timer early, GPU/network/storage in service phases) must agree with hal.md §3.2. |
+| `Platform` trait, 7 `init_*` methods, `InterruptController`, `Timer`, `Uart`, `GpuDevice`, `NetworkDevice`, `StorageDevice`, `RngDevice` | [hal.md](./hal.md) §3 (Platform Trait), §4 (Device Abstractions) | Device trait signatures must match hal.md §3. Initialization order (UART/interrupts/timer early, GPU/network/storage in service phases) must agree with hal.md §3.2. |
 | `Scheduler`, four scheduling classes (RT, Interactive, Normal, Idle), 1ms tick | [scheduler.md](./scheduler.md) §3.1, §10.1 | Timer tick rate (Step 6) and scheduling class names in Step 15 must stay consistent with scheduler.md. |
 | `BuddyAllocator`, `SlabAllocator`, slab size classes | [memory.md](./memory.md) | Buddy allocator order range (0–10) and slab size classes (64–4096 bytes) cited in Steps 8–9 must match memory.md. |
 | `CapabilityManager`, `CapabilityToken`, root capability, trust levels, `Capability::Root` | [security.md](../security/security.md) §10 | `Timestamp::MAX` for Trust Level 0 tokens (Step 12) and capability delegation model (§4.7) must stay aligned. |
-| `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check message format (§4.4) and Service Manager IPC channels (§4.1 step 5) must match ipc.md's channel semantics. |
+| `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check protocol (boot.md §4.4) and Service Manager IPC channels (ipc.md §4.1) must match ipc.md's channel semantics. |
 | Compositor framebuffer handoff, display subsystem, wgpu pipeline | [compositor.md](../platform/compositor.md) | Handoff sequence (§7.4) and Phase 2 display startup must match compositor.md's initialization. |
 | AIRS model selection by RAM, `system/models/` space, GGML runtime, 5-second timeout | [airs.md](../intelligence/airs.md) | Model size thresholds (§5 Phase 3: ≥16 GB → 8B Q5_K_M, ≥8 GB → 8B Q4_K_M, ≥4 GB → 3B, ≥2 GB → 1B, <2 GB → no local model) and the 5-second health timeout must stay consistent with airs.md §4.6. |
 | Identity Service, Ed25519 keypair, `system/identity/` space | [identity.md](../experience/identity.md) | Phase 4 Identity startup and identity unlock flow must match identity.md's key management. |
@@ -256,7 +258,7 @@ This section tracks concepts that boot.md references which are defined (or need 
 | Preference Service, `user/preferences/` space | [preferences.md](../intelligence/preferences.md) | Phase 4 Preference startup and the preference space path must match preferences.md. |
 | `AgentManifest.persistent`, agent shutdown protocol, `ShutdownSignal` | [agents.md](../applications/agents.md) §2.4, §3 | The 5-second shutdown grace period (§11.3) and persistent agent relaunching must match agents.md's lifecycle model. |
 | Block Engine, Object Store, Space Storage, WAL, LSM-tree, system spaces | [spaces.md](../storage/spaces.md) | Phase 1 startup sequence and system space paths (`system/audit/`, `system/models/`, etc.) must agree with spaces.md's space hierarchy. |
-| ARM SMMU (SMMUv3), stream tables, DMA isolation, bounce buffers | [hal.md](./hal.md) | SMMU initialization (§3.6) and per-device DMA page tables must align with hal.md's DMA abstractions. Pi 4 bounce buffer strategy must match hal.md's DMA API. |
+| ARM SMMU (SMMUv3), stream tables, DMA isolation, bounce buffers | [hal.md](./hal.md) | SMMU initialization (hal.md §15) and per-device DMA page tables must align with hal.md's DMA abstractions. Pi 4 bounce buffer strategy must match hal.md's DMA API. |
 | USB host controller (xHCI), USB HID, hub enumeration | [hal.md](./hal.md) | Phase 2 USB input path on Pi must match hal.md's USB abstraction (if defined). xHCI driver is platform-specific (DesignWare on Pi 4, RP1 on Pi 5). |
 | Audio subsystem (PCM, mixing, I2S/PWM, HDMI audio) | [audio.md](../platform/audio.md) | Phase 2 Audio Subsystem startup must match audio.md. RT scheduling class for audio threads must match scheduler.md. |
 | Watchdog timer (virtual watchdog on QEMU, bcm2835-wdt on Pi), boot timeout, runtime ping | [hal.md](./hal.md) | Watchdog hardware abstraction and timeout values (30s boot, 60s runtime, 15s shutdown) must be consistent across hal.md and boot.md. |
@@ -488,7 +490,7 @@ pub struct OpenSpaceState {
 pub struct AgentSessionState {
     agent_id: AgentId,
     /// Conversation history (lightweight: just message IDs referencing Spaces)
-    conversation_ref: SpaceObjectRef,
+    conversation_ref: ObjectRef,  // see spaces.md §3.0 for ObjectRef
     /// Agent's declared resumable state (agent-specific, opaque to the kernel)
     agent_state: Vec<u8>,
     /// What the agent was doing when suspended
@@ -903,7 +905,7 @@ Argon2id (memory-hard KDF)
 Master Key (256-bit)
   │
   ├──→ HKDF("space-encryption") → Space Encryption Key
-  │     Used for per-space ChaCha20-Poly1305
+  │     Used for per-space AES-256-GCM (or ChaCha20-Poly1305 on hardware without crypto extensions)
   │
   ├──→ HKDF("identity-unlock") → Identity Unlock Key
   │     Decrypts the Ed25519 private key in system/identity/
@@ -1677,10 +1679,10 @@ Record-replay has been transformative for debugging. Mozilla used rr to find and
 
 Boot is the hardest thing to debug in an OS. It happens once, quickly, with limited diagnostic tools (no filesystem, no network, no debugger). A race condition during boot may appear once every 100 boots and vanish under debug instrumentation. Record-replay solves this:
 
-1. **Boot trace recording.** Every boot records a compact trace of non-deterministic events: timer interrupts, device responses, MMIO reads, scheduling decisions. The trace is stored in the panic dump partition (§8.2) — available before Space Storage starts.
+1. **Boot trace recording.** Every boot records a compact trace of non-deterministic events: timer interrupts, device responses, MMIO reads, scheduling decisions. The trace is stored in the panic dump partition (boot.md §8.2) — available before Space Storage starts.
 
 ```rust
-pub struct BootTrace {
+pub struct BootReplayTrace {
     /// Monotonic counter of recorded events
     sequence: u64,
     events: Vec<BootTraceEvent>,

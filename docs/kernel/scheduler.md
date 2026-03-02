@@ -975,7 +975,11 @@ pub enum InferenceState {
     TokenGeneration { tokens_so_far: u32 },
     /// Yielded between chunks (waiting for next scheduling)
     Yielded,
-    /// Paused by scheduler (higher priority work needed)
+    /// Paused by scheduler (higher priority work needed).
+    /// NOTE: This is the inference task's internal state, distinct from
+    /// ThreadState::Suspended (§3.3) which halts the entire thread.
+    /// A Paused inference task's thread may still be Runnable — it just
+    /// won't resume inference until the scheduler allows it.
     Paused,
     /// Completed
     Done,
@@ -1821,8 +1825,8 @@ CNTFRQ_EL0          Counter frequency (typically 54 MHz on Pi 4)
 CNTVCT_EL0          Virtual counter value (monotonic, read-only)
 CNTV_CVAL_EL0       Virtual timer compare value (per-thread)
 CNTV_CTL_EL0        Virtual timer control (enable, mask, status)
-CNTP_CVAL_EL1       Physical timer compare value (kernel tick)
-CNTP_CTL_EL1        Physical timer control (kernel tick)
+CNTP_CVAL_EL0       Physical timer compare value (kernel tick)
+CNTP_CTL_EL0        Physical timer control (kernel tick)
 ```
 
 **Kernel tick:** The EL1 physical timer fires every 1ms (1000 Hz). This is the scheduler tick — the point where the scheduler checks whether to preempt the current thread, update accounting, and run the load balancer. 1000 Hz balances two concerns:
@@ -2149,6 +2153,13 @@ Scheduler thread (preemptive)          Async task (cooperative)
 The kernel runs one async executor per CPU core. Each executor is embedded in the core's idle loop — when no scheduler tasks are runnable, the CPU polls async tasks before entering low-power idle.
 
 ```rust
+/// Unique identifier for an async task within the kernel executor.
+pub struct AsyncTaskId(u64);
+
+/// Task priority level (0 = highest, 255 = lowest). Newtype wrapper
+/// over u8, matching ThreadControlBlock.priority representation.
+pub struct Priority(pub u8);
+
 pub struct KernelExecutor {
     /// Ready queue of async tasks that have been woken
     ready_queue: VecDeque<AsyncTaskId>,
@@ -2182,7 +2193,7 @@ When an async task returns `Poll::Pending`, it must register a waker so the exec
 ```rust
 pub enum WakeSource {
     IpcMessage { channel_id: ChannelId },
-    Timer { deadline: Instant },
+    Timer { deadline: Timestamp },
     DmaCompletion { dma_handle: DmaHandle },
     Interrupt { irq: u32 },
     ServiceReady { service_id: ServiceId },
@@ -2191,18 +2202,20 @@ pub enum WakeSource {
 impl KernelExecutor {
     /// Register a waker for an async task.
     /// When the wake source fires, the task is moved to the ready queue.
-    pub fn register_waker(&mut self, task_id: AsyncTaskId, source: WakeSource) {
+    /// Note: The KernelExecutor is wrapped in Arc<SpinLock<KernelExecutor>>
+    /// at the global level. Callbacks capture a clone of the Arc, not &mut self.
+    pub fn register_waker(self_ref: Arc<SpinLock<KernelExecutor>>, task_id: AsyncTaskId, source: WakeSource) {
         match source {
             WakeSource::Timer { deadline } => {
-                // Register with the timer subsystem
+                let executor = self_ref.clone();
                 timer::register_callback(deadline, move || {
-                    self.wake(task_id);
+                    executor.lock().wake(task_id);
                 });
             }
             WakeSource::IpcMessage { channel_id } => {
-                // Register with the IPC subsystem
+                let executor = self_ref.clone();
                 ipc::register_notify(channel_id, move || {
-                    self.wake(task_id);
+                    executor.lock().wake(task_id);
                 });
             }
             // ... other sources
@@ -2228,7 +2241,8 @@ impl KernelExecutor {
     /// Boost an async task's priority because a high-priority thread is waiting for it.
     pub fn boost_priority(&mut self, task_id: AsyncTaskId, waiter_priority: Priority) {
         if let Some(task) = self.tasks.get_mut(&task_id) {
-            task.priority = task.priority.max(waiter_priority);
+            // Lower numerical value = higher priority (Priority(0) is highest)
+            task.priority = task.priority.min(waiter_priority);
             // Re-sort ready queue if the task is ready
         }
     }
