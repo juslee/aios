@@ -11,33 +11,32 @@ pub const BOOTINFO_MAGIC: u64 = 0x41494F53_424F4F54;
 
 /// Information passed from UEFI stub to kernel entry point.
 ///
-/// In Phase 0, only `magic` is populated. All pointer-containing fields
-/// use `Option<u64>` stubs to keep the struct `Send`/`Sync` and compilable
-/// on the host target. Phase 1 replaces stubs with real pointer types
-/// behind `#[cfg(target_arch = "aarch64")]`.
+/// All fields use fixed-layout primitives for a stable C ABI across toolchain
+/// updates. Fields that may be absent use `u64` with 0 meaning "not present".
+/// Phase 1 populates all fields; Phase 0 sets only `magic` and zeroes the rest.
 #[repr(C)]
 pub struct BootInfo {
     /// Magic number for validation: 0x41494F53_424F4F54 ("AIOSBOOT")
     pub magic: u64,
 
-    /// UEFI memory map pointer (stub: address as u64).
-    pub memory_map_addr: Option<u64>,
-    /// Number of memory map entries.
-    pub memory_map_count: Option<u64>,
-    /// Size of each memory map entry.
-    pub memory_map_entry_size: Option<u64>,
+    /// UEFI memory map: physical address of the MemoryDescriptor array (0 = absent).
+    pub memory_map_addr: u64,
+    /// Number of MemoryDescriptor entries in the memory map.
+    pub memory_map_count: u64,
+    /// Size of each MemoryDescriptor entry in bytes (UEFI descriptor size may exceed sizeof).
+    pub memory_map_entry_size: u64,
 
-    /// Framebuffer base address (stub: address as u64).
-    pub framebuffer: Option<u64>,
+    /// Framebuffer base address (0 = not available / headless).
+    pub framebuffer: u64,
 
-    /// Device tree blob base address (stub: address as u64).
-    pub device_tree: Option<u64>,
+    /// Device tree blob base address (0 = not present).
+    pub device_tree: u64,
 
-    /// ACPI RSDP physical address.
-    pub acpi_rsdp: Option<u64>,
+    /// ACPI RSDP physical address (0 = not present).
+    pub acpi_rsdp: u64,
 
-    /// UEFI Runtime Services table address.
-    pub runtime_services: Option<u64>,
+    /// UEFI Runtime Services table address (0 = not available).
+    pub runtime_services: u64,
 
     /// Random seed from UEFI RNG protocol for KASLR.
     pub rng_seed: [u8; 32],
@@ -48,15 +47,15 @@ pub struct BootInfo {
     /// Size of kernel image in memory.
     pub kernel_size: u64,
 
-    /// Physical address of the initramfs.
-    pub initramfs_base: Option<u64>,
-    /// Size of the initramfs.
-    pub initramfs_size: Option<u64>,
+    /// Physical address of the initramfs (0 = not present).
+    pub initramfs_base: u64,
+    /// Size of the initramfs in bytes (0 = not present).
+    pub initramfs_size: u64,
 
-    /// Command line string address (stub: address as u64).
-    pub cmdline_addr: Option<u64>,
-    /// Command line length.
-    pub cmdline_len: Option<u64>,
+    /// Command line string address (0 = not present).
+    pub cmdline_addr: u64,
+    /// Command line length in bytes.
+    pub cmdline_len: u64,
 }
 
 /// Classification of physical memory regions.
@@ -74,7 +73,7 @@ pub enum MemoryType {
     AcpiReclaimable = 8,
     AcpiNvs = 9,
     MemoryMappedIO = 10,
-    BootInfoRegion = 11,
+    BootInfo = 11,
     KernelImage = 12,
     Initramfs = 13,
 }

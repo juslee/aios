@@ -101,7 +101,7 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 - [ ] Print pool statistics to UART: total RAM, per-pool sizes, free pages
 - [ ] Replace Phase 1's bump allocator calls with `FrameAllocator` calls in existing kernel code
 
-**Note:** The UEFI memory map is an array of `MemoryRegion` entries in `BootInfo`. Phase 1 populated this; Phase 2 consumes it.
+**Note:** `BootInfo.memory_map` is a `MemoryMap` of UEFI `MemoryDescriptor` entries populated by Phase 1's UEFI stub. Phase 2 walks this structure to bootstrap the buddy allocator and page pools.
 
 **Key reference:** [memory.md §2.1](../kernel/memory.md) — Bootstrap; [boot.md §2.2](../kernel/boot.md) — BootInfo struct
 
