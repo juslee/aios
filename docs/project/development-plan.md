@@ -209,42 +209,38 @@ All permissively licensed. No GPL dependencies in the core OS.
 
 ## 8. Phase Detail Reference
 
-Each phase's detailed technical design and step-by-step implementation guide lives in its own directory:
+Each phase has an implementation doc in `docs/phases/` containing objectives, milestone steps with acceptance criteria, decision points, and references to the existing architecture documents (which hold the technical design). This avoids duplicating architecture content while providing a clear implementation sequence.
 
-| Phase | Directory | Status |
-|---|---|---|
-| 0 | `00 - Foundation and Tooling/` | Planned |
-| 1 | `01 - Boot and First Pixels/` | Planned |
-| 2 | `02 - Memory Management/` | Planned |
-| 3 | `03 - IPC and Capability System/` | Planned |
-| 4 | `04 - Block Storage and Object Store/` | Planned |
-| 5 | `05 - GPU and Display/` | Planned |
-| 6 | `06 - Window Compositor and Shell/` | Planned |
-| 7 | `07 - Input Terminal and Basic Networking/` | Planned |
-| 8 | `08 - AIRS Core/` | Planned |
-| 9 | `09 - Space Intelligence and Conversation/` | Planned |
-| 10 | `10 - Agent Framework/` | Planned |
-| 11 | `11 - Tasks Flow and Attention/` | Planned |
-| 12 | `12 - Developer Experience and SDK/` | Planned |
-| 13 | `13 - Security Hardening/` | Planned |
-| 14 | `14 - Performance and Optimization/` | Planned |
-| 15 | `15 - POSIX Compatibility and BSD Userland/` | Planned |
-| 16 | `16 - Network Translation Module/` | Planned |
-| 17 | `17 - USB Stack and Hotplug/` | Planned |
-| 18 | `18 - WiFi Bluetooth and Wireless/` | Planned |
-| 19 | `19 - Power Management and Thermal/` | Planned |
-| 20 | `20 - Portable UI Toolkit/` | Planned |
-| 21 | `21 - Web Browser/` | Planned |
-| 22 | `22 - Media Audio and Camera/` | Planned |
-| 23 | `23 - Accessibility and Internationalization/` | Planned |
-| 24 | `24 - Secure Boot and Update System/` | Planned |
-| 25 | `25 - Linux Binary and Wayland Compatibility/` | Planned |
-| 26 | `26 - Enterprise and Multi-Device/` | Planned |
-| 27 | `27 - Real Hardware Certification and Launch/` | Planned |
-
-Each directory will contain:
-- `phase-detail.md` — Technical design, architecture decisions, data models, interfaces
-- `milestone-steps.md` — Step-by-step implementation with acceptance criteria and tests
+| Phase | Name | Document | Status |
+|---|---|---|---|
+| 0 | Foundation & Tooling | [`00-foundation-and-tooling.md`](../phases/00-foundation-and-tooling.md) | Planned |
+| 1 | Boot & First Pixels | `01-boot-and-first-pixels.md` | Planned |
+| 2 | Memory Management | `02-memory-management.md` | Planned |
+| 3 | IPC & Capability System | `03-ipc-and-capability-system.md` | Planned |
+| 4 | Block Storage & Object Store | `04-block-storage-and-object-store.md` | Planned |
+| 5 | GPU & Display | `05-gpu-and-display.md` | Planned |
+| 6 | Window Compositor & Shell | `06-window-compositor-and-shell.md` | Planned |
+| 7 | Input, Terminal & Basic Networking | `07-input-terminal-and-basic-networking.md` | Planned |
+| 8 | AIRS Core | `08-airs-core.md` | Planned |
+| 9 | Space Intelligence & Conversation | `09-space-intelligence-and-conversation.md` | Planned |
+| 10 | Agent Framework | `10-agent-framework.md` | Planned |
+| 11 | Tasks, Flow & Attention | `11-tasks-flow-and-attention.md` | Planned |
+| 12 | Developer Experience & SDK | `12-developer-experience-and-sdk.md` | Planned |
+| 13 | Security Hardening | `13-security-hardening.md` | Planned |
+| 14 | Performance & Optimization | `14-performance-and-optimization.md` | Planned |
+| 15 | POSIX Compatibility & BSD Userland | `15-posix-compatibility-and-bsd-userland.md` | Planned |
+| 16 | Network Translation Module | `16-network-translation-module.md` | Planned |
+| 17 | USB Stack & Hotplug | `17-usb-stack-and-hotplug.md` | Planned |
+| 18 | WiFi, Bluetooth & Wireless | `18-wifi-bluetooth-and-wireless.md` | Planned |
+| 19 | Power Management & Thermal | `19-power-management-and-thermal.md` | Planned |
+| 20 | Portable UI Toolkit | `20-portable-ui-toolkit.md` | Planned |
+| 21 | Web Browser | `21-web-browser.md` | Planned |
+| 22 | Media, Audio & Camera | `22-media-audio-and-camera.md` | Planned |
+| 23 | Accessibility & Internationalization | `23-accessibility-and-internationalization.md` | Planned |
+| 24 | Secure Boot & Update System | `24-secure-boot-and-update-system.md` | Planned |
+| 25 | Linux Binary & Wayland Compatibility | `25-linux-binary-and-wayland-compatibility.md` | Planned |
+| 26 | Enterprise & Multi-Device | `26-enterprise-and-multi-device.md` | Planned |
+| 27 | Real Hardware, Certification & Launch | `27-real-hardware-certification-and-launch.md` | Planned |
 
 -----
 
