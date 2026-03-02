@@ -1,7 +1,7 @@
 # AIOS Deadlock Prevention Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [scheduler.md](./scheduler.md) — Scheduler deep dive, [ipc.md](./ipc.md) — IPC and syscall interface, [memory.md](./memory.md) — Memory management
+**Related:** [ipc.md](./ipc.md) — IPC timeouts (§3.1), synchronous call-reply (§4.2), priority inheritance (§9.2) | [scheduler.md](./scheduler.md) — Lock ordering (§9.1), preemption model (§10.3), async priority inheritance (§13.4) | [memory.md](./memory.md) — Per-CPU magazine allocator (§4.1), kernel singletons (§4.2) | [security.md](../security/security.md) — Capability model
 
 -----
 
@@ -24,15 +24,16 @@ A deadlock requires all four conditions simultaneously (Coffman et al., 1971):
 
 AIOS breaks one or more of these conditions at every level of the system. The table below summarizes which condition each mechanism targets:
 
-| Mechanism | Breaks | Location |
-|---|---|---|
-| Lock ordering (CPU ID) | Circular wait | Scheduler (§3) |
-| Mandatory IPC timeouts | Hold and wait | IPC subsystem (§4) |
-| Priority inheritance | Hold and wait (transitive) | IPC + Scheduler (§5) |
-| Lock-free per-CPU magazines | Mutual exclusion | Memory allocator (§6) |
-| Capability-based resource model | Hold and wait | Kernel-wide (§7) |
-| Synchronous IPC (no callback chains) | Circular wait | IPC subsystem (§8) |
-| Preemptive kernel | No preemption | Scheduler (§9) |
+| Mechanism | Breaks | This doc | Subsystem source |
+|---|---|---|---|
+| Lock ordering (CPU ID) | Circular wait | §3 | [scheduler.md §9.1](./scheduler.md) |
+| Mandatory IPC timeouts | Hold and wait | §4 | [ipc.md §3.1](./ipc.md) |
+| Priority inheritance | Hold and wait (transitive) | §5 | [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md) |
+| Lock-free per-CPU magazines | Mutual exclusion | §6 | [memory.md §4.1](./memory.md) |
+| Capability-based resource model | Hold and wait | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
+| Synchronous IPC (no callback chains) | Circular wait | §8 | [ipc.md §4.2](./ipc.md) |
+| Preemptive kernel | No preemption | §9 | [scheduler.md §10.3](./scheduler.md) |
+| Wait-Die / Wound-Wait | Circular wait | §10 | Future — resource arbitration layer |
 
 -----
 
@@ -65,7 +66,7 @@ impl Scheduler {
 }
 ```
 
-*Source: [scheduler.md §9.1](./scheduler.md)*
+*Source: [scheduler.md §9.1 — Load Balancer Strategy](./scheduler.md) (lock ordering code at line 1644)*
 
 ### 3.3 Why This Works
 
@@ -100,7 +101,7 @@ IpcCall {
 
 When the timeout elapses, the kernel returns `ETIMEDOUT` and cleans up the pending call state. The caller can retry, fall back, or propagate the error.
 
-*Source: [ipc.md §3.1, §4.2](./ipc.md)*
+*Source: [ipc.md §3.1 — Syscall Table](./ipc.md) (mandatory timeout field), [ipc.md §4.2 — Synchronous IPC](./ipc.md) (call-reply pattern)*
 
 ### 4.3 Complementary: IpcCancel
 
@@ -138,7 +139,7 @@ unsafe fn ipc_direct_switch(sender: &mut Thread, receiver: &mut Thread, msg: &Ra
 
 On `IpcReply`, the receiver's original scheduling context is restored. This is transitive — if Service B calls Service C while holding A's inherited priority, C also inherits A's priority.
 
-*Source: [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md)*
+*Source: [ipc.md §9.2 — Priority Inheritance Across IPC](./ipc.md) (scheduling context donation code), [scheduler.md §4.2 — IPC Direct Switch](./scheduler.md) (fast-path priority fields)*
 
 ### 5.3 Async Tasks
 
@@ -157,7 +158,7 @@ impl KernelExecutor {
 }
 ```
 
-*Source: [scheduler.md §13.4](./scheduler.md)*
+*Source: [scheduler.md §13.4 — Priority Inheritance for Async Tasks](./scheduler.md) (boost_priority implementation)*
 
 ### 5.4 Why This Works
 
@@ -186,7 +187,7 @@ Per-CPU Magazine Layer (lock-free fast path)
 
 Each CPU maintains a small array of pre-allocated objects. Allocating takes an object from the local magazine — no locks, no atomic operations, just a decrement and a pointer load. Only when the magazine is empty does the CPU access the shared slab (which requires a lock).
 
-*Source: [memory.md §4.1](./memory.md)*
+*Source: [memory.md §4.1 — Slab Allocator](./memory.md) (per-CPU magazine architecture and lock-free fast path)*
 
 ### 6.3 Global Singletons
 
@@ -200,7 +201,7 @@ static SLAB_ALLOCATOR: SlabAllocator = /* per-CPU magazines + locked slabs */;
 static ZERO_QUEUE: PageZeroQueue = /* ... */;
 ```
 
-*Source: [memory.md §4.2](./memory.md)*
+*Source: [memory.md §4.2 — Kernel Allocation API](./memory.md) (global singleton declarations)*
 
 ### 6.4 Why This Works
 
@@ -224,7 +225,7 @@ In AIOS, access to any resource requires a capability token. Channels are create
 
 This means the set of possible resource dependencies is **statically known** at channel creation time, rather than being an arbitrary runtime graph. Circular dependencies between services can be detected at system design time.
 
-*Source: [ipc.md §4.1](./ipc.md), [security.md](../security/security.md)*
+*Source: [ipc.md §4.1 — Channels](./ipc.md) (ChannelCapability struct), [ipc.md §4.6 — Capability Transfer](./ipc.md) (move semantics), [security.md](../security/security.md) (capability model overview)*
 
 ### 7.3 Why This Works
 
@@ -257,7 +258,7 @@ Agent A ──IpcCall──→ Service B ──IpcCall──→ Service C
 
 The asynchronous `IpcSend` (fire-and-forget) exists for notifications and telemetry, but it has explicit backpressure: when the queue is full, `IpcSend` returns `EAGAIN` — it never blocks the sender.
 
-*Source: [ipc.md §4.2](./ipc.md)*
+*Source: [ipc.md §4.2 — Synchronous IPC](./ipc.md) (call-reply diagram and backpressure semantics)*
 
 ### 8.3 Why This Works
 
@@ -282,7 +283,7 @@ AIOS uses a fully preemptive kernel. User-space threads can be preempted at any 
 
 Everything else in the kernel is preemptible. A timer interrupt in preemptible kernel code immediately switches to a higher-priority thread.
 
-*Source: [scheduler.md §10.3](./scheduler.md)*
+*Source: [scheduler.md §10.3 — Preemption Model](./scheduler.md) (preemption-disabled regions list)*
 
 ### 9.3 Why This Works
 

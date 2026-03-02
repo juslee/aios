@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [ipc.md](./ipc.md) — IPC fast path and direct switch, [compositor.md](../platform/compositor.md) — Compositor frame deadlines, [airs.md](../intelligence/airs.md) — Inference scheduling, [memory.md](./memory.md) — Per-agent memory, [agents.md](../applications/agents.md) — Agent CPU quotas
+**Related:** [ipc.md](./ipc.md) — IPC fast path and direct switch, [compositor.md](../platform/compositor.md) — Compositor frame deadlines, [airs.md](../intelligence/airs.md) — Inference scheduling, [memory.md](./memory.md) — Per-agent memory, [agents.md](../applications/agents.md) — Agent CPU quotas, [deadlock-prevention.md](./deadlock-prevention.md) — Deadlock prevention architecture (lock ordering §3, preemptive kernel §9, priority inheritance §5)
 
 -----
 
@@ -1639,7 +1639,7 @@ After balance:
   CPU 3: load=3  (2 agents + 1 migrated agent)
 ```
 
-**Lock ordering for deadlock prevention.** When the load balancer migrates a thread, it must lock both the source and destination CPU's run queues. To prevent ABBA deadlock (CPU 0 pulls from CPU 1 while CPU 1 pulls from CPU 0), locks are always acquired in ascending CPU ID order:
+**Lock ordering for deadlock prevention.** When the load balancer migrates a thread, it must lock both the source and destination CPU's run queues. To prevent ABBA deadlock (CPU 0 pulls from CPU 1 while CPU 1 pulls from CPU 0), locks are always acquired in ascending CPU ID order (see [deadlock-prevention.md §3](./deadlock-prevention.md) for the full analysis of how this breaks the circular wait condition):
 
 ```rust
 impl Scheduler {
@@ -1895,7 +1895,7 @@ Idle           50ms             Long slices reduce context switch overhead
 
 ### 10.3 Preemption Model
 
-AIOS uses a fully preemptive kernel. User-space threads can be preempted at any instruction boundary (via timer interrupt). Kernel-mode code can be preempted at most points, with specific critical sections protected:
+AIOS uses a fully preemptive kernel. User-space threads can be preempted at any instruction boundary (via timer interrupt). Kernel-mode code can be preempted at most points, with specific critical sections protected. This breaks the "no preemption" Coffman condition — see [deadlock-prevention.md §9](./deadlock-prevention.md) for the full analysis:
 
 ```
 Preemption-disabled regions (kernel code only):
@@ -2234,7 +2234,7 @@ impl KernelExecutor {
 
 Async tasks inherit priority from their spawning context. When the Service Manager spawns an async boot task for a system service, that task inherits the Service Manager's priority (high). When a background indexer spawns an async I/O task, it inherits idle priority.
 
-If a high-priority scheduler task blocks waiting for an async task's result, the async task's priority is temporarily boosted to the waiter's priority. This prevents priority inversion where a high-priority thread waits indefinitely for a low-priority async task.
+If a high-priority scheduler task blocks waiting for an async task's result, the async task's priority is temporarily boosted to the waiter's priority. This prevents priority inversion where a high-priority thread waits indefinitely for a low-priority async task. See [deadlock-prevention.md §5.3](./deadlock-prevention.md) for how this composes with IPC priority inheritance.
 
 ```rust
 impl KernelExecutor {
