@@ -37,7 +37,7 @@ AIOS breaks one or more of these conditions at every level of the system, supple
 
 †Priority inheritance does not break a Coffman condition directly. It prevents unbounded priority inversion — a liveness hazard where a high-priority thread is indefinitely delayed by lower-priority work (§5.1). It is included here because unbounded priority inversion is operationally indistinguishable from deadlock.
 
-‡A preemptive kernel does not break Coffman's *no preemption* condition for lock-based deadlocks. Preempting a thread reclaims CPU time but does not forcibly strip locks or other resources the thread holds. Preemption is a **liveness** mechanism: it bounds how long any thread can monopolize the CPU, and — in combination with priority inheritance — ensures that high-priority waiters eventually get CPU time to make progress.
+‡A preemptive kernel does not break Coffman's *no preemption* condition for lock-based deadlocks. Preempting a thread reclaims CPU time but does not forcibly strip locks or other resources the thread holds. Preemption is a **liveness** mechanism: it bounds how long any thread can monopolize the CPU and — in combination with priority inheritance — helps ensure that lock holders (and thus their waiters) are scheduled promptly to release locks and unblock higher-priority work.
 
 -----
 
