@@ -1895,7 +1895,7 @@ Idle           50ms             Long slices reduce context switch overhead
 
 ### 10.3 Preemption Model
 
-AIOS uses a fully preemptive kernel. User-space threads can be preempted at any instruction boundary (via timer interrupt). Kernel-mode code can be preempted at most points, with specific critical sections protected. This breaks the "no preemption" Coffman condition — see [deadlock-prevention.md §9](./deadlock-prevention.md) for the full analysis:
+AIOS uses a fully preemptive kernel. User-space threads can be preempted at any instruction boundary (via timer interrupt). Kernel-mode code can be preempted at most points, with specific critical sections protected. This preempts CPU time (not locks or other resources in the Coffman sense), keeping non-preemptible regions short and reducing starvation and priority inversion — see [deadlock-prevention.md §9](./deadlock-prevention.md) for the full analysis:
 
 ```
 Preemption-disabled regions (kernel code only):
