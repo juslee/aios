@@ -12,7 +12,7 @@ pub extern "C" fn kernel_main() -> ! {
     loop {
         // SAFETY: wfe is a hint instruction that puts the core in low-power
         // state until an event occurs. Safe to execute at EL1.
-        unsafe { core::arch::asm!("wfe") }
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack, preserves_flags)) }
     }
 }
 
@@ -20,6 +20,6 @@ pub extern "C" fn kernel_main() -> ! {
 fn panic(_info: &PanicInfo) -> ! {
     loop {
         // SAFETY: wfe is a hint instruction, safe at any EL.
-        unsafe { core::arch::asm!("wfe") }
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack, preserves_flags)) }
     }
 }
