@@ -290,7 +290,70 @@ Preemption breaks the **no preemption** condition. If a thread holds a resource 
 
 -----
 
-## 10. Summary: Defense in Depth
+## 10. Wait-Die and Wound-Wait: Timestamp-Based Prevention
+
+### 10.1 Background
+
+Wait-Die and Wound-Wait (Rosenkrantz, Stearns, and Lewis, 1978) are classic deadlock prevention schemes from database concurrency control. Both assign each transaction (or thread) a **timestamp** and use age comparisons to decide whether to wait or abort — guaranteeing no circular wait can ever form.
+
+| Scheme | Older requests resource held by younger | Younger requests resource held by older |
+|---|---|---|
+| **Wait-Die** | Older **waits** (it has priority) | Younger **dies** (aborted, restarts with same timestamp) |
+| **Wound-Wait** | Older **wounds** younger (preempts it) | Younger **waits** (older will finish first) |
+
+Both schemes break the **circular wait** condition: because age is a total order, a cycle of "A waits for B waits for A" is impossible — one side will always abort or be preempted.
+
+### 10.2 How This Relates to AIOS
+
+AIOS does not currently implement Wait-Die or Wound-Wait explicitly, but several of its mechanisms are functionally equivalent:
+
+**Mandatory IPC timeouts (§4) approximate Wait-Die.** When a service call times out and the caller retries, the effect is similar to the "die and restart" behavior in Wait-Die — the younger/less-patient caller aborts its attempt and tries again. The difference is that AIOS uses wall-clock timeouts rather than age-based comparisons.
+
+**Priority inheritance (§5) approximates Wound-Wait.** When a high-priority thread calls a low-priority service, the service is "wounded" — its priority is forcibly elevated so it completes faster and releases the resource. This is the Wound-Wait intuition: the more important transaction preempts the less important one.
+
+### 10.3 Where Wait-Die / Wound-Wait Could Add Value
+
+If AIOS ever needs to manage **contested shared resources** beyond IPC channels — for example, exclusive access to a hardware device, a shared memory region with write locks, or Space Storage write transactions that conflict — a timestamp-based scheme would provide stronger guarantees than timeouts alone:
+
+```
+Scenario: Agent A and Agent B both need exclusive access to
+          resources R1 and R2 (in different orders).
+
+With timeouts only:
+  A locks R1, requests R2 (held by B) → waits up to timeout
+  B locks R2, requests R1 (held by A) → waits up to timeout
+  Both time out → both retry → possible livelock (repeated timeouts)
+
+With Wait-Die (agents stamped at creation time):
+  A (older) locks R1, requests R2 (held by B, younger) → A waits
+  B (younger) locks R2, requests R1 (held by A, older) → B dies (aborts)
+  B releases R2 → A acquires R2, completes → no deadlock, no livelock
+```
+
+The key advantage over pure timeouts: **Wait-Die and Wound-Wait guarantee progress**, while timeouts can lead to livelock if multiple threads repeatedly time out and retry in sync.
+
+### 10.4 Design Considerations for AIOS
+
+If adopted, the natural timestamp for AIOS would be the **agent creation time** (monotonic, unique, immutable) or the **IPC call sequence number** (for per-request ordering). The scheme would apply at the resource arbitration layer, not within the IPC syscall path itself:
+
+```rust
+/// Hypothetical Wait-Die resource arbitration
+fn request_resource(requester: &Thread, holder: &Thread, resource: ResourceId) -> WaitOrDie {
+    if requester.creation_timestamp < holder.creation_timestamp {
+        // Older requester: allowed to wait (it won't cause a cycle)
+        WaitOrDie::Wait
+    } else {
+        // Younger requester: abort and retry (prevents cycle formation)
+        WaitOrDie::Die
+    }
+}
+```
+
+This would complement AIOS's existing defenses as a **Layer 8** — a safety net for resource contention patterns that aren't covered by lock ordering or IPC timeouts alone.
+
+-----
+
+## 11. Summary: Defense in Depth
 
 No single mechanism prevents all deadlocks. AIOS layers multiple strategies so that each covers the gaps of the others:
 
@@ -302,13 +365,14 @@ Layer 4: Lock-free fast paths    → no contention on hot paths
 Layer 5: Capability restrictions → constrained dependency graph
 Layer 6: Synchronous IPC         → no callback cycles
 Layer 7: Preemptive kernel       → no indefinite resource holding
+Layer 8: Wait-Die / Wound-Wait   → progress guarantee for contested resources (future)
 ```
 
-The result: deadlocks are prevented structurally at every level. Where structural prevention is impractical (arbitrary inter-service call patterns), timeout-based detection provides a hard upper bound. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
+The existing layers (1–7) prevent deadlocks structurally. Where structural prevention is impractical (arbitrary inter-service call patterns), timeout-based detection provides a hard upper bound. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
 
 -----
 
-## 11. Guidance for Kernel Developers
+## 12. Guidance for Kernel Developers
 
 When adding new kernel code that introduces locks or blocking operations:
 
