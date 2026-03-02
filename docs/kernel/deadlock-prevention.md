@@ -272,7 +272,7 @@ The asynchronous `IpcSend` (fire-and-forget) exists for notifications and teleme
 
 ### 8.3 Why This Works
 
-Synchronous IPC creates a strict call chain. A thread that is blocked on an `IpcCall` holds no locks and makes no further calls — it simply waits. This breaks **circular wait** because a blocked thread cannot initiate the other half of a cycle.
+Synchronous IPC creates a strict call chain, but by itself does not guarantee that blocked threads are lock-free. In AIOS we adopt a required coding rule: callers must not hold kernel or user-space locks, or other non-preemptible resources, across an `IpcCall`. Under this rule, a thread that is blocked on an `IpcCall` holds no locks and makes no further blocking calls — it simply waits. This breaks **circular wait** because a blocked thread cannot initiate the other half of a cycle.
 
 -----
 
