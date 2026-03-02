@@ -236,6 +236,43 @@ pub enum InferencePriority {
     /// Scheduled batch work (re-indexing, summarization)
     Batch,
 }
+
+/// Cost-aware inference metering — tracks per-agent, per-model token usage
+/// and enforces budgets. Inspired by OpenFang's per-model cost tracking
+/// and GCRA rate limiting. See: https://github.com/RightNow-AI/openfang
+pub struct InferenceMeter {
+    /// Per-agent cumulative token usage
+    agent_usage: HashMap<AgentId, TokenUsage>,
+    /// Per-agent budget limits (None = unlimited for system agents)
+    agent_budgets: HashMap<AgentId, Option<TokenBudget>>,
+    /// GCRA rate limiter: prevents burst inference that starves other agents
+    rate_limiter: GcraRateLimiter,
+}
+
+pub struct TokenUsage {
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    /// Estimated cost based on model quantization and compute time
+    compute_cost: Duration,
+}
+
+pub struct TokenBudget {
+    /// Maximum tokens per scheduling window
+    max_tokens_per_window: u64,
+    /// Window duration (e.g., 1 hour)
+    window: Duration,
+    /// Action when budget exceeded
+    exceeded_policy: BudgetPolicy,
+}
+
+pub enum BudgetPolicy {
+    /// Queue requests until next window
+    Queue,
+    /// Downgrade to smaller/faster model
+    Downgrade,
+    /// Reject with error
+    Reject,
+}
 ```
 
 **Why GGML, not a full ML framework:**

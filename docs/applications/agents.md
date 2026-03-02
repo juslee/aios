@@ -204,6 +204,15 @@ pub struct AgentManifest {
     persistent: bool,
     /// Can this agent run in the background?
     background: bool,
+    /// Scheduled autonomous execution (inspired by OpenFang HAND.toml)
+    schedule: Option<AgentSchedule>,
+
+    // === Guardrails (inspired by OpenFang Hands) ===
+
+    /// Operations requiring explicit user approval before execution
+    approval_gates: Vec<ApprovalGate>,
+    /// Dashboard metrics this agent exposes for monitoring
+    dashboard_metrics: Vec<DashboardMetric>,
 
     // === Security ===
 
@@ -224,6 +233,52 @@ pub enum RuntimeType {
     TypeScript,
     /// WebAssembly module — executed by wasmtime
     Wasm,
+}
+
+/// Scheduled autonomous execution — agents that wake, perform work, and sleep
+/// without user prompting. Inspired by OpenFang's HAND.toml manifest format.
+/// See: https://github.com/RightNow-AI/openfang
+pub struct AgentSchedule {
+    /// Cron expression (e.g., "0 6 * * *" for daily at 6 AM)
+    cron: String,
+    /// Maximum execution time before the scheduler force-terminates
+    timeout: Duration,
+    /// What triggers execution: schedule only, or also event-driven
+    trigger: ScheduleTrigger,
+    /// Whether missed executions should run immediately on wake
+    catch_up: bool,
+}
+
+pub enum ScheduleTrigger {
+    /// Run only on cron schedule
+    Cron,
+    /// Run on schedule AND when a specific IPC event arrives
+    CronOrEvent { event_channel: ChannelId },
+    /// Run only when event arrives (no cron)
+    EventOnly { event_channel: ChannelId },
+}
+
+/// An operation requiring explicit user approval before execution.
+pub struct ApprovalGate {
+    /// What category of action requires approval
+    action: String,
+    /// Human-readable description shown in the approval prompt
+    description: String,
+}
+
+/// A metric this agent exposes for the system dashboard.
+pub struct DashboardMetric {
+    /// Metric name (e.g., "papers_processed", "cost_usd")
+    name: String,
+    /// Display format
+    format: MetricFormat,
+}
+
+pub enum MetricFormat {
+    Counter,
+    Gauge,
+    Currency { symbol: String },
+    Duration,
 }
 
 /// A dependency on another agent bundle or shared library.
@@ -1626,7 +1681,28 @@ identity = "did:aios:abc123"
 [agent.lifecycle]
 autostart = false
 persistent = false
-background = false
+background = true
+
+# Scheduled autonomous execution (inspired by OpenFang HAND.toml)
+[agent.schedule]
+cron = "0 6 * * *"          # Daily at 6 AM
+timeout = "5m"
+trigger = "cron"
+catch_up = true
+
+# Operations requiring user approval before execution
+[[agent.approval_gates]]
+action = "write_external"
+description = "Publishing results to external channels"
+
+# Dashboard metrics exposed to the system monitor
+[[agent.dashboard_metrics]]
+name = "papers_processed"
+format = "counter"
+
+[[agent.dashboard_metrics]]
+name = "total_cost_usd"
+format = { currency = "$" }
 
 [agent.resources.memory]
 minimum = "16MB"
