@@ -74,7 +74,7 @@ Lock ordering is a total order over all lockable resources. Any acyclic total or
 
 ### 3.4 Scope
 
-This ordering applies to all per-CPU resources: run queues, per-CPU timer lists, and per-CPU statistics. Any future per-CPU lock must follow the same ascending-ID convention.
+This ordering applies to per-CPU run queues. Any future per-CPU lock must follow the same ascending-ID convention.
 
 -----
 
@@ -128,12 +128,20 @@ Priority inversion is a deadlock-adjacent hazard. When a high-priority Interacti
 When an `IpcCall` crosses scheduling classes, the kernel temporarily elevates the receiver to the caller's scheduling class:
 
 ```rust
-unsafe fn ipc_direct_switch(sender: &mut Thread, receiver: &mut Thread, msg: &RawMessage) {
+unsafe fn ipc_direct_switch(sender: &mut Thread, receiver: &mut Thread, message: &RawMessage) {
+    // ... existing copy and switch logic ...
+
     // Priority inheritance: receiver inherits caller's scheduling context.
     // Saved and restored on IpcReply.
     receiver.sched.inherited_class = Some(sender.sched.class);
     receiver.sched.inherited_priority = Some(sender.sched.priority);
     receiver.sched.inherited_deadline = sender.sched.deadline;
+
+    // If receiver is in a lower class, temporarily elevate
+    if receiver.sched.class < sender.sched.class {
+        receiver.sched.effective_class = sender.sched.class;
+        receiver.sched.effective_priority = sender.sched.priority;
+    }
 }
 ```
 
@@ -147,12 +155,12 @@ The kernel's async executor applies the same principle. When a high-priority sch
 
 ```rust
 impl KernelExecutor {
+    /// Boost an async task's priority because a high-priority thread is waiting for it.
     pub fn boost_priority(&mut self, task_id: AsyncTaskId, waiter_priority: Priority) {
         if let Some(task) = self.tasks.get_mut(&task_id) {
-            if waiter_priority > task.priority {
-                task.priority = waiter_priority;
-                // Re-sort in the ready queue to reflect new priority
-            }
+            // Lower numerical value = higher priority (Priority(0) is highest)
+            task.priority = task.priority.min(waiter_priority);
+            // Re-sort ready queue if the task is ready
         }
     }
 }
@@ -180,7 +188,7 @@ The slab allocator uses a **per-CPU magazine layer** that requires no locks for 
 Per-CPU Magazine Layer (lock-free fast path)
 ┌─────────┐ ┌─────────┐ ┌─────────┐
 │ CPU 0   │ │ CPU 1   │ │ CPU 2   │ ...
-│ loaded  │ │ loaded  │ │ loaded  │
+│ current │ │ current │ │ current │
 │ prev    │ │ prev    │ │ prev    │
 └─────────┘ └─────────┘ └─────────┘
 ```
@@ -205,7 +213,7 @@ static ZERO_QUEUE: PageZeroQueue = /* ... */;
 
 ### 6.4 Why This Works
 
-Lock-free fast paths break the **mutual exclusion** condition for the common case. Since each CPU operates on its own magazine, there is no shared resource to contend over. The rare slow path (refilling an empty magazine from the shared slab) uses fine-grained locks with minimal hold times (< 1 us target).
+Lock-free fast paths break the **mutual exclusion** condition for the common case. Since each CPU operates on its own magazine, there is no shared resource to contend over. The rare slow path (refilling an empty magazine from the shared slab) uses fine-grained locks with minimal hold times, subject to the system-wide spinlock budget (< 1 μs target — see §9.2).
 
 -----
 
@@ -223,7 +231,7 @@ In AIOS, access to any resource requires a capability token. Channels are create
 - Channels are created during service registration, not ad-hoc
 - Capability transfer requires explicit kernel mediation
 
-This means the set of possible resource dependencies is **statically known** at channel creation time, rather than being an arbitrary runtime graph. Circular dependencies between services can be detected at system design time.
+For the common case — agent-to-service communication — the set of possible resource dependencies is **known at boot time** when the Service Manager creates channels (ipc.md §4.1). Processes with `ChannelCreate` capability can create channels at runtime, but the kernel enforces per-process channel limits (`max_channels` in `KernelResourceLimits`), and circular dependencies between services can be detected in the capability topology.
 
 *Source: [ipc.md §4.1 — Channels](./ipc.md) (ChannelCapability struct), [ipc.md §4.6 — Capability Transfer](./ipc.md) (move semantics), [security.md](../security/security.md) (capability model overview)*
 
