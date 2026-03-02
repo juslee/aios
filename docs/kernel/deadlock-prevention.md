@@ -22,18 +22,20 @@ A deadlock requires all four conditions simultaneously (Coffman et al., 1971):
 3. **No preemption** — resources cannot be forcibly taken from a thread
 4. **Circular wait** — a cycle exists in the resource dependency graph
 
-AIOS breaks one or more of these conditions at every level of the system. The table below summarizes which condition each mechanism targets:
+AIOS breaks one or more of these conditions at every level of the system, supplemented by liveness mechanisms that bound delays even when structural prevention alone is insufficient. The table below summarizes which condition each mechanism targets:
 
 | Mechanism | Breaks | This doc | Subsystem source |
 |---|---|---|---|
 | Lock ordering (CPU ID) | Circular wait | §3 | [scheduler.md §9.1](./scheduler.md) |
-| Mandatory IPC timeouts | Hold and wait | §4 | [ipc.md §3.1](./ipc.md) |
-| Priority inheritance | Hold and wait (transitive) | §5 | [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md) |
+| Mandatory IPC timeouts | Circular wait (bounded) | §4 | [ipc.md §3.1](./ipc.md) |
+| Priority inheritance† | *(liveness)* | §5 | [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md) |
 | Lock-free per-CPU magazines | Mutual exclusion | §6 | [memory.md §4.1](./memory.md) |
-| Capability-based resource model | Hold and wait | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
+| Capability-based resource model | Circular wait (graph constraint) | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
 | Synchronous IPC (no callback chains) | Circular wait | §8 | [ipc.md §4.2](./ipc.md) |
 | Preemptive kernel | No preemption | §9 | [scheduler.md §10.3](./scheduler.md) |
 | Wait-Die / Wound-Wait | Circular wait | §10 | Future — resource arbitration layer |
+
+†Priority inheritance does not break a Coffman condition directly. It prevents unbounded priority inversion — a liveness hazard where a high-priority thread is indefinitely delayed by lower-priority work (§5.1). It is included here because unbounded priority inversion is operationally indistinguishable from deadlock.
 
 -----
 
@@ -109,7 +111,7 @@ Agents can also explicitly cancel a pending call via `IpcCancel`, which returns 
 
 ### 4.4 Why This Works
 
-Mandatory timeouts break the **hold and wait** condition with a time bound. Even if a circular dependency forms, the cycle is broken within the shortest timeout in the chain. This converts a permanent deadlock into a transient timeout error.
+Mandatory timeouts break the **circular wait** condition with a time bound. Even if a circular dependency forms, the cycle is broken within the shortest timeout in the chain — the timed-out caller releases its wait edge, collapsing the cycle. This converts a permanent deadlock into a transient timeout error.
 
 ### 4.5 Design Trade-off
 
@@ -227,8 +229,8 @@ Traditional OSes use ambient authority — any thread can attempt to open any fi
 
 In AIOS, access to any resource requires a capability token. Channels are created with specific capabilities and cannot be used without them. This constrains the resource dependency graph:
 
-- Agents can only communicate through pre-established channels
-- Channels are created during service registration, not ad-hoc
+- Agents typically communicate through channels pre-established at boot by the Service Manager
+- Runtime channel creation requires explicit `ChannelCreate` capability and is subject to per-process limits
 - Capability transfer requires explicit kernel mediation
 
 For the common case — agent-to-service communication — the set of possible resource dependencies is **known at boot time** when the Service Manager creates channels (ipc.md §4.1). Processes with `ChannelCreate` capability can create channels at runtime, but the kernel enforces per-process channel limits (`max_channels` in `KernelResourceLimits`), and circular dependencies between services can be detected in the capability topology.
@@ -284,8 +286,8 @@ Non-preemptive kernels can deadlock when a thread holding a resource enters a lo
 
 AIOS uses a fully preemptive kernel. User-space threads can be preempted at any instruction boundary. Kernel-mode code can be preempted at most points. Only four narrow regions disable preemption:
 
-1. **Interrupt handler top halves** (< 10 us)
-2. **Spinlock critical sections** (< 1 us target)
+1. **Interrupt handler top halves** (< 10 μs)
+2. **Spinlock critical sections** (< 1 μs target)
 3. **Page table manipulation** (single-page atomic update)
 4. **Context switch path** (inherently non-preemptible)
 
@@ -318,7 +320,7 @@ AIOS does not currently implement Wait-Die or Wound-Wait explicitly, but several
 
 **Mandatory IPC timeouts (§4) approximate Wait-Die.** When a service call times out and the caller retries, the effect is similar to the "die and restart" behavior in Wait-Die — the younger/less-patient caller aborts its attempt and tries again. The difference is that AIOS uses wall-clock timeouts rather than age-based comparisons.
 
-**Priority inheritance (§5) approximates Wound-Wait.** When a high-priority thread calls a low-priority service, the service is "wounded" — its priority is forcibly elevated so it completes faster and releases the resource. This is the Wound-Wait intuition: the more important transaction preempts the less important one.
+**Priority inheritance (§5) shares Wound-Wait's intuition but differs in mechanism.** In Wound-Wait, the older (higher-priority) transaction forces the younger holder to *abort* and release the resource. In AIOS's priority inheritance, the holder is *boosted* — its scheduling priority is elevated so it completes faster, but it is not aborted. Both ensure higher-priority work is not indefinitely blocked by lower-priority work, but priority inheritance achieves this through acceleration rather than preemption.
 
 ### 10.3 Where Wait-Die / Wound-Wait Could Add Value
 
@@ -377,7 +379,7 @@ Layer 7: Preemptive kernel       → no indefinite resource holding
 Layer 8: Wait-Die / Wound-Wait   → progress guarantee for contested resources (future)
 ```
 
-The existing layers (1–7) prevent deadlocks structurally. Where structural prevention is impractical (arbitrary inter-service call patterns), timeout-based detection provides a hard upper bound. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
+Layers 1 and 4–7 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layer 3 (priority inheritance) is a liveness mechanism that prevents unbounded priority inversion from mimicking deadlock. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
 
 -----
 
@@ -390,4 +392,6 @@ When adding new kernel code that introduces locks or blocking operations:
 3. **If you add blocking IPC**, always use `IpcCall` with a finite timeout. Never use `IpcRecv` with `timeout_ns: u64::MAX` in service code that holds resources.
 4. **If you add a new allocator or cache**, consider a per-CPU magazine or lock-free design for the fast path (§6).
 5. **If you add inter-service communication**, verify that the capability graph does not create a call cycle. If a cycle is architecturally necessary, ensure every call in the cycle has a timeout (§4).
-6. **Spinlock hold times must remain under 1 us.** If your critical section might exceed this, restructure the code to do work outside the lock.
+6. **If your service handles IPC calls from higher-priority callers**, do not drop or ignore the inherited scheduling context. Complete the request promptly — the caller is blocked at your priority level (§5).
+7. **Prefer synchronous `IpcCall`/`IpcReply`** for request-reply patterns. If asynchronous `IpcSend` is necessary, handle `EAGAIN` backpressure explicitly — never spin or block waiting for queue space (§8).
+8. **Spinlock hold times must remain under 1 μs.** If your critical section might exceed this, restructure the code to do work outside the lock.
