@@ -239,8 +239,9 @@ pub enum RuntimeType {
 /// without user prompting. Inspired by OpenFang's HAND.toml manifest format.
 /// See: https://github.com/RightNow-AI/openfang
 pub struct AgentSchedule {
-    /// Cron expression (e.g., "0 6 * * *" for daily at 6 AM)
-    cron: String,
+    /// Cron expression (e.g., "0 6 * * *" for daily at 6 AM).
+    /// None when trigger is `EventOnly` (no periodic schedule).
+    cron: Option<String>,
     /// Maximum execution time before the scheduler force-terminates
     timeout: Duration,
     /// What triggers execution: schedule only, or also event-driven
@@ -1702,7 +1703,7 @@ format = "counter"
 
 [[agent.dashboard_metrics]]
 name = "total_cost_usd"
-format = { currency = "$" }
+format = { currency = { symbol = "$" } }
 
 [agent.resources.memory]
 minimum = "16MB"
