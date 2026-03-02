@@ -239,23 +239,20 @@ pub enum RuntimeType {
 /// without user prompting. Inspired by OpenFang's HAND.toml manifest format.
 /// See: https://github.com/RightNow-AI/openfang
 pub struct AgentSchedule {
-    /// Cron expression (e.g., "0 6 * * *" for daily at 6 AM).
-    /// None when trigger is `EventOnly` (no periodic schedule).
-    cron: Option<String>,
     /// Maximum execution time before the scheduler force-terminates
     timeout: Duration,
-    /// What triggers execution: schedule only, or also event-driven
+    /// What triggers execution — carries the cron expression where applicable
     trigger: ScheduleTrigger,
     /// Whether missed executions should run immediately on wake
     catch_up: bool,
 }
 
 pub enum ScheduleTrigger {
-    /// Run only on cron schedule
-    Cron,
-    /// Run on schedule AND when a specific IPC event arrives
-    CronOrEvent { event_channel: ChannelId },
-    /// Run only when event arrives (no cron)
+    /// Run only on the given cron schedule (e.g., "0 6 * * *" for daily at 6 AM)
+    Cron { cron: String },
+    /// Run on the cron schedule AND when a specific IPC event arrives
+    CronOrEvent { cron: String, event_channel: ChannelId },
+    /// Run only when event arrives — no cron expression required
     EventOnly { event_channel: ChannelId },
 }
 
@@ -1686,10 +1683,11 @@ background = true
 
 # Scheduled autonomous execution (inspired by OpenFang HAND.toml)
 [agent.schedule]
-cron = "0 6 * * *"          # Daily at 6 AM
 timeout = "5m"
-trigger = "cron"
 catch_up = true
+
+[agent.schedule.trigger.cron]
+cron = "0 6 * * *"          # Daily at 6 AM
 
 # Operations requiring user approval before execution
 [[agent.approval_gates]]
