@@ -30,36 +30,36 @@ Flow is the connective tissue of AIOS. It is how data moves between agents, betw
 ## 2. Architecture
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                       Flow Service                         │
-│               (system service, always running)             │
-│                                                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │   Transfer    │  │   History    │  │   Transform    │  │
-│  │   Manager     │  │   Store      │  │   Engine       │  │
-│  │              │  │              │  │                │  │
-│  │  initiate    │  │  index       │  │  negotiate     │  │
-│  │  stage       │  │  search      │  │  select        │  │
-│  │  deliver     │  │  retain      │  │  execute       │  │
-│  │  cancel      │  │  prune       │  │  register      │  │
-│  └──────────────┘  └──────────────┘  └────────────────┘  │
-│                                                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │  Provenance   │  │   Type       │  │  Multi-Device  │  │
-│  │  Tracker      │  │   System     │  │  Sync          │  │
-│  │              │  │              │  │                │  │
-│  │  chain       │  │  MIME        │  │  replicate     │  │
-│  │  verify      │  │  semantic    │  │  merge         │  │
-│  │  inspect     │  │  negotiate   │  │  resolve       │  │
-│  └──────────────┘  └──────────────┘  └────────────────┘  │
-│                                                            │
-└────────────────────────────┬───────────────────────────────┘
-                             │ IPC (sys.flow channel)
-               ┌─────────────┼─────────────────┐
-               ▼             ▼                 ▼
-            Agents       Compositor       Subsystems
-            (SDK          (drag/drop,      (DataChannels,
-            FlowClient)   visual cues)     FlowPipes)
+┌──────────────────────────────────────────────────────────┐
+│                       Flow Service                       │
+│              (system service, always running)            │
+│                                                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Transfer     │  │  History     │  │  Transform   │  │
+│  │  Manager      │  │  Store       │  │  Engine      │  │
+│  │               │  │              │  │              │  │
+│  │  initiate     │  │  index       │  │  negotiate   │  │
+│  │  stage        │  │  search      │  │  select      │  │
+│  │  deliver      │  │  retain      │  │  execute     │  │
+│  │  cancel       │  │  prune       │  │  register    │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                                                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Provenance   │  │  Type        │  │  Multi-Device│  │
+│  │  Tracker      │  │  System      │  │  Sync        │  │
+│  │               │  │              │  │              │  │
+│  │  chain        │  │  MIME        │  │  replicate   │  │
+│  │  verify       │  │  semantic    │  │  merge       │  │
+│  │  inspect      │  │  negotiate   │  │  resolve     │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                                                          │
+└───────────────────────────┬──────────────────────────────┘
+                            │ IPC (sys.flow channel)
+              ┌─────────────┼─────────────────┐
+              ▼             ▼                 ▼
+           Agents       Compositor       Subsystems
+           (SDK          (drag/drop,      (DataChannels,
+           FlowClient)   visual cues)     FlowPipes)
 ```
 
 The Flow Service runs as a system service registered at `sys.flow`. The core service lands in dev Phase 11 (Tasks, Flow & Attention), with compositor drag/drop protocol scaffolded in Phase 6 and AIRS transform scaffolding in Phase 8 (see §13 for full implementation order). At runtime, it starts during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
@@ -98,6 +98,7 @@ Flow uses types defined in other documents. Canonical definitions:
 | `DeviceId` | [subsystem-framework.md §4](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
 | `IdentityId` | [spaces.md §3.0](./spaces.md) | Identity identifier (Ed25519 public key); shared across a user's devices |
 | `TrustLevel` | [identity.md §5](../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
+| `KeyId` | [identity.md](../experience/identity.md) | Identifier for a cryptographic key in the identity/key management system; used by §15.3 FlowEncryptionPolicy |
 | `Duration` | Rust `core::time::Duration` | Time span; used for expiration, retention, and streaming durations |
 
 Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).
@@ -175,8 +176,16 @@ pub enum FlowError {
     Expired,
     /// The agent's capability was revoked mid-transfer.
     CapabilityRevoked,
+    /// The FlowEntry exists but its content was removed by retention policy.
+    /// Unlike TransferNotFound, retrying will not help — the content is
+    /// permanently gone. The FlowEntry metadata is still available.
+    ContentPruned,
     /// The agent has exceeded its rate limit (see §11.3).
     RateLimited,
+    /// The transfer options are logically invalid (e.g., ephemeral=true
+    /// with Move intent, which is disallowed because Move implies persistence).
+    /// Distinct from PermissionDenied — this is a logic error, not a capability issue.
+    InvalidOptions(String),
     /// Underlying I/O or IPC error.
     IoError(String),
 }
@@ -248,7 +257,13 @@ pub struct Transfer {
     /// Expiration time (for unclaimed transfers)
     expires_at: Option<Timestamp>,
 
-    /// Shared memory region holding the content (COW)
+    /// Flow Service's internal COW staging region for the transfer.
+    /// This is the service-side copy; the agent-facing handle is
+    /// content.primary.data (the SharedMemoryId inside TypedContent).
+    /// They start as the same physical pages (COW), but content_region
+    /// is owned by the Flow Service and survives even if the source
+    /// agent unmaps its side. The agent never sees this field — it is
+    /// internal to the Transfer Manager.
     content_region: SharedMemoryId,
 }
 
@@ -468,11 +483,37 @@ pub struct ContentMetadata {
     content_hash: Hash,
     /// When the content was originally created (not when it was transferred)
     created_at: Option<Timestamp>,
-    /// Size of the primary payload
-    size: u64,
     /// Thumbnail (small preview image, ≤ 64KB)
     thumbnail: Option<Vec<u8>>,
 }
+```
+
+**Convenience constructors and defaults:**
+
+```rust
+impl TypedContent {
+    /// Create a TypedContent wrapping a plain text string.
+    /// Used by the SDK for simple copy/paste (see §12 usage examples).
+    pub fn plain_text(text: &str) -> Self;
+
+    /// Create a TypedContent wrapping rich text (HTML) with an optional source URL.
+    /// The source URL is recorded in ContentMetadata.source_description.
+    pub fn rich_text(html: &str, source_url: Option<&str>) -> Self;
+}
+
+impl SemanticType {
+    /// Infer a SemanticType from a MIME type string.
+    /// "text/plain" → PlainText, "text/html" → RichText, "image/*" → Image,
+    /// "audio/*" → Audio, "application/pdf" → Document, etc.
+    /// Falls back to File { extension } for unrecognized MIME types.
+    pub fn infer_from_mime(mime: &str) -> Self;
+}
+
+/// ContentMetadata, FlowFilter, and FlowQuery derive Default.
+/// ContentMetadata::default() sets content_hash to a zeroed Hash,
+/// all Option fields to None, and thumbnail to None.
+/// FlowFilter::default() and FlowQuery::default() set all filter
+/// fields to None / 0, matching all entries with no pagination offset.
 ```
 
 When a source agent pushes content, it provides the primary payload and optionally pre-computed alternatives. If the receiver cannot handle the primary type and no pre-computed alternative matches, the Transform Engine generates one on the fly.
@@ -590,6 +631,19 @@ pub struct TransformCost {
     lossy: bool,
 }
 
+impl TransformCost {
+    /// Reduce to a scalar for shortest-path computation in ConversionGraph.
+    /// Formula: time_ms + (memory / 1MB) + (50 if requires_airs) + (10 if lossy).
+    /// The AIRS and lossy penalties ensure the graph prefers local, lossless
+    /// transforms when multiple paths have similar time/memory costs.
+    pub fn as_scalar(&self) -> u32 {
+        self.time_ms
+            + (self.memory / (1024 * 1024)) as u32
+            + if self.requires_airs { 50 } else { 0 }
+            + if self.lossy { 10 } else { 0 }
+    }
+}
+
 pub enum TransformProvider {
     /// Built-in system transform (always available)
     System,
@@ -605,7 +659,8 @@ pub enum TransformProvider {
 pub struct ConversionGraph {
     /// Content type nodes (MIME types)
     nodes: Vec<String>,
-    /// Edges: (source_index, target_index, transform_id, cost)
+    /// Edges: (source_index, target_index, transform_id, scalar_cost).
+    /// scalar_cost is computed via TransformCost::as_scalar().
     edges: Vec<(usize, usize, TransformId, u32)>,
 }
 
@@ -661,6 +716,8 @@ PlainText ←──── RichText ←──── HTML
     │
  Audio ──→ Transcript (AIRS)
 ```
+
+> **Note:** This graph is simplified for illustration. It omits several transform paths listed in the §4.1 table (e.g., PDF → PlainText, Image → Thumbnail, StructuredData → FormattedTable as a standalone path, URL → PageContent). See §4.1 for the full transform matrix.
 
 If a receiver needs Markdown but the source provides HTML, the engine walks: HTML → RichText → Markdown (two system transforms, no AIRS needed, fast).
 
@@ -933,7 +990,10 @@ pub struct FlowPipe {
     /// The content type flowing through this pipe
     content_type: TypedContentSpec,
 
-    /// Back-pressure control
+    /// Back-pressure control: maximum bytes to buffer before applying
+    /// back-pressure to the source. This is a Flow-internal staging buffer
+    /// between the DataChannel and the Flow Service; it is separate from
+    /// the kernel's ring buffer used by the DataChannel itself.
     buffer_size: usize,
 
     /// The IPC channel to the Flow Service
@@ -1011,6 +1071,8 @@ pub enum StreamState {
 ```
 
 **Back-pressure:** The receiver controls the data rate. When the receiver's buffer fills (pressure approaches 1.0), Flow signals the source to slow down. For subsystem DataChannels, this maps to the existing `pressure()` method on the DataChannel trait. Hardware that cannot be slowed (e.g., a live microphone) buffers in the kernel's ring buffer; if that fills, samples are dropped and the drop is logged.
+
+**History recording for streams:** When a stream reaches `Completed` state, the Flow Service records a single `FlowEntry` with aggregated metadata: total `bytes_delivered`, `chunks_delivered`, stream duration (first chunk timestamp to last), and the `chunk_transform` applied (if any). The entry's `content` field is set to `None` — the raw stream data is not persisted (it is typically too large and ephemeral). The FlowEntry metadata is sufficient for history search ("that audio stream from the meeting at 3pm") and provenance tracking. Streams that are `Aborted` before delivering any chunks are not recorded. Streams aborted after at least one chunk record a FlowEntry with a note in the metadata indicating partial delivery. Streaming transfers are device-local and are not replicated to other devices (see §9.1).
 
 **Per-chunk transforms:** For streaming data, transforms can be applied incrementally. Real-time transcription: each audio chunk is sent to AIRS for speech-to-text, and the text result is delivered to the receiver. The receiver sees a stream of text chunks, not audio. The transform overhead is amortized across the stream.
 
@@ -1161,7 +1223,12 @@ pub struct FlowHistorySync {
     /// "I have seen all entries from device X up to this timestamp"
     watermarks: HashMap<DeviceId, Timestamp>,
 
-    /// Pending entries to send to each device
+    /// Pending entries to send to each device.
+    /// FlowEntryId is a UUIDv4, globally unique across devices, so bare
+    /// FlowEntryId is sufficient for routing. The (FlowEntryId, origin_device)
+    /// composite key is used only at the receiver for deduplication — not
+    /// needed in the outbound queue because each entry already carries its
+    /// origin_device inside the FlowEntry.
     outbound: HashMap<DeviceId, Vec<FlowEntryId>>,
 
     /// Entries received but not yet integrated
@@ -1222,7 +1289,7 @@ impl PosixClipboardBridge {
             ..Default::default()
         })?;
 
-        let content = entry.content.ok_or(FlowError::TransferNotFound)?;
+        let content = entry.content.ok_or(FlowError::ContentPruned)?;
         Ok(content.primary.as_bytes().to_vec())
     }
 }
