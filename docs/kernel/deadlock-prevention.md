@@ -68,7 +68,7 @@ impl Scheduler {
 }
 ```
 
-*Source: [scheduler.md §9.1 — Load Balancer Strategy](./scheduler.md) (lock ordering code at line 1644)*
+*Source: [scheduler.md §9.1 — Load Balancer Strategy](./scheduler.md) (see lock ordering implementation)*
 
 ### 3.3 Why This Works
 
