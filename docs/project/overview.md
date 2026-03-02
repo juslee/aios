@@ -440,13 +440,17 @@ docs/
 │   ├── browser.md                    Decomposed web browser
 │   └── ui-toolkit.md                 Portable UI toolkit
 │
-└── security/
-    └── security.md                   Security architecture
+├── security/
+│   └── security.md                   Security architecture
+│
+└── phases/                           Implementation milestones per phase
+    ├── 00-foundation-and-tooling.md  Phase 0: project scaffold, CI, build
+    └── ...                           (28 phases total, created as work begins)
 ```
 
-### Phase Detail Documents (planned)
+### Phase Implementation Documents
 
-Each development phase will have companion `phase-detail.md` and `milestone-steps.md` documents (see [development-plan.md](./development-plan.md) for phase list).
+Each phase has a single implementation doc in `docs/phases/` with milestone steps, acceptance criteria, and references to architecture docs. Architecture lives in the domain directories above; phase docs define the build sequence. See [development-plan.md](./development-plan.md) §8 for the full list.
 ---
 ## 12. Related Architecture Documents
 These companion documents provide deep-dive technical specifications:
