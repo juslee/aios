@@ -238,6 +238,7 @@ system/                      ← Core zone, kernel-managed
     audio/
     camera/
     input/
+    flow/                    ← Flow transfer audit trail (flow.md §11.2)
     ...
   models/                    ← AI model storage (AIRS)
   index/                     ← Search indexes (AIRS)
@@ -253,6 +254,9 @@ system/                      ← Core zone, kernel-managed
   identity/                  ← Identity keypairs and authentication state
   flow/                      ← Flow transfer history and provenance (flow.md §3.1)
     history/                 ← Completed FlowEntry objects (content-addressed)
+    index/                   ← Full-text index of entry metadata
+    transforms/              ← Transform registry (persistent transforms)
+    config/                  ← Retention policy, user preferences
 
 user/                        ← Personal zone, encrypted
   home/                      ← Default personal space
@@ -2623,7 +2627,7 @@ pub struct PosixSpaceBridge {
 pub struct MountEntry {
     posix_path: String,                 // "/spaces/research"
     space: SpaceId,
-    capabilities: CapabilitySet,        // from calling process's agent (security.md §4)
+    capabilities: CapabilitySet,        // from calling process's agent (architecture.md §3.2)
 }
 
 impl PosixSpaceBridge {

@@ -2241,7 +2241,8 @@ impl KernelExecutor {
     /// Boost an async task's priority because a high-priority thread is waiting for it.
     pub fn boost_priority(&mut self, task_id: AsyncTaskId, waiter_priority: Priority) {
         if let Some(task) = self.tasks.get_mut(&task_id) {
-            task.priority = task.priority.max(waiter_priority);
+            // Lower numerical value = higher priority (Priority(0) is highest)
+            task.priority = task.priority.min(waiter_priority);
             // Re-sort ready queue if the task is ready
         }
     }

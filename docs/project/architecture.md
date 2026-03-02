@@ -377,6 +377,9 @@ pub enum ResourcePriority {
 
 /// A named entity extracted from content by AIRS (person, place,
 /// organization, date, concept, etc.).
+/// Named entity extracted from content by AIRS.
+/// Simplified; see spaces.md §3.3 for the canonical definition
+/// (uses entity_type: EntityType with fewer variants, no span field).
 pub struct Entity {
     name: String,
     kind: EntityKind,
@@ -391,6 +394,8 @@ pub enum EntityKind {
 }
 
 /// Who created a relation between objects.
+/// Simplified; see spaces.md §3.4 for the canonical definition
+/// (Explicit/AiInferred/SystemGenerated).
 pub enum RelationSource {
     /// Created by AIRS during indexing
     Ai,
@@ -974,11 +979,11 @@ pub enum Capability {
     // Hardware subsystem capabilities (via subsystem framework).
     // Each *Capability type is defined by its subsystem doc; see
     // subsystem-framework.md §5 for the universal capability gate pattern.
-    Audio(AudioCapability),         // direction, device, format constraints (audio.md §5)
+    Audio(AudioCapability),         // direction, device, format constraints (audio.md §3)
     Camera(CameraCapability),       // resolution, frame rate limits
     Gps(GpsCapability),             // precision, update frequency
     Input(InputCapability),         // device types (keyboard, mouse, gamepad)
-    Display(DisplayCapability),     // memory limits, shader constraints (compositor.md §3)
+    Display(DisplayCapability),     // memory limits, shader constraints (compositor.md §10)
     Bluetooth(BluetoothCapability), // profile, device constraints
     Usb(UsbCapability),             // device class, raw access level
     Print(PrintCapability),         // printer, page limits
