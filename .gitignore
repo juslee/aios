@@ -4,6 +4,8 @@ target/
 
 # QEMU / firmware artifacts
 *.img
+*.qcow2
+*.iso
 *.fd
 *.bin
 *.elf
@@ -17,6 +19,7 @@ esp/
 
 # IDE
 .idea/
+.vscode/
 *.iml
 
 # Debug
