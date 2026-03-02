@@ -517,6 +517,7 @@ docs/
 │
 └── phases/                           Implementation milestones per phase
     ├── 00-foundation-and-tooling.md  Phase 0: project scaffold, CI, build
+    ├── 01-boot-and-first-pixels.md   Phase 1: boot flow and first pixels
     └── ...                           (28 phases total, created as work begins)
 ```
 
