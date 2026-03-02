@@ -237,7 +237,7 @@ pub enum InferencePriority {
     Batch,
 }
 
-/// Cost-aware inference metering — tracks per-agent, per-model token usage
+/// Cost-aware inference metering — tracks per-agent token usage
 /// and enforces budgets. Inspired by OpenFang's per-model cost tracking
 /// and GCRA rate limiting. See: https://github.com/RightNow-AI/openfang
 pub struct InferenceMeter {
