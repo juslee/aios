@@ -207,6 +207,35 @@ All permissively licensed. No GPL dependencies in the core OS.
 
 -----
 
+## 7.1 Target Application: OpenFang
+
+[OpenFang](https://github.com/RightNow-AI/openfang) is an open-source Agent Operating System built in Rust (MIT/Apache-2.0, 137K lines, 14 crates). It provides autonomous agent orchestration, 40 channel adapters, 53 built-in tools, 27 LLM providers, and 16 security layers — all in a single ~32MB binary. AIOS adopts OpenFang as a first-class target application starting at Phase 10.
+
+### Why OpenFang
+
+Rather than reinvent agent orchestration, channel adapters, and LLM routing, AIOS provides the kernel-level primitives (capability isolation, hardware-enforced sandboxing, kernel-scheduled inference) and lets OpenFang provide the userspace agent runtime. This gives AIOS a production-tested agent ecosystem from day one.
+
+### Integration Points by Phase
+
+| Phase | Integration | What AIOS Provides | What OpenFang Provides |
+|---|---|---|---|
+| 8 (AIRS Core) | LLM routing compatibility | Kernel-level inference with hardware scheduling | Model routing patterns, cost-aware metering, 27 provider configs |
+| 10 (Agent Framework) | Hand → AIOS agent mapping | AgentManifest with scheduled execution support | HAND.toml manifest format as candidate packaging standard, 7 bundled Hands |
+| 10 (Agent Framework) | Agent-to-Agent protocol | IPC channels with capability gates | A2A + OFP protocol patterns for inter-agent delegation |
+| 13 (Security) | Security layer mapping | Hardware capability tokens, MMU isolation | Taint tracking patterns, Merkle audit chain, prompt injection scanning |
+| 15 (POSIX) | Full binary compatibility | POSIX syscalls, musl libc | Unmodified OpenFang binary runs as AIOS process |
+| 16 (Networking) | Channel adapter support | TCP/IP + TLS stack | 40 channel adapters (Telegram, Discord, Slack, etc.) |
+
+### OpenFang Concepts Adopted into AIOS
+
+- **Scheduled autonomous agents (Hands):** AIOS AgentManifest gains `schedule` field for cron-like autonomous execution — agents that wake, perform work, and sleep without user prompting. Modeled after OpenFang's HAND.toml.
+- **HAND.toml as candidate manifest format:** The AIOS `manifest.toml` format references OpenFang's HAND.toml for the `[schedule]`, `[guardrails]`, and `[dashboard]` sections. See [agents.md §2.4](../applications/agents.md).
+- **Cost-aware inference metering:** AIRS tracks per-model token costs and enforces budgets, inspired by OpenFang's per-model cost tracking and GCRA rate limiting. See [airs.md](../intelligence/airs.md).
+- **Information flow taint tracking:** The capability system labels secret data at introduction and tracks propagation, inspired by OpenFang's taint tracking system.
+- **Merkle hash-chain audit trail:** Every capability invocation is cryptographically chained for tamper-evident audit logs, inspired by OpenFang's audit system.
+
+-----
+
 ## 8. Phase Detail Reference
 
 Each phase has an implementation doc in `docs/phases/` containing objectives, milestone steps with acceptance criteria, decision points, and references to the existing architecture documents (which hold the technical design). This avoids duplicating architecture content while providing a clear implementation sequence.
