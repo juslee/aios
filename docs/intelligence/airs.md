@@ -238,8 +238,10 @@ pub enum InferencePriority {
 }
 
 /// Cost-aware inference metering — tracks per-agent token usage
-/// and enforces budgets. Inspired by OpenFang's per-model cost tracking
-/// and GCRA rate limiting. See: https://github.com/RightNow-AI/openfang
+/// and enforces budgets. Conceptually inspired by OpenFang's cost metering
+/// and GCRA rate limiting, but this implementation aggregates usage per
+/// agent (not per model). See: https://github.com/RightNow-AI/openfang for
+/// a per-model tracking example.
 pub struct InferenceMeter {
     /// Per-agent cumulative token usage
     agent_usage: HashMap<AgentId, TokenUsage>,
