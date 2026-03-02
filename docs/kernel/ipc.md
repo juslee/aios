@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — Subsystem sessions, [memory.md](./memory.md) — Memory management, shared memory regions (§7)
+**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — Subsystem sessions, [memory.md](./memory.md) — Memory management, shared memory regions (§7), [deadlock-prevention.md](./deadlock-prevention.md) — Deadlock prevention architecture (timeouts §4, priority inheritance §5, synchronous IPC §8)
 
 > **Naming note:** This document uses `MemoryFlags` for memory region permissions. This is a type alias for `VmFlags` defined in [memory.md §3.2](./memory.md): `type MemoryFlags = VmFlags;`. Both names refer to the same bitflags type (READ, WRITE, EXECUTE, USER, SHARED, PINNED, HUGE, NO_DUMP).
 
@@ -68,6 +68,7 @@ pub enum Syscall {
     /// Timeout is mandatory — prevents indefinite blocking on hung services.
     /// A service that does not reply within the timeout returns ETIMEDOUT.
     /// The kernel cleans up the pending call state on timeout.
+    /// See deadlock-prevention.md §4 for how this breaks the hold-and-wait condition.
     IpcCall {
         channel: ChannelId,
         send_buf: *const u8,
@@ -508,7 +509,7 @@ Agent                           Service
   │                                │
 ```
 
-**Why synchronous:** Synchronous IPC is simpler, debuggable, and avoids the complexity of asynchronous callback chains. For a microkernel where every system call is an IPC, synchronous is the proven approach (seL4, L4, QNX all use synchronous IPC).
+**Why synchronous:** Synchronous IPC is simpler, debuggable, and avoids the complexity of asynchronous callback chains. For a microkernel where every system call is an IPC, synchronous is the proven approach (seL4, L4, QNX all use synchronous IPC). Synchronous call-reply also structurally prevents callback-cycle deadlocks — see [deadlock-prevention.md §8](./deadlock-prevention.md).
 
 **Latency target:** < 5 microseconds round-trip. This requires:
 - No memory allocation in the IPC path
@@ -1047,7 +1048,7 @@ unsafe fn ipc_reply_switch(replier: &mut Thread, caller: &mut Thread) {
 
 **Transitive inheritance.** If Service B, while handling A's elevated request, calls Service C, the inheritance chain propagates: C inherits A's original scheduling context. The chain is bounded by IPC call depth (typically 1-2 levels; the kernel enforces a maximum depth of 8 to prevent runaway chains).
 
-This is the seL4 MCS (Mixed Criticality System) approach, adapted for AIOS's four scheduling classes. The key property: **no thread ever blocks a higher-priority thread's IPC chain.**
+This is the seL4 MCS (Mixed Criticality System) approach, adapted for AIOS's four scheduling classes. The key property: **no thread ever blocks a higher-priority thread's IPC chain.** For the deadlock-prevention analysis of how priority inheritance composes with mandatory timeouts and other mechanisms, see [deadlock-prevention.md §5](./deadlock-prevention.md).
 
 ### 9.3 Optimizations
 

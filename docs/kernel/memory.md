@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [ipc.md](./ipc.md) — IPC shared memory, [airs.md](../intelligence/airs.md) — Model memory and KV caches, [development-plan.md](../project/development-plan.md) — Phase 2
+**Related:** [ipc.md](./ipc.md) — IPC shared memory, [airs.md](../intelligence/airs.md) — Model memory and KV caches, [development-plan.md](../project/development-plan.md) — Phase 2, [deadlock-prevention.md](./deadlock-prevention.md) — Deadlock prevention architecture (lock-free allocator §6)
 
 -----
 
@@ -1040,7 +1040,7 @@ impl SlabAllocator {
 }
 ```
 
-The per-CPU magazine layer eliminates lock contention on the allocation hot path. Each CPU maintains a small array of pre-allocated objects. Allocating takes an object from the local magazine — no locks, no atomic operations, just a decrement and a pointer load. Only when the magazine is empty does the CPU need to access the shared slab (which requires a lock).
+The per-CPU magazine layer eliminates lock contention on the allocation hot path. Each CPU maintains a small array of pre-allocated objects. Allocating takes an object from the local magazine — no locks, no atomic operations, just a decrement and a pointer load. Only when the magazine is empty does the CPU need to access the shared slab (which requires a lock). This lock-free design also breaks the mutual exclusion Coffman condition for the common-case allocation path — see [deadlock-prevention.md §6](./deadlock-prevention.md).
 
 ### 4.2 Kernel Allocation API
 
