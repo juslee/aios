@@ -109,7 +109,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just build` | Compile the kernel for `aarch64-unknown-none` |
 | `just run` | Build and launch under QEMU |
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
-| `just check` | Run `cargo check` without producing a binary |
+| `just check` | Run format check, clippy, and build (fmt-check + clippy + build) |
 | `just test` | Run unit tests |
 | `just disk` | Build a bootable disk image (requires mtools) |
 
