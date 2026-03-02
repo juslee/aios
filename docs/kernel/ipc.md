@@ -68,7 +68,7 @@ pub enum Syscall {
     /// Timeout is mandatory — prevents indefinite blocking on hung services.
     /// A service that does not reply within the timeout returns ETIMEDOUT.
     /// The kernel cleans up the pending call state on timeout.
-    /// See deadlock-prevention.md §4 for how this breaks the hold-and-wait condition.
+    /// See deadlock-prevention.md §4 for how this bounds circular wait and prevents unbounded waits.
     IpcCall {
         channel: ChannelId,
         send_buf: *const u8,
