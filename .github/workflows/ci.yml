@@ -15,14 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        run: rustup show
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install --profile minimal
+          rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
-      - name: Install QEMU and UEFI firmware
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64
       - run: just check
 
   build-release:
@@ -30,8 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        run: rustup show
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install --profile minimal
+          rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just build-release
@@ -41,8 +41,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        run: rustup show
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install --profile minimal
+          rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just test
