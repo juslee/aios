@@ -2,6 +2,7 @@
 
 A bare-metal aarch64 operating system built in Rust, designed from the ground up for AI as infrastructure.
 
+[![CI](https://github.com/juslee/aios/actions/workflows/ci.yml/badge.svg)](https://github.com/juslee/aios/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)
 ![Language](https://img.shields.io/badge/language-Rust-orange)
 ![Target](https://img.shields.io/badge/target-aarch64-lightgrey)
@@ -47,8 +48,6 @@ See [docs/project/overview.md](docs/project/overview.md) for full architectural 
 ---
 
 ## Getting Started
-
-> **Note:** The build targets below require Phase 0 to be completed first. No kernel source exists yet.
 
 ```sh
 git clone https://github.com/juslee/aios.git

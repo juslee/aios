@@ -134,6 +134,7 @@ When implementing Phase N:
 - Naming: `snake_case` for functions/variables, `CamelCase` for types, `SCREAMING_SNAKE` for constants
 - Error handling: `Result<T, E>` for fallible operations; panics reserved for unrecoverable invariant violations
 - Panic handler: always prints to UART then halts with `wfe` loop (not `loop {}`)
+- Prefer the best approach over the simplest — choose the design that is cleanest, most maintainable, and architecturally sound, even if a shortcut exists
 
 ### Architecture-Specific (aarch64)
 
@@ -218,9 +219,11 @@ PSCI conduit on QEMU:         hvc; on Pi 4/5: smc
 FPU enable sequence:          mrs x1, CPACR_EL1; orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb
 QEMU boot to EL:              EL1 directly (no EL2 setup needed)
 MMU off at entry (Phase 0):   physical = virtual; MMIO works directly
-Vector table alignment:       section ALIGN(2048) in linker.ld + .align 7 per entry in .S
+Vector table alignment:       section ALIGN(2048) in linker.ld + .balign 128 per entry in asm
+Boot stub vectors section:    .text.vectors (boot.S, early boot safety net)
+Rust vectors section:         .text.rvectors (exceptions.rs, installed from kernel_main)
 llvm-tools component name:    llvm-tools (not llvm-tools-preview)
-QEMU serial flag:             -serial stdio (explicit)
+QEMU serial flag:             -nographic (implies -serial mon:stdio; no explicit -serial)
 QEMU GDB flag:                -gdb tcp::1234 (not -s)
 ```
 
@@ -267,7 +270,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (docs-only, pre-Phase 0):
+Current (post-Phase 0 M3 — Scaffold Complete):
 
 ```
 aios/
@@ -275,50 +278,34 @@ aios/
 ├── README.md
 ├── CONTRIBUTING.md
 ├── .gitignore
+├── Cargo.toml            workspace root (resolver = "2", edition = "2021")
+├── Cargo.lock            committed for reproducibility
+├── rust-toolchain.toml   pinned nightly + aarch64-unknown-none + components
+├── justfile              build recipes (build, run, debug, check, test, clean)
+├── LICENSE               BSD-2-Clause
+├── .cargo/
+│   └── config.toml       relocation-model=static for aarch64-unknown-none
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
 │   └── skills/           build-team, implement-phase, generate-phase-doc, verify-phase
-└── docs/
-    ├── project/          overview.md, architecture.md, development-plan.md
-    ├── phases/           00-foundation-and-tooling.md, 01-boot-and-first-pixels.md
-    ├── kernel/           boot.md, boot-lifecycle.md, hal.md, ipc.md, memory.md, scheduler.md
-    ├── platform/         audio.md, compositor.md, networking.md, posix.md, power-management.md, subsystem-framework.md
-    ├── intelligence/     airs.md, attention.md, context-engine.md, preferences.md, task-manager.md
-    ├── storage/          flow.md, spaces.md
-    ├── applications/     agents.md, browser.md, ui-toolkit.md
-    ├── experience/       accessibility.md, experience.md, identity.md
-    └── security/         security.md
-```
-
-After Phase 0 (will be updated by team-lead):
-
-```
-aios/
-├── Cargo.toml            workspace root
-├── Cargo.lock            committed
-├── rust-toolchain.toml   pinned nightly + targets
-├── justfile              build recipes
-├── LICENSE               BSD-2-Clause
-├── .cargo/
-│   └── config.toml       default target, rustflags
 ├── .github/
-│   └── workflows/ci.yml  check + build + test
+│   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
 │   ├── Cargo.toml
 │   ├── build.rs          emits linker script path
 │   └── src/
-│       ├── main.rs       kernel_main, panic_handler
+│       ├── main.rs       kernel_main, global_asm, println, panic_handler, boot diagnostics
 │       └── arch/aarch64/
-│           ├── mod.rs
-│           ├── boot.S
-│           ├── uart.rs
-│           ├── exceptions.rs
-│           └── linker.ld
+│           ├── mod.rs    pub mod uart, pub mod exceptions
+│           ├── boot.S    FPU enable, VBAR install, park secondaries, BSS zero, branch kernel_main
+│           ├── uart.rs   PL011 driver (putc, _print, print!/println! macros)
+│           ├── exceptions.rs  Rust exception vector table + CPU register helpers
+│           └── linker.ld .text.boot, .text.vectors, .text.rvectors, stack 16 KiB
 ├── shared/
 │   ├── Cargo.toml
-│   └── src/lib.rs        BootInfo, PhysAddr, etc.
-└── ... (existing docs/)
+│   └── src/lib.rs        BootInfo, PhysAddr, VirtAddr, MemoryType, PixelFormat
+└── docs/                 (existing architecture + phase docs)
 ```
 
 ---

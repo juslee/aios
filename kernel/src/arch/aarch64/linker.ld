@@ -9,12 +9,15 @@ SECTIONS
     /* Boot code first — _start is the ELF entry point at load address */
     .text.boot : { *(.text.boot) }
 
-    /* Exception vector table: VBAR_EL1 requires 2048-byte alignment */
+    /* Boot stub exception vectors (safety net for early boot) */
     .text.vectors ALIGN(2048) : {
         __vectors_start = .;
         *(.text.vectors)
         __vectors_end = .;
     }
+
+    /* Rust-owned exception vector table (installed from kernel_main) */
+    .text.rvectors ALIGN(2048) : { *(.text.rvectors) }
 
     .text : { *(.text .text.*) }
     .rodata : ALIGN(8) { *(.rodata .rodata.*) }
