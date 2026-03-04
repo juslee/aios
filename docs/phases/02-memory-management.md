@@ -94,14 +94,14 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 
 **Tasks:**
 - [ ] Create `kernel/src/mm/init.rs` — `init_memory(boot_info: &BootInfo)` entry point
-- [ ] Walk `BootInfo.memory_map` regions: classify each as Conventional, LoaderCode, Reserved, MMIO, etc. (memory.md §2.1)
+- [ ] Walk `BootInfo` memory map regions (via `memory_map_addr`, `memory_map_count`, `memory_map_entry_size`): classify each as Conventional, LoaderCode, Reserved, MMIO, etc. (memory.md §2.1)
 - [ ] Feed Conventional regions into the buddy allocator as initial free pages
 - [ ] Mark LoaderCode/LoaderData regions as reclaimable (add to free list after early boot completes)
 - [ ] Partition the buddy allocator's free pages into pools per `PoolConfig`
 - [ ] Print pool statistics to UART: total RAM, per-pool sizes, free pages
 - [ ] Replace Phase 1's bump allocator calls with `FrameAllocator` calls in existing kernel code
 
-**Note:** `BootInfo.memory_map` is a `MemoryMap` of UEFI `MemoryDescriptor` entries populated by Phase 1's UEFI stub. Phase 2 walks this structure to bootstrap the buddy allocator and page pools.
+**Note:** The `BootInfo` memory map is passed as three fields: `memory_map_addr` (physical address of the `MemoryDescriptor` array), `memory_map_count` (number of entries), and `memory_map_entry_size` (bytes per entry). These are populated by Phase 1's UEFI stub. Phase 2 walks this array to bootstrap the buddy allocator and page pools.
 
 **Key reference:** [memory.md §2.1](../kernel/memory.md) — Bootstrap; [boot.md §2.2](../kernel/boot.md) — BootInfo struct
 
