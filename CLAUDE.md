@@ -58,6 +58,7 @@ Kernel load:    0x4008_0000 physical (Phase 0), virtual 0xFFFF_0000_0000_0000+ (
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
 | Security model | `docs/security/security.md` | All (all phases) |
+| Fuzzing & input hardening | `docs/security/fuzzing-and-hardening.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
