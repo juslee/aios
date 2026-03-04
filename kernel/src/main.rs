@@ -7,15 +7,32 @@ mod arch {
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
+use shared::{BootInfo, BOOTINFO_MAGIC};
 
 // Include the assembly boot code (entry point + exception vector stubs).
 core::arch::global_asm!(include_str!("arch/aarch64/boot.S"));
 
 #[no_mangle]
-pub extern "C" fn kernel_main() -> ! {
+pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     use crate::arch::aarch64::exceptions;
 
     println!("AIOS kernel booting...");
+
+    // Validate BootInfo if a non-zero pointer was passed (Phase 1+ UEFI boot).
+    if boot_info_ptr != 0 {
+        // SAFETY: The UEFI stub allocates a page-aligned, fully-initialized BootInfo
+        // struct and passes its physical address in x0. We validated the pointer is
+        // non-zero; the magic check below confirms the struct is intact.
+        let boot_info = unsafe { &*(boot_info_ptr as *const BootInfo) };
+        if boot_info.magic == BOOTINFO_MAGIC {
+            println!("[boot] BootInfo at {:#x}, magic OK", boot_info_ptr);
+        } else {
+            println!(
+                "[boot] BootInfo at {:#x}, BAD magic {:#x}",
+                boot_info_ptr, boot_info.magic
+            );
+        }
+    }
 
     // Install the Rust-owned exception vector table, replacing the boot.S stub.
     let vbar = exceptions::install_vector_table();
