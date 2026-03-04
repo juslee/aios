@@ -73,7 +73,8 @@ When implementing Phase N:
    - All architecture docs listed in the phase doc's "Architecture References" table
    - This file's Code Conventions and Quality Gates sections
 
-2. **BRANCH**: Create `claude/phase-N-name` from latest `main`
+2. **BRANCH**: Create `claude/phase-N-MK-name` from latest `main` (one branch per milestone)
+   - Example: `claude/phase-0-m2-boots` for Phase 0 Milestone 2
 
 3. **PLAN** before writing any code:
    - Identify which Milestone you are targeting (M1/M2/M3)
@@ -99,11 +100,13 @@ When implementing Phase N:
    - Update Quality Gates if new verification steps were added
 
 7. **COMMIT** after each Milestone completes:
-   - Format: `Phase N MN: <Milestone name>`
+   - Format: `Phase N MK: <Milestone name>`
    - Example: `Phase 0 M1: Compiles — aarch64 ELF with zero warnings`
    - Include CLAUDE.md updates in the same commit
 
-8. **PR** after phase completes: push branch, create PR to `main`
+8. **PR** after each milestone completes: push branch, create PR to `main`
+   - One PR per milestone — keeps reviews small and focused
+   - Merge to `main` before starting the next milestone
 
 **BLOCKED?** Read the referenced architecture doc section. Architecture docs are the source of truth. Never invent register offsets, struct fields, or memory addresses.
 
@@ -335,10 +338,10 @@ unsafe { core::ptr::write_volatile(uart_base as *mut u32, byte as u32) };
 
 All work happens on `claude/*` branches. Never commit directly to `main`.
 
-- Phase implementations: `claude/phase-N-name` (e.g., `claude/phase-0-foundation`)
+- Milestone implementations: `claude/phase-N-MK-name` (e.g., `claude/phase-0-m2-boots`)
 - Doc generation: `claude/phase-N-docs` (e.g., `claude/phase-5-docs`)
 - Doc updates from code changes: `claude/docs-update-*`
-- All branches merge to `main` via PR
+- One PR per milestone — merge to `main` before starting the next milestone
 
 ---
 
