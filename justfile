@@ -5,7 +5,7 @@ uefi_target := "aarch64-unknown-uefi"
 kernel_elf := "target/" + target + "/debug/kernel"
 kernel_elf_release := "target/" + target + "/release/kernel"
 stub_efi := "target/" + uefi_target + "/debug/uefi-stub.efi"
-edk2_fw := "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"
+edk2_fw := env("AIOS_EDK2_FW", "/opt/homebrew/share/qemu/edk2-aarch64-code.fd")
 disk_img := "aios.img"
 
 # Default recipe

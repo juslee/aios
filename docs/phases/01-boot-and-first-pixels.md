@@ -102,7 +102,7 @@ qemu-system-aarch64 \
 - [x] Jump to kernel entry point (`kernel_main`) passing `BootInfo` pointer in `x0` (per the Phase 1 ABI replacing the Phase 0 DTB pointer)
 - [x] Update `kernel_main` signature and `shared/BootInfo` to accept the real pointer (replace Phase 0's `Option<u64>` stubs with `#[cfg(target_arch = "aarch64")]`-scoped real types where needed)
 
-**BootInfo pointer ABI:** The stub writes `BootInfo` into a page-aligned buffer, then jumps to the kernel with `x0` = physical address of that buffer. The kernel entry assembly (boot.S from Phase 0) must now save `x0` into `x19` (callee-saved) immediately — the Phase 1 boot assembly differs from Phase 0 here. `BootInfo` stays valid until the kernel records its contents; the memory map entry of type `BootInfo` tells the buddy allocator not to reclaim that page.
+**BootInfo pointer ABI:** The stub allocates `BootInfo` from `LOADER_DATA` in a page-aligned buffer, fills it (including a pointer to the final UEFI memory map returned by `ExitBootServices()`), then jumps to the kernel with `x0` = physical address of that buffer. The kernel entry assembly (boot.S from Phase 0) must now save `x0` into `x19` (callee-saved) immediately — the Phase 1 boot assembly differs from Phase 0 here. Early in boot, the kernel copies `BootInfo` and the UEFI memory map into its own internal structures and then marks the physical page(s) backing the original `BootInfo` and memory-map buffers as reserved in the buddy allocator by address.
 
 **Acceptance:** Serial console shows "AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x...". The kernel entry point is reached (confirmed by the Phase 0 UART print "AIOS kernel booting..." now appearing via the UEFI path).
 
