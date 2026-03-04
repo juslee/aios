@@ -7,7 +7,7 @@
 **Prerequisites:** None (first phase)
 **Unlocks:** Phase 1 (Boot and First Pixels)
 
----
+-----
 
 ## Objective
 
@@ -15,39 +15,39 @@ Set up a Rust bare-metal project targeting aarch64 that compiles a minimal kerne
 
 By the end of this phase, `just run` produces a QEMU window (or terminal) showing "AIOS kernel booting..." from a Rust `#![no_std]` binary running in EL1 on emulated aarch64 hardware.
 
----
+-----
 
 ## Architecture References
 
 These existing documents define the technical design. This phase doc focuses on implementation order and acceptance criteria — not duplicating the architecture.
 
 | Topic                  | Document                                           | Relevant Sections                                                                                                                                                                                     |
-| ---------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Boot sequence          | [boot.md](../kernel/boot.md)                          | §3.3 Steps 1-2 (FPU enable, VBAR install). boot.md §2 documents Phase 1's UEFI path; Phase 0 uses QEMU `-kernel` which bypasses UEFI entirely.                                                    |
 | HAL and platform trait | [hal.md](../kernel/hal.md)                            | §3 Platform Trait (`init_uart`, Uart trait). §2 Platform Detection (reading DTB compatible string, calling `detect_platform()`) is first exercised in Phase 1; Phase 0 hardcodes the QEMU UART. |
 | Memory layout          | [memory.md](../kernel/memory.md)                      | §2 Physical Memory Manager, §2.1 Bootstrap (background only — explains the QEMU RAM base at `0x4000_0000` relevant to the load address decision; PMM implementation is Phase 2)                  |
 | Project overview       | [overview.md](../project/overview.md)                 | §9 Hardware Strategy                                                                                                                                                                                 |
 | Technology stack       | [development-plan.md](../project/development-plan.md) | §7 Technology Stack                                                                                                                                                                                  |
 
----
+-----
 
 ## Milestones
 
 Phase 0 has three internal milestones. Each builds on the previous and produces something observable.
 
 | Milestone                         | Steps | Target        | Observable result                                                     |
-| --------------------------------- | ----- | ------------- | --------------------------------------------------------------------- |
+| ------------------------------------------------------- | ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | **M1 — Compiles**          | 1–2  | Days 2–3     | `cargo build` produces an aarch64 ELF with zero warnings            |
 | **M2 — Boots**             | 3–6  | End of week 1 | `just run` prints "AIOS kernel booting..." in terminal              |
 | **M3 — Scaffold complete** | 7–8  | End of week 2 | CI passes on clean checkout; panic prints to UART; VBAR_EL1 confirmed |
 
----
+-----
 
 ## Milestone 1 — Compiles (Days 2–3)
 
 *Goal: `cargo build` produces an aarch64 ELF with zero warnings.*
 
----
+-----
 
 ### Step 1: Rust Toolchain and Target Setup
 
@@ -64,7 +64,7 @@ Phase 0 has three internal milestones. Each builds on the previous and produces 
 
 **Acceptance:** `rustup show` displays the pinned nightly with aarch64-unknown-none. `cargo build` succeeds (even if the binary does nothing).
 
----
+-----
 
 ### Step 2: Project Scaffold and Cargo Workspace
 
@@ -119,13 +119,13 @@ aios/
 
 **Acceptance:** `cargo build` compiles both crates with zero warnings. `file` on the kernel ELF shows "ELF 64-bit LSB executable, ARM aarch64". `shared/` compiles for both `aarch64-unknown-none` and the host target with zero warnings.
 
----
+-----
 
 ## Milestone 2 — Boots (End of Week 1)
 
 *Goal: `just run` prints "AIOS kernel booting..." in the terminal.*
 
----
+-----
 
 ### Step 3: Linker Script and Assembly Entry Point
 
@@ -159,7 +159,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Key reference:** [boot.md](../kernel/boot.md) §3.3 Steps 1-2 document the FPU enable and VBAR install sequence. Phase 0 implements a subset of this; the full UEFI handoff and `BootInfo` assembly is Phase 1 work.
 
----
+-----
 
 ### Step 4: UART Output (PL011)
 
@@ -180,7 +180,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Acceptance:** Running in QEMU shows "AIOS kernel booting..." on serial output.
 
----
+-----
 
 ### Step 5: Justfile (Build System)
 
@@ -201,7 +201,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Acceptance:** `just build`, `just clippy`, `just fmt-check`, and `just test` all pass with zero warnings. `just check` passes on a clean checkout without QEMU installed.
 
----
+-----
 
 ### Step 6: QEMU Runner Configuration
 
@@ -222,13 +222,13 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Acceptance:** `just run` builds the kernel and launches QEMU. "AIOS kernel booting..." appears in terminal. `Ctrl+A, X` exits QEMU cleanly. `just debug` starts QEMU paused and accepting GDB connections on port 1234.
 
----
+-----
 
 ## Milestone 3 — Scaffold Complete (End of Week 2)
 
 *Goal: CI passes on clean checkout; panic prints to UART; VBAR_EL1 confirmed.*
 
----
+-----
 
 ### Step 7: CI Pipeline (GitHub Actions)
 
@@ -244,7 +244,7 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Acceptance:** Push to GitHub triggers CI. All jobs pass on a clean checkout.
 
----
+-----
 
 ### Step 8: Panic Handler and Boot Diagnostics
 
@@ -259,19 +259,19 @@ The boot sequence must follow this exact order. The ordering is strict — FPU m
 
 **Acceptance:** A `panic!("test")` in `kernel_main` prints the panic message and file:line to UART, then halts. UART shows current EL = 1 and core ID = 0. `VBAR_EL1` printed value matches the vector table symbol from objdump.
 
----
+-----
 
 ## Decision Points
 
 | Decision                | Options                                                             | Recommendation                                                                                                                                                                                     |
-| ----------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Boot method for Phase 0 | UEFI stub vs. ELF loaded by `-kernel`                             | ELF via `-kernel`. UEFI stub is Phase 1 work. QEMU loads the ELF at the physical address from its ELF headers, drops to EL1, and passes a DTB pointer in x0.                                     |
 | Kernel load address     | `0x4008_0000` (512 KiB offset) vs. `0x4010_0000` (1 MiB offset) | `0x4008_0000`. The 512 KiB offset leaves room for QEMU's DTB near RAM base (`0x4000_0000`). The Phase 0 kernel is tiny. Move to `0x4010_0000` if DTB overlap is observed.                    |
 | Linker script wiring    | `.cargo/config.toml` hardcoded `-T` vs. `build.rs`            | `build.rs`. The config.toml path is relative to the workspace root and silently breaks when building from subdirectories. `build.rs` with `cargo:rustc-link-arg` is path-safe and idiomatic. |
 | UART approach           | Hardcoded MMIO vs. HAL trait                                        | Hardcoded for Phase 0. The HAL `Platform` trait and `detect_platform()` are Phase 1 work. Keep it simple now, refactor later.                                                                  |
 | Test strategy           | Host-only unit tests vs. QEMU integration tests                     | Host-only for Phase 0. QEMU integration tests (boot → check UART output) in Phase 1.                                                                                                              |
 
----
+-----
 
 ## Phase Completion Criteria
 
