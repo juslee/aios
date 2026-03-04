@@ -2488,6 +2488,8 @@ Overall: PASS (2 warnings, 0 errors)
 
 ### 8.2 Fuzzing
 
+> For a comprehensive deep-dive on fuzzing strategies, hardening mechanisms, tooling, and the phased adoption roadmap, see [Fuzzing and Input Hardening](fuzzing-and-hardening.md).
+
 **Kernel syscall fuzzing:** Every syscall is fuzzed with random, malformed, and adversarial inputs. The fuzzer targets:
 - Invalid capability handles (out of bounds, negative, MAX_INT)
 - Null pointers, unaligned pointers, kernel-space pointers
