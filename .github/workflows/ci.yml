@@ -48,3 +48,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just test
+
+  security:
+    name: Security (audit + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install --profile minimal
+          rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - name: Install cargo-audit and cargo-deny
+        run: cargo install cargo-audit cargo-deny --locked
+      - run: just audit
+      - run: just deny
+
+  miri:
+    name: Miri (unsafe UB detection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain with miri
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add miri
+          rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - run: just miri

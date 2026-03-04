@@ -85,8 +85,23 @@ fmt:
 fmt-check:
     cargo fmt --check
 
+# Audit dependencies for known vulnerabilities (RustSec)
+audit:
+    cargo audit
+
+# Check dependency policy (licenses, bans, advisories)
+deny:
+    cargo deny check
+
+# Run Miri on host-testable crates (detects UB in unsafe code)
+miri:
+    cargo miri test -p shared --target-dir target/miri-tests
+
 # CI shortcut: fmt-check + clippy + build both targets
 check: fmt-check clippy build build-stub
+
+# Security shortcut: audit + deny + miri
+security-check: audit deny miri
 
 # Clean build artifacts
 clean:
