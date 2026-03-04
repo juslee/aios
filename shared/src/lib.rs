@@ -13,7 +13,8 @@ pub const BOOTINFO_MAGIC: u64 = 0x41494F53_424F4F54;
 ///
 /// All fields use fixed-layout primitives for a stable C ABI across toolchain
 /// updates. Fields that may be absent use `u64` with 0 meaning "not present".
-/// Phase 1 populates all fields; Phase 0 sets only `magic` and zeroes the rest.
+/// Phase 1 populates all available fields and leaves optional ones as 0 when
+/// unavailable; Phase 0 sets only `magic` and zeroes the rest.
 #[repr(C)]
 pub struct BootInfo {
     /// Magic number for validation: 0x41494F53_424F4F54 ("AIOSBOOT")
