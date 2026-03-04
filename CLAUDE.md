@@ -104,12 +104,11 @@ When implementing Phase N:
    - For QEMU output: match exact strings in acceptance criteria
    - For objdump: check section addresses match linker script values
 
-6. **UPDATE CLAUDE.md** after each milestone:
-   - Add new files/dirs to Workspace Layout
-   - Add new addresses/offsets to Key Technical Facts
-   - Add new doc references to Architecture Doc Map
-   - Add new patterns to Code Conventions
-   - Update Quality Gates if new verification steps were added
+6. **UPDATE ALL DOCS** after each milestone:
+   - **CLAUDE.md**: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
+   - **README.md**: Project Structure, Build Commands, status text — anything that changed
+   - **Phase doc** (`docs/phases/NN-*.md`): Check off completed task boxes (`[ ]` → `[x]`), update Status field (e.g. "In Progress (M4 complete)")
+   - **Phase Completion Criteria**: Check off the completed milestone checkbox
 
 7. **COMMIT** after each Milestone completes:
    - Format: `Phase N MK: <Milestone name>`
