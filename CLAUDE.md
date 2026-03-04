@@ -10,7 +10,7 @@ UEFI target:    aarch64-unknown-uefi  (Phase 1+)
 Host target:    native (for unit tests, shared crate)
 Build system:   just + cargo
 License:        BSD-2-Clause
-Toolchain:      Rust nightly (pinned in rust-toolchain.toml)
+Toolchain:      Rust nightly (updated to latest at session start, pinned in rust-toolchain.toml)
 Workspace:      resolver = "2", edition = "2021"
 Linker script:  emitted via build.rs (not .cargo/config.toml)
 Relocation:     static (relocation-model=static throughout all phases)
@@ -61,6 +61,17 @@ Kernel load:    0x4008_0000 physical (Phase 0), virtual 0xFFFF_0000_0000_0000+ (
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
+
+---
+
+## Session Start Checklist
+
+Before any implementation work, run these steps at the start of every session:
+
+1. **Update system tools**: Run `brew upgrade qemu just` to get the latest QEMU and just versions
+2. **Update Rust nightly toolchain**: Check for the latest nightly (`rustc +nightly --version`), update `rust-toolchain.toml` to the latest date, verify the build still passes
+3. **Update dependencies**: Run `cargo update` to pull latest compatible versions of all dependencies, commit `Cargo.lock` if changed
+4. **Verify build**: Run `just check` (or `cargo build --target aarch64-unknown-none` if justfile doesn't exist yet) to confirm zero warnings after updates
 
 ---
 
