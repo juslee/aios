@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 4 weeks
 **Deliverable:** UEFI stub boots kernel via edk2; kernel parses DTB, enables MMU, prints boot log; framebuffer shows coloured rectangle
-**Status:** Planned
+**Status:** In Progress (M4 complete)
 **Prerequisites:** Phase 0 (Foundation and Tooling)
 **Unlocks:** Phase 2 (Memory Management)
 
