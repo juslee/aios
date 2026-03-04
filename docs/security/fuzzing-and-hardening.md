@@ -41,7 +41,7 @@ Every input boundary where external data enters kernel code is a potential fuzz 
 | Network stack | Packet data from virtio-net | 7+ | Malformed packets dropped; no buffer overflow in protocol parsing |
 | Filesystem | Metadata and file content from storage | 4+ | Corrupted metadata does not panic; bounds checked on all reads |
 
-Cross-reference: [security.md](security.md) §1 (threat model), §3 (capability system), §4 (IPC security).
+Cross-reference: [security.md](security.md) §1 (threat model), §§2–3 (IPC security architecture and capability system).
 
 ---
 
@@ -106,7 +106,7 @@ IPC is the primary inter-process communication mechanism and a high-value fuzz t
 - **Capability transfer**: when a message carries a capability, the kernel validates that the sender actually holds the capability and that the transfer is permitted by the capability's attenuation rules.
 - **No raw pointers in messages**: IPC payloads are copied between address spaces. Pointers in message bodies have no meaning in the receiver's address space and are never interpreted as addresses.
 
-Cross-reference: [security.md](security.md) §4 (IPC security).
+Cross-reference: [security.md](security.md) §§2–3 (IPC security architecture and capability system).
 
 ### 3.5 Device Driver Hardening
 
@@ -160,7 +160,17 @@ Once the syscall interface exists (Phase 3), kernel fuzzing begins in earnest.
 
 **Scope:** All 31 syscalls, all parameter combinations. The fuzzer generates both valid and invalid inputs — valid inputs exercise normal paths, invalid inputs exercise error-handling paths.
 
-### 4.3 Phases 10-12: Agent and Manifest Fuzzing
+### 4.3 Phases 6-9: Filesystem and Network Fuzzing
+
+When the storage subsystem (Phase 4) and network stack (Phase 7) arrive, two new binary-protocol fuzz surfaces open:
+
+- **Filesystem metadata parser**: fuzz with corrupted superblocks, invalid inode counts, truncated directory entries, circular symlink chains. The kernel must return errors, never panic or corrupt in-memory state.
+- **Network packet parser**: fuzz with malformed Ethernet frames, truncated IP/TCP/UDP headers, oversized payloads, invalid checksums. The stack must drop bad packets silently — no buffer overflow, no kernel panic.
+- **Compositor input events** (Phase 6): fuzz with out-of-range coordinates, invalid surface IDs, and rapid event floods. The compositor must clamp or reject, never crash.
+
+These targets are mutation-based: start with valid filesystem images or captured packets, then mutate bytes, truncate, and inject garbage. `cargo-fuzz` on host-side parsing logic; QEMU-based fuzzing for the full kernel path.
+
+### 4.4 Phases 10-12: Agent and Manifest Fuzzing
 
 When the agent framework is introduced (Phase 10), three new fuzz surfaces appear:
 
@@ -170,7 +180,7 @@ When the agent framework is introduced (Phase 10), three new fuzz surfaces appea
 
 These are grammar-based fuzzing targets — the fuzzer generates inputs from the manifest schema and IPC protocol definitions, then mutates them to exercise error paths.
 
-### 4.4 Phase 13+: Full Fuzzing Campaign
+### 4.5 Phase 13+: Full Fuzzing Campaign
 
 Phase 13 (Security Hardening) enables hardware security features that make fuzzing dramatically more effective:
 
@@ -179,7 +189,7 @@ Phase 13 (Security Hardening) enables hardware security features that make fuzzi
 - **Continuous fuzzing in CI**: the fuzzer runs 24/7 on a dedicated CI runner. New crashes are filed automatically. Regression tests are generated from crash inputs and added to the test suite.
 - **Corpus management**: the fuzzing corpus is stored in the repository and shared across CI runs. Interesting inputs (those that found new coverage) are kept; redundant inputs are minimized.
 
-### 4.5 Phase 24: Formal Verification Complements Fuzzing
+### 4.6 Phase 24: Formal Verification Complements Fuzzing
 
 Fuzzing finds bugs but cannot prove their absence. Formal verification provides mathematical guarantees for the most critical subsystems:
 
