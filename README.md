@@ -17,7 +17,7 @@ The hardware target is aarch64, starting with QEMU's `virt` machine (`cortex-a72
 
 The architecture is a capability-based microkernel. User processes communicate through typed IPC channels; hardware access is gated by unforgeable capability tokens. On top of the microkernel sit Spaces — isolated execution environments analogous to processes, but with explicit capability grants — and AIRS, the AI Runtime System, which manages inference engines, context stores, and agent lifecycles as native OS services. A compositor, storage subsystem, and networking stack complete the platform layer before the experience layer exposes Workspaces, a Conversation Bar, a browser, and a settings UI.
 
-No source code exists yet. Phase 0 implementation begins next.
+Phase 0 (toolchain and bare-metal boot) and Phase 1 Milestone 4 (UEFI stub) are complete. The kernel boots via edk2 firmware on QEMU virt.
 
 ---
 
@@ -76,9 +76,9 @@ aios/
 ├── .claude/
 │   ├── agents/           # Claude agent definitions
 │   └── skills/           # Reusable skill scripts
-├── kernel/               # (planned) Kernel source
-├── shared/               # (planned) Shared types and interfaces
-└── uefi-stub/            # (planned) UEFI boot stub
+├── kernel/               # Kernel source (aarch64-unknown-none)
+├── shared/               # Shared types (BootInfo, PhysAddr, etc.)
+└── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
 ```
 
 ---
@@ -106,11 +106,13 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | Command | Description |
 |---------|-------------|
 | `just build` | Compile the kernel for `aarch64-unknown-none` |
-| `just run` | Build and launch under QEMU |
+| `just build-stub` | Compile the UEFI stub for `aarch64-unknown-uefi` |
+| `just disk` | Build kernel + stub and create ESP disk image (requires mtools) |
+| `just run` | Boot via edk2 firmware with UEFI stub |
+| `just run-direct` | Boot kernel directly via QEMU `-kernel` (Phase 0 mode) |
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
-| `just check` | Run format check, clippy, and build (fmt-check + clippy + build) |
+| `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
-| `just disk` | Build a bootable disk image (requires mtools) |
 
 ---
 
