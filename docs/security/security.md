@@ -2445,6 +2445,8 @@ pub enum ExportFormat {
 
 ### 8.1 Agent Audit Tool
 
+> For a comprehensive deep-dive on static analysis strategies, tooling, and the phased adoption roadmap for both kernel development and agent auditing, see [Static Analysis and Formal Verification](static-analysis.md).
+
 The `aios agent audit` command runs a comprehensive security analysis on an agent before publication:
 
 ```
@@ -2512,6 +2514,8 @@ Overall: PASS (2 warnings, 0 errors)
 - Manifests with expired certificates
 
 ### 8.3 Formal Verification Targets
+
+> For the full formal verification approach (TLA+, Coq, Kani, Verus) and phased adoption roadmap, see [Static Analysis and Formal Verification](static-analysis.md) §4.5–4.7.
 
 Formal verification provides mathematical guarantees about security properties. Not all code can be formally verified (the cost is too high), so AIOS targets the most critical components:
 

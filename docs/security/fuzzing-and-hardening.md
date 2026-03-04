@@ -2,7 +2,7 @@
 
 This document provides a technical deep-dive into how AIOS defends against the classes of bugs that fuzzing discovers, and how AIOS adopts fuzzing as a first-class testing strategy across its development phases.
 
-For the fuzzing campaign summary and formal verification targets, see [security.md](security.md) §8.
+For the fuzzing campaign summary and formal verification targets, see [security.md](security.md) §8. For the companion deep-dive on static analysis, model checking, and formal verification, see [static-analysis.md](static-analysis.md).
 
 ---
 
