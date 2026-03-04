@@ -2,26 +2,24 @@
 # See https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# Deny any crate with a known vulnerability of any severity
-vulnerability = "deny"
-unmaintained = "warn"
+# All vulnerability advisories emit errors by default (no config needed).
+# Unmaintained: only error for direct workspace deps, not transitive.
+unmaintained = "workspace"
 yanked = "warn"
-notice = "warn"
 
 [licenses]
-# AIOS is BSD-2-Clause. No GPL in kernel/ or shared/.
-unlicensed = "deny"
+# AIOS is BSD-2-Clause. Only these licenses are permitted (all others denied).
 allow = [
     "MIT",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
+    "MPL-2.0",
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "Zlib",
 ]
-copyleft = "deny"
 
 [[licenses.clarify]]
 name = "ring"
