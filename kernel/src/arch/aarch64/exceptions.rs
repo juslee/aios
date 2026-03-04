@@ -66,7 +66,9 @@ pub fn current_el() -> u8 {
     let el: u64;
     // SAFETY: Reading CurrentEL is a pure register read with no side effects,
     // safe at any exception level.
-    unsafe { core::arch::asm!("mrs {}, CurrentEL", out(reg) el) };
+    unsafe {
+        core::arch::asm!("mrs {}, CurrentEL", out(reg) el, options(nomem, nostack, preserves_flags))
+    };
     ((el >> 2) & 0x3) as u8
 }
 
@@ -75,7 +77,9 @@ pub fn core_id() -> u8 {
     let mpidr: u64;
     // SAFETY: Reading MPIDR_EL1 is a pure register read with no side effects,
     // safe at EL1.
-    unsafe { core::arch::asm!("mrs {}, MPIDR_EL1", out(reg) mpidr) };
+    unsafe {
+        core::arch::asm!("mrs {}, MPIDR_EL1", out(reg) mpidr, options(nomem, nostack, preserves_flags))
+    };
     (mpidr & 0xFF) as u8
 }
 
@@ -96,6 +100,7 @@ pub fn install_vector_table() -> u64 {
             "msr VBAR_EL1, {addr}",
             "isb",
             addr = in(reg) addr,
+            options(nomem, nostack, preserves_flags),
         );
     }
     addr
@@ -105,6 +110,8 @@ pub fn install_vector_table() -> u64 {
 pub fn read_vbar_el1() -> u64 {
     let vbar: u64;
     // SAFETY: Reading VBAR_EL1 is a pure register read, safe at EL1.
-    unsafe { core::arch::asm!("mrs {}, VBAR_EL1", out(reg) vbar) };
+    unsafe {
+        core::arch::asm!("mrs {}, VBAR_EL1", out(reg) vbar, options(nomem, nostack, preserves_flags))
+    };
     vbar
 }
