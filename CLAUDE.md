@@ -226,6 +226,13 @@ Rust vectors section:         .text.rvectors (exceptions.rs, installed from kern
 llvm-tools component name:    llvm-tools (not llvm-tools-preview)
 QEMU serial flag:             -nographic (implies -serial mon:stdio; no explicit -serial)
 QEMU GDB flag:                -gdb tcp::1234 (not -s)
+edk2 firmware path (macOS):   /opt/homebrew/share/qemu/edk2-aarch64-code.fd
+ESP disk image:               aios.img (64 MiB FAT32, created by `just disk`)
+UEFI stub ESP path:           /EFI/BOOT/BOOTAA64.EFI and /EFI/AIOS/BOOTAA64.EFI
+Kernel ELF ESP path:          /EFI/AIOS/aios.elf
+ACPI RSDP GUID:               8868e871-e4f1-11d3-bc22-0080c73c8881
+DTB Table GUID:               b1b621d5-f19c-41a5-830b-d9152c69aae0
+uefi crate version:           0.36 (features: alloc, global_allocator, panic_handler, logger)
 ```
 
 ---
@@ -271,7 +278,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 0 M3 — Scaffold Complete):
+Current (post-Phase 1 M4 — UEFI Stub Runs):
 
 ```
 aios/
@@ -279,10 +286,10 @@ aios/
 ├── README.md
 ├── CONTRIBUTING.md
 ├── .gitignore
-├── Cargo.toml            workspace root (resolver = "2", edition = "2021")
+├── Cargo.toml            workspace root (resolver = "2", members: kernel, shared, uefi-stub)
 ├── Cargo.lock            committed for reproducibility
-├── rust-toolchain.toml   pinned nightly + aarch64-unknown-none + components
-├── justfile              build recipes (build, run, debug, check, test, clean)
+├── rust-toolchain.toml   pinned nightly + aarch64-unknown-none + aarch64-unknown-uefi
+├── justfile              build, build-stub, disk, run (edk2), run-direct, check, test, clean
 ├── LICENSE               BSD-2-Clause
 ├── .cargo/
 │   └── config.toml       relocation-model=static for aarch64-unknown-none
@@ -296,13 +303,18 @@ aios/
 │   ├── Cargo.toml
 │   ├── build.rs          emits linker script path
 │   └── src/
-│       ├── main.rs       kernel_main, global_asm, println, panic_handler, boot diagnostics
+│       ├── main.rs       kernel_main(boot_info_ptr), BootInfo validation, boot diagnostics
 │       └── arch/aarch64/
 │           ├── mod.rs    pub mod uart, pub mod exceptions
-│           ├── boot.S    FPU enable, VBAR install, park secondaries, BSS zero, branch kernel_main
+│           ├── boot.S    save x0→x19, FPU, VBAR, park secondaries, BSS zero, restore x0, bl kernel_main
 │           ├── uart.rs   PL011 driver (putc, _print, print!/println! macros)
 │           ├── exceptions.rs  Rust exception vector table + CPU register helpers
 │           └── linker.ld .text.boot, .text.vectors, .text.rvectors, stack 16 KiB
+├── uefi-stub/
+│   ├── Cargo.toml        deps: shared, uefi 0.36, log
+│   └── src/
+│       ├── main.rs       UEFI entry, BootInfo assembly, ExitBootServices, kernel jump
+│       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments)
 ├── shared/
 │   ├── Cargo.toml
 │   └── src/lib.rs        BootInfo, PhysAddr, VirtAddr, MemoryType, PixelFormat

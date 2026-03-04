@@ -1,12 +1,15 @@
-// AIOS aarch64 boot assembly — Phase 0
+// AIOS aarch64 boot assembly — Phase 1
+//
+// Entry: x0 = BootInfo physical address (set by UEFI stub)
 //
 // Boot order (strict):
+// 0. Save BootInfo pointer to callee-saved x19
 // 1. Enable FP/NEON (must be first — hard-float ABI)
 // 2. Install stub exception vectors to VBAR_EL1
 // 3. Park secondary cores (wfe loop)
 // 4. Set stack pointer
 // 5. Zero BSS
-// 6. Branch to kernel_main
+// 6. Branch to kernel_main with x0 = BootInfo pointer
 
 // ---------------------------------------------------------------------------
 // Exception vector table (stub) — 16 entries, 128 bytes each
@@ -65,6 +68,11 @@ __exception_vectors:
 .section .text.boot, "ax"
 .global _start
 _start:
+    // Step 0: Save BootInfo pointer (x0) to callee-saved x19 immediately.
+    // x0 = BootInfo physical address from UEFI stub. Must be preserved
+    // across the entire boot sequence so kernel_main receives it.
+    mov     x19, x0
+
     // Step 1: Enable FP/NEON (CPACR_EL1.FPEN = 0b11)
     // Must be first — hard-float ABI means compiler emits NEON freely.
     // Any NEON instruction before this enable traps.
@@ -107,7 +115,8 @@ _start:
     b       .Lbss_loop
 .Lbss_done:
 
-    // Step 6: Branch to kernel_main (Rust entry point, never returns)
+    // Step 6: Branch to kernel_main with BootInfo pointer in x0.
+    mov     x0, x19
     bl      kernel_main
 
     // Unreachable — kernel_main is -> !, guard against return

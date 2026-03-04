@@ -59,13 +59,13 @@ Milestones are numbered continuously across all phases. Phase 0 used M1–M3; Ph
 **What:** Create the `uefi-stub/` crate — a UEFI application that runs under edk2 Boot Services, assembles `BootInfo`, and jumps to the kernel.
 
 **Tasks:**
-- [ ] Create `uefi-stub/` crate with `#![no_std]`, `#![no_main]`. Target: `aarch64-unknown-uefi` (produces a PE/COFF `.efi` binary — different from the kernel's `aarch64-unknown-none` ELF)
-- [ ] Add `uefi` crate dependency (provides `SystemTable`, `BootServices`, `RuntimeServices`, `MemoryMap` wrappers). Pin a specific version.
-- [ ] Add `uefi-stub` to the workspace `Cargo.toml` members
-- [ ] Implement the UEFI entry point (`efi_main`): open `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` and print a banner to confirm the stub is reached
-- [ ] Implement ESP layout from boot.md §2.4: stub at `/EFI/AIOS/BOOTAA64.EFI`, kernel at `/EFI/AIOS/aios.elf`, config at `/EFI/AIOS/boot.cfg`
-- [ ] Add `just disk` recipe: creates a FAT32 disk image with the ESP, places stub and kernel ELF at the correct paths (requires `mformat` + `mcopy` from `mtools`, or equivalent)
-- [ ] Update `just run` to use edk2 firmware: `-bios /path/to/edk2-aarch64-code.fd` (or distro-specific aarch64 firmware such as `QEMU_EFI.fd` or `AAVMF_CODE.fd`) and `-drive` instead of `-kernel`
+- [x] Create `uefi-stub/` crate with `#![no_std]`, `#![no_main]`. Target: `aarch64-unknown-uefi` (produces a PE/COFF `.efi` binary — different from the kernel's `aarch64-unknown-none` ELF)
+- [x] Add `uefi` crate dependency (provides `SystemTable`, `BootServices`, `RuntimeServices`, `MemoryMap` wrappers). Pin a specific version.
+- [x] Add `uefi-stub` to the workspace `Cargo.toml` members
+- [x] Implement the UEFI entry point (`efi_main`): open `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` and print a banner to confirm the stub is reached
+- [x] Implement ESP layout from boot.md §2.4: stub at `/EFI/AIOS/BOOTAA64.EFI`, kernel at `/EFI/AIOS/aios.elf`, config at `/EFI/AIOS/boot.cfg`
+- [x] Add `just disk` recipe: creates a FAT32 disk image with the ESP, places stub and kernel ELF at the correct paths (requires `mformat` + `mcopy` from `mtools`, or equivalent)
+- [x] Update `just run` to use edk2 firmware: `-bios /path/to/edk2-aarch64-code.fd` (or distro-specific aarch64 firmware such as `QEMU_EFI.fd` or `AAVMF_CODE.fd`) and `-drive` instead of `-kernel`
 
 **QEMU invocation change:** Phase 0 used `qemu-system-aarch64 -kernel <elf>`. Phase 1 switches to:
 ```
@@ -92,15 +92,15 @@ qemu-system-aarch64 \
 **What:** Implement the full BootInfo assembly sequence from boot.md §2.1–2.2: parse the UEFI memory map, acquire GOP framebuffer, acquire DTB, exit Boot Services, and jump to the kernel.
 
 **Tasks:**
-- [ ] Implement memory map acquisition: call `BootServices.get_memory_map()`, iterate over `MemoryDescriptor` entries, build the `BootInfo.memory_map` (boot.md §2.2). Store in a region allocated with `BootServices.allocate_pool(MemoryType::BootServicesData, ...)` — this region must be included in the memory map as type `BootInfo` so the buddy allocator excludes it from the free pool (the kernel reads it before reclaiming)
-- [ ] Implement GOP framebuffer acquisition: open `EFI_GRAPHICS_OUTPUT_PROTOCOL`, read `Mode.Info` for width/height/stride/format, fill `BootInfo.framebuffer` (boot.md §2.2 `FramebufferInfo`). `PixelFormat` mapping: `PixelRedGreenBlueReserved8BitPerColor` → `Rgb8`; `PixelBlueGreenRedReserved8BitPerColor` → `Bgr8`; `PixelBitMask` → `Bitmask { red, green, blue }` (read the per-channel bitmask fields from `EFI_PIXEL_BITMASK` and store them — fill_rect in Step 8 must decode them at draw time). Store framebuffer base as a `PhysicalAddress`.
-- [ ] Implement DTB location: QEMU passes the DTB address via the UEFI `EFI_DTB_TABLE_GUID` configuration table entry. Retrieve with `SystemTable.config_table()`. Fill `BootInfo.device_tree` with base and size.
-- [ ] Set `BootInfo.magic` = `0x41494F53_424F4F54` (`"AIOSBOOT"` as a u64)
-- [ ] Fill `BootInfo.rng_seed` from `EFI_RNG_PROTOCOL` if available; zero-fill if not (kernel falls back to timer entropy)
-- [ ] Fill `BootInfo.kernel_phys_base` and `BootInfo.kernel_size` from the ELF load address and image size
-- [ ] Call `BootServices.exit_boot_services()`. After this call, no UEFI services are available — no allocation, no output, no nothing. The stub must not call any UEFI function after this point.
-- [ ] Jump to kernel entry point (`kernel_main`) passing `BootInfo` pointer in `x0` (per the Phase 1 ABI replacing the Phase 0 DTB pointer)
-- [ ] Update `kernel_main` signature and `shared/BootInfo` to accept the real pointer (replace Phase 0's `Option<u64>` stubs with `#[cfg(target_arch = "aarch64")]`-scoped real types where needed)
+- [x] Implement memory map acquisition: call `BootServices.get_memory_map()`, iterate over `MemoryDescriptor` entries, build the `BootInfo.memory_map` (boot.md §2.2). Store in a region allocated with `BootServices.allocate_pool(MemoryType::BootServicesData, ...)` — this region must be included in the memory map as type `BootInfo` so the buddy allocator excludes it from the free pool (the kernel reads it before reclaiming)
+- [x] Implement GOP framebuffer acquisition: open `EFI_GRAPHICS_OUTPUT_PROTOCOL`, read `Mode.Info` for width/height/stride/format, fill `BootInfo.framebuffer` (boot.md §2.2 `FramebufferInfo`). `PixelFormat` mapping: `PixelRedGreenBlueReserved8BitPerColor` → `Rgb8`; `PixelBlueGreenRedReserved8BitPerColor` → `Bgr8`; `PixelBitMask` → `Bitmask { red, green, blue }` (read the per-channel bitmask fields from `EFI_PIXEL_BITMASK` and store them — fill_rect in Step 8 must decode them at draw time). Store framebuffer base as a `PhysicalAddress`.
+- [x] Implement DTB location: QEMU passes the DTB address via the UEFI `EFI_DTB_TABLE_GUID` configuration table entry. Retrieve with `SystemTable.config_table()`. Fill `BootInfo.device_tree` with base and size.
+- [x] Set `BootInfo.magic` = `0x41494F53_424F4F54` (`"AIOSBOOT"` as a u64)
+- [x] Fill `BootInfo.rng_seed` from `EFI_RNG_PROTOCOL` if available; zero-fill if not (kernel falls back to timer entropy)
+- [x] Fill `BootInfo.kernel_phys_base` and `BootInfo.kernel_size` from the ELF load address and image size
+- [x] Call `BootServices.exit_boot_services()`. After this call, no UEFI services are available — no allocation, no output, no nothing. The stub must not call any UEFI function after this point.
+- [x] Jump to kernel entry point (`kernel_main`) passing `BootInfo` pointer in `x0` (per the Phase 1 ABI replacing the Phase 0 DTB pointer)
+- [x] Update `kernel_main` signature and `shared/BootInfo` to accept the real pointer (replace Phase 0's `Option<u64>` stubs with `#[cfg(target_arch = "aarch64")]`-scoped real types where needed)
 
 **BootInfo pointer ABI:** The stub writes `BootInfo` into a page-aligned buffer, then jumps to the kernel with `x0` = physical address of that buffer. The kernel entry assembly (boot.S from Phase 0) must now save `x0` into `x19` (callee-saved) immediately — the Phase 1 boot assembly differs from Phase 0 here. `BootInfo` stays valid until the kernel records its contents; the memory map entry of type `BootInfo` tells the buddy allocator not to reclaim that page.
 
@@ -293,7 +293,7 @@ qemu-system-aarch64 \
 
 All three milestones complete:
 
-- [ ] **M4** — QEMU boots via edk2; stub prints banner and exits Boot Services; kernel entry is reached
+- [x] **M4** — QEMU boots via edk2; stub prints banner and exits Boot Services; kernel entry is reached
 - [ ] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
 - [ ] **M6** — All 4 cores online; coloured rectangle visible on QEMU virtual display; CI passes on clean checkout
 - [ ] `BootInfo.magic` is validated at kernel entry; mismatched magic halts with a UART error message
