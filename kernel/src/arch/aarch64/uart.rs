@@ -48,21 +48,28 @@ impl fmt::Write for UartWriter {
     }
 }
 
+/// Write formatted arguments to the UART.
+///
+/// Manages the mutable writer instance so callers don't need to.
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    let mut writer = UartWriter;
+    fmt::Write::write_fmt(&mut writer, args).unwrap();
+}
+
 /// Print to the UART without a newline.
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let _ = write!($crate::arch::aarch64::uart::UartWriter, $($arg)*);
-    }};
+    ($($arg:tt)*) => {
+        $crate::arch::aarch64::uart::_print(format_args!($($arg)*))
+    };
 }
 
 /// Print to the UART with a trailing newline.
 #[macro_export]
 macro_rules! println {
     () => { $crate::print!("\n") };
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let _ = writeln!($crate::arch::aarch64::uart::UartWriter, $($arg)*);
-    }};
+    ($($arg:tt)*) => {
+        $crate::arch::aarch64::uart::_print(format_args!("{}\n", format_args!($($arg)*)))
+    };
 }

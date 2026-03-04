@@ -26,7 +26,8 @@ pub extern "C" fn kernel_main() -> ! {
 fn panic(info: &PanicInfo) -> ! {
     // SAFETY: UartWriter accesses PL011 MMIO at 0x0900_0000, which is valid
     // on QEMU virt. In the panic path, correctness of output is best-effort.
-    let _ = writeln!(crate::arch::aarch64::uart::UartWriter, "PANIC: {}", info);
+    let mut w = crate::arch::aarch64::uart::UartWriter;
+    let _ = writeln!(&mut w, "PANIC: {}", info);
 
     loop {
         // SAFETY: wfe is a hint instruction, safe at any EL.
