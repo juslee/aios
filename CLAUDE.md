@@ -109,6 +109,7 @@ When implementing Phase N:
    - **README.md**: Project Structure, Build Commands, status text — anything that changed
    - **Phase doc** (`docs/phases/NN-*.md`): Check off completed task boxes (`[ ]` → `[x]`), update Status field (e.g. "In Progress (M4 complete)")
    - **Phase Completion Criteria**: Check off the completed milestone checkbox
+   - **Architecture docs** (`docs/kernel/*.md`, `docs/project/*.md`, etc.): Update any referenced architecture docs if the implementation revealed corrections, new facts, or deviations from the spec
 
 7. **COMMIT** after each Milestone completes:
    - Format: `Phase N MK: <Milestone name>`
