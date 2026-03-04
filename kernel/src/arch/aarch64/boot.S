@@ -10,7 +10,8 @@
 
 // ---------------------------------------------------------------------------
 // Exception vector table (stub) — 16 entries, 128 bytes each
-// All entries branch-to-self; replaced by Rust table in M3 Step 8
+// All entries branch-to-self. Safety net for faults between _start and
+// kernel_main. kernel_main installs the Rust-owned table from exceptions.rs.
 // ---------------------------------------------------------------------------
 .section .text.vectors, "ax"
 .balign 2048                    // 2048-byte alignment for VBAR_EL1

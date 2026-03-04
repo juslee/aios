@@ -13,7 +13,20 @@ core::arch::global_asm!(include_str!("arch/aarch64/boot.S"));
 
 #[no_mangle]
 pub extern "C" fn kernel_main() -> ! {
+    use crate::arch::aarch64::exceptions;
+
     println!("AIOS kernel booting...");
+
+    // Install the Rust-owned exception vector table, replacing the boot.S stub.
+    let vbar = exceptions::install_vector_table();
+
+    // Boot diagnostics — verify CPU state matches expectations.
+    println!("[boot] EL:       {}", exceptions::current_el());
+    println!("[boot] Core ID:  {}", exceptions::core_id());
+    println!("[boot] VBAR_EL1: {:#018x}", vbar);
+
+    // Verify VBAR_EL1 was written correctly by reading it back.
+    debug_assert_eq!(vbar, exceptions::read_vbar_el1());
 
     loop {
         // SAFETY: wfe is a hint instruction that puts the core in low-power
