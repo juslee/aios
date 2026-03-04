@@ -73,8 +73,9 @@ fn main() -> Status {
 
     // Store memory map info in BootInfo.
     // We count entries via the iterator and compute buffer address from the first entry.
+    // Use the UEFI-reported descriptor size (may exceed sizeof(MemoryDescriptor)).
     let map_len = memory_map.len();
-    let desc_size = core::mem::size_of::<uefi::mem::memory_map::MemoryDescriptor>();
+    let desc_size = memory_map.meta().desc_size;
     // Get raw buffer address: the first descriptor's address is the start of the map buffer.
     let mut map_buf_addr: u64 = 0;
     if let Some(desc) = memory_map.entries().next() {
@@ -126,18 +127,38 @@ fn load_kernel() -> elf::LoadedKernel {
         _ => panic!("Kernel path is not a regular file"),
     };
 
-    // Get file size.
+    // Get file size. First attempt with a small buffer; retry with the required size
+    // if the filename is long enough to overflow 256 bytes.
     let mut info_buf = vec![0u8; 256];
-    let info = regular_file
-        .get_info::<FileInfo>(&mut info_buf)
-        .expect("Failed to get file info");
+    let info = match regular_file.get_info::<FileInfo>(&mut info_buf) {
+        Ok(info) => info,
+        Err(_) => {
+            // Retry with a larger buffer — FileInfo includes a variable-length UTF-16 name.
+            info_buf = vec![0u8; 1024];
+            regular_file
+                .get_info::<FileInfo>(&mut info_buf)
+                .expect("Failed to get file info")
+        }
+    };
     let file_size = info.file_size() as usize;
 
-    // Read entire file.
+    // Read entire file, handling potential short reads.
     let mut file_data = vec![0u8; file_size];
-    regular_file
-        .read(&mut file_data)
-        .expect("Failed to read kernel ELF");
+    let mut read_total = 0usize;
+    while read_total < file_size {
+        let n = regular_file
+            .read(&mut file_data[read_total..])
+            .expect("Failed to read kernel ELF");
+        if n == 0 {
+            break;
+        }
+        read_total += n;
+    }
+    assert_eq!(
+        read_total, file_size,
+        "Kernel ELF truncated: expected {} bytes, read {}",
+        file_size, read_total
+    );
 
     elf::load_elf(&file_data).expect("Failed to parse/load kernel ELF")
 }

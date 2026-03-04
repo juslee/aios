@@ -48,19 +48,23 @@ pub struct LoadedKernel {
     pub size: u64,
 }
 
-/// Get a reference to the i-th program header from the ELF file buffer.
+/// Get the i-th program header from the ELF file buffer.
 fn get_phdr(
     file_data: &[u8],
     phoff: u64,
     phentsize: u16,
     i: usize,
-) -> Result<&Elf64Phdr, &'static str> {
+) -> Result<Elf64Phdr, &'static str> {
+    if (phentsize as usize) < core::mem::size_of::<Elf64Phdr>() {
+        return Err("Program header entry size too small");
+    }
     let offset = phoff as usize + i * phentsize as usize;
     if offset + core::mem::size_of::<Elf64Phdr>() > file_data.len() {
         return Err("Program header out of bounds");
     }
-    // SAFETY: Bounds checked above. Reading from file buffer.
-    Ok(unsafe { &*(file_data.as_ptr().add(offset) as *const Elf64Phdr) })
+    // SAFETY: Bounds checked above. `read_unaligned` handles the potentially unaligned
+    // file buffer (Vec<u8> alignment is 1, but Elf64Phdr has multi-byte fields).
+    Ok(unsafe { ptr::read_unaligned(file_data.as_ptr().add(offset) as *const Elf64Phdr) })
 }
 
 /// Load an ELF64 aarch64 kernel from a file buffer into physical memory.
@@ -72,22 +76,18 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
         return Err("ELF file too small");
     }
 
-    // SAFETY: file_data is at least sizeof(Elf64Header) bytes and aligned to u8.
-    // We read fields individually to avoid alignment issues.
-    let hdr = file_data.as_ptr() as *const Elf64Header;
-    let (magic, class, data, machine, e_entry, e_phoff, e_phentsize, e_phnum) = unsafe {
-        let h = &*hdr;
-        (
-            &h.e_ident[0..4],
-            h.e_ident[4],
-            h.e_ident[5],
-            h.e_machine,
-            h.e_entry,
-            h.e_phoff,
-            h.e_phentsize,
-            h.e_phnum,
-        )
-    };
+    // SAFETY: file_data is at least sizeof(Elf64Header) bytes. `read_unaligned` copies
+    // the header into a properly aligned local, avoiding UB from unaligned references.
+    let hdr = unsafe { ptr::read_unaligned(file_data.as_ptr() as *const Elf64Header) };
+
+    let magic = &hdr.e_ident[0..4];
+    let class = hdr.e_ident[4];
+    let data = hdr.e_ident[5];
+    let machine = hdr.e_machine;
+    let e_entry = hdr.e_entry;
+    let e_phoff = hdr.e_phoff;
+    let e_phentsize = hdr.e_phentsize;
+    let e_phnum = hdr.e_phnum;
 
     if magic != ELF_MAGIC {
         return Err("Invalid ELF magic");
