@@ -138,13 +138,13 @@ Kani translates Rust to CBMC and exhaustively explores all execution paths withi
 
 Three tools form a layered defense against dependency-related risks:
 
-**`cargo-audit`** scans `Cargo.lock` against the RustSec Advisory Database. Any finding of severity High or Critical blocks the PR. Runs on every CI build.
+**`cargo-audit`** scans `Cargo.lock` against the RustSec Advisory Database. Any RustSec advisory (of any severity) blocks the PR under the current CI configuration. Runs on every CI build.
 
 **`cargo-deny`** enforces broader policies via a committed `deny.toml`:
-- **Licenses:** BSD-2-Clause, MIT, Apache-2.0 only — no GPL in `kernel/` or `shared/` (per `CLAUDE.md` crate rules).
+- **Licenses:** BSD-2-Clause, MIT, Apache-2.0, MPL-2.0 only — no GPL in `kernel/` or `shared/` (per `CLAUDE.md` crate rules).
 - **Bans:** specific crates blacklisted if known-problematic.
 - **Duplicates:** warn on duplicate transitive dependencies.
-- **Advisories:** same RustSec database as cargo-audit, configurable severity thresholds.
+- **Advisories:** same RustSec database as cargo-audit; CI denies vulnerabilities at all severities (thresholds adjustable if policy changes).
 
 **`cargo-vet`** tracks human audit provenance. Each dependency is marked as audited or trusted. When a dependency updates, `cargo-vet` flags it for re-audit. AIOS imports audit records from trusted organizations (e.g., Google's published crate audits) to share the audit burden.
 
@@ -214,7 +214,8 @@ Cross-reference: [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §4 for th
 | Job | Frequency | Tools | Blocks PR? |
 |---|---|---|---|
 | `just check` | Every commit | Clippy, rustfmt, cargo build | Yes |
-| `just audit` | Every PR | cargo-audit, cargo-deny | Yes (High/Critical) |
+| `just audit` | Every PR | cargo-audit | Yes (any severity) |
+| `just deny` | Every PR | cargo-deny | Yes (any severity) |
 | `just miri` | Nightly | Miri on `shared/` and host-testable modules | No (findings triaged) |
 | `just kani` | Nightly (Phase 3+) | Kani proof harnesses | Yes for security modules (Phase 13+) |
 | Rudra scan | Weekly (Phase 2+) | Rudra via Docker | No (findings triaged manually) |

@@ -15,10 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain from rust-toolchain.toml
-        run: |
-          rustup toolchain install --profile minimal
-          rustup show active-toolchain
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools, clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just check
@@ -28,10 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain from rust-toolchain.toml
-        run: |
-          rustup toolchain install --profile minimal
-          rustup show active-toolchain
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just build-release
@@ -41,10 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain from rust-toolchain.toml
-        run: |
-          rustup toolchain install --profile minimal
-          rustup show active-toolchain
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just test
@@ -54,10 +57,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain from rust-toolchain.toml
-        run: |
-          rustup toolchain install --profile minimal
-          rustup show active-toolchain
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - name: Install cargo-audit and cargo-deny
@@ -70,11 +74,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain with miri
-        run: |
-          rustup toolchain install --profile minimal
-          rustup component add miri
-          rustup show active-toolchain
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools, miri
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - run: just miri
