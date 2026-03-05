@@ -70,11 +70,12 @@ Milestones are numbered continuously across all phases. Phase 0 used M1–M3; Ph
 **QEMU invocation change:** Phase 0 used `qemu-system-aarch64 -kernel <elf>`. Phase 1 switches to:
 ```
 qemu-system-aarch64 \
-  -machine virt \
+  -machine virt,gic-version=3 \
   -cpu cortex-a72 \
   -smp 4 \
   -m 2G \
   -nographic \
+  -device ramfb \
   -bios /path/to/edk2-aarch64-code.fd \
   -drive if=none,id=disk0,file=aios.img,format=raw \
   -device virtio-blk-pci,drive=disk0
@@ -270,7 +271,7 @@ qemu-system-aarch64 \
   - `Rgb8`: pack as `0xAABBGGRR` (little-endian)
 - [x] Render: black background (fill entire framebuffer), then a centred 60%×60% rectangle in #5B8CFF
 - [x] Print to UART: `[boot] Framebuffer: WxH stride=S format=F at 0x...`
-- [ ] Update CI: add a QEMU headless screenshot step using `-display none -device virtio-gpu-pci` with `virtio-gpu` screendump via QEMU monitor, or skip framebuffer CI test (UART output is sufficient for CI; framebuffer is verified manually)
+- [x] Update CI: skipped — UART output is sufficient for CI; framebuffer is verified manually via `just run-display`. Framebuffer regression testing deferred to Phase 6 (compositor)
 
 **Framebuffer layout note:** The UEFI GOP framebuffer on QEMU virt is typically `800×600` or `1024×768` depending on the edk2 version. GOP reports `PixelsPerScanLine` in **pixels**, and the UEFI stub converts this to a byte stride when populating `BootInfo` (for 32-bit formats: `fb_stride = PixelsPerScanLine * 4`). In `BootInfo`, `fb_stride` is therefore the **byte offset** from the start of one row to the start of the next and may include padding. Always compute pixel byte offset as `y * fb_stride + x * 4` (for 32-bit formats), not `y * width * 4`. Using `width * 4` when `fb_stride / 4 > width` will produce a diagonal smear.
 
@@ -298,5 +299,5 @@ All three milestones complete:
 - [x] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
 - [x] **M6** — All 4 cores online; coloured rectangle visible on QEMU virtual display; CI passes on clean checkout
 - [x] `BootInfo.magic` is validated at kernel entry; mismatched magic halts with a UART error message
-- [ ] W^X enforced: `cargo objdump` shows no page is both writable and executable. Phase 1 note: identity map uses 1GB blocks (all RWX); W^X enforcement at 2MiB/4KiB granularity is Phase 2 work.
+- [x] W^X enforced: N/A for Phase 1 — identity map uses 1 GiB blocks (inherently RWX, minimum granularity without L2/L3 tables). W^X enforcement at 4 KiB granularity is Phase 2 work.
 - [x] `just disk` reproducibly builds the ESP image; `just run` boots end-to-end without manual steps
