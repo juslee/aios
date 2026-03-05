@@ -272,7 +272,7 @@ qemu-system-aarch64 \
 - [x] Print to UART: `[boot] Framebuffer: WxH stride=S format=F at 0x...`
 - [ ] Update CI: add a QEMU headless screenshot step using `-display none -device virtio-gpu-pci` with `virtio-gpu` screendump via QEMU monitor, or skip framebuffer CI test (UART output is sufficient for CI; framebuffer is verified manually)
 
-**Framebuffer layout note:** The UEFI GOP framebuffer on QEMU virt is typically `800×600` or `1024×768` depending on the edk2 version. `stride` is the **byte offset** from the start of one row to the start of the next — it is already in bytes, not pixels, and may include padding. Always compute pixel byte offset as `y * stride + x * 4` (for 32-bit formats), not `y * width * 4`. Using `width * 4` when stride > width will produce a diagonal smear.
+**Framebuffer layout note:** The UEFI GOP framebuffer on QEMU virt is typically `800×600` or `1024×768` depending on the edk2 version. GOP reports `PixelsPerScanLine` in **pixels**, and the UEFI stub converts this to a byte stride when populating `BootInfo` (for 32-bit formats: `fb_stride = PixelsPerScanLine * 4`). In `BootInfo`, `fb_stride` is therefore the **byte offset** from the start of one row to the start of the next and may include padding. Always compute pixel byte offset as `y * fb_stride + x * 4` (for 32-bit formats), not `y * width * 4`. Using `width * 4` when `fb_stride / 4 > width` will produce a diagonal smear.
 
 **Acceptance:** QEMU virtual display (viewed via VNC or SDL — add `-display gtk` to see it) shows a solid coloured rectangle on a black background. UART shows the framebuffer diagnostics line. CI passes without the framebuffer check (UART-only CI is acceptable).
 

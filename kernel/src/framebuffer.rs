@@ -53,8 +53,8 @@ impl Framebuffer {
         // Pre-clamp to framebuffer bounds.
         let x1 = x.min(self.width);
         let y1 = y.min(self.height);
-        let x2 = (x + w).min(self.width);
-        let y2 = (y + h).min(self.height);
+        let x2 = x.saturating_add(w).min(self.width);
+        let y2 = y.saturating_add(h).min(self.height);
 
         let stride_u32 = (self.stride / 4) as usize;
 

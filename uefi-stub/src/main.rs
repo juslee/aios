@@ -209,6 +209,8 @@ fn acquire_gop(boot_info: &mut BootInfo) {
                 "Unsupported GOP pixel format {:?}, skipping framebuffer",
                 mode_info.pixel_format()
             );
+            // Explicitly clear framebuffer base so callers see no framebuffer.
+            boot_info.framebuffer = 0;
             return;
         }
     };
