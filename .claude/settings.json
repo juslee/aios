@@ -55,9 +55,7 @@
       "Bash(objdump *)"
     ],
     "deny": [
-      "Bash(rm -rf /)*",
-      "Bash(curl *)",
-      "Bash(wget *)"
+      "Bash(rm -rf /)*"
     ]
   }
 }
