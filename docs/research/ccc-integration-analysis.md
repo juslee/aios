@@ -373,8 +373,8 @@ BsdProcessCapabilities {
 - Use compiled clang to compile LLVM C++ sources
 - Full self-hosting achieved
 
-### Phase 16+ (AI integration): CCC as AIRS library
-- Link CCC crate into AIRS for in-process compilation
+### Post-Phase 15 (AI integration): CCC as AIRS library
+- Link CCC crate into AIRS (available since Phase 8) for in-process compilation
 - Implement AI-guided pass ordering
 - Add PAC/BTI/MTE codegen to AArch64 backend
 
@@ -481,8 +481,8 @@ Step 8: Native rustc compiles the AIOS kernel
 **Timeline estimate:**
 - Steps 1-2: Phase 15a (musl port)
 - Steps 3-5: Phase 15f (self-hosting with clang)
-- Steps 6-7: Phase 16+ (Rust self-hosting)
-- Step 8: Phase 17+ (full OS self-hosting)
+- Steps 6-7: Post-Phase 15 (Rust self-hosting)
+- Step 8: Post-Phase 15 (full OS self-hosting)
 
 ### 8.3 Alternative: Skip CCC, Cross-Compile Everything
 
