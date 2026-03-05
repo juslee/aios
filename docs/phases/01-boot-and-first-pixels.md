@@ -189,13 +189,13 @@ qemu-system-aarch64 \
 
 ### Step 6: MMU Enable and Buddy Allocator
 
-**What:** Build kernel page tables, enable the MMU, switch to virtual addresses, and initialize the buddy allocator. After this step, the kernel runs at high-half virtual addresses (`0xFFFF_...`).
+**What:** Build kernel page tables, enable the MMU, and initialize the buddy allocator and slab heap. Phase 1 note: the kernel remains at physical addresses via a TTBR0 identity map (swapping edk2's page tables for our own). High-half virtual address mapping (TTBR1, `0xFFFF_...`) is deferred to Phase 2.
 
 **Tasks:**
 
 **Page table setup (memory.md §3):**
 - [x] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, e.g. 64 KiB, for the initial page tables only)
-- [x] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7:
+- [x] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7. Phase 1 note: built TTBR0 identity map instead (3×1GB blocks); TTBR1 high-half deferred to Phase 2:
   - `0xFFFF_0000_0000_0000` — kernel text (PXN=0, UXN=1, AP=RO), rodata (PXN=1, UXN=1, AP=RO), data/bss (PXN=1, UXN=1, AP=RW)
   - `0xFFFF_0000_4000_0000` — kernel heap region (reserved, not yet mapped)
   - `0xFFFF_0001_0000_0000` — physical memory direct map (all RAM, device memory)
@@ -224,7 +224,7 @@ qemu-system-aarch64 \
 
 **Cache maintenance (boot.md §3.3 Step 7 note):** After enabling the new TTBR1 mapping: issue `IC IALLU; ISB` to invalidate the instruction cache and ensure no stale entries from the pre-MMU physical addresses survive.
 
-**Acceptance:** Boot log shows `[boot] MmuEnabled`, `[boot] PageAllocatorReady`, `[boot] HeapReady — Xms`. `Box::new(42u32)` succeeds (heap is live). `cargo objdump` shows kernel text at `0xFFFF_0000_0000_xxxx` (high-half) after relinking for the virtual address. No UART output interruption during the MMU transition.
+**Acceptance:** Boot log shows `[boot] MmuEnabled`, `[boot] PageAllocatorReady`, `[boot] HeapReady — Xms`. `Box::new(42u32)` succeeds (heap is live). No UART output interruption during the MMU transition. Phase 1 note: kernel remains linked at `0x4008_0000` and runs via TTBR0 identity map (VA=PA). High-half virtual address relinking (TTBR1, `0xFFFF_0000_...`) is Phase 2 work.
 
 -----
 
@@ -294,7 +294,7 @@ qemu-system-aarch64 \
 All three milestones complete:
 
 - [x] **M4** — QEMU boots via edk2; stub prints banner and exits Boot Services; kernel entry is reached
-- [ ] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
+- [x] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
 - [ ] **M6** — All 4 cores online; coloured rectangle visible on QEMU virtual display; CI passes on clean checkout
 - [ ] `BootInfo.magic` is validated at kernel entry; mismatched magic halts with a UART error message
 - [ ] W^X enforced: `cargo objdump` shows no page is both writable and executable

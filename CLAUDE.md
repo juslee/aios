@@ -16,7 +16,7 @@ Linker script:  emitted via build.rs (not .cargo/config.toml)
 Relocation:     static (relocation-model=static throughout all phases)
 QEMU machine:   virt, cpu=cortex-a72, -smp 4 -m 2G
 UART:           PL011 at 0x0900_0000 (QEMU); DTB-sourced Phase 1+
-Kernel load:    0x4008_0000 physical (Phase 0), virtual 0xFFFF_0000_0000_0000+ (Phase 1+)
+Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); virtual 0xFFFF_0000_0000_0000+ (Phase 2+)
 ```
 
 ---
@@ -312,7 +312,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt, spin
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence Steps 1-6, extern crate alloc
