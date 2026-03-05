@@ -42,7 +42,21 @@ run: disk
         -nographic \
         -bios {{edk2_fw}} \
         -drive if=none,id=disk0,file={{disk_img}},format=raw \
-        -device virtio-blk-pci,drive=disk0
+        -device virtio-blk-pci,drive=disk0 \
+        -device ramfb
+
+# Build and launch QEMU with display (for visual framebuffer verification)
+run-display: disk
+    qemu-system-aarch64 \
+        -machine virt,gic-version=3 \
+        -cpu cortex-a72 \
+        -smp 4 \
+        -m 2G \
+        -serial stdio \
+        -bios {{edk2_fw}} \
+        -drive if=none,id=disk0,file={{disk_img}},format=raw \
+        -device virtio-blk-pci,drive=disk0 \
+        -device ramfb
 
 # Build and launch QEMU with GDB server (paused, edk2 boot)
 debug: disk
@@ -55,6 +69,7 @@ debug: disk
         -bios {{edk2_fw}} \
         -drive if=none,id=disk0,file={{disk_img}},format=raw \
         -device virtio-blk-pci,drive=disk0 \
+        -device ramfb \
         -gdb tcp::1234 \
         -S
 

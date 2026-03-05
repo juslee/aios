@@ -197,16 +197,42 @@ fn acquire_gop(boot_info: &mut BootInfo) {
     };
 
     let mode_info = gop.current_mode_info();
+    let (width, height) = mode_info.resolution();
+
+    // Map UEFI pixel format to our PixelFormat enum (shared/src/lib.rs).
+    // BltOnly and unknown formats → skip framebuffer (set base to 0).
+    let pixel_format = match mode_info.pixel_format() {
+        uefi::proto::console::gop::PixelFormat::Bgr => 0u32, // PixelFormat::Bgr8
+        uefi::proto::console::gop::PixelFormat::Rgb => 1u32, // PixelFormat::Rgb8
+        _ => {
+            log::warn!(
+                "Unsupported GOP pixel format {:?}, skipping framebuffer",
+                mode_info.pixel_format()
+            );
+            return;
+        }
+    };
+
     let fb_base = gop.frame_buffer().as_mut_ptr() as u64;
+    // stride() returns pixels per scan line, not bytes. Multiply by 4 for 32-bit formats.
+    let stride_bytes = mode_info.stride() as u32 * 4;
+    let fb_size = stride_bytes as u64 * height as u64;
 
     boot_info.framebuffer = fb_base;
+    boot_info.fb_width = width as u32;
+    boot_info.fb_height = height as u32;
+    boot_info.fb_stride = stride_bytes;
+    boot_info.fb_pixel_format = pixel_format;
+    boot_info.fb_size = fb_size;
 
     log::info!(
-        "GOP: {}x{} format={:?} at {:#x}",
-        mode_info.resolution().0,
-        mode_info.resolution().1,
-        mode_info.pixel_format(),
+        "GOP: {}x{} stride={}B format={} at {:#x} ({}B)",
+        width,
+        height,
+        stride_bytes,
+        pixel_format,
         fb_base,
+        fb_size,
     );
 }
 

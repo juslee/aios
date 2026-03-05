@@ -57,6 +57,17 @@ pub struct BootInfo {
     pub cmdline_addr: u64,
     /// Command line length in bytes.
     pub cmdline_len: u64,
+
+    /// Framebuffer width in pixels (0 = not available).
+    pub fb_width: u32,
+    /// Framebuffer height in pixels.
+    pub fb_height: u32,
+    /// Framebuffer stride in bytes (byte offset from one row to the next).
+    pub fb_stride: u32,
+    /// Framebuffer pixel format: 0 = Bgr8, 1 = Rgb8 (matches PixelFormat repr).
+    pub fb_pixel_format: u32,
+    /// Framebuffer total size in bytes (stride * height).
+    pub fb_size: u64,
 }
 
 /// Classification of physical memory regions.
