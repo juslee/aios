@@ -8,6 +8,7 @@ mod arch {
 }
 mod boot_phase;
 mod dtb;
+mod framebuffer;
 mod mm;
 mod platform;
 mod smp;
@@ -149,6 +150,22 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // --- Step 7: SMP Secondary Core Bringup ---
     let _sched = smp::bring_secondaries_online(&dt, ic.gicr_base());
     advance_boot_phase(EarlyBootPhase::ProcessManagerReady);
+
+    // --- Step 8: Framebuffer and First Pixels ---
+    if let Some(mut fb) = framebuffer::Framebuffer::from_boot_info(boot_info) {
+        println!(
+            "[boot] Framebuffer: {}x{} stride={}B format={} at {:#x}",
+            fb.width(),
+            fb.height(),
+            fb.stride(),
+            fb.format(),
+            fb.base_addr()
+        );
+        fb.render_test_pattern();
+        println!("[boot] Test pattern rendered");
+    } else {
+        println!("[boot] No framebuffer available — skipping display");
+    }
 
     println!("[boot] Boot sequence complete, entering idle loop");
 

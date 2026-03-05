@@ -28,7 +28,12 @@ static SECONDARY_STACKS: StackPointers = StackPointers {
     stacks: UnsafeCell::new([0; MAX_CORES]),
 };
 
-/// Number of online CPUs (boot CPU starts as 1).
+/// Serializes secondary core printing. Core N waits for PRINT_TURN == N
+/// before printing, then stores N+1. Uses only load(Acquire)/store(Release)
+/// — no exclusive load/store pairs — which is safe on NC memory.
+static PRINT_TURN: AtomicUsize = AtomicUsize::new(1);
+
+/// Number of online CPUs. Only written by boot CPU after collecting results.
 static ONLINE_CPUS: AtomicUsize = AtomicUsize::new(1);
 
 /// GIC redistributor base address (set by boot CPU before SMP bringup).
@@ -135,13 +140,14 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
         }
     }
 
-    // Wait for all secondaries to come online (with timeout).
+    // Wait for all secondaries to print (PRINT_TURN reaches cpu_count).
+    // Uses only load(Acquire) — no exclusive pairs — safe on NC memory.
     let start = crate::boot_phase::boot_elapsed_ms();
-    while ONLINE_CPUS.load(Ordering::Acquire) < cpu_count {
+    while PRINT_TURN.load(Ordering::Acquire) < cpu_count {
         if crate::boot_phase::boot_elapsed_ms() - start > 100 {
             crate::println!(
                 "[boot] SMP timeout: {}/{} cores online",
-                ONLINE_CPUS.load(Ordering::Relaxed),
+                PRINT_TURN.load(Ordering::Acquire),
                 cpu_count
             );
             break;
@@ -149,7 +155,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
         core::hint::spin_loop();
     }
 
-    crate::println!("[boot] {} CPUs online", ONLINE_CPUS.load(Ordering::Relaxed));
+    let online = PRINT_TURN.load(Ordering::Acquire);
+    ONLINE_CPUS.store(online, Ordering::Relaxed);
+    crate::println!("[boot] {} CPUs online", online);
     sched
 }
 
@@ -162,10 +170,16 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     let gicr_base = GICR_BASE.load(Ordering::Relaxed);
     crate::arch::aarch64::gic::init_gicv3_secondary(gicr_base, core_id);
 
+    // Wait for our turn to print (serializes UART output across cores).
+    // Uses only load(Acquire) — no exclusive pairs — safe on NC memory.
+    while PRINT_TURN.load(Ordering::Acquire) != core_id {
+        core::hint::spin_loop();
+    }
+
     crate::println!("[boot] Core {} online", core_id);
 
-    // Signal that this core is online.
-    ONLINE_CPUS.fetch_add(1, Ordering::Release);
+    // Signal next core's turn to print.
+    PRINT_TURN.store(core_id + 1, Ordering::Release);
 
     // Enter idle loop — scheduler assigns work in Phase 3.
     loop {
