@@ -35,7 +35,7 @@ disk: build build-stub
 # Build and launch QEMU with edk2 UEFI firmware
 run: disk
     qemu-system-aarch64 \
-        -machine virt \
+        -machine virt,gic-version=3 \
         -cpu cortex-a72 \
         -smp 4 \
         -m 2G \
@@ -47,7 +47,7 @@ run: disk
 # Build and launch QEMU with GDB server (paused, edk2 boot)
 debug: disk
     qemu-system-aarch64 \
-        -machine virt \
+        -machine virt,gic-version=3 \
         -cpu cortex-a72 \
         -smp 4 \
         -m 2G \
@@ -61,7 +61,7 @@ debug: disk
 # Phase 0 direct kernel boot (no UEFI, for quick debugging)
 run-direct: build
     qemu-system-aarch64 \
-        -machine virt \
+        -machine virt,gic-version=3 \
         -cpu cortex-a72 \
         -smp 4 \
         -m 2G \

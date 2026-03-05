@@ -1,35 +1,108 @@
-//! PL011 UART driver for QEMU virt machine.
+//! PL011 UART driver.
 //!
-//! Phase 0: hardcoded MMIO at 0x0900_0000. QEMU pre-initializes the PL011,
-//! so no baud rate configuration is needed. Phase 1+ uses the HAL Platform
-//! trait and reads the base address from the device tree.
+//! Supports two modes:
+//! 1. Early boot: hardcoded base 0x0900_0000 (QEMU pre-initialized).
+//! 2. Post-DTB: full PL011 initialization from DTB-sourced base address
+//!    with baud rate programming (required on real hardware).
 
 use core::fmt;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-/// PL011 UART base address on QEMU virt (UART0).
-const UART_BASE: usize = 0x0900_0000;
+/// Current UART base address — starts with QEMU default, updated after DTB parse.
+static UART_BASE_ADDR: AtomicUsize = AtomicUsize::new(0x0900_0000);
 
-/// UART Data Register offset.
+// PL011 register offsets (hal.md §4.3)
 const UARTDR: usize = 0x000;
-/// UART Flag Register offset.
 const UARTFR: usize = 0x018;
-/// TXFF (Transmit FIFO Full) flag — bit 5 of UARTFR.
-const TXFF: u32 = 1 << 5;
+const UARTIBRD: usize = 0x024;
+const UARTFBRD: usize = 0x028;
+const UARTLCR_H: usize = 0x02C;
+const UARTCR: usize = 0x030;
+
+// Flag register bits
+const FR_TXFF: u32 = 1 << 5;
+const FR_BUSY: u32 = 1 << 3;
+
+/// PL011 UART handle returned by init_pl011().
+#[allow(dead_code)]
+pub struct Uart {
+    base: usize,
+}
+
+/// Perform full PL011 initialization at the given base address.
+///
+/// Programs baud rate to 115200 with 24 MHz UART clock (IBRD=13, FBRD=1),
+/// 8N1 with FIFO enabled. Updates the global UART base so print!/println!
+/// continue to work.
+pub fn init_pl011(base: usize) -> Uart {
+    // SAFETY: All writes are to PL011 MMIO registers at the DTB-provided
+    // base address. The initialization sequence follows the PL011 TRM.
+    unsafe {
+        // 1. Disable UART: clear CR.UARTEN (bit 0)
+        mmio_write32(base + UARTCR, 0);
+
+        // 2. Wait for any in-progress transmission (poll FR.BUSY)
+        let mut timeout = 100_000u32;
+        while mmio_read32(base + UARTFR) & FR_BUSY != 0 {
+            timeout -= 1;
+            if timeout == 0 {
+                break;
+            }
+        }
+
+        // 3. Flush FIFO: clear LCR_H.FEN (bit 4) — writing 0 flushes
+        mmio_write32(base + UARTLCR_H, 0);
+
+        // 4. Program baud rate: 24 MHz / (16 * 115200) = 13.0208...
+        //    IBRD = 13, FBRD = round(0.0208 * 64) = 1
+        mmio_write32(base + UARTIBRD, 13);
+        mmio_write32(base + UARTFBRD, 1);
+
+        // 5. Line control: 8-bit, 1 stop, no parity, FIFO enabled
+        //    LCR_H = 0x70 (WLEN=0b11 [8-bit] | FEN [FIFO enable])
+        mmio_write32(base + UARTLCR_H, 0x70);
+
+        // 6. Re-enable UART: CR = 0x301 (UARTEN | TXE | RXE)
+        mmio_write32(base + UARTCR, 0x301);
+    }
+
+    // Update global base for print!/println! macros
+    UART_BASE_ADDR.store(base, Ordering::Relaxed);
+
+    Uart { base }
+}
+
+/// Update the UART base address (e.g., after MMU maps MMIO to virtual addresses).
+#[allow(dead_code)]
+pub fn update_base(new_base: usize) {
+    UART_BASE_ADDR.store(new_base, Ordering::Relaxed);
+}
 
 /// Write a single byte to the PL011 UART.
-///
-/// Spins until the transmit FIFO has space, then writes the byte.
 pub fn putc(byte: u8) {
-    // SAFETY: UART base 0x0900_0000 is valid MMIO on QEMU virt. QEMU maps
-    // this region unconditionally. Writing to DR after checking TXFF ensures
-    // the FIFO is not full. On non-QEMU hardware this address may not be
-    // mapped, but Phase 0 only targets QEMU.
+    let base = UART_BASE_ADDR.load(Ordering::Relaxed);
+    // SAFETY: UART base is a valid PL011 MMIO address (set by init or default).
     unsafe {
-        let fr = (UART_BASE + UARTFR) as *const u32;
-        let dr = (UART_BASE + UARTDR) as *mut u32;
+        while mmio_read32(base + UARTFR) & FR_TXFF != 0 {}
+        mmio_write32(base + UARTDR, byte as u32);
+    }
+}
 
-        while core::ptr::read_volatile(fr) & TXFF != 0 {}
-        core::ptr::write_volatile(dr, byte as u32);
+#[inline(always)]
+unsafe fn mmio_read32(addr: usize) -> u32 {
+    core::ptr::read_volatile(addr as *const u32)
+}
+
+#[inline(always)]
+unsafe fn mmio_write32(addr: usize, val: u32) {
+    core::ptr::write_volatile(addr as *mut u32, val);
+}
+
+#[allow(dead_code)]
+impl Uart {
+    /// Get the base address of this UART.
+    pub fn base(&self) -> usize {
+        self.base
     }
 }
 
@@ -49,8 +122,6 @@ impl fmt::Write for UartWriter {
 }
 
 /// Write formatted arguments to the UART.
-///
-/// Manages the mutable writer instance so callers don't need to.
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     let mut writer = UartWriter;

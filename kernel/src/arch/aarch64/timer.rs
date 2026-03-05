@@ -1,0 +1,97 @@
+//! ARM Generic Timer driver.
+//!
+//! Configures the physical timer (CNTP) for a 1 ms scheduler tick.
+//! Per hal.md §4.2.
+
+use crate::arch::aarch64::gic::InterruptController;
+
+/// ARM Generic Timer state.
+#[allow(dead_code)]
+pub struct Timer {
+    frequency_hz: u64,
+    tick_interval: u64,
+    timer_irq: u32,
+}
+
+/// Read CNTFRQ_EL0 (timer frequency).
+#[inline(always)]
+fn read_cntfrq() -> u64 {
+    let val: u64;
+    // SAFETY: CNTFRQ_EL0 is always readable at EL1.
+    unsafe { core::arch::asm!("mrs {}, CNTFRQ_EL0", out(reg) val) };
+    val
+}
+
+/// Read CNTVCT_EL0 (virtual timer count).
+#[allow(dead_code)]
+#[inline(always)]
+pub fn read_counter() -> u64 {
+    let val: u64;
+    // SAFETY: CNTVCT_EL0 is always readable at EL1.
+    unsafe { core::arch::asm!("mrs {}, CNTVCT_EL0", out(reg) val) };
+    val
+}
+
+/// Initialize the ARM Generic Timer and register its interrupt in the GIC.
+///
+/// Programs a 1 ms tick on the physical timer (CNTP) and enables PPI `irq`
+/// in the GIC. The timer fires but interrupts remain masked at PSTATE level
+/// until the scheduler unmasks them (Phase 3).
+pub fn init_generic_timer(irq: u32, ic: &InterruptController) -> Timer {
+    let frequency_hz = read_cntfrq();
+    assert!(
+        frequency_hz > 0,
+        "CNTFRQ_EL0 is zero — timer not configured"
+    );
+
+    let tick_interval = frequency_hz / 1000; // 1 ms tick
+
+    // SAFETY: System register writes for timer configuration at EL1.
+    unsafe {
+        // Program physical timer compare value for 1 ms
+        core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) tick_interval);
+
+        // Enable physical timer: CNTP_CTL_EL0 bit 0 = ENABLE, bit 1 = IMASK (0 = not masked)
+        core::arch::asm!("msr CNTP_CTL_EL0, {}", in(reg) 1u64);
+
+        core::arch::asm!("isb");
+    }
+
+    // Enable the timer PPI in the GIC
+    ic.enable_irq(irq);
+
+    Timer {
+        frequency_hz,
+        tick_interval,
+        timer_irq: irq,
+    }
+}
+
+#[allow(dead_code)]
+impl Timer {
+    /// Current counter value.
+    pub fn now(&self) -> u64 {
+        read_counter()
+    }
+
+    /// Timer frequency in Hz.
+    pub fn frequency(&self) -> u64 {
+        self.frequency_hz
+    }
+
+    /// Timer interrupt INTID.
+    pub fn irq(&self) -> u32 {
+        self.timer_irq
+    }
+
+    /// Ticks per scheduler interval (1 ms).
+    pub fn tick_interval(&self) -> u64 {
+        self.tick_interval
+    }
+
+    /// Set the next timer deadline (ticks from now).
+    pub fn set_next_deadline(&self, ticks: u64) {
+        // SAFETY: CNTP_TVAL_EL0 write is safe at EL1.
+        unsafe { core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) ticks) };
+    }
+}

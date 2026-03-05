@@ -86,3 +86,49 @@ pub enum PixelFormat {
     Bgr8 = 0,
     Rgb8 = 1,
 }
+
+/// UEFI memory descriptor — matches the EFI_MEMORY_DESCRIPTOR layout.
+///
+/// The UEFI stub stores the raw memory map returned by ExitBootServices().
+/// The kernel iterates these via `BootInfo.memory_map_addr` with stride
+/// `BootInfo.memory_map_entry_size` (which may exceed `size_of::<MemoryDescriptor>()`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MemoryDescriptor {
+    /// UEFI memory type (EFI_MEMORY_TYPE). Values 0–13 map to our MemoryType enum.
+    pub ty: u32,
+    /// Padding to align phys_start to 8 bytes (UEFI ABI requirement).
+    pub _pad: u32,
+    /// Physical address of the start of the memory region.
+    pub phys_start: u64,
+    /// Virtual address (set by SetVirtualAddressMap; unused by kernel).
+    pub virt_start: u64,
+    /// Number of 4 KiB pages in the region.
+    pub page_count: u64,
+    /// Memory attributes (EFI_MEMORY_ATTRIBUTES).
+    pub attribute: u64,
+}
+
+impl MemoryDescriptor {
+    /// Convert the raw UEFI memory type to our MemoryType enum.
+    ///
+    /// UEFI memory types: 0=Reserved, 1=LoaderCode, 2=LoaderData,
+    /// 3=BootServicesCode, 4=BootServicesData, 5=RuntimeServicesCode,
+    /// 6=RuntimeServicesData, 7=Conventional, 8=Unusable,
+    /// 9=ACPIReclaim, 10=ACPINvs, 11=MMIO, 12=MMIOPortSpace, 13=PalCode.
+    pub fn memory_type(&self) -> MemoryType {
+        match self.ty {
+            1 => MemoryType::LoaderCode,
+            2 => MemoryType::LoaderData,
+            3 => MemoryType::BootServicesCode,
+            4 => MemoryType::BootServicesData,
+            5 => MemoryType::RuntimeServicesCode,
+            6 => MemoryType::RuntimeServicesData,
+            7 => MemoryType::Conventional,
+            9 => MemoryType::AcpiReclaimable,
+            10 => MemoryType::AcpiNvs,
+            11 | 12 => MemoryType::MemoryMappedIO,
+            _ => MemoryType::Reserved,
+        }
+    }
+}
