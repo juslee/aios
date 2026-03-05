@@ -94,7 +94,8 @@ pub unsafe fn init_mmu() {
     let l0_addr = TTBR0_L0.entries.get() as u64;
     let l1_addr = TTBR0_L1.entries.get() as u64;
 
-    // Build identity map (TTBR0): 3 × 1 GB blocks covering 0x0000_0000–0xBFFF_FFFF
+    // SAFETY: UnsafeCell dereferences are safe because init_mmu is called
+    // exactly once from the boot CPU with no concurrent access to these statics.
     let l0 = &mut *TTBR0_L0.entries.get();
     let l1 = &mut *TTBR0_L1.entries.get();
 
@@ -107,7 +108,8 @@ pub unsafe fn init_mmu() {
     // Block 2: 0x8000_0000 – RAM (rest of 2 GB)
     l1[2] = l1_block_descriptor(0x8000_0000, MAIR_NORMAL_IDX, false);
 
-    // Ensure all table writes are visible before TTBR swap
+    // SAFETY: DSB SY is a data synchronization barrier — a hint instruction
+    // safe at EL1. Ensures all page table writes are visible before TTBR swap.
     core::arch::asm!("dsb sy");
 
     // Swap TTBR0 to our identity map page tables.
@@ -116,6 +118,9 @@ pub unsafe fn init_mmu() {
     // We skip pre-swap TLBI: stale edk2 TLB entries map identity VA→PA
     // (same as ours), so they're harmless. New entries from our tables will
     // be filled on TLB misses.
+    // SAFETY: l0_addr points to a valid, page-aligned L0 page table built
+    // above. Writing TTBR0_EL1 at EL1 is architecturally permitted. The ISB
+    // ensures subsequent instruction fetches use the new translation tables.
     let ttbr0 = l0_addr;
     core::arch::asm!(
         "msr TTBR0_EL1, {ttbr0}",
@@ -123,11 +128,12 @@ pub unsafe fn init_mmu() {
         ttbr0 = in(reg) ttbr0,
     );
 
-    // Skip broadcast TLBI: `tlbi alle1` + `dsb sy` hangs because DSB waits
-    // for TLBI completion on all PEs, including secondary cores parked in WFE.
-    // This is safe: stale edk2 TLB entries map identity (VA=PA), same as our
-    // tables. New entries fill on TLB miss from our page tables. Local TLBI
-    // on this core only:
+    // SAFETY: TLBI and DSB are TLB maintenance instructions safe at EL1.
+    // We use VM-local TLBI + non-shareable DSB instead of broadcast TLBI +
+    // DSB SY because the latter hangs — DSB SY waits for TLBI completion on
+    // all PEs, including secondary cores parked in WFE. This is correct:
+    // stale edk2 TLB entries map identity (VA=PA), same as our tables.
+    // New entries fill on TLB miss from our page tables.
     core::arch::asm!(
         "tlbi vmalle1", // VM-local, not broadcast
         "dsb nsh",      // non-shareable domain — this core only

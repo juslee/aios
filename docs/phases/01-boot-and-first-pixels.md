@@ -119,7 +119,7 @@ qemu-system-aarch64 \
 **What:** Implement a minimal flattened device tree (FDT) parser sufficient to complete early boot. Full DTB parsing is not needed — only the nodes the kernel queries during Steps 3–6.
 
 **Tasks:**
-- [x] Add `fdt` crate (or implement a minimal parser) — must be `no_std` compatible. The parser needs: root `compatible` string, `/chosen/stdout-path`, CPU nodes (for SMP count and MPIDR values), `/psci` node (conduit and `cpu_on` function ID), memory nodes (base and size for each RAM region), GICv3 distributor and redistributor base addresses, ARM Generic Timer interrupt numbers
+- [x] Add `fdt` crate (or implement a minimal parser) — must be `no_std` compatible. Used `fdt-parser` 0.5 (MIT, `no_std`). The parser needs: root `compatible` string, `/chosen/stdout-path`, CPU nodes (for SMP count and MPIDR values), `/psci` node (conduit and `cpu_on` function ID), memory nodes (base and size for each RAM region), GICv3 distributor and redistributor base addresses, ARM Generic Timer interrupt numbers
 - [x] Implement `detect_platform(dt: &DeviceTree) -> Box<dyn Platform>` matching hal.md §2 (compatible string table) and §3 (Platform trait). For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
 - [x] Implement `QemuPlatform` struct implementing the `Platform` trait skeleton (hal.md §3). Phase 1 only needs `init_uart`, `init_interrupts`, and `init_timer` — stub the remaining four with `unimplemented!()` for now
 - [x] Advance `EarlyBootPhase` to `DeviceTreeParsed` and print to UART

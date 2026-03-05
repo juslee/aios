@@ -62,7 +62,9 @@ impl SlabCache {
     /// # Safety
     /// `ptr` must have been returned by `alloc` on this same cache.
     unsafe fn dealloc(&mut self, ptr: *mut u8) {
-        // Write current head into the freed object's first 8 bytes
+        // SAFETY: ptr was returned by alloc on this cache, so it points to a
+        // valid, aligned object of at least 8 bytes (minimum cache size).
+        // Writing the free list next-pointer into the first 8 bytes is safe.
         core::ptr::write(ptr as *mut usize, self.free_head);
         self.free_head = ptr as usize;
     }
@@ -74,10 +76,13 @@ impl SlabCache {
 
         self.pages_used += 1;
 
-        // Carve the page into objects and link them
+        // Carve the page into objects and link them into the free list
         let count = PAGE_SIZE / self.object_size;
         for i in (0..count).rev() {
             let obj_addr = page_addr + i * self.object_size;
+            // SAFETY: page_addr is a valid page from buddy. Each obj_addr is
+            // aligned to object_size (>= 8) within the page. Writing the next
+            // pointer into the first 8 bytes of each free object is safe.
             core::ptr::write(obj_addr as *mut usize, self.free_head);
             self.free_head = obj_addr;
         }
@@ -123,12 +128,12 @@ pub static SLAB: spin::Mutex<SlabAllocator> = spin::Mutex::new(SlabAllocator::ne
 /// Buddy allocator must be initialized. Identity map must be active.
 pub unsafe fn alloc(layout: Layout) -> *mut u8 {
     if layout.size() > PAGE_SIZE {
-        // Large allocation: get pages directly from buddy
-        let order = (layout.size() + PAGE_SIZE - 1)
-            .next_power_of_two()
-            .trailing_zeros() as usize;
-        let page_order = order.saturating_sub(12); // convert byte order to page order
+        // Large allocation: get pages directly from buddy.
+        // Round up to the next page count, then find the order.
+        let pages = layout.size().div_ceil(PAGE_SIZE);
+        let page_order = pages.next_power_of_two().trailing_zeros() as usize;
         let mut buddy = super::buddy::BUDDY.lock();
+        // SAFETY: buddy allocator is initialized and identity map is active.
         return buddy
             .alloc_pages(page_order)
             .map_or(core::ptr::null_mut(), |a| a as *mut u8);
@@ -152,12 +157,11 @@ pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
     }
 
     if layout.size() > PAGE_SIZE {
-        // Large allocation: return pages to buddy
-        let order = (layout.size() + PAGE_SIZE - 1)
-            .next_power_of_two()
-            .trailing_zeros() as usize;
-        let page_order = order.saturating_sub(12);
+        // Large allocation: return pages to buddy (must match alloc order)
+        let pages = layout.size().div_ceil(PAGE_SIZE);
+        let page_order = pages.next_power_of_two().trailing_zeros() as usize;
         let mut buddy = super::buddy::BUDDY.lock();
+        // SAFETY: ptr was returned by alloc_pages with the same order.
         buddy.free_pages(ptr as usize, page_order);
         return;
     }

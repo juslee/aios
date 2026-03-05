@@ -98,9 +98,6 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // --- Step 6: MMU, Buddy Allocator, Heap ---
 
-    // Enable MMU with identity map (TTBR0) + direct map (TTBR1).
-    // SAFETY: Called once from boot CPU. Page table statics are not accessed
-    // concurrently. Identity map covers currently executing code at 0x40080000.
     // SAFETY: Called once from boot CPU. Page table statics are not accessed
     // concurrently. Identity map covers currently executing code at 0x40080000.
     unsafe { crate::arch::aarch64::mmu::init_mmu() };

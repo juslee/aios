@@ -317,7 +317,7 @@ aios/
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence Steps 1-6, extern crate alloc
 │       ├── boot_phase.rs EarlyBootPhase enum, advance_boot_phase(), boot timing
-│       ├── dtb.rs        DeviceTree wrapper (fdt crate), DTB parse + QEMU defaults
+│       ├── dtb.rs        DeviceTree wrapper (fdt-parser crate), DTB parse + QEMU defaults
 │       ├── platform/
 │       │   ├── mod.rs    Platform trait, detect_platform()
 │       │   └── qemu.rs   QemuPlatform: init_uart, init_interrupts, init_timer
