@@ -97,9 +97,56 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     println!("[boot]   CNTFRQ={}Hz", timer.frequency());
 
     // --- Step 6: MMU, Buddy Allocator, Heap ---
-    // (Implemented in Step 6 commit)
 
-    println!("[boot] Boot sequence complete (pre-MMU), entering idle loop");
+    // Enable MMU with identity map (TTBR0) + direct map (TTBR1).
+    // SAFETY: Called once from boot CPU. Page table statics are not accessed
+    // concurrently. Identity map covers currently executing code at 0x40080000.
+    // SAFETY: Called once from boot CPU. Page table statics are not accessed
+    // concurrently. Identity map covers currently executing code at 0x40080000.
+    unsafe { crate::arch::aarch64::mmu::init_mmu() };
+    advance_boot_phase(EarlyBootPhase::MmuEnabled);
+
+    // Initialize buddy allocator from UEFI memory map.
+    extern "C" {
+        static __kernel_end: u8;
+    }
+    let kernel_start = boot_info.kernel_phys_base as usize;
+    // SAFETY: __kernel_end is defined by the linker script.
+    let kernel_end = unsafe { &__kernel_end as *const u8 as usize };
+    // Use the larger of BootInfo's kernel_size and linker-computed end.
+    let kernel_end = kernel_end.max(kernel_start + boot_info.kernel_size as usize);
+
+    // SAFETY: Memory map is valid, MMU identity map is active, kernel range
+    // is correctly computed from BootInfo and linker symbols.
+    let free_pages = unsafe {
+        crate::mm::buddy::init(
+            boot_info.memory_map_addr,
+            boot_info.memory_map_count,
+            boot_info.memory_map_entry_size,
+            kernel_start,
+            kernel_end,
+        )
+    };
+    println!(
+        "[boot] PageAllocatorReady — {} pages free ({} MiB)",
+        free_pages,
+        (free_pages * 4096) / (1024 * 1024)
+    );
+    advance_boot_phase(EarlyBootPhase::PageAllocatorReady);
+
+    // Switch global allocator from bump to slab (backed by buddy).
+    crate::mm::enable_slab_allocator();
+    advance_boot_phase(EarlyBootPhase::HeapReady);
+
+    // Verify heap works with a Box allocation.
+    {
+        use alloc::boxed::Box;
+        let x = Box::new(42u32);
+        assert_eq!(*x, 42);
+        println!("[boot] Box::new(42) = {} — heap verified", *x);
+    }
+
+    println!("[boot] Boot sequence complete, entering idle loop");
 
     loop {
         // SAFETY: wfe is a hint instruction that puts the core in low-power

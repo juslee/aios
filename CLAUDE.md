@@ -171,9 +171,11 @@ When implementing Phase N:
 ## File Placement
 
 ```
-kernel/src/arch/aarch64/       aarch64-specific code (uart.rs, exceptions.rs, boot.S, linker.ld)
+kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, boot.S, linker.ld)
 kernel/src/arch/aarch64/mod.rs re-exports arch-specific items
-kernel/src/                    platform-agnostic kernel logic
+kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
+kernel/src/mm/                 Memory management (bump, buddy, slab, GlobalAlloc)
+kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs)
 shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, etc.)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
 docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
@@ -223,6 +225,13 @@ PSCI conduit on QEMU:         hvc; on Pi 4/5: smc
 FPU enable sequence:          mrs x1, CPACR_EL1; orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb
 QEMU boot to EL:              EL1 directly (no EL2 setup needed)
 MMU off at entry (Phase 0):   physical = virtual; MMIO works directly
+edk2 MMU state post-EBS:      MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
+edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr3=WB)
+Phase 1 MMU strategy:         TTBR0-only swap; reuse edk2 MAIR/TCR (changing while MMU on = UNPREDICTABLE)
+Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1
+TLBI with SMP:                Use tlbi vmalle1 + dsb nsh (not tlbi alle1 + dsb sy — broadcast hangs with parked cores)
+Buddy allocator:              Orders 0-10 (4KiB-4MiB), ~522K pages free on QEMU 2G
+Slab allocator:               10 size classes (8-4096B), backed by buddy pages
 Vector table alignment:       section ALIGN(2048) in linker.ld + .balign 128 per entry in asm
 Boot stub vectors section:    .text.vectors (boot.S, early boot safety net)
 Rust vectors section:         .text.rvectors (exceptions.rs, installed from kernel_main)
@@ -281,7 +290,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 1 M4 — UEFI Stub Runs):
+Current (post-Phase 1 M5 — Kernel Boots to Heap):
 
 ```
 aios/
@@ -303,16 +312,29 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml
+│   ├── Cargo.toml        deps: shared, fdt, spin
 │   ├── build.rs          emits linker script path
 │   └── src/
-│       ├── main.rs       kernel_main(boot_info_ptr), BootInfo validation, boot diagnostics
+│       ├── main.rs       kernel_main: full boot sequence Steps 1-6, extern crate alloc
+│       ├── boot_phase.rs EarlyBootPhase enum, advance_boot_phase(), boot timing
+│       ├── dtb.rs        DeviceTree wrapper (fdt crate), DTB parse + QEMU defaults
+│       ├── platform/
+│       │   ├── mod.rs    Platform trait, detect_platform()
+│       │   └── qemu.rs   QemuPlatform: init_uart, init_interrupts, init_timer
+│       ├── mm/
+│       │   ├── mod.rs    Switchable GlobalAlloc (bump → slab), enable_slab_allocator()
+│       │   ├── bump.rs   128 KiB static bump allocator for early boot
+│       │   ├── buddy.rs  Buddy allocator orders 0-10, init from UEFI memory map
+│       │   └── slab.rs   Slab allocator (10 size classes), backed by buddy
 │       └── arch/aarch64/
-│           ├── mod.rs    pub mod uart, pub mod exceptions
-│           ├── boot.S    save x0→x19, FPU, VBAR, park secondaries, BSS zero, restore x0, bl kernel_main
-│           ├── uart.rs   PL011 driver (putc, _print, print!/println! macros)
+│           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu
+│           ├── boot.S    save x0→x19, FPU, VBAR, park secondaries, BSS zero, bl kernel_main
+│           ├── uart.rs   PL011 driver with full init (IBRD/FBRD/LCR_H/CR)
 │           ├── exceptions.rs  Rust exception vector table + CPU register helpers
-│           └── linker.ld .text.boot, .text.vectors, .text.rvectors, stack 16 KiB
+│           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface
+│           ├── timer.rs  ARM Generic Timer: frequency, tick, PPI wiring
+│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks), edk2-compatible
+│           └── linker.ld page-aligned sections with __kernel_end symbol
 ├── uefi-stub/
 │   ├── Cargo.toml        deps: shared, uefi 0.36, log
 │   └── src/
@@ -320,7 +342,7 @@ aios/
 │       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments)
 ├── shared/
 │   ├── Cargo.toml
-│   └── src/lib.rs        BootInfo, PhysAddr, VirtAddr, MemoryType, PixelFormat
+│   └── src/lib.rs        BootInfo, MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat
 └── docs/                 (architecture, phase, and research docs)
 ```
 

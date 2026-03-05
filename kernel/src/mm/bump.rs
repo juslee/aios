@@ -4,7 +4,7 @@
 //! DTB parsing (fdt-parser requires alloc) and early page table construction.
 //! Replaced by the slab allocator once the heap is initialized in Step 6.
 
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// 128 KiB static buffer for early allocations.
@@ -20,33 +20,25 @@ static BUMP_BUFFER: BumpBuffer = BumpBuffer {
 };
 static BUMP_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
-pub struct BumpAllocator;
-
-unsafe impl GlobalAlloc for BumpAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        loop {
-            let current = BUMP_OFFSET.load(Ordering::Relaxed);
-            let base = BUMP_BUFFER.data.as_ptr() as usize;
-            let aligned = (base + current + layout.align() - 1) & !(layout.align() - 1);
-            let offset = aligned - base;
-            let new_offset = offset + layout.size();
-            if new_offset > BUMP_SIZE {
-                return core::ptr::null_mut();
-            }
-            if BUMP_OFFSET
-                .compare_exchange_weak(current, new_offset, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                return aligned as *mut u8;
-            }
+/// Allocate from the bump allocator.
+///
+/// # Safety
+/// Returned pointer is valid for the requested layout. Memory is never freed.
+pub unsafe fn alloc(layout: Layout) -> *mut u8 {
+    loop {
+        let current = BUMP_OFFSET.load(Ordering::Relaxed);
+        let base = BUMP_BUFFER.data.as_ptr() as usize;
+        let aligned = (base + current + layout.align() - 1) & !(layout.align() - 1);
+        let offset = aligned - base;
+        let new_offset = offset + layout.size();
+        if new_offset > BUMP_SIZE {
+            return core::ptr::null_mut();
+        }
+        if BUMP_OFFSET
+            .compare_exchange_weak(current, new_offset, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return aligned as *mut u8;
         }
     }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        // Bump allocator never frees — memory is reclaimed when the slab
-        // allocator takes over in Step 6.
-    }
 }
-
-#[global_allocator]
-static ALLOCATOR: BumpAllocator = BumpAllocator;
