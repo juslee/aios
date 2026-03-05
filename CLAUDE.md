@@ -42,6 +42,7 @@ Kernel load:    0x4008_0000 physical (Phase 0), virtual 0xFFFF_0000_0000_0000+ (
 | Slab allocator & heap | `docs/kernel/memory.md` | §4.1 |
 | IPC & syscalls | `docs/kernel/ipc.md` | All (Phase 3+) |
 | Scheduler | `docs/kernel/scheduler.md` | All (Phase 3+) |
+| Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
 | Space Storage | `docs/storage/spaces.md` | All (Phase 4+) |
 | Flow (smart clipboard) | `docs/storage/flow.md` | All (Phase 11+) |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
@@ -320,7 +321,7 @@ aios/
 ├── shared/
 │   ├── Cargo.toml
 │   └── src/lib.rs        BootInfo, PhysAddr, VirtAddr, MemoryType, PixelFormat
-└── docs/                 (existing architecture + phase docs)
+└── docs/                 (architecture, phase, and research docs)
 ```
 
 ---

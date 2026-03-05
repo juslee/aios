@@ -18,7 +18,7 @@ the capability set is the security boundary.
 │            Declares: runtime, capabilities, schedule         │
 ├─────────────────────────────────────────────────────────────┤
 │                    RuntimeAdapter trait                       │
-│         NativeRuntime  PythonRuntime  TSRuntime  WasmRuntime │
+│  NativeRuntime  PythonRuntime  TypeScriptRuntime  WasmRuntime │
 ├──────┬──────────┬────────────┬───────────────────────────────┤
 │ Rust │  Python  │ TypeScript │           WASM                │
 │native│RustPython│  QuickJS   │         wasmtime              │
@@ -115,8 +115,8 @@ aios agent install ./target/      # Install from local build
 ### How It Works
 
 Python agents run inside an embedded **RustPython** interpreter (pure Rust, no C dependencies).
-The interpreter lives inside the agent process sandbox. PyO3 bindings expose the `AgentContext`
-to Python code.
+The interpreter lives inside the agent process sandbox. RustPython's embedding API exposes the
+`AgentContext` to Python code.
 
 ```python
 from aios_sdk import agent, spaces, ai
@@ -134,7 +134,7 @@ async def my_agent(ctx):
 | Component | Source | License | Phase |
 |---|---|---|---|
 | RustPython interpreter | github.com/RustPython/RustPython | MIT | Phase 12 |
-| PyO3 bindings | github.com/PyO3/pyo3 | Apache-2.0/MIT | Phase 12 |
+| RustPython embedding API | github.com/RustPython/RustPython | MIT | Phase 12 |
 | `aios-sdk` pip package | Built with AIOS | BSD-2-Clause | Phase 12 |
 | Agent-local `site-packages/` | Declared in manifest, installed at install time | — | Phase 12 |
 
@@ -242,7 +242,7 @@ capability gates on which domains the agent can contact.
 | Memory usage | < 1 MB base | ~10+ MB base |
 | Dependencies | Minimal C | Large C++ codebase |
 | AIOS integration | Embeds easily | Requires POSIX layer |
-| Available at | Phase 12 | Phase 21 (via Servo/SpiderMonkey) |
+| Available at | Phase 12 | Phase 15 (via Node.js on POSIX layer) |
 
 QuickJS is chosen for the same reason as RustPython: it's **small, embeddable, and available
 before the POSIX layer.** Agent workloads are I/O-bound (waiting on AIRS, Space queries, network),
@@ -411,7 +411,7 @@ Phase 25:    Linux binary compatibility
 
 **Python Runtime (Phase 12):**
 - [ ] Embed RustPython into agent process
-- [ ] PyO3 bindings for `AgentContext`
+- [ ] RustPython embedding bindings for `AgentContext`
 - [ ] `aios-sdk` pip package
 - [ ] Restricted stdlib implementation (remove dangerous modules)
 - [ ] `open()` / `os.path` redirection to Space API
@@ -477,17 +477,26 @@ All four runtimes enforce identical capability semantics. The `RuntimeAdapter` t
 the abstraction:
 
 ```rust
-trait RuntimeAdapter {
-    fn initialize(&mut self, manifest: &AgentManifest) -> Result<()>;
-    fn execute(&mut self, ctx: AgentContext) -> Result<AgentOutput>;
-    fn capabilities(&self) -> &CapabilitySet;  // Same type for all runtimes
+pub trait RuntimeAdapter: Send + Sync {
+    /// Initialize the runtime (load interpreter, JIT, etc.)
+    fn init(&mut self, manifest: &AgentManifest) -> Result<()>;
+    /// Load the agent's code
+    fn load(&mut self, code: &[u8]) -> Result<()>;
+    /// Create an AgentContext bridge for this runtime
+    fn create_context(&self, channels: &ChannelSet) -> Box<dyn AgentContext>;
+    /// Start the agent's event loop
+    fn run(&mut self, ctx: Box<dyn AgentContext>) -> Result<AgentResult>;
+    /// Signal shutdown
+    fn shutdown(&mut self, deadline: Timestamp);
+    /// Runtime type identifier
+    fn runtime_type(&self) -> RuntimeType;
 }
 
 // Four implementations:
-struct NativeRuntime;      // Rust — direct execution
-struct PythonRuntime;      // RustPython — embedded interpreter
-struct TypeScriptRuntime;  // QuickJS — embedded engine
-struct WasmRuntime;        // wasmtime — AOT-compiled WASM
+pub struct NativeRuntime;      // Rust — direct execution
+pub struct PythonRuntime;      // RustPython or CPython
+pub struct TypeScriptRuntime;  // QuickJS or V8
+pub struct WasmRuntime;        // wasmtime — AOT-compiled WASM
 ```
 
 A Python agent with `[spaces.read, ai.complete]` capabilities can do exactly what a Rust agent
