@@ -246,8 +246,6 @@ Kernel ELF ESP path:          /EFI/AIOS/aios.elf
 ACPI RSDP GUID:               8868e871-e4f1-11d3-bc22-0080c73c8881
 DTB Table GUID:               b1b621d5-f19c-41a5-830b-d9152c69aae0
 uefi crate version:           0.36 (features: alloc, global_allocator, panic_handler, logger)
-PSCI CPU_ON (64-bit):         0xC400_0003
-PSCI conduit on QEMU:         hvc; on Pi 4/5: smc
 SMP secondary entry:          _secondary_entry in boot.S (FPU → VBAR → MMU enable → stack → secondary_main)
 Secondary MMU enable:         MAIR/TCR/TTBR0 write (safe: MMU off) → ISB → DSB SY → SCTLR write → ISB
 GICv3 redistributor spacing:  128 KiB (0x20000) per core

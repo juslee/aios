@@ -75,7 +75,6 @@ qemu-system-aarch64 \
   -smp 4 \
   -m 2G \
   -nographic \
-  -serial stdio \
   -bios /path/to/edk2-aarch64-code.fd \
   -drive if=none,id=disk0,file=aios.img,format=raw \
   -device virtio-blk-pci,drive=disk0

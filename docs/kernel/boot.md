@@ -329,10 +329,10 @@ pub enum EarlyBootPhase {
     EntryPoint,
     /// Exception vectors installed at VBAR_EL1.
     ExceptionVectors,
-    /// UART initialized. kprintln!() works from here.
-    UartReady,
     /// Device tree parsed. Platform detected.
     DeviceTreeParsed,
+    /// UART initialized. kprintln!() works from here.
+    UartReady,
     /// Interrupt controller initialized (GICv3, GICv2, or AIC).
     InterruptsReady,
     /// ARM Generic Timer configured. Timer interrupts enabled.
