@@ -10,6 +10,7 @@ mod boot_phase;
 mod dtb;
 mod mm;
 mod platform;
+mod smp;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;

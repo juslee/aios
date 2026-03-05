@@ -10,8 +10,11 @@ use core::sync::atomic::{AtomicU64, Ordering};
 // ── Boot CPU MMU register state (for secondary core MMU enable) ─────
 // Saved during init_mmu() after TTBR0 swap. Secondary cores load these
 // to enable their MMU with the same configuration as the boot CPU.
+#[no_mangle]
 static BOOT_MAIR: AtomicU64 = AtomicU64::new(0);
+#[no_mangle]
 static BOOT_TCR: AtomicU64 = AtomicU64::new(0);
+#[no_mangle]
 static BOOT_SCTLR: AtomicU64 = AtomicU64::new(0);
 
 // Kernel virtual address space layout (memory.md §3.1)
@@ -37,6 +40,7 @@ struct RawPageTable {
 // by the MMU hardware. No concurrent access during init.
 unsafe impl Sync for RawPageTable {}
 
+#[no_mangle]
 static TTBR0_L0: RawPageTable = RawPageTable {
     entries: UnsafeCell::new([0; 512]),
 };
