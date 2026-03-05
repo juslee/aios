@@ -171,12 +171,12 @@ When implementing Phase N:
 ## File Placement
 
 ```
-kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, boot.S, linker.ld)
-kernel/src/arch/aarch64/mod.rs re-exports arch-specific items
+kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, boot.S, linker.ld)
+kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
 kernel/src/mm/                 Memory management (bump, buddy, slab, GlobalAlloc)
-kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs)
-shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, etc.)
+kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
+shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, etc.)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
 docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
 ```
@@ -245,6 +245,16 @@ Kernel ELF ESP path:          /EFI/AIOS/aios.elf
 ACPI RSDP GUID:               8868e871-e4f1-11d3-bc22-0080c73c8881
 DTB Table GUID:               b1b621d5-f19c-41a5-830b-d9152c69aae0
 uefi crate version:           0.36 (features: alloc, global_allocator, panic_handler, logger)
+PSCI CPU_ON (64-bit):         0xC400_0003
+PSCI conduit on QEMU:         hvc; on Pi 4/5: smc
+SMP secondary entry:          _secondary_entry in boot.S (FPU → VBAR → MMU enable → stack → secondary_main)
+Secondary MMU enable:         MAIR/TCR/TTBR0 write (safe: MMU off) → ISB → DSB SY → SCTLR write → ISB
+GICv3 redistributor spacing:  128 KiB (0x20000) per core
+NC memory atomic limitation:  Exclusive load/store pairs (ldaxr/stlxr) require global exclusive monitor
+                              → needs Inner Shareable + Cacheable. spin::Mutex HANGS on NC memory.
+                              Use only load(Acquire)/store(Release) for inter-core sync in Phase 1.
+GOP framebuffer on QEMU:      800x600 Bgr8, stride=3200B, at ~0xBC7A0000 (NC Normal via L1[1])
+ramfb device:                 -device ramfb in QEMU; provides GOP without a full GPU driver
 ```
 
 ---
@@ -290,7 +300,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 1 M5 — Kernel Boots to Heap):
+Current (post-Phase 1 M6 — First Pixels):
 
 ```
 aios/
@@ -301,7 +311,7 @@ aios/
 ├── Cargo.toml            workspace root (resolver = "2", members: kernel, shared, uefi-stub)
 ├── Cargo.lock            committed for reproducibility
 ├── rust-toolchain.toml   pinned nightly + aarch64-unknown-none + aarch64-unknown-uefi
-├── justfile              build, build-stub, disk, run (edk2), run-direct, check, test, clean
+├── justfile              build, build-stub, disk, run (edk2), run-display, run-direct, check, test, clean
 ├── LICENSE               BSD-2-Clause
 ├── .cargo/
 │   └── config.toml       relocation-model=static for aarch64-unknown-none
@@ -315,9 +325,11 @@ aios/
 │   ├── Cargo.toml        deps: shared, fdt-parser, spin
 │   ├── build.rs          emits linker script path
 │   └── src/
-│       ├── main.rs       kernel_main: full boot sequence Steps 1-6, extern crate alloc
+│       ├── main.rs       kernel_main: full boot sequence Steps 1-8, extern crate alloc
 │       ├── boot_phase.rs EarlyBootPhase enum, advance_boot_phase(), boot timing
-│       ├── dtb.rs        DeviceTree wrapper (fdt-parser crate), DTB parse + QEMU defaults
+│       ├── dtb.rs        DeviceTree wrapper (fdt-parser), DTB parse + QEMU defaults + MPIDR extraction
+│       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main
+│       ├── framebuffer.rs GOP framebuffer driver: fill_rect, render_test_pattern (#5B8CFF)
 │       ├── platform/
 │       │   ├── mod.rs    Platform trait, detect_platform()
 │       │   └── qemu.rs   QemuPlatform: init_uart, init_interrupts, init_timer
@@ -327,22 +339,23 @@ aios/
 │       │   ├── buddy.rs  Buddy allocator orders 0-10, init from UEFI memory map
 │       │   └── slab.rs   Slab allocator (10 size classes), backed by buddy
 │       └── arch/aarch64/
-│           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu
-│           ├── boot.S    save x0→x19, FPU, VBAR, park secondaries, BSS zero, bl kernel_main
+│           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
+│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, MMU enable, stack, branch)
 │           ├── uart.rs   PL011 driver with full init (IBRD/FBRD/LCR_H/CR)
 │           ├── exceptions.rs  Rust exception vector table + CPU register helpers
-│           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface
+│           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface + init_gicv3_secondary
+│           ├── psci.rs   PSCI CPU_ON via HVC/SMC (SMCCC ABI)
 │           ├── timer.rs  ARM Generic Timer: frequency, tick, PPI wiring
-│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks), edk2-compatible
+│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks), edk2-compatible, MMU state export
 │           └── linker.ld page-aligned sections with __kernel_end symbol
 ├── uefi-stub/
 │   ├── Cargo.toml        deps: shared, uefi 0.36, log
 │   └── src/
-│       ├── main.rs       UEFI entry, BootInfo assembly, ExitBootServices, kernel jump
+│       ├── main.rs       UEFI entry, BootInfo assembly (incl. framebuffer), ExitBootServices, kernel jump
 │       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments)
 ├── shared/
 │   ├── Cargo.toml
-│   └── src/lib.rs        BootInfo, MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat
+│   └── src/lib.rs        BootInfo (incl. fb fields), MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat
 └── docs/                 (architecture, phase, and research docs)
 ```
 
