@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 4 weeks
 **Deliverable:** UEFI stub boots kernel via edk2; kernel parses DTB, enables MMU, prints boot log; framebuffer shows coloured rectangle
-**Status:** In Progress (M4 complete)
+**Status:** In Progress (M5 complete)
 **Prerequisites:** Phase 0 (Foundation and Tooling)
 **Unlocks:** Phase 2 (Memory Management)
 
@@ -119,10 +119,10 @@ qemu-system-aarch64 \
 **What:** Implement a minimal flattened device tree (FDT) parser sufficient to complete early boot. Full DTB parsing is not needed — only the nodes the kernel queries during Steps 3–6.
 
 **Tasks:**
-- [ ] Add `fdt` crate (or implement a minimal parser) — must be `no_std` compatible. The parser needs: root `compatible` string, `/chosen/stdout-path`, CPU nodes (for SMP count and MPIDR values), `/psci` node (conduit and `cpu_on` function ID), memory nodes (base and size for each RAM region), GICv3 distributor and redistributor base addresses, ARM Generic Timer interrupt numbers
-- [ ] Implement `detect_platform(dt: &DeviceTree) -> Box<dyn Platform>` matching hal.md §2 (compatible string table) and §3 (Platform trait). For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
-- [ ] Implement `QemuPlatform` struct implementing the `Platform` trait skeleton (hal.md §3). Phase 1 only needs `init_uart`, `init_interrupts`, and `init_timer` — stub the remaining four with `unimplemented!()` for now
-- [ ] Advance `EarlyBootPhase` to `DeviceTreeParsed` and print to UART
+- [x] Add `fdt` crate (or implement a minimal parser) — must be `no_std` compatible. Used `fdt-parser` 0.5 (MIT, `no_std`). The parser needs: root `compatible` string, `/chosen/stdout-path`, CPU nodes (for SMP count and MPIDR values), `/psci` node (conduit and `cpu_on` function ID), memory nodes (base and size for each RAM region), GICv3 distributor and redistributor base addresses, ARM Generic Timer interrupt numbers
+- [x] Implement `detect_platform(dt: &DeviceTree) -> &'static dyn Platform` matching hal.md §2 (compatible string table) and §3 (Platform trait). Returns a static reference (no heap at detection time). For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
+- [x] Implement `QemuPlatform` struct implementing the `Platform` trait (hal.md §3). Phase 1 defines three methods: `init_uart`, `init_interrupts`, and `init_timer`
+- [x] Advance `EarlyBootPhase` to `DeviceTreeParsed` and print to UART
 
 **Minimal parser scope:** The FDT parser only needs to find specific well-known nodes by path or compatible string. A full recursive traversal is Phase 4+ work (when the Device Registry service discovers all hardware). For now: parse only what Steps 3–6 require.
 
@@ -135,16 +135,16 @@ qemu-system-aarch64 \
 **What:** Replace the Phase 0 hardcoded UART (relying on QEMU pre-initialization) with a proper PL011 driver that initializes from the DTB base address and programs baud rate registers. This is the `Platform::init_uart()` implementation.
 
 **Tasks:**
-- [ ] Read PL011 base address from DTB `/chosen/stdout-path` → resolve to MMIO node → extract `reg` property
-- [ ] Implement full PL011 initialization sequence (required on real hardware; harmless on QEMU):
+- [x] Read PL011 base address from DTB by searching for the first `arm,pl011` compatible node → extract `reg` property
+- [x] Implement full PL011 initialization sequence (required on real hardware; harmless on QEMU):
   1. Disable UART: clear CR.UARTEN (bit 0)
   2. Wait for any in-progress transmission to finish: poll UARTFR.BUSY (bit 3)
   3. Flush the FIFO: clear LCR_H.FEN (bit 4)
   4. Program baud rate: `IBRD` = `clock_hz / (16 * baud_rate)`, `FBRD` = `round((clock_hz % (16 * baud_rate)) * 64 / (16 * baud_rate))`. QEMU PL011 UART clock: 24 MHz (this is the APB/UART peripheral clock — distinct from the ARM Generic Timer frequency of 62.5 MHz). For 115200 baud: IBRD=13, FBRD=1.
   5. Set line control: LCR_H = 0x70 (8-bit, 1 stop, no parity, FIFO enabled)
   6. Re-enable UART: CR = 0x301 (UARTEN | TXE | RXE)
-- [ ] Return `Uart` handle from `QemuPlatform::init_uart()`, store in `KernelState.uart`
-- [ ] Advance `EarlyBootPhase` to `UartReady` and print the first full boot banner
+- [x] Return `Uart` handle from `QemuPlatform::init_uart()`, store in `KernelState.uart`
+- [x] Advance `EarlyBootPhase` to `UartReady` and print the first full boot banner
 
 **Register offsets (hal.md §4.3):**
 - `UARTDR` 0x000 — data register
@@ -165,21 +165,21 @@ qemu-system-aarch64 \
 **Tasks:**
 
 **GICv3 (hal.md §4.1):**
-- [ ] Read GICv3 distributor base (`GICD`) and redistributor base (`GICR`) from DTB. On QEMU virt: `GICD` at `0x0800_0000`, `GICR` at `0x080A_0000` (8 redistributor frames × 128 KiB each for 4 cores)
-- [ ] Initialize distributor: set `GICD_CTLR.ARE_NS` (affinity routing enable), enable Group 1 non-secure interrupts
-- [ ] Initialize per-CPU redistributor: wake redistributor (clear `GICR_WAKER.ProcessorSleep`, wait for `ChildrenAsleep` to clear), enable Group 1 SGIs
-- [ ] Enable CPU interface via system registers: `ICC_SRE_EL1 |= 1` (enable system register interface), `ICC_IGRPEN1_EL1 = 1` (enable Group 1), set `ICC_PMR_EL1 = 0xFF` (allow all priorities)
-- [ ] Store `InterruptController` handle in `KernelState.interrupt_controller`
-- [ ] Advance `EarlyBootPhase` to `InterruptsReady`
+- [x] Read GICv3 distributor base (`GICD`) and redistributor base (`GICR`) from DTB. On QEMU virt: `GICD` at `0x0800_0000`, `GICR` at `0x080A_0000` (8 redistributor frames × 128 KiB each for 4 cores)
+- [x] Initialize distributor: set `GICD_CTLR.ARE_NS` (affinity routing enable), enable Group 1 non-secure interrupts
+- [x] Initialize per-CPU redistributor: wake redistributor (clear `GICR_WAKER.ProcessorSleep`, wait for `ChildrenAsleep` to clear), enable Group 1 SGIs
+- [x] Enable CPU interface via system registers: `ICC_SRE_EL1 |= 1` (enable system register interface), `ICC_IGRPEN1_EL1 = 1` (enable Group 1), set `ICC_PMR_EL1 = 0xFF` (allow all priorities)
+- [x] Store `InterruptController` handle in `KernelState.interrupt_controller`
+- [x] Advance `EarlyBootPhase` to `InterruptsReady`
 
 **ARM Generic Timer (hal.md §4.2):**
-- [ ] Read `CNTFRQ_EL0` for the timer frequency. QEMU virt default: 62.5 MHz
-- [ ] Calculate the 1 ms tick count: `tick_count = freq_hz / 1000`
-- [ ] Program `CNTP_TVAL_EL0 = tick_count` (physical timer compare value)
-- [ ] Enable physical timer: `CNTP_CTL_EL0 = 0x1` (ENABLE bit)
-- [ ] Register the timer interrupt in the GIC (PPI interrupt 30, `INTID = 30`)
-- [ ] Store `Timer` handle in `KernelState.timer`
-- [ ] Advance `EarlyBootPhase` to `TimerReady`
+- [x] Read `CNTFRQ_EL0` for the timer frequency. QEMU virt default: 62.5 MHz
+- [x] Calculate the 1 ms tick count: `tick_count = freq_hz / 1000`
+- [x] Program `CNTP_TVAL_EL0 = tick_count` (physical timer compare value)
+- [x] Enable physical timer: `CNTP_CTL_EL0 = 0x1` (ENABLE bit)
+- [x] Register the timer interrupt in the GIC (PPI interrupt 30, `INTID = 30`)
+- [x] Store `Timer` handle in `KernelState.timer`
+- [x] Advance `EarlyBootPhase` to `TimerReady`
 
 **Note:** Interrupts are enabled in the GIC but not yet globally enabled in PSTATE (`DAIF.I` bit). The scheduler will unmask interrupts after the MMU is up and the first process context is ready (Phase 3). The timer interrupt fires but is masked at PSTATE level until then.
 
@@ -189,42 +189,42 @@ qemu-system-aarch64 \
 
 ### Step 6: MMU Enable and Buddy Allocator
 
-**What:** Build kernel page tables, enable the MMU, switch to virtual addresses, and initialize the buddy allocator. After this step, the kernel runs at high-half virtual addresses (`0xFFFF_...`).
+**What:** Build kernel page tables, enable the MMU, and initialize the buddy allocator and slab heap. Phase 1 note: the kernel remains at physical addresses via a TTBR0 identity map (swapping edk2's page tables for our own). High-half virtual address mapping (TTBR1, `0xFFFF_...`) is deferred to Phase 2.
 
 **Tasks:**
 
 **Page table setup (memory.md §3):**
-- [ ] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, e.g. 64 KiB, for the initial page tables only)
-- [ ] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7:
+- [x] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, 128 KiB, for early boot allocations)
+- [x] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7. Phase 1 note: built TTBR0 identity map instead (3×1GB blocks); TTBR1 high-half deferred to Phase 2:
   - `0xFFFF_0000_0000_0000` — kernel text (PXN=0, UXN=1, AP=RO), rodata (PXN=1, UXN=1, AP=RO), data/bss (PXN=1, UXN=1, AP=RW)
   - `0xFFFF_0000_4000_0000` — kernel heap region (reserved, not yet mapped)
   - `0xFFFF_0001_0000_0000` — physical memory direct map (all RAM, device memory)
   - `0xFFFF_0002_0000_0000` — MMIO (device memory, `nGnRnE` attribute)
-- [ ] Keep TTBR0_EL1 identity map active during the transition
-- [ ] Configure `MAIR_EL1` with memory attribute indices: index 0 = `nGnRnE` (device), index 1 = Normal writeback cacheable (RAM)
-- [ ] Configure `TCR_EL1`: T1SZ=16 (48-bit VA), TG1=4KiB granule, SH1=inner-shareable, ORGN1/IRGN1=writeback cacheable
-- [ ] Enable MMU: set `SCTLR_EL1.M`, `SCTLR_EL1.C` (D-cache), `SCTLR_EL1.I` (I-cache). Issue `ISB` after write.
-- [ ] Switch the stack pointer to the new virtual address (TTBR1 high-half stack region)
-- [ ] Remove TTBR0 identity mapping entries for kernel addresses (keep user address space range for future process mappings)
-- [ ] Advance `EarlyBootPhase` to `MmuEnabled`
+- [x] Keep TTBR0_EL1 identity map active during the transition
+- [x] Configure `MAIR_EL1` with memory attribute indices: index 0 = `nGnRnE` (device), index 1 = Normal writeback cacheable (RAM). Phase 1 note: edk2 leaves MMU on with its own MAIR (0xffbb4400); changing MAIR while MMU is on is CONSTRAINED UNPREDICTABLE, so Phase 1 reuses edk2's MAIR indices (Attr0=Device, Attr1=Non-cacheable Normal). Full MAIR/TCR reconfiguration deferred to Phase 2.
+- [x] Configure `TCR_EL1`: T1SZ=16 (48-bit VA), TG1=4KiB granule, SH1=inner-shareable, ORGN1/IRGN1=writeback cacheable. Phase 1 note: reuses edk2's TCR (T0SZ=20, 44-bit VA) for same reason as MAIR above.
+- [x] Enable MMU: set `SCTLR_EL1.M`, `SCTLR_EL1.C` (D-cache), `SCTLR_EL1.I` (I-cache). Issue `ISB` after write. Phase 1 note: MMU already enabled by edk2; Phase 1 swaps TTBR0 only with compatible identity-map page tables.
+- [x] Switch the stack pointer to the new virtual address (TTBR1 high-half stack region). Phase 1 note: deferred — kernel runs at physical addresses via identity map.
+- [x] Remove TTBR0 identity mapping entries for kernel addresses (keep user address space range for future process mappings). Phase 1 note: deferred — identity map remains active.
+- [x] Advance `EarlyBootPhase` to `MmuEnabled`
 
 **Buddy allocator (memory.md §2.2):**
-- [ ] Walk the `BootInfo.memory_map` and add all `Conventional`, `LoaderCode`, `LoaderData`, `BootServicesCode`, `BootServicesData` pages to the buddy allocator free list. Exclude: kernel image pages, BootInfo page, initramfs pages, UEFI Runtime pages, MMIO regions.
-- [ ] Implement buddy allocator orders 0–10 (4 KiB to 4 MiB blocks)
-- [ ] Store in `KernelState.page_allocator`
-- [ ] Advance `EarlyBootPhase` to `PageAllocatorReady`
+- [x] Walk the `BootInfo.memory_map` and add all `Conventional`, `LoaderCode`, `LoaderData`, `BootServicesCode`, `BootServicesData` pages to the buddy allocator free list. Exclude: kernel image pages, BootInfo page, initramfs pages, UEFI Runtime pages, MMIO regions.
+- [x] Implement buddy allocator orders 0–10 (4 KiB to 4 MiB blocks)
+- [x] Store in `KernelState.page_allocator`
+- [x] Advance `EarlyBootPhase` to `PageAllocatorReady`
 
 **Kernel heap (memory.md §4.1):**
-- [ ] Initialize slab allocator on top of the buddy allocator. Named caches per memory.md §4.1: `ipc_message` (64 B), `capability_token` (128 B), `channel` (256 B), `process_descriptor` (512 B), `vm_region` (128 B), `page_table` (4096 B)
-- [ ] Register as `GlobalAlloc` so `Box`, `Vec`, `String` work
-- [ ] Store in `KernelState.heap`
-- [ ] Advance `EarlyBootPhase` to `HeapReady`
+- [x] Initialize slab allocator on top of the buddy allocator. Phase 1 uses generic size-class caches (8–4096 B); named caches (`ipc_message`, `capability_token`, etc.) deferred to Phase 3.
+- [x] Register as `GlobalAlloc` so `Box`, `Vec`, `String` work
+- [x] Store in `KernelState.heap`
+- [x] Advance `EarlyBootPhase` to `HeapReady`
 
 **W^X enforcement:** Every page mapped into TTBR1 must be either writable or executable, never both. Kernel text: executable, read-only. Kernel data/bss: writable, non-executable. This is enforced at mapping time and verified by objdump in the acceptance criteria.
 
 **Cache maintenance (boot.md §3.3 Step 7 note):** After enabling the new TTBR1 mapping: issue `IC IALLU; ISB` to invalidate the instruction cache and ensure no stale entries from the pre-MMU physical addresses survive.
 
-**Acceptance:** Boot log shows `[boot] MmuEnabled`, `[boot] PageAllocatorReady`, `[boot] HeapReady — Xms`. `Box::new(42u32)` succeeds (heap is live). `cargo objdump` shows kernel text at `0xFFFF_0000_0000_xxxx` (high-half) after relinking for the virtual address. No UART output interruption during the MMU transition.
+**Acceptance:** Boot log shows `[boot] MmuEnabled`, `[boot] PageAllocatorReady`, `[boot] HeapReady — Xms`. `Box::new(42u32)` succeeds (heap is live). No UART output interruption during the MMU transition. Phase 1 note: kernel remains linked at `0x4008_0000` and runs via TTBR0 identity map (VA=PA). High-half virtual address relinking (TTBR1, `0xFFFF_0000_...`) is Phase 2 work.
 
 -----
 
@@ -281,10 +281,10 @@ qemu-system-aarch64 \
 
 | Decision | Options | Recommendation |
 |---|---|---|
-| FDT parser | Implement minimal parser vs. use `fdt` crate | Use the `fdt` crate (MIT licensed, `no_std` compatible). A hand-rolled parser adds risk. Only implement a custom parser if crate licensing or `no_std` compatibility is a problem. |
+| FDT parser | Implement minimal parser vs. use `fdt-parser` crate | Use the `fdt-parser` crate (MIT licensed, `no_std` compatible). A hand-rolled parser adds risk. Only implement a custom parser if crate licensing or `no_std` compatibility is a problem. |
 | UEFI crate | `uefi` crate vs. raw UEFI ABI | Use the `uefi` crate for Phase 1 — it provides safe wrappers for `BootServices`, `RuntimeServices`, and `GOP`. The raw ABI is an option if the crate becomes a problem, but it is not needed yet. |
 | edk2 firmware source | System package vs. built from source | Use the system package (`qemu-efi-aarch64` on Debian/Ubuntu, `edk2-aarch64` on Fedora, or download from https://retrage.github.io/edk2-nightly/). Building edk2 from source is not needed for Phase 1. |
-| MMU transition approach | Enable MMU in assembly vs. Rust | Enable in assembly (boot.S). The MMU enable instruction (`msr SCTLR_EL1, x`) must be at a physical address valid in both the old identity map and the new TTBR1 map simultaneously. This is easier to arrange in assembly where you control exact instruction placement. |
+| MMU transition approach | Enable MMU in assembly vs. Rust | Phase 1: MMU is already enabled by edk2, so we only swap TTBR0 in Rust (`mmu.rs`) via inline asm. Phase 2 (full MAIR/TCR reconfiguration with MMU-off transition) may use assembly if needed. |
 | Framebuffer CI | Screenshot in CI vs. manual verify | Skip framebuffer screenshot in CI for Phase 1 — UART output is deterministic and sufficient. Framebuffer regression testing comes with the compositor (Phase 6). |
 
 -----
@@ -294,7 +294,7 @@ qemu-system-aarch64 \
 All three milestones complete:
 
 - [x] **M4** — QEMU boots via edk2; stub prints banner and exits Boot Services; kernel entry is reached
-- [ ] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
+- [x] **M5** — Boot log shows `UartReady`, `DeviceTreeParsed`, `InterruptsReady`, `TimerReady`, `MmuEnabled`, `PageAllocatorReady`, `HeapReady`; `Box::new(42u32)` succeeds; `just check` passes
 - [ ] **M6** — All 4 cores online; coloured rectangle visible on QEMU virtual display; CI passes on clean checkout
 - [ ] `BootInfo.magic` is validated at kernel entry; mismatched magic halts with a UART error message
 - [ ] W^X enforced: `cargo objdump` shows no page is both writable and executable

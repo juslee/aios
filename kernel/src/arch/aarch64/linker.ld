@@ -1,10 +1,13 @@
-/* AIOS Kernel Linker Script — Phase 0 */
+/* AIOS Kernel Linker Script — Phase 1 */
 
 ENTRY(_start)
 
 SECTIONS
 {
     . = 0x40080000;
+
+    /* ── Executable region ── */
+    __text_start = .;
 
     /* Boot code first — _start is the ELF entry point at load address */
     .text.boot : { *(.text.boot) }
@@ -20,8 +23,19 @@ SECTIONS
     .text.rvectors ALIGN(2048) : { *(.text.rvectors) }
 
     .text : { *(.text .text.*) }
-    .rodata : ALIGN(8) { *(.rodata .rodata.*) }
-    .data : ALIGN(8) { *(.data .data.*) }
+
+    . = ALIGN(4096);
+    __text_end = .;
+
+    /* ── Read-only data region ── */
+    __rodata_start = .;
+    .rodata : ALIGN(4096) { *(.rodata .rodata.*) }
+    . = ALIGN(4096);
+    __rodata_end = .;
+
+    /* ── Read-write data region (data + bss + stack) ── */
+    __data_start = .;
+    .data : ALIGN(4096) { *(.data .data.*) }
 
     . = ALIGN(8);
     __bss_start = .;
@@ -34,6 +48,11 @@ SECTIONS
     __stack_bottom = .;
     . += 16384;
     __stack_top = .;
+
+    . = ALIGN(4096);
+    __data_end = .;
+
+    __kernel_end = .;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

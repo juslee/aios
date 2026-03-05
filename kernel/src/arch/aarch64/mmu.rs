@@ -1,0 +1,144 @@
+//! MMU and page table management for aarch64.
+//!
+//! Builds kernel page tables and swaps TTBR0 to our identity map.
+//! Phase 1 uses edk2's existing MAIR/TCR configuration with 1 GB block
+//! descriptors. Per memory.md §3.
+
+use core::cell::UnsafeCell;
+
+// Kernel virtual address space layout (memory.md §3.1)
+#[allow(dead_code)]
+pub const KERNEL_BASE: usize = 0xFFFF_0000_0000_0000;
+#[allow(dead_code)]
+pub const DIRECT_MAP_BASE: usize = 0xFFFF_0001_0000_0000;
+#[allow(dead_code)]
+pub const MMIO_BASE: usize = 0xFFFF_0002_0000_0000;
+#[allow(dead_code)]
+pub const PAGE_SIZE: usize = 4096;
+
+// ── Page table storage ────────────────────────────────────────────────
+// Two static tables: L0+L1 for TTBR0 (identity map).
+// Each table is 4 KiB (512 × 8-byte entries), page-aligned.
+
+#[repr(C, align(4096))]
+struct RawPageTable {
+    entries: UnsafeCell<[u64; 512]>,
+}
+
+// SAFETY: Page tables are written once during single-core boot, then read-only
+// by the MMU hardware. No concurrent access during init.
+unsafe impl Sync for RawPageTable {}
+
+static TTBR0_L0: RawPageTable = RawPageTable {
+    entries: UnsafeCell::new([0; 512]),
+};
+static TTBR0_L1: RawPageTable = RawPageTable {
+    entries: UnsafeCell::new([0; 512]),
+};
+
+// ── Descriptor helpers ────────────────────────────────────────────────
+
+// Page table entry bits
+const PTE_VALID: u64 = 1 << 0;
+const PTE_TABLE: u64 = 1 << 1; // table descriptor (not block)
+const PTE_AF: u64 = 1 << 10; // access flag
+const PTE_SH_INNER: u64 = 0b11 << 8; // inner shareable
+const PTE_PXN: u64 = 1 << 53; // privileged execute-never
+const PTE_UXN: u64 = 1 << 54; // unprivileged execute-never
+
+// MAIR attribute indices — matched to edk2's MAIR configuration:
+//   edk2 MAIR = 0xffbb4400: Attr0=0x00(Device), Attr1=0x44(NC), Attr2=0xbb(WT), Attr3=0xff(WB)
+// We use Attr0 for device memory and Attr1 for normal memory (non-cacheable
+// under edk2's MAIR, which is safe for Phase 1 boot).
+const MAIR_DEVICE_IDX: u64 = 0;
+const MAIR_NORMAL_IDX: u64 = 1;
+
+/// Build a table descriptor pointing to the next-level table.
+fn table_descriptor(next_table_phys: u64) -> u64 {
+    (next_table_phys & 0x0000_FFFF_FFFF_F000) | PTE_TABLE | PTE_VALID
+}
+
+/// Build a 1 GB block descriptor at L1.
+///
+/// `phys_addr` must be 1 GB aligned. `mair_idx` selects device (0) or
+/// normal (1) memory attributes. If `executable` is false, PXN+UXN are set.
+fn l1_block_descriptor(phys_addr: u64, mair_idx: u64, executable: bool) -> u64 {
+    let mut desc = (phys_addr & 0x0000_FFFF_C000_0000) | PTE_VALID;
+    // bit 1 = 0 → block descriptor (not table)
+    desc |= (mair_idx & 0x7) << 2; // AttrIndx[4:2]
+    desc |= PTE_AF;
+    desc |= PTE_SH_INNER;
+    if !executable {
+        desc |= PTE_PXN | PTE_UXN;
+    }
+    desc
+}
+
+// ── Public API ────────────────────────────────────────────────────────
+
+/// Build identity-map page tables and swap TTBR0_EL1.
+///
+/// Phase 1 strategy: edk2 leaves MMU on with its own MAIR/TCR. Changing
+/// these registers while MMU is on is CONSTRAINED UNPREDICTABLE (ARM ARM).
+/// Instead, we build page tables compatible with edk2's T0SZ=20 (44-bit VA,
+/// 4KB granule) and only swap TTBR0. Memory attributes use edk2's MAIR
+/// (Attr0=Device, Attr1=Non-cacheable Normal), which is correct for boot.
+///
+/// After this call, code continues executing at physical addresses via our
+/// identity map. The buddy/slab allocators use physical addresses directly.
+///
+/// # Safety
+/// Must be called exactly once from the boot CPU during early init.
+/// Caller must ensure no concurrent access to page table statics.
+pub unsafe fn init_mmu() {
+    let l0_addr = TTBR0_L0.entries.get() as u64;
+    let l1_addr = TTBR0_L1.entries.get() as u64;
+
+    // SAFETY: UnsafeCell dereferences are safe because init_mmu is called
+    // exactly once from the boot CPU with no concurrent access to these statics.
+    let l0 = &mut *TTBR0_L0.entries.get();
+    let l1 = &mut *TTBR0_L1.entries.get();
+
+    l0[0] = table_descriptor(l1_addr);
+
+    // Block 0: 0x0000_0000 – device memory (UART, GIC, etc.)
+    l1[0] = l1_block_descriptor(0x0000_0000, MAIR_DEVICE_IDX, false);
+    // Block 1: 0x4000_0000 – RAM (kernel code + data, must be executable)
+    // Phase 1 limitation: 1 GB block is RWX (no AP bits = EL1 RW, executable=true).
+    // W^X enforcement at 2 MiB/4 KiB granularity (text=RX, data=RW+XN) is Phase 2.
+    l1[1] = l1_block_descriptor(0x4000_0000, MAIR_NORMAL_IDX, true);
+    // Block 2: 0x8000_0000 – RAM (rest of 2 GB)
+    l1[2] = l1_block_descriptor(0x8000_0000, MAIR_NORMAL_IDX, false);
+
+    // SAFETY: DSB SY is a data synchronization barrier — a hint instruction
+    // safe at EL1. Ensures all page table writes are visible before TTBR swap.
+    core::arch::asm!("dsb sy");
+
+    // Swap TTBR0 to our identity map page tables.
+    // edk2's T0SZ=20 (44-bit VA, L0 start): our L0[0]→L1 with 1GB blocks
+    // is compatible — L0 index for all our addresses (0x00–0xBF_FFFF_FFFF) is 0.
+    // We skip pre-swap TLBI: stale edk2 TLB entries map identity VA→PA
+    // (same as ours), so they're harmless. New entries from our tables will
+    // be filled on TLB misses.
+    // SAFETY: l0_addr points to a valid, page-aligned L0 page table built
+    // above. Writing TTBR0_EL1 at EL1 is architecturally permitted. The ISB
+    // ensures subsequent instruction fetches use the new translation tables.
+    let ttbr0 = l0_addr;
+    core::arch::asm!(
+        "msr TTBR0_EL1, {ttbr0}",
+        "isb",
+        ttbr0 = in(reg) ttbr0,
+    );
+
+    // SAFETY: TLBI and DSB are TLB maintenance instructions safe at EL1.
+    // We use VM-local TLBI + non-shareable DSB instead of broadcast TLBI +
+    // DSB SY because the latter hangs — DSB SY waits for TLBI completion on
+    // all PEs, including secondary cores parked in WFE. This is correct:
+    // stale edk2 TLB entries map identity (VA=PA), same as our tables.
+    // New entries fill on TLB miss from our page tables.
+    core::arch::asm!(
+        "tlbi vmalle1", // VM-local, not broadcast
+        "dsb nsh",      // non-shareable domain — this core only
+        "isb",
+    );
+}

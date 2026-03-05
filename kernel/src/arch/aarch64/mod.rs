@@ -1,4 +1,7 @@
 // aarch64-specific kernel code
 
 pub mod exceptions;
+pub mod gic;
+pub mod mmu;
+pub mod timer;
 pub mod uart;
