@@ -150,6 +150,7 @@ When implementing Phase N:
 - W^X: no page is both writable and executable
 - Stack alignment: 16-byte (ABI requirement)
 - Secondary cores: park with `wfe` (not `wfi`) — `sev` wakes all simultaneously
+- Phase 1 NC memory: `spin::Mutex` and atomic RMW (`fetch_add`, `compare_exchange`) use exclusive load/store pairs that require Inner Shareable + Cacheable memory. They **hang** on Non-Cacheable Normal memory (Phase 1 identity map). Use only `load(Acquire)` / `store(Release)` for inter-core synchronization until Phase 2 enables WB cacheable attributes.
 
 ### Assembly
 

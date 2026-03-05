@@ -242,18 +242,20 @@ qemu-system-aarch64 \
 - [x] Implement minimal `Scheduler` stub: enough to allocate per-core kernel stacks and track which cores are online. Full scheduling classes (RT, Interactive, Normal, Idle) are Phase 3 work.
 - [x] Read PSCI conduit from DTB `/psci` node: `method = "hvc"` on QEMU (QEMU without KVM emulates PSCI at the hypervisor level)
 - [x] For each secondary CPU node in the DTB (cores 1–3):
-  - Allocate a 16 KiB kernel stack with guard page at `0xFFFF_0000_8000_0000 + core_id * 0x10000`
+  - Allocate a 16 KiB kernel stack from buddy allocator (order 2 = 4 pages). Phase 1 note: stacks are at physical addresses via identity map; TTBR1 virtual stack addresses (`0xFFFF_0000_8000_0000 + core_id * 0x10000`) are Phase 2 work. Guard page enforcement requires 4 KiB granularity page tables (also Phase 2).
   - Call `PSCI CPU_ON` (function ID `0xC400_0003` for 64-bit PSCI) via `HVC` with: `target_cpu` = MPIDR value from DTB, `entry_point_address` = physical address of the secondary entry point in boot.S, `context_id` = core index
 - [x] Implement secondary core entry in `boot.S`: FPU enable, VBAR_EL1 install (same vectors as boot CPU), load the allocated stack pointer, call `secondary_main(core_id: usize)`
-- [x] `secondary_main`: print `[boot] Core N online`, advance per-core `EarlyBootPhase`, then enter the idle loop (`wfe`) until the scheduler assigns work
+- [x] `secondary_main`: initialize per-core GIC redistributor + CPU interface, print `[boot] Core N online`, then enter the idle loop (`wfe`) until the scheduler assigns work (Phase 3)
 - [x] Advance boot CPU `EarlyBootPhase` to `ProcessManagerReady` once all secondaries check in
+
+**NC memory constraint (Phase 1):** Phase 1 identity map uses Non-Cacheable Normal memory (edk2 MAIR Attr1=0x44). Atomic RMW instructions (`ldaxr`/`stlxr` exclusive pairs used by `spin::Mutex`, `fetch_add`, `compare_exchange`) require the global exclusive monitor, which only works with Inner Shareable + Cacheable memory attributes. On NC memory, the exclusive monitor fails and spinlocks hang under multi-core contention. Phase 1 serializes secondary core output using a turn-based protocol with only `load(Acquire)` / `store(Release)` (compiled to `ldar`/`stlr` — plain loads/stores with ordering, no exclusive pairs). Phase 2 enables WB cacheable memory, making `spin::Mutex` and atomic RMW safe.
 
 **PSCI function IDs (64-bit SMCCC):**
 - `CPU_ON`: `0xC400_0003`
 - `SYSTEM_RESET`: `0x8400_0009`
 - `SYSTEM_OFF`: `0x8400_0008`
 
-**Acceptance:** Boot log shows `[boot] Core 1 online`, `[boot] Core 2 online`, `[boot] Core 3 online` before the first-pixels step. All 4 cores are running at EL1 with their own stacks and the shared TTBR1 page tables.
+**Acceptance:** Boot log shows `[boot] Core 1 online`, `[boot] Core 2 online`, `[boot] Core 3 online` before the first-pixels step. All 4 cores are running at EL1 with their own stacks and the shared TTBR0 identity-mapped page tables.
 
 -----
 
