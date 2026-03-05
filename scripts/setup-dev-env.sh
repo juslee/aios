@@ -4,10 +4,10 @@
 # Designed for Claude Code web sessions (SessionStart hook).
 # Idempotent — safe to run multiple times.
 
-set -e
+set -euo pipefail
 
 # Only run in remote/web environments
-if [ "$CLAUDE_CODE_REMOTE" != "true" ] && [ -z "$FORCE_SETUP" ]; then
+if [ "$CLAUDE_CODE_REMOTE" != "true" ] && [ -z "${FORCE_SETUP:-}" ]; then
     echo "[setup] Local environment detected, skipping. Set FORCE_SETUP=1 to override."
     exit 0
 fi
@@ -16,6 +16,16 @@ echo "[setup] AIOS dev environment setup starting..."
 
 # ─── Track what we installed ───
 INSTALLED=""
+APT_UPDATED=false
+
+# Helper: run apt-get update once before first apt install
+ensure_apt_updated() {
+    if [ "$APT_UPDATED" = false ]; then
+        echo "[setup] Updating package lists..."
+        sudo apt-get update -qq
+        APT_UPDATED=true
+    fi
+}
 
 # ─── Tier 1: Essential build tools ───
 
@@ -29,16 +39,31 @@ fi
 # QEMU (aarch64 emulator)
 if ! command -v qemu-system-aarch64 &> /dev/null; then
     echo "[setup] Installing qemu-system-aarch64..."
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq qemu-system-arm 2>/dev/null || true
-    INSTALLED="$INSTALLED qemu"
+    ensure_apt_updated
+    if sudo apt-get install -y -qq qemu-system-arm 2>/dev/null; then
+        if command -v qemu-system-aarch64 &> /dev/null; then
+            INSTALLED="$INSTALLED qemu"
+        else
+            echo "[setup] WARNING: qemu-system-arm installed but qemu-system-aarch64 not found."
+        fi
+    else
+        echo "[setup] WARNING: Could not install qemu-system-arm (apt-get failed)."
+    fi
 fi
 
 # mtools (FAT32 disk image creation for UEFI ESP)
 if ! command -v mformat &> /dev/null; then
     echo "[setup] Installing mtools..."
-    sudo apt-get install -y -qq mtools 2>/dev/null || true
-    INSTALLED="$INSTALLED mtools"
+    ensure_apt_updated
+    if sudo apt-get install -y -qq mtools 2>/dev/null; then
+        if command -v mformat &> /dev/null; then
+            INSTALLED="$INSTALLED mtools"
+        else
+            echo "[setup] WARNING: mtools installed but mformat not found."
+        fi
+    else
+        echo "[setup] WARNING: Could not install mtools (apt-get failed)."
+    fi
 fi
 
 # ─── Tier 2: Quality gate tools ───
@@ -61,17 +86,12 @@ fi
 
 if ! command -v gh &> /dev/null; then
     echo "[setup] Installing gh (GitHub CLI)..."
-    # Try apt first (may already be in package cache)
-    sudo apt-get install -y -qq gh 2>/dev/null || {
-        # Fallback: download binary directly
-        GH_VERSION="2.45.0"
-        ARCH="$(dpkg --print-architecture)"
-        curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
-            | sudo tar -xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_${ARCH}/bin/gh" 2>/dev/null || {
-            echo "[setup] WARNING: Could not install gh (no network access). PR creation will need manual steps."
-        }
-    }
-    command -v gh &> /dev/null && INSTALLED="$INSTALLED gh"
+    ensure_apt_updated
+    if sudo apt-get install -y -qq gh 2>/dev/null; then
+        command -v gh &> /dev/null && INSTALLED="$INSTALLED gh"
+    else
+        echo "[setup] WARNING: Could not install gh. PR creation will need manual steps."
+    fi
 fi
 
 # ─── Tier 4: UEFI firmware (for `just run` with edk2) ───
@@ -79,22 +99,31 @@ fi
 EDK2_FW="/usr/share/qemu/edk2-aarch64-code.fd"
 if [ ! -f "$EDK2_FW" ]; then
     echo "[setup] Installing UEFI firmware (qemu-efi-aarch64)..."
-    sudo apt-get install -y -qq qemu-efi-aarch64 2>/dev/null || true
-    [ -f "$EDK2_FW" ] && INSTALLED="$INSTALLED edk2-firmware"
+    ensure_apt_updated
+    if sudo apt-get install -y -qq qemu-efi-aarch64 2>/dev/null; then
+        [ -f "$EDK2_FW" ] && INSTALLED="$INSTALLED edk2-firmware"
+    else
+        echo "[setup] WARNING: Could not install qemu-efi-aarch64."
+    fi
 fi
 
 # ─── Verify Rust toolchain ───
 
 echo "[setup] Verifying Rust toolchain..."
+if ! command -v rustup &> /dev/null; then
+    echo "[setup] ERROR: rustup not found. Cannot verify Rust targets."
+    exit 1
+fi
+
 # rust-toolchain.toml handles this automatically, but verify targets
-rustup target list --installed 2>/dev/null | grep -q "aarch64-unknown-none" || {
+if ! rustup target list --installed | grep -q "aarch64-unknown-none"; then
     echo "[setup] Adding aarch64-unknown-none target..."
     rustup target add aarch64-unknown-none
-}
-rustup target list --installed 2>/dev/null | grep -q "aarch64-unknown-uefi" || {
+fi
+if ! rustup target list --installed | grep -q "aarch64-unknown-uefi"; then
     echo "[setup] Adding aarch64-unknown-uefi target..."
     rustup target add aarch64-unknown-uefi
-}
+fi
 
 # ─── Summary ───
 
