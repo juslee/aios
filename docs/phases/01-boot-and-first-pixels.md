@@ -194,7 +194,7 @@ qemu-system-aarch64 \
 **Tasks:**
 
 **Page table setup (memory.md §3):**
-- [x] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, e.g. 64 KiB, for the initial page tables only)
+- [x] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, 128 KiB, for early boot allocations)
 - [x] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7. Phase 1 note: built TTBR0 identity map instead (3×1GB blocks); TTBR1 high-half deferred to Phase 2:
   - `0xFFFF_0000_0000_0000` — kernel text (PXN=0, UXN=1, AP=RO), rodata (PXN=1, UXN=1, AP=RO), data/bss (PXN=1, UXN=1, AP=RW)
   - `0xFFFF_0000_4000_0000` — kernel heap region (reserved, not yet mapped)
@@ -281,10 +281,10 @@ qemu-system-aarch64 \
 
 | Decision | Options | Recommendation |
 |---|---|---|
-| FDT parser | Implement minimal parser vs. use `fdt` crate | Use the `fdt` crate (MIT licensed, `no_std` compatible). A hand-rolled parser adds risk. Only implement a custom parser if crate licensing or `no_std` compatibility is a problem. |
+| FDT parser | Implement minimal parser vs. use `fdt-parser` crate | Use the `fdt-parser` crate (MIT licensed, `no_std` compatible). A hand-rolled parser adds risk. Only implement a custom parser if crate licensing or `no_std` compatibility is a problem. |
 | UEFI crate | `uefi` crate vs. raw UEFI ABI | Use the `uefi` crate for Phase 1 — it provides safe wrappers for `BootServices`, `RuntimeServices`, and `GOP`. The raw ABI is an option if the crate becomes a problem, but it is not needed yet. |
 | edk2 firmware source | System package vs. built from source | Use the system package (`qemu-efi-aarch64` on Debian/Ubuntu, `edk2-aarch64` on Fedora, or download from https://retrage.github.io/edk2-nightly/). Building edk2 from source is not needed for Phase 1. |
-| MMU transition approach | Enable MMU in assembly vs. Rust | Enable in assembly (boot.S). The MMU enable instruction (`msr SCTLR_EL1, x`) must be at a physical address valid in both the old identity map and the new TTBR1 map simultaneously. This is easier to arrange in assembly where you control exact instruction placement. |
+| MMU transition approach | Enable MMU in assembly vs. Rust | Phase 1: MMU is already enabled by edk2, so we only swap TTBR0 in Rust (`mmu.rs`) via inline asm. Phase 2 (full MAIR/TCR reconfiguration with MMU-off transition) may use assembly if needed. |
 | Framebuffer CI | Screenshot in CI vs. manual verify | Skip framebuffer screenshot in CI for Phase 1 — UART output is deterministic and sufficient. Framebuffer regression testing comes with the compositor (Phase 6). |
 
 -----
