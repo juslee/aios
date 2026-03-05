@@ -8,6 +8,15 @@
 use core::fmt;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+// NOTE: UART locking deferred to Phase 2. Phase 1 identity map uses Non-Cacheable
+// Normal memory (edk2 MAIR Attr1=0x44). Atomic RMW operations (compare_exchange,
+// swap, fetch_add) used by spin::Mutex compile to exclusive load/store pairs
+// (ldaxrb/stlxrb) which require the global exclusive monitor — that only works
+// with Inner Shareable + Cacheable memory attributes. On NC memory, the exclusive
+// monitor fails and spinlocks hang under multi-core contention.
+// Phase 2 enables WB cacheable memory, making spinlocks safe.
+// Brief interleaved output during SMP bringup is acceptable for Phase 1.
+
 /// Current UART base address — starts with QEMU default, updated after DTB parse.
 static UART_BASE_ADDR: AtomicUsize = AtomicUsize::new(0x0900_0000);
 

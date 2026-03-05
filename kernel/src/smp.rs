@@ -71,7 +71,6 @@ pub struct Scheduler {
 /// Allocates per-core stacks from the buddy allocator, writes stack
 /// pointers to SECONDARY_STACKS, then wakes each core with PSCI.
 /// Returns a Scheduler with all core states populated.
-#[allow(dead_code)]
 pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -> Scheduler {
     GICR_BASE.store(gicr_base, Ordering::Relaxed);
 

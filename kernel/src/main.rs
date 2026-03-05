@@ -146,6 +146,10 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         println!("[boot] Box::new(42) = {} — heap verified", *x);
     }
 
+    // --- Step 7: SMP Secondary Core Bringup ---
+    let _sched = smp::bring_secondaries_online(&dt, ic.gicr_base());
+    advance_boot_phase(EarlyBootPhase::ProcessManagerReady);
+
     println!("[boot] Boot sequence complete, entering idle loop");
 
     loop {
