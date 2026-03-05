@@ -105,6 +105,54 @@ pub fn init_gicv3(gicd_base: usize, gicr_base: usize) -> InterruptController {
     }
 }
 
+/// Initialize GICv3 redistributor and CPU interface for a secondary core.
+///
+/// The distributor is already initialized by the boot CPU. Each secondary
+/// core needs its own redistributor wakeup and CPU interface enable.
+pub fn init_gicv3_secondary(gicr_base: usize, core_id: usize) {
+    // Each redistributor frame is 128 KiB (0x20000) — RD_base + SGI_base.
+    let redist_base = gicr_base + core_id * 0x20000;
+
+    // SAFETY: GIC MMIO addresses are derived from DTB-provided base + core offset.
+    // All register accesses are to well-defined GICv3 registers.
+    unsafe {
+        // Wake this core's redistributor.
+        let waker = mmio_read32(redist_base + GICR_WAKER);
+        if waker & GICR_WAKER_CHILDREN_ASLEEP != 0 {
+            mmio_write32(
+                redist_base + GICR_WAKER,
+                waker & !GICR_WAKER_PROCESSOR_SLEEP,
+            );
+
+            let mut timeout = 1_000_000u32;
+            while mmio_read32(redist_base + GICR_WAKER) & GICR_WAKER_CHILDREN_ASLEEP != 0 {
+                timeout -= 1;
+                if timeout == 0 {
+                    // Can't panic cleanly on secondary — just break and continue.
+                    break;
+                }
+            }
+        }
+
+        // Enable system register interface (ICC_SRE_EL1.SRE = 1).
+        let sre: u64;
+        core::arch::asm!("mrs {}, ICC_SRE_EL1", out(reg) sre);
+        core::arch::asm!("msr ICC_SRE_EL1, {}", in(reg) sre | 1);
+        core::arch::asm!("isb");
+
+        // Set priority mask to allow all priorities.
+        core::arch::asm!("msr ICC_PMR_EL1, {}", in(reg) 0xFFu64);
+
+        // Enable Group 1 interrupts.
+        core::arch::asm!("msr ICC_IGRPEN1_EL1, {}", in(reg) 1u64);
+        core::arch::asm!("isb");
+
+        // Enable timer PPI 30 (NS Physical Timer) in GICR_ISENABLER0.
+        let bit = 1u32 << 30;
+        mmio_write32(redist_base + GICR_ISENABLER0, bit);
+    }
+}
+
 #[allow(dead_code)]
 impl InterruptController {
     /// Enable an interrupt by INTID.

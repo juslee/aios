@@ -17,7 +17,7 @@ The hardware target is aarch64, starting with QEMU's `virt` machine (`cortex-a72
 
 The architecture is a capability-based microkernel. User processes communicate through typed IPC channels; hardware access is gated by unforgeable capability tokens. On top of the microkernel sit Spaces — isolated execution environments analogous to processes, but with explicit capability grants — and AIRS, the AI Runtime System, which manages inference engines, context stores, and agent lifecycles as native OS services. A compositor, storage subsystem, and networking stack complete the platform layer before the experience layer exposes Workspaces, a Conversation Bar, a browser, and a settings UI.
 
-Phase 0 (toolchain and bare-metal boot) and Phase 1 Milestone 4 (UEFI stub) are complete. The kernel boots via edk2 firmware on QEMU virt.
+Phase 0 (toolchain and bare-metal boot) and Phase 1 (boot and first pixels) are complete. The kernel boots via edk2 firmware on QEMU virt with 4 SMP cores online and a framebuffer test pattern rendered.
 
 ---
 
@@ -109,6 +109,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just build-stub` | Compile the UEFI stub for `aarch64-unknown-uefi` |
 | `just disk` | Build kernel + stub and create ESP disk image (requires mtools) |
 | `just run` | Boot via edk2 firmware with UEFI stub |
+| `just run-display` | Boot with QEMU display window (for framebuffer visual verification) |
 | `just run-direct` | Boot kernel directly via QEMU `-kernel` (Phase 0 mode) |
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
 | `just check` | Run format check, clippy, and build (both targets) |

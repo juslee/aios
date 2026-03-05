@@ -5,6 +5,17 @@
 //! descriptors. Per memory.md §3.
 
 use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+// ── Boot CPU MMU register state (for secondary core MMU enable) ─────
+// Saved during init_mmu() after TTBR0 swap. Secondary cores load these
+// to enable their MMU with the same configuration as the boot CPU.
+#[no_mangle]
+static BOOT_MAIR: AtomicU64 = AtomicU64::new(0);
+#[no_mangle]
+static BOOT_TCR: AtomicU64 = AtomicU64::new(0);
+#[no_mangle]
+static BOOT_SCTLR: AtomicU64 = AtomicU64::new(0);
 
 // Kernel virtual address space layout (memory.md §3.1)
 #[allow(dead_code)]
@@ -29,6 +40,7 @@ struct RawPageTable {
 // by the MMU hardware. No concurrent access during init.
 unsafe impl Sync for RawPageTable {}
 
+#[no_mangle]
 static TTBR0_L0: RawPageTable = RawPageTable {
     entries: UnsafeCell::new([0; 512]),
 };
@@ -141,4 +153,34 @@ pub unsafe fn init_mmu() {
         "dsb nsh",      // non-shareable domain — this core only
         "isb",
     );
+
+    // Save boot CPU's MMU register state for secondary cores.
+    // These registers are read-only from here on; secondary cores load them
+    // in boot.S _secondary_entry to enable MMU with the same configuration.
+    let mair: u64;
+    let tcr: u64;
+    let sctlr: u64;
+    core::arch::asm!("mrs {}, MAIR_EL1", out(reg) mair, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("mrs {}, TCR_EL1", out(reg) tcr, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("mrs {}, SCTLR_EL1", out(reg) sctlr, options(nomem, nostack, preserves_flags));
+    BOOT_MAIR.store(mair, Ordering::Relaxed);
+    BOOT_TCR.store(tcr, Ordering::Relaxed);
+    BOOT_SCTLR.store(sctlr, Ordering::Relaxed);
+}
+
+/// Physical address of the L0 page table (for TTBR0_EL1 on secondary cores).
+#[allow(dead_code)]
+pub fn ttbr0_l0_addr() -> u64 {
+    TTBR0_L0.entries.get() as u64
+}
+
+/// Boot CPU's MMU register values: (MAIR_EL1, TCR_EL1, SCTLR_EL1).
+/// Secondary cores use these to enable MMU with identical configuration.
+#[allow(dead_code)]
+pub fn boot_mmu_regs() -> (u64, u64, u64) {
+    (
+        BOOT_MAIR.load(Ordering::Relaxed),
+        BOOT_TCR.load(Ordering::Relaxed),
+        BOOT_SCTLR.load(Ordering::Relaxed),
+    )
 }
