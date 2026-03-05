@@ -119,9 +119,9 @@ impl BuddyAllocator {
     /// as the largest possible aligned blocks.
     ///
     /// # Safety
-    /// - `boot_info` must be a valid BootInfo with populated memory map fields.
+    /// - `map_addr` must point to a valid UEFI memory descriptor array.
     /// - The identity map must be active (MMU enabled).
-    /// - The kernel range `[kernel_start, kernel_end)` is excluded.
+    /// - `[kernel_start, kernel_end)` and `[map_start, map_end)` are excluded.
     pub unsafe fn init_from_memory_map(
         &mut self,
         map_addr: u64,
@@ -132,9 +132,19 @@ impl BuddyAllocator {
     ) {
         let base = map_addr as *const u8;
 
+        // Compute the memory map buffer extent so we can exclude it.
+        // The UEFI stub allocates this buffer as LOADER_DATA; writing buddy
+        // next-pointers into it would corrupt descriptors we're still reading.
+        let map_buf_start = map_addr as usize;
+        let map_buf_end = map_buf_start + map_count as usize * entry_size as usize;
+        // Round up to page boundary for exclusion.
+        let map_buf_end = (map_buf_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+
         for i in 0..map_count {
             let ptr = base.add(i as usize * entry_size as usize);
             // SAFETY: The UEFI stub stores valid MemoryDescriptors at this address.
+            // We read each descriptor before push_block could write into this region
+            // because the memory map buffer itself is excluded below.
             let desc = &*(ptr as *const MemoryDescriptor);
 
             // Only use memory types that are reclaimable after ExitBootServices
@@ -149,21 +159,30 @@ impl BuddyAllocator {
             let region_start = desc.phys_start as usize;
             let region_end = region_start + (desc.page_count as usize) * PAGE_SIZE;
 
-            // Add usable pages, skipping the kernel image range
-            self.add_region(region_start, region_end, kernel_start, kernel_end);
+            // Add usable pages, skipping the kernel image and memory map buffer.
+            self.add_region_excluding2(
+                region_start,
+                region_end,
+                kernel_start,
+                kernel_end,
+                map_buf_start,
+                map_buf_end,
+            );
         }
     }
 
-    /// Add a physical region to the buddy allocator, excluding the kernel range.
+    /// Add a physical region, excluding two reserved ranges (kernel + memory map buffer).
     ///
     /// # Safety
     /// Region must be valid, page-aligned RAM accessible via identity map.
-    unsafe fn add_region(
+    unsafe fn add_region_excluding2(
         &mut self,
         mut start: usize,
         end: usize,
-        kernel_start: usize,
-        kernel_end: usize,
+        excl1_start: usize,
+        excl1_end: usize,
+        excl2_start: usize,
+        excl2_end: usize,
     ) {
         // Page-align: round start up, round end down
         start = (start + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
@@ -173,18 +192,38 @@ impl BuddyAllocator {
             return;
         }
 
-        // If region overlaps kernel, split around it
-        if start < kernel_end && end > kernel_start {
-            // Part before kernel
-            if start < kernel_start {
-                self.add_aligned_blocks(start, kernel_start);
+        // Split around both exclusion zones, then add remaining sub-regions.
+        // After splitting one region around 2 exclusions, we get at most 3 pieces.
+        let mut ranges: [(usize, usize); 4] = [(0, 0); 4];
+        let mut count = 0;
+
+        // Split initial region around exclusion 1 (kernel)
+        if start < excl1_end && end > excl1_start {
+            if start < excl1_start {
+                ranges[count] = (start, excl1_start);
+                count += 1;
             }
-            // Part after kernel
-            if end > kernel_end {
-                self.add_aligned_blocks(kernel_end, end);
+            if end > excl1_end {
+                ranges[count] = (excl1_end, end);
+                count += 1;
             }
         } else {
-            self.add_aligned_blocks(start, end);
+            ranges[count] = (start, end);
+            count += 1;
+        }
+
+        // Split each resulting sub-range around exclusion 2 (memory map buffer)
+        for &(s, e) in &ranges[..count] {
+            if s < excl2_end && e > excl2_start {
+                if s < excl2_start {
+                    self.add_aligned_blocks(s, excl2_start);
+                }
+                if e > excl2_end {
+                    self.add_aligned_blocks(excl2_end, e);
+                }
+            } else if s < e {
+                self.add_aligned_blocks(s, e);
+            }
         }
     }
 

@@ -95,7 +95,8 @@ pub enum PixelFormat {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct MemoryDescriptor {
-    /// UEFI memory type (EFI_MEMORY_TYPE). Values 0–13 map to our MemoryType enum.
+    /// UEFI memory type (EFI_MEMORY_TYPE). Values 0–13 are translated to `MemoryType`
+    /// via `MemoryDescriptor::memory_type()`.
     pub ty: u32,
     /// Padding to align phys_start to 8 bytes (UEFI ABI requirement).
     pub _pad: u32,

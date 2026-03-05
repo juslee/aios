@@ -29,7 +29,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // Initialize boot timing from ARM Generic Timer counter.
     boot_phase::init_boot_timing();
 
-    // Validate BootInfo.
+    // Validate BootInfo. The UEFI stub allocates BootInfo in LOADER_DATA pages.
+    // We extract all needed fields before buddy init, which excludes the memory
+    // map buffer pages from the free list to prevent corruption.
     let boot_info = if boot_info_ptr != 0 {
         // SAFETY: The UEFI stub allocates a page-aligned, fully-initialized BootInfo
         // struct and passes its physical address in x0. We validated the pointer is

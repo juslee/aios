@@ -127,10 +127,15 @@ pub static SLAB: spin::Mutex<SlabAllocator> = spin::Mutex::new(SlabAllocator::ne
 /// # Safety
 /// Buddy allocator must be initialized. Identity map must be active.
 pub unsafe fn alloc(layout: Layout) -> *mut u8 {
-    if layout.size() > PAGE_SIZE {
+    // Use the larger of size and alignment to ensure the buddy allocator
+    // returns a block that satisfies both requirements. Buddy blocks of
+    // order N are naturally aligned to 2^N * PAGE_SIZE.
+    let effective_size = layout.size().max(layout.align());
+
+    if effective_size > PAGE_SIZE {
         // Large allocation: get pages directly from buddy.
         // Round up to the next page count, then find the order.
-        let pages = layout.size().div_ceil(PAGE_SIZE);
+        let pages = effective_size.div_ceil(PAGE_SIZE);
         let page_order = pages.next_power_of_two().trailing_zeros() as usize;
         let mut buddy = super::buddy::BUDDY.lock();
         // SAFETY: buddy allocator is initialized and identity map is active.
@@ -156,9 +161,11 @@ pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
         return;
     }
 
-    if layout.size() > PAGE_SIZE {
+    let effective_size = layout.size().max(layout.align());
+
+    if effective_size > PAGE_SIZE {
         // Large allocation: return pages to buddy (must match alloc order)
-        let pages = layout.size().div_ceil(PAGE_SIZE);
+        let pages = effective_size.div_ceil(PAGE_SIZE);
         let page_order = pages.next_power_of_two().trailing_zeros() as usize;
         let mut buddy = super::buddy::BUDDY.lock();
         // SAFETY: ptr was returned by alloc_pages with the same order.

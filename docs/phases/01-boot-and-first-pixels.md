@@ -120,8 +120,8 @@ qemu-system-aarch64 \
 
 **Tasks:**
 - [x] Add `fdt` crate (or implement a minimal parser) — must be `no_std` compatible. Used `fdt-parser` 0.5 (MIT, `no_std`). The parser needs: root `compatible` string, `/chosen/stdout-path`, CPU nodes (for SMP count and MPIDR values), `/psci` node (conduit and `cpu_on` function ID), memory nodes (base and size for each RAM region), GICv3 distributor and redistributor base addresses, ARM Generic Timer interrupt numbers
-- [x] Implement `detect_platform(dt: &DeviceTree) -> Box<dyn Platform>` matching hal.md §2 (compatible string table) and §3 (Platform trait). For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
-- [x] Implement `QemuPlatform` struct implementing the `Platform` trait skeleton (hal.md §3). Phase 1 only needs `init_uart`, `init_interrupts`, and `init_timer` — stub the remaining four with `unimplemented!()` for now
+- [x] Implement `detect_platform(dt: &DeviceTree) -> &'static dyn Platform` matching hal.md §2 (compatible string table) and §3 (Platform trait). Returns a static reference (no heap at detection time). For Phase 1 QEMU target: match `"qemu,virt"` compatible string → `QemuPlatform`
+- [x] Implement `QemuPlatform` struct implementing the `Platform` trait (hal.md §3). Phase 1 defines three methods: `init_uart`, `init_interrupts`, and `init_timer`
 - [x] Advance `EarlyBootPhase` to `DeviceTreeParsed` and print to UART
 
 **Minimal parser scope:** The FDT parser only needs to find specific well-known nodes by path or compatible string. A full recursive traversal is Phase 4+ work (when the Device Registry service discovers all hardware). For now: parse only what Steps 3–6 require.
@@ -135,7 +135,7 @@ qemu-system-aarch64 \
 **What:** Replace the Phase 0 hardcoded UART (relying on QEMU pre-initialization) with a proper PL011 driver that initializes from the DTB base address and programs baud rate registers. This is the `Platform::init_uart()` implementation.
 
 **Tasks:**
-- [x] Read PL011 base address from DTB `/chosen/stdout-path` → resolve to MMIO node → extract `reg` property
+- [x] Read PL011 base address from DTB by searching for the first `arm,pl011` compatible node → extract `reg` property
 - [x] Implement full PL011 initialization sequence (required on real hardware; harmless on QEMU):
   1. Disable UART: clear CR.UARTEN (bit 0)
   2. Wait for any in-progress transmission to finish: poll UARTFR.BUSY (bit 3)

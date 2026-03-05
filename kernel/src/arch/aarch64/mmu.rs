@@ -104,6 +104,8 @@ pub unsafe fn init_mmu() {
     // Block 0: 0x0000_0000 – device memory (UART, GIC, etc.)
     l1[0] = l1_block_descriptor(0x0000_0000, MAIR_DEVICE_IDX, false);
     // Block 1: 0x4000_0000 – RAM (kernel code + data, must be executable)
+    // Phase 1 limitation: 1 GB block is RWX (no AP bits = EL1 RW, executable=true).
+    // W^X enforcement at 2 MiB/4 KiB granularity (text=RX, data=RW+XN) is Phase 2.
     l1[1] = l1_block_descriptor(0x4000_0000, MAIR_NORMAL_IDX, true);
     // Block 2: 0x8000_0000 – RAM (rest of 2 GB)
     l1[2] = l1_block_descriptor(0x8000_0000, MAIR_NORMAL_IDX, false);
