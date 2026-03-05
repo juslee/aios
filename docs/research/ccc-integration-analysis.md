@@ -3,7 +3,9 @@
 **Status:** Research
 **Date:** 2026-03-05
 **Repository:** https://github.com/anthropics/claudes-c-compiler
-**License:** Not explicitly stated (needs verification before integration)
+**License:** CC0-1.0 (public domain dedication — no restrictions on integration)
+**Size:** ~200,000-250,000 lines of Rust, ~170-200 source files, 8.2 MB source
+**Stack thread:** Spawns 64 MB stack thread for deep recursion
 
 ---
 
@@ -350,7 +352,7 @@ BsdProcessCapabilities {
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| License incompatibility | Medium | High | Verify license before integration; CCC repo doesn't state license clearly |
+| License incompatibility | **None** | — | CC0-1.0 (public domain) — no restrictions whatsoever |
 | AArch64 backend bugs in edge cases | Low | Medium | CCC already passes FFmpeg+PostgreSQL on AArch64; fuzz testing |
 | Maintenance burden (two compilers) | Medium | Medium | CCC is supplementary, not replacement; clang remains primary |
 | Missing security features (PAC/BTI/MTE) | Certain | High | Must be implemented before production use |
@@ -409,6 +411,110 @@ src/
 └── lib.rs              # Library root
 ```
 
-Estimated total: **150-200+ Rust source files**, likely **50,000-100,000+ lines of Rust**.
+Actual total: **~170-200 Rust source files**, **~200,000-250,000 lines of Rust** (8.2 MB source).
 
 Cargo.toml declares **zero external crate dependencies** — everything from ELF parsing to instruction encoding is implemented from scratch.
+
+---
+
+## 8. Full Language Support & Self-Hosting Analysis
+
+### 8.1 Can C Be a First-Class AIOS Language via CCC?
+
+**Yes.** CCC can serve as a full-fledged C development environment on AIOS. What that looks like:
+
+| Capability | Status | Notes |
+|---|---|---|
+| Compile C11 programs | Working | Full C11 minus `_Atomic` tracking, `_Complex` edge cases |
+| Link executables | Working | Builtin ELF linker, static + dynamic |
+| Shared libraries | Working | `-fPIC`, `-shared`, PLT/GOT |
+| Debug info | Working | DWARF generation, `-g` flag |
+| Cross-compilation | Working | All four arch targets from single binary |
+| Compile real-world C | Working | PostgreSQL, FFmpeg, musl, CPython, Redis, Linux kernel |
+| GCC drop-in | Working | Standard flags, `-dumpmachine`, build system integration |
+| Optimization | Working | 15 SSA passes, but no tiered `-O` levels yet |
+| AIOS security (PAC/BTI) | **Not yet** | Must add to AArch64 prologue/epilogue codegen |
+| Full NEON intrinsics | **Partial** | Core 128-bit ops work; full `arm_neon.h` coverage needed |
+| `_Atomic` correctness | **Partial** | Parsed but not type-system-tracked |
+
+**The gap is narrow.** CCC already compiles musl libc, which means the POSIX translation layer
+can be validated with CCC-compiled C programs at Phase 15a — far earlier than waiting for LLVM.
+
+### 8.2 Does CCC Enable "Rust Compiles Rust on AIOS"?
+
+**Indirectly, yes — CCC is the critical first link in the self-hosting bootstrap chain.**
+
+The fundamental problem: to compile Rust on AIOS, you need `rustc`, which needs LLVM, which is
+C++. To compile C++, you need `clang`, which is also C++. Chicken-and-egg.
+
+CCC breaks this cycle. Here is the full bootstrap chain:
+
+```
+Step 1: Cross-compile CCC for AIOS AArch64 (from host)
+        → Now AIOS has a native C compiler
+
+Step 2: CCC compiles musl libc on AIOS
+        → Now AIOS has a native C standard library
+
+Step 3: CCC compiles LLVM's C sources (compiler-rt, some core libs)
+        → Now AIOS has runtime support libraries
+
+Step 4: CCC compiles a minimal C++ compiler (or bootstrap clang's C portions)
+        → This is the hardest step — may need a staged approach:
+          a. CCC compiles TCC (Tiny C Compiler) or similar minimal C compiler
+          b. Minimal compiler compiles a C subset of clang
+          c. Partial clang compiles full clang
+
+Step 5: Native clang compiles full LLVM + clang in C++
+        → Now AIOS has a native C/C++ compiler
+
+Step 6: Cross-compile rustc for AIOS (needs LLVM, which now exists natively)
+        → Now AIOS has a native Rust compiler
+
+Step 7: Native rustc compiles rustc on AIOS
+        → AIOS is fully self-hosting for Rust
+
+Step 8: Native rustc compiles the AIOS kernel
+        → AIOS compiles itself
+```
+
+**Timeline estimate:**
+- Steps 1-2: Phase 15a (musl port)
+- Steps 3-5: Phase 15f (self-hosting with clang)
+- Steps 6-7: Phase 16+ (Rust self-hosting)
+- Step 8: Phase 17+ (full OS self-hosting)
+
+### 8.3 Alternative: Skip CCC, Cross-Compile Everything
+
+The alternative to CCC bootstrapping is to cross-compile clang, rustc, and all tools from the
+host and ship them as pre-built AIOS binaries. This works but:
+
+| Approach | CCC Bootstrap | Cross-Compile Everything |
+|---|---|---|
+| Native compilation | Phase 15a (early) | Phase 15f (late) |
+| Self-hosting proof | Incremental (C first, then C++, then Rust) | All-or-nothing |
+| Validates POSIX layer | Real workload at each step | Only validated at the end |
+| Binary size shipped | ~20 MB (CCC) | ~500+ MB (clang + rustc + tools) |
+| Debug story | Can debug compiler itself on AIOS | Must debug on host, ship fixed binary |
+| Intellectual elegance | AI-written compiler bootstraps AI-written OS | Standard cross-compilation |
+
+### 8.4 AArch64 Backend Improvement Priorities
+
+The CCC AArch64 backend has a significant **register allocation weakness**: only 2 caller-saved
+registers (`x13, x14`) are available for allocation. The rest are reserved:
+- `x9`: address materialization scratch
+- `x10-x12`: memcpy implementation
+- `x15`: F128 scratch
+- `x16-x18`: ABI-reserved (IP0, IP1, PR)
+
+This causes excessive spilling under register pressure. For AIOS, improvements should target:
+
+1. **Expand allocatable registers**: `x9` could be freed when not materializing addresses;
+   `x10-x12` could be freed when not in a memcpy context. This alone would 3-4x the caller-saved
+   register budget.
+2. **PAC codegen**: Add `PACIASP`/`AUTIASP` to function prologue/epilogue — required by AIOS
+   security model.
+3. **BTI codegen**: Add `BTI` landing pads at all indirect branch targets.
+4. **Full NEON**: Complete `arm_neon.h` intrinsic coverage for multimedia and crypto workloads.
+5. **MTE integration**: Memory tagging instructions at allocation/deallocation sites for
+   Phase 13 hardware use-after-free detection.
