@@ -20,6 +20,8 @@ pub struct DeviceTree {
     pub timer_ppi: u32,
     /// Number of CPU cores.
     cpu_count_val: usize,
+    /// Per-CPU MPIDR values from DTB cpu@N reg property.
+    cpu_mpidrs: [u64; 8],
     /// PSCI method: true = hvc, false = smc.
     pub psci_hvc: bool,
 }
@@ -57,6 +59,7 @@ impl DeviceTree {
             gicr_base: None,
             timer_ppi: 30, // default fallback
             cpu_count_val: 0,
+            cpu_mpidrs: [0; 8],
             psci_hvc: true, // default: QEMU uses hvc
         };
 
@@ -74,10 +77,19 @@ impl DeviceTree {
             }
         }
 
-        // Extract CPU count: find /cpus children named cpu@*
+        // Extract CPU count and MPIDR values from /cpus/cpu@N nodes.
         if let Some(cpus_node) = fdt.find_nodes("/cpus").flatten().next() {
             for child in cpus_node.children().flatten() {
                 if child.name().starts_with("cpu@") {
+                    let idx = dt.cpu_count_val;
+                    if idx < 8 {
+                        // Extract MPIDR from the `reg` property of each cpu@N node.
+                        if let Ok(mut regs) = child.reg() {
+                            if let Some(reg) = regs.next() {
+                                dt.cpu_mpidrs[idx] = reg.address;
+                            }
+                        }
+                    }
                     dt.cpu_count_val += 1;
                 }
             }
@@ -153,6 +165,7 @@ impl DeviceTree {
             gicr_base: Some(0x080A_0000),
             timer_ppi: 30, // non-secure physical timer PPI INTID
             cpu_count_val: 4,
+            cpu_mpidrs: [0, 1, 2, 3, 0, 0, 0, 0],
             psci_hvc: true,
         };
         let compat = b"linux,dummy-virt";
@@ -177,6 +190,12 @@ impl DeviceTree {
     /// Number of CPU cores found in the DTB.
     pub fn cpu_count(&self) -> usize {
         self.cpu_count_val
+    }
+
+    /// MPIDR value for a given CPU index (for PSCI CPU_ON target_cpu parameter).
+    #[allow(dead_code)]
+    pub fn cpu_mpidr(&self, index: usize) -> u64 {
+        self.cpu_mpidrs[index]
     }
 
     /// PSCI method as a string.
