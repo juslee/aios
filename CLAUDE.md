@@ -58,6 +58,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); virtual 0xFFFF
 | Preferences | `docs/intelligence/preferences.md` | All (Phase 8+) |
 | Agents | `docs/applications/agents.md` | All (Phase 10+) |
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
+| Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 13+) |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
 | Security model | `docs/security/security.md` | All (all phases) |
 | Composable capability profiles | `docs/security/security.md` | §3.7 (Phase 28) |
