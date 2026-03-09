@@ -1116,7 +1116,7 @@ Stage 3: Behavioral Prediction      (LLM-powered)
     Input:  CodeAnalysisReport + RuntimeType + dependency graph
     Output: PredictedBehavior
 
-Stage 4: Corpus Comparison           (LLM-powered)
+Stage 4: Corpus Comparison           (algorithmic — outlier detection)
     Input:  ManifestReviewReport + PredictedBehavior + agent corpus
     Output: CorpusComparison
 
@@ -1352,7 +1352,7 @@ pub struct SecurityAnalysis {
     code_analysis: CodeAnalysisReport,
     /// Behavioral prediction (Stage 3, requires LLM)
     predicted_behavior: Option<PredictedBehavior>,
-    /// Comparison to known agent corpus (Stage 4, requires LLM)
+    /// Comparison to known agent corpus (Stage 4, algorithmic — no LLM required)
     corpus_match: Option<CorpusComparison>,
     /// Confidence in the overall analysis (0.0–1.0)
     analysis_confidence: f32,

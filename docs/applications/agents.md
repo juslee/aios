@@ -184,10 +184,12 @@ pub struct AgentManifest {
 
     // === Capability Profiles (Phase 28) ===
 
-    /// Capability profiles this agent includes.
+    /// Capability profiles this agent references (not bundled — loaded from
+    /// system/config/capability-profiles/ at install time).
     /// Profiles are pre-audited, named bundles of capabilities that compose
     /// in numbered layers. See security.md §3.7 for the profile system.
     /// Resolved at install time into a flat CapabilitySet for kernel enforcement.
+    /// Defaults to empty if omitted (backward-compatible with pre-Phase 28 manifests).
     profiles: Vec<ProfileReference>,
 
     // === Capabilities ===

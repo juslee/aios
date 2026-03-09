@@ -1927,11 +1927,11 @@ impl TemporalCapability {
 
 The flat `requested_capabilities` list in `AgentManifest` (§2.4 of [agents.md](../applications/agents.md)) works for simple agents but creates problems at scale: every Python agent duplicates the same interpreter capabilities, every network-capable agent copies the same access patterns, and each manifest must be audited individually even when the capability patterns are identical.
 
-**Capability profiles** are pre-audited, named, versioned bundles of capabilities that compose in numbered layers. An agent's effective capability set is the composition of multiple profiles, resolved at install time into the flat `CapabilityTable` (§3.2) that the kernel enforces.
+**Capability profiles** are pre-audited, named, versioned bundles of capabilities that compose in numbered layers. An agent's effective capability set is the composition of multiple profiles, resolved at install time into a flat `ResolvedCapabilitySet` whose capabilities are then minted as kernel-enforced tokens in the `CapabilityTable` (§3.2).
 
 #### 3.7.1 Layer Architecture
 
-Five layers, evaluated bottom-to-top. Later layers can only restrict, never expand (except Layer 50 which adds agent-specific grants).
+Five layers, evaluated bottom-to-top. Layers 00–30 are additive (each adds grants for its domain). Layer 50 adds the agent's own one-off grants. Layer 90 is restriction-only (denials and attenuations, no new grants).
 
 ```
 Layer 00: OS Base           Ships with AIOS. Immutable. Every agent gets these.
@@ -1975,8 +1975,8 @@ const OS_BASE_GRANTS: &[Capability] = &[
 
 **Layer 90 — User Override**: Applied at install time or later via Settings. The user can:
 
-- Remove capabilities from any layer (deny override)
-- Add attenuations to any capability (further restrict)
+- Remove capabilities from any *removable* layer via deny override — but OS Base (Layer 00) grants cannot be fully denied, only attenuated (e.g., rate-limited), since they are foundational security primitives
+- Add attenuations to any capability from any layer (further restrict scope, rate, or target)
 - Cannot add new capabilities not present in any lower layer (no escalation)
 
 #### 3.7.2 Profile Type Definition
@@ -2003,7 +2003,7 @@ pub struct CapabilityProfile {
     author: ProfileAuthor,
     /// Ed25519 signature (OS profiles signed by AIOS root key)
     signature: Signature,
-    /// AIRS security analysis of this profile (see §3.7.6)
+    /// AIRS security analysis of this profile (see agents.md §2.4 and airs.md §5.9)
     analysis: Option<SecurityAnalysis>,
     /// Minimum OS version required
     min_os_version: Version,
@@ -2149,8 +2149,13 @@ pub fn resolve_capability_set(
         }
     }
 
-    // Phase 5: Remove denied capabilities (deny-always-wins)
+    // Phase 5: Remove denied capabilities (deny-always-wins, except OS Base)
     grants.retain(|grant| {
+        // OS Base capabilities are foundational and cannot be denied by any higher layer.
+        // They can only be attenuated (Phase 4 above) — never fully removed.
+        if grant.source_layer == ProfileLayer::OsBase {
+            return true;
+        }
         !denials.iter().any(|d| d.pattern.matches(&grant.capability))
     });
 
