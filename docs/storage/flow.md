@@ -30,19 +30,28 @@ Flow is the connective tissue of AIOS. It is how data moves between agents, betw
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph FS["Flow Service (system service, always running)"]
-        TM["Transfer Manager<br/>initiate, stage, deliver, cancel"]
-        HS["History Store<br/>index, search, retain, prune"]
-        TE["Transform Engine<br/>negotiate, select, execute, register"]
-        PT["Provenance Tracker<br/>chain, verify, inspect"]
-        TS["Type System<br/>MIME, semantic, negotiate"]
-        MDS["Multi-Device Sync<br/>replicate, merge, resolve"]
+        TM["`Transfer Manager
+initiate, stage, deliver, cancel`"]
+        HS["`History Store
+index, search, retain, prune`"]
+        TE["`Transform Engine
+negotiate, select, execute, register`"]
+        PT["`Provenance Tracker
+chain, verify, inspect`"]
+        TS["`Type System
+MIME, semantic, negotiate`"]
+        MDS["`Multi-Device Sync
+replicate, merge, resolve`"]
     end
 
-    FS -- "IPC (sys.flow channel)" --> Agents["Agents<br/>(SDK FlowClient)"]
-    FS -- "IPC (sys.flow channel)" --> Compositor["Compositor<br/>(drag/drop, visual cues)"]
-    FS -- "IPC (sys.flow channel)" --> Subsystems["Subsystems<br/>(DataChannels, FlowPipes)"]
+    FS -- "IPC (sys.flow channel)" --> Agents["`Agents
+(SDK FlowClient)`"]
+    FS -- "IPC (sys.flow channel)" --> Compositor["`Compositor
+(drag/drop, visual cues)`"]
+    FS -- "IPC (sys.flow channel)" --> Subsystems["`Subsystems
+(DataChannels, FlowPipes)`"]
 ```
 
 The Flow Service runs as a system service registered at `sys.flow`. The core service lands in dev Phase 11 (Tasks, Flow & Attention), with compositor drag/drop protocol scaffolded in Phase 6 and AIRS transform scaffolding in Phase 8 (see §13 for full implementation order). At runtime, it starts during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
@@ -689,12 +698,13 @@ pub struct TransformRecord {
 **Conversion graph:** The registry maintains a directed graph where nodes are content types and edges are transforms. When a conversion is needed, the engine finds the shortest (cheapest) path. The graph is recomputed when transforms are added or removed.
 
 ```mermaid
-graph LR
+flowchart LR
     HTML --> RichText --> PlainText
     RichText --> Markdown --> FormattedTable
     PlainText --> Embedding
     Code --> HTML
-    Code --> FormattedHTML["FormattedHTML<br/>(syntax highlight)"]
+    Code --> FormattedHTML["`FormattedHTML
+(syntax highlight)`"]
     Audio --> Transcript["Transcript (AIRS)"] --> PlainText
     PlainText --> Embedding
 ```
@@ -737,14 +747,22 @@ AIRS indexes Flow history like any other space. Users can search semantically: "
 The Flow Tray (see [experience.md](../experience/experience.md)) provides the user-facing history interface:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph FlowHistory["FLOW HISTORY (Ctrl+Shift+V)"]
         Search["Search: [ ... ] 🔍"]
         subgraph Entries["History Entries"]
-            E1["'pub fn transform_engine...' — 3 min ago<br/>Code (Rust) · from: editor-agent · to: browser-agent<br/>Intent: Copy [Re-send]"]
-            E2["[thumbnail] Screenshot of architecture diagram — 15 min ago<br/>Image (PNG, 1920x1080) · from: screenshot-agent<br/>Intent: Copy [Re-send]"]
-            E3["'Attention mechanisms allow models to...' — 1 hour ago<br/>RichText · from: browser-tab (arxiv.org) · to: research<br/>Intent: Quote · Transform: HTML → PlainText [Re-send]"]
-            E4["research/papers/transformer-survey.pdf — yesterday<br/>Reference · from: research-agent<br/>Intent: Reference [Re-send]"]
+            E1["`'pub fn transform_engine...' — 3 min ago
+Code (Rust) · from: editor-agent · to: browser-agent
+Intent: Copy [Re-send]`"]
+            E2["`[thumbnail] Screenshot of architecture diagram — 15 min ago
+Image (PNG, 1920x1080) · from: screenshot-agent
+Intent: Copy [Re-send]`"]
+            E3["`'Attention mechanisms allow models to...' — 1 hour ago
+RichText · from: browser-tab (arxiv.org) · to: research
+Intent: Quote · Transform: HTML → PlainText [Re-send]`"]
+            E4["`research/papers/transformer-survey.pdf — yesterday
+Reference · from: research-agent
+Intent: Reference [Re-send]`"]
         end
         Footer["Showing 4 of 247 entries · Load more"]
     end
@@ -903,13 +921,14 @@ pub enum DropCompatibility {
 The compositor provides visual cues during drag operations, informed by Flow's type negotiation:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Source["Source Surface"]
         Dragging["dragging: code snippet"]
     end
 
     subgraph Preview["Drag Preview"]
-        PV["pub fn transform()...<br/>Rust · 12 lines"]
+        PV["`pub fn transform()...
+Rust · 12 lines`"]
     end
 
     subgraph Terminal["Terminal (compatible)"]

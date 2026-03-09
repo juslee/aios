@@ -38,43 +38,72 @@ The application doesn't know or care that `openai/v1/models` is on a server in S
 ## 2. Full Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Agent["Agent / Application"]
-        SpaceOps["space::remote('openai/v1')?.read('models')<br/>space::remote('collab/doc/123')?.subscribe(callback)<br/>Flow::transfer(remote_object, local_space)"]
+        SpaceOps["`space::remote('openai/v1')?.read('models')
+space::remote('collab/doc/123')?.subscribe(callback)
+Flow::transfer(remote_object, local_space)`"]
     end
 
     Agent -->|"Space Operations (kernel syscalls)"| NTM
 
     subgraph NTM["Network Translation Module (userspace service)"]
         subgraph NTMCore[" "]
-            SR["Space Resolver<br/>semantic name to URI,<br/>protocol, endpoint"]
-            CM["Connection Manager<br/>pool/reuse, TLS session,<br/>multiplexing, keepalive"]
-            SE["Shadow Engine<br/>local copies of remote<br/>spaces for offline use"]
+            direction LR
+            SR["`Space Resolver
+semantic name to URI,
+protocol, endpoint`"]
+            CM["`Connection Manager
+pool/reuse, TLS session,
+multiplexing, keepalive`"]
+            SE["`Shadow Engine
+local copies of remote
+spaces for offline use`"]
         end
         subgraph NTMPolicy[" "]
-            RE["Resilience Engine<br/>retry, backoff,<br/>circuit breaker"]
-            BS["Bandwidth Scheduler<br/>fair share, priority,<br/>multi-path, QoS"]
-            CG["Capability Gate<br/>verify cap before ANY<br/>network op, audit trail"]
+            direction LR
+            RE["`Resilience Engine
+retry, backoff,
+circuit breaker`"]
+            BS["`Bandwidth Scheduler
+fair share, priority,
+multi-path, QoS`"]
+            CG["`Capability Gate
+verify cap before ANY
+network op, audit trail`"]
         end
-        PT["Protocol Translators<br/>space.read() to HTTP GET | space.write() to HTTP POST/PUT<br/>space.subscribe() to WebSocket/SSE | Flow.transfer() to QUIC streams<br/>space.query() to GraphQL/SQL | space.delete() to HTTP DELETE"]
+        PT["`Protocol Translators
+space.read() to HTTP GET | space.write() to HTTP POST/PUT
+space.subscribe() to WebSocket/SSE | Flow.transfer() to QUIC streams
+space.query() to GraphQL/SQL | space.delete() to HTTP DELETE`"]
     end
 
     NTM --> Protocols
 
     subgraph Protocols["Protocol Engines"]
-        HTTP2["HTTP/2<br/>(h2 crate)"]
-        HTTP3["HTTP/3<br/>(QUIC / quinn)"]
-        AIOSPeer["AIOS Peer<br/>Protocol"]
-        MQTT["MQTT<br/>(IoT)"]
-        RawSocket["Raw Socket Engine<br/>(POSIX compat layer)"]
+        direction LR
+        HTTP2["`HTTP/2
+(h2 crate)`"]
+        HTTP3["`HTTP/3
+(QUIC / quinn)`"]
+        AIOSPeer["`AIOS Peer
+Protocol`"]
+        MQTT["`MQTT
+(IoT)`"]
+        RawSocket["`Raw Socket Engine
+(POSIX compat layer)`"]
     end
 
     Protocols --> Transport
 
     subgraph Transport["Transport Layer"]
-        TLS["TLS 1.3<br/>(rustls)"]
-        QUIC["QUIC<br/>(quinn)"]
-        PlainTCP["Plain TCP/UDP<br/>(POSIX compat)"]
+        direction LR
+        TLS["`TLS 1.3
+(rustls)`"]
+        QUIC["`QUIC
+(quinn)`"]
+        PlainTCP["`Plain TCP/UDP
+(POSIX compat)`"]
     end
 
     Transport --> NetStack

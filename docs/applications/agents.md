@@ -34,14 +34,26 @@ Agents do not share memory. Agents do not call each other's functions. Agents do
 ### 2.2 Agent Categories
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Categories["Agent Categories"]
-        SA["System Agents<br/>Compositor, AIRS, Space Storage, Agent Runtime, Service Manager<br/>Ship with the OS. Elevated capabilities. Trusted by the kernel."]
-        NEA["Native Experience Agents<br/>Browser Shell, Media Player, Game Launcher, Inspector, Settings<br/>Ship with the OS. User-level capabilities. No special privileges."]
-        TPA["Third-Party Agents<br/>Installed from Agent Store or sideloaded in dev mode.<br/>User-approved capabilities. AIRS-analyzed before install."]
-        TA["Tab Agents<br/>One per browser tab, per web origin. Spawned by Browser Shell.<br/>Ephemeral. Capabilities derived from URL origin. Sandboxed."]
-        SWA["Service Worker Agents<br/>Persistent tab agents for background web tasks (push, sync).<br/>Constrained capabilities. Survive tab close. Origin-scoped."]
-        TSK["Task Agents<br/>Ephemeral. Spawned for a specific task (e.g., 'summarize this').<br/>Terminated when the task completes or fails."]
+        SA["`System Agents
+Compositor, AIRS, Space Storage, Agent Runtime, Service Manager
+Ship with the OS. Elevated capabilities. Trusted by the kernel.`"]
+        NEA["`Native Experience Agents
+Browser Shell, Media Player, Game Launcher, Inspector, Settings
+Ship with the OS. User-level capabilities. No special privileges.`"]
+        TPA["`Third-Party Agents
+Installed from Agent Store or sideloaded in dev mode.
+User-approved capabilities. AIRS-analyzed before install.`"]
+        TA["`Tab Agents
+One per browser tab, per web origin. Spawned by Browser Shell.
+Ephemeral. Capabilities derived from URL origin. Sandboxed.`"]
+        SWA["`Service Worker Agents
+Persistent tab agents for background web tasks (push, sync).
+Constrained capabilities. Survive tab close. Origin-scoped.`"]
+        TSK["`Task Agents
+Ephemeral. Spawned for a specific task (e.g., 'summarize this').
+Terminated when the task completes or fails.`"]
     end
 
     SA --- NEA --- TPA --- TA --- SWA --- TSK
@@ -353,13 +365,29 @@ pub enum RiskLevel {
 Agents are distributed as `.aios-agent` packages (see Section 8.2). The installation flow:
 
 ```mermaid
-graph TD
-    S1["**1. Package received** (from Store, sideload, or enterprise)<br/>Verify .aios-agent archive integrity (checksums)"]
-    S2["**2. Verify author signature** (Ed25519)<br/>Check author identity against trust store<br/>Reject if signature invalid or author unknown"]
-    S3["**3. AIRS security analysis**<br/>Static analysis of code bundle<br/>Verify capabilities used match capabilities declared<br/>Flag unused capabilities, suspicious patterns<br/>Produce SecurityAnalysis, attach to manifest"]
-    S4["**4. Present to user**<br/>Show: name, author, description, risk level<br/>Show: each requested capability with justification<br/>Show: AIRS analysis summary and concerns<br/>User approves, denies, or approves with restrictions"]
-    S5["**5. Store in system/agents/**<br/>Manifest stored as space object<br/>Code bundle stored content-addressed<br/>Approved capabilities recorded"]
-    S6["**6. Register with Agent Runtime**<br/>Agent ready to launch<br/>If autostart: agent started immediately"]
+flowchart TD
+    S1["`**1. Package received** (from Store, sideload, or enterprise)
+Verify .aios-agent archive integrity (checksums)`"]
+    S2["`**2. Verify author signature** (Ed25519)
+Check author identity against trust store
+Reject if signature invalid or author unknown`"]
+    S3["`**3. AIRS security analysis**
+Static analysis of code bundle
+Verify capabilities used match capabilities declared
+Flag unused capabilities, suspicious patterns
+Produce SecurityAnalysis, attach to manifest`"]
+    S4["`**4. Present to user**
+Show: name, author, description, risk level
+Show: each requested capability with justification
+Show: AIRS analysis summary and concerns
+User approves, denies, or approves with restrictions`"]
+    S5["`**5. Store in system/agents/**
+Manifest stored as space object
+Code bundle stored content-addressed
+Approved capabilities recorded`"]
+    S6["`**6. Register with Agent Runtime**
+Agent ready to launch
+If autostart: agent started immediately`"]
 
     S1 --> S2 --> S3 --> S4 --> S5 --> S6
 ```
@@ -677,12 +705,29 @@ When a new version of an agent is available:
 Five mechanisms enforce agent isolation. All five are always active. Disabling any one of them requires kernel modification.
 
 ```mermaid
-graph TD
-    L1["**1. Address Space Isolation (TTBR0)**<br/>Each agent has its own page tables.<br/>Agent A cannot address Agent B's memory.<br/>Hardware-enforced by ARM MMU."]
-    L2["**2. Capability Confinement**<br/>Every operation requires a kernel capability token.<br/>Tokens are unforgeable (kernel objects, not data).<br/>No token = no access. No exceptions."]
-    L3["**3. IPC-Only Communication**<br/>No shared memory without explicit capability grant.<br/>No signals between agents.<br/>All communication through kernel IPC.<br/>All IPC metadata logged to audit."]
-    L4["**4. Resource Limits**<br/>Memory: hard RSS limit, exceeded = paused + notify.<br/>CPU: fair-share quota, exceeded = deprioritized.<br/>Network: per-agent bandwidth accounting.<br/>Inference: per-agent token quota."]
-    L5["**5. Syscall Whitelist**<br/>Agents can only invoke AIOS syscalls (31 total).<br/>No raw Linux syscalls. No ioctl. No ptrace.<br/>W^X enforced: memory is writable XOR executable."]
+flowchart TD
+    L1["`**1. Address Space Isolation (TTBR0)**
+Each agent has its own page tables.
+Agent A cannot address Agent B's memory.
+Hardware-enforced by ARM MMU.`"]
+    L2["`**2. Capability Confinement**
+Every operation requires a kernel capability token.
+Tokens are unforgeable (kernel objects, not data).
+No token = no access. No exceptions.`"]
+    L3["`**3. IPC-Only Communication**
+No shared memory without explicit capability grant.
+No signals between agents.
+All communication through kernel IPC.
+All IPC metadata logged to audit.`"]
+    L4["`**4. Resource Limits**
+Memory: hard RSS limit, exceeded = paused + notify.
+CPU: fair-share quota, exceeded = deprioritized.
+Network: per-agent bandwidth accounting.
+Inference: per-agent token quota.`"]
+    L5["`**5. Syscall Whitelist**
+Agents can only invoke AIOS syscalls (31 total).
+No raw Linux syscalls. No ioctl. No ptrace.
+W^X enforced: memory is writable XOR executable.`"]
 
     L1 --- L2 --- L3 --- L4 --- L5
 ```
@@ -845,12 +890,21 @@ Total: 17 agent-facing syscalls (out of 31 kernel syscalls — see ipc.md §3.4)
 The SDK provides a high-level API that agents use to interact with the system. It hides the syscall layer, IPC serialization, and event loop mechanics:
 
 ```mermaid
-graph TD
-    AC["**Agent Code**<br/>Business logic written by the developer<br/>Uses AgentContext methods, responds to events"]
-    API["**SDK High-Level API**<br/>AgentContext, spaces(), infer(), respond(), etc.<br/>Typed, async, idiomatic Rust/Python/TypeScript"]
-    RT["**SDK Runtime**<br/>Event loop, IPC dispatch, message serialization<br/>Capability token management, channel multiplexing"]
-    SC["**Syscall Wrapper**<br/>Thin unsafe layer: Rust → SVC #0 → kernel<br/>One function per syscall, validated parameters"]
-    K["**Kernel**<br/>Validates, enforces, dispatches"]
+flowchart TD
+    AC["`**Agent Code**
+Business logic written by the developer
+Uses AgentContext methods, responds to events`"]
+    API["`**SDK High-Level API**
+AgentContext, spaces(), infer(), respond(), etc.
+Typed, async, idiomatic Rust/Python/TypeScript`"]
+    RT["`**SDK Runtime**
+Event loop, IPC dispatch, message serialization
+Capability token management, channel multiplexing`"]
+    SC["`**Syscall Wrapper**
+Thin unsafe layer: Rust → SVC #0 → kernel
+One function per syscall, validated parameters`"]
+    K["`**Kernel**
+Validates, enforces, dispatches`"]
 
     AC --> API --> RT --> SC --> K
 ```
@@ -1647,14 +1701,23 @@ aios-sdk = "0.1"
 ### 8.3 Review Process
 
 ```mermaid
-graph TD
+flowchart TD
     Submit["Developer submits .aios-agent to Store"]
-    Analysis["**Automated Analysis**<br/>1. Signature verification<br/>2. AIRS code analysis<br/>(capability usage audit, unused capability flags,<br/>suspicious patterns, dependency vulnerability)<br/>3. Resource profiling (run in sandbox, measure memory/CPU/network)<br/>4. Capability audit (minimal caps? match description?)"]
+    Analysis["`**Automated Analysis**
+1. Signature verification
+2. AIRS code analysis
+(capability usage audit, unused capability flags,
+suspicious patterns, dependency vulnerability)
+3. Resource profiling (run in sandbox, measure memory/CPU/network)
+4. Capability audit (minimal caps? match description?)`"]
     Risk{"Risk Level?"}
     Low["Auto-approve"]
     High["Manual review (human reviewer)"]
-    PubLow["Published<br/>Store signs with Store key<br/>Available to users"]
-    PubHigh["Approve/Reject<br/>Published or feedback to developer"]
+    PubLow["`Published
+Store signs with Store key
+Available to users`"]
+    PubHigh["`Approve/Reject
+Published or feedback to developer`"]
 
     Submit --> Analysis --> Risk
     Risk -->|Low / Med| Low --> PubLow

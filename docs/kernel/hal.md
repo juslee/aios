@@ -16,15 +16,19 @@ The HAL has one design goal: **adding a new platform is implementing seven metho
 ### 1.1 HAL Boundary
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph KC["Kernel Core"]
-        KCD["scheduler, IPC, capability manager, memory manager<br/>Programs against abstract types:<br/>InterruptController, Timer, Uart, GpuDevice,<br/>NetworkDevice, StorageDevice, RngDevice"]
+        KCD["`scheduler, IPC, capability manager, memory manager
+Programs against abstract types:
+InterruptController, Timer, Uart, GpuDevice,
+NetworkDevice, StorageDevice, RngDevice`"]
     end
 
     KC --- HAL["HAL BOUNDARY — Platform trait + device traits"]
 
     subgraph PI["Platform Implementations (aarch64)"]
         subgraph QEMU["QemuPlatform"]
+            direction LR
             Q1["GICv3"]
             Q2["ARM Gen Timer"]
             Q3["PL011 UART"]
@@ -34,6 +38,7 @@ graph TD
             Q7["VirtIO-RNG"]
         end
         subgraph PI4["Pi4Platform"]
+            direction LR
             P41["GICv2"]
             P42["ARM Timer"]
             P43["PL011"]
@@ -43,6 +48,7 @@ graph TD
             P47["bcm2835"]
         end
         subgraph PI5["Pi5Platform"]
+            direction LR
             P51["GICv3"]
             P52["ARM Timer"]
             P53["PL011"]
@@ -52,6 +58,7 @@ graph TD
             P57["bcm2835"]
         end
         subgraph APPLE["AppleSilicon"]
+            direction LR
             A1["AIC"]
             A2["ARM Timer"]
             A3["S5L UART"]
@@ -986,15 +993,18 @@ The `Option` wrappers reflect the incremental initialization during boot — UAR
 The full interrupt path from hardware to handler:
 
 ```mermaid
-graph TD
-    IRQ["Hardware IRQ fires"] --> VEC["ARM exception vector<br/>(IRQ from current EL or lower EL)"]
-    VEC --> ACK["1. controller.acknowledge()<br/>read IAR (GICv2) or ICC_IAR1_EL1 (GICv3)"]
+flowchart TD
+    IRQ["Hardware IRQ fires"] --> VEC["`ARM exception vector
+(IRQ from current EL or lower EL)`"]
+    VEC --> ACK["`1. controller.acknowledge()
+read IAR (GICv2) or ICC_IAR1_EL1 (GICv3)`"]
     ACK --> MATCH{"2. match irq_number"}
     MATCH -->|TIMER_IRQ| TIMER["scheduler.timer_tick()"]
     MATCH -->|UART_IRQ| UART["uart.handle_rx()"]
     MATCH -->|VIRTIO_*| VIRTIO["virtio_irq_handler(device_id)"]
     MATCH -->|other| SPUR["spurious, log and ignore"]
-    TIMER --> EOI["3. controller.end_of_interrupt()<br/>write EOIR"]
+    TIMER --> EOI["`3. controller.end_of_interrupt()
+write EOIR`"]
     UART --> EOI
     VIRTIO --> EOI
     SPUR --> EOI
@@ -1005,9 +1015,11 @@ graph TD
 The timer drives the scheduler's preemption mechanism:
 
 ```mermaid
-graph TD
-    TICK["Timer fires every 1ms"] --> REARM["1. timer.set_next_deadline(tick_interval)<br/>re-arm for next 1ms"]
-    REARM --> SCHED["2. scheduler.tick()<br/>update time accounting"]
+flowchart TD
+    TICK["Timer fires every 1ms"] --> REARM["`1. timer.set_next_deadline(tick_interval)
+re-arm for next 1ms`"]
+    REARM --> SCHED["`2. scheduler.tick()
+update time accounting`"]
     SCHED --> DEC["Decrement current thread's remaining quantum"]
     DEC --> EDF["Check EDF deadlines (RT class)"]
     EDF --> PREEMPT{"Preemption needed?"}
@@ -1932,7 +1944,7 @@ pub trait UsbHostController {
 xHCI is the standard USB 3.x host controller interface, used on Pi 5 (VIA VL805 PCIe-USB bridge) and QEMU (emulated xHCI). The xHCI driver manages three ring buffer types:
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph CMD["Command Ring (kernel --> controller)"]
         C1["Enable Slot"]
         C2["Address Device"]
@@ -2102,14 +2114,20 @@ The ARM System MMU (SMMU) provides IOMMU functionality for DMA isolation on Pi 5
 ### 15.1 SMMUv3 Architecture
 
 ```mermaid
-graph LR
-    DEV["Device<br/>(StreamID)"] -->|DMA| SMMU
+flowchart LR
+    DEV["`Device
+(StreamID)`"] -->|DMA| SMMU
 
     subgraph SMMU["SMMUv3"]
         ST["Stream Table"]
-        STE["STE[StreamID]<br/>Stage 1 Page Tables<br/>Stage 2 Page Tables<br/>Configuration"]
-        CMDQ["Command Queue<br/>(kernel --> SMMU)"]
-        EVTQ["Event Queue<br/>(SMMU --> kernel)"]
+        STE["`STE[StreamID]
+Stage 1 Page Tables
+Stage 2 Page Tables
+Configuration`"]
+        CMDQ["`Command Queue
+(kernel --> SMMU)`"]
+        EVTQ["`Event Queue
+(SMMU --> kernel)`"]
         ST --- STE
     end
 

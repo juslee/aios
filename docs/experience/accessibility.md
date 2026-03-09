@@ -39,7 +39,7 @@ The split is deliberate. Everything above the line works without AI, without net
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph AM["Accessibility Manager (system service, Phase 2)"]
         subgraph CE["Core Engine (no AIRS)"]
             SR["Screen Reader (eSpeak-NG TTS)"]
@@ -69,10 +69,18 @@ graph TD
         end
     end
 
-    AM --> Compositor["Compositor<br/>(rendering, zoom, contrast, magnify)<br/>See compositor.md section 9"]
-    AM --> UIToolkit["UI Toolkit - iced<br/>(accessibility tree, focus management,<br/>semantic roles)<br/>See ui-toolkit.md section 12"]
-    Compositor --> Audio["Audio Subsystem<br/>(TTS output, audio cues)"]
-    UIToolkit --> Input["Input Subsystem<br/>(switch devices, keyboard events,<br/>USB HID polling)"]
+    AM --> Compositor["`Compositor
+(rendering, zoom, contrast, magnify)
+See compositor.md section 9`"]
+    AM --> UIToolkit["`UI Toolkit - iced
+(accessibility tree, focus management,
+semantic roles)
+See ui-toolkit.md section 12`"]
+    Compositor --> Audio["`Audio Subsystem
+(TTS output, audio cues)`"]
+    UIToolkit --> Input["`Input Subsystem
+(switch devices, keyboard events,
+USB HID polling)`"]
 ```
 
 ### 2.1 Accessibility Manager
@@ -150,7 +158,7 @@ impl AccessibilityManager {
 Accessibility configuration uses a two-phase model to handle the chicken-and-egg problem of needing accessibility before user preferences are available:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph P1C["Phase 1: Boot Config (unencrypted, pre-identity)"]
         P1a["Stored in system/config/accessibility"]
         P1b["Readable without identity unlock"]
@@ -181,12 +189,35 @@ The boot config is intentionally minimal — booleans and a few numeric values. 
 The screen reader is built on eSpeak-NG, a compact, multilingual text-to-speech engine compiled into the initramfs. This is the foundation that makes screen reading available from the first frame without AIRS, without network, and without any configuration.
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph SRP["Screen Reader Pipeline"]
-        ATE["Accessibility<br/>Tree Events<br/>---<br/>Focus changed<br/>Value changed<br/>Alert<br/>Structure changed"]
-        TE["Text<br/>Extraction<br/>---<br/>Role + label + state<br/>'Button: Save, pressed'<br/>Interrupt handling"]
-        TTS["eSpeak-NG<br/>TTS Engine<br/>---<br/>Phoneme synthesis<br/>(MBROLA or Klatt)<br/>Prosody control<br/>Rate, pitch, volume"]
-        AO["Audio<br/>Subsystem<br/>---<br/>PCM output<br/>(48kHz, 16-bit)<br/>Priority mixing<br/>(over media)"]
+        ATE["`Accessibility
+Tree Events
+---
+Focus changed
+Value changed
+Alert
+Structure changed`"]
+        TE["`Text
+Extraction
+---
+Role + label + state
+'Button: Save, pressed'
+Interrupt handling`"]
+        TTS["`eSpeak-NG
+TTS Engine
+---
+Phoneme synthesis
+(MBROLA or Klatt)
+Prosody control
+Rate, pitch, volume`"]
+        AO["`Audio
+Subsystem
+---
+PCM output
+(48kHz, 16-bit)
+Priority mixing
+(over media)`"]
 
         ATE --> TE --> TTS --> AO
     end
@@ -372,12 +403,24 @@ Earcons are mixed at a lower volume than speech so they never obscure spoken con
 AIOS supports refreshable Braille displays via the USB HID Braille usage page (0x41), standardized in the USB HID specification. This means any display conforming to the HID Braille standard works without device-specific drivers.
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph BDP["Braille Display Pipeline"]
-        AT["Accessibility Tree<br/>---<br/>Focus node text<br/>+ role + state"]
-        BT["Braille Translation<br/>---<br/>Unicode to Braille<br/>table lookup"]
-        GC["Grade 2 Contraction<br/>---<br/>Contracted Braille<br/>(lang-specific)"]
-        HID["USB HID Output<br/>---<br/>HID Report<br/>(dot pattern bytes)"]
+        AT["`Accessibility Tree
+---
+Focus node text
++ role + state`"]
+        BT["`Braille Translation
+---
+Unicode to Braille
+table lookup`"]
+        GC["`Grade 2 Contraction
+---
+Contracted Braille
+(lang-specific)`"]
+        HID["`USB HID Output
+---
+HID Report
+(dot pattern bytes)`"]
 
         AT --> BT --> GC --> HID
     end
@@ -554,21 +597,30 @@ This is the most constrained input method AIOS supports. A single-switch user ha
 ### 5.2 Scan Patterns
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph SwitchScanning["Switch Scanning Model"]
         subgraph SingleSwitch["Single-Switch (auto-scan)"]
-            SS1["System highlights groups, then items within groups.<br/>Highlight advances automatically on a timer.<br/>Switch press = select highlighted item."]
-            SS2["Level 1 (groups): [**Menu Bar**] [Content] [Status]<br/>Switch press → enters group"]
-            SS3["Level 2 (items): [**File**] [Edit] [View] [Help]<br/>Switch press → activates item<br/>Timeout without press → back to Level 1"]
+            SS1["`System highlights groups, then items within groups.
+Highlight advances automatically on a timer.
+Switch press = select highlighted item.`"]
+            SS2["`Level 1 (groups): [**Menu Bar**] [Content] [Status]
+Switch press → enters group`"]
+            SS3["`Level 2 (items): [**File**] [Edit] [View] [Help]
+Switch press → activates item
+Timeout without press → back to Level 1`"]
         end
 
         subgraph TwoSwitch["Two-Switch (manual advance)"]
-            TS1["Switch A = advance highlight to next item<br/>Switch B = select highlighted item<br/>No auto-advance timer. User controls pace entirely."]
+            TS1["`Switch A = advance highlight to next item
+Switch B = select highlighted item
+No auto-advance timer. User controls pace entirely.`"]
         end
 
         subgraph RowColumn["Row-Column (grid scan, for text entry)"]
-            RC1["Grid: A B C D E F G (row highlighted)<br/>H I J K L M N / O P Q R S T U / V W X Y Z . ⌫"]
-            RC2["Switch press → lock row, scan columns<br/>Switch press → select character at intersection"]
+            RC1["`Grid: A B C D E F G (row highlighted)
+H I J K L M N / O P Q R S T U / V W X Y Z . ⌫`"]
+            RC2["`Switch press → lock row, scan columns
+Switch press → select character at intersection`"]
         end
     end
 ```
@@ -988,20 +1040,31 @@ pub struct ReducedMotionConfig {
 Voice control allows users to control the OS and applications entirely by voice. It operates in two tiers: basic command recognition (without AIRS) and full natural language control (with AIRS).
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph VCP["Voice Control Pipeline"]
-        MIC["Microphone<br/>(audio subsystem)"]
-        VAD["Voice Activity Detection<br/>(energy + zero-crossing)"]
-        SR["Speech Recognition<br/>(AIRS or basic)"]
-        CD["Command Dispatcher<br/>(maps to actions)"]
+        MIC["`Microphone
+(audio subsystem)`"]
+        VAD["`Voice Activity Detection
+(energy + zero-crossing)`"]
+        SR["`Speech Recognition
+(AIRS or basic)`"]
+        CD["`Command Dispatcher
+(maps to actions)`"]
 
         MIC -- "PCM audio stream" --> VAD
         VAD -- "voice segments" --> SR
         SR -- "recognized text / command" --> CD
     end
 
-    NoAIRS["Without AIRS:<br/>Keyword spotting only, ~50 built-in commands<br/>'Click' 'Scroll down' 'Next'<br/>Pattern matching on phonemes"]
-    WithAIRS["With AIRS:<br/>Full natural language recognition<br/>'Open the browser and go to email'<br/>Context-aware command parsing<br/>Conversation Bar integration"]
+    NoAIRS["`Without AIRS:
+Keyword spotting only, ~50 built-in commands
+'Click' 'Scroll down' 'Next'
+Pattern matching on phonemes`"]
+    WithAIRS["`With AIRS:
+Full natural language recognition
+'Open the browser and go to email'
+Context-aware command parsing
+Conversation Bar integration`"]
 
     VAD -.- NoAIRS
     SR -.- WithAIRS
@@ -1079,7 +1142,7 @@ pub enum VoiceAction {
 For users who need pixel-level cursor control via voice, the compositor can display a numbered grid overlay. The user says a grid number to move the cursor to that region, then a sub-grid appears for finer positioning:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Grid["6x6 Numbered Grid Overlay"]
         R1["1 | 2 | 3 | 4 | 5 | 6"]
         R2["7 | 8 | 9 | 10 | 11 | 12"]
@@ -1089,7 +1152,8 @@ graph TD
         R6["31 | 32 | 33 | 34 | 35 | 36"]
     end
 
-    Grid --> Say15["User: '15' → cursor moves to center of cell 15<br/>Sub-grid appears within cell 15"]
+    Grid --> Say15["`User: '15' → cursor moves to center of cell 15
+Sub-grid appears within cell 15`"]
     Say15 --> Say3["User: '3' → cursor moves to sub-position 3"]
     Say3 --> Click["User: 'click' → click at cursor position"]
 ```
@@ -1105,7 +1169,7 @@ This is a fallback for interactions that cannot be reached through the accessibi
 The first frame displayed by AIOS is accessible. This is not aspirational — it is an architectural requirement enforced by the boot sequence. The compositor reads `system/config/accessibility` during Phase 2 (before identity unlock) and applies all configured features before rendering anything to the display.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph P1["Phase 1: Storage"]
         P1A["Block Engine -> Object Store -> Space Storage"]
         P1B["system/config/accessibility is now readable"]
@@ -1202,8 +1266,9 @@ impl BootAccessibilityConfig {
 The first frame always displays the accessibility options prompt in large, high-contrast text (24pt, white on dark background) regardless of configuration. This ensures the prompt is readable even for users with moderate vision impairment who haven't yet enabled accessibility:
 
 ```mermaid
-graph TD
-    subgraph BootPrompt["First Boot Accessibility Prompt<br/>(24pt, white on dark background)"]
+flowchart TD
+    subgraph BootPrompt["`First Boot Accessibility Prompt
+(24pt, white on dark background)`"]
         F5["Press F5 for screen reader."]
         F6["Press F6 for high contrast."]
         F7["Press F7 for large text."]
@@ -1253,14 +1318,26 @@ This config is separate from the user's encrypted preference space. After identi
 The accessibility tree is the central data structure that connects assistive technology to the UI. It is a parallel representation of the visual UI, carrying semantic information rather than pixel data. The tree is built from three sources:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Sources["Accessibility Tree Assembly"]
-        S1["Source 1: UI Toolkit (iced widgets)<br/>Every widget emits an AccessNode<br/>Roles, labels, states, actions from widget type<br/>Developer adds: label, description, custom role<br/>See ui-toolkit.md section 12.1"]
-        S2["Source 2: Agent-provided semantic hints<br/>Agents annotate surfaces with SemanticRole<br/>Agents provide alt-text for images,<br/>descriptions for complex visualizations<br/>See compositor.md section 4 SurfaceHints"]
-        S3["Source 3: AIRS inference (when available)<br/>Auto-generates descriptions for unlabeled images<br/>Summarizes complex content for screen reader users<br/>See section 10 AIRS Enhancement"]
+        S1["`Source 1: UI Toolkit (iced widgets)
+Every widget emits an AccessNode
+Roles, labels, states, actions from widget type
+Developer adds: label, description, custom role
+See ui-toolkit.md section 12.1`"]
+        S2["`Source 2: Agent-provided semantic hints
+Agents annotate surfaces with SemanticRole
+Agents provide alt-text for images,
+descriptions for complex visualizations
+See compositor.md section 4 SurfaceHints`"]
+        S3["`Source 3: AIRS inference (when available)
+Auto-generates descriptions for unlabeled images
+Summarizes complex content for screen reader users
+See section 10 AIRS Enhancement`"]
     end
 
-    COMP["Compositor<br/>merges all three sources"]
+    COMP["`Compositor
+merges all three sources`"]
 
     S1 --> COMP
     S2 --> COMP
@@ -1594,7 +1671,7 @@ The key invariant: **no accessibility feature becomes unavailable when AIRS disc
 Accessibility is not a single phase. It is woven through the development plan from Phase 6 (compositor) through Phase 23 (polish). The principle is: build the infrastructure early, add features incrementally, polish last.
 
 ```mermaid
-graph TD
+flowchart TD
     P6["Phase 6: Compositor Foundation"]
     P6a["Accessibility tree data structure (AccessNode, AccessRole)"]
     P6b["High contrast shader (white-on-black, applied at compositor)"]

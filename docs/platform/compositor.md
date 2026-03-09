@@ -20,7 +20,7 @@ The compositor is also the **display subsystem** in the subsystem framework. It 
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Experience["Experience Layer"]
         Workspace
         Browser
@@ -33,25 +33,47 @@ graph TD
 
     subgraph Compositor["Compositor Service"]
         subgraph CoreModules[" "]
-            WM["Window Manager<br/>z-order, focus,<br/>minimize, close"]
-            LE["Layout Engine<br/>tiling, floating,<br/>fullscreen, split"]
-            SH["Semantic Hints<br/>content type, urgency,<br/>interaction state"]
+            direction LR
+            WM["`Window Manager
+z-order, focus,
+minimize, close`"]
+            LE["`Layout Engine
+tiling, floating,
+fullscreen, split`"]
+            SH["`Semantic Hints
+content type, urgency,
+interaction state`"]
         end
         subgraph PipelineModules[" "]
-            RP["Render Pipeline<br/>damage, composite,<br/>present"]
-            AS["Animation System<br/>transitions, easing,<br/>60fps"]
-            IR["Input Router<br/>focus to agent,<br/>global hotkeys,<br/>gesture recog"]
+            direction LR
+            RP["`Render Pipeline
+damage, composite,
+present`"]
+            AS["`Animation System
+transitions, easing,
+60fps`"]
+            IR["`Input Router
+focus to agent,
+global hotkeys,
+gesture recog`"]
         end
-        AL["Accessibility Layer<br/>Accessibility tree | Screen reader | Keyboard nav"]
+        AL["`Accessibility Layer
+Accessibility tree | Screen reader | Keyboard nav`"]
     end
 
     Compositor --> GPU
 
     subgraph GPU["GPU Abstraction — wgpu"]
-        Vulkan["Vulkan backend<br/>(primary, Pi 4/5)"]
-        VirtIOGPU["VirtIO-GPU backend<br/>(QEMU development)"]
-        SoftwareRenderer["Software renderer<br/>(fallback)"]
-        RenderOps["Render operations:<br/>Surface composition, Damage tracking,<br/>VSync, Multi-monitor"]
+        direction LR
+        Vulkan["`Vulkan backend
+(primary, Pi 4/5)`"]
+        VirtIOGPU["`VirtIO-GPU backend
+(QEMU development)`"]
+        SoftwareRenderer["`Software renderer
+(fallback)`"]
+        RenderOps["`Render operations:
+Surface composition, Damage tracking,
+VSync, Multi-monitor`"]
     end
 
     GPU --> Drivers

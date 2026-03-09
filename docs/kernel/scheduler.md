@@ -89,7 +89,7 @@ pub enum SchedulerClass {
 ### 3.2 Scheduler Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph RQ["Per-CPU Run Queues"]
         subgraph CPU0["CPU 0"]
             RT0["RT Queue (EDF heap)"]
@@ -121,7 +121,8 @@ graph TD
         end
     end
 
-    CPU0 --- LB["Load Balancer<br/>(periodic + push/pull migration)"]
+    CPU0 --- LB["`Load Balancer
+(periodic + push/pull migration)`"]
     CPU1 --- LB
     CPU2 --- LB
     CPU3 --- LB
@@ -430,7 +431,7 @@ The context switch is the most performance-critical code path in the kernel. Eve
 An aarch64 context switch saves and restores the following state:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph ctx["Thread Hardware Context"]
         subgraph gp["General-purpose registers (~256 bytes)"]
             GP1["x0-x30 (31 registers, 8 bytes each = 248 bytes)"]
@@ -988,21 +989,32 @@ pub enum InferenceState {
 Inference can be preempted, but only at well-defined preemption points to avoid expensive state reconstruction:
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph prompt["Prompt Evaluation"]
-        L0["Layer 0<br/>Attn + FFN"] -->|PP| L1["Layer 1<br/>Attn + FFN"]
-        L1 -->|PP| L2["Layer 2<br/>Attn + FFN"]
-        L2 -->|PP| L3["...<br/>"]
-        L3 -->|PP| L31["Layer 31<br/>Attn + FFN"]
+        L0["`Layer 0
+Attn + FFN`"] -->|PP| L1["`Layer 1
+Attn + FFN`"]
+        L1 -->|PP| L2["`Layer 2
+Attn + FFN`"]
+        L2 -->|PP| L3["`...
+`"]
+        L3 -->|PP| L31["`Layer 31
+Attn + FFN`"]
     end
 
     subgraph token["Token Generation"]
-        T1["Token 1<br/>32 layers"] -->|PP| T2["Token 2<br/>32 layers"]
-        T2 -->|PP| T3["Token 3<br/>32 layers"]
-        T3 -->|PP| T4["...<br/>"]
-        T4 -->|PP| T8["Token 8<br/>32 layers"]
+        T1["`Token 1
+32 layers`"] -->|PP| T2["`Token 2
+32 layers`"]
+        T2 -->|PP| T3["`Token 3
+32 layers`"]
+        T3 -->|PP| T4["`...
+`"]
+        T4 -->|PP| T8["`Token 8
+32 layers`"]
         T8 -->|yield| SCHED["Scheduler"]
-        SCHED --> T9["Token 9<br/>..."]
+        SCHED --> T9["`Token 9
+...`"]
     end
 
     prompt ~~~ token
@@ -1659,7 +1671,7 @@ impl Scheduler {
 On the target hardware (Raspberry Pi 4 with Cortex-A72, Pi 5 with Cortex-A76), the default core assignment is:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph core0["Core 0: RT + Interactive"]
         C0_1["Compositor frame rendering (RT, EDF)"]
         C0_2["Audio mixing (RT, EDF)"]
@@ -2135,18 +2147,20 @@ The kernel has two concurrent execution models:
 2. **Async tasks (futures).** Cooperative, poll-based, run within a kernel thread's context. An async task borrows the current thread's stack during `.poll()` and yields when it returns `Poll::Pending`. No context switch — just a function return.
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph sched["Scheduler Thread (preemptive)"]
         S1["Has its own stack"]
         S2["Own register state"]
-        S3["Context switch = save registers,<br/>switch page tables, etc"]
+        S3["`Context switch = save registers,
+switch page tables, etc`"]
         S4["Cost: ~1-10 μs"]
     end
 
     subgraph async["Async Task (cooperative)"]
         A1["Borrows thread stack"]
         A2["No saved registers"]
-        A3["Yield = return Pending<br/>Resume = poll() again"]
+        A3["`Yield = return Pending
+Resume = poll() again`"]
         A4["Cost: ~50-100 ns"]
     end
 

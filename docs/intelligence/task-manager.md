@@ -47,33 +47,52 @@ With Task Manager:
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph TM["Task Manager (privileged userspace service)"]
         subgraph ID["Intent Decomposer"]
-            IP["Intent Parser<br/>(NL to structured)"]
-            TGB["Task Graph Builder<br/>(subtask DAG)"]
-            CP["Capability Planner<br/>(min caps per subtask)"]
+            IP["`Intent Parser
+(NL to structured)`"]
+            TGB["`Task Graph Builder
+(subtask DAG)`"]
+            CP["`Capability Planner
+(min caps per subtask)`"]
         end
         subgraph TS["Task Scheduler"]
-            DE["DAG Executor<br/>(topological order exec)"]
-            CM["Concurrency Mgr<br/>(parallel where safe,<br/>serial where required)"]
-            PR["Priority Router<br/>(context-aware scheduling)"]
+            DE["`DAG Executor
+(topological order exec)`"]
+            CM["`Concurrency Mgr
+(parallel where safe,
+serial where required)`"]
+            PR["`Priority Router
+(context-aware scheduling)`"]
         end
         subgraph AO["Agent Orchestrator"]
-            AS["Agent Selector<br/>(task-to-agent matching)"]
-            SM["Spawn Manager<br/>(capability scoping, spawn)"]
-            RC["Result Collector<br/>(aggregate subtask results)"]
+            AS["`Agent Selector
+(task-to-agent matching)`"]
+            SM["`Spawn Manager
+(capability scoping, spawn)`"]
+            RC["`Result Collector
+(aggregate subtask results)`"]
         end
         subgraph TSS["Task State Store"]
-            IFS["In-Flight State<br/>(volatile, per-task session)"]
-            PT["Progress Tracker<br/>(% complete, subtask status)"]
-            AL["Audit Logger<br/>(provenance chain entries)"]
+            IFS["`In-Flight State
+(volatile, per-task session)`"]
+            PT["`Progress Tracker
+(% complete, subtask status)`"]
+            AL["`Audit Logger
+(provenance chain entries)`"]
         end
     end
 
-    TM --> AIRS["AIRS (IPC)<br/>(intent decompose,<br/>inference)"]
-    TM --> AR["Agent Runtime<br/>(spawn agents,<br/>enforce caps, lifecycle)"]
-    TM --> SS["Space Storage<br/>(task state,<br/>object access, audit log)"]
+    TM --> AIRS["`AIRS (IPC)
+(intent decompose,
+inference)`"]
+    TM --> AR["`Agent Runtime
+(spawn agents,
+enforce caps, lifecycle)`"]
+    TM --> SS["`Space Storage
+(task state,
+object access, audit log)`"]
 ```
 
 ### 2.1 Relationship to Other Services
@@ -275,19 +294,40 @@ User intent: "Summarize all the research papers I read this week
 AIRS decomposition:
 
 ```mermaid
-graph TD
-    T1["T1: SpaceQuery<br/>space: research<br/>query: accessed this week by user<br/>caps: ReadSpace"]
-    T2["T2: Inference (Summarize)<br/>runs once per paper, parallelized<br/>input: T1 objects<br/>caps: ReadSpace, InferenceCpu"]
-    T3["T3: Inference (Synthesize)<br/>input: T2 summaries<br/>prompt: Combine paper summaries<br/>into a unified briefing<br/>caps: InferenceCpu"]
-    T4["T4: Inference (Generate)<br/>input: T3 summary<br/>prompt: Compose a professional<br/>email with this summary<br/>caps: InferenceCpu"]
-    T5["T5: UserConfirmation<br/>prompt: Send this summary<br/>email to your team?<br/>shows email preview"]
-    T6["T6: ConnectorSend<br/>connector: email<br/>destination: team<br/>input: T4 email body<br/>caps: Network smtp"]
+flowchart TD
+    T1["`T1: SpaceQuery
+space: research
+query: accessed this week by user
+caps: ReadSpace`"]
+    T2["`T2: Inference (Summarize)
+runs once per paper, parallelized
+input: T1 objects
+caps: ReadSpace, InferenceCpu`"]
+    T3["`T3: Inference (Synthesize)
+input: T2 summaries
+prompt: Combine paper summaries
+into a unified briefing
+caps: InferenceCpu`"]
+    T4["`T4: Inference (Generate)
+input: T3 summary
+prompt: Compose a professional
+email with this summary
+caps: InferenceCpu`"]
+    T5["`T5: UserConfirmation
+prompt: Send this summary
+email to your team?
+shows email preview`"]
+    T6["`T6: ConnectorSend
+connector: email
+destination: team
+input: T4 email body
+caps: Network smtp`"]
 
     T1 -- "Vec of ObjectId" --> T2
-    T2 -- "Vec of String<br/>(per-paper summaries)" --> T3
-    T3 -- "String<br/>(unified summary)" --> T4
-    T4 -- "String<br/>(email body)" --> T5
-    T5 -- "Boolean<br/>(approved/rejected)" --> T6
+    T2 -- "Vec of String - per-paper summaries" --> T3
+    T3 -- "String - unified summary" --> T4
+    T4 -- "String - email body" --> T5
+    T5 -- "Boolean - approved/rejected" --> T6
 ```
 ```
 

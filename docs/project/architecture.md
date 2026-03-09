@@ -81,96 +81,166 @@ A clean-sheet microkernel operating system written in Rust for aarch64 where eve
 ### 2.1 Full Stack Overview
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph EXP["EXPERIENCE LAYER"]
-        Workspace["Workspace<br/><i>contextual home view</i>"]
-        ConvBar["Conversation Bar<br/><i>always available, user-invoked</i>"]
-        MediaPlayer["Media Player<br/><i>music, video, podcasts, streaming</i>"]
-        WebBrowser["Web Browser<br/><i>Servo-based, semantic indexing</i>"]
-        GameLauncher["Game Launcher<br/><i>library, saves as space objects</i>"]
-        Inspector["Inspector<br/><i>provenance, security visibility</i>"]
-        AgentStore["Agent Store<br/><i>discover, approve capabilities</i>"]
-        Settings["Settings<br/><i>conversational, AI-mediated</i>"]
+        direction LR
+        Workspace["`Workspace
+*contextual home view*`"]
+        ConvBar["`Conversation Bar
+*always available, user-invoked*`"]
+        MediaPlayer["`Media Player
+*music, video, podcasts, streaming*`"]
+        WebBrowser["`Web Browser
+*Servo-based, semantic indexing*`"]
+        GameLauncher["`Game Launcher
+*library, saves as space objects*`"]
+        Inspector["`Inspector
+*provenance, security visibility*`"]
+        AgentStore["`Agent Store
+*discover, approve capabilities*`"]
+        Settings["`Settings
+*conversational, AI-mediated*`"]
     end
 
     subgraph SVC["SERVICES LAYER"]
+        direction LR
         subgraph AIRS["AI Runtime Service — hot-swappable privileged service"]
-            InfEngine["Inference Engine<br/><i>GGML, NEON SIMD</i>"]
-            ModelReg["Model Registry<br/><i>GGUF, LRU</i>"]
-            AgentLife["Agent Lifecycle<br/><i>create, sandbox</i>"]
-            CtxMgr["Context Manager<br/><i>state, compress</i>"]
-            ToolMgr["Tool Manager<br/><i>register, exec</i>"]
-            SpaceIdx["Space Indexer<br/><i>embed, relate</i>"]
-            CtxEngine["Context Engine<br/><i>infer work/play</i>"]
-            AttnMgr["Attention Mgr<br/><i>triage, digest</i>"]
-            IntentVer["Intent Verifier<br/><i>action alignment</i>"]
-            BehMon["Behavioral Monitor<br/><i>anomaly detect</i>"]
-            AdvDef["Adversarial Def<br/><i>injection detect</i>"]
-            InfSched["Inference Scheduler<br/><i>priority, deadline</i>"]
+            direction LR
+            InfEngine["`Inference Engine
+*GGML, NEON SIMD*`"]
+            ModelReg["`Model Registry
+*GGUF, LRU*`"]
+            AgentLife["`Agent Lifecycle
+*create, sandbox*`"]
+            CtxMgr["`Context Manager
+*state, compress*`"]
+            ToolMgr["`Tool Manager
+*register, exec*`"]
+            SpaceIdx["`Space Indexer
+*embed, relate*`"]
+            CtxEngine["`Context Engine
+*infer work/play*`"]
+            AttnMgr["`Attention Mgr
+*triage, digest*`"]
+            IntentVer["`Intent Verifier
+*action alignment*`"]
+            BehMon["`Behavioral Monitor
+*anomaly detect*`"]
+            AdvDef["`Adversarial Def
+*injection detect*`"]
+            InfSched["`Inference Scheduler
+*priority, deadline*`"]
         end
 
-        SpaceStorage["Space Storage<br/><i>object store, block engine, content-addr</i>"]
-        TaskMgr["Task Manager<br/><i>intent to subtasks, orchestrate</i>"]
-        FlowSvc["Flow Service<br/><i>context-aware data transfer, transform</i>"]
-        IdentitySvc["Identity Svc<br/><i>crypto keys, relationships, trust model</i>"]
-        NTM["Network Translation Module<br/><i>spaces to net</i>"]
-        PrefSvc["Preference Svc<br/><i>conversational config, learn</i>"]
-        Compositor["Compositor<br/><i>GPU-native, semantic-ready</i>"]
-        AudioSvc["Audio Service<br/><i>mixing, route, decode, output</i>"]
+        SpaceStorage["`Space Storage
+*object store, block engine, content-addr*`"]
+        TaskMgr["`Task Manager
+*intent to subtasks, orchestrate*`"]
+        FlowSvc["`Flow Service
+*context-aware data transfer, transform*`"]
+        IdentitySvc["`Identity Svc
+*crypto keys, relationships, trust model*`"]
+        NTM["`Network Translation Module
+*spaces to net*`"]
+        PrefSvc["`Preference Svc
+*conversational config, learn*`"]
+        Compositor["`Compositor
+*GPU-native, semantic-ready*`"]
+        AudioSvc["`Audio Service
+*mixing, route, decode, output*`"]
 
         subgraph SUBSYS["Subsystem Framework — universal hardware abstraction"]
-            CapGate["Capability Gate<br/><i>kernel-enforced</i>"]
-            Sessions["Sessions<br/><i>bounded use</i>"]
-            DataChan["Data Channels<br/><i>Flow-connected</i>"]
-            DevReg["Device Registry<br/><i>system/devices/</i>"]
-            AuditSp["Audit Spaces<br/><i>system/audit/</i>"]
-            PwrMgr["Power Manager<br/><i>idle policies</i>"]
-            PosixBr["POSIX Bridge<br/><i>/dev nodes</i>"]
-            ConflRes["Conflict Res<br/><i>share/queue</i>"]
-            Hotplug["Hotplug Handler<br/><i>USB, BT, etc.</i>"]
+            direction LR
+            CapGate["`Capability Gate
+*kernel-enforced*`"]
+            Sessions["`Sessions
+*bounded use*`"]
+            DataChan["`Data Channels
+*Flow-connected*`"]
+            DevReg["`Device Registry
+*system/devices/*`"]
+            AuditSp["`Audit Spaces
+*system/audit/*`"]
+            PwrMgr["`Power Manager
+*idle policies*`"]
+            PosixBr["`POSIX Bridge
+*/dev nodes*`"]
+            ConflRes["`Conflict Res
+*share/queue*`"]
+            Hotplug["`Hotplug Handler
+*USB, BT, etc.*`"]
         end
 
-        POSIXCompat["POSIX Compat<br/><i>BSD userland, musl libc, translation</i>"]
-        AgentRT["Agent Runtime<br/><i>sandbox, SDK runtime, tool execution</i>"]
-        ConnSvc["Connector Svc<br/><i>Slack, GitHub, external APIs</i>"]
-        DevDrivers["Device Drivers<br/><i>VirtIO, USB, WiFi, BT</i>"]
+        POSIXCompat["`POSIX Compat
+*BSD userland, musl libc, translation*`"]
+        AgentRT["`Agent Runtime
+*sandbox, SDK runtime, tool execution*`"]
+        ConnSvc["`Connector Svc
+*Slack, GitHub, external APIs*`"]
+        DevDrivers["`Device Drivers
+*VirtIO, USB, WiFi, BT*`"]
     end
 
     subgraph KERN["KERNEL SPACE"]
         subgraph AIKP["AI Kernel Primitives"]
-            ModelMem["Model memory regions<br/><i>shared, pinned, ref-counted</i>"]
-            ComputeAbs["Compute device abstraction<br/><i>CPU/GPU/NPU</i>"]
-            AgentCap["Agent capability tokens<br/><i>fine-grained, revocable, expiring</i>"]
-            ProvChain["Provenance chain<br/><i>append-only, Merkle-linked, signed</i>"]
-            InfPrim["Inference scheduling primitives<br/><i>priority, deadline, preempt</i>"]
+            direction LR
+            ModelMem["`Model memory regions
+*shared, pinned, ref-counted*`"]
+            ComputeAbs["`Compute device abstraction
+*CPU/GPU/NPU*`"]
+            AgentCap["`Agent capability tokens
+*fine-grained, revocable, expiring*`"]
+            ProvChain["`Provenance chain
+*append-only, Merkle-linked, signed*`"]
+            InfPrim["`Inference scheduling primitives
+*priority, deadline, preempt*`"]
         end
 
         subgraph MICRO["Core Microkernel"]
-            VMM["Virtual Memory Manager<br/><i>4-level, TTBR0/TTBR1, W^X, KASLR</i>"]
-            IPC["IPC<br/><i>sync message passing, capability transfer, zero-copy</i>"]
-            Sched["Scheduler<br/><i>priority + deadline, context-aware hints</i>"]
-            CapMgr["Capability Manager<br/><i>create, transfer, revoke, attenuate</i>"]
-            CryptoCore["Cryptographic Core<br/><i>Ed25519, AES-256, key storage</i>"]
-            AuditLog["Audit Log<br/><i>kernel-enforced, tamper-evident</i>"]
-            ProcMgr["Process Manager<br/><i>create, isolate, terminate</i>"]
+            direction LR
+            VMM["`Virtual Memory Manager
+*4-level, TTBR0/TTBR1, W^X, KASLR*`"]
+            IPC["`IPC
+*sync message passing, capability transfer, zero-copy*`"]
+            Sched["`Scheduler
+*priority + deadline, context-aware hints*`"]
+            CapMgr["`Capability Manager
+*create, transfer, revoke, attenuate*`"]
+            CryptoCore["`Cryptographic Core
+*Ed25519, AES-256, key storage*`"]
+            AuditLog["`Audit Log
+*kernel-enforced, tamper-evident*`"]
+            ProcMgr["`Process Manager
+*create, isolate, terminate*`"]
         end
 
         subgraph HAL["Hardware Abstraction Layer"]
-            PlatTrait["Platform trait<br/><i>7 init methods, one per hardware class</i>"]
-            IntCtrl["InterruptController<br/><i>GICv2 on Pi 4, GICv3 on Pi 5/QEMU</i>"]
-            Timer["Timer<br/><i>ARM Generic Timer</i>"]
-            Uart["Uart<br/><i>PL011 UART</i>"]
-            GpuDev["GpuDevice<br/><i>VirtIO-GPU / VideoCore VI / VII</i>"]
-            NetDev["NetworkDevice<br/><i>VirtIO-Net / Broadcom Genet</i>"]
-            StorDev["StorageDevice<br/><i>VirtIO-Blk / Arasan SDHCI</i>"]
-            RngDev["RngDevice<br/><i>VirtIO-RNG / bcm2835-rng</i>"]
+            direction LR
+            PlatTrait["`Platform trait
+*7 init methods, one per hardware class*`"]
+            IntCtrl["`InterruptController
+*GICv2 on Pi 4, GICv3 on Pi 5/QEMU*`"]
+            Timer["`Timer
+*ARM Generic Timer*`"]
+            Uart["`Uart
+*PL011 UART*`"]
+            GpuDev["`GpuDevice
+*VirtIO-GPU / VideoCore VI / VII*`"]
+            NetDev["`NetworkDevice
+*VirtIO-Net / Broadcom Genet*`"]
+            StorDev["`StorageDevice
+*VirtIO-Blk / Arasan SDHCI*`"]
+            RngDev["`RngDevice
+*VirtIO-RNG / bcm2835-rng*`"]
             UEFIRS["UEFI Runtime Services"]
             DTBParse["Device Tree Parsing + Platform Detection"]
         end
     end
 
     subgraph HW["HARDWARE"]
-        CPU["CPU<br/><i>aarch64</i>"]
+        direction LR
+        CPU["`CPU
+*aarch64*`"]
         RAM["RAM"]
         GPU["GPU"]
         NPU["NPU"]
@@ -188,12 +258,25 @@ graph TD
 Replaces the traditional filesystem. Objects instead of files. Semantic relationships instead of directory trees. Content-addressed storage with AI-maintained indexes.
 
 ```mermaid
-graph TD
-    API["Space API<br/><i>query, create, relate, version, similar_to, traverse, search</i>"]
-    SemIdx["Semantic Index (maintained by AIRS)<br/><i>Embedding store | Entity index | Tag index<br/>Relationship graph | Temporal index</i>"]
-    ObjStore["Object Store<br/><i>Content-addressed SHA-256 hash keys<br/>Typed objects with structured metadata<br/>Automatic deduplication, integrity verification</i>"]
-    VerStore["Version Store<br/><i>Merkle DAG (like git) for full history<br/>Per-object and per-space versioning<br/>Provenance chain per version</i>"]
-    BlockEng["Block Engine<br/><i>LSM-tree indexed blocks on raw device<br/>No intermediate filesystem layer<br/>Write-ahead log for crash recovery<br/>Encryption at rest (per-space keys)</i>"]
+flowchart TD
+    API["`Space API
+*query, create, relate, version, similar_to, traverse, search*`"]
+    SemIdx["`Semantic Index (maintained by AIRS)
+*Embedding store | Entity index | Tag index
+Relationship graph | Temporal index*`"]
+    ObjStore["`Object Store
+*Content-addressed SHA-256 hash keys
+Typed objects with structured metadata
+Automatic deduplication, integrity verification*`"]
+    VerStore["`Version Store
+*Merkle DAG (like git) for full history
+Per-object and per-space versioning
+Provenance chain per version*`"]
+    BlockEng["`Block Engine
+*LSM-tree indexed blocks on raw device
+No intermediate filesystem layer
+Write-ahead log for crash recovery
+Encryption at rest (per-space keys)*`"]
 
     API --> SemIdx --> ObjStore --> VerStore --> BlockEng
 ```
@@ -665,22 +748,34 @@ Replaces application-level networking. Applications see spaces; the OS handles a
 **Core principle:** Applications never see the network. There are only space operations — some of which happen to involve remote spaces — and the OS handles everything else.
 
 ```mermaid
-graph TD
-    App["Application<br/>space::read#40;openai/v1/models#41;"]
+flowchart TD
+    App["`Application
+space::read#40;openai/v1/models#41;`"]
 
     subgraph NTM["Network Translation Module"]
-        SpaceRes["Space Resolver<br/><i>semantic name to endpoint + protocol + auth</i>"]
-        ConnMgr["Connection Manager<br/><i>pool, TLS, multiplex, keepalive</i>"]
-        Shadow["Shadow Engine<br/><i>offline transparency, local cache, sync</i>"]
-        Resilience["Resilience Engine<br/><i>retry, backoff, circuit breaker</i>"]
-        BWSched["Bandwidth Scheduler<br/><i>priority, multi-path, QoS, metered awareness</i>"]
-        CapGate["Capability Gate<br/><i>verify net capability before ANY operation</i>"]
+        direction LR
+        SpaceRes["`Space Resolver
+*semantic name to endpoint + protocol + auth*`"]
+        ConnMgr["`Connection Manager
+*pool, TLS, multiplex, keepalive*`"]
+        Shadow["`Shadow Engine
+*offline transparency, local cache, sync*`"]
+        Resilience["`Resilience Engine
+*retry, backoff, circuit breaker*`"]
+        BWSched["`Bandwidth Scheduler
+*priority, multi-path, QoS, metered awareness*`"]
+        CapGate["`Capability Gate
+*verify net capability before ANY operation*`"]
     end
 
-    Proto["Protocol Engines<br/><i>HTTP/2 | HTTP/3/QUIC | AIOS Peer | MQTT | Raw Socket</i>"]
-    Transport["Transport<br/><i>TLS 1.3 rustls | QUIC quinn | Plain TCP/UDP</i>"]
-    NetStack["Network Stack<br/><i>smoltcp: TCP/UDP/ICMP/IPv4/IPv6/ARP/DHCP</i>"]
-    Drivers["Interface Drivers<br/><i>VirtIO-Net | Ethernet | WiFi | Bluetooth | Cellular</i>"]
+    Proto["`Protocol Engines
+*HTTP/2 | HTTP/3/QUIC | AIOS Peer | MQTT | Raw Socket*`"]
+    Transport["`Transport
+*TLS 1.3 rustls | QUIC quinn | Plain TCP/UDP*`"]
+    NetStack["`Network Stack
+*smoltcp: TCP/UDP/ICMP/IPv4/IPv6/ARP/DHCP*`"]
+    Drivers["`Interface Drivers
+*VirtIO-Net | Ethernet | WiFi | Bluetooth | Cellular*`"]
 
     App --> NTM
     NTM --> Proto --> Transport --> NetStack --> Drivers
@@ -705,11 +800,15 @@ AIOS uses FreeBSD userland (BSD-licensed) instead of GNU tools (GPL), providing 
 **Compatibility architecture:**
 
 ```mermaid
-graph TD
-    BSD["BSD Tools<br/><i>unmodified FreeBSD userland</i>"]
-    LIBC["libc<br/><i>musl-based, MIT-licensed, ~100K lines vs glibc 1.5M</i>"]
-    POSIX["POSIX Emulation Layer<br/><i>translates POSIX to AIOS syscalls</i>"]
-    KERN["AIOS Kernel<br/><i>capabilities, IPC, spaces</i>"]
+flowchart TD
+    BSD["`BSD Tools
+*unmodified FreeBSD userland*`"]
+    LIBC["`libc
+*musl-based, MIT-licensed, ~100K lines vs glibc 1.5M*`"]
+    POSIX["`POSIX Emulation Layer
+*translates POSIX to AIOS syscalls*`"]
+    KERN["`AIOS Kernel
+*capabilities, IPC, spaces*`"]
 
     BSD --> LIBC --> POSIX --> KERN
 ```
@@ -767,23 +866,35 @@ The UI toolkit runs on Linux, macOS, and AIOS. Developers build on familiar plat
 **Architecture:**
 
 ```mermaid
-graph TD
-    AppUI["Application UI Code<br/><i>identical across platforms</i>"]
+flowchart TD
+    AppUI["`Application UI Code
+*identical across platforms*`"]
 
     subgraph Core["UI Toolkit - Portable Core"]
-        Widgets["Widget library<br/><i>button, label, input, list, scroll...</i>"]
-        Layout["Layout engine<br/><i>flexbox-like</i>"]
-        Theme["Theme system<br/><i>colors, fonts, spacing</i>"]
-        Events["Event model<br/><i>click, hover, focus, keyboard</i>"]
+        direction LR
+        Widgets["`Widget library
+*button, label, input, list, scroll...*`"]
+        Layout["`Layout engine
+*flexbox-like*`"]
+        Theme["`Theme system
+*colors, fonts, spacing*`"]
+        Events["`Event model
+*click, hover, focus, keyboard*`"]
         Render["Render tree to display list"]
-        TextLayout["Text layout<br/><i>shaping, line breaking, bidi</i>"]
+        TextLayout["`Text layout
+*shaping, line breaking, bidi*`"]
     end
 
     subgraph Backend["Platform Backend (one per target)"]
-        AIOS["AIOS<br/><i>Compositor protocol + GPU direct</i>"]
-        Linux["Linux<br/><i>wgpu + winit Wayland/X11</i>"]
-        macOS["macOS<br/><i>wgpu + winit Metal</i>"]
-        Web["Web<br/><i>Canvas + DOM WASM</i>"]
+        direction LR
+        AIOS["`AIOS
+*Compositor protocol + GPU direct*`"]
+        Linux["`Linux
+*wgpu + winit Wayland/X11*`"]
+        macOS["`macOS
+*wgpu + winit Metal*`"]
+        Web["`Web
+*Canvas + DOM WASM*`"]
     end
 
     AppUI --> Core --> Backend
@@ -910,15 +1021,39 @@ Traditional browsers are mini-operating systems because the actual OS provides n
 Every action by every agent passes through all eight layers. No single layer failing compromises the system.
 
 ```mermaid
-graph TD
-    L1["Layer 1: Intent Verification<br/><i>Does this action align with the declared task/intent?<br/>AI compares observed actions against user's goal.<br/>Catches legitimate capabilities used inappropriately.</i>"]
-    L2["Layer 2: Capability Check<br/><i>Does the agent hold the required capability token?<br/>Kernel-enforced, unforgeable, revocable, expiring.<br/>Fine-grained: per-space, per-object, per-device.</i>"]
-    L3["Layer 3: Behavioral Boundary<br/><i>Is the access pattern normal for this agent?<br/>Rate limits, anomaly detection, baseline comparison.<br/>Catches compromised agents with valid capabilities.</i>"]
-    L4["Layer 4: Security Zone<br/><i>Is this data in a zone this agent can reach?<br/>Core / Personal / Collaborative / Untrusted / Ephemeral.<br/>Promotion between zones requires review.</i>"]
-    L5["Layer 5: Adversarial Defense<br/><i>Is this action the result of prompt injection?<br/>Control/data plane separation, injection detection.<br/>Agent instructions from kernel, never from data.</i>"]
-    L6["Layer 6: Cryptographic Enforcement<br/><i>Does the agent have the decryption key?<br/>Per-space encryption + device-level encryption.<br/>Keys released only after intent verification.</i>"]
-    L7["Layer 7: Provenance Recording<br/><i>Action logged to tamper-evident Merkle chain.<br/>Cryptographically signed, append-only.<br/>Cannot be bypassed -- even if action is allowed.</i>"]
-    L8["Layer 8: Blast Radius Containment<br/><i>Even if all above fail, damage is bounded.<br/>Max objects writable, auto-snapshot before bulk ops.<br/>Rollback window -- changes reversible for 72 hours.</i>"]
+flowchart TD
+    L1["`Layer 1: Intent Verification
+*Does this action align with the declared task/intent?
+AI compares observed actions against user's goal.
+Catches legitimate capabilities used inappropriately.*`"]
+    L2["`Layer 2: Capability Check
+*Does the agent hold the required capability token?
+Kernel-enforced, unforgeable, revocable, expiring.
+Fine-grained: per-space, per-object, per-device.*`"]
+    L3["`Layer 3: Behavioral Boundary
+*Is the access pattern normal for this agent?
+Rate limits, anomaly detection, baseline comparison.
+Catches compromised agents with valid capabilities.*`"]
+    L4["`Layer 4: Security Zone
+*Is this data in a zone this agent can reach?
+Core / Personal / Collaborative / Untrusted / Ephemeral.
+Promotion between zones requires review.*`"]
+    L5["`Layer 5: Adversarial Defense
+*Is this action the result of prompt injection?
+Control/data plane separation, injection detection.
+Agent instructions from kernel, never from data.*`"]
+    L6["`Layer 6: Cryptographic Enforcement
+*Does the agent have the decryption key?
+Per-space encryption + device-level encryption.
+Keys released only after intent verification.*`"]
+    L7["`Layer 7: Provenance Recording
+*Action logged to tamper-evident Merkle chain.
+Cryptographically signed, append-only.
+Cannot be bypassed -- even if action is allowed.*`"]
+    L8["`Layer 8: Blast Radius Containment
+*Even if all above fail, damage is bounded.
+Max objects writable, auto-snapshot before bulk ops.
+Rollback window -- changes reversible for 72 hours.*`"]
 
     L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7 --> L8
 ```
@@ -1197,12 +1332,14 @@ Available always, used by those who want transparency into the system.
 ### 6.1 Boot Sequence
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph UEFI["UEFI Firmware"]
-        FW["Hardware init, memory map, framebuffer, device tree<br/>Load kernel ELF from EFI System Partition"]
+        FW["`Hardware init, memory map, framebuffer, device tree
+Load kernel ELF from EFI System Partition`"]
     end
 
     subgraph KBOOT["Kernel Early Boot (see boot.md &sect;3.3 for full 17 steps)"]
+        direction LR
         K1["1. Exception vectors + UART init"]
         K2["2. Device tree parse + platform detection"]
         K3["3. GIC v2/v3 + timer init"]
@@ -1217,11 +1354,23 @@ graph TD
     end
 
     subgraph SVCMGR["Service Manager (first userspace process)"]
-        P1["Phase 1 -- Storage<br/><i>Block Engine, Object Store, Space Storage Service<br/>System spaces: system/devices, system/audit</i>"]
-        P2["Phase 2 -- Core Services<br/><i>Device Registry, Subsystem Framework<br/>Input, Display, Compositor, Network TCP/IP</i>"]
-        P3["Phase 3 -- AI Services<br/><i>AIRS loads, model registry scanned<br/>Space Indexer, Context Engine</i>"]
-        P4["Phase 4 -- User Services<br/><i>Identity, Preferences<br/>Attention Manager, Agent Runtime</i>"]
-        P5["Phase 5 -- Experience<br/><i>Workspace displayed<br/>Conversation bar available<br/>Boot complete</i>"]
+        direction LR
+        P1["`Phase 1 -- Storage
+*Block Engine, Object Store, Space Storage Service
+System spaces: system/devices, system/audit*`"]
+        P2["`Phase 2 -- Core Services
+*Device Registry, Subsystem Framework
+Input, Display, Compositor, Network TCP/IP*`"]
+        P3["`Phase 3 -- AI Services
+*AIRS loads, model registry scanned
+Space Indexer, Context Engine*`"]
+        P4["`Phase 4 -- User Services
+*Identity, Preferences
+Attention Manager, Agent Runtime*`"]
+        P5["`Phase 5 -- Experience
+*Workspace displayed
+Conversation bar available
+Boot complete*`"]
         P1 --> P2 --> P3 --> P4 --> P5
     end
 

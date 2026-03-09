@@ -32,21 +32,54 @@ AIOS runs autonomous agents that perform actions on behalf of the user. This is 
 ### 1.2 Trust Boundaries
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph TL0["TRUST LEVEL 0: Kernel"]
-        TL0_desc["Full hardware access. Manages all memory, capabilities, IPC.<br/>Defines the rules everyone else follows. 31 syscalls.<br/>If this is compromised, all bets are off (see section 1.3).<br/><br/>CAN: everything<br/>CANNOT: nothing (it IS the enforcement mechanism)"]
+        TL0_desc["`Full hardware access. Manages all memory, capabilities, IPC.
+Defines the rules everyone else follows. 31 syscalls.
+If this is compromised, all bets are off (see section 1.3).
+
+CAN: everything
+CANNOT: nothing (it IS the enforcement mechanism)`"]
     end
     subgraph TL1["TRUST LEVEL 1: System services"]
-        TL1_desc["AIRS, Space Storage, Service Manager, Compositor, Network<br/>Translation Module. Run as userspace processes with elevated<br/>capability sets. First to boot, last to terminate.<br/><br/>CAN: access system spaces, manage other processes' caps,<br/>perform crypto operations, access all subsystem hardware<br/>CANNOT: modify kernel memory, forge capability tokens,<br/>bypass IPC mediation, access other services' memory"]
+        TL1_desc["`AIRS, Space Storage, Service Manager, Compositor, Network
+Translation Module. Run as userspace processes with elevated
+capability sets. First to boot, last to terminate.
+
+CAN: access system spaces, manage other processes' caps,
+perform crypto operations, access all subsystem hardware
+CANNOT: modify kernel memory, forge capability tokens,
+bypass IPC mediation, access other services' memory`"]
     end
     subgraph TL2["TRUST LEVEL 2: Native experience agents"]
-        TL2_desc["Workspace, Browser Shell, Media Player, Inspector, Settings.<br/>Shipped with the OS. Signed by AIOS root key. Broad caps<br/>but still bounded by the capability system.<br/><br/>CAN: create surfaces, access multiple spaces, post attention<br/>items, use inference, spawn tab agents<br/>CANNOT: access system spaces directly, modify other agents'<br/>capabilities, bypass intent verification"]
+        TL2_desc["`Workspace, Browser Shell, Media Player, Inspector, Settings.
+Shipped with the OS. Signed by AIOS root key. Broad caps
+but still bounded by the capability system.
+
+CAN: create surfaces, access multiple spaces, post attention
+items, use inference, spawn tab agents
+CANNOT: access system spaces directly, modify other agents'
+capabilities, bypass intent verification`"]
     end
     subgraph TL3["TRUST LEVEL 3: Third-party agents"]
-        TL3_desc["Installed from Agent Store. Signed by developer keys.<br/>Capabilities explicitly approved by user at install time.<br/><br/>CAN: only what their manifest declares and user approved<br/>CANNOT: access spaces not in manifest, use hardware not<br/>declared, spawn agents without SpawnAgent cap,<br/>communicate with agents outside IPC channels"]
+        TL3_desc["`Installed from Agent Store. Signed by developer keys.
+Capabilities explicitly approved by user at install time.
+
+CAN: only what their manifest declares and user approved
+CANNOT: access spaces not in manifest, use hardware not
+declared, spawn agents without SpawnAgent cap,
+communicate with agents outside IPC channels`"]
     end
     subgraph TL4["TRUST LEVEL 4: Web content / Tab agents (lowest trust)"]
-        TL4_desc["Each browser tab is an agent. Runs arbitrary JS from any<br/>origin. Capabilities derived from URL origin, not manifest.<br/>Mandatory OS-managed TLS and HTTP. Cannot opt out.<br/><br/>CAN: render content, make network requests to own origin,<br/>use Web APIs (with user prompts for camera/mic/GPS)<br/>CANNOT: access any space outside web-storage/origin/,<br/>use raw sockets, bypass OS network management,<br/>interact with other tab agents' memory"]
+        TL4_desc["`Each browser tab is an agent. Runs arbitrary JS from any
+origin. Capabilities derived from URL origin, not manifest.
+Mandatory OS-managed TLS and HTTP. Cannot opt out.
+
+CAN: render content, make network requests to own origin,
+use Web APIs (with user prompts for camera/mic/GPS)
+CANNOT: access any space outside web-storage/origin/,
+use raw sockets, bypass OS network management,
+interact with other tab agents' memory`"]
     end
 
     TL0 --> TL1 --> TL2 --> TL3 --> TL4
@@ -363,7 +396,7 @@ pub enum RecommendedAction {
 **Verification flow:**
 
 ```mermaid
-graph TD
+flowchart TD
     A["Agent requests action"] --> B{"On allow list?"}
     B -- YES --> C["ALLOW"]
     B -- NO --> D{"AIRS available?"}
@@ -444,7 +477,7 @@ pub struct CapabilityToken {
 **Validation flow:**
 
 ```mermaid
-graph TD
+flowchart TD
     A["Agent issues syscall with CapabilityHandle"] --> B{"1. Handle bounds check\nhandle < table.tokens.len?"}
     B -- NO --> B_deny["EPERM + audit"]
     B -- YES --> C{"2. Slot occupied?\ntable.tokens[handle].is_some?"}
@@ -728,18 +761,37 @@ pub enum AuditLevel {
 **Zone assignment rules:**
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Core["Core Zone"]
-        Core_desc["system/audit/*, system/config/*, system/models/*,<br/>system/agents/*, system/devices/*, system/credentials/*<br/><br/>Access: system services only<br/>Encryption: not encrypted (system data, not user data)<br/>Audit: full"]
+        Core_desc["`system/audit/*, system/config/*, system/models/*,
+system/agents/*, system/devices/*, system/credentials/*
+
+Access: system services only
+Encryption: not encrypted (system data, not user data)
+Audit: full`"]
     end
     subgraph Personal["Personal Zone"]
-        Personal_desc["user/home/*, user/documents/*, user/media/*,<br/>user/conversations/*, user/preferences/*<br/><br/>Access: agents with explicit ReadSpace/WriteSpace caps<br/>Encryption: required (per-space keys from identity)<br/>Audit: metadata (access logged, content not logged)"]
+        Personal_desc["`user/home/*, user/documents/*, user/media/*,
+user/conversations/*, user/preferences/*
+
+Access: agents with explicit ReadSpace/WriteSpace caps
+Encryption: required (per-space keys from identity)
+Audit: metadata (access logged, content not logged)`"]
     end
     subgraph Collaborative["Collaborative Zone"]
-        Collab_desc["shared/[space-name]/*<br/><br/>Access: agents with caps + identity in members list<br/>Encryption: required (shared key via capability exchange)<br/>Audit: full (multi-user accountability)"]
+        Collab_desc["`shared/[space-name]/*
+
+Access: agents with caps + identity in members list
+Encryption: required (shared key via capability exchange)
+Audit: full (multi-user accountability)`"]
     end
     subgraph Untrusted["Untrusted Zone"]
-        Untrusted_desc["web-storage/[origin]/*, downloads/*, temp/*<br/><br/>Access: origin-scoped capabilities for web-storage;<br/>broad read for downloads (user-initiated)<br/>Encryption: required (per-origin keys)<br/>Audit: metadata"]
+        Untrusted_desc["`web-storage/[origin]/*, downloads/*, temp/*
+
+Access: origin-scoped capabilities for web-storage;
+broad read for downloads (user-initiated)
+Encryption: required (per-origin keys)
+Audit: metadata`"]
     end
 
     Core --> Personal --> Collaborative --> Untrusted
@@ -910,7 +962,7 @@ Even if an agent somehow bypasses capability checks (kernel bug), it still canno
 **Key derivation chain:**
 
 ```mermaid
-graph TD
+flowchart TD
     A["User password / biometric / hardware key"] --> B["Argon2id(password, device_salt,\nt=3, m=64MB, p=4)\n\n-> master_key (256-bit)"]
     B --> C["HKDF-SHA256(\nmaster_key,\n'space:' + space_id_1)\n\n-> space_key_1 (256-bit)"]
     B --> D["HKDF-SHA256(\nmaster_key,\n'space:' + space_id_2)\n\n-> space_key_2 (256-bit)"]
@@ -956,7 +1008,7 @@ pub struct EncryptedBlock {
 **Key release protocol:**
 
 ```mermaid
-graph TD
+flowchart TD
     A["Agent requests space read"] --> B["1. Capability check (Layer 2):\ndoes agent hold ReadSpace(space_id)?"]
     B -- YES --> C["2. Intent verification (Layer 1):\ndoes read align with declared task?"]
     C -- "YES (or AIRS unavailable: skip)" --> D["3. Zone check (Layer 4):\nis agent allowed in this zone?"]
@@ -1344,7 +1396,7 @@ impl BlastRadiusTracker {
 ### 3.1 Capability Token Lifecycle
 
 ```mermaid
-graph LR
+flowchart LR
     CREATE["CREATE\n\nkernel\ncreates\ntoken"] --> GRANT["GRANT\n\nuser\napproves\ninstall"]
     GRANT --> USE["USE\n\nagent\npresents\ntoken to\nkernel"]
     USE --> ATTENUATE["ATTENUATE\n\nagent/kernel\nrestricts\ntoken further"]
@@ -1576,7 +1628,7 @@ Attenuate: expires in 730 days                ← longer, DENIED
 ### 3.4 Capability Request and Approval Flow
 
 ```mermaid
-graph TD
+flowchart TD
     A["Developer declares capabilities in agent manifest"] --> B
 
     subgraph B["Agent Manifest (signed by developer key)"]
@@ -2074,7 +2126,7 @@ Profiles are space objects — content-addressed, versioned, and distributed thr
 The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces.md §6](../storage/spaces.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces.md §4.10](../storage/spaces.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces.md §4.10 single-passphrase mode).
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph KH["Key Hierarchy"]
         DK["Device Key (spaces.md section 4.10)\n\nLocation: kernel memory (pinned, no-dump)\nDerived from: hardware TPM/TrustZone or\nArgon2id(boot_passphrase, device_salt)\nLifetime: boot to shutdown\nEncrypts: every block before storage drivers\nDestroyed: on shutdown / device removal"]
 
@@ -2095,7 +2147,7 @@ graph TD
 ### 4.3 Certificate Chain
 
 ```mermaid
-graph TD
+flowchart TD
     A["AIOS Root CA\n(offline, HSM)"] -- "signs" --> B["Agent Store Signing Key\n(AIOS infrastructure)"]
     B -- "signs (at developer enrollment)" --> C["Developer Signing Key\n(developer's machine)"]
     C -- "signs (at agent publish)" --> D["Agent Manifest Signature"]
@@ -2262,7 +2314,7 @@ ARM TrustZone provides a hardware-isolated "secure world" that the normal world 
 - **Sealed storage:** Sensitive data (like the kernel signing key) is encrypted with a TrustZone-derived key that is only available when the secure world is intact.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph NW["Normal World (EL0/EL1)"]
         NW_desc["Kernel, services, agents\n\nCan request: sign, verify, encrypt,\ndecrypt, derive_key\nCannot: read key material, modify\nsecure world code/data"]
     end
@@ -2313,7 +2365,7 @@ The kernel's base address is randomized at each boot, making it harder for attac
 ### 6.1 Detection → Response Pipeline
 
 ```mermaid
-graph TD
+flowchart TD
     A["Security event occurs"] --> B
 
     subgraph B["DETECTION"]
@@ -2383,7 +2435,7 @@ The Inspector is a native experience agent (Trust Level 2) that provides full vi
 **Inspector views:**
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Inspector["Inspector"]
         subgraph AV["Agent View"]
             AV_desc["Per-agent: capabilities, usage history, current\nsessions, behavioral baseline, anomaly score"]
@@ -2667,7 +2719,7 @@ AIRS needs memory to run. AIRS controls memory allocation. This creates a potent
 **Resolution:** AIRS is a Trust Level 1 userspace service, so its process memory lives in the **user pool**. However, the AIRS resource directives can only resize the boundary between the model pool and user pool — they cannot evict AIRS's own pages. The kernel enforces a per-agent memory floor for AIRS (configured at boot), ensuring AIRS always has enough memory to run. The circular dependency is broken by this structural separation: AIRS can resize pools but cannot evict itself.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph KP["Kernel Pool (128-256 MB)"]
         KP_desc["Kernel data structures (page tables, slab caches)\nKernel heap\n\nNOT subject to AIRS directives. Fixed at boot."]
     end
@@ -2817,7 +2869,7 @@ This is not just logging — it is active enforcement based on behavioral contex
 ### 10.4 Zero Trust Enforcement Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     title["Every IPC call passes through ALL of:"]
 
     S1["1. STRUCTURAL CHECK (kernel, per-message)\nDoes the agent hold a valid, non-expired,\nnon-revoked capability for this channel?"]

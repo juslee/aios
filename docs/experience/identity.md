@@ -37,7 +37,7 @@ AIOS is a single-user operating system. There is no multi-user login. There are 
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph IS["Identity Service (privileged system service)"]
         subgraph KM["Key Management"]
             PK["Primary Key (Ed25519)"]
@@ -64,10 +64,14 @@ graph TD
         end
     end
 
-    IS --> CM["Capability Manager<br/>(identity-bound caps)"]
-    IS --> STO["Space Storage<br/>(shared spaces, provenance signing)"]
-    IS --> NS["Network Service<br/>(peer protocol)"]
-    IS --> AIRS["AIRS<br/>(relationship-aware AI behavior)"]
+    IS --> CM["`Capability Manager
+(identity-bound caps)`"]
+    IS --> STO["`Space Storage
+(shared spaces, provenance signing)`"]
+    IS --> NS["`Network Service
+(peer protocol)`"]
+    IS --> AIRS["`AIRS
+(relationship-aware AI behavior)`"]
 ```
 
 The Identity Service runs as a privileged system service (Trust Level 1). It manages keys, relationships, credentials, and identity proofs. All other services interact with identity through IPC — no service directly accesses key material.
@@ -217,11 +221,22 @@ AIOS does not generate a recovery key. There is no seed phrase, no mnemonic, and
 ### 4.1 Key Hierarchy
 
 ```mermaid
-graph TD
-    PIK["Primary Identity Key (Ed25519)<br/>Created at first boot<br/>Stored in kernel Crypto Core<br/>Signs: device keys, identity proofs, provenance"]
-    DKA["Device Key A (Ed25519)<br/>Created when device A is set up<br/>Signed by primary key (certificate)<br/>Used for: local signing, peer authentication"]
-    DKB["Device Key B (Ed25519)<br/>Created when device B is added<br/>Signed by primary key (certificate)<br/>Used for: local signing, peer authentication"]
-    NRK["(No recovery key -- see section 14)<br/>Recovery is prevention-based, not key-based<br/>Multi-device escrow available in Phase 9c+"]
+flowchart TD
+    PIK["`Primary Identity Key (Ed25519)
+Created at first boot
+Stored in kernel Crypto Core
+Signs: device keys, identity proofs, provenance`"]
+    DKA["`Device Key A (Ed25519)
+Created when device A is set up
+Signed by primary key (certificate)
+Used for: local signing, peer authentication`"]
+    DKB["`Device Key B (Ed25519)
+Created when device B is added
+Signed by primary key (certificate)
+Used for: local signing, peer authentication`"]
+    NRK["`(No recovery key -- see section 14)
+Recovery is prevention-based, not key-based
+Multi-device escrow available in Phase 9c+`"]
 
     PIK --> DKA
     PIK --> DKB

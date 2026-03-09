@@ -24,26 +24,45 @@ The Context Engine is an intelligence service within AIRS. When AIRS is availabl
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph CE["Context Engine (AIRS intelligence service)"]
-        SC["Signal Collector<br/>gather input from<br/>8 signal sources"]
-        CTM["Context Model<br/>AIRS inference or<br/>rule-based fallback"]
-        OM["Override Manager<br/>explicit user intents"]
+        SC["`Signal Collector
+gather input from
+8 signal sources`"]
+        CTM["`Context Model
+AIRS inference or
+rule-based fallback`"]
+        OM["`Override Manager
+explicit user intents`"]
 
-        SC --> SP["State Publisher<br/>notify all consumers<br/>via IPC"]
-        CTM --> HS["History Store<br/>learned patterns in<br/>system/context/"]
-        OM --> FE["Fallback Engine<br/>rule-based inference<br/>(no AIRS)"]
+        SC --> SP["`State Publisher
+notify all consumers
+via IPC`"]
+        CTM --> HS["`History Store
+learned patterns in
+system/context/`"]
+        OM --> FE["`Fallback Engine
+rule-based inference
+(no AIRS)`"]
 
         SC --> SP
         CTM --> SP
         OM --> SP
     end
 
-    SP -- "Publishes ContextState" --> Scheduler["Scheduler<br/>(priority adjust,<br/>context mult.)"]
-    SP --> AM["Attention Manager<br/>(notif threshold,<br/>digest)"]
-    SP --> Compositor["Compositor<br/>(UI adapt, layout,<br/>chrome)"]
-    SP --> PS["Preference Service<br/>(theme, brightness)"]
-    SP --> AR["Agent Runtime<br/>(agent hints)"]
+    SP -- "Publishes ContextState" --> Scheduler["`Scheduler
+(priority adjust,
+context mult.)`"]
+    SP --> AM["`Attention Manager
+(notif threshold,
+digest)`"]
+    SP --> Compositor["`Compositor
+(UI adapt, layout,
+chrome)`"]
+    SP --> PS["`Preference Service
+(theme, brightness)`"]
+    SP --> AR["`Agent Runtime
+(agent hints)`"]
 ```
 
 The engine runs as a subservice of AIRS, sharing AIRS's privileged access to system state. It reads signals from other system services via IPC, produces a `ContextState`, and publishes that state to all consumers. Consumers subscribe and react — they never poll.

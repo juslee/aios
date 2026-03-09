@@ -32,28 +32,48 @@ No settings panel required. No config files to edit. No documentation to read. T
 ## 2. Architecture
 
 ```mermaid
-graph TD
-    CB["Conversation Bar<br/>Make the text bigger"]
-    SUI["Settings UI<br/>visual preference browser"]
-    AUI["Agent UI<br/>agent-specific preference controls"]
+flowchart TD
+    CB["`Conversation Bar
+Make the text bigger`"]
+    SUI["`Settings UI
+visual preference browser`"]
+    AUI["`Agent UI
+agent-specific preference controls`"]
 
     CB --> PS
     SUI --> PS
     AUI --> PS
 
     subgraph PS["Preference Service (privileged system service)"]
-        NLU["NLU Resolver<br/>Natural lang to<br/>preference change"]
-        STORE["Preference Store<br/>user/preferences/<br/>space"]
-        BO["Behavioral Observer<br/>Watches user patterns,<br/>infers preference changes"]
-        CP["Change Propagator<br/>Notifies affected<br/>components via IPC"]
-        CR["Conflict Resolver<br/>UserExplicit wins,<br/>but explains tradeoffs"]
-        HM["History Manager<br/>Every change recorded<br/>with timestamp, source,<br/>and reason"]
+        NLU["`NLU Resolver
+Natural lang to
+preference change`"]
+        STORE["`Preference Store
+user/preferences/
+space`"]
+        BO["`Behavioral Observer
+Watches user patterns,
+infers preference changes`"]
+        CP["`Change Propagator
+Notifies affected
+components via IPC`"]
+        CR["`Conflict Resolver
+UserExplicit wins,
+but explains tradeoffs`"]
+        HM["`History Manager
+Every change recorded
+with timestamp, source,
+and reason`"]
     end
 
-    PS --> Compositor["Compositor<br/>(display, theme, density)"]
-    PS --> Audio["Audio Service<br/>(volume, output)"]
-    PS --> Attention["Attention Manager<br/>(thresholds, schedule)"]
-    PS --> Network["Network Service<br/>(metered, VPN)"]
+    PS --> Compositor["`Compositor
+(display, theme, density)`"]
+    PS --> Audio["`Audio Service
+(volume, output)`"]
+    PS --> Attention["`Attention Manager
+(thresholds, schedule)`"]
+    PS --> Network["`Network Service
+(metered, VPN)`"]
 ```
 
 -----
@@ -230,12 +250,22 @@ pub struct PreferenceChange {
 ### 4.1 Authority Ranking
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Authority["Preference Authority Ranking (highest to lowest)"]
-        UE["1. UserExplicit<br/>I said dark mode. Never overridden silently.<br/>System must explain and get approval to change."]
-        UBI["2. UserBehaviorInferred<br/>You always enable dark mode after 8pm.<br/>AIRS observed pattern, user approved inference.<br/>Overridable by explicit preference at any time."]
-        AS["3. AgentSuggested<br/>Power agent suggests reducing brightness to 40%.<br/>Requires explicit user approval. Never applied silently.<br/>Can be rejected permanently."]
-        SD["4. SystemDefault<br/>Factory defaults. Applied when nothing else has been set.<br/>Overridden by any other source."]
+        UE["`1. UserExplicit
+I said dark mode. Never overridden silently.
+System must explain and get approval to change.`"]
+        UBI["`2. UserBehaviorInferred
+You always enable dark mode after 8pm.
+AIRS observed pattern, user approved inference.
+Overridable by explicit preference at any time.`"]
+        AS["`3. AgentSuggested
+Power agent suggests reducing brightness to 40%.
+Requires explicit user approval. Never applied silently.
+Can be rejected permanently.`"]
+        SD["`4. SystemDefault
+Factory defaults. Applied when nothing else has been set.
+Overridden by any other source.`"]
 
         UE --> UBI --> AS --> SD
     end
@@ -308,20 +338,32 @@ informs them of the tradeoff. The user decides.
 When the user speaks a preference change via the Conversation Bar:
 
 ```mermaid
-graph TD
-    INPUT["User input:<br/>Make the text bigger"]
+flowchart TD
+    INPUT["`User input:
+Make the text bigger`"]
 
     INPUT --> NLU
 
-    NLU["AIRS Natural Language Understanding<br/>Intent: change_preference<br/>Target: display.font_scale<br/>Direction: increase<br/>Amount: unspecified (use default step)"]
+    NLU["`AIRS Natural Language Understanding
+Intent: change_preference
+Target: display.font_scale
+Direction: increase
+Amount: unspecified (use default step)`"]
 
     NLU --> PREF
 
-    PREF["Preference Service<br/>Current: display.font_scale = 1.0<br/>Step: 0.1 (from metadata)<br/>New value: 1.1<br/>Affected: Compositor (re-render all)"]
+    PREF["`Preference Service
+Current: display.font_scale = 1.0
+Step: 0.1 (from metadata)
+New value: 1.1
+Affected: Compositor (re-render all)`"]
 
     PREF --> PROP
 
-    PROP["Change Propagator<br/>IPC to Compositor: font_scale = 1.1<br/>Compositor re-renders all surfaces<br/>User sees larger text immediately"]
+    PROP["`Change Propagator
+IPC to Compositor: font_scale = 1.1
+Compositor re-renders all surfaces
+User sees larger text immediately`"]
 ```
 
 ```rust

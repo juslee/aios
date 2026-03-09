@@ -18,33 +18,56 @@ AIOS replaces this with **spaces** — collections of typed objects with semanti
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph API["Space API"]
-        A1["query() create() relate() version() search()<br/>similar_to() traverse() subscribe() import() export()<br/>(what agents and the POSIX bridge see)"]
+        A1["`query() create() relate() version() search()
+similar_to() traverse() subscribe() import() export()
+(what agents and the POSIX bridge see)`"]
     end
 
     subgraph QE["Query Engine"]
-        Q1["SpaceQuery dispatch: Filter, TextSearch, Semantic, Traverse<br/>Full-text index (inverted, BM25) -- available from Phase 9a<br/>Embedding index (HNSW) -- requires AIRS<br/>Relationship graph (adjacency lists, bidirectional)<br/>Temporal index (B-tree on timestamps)"]
+        Q1["`SpaceQuery dispatch: Filter, TextSearch, Semantic, Traverse
+Full-text index (inverted, BM25) -- available from Phase 9a
+Embedding index (HNSW) -- requires AIRS
+Relationship graph (adjacency lists, bidirectional)
+Temporal index (B-tree on timestamps)`"]
     end
 
     subgraph OS["Object Store"]
-        O1["Object metadata (ObjectId -> content_hash, type, semantic)<br/>Relation store (ObjectId -> Vec of Relation)<br/>Content-addressed blocks (SHA-256 hash -> data)<br/>Reference counting (hash -> ref_count)<br/>Deduplication (automatic, transparent)"]
+        O1["`Object metadata (ObjectId -> content_hash, type, semantic)
+Relation store (ObjectId -> Vec of Relation)
+Content-addressed blocks (SHA-256 hash -> data)
+Reference counting (hash -> ref_count)
+Deduplication (automatic, transparent)`"]
     end
 
     subgraph VS["Version Store"]
-        V1["Merkle DAG (git-like)<br/>Per-object version chains (ObjectId -> Vec of Version)<br/>Per-space snapshots (SpaceId -> Vec of Snapshot)<br/>Provenance chain per version (who, when, why)"]
+        V1["`Merkle DAG (git-like)
+Per-object version chains (ObjectId -> Vec of Version)
+Per-space snapshots (SpaceId -> Vec of Snapshot)
+Provenance chain per version (who, when, why)`"]
     end
 
     subgraph EL["Encryption Layer"]
-        E1["Per-space encryption keys (AES-256-GCM)<br/>Key derivation from identity (Argon2id)<br/>No key escrow -- prevention-based recovery design (section 6.3)<br/>Transparent encrypt/decrypt on read/write"]
+        E1["`Per-space encryption keys (AES-256-GCM)
+Key derivation from identity (Argon2id)
+No key escrow -- prevention-based recovery design (section 6.3)
+Transparent encrypt/decrypt on read/write`"]
     end
 
     subgraph BE["Block Engine"]
-        B1["LSM-tree indexed blocks on raw storage device<br/>Write-ahead log (WAL) for crash consistency<br/>Flash-aware zone allocation (hot/warm/cold separation)<br/>Device-level transparent encryption (AES-256-GCM)<br/>Sub-block dedup (Rabin rolling hash, content-defined chunks)<br/>Block-level checksums (CRC-32C), WAF tracking<br/>No intermediate filesystem -- AIOS owns the device"]
+        B1["`LSM-tree indexed blocks on raw storage device
+Write-ahead log (WAL) for crash consistency
+Flash-aware zone allocation (hot/warm/cold separation)
+Device-level transparent encryption (AES-256-GCM)
+Sub-block dedup (Rabin rolling hash, content-defined chunks)
+Block-level checksums (CRC-32C), WAF tracking
+No intermediate filesystem -- AIOS owns the device`"]
     end
 
     subgraph SD["Storage Drivers"]
-        S1["Core: VirtIO-Blk (QEMU) | SD/eMMC | Apple ANS<br/>Extension: NVMe (via PCIe) | USB Mass Storage (via USB)"]
+        S1["`Core: VirtIO-Blk (QEMU) | SD/eMMC | Apple ANS
+Extension: NVMe (via PCIe) | USB Mass Storage (via USB)`"]
     end
 
     API --> QE --> OS --> VS --> EL --> BE --> SD
@@ -494,11 +517,22 @@ Relations are bidirectional in storage — creating `A → References → B` als
 The Block Engine manages raw storage directly — no ext4, no ZFS, no intermediate filesystem. AIOS owns the partition.
 
 ```mermaid
-graph TD
-    SB["**Superblock (4 KB)**<br/>Magic, version, block size, total blocks, free blocks,<br/>LSM-tree L0 offset, WAL offset, checksum"]
-    WAL["**Write-Ahead Log (configurable, default 64 MB)**<br/>Circular buffer of pending writes<br/>Each entry: block_id, old_data, new_data, checksum"]
-    BI["**Block Index (LSM-tree)**<br/>Maps: content_hash → (block_offset, block_size, refcount)<br/>Also maps: ObjectId → (metadata_block, content_hash)<br/>L0: in-memory MemTable (sorted, ~4 MB)<br/>L1-L3: on-disk SSTables with bloom filters"]
-    DB["**Data Blocks (remainder of partition)**<br/>Content-addressed blocks, variable size<br/>Each block: header (hash, size, checksum) + data<br/>Hot/cold zone separation for flash-friendly write patterns"]
+flowchart TD
+    SB["`**Superblock (4 KB)**
+Magic, version, block size, total blocks, free blocks,
+LSM-tree L0 offset, WAL offset, checksum`"]
+    WAL["`**Write-Ahead Log (configurable, default 64 MB)**
+Circular buffer of pending writes
+Each entry: block_id, old_data, new_data, checksum`"]
+    BI["`**Block Index (LSM-tree)**
+Maps: content_hash → (block_offset, block_size, refcount)
+Also maps: ObjectId → (metadata_block, content_hash)
+L0: in-memory MemTable (sorted, ~4 MB)
+L1-L3: on-disk SSTables with bloom filters`"]
+    DB["`**Data Blocks (remainder of partition)**
+Content-addressed blocks, variable size
+Each block: header (hash, size, checksum) + data
+Hot/cold zone separation for flash-friendly write patterns`"]
 
     SB --- WAL --- BI --- DB
 ```
@@ -1408,12 +1442,21 @@ Savings: 96 KB (48%)
 Every block written to the storage device is encrypted with a device-bound key before it reaches the storage drivers. This is not per-space encryption (§6) — it is a lower layer. Per-space encryption protects cross-zone isolation within a running system. Device-level encryption protects against physical access to the storage medium: someone pulling the SD card, imaging the SSD, or analyzing flash chips.
 
 ```mermaid
-graph TD
+flowchart TD
     OBJ["Object content (plaintext)"]
-    EL["**Encryption Layer (§6)**<br/>Per-space key (AES-256-GCM)<br/>Encrypts object content at this layer<br/>⬅ Only for Personal, Collaborative, Untrusted zones.<br/>Core and Ephemeral are plaintext at this layer."]
-    BE["**Block Engine (§4)**<br/>Compression, chunking, indexing"]
-    DE["**Device Encryption (this section)**<br/>Device key (AES-256-GCM)<br/>Encrypts the block envelope: header + compressed data<br/>⬅ Always. Every block. No exceptions."]
-    SD["**Storage Drivers**<br/>VirtIO-Blk | NVMe | SD/eMMC | USB"]
+    EL["`**Encryption Layer (§6)**
+Per-space key (AES-256-GCM)
+Encrypts object content at this layer
+⬅ Only for Personal, Collaborative, Untrusted zones.
+Core and Ephemeral are plaintext at this layer.`"]
+    BE["`**Block Engine (§4)**
+Compression, chunking, indexing`"]
+    DE["`**Device Encryption (this section)**
+Device key (AES-256-GCM)
+Encrypts the block envelope: header + compressed data
+⬅ Always. Every block. No exceptions.`"]
+    SD["`**Storage Drivers**
+VirtIO-Blk | NVMe | SD/eMMC | USB`"]
 
     OBJ -->|plaintext| EL
     EL -->|"ciphertext (or plaintext for Core/Ephemeral)"| BE
@@ -3215,12 +3258,15 @@ impl AdaptiveRetention {
 The Inspector exposes real-time storage analytics:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Dashboard["Storage Dashboard — 512 GB laptop"]
-        Header["**Device: LaptopPC**<br/>Total: 476 GB | Used: 142 GB | Free: 334 GB (70%) | 30% used"]
+        Header["`**Device: LaptopPC**
+Total: 476 GB | Used: 142 GB | Free: 334 GB (70%) | 30% used`"]
 
         subgraph Categories["Storage Breakdown"]
-            AI["AI Models — 22.3 GB (5%)<br/>llama-3.1-8b-q4: 4.5 GB | llama-3.1-13b-q4: 7.4 GB<br/>phi-3-vision: 3.2 GB | llama-3.1-70b-q4: 7.2 GB (partial)"]
+            AI["`AI Models — 22.3 GB (5%)
+llama-3.1-8b-q4: 4.5 GB | llama-3.1-13b-q4: 7.4 GB
+phi-3-vision: 3.2 GB | llama-3.1-70b-q4: 7.2 GB (partial)`"]
             UD["User Data — 68.4 GB (14%)"]
             VH["Version History — 24.7 GB (5%)"]
             WS["Web Storage — 8.2 GB (2%)"]
@@ -3236,7 +3282,9 @@ graph TD
             S4["web-storage/ — 8.2 GB (24 origins)"]
         end
 
-        Savings["**Version history savings:**<br/>Deduplication saved: 41.2 GB (63%)<br/>Compression saved: 11.8 GB (across all tiers)"]
+        Savings["`**Version history savings:**
+Deduplication saved: 41.2 GB (63%)
+Compression saved: 11.8 GB (across all tiers)`"]
         Pressure["Storage pressure: Normal (70% free)"]
     end
 ```

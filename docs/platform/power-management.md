@@ -33,42 +33,68 @@ The Policy Engine is a privileged userspace service that:
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph PolicyEngine["Power Management Policy Engine (privileged userspace service)"]
         subgraph Sensors["Sensor Aggregator"]
-            BatterySensor["BatterySensor<br/>(SoC%, health, cycle count)"]
-            ThermalSensor["ThermalSensor<br/>(per-zone C, trip points)"]
-            LidSwitch["LidSwitch<br/>(open/close events)"]
-            AcAdapter["AcAdapter<br/>(plugged/unplugged)"]
-            UserActivity["UserActivity<br/>(last input timestamp)"]
-            AirsPrediction["AirsPrediction<br/>(next wake probability)"]
-            ContextState["ContextState<br/>(from Context Engine)"]
-            SystemLoad["SystemLoad<br/>(CPU util, runnable)"]
+            BatterySensor["`BatterySensor
+(SoC%, health, cycle count)`"]
+            ThermalSensor["`ThermalSensor
+(per-zone C, trip points)`"]
+            LidSwitch["`LidSwitch
+(open/close events)`"]
+            AcAdapter["`AcAdapter
+(plugged/unplugged)`"]
+            UserActivity["`UserActivity
+(last input timestamp)`"]
+            AirsPrediction["`AirsPrediction
+(next wake probability)`"]
+            ContextState["`ContextState
+(from Context Engine)`"]
+            SystemLoad["`SystemLoad
+(CPU util, runnable)`"]
         end
 
         Sensors --> RuleEngine
 
         subgraph RuleEngine["Policy Rule Engine"]
-            RuleTable["Rule Table<br/>(priority-ordered<br/>condition to action rules)"]
-            StateMachine["State Machine<br/>(S0 to S0ix to S3<br/>to S4 to S5)"]
-            Guards["Transition Guards<br/>(conditions that<br/>block transitions)"]
+            RuleTable["`Rule Table
+(priority-ordered
+condition to action rules)`"]
+            StateMachine["`State Machine
+(S0 to S0ix to S3
+to S4 to S5)`"]
+            Guards["`Transition Guards
+(conditions that
+block transitions)`"]
         end
 
         RuleEngine --> Executor
 
         subgraph Executor["Transition Executor"]
-            KernelCmds["KernelCommands<br/>(PSCI suspend, hibernate<br/>image, RTC alarm, DVFS)"]
-            SvcMgr["ServiceManager<br/>(quiesce, resume<br/>services)"]
-            SubFw["SubsystemFramework<br/>(device power<br/>transitions)"]
-            AuditLogger["AuditLogger<br/>(system/audit/power/)"]
-            SchedHints["SchedulerHints<br/>(DvfsPolicy, battery mode)"]
-            ThermalGov["ThermalGovernor<br/>(zone to action mapping)"]
+            KernelCmds["`KernelCommands
+(PSCI suspend, hibernate
+image, RTC alarm, DVFS)`"]
+            SvcMgr["`ServiceManager
+(quiesce, resume
+services)`"]
+            SubFw["`SubsystemFramework
+(device power
+transitions)`"]
+            AuditLogger["`AuditLogger
+(system/audit/power/)`"]
+            SchedHints["`SchedulerHints
+(DvfsPolicy, battery mode)`"]
+            ThermalGov["`ThermalGovernor
+(zone to action mapping)`"]
         end
     end
 
-    Executor --> Kernel["Kernel<br/>(HAL, scheduler, PSCI, RTC)"]
-    Executor --> ServiceManager["Service Manager<br/>(lifecycle channel)"]
-    Executor --> SubsystemFw["Subsystem Framework<br/>(per-device PowerManaged trait)"]
+    Executor --> Kernel["`Kernel
+(HAL, scheduler, PSCI, RTC)`"]
+    Executor --> ServiceManager["`Service Manager
+(lifecycle channel)`"]
+    Executor --> SubsystemFw["`Subsystem Framework
+(per-device PowerManaged trait)`"]
 ```
 
 ### 2.1 Service Position in Boot
@@ -206,7 +232,7 @@ pub enum IdleDepth {
 The Policy Engine progressively deepens idle state as inactivity continues. This avoids the latency penalty of deep idle for brief pauses (checking a notification) while achieving full power savings for sustained inactivity (user walked away).
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph T0["0s - 30s"]
         S0["S0 Active\n(full power)"]
     end
@@ -648,7 +674,7 @@ impl PolicyEngine {
 Each platform exposes thermal zones through the HAL. The Policy Engine reads all zones and drives the scheduler's thermal response.
 
 ```mermaid
-graph LR
+flowchart LR
     CPU["cpu-thermal"] --> AGG["Aggregate zones,\nselect worst-case"]
     GPU["gpu-thermal"] --> AGG
     BAT["battery-temp"] --> AGG
@@ -872,7 +898,7 @@ AIRS provides two capabilities to the Policy Engine: proactive wake scheduling a
 Proactive Wake is described in boot-lifecycle.md §15.5. The Policy Engine is responsible for the operational mechanics: programming the RTC alarm, handling the wake event, and deciding whether to re-suspend.
 
 ```mermaid
-graph TD
+flowchart TD
     AIRS["AIRS Usage Model\n(7x24 probability grid\n+ calendar events)"]
     PE["Policy Engine\n1. Receive prediction\n2. Check power policy\n3. Compute lead time\n4. Program RTC alarm"]
     GUARD["Guard: power sufficient?\n(AC or battery > 50%)"]

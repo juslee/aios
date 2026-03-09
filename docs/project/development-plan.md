@@ -12,14 +12,28 @@
 28 phases across ~130 weeks (~2.5 years). Organized into 7 tiers, each delivering a usable milestone. The plan is designed so that each tier builds on the previous one and produces something demonstrable.
 
 ```mermaid
-graph LR
-    T1["Tier 1: Hardware Foundation<br/>Phases 0-3 | Weeks 1-16<br/><i>Boot, memory, IPC</i>"]
-    T2["Tier 2: Core System Services<br/>Phases 4-7 | Weeks 17-34<br/><i>Storage, GPU, compositor, networking</i>"]
-    T3["Tier 3: AI & Intelligence<br/>Phases 8-11 | Weeks 35-54<br/><i>AIRS, semantic search, agents</i>"]
-    T4["Tier 4: Platform Maturity<br/>Phases 12-15 | Weeks 55-74<br/><i>SDK, security, performance, POSIX</i>"]
-    T5["Tier 5: Hardware & Connectivity<br/>Phases 16-19 | Weeks 75-92<br/><i>Full NTM, USB, wireless, power</i>"]
-    T6["Tier 6: Rich Experience<br/>Phases 20-23 | Weeks 93-112<br/><i>UI toolkit, browser, media, a11y</i>"]
-    T7["Tier 7: Production OS<br/>Phases 24-27 | Weeks 113-130<br/><i>Secure boot, Linux compat, launch</i>"]
+flowchart LR
+    T1["`Tier 1: Hardware Foundation
+Phases 0-3 | Weeks 1-16
+*Boot, memory, IPC*`"]
+    T2["`Tier 2: Core System Services
+Phases 4-7 | Weeks 17-34
+*Storage, GPU, compositor, networking*`"]
+    T3["`Tier 3: AI & Intelligence
+Phases 8-11 | Weeks 35-54
+*AIRS, semantic search, agents*`"]
+    T4["`Tier 4: Platform Maturity
+Phases 12-15 | Weeks 55-74
+*SDK, security, performance, POSIX*`"]
+    T5["`Tier 5: Hardware & Connectivity
+Phases 16-19 | Weeks 75-92
+*Full NTM, USB, wireless, power*`"]
+    T6["`Tier 6: Rich Experience
+Phases 20-23 | Weeks 93-112
+*UI toolkit, browser, media, a11y*`"]
+    T7["`Tier 7: Production OS
+Phases 24-27 | Weeks 113-130
+*Secure boot, Linux compat, launch*`"]
 
     T1 --> T2 --> T3 --> T4 --> T5 --> T6 --> T7
 ```
@@ -45,7 +59,7 @@ Each tier produces a demonstrable result:
 ## 3. Phase Dependencies
 
 ```mermaid
-graph TD
+flowchart TD
     P0["Phase 0: Foundation & Tooling"]
     P1["Phase 1: Boot & First Pixels"]
     P2["Phase 2: Memory Management"]

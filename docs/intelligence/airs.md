@@ -20,45 +20,76 @@ AIOS inverts this. The AI Runtime Service (AIRS) is a **privileged system servic
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph AIRS["AI Runtime Service (AIRS) — privileged userspace service"]
         subgraph IE["Inference Engine"]
-            ML["Model Loader<br/>(GGUF format)"]
-            TK["Tokenizer<br/>(per-model)"]
-            CS["Compute Scheduler<br/>(CPU/GPU/NPU routing)"]
-            GR["GGML Runtime<br/>(NEON SIMD)"]
-            KV["KV Cache<br/>(per-session)"]
-            SO["Streaming Output<br/>(token-by-token)"]
+            direction LR
+            ML["`Model Loader
+(GGUF format)`"]
+            TK["`Tokenizer
+(per-model)`"]
+            CS["`Compute Scheduler
+(CPU/GPU/NPU routing)`"]
+            GR["`GGML Runtime
+(NEON SIMD)`"]
+            KV["`KV Cache
+(per-session)`"]
+            SO["`Streaming Output
+(token-by-token)`"]
         end
         subgraph MR["Model Registry"]
-            MC["Model Catalog<br/>(system/models/)"]
-            LE["LRU Eviction<br/>(memory mgmt)"]
-            MP["Model Profiles<br/>(task-to-model map)"]
-            DM["Download Mgr<br/>(NTM-backed)"]
-            IN["Integrity<br/>(SHA-256)"]
-            VT["Version Tracking<br/>(upgrade paths)"]
+            direction LR
+            MC["`Model Catalog
+(system/models/)`"]
+            LE["`LRU Eviction
+(memory mgmt)`"]
+            MP["`Model Profiles
+(task-to-model map)`"]
+            DM["`Download Mgr
+(NTM-backed)`"]
+            IN["`Integrity
+(SHA-256)`"]
+            VT["`Version Tracking
+(upgrade paths)`"]
         end
         subgraph IS["Intelligence Services"]
-            SI["Space Indexer<br/>(embed, relate)"]
-            CE["Context Engine<br/>(infer context)"]
-            AM["Attention Manager<br/>(triage, digest)"]
-            IV["Intent Verifier<br/>(action-to-intent)"]
-            BM["Behavioral Mon<br/>(anomaly detect)"]
-            AD["Adversarial Def<br/>(injection det)"]
-            TM["Tool Manager<br/>(register, exec)"]
-            CM["Context Manager<br/>(state, compress)"]
-            CV["Conversation Mgr<br/>(history, bar)"]
+            direction LR
+            SI["`Space Indexer
+(embed, relate)`"]
+            CE["`Context Engine
+(infer context)`"]
+            AM["`Attention Manager
+(triage, digest)`"]
+            IV["`Intent Verifier
+(action-to-intent)`"]
+            BM["`Behavioral Mon
+(anomaly detect)`"]
+            AD["`Adversarial Def
+(injection det)`"]
+            TM["`Tool Manager
+(register, exec)`"]
+            CM["`Context Manager
+(state, compress)`"]
+            CV["`Conversation Mgr
+(history, bar)`"]
         end
         subgraph AL["Agent Lifecycle"]
-            AS["Agent Spawner<br/>(manifest-to-proc)"]
-            SA["Security Analyzer<br/>(static analysis)"]
-            SC["Sandbox Config<br/>(cap set build)"]
+            direction LR
+            AS["`Agent Spawner
+(manifest-to-proc)`"]
+            SA["`Security Analyzer
+(static analysis)`"]
+            SC["`Sandbox Config
+(cap set build)`"]
         end
     end
 
-    AIRS --> KIPC["Kernel IPC<br/>(capability transfer)"]
-    AIRS --> SS["Space Storage<br/>(model storage, index spaces)"]
-    AIRS --> CD["Compute Devices<br/>(CPU NEON SIMD, GPU, NPU)"]
+    AIRS --> KIPC["`Kernel IPC
+(capability transfer)`"]
+    AIRS --> SS["`Space Storage
+(model storage, index spaces)`"]
+    AIRS --> CD["`Compute Devices
+(CPU NEON SIMD, GPU, NPU)`"]
 ```
 
 ### 2.1 Why a Single Service (Monolith Now, Structured Split Later)
@@ -91,12 +122,17 @@ The model pool holds 4 GB. KV cache budget is 25% of that (1 GB). Splitting that
 The monolithic process is not monolithic code. Each subsystem is a Rust module with a defined interface. The security path and resource path share no mutable state (§10.1). IPC channels are already defined per-function (security gets a dedicated high-priority channel). The internal architecture is a set of components that happen to share an address space today.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph P1["Phase 1 (4-8 GB) — Single process, internal isolation"]
         subgraph AIRS1["AIRS Process"]
-            SP1["Security Path<br/>(intent, behavioral, adversarial)"]
-            IR1["Intelligence + Resource<br/>(indexer, context, attention,<br/>conversation, resource orchestrator)"]
-            IE1["Inference Engine<br/>(shared model)"]
+            direction LR
+            SP1["`Security Path
+(intent, behavioral, adversarial)`"]
+            IR1["`Intelligence + Resource
+(indexer, context, attention,
+conversation, resource orchestrator)`"]
+            IE1["`Inference Engine
+(shared model)`"]
             SP1 --> IE1
             IR1 --> IE1
         end
@@ -106,11 +142,22 @@ graph TD
 Phase 2 (16 GB) — Single process, multiple models: same structure, but primary + specialist models loaded. Security tasks can use a dedicated small model (~1B) alongside the primary conversation model (~8B). No process split yet — shared address space still wins.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph P3["Phase 3 (32+ GB) — Separate processes become viable"]
-        SEC["AIRS-Security<br/>(intent, behavioral, adversarial)<br/>Own model (3B) · Own caps<br/>Own failure domain"]
-        INT["AIRS-Intelligence<br/>(indexer, context,<br/>attention, conversation)<br/>Own model (8B+) · Own caps<br/>Own failure domain"]
-        RES["AIRS-Resource<br/>(orchestrator, hint processor)<br/>Mostly stats, minimal LLM<br/>Own caps"]
+        direction LR
+        SEC["`AIRS-Security
+(intent, behavioral, adversarial)
+Own model (3B) · Own caps
+Own failure domain`"]
+        INT["`AIRS-Intelligence
+(indexer, context,
+attention, conversation)
+Own model (8B+) · Own caps
+Own failure domain`"]
+        RES["`AIRS-Resource
+(orchestrator, hint processor)
+Mostly stats, minimal LLM
+Own caps`"]
     end
 ```
 
@@ -133,8 +180,9 @@ The split is not worth it at 8 GB because:
 AIOS is a microkernel OS. The kernel is 31 syscalls: capabilities, IPC mediation, page tables, process lifecycle. Everything else — AIRS, Space Storage, Network Translation Module, Compositor — runs in userspace as Trust Level 1 services. AIRS being monolithic or split is a userspace concern that does not affect the kernel's architecture.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph MK["Microkernel (31 syscalls)"]
+        direction LR
         PROC["ProcessCreate, ProcessTerminate"]
         CAP["CapabilityGrant, CapabilityRevoke, CapabilityCheck"]
         IPC["IpcSend, IpcReceive, ChannelCreate"]
@@ -145,6 +193,7 @@ graph TD
     MK -- "stable syscall interface" --> US
 
     subgraph US["Userspace Services (Trust Level 1)"]
+        direction LR
         AIRS2["AIRS (1 process today, maybe 3 later)"]
         SS2["Space Storage"]
         NTM["Network Translation Module"]

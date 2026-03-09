@@ -318,16 +318,24 @@ impl FrameAllocator {
 Physical memory is divided into pools at boot based on total RAM. Each pool reserves a region of physical memory for a specific purpose. This prevents one subsystem from starving another.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph PML["Physical Memory Layout"]
         subgraph KP["Kernel Pool"]
-            KPD["page tables, kernel heap,<br/>slab caches<br/>4 KB pages"]
+            KPD["`page tables, kernel heap,
+slab caches
+4 KB pages`"]
         end
         subgraph MP["Model Pool (pinned)"]
-            MPD["model weights, KV caches,<br/>embedding stores<br/>2 MB huge pages,<br/>pinned, never swapped"]
+            MPD["`model weights, KV caches,
+embedding stores
+2 MB huge pages,
+pinned, never swapped`"]
         end
         subgraph UP["User Pool"]
-            UPD["agent heaps, stacks,<br/>shared mem<br/>4 KB pages,<br/>demand-paged"]
+            UPD["`agent heaps, stacks,
+shared mem
+4 KB pages,
+demand-paged`"]
         end
         subgraph DP["DMA Pool"]
             DPD["contiguous, aligned"]
@@ -449,27 +457,45 @@ The model pool is the largest allocation on devices with 4 GB+ RAM. This is inte
 ARM64 with 48-bit virtual addresses provides 256 TB of virtual address space, split between kernel (upper half, TTBR1) and user (lower half, TTBR0):
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph vas["Virtual Address Space (48-bit, 256 TB)"]
         subgraph ttbr1["TTBR1 — Kernel Space"]
-            K1["0xFFFF_FFFF_FFFF_FFFF<br/>Per-CPU data, temp mappings"]
-            K2["0xFFFF_FF00_0000_0000<br/>(gap)"]
-            K3["0xFFFF_0010_0000_0000<br/>MMIO regions"]
-            K4["0xFFFF_0002_0000_0000<br/>Physical memory direct map"]
-            K5["0xFFFF_0001_0000_0000<br/>Kernel heap"]
-            K6["0xFFFF_0000_4000_0000<br/>Kernel data (.data, .bss)<br/>Kernel text (.text, read-only)"]
+            K1["`0xFFFF_FFFF_FFFF_FFFF
+Per-CPU data, temp mappings`"]
+            K2["`0xFFFF_FF00_0000_0000
+(gap)`"]
+            K3["`0xFFFF_0010_0000_0000
+MMIO regions`"]
+            K4["`0xFFFF_0002_0000_0000
+Physical memory direct map`"]
+            K5["`0xFFFF_0001_0000_0000
+Kernel heap`"]
+            K6["`0xFFFF_0000_4000_0000
+Kernel data (.data, .bss)
+Kernel text (.text, read-only)`"]
             K1 --- K2 --- K3 --- K4 --- K5 --- K6
         end
-        HOLE["0xFFFF_0000_0000_0000 — 0x0000_8000_0000_0000<br/>Non-canonical address hole<br/>(inaccessible — hardware enforced gap)"]
+        HOLE["`0xFFFF_0000_0000_0000 — 0x0000_8000_0000_0000
+Non-canonical address hole
+(inaccessible — hardware enforced gap)`"]
         subgraph ttbr0["TTBR0 — User Space (per-agent)"]
-            U1["0x0000_7FFF_FFFF_F000<br/>Stack (grows down)"]
-            U2["0x0000_7FFF_FFC0_0000<br/>(gap)"]
-            U3["0x0000_0010_0000_0000<br/>Memory-mapped spaces"]
-            U4["0x0000_0001_0000_0000<br/>Shared memory (IPC regions)"]
-            U5["0x0000_0000_1000_0000<br/>Agent heap (grows up)<br/>Agent data (.data, .bss)"]
-            U6["0x0000_0000_0040_1000<br/>Guard page (4 KB, unmapped)"]
-            U7["0x0000_0000_0040_0000<br/>Agent text (.text, read-only)"]
-            U8["0x0000_0000_0010_0000<br/>Guard page (unmapped)"]
+            U1["`0x0000_7FFF_FFFF_F000
+Stack (grows down)`"]
+            U2["`0x0000_7FFF_FFC0_0000
+(gap)`"]
+            U3["`0x0000_0010_0000_0000
+Memory-mapped spaces`"]
+            U4["`0x0000_0001_0000_0000
+Shared memory (IPC regions)`"]
+            U5["`0x0000_0000_1000_0000
+Agent heap (grows up)
+Agent data (.data, .bss)`"]
+            U6["`0x0000_0000_0040_1000
+Guard page (4 KB, unmapped)`"]
+            U7["`0x0000_0000_0040_0000
+Agent text (.text, read-only)`"]
+            U8["`0x0000_0000_0010_0000
+Guard page (unmapped)`"]
             U9["0x0000_0000_0000_0000"]
             U1 --- U2 --- U3 --- U4 --- U5 --- U6 --- U7 --- U8 --- U9
         end
@@ -490,31 +516,45 @@ graph TD
 ARM64 with a 4 KB granule uses 4-level page tables. Each level indexes 9 bits of the virtual address:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph va48["48-bit Virtual Address (4 KB pages)"]
-        PGD_F["PGD [47:39]<br/>9 bits"]
-        PUD_F["PUD [38:30]<br/>9 bits"]
-        PMD_F["PMD [29:21]<br/>9 bits"]
-        PTE_F["PTE [20:12]<br/>9 bits"]
-        OFF_F["Offset [11:0]<br/>12 bits"]
+        PGD_F["`PGD [47:39]
+9 bits`"]
+        PUD_F["`PUD [38:30]
+9 bits`"]
+        PMD_F["`PMD [29:21]
+9 bits`"]
+        PTE_F["`PTE [20:12]
+9 bits`"]
+        OFF_F["`Offset [11:0]
+12 bits`"]
         PGD_F --- PUD_F --- PMD_F --- PTE_F --- OFF_F
     end
 
-    PGD_F --> PGD_T["PGD table<br/>(512 entries)"]
-    PUD_F --> PUD_T["PUD table<br/>(512 entries)"]
-    PMD_F --> PMD_T["PMD table<br/>(512 entries)"]
-    PTE_F --> PTE_T["PTE table<br/>(512 entries)"]
+    PGD_F --> PGD_T["`PGD table
+(512 entries)`"]
+    PUD_F --> PUD_T["`PUD table
+(512 entries)`"]
+    PMD_F --> PMD_T["`PMD table
+(512 entries)`"]
+    PTE_F --> PTE_T["`PTE table
+(512 entries)`"]
     PTE_T --> PHYS["Physical Frame"]
 
     subgraph va2m["48-bit Virtual Address (2 MB huge pages — model memory)"]
-        PGD_H["PGD [47:39]<br/>9 bits"]
-        PUD_H["PUD [38:30]<br/>9 bits"]
-        PMD_H["PMD [29:21]<br/>9 bits"]
-        OFF_H["Offset [20:0]<br/>21 bits"]
+        PGD_H["`PGD [47:39]
+9 bits`"]
+        PUD_H["`PUD [38:30]
+9 bits`"]
+        PMD_H["`PMD [29:21]
+9 bits`"]
+        OFF_H["`Offset [20:0]
+21 bits`"]
         PGD_H --- PUD_H --- PMD_H --- OFF_H
     end
 
-    PMD_H --> BLOCK["2 MB physical block<br/>(no PTE level)"]
+    PMD_H --> BLOCK["`2 MB physical block
+(no PTE level)`"]
 ```
 
 ```rust
@@ -845,7 +885,7 @@ Single-page and ASID invalidations include the `IS` (Inner Shareable) suffix to 
 The kernel needs to allocate variable-sized objects frequently — page table pages, IPC message buffers, capability tokens, process descriptors. A raw buddy allocator wastes memory on small allocations (allocating 64 bytes wastes 4032 bytes of a 4 KB page). The slab allocator solves this.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph SLAB["Slab Allocator"]
         subgraph CACHES["Slab Caches"]
             subgraph IPC["Cache: IPC Message (64 bytes)"]
@@ -864,9 +904,12 @@ graph TD
         end
 
         subgraph MAG["Per-CPU Magazine Layer (lock-free fast path)"]
-            M0["CPU 0<br/>loaded / prev"]
-            M1["CPU 1<br/>loaded / prev"]
-            M2["CPU 2<br/>loaded / prev"]
+            M0["`CPU 0
+loaded / prev`"]
+            M1["`CPU 1
+loaded / prev`"]
+            M2["`CPU 2
+loaded / prev`"]
         end
 
         CACHES --> MAG
@@ -1093,16 +1136,33 @@ Kernel allocation failure in core data paths (page table allocation during proce
 Each agent gets its own address space — a unique TTBR0 page table tree. No two agents share virtual-to-physical mappings except through explicit shared memory regions.
 
 ```mermaid
-graph TD
-    subgraph A1["Agent: research-assistant<br/>TTBR0: 0x1A2B_0000, ASID: 42"]
-        A1D["0x0040_0000 data (RW-)<br/>0x0080_0000 data (RW-)<br/>0x0100_0000 heap (RW-)<br/>...<br/>0x1_0000_0000 shm (RW-)<br/>...<br/>0x7FFF_FFC0_0000 stack"]
+flowchart TD
+    subgraph A1["`Agent: research-assistant
+TTBR0: 0x1A2B_0000, ASID: 42`"]
+        A1D["`0x0040_0000 data (RW-)
+0x0080_0000 data (RW-)
+0x0100_0000 heap (RW-)
+...
+0x1_0000_0000 shm (RW-)
+...
+0x7FFF_FFC0_0000 stack`"]
     end
 
-    subgraph A2["Agent: code-editor<br/>TTBR0: 0x3C4D_0000, ASID: 43"]
-        A2D["0x0040_0000 data (RW-)<br/>0x0080_0000 data (RW-)<br/>0x0100_0000 heap (RW-)<br/>...<br/>0x1_0000_0000 shm (RW-)<br/>...<br/>0x7FFF_FFC0_0000 stack"]
+    subgraph A2["`Agent: code-editor
+TTBR0: 0x3C4D_0000, ASID: 43`"]
+        A2D["`0x0040_0000 data (RW-)
+0x0080_0000 data (RW-)
+0x0100_0000 heap (RW-)
+...
+0x1_0000_0000 shm (RW-)
+...
+0x7FFF_FFC0_0000 stack`"]
     end
 
-    SHM["Shared Memory Region #17<br/>Physical: 0x5000<br/>Size: 64 KB<br/>Refcount: 2"]
+    SHM["`Shared Memory Region #17
+Physical: 0x5000
+Size: 64 KB
+Refcount: 2`"]
 
     A1 -->|shm mapping| SHM
     A2 -->|shm mapping| SHM
@@ -2088,16 +2148,32 @@ pub enum MteMode {
 Guard pages are unmapped virtual memory regions placed between sensitive areas. Any access to a guard page triggers an immediate page fault, which the kernel handles as a clean error rather than allowing silent corruption.
 
 ```mermaid
-graph TD
-    G1["0x0000_0000_0000_0000<br/>GUARD (unmapped)<br/>NULL pointer dereference → fault"]
-    T["0x0000_0000_0010_0000<br/>Agent text"]
-    G2["0x0000_0000_0040_0000<br/>GUARD<br/>text/data boundary"]
-    D["0x0000_0000_0040_1000<br/>Agent data<br/>Agent heap<br/>... Heap top"]
-    G3["0x0000_xxxx_xxxx_xxxx<br/>GUARD<br/>heap/shared boundary"]
-    S["0x0000_0001_0000_0000<br/>Shared memory"]
-    G4["GUARD<br/>shared/stack gap"]
-    STK["0x0000_7FFF_FFC0_0000<br/>Stack (grows down)"]
-    G5["0x0000_7FFF_FFBF_F000<br/>GUARD<br/>stack overflow → fault, not corruption<br/>0x0000_7FFF_FFBF_E000"]
+flowchart TD
+    G1["`0x0000_0000_0000_0000
+GUARD (unmapped)
+NULL pointer dereference → fault`"]
+    T["`0x0000_0000_0010_0000
+Agent text`"]
+    G2["`0x0000_0000_0040_0000
+GUARD
+text/data boundary`"]
+    D["`0x0000_0000_0040_1000
+Agent data
+Agent heap
+... Heap top`"]
+    G3["`0x0000_xxxx_xxxx_xxxx
+GUARD
+heap/shared boundary`"]
+    S["`0x0000_0001_0000_0000
+Shared memory`"]
+    G4["`GUARD
+shared/stack gap`"]
+    STK["`0x0000_7FFF_FFC0_0000
+Stack (grows down)`"]
+    G5["`0x0000_7FFF_FFBF_F000
+GUARD
+stack overflow → fault, not corruption
+0x0000_7FFF_FFBF_E000`"]
 
     G1 --- T --- G2 --- D --- G3 --- S --- G4 --- STK --- G5
 
@@ -2389,7 +2465,7 @@ zram provides the second tier of memory reclamation. Instead of writing inactive
 **Architecture:**
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph before["Before compression (12 KB occupied)"]
         A1["Page A (inactive) — 4 KB"]
         B1["Page B (inactive) — 4 KB"]
@@ -2625,23 +2701,26 @@ When an agent accesses a page that has been compressed (zram) or swapped to disk
 When a page is reclaimed, its PTE is modified to indicate where the data went. The PTE's "valid" bit is cleared (causing a fault on access), and the remaining bits encode the location:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph valid["Valid PTE (page in physical RAM)"]
-        V_PFN["Physical Frame Number<br/>(bits 47:12)"]
+        V_PFN["`Physical Frame Number
+(bits 47:12)`"]
         V_FLAGS["Flags"]
         V_BIT["V=1"]
         V_PFN --- V_FLAGS --- V_BIT
     end
 
     subgraph compressed["Compressed PTE (page in zram)"]
-        C_IDX["zram index<br/>(bits 47:2)"]
+        C_IDX["`zram index
+(bits 47:2)`"]
         C_TYPE["Type=01"]
         C_BIT["V=0"]
         C_IDX --- C_TYPE --- C_BIT
     end
 
     subgraph swapped["Swapped PTE (page on disk)"]
-        S_SLOT["Swap slot number<br/>(bits 47:2)"]
+        S_SLOT["`Swap slot number
+(bits 47:2)`"]
         S_TYPE["Type=10"]
         S_BIT["V=0"]
         S_SLOT --- S_TYPE --- S_BIT

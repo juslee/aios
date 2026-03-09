@@ -20,9 +20,12 @@ AIOS IPC is designed for **sub-5-microsecond round-trip latency**. Every design 
 ## 2. Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph APP["Agent / Application"]
-        SDK["SDK provides typed wrappers:<br/>spaces::read() --> syscall(IPC_CALL, space_svc, msg)<br/>audio::play() --> syscall(IPC_CALL, audio_svc, msg)<br/>compositor::* --> syscall(IPC_CALL, comp_svc, msg)"]
+        SDK["`SDK provides typed wrappers:
+spaces::read() --> syscall(IPC_CALL, space_svc, msg)
+audio::play() --> syscall(IPC_CALL, audio_svc, msg)
+compositor::* --> syscall(IPC_CALL, comp_svc, msg)`"]
     end
 
     APP -->|"syscall trap (SVC instruction)"| HANDLER
@@ -39,12 +42,18 @@ graph TD
     HANDLER --> IPC
 
     subgraph IPC["IPC Subsystem"]
-        CM["Channel Manager<br/>(create, destroy)"]
-        MR["Message Router<br/>(send, recv)"]
-        CX["Capability Xfer<br/>(transfer tokens)"]
-        SM["Shared Memory Mgr<br/>(map, unmap, share)"]
-        NM["Notification Mgr<br/>(async signals)"]
-        AL["Audit Logger<br/>(all IPC logged)"]
+        CM["`Channel Manager
+(create, destroy)`"]
+        MR["`Message Router
+(send, recv)`"]
+        CX["`Capability Xfer
+(transfer tokens)`"]
+        SM["`Shared Memory Mgr
+(map, unmap, share)`"]
+        NM["`Notification Mgr
+(async signals)`"]
+        AL["`Audit Logger
+(all IPC logged)`"]
     end
 ```
 
@@ -1238,7 +1247,7 @@ Every IPC technique in §12 exists in at least one other kernel. This section de
 **AIRS is advisory. The kernel is authoritative.** This is the inviolable architectural constraint for every feature in this section. It extends security.md §9.2 ("Resource Intelligence as Optimization, Not Security") to AI-native IPC:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph can["AIRS CAN"]
         C1["Suggest IPC routes (§13.1)"]
         C2["Predict future channel needs (§13.2)"]

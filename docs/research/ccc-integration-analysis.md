@@ -16,7 +16,7 @@ Claude's C Compiler (CCC) is a **complete, dependency-free C compiler** written 
 ### Pipeline
 
 ```mermaid
-graph TD
+flowchart TD
     A[C Source] --> B[Preprocessor<br>macro expansion, #include, #ifdef]
     B --> C[Lexer<br>tokenization with source locations]
     C --> D[Parser<br>recursive descent, typed AST]
@@ -154,14 +154,14 @@ Located in `src/backend/arm/`:
 **Assembler pipeline (per arch):**
 
 ```mermaid
-graph LR
+flowchart LR
     A[Assembly text] --> B[Parser] --> C["Vec&lt;AsmStatement&gt;"] --> D[Encoder] --> E["Vec&lt;u8&gt; + relocations"] --> F[ELF Writer] --> G[.o file]
 ```
 
 **Linker pipeline:**
 
 ```mermaid
-graph LR
+flowchart LR
     A[".o files + .a archives"] --> B[Parse ELF objects] --> C[Resolve symbols]
     C --> D[Merge sections] --> E[Assign addresses] --> F[Apply relocations]
     F --> G["Generate PLT/GOT<br>(if dynamic)"] --> H[ELF executable]
@@ -178,7 +178,7 @@ Shared infrastructure in `backend/elf/` (11 files) and `backend/linker_common/` 
 AIOS Phase 15 (POSIX Compatibility & BSD Userland) plans to use **LLVM/clang** as the C/C++ compiler. The architecture is:
 
 ```mermaid
-graph TD
+flowchart TD
     A["BSD Userland<br>(FreeBSD tools, clang)"] --> B["musl libc<br>(syscall dispatch, IPC dispatch)"]
     B --> C["POSIX Translation Layer<br>(FD table, path resolver)"]
     C --> D["AIOS Kernel<br>(31 native syscalls)"]
@@ -217,7 +217,7 @@ CCC is not a replacement for LLVM/clang — it doesn't do C++. But it fills seve
 The LLVM bootstrap problem: to compile clang on AIOS, you need a C++ compiler. To get a C++ compiler, you need... a C++ compiler. CCC breaks this cycle:
 
 ```mermaid
-graph TD
+flowchart TD
     Start["Phase 15a: Port musl libc<br>needs C compiler"]
     Start --> A["Option A: Cross-compile<br>everything from host<br>(current plan)"]
     Start --> B["Option B: Ship CCC as<br>native AIOS binary"]
@@ -260,7 +260,7 @@ CCC's AArch64 backend would need these features added. But because CCC is Rust, 
 ### 3.4 Integration Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     US[AIOS Userspace]
 
     US --> CCC["/usr/bin/ccc<br>CCC native AIOS binary, Phase 15a"]
@@ -455,7 +455,7 @@ C++. To compile C++, you need `clang`, which is also C++. Chicken-and-egg.
 CCC breaks this cycle. Here is the full bootstrap chain:
 
 ```mermaid
-graph TD
+flowchart TD
     S1["Step 1: Cross-compile CCC<br>for AIOS AArch64 (from host)"]
     S1 -->|"AIOS has a native C compiler"| S2
 

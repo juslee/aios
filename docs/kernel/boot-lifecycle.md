@@ -15,14 +15,39 @@
 Shutdown is the reverse of boot, with extra care for data integrity:
 
 ```mermaid
-graph TD
-    REQ["1. User requests shutdown<br/>(or system initiates reboot)"]
-    P5["2. Phase 5 teardown<br/>Agents receive shutdown signal (5s grace)<br/>Agents persist state to spaces<br/>Conversation bar saves to space<br/>Workspace saves layout state"]
-    P4["3. Phase 4 teardown<br/>Agent Runtime terminates remaining agents<br/>Attention Manager flushes notifications<br/>Preference Service writes dirty prefs<br/>Identity Service locks identity (zero keys)"]
-    P3["4. Phase 3 teardown<br/>Context Engine saves context state<br/>Space Indexer checkpoints index<br/>AIRS unloads models (drop mmap)"]
-    P2["5. Phase 2 teardown<br/>Compositor shows 'Shutting down...'<br/>Network closes connections<br/>Input quiesced, Display releases GPU<br/>POSIX compat flushes file descriptors"]
-    P1["6. Phase 1 teardown<br/>Space Storage flushes pending writes<br/>Object Store flushes refcounts<br/>Block Engine flushes WAL<br/>Block Engine writes clean-shutdown flag"]
-    KS["7. Kernel shutdown<br/>All services terminated<br/>Audit log: 'clean shutdown'<br/>Disable interrupts (DAIF mask)<br/>Flush caches (DC CIVAC, IC IALLU)<br/>ResetSystem(Shutdown or Reboot)"]
+flowchart TD
+    REQ["`1. User requests shutdown
+(or system initiates reboot)`"]
+    P5["`2. Phase 5 teardown
+Agents receive shutdown signal (5s grace)
+Agents persist state to spaces
+Conversation bar saves to space
+Workspace saves layout state`"]
+    P4["`3. Phase 4 teardown
+Agent Runtime terminates remaining agents
+Attention Manager flushes notifications
+Preference Service writes dirty prefs
+Identity Service locks identity (zero keys)`"]
+    P3["`4. Phase 3 teardown
+Context Engine saves context state
+Space Indexer checkpoints index
+AIRS unloads models (drop mmap)`"]
+    P2["`5. Phase 2 teardown
+Compositor shows 'Shutting down...'
+Network closes connections
+Input quiesced, Display releases GPU
+POSIX compat flushes file descriptors`"]
+    P1["`6. Phase 1 teardown
+Space Storage flushes pending writes
+Object Store flushes refcounts
+Block Engine flushes WAL
+Block Engine writes clean-shutdown flag`"]
+    KS["`7. Kernel shutdown
+All services terminated
+Audit log: 'clean shutdown'
+Disable interrupts (DAIF mask)
+Flush caches (DC CIVAC, IC IALLU)
+ResetSystem(Shutdown or Reboot)`"]
 
     REQ --> P5 --> P4 --> P3 --> P2 --> P1 --> KS
 ```
@@ -251,13 +276,23 @@ The fastest resume path. CPU cores are powered down, DRAM stays in self-refresh,
 **Suspend sequence:**
 
 ```mermaid
-graph TD
+flowchart TD
     TRIG["1. User closes lid / presses power button / idle timeout"]
-    SM["2. Service Manager receives SuspendRequest<br/>Broadcasts SuspendPrepare (2s timeout)<br/>Services: flush I/O, save state, park DMA<br/>Reply: SuspendReady (or force-frozen)"]
-    KS["3. Kernel suspend path<br/>Disable interrupts except wake sources<br/>Save per-core state (VBAR, TTBR0, SP, regs)<br/>Save GIC/AIC and timer state"]
-    DEV["platform.suspend_devices()<br/>UART, GPU, Network, Storage,<br/>Audio, USB, SMMU, RNG"]
-    PARK["Park secondary CPUs (PSCI CPU_SUSPEND)<br/>Boot CPU enters PSCI SYSTEM_SUSPEND"]
-    SLEEP["DRAM in self-refresh<br/>System draws < 50 mW"]
+    SM["`2. Service Manager receives SuspendRequest
+Broadcasts SuspendPrepare (2s timeout)
+Services: flush I/O, save state, park DMA
+Reply: SuspendReady (or force-frozen)`"]
+    KS["`3. Kernel suspend path
+Disable interrupts except wake sources
+Save per-core state (VBAR, TTBR0, SP, regs)
+Save GIC/AIC and timer state`"]
+    DEV["`platform.suspend_devices()
+UART, GPU, Network, Storage,
+Audio, USB, SMMU, RNG`"]
+    PARK["`Park secondary CPUs (PSCI CPU_SUSPEND)
+Boot CPU enters PSCI SYSTEM_SUSPEND`"]
+    SLEEP["`DRAM in self-refresh
+System draws < 50 mW`"]
 
     TRIG --> SM --> KS --> DEV --> PARK --> SLEEP
 ```
@@ -324,7 +359,7 @@ Hibernate writes the entire system state to persistent storage, then powers off 
 **Hibernate is S3 with a safety net.** AIOS enters S3 first (fast wake), and starts writing the hibernate image to storage *in the background while the system is suspended*. If power fails during S3 (DRAM loses content), the next boot detects the hibernate image and resumes from it. If S3 wake succeeds normally, the hibernate image is discarded.
 
 ```mermaid
-graph TD
+flowchart TD
     A[Suspend Request] --> B[Enter S3 - immediate, < 200ms]
     A --> C[Background: write hibernate image to block device]
 
@@ -450,7 +485,7 @@ pub struct WindowState {
 **When Semantic Resume is used:**
 
 ```mermaid
-graph TD
+flowchart TD
     A["Boot starts: check for semantic snapshot in system/session/"] --> B{"Snapshot exists?"}
 
     B -->|"Yes + kernel version matches"| C["Try S4 hibernate first\n(faster, preserves more state)"]
@@ -656,7 +691,7 @@ pub enum BootIntent {
 **How intent is detected:**
 
 ```mermaid
-graph TD
+flowchart TD
     A[Boot starts] --> B{"consecutive_failures >= 3?\n(UEFI variable)"}
     B -->|YES| C[BootIntent::Recovery]
     B -->|NO| D{"Hibernate image present\nwith valid kernel version?"}
@@ -823,7 +858,7 @@ web-storage/             Yes         Browser data
 ### 18.2 Key Derivation
 
 ```mermaid
-graph TD
+flowchart TD
     A[User passphrase] --> B["Argon2id (memory-hard KDF)\n256 MB memory cost (~500ms on Pi 4)\n3 iterations\n32-byte salt (stored in system/identity/)"]
     B --> C["Master Key (256-bit)"]
     C --> D["HKDF('space-encryption')"]
@@ -837,7 +872,7 @@ graph TD
 ### 18.3 Boot-Time Unlock Flow
 
 ```mermaid
-graph TD
+flowchart TD
     A["Phase 4: Identity Service starts"] --> B{"system/identity/ exists?"}
     B -->|NO| C["First boot\n(§5 Phase 5 first boot setup flow)"]
     B -->|YES| D[Read encrypted identity blob]
@@ -878,7 +913,7 @@ AIOS is unusable if a user with a disability cannot complete the first boot expe
 The first-boot setup flow (§5 Phase 5) includes accessibility as its very first step — *before* language selection:
 
 ```mermaid
-graph TD
+flowchart TD
     A["First Boot — Step 0:\nAccessibility Detection\n(BEFORE any other UI)"] --> B[Check connected USB devices]
     B --> C{"Braille display?\n(USB HID, usage page 0x41)"}
     C -->|YES| D[Enable Braille output driver]

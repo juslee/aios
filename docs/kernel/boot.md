@@ -25,13 +25,15 @@ AIOS boots via UEFI on aarch64. The firmware is not part of AIOS — it's provid
 **Boot flow:**
 
 ```mermaid
-graph TD
-    FW["Platform firmware (not AIOS)"] --> POST["POST: hardware self-test,<br/>DRAM training, PCI enumeration"]
+flowchart TD
+    FW["Platform firmware (not AIOS)"] --> POST["`POST: hardware self-test,
+DRAM training, PCI enumeration`"]
     POST --> UEFI_INIT["UEFI firmware initialization"]
     UEFI_INIT --> ESP["Read ESP from boot device"]
     ESP --> LOAD_STUB["Load BOOTAA64.EFI (AIOS UEFI stub)"]
 
-    LOAD_STUB --> STUB["AIOS UEFI stub<br/>(runs in UEFI Boot Services, EL1)"]
+    LOAD_STUB --> STUB["`AIOS UEFI stub
+(runs in UEFI Boot Services, EL1)`"]
     STUB --> PARSE["Parse UEFI memory map"]
     PARSE --> LOAD_ELF["Locate and load kernel ELF from ESP"]
     LOAD_ELF --> GOP["Acquire framebuffer via GOP"]
@@ -40,7 +42,8 @@ graph TD
     RNG --> ALLOC["Allocate contiguous region for kernel"]
     ALLOC --> EBS["ExitBootServices() -- point of no return"]
 
-    EBS --> KERNEL["Jump to kernel entry point<br/>(all UEFI Boot Services gone)"]
+    EBS --> KERNEL["`Jump to kernel entry point
+(all UEFI Boot Services gone)`"]
 ```
 
 ### 2.2 What the Kernel Receives
@@ -893,7 +896,7 @@ Services form a directed acyclic graph (DAG) where edges represent "must start a
 **Cross-phase dependencies:** Each phase requires all services from every previous phase to be healthy before it starts. The graph below shows only intra-phase dependencies. Cross-phase dependencies are implicit: every Phase 2 service depends on `space_storage` (Phase 1), every Phase 3 service depends on Phase 2 core services (specifically `space_storage` for persistent state and `compositor` for display access where needed), and so on. Phase 3 (AI) and Phase 4 (User) run in parallel after Phase 2 completes — they depend on Phase 2 but not on each other (see §6.1 timeline).
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph P1["PHASE 1: STORAGE"]
         block_engine --> object_store --> space_storage
     end
@@ -958,16 +961,33 @@ t=200ms: compositor healthy
 The Service Manager holds a `ServiceManagerCapability` derived from the kernel's root capability. When it starts a service, it mints the minimum set of capabilities that service needs:
 
 ```mermaid
-graph LR
-    SM["Service Manager<br/>ServiceManagerCapability"] --> BE["block_engine<br/>RawStorageAccess, AuditWrite"]
-    SM --> OS["object_store<br/>BlockEngineChannel, AuditWrite"]
-    SM --> SS["space_storage<br/>ObjectStoreChannel, AuditWrite,<br/>SpaceManagement"]
-    SM --> DR["device_registry<br/>SpaceWrite(system/devices), AuditWrite"]
-    SM --> CO["compositor<br/>DisplayAccess, InputAccess,<br/>SharedMemoryCreate"]
-    SM --> NET["network<br/>RawNetworkAccess,<br/>SpaceRead(system/credentials)"]
-    SM --> AIRS["airs<br/>InferenceAccess,<br/>SpaceReadWrite(system/models),<br/>SpaceReadWrite(system/index)"]
-    SM --> ID["identity<br/>SpaceReadWrite(system/identity),<br/>CryptoAccess"]
-    SM --> AR["agent_runtime<br/>ProcessCreate,<br/>CapabilityMint (attenuated)"]
+flowchart LR
+    SM["`Service Manager
+ServiceManagerCapability`"] --> BE["`block_engine
+RawStorageAccess, AuditWrite`"]
+    SM --> OS["`object_store
+BlockEngineChannel, AuditWrite`"]
+    SM --> SS["`space_storage
+ObjectStoreChannel, AuditWrite,
+SpaceManagement`"]
+    SM --> DR["`device_registry
+SpaceWrite(system/devices), AuditWrite`"]
+    SM --> CO["`compositor
+DisplayAccess, InputAccess,
+SharedMemoryCreate`"]
+    SM --> NET["`network
+RawNetworkAccess,
+SpaceRead(system/credentials)`"]
+    SM --> AIRS["`airs
+InferenceAccess,
+SpaceReadWrite(system/models),
+SpaceReadWrite(system/index)`"]
+    SM --> ID["`identity
+SpaceReadWrite(system/identity),
+CryptoAccess`"]
+    SM --> AR["`agent_runtime
+ProcessCreate,
+CapabilityMint (attenuated)`"]
 ```
 
 Each service receives exactly the capabilities it needs. No service holds the `ServiceManagerCapability` itself. Capability escalation is impossible — a compromised service cannot mint capabilities beyond its own set.
@@ -1559,13 +1579,22 @@ Persistence priority (try in order):
 If the early framebuffer is available (before compositor handoff) or can be reclaimed (after compositor, by reverting to the GOP framebuffer):
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph panic["AIOS KERNEL PANIC"]
         phase["Phase: HeapReady"]
-        msg["Message: out of memory: buddy allocator<br/>exhausted during slab refill"]
-        regs["PC: 0xffff0000_00042a8c<br/>ESR: 0x00000000_96000045 (data abort, current EL)<br/>FAR: 0x00000001_80000000"]
-        bt["Backtrace:<br/>#0 0xffff0000_00042a8c slab_alloc+0x1c<br/>#1 0xffff0000_00038f10 box_new+0x28<br/>#2 0xffff0000_0001cd44 capability_create+0x54<br/>..."]
-        footer["Crash dump saved to block device.<br/>System will reboot in 10 seconds.<br/>(Press any key for UART debug shell)"]
+        msg["`Message: out of memory: buddy allocator
+exhausted during slab refill`"]
+        regs["`PC: 0xffff0000_00042a8c
+ESR: 0x00000000_96000045 (data abort, current EL)
+FAR: 0x00000001_80000000`"]
+        bt["`Backtrace:
+#0 0xffff0000_00042a8c slab_alloc+0x1c
+#1 0xffff0000_00038f10 box_new+0x28
+#2 0xffff0000_0001cd44 capability_create+0x54
+...`"]
+        footer["`Crash dump saved to block device.
+System will reboot in 10 seconds.
+(Press any key for UART debug shell)`"]
 
         phase --- msg --- regs --- bt --- footer
     end
@@ -1614,12 +1643,13 @@ pub struct BootAttemptTracker {
 **Decision tree:**
 
 ```mermaid
-graph TD
+flowchart TD
     START["Boot starts"] --> CHECK{"consecutive_failures < 3?"}
     CHECK -->|YES| NORMAL["Normal boot"]
     CHECK -->|NO| RECOVERY["Recovery mode"]
     NORMAL --> P5{"Phase 5 completes?"}
-    P5 -->|YES| CLEAR["Clear consecutive_failures<br/>boot_success = true"]
+    P5 -->|YES| CLEAR["`Clear consecutive_failures
+boot_success = true`"]
     P5 -->|NO| CRASH["Crash or hang during boot"]
     CRASH --> REBOOT["Reboot (watchdog or manual)"]
     REBOOT --> INC["consecutive_failures incremented"]
@@ -1794,12 +1824,14 @@ Total initramfs size target: **< 32 MB**. The initramfs is compressed (zstd) to 
 The kernel and initramfs are bundled as a single boot image by the build system:
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph IMG["AIOS Boot Image"]
         STUB["UEFI Stub (PE/COFF) ~64 KiB"]
         ELF["Kernel ELF ~1.5 MB"]
         INITRD["Initramfs (zstd-compressed cpio archive) ~10 MB"]
-        MANIFEST["Boot manifest (JSON) ~1 KiB<br/>kernel hash, initramfs hash,<br/>build timestamp, version string"]
+        MANIFEST["`Boot manifest (JSON) ~1 KiB
+kernel hash, initramfs hash,
+build timestamp, version string`"]
         STUB --- ELF --- INITRD --- MANIFEST
     end
 ```
