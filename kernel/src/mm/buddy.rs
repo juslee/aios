@@ -581,6 +581,7 @@ pub static BUDDY: Mutex<BuddyAllocator> = Mutex::new(BuddyAllocator::new());
 ///
 /// # Safety
 /// Must be called after MMU enable, with a valid BootInfo.
+#[allow(dead_code)]
 pub unsafe fn init(
     map_addr: u64,
     map_count: u64,

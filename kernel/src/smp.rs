@@ -100,8 +100,17 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
         let mpidr = dt.cpu_mpidr(i);
         // Allocate 16 KiB stack (buddy order 2 = 4 pages).
         // SAFETY: Identity map is active post-MMU init; buddy allocator is initialized.
-        let stack_phys = unsafe { crate::mm::buddy::BUDDY.lock().alloc_pages(2) }
-            .expect("Failed to allocate secondary core stack");
+        let stack_phys = {
+            let mut guard = crate::mm::frame::FRAME_ALLOC.lock();
+            if let Some(fa) = guard.as_mut() {
+                // SAFETY: Identity map is active; frame allocator is initialized.
+                unsafe { fa.alloc_pages(shared::Pool::Kernel, 2) }
+            } else {
+                // SAFETY: Fallback to legacy buddy if frame allocator not yet initialized.
+                unsafe { crate::mm::buddy::BUDDY.lock().alloc_pages(2) }
+            }
+        }
+        .expect("Failed to allocate secondary core stack");
 
         let stack_size = 4096 * 4; // 16 KiB
         let stack_top = stack_phys + stack_size;

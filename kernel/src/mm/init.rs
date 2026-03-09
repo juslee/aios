@@ -1,0 +1,97 @@
+//! Memory subsystem initialization — bootstraps from UEFI memory map.
+//!
+//! `init_memory()` walks the BootInfo memory map, computes pool sizes,
+//! initializes per-pool buddy allocators, and stores the global FrameAllocator.
+//!
+//! Per memory.md §2.1 (Bootstrap) and boot.md §2.2 (BootInfo).
+
+use shared::{BootInfo, MemoryDescriptor, PoolConfig};
+
+use super::buddy::PAGE_SIZE;
+use super::frame::{FrameAllocator, FRAME_ALLOC};
+use super::pools::PagePools;
+
+/// Initialize the physical memory subsystem from the UEFI memory map.
+///
+/// 1. Walks the memory map to find the overall usable physical range.
+/// 2. Computes pool sizes via `PoolConfig::from_total_ram()`.
+/// 3. Initializes `PagePools` (per-pool buddy allocators).
+/// 4. Stores the global `FrameAllocator`.
+///
+/// # Safety
+/// - `boot_info` must point to a valid, identity-mapped BootInfo struct.
+/// - The identity map must be active (MMU enabled).
+/// - Must be called exactly once, from the boot CPU.
+pub unsafe fn init_memory(boot_info: &BootInfo) {
+    // Step 1: Walk memory map to find overall physical extent and total usable bytes.
+    let map_base = boot_info.memory_map_addr as *const u8;
+    let map_count = boot_info.memory_map_count;
+    let entry_size = boot_info.memory_map_entry_size;
+
+    let mut phys_min: usize = usize::MAX;
+    let mut phys_max: usize = 0;
+    let mut total_usable_bytes: usize = 0;
+
+    for i in 0..map_count {
+        let ptr = map_base.add(i as usize * entry_size as usize);
+        // SAFETY: The UEFI stub stores valid MemoryDescriptors. We read each
+        // descriptor before any writes to the same memory.
+        let desc = &*(ptr as *const MemoryDescriptor);
+
+        // Only use memory types reclaimable after ExitBootServices.
+        let usable = matches!(
+            desc.ty,
+            1 | 2 | 3 | 4 | 7 // LoaderCode, LoaderData, BSCode, BSData, Conventional
+        );
+        if !usable {
+            continue;
+        }
+
+        let start = desc.phys_start as usize;
+        let end = start + (desc.page_count as usize) * PAGE_SIZE;
+
+        if start < phys_min {
+            phys_min = start;
+        }
+        if end > phys_max {
+            phys_max = end;
+        }
+        total_usable_bytes += end - start;
+    }
+
+    // Page-align the extent.
+    phys_min = (phys_min + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    let phys_max = phys_max & !(PAGE_SIZE - 1);
+
+    // Step 2: Compute pool sizes.
+    let config = PoolConfig::from_total_ram(total_usable_bytes);
+    let total_pages = total_usable_bytes / PAGE_SIZE;
+
+    // Step 3: Compute exclusion ranges (kernel image + memory map buffer).
+    extern "C" {
+        static __kernel_end: u8;
+    }
+    let kernel_start = boot_info.kernel_phys_base as usize;
+    let kernel_end_linker = &__kernel_end as *const u8 as usize;
+    let kernel_end = kernel_end_linker.max(kernel_start + boot_info.kernel_size as usize);
+    let kernel_end = (kernel_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+
+    let map_buf_start = boot_info.memory_map_addr as usize;
+    let map_buf_end = map_buf_start + map_count as usize * entry_size as usize;
+    let map_buf_end = (map_buf_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+
+    // Step 4: Initialize page pools from the contiguous physical range.
+    let pools = PagePools::init(
+        phys_min,
+        phys_max,
+        &config,
+        (kernel_start, kernel_end),
+        (map_buf_start, map_buf_end),
+    );
+
+    // Step 5: Create and store global FrameAllocator.
+    let fa = FrameAllocator::new(pools, total_pages);
+    fa.print_stats();
+
+    *FRAME_ALLOC.lock() = Some(fa);
+}

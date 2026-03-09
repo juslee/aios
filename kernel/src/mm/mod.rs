@@ -5,6 +5,9 @@
 
 pub mod buddy;
 pub mod bump;
+pub mod frame;
+pub mod init;
+pub mod pools;
 pub mod slab;
 
 use core::alloc::{GlobalAlloc, Layout};

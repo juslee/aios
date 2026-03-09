@@ -71,7 +71,7 @@ impl SlabCache {
 
     /// Request a page from the buddy allocator and carve it into free objects.
     unsafe fn grow(&mut self) {
-        let page = super::buddy::alloc_page();
+        let page = super::frame::alloc_page().or_else(super::buddy::alloc_page);
         let Some(page_addr) = page else { return };
 
         self.pages_used += 1;
@@ -133,15 +133,20 @@ pub unsafe fn alloc(layout: Layout) -> *mut u8 {
     let effective_size = layout.size().max(layout.align());
 
     if effective_size > PAGE_SIZE {
-        // Large allocation: get pages directly from buddy.
-        // Round up to the next page count, then find the order.
+        // Large allocation: get pages directly from the frame allocator (or legacy buddy).
         let pages = effective_size.div_ceil(PAGE_SIZE);
         let page_order = pages.next_power_of_two().trailing_zeros() as usize;
-        let mut buddy = super::buddy::BUDDY.lock();
-        // SAFETY: buddy allocator is initialized and identity map is active.
-        return buddy
-            .alloc_pages(page_order)
-            .map_or(core::ptr::null_mut(), |a| a as *mut u8);
+        // SAFETY: Identity map is active; frame allocator or buddy is initialized.
+        let addr = {
+            let mut guard = super::frame::FRAME_ALLOC.lock();
+            if let Some(fa) = guard.as_mut() {
+                fa.alloc_pages(shared::Pool::Kernel, page_order)
+            } else {
+                let mut buddy = super::buddy::BUDDY.lock();
+                buddy.alloc_pages(page_order)
+            }
+        };
+        return addr.map_or(core::ptr::null_mut(), |a| a as *mut u8);
     }
 
     let Some(idx) = SlabAllocator::cache_index(&layout) else {
@@ -164,12 +169,17 @@ pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
     let effective_size = layout.size().max(layout.align());
 
     if effective_size > PAGE_SIZE {
-        // Large allocation: return pages to buddy (must match alloc order)
+        // Large allocation: return pages to frame allocator (or legacy buddy).
         let pages = effective_size.div_ceil(PAGE_SIZE);
         let page_order = pages.next_power_of_two().trailing_zeros() as usize;
-        let mut buddy = super::buddy::BUDDY.lock();
         // SAFETY: ptr was returned by alloc_pages with the same order.
-        buddy.free_pages(ptr as usize, page_order);
+        let mut guard = super::frame::FRAME_ALLOC.lock();
+        if let Some(fa) = guard.as_mut() {
+            fa.free_pages(ptr as usize, page_order);
+        } else {
+            let mut buddy = super::buddy::BUDDY.lock();
+            buddy.free_pages(ptr as usize, page_order);
+        }
         return;
     }
 
