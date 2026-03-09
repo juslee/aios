@@ -100,6 +100,23 @@ fn l1_block_descriptor(phys_addr: u64, mair_idx: u64, executable: bool) -> u64 {
 
 // ── Public API ────────────────────────────────────────────────────────
 
+/// Virt-to-phys offset for kernel statics.
+///
+/// With virtual linking (VMA at KERNEL_VIRT, LMA at KERNEL_PHYS), Rust
+/// addresses of statics are virtual. TTBR0_EL1 and table descriptors need
+/// physical addresses. Subtract this offset to convert.
+///
+/// = KERNEL_VIRT + (KERNEL_PHYS & 0x1FFFFF) - KERNEL_PHYS
+/// = 0xFFFF_0000_0008_0000 - 0x4008_0000
+/// = 0xFFFE_FFFF_C000_0000
+const VIRT_PHYS_OFFSET: u64 = 0xFFFE_FFFF_C000_0000;
+
+/// Convert a kernel virtual address to physical.
+#[inline]
+fn virt_to_phys(va: u64) -> u64 {
+    va.wrapping_sub(VIRT_PHYS_OFFSET)
+}
+
 /// Build identity-map page tables and swap TTBR0_EL1.
 ///
 /// Phase 1 strategy: edk2 leaves MMU on with its own MAIR/TCR. Changing
@@ -115,15 +132,20 @@ fn l1_block_descriptor(phys_addr: u64, mair_idx: u64, executable: bool) -> u64 {
 /// Must be called exactly once from the boot CPU during early init.
 /// Caller must ensure no concurrent access to page table statics.
 pub unsafe fn init_mmu() {
-    let l0_addr = TTBR0_L0.entries.get() as u64;
-    let l1_addr = TTBR0_L1.entries.get() as u64;
+    // With virtual linking, Rust pointer casts on statics yield virtual
+    // addresses. TTBR0_EL1 and table descriptors require physical addresses
+    // (the MMU table walker starts from the physical address in TTBRn).
+    let l0_phys = virt_to_phys(TTBR0_L0.entries.get() as u64);
+    let l1_phys = virt_to_phys(TTBR0_L1.entries.get() as u64);
 
     // SAFETY: UnsafeCell dereferences are safe because init_mmu is called
     // exactly once from the boot CPU with no concurrent access to these statics.
+    // We access statics via their virtual addresses (valid through TTBR1),
+    // but write physical addresses into the page table entries.
     let l0 = &mut *TTBR0_L0.entries.get();
     let l1 = &mut *TTBR0_L1.entries.get();
 
-    l0[0] = table_descriptor(l1_addr);
+    l0[0] = table_descriptor(l1_phys);
 
     // Block 0: 0x0000_0000 – device memory (UART, GIC, etc.)
     l1[0] = l1_block_descriptor(0x0000_0000, MAIR_DEVICE_IDX, false);
@@ -144,10 +166,10 @@ pub unsafe fn init_mmu() {
     // We skip pre-swap TLBI: stale edk2 TLB entries map identity VA→PA
     // (same as ours), so they're harmless. New entries from our tables will
     // be filled on TLB misses.
-    // SAFETY: l0_addr points to a valid, page-aligned L0 page table built
-    // above. Writing TTBR0_EL1 at EL1 is architecturally permitted. The ISB
-    // ensures subsequent instruction fetches use the new translation tables.
-    let ttbr0 = l0_addr;
+    // SAFETY: l0_phys is the physical address of a valid, page-aligned L0 page
+    // table built above. Writing TTBR0_EL1 at EL1 is architecturally permitted.
+    // The ISB ensures subsequent instruction fetches use the new translation tables.
+    let ttbr0 = l0_phys;
     core::arch::asm!(
         "msr TTBR0_EL1, {ttbr0}",
         "isb",
@@ -183,7 +205,7 @@ pub unsafe fn init_mmu() {
 /// Physical address of the L0 page table (for TTBR0_EL1 on secondary cores).
 #[allow(dead_code)]
 pub fn ttbr0_l0_addr() -> u64 {
-    TTBR0_L0.entries.get() as u64
+    virt_to_phys(TTBR0_L0.entries.get() as u64)
 }
 
 /// Boot CPU's MMU register values: (MAIR_EL1, TCR_EL1, SCTLR_EL1).

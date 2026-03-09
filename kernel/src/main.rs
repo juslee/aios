@@ -126,6 +126,25 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         println!("[boot] Box::new(42) = {} — heap verified", *x);
     }
 
+    // --- Step 6b: KASLR + Full TTBR1 with W^X ---
+
+    // Compute KASLR slide (logged but not applied — slide=0 for M8).
+    // The slide is computed for verification; full KASLR address transition
+    // requires rebuilding TTBR1 with both old and new mappings active.
+    let _kaslr = crate::mm::kaslr::compute_slide(&boot_info.rng_seed);
+
+    // Build full kernel address space: W^X sections, direct map, MMIO.
+    // Replaces boot.S minimal TTBR1 (2MB RWX blocks) with 4KB W^X pages.
+    // SAFETY: Called once from boot CPU after pool init. TTBR0 identity map
+    // and boot.S TTBR1 are both active. The switch preserves kernel virtual
+    // addresses (slide=0), so execution continues transparently.
+    unsafe {
+        crate::mm::kmap::init_kernel_address_space(
+            0x4000_0000, // QEMU virt RAM base
+            0x8000_0000, // 2 GB RAM
+        );
+    };
+
     // --- Step 7: SMP Secondary Core Bringup ---
     let _sched = smp::bring_secondaries_online(&dt, ic.gicr_base());
     advance_boot_phase(EarlyBootPhase::ProcessManagerReady);

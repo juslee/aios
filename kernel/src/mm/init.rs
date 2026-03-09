@@ -11,6 +11,10 @@ use super::buddy::PAGE_SIZE;
 use super::frame::{FrameAllocator, FRAME_ALLOC};
 use super::pools::PagePools;
 
+/// Virt-to-phys offset for kernel statics (virtual linking).
+/// KERNEL_VIRT + 0x80000 - KERNEL_PHYS = 0xFFFE_FFFF_C000_0000
+const VIRT_PHYS_OFFSET: usize = 0xFFFE_FFFF_C000_0000;
+
 /// Initialize the physical memory subsystem from the UEFI memory map.
 ///
 /// 1. Walks the memory map to find the overall usable physical range.
@@ -91,11 +95,16 @@ pub unsafe fn init_memory(boot_info: &BootInfo) {
     let total_pages = total_usable_bytes / PAGE_SIZE;
 
     // Step 3: Compute exclusion ranges (kernel image + memory map buffer).
+    //
+    // With virtual linking, linker symbols yield virtual addresses. Convert
+    // __kernel_end to physical via the virt-phys offset so the exclusion
+    // range stays in the physical address space used by the buddy allocator.
     extern "C" {
         static __kernel_end: u8;
     }
     let kernel_start = boot_info.kernel_phys_base as usize;
-    let kernel_end_linker = &__kernel_end as *const u8 as usize;
+    let kernel_end_linker_virt = &__kernel_end as *const u8 as usize;
+    let kernel_end_linker = kernel_end_linker_virt.wrapping_sub(VIRT_PHYS_OFFSET);
     let kernel_end = kernel_end_linker.max(kernel_start + boot_info.kernel_size as usize);
     let kernel_end = (kernel_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 

@@ -10,6 +10,8 @@ pub mod bump;
 pub mod frame;
 pub mod init;
 #[allow(dead_code)]
+pub mod kaslr;
+#[allow(dead_code)]
 pub mod kmap;
 #[allow(dead_code)]
 pub mod pgtable;
