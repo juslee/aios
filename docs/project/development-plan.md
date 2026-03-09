@@ -9,33 +9,36 @@
 
 ## 1. Overview
 
-28 phases across ~130 weeks (~2.5 years). Organized into 7 tiers, each delivering a usable milestone. The plan is designed so that each tier builds on the previous one and produces something demonstrable.
+30 phases across ~138 weeks (~2.7 years). Organized into 8 tiers, each delivering a usable milestone. The plan is designed so that each tier builds on the previous one and produces something demonstrable.
 
 ```mermaid
 flowchart LR
-    T1["`Tier 1: Hardware Foundation
-Phases 0-3 | Weeks 1-16
-*Boot, memory, IPC*`"]
-    T2["`Tier 2: Core System Services
-Phases 4-7 | Weeks 17-34
-*Storage, GPU, compositor, networking*`"]
-    T3["`Tier 3: AI & Intelligence
-Phases 8-11 | Weeks 35-54
-*AIRS, semantic search, agents*`"]
-    T4["`Tier 4: Platform Maturity
-Phases 12-15 | Weeks 55-74
-*SDK, security, performance, POSIX*`"]
-    T5["`Tier 5: Hardware & Connectivity
-Phases 16-19 | Weeks 75-92
-*Full NTM, USB, wireless, power*`"]
-    T6["`Tier 6: Rich Experience
-Phases 20-23 | Weeks 93-112
-*UI toolkit, browser, media, a11y*`"]
-    T7["`Tier 7: Production OS
-Phases 24-27 | Weeks 113-130
-*Secure boot, Linux compat, launch*`"]
+    T1["`**Tier 1**: Hardware Foundation
+    Phases 0-3 | Weeks 1-16
+    *Boot, memory, IPC*`"]
+    T2["`**Tier 2**: Core System Services
+    Phases 4-7 | Weeks 17-34
+    *Storage, GPU, compositor, networking*`"]
+    T3["`**Tier 3**: AI & Intelligence
+    Phases 8-11 | Weeks 35-54
+    *AIRS, semantic search, agents*`"]
+    T4["`**Tier 4**: Platform Maturity
+    Phases 12-15 | Weeks 55-74
+    *SDK, security, performance, POSIX*`"]
+    T5["`**Tier 5**: Hardware & Connectivity
+    Phases 16-19 | Weeks 75-92
+    *Full NTM, USB, wireless, power*`"]
+    T6["`**Tier 6**: Rich Experience
+    Phases 20-23 | Weeks 93-112
+    *UI toolkit, browser, media, a11y*`"]
+    T7["`**Tier 7**: Production OS
+    Phases 24-27 | Weeks 113-130
+    *Secure boot, Linux compat, launch*`"]
+    T8["`**Tier 8**: Security Intelligence
+    Phases 28-29 | Weeks 131-138
+    *Capability profiles, AIRS cap intelligence*`"]
 
-    T1 --> T2 --> T3 --> T4 --> T5 --> T6 --> T7
+    T1 --> T2 --> T3 --> T4 --> T5 --> T6 --> T7 --> T8
 ```
 
 -----
@@ -53,6 +56,7 @@ Each tier produces a demonstrable result:
 | 5 | Hardware-ready OS | WiFi, Bluetooth, USB, power management — runs on Raspberry Pi |
 | 6 | Daily-driver OS | Web browser, media player, accessibility, internationalization |
 | 7 | Production OS | Secure boot, Linux app compat, enterprise features, shipping |
+| 8 | Security Intelligence | Composable capability profiles, AIRS-powered agent audit |
 
 -----
 
@@ -60,48 +64,46 @@ Each tier produces a demonstrable result:
 
 ```mermaid
 flowchart TD
-    P0["Phase 0: Foundation & Tooling"]
-    P1["Phase 1: Boot & First Pixels"]
-    P2["Phase 2: Memory Management"]
-    P3["Phase 3: IPC & Capability System"]
-    P4["Phase 4: Block Storage & Object Store"]
-    P5["Phase 5: GPU & Display"]
-    P6["Phase 6: Window Compositor & Shell"]
-    P7["Phase 7: Input, Terminal & Basic Networking"]
-    P8["Phase 8: AIRS Core"]
-    P9["Phase 9: Space Intelligence & Conversation"]
-    P10["Phase 10: Agent Framework"]
-    P11["Phase 11: Tasks, Flow & Attention"]
-    P12["Phase 12: Developer Experience & SDK"]
-    P13["Phase 13: Security Hardening"]
-    P14["Phase 14: Performance & Optimization"]
-    P15["Phase 15: POSIX Compatibility & BSD Userland"]
-    P16["Phase 16: Network Translation Module"]
-    P17["Phase 17: USB Stack & Hotplug"]
-    P18["Phase 18: WiFi, Bluetooth & Wireless"]
-    P19["Phase 19: Power Management & Thermal"]
-    P20["Phase 20: Portable UI Toolkit"]
-    P21["Phase 21: Web Browser (Servo)"]
-    P22["Phase 22: Media, Audio & Camera"]
-    P23["Phase 23: Accessibility & i18n"]
-    P24["Phase 24: Secure Boot & Update System"]
-    P25["Phase 25: Linux Binary & Wayland Compat"]
-    P26["Phase 26: Enterprise & Multi-Device"]
-    P27["Phase 27: Real Hardware & Launch"]
+    P0["Phase 0: Foundation & Tooling"] --> P1["Phase 1: Boot & First Pixels"]
+    P1 --> P2["Phase 2: Memory Management"]
+    P2 --> P3["Phase 3: IPC & Capability System"]
+    P3 --> P4["Phase 4: Block Storage & Object Store"]
+    P4 --> P5["Phase 5: GPU & Display"]
+    P5 --> P6["Phase 6: Window Compositor & Shell"]
+    P6 --> P7["Phase 7: Input, Terminal & Basic Networking"]
 
-    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
-    P7 --> P8
-    P8 --> P9 --> P10
-    P10 --> P11 --> P12
-    P10 --> P13
+    P7 --> P8["Phase 8: AIRS Core"]
+    P8 --> P9["Phase 9: Space Intelligence & Conversation"]
+    P9 --> P10["Phase 10: Agent Framework"]
+    P10 --> P11["Phase 11: Tasks, Flow & Attention"]
+    P11 --> P12["Phase 12: Developer Experience & SDK"]
+    P10 --> P13["Phase 13: Security Hardening"]
     P4 --> P13
-    P8 --> P14
+    P8 --> P14["Phase 14: Performance & Optimization"]
     P6 --> P14
-    P14 --> P15
-    P7 --> P16 --> P17 --> P18 --> P19
-    P12 --> P20 --> P21
-    P18 --> P22 --> P23
-    P19 --> P24 --> P25 --> P26 --> P27
+    P14 --> P15["Phase 15: POSIX Compatibility & BSD Userland"]
+
+    P7 --> P16["Phase 16: Network Translation Module"]
+    P16 --> P17["Phase 17: USB Stack & Hotplug"]
+    P17 --> P18["Phase 18: WiFi, Bluetooth & Wireless"]
+    P18 --> P19["Phase 19: Power Management & Thermal"]
+
+    P12 --> P20["Phase 20: Portable UI Toolkit"]
+    P20 --> P21["Phase 21: Web Browser - Servo"]
+    P18 --> P22["Phase 22: Media, Audio & Camera Subsystems"]
+    P22 --> P23["Phase 23: Accessibility & Internationalization"]
+
+    P19 --> P24["Phase 24: Secure Boot & Update System"]
+    P24 --> P25["Phase 25: Linux Binary & Wayland Compatibility"]
+    P25 --> P26["Phase 26: Enterprise & Multi-Device"]
+    P26 --> P27["Phase 27: Real Hardware, Certification & Launch"]
+
+    P3 --> P28["Phase 28: Composable Capability Profiles"]
+    P10 --> P28
+    P12 --> P28
+    P28 --> P29["Phase 29: AIRS Capability Intelligence"]
+    P8 --> P29
+    P13 --> P29
 ```
 
 **Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21. Note: Phase 15 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 21) depends on the browser and UI toolkit chain (12 → 20 → 21), not POSIX tools. Phase 15 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
@@ -188,9 +190,9 @@ Major decisions that must be made during development:
 
 ### Solo Developer (Realistic)
 
-All 28 phases are designed to be achievable by a single experienced systems programmer:
+All 30 phases are designed to be achievable by a single experienced systems programmer:
 - Average phase: 4-5 weeks
-- Total: ~130 weeks (~2.5 years)
+- Total: ~138 weeks (~2.7 years)
 - Assumes full-time, focused work
 
 ### Small Team (Accelerated)
@@ -296,6 +298,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 25 | Linux Binary & Wayland Compatibility | `25-linux-binary-and-wayland-compatibility.md` | Planned |
 | 26 | Enterprise & Multi-Device | `26-enterprise-and-multi-device.md` | Planned |
 | 27 | Real Hardware, Certification & Launch | `27-real-hardware-certification-and-launch.md` | Planned |
+| 28 | Composable Capability Profiles | `28-composable-capability-profiles.md` | Planned |
+| 29 | AIRS Capability Intelligence | `29-airs-capability-intelligence.md` | Planned |
 
 -----
 
@@ -349,3 +353,12 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 - [ ] Wayland compatibility (Linux GUI apps)
 - [ ] MDM, fleet management, cross-device sync
 - [ ] Pi 4/5 certified, Pine64 support, VM images published
+
+### Tier 8 Complete (Week 138)
+- [ ] Composable capability profiles: OS Base, Runtime, and Subsystem profiles shipped
+- [ ] Agent manifests reference profiles instead of duplicating capabilities
+- [ ] Profile resolution algorithm produces flat CapabilitySet for kernel enforcement
+- [ ] AIRS 5-stage agent capability analysis pipeline operational
+- [ ] `aios agent audit` provides profile suggestions, missing/unused capability detection
+- [ ] Corpus-based outlier detection for agent capability review
+- [ ] Feedback loop: user override tracking improves AIRS accuracy over time
