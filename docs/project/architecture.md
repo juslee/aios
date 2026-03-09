@@ -31,6 +31,7 @@
 - [audio.md](../platform/audio.md) — Audio subsystem architecture
 - [accessibility.md](../experience/accessibility.md) — Accessibility engine
 - [power-management.md](../platform/power-management.md) — Power management policy engine
+- [inspector.md](../applications/inspector.md) — Inspector security dashboard architecture
 
 -----
 

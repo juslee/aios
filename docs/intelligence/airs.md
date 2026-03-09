@@ -1101,7 +1101,7 @@ pub struct ConversationContext {
 
 ### 5.9 Agent Capability Intelligence
 
-AIRS performs automated capability analysis for agents at three points: developer-side via `aios agent audit`, install time as part of the installation flow ([agents.md §3.1](../applications/agents.md)), and post-deployment via behavioral monitoring (§5.6). The analysis is a 5-stage pipeline:
+AIRS performs automated capability analysis for agents at three points: developer-side via `aios agent audit`, install time as part of the installation flow ([agents.md §3.1](../applications/agents.md)), and post-deployment via behavioral monitoring (§5.5). The analysis is a 5-stage pipeline:
 
 ```
 Stage 1: Static Code Analysis      (no LLM — rule-based)

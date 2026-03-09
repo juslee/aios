@@ -23,7 +23,7 @@ The Inspector surfaces all of it. It is the single place where users see, unders
 
 **Comprehensible by default, powerful on demand.** The default view is a simple dashboard: which agents are running, what they recently did, are there any alerts. Drilling down reveals capability tokens, provenance chains, profile resolution traces, and AIRS analysis reports.
 
-**No special kernel backdoors.** The Inspector is a regular Trust Level 2 agent ([security.md §1.1](../security/security.md)). Its elevated visibility comes from having `AuditRead(Scope::All)` capability, granted because it is system-shipped and signed by the AIOS root key. It uses the same syscall interface as any agent.
+**No special kernel backdoors.** The Inspector is a regular Trust Level 2 agent ([security.md §1.2](../security/security.md)). Its elevated visibility comes from having `AuditRead(Scope::All)` capability, granted because it is system-shipped and signed by the AIOS root key. It uses the same syscall interface as any agent.
 
 **Non-blocking.** The Inspector never interferes with agent execution. It is a read-heavy, write-light application. The only writes are user-initiated actions: capability revocation, profile override edits, agent pause/resume.
 
@@ -33,41 +33,41 @@ The Inspector surfaces all of it. It is the single place where users see, unders
 
 ```rust
 pub const INSPECTOR_AGENT: AgentManifest = AgentManifest {
-    id: "dev.aios.inspector",
+    bundle_id: "dev.aios.inspector",
     name: "Inspector",
     version: "1.0.0",
-    trust_level: TrustLevel::NativeExperience,  // Level 2
-    runtime: Runtime::Native,
+    // Trust Level 2: Native experience agent (see security.md §1.2)
+    runtime: RuntimeType::Native,
     profiles: vec![
         ProfileReference {
-            profile_id: "aios.profile.os-base",
-            version: ">=1.0",
+            profile_id: "os.base.v1",
+            version_req: ">=1.0",
             required: true,
         },
         ProfileReference {
-            profile_id: "aios.profile.runtime.native",
-            version: ">=1.0",
+            profile_id: "runtime.native.v1",
+            version_req: ">=1.0",
             required: true,
         },
     ],
     requested_capabilities: vec![
         // Core: full audit visibility
-        CapabilityRequest::AuditRead(Scope::All),
+        CapabilityRequest { capability: Capability::AuditRead(Scope::All), justification: "Full audit visibility for security monitoring", required: true },
         // Read capability tables for all agents
-        CapabilityRequest::CapabilityQuery(Scope::All),
+        CapabilityRequest { capability: Capability::CapabilityQuery(Scope::All), justification: "Read capability tables for all agents", required: true },
         // Revoke capabilities on user's behalf
-        CapabilityRequest::CapabilityRevoke(Scope::All),
+        CapabilityRequest { capability: Capability::CapabilityRevoke(Scope::All), justification: "Revoke capabilities on user's behalf", required: true },
         // Read agent metadata and behavioral baselines
-        CapabilityRequest::AgentQuery(Scope::All),
+        CapabilityRequest { capability: Capability::AgentQuery(Scope::All), justification: "Read agent metadata and behavioral baselines", required: true },
         // Pause/resume agents on user's behalf
-        CapabilityRequest::AgentControl(Scope::All),
+        CapabilityRequest { capability: Capability::AgentControl(Scope::All), justification: "Pause/resume agents on user's behalf", required: true },
         // Profile management (Phase 28)
-        CapabilityRequest::ProfileRead(Scope::All),
-        CapabilityRequest::ProfileWrite(Scope::User),
+        CapabilityRequest { capability: Capability::ProfileRead(Scope::All), justification: "Read capability profiles and resolution logs", required: false },
+        CapabilityRequest { capability: Capability::ProfileWrite(Scope::User), justification: "Manage user override profiles (Layer 90)", required: false },
         // Compositor surface for its own window
-        CapabilityRequest::Compositor(SurfaceType::Window),
+        CapabilityRequest { capability: Capability::Compositor(SurfaceType::Window), justification: "Compositor surface for Inspector window", required: true },
         // Read AIRS analysis results (Phase 29)
-        CapabilityRequest::InferenceQuery(Scope::SecurityAnalysis),
+        CapabilityRequest { capability: Capability::InferenceQuery(Scope::SecurityAnalysis), justification: "Read AIRS security analysis results", required: false },
     ],
 };
 ```
@@ -132,7 +132,7 @@ All reads are non-blocking. The provenance chain is append-only and immutable �
 
 ## 5. Views
 
-The Inspector presents seven views, each corresponding to a distinct concern. The user navigates between them via a sidebar or tab bar.
+The Inspector presents eight views, each corresponding to a distinct concern. The user navigates between them via a sidebar or tab bar.
 
 ### 5.1 Dashboard (Default View)
 
@@ -276,7 +276,7 @@ Real-time feed of security-relevant events, filtered by severity.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Response levels**: Maps to the 4-level incident response defined in [security.md §6.2](../security/security.md). Critical events auto-open the Inspector (Level 4 response).
+**Response levels**: Maps to the 4-level escalation policy defined in [security.md §6.3](../security/security.md). Critical events auto-open the Inspector (Level 4 response).
 
 ### 5.5 Capability View
 
@@ -357,7 +357,7 @@ Capability profile management. Shows how profiles compose into resolved capabili
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Key interaction**: The user can add Layer 90 overrides (deny or attenuate) to any agent's resolved set. Overrides are stored in `system/config/capability-profiles/90-user/` ([security.md §3.7](../security/security.md)).
+**Key interaction**: The user can add Layer 90 overrides (deny or attenuate) to any agent's resolved set. Overrides are stored in `user/preferences/capability-overrides/` ([security.md §3.7.7](../security/security.md)).
 
 The Profile View implements the visual equivalent of `aios agent audit --show-resolution` — showing exactly how each layer contributes to the final capability set.
 
@@ -508,8 +508,8 @@ The Inspector is referenced throughout the security architecture but defined in 
 
 | Document | Section | Inspector Role |
 |---|---|---|
-| [security.md §1.1](../security/security.md) | Trust Levels | Listed as Trust Level 2 native experience agent |
-| [security.md §6.2](../security/security.md) | Incident Response | Level 4 auto-opens Inspector; user reviews in Inspector |
+| [security.md §1.2](../security/security.md) | Trust Boundaries | Listed as Trust Level 2 native experience agent |
+| [security.md §6.3](../security/security.md) | Escalation Policy | Level 4 auto-opens Inspector; user reviews in Inspector |
 | [security.md §7.1](../security/security.md) | Inspector (overview) | 5-view summary — **this doc supersedes with full architecture** |
 | [security.md §7.2](../security/security.md) | Conversation Bar | Inspector linked from AIRS natural language responses |
 | [security.md §3.7](../security/security.md) | Composable Profiles | Inspector Profile View shows resolution traces |
@@ -559,7 +559,7 @@ The Inspector shows *intent* where Activity Monitor shows *resources*. This is t
 | **Sandbox enforcement** | macOS `sandbox-exec` (application-level) | Kernel capability table (OS-level) |
 | **Policy format** | SBPL numbered layers (00-base, 30-toolchains, 60-agents) | Capability profiles with 5 named layers (OsBase through UserOverride) |
 | **Deny semantics** | Later rules can override earlier denials | Deny-always-wins across all layers |
-| **Visualization** | CLI output, log files | Native GUI with 7 interactive views |
+| **Visualization** | CLI output, log files | Native GUI with 8 interactive views |
 | **Audit trail** | Log files (mutable) | Merkle-chained provenance (tamper-evident) |
 | **AI analysis** | None | AIRS 5-stage pipeline with behavioral prediction |
 | **User overrides** | Edit SBPL files manually | Layer 90 visual editor in Profile View |
