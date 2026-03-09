@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-28 phases across ~130 weeks (~2.5 years). Organized into 7 tiers, each delivering a usable milestone. The plan is designed so that each tier builds on the previous one and produces something demonstrable.
+30 phases across ~138 weeks (~2.7 years). Organized into 8 tiers, each delivering a usable milestone. The plan is designed so that each tier builds on the previous one and produces something demonstrable.
 
 ```
 Tier 1: Hardware Foundation    (Phases 0–3)    Weeks 1–16     Boot, memory, IPC
@@ -19,6 +19,7 @@ Tier 4: Platform Maturity      (Phases 12–15)  Weeks 55–74    SDK, security,
 Tier 5: Hardware & Connectivity(Phases 16–19)  Weeks 75–92    Full NTM, USB, wireless, power
 Tier 6: Rich Experience        (Phases 20–23)  Weeks 93–112   UI toolkit, browser, media, a11y
 Tier 7: Production OS          (Phases 24–27)  Weeks 113–130  Secure boot, Linux compat, launch
+Tier 8: Security Intelligence  (Phases 28–29)  Weeks 131–138  Capability profiles, AIRS cap intelligence
 ```
 
 -----
@@ -36,6 +37,7 @@ Each tier produces a demonstrable result:
 | 5 | Hardware-ready OS | WiFi, Bluetooth, USB, power management — runs on Raspberry Pi |
 | 6 | Daily-driver OS | Web browser, media player, accessibility, internationalization |
 | 7 | Production OS | Secure boot, Linux app compat, enterprise features, shipping |
+| 8 | Security Intelligence | Composable capability profiles, AIRS-powered agent audit |
 
 -----
 
@@ -76,6 +78,10 @@ Phase 19 ──→ Phase 24: Secure Boot & Update System
               └─→ Phase 25: Linux Binary & Wayland Compatibility
                    └─→ Phase 26: Enterprise & Multi-Device
                         └─→ Phase 27: Real Hardware, Certification & Launch
+
+Phase 3 + Phase 10 + Phase 12
+  └─→ Phase 28: Composable Capability Profiles
+       └─→ Phase 29: AIRS Capability Intelligence (also requires Phase 8, Phase 13)
 ```
 
 **Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 20 → 21. Note: Phase 15 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 21) depends on the browser and UI toolkit chain (12 → 20 → 21), not POSIX tools. Phase 15 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
@@ -162,9 +168,9 @@ Major decisions that must be made during development:
 
 ### Solo Developer (Realistic)
 
-All 28 phases are designed to be achievable by a single experienced systems programmer:
+All 30 phases are designed to be achievable by a single experienced systems programmer:
 - Average phase: 4-5 weeks
-- Total: ~130 weeks (~2.5 years)
+- Total: ~138 weeks (~2.7 years)
 - Assumes full-time, focused work
 
 ### Small Team (Accelerated)
@@ -270,6 +276,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 25 | Linux Binary & Wayland Compatibility | `25-linux-binary-and-wayland-compatibility.md` | Planned |
 | 26 | Enterprise & Multi-Device | `26-enterprise-and-multi-device.md` | Planned |
 | 27 | Real Hardware, Certification & Launch | `27-real-hardware-certification-and-launch.md` | Planned |
+| 28 | Composable Capability Profiles | `28-composable-capability-profiles.md` | Planned |
+| 29 | AIRS Capability Intelligence | `29-airs-capability-intelligence.md` | Planned |
 
 -----
 
@@ -323,3 +331,12 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 - [ ] Wayland compatibility (Linux GUI apps)
 - [ ] MDM, fleet management, cross-device sync
 - [ ] Pi 4/5 certified, Pine64 support, VM images published
+
+### Tier 8 Complete (Week 138)
+- [ ] Composable capability profiles: OS Base, Runtime, and Subsystem profiles shipped
+- [ ] Agent manifests reference profiles instead of duplicating capabilities
+- [ ] Profile resolution algorithm produces flat CapabilitySet for kernel enforcement
+- [ ] AIRS 5-stage agent capability analysis pipeline operational
+- [ ] `aios agent audit` provides profile suggestions, missing/unused capability detection
+- [ ] Corpus-based outlier detection for agent capability review
+- [ ] Feedback loop: user override tracking improves AIRS accuracy over time

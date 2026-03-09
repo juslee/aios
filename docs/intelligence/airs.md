@@ -1099,6 +1099,375 @@ pub struct ConversationContext {
 3. Always include system prompt and capability declarations
 4. Retrieved context (from spaces) is injected per-turn, not persisted
 
+### 5.9 Agent Capability Intelligence
+
+AIRS performs automated capability analysis for agents at three points: developer-side via `aios agent audit`, install time as part of the installation flow ([agents.md §3.1](../applications/agents.md)), and post-deployment via behavioral monitoring (§5.6). The analysis is a 5-stage pipeline:
+
+```
+Stage 1: Static Code Analysis      (no LLM — rule-based)
+    Input:  Agent source code or compiled bundle
+    Output: CodeAnalysisReport
+
+Stage 2: Manifest Review            (no LLM — rule-based)
+    Input:  AgentManifest + CodeAnalysisReport
+    Output: ManifestReviewReport
+
+Stage 3: Behavioral Prediction      (LLM-powered)
+    Input:  CodeAnalysisReport + RuntimeType + dependency graph
+    Output: PredictedBehavior
+
+Stage 4: Corpus Comparison           (LLM-powered)
+    Input:  ManifestReviewReport + PredictedBehavior + agent corpus
+    Output: CorpusComparison
+
+Stage 5: Profile Suggestion          (algorithmic — set-cover)
+    Input:  All above + available CapabilityProfiles
+    Output: ProfileSuggestion list + Recommendations
+```
+
+#### Stage 1: Static Code Analysis
+
+Scans agent code to identify SDK API calls and map them to implied capabilities, without executing the code.
+
+```rust
+pub struct CodeAnalysisReport {
+    /// SDK API calls found in the code
+    api_calls: Vec<ApiCallSite>,
+    /// Data flow paths (source → sink)
+    data_flows: Vec<DataFlowPath>,
+    /// External dependencies and their capability implications
+    dependency_caps: Vec<DependencyCapability>,
+    /// Code patterns matching known security concerns
+    pattern_matches: Vec<PatternMatch>,
+    /// Lines of code analyzed
+    lines_analyzed: u64,
+    /// Analysis coverage (fraction of code paths analyzed, 0.0–1.0)
+    coverage: f32,
+}
+
+pub struct ApiCallSite {
+    /// The SDK API call (e.g., ctx.spaces().read(), ctx.network().get())
+    api: String,
+    /// Source location
+    location: CodeLocation,
+    /// Capability implied by this API call
+    implied_capability: Capability,
+    /// Whether this call is always executed or conditional
+    execution_likelihood: ExecutionLikelihood,
+}
+
+pub enum ExecutionLikelihood {
+    Always,          // unconditional code path
+    Conditional,     // behind an if/match
+    ErrorPath,       // only on error
+    ConfigDependent, // depends on runtime configuration
+}
+
+pub struct DataFlowPath {
+    source: DataSource,
+    sink: DataSink,
+    /// Whether sensitive data is involved
+    sensitivity: DataSensitivity,
+    /// Whether the path is concerning (e.g., sensitive data to network)
+    concern: Option<String>,
+}
+
+pub enum DataSource {
+    Space(String),        // reading from a space
+    Network(String),      // reading from network
+    UserInput,            // reading from user interaction
+    Inference,            // reading from AIRS response
+    HardcodedSecret,      // detected hardcoded secret (security concern)
+}
+
+pub enum DataSink {
+    Space(String),        // writing to a space
+    Network(String),      // sending over network
+    Display,              // showing to user
+    Inference,            // sending to AIRS
+    Log,                  // writing to log
+}
+
+pub struct CodeLocation {
+    file: String,
+    line: u32,
+    column: u32,
+    snippet: String,      // surrounding context for display
+}
+```
+
+#### Stage 2: Manifest Review
+
+Rule-based checks comparing manifest declarations against code analysis, without LLM inference.
+
+```rust
+pub enum SecurityConcern {
+    /// Agent requests capability it never uses in code
+    UnusedCapability {
+        capability: Capability,
+    },
+    /// Agent code accesses API requiring capability not in manifest
+    UndeclaredAccess {
+        capability: Capability,
+        location: CodeLocation,
+    },
+    /// Data flows from sensitive source to network sink
+    PotentialExfiltration {
+        flow: DataFlowPath,
+    },
+    /// Hardcoded secrets detected in code
+    HardcodedSecret {
+        location: CodeLocation,
+        secret_type: String,
+    },
+    /// Overly broad capability (wildcards, no path restriction)
+    OverlyBroad {
+        capability: Capability,
+        suggestion: Capability,
+    },
+    /// Unusual capability combination for this agent category
+    UnusualCombination {
+        capabilities: Vec<Capability>,
+        explanation: String,
+    },
+    /// Dependency with known vulnerability
+    VulnerableDependency {
+        name: String,
+        version: String,
+        advisory: String,
+    },
+    /// Code pattern matching known malicious behavior
+    SuspiciousPattern {
+        pattern: String,
+        location: CodeLocation,
+        severity: Severity,
+    },
+}
+```
+
+#### Stage 3: Behavioral Prediction
+
+LLM-powered analysis predicting how the agent will behave at runtime, based on code structure and declared purpose.
+
+```rust
+pub struct PredictedBehavior {
+    /// Expected space access patterns
+    space_access: Vec<PredictedAccess>,
+    /// Expected network endpoints
+    network_endpoints: Vec<PredictedEndpoint>,
+    /// Expected resource usage
+    resource_usage: PredictedResources,
+    /// Expected inference usage
+    inference_usage: PredictedInference,
+}
+
+pub struct PredictedAccess {
+    space_pattern: String,
+    access_mode: SpaceAccessMode,
+    estimated_frequency: FrequencyBucket,
+    confidence: f32,
+}
+
+pub enum FrequencyBucket {
+    Rare,       // < 1/day
+    Occasional, // 1–10/day
+    Frequent,   // 10–100/day
+    Heavy,      // 100+/day
+}
+```
+
+This stage requires AIRS inference capacity. If AIRS is unavailable, the pipeline falls back to Stages 1–2 only, producing a `SecurityAnalysis` with `analysis_confidence: 0.3` and a note that LLM analysis was unavailable.
+
+#### Stage 4: Corpus Comparison
+
+Compares the agent against a local corpus of known-good agents to detect outliers.
+
+```rust
+pub struct CorpusComparison {
+    /// Most similar known-good agents
+    similar_agents: Vec<SimilarAgent>,
+    /// Dimensions where this agent is an outlier
+    outlier_dimensions: Vec<OutlierDimension>,
+    /// Risk score relative to corpus (0.0 = very normal, 1.0 = extreme outlier)
+    corpus_risk_score: f32,
+}
+
+pub struct SimilarAgent {
+    bundle_id: String,
+    similarity_score: f32,
+    capability_overlap: f32,
+}
+
+pub enum OutlierDimension {
+    /// Requests far more capabilities than similar agents
+    CapabilityCount { this: u32, median: u32 },
+    /// Requests unusual capability combinations
+    UnusualCombination { capabilities: Vec<Capability> },
+    /// Requests sensitive capabilities not seen in similar agents
+    UniqueSensitiveCap { capability: Capability },
+    /// Much more code than similar agents (potential obfuscation)
+    CodeSize { this: u64, median: u64 },
+}
+```
+
+The corpus (`CapabilityAnalysisCorpus`) is stored locally in `system/airs/capability-corpus/`. No agent code is sent to external servers. If the user opts in to the AIOS improvement program, only anonymized aggregate statistics are shared.
+
+#### Stage 5: Profile Suggestion
+
+Algorithmic (not LLM) — uses greedy set-cover to suggest minimal capability profiles ([security.md §3.7](../security/security.md)) that cover the agent's needs.
+
+```rust
+pub struct ProfileSuggestion {
+    /// The profile AIRS recommends
+    profile_id: ProfileId,
+    /// Why this profile matches the agent's needs
+    reason: String,
+    /// Percentage of the agent's capabilities covered by this profile
+    coverage: f32,
+    /// Capabilities the agent needs beyond this profile
+    remaining_caps: Vec<Capability>,
+}
+```
+
+#### Extended SecurityAnalysis
+
+The existing `SecurityAnalysis` struct is extended with fields from the 5-stage pipeline:
+
+```rust
+pub struct SecurityAnalysis {
+    // === Existing fields (unchanged) ===
+    risk_level: RiskLevel,
+    capabilities_used: Vec<Capability>,
+    capabilities_unused: Vec<Capability>,
+    concerns: Vec<SecurityConcern>,
+    analyzed_at: Timestamp,
+    model: ModelId,
+
+    // === New fields (Phase 29) ===
+    /// Capabilities the code uses but the manifest does not declare
+    capabilities_missing: Vec<CapabilitySuggestion>,
+    /// Suggested capability profiles matching this agent's needs
+    suggested_profiles: Vec<ProfileSuggestion>,
+    /// Detailed static code analysis (Stage 1)
+    code_analysis: CodeAnalysisReport,
+    /// Behavioral prediction (Stage 3, requires LLM)
+    predicted_behavior: Option<PredictedBehavior>,
+    /// Comparison to known agent corpus (Stage 4, requires LLM)
+    corpus_match: Option<CorpusComparison>,
+    /// Confidence in the overall analysis (0.0–1.0)
+    analysis_confidence: f32,
+    /// Specific actionable recommendations
+    recommendations: Vec<Recommendation>,
+}
+
+pub struct CapabilitySuggestion {
+    capability: Capability,
+    reason: String,
+    evidence: Vec<CodeLocation>,
+    confidence: f32,
+}
+
+pub struct Recommendation {
+    action: RecommendationAction,
+    reason: String,
+    priority: RecommendationPriority,
+    confidence: f32,
+}
+
+pub enum RecommendationAction {
+    /// Remove this capability from manifest (unused)
+    RemoveCapability(Capability),
+    /// Add this capability to manifest (used but undeclared)
+    AddCapability(Capability),
+    /// Replace flat capabilities with this profile
+    UseProfile(ProfileId),
+    /// Narrow this capability's scope
+    NarrowCapability { from: Capability, to: Capability },
+    /// Add attenuation to this capability
+    AddAttenuation { capability: Capability, attenuation: AttenuationSpec },
+    /// Fix this security concern
+    FixConcern { concern_index: usize, suggestion: String },
+}
+
+pub enum RecommendationPriority {
+    Required,    // must fix before publication
+    Recommended, // should fix
+    Optional,    // nice to have
+}
+```
+
+#### Feedback Loop
+
+AIRS improves its capability analysis through local feedback:
+
+```rust
+pub struct CapabilityAnalysisCorpus {
+    /// Agents that passed audit and deployed without issues
+    known_good: Vec<AuditedAgent>,
+    /// Agents where AIRS analysis was overridden by user
+    overrides: Vec<UserOverrideRecord>,
+    /// Agents deployed and later flagged by behavioral monitoring (§5.6)
+    missed_detections: Vec<MissedDetection>,
+    /// Per-runtime behavioral baselines from deployed agents
+    runtime_baselines: HashMap<RuntimeType, AggregateBaseline>,
+}
+
+pub struct UserOverrideRecord {
+    agent_id: AgentId,
+    airs_recommendation: Recommendation,
+    user_decision: UserDecision,
+    /// Validated after deployment — was AIRS right or wrong?
+    outcome: Option<OverrideOutcome>,
+}
+
+pub enum UserDecision {
+    ApprovedDespiteWarning,
+    DeniedDespiteSuggestion,
+    AcceptedSuggestion,
+}
+
+pub enum OverrideOutcome {
+    /// Agent ran fine — AIRS may have been wrong (false positive)
+    NoIssues,
+    /// Agent was later flagged — AIRS was right
+    LaterFlagged { reason: String },
+}
+```
+
+After N occurrences of the same false-positive pattern (where the user overrides and the outcome is `NoIssues`), AIRS adjusts its detection threshold for that pattern. All learning is local — the corpus lives on-device in `system/airs/capability-corpus/`.
+
+#### Developer CLI Integration
+
+The `aios agent audit` command runs Stages 1–5 and displays results:
+
+```
+$ aios agent audit ./my-agent/
+
+=== AIOS Agent Security Audit ===
+
+Profile Suggestions:
+  → Use 'runtime.python.v1' (covers 4 of your capabilities)
+  → Use 'subsystem.network-client.v1' (covers Network caps)
+  → Remaining agent-specific: ReadSpace("research/papers/")
+
+Capability Analysis:
+  ✓ ReadSpace("research/") — used in 3 code paths
+  ✗ InferenceCpu(Normal) — declared but never used (REMOVE)
+  ⚠ WriteSpace("output/") — used but not declared (ADD)
+
+Behavioral Prediction:
+  Expected: ~50 space reads/day, ~10 network calls/day
+  Resource: ~64 MB memory, bursty CPU pattern
+
+Corpus Comparison:
+  Similar to: research-summarizer (0.87), paper-finder (0.82)
+  No outlier dimensions detected
+
+Overall: LOW RISK (1 error, 1 warning, 2 suggestions)
+```
+
+When AIRS inference is unavailable, Stages 3–5 are skipped and the output indicates limited analysis.
+
 -----
 
 ## 6. Agent Lifecycle

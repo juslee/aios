@@ -415,6 +415,9 @@ pub enum Persistence {
 pub struct AgentManifest {
     name: String,
     author: Identity,
+    /// Capability profiles: pre-audited, named bundles composed in layers.
+    /// See security.md §3.7 for profile types and resolution algorithm.
+    profiles: Vec<ProfileReference>,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
     dependencies: Vec<Dependency>,
@@ -424,8 +427,9 @@ pub struct AgentManifest {
 /// Set of capabilities held by a task or agent process. Capabilities are
 /// kernel-managed tokens — agents hold references, not the capabilities
 /// themselves. The kernel validates every token on every syscall.
-/// See ipc.md §4 for capability transfer and boot.md §3.3 Step 12 for
-/// the root capability from which all others derive.
+/// See ipc.md §4 for capability transfer, boot.md §3.3 Step 12 for
+/// the root capability from which all others derive, and security.md §3.7
+/// for composable capability profiles that resolve into this flat set.
 pub struct CapabilitySet {
     /// Active capability tokens, keyed by capability type for O(1) lookup
     tokens: HashMap<CapabilityType, Vec<CapabilityToken>>,

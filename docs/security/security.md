@@ -1923,6 +1923,326 @@ impl TemporalCapability {
 - **Maintenance tasks:** Agent needs temporary elevated access to reorganize spaces. User approves a 30-minute `WriteSpace("user/documents/")` token. Expires automatically.
 - **API key rotation:** Agent needs one-time access to credential store. One-shot `UseCredential(api_key_id)` token. Cannot be reused.
 
+### 3.7 Composable Capability Profiles
+
+The flat `requested_capabilities` list in `AgentManifest` (§2.4 of [agents.md](../applications/agents.md)) works for simple agents but creates problems at scale: every Python agent duplicates the same interpreter capabilities, every network-capable agent copies the same access patterns, and each manifest must be audited individually even when the capability patterns are identical.
+
+**Capability profiles** are pre-audited, named, versioned bundles of capabilities that compose in numbered layers. An agent's effective capability set is the composition of multiple profiles, resolved at install time into the flat `CapabilityTable` (§3.2) that the kernel enforces.
+
+#### 3.7.1 Layer Architecture
+
+Five layers, evaluated bottom-to-top. Later layers can only restrict, never expand (except Layer 50 which adds agent-specific grants).
+
+```
+Layer 00: OS Base           Ships with AIOS. Immutable. Every agent gets these.
+Layer 10: Runtime           Per RuntimeType (Native, Python, TypeScript, Wasm). Ships with SDK.
+Layer 30: Subsystem         Reusable access patterns (NetworkClient, AudioPlayback, etc.).
+Layer 50: Agent-Specific    From the agent's manifest. One-off capabilities not covered by profiles.
+Layer 90: User Override     User adds attenuations or denials at install time or later via Settings.
+```
+
+**Layer 00 — OS Base** (non-removable):
+
+```rust
+// Every agent receives these capabilities. Cannot be denied by any layer.
+const OS_BASE_GRANTS: &[Capability] = &[
+    Capability::IpcConnect(ServiceId::AgentRuntime),  // lifecycle management
+    Capability::ReadSpace(SpaceId::new("system/config/agent-defaults")),
+    Capability::AttentionPost(Urgency::Low),          // basic attention posting
+];
+```
+
+**Layer 10 — Runtime** (per `RuntimeType`, pre-audited by AIOS team):
+
+| Profile | Grants | Rationale |
+|---|---|---|
+| `runtime.native.v1` | Stack/heap memory budget | Minimal — native code needs no interpreter |
+| `runtime.python.v1` | Interpreter memory, temp space for `.pyc`, `IpcConnect(PythonRuntime)` | Python interpreter requirements |
+| `runtime.typescript.v1` | JS heap budget, temp space, `IpcConnect(JsRuntime)` | V8/QuickJS requirements |
+| `runtime.wasm.v1` | Linear memory budget, WASI mapping | WebAssembly sandbox requirements |
+
+**Layer 30 — Subsystem profiles** (reusable patterns):
+
+| Profile | Grants | Use case |
+|---|---|---|
+| `subsystem.network-client.v1` | `Network(*)` with outbound-only, rate-limited | Agents that make HTTP requests |
+| `subsystem.space-reader.v1` | `ReadSpace(pattern)` with common attenuations | Read-only data access |
+| `subsystem.audio-playback.v1` | `Audio(Playback, default_device)` | Audio output only |
+| `subsystem.inference-user.v1` | `InferenceCpu(Normal)` with token budget | Agents using AIRS inference |
+| `subsystem.display-surface.v1` | `Display(SurfaceOnly)` | UI rendering without raw GPU |
+
+**Layer 50 — Agent-Specific**: The manifest's own `requested_capabilities`, unchanged from current design. Used for one-off capabilities not covered by any profile.
+
+**Layer 90 — User Override**: Applied at install time or later via Settings. The user can:
+
+- Remove capabilities from any layer (deny override)
+- Add attenuations to any capability (further restrict)
+- Cannot add new capabilities not present in any lower layer (no escalation)
+
+#### 3.7.2 Profile Type Definition
+
+```rust
+/// A named, versioned, pre-audited bundle of capabilities.
+/// Stored in system/config/capability-profiles/.
+pub struct CapabilityProfile {
+    /// Unique identifier (e.g., "os.base.v1", "runtime.python.v1")
+    id: ProfileId,
+    /// Human-readable name
+    name: String,
+    /// Semantic version (profiles versioned independently of OS)
+    version: Version,
+    /// Which layer this profile belongs to
+    layer: ProfileLayer,
+    /// Capabilities this profile grants
+    grants: Vec<ProfileGrant>,
+    /// Capabilities this profile explicitly denies (deny-always-wins)
+    denials: Vec<ProfileDenial>,
+    /// Attenuations applied to capabilities matching a pattern
+    attenuations: Vec<ProfileAttenuation>,
+    /// Who authored this profile
+    author: ProfileAuthor,
+    /// Ed25519 signature (OS profiles signed by AIOS root key)
+    signature: Signature,
+    /// AIRS security analysis of this profile (see §3.7.6)
+    analysis: Option<SecurityAnalysis>,
+    /// Minimum OS version required
+    min_os_version: Version,
+}
+
+#[repr(u8)]
+pub enum ProfileLayer {
+    OsBase = 0,
+    Runtime = 10,
+    Subsystem = 30,
+    AgentSpecific = 50,
+    UserOverride = 90,
+}
+
+pub struct ProfileGrant {
+    /// The capability being granted
+    capability: Capability,
+    /// Human-readable justification
+    justification: String,
+    /// Default attenuations shipped with this grant
+    default_attenuations: Vec<AttenuationSpec>,
+}
+
+pub struct ProfileDenial {
+    /// Pattern matching capabilities to deny
+    pattern: CapabilityPattern,
+    /// Human-readable reason for the denial
+    reason: String,
+}
+
+pub struct ProfileAttenuation {
+    /// Which capabilities this attenuation applies to
+    target: CapabilityPattern,
+    /// The attenuation to apply
+    spec: AttenuationSpec,
+}
+
+/// A pattern that matches one or more Capability variants.
+/// Used for deny rules and attenuation application.
+pub enum CapabilityPattern {
+    /// Matches a specific capability exactly
+    Exact(Capability),
+    /// Matches all capabilities of a given type (e.g., all Network caps)
+    TypeMatch(CapabilityTypeDiscriminant),
+    /// Matches capabilities with a space path prefix (e.g., ReadSpace("user/*"))
+    PathPrefix {
+        cap_type: CapabilityTypeDiscriminant,
+        prefix: String,
+    },
+    /// Matches all capabilities (used in user deny-all override)
+    All,
+}
+
+pub enum ProfileAuthor {
+    /// Signed by AIOS root key (OS-shipped profiles)
+    System,
+    /// Signed by SDK team (runtime profiles)
+    Sdk,
+    /// Signed by subsystem maintainer
+    SubsystemMaintainer(Identity),
+    /// Signed by agent developer (agent-specific layer)
+    Developer(Identity),
+    /// Applied by the user (user override layer)
+    User,
+}
+```
+
+#### 3.7.3 Manifest Integration
+
+The `AgentManifest` gains a `profiles` field alongside the existing `requested_capabilities`. See [agents.md §2.4](../applications/agents.md) for the full manifest definition.
+
+```rust
+pub struct ProfileReference {
+    /// Profile ID (e.g., "runtime.python.v1", "subsystem.network-client.v1")
+    profile_id: ProfileId,
+    /// Semantic version requirement (e.g., "^1.0")
+    version_req: String,
+    /// Whether the agent requires this profile to start
+    required: bool,
+}
+```
+
+**Backward compatibility**: An agent with no `profiles` field works exactly as today — `requested_capabilities` are resolved as Layer 50 with only the immutable OS Base layer applied.
+
+#### 3.7.4 Resolution Algorithm
+
+Profile resolution is a **userspace operation** performed by the Agent Runtime at install/launch time. The kernel's `CapabilityTable` (§3.2) remains flat and unchanged — it never sees profiles.
+
+```rust
+/// Resolve a layered profile stack into a flat CapabilitySet
+/// suitable for kernel enforcement.
+///
+/// Composition: union with deny-always-wins.
+/// 1. Collect all grants from all layers (union).
+/// 2. Apply attenuations from all layers (cumulative, monotonic).
+/// 3. Remove any capability matching a denial from ANY layer.
+/// 4. Deduplicate: same capability from multiple profiles
+///    → keep the most attenuated version.
+/// 5. Produce the final flat CapabilitySet.
+pub fn resolve_capability_set(
+    profiles: &[CapabilityProfile],   // sorted by layer ascending
+    agent_caps: &[CapabilityRequest], // Layer 50 from manifest
+    user_overrides: &UserOverrides,   // Layer 90
+) -> Result<ResolvedCapabilitySet, ResolutionError> {
+    let mut grants: Vec<ResolvedGrant> = Vec::new();
+    let mut denials: Vec<ProfileDenial> = Vec::new();
+    let mut attenuations: Vec<ProfileAttenuation> = Vec::new();
+
+    // Phase 1: Collect from all profile layers
+    for profile in profiles {
+        for grant in &profile.grants {
+            grants.push(ResolvedGrant {
+                capability: grant.capability.clone(),
+                source_profile: profile.id.clone(),
+                source_layer: profile.layer,
+                attenuations: grant.default_attenuations.clone(),
+            });
+        }
+        denials.extend(profile.denials.iter().cloned());
+        attenuations.extend(profile.attenuations.iter().cloned());
+    }
+
+    // Phase 2: Add agent-specific caps (Layer 50)
+    for req in agent_caps {
+        grants.push(ResolvedGrant {
+            capability: req.capability.clone(),
+            source_profile: ProfileId::AGENT_MANIFEST,
+            source_layer: ProfileLayer::AgentSpecific,
+            attenuations: Vec::new(),
+        });
+    }
+
+    // Phase 3: Add user overrides (Layer 90 — denials and attenuations only)
+    denials.extend(user_overrides.denials.iter().cloned());
+    attenuations.extend(user_overrides.attenuations.iter().cloned());
+
+    // Phase 4: Apply attenuations (monotonic — only makes stricter)
+    for grant in &mut grants {
+        for attenuation in &attenuations {
+            if attenuation.target.matches(&grant.capability) {
+                grant.attenuations.push(attenuation.spec.clone());
+            }
+        }
+    }
+
+    // Phase 5: Remove denied capabilities (deny-always-wins)
+    grants.retain(|grant| {
+        !denials.iter().any(|d| d.pattern.matches(&grant.capability))
+    });
+
+    // Phase 6: Deduplicate
+    let deduped = deduplicate_grants(grants);
+
+    Ok(ResolvedCapabilitySet {
+        capabilities: deduped,
+        resolution_log: /* full audit trail */,
+    })
+}
+
+pub struct ResolvedCapabilitySet {
+    /// Final flat capability list for kernel token minting
+    capabilities: Vec<ResolvedGrant>,
+    /// Audit trail: which profile contributed what, what was attenuated/denied.
+    /// Stored in the agent's provenance chain (Layer 7).
+    resolution_log: Vec<ResolutionLogEntry>,
+}
+
+pub struct ResolvedGrant {
+    capability: Capability,
+    source_profile: ProfileId,
+    source_layer: ProfileLayer,
+    attenuations: Vec<AttenuationSpec>,
+}
+
+pub enum ResolutionLogEntry {
+    Granted {
+        capability: Capability,
+        from: ProfileId,
+        layer: ProfileLayer,
+    },
+    Attenuated {
+        capability: Capability,
+        by: ProfileId,
+        spec: AttenuationSpec,
+    },
+    Denied {
+        capability: Capability,
+        by: ProfileId,
+        reason: String,
+    },
+    Deduplicated {
+        capability: Capability,
+        kept: ProfileId,
+        removed: Vec<ProfileId>,
+    },
+}
+```
+
+**Kernel interaction**: After resolution, the Agent Runtime calls `Syscall::CapabilityCreate` for each entry in `ResolvedCapabilitySet.capabilities`. The kernel mints individual `CapabilityToken` instances (§3.1) and inserts them into the agent's `CapabilityTable` (§3.2). The kernel performs its standard 7-step validation (§2.2) on every subsequent syscall. The profile system adds zero overhead to syscall validation.
+
+#### 3.7.5 Attenuation Interaction with Layers
+
+Attenuations from all layers are cumulative and monotonic — each dimension independently takes the tightest restriction:
+
+```
+Layer 00 attenuates: Network(*) with rate_limit: 1000 req/min
+Layer 10 attenuates: Network(*) with outbound_only: true
+Layer 50 declares:   Network("api.example.com") with methods: [GET, POST]
+Layer 90 attenuates: Network(*) with rate_limit: 100 req/min (user tightened it)
+
+Final capability:
+  Network("api.example.com")
+    outbound_only: true
+    methods: [GET, POST]
+    rate_limit: 100 req/min    ← tightest of 1000 (Layer 00) and 100 (Layer 90)
+```
+
+This follows the attenuation semantics defined in §3.3 — attenuation is monotonic (stricter only). No layer can loosen what a lower layer restricted.
+
+#### 3.7.6 Security Benefits
+
+1. **Reduced audit burden.** AIRS analyzes each profile once. Agents referencing `subsystem.network-client.v1` inherit that analysis. AIRS only audits the agent's Layer 50 additions (see [airs.md §5.9](../intelligence/airs.md) for the analysis pipeline).
+2. **Deny-always-wins prevents escalation.** A denial from ANY layer is absolute. No profile at any layer can override it. User denials (Layer 90) are final.
+3. **Progressive hardening.** OS updates can ship increasingly restrictive base profiles, tightening all agents simultaneously without per-agent manifest changes.
+4. **Full audit trail.** The `resolution_log` records exactly which profile contributed which capability, enabling post-incident forensic analysis via the provenance chain (Layer 7, §2.7).
+5. **Backward compatible.** Agents without `profiles` work unchanged — their `requested_capabilities` resolve as Layer 50 with OS Base only.
+
+#### 3.7.7 Storage
+
+| Profile type | Storage path | Authored by | Signed by |
+|---|---|---|---|
+| OS Base | `system/config/capability-profiles/00-base/` | AIOS team | AIOS root key |
+| Runtime | `system/config/capability-profiles/10-runtime/` | SDK team | AIOS SDK key |
+| Subsystem | `system/config/capability-profiles/30-subsystem/` | Subsystem maintainers | Subsystem key |
+| Agent-specific | Inside `.aios-agent` package | Agent developer | Developer key |
+| User Override | `user/preferences/capability-overrides/` | User | N/A (local) |
+
+Profiles are space objects — content-addressed, versioned, and distributed through the same update channel as OS updates (Phase 24). Runtime and subsystem profiles can be updated independently of the OS version.
+
 -----
 
 ## 4. Cryptographic Foundations
