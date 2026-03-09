@@ -107,32 +107,11 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     unsafe { crate::arch::aarch64::mmu::init_mmu() };
     advance_boot_phase(EarlyBootPhase::MmuEnabled);
 
-    // Initialize buddy allocator from UEFI memory map.
-    extern "C" {
-        static __kernel_end: u8;
-    }
-    let kernel_start = boot_info.kernel_phys_base as usize;
-    // SAFETY: __kernel_end is defined by the linker script.
-    let kernel_end = unsafe { &__kernel_end as *const u8 as usize };
-    // Use the larger of BootInfo's kernel_size and linker-computed end.
-    let kernel_end = kernel_end.max(kernel_start + boot_info.kernel_size as usize);
-
-    // SAFETY: Memory map is valid, MMU identity map is active, kernel range
-    // is correctly computed from BootInfo and linker symbols.
-    let free_pages = unsafe {
-        crate::mm::buddy::init(
-            boot_info.memory_map_addr,
-            boot_info.memory_map_count,
-            boot_info.memory_map_entry_size,
-            kernel_start,
-            kernel_end,
-        )
-    };
-    println!(
-        "[boot] PageAllocatorReady — {} pages free ({} MiB)",
-        free_pages,
-        (free_pages * 4096) / (1024 * 1024)
-    );
+    // Initialize physical memory pools from UEFI memory map.
+    // SAFETY: Memory map is valid, MMU identity map is active, called once
+    // from boot CPU. init_memory computes kernel range from BootInfo + linker
+    // symbols and excludes kernel image + memory map buffer from free pages.
+    unsafe { crate::mm::init::init_memory(boot_info) };
     advance_boot_phase(EarlyBootPhase::PageAllocatorReady);
 
     // Switch global allocator from bump to slab (backed by buddy).

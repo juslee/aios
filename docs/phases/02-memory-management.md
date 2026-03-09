@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 4 weeks
 **Deliverable:** Virtual memory, heap, W^X, KASLR
-**Status:** Planned
+**Status:** In Progress (M7 complete)
 **Prerequisites:** Phase 1 (Boot and First Pixels)
 **Unlocks:** Phase 3 (IPC & Capability System)
 
@@ -11,7 +11,7 @@
 
 ## Objective
 
-Build the full memory management subsystem on top of Phase 1's early boot allocators and identity-mapped page tables. Phase 1 established a bump allocator and minimal MMU configuration to get the kernel running. Phase 2 replaces these with production-grade components: a buddy allocator with pool partitioning, 4-level page tables with W^X enforcement, an ASID-tagged TLB scheme, KASLR, a slab allocator for kernel objects, and a typed kernel heap API.
+Build the full memory management subsystem on top of Phase 1's allocators and identity-mapped page tables. Phase 1 established a bump allocator, buddy allocator (orders 0–10 with splitting but no coalescing), slab allocator (10 size classes), a switchable `#[global_allocator]` (bump→slab), and an edk2-compatible MMU identity map. Phase 2 enhances these with production-grade components: buddy coalescing with bitmap tracking, page pool partitioning, 4-level page tables with W^X enforcement, an ASID-tagged TLB scheme, KASLR, per-CPU slab magazines, and a typed kernel heap API.
 
 By the end of this phase, the kernel manages physical memory through a buddy allocator partitioned into kernel/user/model/DMA pools, maps all kernel memory through proper TTBR1 page tables with W^X enforcement, randomizes its base address via KASLR, and provides a working `kalloc`/`kfree` heap. A test that allocates, writes, reads back, and frees memory through the heap confirms end-to-end correctness. Per-agent address spaces (TTBR0 switching) are also functional, preparing the ground for process isolation in Phase 3.
 
@@ -33,6 +33,7 @@ By the end of this phase, the kernel manages physical memory through a buddy all
 | Implementation order | [memory.md](../kernel/memory.md) | §13 Implementation Order |
 | BootInfo and memory map handoff | [boot.md](../kernel/boot.md) | §2.2 BootInfo struct; §3.3 Steps 3–9 |
 | Security model (W^X, PAC, BTI) | [security.md](../security/security.md) | Memory isolation sections |
+| Memory hardening (poisoning, double-free, red zones) | [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) | §3.3 Memory Hardening |
 
 -----
 
@@ -50,21 +51,25 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 
 ## Milestone 7 — Physical Memory Manager (End of Week 1)
 
-*Goal: Replace the Phase 1 bump allocator with a buddy allocator partitioned into page pools. Boot log prints pool statistics.*
+*Goal: Enhance Phase 1's buddy allocator with coalescing and partition into page pools. Boot log prints pool statistics.*
 
 -----
 
 ### Step 1: Buddy Allocator Core
 
-**What:** Implement the buddy allocator with orders 0–10 (4 KB – 4 MB), supporting `alloc(order)` and `free(frame, order)` with buddy merging.
+**What:** Enhance the existing buddy allocator (orders 0–10, alloc with splitting) to add bitmap-based coalescing on free, and security hardening (poisoning, double-free detection).
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/mod.rs` — memory management module root
-- [ ] Create `kernel/src/mm/buddy.rs` — `BuddyAllocator` struct with free lists per order and a bitmap tracking allocated/free state (memory.md §2.2)
-- [ ] Implement `alloc(order)` — try requested order, split from larger blocks if needed
-- [ ] Implement `free(frame, order)` — merge with buddy if buddy is free, coalescing up to `MAX_ORDER`
-- [ ] Implement `buddy_of(frame, order)` — XOR-based buddy address computation
-- [ ] Add unit tests (host target) for alloc/free/split/merge sequences
+- [x] `kernel/src/mm/mod.rs` exists — switchable GlobalAlloc (bump→slab)
+- [x] `kernel/src/mm/buddy.rs` exists — orders 0–10, alloc with splitting, UEFI map init
+- [x] `alloc(order)` implemented with splitting from larger blocks
+- [x] Add module declarations for new files: `pub mod pools; pub mod frame; pub mod init;`
+- [x] Enhance `free(frame, order)` — add bitmap-based coalescing up to `MAX_ORDER`
+- [x] Add `buddy_of(frame, order)` — XOR-based buddy address computation
+- [x] Add buddy-pair XOR bitmap for coalescing state tracking
+- [x] **Security:** Double-free detection via bitmap check before free ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [x] **Security:** Buddy allocator poisoning — fill freed pages with `0xDEAD_DEAD` ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [x] Add unit tests (in `shared/` crate, host target) for buddy_of XOR, pool sizing, pressure thresholds
 
 **Key reference:** [memory.md §2.2](../kernel/memory.md) — Buddy Allocator
 
@@ -77,10 +82,10 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 **What:** Partition physical memory into kernel/user/model/DMA pools based on detected RAM, and wrap with the `FrameAllocator` interface.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/pools.rs` — `PagePools` struct with four `BuddyAllocator` instances (memory.md §2.4)
-- [ ] Implement `PoolConfig::from_total_ram(total)` — compute pool sizes per the table in memory.md §2.4 (2 GB/4 GB/8 GB/16 GB tiers)
-- [ ] Create `kernel/src/mm/frame.rs` — `FrameAllocator` wrapping `PagePools` with `alloc_page`, `alloc_pages`, `free_pages`, and `pressure()` (memory.md §2.3)
-- [ ] Implement `MemoryPressure` enum (Normal/Low/Critical/Oom) with thresholds from memory.md §2.3
+- [x] Create `kernel/src/mm/pools.rs` — `PagePools` struct with four `BuddyAllocator` instances (memory.md §2.4)
+- [x] Implement `PoolConfig::from_total_ram(total)` — compute pool sizes per the table in memory.md §2.4 (2 GB/4 GB/8 GB/16 GB tiers)
+- [x] Create `kernel/src/mm/frame.rs` — `FrameAllocator` wrapping `PagePools` with `alloc_page`, `alloc_pages`, `free_pages`, and `pressure()` (memory.md §2.3)
+- [x] Implement `MemoryPressure` enum (Normal/Low/Critical/Oom) with thresholds from memory.md §2.3
 
 **Key reference:** [memory.md §2.3–2.4](../kernel/memory.md) — Frame Allocator Interface, Page Pools
 
@@ -93,13 +98,13 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 **What:** Walk the `BootInfo` memory map (populated by Phase 1's UEFI stub) to initialise the buddy allocator and page pools.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/init.rs` — `init_memory(boot_info: &BootInfo)` entry point
-- [ ] Walk `BootInfo` memory map regions (via `memory_map_addr`, `memory_map_count`, `memory_map_entry_size`): classify each as Conventional, LoaderCode, Reserved, MMIO, etc. (memory.md §2.1)
-- [ ] Feed Conventional regions into the buddy allocator as initial free pages
-- [ ] Mark LoaderCode/LoaderData regions as reclaimable (add to free list after early boot completes)
-- [ ] Partition the buddy allocator's free pages into pools per `PoolConfig`
-- [ ] Print pool statistics to UART: total RAM, per-pool sizes, free pages
-- [ ] Replace Phase 1's bump allocator calls with `FrameAllocator` calls in existing kernel code
+- [x] Create `kernel/src/mm/init.rs` — `init_memory(boot_info: &BootInfo)` entry point
+- [x] Walk `BootInfo` memory map regions (via `memory_map_addr`, `memory_map_count`, `memory_map_entry_size`): classify each as Conventional, LoaderCode, Reserved, MMIO, etc. (memory.md §2.1)
+- [x] Feed Conventional regions into the buddy allocator as initial free pages
+- [x] Mark LoaderCode/LoaderData regions as reclaimable (add to free list after early boot completes)
+- [x] Partition the buddy allocator's free pages into pools per `PoolConfig`
+- [x] Print pool statistics to UART: total RAM, per-pool sizes, free pages
+- [x] Replace Phase 1's bump allocator calls with `FrameAllocator` calls in existing kernel code
 
 **Note:** The `BootInfo` memory map is passed as three fields: `memory_map_addr` (physical address of the `MemoryDescriptor` array), `memory_map_count` (number of entries), and `memory_map_entry_size` (bytes per entry). These are populated by Phase 1's UEFI stub. Phase 2 walks this array to bootstrap the buddy allocator and page pools.
 
@@ -207,16 +212,16 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 ### Step 8: Slab Allocator
 
-**What:** Implement the slab allocator with per-CPU magazines for lock-free fast-path allocation of fixed-size kernel objects.
+**What:** Enhance the existing slab allocator (10 size classes, 8–4096 bytes) with per-CPU magazines for lock-free fast-path allocation.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/slab.rs` — `SlabCache` and `SlabAllocator` (memory.md §4.1)
-- [ ] Implement `SlabCache::new(name, size, fa)` — allocates one backing page, carves into freelist
-- [ ] Implement `SlabCache::alloc()` — fast path: pop from magazine; slow path: refill from shared slab
-- [ ] Implement `SlabCache::free(ptr)` — fast path: push to magazine; overflow: flush to shared slab
-- [ ] Implement `Magazine` layer — `MagazineRound` with `MAGAZINE_SIZE = 32` object slots, current/prev swap
-- [ ] Implement `SlabAllocator::init(fa)` — create standard caches: 64, 128, 256, 512, 4096 bytes (memory.md §4.1)
-- [ ] Implement `SlabAllocator::alloc(size, align)` and `free(ptr, size)` — route to smallest fitting cache
+- [x] `kernel/src/mm/slab.rs` exists — `SlabCache` with 10 size classes, intrusive free list, backed by buddy
+- [x] `SlabCache::alloc()` and `SlabCache::free(ptr)` implemented (slow-path only)
+- [ ] Add `Magazine` layer — `MagazineRound` with `MAGAZINE_SIZE = 32` object slots, current/prev swap
+- [ ] Enhance `SlabCache::alloc()` — fast path: pop from magazine; slow path: refill from shared slab
+- [ ] Enhance `SlabCache::free(ptr)` — fast path: push to magazine; overflow: flush to shared slab
+- [ ] **Security:** Slab red zones — guard bytes around allocations to detect overflow ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [ ] Consolidate standard caches to 64, 128, 256, 512, 4096 bytes (memory.md §4.1)
 
 **Key reference:** [memory.md §4.1](../kernel/memory.md) — Slab Allocator
 
@@ -226,14 +231,15 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 ### Step 9: Kernel Heap API (`kalloc`/`kfree`)
 
-**What:** Wire the slab and buddy allocators into the kernel-wide `kalloc<T>()`/`kfree<T>()` typed allocation API, and implement `#[global_allocator]` for `alloc` crate usage.
+**What:** Enhance the existing `#[global_allocator]` (bump→slab switching) with a typed `kalloc<T>()`/`kfree<T>()` API that routes through the slab and buddy allocators.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/heap.rs` — `kalloc<T>()` and `kfree<T>(ptr)` functions (memory.md §4.2)
+- [x] `kernel/src/mm/mod.rs` has `KernelAllocator` registered as `#[global_allocator]` with bump→slab switching
+- [x] `alloc` crate usage works (Box, Vec) via existing GlobalAlloc impl
+- [ ] Create `kernel/src/mm/heap.rs` — `kalloc<T>()` and `kfree<T>(ptr)` typed functions (memory.md §4.2)
 - [ ] `kalloc`: use slab allocator for sizes ≤ largest cache; fall back to buddy allocator for larger allocations
 - [ ] `kfree`: route to slab or buddy based on size
-- [ ] Implement `GlobalAlloc` trait on a `KernelAllocator` struct — delegates to `kalloc`/`kfree` — enables `alloc::boxed::Box`, `alloc::vec::Vec`, etc.
-- [ ] Register as `#[global_allocator]`
+- [ ] Enhance `KernelAllocator` to delegate through `kalloc`/`kfree`
 - [ ] Print heap ready message: `[mm] Kernel heap ready (slab caches: 64, 128, 256, 512, 4096)`
 - [ ] Test: allocate a `Box<[u8; 1024]>`, write pattern, read back, drop — verify no panic
 
@@ -304,8 +310,8 @@ just run     → boot log shows: pool stats, KASLR base, heap ready, address spa
 
 ## Phase Completion Criteria
 
-- [ ] Buddy allocator with orders 0–10, split/merge, O(log n) alloc/free
-- [ ] Page pools partitioned by RAM tier (kernel/user/model/DMA)
+- [x] Buddy allocator with orders 0–10, split/merge, O(log n) alloc/free
+- [x] Page pools partitioned by RAM tier (kernel/user/model/DMA)
 - [ ] 4-level page tables (PGD/PUD/PMD/PTE) with W^X enforcement at API level
 - [ ] Kernel mapped through TTBR1 with correct permissions: text=R-X, data=RW-, MMIO=device
 - [ ] Physical memory direct map at `0xFFFF_0001_0000_0000`
