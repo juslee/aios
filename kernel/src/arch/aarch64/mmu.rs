@@ -23,7 +23,7 @@ pub const KERNEL_BASE: usize = 0xFFFF_0000_0000_0000;
 #[allow(dead_code)]
 pub const DIRECT_MAP_BASE: usize = 0xFFFF_0001_0000_0000;
 #[allow(dead_code)]
-pub const MMIO_BASE: usize = 0xFFFF_0002_0000_0000;
+pub const MMIO_BASE: usize = 0xFFFF_0010_0000_0000;
 #[allow(dead_code)]
 pub const PAGE_SIZE: usize = 4096;
 
@@ -62,8 +62,20 @@ const PTE_UXN: u64 = 1 << 54; // unprivileged execute-never
 //   edk2 MAIR = 0xffbb4400: Attr0=0x00(Device), Attr1=0x44(NC), Attr2=0xbb(WT), Attr3=0xff(WB)
 // We use Attr0 for device memory and Attr1 for normal memory (non-cacheable
 // under edk2's MAIR, which is safe for Phase 1 boot).
-const MAIR_DEVICE_IDX: u64 = 0;
-const MAIR_NORMAL_IDX: u64 = 1;
+#[allow(dead_code)]
+pub const MAIR_DEVICE_IDX: u64 = 0;
+#[allow(dead_code)]
+pub const MAIR_NORMAL_NC_IDX: u64 = 1;
+#[allow(dead_code)]
+pub const MAIR_NORMAL_WB_IDX: u64 = 3;
+
+// TTBR0 identity map uses WB cacheable (Attr3) to match TTBR1 attributes.
+// Phase 1 used NC (Attr1) as a conservative choice. Phase 2 M8 upgrades
+// to WB to prevent attribute aliasing (CONSTRAINED UNPREDICTABLE on ARM
+// when the same physical page is mapped with different cacheability).
+// This also enables spin::Mutex — exclusive load/store pairs (ldaxr/stlxr)
+// require Inner Shareable + Cacheable memory for the global exclusive monitor.
+const MAIR_NORMAL_IDX: u64 = MAIR_NORMAL_WB_IDX;
 
 /// Build a table descriptor pointing to the next-level table.
 fn table_descriptor(next_table_phys: u64) -> u64 {

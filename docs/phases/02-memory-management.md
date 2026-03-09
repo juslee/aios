@@ -135,6 +135,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 - [ ] Implement PTE helpers: `is_valid`, `is_writable`, `is_executable`, `frame`, `set_writable` (clears exec), `set_executable` (sets read-only) — W^X enforced at API level
 - [ ] Implement `AddressSpace` struct: PGD physical frame, ASID, VmRegion BTreeMap, MemoryStats (memory.md §3.2)
 - [ ] Implement `AddressSpace::map_page(addr, frame, perms)` — walks/allocates intermediate tables, writes leaf PTE, asserts W^X
+- [ ] Intermediate page table pages allocated from `frame::alloc_page()` (Pool::Kernel)
 - [ ] Implement `AddressSpace::lookup_pte(addr)` — 4-level walk returning leaf PTE reference
 - [ ] Implement `AddressSpace::unmap_page(addr)` — clears PTE, issues TLB invalidation
 - [ ] Add `VmRegion`, `VmFlags` (with W^X constraint), and `VmRegionKind` types (memory.md §3.2)
@@ -145,22 +146,36 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 -----
 
-### Step 5: Kernel Address Space and Direct Map
+### Step 5: Virtual Linking, Boot TTBR1, and Kernel Address Space
 
-**What:** Build the kernel's TTBR1 page table tree: map kernel text (RX), data/BSS (RW), physical memory direct map (RW), and MMIO regions (RW device).
+**What:** Two-phase TTBR1 approach. Phase A: Update linker script for virtual addresses, add minimal TTBR1 setup in boot.S so kernel runs at virtual addresses from entry. Phase B: After pool init, build full TTBR1 with fine-grained W^X, direct map, MMIO, and KASLR slide.
 
-**Tasks:**
-- [ ] Create `kernel/src/mm/kmap.rs` — `init_kernel_address_space()` builds the TTBR1 mapping
-- [ ] Map kernel text section: read-only + executable (R-X)
+**Tasks (Phase A — boot.S):**
+
+- [ ] Update `kernel/src/arch/aarch64/linker.ld`: VMA at `KERNEL_BASE` (0xFFFF_0000_0000_0000), LMA at physical `0x40080000` (AT clause)
+- [ ] Add linker symbols: `__kernel_virt_base`, `__kernel_phys_base`, `__virt_phys_offset`
+- [ ] Update `uefi-stub/src/elf.rs`: convert `e_entry` from virtual to physical (track `lowest_vaddr` in Pass 1, compute `physical_entry = e_entry - lowest_vaddr + lowest_paddr`)
+- [ ] Update `kernel/src/arch/aarch64/boot.S`: build minimal TTBR1 tables (static L0/L1/L2 in BSS, 2MB block descriptors covering kernel image)
+- [ ] Set TCR_EL1 T1SZ=16 for 48-bit kernel VA before writing TTBR1_EL1
+- [ ] Use MAIR index 3 (Write-Back cacheable, 0xff) for kernel normal memory in TTBR1 — no MAIR register change needed (edk2 MAIR already has Attr3=WB)
+- [ ] Branch to virtual kernel_main address after TTBR1 install
+- [ ] Update `_secondary_entry` in boot.S to also install TTBR1 (reuse boot CPU's tables)
+
+**Tasks (Phase B — kernel_main, in kmap.rs):**
+
+- [ ] Create `kernel/src/mm/kmap.rs` — `init_kernel_address_space(boot_info, slide)` builds full TTBR1
+- [ ] Map kernel text section: read-only + executable (R-X), 4KB pages, Attr3 WB
+- [ ] Map kernel rodata: read-only + no-execute
 - [ ] Map kernel data/BSS sections: read-write + no-execute (RW-)
-- [ ] Map physical memory direct map at `0xFFFF_0001_0000_0000` — identity of all RAM, read-write + no-execute (memory.md §3.1)
-- [ ] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0002_0000_0000` with device memory attributes (nGnRnE)
-- [ ] Switch from Phase 1's identity/early page tables to the new TTBR1 tables: write `TTBR1_EL1`, issue `TLBI VMALLE1IS`, `DSB ISH`, `ISB`
+- [ ] Map physical memory direct map at `0xFFFF_0001_0000_0000` — all RAM, RW+XN (2MB blocks for efficiency)
+- [ ] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0010_0000_0000` with device memory attributes (Attr0, nGnRnE)
+- [ ] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1IS`, `DSB ISH`, `ISB`
+- [ ] Fix TTBR0 RAM blocks from NC (Attr1) to WB (Attr3) after TTBR1 active — prevents CONSTRAINED UNPREDICTABLE from mismatched attributes on same physical pages
 - [ ] Verify kernel continues executing after the switch (UART still works)
 
-**Note:** The direct map allows the kernel to access any physical address by adding `DIRECT_MAP_BASE`. This is how `PhysicalFrame::as_ptr()` works (memory.md §2.2).
+**Note:** The direct map allows the kernel to access any physical address by adding `DIRECT_MAP_BASE`. This is how `PhysicalFrame::as_ptr()` works (memory.md §2.2). boot.S creates minimal TTBR1 for virtual kernel execution; full TTBR1 with KASLR/direct map built in kernel_main after pool init.
 
-**Key reference:** [memory.md §3.1](../kernel/memory.md) — Address Space Layout
+**Key reference:** [memory.md §3.1](../kernel/memory.md) — Address Space Layout, [boot.md §3.3](../kernel/boot.md) — Step 7
 
 **Acceptance:** `just run` — kernel prints to UART after switching to new TTBR1 page tables. `cargo objdump -- -h` shows kernel text section is mapped at virtual address `0xFFFF_0000_*`.
 
@@ -168,13 +183,16 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 ### Step 6: KASLR
 
-**What:** Randomize the kernel base address at boot using entropy from UEFI RNG, DTB, or ARM generic counter.
+**What:** Randomize the kernel base address at boot using entropy from UEFI RNG or ARM generic counter.
+
+**Note:** KASLR is deferred to the full TTBR1 rebuild in kernel_main (Step 5 Phase B). boot.S uses fixed KERNEL_BASE; kernel_main computes slide after pool init, then builds full TTBR1 with slide applied. The transition works because aarch64 ADRP+ADD offsets are PC-relative and the entire image shifts uniformly — no pointer fixups needed.
 
 **Tasks:**
+
 - [ ] Create `kernel/src/mm/kaslr.rs` — `KaslrConfig` struct (memory.md §3.3)
 - [ ] Implement `compute_slide(entropy)` — 2 MB aligned slide within 0..128 MB range (64 possible positions)
-- [ ] Read entropy source: try UEFI RNG (from BootInfo), fall back to DTB `/chosen/rng-seed`, last resort ARM generic counter (`CNTPCT_EL0`)
-- [ ] Apply slide to kernel mapping before setting up TTBR1 page tables (integrate with Step 5)
+- [ ] Read entropy source: try `BootInfo.rng_seed` (from UEFI RNG protocol), fall back to `CNTPCT_EL0` (weak but non-deterministic)
+- [ ] Pass slide to `init_kernel_address_space()` in Step 5 Phase B — full TTBR1 maps kernel at KERNEL_BASE + slide
 - [ ] Print actual kernel base to UART for verification: `[kaslr] Kernel base: 0x<addr> (slide: 0x<slide>)`
 
 **Key reference:** [memory.md §3.3](../kernel/memory.md) — KASLR

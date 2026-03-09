@@ -466,14 +466,13 @@ Per-CPU data, temp mappings`"]
 (gap)`"]
             K3["`0xFFFF_0010_0000_0000
 MMIO regions`"]
-            K4["`0xFFFF_0002_0000_0000
+            K4["`0xFFFF_0001_0000_0000
 Physical memory direct map`"]
-            K5["`0xFFFF_0001_0000_0000
-Kernel heap`"]
-            K6["`0xFFFF_0000_4000_0000
+            K5["`0xFFFF_0000_0000_0000
+Kernel text (.text, read-only)
 Kernel data (.data, .bss)
-Kernel text (.text, read-only)`"]
-            K1 --- K2 --- K3 --- K4 --- K5 --- K6
+Kernel heap`"]
+            K1 --- K2 --- K3 --- K4 --- K5
         end
         HOLE["`0xFFFF_0000_0000_0000 — 0x0000_8000_0000_0000
 Non-canonical address hole
@@ -768,16 +767,30 @@ impl AddressSpace {
 The kernel base address is randomized at boot to defeat return-oriented programming (ROP) attacks that rely on known kernel addresses.
 
 ```
-Boot sequence:
-1. UEFI loads kernel ELF into a temporary address
-2. Kernel early init reads random seed:
-   - Preferred: UEFI RNG protocol (EFI_RNG_PROTOCOL)
-   - Fallback: device tree /chosen/rng-seed property
-   - Last resort: ARM generic counter (weak entropy)
-3. Compute slide: random value & ~(2MB - 1) within 0..128 MB range
-4. Relocate kernel to: base_address + slide
-5. Fixup all kernel pointers (PIC — position-independent code)
-6. Set up TTBR1 page tables at randomized base
+Boot sequence (two-phase TTBR1 approach):
+
+Phase A — boot.S (before kernel_main):
+1. UEFI loads kernel ELF at physical 0x40080000
+2. boot.S builds minimal TTBR1 page tables (static L0/L1/L2 in BSS)
+   - 2MB block descriptors covering kernel image at fixed KERNEL_BASE
+   - MAIR Attr3 (WB cacheable), no KASLR yet
+3. Set TCR T1SZ=16 for 48-bit kernel VA
+4. Install TTBR1, branch to kernel_main at virtual address
+
+Phase B — kernel_main (after pool init):
+5. Read random seed:
+   - Preferred: BootInfo.rng_seed from UEFI RNG protocol (EFI_RNG_PROTOCOL)
+   - Fallback: ARM generic counter CNTPCT_EL0 (weak entropy)
+6. Compute slide: (entropy % 64) * 2MB within 0..128 MB range
+7. Build full TTBR1 with fine-grained W^X (4KB pages):
+   - Kernel mapped at KERNEL_BASE + slide
+   - Direct map at DIRECT_MAP_BASE
+   - MMIO at MMIO_BASE
+8. Switch TTBR1 to full tables, branch to KASLR-slid address
+
+Note: aarch64 Rust uses PC-relative ADRP+ADD addressing by default.
+When the entire kernel image shifts uniformly, all PC-relative references
+resolve correctly — no pointer fixups are needed for KASLR.
 ```
 
 ```rust

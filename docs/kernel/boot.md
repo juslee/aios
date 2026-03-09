@@ -468,25 +468,28 @@ Exception Vector Table (aligned to 2048 bytes):
 
 **Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi, SoC watchdog on Apple Silicon — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (boot-lifecycle.md §11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
 
-**Step 7: MMU enable — page table setup.** This is the most complex step:
+**Step 7: MMU enable — page table setup.** This is the most complex step, using a two-phase TTBR1 approach:
 
 ```
-Before MMU reconfiguration:
-  TTBR0_EL1 → UEFI's identity map (phys == virt)
-  TTBR1_EL1 → not set (no kernel high-half mapping)
+Phase A — boot.S (before kernel_main):
+  boot.S builds a minimal TTBR1 using static page tables (3 pages in BSS: L0, L1, L2).
+  L2 uses 2MB block descriptors covering the kernel image at fixed KERNEL_BASE.
+  MAIR Attr3 (WB cacheable) for normal memory. No KASLR at this stage.
+  TCR T1SZ=16 set for 48-bit kernel VA. TTBR1 installed, branch to virtual kernel_main.
 
-After:
-  TTBR1_EL1 → Kernel page table (high-half mapping)
-    0xFFFF_0000_0000_0000          → kernel text (RX) + rodata (RO) + data/bss (RW, NX)
-    0xFFFF_0000_4000_0000          → kernel heap
-    0xFFFF_0000_8000_0000          → kernel stacks (per-core + per-process, with guard pages)
-    0xFFFF_0001_0000_0000          → physical memory direct map
-    0xFFFF_0002_0000_0000          → MMIO regions (device memory)
+  After boot.S:
+    TTBR0_EL1 → Identity map (phys == virt, from Phase 1 init_mmu)
+    TTBR1_EL1 → Minimal static tables (kernel image only at KERNEL_BASE)
 
-  TTBR0_EL1 → Temporary identity map (will be replaced per-process)
-    Keep identity map active briefly so the instruction that
-    enables the new TTBR1 can still execute (it's at a physical
-    address). After switching, the identity map entries are removed.
+Phase B — kernel_main (after pool init, Step 11):
+  Full TTBR1 with fine-grained 4KB pages, W^X, KASLR slide, direct map, MMIO:
+    TTBR1_EL1 → Full kernel page table (high-half mapping)
+      0xFFFF_0000_0000_0000 + slide → kernel text (RX) + rodata (RO) + data/bss (RW, NX)
+      0xFFFF_0001_0000_0000          → physical memory direct map
+      0xFFFF_0010_0000_0000          → MMIO regions (device memory)
+
+  TTBR0_EL1 → Updated identity map (RAM blocks fixed to WB/Attr3 to prevent
+    CONSTRAINED UNPREDICTABLE from mismatched attributes with TTBR1)
 
 Page table format: 4-level, 4 KiB granule, 48-bit VA
   L0 (PGD) → L1 (PUD) → L2 (PMD) → L3 (PTE)
@@ -515,7 +518,7 @@ The buddy allocator manages pages in orders 0 through 10 (4 KiB to 4 MiB blocks)
 
 **Step 10: Hardware RNG.** Call `platform.init_rng(dt)` to initialize the hardware random number generator. On QEMU this is VirtIO-RNG (virtqueue-based, entropy from host `/dev/urandom`). On Pi 4/5 this is the bcm2835-rng (MMIO TRNG). On Apple Silicon this is the Apple TRNG (hardware true random number generator). The returned `RngDevice` is stored in `KernelState.rng` and provides runtime entropy for KASLR, capability token generation, nonces, and key derivation — replacing reliance on the one-shot 32-byte UEFI seed.
 
-**Step 11: KASLR.** Use the hardware RNG to compute a random kernel base offset (aligned to 2 MiB). Remap the kernel at the new virtual address. Update all absolute address references (the kernel is compiled as position-independent). This makes kernel address prediction harder for exploits. Falls back to `BootInfo.rng_seed` if the hardware RNG init failed (should not happen on supported platforms).
+**Step 11: KASLR and full TTBR1.** Compute a random kernel base offset (2 MiB aligned, 128 MB range, 64 positions) using `BootInfo.rng_seed` (from UEFI RNG protocol) or `CNTPCT_EL0` as weak fallback. Build full TTBR1 page tables with the slide applied: kernel mapped at `KERNEL_BASE + slide` with fine-grained W^X (4KB pages), physical memory direct map at `DIRECT_MAP_BASE`, MMIO at `MMIO_BASE`. Switch TTBR1 to full tables (replacing boot.S minimal tables), then branch to the KASLR-slid virtual address. Also fix TTBR0 RAM blocks from NC (Attr1) to WB (Attr3) to prevent attribute aliasing. No pointer fixups are needed — aarch64 Rust uses PC-relative ADRP+ADD addressing, so all references resolve correctly when the entire image shifts uniformly.
 
 **Step 12: Capability manager.** Create the root capability — the single capability from which all others are derived:
 
