@@ -143,7 +143,7 @@ pub type CapabilityTokenId = u64;
 pub type Signature = [u8; 64];
 
 /// Reference to an object within a space. Used by Flow (flow.md §3.1),
-/// architecture.md §2.3, and boot-lifecycle.md §15 for cross-space
+/// architecture.md §2.4, and boot-lifecycle.md §15 for cross-space
 /// object references without copying the object itself.
 pub struct ObjectRef {
     pub space_id: SpaceId,
@@ -238,7 +238,7 @@ system/                      ← Core zone, kernel-managed
     audio/
     camera/
     input/
-    flow/                    ← Flow transfer audit trail (flow.md §11.2)
+    flow/                    ← Flow transfer audit trail (flow.md §11)
     ...
   models/                    ← AI model storage (AIRS)
   index/                     ← Search indexes (AIRS)
@@ -298,7 +298,7 @@ pub struct Object {
 /// Append-only Merkle-linked provenance chain for an object. Summarizes
 /// the full per-version ProvenanceEntry records (§5.1) for quick inspection
 /// without walking the entire version DAG.
-/// Canonical definition: architecture.md §2.3.
+/// Canonical definition: architecture.md §2.2.
 pub struct ProvenanceChain {
     /// Hash of the most recent ProvenanceEntry in the chain
     head: Hash,

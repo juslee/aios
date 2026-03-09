@@ -808,7 +808,7 @@ pub enum BootPhase {
 }
 
 /// Capability request for system services (compiled into initramfs).
-/// Simpler than agent CapabilityRequest (agents.md §2.3) — system services
+/// Simpler than agent CapabilityRequest (agents.md §2.4) — system services
 /// are always required and have static justification strings.
 pub struct ServiceCapabilityRequest {
     capability: Capability,

@@ -1410,20 +1410,21 @@ if context.work_engagement > 0.8 {
 
 ### 9.2 Posting Attention Items
 
-Agents post attention items through the Attention Manager. The agent declares the content and a suggested urgency. AIRS re-assesses the urgency based on the actual content and current context.
+Agents post attention items through the Attention Manager. The agent declares the content and an optional proposed action. The agent cannot set urgency — AIRS assesses urgency based on the actual content, the user's current context, and the agent's track record (see [attention.md §4](./attention.md) for the full urgency assessment pipeline).
 
 ```rust
-ctx.attention().post(AttentionItem {
-    content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
-    urgency: Urgency::NextBreak,
-    relevance: 0.8,
-    auto_actionable: Some(ProposedAction::OpenCalendar),
-    group: Some(GroupId::from("calendar-reminders")),
-    ..Default::default()
+ctx.attention().post(AttentionRequest {
+    content: AttentionContent::Schedule {
+        event_name: "Team Standup".into(),
+        time: meeting_time,
+        change: None,
+    },
+    expiry: Some(meeting_time + Duration::from_mins(5)),
+    auto_action: Some(ProposedAction::OpenCalendar),
 }).await?;
 ```
 
-The agent's declared `urgency` is a hint. AIRS may upgrade or downgrade it. An email agent that declares every message as `Interrupt` will find its messages consistently downgraded to `Digest` by AIRS. An agent that accurately declares urgency builds a better track record and its declarations are trusted more over time.
+The agent does not set urgency. AIRS determines urgency from the content, the user's context, and the agent's historical accuracy. An email agent that floods items will find its items consistently triaged to `Digest` by AIRS. An agent whose items the user consistently acts on promptly builds trust, and AIRS may escalate its future items accordingly.
 
 ### 9.3 Subscribing to Context Changes
 

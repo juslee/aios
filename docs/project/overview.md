@@ -4,7 +4,7 @@
 **Target:** aarch64 (ARM64)
 **Language:** Rust (kernel + userspace)
 **License:** BSD-2-Clause (kernel, tools, SDK)
-**Timeline:** 28 phases across ~130 weeks (~2.5 years)
+**Timeline:** 30 phases across ~138 weeks (~2.7 years)
 ---
 ## 1. Vision
 AIOS is a clean-sheet microkernel operating system written in Rust for aarch64 where every subsystem is designed assuming AI exists. AI is not an application running on the OS — it is the infrastructure that makes every abstraction work better than on any other operating system.
@@ -235,6 +235,9 @@ pub struct ContextLink {
 pub struct AgentManifest {
     name: String,
     author: Identity,
+    /// Capability profiles: pre-audited, named bundles composed in layers.
+    /// See security.md §3.7 for profile types and resolution algorithm.
+    profiles: Vec<ProfileReference>,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
     dependencies: Vec<Dependency>,
@@ -457,11 +460,18 @@ Secure boot, Linux compatibility, enterprise features, hardware certification, l
 | 25 | Linux Binary & Wayland Compatibility | 5 weeks | Run unmodified Linux apps and GUI programs |
 | 26 | Enterprise & Multi-Device | 4 weeks | MDM, fleet management, cross-device sync |
 | 27 | Real Hardware, Certification & Launch | 4 weeks | Pi 4/5, Pine64, VM images, documentation site |
+### Tier 8: Security Intelligence — Phases 28–29 (Weeks 131–138)
+Composable capability profiles and AIRS-powered agent capability intelligence.
+| Phase | Name | Duration | Deliverable |
+|---|---|---|---|
+| 28 | Composable Capability Profiles | 4 weeks | Profile types, resolution algorithm, manifest integration |
+| 29 | AIRS Capability Intelligence | 4 weeks | 5-stage analysis pipeline, audit tool, corpus-based outlier detection |
 ### Timeline Summary
 ```
 Year 1 (Weeks 1-54):    Tiers 1-3 — Functioning AI-first OS on QEMU
 Year 2 (Weeks 55-92):   Tiers 4-5 — Developer platform with real hardware support
 Year 2.5 (Weeks 93-130): Tiers 6-7 — Production OS ready for daily use
+Year 2.7 (Weeks 131-138): Tier 8 — Security intelligence and capability profiles
 ```
 ---
 ## 11. Document Index
@@ -473,11 +483,13 @@ docs/
 ├── project/
 │   ├── overview.md                    ← This document
 │   ├── architecture.md               System architecture deep dive
-│   └── development-plan.md           Timeline, risks, dependencies
+│   ├── development-plan.md           Timeline, risks, dependencies
+│   └── language-ecosystem.md         Language runtimes (Rust, Python, TS, WASM)
 │
 ├── kernel/
 │   ├── boot.md                       Boot sequence and service startup
 │   ├── boot-lifecycle.md             Boot lifecycle deep analysis
+│   ├── deadlock-prevention.md        Deadlock prevention strategies
 │   ├── hal.md                        Hardware Abstraction Layer
 │   ├── ipc.md                        IPC and syscall interface
 │   ├── memory.md                     Memory management
@@ -510,15 +522,18 @@ docs/
 ├── applications/
 │   ├── agents.md                     Agent framework
 │   ├── browser.md                    Decomposed web browser
+│   ├── inspector.md                  Inspector security dashboard
 │   └── ui-toolkit.md                 Portable UI toolkit
 │
 ├── security/
-│   └── security.md                   Security architecture
+│   ├── security.md                   Security architecture
+│   ├── fuzzing-and-hardening.md      Fuzzing and input hardening
+│   └── static-analysis.md            Static analysis and formal verification
 │
 └── phases/                           Implementation milestones per phase
     ├── 00-foundation-and-tooling.md  Phase 0: project scaffold, CI, build
     ├── 01-boot-and-first-pixels.md   Phase 1: boot flow and first pixels
-    └── ...                           (28 phases total, created as work begins)
+    └── ...                           (30 phases total, created as work begins)
 ```
 
 ### Phase Implementation Documents

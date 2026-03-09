@@ -1726,7 +1726,7 @@ Agents cannot observe AIRS resource decisions. Each agent sees only its own virt
 
 ### 10.5 Provenance
 
-All AIRS resource directives are logged in the provenance chain (Merkle chain, kernel-signed, append-only). Directive types: `ResourcePrefetch`, `ResourcePoolResize`, `ResourceCompress`, `ResourceFallbackTransition`, `ResourceHintReceived`. These follow standard audit retention (7 days full, 90 days summarized, hash-only after). See [security.md §2.7.1](../security/security.md).
+All AIRS resource directives are logged in the provenance chain (Merkle chain, kernel-signed, append-only). Directive types: `ResourcePrefetch`, `ResourcePoolResize`, `ResourceCompress`, `ResourceFallbackTransition`, `ResourceHintReceived`. These follow standard audit retention (7 days full, 90 days summarized, hash-only after). See [security.md §2.7](../security/security.md).
 
 -----
 

@@ -32,6 +32,10 @@
 - [accessibility.md](../experience/accessibility.md) — Accessibility engine
 - [power-management.md](../platform/power-management.md) — Power management policy engine
 - [inspector.md](../applications/inspector.md) — Inspector security dashboard architecture
+- [deadlock-prevention.md](../kernel/deadlock-prevention.md) — Deadlock prevention strategies
+- [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) — Fuzzing and input hardening
+- [static-analysis.md](../security/static-analysis.md) — Static analysis and formal verification
+- [language-ecosystem.md](./language-ecosystem.md) — Language runtimes (Rust, Python, TypeScript, WASM)
 
 -----
 
