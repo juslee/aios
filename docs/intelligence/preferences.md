@@ -212,7 +212,7 @@ pub enum SystemComponent {
 }
 
 /// Named collection of preferences associated with an identity profile
-/// (referenced by architecture.md §6.3 and agents.md).
+/// (referenced by architecture.md §6.5 and agents.md).
 pub struct PreferenceSet {
     pub preferences: Vec<Preference>,
 }

@@ -969,11 +969,11 @@ Security Layer 3. Detects anomalous behavior patterns:
 
 ```rust
 pub struct BehavioralMonitor {
-    baselines: HashMap<AgentId, BehaviorBaseline>,
-    rules: Vec<BehaviorRule>,
+    baselines: HashMap<AgentId, BehavioralBaseline>,
+    rules: Vec<BehavioralRule>,
 }
 
-pub struct BehaviorBaseline {
+pub struct BehavioralBaseline {
     agent: AgentId,
     /// Learned from first N hours of agent operation
     typical_read_rate: f32,         // objects per minute
@@ -984,12 +984,12 @@ pub struct BehaviorBaseline {
     sample_count: u64,
 }
 
-pub struct BehaviorRule {
-    condition: BehaviorCondition,
-    action: BehaviorAction,
+pub struct BehavioralRule {
+    condition: BehavioralCondition,
+    action: BehavioralAction,
 }
 
-pub enum BehaviorCondition {
+pub enum BehavioralCondition {
     ReadRateExceeds(f32),           // X times baseline
     WriteRateExceeds(f32),
     NetworkRateExceeds(f32),
@@ -998,7 +998,7 @@ pub enum BehaviorCondition {
     BulkDeletion(u32),              // more than N deletes in window
 }
 
-pub enum BehaviorAction {
+pub enum BehavioralAction {
     Log,                            // record but allow
     RateLimit(Duration),            // slow down the agent
     Suspend,                        // pause agent, notify user
@@ -1406,7 +1406,7 @@ pub struct CapabilityAnalysisCorpus {
     known_good: Vec<AuditedAgent>,
     /// Agents where AIRS analysis was overridden by user
     overrides: Vec<UserOverrideRecord>,
-    /// Agents deployed and later flagged by behavioral monitoring (§5.6)
+    /// Agents deployed and later flagged by behavioral monitoring (§5.5)
     missed_detections: Vec<MissedDetection>,
     /// Per-runtime behavioral baselines from deployed agents
     runtime_baselines: HashMap<RuntimeType, AggregateBaseline>,
