@@ -163,14 +163,14 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **Tasks (Phase B — kernel_main, in kmap.rs):**
 
-- [x] Create `kernel/src/mm/kmap.rs` — `init_kernel_address_space(boot_info, slide)` builds full TTBR1
+- [x] Create `kernel/src/mm/kmap.rs` — `init_kernel_address_space(ram_start, ram_size)` builds full TTBR1
 - [x] Map kernel text section: read-only + executable (R-X), 4KB pages, Attr3 WB
 - [x] Map kernel rodata: read-only + no-execute
 - [x] Map kernel data/BSS sections: read-write + no-execute (RW-)
 - [x] Map physical memory direct map at `0xFFFF_0001_0000_0000` — all RAM, RW+XN (2MB blocks for efficiency)
 - [x] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0010_0000_0000` with device memory attributes (Attr0, nGnRnE)
-- [x] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1IS`, `DSB ISH`, `ISB`
-- [x] Fix TTBR0 RAM blocks from NC (Attr1) to WB (Attr3) after TTBR1 active — prevents CONSTRAINED UNPREDICTABLE from mismatched attributes on same physical pages
+- [x] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1`, `DSB NSH`, `ISB` (non-IS variant sufficient since SMP not yet started)
+- [x] Build TTBR0 RAM blocks with WB (Attr3) from init — mmu.rs `MAIR_NORMAL_IDX` set to WB (was NC in Phase 1); prevents CONSTRAINED UNPREDICTABLE from mismatched attributes with TTBR1
 - [x] Verify kernel continues executing after the switch (UART still works)
 
 **Note:** The direct map allows the kernel to access any physical address by adding `DIRECT_MAP_BASE`. This is how `PhysicalFrame::as_ptr()` works (memory.md §2.2). boot.S creates minimal TTBR1 for virtual kernel execution; full TTBR1 with KASLR/direct map built in kernel_main after pool init.
@@ -192,7 +192,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 - [x] Create `kernel/src/mm/kaslr.rs` — `KaslrConfig` struct (memory.md §3.3)
 - [x] Implement `compute_slide(entropy)` — 2 MB aligned slide within 0..128 MB range (64 possible positions)
 - [x] Read entropy source: try `BootInfo.rng_seed` (from UEFI RNG protocol), fall back to `CNTPCT_EL0` (weak but non-deterministic)
-- [x] Pass slide to `init_kernel_address_space()` in Step 5 Phase B — full TTBR1 maps kernel at KERNEL_BASE + slide
+- [x] Compute slide and log it; slide is not yet passed to `init_kernel_address_space()` (non-zero slide deferred to a later milestone)
 - [x] Print actual kernel base to UART for verification: `[kaslr] Kernel base: 0x<addr> (slide: 0x<slide>)`
 
 **Key reference:** [memory.md §3.3](../kernel/memory.md) — KASLR

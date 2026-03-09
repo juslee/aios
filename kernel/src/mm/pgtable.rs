@@ -126,8 +126,10 @@ impl PageTableEntry {
         self.0 & Self::AP_RO == 0
     }
 
+    /// True if this page is executable at EL1 (kernel).
+    /// Both PXN and UXN must be clear for kernel execution.
     pub const fn is_executable(&self) -> bool {
-        self.0 & Self::UXN == 0
+        self.0 & (Self::PXN | Self::UXN) == 0
     }
 
     pub const fn is_user(&self) -> bool {
@@ -157,11 +159,10 @@ impl PageTableEntry {
         self.0 |= Self::PXN | Self::UXN;
     }
 
-    /// Make this page executable (sets read-only).
+    /// Make this page executable (sets read-only, clears PXN+UXN).
     pub fn set_executable(&mut self) {
         self.0 |= Self::AP_RO;
-        self.0 &= !Self::UXN;
-        // PXN clear for kernel code
+        self.0 &= !(Self::PXN | Self::UXN);
     }
 }
 

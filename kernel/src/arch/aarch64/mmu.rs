@@ -100,7 +100,7 @@ fn l1_block_descriptor(phys_addr: u64, mair_idx: u64, executable: bool) -> u64 {
 
 // ── Public API ────────────────────────────────────────────────────────
 
-/// Virt-to-phys offset for kernel statics.
+/// Virt-to-phys offset for kernel statics (virtual linking).
 ///
 /// With virtual linking (VMA at KERNEL_VIRT, LMA at KERNEL_PHYS), Rust
 /// addresses of statics are virtual. TTBR0_EL1 and table descriptors need
@@ -109,11 +109,13 @@ fn l1_block_descriptor(phys_addr: u64, mair_idx: u64, executable: bool) -> u64 {
 /// = KERNEL_VIRT + (KERNEL_PHYS & 0x1FFFFF) - KERNEL_PHYS
 /// = 0xFFFF_0000_0008_0000 - 0x4008_0000
 /// = 0xFFFE_FFFF_C000_0000
-const VIRT_PHYS_OFFSET: u64 = 0xFFFE_FFFF_C000_0000;
+///
+/// Canonical source — imported by kmap.rs, mm/init.rs, smp.rs.
+pub const VIRT_PHYS_OFFSET: u64 = 0xFFFE_FFFF_C000_0000;
 
 /// Convert a kernel virtual address to physical.
 #[inline]
-fn virt_to_phys(va: u64) -> u64 {
+pub fn virt_to_phys(va: u64) -> u64 {
     va.wrapping_sub(VIRT_PHYS_OFFSET)
 }
 

@@ -26,21 +26,10 @@ extern "C" {
     static __data_end: u8;
 }
 
-/// Virt-to-phys offset for the kernel image.
-///
-/// Constant for all kernel sections:
-///   KERNEL_VIRT + (KERNEL_PHYS & 0x1FFFFF) - KERNEL_PHYS
-/// = 0xFFFF_0000_0008_0000 - 0x4008_0000
-/// = 0xFFFE_FFFF_C000_0000
-///
-/// Derived from linker.ld constants. If KERNEL_VIRT or KERNEL_PHYS change,
-/// this value must be updated.
-const VIRT_PHYS_OFFSET: usize = 0xFFFE_FFFF_C000_0000;
-
 /// Convert a kernel virtual address to its physical address.
 #[inline]
 fn virt_to_phys(va: usize) -> usize {
-    va.wrapping_sub(VIRT_PHYS_OFFSET)
+    va.wrapping_sub(mmu::VIRT_PHYS_OFFSET as usize)
 }
 
 // ── Page table walk helpers ─────────────────────────────────────────────
@@ -58,6 +47,8 @@ fn virt_to_phys(va: usize) -> usize {
 /// TTBR0 identity map must be active for physical address access.
 unsafe fn ensure_table(table_phys: usize, index: usize) -> usize {
     let entry_ptr = (table_phys + index * 8) as *mut u64;
+    // SAFETY: table_phys is a valid page-aligned physical address accessible
+    // via TTBR0 identity map. index < 512, so the offset is within the 4KB page.
     let raw = ptr::read(entry_ptr);
 
     if raw != 0 {
@@ -73,8 +64,12 @@ unsafe fn ensure_table(table_phys: usize, index: usize) -> usize {
     } else {
         // Allocate and zero a new page table page
         let new_page = frame::alloc_page().expect("kmap: OOM allocating page table");
+        // SAFETY: new_page is a freshly allocated physical page from Pool::Kernel,
+        // accessible via TTBR0 identity map. Zeroing 4KB initializes all 512 PTEs
+        // to invalid (0).
         ptr::write_bytes(new_page as *mut u8, 0, PAGE_SIZE);
         let desc = PageTableEntry::new_table(new_page);
+        // SAFETY: entry_ptr points to a valid PTE slot (see read above).
         ptr::write(entry_ptr, desc.raw());
         new_page
     }
@@ -93,6 +88,7 @@ unsafe fn map_page(pgd: usize, va: usize, pa: usize, mair_idx: u64, flags: VmFla
 
     let pte = PageTableEntry::new_page(pa, mair_idx, flags);
     let slot = (l3 + l3_index(va) * 8) as *mut u64;
+    // SAFETY: l3 is a valid L3 table from ensure_table; slot is within the page.
     ptr::write(slot, pte.raw());
 }
 
@@ -109,6 +105,7 @@ unsafe fn map_block_2m(pgd: usize, va: usize, pa: usize, mair_idx: u64, flags: V
 
     let pte = PageTableEntry::new_block_2m(pa, mair_idx, flags);
     let slot = (l2 + l2_index(va) * 8) as *mut u64;
+    // SAFETY: l2 is a valid L2 table from ensure_table; slot is within the page.
     ptr::write(slot, pte.raw());
 }
 
@@ -179,6 +176,8 @@ unsafe fn map_range_2m(
 pub unsafe fn init_kernel_address_space(ram_start: usize, ram_size: usize) {
     // Allocate PGD (L0 page table) from kernel pool
     let pgd = frame::alloc_page().expect("kmap: cannot allocate PGD");
+    // SAFETY: pgd is a freshly allocated page from Pool::Kernel, accessible
+    // via TTBR0 identity map. Zeroing initializes all 512 entries to invalid.
     ptr::write_bytes(pgd as *mut u8, 0, PAGE_SIZE);
 
     // ── Kernel sections with W^X ────────────────────────────────────
@@ -274,7 +273,11 @@ pub unsafe fn init_kernel_address_space(ram_start: usize, ram_size: usize) {
         "isb",
         pgd = in(reg) pgd as u64,
     );
-    core::arch::asm!("tlbi vmalle1", "dsb nsh", "isb",);
+    // SAFETY: TLBI VMALLE1IS broadcasts TLB invalidation to all PEs in the
+    // Inner Shareable domain. DSB ISH ensures completion before proceeding.
+    // Secondary cores are not yet online (SMP bringup is step 7), so this
+    // is safe even though it broadcasts.
+    core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb",);
 
     crate::println!("[mm] TTBR1 active — kernel mapped with W^X");
     crate::println!(

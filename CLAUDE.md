@@ -16,7 +16,7 @@ Linker script:  emitted via build.rs (not .cargo/config.toml)
 Relocation:     static (relocation-model=static throughout all phases)
 QEMU machine:   virt, cpu=cortex-a72, -smp 4 -m 2G
 UART:           PL011 at 0x0900_0000 (QEMU); DTB-sourced Phase 1+
-Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); virtual 0xFFFF_0000_0000_0000+ (Phase 2+)
+Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_0000_0008_0000 (Phase 2+)
 ```
 
 ---
@@ -161,7 +161,7 @@ When implementing Phase N:
 - Entry symbols: `#[no_mangle]` on the Rust side
 - Vector table: `.align 7` (128 bytes) per entry in assembly; `ALIGN(2048)` for section in linker script
 - All 16 exception vector entries present; stubs `b .` until real handlers added
-- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → branch to `kernel_main`
+- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → branch to virtual `kernel_main`
 
 ### Crate & Dependency Rules
 
@@ -178,7 +178,7 @@ When implementing Phase N:
 kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, boot.S, linker.ld)
 kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
-kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, GlobalAlloc)
+kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, pgtable, kmap, kaslr, asid, tlb, GlobalAlloc)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
 shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, Pool, PoolConfig, MemoryPressure, etc.)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
@@ -269,8 +269,8 @@ Boot TTBR1 (boot.S):          3 static pages in BSS (L0/L1/L2); 4×2MB block des
 Full TTBR1 (kmap.rs):         Built in kernel_main after pool init; text=RX (38 pages), rodata=RO (42 pages),
                               data=RW (13 pages); direct map + MMIO; replaces boot TTBR1 via TLBI VMALLE1IS
 TTBR1 T1SZ:                   16 (48-bit kernel VA); set in boot.S before TTBR1_EL1 write
-KASLR slide (M8):             Computed (entropy from CNTPCT_EL0 or BootInfo.rng_seed); slide=0 applied
-                              (KASLR infrastructure complete; non-zero slide activated in later milestone)
+KASLR slide (M8):             Computed (entropy from CNTPCT_EL0 or BootInfo.rng_seed); logged but NOT applied
+                              to TTBR1 (init_kernel_address_space ignores slide; non-zero slide in later milestone)
 ASID width:                   16-bit; AsidAllocator tracks generation; full TLBI VMALLE1IS on generation wrap
 Secondary TTBR1 install:      _secondary_entry reuses boot CPU's L0/L1/L2 tables; TTBR1_EL1 set before MMU enable
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry symbol to physical before PSCI CPU_ON call

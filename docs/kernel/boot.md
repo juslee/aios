@@ -488,7 +488,7 @@ Phase B — kernel_main (after pool init, Step 11):
       0xFFFF_0001_0000_0000          → physical memory direct map
       0xFFFF_0010_0000_0000          → MMIO regions (device memory)
 
-  TTBR0_EL1 → Updated identity map (RAM blocks fixed to WB/Attr3 to prevent
+  TTBR0_EL1 → Identity map (RAM blocks built with WB/Attr3 since M8 to prevent
     CONSTRAINED UNPREDICTABLE from mismatched attributes with TTBR1)
 
 Page table format: 4-level, 4 KiB granule, 48-bit VA
