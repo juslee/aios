@@ -24,27 +24,26 @@ AIOS boots via UEFI on aarch64. The firmware is not part of AIOS — it's provid
 
 **Boot flow:**
 
-```
-Platform firmware (not AIOS)
-  │
-  ├── POST: hardware self-test, DRAM training, PCI enumeration
-  ├── UEFI firmware initialization
-  ├── Read ESP (EFI System Partition) from boot device
-  ├── Load \EFI\BOOT\BOOTAA64.EFI (AIOS UEFI stub)
-  │
-  ▼
-AIOS UEFI stub (runs in UEFI Boot Services, EL1)
-  │
-  ├── Parse UEFI memory map
-  ├── Locate and load kernel ELF from ESP
-  ├── Acquire framebuffer via GOP (Graphics Output Protocol)
-  ├── Acquire device tree or ACPI tables
-  ├── Request RNG seed from UEFI for KASLR
-  ├── Allocate contiguous region for kernel
-  ├── ExitBootServices() — point of no return
-  │
-  ▼
-Jump to kernel entry point (all UEFI Boot Services gone)
+```mermaid
+flowchart TD
+    FW["Platform firmware (not AIOS)"] --> POST["`POST: hardware self-test,
+DRAM training, PCI enumeration`"]
+    POST --> UEFI_INIT["UEFI firmware initialization"]
+    UEFI_INIT --> ESP["Read ESP from boot device"]
+    ESP --> LOAD_STUB["Load BOOTAA64.EFI (AIOS UEFI stub)"]
+
+    LOAD_STUB --> STUB["`AIOS UEFI stub
+(runs in UEFI Boot Services, EL1)`"]
+    STUB --> PARSE["Parse UEFI memory map"]
+    PARSE --> LOAD_ELF["Locate and load kernel ELF from ESP"]
+    LOAD_ELF --> GOP["Acquire framebuffer via GOP"]
+    GOP --> DTB["Acquire device tree or ACPI tables"]
+    DTB --> RNG["Request RNG seed from UEFI for KASLR"]
+    RNG --> ALLOC["Allocate contiguous region for kernel"]
+    ALLOC --> EBS["ExitBootServices() -- point of no return"]
+
+    EBS --> KERNEL["`Jump to kernel entry point
+(all UEFI Boot Services gone)`"]
 ```
 
 ### 2.2 What the Kernel Receives
@@ -808,7 +807,7 @@ pub enum BootPhase {
 }
 
 /// Capability request for system services (compiled into initramfs).
-/// Simpler than agent CapabilityRequest (agents.md §2.3) — system services
+/// Simpler than agent CapabilityRequest (agents.md §2.4) — system services
 /// are always required and have static justification strings.
 pub struct ServiceCapabilityRequest {
     capability: Capability,
@@ -896,54 +895,41 @@ Services form a directed acyclic graph (DAG) where edges represent "must start a
 
 **Cross-phase dependencies:** Each phase requires all services from every previous phase to be healthy before it starts. The graph below shows only intra-phase dependencies. Cross-phase dependencies are implicit: every Phase 2 service depends on `space_storage` (Phase 1), every Phase 3 service depends on Phase 2 core services (specifically `space_storage` for persistent state and `compositor` for display access where needed), and so on. Phase 3 (AI) and Phase 4 (User) run in parallel after Phase 2 completes — they depend on Phase 2 but not on each other (see §6.1 timeline).
 
-```
-╔═══════════════════════════════════════════════════════════════════╗
-║  PHASE 1: STORAGE                                                  ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  block_engine ──→ object_store ──→ space_storage                  ║
-║                                                                    ║
-╠═══════════════════════════════════════════════════════════════════╣
-║  PHASE 2: CORE SERVICES                                           ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  device_registry ──→ subsystem_framework                          ║
-║       │                    │                                       ║
-║       ▼                    ├──→ input_subsystem                    ║
-║  posix_compat (on-demand)  │                                       ║
-║                            ├──→ display_subsystem ──→ compositor   ║
-║                            │                                       ║
-║                            ├──→ network_subsystem                  ║
-║                            │                                       ║
-║                            └──→ audio_subsystem (on-demand)        ║
-║                                                                    ║
-╠═══════════════════════════════════════════════════════════════════╣
-║  PHASE 3 + PHASE 4: CONCURRENT after Phase 2 completes            ║
-║  (Phase 3 is non-critical; Phase 4 does not wait for Phase 3)     ║
-╠═══════════════════════════╦═══════════════════════════════════════╣
-║  PHASE 3: AI SERVICES     ║  PHASE 4: USER SERVICES               ║
-║  (non-critical path)      ║  (critical path continues)            ║
-╠═══════════════════════════╬═══════════════════════════════════════╣
-║                            ║                                       ║
-║  airs_core ──→ space_indexer║  identity_service                     ║
-║      │                     ║       │                                ║
-║      └──→ context_engine   ║       ▼                                ║
-║                            ║  preference_service                    ║
-║  (5-second timeout: if     ║       │                                ║
-║   AIRS not healthy by then,║       ├──→ attention_manager           ║
-║   Phase 5 proceeds without ║       │                                ║
-║   it; AIRS loads in bg)    ║       └──→ agent_runtime               ║
-║                            ║                                       ║
-╠═══════════════════════════╩═══════════════════════════════════════╣
-║  PHASE 5: EXPERIENCE (starts when Phase 4 completes)              ║
-║  (Phase 3 may still be loading — that's OK)                       ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  workspace ──→ conversation_bar                                   ║
-║                     │                                              ║
-║                     └──→ autostart_agents                          ║
-║                                                                    ║
-╚═══════════════════════════════════════════════════════════════════╝
+```mermaid
+flowchart TD
+    subgraph P1["PHASE 1: STORAGE"]
+        block_engine --> object_store --> space_storage
+    end
+
+    subgraph P2["PHASE 2: CORE SERVICES"]
+        device_registry --> subsystem_framework
+        device_registry --> posix_compat["posix_compat (on-demand)"]
+        subsystem_framework --> input_subsystem
+        subsystem_framework --> display_subsystem --> compositor
+        subsystem_framework --> network_subsystem
+        subsystem_framework --> audio_subsystem["audio_subsystem (on-demand)"]
+    end
+
+    subgraph P3P4["PHASE 3 + PHASE 4: CONCURRENT after Phase 2"]
+        subgraph P3["PHASE 3: AI SERVICES (non-critical path)"]
+            airs_core --> space_indexer
+            airs_core --> context_engine
+        end
+        subgraph P4["PHASE 4: USER SERVICES (critical path)"]
+            identity_service --> preference_service
+            preference_service --> attention_manager
+            preference_service --> agent_runtime
+        end
+    end
+
+    subgraph P5["PHASE 5: EXPERIENCE"]
+        workspace --> conversation_bar
+        conversation_bar --> autostart_agents
+    end
+
+    P1 --> P2
+    P2 --> P3P4
+    P4 --> P5
 ```
 
 **Service count:** The graph shows 21 nodes, but `autostart_agents` is a boot step (the Agent Runtime spawning user agents), not a persistent system service. The actual service count is **20** (3 + 8 + 3 + 4 + 2).
@@ -974,20 +960,34 @@ t=200ms: compositor healthy
 
 The Service Manager holds a `ServiceManagerCapability` derived from the kernel's root capability. When it starts a service, it mints the minimum set of capabilities that service needs:
 
-```
-Service Manager holds: ServiceManagerCapability
-  │
-  ├─→ block_engine:     RawStorageAccess, AuditWrite
-  ├─→ object_store:     BlockEngineChannel, AuditWrite
-  ├─→ space_storage:    ObjectStoreChannel, AuditWrite, SpaceManagement
-  ├─→ device_registry:  SpaceWrite("system/devices"), AuditWrite
-  ├─→ compositor:       DisplayAccess, InputAccess, SharedMemoryCreate
-  ├─→ network:          RawNetworkAccess, SpaceRead("system/credentials")
-  ├─→ airs:             InferenceAccess, SpaceReadWrite("system/models"),
-  │                     SpaceReadWrite("system/index")
-  ├─→ identity:         SpaceReadWrite("system/identity"), CryptoAccess
-  ├─→ agent_runtime:    ProcessCreate, CapabilityMint (attenuated)
-  └─→ ...
+```mermaid
+flowchart LR
+    SM["`Service Manager
+ServiceManagerCapability`"] --> BE["`block_engine
+RawStorageAccess, AuditWrite`"]
+    SM --> OS["`object_store
+BlockEngineChannel, AuditWrite`"]
+    SM --> SS["`space_storage
+ObjectStoreChannel, AuditWrite,
+SpaceManagement`"]
+    SM --> DR["`device_registry
+SpaceWrite(system/devices), AuditWrite`"]
+    SM --> CO["`compositor
+DisplayAccess, InputAccess,
+SharedMemoryCreate`"]
+    SM --> NET["`network
+RawNetworkAccess,
+SpaceRead(system/credentials)`"]
+    SM --> AIRS["`airs
+InferenceAccess,
+SpaceReadWrite(system/models),
+SpaceReadWrite(system/index)`"]
+    SM --> ID["`identity
+SpaceReadWrite(system/identity),
+CryptoAccess`"]
+    SM --> AR["`agent_runtime
+ProcessCreate,
+CapabilityMint (attenuated)`"]
 ```
 
 Each service receives exactly the capabilities it needs. No service holds the `ServiceManagerCapability` itself. Capability escalation is impossible — a compromised service cannot mint capabilities beyond its own set.
@@ -1578,30 +1578,33 @@ Persistence priority (try in order):
 
 If the early framebuffer is available (before compositor handoff) or can be reclaimed (after compositor, by reverting to the GOP framebuffer):
 
-```
-┌──────────────────────────────────────────────────┐
-│                                                    │
-│              AIOS KERNEL PANIC                     │
-│                                                    │
-│  Phase: HeapReady                                  │
-│  Message: out of memory: buddy allocator           │
-│           exhausted during slab refill             │
-│                                                    │
-│  PC:  0xffff0000_00042a8c                          │
-│  ESR: 0x00000000_96000045 (data abort, current EL) │
-│  FAR: 0x00000001_80000000                          │
-│                                                    │
-│  Backtrace:                                        │
-│    #0 0xffff0000_00042a8c slab_alloc+0x1c          │
-│    #1 0xffff0000_00038f10 box_new+0x28             │
-│    #2 0xffff0000_0001cd44 capability_create+0x54   │
-│    ...                                             │
-│                                                    │
-│  Crash dump saved to block device.                 │
-│  System will reboot in 10 seconds.                 │
-│  (Press any key for UART debug shell)              │
-│                                                    │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph panic["AIOS KERNEL PANIC"]
+        phase["Phase: HeapReady"]
+        msg["`Message: out of memory: buddy allocator
+exhausted during slab refill`"]
+        regs["`PC: 0xffff0000_00042a8c
+ESR: 0x00000000_96000045 (data abort, current EL)
+FAR: 0x00000001_80000000`"]
+        bt["`Backtrace:
+#0 0xffff0000_00042a8c slab_alloc+0x1c
+#1 0xffff0000_00038f10 box_new+0x28
+#2 0xffff0000_0001cd44 capability_create+0x54
+...`"]
+        footer["`Crash dump saved to block device.
+System will reboot in 10 seconds.
+(Press any key for UART debug shell)`"]
+
+        phase --- msg --- regs --- bt --- footer
+    end
+
+    style panic fill:#1a1a1a,stroke:#ff4444,color:#ffffff
+    style phase fill:#1a1a1a,stroke:none,color:#ff4444
+    style msg fill:#1a1a1a,stroke:none,color:#ffffff
+    style regs fill:#1a1a1a,stroke:none,color:#ffaa00
+    style bt fill:#1a1a1a,stroke:none,color:#cccccc
+    style footer fill:#1a1a1a,stroke:none,color:#888888
 ```
 
 The panic screen is rendered with the same `EarlyFramebuffer` code used for the splash screen — direct pixel writes, no GPU driver, no heap allocation. The font is a compiled-in 8x16 bitmap font, not the TTF fonts from the initramfs.
@@ -1639,24 +1642,18 @@ pub struct BootAttemptTracker {
 
 **Decision tree:**
 
-```
-Boot starts
-  │
-  ├── consecutive_failures < 3?
-  │     YES → normal boot
-  │     NO  → recovery mode
-  │
-  ▼ (normal boot)
-Phase 5 completes?
-  │
-  ├── YES → clear consecutive_failures, boot_success = true
-  │
-  └── NO (crash or hang during boot)
-        │
-        ├── Reboot (watchdog or manual)
-        │
-        └── consecutive_failures incremented
-            Loop back to top
+```mermaid
+flowchart TD
+    START["Boot starts"] --> CHECK{"consecutive_failures < 3?"}
+    CHECK -->|YES| NORMAL["Normal boot"]
+    CHECK -->|NO| RECOVERY["Recovery mode"]
+    NORMAL --> P5{"Phase 5 completes?"}
+    P5 -->|YES| CLEAR["`Clear consecutive_failures
+boot_success = true`"]
+    P5 -->|NO| CRASH["Crash or hang during boot"]
+    CRASH --> REBOOT["Reboot (watchdog or manual)"]
+    REBOOT --> INC["consecutive_failures incremented"]
+    INC --> START
 ```
 
 ### 9.2 Recovery Shell
@@ -1826,22 +1823,17 @@ Total initramfs size target: **< 32 MB**. The initramfs is compressed (zstd) to 
 
 The kernel and initramfs are bundled as a single boot image by the build system:
 
-```
-AIOS Boot Image:
-  ┌────────────────────────────┐
-  │  UEFI Stub (PE/COFF)       │  ~64 KiB
-  ├────────────────────────────┤
-  │  Kernel ELF                │  ~1.5 MB
-  ├────────────────────────────┤
-  │  Initramfs (zstd-compressed│  ~10 MB
-  │  cpio archive)             │
-  ├────────────────────────────┤
-  │  Boot manifest (JSON)      │  ~1 KiB
-  │  - kernel hash             │
-  │  - initramfs hash          │
-  │  - build timestamp         │
-  │  - version string          │
-  └────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph IMG["AIOS Boot Image"]
+        STUB["UEFI Stub (PE/COFF) ~64 KiB"]
+        ELF["Kernel ELF ~1.5 MB"]
+        INITRD["Initramfs (zstd-compressed cpio archive) ~10 MB"]
+        MANIFEST["`Boot manifest (JSON) ~1 KiB
+kernel hash, initramfs hash,
+build timestamp, version string`"]
+        STUB --- ELF --- INITRD --- MANIFEST
+    end
 ```
 
 The UEFI stub extracts the kernel and initramfs into separate physical memory regions, populates `BootInfo`, and jumps to the kernel. The boot manifest provides integrity verification — the stub checks hashes before jumping.

@@ -29,37 +29,29 @@ Flow is the connective tissue of AIOS. It is how data moves between agents, betw
 
 ## 2. Architecture
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                       Flow Service                       │
-│              (system service, always running)            │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  Transfer     │  │  History     │  │  Transform   │  │
-│  │  Manager      │  │  Store       │  │  Engine      │  │
-│  │               │  │              │  │              │  │
-│  │  initiate     │  │  index       │  │  negotiate   │  │
-│  │  stage        │  │  search      │  │  select      │  │
-│  │  deliver      │  │  retain      │  │  execute     │  │
-│  │  cancel       │  │  prune       │  │  register    │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  Provenance   │  │  Type        │  │  Multi-Device│  │
-│  │  Tracker      │  │  System      │  │  Sync        │  │
-│  │               │  │              │  │              │  │
-│  │  chain        │  │  MIME        │  │  replicate   │  │
-│  │  verify       │  │  semantic    │  │  merge       │  │
-│  │  inspect      │  │  negotiate   │  │  resolve     │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│                                                          │
-└───────────────────────────┬──────────────────────────────┘
-                            │ IPC (sys.flow channel)
-              ┌─────────────┼─────────────────┐
-              ▼             ▼                 ▼
-           Agents       Compositor       Subsystems
-           (SDK          (drag/drop,      (DataChannels,
-           FlowClient)   visual cues)     FlowPipes)
+```mermaid
+flowchart TD
+    subgraph FS["Flow Service (system service, always running)"]
+        TM["`Transfer Manager
+initiate, stage, deliver, cancel`"]
+        HS["`History Store
+index, search, retain, prune`"]
+        TE["`Transform Engine
+negotiate, select, execute, register`"]
+        PT["`Provenance Tracker
+chain, verify, inspect`"]
+        TS["`Type System
+MIME, semantic, negotiate`"]
+        MDS["`Multi-Device Sync
+replicate, merge, resolve`"]
+    end
+
+    FS -- "IPC (sys.flow channel)" --> Agents["`Agents
+(SDK FlowClient)`"]
+    FS -- "IPC (sys.flow channel)" --> Compositor["`Compositor
+(drag/drop, visual cues)`"]
+    FS -- "IPC (sys.flow channel)" --> Subsystems["`Subsystems
+(DataChannels, FlowPipes)`"]
 ```
 
 The Flow Service runs as a system service registered at `sys.flow`. The core service lands in dev Phase 11 (Tasks, Flow & Attention), with compositor drag/drop protocol scaffolded in Phase 6 and AIRS transform scaffolding in Phase 8 (see §13 for full implementation order). At runtime, it starts during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
@@ -212,20 +204,20 @@ FlowEntry is stored as a space object in `system/flow/history/`. The object's se
 
 A transfer moves through a defined set of states:
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────────┐     ┌───────────┐
-│ Initiated │────→│  Staged  │────→│  Negotiating  │────→│ Delivered │
-└──────────┘     └──────────┘     └──────────────┘     └───────────┘
-      │                │                  │                    │
-      │                │                  │                    ▼
-      │                │                  │            ┌──────────────┐
-      │                │                  │            │  Recorded    │
-      │                │                  │            │  (history)   │
-      │                │                  │            └──────────────┘
-      ▼                ▼                  ▼
-┌──────────────────────────────────────────────┐
-│              Cancelled / Expired              │
-└──────────────────────────────────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> Initiated
+    Initiated --> Staged
+    Staged --> Negotiating
+    Negotiating --> Delivered
+    Delivered --> Recorded : history
+
+    Initiated --> Cancelled_Expired
+    Staged --> Cancelled_Expired
+    Negotiating --> Cancelled_Expired
+
+    state "Cancelled / Expired" as Cancelled_Expired
+    state "Recorded (history)" as Recorded
 ```
 
 ```rust
@@ -705,16 +697,16 @@ pub struct TransformRecord {
 
 **Conversion graph:** The registry maintains a directed graph where nodes are content types and edges are transforms. When a conversion is needed, the engine finds the shortest (cheapest) path. The graph is recomputed when transforms are added or removed.
 
-```
-PlainText ←──── RichText ←──── HTML
-    │              │               ↑
-    ▼              ▼               │
- Embedding     Markdown        Code ──→ FormattedHTML
-    ↑              │              (syntax highlight)
-    │              ▼
-    │         FormattedTable
-    │
- Audio ──→ Transcript (AIRS)
+```mermaid
+flowchart LR
+    HTML --> RichText --> PlainText
+    RichText --> Markdown --> FormattedTable
+    PlainText --> Embedding
+    Code --> HTML
+    Code --> FormattedHTML["`FormattedHTML
+(syntax highlight)`"]
+    Audio --> Transcript["Transcript (AIRS)"] --> PlainText
+    PlainText --> Embedding
 ```
 
 > **Note:** This graph is simplified for illustration. It omits several transform paths listed in the §4.1 table (e.g., PDF → PlainText, Image → Thumbnail, StructuredData → FormattedTable as a standalone path, URL → PageContent). See §4.1 for the full transform matrix.
@@ -754,31 +746,28 @@ AIRS indexes Flow history like any other space. Users can search semantically: "
 
 The Flow Tray (see [experience.md](../experience/experience.md)) provides the user-facing history interface:
 
-```
-┌─ FLOW HISTORY (Ctrl+Shift+V) ──────────────────────────────────┐
-│                                                                   │
-│  Search: [                                               ] [🔍]  │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  "pub fn transform_engine..."                    3 min ago  │ │
-│  │  Code (Rust) · from: editor-agent · to: browser-agent      │ │
-│  │  Intent: Copy                                    [Re-send]  │ │
-│  ├─────────────────────────────────────────────────────────────┤ │
-│  │  [thumbnail]  Screenshot of architecture diagram  15 min ago│ │
-│  │  Image (PNG, 1920x1080) · from: screenshot-agent            │ │
-│  │  Intent: Copy                                    [Re-send]  │ │
-│  ├─────────────────────────────────────────────────────────────┤ │
-│  │  "Attention mechanisms allow models to..."       1 hour ago │ │
-│  │  RichText · from: browser-tab (arxiv.org) · to: research   │ │
-│  │  Intent: Quote · Transform: HTML → PlainText     [Re-send]  │ │
-│  ├─────────────────────────────────────────────────────────────┤ │
-│  │  research/papers/transformer-survey.pdf        yesterday    │ │
-│  │  Reference · from: research-agent                           │ │
-│  │  Intent: Reference                               [Re-send]  │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  Showing 4 of 247 entries · [Load more]                          │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph FlowHistory["FLOW HISTORY (Ctrl+Shift+V)"]
+        Search["Search: [ ... ] 🔍"]
+        subgraph Entries["History Entries"]
+            E1["`'pub fn transform_engine...' — 3 min ago
+Code (Rust) · from: editor-agent · to: browser-agent
+Intent: Copy [Re-send]`"]
+            E2["`[thumbnail] Screenshot of architecture diagram — 15 min ago
+Image (PNG, 1920x1080) · from: screenshot-agent
+Intent: Copy [Re-send]`"]
+            E3["`'Attention mechanisms allow models to...' — 1 hour ago
+RichText · from: browser-tab (arxiv.org) · to: research
+Intent: Quote · Transform: HTML → PlainText [Re-send]`"]
+            E4["`research/papers/transformer-survey.pdf — yesterday
+Reference · from: research-agent
+Intent: Reference [Re-send]`"]
+        end
+        Footer["Showing 4 of 247 entries · Load more"]
+    end
+
+    Search --- E1 --- E2 --- E3 --- E4 --- Footer
 ```
 
 **Features:**
@@ -931,28 +920,28 @@ pub enum DropCompatibility {
 
 The compositor provides visual cues during drag operations, informed by Flow's type negotiation:
 
-```
-┌─────────────────────────────────────┐
-│  Source Surface                      │
-│                                     │
-│    [dragging: code snippet]         │
-│        ╲                            │
-└─────────╲───────────────────────────┘
-           ╲
-            ╲   ┌── Drag Preview ─────────┐
-             ╲  │  pub fn transform()...   │
-              ╲ │  Rust · 12 lines         │
-               ╲└──────────────────────────┘
-                ╲
-  ┌──────────────╲──────────┐  ┌────────────────────────┐
-  │  Terminal     ╲         │  │  Browser Tab            │
-  │  (compatible)  •        │  │  (needs transform)      │
-  │                         │  │                          │
-  │  ┌─green glow──────┐   │  │  ┌─amber glow───────┐   │
-  │  │ drop here       │   │  │  │ will convert to   │   │
-  │  │                 │   │  │  │ formatted HTML     │   │
-  │  └─────────────────┘   │  │  └────────────────────┘  │
-  └─────────────────────────┘  └──────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Source["Source Surface"]
+        Dragging["dragging: code snippet"]
+    end
+
+    subgraph Preview["Drag Preview"]
+        PV["`pub fn transform()...
+Rust · 12 lines`"]
+    end
+
+    subgraph Terminal["Terminal (compatible)"]
+        GreenZone["🟢 green glow: drop here"]
+    end
+
+    subgraph Browser["Browser Tab (needs transform)"]
+        AmberZone["🟡 amber glow: will convert to formatted HTML"]
+    end
+
+    Source --> Preview
+    Preview --> Terminal
+    Preview --> Browser
 ```
 
 **Visual states:**
@@ -1084,37 +1073,19 @@ pub enum StreamState {
 
 The most common Flow pattern: one agent pushes content, another pulls it.
 
-```
-Agent A (editor)                Flow Service                Agent B (terminal)
-      │                              │                            │
-      │  push(TypedContent,          │                            │
-      │    intent: Copy,             │                            │
-      │    target: Any)              │                            │
-      │─────────────────────────────→│                            │
-      │                              │                            │
-      │  [FlowWrite cap checked]     │                            │
-      │  [Content staged in          │                            │
-      │   shared memory, COW]        │                            │
-      │                              │                            │
-      │  Ok(TransferId)              │                            │
-      │←─────────────────────────────│                            │
-      │                              │                            │
-      │                              │  pull(FlowFilter {         │
-      │                              │    content_type: Text })   │
-      │                              │←───────────────────────────│
-      │                              │                            │
-      │                              │  [FlowRead cap checked]   │
-      │                              │  [Type negotiation:        │
-      │                              │   source=Code(Rust),       │
-      │                              │   target accepts PlainText │
-      │                              │   → apply strip-formatting │
-      │                              │   transform]               │
-      │                              │                            │
-      │                              │  Ok(FlowEntry {            │
-      │                              │    content: plain text,    │
-      │                              │    transform: applied })   │
-      │                              │───────────────────────────→│
-      │                              │                            │
+```mermaid
+sequenceDiagram
+    participant A as Agent A (editor)
+    participant F as Flow Service
+    participant B as Agent B (terminal)
+
+    A->>F: push(TypedContent, intent: Copy, target: Any)
+    Note over F: FlowWrite cap checked<br/>Content staged in shared memory, COW
+    F-->>A: Ok(TransferId)
+
+    B->>F: pull(FlowFilter { content_type: Text })
+    Note over F: FlowRead cap checked<br/>Type negotiation:<br/>source=Code(Rust),<br/>target accepts PlainText<br/>→ apply strip-formatting transform
+    F->>B: Ok(FlowEntry { content: plain text, transform: applied })
 ```
 
 **Targeted transfers:** When Agent A knows the destination, it can target specifically:
@@ -1170,30 +1141,18 @@ pub enum Capability {
 
 AIOS devices sharing an identity can sync Flow. Copy on your laptop, paste on your tablet.
 
-```
-Device A (laptop)                               Device B (tablet)
-      │                                               │
-      │  User copies text                             │
-      │  → Flow push(content,                         │
-      │      intent: Copy,                            │
-      │      target: Any)                             │
-      │                                               │
-      │  Flow Service stores locally                  │
-      │  Flow Service replicates via                  │
-      │  AIOS Peer Protocol                           │
-      │  ─────────────────────────────────────────→   │
-      │  [encrypted with identity keys]               │
-      │  [includes: TypedContent, intent,             │
-      │   source_device, timestamp]                   │
-      │                                               │
-      │                              Flow Service receives
-      │                              Stores in local history
-      │                              Available for pull()
-      │                                               │
-      │                              User pastes      │
-      │                              → Flow pull()    │
-      │                              → content delivered
-      │                                               │
+```mermaid
+sequenceDiagram
+    participant A as Device A (laptop)
+    participant B as Device B (tablet)
+
+    Note over A: User copies text<br/>Flow push(content, intent: Copy, target: Any)
+    Note over A: Flow Service stores locally
+
+    A->>B: Replicate via AIOS Peer Protocol<br/>[encrypted with identity keys]<br/>[includes: TypedContent, intent, source_device, timestamp]
+
+    Note over B: Flow Service receives<br/>Stores in local history<br/>Available for pull()
+    Note over B: User pastes<br/>Flow pull()<br/>content delivered
 ```
 
 **Transport:** Cross-device Flow uses the AIOS Peer Protocol (defined in [networking.md](../platform/networking.md)). Content is encrypted in transit using the shared identity's keys. The Peer Protocol handles device discovery, connection establishment, and reliable delivery.

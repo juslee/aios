@@ -1261,7 +1261,7 @@ When video and audio play simultaneously (media player, video call, game), the a
 /// The audio subsystem is the clock master — video follows audio.
 /// Rationale: audio glitches are more noticeable than dropped video frames.
 pub struct MediaTimeline {
-    /// Monotonic reference clock (ARM Generic Timer, ~54 MHz)
+    /// Monotonic reference clock (ARM Generic Timer, 62.5 MHz on QEMU)
     base_clock: ArmGenericTimer,
 
     /// Current playback position in media time (microseconds)

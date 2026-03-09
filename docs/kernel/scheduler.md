@@ -88,29 +88,44 @@ pub enum SchedulerClass {
 
 ### 3.2 Scheduler Architecture
 
-```
-                        Per-CPU Run Queues
-┌──────────────────────────────────────────────────────────────┐
-│  CPU 0                CPU 1               CPU 2    CPU 3     │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────┐ ┌──────┐ │
-│  │ RT Queue     │    │ RT Queue     │    │  RT  │ │  RT  │ │
-│  │ (EDF heap)   │    │ (EDF heap)   │    │      │ │      │ │
-│  ├──────────────┤    ├──────────────┤    ├──────┤ ├──────┤ │
-│  │ Interactive  │    │ Interactive  │    │ Intv │ │ Intv │ │
-│  │ (prio queue) │    │ (prio queue) │    │      │ │      │ │
-│  ├──────────────┤    ├──────────────┤    ├──────┤ ├──────┤ │
-│  │ Normal       │    │ Normal       │    │ Norm │ │ Norm │ │
-│  │ (WFQ tree)   │    │ (WFQ tree)   │    │      │ │      │ │
-│  ├──────────────┤    ├──────────────┤    ├──────┤ ├──────┤ │
-│  │ Idle         │    │ Idle         │    │ Idle │ │ Idle │ │
-│  │ (FIFO list)  │    │ (FIFO list)  │    │      │ │      │ │
-│  └──────────────┘    └──────────────┘    └──────┘ └──────┘ │
-│         │                   │                │        │      │
-│         └───────────────────┴────────────────┴────────┘      │
-│                             │                                 │
-│                    Load Balancer                              │
-│              (periodic + push/pull migration)                 │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph RQ["Per-CPU Run Queues"]
+        subgraph CPU0["CPU 0"]
+            RT0["RT Queue (EDF heap)"]
+            INT0["Interactive (prio queue)"]
+            NRM0["Normal (WFQ tree)"]
+            IDL0["Idle (FIFO list)"]
+            RT0 --- INT0 --- NRM0 --- IDL0
+        end
+        subgraph CPU1["CPU 1"]
+            RT1["RT Queue (EDF heap)"]
+            INT1["Interactive (prio queue)"]
+            NRM1["Normal (WFQ tree)"]
+            IDL1["Idle (FIFO list)"]
+            RT1 --- INT1 --- NRM1 --- IDL1
+        end
+        subgraph CPU2["CPU 2"]
+            RT2["RT Queue"]
+            INT2["Interactive"]
+            NRM2["Normal"]
+            IDL2["Idle"]
+            RT2 --- INT2 --- NRM2 --- IDL2
+        end
+        subgraph CPU3["CPU 3"]
+            RT3["RT Queue"]
+            INT3["Interactive"]
+            NRM3["Normal"]
+            IDL3["Idle"]
+            RT3 --- INT3 --- NRM3 --- IDL3
+        end
+    end
+
+    CPU0 --- LB["`Load Balancer
+(periodic + push/pull migration)`"]
+    CPU1 --- LB
+    CPU2 --- LB
+    CPU3 --- LB
 ```
 
 Each CPU has its own set of run queues — one per scheduling class. No global run queue lock. The only cross-CPU coordination is the load balancer, which runs periodically (every 4ms) and on push/pull events (CPU going idle or overloaded).
@@ -415,36 +430,31 @@ The context switch is the most performance-critical code path in the kernel. Eve
 
 An aarch64 context switch saves and restores the following state:
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                  Thread Hardware Context                      │
-│                                                              │
-│  General-purpose registers:                                  │
-│    x0-x30  (31 registers, 8 bytes each = 248 bytes)        │
-│    SP_EL0  (user stack pointer)                             │
-│    PC      (saved in ELR_EL1 on trap)                       │
-│    PSTATE  (saved in SPSR_EL1 on trap)                      │
-│                                                    ~256 bytes│
-│                                                              │
-│  Floating-point / NEON registers (LAZY SAVE):               │
-│    v0-v31  (32 registers, 16 bytes each = 512 bytes)       │
-│    FPCR    (floating-point control register)                │
-│    FPSR    (floating-point status register)                 │
-│                                                    ~520 bytes│
-│                                                              │
-│  Address space state:                                        │
-│    TTBR0_EL1  (user page table base)                        │
-│    ASID       (encoded in TTBR0 upper bits)                 │
-│                                                     16 bytes │
-│                                                              │
-│  Per-thread timer:                                           │
-│    CNTV_CVAL_EL0  (virtual timer compare value)             │
-│    CNTV_CTL_EL0   (virtual timer control)                   │
-│                                                     16 bytes │
-│                                                              │
-│  Total (without FP): ~296 bytes                              │
-│  Total (with FP):    ~808 bytes                              │
-└────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph ctx["Thread Hardware Context"]
+        subgraph gp["General-purpose registers (~256 bytes)"]
+            GP1["x0-x30 (31 registers, 8 bytes each = 248 bytes)"]
+            GP2["SP_EL0 (user stack pointer)"]
+            GP3["PC (saved in ELR_EL1 on trap)"]
+            GP4["PSTATE (saved in SPSR_EL1 on trap)"]
+        end
+        subgraph fp["Floating-point / NEON registers — LAZY SAVE (~520 bytes)"]
+            FP1["v0-v31 (32 registers, 16 bytes each = 512 bytes)"]
+            FP2["FPCR (floating-point control register)"]
+            FP3["FPSR (floating-point status register)"]
+        end
+        subgraph as["Address space state (16 bytes)"]
+            AS1["TTBR0_EL1 (user page table base)"]
+            AS2["ASID (encoded in TTBR0 upper bits)"]
+        end
+        subgraph tmr["Per-thread timer (16 bytes)"]
+            TM1["CNTV_CVAL_EL0 (virtual timer compare value)"]
+            TM2["CNTV_CTL_EL0 (virtual timer control)"]
+        end
+        totals["Total without FP: ~296 bytes | Total with FP: ~808 bytes"]
+        gp --- fp --- as --- tmr --- totals
+    end
 ```
 
 **Lazy FP save:** Floating-point and NEON registers are not saved on every context switch. Instead, the kernel sets the CPACR_EL1 trap bit when switching away from a thread that used FP. If the next thread touches an FP register, the trap fires, the kernel saves the old FP state and restores the new, and clears the trap bit. Most IPC handler threads never touch FP registers, so this optimization avoids 520 bytes of save/restore on the common path.
@@ -501,41 +511,21 @@ pub struct Thread {
 
 The critical optimization for microkernel performance. When agent A makes a synchronous IPC call to service B, the kernel can switch directly from A to B without touching the scheduler queues:
 
-```
-Agent A                    Kernel                     Service B
-   │                         │                            │
-   │  IPC_CALL(channel, msg) │                            │
-   │ ──────────────────────→ │                            │
-   │  (SVC trap to EL1)      │                            │
-   │                         │  1. Validate channel       │
-   │                         │  2. Find B's waiting       │
-   │                         │     thread (BlockedIpc)    │
-   │                         │  3. Copy message:          │
-   │                         │     A.send_buf → B.recv_buf│
-   │                         │  4. Save A's registers     │
-   │                         │  5. A.state = BlockedIpc   │
-   │                         │  6. Donate A's remaining   │
-   │                         │     time slice to B        │
-   │                         │  7. TTBR0 = B.ttbr0       │
-   │                         │     (ASID avoids TLB flush)│
-   │                         │  8. Restore B's registers  │
-   │                         │ ──────────────────────────→│
-   │                         │                            │
-   │                         │             B processes request
-   │                         │                            │
-   │                         │ ←──────────────────────────│
-   │                         │  IPC_REPLY(reply)             │
-   │                         │  (SVC trap to EL1)          │
-   │                         │                            │
-   │                         │  9. Copy reply:            │
-   │                         │     B.send_buf → A.recv_buf│
-   │                         │  10. Save B's registers    │
-   │                         │  11. B.state = BlockedIpc  │
-   │                         │  12. TTBR0 = A.ttbr0      │
-   │                         │  13. Restore A's registers │
-   │ ←────────────────────── │                            │
-   │  (returns from IpcCall) │                            │
-   │                         │                            │
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant K as Kernel
+    participant B as Service B
+
+    A->>K: IPC_CALL(channel, msg)<br/>(SVC trap to EL1)
+    Note over K: 1. Validate channel<br/>2. Find B's waiting thread (BlockedIpc)<br/>3. Copy message: A.send_buf → B.recv_buf<br/>4. Save A's registers<br/>5. A.state = BlockedIpc<br/>6. Donate A's remaining time slice to B<br/>7. TTBR0 = B.ttbr0 (ASID avoids TLB flush)<br/>8. Restore B's registers
+    K->>B: (direct switch)
+
+    Note over B: B processes request
+
+    B->>K: IPC_REPLY(reply)<br/>(SVC trap to EL1)
+    Note over K: 9. Copy reply: B.send_buf → A.recv_buf<br/>10. Save B's registers<br/>11. B.state = BlockedIpc<br/>12. TTBR0 = A.ttbr0<br/>13. Restore A's registers
+    K-->>A: (returns from IpcCall)
 ```
 
 **Key properties of the direct switch:**
@@ -622,23 +612,20 @@ The typical case (IPC between agents with warm caches) is under 1 us. The worst 
 
 The compositor is the primary RT consumer. It must produce a frame every 16.6ms for 60fps output:
 
-```
-         0ms              4ms                           16.6ms
-          │────────────────│───────────────────────────────│
-          │  Compositor    │  Available for other work     │
-          │  frame render  │  (interactive, normal, idle)  │
-          │  (budget: 4ms) │  (~12.6ms on this core)      │
-          │                │                               │
-          ├── Collect      │                               │
-          │   damage       │                               │
-          ├── Occlusion    │                               │
-          │   cull         │                               │
-          ├── Composite    │                               │
-          │   surfaces     │                               │
-          ├── Present      │                               │
-          │   (VSync)      │                               │
-          │────────────────│───────────────────────────────│
-                                                    next frame
+```mermaid
+gantt
+    title Compositor Frame Timeline (16.6ms period)
+    dateFormat X
+    axisFormat %s ms
+
+    section Compositor (budget: 4ms)
+    Collect damage       :a1, 0, 1
+    Occlusion cull       :a2, after a1, 1
+    Composite surfaces   :a3, after a2, 1
+    Present (VSync)      :a4, after a3, 1
+
+    section Available
+    Other work (interactive, normal, idle ~12.6ms) :b1, after a4, 12
 ```
 
 The compositor declares itself as an RT task with:
@@ -652,13 +639,23 @@ If the compositor finishes in 2ms (common — most frames have minimal damage), 
 
 Audio mixing has tighter timing requirements than the compositor. An audio glitch (buffer underrun) is more noticeable than a single dropped frame:
 
-```
-Audio mixing timeline (5ms buffer, 200 Hz callback):
+```mermaid
+gantt
+    title Audio Mixing Timeline (5ms buffer, 200 Hz callback)
+    dateFormat X
+    axisFormat %s ms
 
-  │←── 5ms ──→│←── 5ms ──→│←── 5ms ──→│
-  │ mix buffer │ mix buffer │ mix buffer │
-  │  0.5ms     │  0.5ms     │  0.5ms     │
-  │  budget    │  budget    │  budget    │
+    section Period 1
+    Mix buffer (0.5ms budget) :a1, 0, 1
+    Idle                      :a2, after a1, 9
+
+    section Period 2
+    Mix buffer (0.5ms budget) :b1, 10, 1
+    Idle                      :b2, after b1, 9
+
+    section Period 3
+    Mix buffer (0.5ms budget) :c1, 20, 1
+    Idle                      :c2, after c1, 9
 ```
 
 The audio service declares:
@@ -887,19 +884,20 @@ Inference threads run in the Normal class, not RT. Inference is important but no
 
 The strategy is chunked execution with core pinning:
 
-```
-Inference thread execution pattern:
+```mermaid
+gantt
+    title Inference Thread Execution Pattern — Core 1 (pinned)
+    dateFormat X
+    axisFormat %s ms
 
-Core 1 (pinned for inference):
+    section Inference
+    Generate 8 tokens (~40ms) :a1, 0, 40
+    Generate 8 tokens (~40ms) :a2, 42, 40
+    Generate 8 tokens (~40ms) :a3, 84, 40
 
-│←── chunk ──→│yield│←── chunk ──→│yield│←── chunk ──→│
-│ generate    │     │ generate    │     │ generate    │
-│ 8 tokens    │     │ 8 tokens    │     │ 8 tokens    │
-│ (~40ms)     │     │ (~40ms)     │     │ (~40ms)     │
-│             │ ^^^ │             │ ^^^ │             │
-│             │other│             │other│             │
-│             │work │             │work │             │
-│             │~2ms │             │~2ms │             │
+    section Yield
+    Other work (~2ms) :crit, y1, 40, 2
+    Other work (~2ms) :crit, y2, 82, 2
 ```
 
 **Chunked token generation.** The inference engine generates tokens in chunks of N (default: 8). After each chunk, the inference thread yields to the scheduler. This creates natural preemption points without the overhead of involuntary preemption. The chunk size is tunable — larger chunks increase throughput but reduce responsiveness.
@@ -990,35 +988,41 @@ pub enum InferenceState {
 
 Inference can be preempted, but only at well-defined preemption points to avoid expensive state reconstruction:
 
-```
-Inference execution with preemption points:
+```mermaid
+flowchart LR
+    subgraph prompt["Prompt Evaluation"]
+        L0["`Layer 0
+Attn + FFN`"] -->|PP| L1["`Layer 1
+Attn + FFN`"]
+        L1 -->|PP| L2["`Layer 2
+Attn + FFN`"]
+        L2 -->|PP| L3["`...
+`"]
+        L3 -->|PP| L31["`Layer 31
+Attn + FFN`"]
+    end
 
-┌─────────────────────────────────────────────────────────┐
-│                    Prompt Evaluation                       │
-│                                                           │
-│  Layer 0     Layer 1     Layer 2    ...    Layer 31       │
-│  ┌───────┐  ┌───────┐  ┌───────┐       ┌───────┐       │
-│  │Attn   │  │Attn   │  │Attn   │       │Attn   │       │
-│  │FFN    │  │FFN    │  │FFN    │       │FFN    │       │
-│  │       │  │       │  │       │       │       │       │
-│  └──┬────┘  └──┬────┘  └──┬────┘       └──┬────┘       │
-│     │PP        │PP        │PP              │PP           │
-│                                                           │
-│  PP = Preemption Point (between transformer layers)       │
-└─────────────────────────────────────────────────────────┘
+    subgraph token["Token Generation"]
+        T1["`Token 1
+32 layers`"] -->|PP| T2["`Token 2
+32 layers`"]
+        T2 -->|PP| T3["`Token 3
+32 layers`"]
+        T3 -->|PP| T4["`...
+`"]
+        T4 -->|PP| T8["`Token 8
+32 layers`"]
+        T8 -->|yield| SCHED["Scheduler"]
+        SCHED --> T9["`Token 9
+...`"]
+    end
 
-┌─────────────────────────────────────────────────────────┐
-│                  Token Generation                         │
-│                                                           │
-│  Token 1  Token 2  Token 3  ... Token 8  │yield│ ...    │
-│  ┌──────┐ ┌──────┐ ┌──────┐    ┌──────┐ │     │        │
-│  │32 lyr│ │32 lyr│ │32 lyr│    │32 lyr│ │sched│        │
-│  └──┬───┘ └──┬───┘ └──┬───┘    └──┬───┘ │     │        │
-│     │PP      │PP      │PP          │PP   │     │        │
-│                                          │     │        │
-│  PP = Preemption Point (after each token)│     │        │
-└─────────────────────────────────────────────────────────┘
+    prompt ~~~ token
+
+    style SCHED fill:#ff6644,stroke:#ff4444,color:#ffffff
 ```
+
+> **PP** = Preemption Point. In prompt evaluation, PP occurs between transformer layers. In token generation, PP occurs after each token, with a yield to the scheduler after each chunk (default: 8 tokens).
 
 **Preemption point locations:**
 1. **Between transformer layers** during prompt evaluation. After each layer completes, the inference thread checks a preemption flag. If set, it saves the layer index and KV cache position, then yields.
@@ -1666,32 +1670,40 @@ impl Scheduler {
 
 On the target hardware (Raspberry Pi 4 with Cortex-A72, Pi 5 with Cortex-A76), the default core assignment is:
 
-```
-┌────────────────────────────────────────────────────────┐
-│  Core 0: RT + Interactive                                │
-│    Compositor frame rendering (RT, EDF)                  │
-│    Audio mixing (RT, EDF)                                │
-│    Active agent UI threads (Interactive)                  │
-│    Conversation bar (Interactive)                         │
-│    User input handling (Interactive)                      │
-│                                                          │
-│  Core 1: Primary Inference                               │
-│    AIRS inference threads (Normal, high weight)           │
-│    Interactive inference gets this core first             │
-│    Pinned via CPU affinity for cache warmth               │
-│                                                          │
-│  Core 2: Secondary Inference + Normal                    │
-│    Overflow inference (when core 1 is busy)              │
-│    Background agents                                      │
-│    System services (Space Storage, NTM)                   │
-│                                                          │
-│  Core 3: Normal + Idle                                   │
-│    Background agents                                      │
-│    System services                                        │
-│    Space Indexer                                          │
-│    Garbage collection, behavioral analysis                │
-│    Idle tasks                                            │
-└────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph core0["Core 0: RT + Interactive"]
+        C0_1["Compositor frame rendering (RT, EDF)"]
+        C0_2["Audio mixing (RT, EDF)"]
+        C0_3["Active agent UI threads (Interactive)"]
+        C0_4["Conversation bar (Interactive)"]
+        C0_5["User input handling (Interactive)"]
+    end
+
+    subgraph core1["Core 1: Primary Inference"]
+        C1_1["AIRS inference threads (Normal, high weight)"]
+        C1_2["Interactive inference gets this core first"]
+        C1_3["Pinned via CPU affinity for cache warmth"]
+    end
+
+    subgraph core2["Core 2: Secondary Inference + Normal"]
+        C2_1["Overflow inference (when core 1 is busy)"]
+        C2_2["Background agents"]
+        C2_3["System services (Space Storage, NTM)"]
+    end
+
+    subgraph core3["Core 3: Normal + Idle"]
+        C3_1["Background agents"]
+        C3_2["System services"]
+        C3_3["Space Indexer"]
+        C3_4["Garbage collection, behavioral analysis"]
+        C3_5["Idle tasks"]
+    end
+
+    style core0 fill:#3a1a1a,stroke:#ff6644,color:#ffffff
+    style core1 fill:#1a1a3a,stroke:#6688ff,color:#ffffff
+    style core2 fill:#1a3a3a,stroke:#44dddd,color:#ffffff
+    style core3 fill:#2a2a2a,stroke:#888888,color:#ffffff
 ```
 
 This assignment is the default, enforced through CPU affinity masks on thread creation. The load balancer can override it under pressure — if core 0 is idle and cores 2-3 are overloaded, normal threads can migrate to core 0. But inference threads strongly prefer cores 1-2 (affinity mask `{1, 2}`), and RT threads strongly prefer core 0 (affinity mask `{0}`).
@@ -2134,16 +2146,26 @@ The kernel has two concurrent execution models:
 
 2. **Async tasks (futures).** Cooperative, poll-based, run within a kernel thread's context. An async task borrows the current thread's stack during `.poll()` and yields when it returns `Poll::Pending`. No context switch — just a function return.
 
-```
-Scheduler thread (preemptive)          Async task (cooperative)
-┌─────────────────────┐               ┌─────────────────────┐
-│ Has its own stack    │               │ Borrows thread stack │
-│ Own register state   │               │ No saved registers   │
-│ Context switch = save│               │ Yield = return Pending│
-│   registers, switch  │               │ Resume = poll() again│
-│   page tables, etc   │               │                      │
-│ Cost: ~1-10μs        │               │ Cost: ~50-100ns      │
-└─────────────────────┘               └─────────────────────┘
+```mermaid
+flowchart LR
+    subgraph sched["Scheduler Thread (preemptive)"]
+        S1["Has its own stack"]
+        S2["Own register state"]
+        S3["`Context switch = save registers,
+switch page tables, etc`"]
+        S4["Cost: ~1-10 μs"]
+    end
+
+    subgraph async["Async Task (cooperative)"]
+        A1["Borrows thread stack"]
+        A2["No saved registers"]
+        A3["`Yield = return Pending
+Resume = poll() again`"]
+        A4["Cost: ~50-100 ns"]
+    end
+
+    style sched fill:#1a1a3a,stroke:#6688ff,color:#ffffff
+    style async fill:#1a3a1a,stroke:#44ff66,color:#ffffff
 ```
 
 **Why both?** Scheduler tasks provide isolation and preemption — essential for untrusted code and fairness. Async tasks provide lightweight concurrency within trusted kernel code — essential for orchestrating boot services, IPC multiplexing, and interrupt-driven I/O without thread-per-operation overhead.

@@ -12,23 +12,32 @@ AIOS supports four first-class development languages through a unified capabilit
 language runtime enforces the same security boundaries — the language is an implementation detail,
 the capability set is the security boundary.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Agent Manifest (manifest.toml)            │
-│            Declares: runtime, capabilities, schedule         │
-├─────────────────────────────────────────────────────────────┤
-│                    RuntimeAdapter trait                       │
-│  NativeRuntime  PythonRuntime  TypeScriptRuntime  WasmRuntime │
-├──────┬──────────┬────────────┬───────────────────────────────┤
-│ Rust │  Python  │ TypeScript │           WASM                │
-│native│RustPython│  QuickJS   │         wasmtime              │
-│ ELF  │embedded  │ embedded   │      AOT-compiled             │
-├──────┴──────────┴────────────┴───────────────────────────────┤
-│              AIOS Capability System (8 layers)               │
-│         Intent → Capability → Behavior → Zone → ...         │
-├─────────────────────────────────────────────────────────────┤
-│              AIOS Kernel (31 syscalls, IPC)                   │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Manifest["`Agent Manifest (manifest.toml)
+*Declares: runtime, capabilities, schedule*`"]
+
+    subgraph Adapter["RuntimeAdapter trait"]
+        Rust["`Rust
+*NativeRuntime
+native ELF*`"]
+        Python["`Python
+*PythonRuntime
+RustPython embedded*`"]
+        TS["`TypeScript
+*TypeScriptRuntime
+QuickJS embedded*`"]
+        WASM["`WASM
+*WasmRuntime
+wasmtime AOT-compiled*`"]
+    end
+
+    CapSys["`AIOS Capability System (8 layers)
+*Intent, Capability, Behavior, Zone, ...*`"]
+    Kernel["`AIOS Kernel
+*31 syscalls, IPC*`"]
+
+    Manifest --> Adapter --> CapSys --> Kernel
 ```
 
 ### When Each Language Arrives
@@ -79,14 +88,22 @@ async fn my_agent(ctx: AgentContext) -> Result<()> {
 
 This is the hardest self-hosting problem because `rustc` depends on LLVM (C++):
 
-```
-Phase 15a:  musl libc compiled on AIOS (C library available)
-Phase 15f:  LLVM/clang compiled on AIOS (C++ compiler available)
-            → Now LLVM libraries exist natively
-Phase 15+:  Cross-compile rustc for AIOS from host
-            → Ship as pre-built binary initially
-Phase 16+:  Native rustc compiles rustc on AIOS
-            → Full Rust self-hosting achieved
+```mermaid
+flowchart LR
+    A["`Phase 15a
+*musl libc compiled on AIOS
+C library available*`"]
+    B["`Phase 15f
+*LLVM/clang compiled on AIOS
+C++ compiler available*`"]
+    C["`Phase 15+
+*Cross-compile rustc for AIOS
+Ship as pre-built binary*`"]
+    D["`Phase 16+
+*Native rustc compiles rustc
+Full Rust self-hosting*`"]
+
+    A --> B --> C --> D
 ```
 
 **The blocker isn't Rust — it's LLVM.** Rust's compiler uses LLVM as its code generation backend.
@@ -289,17 +306,16 @@ pub fn agent_main() {
 **Agent WASM (Phase 12):** WASM modules run in wasmtime inside the agent sandbox. Double-sandboxed:
 WASM's linear memory sandbox inside AIOS's capability sandbox.
 
-```
-┌──────────────────────────────────┐
-│ AIOS Agent Sandbox (capabilities)│
-│  ┌────────────────────────────┐  │
-│  │ WASM Sandbox (wasmtime)    │  │
-│  │  Linear memory only        │  │
-│  │  WASI imports only         │  │
-│  │  No shared memory          │  │
-│  │  No direct syscalls        │  │
-│  └────────────────────────────┘  │
-└──────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph AIOS["AIOS Agent Sandbox (capabilities)"]
+        subgraph WASM["WASM Sandbox (wasmtime)"]
+            LM["Linear memory only"]
+            WI["WASI imports only"]
+            NS["No shared memory"]
+            ND["No direct syscalls"]
+        end
+    end
 ```
 
 **Browser WASM (Phase 21):** WASM runs inside SpiderMonkey (via Servo) within Tab Agents.
@@ -335,38 +351,32 @@ To compile WASM **on** AIOS, you'd need a compiler targeting WASM running native
 
 ### The Dependency Chain
 
-```
-Phase 0-3:   Kernel boots, IPC works, capabilities enforced
-             → Rust kernel code compiles on HOST, runs on AIOS
+```mermaid
+flowchart TD
+    P03["`Phases 0-3: Kernel boots, IPC, capabilities
+*Rust kernel code compiles on HOST, runs on AIOS*`"]
+    P47["`Phases 4-7: Storage, GPU, networking
+*Foundation for all language runtimes*`"]
+    P811["`Phases 8-11: AIRS, agents framework
+*AI inference available to all languages*`"]
+    P12["`Phase 12: SDK + Developer Experience
+*Python RustPython, TypeScript QuickJS, WASM wasmtime ON AIOS
+Rust SDK published -- develop on HOST*`"]
+    P14["`Phase 14: Performance optimization
+*All runtimes tuned for production*`"]
+    P15["`Phase 15: POSIX + BSD Userland
+*C/C++ clang ON AIOS -- FIRST COMPILED LANGUAGE
+CPython + Node.js available*`"]
+    P15P["`Phase 15+: Cross-compile rustc
+*Rust development ON AIOS -- RUST SELF-HOSTING*`"]
+    P16P["`Phase 16+: Native rustc compiles rustc
+*Full self-hosting -- AIOS COMPILES ITSELF*`"]
+    P25["`Phase 25: Linux binary compatibility
+*ANY Linux program runs -- UNIVERSAL COMPATIBILITY*`"]
 
-Phase 4-7:   Storage, GPU, networking
-             → Foundation for all language runtimes
-
-Phase 8-11:  AIRS, agents framework
-             → AI inference available to all languages
-
-Phase 12:    SDK + Developer Experience
-             → Python (RustPython) available ON AIOS    ← FIRST INTERPRETED LANGUAGES
-             → TypeScript (QuickJS) available ON AIOS
-             → WASM (wasmtime) available ON AIOS
-             → Rust SDK published (develop on HOST)
-
-Phase 14:    Performance optimization
-             → All runtimes tuned for production
-
-Phase 15:    POSIX + BSD Userland
-             → C/C++ (clang) available ON AIOS          ← FIRST COMPILED LANGUAGE ON AIOS
-             → CPython available (C extension compat)
-             → Node.js available (V8, full compat)
-
-Phase 15+:   Cross-compile rustc for AIOS
-             → Rust development ON AIOS                  ← RUST SELF-HOSTING
-
-Phase 16+:   Native rustc compiles rustc
-             → Full self-hosting                         ← AIOS COMPILES ITSELF
-
-Phase 25:    Linux binary compatibility
-             → ANY Linux program runs                    ← UNIVERSAL COMPATIBILITY
+    P03 --> P47 --> P811 --> P12
+    P12 --> P14 --> P15 --> P15P --> P16P
+    P16P --> P25
 ```
 
 ### What Each Phase Unlocks for Developers

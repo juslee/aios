@@ -37,93 +37,90 @@ The application doesn't know or care that `openai/v1/models` is on a server in S
 
 ## 2. Full Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Agent / Application                    │
-│                                                          │
-│   space::remote("openai/v1")?.read("models")            │
-│   space::remote("collab/doc/123")?.subscribe(callback)  │
-│   Flow::transfer(remote_object, local_space)             │
-└──────────────────────┬──────────────────────────────────┘
-                       │ Space Operations (kernel syscalls)
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│              NETWORK TRANSLATION MODULE                   │
-│                  (userspace service)                       │
-│                                                          │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │   Space      │  │  Connection  │  │   Shadow      │  │
-│  │   Resolver   │  │  Manager     │  │   Engine      │  │
-│  │             │  │              │  │               │  │
-│  │  semantic   │  │  pool/reuse  │  │  local copies │  │
-│  │  name → URI │  │  TLS session │  │  of remote    │  │
-│  │  + protocol │  │  multiplexing│  │  spaces for   │  │
-│  │  + endpoint │  │  keepalive   │  │  offline use  │  │
-│  └─────────────┘  └──────────────┘  └───────────────┘  │
-│                                                          │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │  Resilience  │  │  Bandwidth   │  │  Capability   │  │
-│  │  Engine     │  │  Scheduler   │  │  Gate         │  │
-│  │             │  │              │  │               │  │
-│  │  retry      │  │  fair share  │  │  verify cap   │  │
-│  │  backoff    │  │  priority    │  │  before ANY   │  │
-│  │  circuit    │  │  multi-path  │  │  network op   │  │
-│  │  breaker    │  │  QoS         │  │  audit trail  │  │
-│  └─────────────┘  └──────────────┘  └───────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Protocol Translators                 │   │
-│  │                                                    │   │
-│  │  space.read()     → HTTP GET / AIOS-proto READ   │   │
-│  │  space.write()    → HTTP POST/PUT / AIOS-proto   │   │
-│  │  space.list()     → HTTP GET (collection)         │   │
-│  │  space.delete()   → HTTP DELETE                   │   │
-│  │  space.subscribe()→ WebSocket / SSE / AIOS-proto  │   │
-│  │  Flow.transfer()  → HTTP chunked / QUIC streams   │   │
-│  │  space.query()    → GraphQL / SQL / AIOS-proto    │   │
-│  └──────────────────────────────────────────────────┘   │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                   Protocol Engines                       │
-│                                                          │
-│  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────┐ │
-│  │ HTTP/2   │ │ HTTP/3    │ │ AIOS     │ │ MQTT     │ │
-│  │ h2 crate │ │ QUIC      │ │ Peer     │ │ (IoT)   │ │
-│  │          │ │ quinn     │ │ Protocol │ │          │ │
-│  └──────────┘ └───────────┘ └──────────┘ └──────────┘ │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Raw Socket Engine (for POSIX compat layer)       │   │
-│  │  BSD tools see normal sockets, translated here    │   │
-│  └──────────────────────────────────────────────────┘   │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Transport Layer                        │
-│                                                          │
-│  ┌───────────┐  ┌──────────┐  ┌───────────────────┐    │
-│  │ TLS 1.3   │  │ QUIC     │  │ Plain TCP/UDP     │    │
-│  │ (rustls)  │  │ (quinn)  │  │ (POSIX compat)    │    │
-│  └───────────┘  └──────────┘  └───────────────────┘    │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Network Stack                         │
-│                    (smoltcp)                              │
-│                                                          │
-│  TCP │ UDP │ ICMP │ IPv4 │ IPv6 │ ARP │ NDP │ DHCP    │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Interface Drivers                        │
-│                                                          │
-│  VirtIO-Net │ Ethernet │ WiFi │ Bluetooth │ Cellular   │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Agent["Agent / Application"]
+        SpaceOps["`space::remote('openai/v1')?.read('models')
+space::remote('collab/doc/123')?.subscribe(callback)
+Flow::transfer(remote_object, local_space)`"]
+    end
+
+    Agent -->|"Space Operations (kernel syscalls)"| NTM
+
+    subgraph NTM["Network Translation Module (userspace service)"]
+        subgraph NTMCore[" "]
+            direction LR
+            SR["`Space Resolver
+semantic name to URI,
+protocol, endpoint`"]
+            CM["`Connection Manager
+pool/reuse, TLS session,
+multiplexing, keepalive`"]
+            SE["`Shadow Engine
+local copies of remote
+spaces for offline use`"]
+        end
+        subgraph NTMPolicy[" "]
+            direction LR
+            RE["`Resilience Engine
+retry, backoff,
+circuit breaker`"]
+            BS["`Bandwidth Scheduler
+fair share, priority,
+multi-path, QoS`"]
+            CG["`Capability Gate
+verify cap before ANY
+network op, audit trail`"]
+        end
+        PT["`Protocol Translators
+space.read() to HTTP GET | space.write() to HTTP POST/PUT
+space.subscribe() to WebSocket/SSE | Flow.transfer() to QUIC streams
+space.query() to GraphQL/SQL | space.delete() to HTTP DELETE`"]
+    end
+
+    NTM --> Protocols
+
+    subgraph Protocols["Protocol Engines"]
+        direction LR
+        HTTP2["`HTTP/2
+(h2 crate)`"]
+        HTTP3["`HTTP/3
+(QUIC / quinn)`"]
+        AIOSPeer["`AIOS Peer
+Protocol`"]
+        MQTT["`MQTT
+(IoT)`"]
+        RawSocket["`Raw Socket Engine
+(POSIX compat layer)`"]
+    end
+
+    Protocols --> Transport
+
+    subgraph Transport["Transport Layer"]
+        direction LR
+        TLS["`TLS 1.3
+(rustls)`"]
+        QUIC["`QUIC
+(quinn)`"]
+        PlainTCP["`Plain TCP/UDP
+(POSIX compat)`"]
+    end
+
+    Transport --> NetStack
+
+    subgraph NetStack["Network Stack (smoltcp)"]
+        NetProtos["TCP | UDP | ICMP | IPv4 | IPv6 | ARP | NDP | DHCP"]
+    end
+
+    NetStack --> Drivers
+
+    subgraph Drivers["Interface Drivers"]
+        VirtIONet["VirtIO-Net"]
+        Ethernet
+        WiFi
+        Bluetooth
+        Cellular
+    end
 ```
 
 -----

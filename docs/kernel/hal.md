@@ -15,30 +15,62 @@ The HAL has one design goal: **adding a new platform is implementing seven metho
 
 ### 1.1 HAL Boundary
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Kernel Core                                                             │
-│  (scheduler, IPC, capability manager, memory manager)                    │
-│                                                                          │
-│  Programs against abstract types:                                        │
-│  InterruptController, Timer, Uart, GpuDevice,                            │
-│  NetworkDevice, StorageDevice, RngDevice                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│  HAL BOUNDARY — Platform trait + device traits                           │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Platform Implementations (aarch64)                                      │
-│                                                                          │
-│  QemuPlatform       │ Pi4Platform   │ Pi5Platform   │ AppleSilicon      │
-│  ├── GICv3          │ ├── GICv2    │ ├── GICv3    │ ├── AIC            │
-│  ├── ARM Gen Timer  │ ├── ARM Tmr │ ├── ARM Tmr  │ ├── ARM Timer      │
-│  ├── PL011 UART     │ ├── PL011   │ ├── PL011    │ ├── S5L UART       │
-│  ├── VirtIO-GPU     │ ├── VC4/V3D │ ├── V3D 7.1  │ ├── AGX GPU        │
-│  ├── VirtIO-Net     │ ├── Genet   │ ├── Genet    │ ├── PCIe NIC       │
-│  ├── VirtIO-Blk     │ ├── SD/eMMC │ ├── SD/eMMC  │ ├── ANS NVMe       │
-│  └── VirtIO-RNG     │ └── bcm2835 │ └── bcm2835  │ └── Apple TRNG     │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Raw Hardware (MMIO registers, device memory, DMA)                       │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph KC["Kernel Core"]
+        KCD["`scheduler, IPC, capability manager, memory manager
+Programs against abstract types:
+InterruptController, Timer, Uart, GpuDevice,
+NetworkDevice, StorageDevice, RngDevice`"]
+    end
+
+    KC --- HAL["HAL BOUNDARY — Platform trait + device traits"]
+
+    subgraph PI["Platform Implementations (aarch64)"]
+        subgraph QEMU["QemuPlatform"]
+            direction LR
+            Q1["GICv3"]
+            Q2["ARM Gen Timer"]
+            Q3["PL011 UART"]
+            Q4["VirtIO-GPU"]
+            Q5["VirtIO-Net"]
+            Q6["VirtIO-Blk"]
+            Q7["VirtIO-RNG"]
+        end
+        subgraph PI4["Pi4Platform"]
+            direction LR
+            P41["GICv2"]
+            P42["ARM Timer"]
+            P43["PL011"]
+            P44["VC4/V3D"]
+            P45["Genet"]
+            P46["SD/eMMC"]
+            P47["bcm2835"]
+        end
+        subgraph PI5["Pi5Platform"]
+            direction LR
+            P51["GICv3"]
+            P52["ARM Timer"]
+            P53["PL011"]
+            P54["V3D 7.1"]
+            P55["Genet"]
+            P56["SD/eMMC"]
+            P57["bcm2835"]
+        end
+        subgraph APPLE["AppleSilicon"]
+            direction LR
+            A1["AIC"]
+            A2["ARM Timer"]
+            A3["S5L UART"]
+            A4["AGX GPU"]
+            A5["PCIe NIC"]
+            A6["ANS NVMe"]
+            A7["Apple TRNG"]
+        end
+    end
+
+    HAL --- PI
+    PI --- HW["Raw Hardware (MMIO registers, device memory, DMA)"]
 ```
 
 ### 1.2 What the HAL Is Not
@@ -960,39 +992,43 @@ The `Option` wrappers reflect the incremental initialization during boot — UAR
 
 The full interrupt path from hardware to handler:
 
-```
-Hardware IRQ fires
-  │
-  ▼
-ARM exception vector (IRQ from current EL or lower EL)
-  │
-  ▼
-irq_handler():
-  1. controller.acknowledge()     → read IAR (GICv2) or ICC_IAR1_EL1 (GICv3)
-  2. match irq_number:
-       TIMER_IRQ → scheduler.timer_tick()
-       UART_IRQ  → uart.handle_rx()
-       VIRTIO_*  → virtio_irq_handler(device_id)
-       other     → spurious, log and ignore
-  3. controller.end_of_interrupt() → write EOIR
+```mermaid
+flowchart TD
+    IRQ["Hardware IRQ fires"] --> VEC["`ARM exception vector
+(IRQ from current EL or lower EL)`"]
+    VEC --> ACK["`1. controller.acknowledge()
+read IAR (GICv2) or ICC_IAR1_EL1 (GICv3)`"]
+    ACK --> MATCH{"2. match irq_number"}
+    MATCH -->|TIMER_IRQ| TIMER["scheduler.timer_tick()"]
+    MATCH -->|UART_IRQ| UART["uart.handle_rx()"]
+    MATCH -->|VIRTIO_*| VIRTIO["virtio_irq_handler(device_id)"]
+    MATCH -->|other| SPUR["spurious, log and ignore"]
+    TIMER --> EOI["`3. controller.end_of_interrupt()
+write EOIR`"]
+    UART --> EOI
+    VIRTIO --> EOI
+    SPUR --> EOI
 ```
 
 ### 8.3 Timer-Scheduler Integration
 
 The timer drives the scheduler's preemption mechanism:
 
-```
-Timer fires every 1ms
-  │
-  ▼
-timer_tick():
-  1. timer.set_next_deadline(tick_interval)   // re-arm for next 1ms
-  2. scheduler.tick()                          // update time accounting
-     - Decrement current thread's remaining quantum
-     - Check EDF deadlines (RT class)
-     - If preemption needed: set PREEMPT_PENDING flag
-  3. On return from IRQ handler:
-     - If PREEMPT_PENDING: context switch to highest-priority thread
+```mermaid
+flowchart TD
+    TICK["Timer fires every 1ms"] --> REARM["`1. timer.set_next_deadline(tick_interval)
+re-arm for next 1ms`"]
+    REARM --> SCHED["`2. scheduler.tick()
+update time accounting`"]
+    SCHED --> DEC["Decrement current thread's remaining quantum"]
+    DEC --> EDF["Check EDF deadlines (RT class)"]
+    EDF --> PREEMPT{"Preemption needed?"}
+    PREEMPT -->|Yes| FLAG["Set PREEMPT_PENDING flag"]
+    PREEMPT -->|No| RET["3. Return from IRQ handler"]
+    FLAG --> RET
+    RET --> CHECK{"PREEMPT_PENDING?"}
+    CHECK -->|Yes| CTX["Context switch to highest-priority thread"]
+    CHECK -->|No| RESUME["Resume current thread"]
 ```
 
 -----
@@ -1907,26 +1943,32 @@ pub trait UsbHostController {
 
 xHCI is the standard USB 3.x host controller interface, used on Pi 5 (VIA VL805 PCIe-USB bridge) and QEMU (emulated xHCI). The xHCI driver manages three ring buffer types:
 
-```
-xHCI Ring Buffer Architecture:
+```mermaid
+flowchart LR
+    subgraph CMD["Command Ring (kernel --> controller)"]
+        C1["Enable Slot"]
+        C2["Address Device"]
+        C3["Configure Endpoint"]
+        C4["Evaluate Context"]
+    end
 
-  Command Ring (kernel → controller)
-  ├── Enable Slot
-  ├── Address Device
-  ├── Configure Endpoint
-  └── Evaluate Context
+    subgraph XFR["Transfer Rings (per-endpoint, kernel --> controller)"]
+        T1["Normal TRB (bulk data)"]
+        T2["Setup Stage TRB (control transfers)"]
+        T3["Data Stage TRB (control data phase)"]
+        T4["Status Stage TRB (control completion)"]
+    end
 
-  Transfer Rings (per-endpoint, kernel → controller)
-  ├── Normal TRB (bulk data)
-  ├── Setup Stage TRB (control transfers)
-  ├── Data Stage TRB (control data phase)
-  └── Status Stage TRB (control completion)
+    subgraph EVT["Event Ring (controller --> kernel)"]
+        E1["Command Completion Event"]
+        E2["Transfer Event (transfer completed)"]
+        E3["Port Status Change Event (device connected/disconnected)"]
+        E4["Host Controller Event (errors, bandwidth)"]
+    end
 
-  Event Ring (controller → kernel)
-  ├── Command Completion Event
-  ├── Transfer Event (transfer completed)
-  ├── Port Status Change Event (device connected/disconnected)
-  └── Host Controller Event (errors, bandwidth)
+    CMD -->|"kernel --> controller"| CTRL["xHCI Controller"]
+    XFR -->|"kernel --> controller"| CTRL
+    CTRL -->|"controller --> kernel"| EVT
 ```
 
 ```rust
@@ -2071,21 +2113,25 @@ The ARM System MMU (SMMU) provides IOMMU functionality for DMA isolation on Pi 5
 
 ### 15.1 SMMUv3 Architecture
 
-```
-                    ┌──────────────────────────────────┐
-                    │           SMMUv3                  │
-                    │                                    │
-  Device ──DMA──→   │  Stream Table                     │
-  (StreamID)        │  ┌─────────────────────────────┐  │
-                    │  │ STE[StreamID]               │  │  ──→ Physical Memory
-                    │  │  → Stage 1 Page Tables      │  │      (translated address)
-                    │  │  → Stage 2 Page Tables      │  │
-                    │  │  → Configuration             │  │
-                    │  └─────────────────────────────┘  │
-                    │                                    │
-                    │  Command Queue (kernel → SMMU)     │
-                    │  Event Queue (SMMU → kernel)       │
-                    └──────────────────────────────────┘
+```mermaid
+flowchart LR
+    DEV["`Device
+(StreamID)`"] -->|DMA| SMMU
+
+    subgraph SMMU["SMMUv3"]
+        ST["Stream Table"]
+        STE["`STE[StreamID]
+Stage 1 Page Tables
+Stage 2 Page Tables
+Configuration`"]
+        CMDQ["`Command Queue
+(kernel --> SMMU)`"]
+        EVTQ["`Event Queue
+(SMMU --> kernel)`"]
+        ST --- STE
+    end
+
+    SMMU -->|translated address| PM["Physical Memory"]
 ```
 
 ### 15.2 Stream Table
@@ -2194,25 +2240,16 @@ When the system enters S3 suspend (RAM stays powered, CPU off) or S4 hibernate (
 
 ### 16.1 Device Power State Machine
 
-```
-               ┌──────────┐
-               │  Active   │ ← normal operation
-               └────┬──────┘
-                    │ suspend()
-                    ▼
-               ┌──────────┐
-               │  Quiesced │ ← DMA stopped, interrupts masked, state saved
-               └────┬──────┘
-                    │ power_off() [S4 only]
-                    ▼
-               ┌──────────┐
-               │  Off      │ ← device powered down, state in RAM/storage
-               └────┬──────┘
-                    │ resume()
-                    ▼
-               ┌──────────┐
-               │  Active   │ ← state restored, device operational
-               └──────────┘
+```mermaid
+stateDiagram-v2
+    Active1 : Active (normal operation)
+    Quiesced : Quiesced (DMA stopped, interrupts masked, state saved)
+    Off : Off (device powered down, state in RAM/storage)
+    Active2 : Active (state restored, device operational)
+
+    Active1 --> Quiesced : suspend()
+    Quiesced --> Off : power_off() [S4 only]
+    Off --> Active2 : resume()
 ```
 
 ### 16.2 Per-Device Suspend/Resume

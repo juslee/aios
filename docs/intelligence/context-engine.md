@@ -23,40 +23,46 @@ The Context Engine is an intelligence service within AIRS. When AIRS is availabl
 
 ## 2. Architecture
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                     Context Engine                          │
-│                  (AIRS intelligence service)                │
-│                                                            │
-│  ┌────────────────┐  ┌─────────────────┐  ┌────────────┐  │
-│  │    Signal       │  │   Context       │  │  Override   │  │
-│  │    Collector    │  │   Model         │  │  Manager    │  │
-│  │                 │  │                 │  │             │  │
-│  │  gather input   │  │  AIRS inference │  │  explicit   │  │
-│  │  from 8 signal  │  │  or rule-based  │  │  user       │  │
-│  │  sources        │  │  fallback       │  │  intents    │  │
-│  └────────┬────────┘  └────────┬────────┘  └──────┬─────┘  │
-│           │                    │                   │        │
-│           ▼                    ▼                   ▼        │
-│  ┌────────────────┐  ┌─────────────────┐  ┌────────────┐  │
-│  │    State        │  │   History       │  │  Fallback   │  │
-│  │    Publisher    │  │   Store         │  │  Engine     │  │
-│  │                 │  │                 │  │             │  │
-│  │  notify all     │  │  learned        │  │  rule-based │  │
-│  │  consumers      │  │  patterns in    │  │  inference  │  │
-│  │  via IPC        │  │  system/context/│  │  (no AIRS)  │  │
-│  └────────┬────────┘  └─────────────────┘  └────────────┘  │
-│           │                                                 │
-└───────────┼─────────────────────────────────────────────────┘
-            │ Publishes ContextState
-            │
-    ┌───────┼──────────────┬──────────────┬──────────────┐
-    ▼       ▼              ▼              ▼              ▼
-Scheduler  Attention    Compositor    Preference     Agent
-(priority  Manager      (UI adapt,   Service        Runtime
- adjust,   (notif       layout,      (theme,        (agent
- context   threshold,   chrome)      brightness)    hints)
- mult.)    digest)
+```mermaid
+flowchart TD
+    subgraph CE["Context Engine (AIRS intelligence service)"]
+        SC["`Signal Collector
+gather input from
+8 signal sources`"]
+        CTM["`Context Model
+AIRS inference or
+rule-based fallback`"]
+        OM["`Override Manager
+explicit user intents`"]
+
+        SC --> SP["`State Publisher
+notify all consumers
+via IPC`"]
+        CTM --> HS["`History Store
+learned patterns in
+system/context/`"]
+        OM --> FE["`Fallback Engine
+rule-based inference
+(no AIRS)`"]
+
+        SC --> SP
+        CTM --> SP
+        OM --> SP
+    end
+
+    SP -- "Publishes ContextState" --> Scheduler["`Scheduler
+(priority adjust,
+context mult.)`"]
+    SP --> AM["`Attention Manager
+(notif threshold,
+digest)`"]
+    SP --> Compositor["`Compositor
+(UI adapt, layout,
+chrome)`"]
+    SP --> PS["`Preference Service
+(theme, brightness)`"]
+    SP --> AR["`Agent Runtime
+(agent hints)`"]
 ```
 
 The engine runs as a subservice of AIRS, sharing AIRS's privileged access to system state. It reads signals from other system services via IPC, produces a `ContextState`, and publishes that state to all consumers. Consumers subscribe and react — they never poll.

@@ -36,55 +36,42 @@ AIOS is a single-user operating system. There is no multi-user login. There are 
 
 ## 2. Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Identity Service                           │
-│                     (privileged system service)                    │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                    Key Management                            │ │
-│  │                                                              │ │
-│  │  Primary Key      Device Keys      Session                   │ │
-│  │  (Ed25519)        (per-device,     Persistence               │ │
-│  │                    signed by        (TPM/Secure Enclave       │ │
-│  │                    primary)         sealed session)            │ │
-│  │                                                              │ │
-│  │  Key Rotation     Hardware Key     Key Storage               │ │
-│  │  (re-sign         (FIDO2/WebAuthn  (kernel Crypto Core,      │ │
-│  │   without ID      support)         never in userspace)       │ │
-│  │   change)                                                    │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                 Relationship Manager                         │ │
-│  │                                                              │ │
-│  │  Relationship     Trust Model      Shared Spaces             │ │
-│  │  Graph            (graduated,      (per-identity             │ │
-│  │  (Family,         multi-signal)    capability sets)           │ │
-│  │   Colleague,                                                 │ │
-│  │   Friend, ...)                                               │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                 Credential Vault                             │ │
-│  │                                                              │ │
-│  │  OAuth Tokens     API Keys         Passwords                 │ │
-│  │  (per-service,    (agent-scoped,   (legacy service           │ │
-│  │   encrypted)      never exposed)   compatibility)            │ │
-│  │                                                              │ │
-│  │  Credential Use   Audit Log        Rotation Policy           │ │
-│  │  (agents request  (who used what   (auto-rotate              │ │
-│  │   use, never      credential when) expiring creds)           │ │
-│  │   possession)                                                │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-└──────────┬──────────────┬──────────────┬──────────────┬──────────┘
-           │              │              │              │
-           ▼              ▼              ▼              ▼
-     Capability      Space Storage    Network       AIRS
-     Manager         (shared spaces,  Service       (relationship-
-     (identity-      provenance       (peer         aware AI
-      bound caps)    signing)         protocol)     behavior)
+```mermaid
+flowchart TD
+    subgraph IS["Identity Service (privileged system service)"]
+        subgraph KM["Key Management"]
+            PK["Primary Key (Ed25519)"]
+            DK["Device Keys (per-device, signed by primary)"]
+            SP["Session Persistence (TPM/Secure Enclave sealed session)"]
+            KR["Key Rotation (re-sign without ID change)"]
+            HK["Hardware Key (FIDO2/WebAuthn support)"]
+            KS["Key Storage (kernel Crypto Core, never in userspace)"]
+        end
+
+        subgraph RM["Relationship Manager"]
+            RG["Relationship Graph (Family, Colleague, Friend, ...)"]
+            TM["Trust Model (graduated, multi-signal)"]
+            SS["Shared Spaces (per-identity capability sets)"]
+        end
+
+        subgraph CV["Credential Vault"]
+            OT["OAuth Tokens (per-service, encrypted)"]
+            AK["API Keys (agent-scoped, never exposed)"]
+            PW["Passwords (legacy service compatibility)"]
+            CU["Credential Use (agents request use, never possession)"]
+            AL["Audit Log (who used what credential when)"]
+            RP["Rotation Policy (auto-rotate expiring creds)"]
+        end
+    end
+
+    IS --> CM["`Capability Manager
+(identity-bound caps)`"]
+    IS --> STO["`Space Storage
+(shared spaces, provenance signing)`"]
+    IS --> NS["`Network Service
+(peer protocol)`"]
+    IS --> AIRS["`AIRS
+(relationship-aware AI behavior)`"]
 ```
 
 The Identity Service runs as a privileged system service (Trust Level 1). It manages keys, relationships, credentials, and identity proofs. All other services interact with identity through IPC — no service directly accesses key material.
@@ -233,25 +220,27 @@ AIOS does not generate a recovery key. There is no seed phrase, no mnemonic, and
 
 ### 4.1 Key Hierarchy
 
-```
-Primary Identity Key (Ed25519)
-│   Created at first boot
-│   Stored in kernel Crypto Core
-│   Signs: device keys, identity proofs, provenance
-│
-├── Device Key A (Ed25519)
-│   Created when device A is set up
-│   Signed by primary key (certificate)
-│   Used for: local signing, peer authentication
-│
-├── Device Key B (Ed25519)
-│   Created when device B is added
-│   Signed by primary key (certificate)
-│   Used for: local signing, peer authentication
-│
-└── (No recovery key — see §14)
-    Recovery is prevention-based, not key-based
-    Multi-device escrow available in Phase 9c+
+```mermaid
+flowchart TD
+    PIK["`Primary Identity Key (Ed25519)
+Created at first boot
+Stored in kernel Crypto Core
+Signs: device keys, identity proofs, provenance`"]
+    DKA["`Device Key A (Ed25519)
+Created when device A is set up
+Signed by primary key (certificate)
+Used for: local signing, peer authentication`"]
+    DKB["`Device Key B (Ed25519)
+Created when device B is added
+Signed by primary key (certificate)
+Used for: local signing, peer authentication`"]
+    NRK["`(No recovery key -- see section 14)
+Recovery is prevention-based, not key-based
+Multi-device escrow available in Phase 9c+`"]
+
+    PIK --> DKA
+    PIK --> DKB
+    PIK --> NRK
 ```
 
 ### 4.2 Kernel Crypto Core
@@ -773,26 +762,19 @@ A capability token cannot be transferred to another identity. If Alice shares a 
 
 Adding a new device to an existing identity:
 
-```
-Existing Device (A)                    New Device (B)
-┌────────────────────┐                ┌────────────────────┐
-│                     │                │                     │
-│ 1. Display QR code  │                │ 2. Scan QR code     │
-│    containing:      │   ─── QR ───→ │    containing:      │
-│    - Identity ID    │                │    - Identity ID    │
-│    - Device A pubkey│                │    - Device A pubkey│
-│    - Challenge nonce│                │    - Challenge nonce│
-│                     │                │                     │
-│ 4. Verify response  │  ◄── BLE ──── │ 3. Generate device  │
-│    Sign device cert  │                │    key B, sign      │
-│    for device B     │                │    challenge with   │
-│                     │   ─── BLE ──→ │    device key B     │
-│ 5. Send signed cert │                │                     │
-│    + identity data  │                │ 6. Store identity   │
-│    + space sync     │                │    + device cert    │
-│    bootstrap        │                │    Begin space sync │
-│                     │                │                     │
-└────────────────────┘                └────────────────────┘
+```mermaid
+sequenceDiagram
+    participant A as Existing Device (A)
+    participant B as New Device (B)
+
+    A->>A: 1. Display QR code containing:<br/>Identity ID, Device A pubkey, Challenge nonce
+    A-->>B: QR scan
+    B->>B: 2. Scan QR code, extract:<br/>Identity ID, Device A pubkey, Challenge nonce
+    B->>B: 3. Generate device key B,<br/>sign challenge with device key B
+    B->>A: BLE: signed challenge response
+    A->>A: 4. Verify response,<br/>sign device cert for device B
+    A->>B: BLE: signed cert + identity data + space sync bootstrap
+    B->>B: 6. Store identity + device cert,<br/>begin space sync
 ```
 
 ```rust

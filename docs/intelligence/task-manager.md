@@ -46,89 +46,81 @@ With Task Manager:
 
 ## 2. Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Task Manager                                │
-│                   (privileged userspace service)                   │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐   │
-│  │              Intent Decomposer                             │   │
-│  │                                                           │   │
-│  │  Intent Parser       Task Graph Builder    Capability Planner│  │
-│  │  (NL → structured)   (subtask DAG)         (min caps per     │  │
-│  │                                             subtask)         │  │
-│  └───────────────────────────────────────────────────────────┘   │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐   │
-│  │              Task Scheduler                                │   │
-│  │                                                           │   │
-│  │  DAG Executor        Concurrency Mgr     Priority Router  │   │
-│  │  (topological        (parallel where      (context-aware   │  │
-│  │   order exec)         safe, serial         scheduling)      │  │
-│  │                       where required)                       │  │
-│  └───────────────────────────────────────────────────────────┘   │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐   │
-│  │              Agent Orchestrator                             │   │
-│  │                                                           │   │
-│  │  Agent Selector      Spawn Manager       Result Collector │   │
-│  │  (task → agent       (capability          (aggregate       │  │
-│  │   matching)           scoping, spawn)      subtask results) │  │
-│  └───────────────────────────────────────────────────────────┘   │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐   │
-│  │              Task State Store                              │   │
-│  │                                                           │   │
-│  │  In-Flight State     Progress Tracker    Audit Logger     │   │
-│  │  (volatile, per-     (% complete,         (provenance      │  │
-│  │   task session)       subtask status)      chain entries)   │  │
-│  └───────────────────────────────────────────────────────────┘   │
-│                                                                   │
-└─────────────┬──────────────┬────────────────┬─────────────────────┘
-              │              │                │
-              ▼              ▼                ▼
-         AIRS (IPC)     Agent Runtime    Space Storage
-         (intent        (spawn agents,   (task state,
-          decompose,     enforce caps,    object access,
-          inference)     lifecycle)       audit log)
+```mermaid
+flowchart TD
+    subgraph TM["Task Manager (privileged userspace service)"]
+        subgraph ID["Intent Decomposer"]
+            IP["`Intent Parser
+(NL to structured)`"]
+            TGB["`Task Graph Builder
+(subtask DAG)`"]
+            CP["`Capability Planner
+(min caps per subtask)`"]
+        end
+        subgraph TS["Task Scheduler"]
+            DE["`DAG Executor
+(topological order exec)`"]
+            CM["`Concurrency Mgr
+(parallel where safe,
+serial where required)`"]
+            PR["`Priority Router
+(context-aware scheduling)`"]
+        end
+        subgraph AO["Agent Orchestrator"]
+            AS["`Agent Selector
+(task-to-agent matching)`"]
+            SM["`Spawn Manager
+(capability scoping, spawn)`"]
+            RC["`Result Collector
+(aggregate subtask results)`"]
+        end
+        subgraph TSS["Task State Store"]
+            IFS["`In-Flight State
+(volatile, per-task session)`"]
+            PT["`Progress Tracker
+(% complete, subtask status)`"]
+            AL["`Audit Logger
+(provenance chain entries)`"]
+        end
+    end
+
+    TM --> AIRS["`AIRS (IPC)
+(intent decompose,
+inference)`"]
+    TM --> AR["`Agent Runtime
+(spawn agents,
+enforce caps, lifecycle)`"]
+    TM --> SS["`Space Storage
+(task state,
+object access, audit log)`"]
 ```
 
 ### 2.1 Relationship to Other Services
 
 The Task Manager sits between the user's intent and the system's execution machinery. It does not duplicate functionality — it coordinates it.
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  User                                                      │
-│  "Summarize my research papers and email the summary"     │
-└──────────────┬─────────────────────────────────────────────┘
-               │ natural language intent
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│  Conversation Bar / Conversation Manager                   │
-│  Recognizes this as a task request (not a question)       │
-│  Routes to Task Manager via IPC                           │
-└──────────────┬─────────────────────────────────────────────┘
-               │ structured intent
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│  Task Manager                                              │
-│  1. Asks AIRS to decompose intent → task graph             │
-│  2. Plans capabilities needed per subtask                  │
-│  3. Asks Agent Runtime to spawn task agents                │
-│  4. Monitors execution, handles failures                   │
-│  5. Collects results, reports to user                      │
-└──────────────┬──────────┬───────────────┬──────────────────┘
-               │          │               │
-          ┌────┘    ┌─────┘         ┌─────┘
-          ▼         ▼               ▼
-      ┌────────┐ ┌───────────┐ ┌──────────────┐
-      │  AIRS  │ │Agent      │ │Space Storage │
-      │        │ │Runtime    │ │              │
-      │ decomp,│ │ spawn,    │ │ read/write   │
-      │ infer, │ │ sandbox,  │ │ objects,     │
-      │ verify │ │ lifecycle │ │ task state   │
-      └────────┘ └───────────┘ └──────────────┘
+```mermaid
+sequenceDiagram
+    actor User
+    participant CB as Conversation Bar /<br/>Conversation Manager
+    participant TM as Task Manager
+    participant AIRS
+    participant AgentRT as Agent Runtime
+    participant Space as Space Storage
+
+    User->>CB: "Summarize my research papers<br/>and email the summary"
+    Note over CB: Recognizes task request<br/>(not a question)
+    CB->>TM: structured intent (via IPC)
+    TM->>AIRS: 1. Decompose intent
+    AIRS-->>TM: task graph
+    Note over TM: 2. Plan capabilities<br/>per subtask
+    TM->>AgentRT: 3. Spawn task agents<br/>(with scoped caps)
+    Note over TM: 4. Monitor execution,<br/>handle failures
+    AgentRT->>Space: read/write objects
+    AgentRT->>AIRS: inference requests
+    AgentRT-->>TM: subtask results
+    Note over TM: 5. Collect results
+    TM-->>User: report to user
 ```
 
 **AIRS** provides:
@@ -301,65 +293,42 @@ User intent: "Summarize all the research papers I read this week
 
 AIRS decomposition:
 
-  ┌─────────────────────────┐
-  │  T1: SpaceQuery         │
-  │  space: "research"      │
-  │  query: "accessed this  │
-  │    week by user"        │
-  │  caps: ReadSpace        │
-  └───────────┬─────────────┘
-              │ outputs: Vec<ObjectId>
-              ▼
-  ┌─────────────────────────┐
-  │  T2: Inference          │  (runs once per paper, parallelized)
-  │  type: Summarize        │
-  │  input: T1 objects      │
-  │  prompt: "Extract key   │
-  │    findings from this   │
-  │    research paper"      │
-  │  caps: ReadSpace,       │
-  │        InferenceCpu     │
-  └───────────┬─────────────┘
-              │ outputs: Vec<String> (per-paper summaries)
-              ▼
-  ┌─────────────────────────┐
-  │  T3: Inference          │
-  │  type: Synthesize       │
-  │  input: T2 summaries    │
-  │  prompt: "Combine these │
-  │    paper summaries into │
-  │    a unified briefing"  │
-  │  caps: InferenceCpu     │
-  └───────────┬─────────────┘
-              │ output: String (unified summary)
-              ▼
-  ┌─────────────────────────┐
-  │  T4: Inference          │
-  │  type: Generate         │
-  │  input: T3 summary      │
-  │  prompt: "Compose a     │
-  │    professional email   │
-  │    with this summary"   │
-  │  caps: InferenceCpu     │
-  └───────────┬─────────────┘
-              │ output: String (email body)
-              ▼
-  ┌─────────────────────────┐
-  │  T5: UserConfirmation   │
-  │  prompt: "Send this     │
-  │    summary email to     │
-  │    your team?"          │
-  │  [shows email preview]  │
-  └───────────┬─────────────┘
-              │ output: Boolean (approved/rejected)
-              ▼
-  ┌─────────────────────────┐
-  │  T6: ConnectorSend      │
-  │  connector: "email"     │
-  │  destination: "team"    │
-  │  input: T4 email body   │
-  │  caps: Network("smtp")  │
-  └─────────────────────────┘
+```mermaid
+flowchart TD
+    T1["`T1: SpaceQuery
+space: research
+query: accessed this week by user
+caps: ReadSpace`"]
+    T2["`T2: Inference (Summarize)
+runs once per paper, parallelized
+input: T1 objects
+caps: ReadSpace, InferenceCpu`"]
+    T3["`T3: Inference (Synthesize)
+input: T2 summaries
+prompt: Combine paper summaries
+into a unified briefing
+caps: InferenceCpu`"]
+    T4["`T4: Inference (Generate)
+input: T3 summary
+prompt: Compose a professional
+email with this summary
+caps: InferenceCpu`"]
+    T5["`T5: UserConfirmation
+prompt: Send this summary
+email to your team?
+shows email preview`"]
+    T6["`T6: ConnectorSend
+connector: email
+destination: team
+input: T4 email body
+caps: Network smtp`"]
+
+    T1 -- "Vec of ObjectId" --> T2
+    T2 -- "Vec of String - per-paper summaries" --> T3
+    T3 -- "String - unified summary" --> T4
+    T4 -- "String - email body" --> T5
+    T5 -- "Boolean - approved/rejected" --> T6
+```
 ```
 
 ### 3.4 Decomposition Without AIRS
@@ -400,51 +369,22 @@ pub enum IntentPattern {
 
 ### 4.1 Task States
 
-```
-                          ┌───────────┐
-                          │  Created  │
-                          └─────┬─────┘
-                                │ decomposition complete
-                                ▼
-                          ┌───────────┐
-                    ┌─────│  Pending  │
-                    │     └─────┬─────┘
-                    │           │ agent(s) spawned
-              user  │           ▼
-            cancels │     ┌───────────┐
-                    │     │  Running  │◄──────────────┐
-                    │     └──┬──┬──┬──┘               │
-                    │        │  │  │                   │
-                    │        │  │  ├── subtask fails   │
-                    │        │  │  │   (retryable)     │
-                    │        │  │  │        │          │
-                    │        │  │  │        ▼          │
-                    │        │  │  │  ┌──────────┐    │
-                    │        │  │  │  │ Retrying │────┘
-                    │        │  │  │  └──────────┘
-                    │        │  │  │
-                    │        │  │  └── waiting for
-                    │        │  │      user confirmation
-                    │        │  │           │
-                    │        │  │           ▼
-                    │        │  │     ┌───────────┐
-                    │        │  │     │  Paused   │───────┘
-                    │        │  │     └───────────┘  (user confirms
-                    │        │  │                     or rejects)
-                    │        │  │
-                    │        │  └── all subtasks complete
-                    │        │           │
-                    │        │           ▼
-                    │        │     ┌───────────┐
-                    │        │     │ Completed │
-                    │        │     └───────────┘
-                    │        │
-                    │        └── unrecoverable failure
-                    │                 │
-                    ▼                 ▼
-              ┌───────────┐   ┌───────────┐
-              │ Cancelled │   │  Failed   │
-              └───────────┘   └───────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> Created
+    Created --> Pending : decomposition complete
+    Pending --> Running : agent(s) spawned
+    Pending --> Cancelled : user cancels
+
+    Running --> Retrying : subtask fails (retryable)
+    Retrying --> Running : retry succeeds
+
+    Running --> Paused : waiting for user confirmation
+    Paused --> Running : user confirms or rejects
+
+    Running --> Completed : all subtasks complete
+    Running --> Failed : unrecoverable failure
+    Running --> Cancelled : user cancels
 ```
 
 ```rust

@@ -14,52 +14,42 @@
 
 Shutdown is the reverse of boot, with extra care for data integrity:
 
-```
-1. User requests shutdown (or system initiates reboot)
-     │
-     ▼
-2. Phase 5 teardown
-   - Autostart agents receive shutdown signal (5-second grace period)
-   - Agents persist state to their spaces
-   - Conversation bar saves conversation to space
-   - Workspace saves layout state
-     │
-     ▼
-3. Phase 4 teardown
-   - Agent Runtime terminates remaining agents
-   - Attention Manager flushes pending notifications to space
-   - Preference Service writes any dirty preferences
-   - Identity Service locks identity (zero keys from memory)
-     │
-     ▼
-4. Phase 3 teardown
-   - Context Engine saves last known context state
-   - Space Indexer checkpoints index state
-   - AIRS unloads models (just drop the mmap — instant)
-     │
-     ▼
-5. Phase 2 teardown
-   - Compositor presents "Shutting down..." screen
-   - Network subsystem closes all connections
-   - Input subsystem quiesced
-   - Display subsystem releases GPU
-   - POSIX compat flushes file descriptors
-     │
-     ▼
-6. Phase 1 teardown
-   - Space Storage flushes all pending writes
-   - Object Store flushes reference count updates
-   - Block Engine flushes WAL to stable storage
-   - Block Engine writes clean-shutdown flag to superblock
-     │
-     ▼
-7. Kernel shutdown
-   - All service processes terminated
-   - Audit log: final entry "clean shutdown"
-   - Disable interrupts (DAIF mask)
-   - Flush caches (DC CIVAC, IC IALLU)
-   - Call UEFI Runtime Services: ResetSystem(Shutdown)
-   - (or ResetSystem(Reboot) for reboot)
+```mermaid
+flowchart TD
+    REQ["`1. User requests shutdown
+(or system initiates reboot)`"]
+    P5["`2. Phase 5 teardown
+Agents receive shutdown signal (5s grace)
+Agents persist state to spaces
+Conversation bar saves to space
+Workspace saves layout state`"]
+    P4["`3. Phase 4 teardown
+Agent Runtime terminates remaining agents
+Attention Manager flushes notifications
+Preference Service writes dirty prefs
+Identity Service locks identity (zero keys)`"]
+    P3["`4. Phase 3 teardown
+Context Engine saves context state
+Space Indexer checkpoints index
+AIRS unloads models (drop mmap)`"]
+    P2["`5. Phase 2 teardown
+Compositor shows 'Shutting down...'
+Network closes connections
+Input quiesced, Display releases GPU
+POSIX compat flushes file descriptors`"]
+    P1["`6. Phase 1 teardown
+Space Storage flushes pending writes
+Object Store flushes refcounts
+Block Engine flushes WAL
+Block Engine writes clean-shutdown flag`"]
+    KS["`7. Kernel shutdown
+All services terminated
+Audit log: 'clean shutdown'
+Disable interrupts (DAIF mask)
+Flush caches (DC CIVAC, IC IALLU)
+ResetSystem(Shutdown or Reboot)`"]
+
+    REQ --> P5 --> P4 --> P3 --> P2 --> P1 --> KS
 ```
 
 ### 11.2 Forced Shutdown
@@ -285,39 +275,26 @@ The fastest resume path. CPU cores are powered down, DRAM stays in self-refresh,
 
 **Suspend sequence:**
 
-```
-1. User closes lid / presses power button / idle timeout
-     │
-     ▼
-2. Service Manager receives SuspendRequest
-   - Broadcasts SuspendPrepare to all running services (via lifecycle channel)
-   - Services have 2 seconds to:
-     ├── Flush pending I/O (Space Storage commits dirty buffers)
-     ├── Save volatile state (compositor saves scanout buffer hash)
-     ├── Park DMA engines (Block Engine quiesces controller)
-     └── Reply: SuspendReady
-   - Services that don't reply in 2 seconds are force-frozen
-     │
-     ▼
-3. Kernel suspend path
-   - Disable all interrupts except wake sources
-   - Save per-core state: VBAR_EL1, TTBR0_EL1, SP, callee-saved registers
-   - Save interrupt controller state: GIC distributor/redistributor (or AIC event masks)
-   - Save timer state: CNTV_CTL_EL0, CNTV_CVAL_EL0
-   - Call platform.suspend_devices() (see hal.md §16 for per-device details):
-     ├── UART: save baud rate config (restore on wake)
-     ├── GPU: save mode/scanout state (VirtIO-GPU or VC4/V3D or AGX)
-     ├── Network: save MAC filters, link state (Genet or VirtIO-Net)
-     ├── Storage: controller quiesced (no DMA in flight)
-     ├── Audio: drain PCM buffers, mute outputs
-     ├── USB: stop xHCI controller, save port state
-     ├── SMMU: save stream table config
-     └── RNG: no state to save
-   - Park secondary CPUs via PSCI CPU_SUSPEND
-   - Boot CPU enters PSCI SYSTEM_SUSPEND
-     │
-     ▼
-   DRAM in self-refresh. System draws < 50 mW.
+```mermaid
+flowchart TD
+    TRIG["1. User closes lid / presses power button / idle timeout"]
+    SM["`2. Service Manager receives SuspendRequest
+Broadcasts SuspendPrepare (2s timeout)
+Services: flush I/O, save state, park DMA
+Reply: SuspendReady (or force-frozen)`"]
+    KS["`3. Kernel suspend path
+Disable interrupts except wake sources
+Save per-core state (VBAR, TTBR0, SP, regs)
+Save GIC/AIC and timer state`"]
+    DEV["`platform.suspend_devices()
+UART, GPU, Network, Storage,
+Audio, USB, SMMU, RNG`"]
+    PARK["`Park secondary CPUs (PSCI CPU_SUSPEND)
+Boot CPU enters PSCI SYSTEM_SUSPEND`"]
+    SLEEP["`DRAM in self-refresh
+System draws < 50 mW`"]
+
+    TRIG --> SM --> KS --> DEV --> PARK --> SLEEP
 ```
 
 **Wake sequence:**
@@ -381,21 +358,16 @@ Hibernate writes the entire system state to persistent storage, then powers off 
 
 **Hibernate is S3 with a safety net.** AIOS enters S3 first (fast wake), and starts writing the hibernate image to storage *in the background while the system is suspended*. If power fails during S3 (DRAM loses content), the next boot detects the hibernate image and resumes from it. If S3 wake succeeds normally, the hibernate image is discarded.
 
-```
-Suspend Request
-  │
-  ├── Enter S3 (immediate, < 200ms)
-  │     User's screen off, system sleeping
-  │
-  └── Background: write hibernate image to block device
-      (DMA engine runs in sleep, writing DRAM pages to
-       a reserved partition: the hibernate image partition)
-        │
-        ├── Power stays on → S3 wake is used (fast, < 200ms)
-        │                     Hibernate image discarded
-        │
-        └── Power lost → next cold boot detects hibernate image
-                          Restore from disk (~1.5s)
+```mermaid
+flowchart TD
+    A[Suspend Request] --> B[Enter S3 - immediate, < 200ms]
+    A --> C[Background: write hibernate image to block device]
+
+    B --> D["User's screen off, system sleeping"]
+
+    C --> E{"Power stays on?"}
+    E -->|Yes| F["S3 wake used (fast, < 200ms)\nHibernate image discarded"]
+    E -->|No - Power lost| G["Next cold boot detects hibernate image\nRestore from disk (~1.5s)"]
 ```
 
 **Hibernate image format:**
@@ -512,24 +484,24 @@ pub struct WindowState {
 
 **When Semantic Resume is used:**
 
-```
-Boot starts → check for semantic snapshot in system/session/
-  │
-  ├── Snapshot exists + kernel version matches → try S4 hibernate first
-  │     (hibernate is faster and preserves more state)
-  │
-  ├── Snapshot exists + kernel version CHANGED → semantic resume
-  │     1. Boot proceeds normally through all 5 phases
-  │     2. After Phase 5, Service Manager reads semantic snapshot
-  │     3. Workspace restores window layout from WindowState entries
-  │     4. Spaces are opened and scrolled to saved positions
-  │     5. Agents are relaunched and handed their AgentSessionState
-  │     6. Conversation bar restores draft text
-  │     7. Context Engine adopts saved mode (skips cold inference)
-  │     8. Focus is restored to the saved element
-  │     User sees their workspace reconstructed in ~500ms after desktop
-  │
-  └── No snapshot → fresh boot (first boot or after factory reset)
+```mermaid
+flowchart TD
+    A["Boot starts: check for semantic snapshot in system/session/"] --> B{"Snapshot exists?"}
+
+    B -->|"Yes + kernel version matches"| C["Try S4 hibernate first\n(faster, preserves more state)"]
+
+    B -->|"Yes + kernel version CHANGED"| D["Semantic Resume"]
+    D --> D1["1. Boot proceeds normally through all 5 phases"]
+    D1 --> D2["2. Service Manager reads semantic snapshot"]
+    D2 --> D3["3. Workspace restores window layout"]
+    D3 --> D4["4. Spaces opened, scrolled to saved positions"]
+    D4 --> D5["5. Agents relaunched with AgentSessionState"]
+    D5 --> D6["6. Conversation bar restores draft text"]
+    D6 --> D7["7. Context Engine adopts saved mode"]
+    D7 --> D8["8. Focus restored to saved element"]
+    D8 --> D9["Workspace reconstructed in ~500ms after desktop"]
+
+    B -->|No snapshot| E["Fresh boot\n(first boot or after factory reset)"]
 ```
 
 **Why this matters:**
@@ -718,30 +690,23 @@ pub enum BootIntent {
 
 **How intent is detected:**
 
-```
-Boot starts
-  │
-  ├── UEFI variable: consecutive_failures >= 3?
-  │     YES → BootIntent::Recovery
-  │
-  ├── Hibernate image present with valid kernel version?
-  │     YES → BootIntent::Resume (S4)
-  │
-  ├── S3 resume entry point? (resume from RAM)
-  │     YES → BootIntent::Resume (S3)
-  │
-  ├── RTC alarm triggered? (device tree / UEFI wake source register)
-  │     YES → check scheduled_tasks table in system/session/
-  │     ├── Proactive wake entry → BootIntent::ProactiveWake
-  │     └── Scheduled task entry → BootIntent::ScheduledTask
-  │
-  ├── Boot command line contains "safe"?
-  │     YES → BootIntent::SafeMode
-  │
-  ├── Staged update detected? (aios.elf is newer than last successful boot)
-  │     YES → BootIntent::Update
-  │
-  └── Default → BootIntent::Interactive
+```mermaid
+flowchart TD
+    A[Boot starts] --> B{"consecutive_failures >= 3?\n(UEFI variable)"}
+    B -->|YES| C[BootIntent::Recovery]
+    B -->|NO| D{"Hibernate image present\nwith valid kernel version?"}
+    D -->|YES| E["BootIntent::Resume (S4)"]
+    D -->|NO| F{"S3 resume entry point?\n(resume from RAM)"}
+    F -->|YES| G["BootIntent::Resume (S3)"]
+    F -->|NO| H{"RTC alarm triggered?"}
+    H -->|YES| I{"Check scheduled_tasks\nin system/session/"}
+    I -->|Proactive wake entry| J[BootIntent::ProactiveWake]
+    I -->|Scheduled task entry| K[BootIntent::ScheduledTask]
+    H -->|NO| L{"Boot command line\ncontains 'safe'?"}
+    L -->|YES| M[BootIntent::SafeMode]
+    L -->|NO| N{"Staged update detected?"}
+    N -->|YES| O[BootIntent::Update]
+    N -->|NO| P[BootIntent::Interactive]
 ```
 
 **Service graph adaptation:** The Service Manager reads `BootIntent` from `KernelState` and adjusts the phase plan:
@@ -892,64 +857,45 @@ web-storage/             Yes         Browser data
 
 ### 18.2 Key Derivation
 
-```
-User passphrase
-  │
-  ▼
-Argon2id (memory-hard KDF)
-  - 256 MB memory cost (tuned to take ~500ms on Pi 4)
-  - 3 iterations
-  - 32-byte salt (random, stored in system/identity/)
-  │
-  ▼
-Master Key (256-bit)
-  │
-  ├──→ HKDF("space-encryption") → Space Encryption Key
-  │     Used for per-space AES-256-GCM (or ChaCha20-Poly1305 on hardware without crypto extensions)
-  │
-  ├──→ HKDF("identity-unlock") → Identity Unlock Key
-  │     Decrypts the Ed25519 private key in system/identity/
-  │
-  └──→ HKDF("credential-store") → Credential Store Key
-       Decrypts system/credentials/
+```mermaid
+flowchart TD
+    A[User passphrase] --> B["Argon2id (memory-hard KDF)\n256 MB memory cost (~500ms on Pi 4)\n3 iterations\n32-byte salt (stored in system/identity/)"]
+    B --> C["Master Key (256-bit)"]
+    C --> D["HKDF('space-encryption')"]
+    C --> E["HKDF('identity-unlock')"]
+    C --> F["HKDF('credential-store')"]
+    D --> G["Space Encryption Key\nper-space AES-256-GCM or ChaCha20-Poly1305"]
+    E --> H["Identity Unlock Key\nDecrypts Ed25519 private key in system/identity/"]
+    F --> I["Credential Store Key\nDecrypts system/credentials/"]
 ```
 
 ### 18.3 Boot-Time Unlock Flow
 
-```
-Phase 4: Identity Service starts
-  │
-  ├── system/identity/ exists?
-  │     NO → first boot (§5 Phase 5 first boot setup flow)
-  │
-  ├── YES → read encrypted identity blob
-  │
-  ├── Attempt auto-unlock:
-  │   ├── Hardware security key present (USB FIDO2)?
-  │   │     → HMAC challenge-response → derive key → unlock
-  │   │     → no user interaction needed (~200ms)
-  │   │
-  │   ├── Biometric reader available?
-  │   │     → fingerprint scan → derive key → unlock
-  │   │     → minimal user interaction (~500ms)
-  │   │
-  │   └── Neither available → fall through to passphrase
-  │
-  ├── Passphrase required:
-  │   ├── Compositor is running (Phase 2 complete)
-  │   │     → render passphrase prompt overlay
-  │   │     → user types passphrase
-  │   │     → Argon2id derivation (~500ms on Pi 4)
-  │   │     → attempt decrypt
-  │   │     ├── Success → unlock, continue boot
-  │   │     └── Failure → "Incorrect passphrase", retry (max 10 attempts)
-  │   │
-  │   └── No compositor (headless) → passphrase via UART
-  │
-  ▼
-Identity unlocked → derive Space Encryption Key
-  → Space Storage unlocks encrypted spaces
-  → Phase 4 continues (Preferences, Attention Manager, etc.)
+```mermaid
+flowchart TD
+    A["Phase 4: Identity Service starts"] --> B{"system/identity/ exists?"}
+    B -->|NO| C["First boot\n(§5 Phase 5 first boot setup flow)"]
+    B -->|YES| D[Read encrypted identity blob]
+    D --> E{"Hardware security key\npresent (USB FIDO2)?"}
+    E -->|YES| F["HMAC challenge-response\nderive key, unlock (~200ms)"]
+    E -->|NO| G{"Biometric reader\navailable?"}
+    G -->|YES| H["Fingerprint scan\nderive key, unlock (~500ms)"]
+    G -->|NO| I[Passphrase required]
+
+    I --> J{"Compositor running?\n(Phase 2 complete)"}
+    J -->|YES| K["Render passphrase prompt overlay\nUser types passphrase\nArgon2id derivation (~500ms)"]
+    J -->|NO - headless| L[Passphrase via UART]
+
+    K --> M{"Decrypt attempt"}
+    L --> M
+    M -->|Success| N[Unlock, continue boot]
+    M -->|Failure| O["'Incorrect passphrase'\nretry (max 10 attempts)"]
+
+    F --> P["Identity unlocked\nDerive Space Encryption Key"]
+    H --> P
+    N --> P
+    P --> Q["Space Storage unlocks encrypted spaces"]
+    Q --> R["Phase 4 continues\n(Preferences, Attention Manager, etc.)"]
 ```
 
 **Timing impact:** On a fast path (hardware key or biometric), unlock adds ~200-500ms. With a passphrase, it adds user-wait time (typing) + 500ms (Argon2id). The Argon2id cost is tunable — faster on powerful hardware, deliberately slow enough on all platforms to resist brute force.
@@ -966,29 +912,19 @@ AIOS is unusable if a user with a disability cannot complete the first boot expe
 
 The first-boot setup flow (§5 Phase 5) includes accessibility as its very first step — *before* language selection:
 
-```
-First Boot — Revised Setup Flow:
+```mermaid
+flowchart TD
+    A["First Boot — Step 0:\nAccessibility Detection\n(BEFORE any other UI)"] --> B[Check connected USB devices]
+    B --> C{"Braille display?\n(USB HID, usage page 0x41)"}
+    C -->|YES| D[Enable Braille output driver]
+    B --> E{"Switch access device?\n(USB HID, specific vendor IDs)"}
+    E -->|YES| F[Enable switch scanning mode]
+    B --> G{"Screen reader request?\n(F5 held at boot)"}
+    G -->|YES| H["Enable TTS\n(built-in eSpeak-NG, no AIRS needed)"]
 
-0. Accessibility Detection (BEFORE any other UI)
-   │
-   ├── Check connected USB devices for assistive hardware:
-   │   ├── Braille display (USB HID, usage page 0x41)
-   │   │     → enable Braille output driver
-   │   ├── Switch access device (USB HID, specific vendor IDs)
-   │   │     → enable switch scanning mode
-   │   └── Screen reader request (special key held: F5 at boot)
-   │         → enable text-to-speech (built-in eSpeak-NG, no AIRS needed)
-   │
-   ├── Offer accessibility options on first frame:
-   │   "Press F5 for screen reader. Press F6 for high contrast.
-   │    Press F7 for large text. Press Enter to continue."
-   │   Displayed in large, high-contrast text by default (24pt, white on dark)
-   │   Spoken aloud if screen reader is active
-   │
-   └── Continue to Language Selection → Passphrase → Wi-Fi → AIRS → Complete
-
-1. Language & Locale Selection
-   (all subsequent screens respect accessibility choices from step 0)
+    B --> I["Offer accessibility options on first frame:\nF5 = screen reader, F6 = high contrast\nF7 = large text, Enter = continue\n(24pt, white on dark)"]
+    I --> J["Step 1: Language & Locale Selection\n(respects accessibility choices)"]
+    J --> K["Passphrase → Wi-Fi → AIRS → Complete"]
 ```
 
 ### 19.2 Built-In Accessibility Engine

@@ -15,20 +15,20 @@ Claude's C Compiler (CCC) is a **complete, dependency-free C compiler** written 
 
 ### Pipeline
 
-```
-C Source
-  → Preprocessor (macro expansion, #include, #ifdef)
-  → Lexer (tokenization with source locations)
-  → Parser (recursive descent → typed AST)
-  → Semantic Analysis (type checking, symbol table, const eval)
-  → IR Lowering (AST → alloca-based IR)
-  → Mem2reg (SSA promotion via dominator frontiers)
-  → 15 Optimization Passes (3 iterations, dirty-tracked)
-  → Phi Elimination (SSA → register copies)
-  → Code Generation (per-arch via ArchCodegen trait)
-  → Peephole Optimization (arch-specific patterns)
-  → Builtin Assembler (text → machine code → ELF .o)
-  → Builtin Linker (symbol resolution → relocation → ELF executable)
+```mermaid
+flowchart TD
+    A[C Source] --> B[Preprocessor<br>macro expansion, #include, #ifdef]
+    B --> C[Lexer<br>tokenization with source locations]
+    C --> D[Parser<br>recursive descent, typed AST]
+    D --> E[Semantic Analysis<br>type checking, symbol table, const eval]
+    E --> F[IR Lowering<br>AST to alloca-based IR]
+    F --> G[Mem2reg<br>SSA promotion via dominator frontiers]
+    G --> H[15 Optimization Passes<br>3 iterations, dirty-tracked]
+    H --> I[Phi Elimination<br>SSA to register copies]
+    I --> J[Code Generation<br>per-arch via ArchCodegen trait]
+    J --> K[Peephole Optimization<br>arch-specific patterns]
+    K --> L[Builtin Assembler<br>text to machine code to ELF .o]
+    L --> M[Builtin Linker<br>symbol resolution, relocation, ELF executable]
 ```
 
 ### Key Properties
@@ -152,15 +152,19 @@ Located in `src/backend/arm/`:
 ### 2.6 Builtin Assembler & Linker
 
 **Assembler pipeline (per arch):**
-```
-Assembly text → Parser → Vec<AsmStatement> → Encoder → Vec<u8> + relocations → ELF Writer → .o file
+
+```mermaid
+flowchart LR
+    A[Assembly text] --> B[Parser] --> C["Vec&lt;AsmStatement&gt;"] --> D[Encoder] --> E["Vec&lt;u8&gt; + relocations"] --> F[ELF Writer] --> G[.o file]
 ```
 
 **Linker pipeline:**
-```
-.o files + .a archives → Parse ELF objects → Resolve symbols →
-Merge sections → Assign addresses → Apply relocations →
-Generate PLT/GOT (if dynamic) → Write ELF executable
+
+```mermaid
+flowchart LR
+    A[".o files + .a archives"] --> B[Parse ELF objects] --> C[Resolve symbols]
+    C --> D[Merge sections] --> E[Assign addresses] --> F[Apply relocations]
+    F --> G["Generate PLT/GOT<br>(if dynamic)"] --> H[ELF executable]
 ```
 
 Shared infrastructure in `backend/elf/` (11 files) and `backend/linker_common/` (17 files) handles ELF constants, archive parsing, section ordering, `--gc-sections`, `.eh_frame` processing, and GNU/SysV hash tables.
@@ -173,14 +177,11 @@ Shared infrastructure in `backend/elf/` (11 files) and `backend/linker_common/` 
 
 AIOS Phase 15 (POSIX Compatibility & BSD Userland) plans to use **LLVM/clang** as the C/C++ compiler. The architecture is:
 
-```
-BSD Userland (FreeBSD tools, clang)
-    ↓
-musl libc (syscall dispatch → IPC dispatch)
-    ↓
-POSIX Translation Layer (FD table, path resolver)
-    ↓
-AIOS Kernel (31 native syscalls)
+```mermaid
+flowchart TD
+    A["BSD Userland<br>(FreeBSD tools, clang)"] --> B["musl libc<br>(syscall dispatch, IPC dispatch)"]
+    B --> C["POSIX Translation Layer<br>(FD table, path resolver)"]
+    C --> D["AIOS Kernel<br>(31 native syscalls)"]
 ```
 
 Key constraints:
@@ -215,12 +216,14 @@ CCC is not a replacement for LLVM/clang — it doesn't do C++. But it fills seve
 
 The LLVM bootstrap problem: to compile clang on AIOS, you need a C++ compiler. To get a C++ compiler, you need... a C++ compiler. CCC breaks this cycle:
 
-```
-Phase 15a: Port musl libc → needs C compiler
-  Option A: Cross-compile everything from host (current plan)
-  Option B: Ship CCC as a native AIOS binary → compile musl natively
-            → then use musl + CCC to compile clang/LLVM
-            → then use clang to compile everything else
+```mermaid
+flowchart TD
+    Start["Phase 15a: Port musl libc<br>needs C compiler"]
+    Start --> A["Option A: Cross-compile<br>everything from host<br>(current plan)"]
+    Start --> B["Option B: Ship CCC as<br>native AIOS binary"]
+    B --> C[Compile musl natively]
+    C --> D[Use musl + CCC to compile clang/LLVM]
+    D --> E[Use clang to compile everything else]
 ```
 
 CCC compiles musl libc successfully (listed as a verified project). This means AIOS could achieve native C compilation before LLVM is ported.
@@ -256,21 +259,23 @@ CCC's AArch64 backend would need these features added. But because CCC is Rust, 
 
 ### 3.4 Integration Architecture
 
-```
-AIOS Userspace
-├── /usr/bin/ccc          CCC (native AIOS binary, Phase 15a)
-│   ├── Reads from:       source Spaces (capability-scoped)
-│   ├── Writes to:        build output Spaces (capability-scoped)
-│   └── Runs as:          BSD process via POSIX translation layer
-│
-├── /usr/bin/clang        LLVM/clang (Phase 15f, bootstrapped via CCC)
-│   └── Full C/C++ when needed
-│
-└── AIRS Integration (Phase 8+)
-    ├── CCC as library:   Link CCC as a Rust crate into AIRS
-    │   └── API:          parse() → lower() → optimize() → codegen()
-    ├── Pass control:     AIRS selects/configures optimization passes
-    └── Live compilation: Agent-driven recompilation workflows
+```mermaid
+flowchart TD
+    US[AIOS Userspace]
+
+    US --> CCC["/usr/bin/ccc<br>CCC native AIOS binary, Phase 15a"]
+    CCC --> CCC_R["Reads from: source Spaces<br>(capability-scoped)"]
+    CCC --> CCC_W["Writes to: build output Spaces<br>(capability-scoped)"]
+    CCC --> CCC_P["Runs as: BSD process via<br>POSIX translation layer"]
+
+    US --> CLANG["/usr/bin/clang<br>LLVM/clang, Phase 15f<br>bootstrapped via CCC"]
+    CLANG --> CLANG_D["Full C/C++ when needed"]
+
+    US --> AIRS["AIRS Integration<br>(Phase 8+)"]
+    AIRS --> LIB["CCC as library:<br>Link CCC as Rust crate into AIRS"]
+    LIB --> API["API: parse, lower,<br>optimize, codegen"]
+    AIRS --> PASS["Pass control:<br>AIRS selects/configures<br>optimization passes"]
+    AIRS --> LIVE["Live compilation:<br>Agent-driven recompilation<br>workflows"]
 ```
 
 **CCC as a Rust library** is particularly interesting. Since CCC is a Rust crate with `src/lib.rs`, AIOS could link it directly into kernel-space or AIRS without spawning a process:
@@ -449,33 +454,35 @@ C++. To compile C++, you need `clang`, which is also C++. Chicken-and-egg.
 
 CCC breaks this cycle. Here is the full bootstrap chain:
 
-```
-Step 1: Cross-compile CCC for AIOS AArch64 (from host)
-        → Now AIOS has a native C compiler
+```mermaid
+flowchart TD
+    S1["Step 1: Cross-compile CCC<br>for AIOS AArch64 (from host)"]
+    S1 -->|"AIOS has a native C compiler"| S2
 
-Step 2: CCC compiles musl libc on AIOS
-        → Now AIOS has a native C standard library
+    S2["Step 2: CCC compiles musl libc<br>on AIOS"]
+    S2 -->|"AIOS has a native C standard library"| S3
 
-Step 3: CCC compiles LLVM's C sources (compiler-rt, some core libs)
-        → Now AIOS has runtime support libraries
+    S3["Step 3: CCC compiles LLVM C sources<br>(compiler-rt, core libs)"]
+    S3 -->|"AIOS has runtime support libraries"| S4
 
-Step 4: CCC compiles a minimal C++ compiler (or bootstrap clang's C portions)
-        → This is the hardest step — may need a staged approach:
-          a. CCC compiles TCC (Tiny C Compiler) or similar minimal C compiler
-          b. Minimal compiler compiles a C subset of clang
-          c. Partial clang compiles full clang
+    S4["Step 4: CCC bootstraps a C++ compiler<br>(hardest step, staged approach)"]
+    S4 --> S4a["a. CCC compiles TCC or similar"]
+    S4a --> S4b["b. Minimal compiler compiles<br>C subset of clang"]
+    S4b --> S4c["c. Partial clang compiles<br>full clang"]
+    S4c --> S5
 
-Step 5: Native clang compiles full LLVM + clang in C++
-        → Now AIOS has a native C/C++ compiler
+    S5["Step 5: Native clang compiles<br>full LLVM + clang in C++"]
+    S5 -->|"AIOS has a native C/C++ compiler"| S6
 
-Step 6: Cross-compile rustc for AIOS (needs LLVM, which now exists natively)
-        → Now AIOS has a native Rust compiler
+    S6["Step 6: Cross-compile rustc for AIOS<br>(needs LLVM, now exists natively)"]
+    S6 -->|"AIOS has a native Rust compiler"| S7
 
-Step 7: Native rustc compiles rustc on AIOS
-        → AIOS is fully self-hosting for Rust
+    S7["Step 7: Native rustc compiles<br>rustc on AIOS"]
+    S7 -->|"AIOS is fully self-hosting for Rust"| S8
 
-Step 8: Native rustc compiles the AIOS kernel
-        → AIOS compiles itself
+    S8["Step 8: Native rustc compiles<br>the AIOS kernel"]
+
+    style S8 fill:#2d6,color:#fff
 ```
 
 **Timeline estimate:**

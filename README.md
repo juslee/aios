@@ -85,7 +85,7 @@ aios/
 
 ## Development Plan
 
-28 phases across 7 tiers, targeting approximately 2.5 years to a production OS.
+30 phases across 8 tiers, targeting approximately 2.7 years to a production OS.
 
 | Tier | Name | Phases | Focus |
 |------|------|--------|-------|

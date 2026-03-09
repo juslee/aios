@@ -38,60 +38,49 @@ The split is deliberate. Everything above the line works without AI, without net
 
 ## 2. Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Accessibility Manager                       │
-│                  (system service, Phase 2)                    │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                 Core Engine (no AIRS)                   │  │
-│  │                                                       │  │
-│  │  Screen Reader       Braille Driver     Switch Scanner │  │
-│  │  (eSpeak-NG TTS)     (USB HID 0x41)    (scan patterns)│  │
-│  │                                                       │  │
-│  │  High Contrast       Magnifier          Reduced Motion │  │
-│  │  (compositor shader) (compositor zoom)  (animation off)│  │
-│  │                                                       │  │
-│  │  Keyboard Nav        Large Text         Caret Tracking │  │
-│  │  (focus management)  (font scaling)     (follow focus) │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              AIRS Enhancement Layer (optional)          │  │
-│  │                                                       │  │
-│  │  Neural TTS          Image Describer    Voice Control  │  │
-│  │  (natural voice)     (alt-text gen)     (speech→cmd)   │  │
-│  │                                                       │  │
-│  │  Context Adaptation  Smart Navigation   Predictive UI  │  │
-│  │  (simplify by task)  (skip repetitive)  (anticipate)   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              Configuration & Persistence               │  │
-│  │                                                       │  │
-│  │  BootAccessibilityConfig  (system/config/accessibility)│  │
-│  │  UserAccessibilityPrefs   (user preferences, encrypted)│  │
-│  │  LiveOverrides            (temporary per-session)      │  │
-│  └───────────────────────────────────────────────────────┘  │
-└──────────────────────┬──────────────────┬────────────────────┘
-                       │                  │
-          ┌────────────┘                  └────────────┐
-          ▼                                            ▼
-┌──────────────────────────┐              ┌──────────────────────────┐
-│    Compositor              │              │    UI Toolkit (iced)       │
-│    (rendering, zoom,       │              │    (accessibility tree,    │
-│     contrast, magnify)     │              │     focus management,      │
-│                            │              │     semantic roles)        │
-│  See compositor.md §9      │              │  See ui-toolkit.md §12     │
-└──────────────┬─────────────┘              └──────────────┬─────────────┘
-               │                                           │
-               ▼                                           ▼
-┌──────────────────────────┐              ┌──────────────────────────┐
-│    Audio Subsystem         │              │    Input Subsystem         │
-│    (TTS output,            │              │    (switch devices,        │
-│     audio cues)            │              │     keyboard events,       │
-│                            │              │     USB HID polling)       │
-└────────────────────────────┘              └────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph AM["Accessibility Manager (system service, Phase 2)"]
+        subgraph CE["Core Engine (no AIRS)"]
+            SR["Screen Reader (eSpeak-NG TTS)"]
+            BD["Braille Driver (USB HID 0x41)"]
+            SS["Switch Scanner (scan patterns)"]
+            HC["High Contrast (compositor shader)"]
+            MG["Magnifier (compositor zoom)"]
+            RM["Reduced Motion (animation off)"]
+            KN["Keyboard Nav (focus management)"]
+            LT["Large Text (font scaling)"]
+            CT["Caret Tracking (follow focus)"]
+        end
+
+        subgraph AE["AIRS Enhancement Layer (optional)"]
+            NT["Neural TTS (natural voice)"]
+            ID["Image Describer (alt-text gen)"]
+            VC["Voice Control (speech to cmd)"]
+            CA["Context Adaptation (simplify by task)"]
+            SN["Smart Navigation (skip repetitive)"]
+            PU["Predictive UI (anticipate)"]
+        end
+
+        subgraph CP["Configuration and Persistence"]
+            BAC["BootAccessibilityConfig (system/config/accessibility)"]
+            UAP["UserAccessibilityPrefs (user preferences, encrypted)"]
+            LO["LiveOverrides (temporary per-session)"]
+        end
+    end
+
+    AM --> Compositor["`Compositor
+(rendering, zoom, contrast, magnify)
+See compositor.md section 9`"]
+    AM --> UIToolkit["`UI Toolkit - iced
+(accessibility tree, focus management,
+semantic roles)
+See ui-toolkit.md section 12`"]
+    Compositor --> Audio["`Audio Subsystem
+(TTS output, audio cues)`"]
+    UIToolkit --> Input["`Input Subsystem
+(switch devices, keyboard events,
+USB HID polling)`"]
 ```
 
 ### 2.1 Accessibility Manager
@@ -168,20 +157,25 @@ impl AccessibilityManager {
 
 Accessibility configuration uses a two-phase model to handle the chicken-and-egg problem of needing accessibility before user preferences are available:
 
-```
-Phase 1: Boot Config (unencrypted, pre-identity)
-  ├── Stored in system/config/accessibility
-  ├── Readable without identity unlock
-  ├── Contains only accessibility state (no personal data)
-  ├── Written during first boot or via Conversation Bar
-  └── Ensures passphrase entry screen is accessible
+```mermaid
+flowchart TD
+    subgraph P1C["Phase 1: Boot Config (unencrypted, pre-identity)"]
+        P1a["Stored in system/config/accessibility"]
+        P1b["Readable without identity unlock"]
+        P1c["Contains only accessibility state (no personal data)"]
+        P1d["Written during first boot or via Conversation Bar"]
+        P1e["Ensures passphrase entry screen is accessible"]
+    end
 
-Phase 2: User Preferences (encrypted, post-identity)
-  ├── Stored in user's preference space (see preferences.md)
-  ├── Decrypted after identity unlock
-  ├── Contains detailed customization (voice choice, speech rate, colors)
-  ├── Overrides boot config where they conflict
-  └── Enables per-identity accessibility settings on shared devices
+    subgraph P2C["Phase 2: User Preferences (encrypted, post-identity)"]
+        P2a["Stored in user's preference space (see preferences.md)"]
+        P2b["Decrypted after identity unlock"]
+        P2c["Contains detailed customization (voice choice, speech rate, colors)"]
+        P2d["Overrides boot config where they conflict"]
+        P2e["Enables per-identity accessibility settings on shared devices"]
+    end
+
+    P1C --> P2C
 ```
 
 The boot config is intentionally minimal — booleans and a few numeric values. It stores no personal information and is unencrypted so the compositor can read it before identity unlock. The full user preferences are encrypted with everything else and loaded after authentication.
@@ -194,27 +188,39 @@ The boot config is intentionally minimal — booleans and a few numeric values. 
 
 The screen reader is built on eSpeak-NG, a compact, multilingual text-to-speech engine compiled into the initramfs. This is the foundation that makes screen reading available from the first frame without AIRS, without network, and without any configuration.
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│                    Screen Reader Pipeline                       │
-│                                                                │
-│  Accessibility     Text            eSpeak-NG       Audio       │
-│  Tree Events  →  Extraction  →  TTS Engine   →  Subsystem     │
-│                                                                │
-│  ┌────────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐ │
-│  │ Focus      │  │ Role +    │  │ Phoneme   │  │ PCM       │ │
-│  │ changed    │→ │ label +   │→ │ synthesis │→ │ output    │ │
-│  │            │  │ state     │  │ (MBROLA   │  │ (48kHz,   │ │
-│  │ Value      │  │           │  │  or Klatt)│  │  16-bit)  │ │
-│  │ changed    │  │ "Button:  │  │           │  │           │ │
-│  │            │  │  Save,    │  │ Prosody   │  │ Priority  │ │
-│  │ Alert      │  │  pressed" │  │ control   │  │ mixing    │ │
-│  │            │  │           │  │           │  │ (over     │ │
-│  │ Structure  │  │ Interrupt │  │ Rate,     │  │  media)   │ │
-│  │ changed    │  │ handling  │  │ pitch,    │  │           │ │
-│  │            │  │           │  │ volume    │  │           │ │
-│  └────────────┘  └───────────┘  └───────────┘  └───────────┘ │
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph SRP["Screen Reader Pipeline"]
+        ATE["`Accessibility
+Tree Events
+---
+Focus changed
+Value changed
+Alert
+Structure changed`"]
+        TE["`Text
+Extraction
+---
+Role + label + state
+'Button: Save, pressed'
+Interrupt handling`"]
+        TTS["`eSpeak-NG
+TTS Engine
+---
+Phoneme synthesis
+(MBROLA or Klatt)
+Prosody control
+Rate, pitch, volume`"]
+        AO["`Audio
+Subsystem
+---
+PCM output
+(48kHz, 16-bit)
+Priority mixing
+(over media)`"]
+
+        ATE --> TE --> TTS --> AO
+    end
 ```
 
 **Why eSpeak-NG:**
@@ -396,28 +402,34 @@ Earcons are mixed at a lower volume than speech so they never obscure spoken con
 
 AIOS supports refreshable Braille displays via the USB HID Braille usage page (0x41), standardized in the USB HID specification. This means any display conforming to the HID Braille standard works without device-specific drivers.
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    Braille Display Pipeline                    │
-│                                                               │
-│  Accessibility    Braille        Grade 2         USB HID      │
-│  Tree         →  Translation  →  Contraction  →  Output       │
-│                                                               │
-│  ┌───────────┐   ┌───────────┐  ┌───────────┐  ┌──────────┐ │
-│  │ Focus     │   │ Unicode   │  │ Contracted │  │ HID      │ │
-│  │ node text │ → │ → Braille │→ │ Braille    │→ │ Report   │ │
-│  │ + role +  │   │ table     │  │ (lang-     │  │ (dot     │ │
-│  │ state     │   │ lookup    │  │  specific) │  │  pattern │ │
-│  │           │   │           │  │            │  │  bytes)  │ │
-│  └───────────┘   └───────────┘  └───────────┘  └──────────┘ │
-│                                                               │
-│  ┌───────────────────────────────────────────────────────┐   │
-│  │              Input (routing keys, nav keys)            │   │
-│  │  Routing key pressed → focus moves to that cell        │   │
-│  │  Nav keys → scroll through content / move focus        │   │
-│  │  Chord input → text entry via Braille keyboard         │   │
-│  └───────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph BDP["Braille Display Pipeline"]
+        AT["`Accessibility Tree
+---
+Focus node text
++ role + state`"]
+        BT["`Braille Translation
+---
+Unicode to Braille
+table lookup`"]
+        GC["`Grade 2 Contraction
+---
+Contracted Braille
+(lang-specific)`"]
+        HID["`USB HID Output
+---
+HID Report
+(dot pattern bytes)`"]
+
+        AT --> BT --> GC --> HID
+    end
+
+    subgraph BI["Input (routing keys, nav keys)"]
+        RK["Routing key pressed: focus moves to that cell"]
+        NK["Nav keys: scroll through content / move focus"]
+        CI["Chord input: text entry via Braille keyboard"]
+    end
 ```
 
 ### 4.2 Braille Driver
@@ -584,57 +596,33 @@ This is the most constrained input method AIOS supports. A single-switch user ha
 
 ### 5.2 Scan Patterns
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    Switch Scanning Model                        │
-│                                                                 │
-│  Single-Switch (auto-scan):                                     │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                                                          │  │
-│  │  System highlights groups, then items within groups.     │  │
-│  │  Highlight advances automatically on a timer.            │  │
-│  │  Switch press = select highlighted item.                 │  │
-│  │                                                          │  │
-│  │  Level 1 (groups):    [Menu Bar]  [Content]  [Status]    │  │
-│  │                        ^^^^^^^^                          │  │
-│  │                        highlighted                       │  │
-│  │                                                          │  │
-│  │  Switch press → enters group                             │  │
-│  │                                                          │  │
-│  │  Level 2 (items):     [File]  [Edit]  [View]  [Help]    │  │
-│  │                        ^^^^^^                            │  │
-│  │                        highlighted                       │  │
-│  │                                                          │  │
-│  │  Switch press → activates item                           │  │
-│  │  Timeout without press → back to Level 1                 │  │
-│  │                                                          │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│  Two-Switch (manual advance):                                   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                                                          │  │
-│  │  Switch A = advance highlight to next item               │  │
-│  │  Switch B = select highlighted item                      │  │
-│  │                                                          │  │
-│  │  No auto-advance timer. User controls pace entirely.     │  │
-│  │                                                          │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│  Row-Column (grid scan, for text entry):                        │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                                                          │  │
-│  │  ┌─────────────────────────────────────────────────┐     │  │
-│  │  │  A  B  C  D  E  F  G  ← row highlighted        │     │  │
-│  │  │  H  I  J  K  L  M  N                           │     │  │
-│  │  │  O  P  Q  R  S  T  U                           │     │  │
-│  │  │  V  W  X  Y  Z  .  ⌫                           │     │  │
-│  │  └─────────────────────────────────────────────────┘     │  │
-│  │                                                          │  │
-│  │  Switch press → lock row, scan columns                   │  │
-│  │  Switch press → select character at intersection         │  │
-│  │                                                          │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph SwitchScanning["Switch Scanning Model"]
+        subgraph SingleSwitch["Single-Switch (auto-scan)"]
+            SS1["`System highlights groups, then items within groups.
+Highlight advances automatically on a timer.
+Switch press = select highlighted item.`"]
+            SS2["`Level 1 (groups): [**Menu Bar**] [Content] [Status]
+Switch press → enters group`"]
+            SS3["`Level 2 (items): [**File**] [Edit] [View] [Help]
+Switch press → activates item
+Timeout without press → back to Level 1`"]
+        end
+
+        subgraph TwoSwitch["Two-Switch (manual advance)"]
+            TS1["`Switch A = advance highlight to next item
+Switch B = select highlighted item
+No auto-advance timer. User controls pace entirely.`"]
+        end
+
+        subgraph RowColumn["Row-Column (grid scan, for text entry)"]
+            RC1["`Grid: A B C D E F G (row highlighted)
+H I J K L M N / O P Q R S T U / V W X Y Z . ⌫`"]
+            RC2["`Switch press → lock row, scan columns
+Switch press → select character at intersection`"]
+        end
+    end
 ```
 
 ### 5.3 Switch Scan Engine
@@ -1051,42 +1039,35 @@ pub struct ReducedMotionConfig {
 
 Voice control allows users to control the OS and applications entirely by voice. It operates in two tiers: basic command recognition (without AIRS) and full natural language control (with AIRS).
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    Voice Control Pipeline                        │
-│                                                                 │
-│  ┌──────────────┐                                               │
-│  │  Microphone   │                                               │
-│  │  (audio       │                                               │
-│  │   subsystem)  │                                               │
-│  └──────┬───────┘                                               │
-│         │ PCM audio stream                                      │
-│         ▼                                                       │
-│  ┌──────────────┐   ┌─────────────────────────────────────┐    │
-│  │  Voice        │   │  Without AIRS:                       │    │
-│  │  Activity     │   │  Keyword spotting only               │    │
-│  │  Detection    │   │  ~50 built-in commands               │    │
-│  │  (energy +    │   │  "Click" "Scroll down" "Next"       │    │
-│  │   zero-cross) │   │  Pattern matching on phonemes        │    │
-│  └──────┬───────┘   └─────────────────────────────────────┘    │
-│         │ voice segments                                        │
-│         ▼                                                       │
-│  ┌──────────────┐   ┌─────────────────────────────────────┐    │
-│  │  Speech       │   │  With AIRS:                          │    │
-│  │  Recognition  │   │  Full natural language recognition   │    │
-│  │              │   │  "Open the browser and go to email"  │    │
-│  │  (AIRS or    │   │  Context-aware command parsing       │    │
-│  │   basic)     │   │  Conversation Bar integration        │    │
-│  └──────┬───────┘   └─────────────────────────────────────┘    │
-│         │ recognized text / command                              │
-│         ▼                                                       │
-│  ┌──────────────┐                                               │
-│  │  Command      │                                               │
-│  │  Dispatcher   │                                               │
-│  │  (maps to     │                                               │
-│  │   actions)    │                                               │
-│  └──────────────┘                                               │
-└────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph VCP["Voice Control Pipeline"]
+        MIC["`Microphone
+(audio subsystem)`"]
+        VAD["`Voice Activity Detection
+(energy + zero-crossing)`"]
+        SR["`Speech Recognition
+(AIRS or basic)`"]
+        CD["`Command Dispatcher
+(maps to actions)`"]
+
+        MIC -- "PCM audio stream" --> VAD
+        VAD -- "voice segments" --> SR
+        SR -- "recognized text / command" --> CD
+    end
+
+    NoAIRS["`Without AIRS:
+Keyword spotting only, ~50 built-in commands
+'Click' 'Scroll down' 'Next'
+Pattern matching on phonemes`"]
+    WithAIRS["`With AIRS:
+Full natural language recognition
+'Open the browser and go to email'
+Context-aware command parsing
+Conversation Bar integration`"]
+
+    VAD -.- NoAIRS
+    SR -.- WithAIRS
 ```
 
 ### 7.2 Basic Command Recognition (No AIRS)
@@ -1160,25 +1141,21 @@ pub enum VoiceAction {
 
 For users who need pixel-level cursor control via voice, the compositor can display a numbered grid overlay. The user says a grid number to move the cursor to that region, then a sub-grid appears for finer positioning:
 
-```
-┌─────┬─────┬─────┬─────┬─────┬─────┐
-│  1  │  2  │  3  │  4  │  5  │  6  │
-├─────┼─────┼─────┼─────┼─────┼─────┤
-│  7  │  8  │  9  │ 10  │ 11  │ 12  │
-├─────┼─────┼─────┼─────┼─────┼─────┤
-│ 13  │ 14  │ 15  │ 16  │ 17  │ 18  │
-├─────┼─────┼─────┼─────┼─────┼─────┤
-│ 19  │ 20  │ 21  │ 22  │ 23  │ 24  │
-├─────┼─────┼─────┼─────┼─────┼─────┤
-│ 25  │ 26  │ 27  │ 28  │ 29  │ 30  │
-├─────┼─────┼─────┼─────┼─────┼─────┤
-│ 31  │ 32  │ 33  │ 34  │ 35  │ 36  │
-└─────┴─────┴─────┴─────┴─────┴─────┘
+```mermaid
+flowchart TD
+    subgraph Grid["6x6 Numbered Grid Overlay"]
+        R1["1 | 2 | 3 | 4 | 5 | 6"]
+        R2["7 | 8 | 9 | 10 | 11 | 12"]
+        R3["13 | 14 | 15 | 16 | 17 | 18"]
+        R4["19 | 20 | 21 | 22 | 23 | 24"]
+        R5["25 | 26 | 27 | 28 | 29 | 30"]
+        R6["31 | 32 | 33 | 34 | 35 | 36"]
+    end
 
-User: "15"  → cursor moves to center of cell 15
-           → sub-grid appears within cell 15
-User: "3"   → cursor moves to sub-position 3
-User: "click" → click at cursor position
+    Grid --> Say15["`User: '15' → cursor moves to center of cell 15
+Sub-grid appears within cell 15`"]
+    Say15 --> Say3["User: '3' → cursor moves to sub-position 3"]
+    Say3 --> Click["User: 'click' → click at cursor position"]
 ```
 
 This is a fallback for interactions that cannot be reached through the accessibility tree. Well-designed agents should never require it — all interactive elements should be in the accessibility tree with keyboard focus support.
@@ -1191,51 +1168,62 @@ This is a fallback for interactions that cannot be reached through the accessibi
 
 The first frame displayed by AIOS is accessible. This is not aspirational — it is an architectural requirement enforced by the boot sequence. The compositor reads `system/config/accessibility` during Phase 2 (before identity unlock) and applies all configured features before rendering anything to the display.
 
-```
-Boot Timeline for Accessible First Boot:
+```mermaid
+flowchart TD
+    subgraph P1["Phase 1: Storage"]
+        P1A["Block Engine -> Object Store -> Space Storage"]
+        P1B["system/config/accessibility is now readable"]
+        P1A --> P1B
+    end
 
-Phase 1: Storage
-  └── Block Engine → Object Store → Space Storage
-      └── system/config/accessibility is now readable
+    subgraph P2["Phase 2: Core Services (accessibility activates here)"]
+        INPUT["Input subsystem init"]
+        USBHID["USB HID enumeration"]
+        BRAILLE["Braille display detected? -> BrailleDriver started"]
+        SWITCH["Switch device detected? -> SwitchScanEngine started"]
 
-Phase 2: Core Services (accessibility activates here)
-  ├── Input subsystem init
-  │   └── USB HID enumeration
-  │       ├── Braille display detected? → BrailleDriver started
-  │       └── Switch device detected? → SwitchScanEngine started
-  │
-  ├── Read system/config/accessibility
-  │   ├── First boot (no config exists):
-  │   │   └── Enter detection mode (§8.2)
-  │   └── Subsequent boot (config exists):
-  │       └── Apply saved settings immediately
-  │
-  ├── Compositor starts with accessibility state applied:
-  │   ├── High contrast shader loaded (if configured)
-  │   ├── Font scale applied (if configured)
-  │   ├── Reduced motion flag set (if configured)
-  │   └── Magnifier initialized (if configured)
-  │
-  ├── eSpeak-NG process spawned (if screen reader configured)
-  │   └── TTS ready before first frame renders
-  │
-  └── First frame rendered
-      ├── Visual: high contrast, large text, no animation
-      ├── Audio: screen reader speaks first UI element
-      ├── Braille: display shows first UI element
-      └── Switch: scan groups built, scanning begins
+        READ["Read system/config/accessibility"]
+        FIRST["First boot (no config): Enter detection mode (section 8.2)"]
+        SUBSEQ["Subsequent boot (config exists): Apply saved settings immediately"]
 
-Phase 3: AIRS loads (accessibility upgrades available)
-  ├── Neural TTS offered as upgrade to eSpeak-NG
-  ├── Image description available for unlabeled images
-  ├── Full voice control available
-  └── Context-aware UI simplification begins
+        COMP["Compositor starts with accessibility state applied"]
+        HC2["High contrast shader loaded (if configured)"]
+        FS2["Font scale applied (if configured)"]
+        RM2["Reduced motion flag set (if configured)"]
+        MAG2["Magnifier initialized (if configured)"]
 
-Phase 4: Identity unlock
-  └── Passphrase screen is ALREADY ACCESSIBLE
-      └── Screen reader speaks "Enter your passphrase"
-      └── Braille display shows prompt
-      └── Switch scanning covers input field + submit button
+        ESPEAK["eSpeak-NG process spawned (if screen reader configured)"]
+        TTSREADY["TTS ready before first frame renders"]
+
+        FF["First frame rendered"]
+        VIS["Visual: high contrast, large text, no animation"]
+        AUD["Audio: screen reader speaks first UI element"]
+        BRL["Braille: display shows first UI element"]
+        SWI["Switch: scan groups built, scanning begins"]
+
+        INPUT --> USBHID --> BRAILLE & SWITCH
+        READ --> FIRST & SUBSEQ
+        COMP --> HC2 & FS2 & RM2 & MAG2
+        ESPEAK --> TTSREADY
+        FF --> VIS & AUD & BRL & SWI
+    end
+
+    subgraph P3["Phase 3: AIRS loads (accessibility upgrades available)"]
+        P3A["Neural TTS offered as upgrade to eSpeak-NG"]
+        P3B["Image description available for unlabeled images"]
+        P3C["Full voice control available"]
+        P3D["Context-aware UI simplification begins"]
+    end
+
+    subgraph P4["Phase 4: Identity unlock"]
+        P4A["Passphrase screen is ALREADY ACCESSIBLE"]
+        P4B["Screen reader speaks 'Enter your passphrase'"]
+        P4C["Braille display shows prompt"]
+        P4D["Switch scanning covers input field + submit button"]
+        P4A --> P4B & P4C & P4D
+    end
+
+    P1 --> P2 --> P3 --> P4
 ```
 
 ### 8.2 First-Boot Detection Mode
@@ -1277,21 +1265,16 @@ impl BootAccessibilityConfig {
 
 The first frame always displays the accessibility options prompt in large, high-contrast text (24pt, white on dark background) regardless of configuration. This ensures the prompt is readable even for users with moderate vision impairment who haven't yet enabled accessibility:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                                                              │
-│                                                              │
-│        Press F5 for screen reader.                           │
-│        Press F6 for high contrast.                           │
-│        Press F7 for large text.                              │
-│        Press F8 for switch access.                           │
-│                                                              │
-│        Press Enter to continue.                              │
-│                                                              │
-│                                                              │
-│  (This text is displayed in 24pt, white on dark background)  │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph BootPrompt["`First Boot Accessibility Prompt
+(24pt, white on dark background)`"]
+        F5["Press F5 for screen reader."]
+        F6["Press F6 for high contrast."]
+        F7["Press F7 for large text."]
+        F8["Press F8 for switch access."]
+        Enter["Press Enter to continue."]
+    end
 ```
 
 If a screen reader is already active (F5 was held during boot, or a Braille display was detected), this prompt is spoken aloud.
@@ -1334,56 +1317,57 @@ This config is separate from the user's encrypted preference space. After identi
 
 The accessibility tree is the central data structure that connects assistive technology to the UI. It is a parallel representation of the visual UI, carrying semantic information rather than pixel data. The tree is built from three sources:
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│                  Accessibility Tree Assembly                    │
-│                                                                │
-│  Source 1: UI Toolkit (iced widgets)                           │
-│  ├── Every widget automatically emits an AccessNode            │
-│  ├── Roles, labels, states, actions derived from widget type   │
-│  ├── Developer adds: label, description, custom role           │
-│  └── See ui-toolkit.md §12.1                                  │
-│                                                                │
-│  Source 2: Agent-provided semantic hints                       │
-│  ├── Agents annotate surfaces with SemanticRole                │
-│  ├── Agents provide alt-text for images, descriptions for      │
-│  │   complex visualizations                                    │
-│  └── See compositor.md §4 SurfaceHints                        │
-│                                                                │
-│  Source 3: AIRS inference (when available)                     │
-│  ├── Auto-generates descriptions for unlabeled images          │
-│  ├── Summarizes complex content for screen reader users        │
-│  └── See §10 AIRS Enhancement                                 │
-│                                                                │
-│          ┌──────────┐                                          │
-│          │ Compositor│                                          │
-│          │ merges    │                                          │
-│          │ all three │                                          │
-│          │ sources   │                                          │
-│          └────┬─────┘                                          │
-│               │                                                │
-│               ▼                                                │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │             Unified Accessibility Tree                    │  │
-│  │                                                         │  │
-│  │  Window: "Browser"                                      │  │
-│  │  ├── Toolbar                                            │  │
-│  │  │   ├── Button: "Back"                                 │  │
-│  │  │   ├── Button: "Forward"                              │  │
-│  │  │   ├── TextInput: "Address bar", value="example.com"  │  │
-│  │  │   └── Button: "Menu"                                 │  │
-│  │  ├── TabList                                            │  │
-│  │  │   ├── Tab: "Email", selected                         │  │
-│  │  │   └── Tab: "News"                                    │  │
-│  │  └── WebContent                                         │  │
-│  │      ├── Heading(1): "Inbox"                            │  │
-│  │      ├── List: "Messages", 42 items                     │  │
-│  │      │   ├── ListItem: "From: Alice — Re: Project..."   │  │
-│  │      │   ├── ListItem: "From: Bob — Meeting notes..."   │  │
-│  │      │   └── ...                                        │  │
-│  │      └── Image: "Company logo" (AIRS-generated alt)     │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Sources["Accessibility Tree Assembly"]
+        S1["`Source 1: UI Toolkit (iced widgets)
+Every widget emits an AccessNode
+Roles, labels, states, actions from widget type
+Developer adds: label, description, custom role
+See ui-toolkit.md section 12.1`"]
+        S2["`Source 2: Agent-provided semantic hints
+Agents annotate surfaces with SemanticRole
+Agents provide alt-text for images,
+descriptions for complex visualizations
+See compositor.md section 4 SurfaceHints`"]
+        S3["`Source 3: AIRS inference (when available)
+Auto-generates descriptions for unlabeled images
+Summarizes complex content for screen reader users
+See section 10 AIRS Enhancement`"]
+    end
+
+    COMP["`Compositor
+merges all three sources`"]
+
+    S1 --> COMP
+    S2 --> COMP
+    S3 --> COMP
+
+    subgraph UAT["Unified Accessibility Tree"]
+        W["Window: 'Browser'"]
+        TB["Toolbar"]
+        BK["Button: 'Back'"]
+        FW["Button: 'Forward'"]
+        AB["TextInput: 'Address bar', value='example.com'"]
+        MN["Button: 'Menu'"]
+        TL["TabList"]
+        T1["Tab: 'Email', selected"]
+        T2["Tab: 'News'"]
+        WC["WebContent"]
+        H1["Heading 1: 'Inbox'"]
+        LS["List: 'Messages', 42 items"]
+        LI1["ListItem: 'From: Alice -- Re: Project...'"]
+        LI2["ListItem: 'From: Bob -- Meeting notes...'"]
+        IMG["Image: 'Company logo' (AIRS-generated alt)"]
+
+        W --> TB & TL & WC
+        TB --> BK & FW & AB & MN
+        TL --> T1 & T2
+        WC --> H1 & LS & IMG
+        LS --> LI1 & LI2
+    end
+
+    COMP --> UAT
 ```
 
 ### 9.2 Tree Protocol
@@ -1686,59 +1670,67 @@ The key invariant: **no accessibility feature becomes unavailable when AIRS disc
 
 Accessibility is not a single phase. It is woven through the development plan from Phase 6 (compositor) through Phase 23 (polish). The principle is: build the infrastructure early, add features incrementally, polish last.
 
-```
-Phase 6:   Compositor Foundation
-           ├── Accessibility tree data structure (AccessNode, AccessRole)
-           ├── High contrast shader (white-on-black, applied at compositor)
-           ├── Large text support in theme system
-           ├── Reduced motion flag (animations respect it)
-           ├── Focus indicator rendering (always visible)
-           └── Keyboard focus management (Tab, Enter, Escape, Arrows)
+```mermaid
+flowchart TD
+    P6["Phase 6: Compositor Foundation"]
+    P6a["Accessibility tree data structure (AccessNode, AccessRole)"]
+    P6b["High contrast shader (white-on-black, applied at compositor)"]
+    P6c["Large text support in theme system"]
+    P6d["Reduced motion flag (animations respect it)"]
+    P6e["Focus indicator rendering (always visible)"]
+    P6f["Keyboard focus management (Tab, Enter, Escape, Arrows)"]
+    P6 --> P6a & P6b & P6c & P6d & P6e & P6f
 
-Phase 8:   AIRS Integration
-           └── Image description API (for later use by accessibility)
+    P8["Phase 8: AIRS Integration"]
+    P8a["Image description API (for later use by accessibility)"]
+    P8 --> P8a
 
-Phase 9:   Experience Layer
-           ├── Accessibility options in first-boot flow
-           ├── BootAccessibilityConfig persistence
-           └── Conversation Bar: "turn on screen reader" works
+    P9["Phase 9: Experience Layer"]
+    P9a["Accessibility options in first-boot flow"]
+    P9b["BootAccessibilityConfig persistence"]
+    P9c["Conversation Bar: 'turn on screen reader' works"]
+    P9 --> P9a & P9b & P9c
 
-Phase 20:  UI Toolkit Accessibility
-           ├── All widgets emit AccessNode automatically
-           ├── AccessRole for every standard widget
-           ├── Accessible label / description API for developers
-           ├── Agent audit: warn on missing labels
-           └── Keyboard navigation: Tab order, arrow key nav
+    P17["Phase 17: USB Stack"]
+    P17a["USB HID Braille display detection and driver"]
+    P17b["USB HID switch device detection"]
+    P17 --> P17a & P17b
 
-Phase 17:  USB Stack
-           ├── USB HID Braille display detection and driver
-           └── USB HID switch device detection
+    P20["Phase 20: UI Toolkit Accessibility / Portable UI Toolkit (iced)"]
+    P20a["All widgets emit AccessNode automatically"]
+    P20b["AccessRole for every standard widget"]
+    P20c["Accessible label / description API for developers"]
+    P20d["Agent audit: warn on missing labels"]
+    P20e["Keyboard navigation: Tab order, arrow key nav"]
+    P20f["Accessibility tree generation from iced widget hierarchy"]
+    P20g["Cross-platform a11y: AT-SPI2 (Linux), NSAccessibility (macOS)"]
+    P20h["Focus management in iced backend"]
+    P20 --> P20a & P20b & P20c & P20d & P20e & P20f & P20g & P20h
 
-Phase 20:  Portable UI Toolkit (iced)
-           ├── Accessibility tree generation from iced widget hierarchy
-           ├── Cross-platform a11y: AT-SPI2 (Linux), NSAccessibility (macOS)
-           └── Focus management in iced backend
+    P22["Phase 22: Audio Subsystem"]
+    P22a["eSpeak-NG integration (IPC to GPL process)"]
+    P22b["TTS audio output pipeline (priority mixing)"]
+    P22c["Earcon playback"]
+    P22d["Voice activity detection for voice control"]
+    P22 --> P22a & P22b & P22c & P22d
 
-Phase 22:  Audio Subsystem
-           ├── eSpeak-NG integration (IPC to GPL process)
-           ├── TTS audio output pipeline (priority mixing)
-           ├── Earcon playback
-           └── Voice activity detection for voice control
+    P23["Phase 23: Accessibility Polish"]
+    P23a["Full screen reader with text extraction"]
+    P23b["Braille display: Grade 1, Grade 2, Computer Braille"]
+    P23c["Switch scanning: single-switch, two-switch, row-column"]
+    P23d["Magnification: full-screen, lens, split-screen"]
+    P23e["Voice control: keyword spotter (no AIRS)"]
+    P23f["Voice control: full NLU (with AIRS)"]
+    P23g["Neural TTS integration (with AIRS)"]
+    P23h["AI image description (with AIRS)"]
+    P23i["Context-aware UI adaptation (with AIRS)"]
+    P23j["Grid overlay for voice mouse control"]
+    P23k["WCAG AA compliance audit"]
+    P23l["SDK accessibility linter"]
+    P23m["Accessibility testing suite"]
+    P23 --> P23a & P23b & P23c & P23d & P23e & P23f & P23g & P23h & P23i & P23j & P23k & P23l & P23m
 
-Phase 23:  Accessibility Polish
-           ├── Full screen reader with text extraction
-           ├── Braille display: Grade 1, Grade 2, Computer Braille
-           ├── Switch scanning: single-switch, two-switch, row-column
-           ├── Magnification: full-screen, lens, split-screen
-           ├── Voice control: keyword spotter (no AIRS)
-           ├── Voice control: full NLU (with AIRS)
-           ├── Neural TTS integration (with AIRS)
-           ├── AI image description (with AIRS)
-           ├── Context-aware UI adaptation (with AIRS)
-           ├── Grid overlay for voice mouse control
-           ├── WCAG AA compliance audit
-           ├── SDK accessibility linter
-           └── Accessibility testing suite
+    P6 --> P8 --> P9 --> P17 --> P20 --> P22 --> P23
 ```
 
 **Why accessibility infrastructure starts in Phase 6:** Retrofitting accessibility into a finished compositor is much harder than building it in from the start. The accessibility tree, focus management, and keyboard navigation are structural — they must be designed into the widget hierarchy and compositor protocol, not bolted on afterward. By Phase 23, the infrastructure exists; the work is features, polish, and compliance testing.

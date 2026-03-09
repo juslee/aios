@@ -27,60 +27,52 @@ AIOS inverts this. **The AI decides importance, not the sender.** Agents post at
 
 ## 2. Architecture
 
+```mermaid
+flowchart TD
+    AgentA["Agent A"] --> IPC
+    AgentB["Agent B"] --> IPC
+    AgentC["Agent C"] --> IPC
+
+    IPC["`IPC
+(PostAttention capability required)`"]
+
+    subgraph ATM["Attention Manager (system service)"]
+        IQ["`Intake Queue
+(rate-limited per-agent)`"]
+        TRIAGE["`AIRS Triage
+Urgency assessment
+Content analysis
+Relationship lookup
+History patterns`"]
+        CF["`Context Filter
+Current context
+User preferences
+Override state`"]
+        GS["`Grouping & Summary
+Cluster related
+Generate summaries
+Merge duplicates`"]
+        PQ["`Presentation Queue
+Interrupt: now
+NextBreak: wait
+Digest: batch
+Silent: log only`"]
+        AUDIT["`Audit Log
+(all items)`"]
+
+        IQ --> TRIAGE --> CF --> GS --> PQ
+        PQ --> AUDIT
+    end
+
+    IPC --> IQ
+
+    PQ --> PL["`Presentation Layer
+Status Strip badge
+Attention Panel
+Interrupt overlay
+Conversation Bar
+Toast (NextBreak)`"]
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                                                                   │
-│  Agent A ──┐                                                      │
-│             │   IPC (PostAttention capability required)            │
-│  Agent B ──┼──→ ┌──────────────────────────────────────────────┐ │
-│             │    │           Attention Manager                   │ │
-│  Agent C ──┘    │          (system service)                     │ │
-│                  │                                               │ │
-│                  │  ┌─────────────┐    ┌──────────────────────┐│ │
-│                  │  │ Intake Queue │───→│ AIRS Triage          ││ │
-│                  │  │ (rate-limited│    │                      ││ │
-│                  │  │  per-agent)  │    │ • Urgency assessment ││ │
-│                  │  └─────────────┘    │ • Content analysis   ││ │
-│                  │                      │ • Relationship lookup││ │
-│                  │                      │ • History patterns   ││ │
-│                  │                      └──────────┬───────────┘│ │
-│                  │                                 │            │ │
-│                  │                      ┌──────────▼───────────┐│ │
-│                  │                      │ Context Filter       ││ │
-│                  │                      │                      ││ │
-│                  │                      │ • Current context    ││ │
-│                  │                      │ • User preferences   ││ │
-│                  │                      │ • Override state     ││ │
-│                  │                      └──────────┬───────────┘│ │
-│                  │                                 │            │ │
-│                  │                      ┌──────────▼───────────┐│ │
-│                  │                      │ Grouping & Summary   ││ │
-│                  │                      │                      ││ │
-│                  │                      │ • Cluster related    ││ │
-│                  │                      │ • Generate summaries ││ │
-│                  │                      │ • Merge duplicates   ││ │
-│                  │                      └──────────┬───────────┘│ │
-│                  │                                 │            │ │
-│                  │  ┌──────────────┐    ┌──────────▼───────────┐│ │
-│                  │  │ Audit Log    │◄───│ Presentation Queue   ││ │
-│                  │  │ (all items)  │    │                      ││ │
-│                  │  └──────────────┘    │ • Interrupt → now    ││ │
-│                  │                      │ • NextBreak → wait   ││ │
-│                  │                      │ • Digest → batch     ││ │
-│                  │                      │ • Silent → log only  ││ │
-│                  │                      └──────────┬───────────┘│ │
-│                  └──────────────────────────────────┼───────────┘ │
-│                                                     │             │
-│                                          ┌──────────▼──────────┐ │
-│                                          │  Presentation Layer  │ │
-│                                          │                      │ │
-│                                          │  • Status Strip badge│ │
-│                                          │  • Attention Panel   │ │
-│                                          │  • Interrupt overlay │ │
-│                                          │  • Conversation Bar  │ │
-│                                          │  • Toast (NextBreak) │ │
-│                                          └──────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
 ```
 
 -----

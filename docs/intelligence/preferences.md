@@ -31,47 +31,49 @@ No settings panel required. No config files to edit. No documentation to read. T
 
 ## 2. Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                                                                   │
-│  User                                                             │
-│  ├── Conversation Bar: "Make the text bigger"                    │
-│  ├── Settings UI: visual preference browser                      │
-│  └── Agent UI: agent-specific preference controls                │
-│                                                                   │
-│         │              │                │                         │
-│         ▼              ▼                ▼                         │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │                  Preference Service                          ││
-│  │                (privileged system service)                    ││
-│  │                                                              ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐ ││
-│  │  │ NLU Resolver  │  │ Preference   │  │ Behavioral        │ ││
-│  │  │               │  │ Store        │  │ Observer          │ ││
-│  │  │ Natural lang  │  │              │  │                   │ ││
-│  │  │ → preference  │  │ user/        │  │ Watches user      │ ││
-│  │  │   change      │  │ preferences/ │  │ patterns, infers  │ ││
-│  │  │               │  │ space        │  │ preference changes│ ││
-│  │  └──────────────┘  └──────────────┘  └───────────────────┘ ││
-│  │                                                              ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐ ││
-│  │  │ Change        │  │ Conflict     │  │ History           │ ││
-│  │  │ Propagator    │  │ Resolver     │  │ Manager           │ ││
-│  │  │               │  │              │  │                   │ ││
-│  │  │ Notifies      │  │ UserExplicit │  │ Every change      │ ││
-│  │  │ affected      │  │ wins, but    │  │ recorded with     │ ││
-│  │  │ components    │  │ explains     │  │ timestamp, source │ ││
-│  │  │ via IPC       │  │ tradeoffs    │  │ and reason        │ ││
-│  │  └──────────────┘  └──────────────┘  └───────────────────┘ ││
-│  └──────────────────────────────────────────────────────────────┘│
-│         │              │              │              │            │
-│         ▼              ▼              ▼              ▼            │
-│    Compositor      Audio         Attention      Network          │
-│    (display,       Service       Manager        Service          │
-│     theme,         (volume,      (thresholds,   (metered,        │
-│     density)       output)       schedule)      VPN)             │
-│                                                                   │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    CB["`Conversation Bar
+Make the text bigger`"]
+    SUI["`Settings UI
+visual preference browser`"]
+    AUI["`Agent UI
+agent-specific preference controls`"]
+
+    CB --> PS
+    SUI --> PS
+    AUI --> PS
+
+    subgraph PS["Preference Service (privileged system service)"]
+        NLU["`NLU Resolver
+Natural lang to
+preference change`"]
+        STORE["`Preference Store
+user/preferences/
+space`"]
+        BO["`Behavioral Observer
+Watches user patterns,
+infers preference changes`"]
+        CP["`Change Propagator
+Notifies affected
+components via IPC`"]
+        CR["`Conflict Resolver
+UserExplicit wins,
+but explains tradeoffs`"]
+        HM["`History Manager
+Every change recorded
+with timestamp, source,
+and reason`"]
+    end
+
+    PS --> Compositor["`Compositor
+(display, theme, density)`"]
+    PS --> Audio["`Audio Service
+(volume, output)`"]
+    PS --> Attention["`Attention Manager
+(thresholds, schedule)`"]
+    PS --> Network["`Network Service
+(metered, VPN)`"]
 ```
 
 -----
@@ -247,31 +249,31 @@ pub struct PreferenceChange {
 
 ### 4.1 Authority Ranking
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  HIGHEST AUTHORITY                                                │
-│                                                                   │
-│  1. UserExplicit                                                  │
-│     "I said dark mode." This is never overridden silently.       │
-│     If a system component wants to change an explicit pref,      │
-│     it must explain why and get approval.                        │
-│                                                                   │
-│  2. UserBehaviorInferred                                          │
-│     "You always enable dark mode after 8pm."                     │
-│     AIRS observed a pattern and the user approved the inference. │
-│     Overridable by explicit preference at any time.              │
-│                                                                   │
-│  3. AgentSuggested                                                │
-│     "Power agent suggests reducing brightness to 40%."           │
-│     Requires explicit user approval. Never applied silently.     │
-│     Can be rejected permanently.                                  │
-│                                                                   │
-│  4. SystemDefault                                                 │
-│     Factory defaults. Applied when nothing else has been set.    │
-│     Overridden by any other source.                              │
-│                                                                   │
-│  LOWEST AUTHORITY                                                 │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Authority["Preference Authority Ranking (highest to lowest)"]
+        UE["`1. UserExplicit
+I said dark mode. Never overridden silently.
+System must explain and get approval to change.`"]
+        UBI["`2. UserBehaviorInferred
+You always enable dark mode after 8pm.
+AIRS observed pattern, user approved inference.
+Overridable by explicit preference at any time.`"]
+        AS["`3. AgentSuggested
+Power agent suggests reducing brightness to 40%.
+Requires explicit user approval. Never applied silently.
+Can be rejected permanently.`"]
+        SD["`4. SystemDefault
+Factory defaults. Applied when nothing else has been set.
+Overridden by any other source.`"]
+
+        UE --> UBI --> AS --> SD
+    end
+
+    style UE fill:#d4edda,stroke:#28a745
+    style UBI fill:#fff3cd,stroke:#ffc107
+    style AS fill:#fde2e2,stroke:#dc3545
+    style SD fill:#f0f0f0,stroke:#6c757d
 ```
 
 ### 4.2 Precedence Resolution
@@ -335,37 +337,33 @@ informs them of the tradeoff. The user decides.
 
 When the user speaks a preference change via the Conversation Bar:
 
-```
-User input: "Make the text bigger"
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  AIRS Natural Language Understanding     │
-│                                          │
-│  Intent: change_preference               │
-│  Target: display.font_scale              │
-│  Direction: increase                     │
-│  Amount: unspecified (use default step)   │
-└────────────────────┬────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────┐
-│  Preference Service                      │
-│                                          │
-│  Current: display.font_scale = 1.0       │
-│  Step: 0.1 (from metadata)               │
-│  New value: 1.1                          │
-│  Affected: Compositor (re-render all)    │
-└────────────────────┬────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────┐
-│  Change Propagator                       │
-│                                          │
-│  IPC → Compositor: font_scale = 1.1      │
-│  Compositor re-renders all surfaces      │
-│  User sees larger text immediately       │
-└─────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    INPUT["`User input:
+Make the text bigger`"]
+
+    INPUT --> NLU
+
+    NLU["`AIRS Natural Language Understanding
+Intent: change_preference
+Target: display.font_scale
+Direction: increase
+Amount: unspecified (use default step)`"]
+
+    NLU --> PREF
+
+    PREF["`Preference Service
+Current: display.font_scale = 1.0
+Step: 0.1 (from metadata)
+New value: 1.1
+Affected: Compositor (re-render all)`"]
+
+    PREF --> PROP
+
+    PROP["`Change Propagator
+IPC to Compositor: font_scale = 1.1
+Compositor re-renders all surfaces
+User sees larger text immediately`"]
 ```
 
 ```rust

@@ -19,56 +19,77 @@ AIOS inverts this. The AI Runtime Service (AIRS) is a **privileged system servic
 
 ## 2. Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                  AI Runtime Service (AIRS)                    │
-│                 (privileged userspace service)                │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              Inference Engine                          │  │
-│  │                                                       │  │
-│  │  Model Loader     Tokenizer     Compute Scheduler     │  │
-│  │  (GGUF format)    (per-model)   (CPU/GPU/NPU routing) │  │
-│  │                                                       │  │
-│  │  GGML Runtime     KV Cache      Streaming Output      │  │
-│  │  (NEON SIMD)      (per-session) (token-by-token)      │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              Model Registry                            │  │
-│  │                                                       │  │
-│  │  Model Catalog    LRU Eviction   Model Profiles       │  │
-│  │  (system/models/) (memory mgmt)  (task → model map)   │  │
-│  │                                                       │  │
-│  │  Download Mgr     Integrity      Version Tracking     │  │
-│  │  (NTM-backed)     (SHA-256)      (upgrade paths)      │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              Intelligence Services                     │  │
-│  │                                                       │  │
-│  │  Space Indexer     Context Engine   Attention Manager  │  │
-│  │  (embed, relate)   (infer context)  (triage, digest)  │  │
-│  │                                                       │  │
-│  │  Intent Verifier   Behavioral Mon   Adversarial Def   │  │
-│  │  (action→intent)   (anomaly detect) (injection det)   │  │
-│  │                                                       │  │
-│  │  Tool Manager      Context Manager  Conversation Mgr  │  │
-│  │  (register, exec)  (state, compress) (history, bar)   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              Agent Lifecycle                            │  │
-│  │                                                       │  │
-│  │  Agent Spawner     Security Analyzer  Sandbox Config   │  │
-│  │  (manifest→proc)   (static analysis)  (cap set build) │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-        │              │              │
-        ▼              ▼              ▼
-   Kernel IPC     Space Storage    Compute Devices
-   (capability    (model storage,  (CPU NEON SIMD,
-    transfer)      index spaces)    GPU, NPU)
+```mermaid
+flowchart TD
+    subgraph AIRS["AI Runtime Service (AIRS) — privileged userspace service"]
+        subgraph IE["Inference Engine"]
+            direction LR
+            ML["`Model Loader
+(GGUF format)`"]
+            TK["`Tokenizer
+(per-model)`"]
+            CS["`Compute Scheduler
+(CPU/GPU/NPU routing)`"]
+            GR["`GGML Runtime
+(NEON SIMD)`"]
+            KV["`KV Cache
+(per-session)`"]
+            SO["`Streaming Output
+(token-by-token)`"]
+        end
+        subgraph MR["Model Registry"]
+            direction LR
+            MC["`Model Catalog
+(system/models/)`"]
+            LE["`LRU Eviction
+(memory mgmt)`"]
+            MP["`Model Profiles
+(task-to-model map)`"]
+            DM["`Download Mgr
+(NTM-backed)`"]
+            IN["`Integrity
+(SHA-256)`"]
+            VT["`Version Tracking
+(upgrade paths)`"]
+        end
+        subgraph IS["Intelligence Services"]
+            direction LR
+            SI["`Space Indexer
+(embed, relate)`"]
+            CE["`Context Engine
+(infer context)`"]
+            AM["`Attention Manager
+(triage, digest)`"]
+            IV["`Intent Verifier
+(action-to-intent)`"]
+            BM["`Behavioral Mon
+(anomaly detect)`"]
+            AD["`Adversarial Def
+(injection det)`"]
+            TM["`Tool Manager
+(register, exec)`"]
+            CM["`Context Manager
+(state, compress)`"]
+            CV["`Conversation Mgr
+(history, bar)`"]
+        end
+        subgraph AL["Agent Lifecycle"]
+            direction LR
+            AS["`Agent Spawner
+(manifest-to-proc)`"]
+            SA["`Security Analyzer
+(static analysis)`"]
+            SC["`Sandbox Config
+(cap set build)`"]
+        end
+    end
+
+    AIRS --> KIPC["`Kernel IPC
+(capability transfer)`"]
+    AIRS --> SS["`Space Storage
+(model storage, index spaces)`"]
+    AIRS --> CD["`Compute Devices
+(CPU NEON SIMD, GPU, NPU)`"]
 ```
 
 ### 2.1 Why a Single Service (Monolith Now, Structured Split Later)
@@ -100,46 +121,44 @@ The model pool holds 4 GB. KV cache budget is 25% of that (1 GB). Splitting that
 
 The monolithic process is not monolithic code. Each subsystem is a Rust module with a defined interface. The security path and resource path share no mutable state (§10.1). IPC channels are already defined per-function (security gets a dedicated high-priority channel). The internal architecture is a set of components that happen to share an address space today.
 
+```mermaid
+flowchart TD
+    subgraph P1["Phase 1 (4-8 GB) — Single process, internal isolation"]
+        subgraph AIRS1["AIRS Process"]
+            direction LR
+            SP1["`Security Path
+(intent, behavioral, adversarial)`"]
+            IR1["`Intelligence + Resource
+(indexer, context, attention,
+conversation, resource orchestrator)`"]
+            IE1["`Inference Engine
+(shared model)`"]
+            SP1 --> IE1
+            IR1 --> IE1
+        end
+    end
 ```
-Phase 1 (4-8 GB) — Single process, internal isolation:
-  ┌─────────────────────────────────────────────────┐
-  │                  AIRS Process                     │
-  │  ┌──────────────┐  ┌──────────────────────────┐ │
-  │  │ Security Path │  │ Intelligence + Resource  │ │
-  │  │ (intent,      │  │ (indexer, context,       │ │
-  │  │  behavioral,  │  │  attention, conversation,│ │
-  │  │  adversarial) │  │  resource orchestrator)  │ │
-  │  └──────┬───────┘  └──────────┬───────────────┘ │
-  │         │     shared model     │                  │
-  │         └────────┬─────────────┘                  │
-  │          Inference Engine                         │
-  └─────────────────────────────────────────────────┘
 
-Phase 2 (16 GB) — Single process, multiple models:
-  Same structure, but primary + specialist models loaded.
-  Security tasks can use a dedicated small model (~1B)
-  alongside the primary conversation model (~8B).
-  No process split yet — shared address space still wins.
+Phase 2 (16 GB) — Single process, multiple models: same structure, but primary + specialist models loaded. Security tasks can use a dedicated small model (~1B) alongside the primary conversation model (~8B). No process split yet — shared address space still wins.
 
-Phase 3 (32+ GB) — Separate processes become viable:
-  ┌──────────────────┐  ┌──────────────────────────┐
-  │  AIRS-Security   │  │  AIRS-Intelligence       │
-  │  (intent,        │  │  (indexer, context,       │
-  │   behavioral,    │  │   attention, conversation)│
-  │   adversarial)   │  │                          │
-  │  Own model (3B)  │  │  Own model (8B+)         │
-  │  Own caps        │  │  Own caps                │
-  │  Own failure     │  │  Own failure domain      │
-  │  domain          │  │                          │
-  └──────────────────┘  └──────────────────────────┘
-  ┌──────────────────┐
-  │  AIRS-Resource   │
-  │  (orchestrator,  │
-  │   hint processor)│
-  │  Mostly stats,   │
-  │  minimal LLM     │
-  │  Own caps        │
-  └──────────────────┘
+```mermaid
+flowchart TD
+    subgraph P3["Phase 3 (32+ GB) — Separate processes become viable"]
+        direction LR
+        SEC["`AIRS-Security
+(intent, behavioral, adversarial)
+Own model (3B) · Own caps
+Own failure domain`"]
+        INT["`AIRS-Intelligence
+(indexer, context,
+attention, conversation)
+Own model (8B+) · Own caps
+Own failure domain`"]
+        RES["`AIRS-Resource
+(orchestrator, hint processor)
+Mostly stats, minimal LLM
+Own caps`"]
+    end
 ```
 
 At 32 GB, the split is worth it because:
@@ -160,37 +179,33 @@ The split is not worth it at 8 GB because:
 
 AIOS is a microkernel OS. The kernel is 31 syscalls: capabilities, IPC mediation, page tables, process lifecycle. Everything else — AIRS, Space Storage, Network Translation Module, Compositor — runs in userspace as Trust Level 1 services. AIRS being monolithic or split is a userspace concern that does not affect the kernel's architecture.
 
+```mermaid
+flowchart TD
+    subgraph MK["Microkernel (31 syscalls)"]
+        direction LR
+        PROC["ProcessCreate, ProcessTerminate"]
+        CAP["CapabilityGrant, CapabilityRevoke, CapabilityCheck"]
+        IPC["IpcSend, IpcReceive, ChannelCreate"]
+        MEM["MemoryMap, MemoryUnmap, MemoryProtect"]
+        SPC["SpaceRead, SpaceWrite (mediated)"]
+    end
+
+    MK -- "stable syscall interface" --> US
+
+    subgraph US["Userspace Services (Trust Level 1)"]
+        direction LR
+        AIRS2["AIRS (1 process today, maybe 3 later)"]
+        SS2["Space Storage"]
+        NTM["Network Translation Module"]
+        COMP["Compositor"]
+        SM["Service Manager"]
+    end
+
+    style MK fill:#f9f9f9,stroke:#333
+    style US fill:#f0f0ff,stroke:#333
 ```
-┌─────────────────────────────────────────────────────┐
-│  Microkernel (31 syscalls)                          │
-│  ProcessCreate, ProcessTerminate                     │
-│  CapabilityGrant, CapabilityRevoke, CapabilityCheck  │
-│  IpcSend, IpcReceive, ChannelCreate                  │
-│  MemoryMap, MemoryUnmap, MemoryProtect               │
-│  SpaceRead, SpaceWrite (mediated)                    │
-│  ...                                                 │
-│                                                      │
-│  Does not care how many processes AIRS uses.          │
-│  Sees: processes with capability sets making syscalls.│
-│  Enforces: the same rules regardless of AIRS layout. │
-└─────────────────────────────────────────────────────┘
-        │
-        │  stable syscall interface
-        │
-        ▼
-┌─────────────────────────────────────────────────────┐
-│  Userspace Services (Trust Level 1)                  │
-│  ├── AIRS (1 process today, maybe 3 later)           │
-│  ├── Space Storage                                   │
-│  ├── Network Translation Module                      │
-│  ├── Compositor                                      │
-│  └── Service Manager                                 │
-│                                                      │
-│  Can restructure freely.                             │
-│  Kernel interface is stable.                         │
-│  AIRS can split without touching the kernel.          │
-└─────────────────────────────────────────────────────┘
-```
+
+The microkernel does not care how many processes AIRS uses. It sees processes with capability sets making syscalls and enforces the same rules regardless of AIRS layout. Userspace services can restructure freely because the kernel interface is stable — AIRS can split without touching the kernel.
 
 AIRS as a resource orchestrator reinforces the microkernel choice. In a monolithic kernel (Linux), resource management intelligence tends to migrate into the kernel itself — Linux's memory compaction heuristics, pressure stall information, and cgroup controllers grow ever more complex inside kernel space. In AIOS, that intelligence lives in userspace where it can crash, be monitored, and be disabled without affecting kernel stability. The kernel does plain LRU and fixed pools — simple, correct, boring. AIRS makes it smarter from userspace. If AIRS crashes, the kernel keeps working with static heuristics.
 
@@ -1101,7 +1116,7 @@ pub struct ConversationContext {
 
 ### 5.9 Agent Capability Intelligence
 
-AIRS performs automated capability analysis for agents at three points: developer-side via `aios agent audit`, install time as part of the installation flow ([agents.md §3.1](../applications/agents.md)), and post-deployment via behavioral monitoring (§5.6). The analysis is a 5-stage pipeline:
+AIRS performs automated capability analysis for agents at three points: developer-side via `aios agent audit`, install time as part of the installation flow ([agents.md §3.1](../applications/agents.md)), and post-deployment via behavioral monitoring (§5.5). The analysis is a 5-stage pipeline:
 
 ```
 Stage 1: Static Code Analysis      (no LLM — rule-based)
@@ -1276,7 +1291,7 @@ pub enum FrequencyBucket {
 }
 ```
 
-This stage requires AIRS inference capacity. If AIRS is unavailable, the pipeline falls back to Stages 1–2 only, producing a `SecurityAnalysis` with `analysis_confidence: 0.3` and a note that LLM analysis was unavailable.
+This stage requires AIRS inference capacity. If AIRS is unavailable, the pipeline still runs Stages 1–2 and the non-LLM Stage 5 in degraded mode, producing a `SecurityAnalysis` with `analysis_confidence: 0.3` and a note that LLM analysis was unavailable.
 
 #### Stage 4: Corpus Comparison
 
@@ -1406,7 +1421,7 @@ pub struct CapabilityAnalysisCorpus {
     known_good: Vec<AuditedAgent>,
     /// Agents where AIRS analysis was overridden by user
     overrides: Vec<UserOverrideRecord>,
-    /// Agents deployed and later flagged by behavioral monitoring (§5.6)
+    /// Agents deployed and later flagged by behavioral monitoring (§5.5)
     missed_detections: Vec<MissedDetection>,
     /// Per-runtime behavioral baselines from deployed agents
     runtime_baselines: HashMap<RuntimeType, AggregateBaseline>,
