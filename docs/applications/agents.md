@@ -187,7 +187,10 @@ pub struct AgentManifest {
     /// Profiles are pre-audited, named bundles of capabilities that compose
     /// in numbered layers. See security.md §3.7 for the profile system.
     /// Resolved at install time into a flat CapabilitySet for kernel enforcement.
-    /// Defaults to empty if omitted (backward-compatible with pre-Phase 28 manifests).
+    /// Optional: if omitted in the manifest, this defaults to an empty list
+    /// during deserialization for backward compatibility with agents that
+    /// do not declare any profiles.
+    #[serde(default)]
     profiles: Vec<ProfileReference>,
 
     // === Capabilities ===

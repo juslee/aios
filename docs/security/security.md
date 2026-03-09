@@ -1856,8 +1856,9 @@ pub struct CapabilityProfile {
     attenuations: Vec<ProfileAttenuation>,
     /// Who authored this profile
     author: ProfileAuthor,
-    /// Ed25519 signature (OS profiles signed by AIOS root key)
-    signature: Signature,
+    /// Ed25519 signature (OS/runtime/subsystem/developer profiles).
+    /// None for User Override profiles — validated via local user account boundary.
+    signature: Option<Signature>,
     /// AIRS security analysis of this profile (see agents.md §2.4 and airs.md §5.9)
     analysis: Option<SecurityAnalysis>,
     /// Minimum OS version required
@@ -2093,13 +2094,15 @@ This follows the attenuation semantics defined in §3.3 — attenuation is monot
 
 #### 3.7.7 Storage
 
-| Profile type | Storage path | Authored by | Signed by |
+| Profile type | Storage path | Authored by | Signed by / validated via |
 |---|---|---|---|
 | OS Base | `system/config/capability-profiles/00-base/` | AIOS team | AIOS root key |
 | Runtime | `system/config/capability-profiles/10-runtime/` | SDK team | AIOS SDK key |
 | Subsystem | `system/config/capability-profiles/30-subsystem/` | Subsystem maintainers | Subsystem key |
 | Agent-specific | Inside `.aios-agent` package | Agent developer | Developer key |
-| User Override | `user/preferences/capability-overrides/` | User | N/A (local) |
+| User Override | `user/preferences/capability-overrides/` | User | Local user account & secure profile store (no separate signing key) |
+
+User Override profiles are not individually signed with a separate cryptographic key; their authenticity and integrity are enforced by the local OS user account boundary and the secure storage semantics of the user profile store.
 
 Profiles are space objects — content-addressed, versioned, and distributed through the same update channel as OS updates (Phase 24). Runtime and subsystem profiles can be updated independently of the OS version.
 

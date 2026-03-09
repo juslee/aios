@@ -1291,7 +1291,7 @@ pub enum FrequencyBucket {
 }
 ```
 
-This stage requires AIRS inference capacity. If AIRS is unavailable, the pipeline falls back to Stages 1–2 only, producing a `SecurityAnalysis` with `analysis_confidence: 0.3` and a note that LLM analysis was unavailable.
+This stage requires AIRS inference capacity. If AIRS is unavailable, the pipeline still runs Stages 1–2 and the non-LLM Stage 5 in degraded mode, producing a `SecurityAnalysis` with `analysis_confidence: 0.3` and a note that LLM analysis was unavailable.
 
 #### Stage 4: Corpus Comparison
 
