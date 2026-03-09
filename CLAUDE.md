@@ -178,9 +178,9 @@ When implementing Phase N:
 kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, boot.S, linker.ld)
 kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
-kernel/src/mm/                 Memory management (bump, buddy, slab, GlobalAlloc)
+kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, GlobalAlloc)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
-shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, etc.)
+shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, Pool, PoolConfig, MemoryPressure, etc.)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
 docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
 ```
@@ -234,8 +234,10 @@ edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr
 Phase 1 MMU strategy:         TTBR0-only swap; reuse edk2 MAIR/TCR (changing while MMU on = UNPREDICTABLE)
 Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1
 TLBI with SMP:                Use tlbi vmalle1 + dsb nsh (not tlbi alle1 + dsb sy — broadcast hangs with parked cores)
-Buddy allocator:              Orders 0-10 (4KiB-4MiB), ~522K pages free on QEMU 2G
-Slab allocator:               10 size classes (8-4096B), backed by buddy pages
+Buddy allocator:              Orders 0-10 (4KiB-4MiB), bitmap coalescing, poison fill on free
+Page pools (QEMU 2G):         kernel=128MB, user=1792MB, model=0, dma=64MB, reserved=64MB
+Free pages (QEMU 2G):         ~508K / ~522K (bitmap + exclusions consume ~14K)
+Slab allocator:               10 size classes (8-4096B), backed by frame allocator (kernel pool)
 Vector table alignment:       section ALIGN(2048) in linker.ld + .balign 128 per entry in asm
 Boot stub vectors section:    .text.vectors (boot.S, early boot safety net)
 Rust vectors section:         .text.rvectors (exceptions.rs, installed from kernel_main)
@@ -338,8 +340,11 @@ aios/
 │       ├── mm/
 │       │   ├── mod.rs    Switchable GlobalAlloc (bump → slab), enable_slab_allocator()
 │       │   ├── bump.rs   128 KiB static bump allocator for early boot
-│       │   ├── buddy.rs  Buddy allocator orders 0-10, init from UEFI memory map
-│       │   └── slab.rs   Slab allocator (10 size classes), backed by buddy
+│       │   ├── buddy.rs  Buddy allocator: bitmap coalescing, poison fill, orders 0-10
+│       │   ├── slab.rs   Slab allocator (10 size classes), backed by frame allocator
+│       │   ├── pools.rs  PagePools: 4 buddy instances (kernel/user/model/dma)
+│       │   ├── frame.rs  FrameAllocator: pool-aware alloc/free, pressure, global static
+│       │   └── init.rs   init_memory(): UEFI map walk, pool config, bootstrap
 │       └── arch/aarch64/
 │           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
 │           ├── boot.S    _start + _secondary_entry (FPU, VBAR, MMU enable, stack, branch)

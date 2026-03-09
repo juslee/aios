@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 4 weeks
 **Deliverable:** Virtual memory, heap, W^X, KASLR
-**Status:** Planned
+**Status:** In Progress (M7 complete)
 **Prerequisites:** Phase 1 (Boot and First Pixels)
 **Unlocks:** Phase 3 (IPC & Capability System)
 
@@ -63,13 +63,13 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 - [x] `kernel/src/mm/mod.rs` exists — switchable GlobalAlloc (bump→slab)
 - [x] `kernel/src/mm/buddy.rs` exists — orders 0–10, alloc with splitting, UEFI map init
 - [x] `alloc(order)` implemented with splitting from larger blocks
-- [ ] Add module declarations for new files: `pub mod pools; pub mod frame; pub mod init;`
-- [ ] Enhance `free(frame, order)` — add bitmap-based coalescing up to `MAX_ORDER`
-- [ ] Add `buddy_of(frame, order)` — XOR-based buddy address computation
-- [ ] Add buddy-pair XOR bitmap for coalescing state tracking
-- [ ] **Security:** Double-free detection via bitmap check before free ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
-- [ ] **Security:** Buddy allocator poisoning — fill freed pages with `0xDEAD_DEAD` ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
-- [ ] Add unit tests (in `shared/` crate, host target) for buddy_of XOR, pool sizing, pressure thresholds
+- [x] Add module declarations for new files: `pub mod pools; pub mod frame; pub mod init;`
+- [x] Enhance `free(frame, order)` — add bitmap-based coalescing up to `MAX_ORDER`
+- [x] Add `buddy_of(frame, order)` — XOR-based buddy address computation
+- [x] Add buddy-pair XOR bitmap for coalescing state tracking
+- [x] **Security:** Double-free detection via bitmap check before free ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [x] **Security:** Buddy allocator poisoning — fill freed pages with `0xDEAD_DEAD` ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [x] Add unit tests (in `shared/` crate, host target) for buddy_of XOR, pool sizing, pressure thresholds
 
 **Key reference:** [memory.md §2.2](../kernel/memory.md) — Buddy Allocator
 
@@ -82,10 +82,10 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 **What:** Partition physical memory into kernel/user/model/DMA pools based on detected RAM, and wrap with the `FrameAllocator` interface.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/pools.rs` — `PagePools` struct with four `BuddyAllocator` instances (memory.md §2.4)
-- [ ] Implement `PoolConfig::from_total_ram(total)` — compute pool sizes per the table in memory.md §2.4 (2 GB/4 GB/8 GB/16 GB tiers)
-- [ ] Create `kernel/src/mm/frame.rs` — `FrameAllocator` wrapping `PagePools` with `alloc_page`, `alloc_pages`, `free_pages`, and `pressure()` (memory.md §2.3)
-- [ ] Implement `MemoryPressure` enum (Normal/Low/Critical/Oom) with thresholds from memory.md §2.3
+- [x] Create `kernel/src/mm/pools.rs` — `PagePools` struct with four `BuddyAllocator` instances (memory.md §2.4)
+- [x] Implement `PoolConfig::from_total_ram(total)` — compute pool sizes per the table in memory.md §2.4 (2 GB/4 GB/8 GB/16 GB tiers)
+- [x] Create `kernel/src/mm/frame.rs` — `FrameAllocator` wrapping `PagePools` with `alloc_page`, `alloc_pages`, `free_pages`, and `pressure()` (memory.md §2.3)
+- [x] Implement `MemoryPressure` enum (Normal/Low/Critical/Oom) with thresholds from memory.md §2.3
 
 **Key reference:** [memory.md §2.3–2.4](../kernel/memory.md) — Frame Allocator Interface, Page Pools
 
@@ -98,13 +98,13 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 **What:** Walk the `BootInfo` memory map (populated by Phase 1's UEFI stub) to initialise the buddy allocator and page pools.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/init.rs` — `init_memory(boot_info: &BootInfo)` entry point
-- [ ] Walk `BootInfo` memory map regions (via `memory_map_addr`, `memory_map_count`, `memory_map_entry_size`): classify each as Conventional, LoaderCode, Reserved, MMIO, etc. (memory.md §2.1)
-- [ ] Feed Conventional regions into the buddy allocator as initial free pages
-- [ ] Mark LoaderCode/LoaderData regions as reclaimable (add to free list after early boot completes)
-- [ ] Partition the buddy allocator's free pages into pools per `PoolConfig`
-- [ ] Print pool statistics to UART: total RAM, per-pool sizes, free pages
-- [ ] Replace Phase 1's bump allocator calls with `FrameAllocator` calls in existing kernel code
+- [x] Create `kernel/src/mm/init.rs` — `init_memory(boot_info: &BootInfo)` entry point
+- [x] Walk `BootInfo` memory map regions (via `memory_map_addr`, `memory_map_count`, `memory_map_entry_size`): classify each as Conventional, LoaderCode, Reserved, MMIO, etc. (memory.md §2.1)
+- [x] Feed Conventional regions into the buddy allocator as initial free pages
+- [x] Mark LoaderCode/LoaderData regions as reclaimable (add to free list after early boot completes)
+- [x] Partition the buddy allocator's free pages into pools per `PoolConfig`
+- [x] Print pool statistics to UART: total RAM, per-pool sizes, free pages
+- [x] Replace Phase 1's bump allocator calls with `FrameAllocator` calls in existing kernel code
 
 **Note:** The `BootInfo` memory map is passed as three fields: `memory_map_addr` (physical address of the `MemoryDescriptor` array), `memory_map_count` (number of entries), and `memory_map_entry_size` (bytes per entry). These are populated by Phase 1's UEFI stub. Phase 2 walks this array to bootstrap the buddy allocator and page pools.
 
@@ -310,8 +310,8 @@ just run     → boot log shows: pool stats, KASLR base, heap ready, address spa
 
 ## Phase Completion Criteria
 
-- [ ] Buddy allocator with orders 0–10, split/merge, O(log n) alloc/free
-- [ ] Page pools partitioned by RAM tier (kernel/user/model/DMA)
+- [x] Buddy allocator with orders 0–10, split/merge, O(log n) alloc/free
+- [x] Page pools partitioned by RAM tier (kernel/user/model/DMA)
 - [ ] 4-level page tables (PGD/PUD/PMD/PTE) with W^X enforcement at API level
 - [ ] Kernel mapped through TTBR1 with correct permissions: text=R-X, data=RW-, MMIO=device
 - [ ] Physical memory direct map at `0xFFFF_0001_0000_0000`
