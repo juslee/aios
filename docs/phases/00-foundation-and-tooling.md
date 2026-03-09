@@ -68,7 +68,7 @@ Phase 0 has three internal milestones. Each builds on the previous and produces 
 
 ### Step 2: Project Scaffold and Cargo Workspace
 
-**What:** Create the workspace layout, project hygiene files, and crate structure that will grow across all 28 phases.
+**What:** Create the workspace layout, project hygiene files, and crate structure that will grow across all 30 phases.
 
 **Tasks:**
 
