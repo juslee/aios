@@ -19,37 +19,33 @@ AIOS IPC is designed for **sub-5-microsecond round-trip latency**. Every design 
 
 ## 2. Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Agent / Application                    │
-│                                                          │
-│  SDK provides typed wrappers:                            │
-│    spaces::read()  →  syscall(IPC_CALL, space_svc, msg) │
-│    audio::play()   →  syscall(IPC_CALL, audio_svc, msg) │
-│    compositor::*   →  syscall(IPC_CALL, comp_svc, msg)  │
-└──────────────────────┬───────────────────────────────────┘
-                       │ syscall trap (SVC instruction)
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Kernel Syscall Handler                 │
-│                                                          │
-│  1. Validate syscall number                              │
-│  2. Validate parameters (in user address range)          │
-│  3. Check capability (for IPC: channel capability)       │
-│  4. Dispatch to handler                                  │
-│  5. Return result                                        │
-└──────────────────────┬───────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                    IPC Subsystem                          │
-│                                                          │
-│  Channel Manager     Message Router     Capability Xfer  │
-│  (create, destroy)   (send, recv)       (transfer tokens)│
-│                                                          │
-│  Shared Memory Mgr   Notification Mgr   Audit Logger     │
-│  (map, unmap, share)  (async signals)   (all IPC logged) │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph APP["Agent / Application"]
+        SDK["SDK provides typed wrappers:<br/>spaces::read() --> syscall(IPC_CALL, space_svc, msg)<br/>audio::play() --> syscall(IPC_CALL, audio_svc, msg)<br/>compositor::* --> syscall(IPC_CALL, comp_svc, msg)"]
+    end
+
+    APP -->|"syscall trap (SVC instruction)"| HANDLER
+
+    subgraph HANDLER["Kernel Syscall Handler"]
+        H1["1. Validate syscall number"]
+        H2["2. Validate parameters (in user address range)"]
+        H3["3. Check capability (for IPC: channel capability)"]
+        H4["4. Dispatch to handler"]
+        H5["5. Return result"]
+        H1 --> H2 --> H3 --> H4 --> H5
+    end
+
+    HANDLER --> IPC
+
+    subgraph IPC["IPC Subsystem"]
+        CM["Channel Manager<br/>(create, destroy)"]
+        MR["Message Router<br/>(send, recv)"]
+        CX["Capability Xfer<br/>(transfer tokens)"]
+        SM["Shared Memory Mgr<br/>(map, unmap, share)"]
+        NM["Notification Mgr<br/>(async signals)"]
+        AL["Audit Logger<br/>(all IPC logged)"]
+    end
 ```
 
 -----
@@ -497,16 +493,16 @@ pub struct ChannelFlags {
 
 The primary IPC pattern. Agent sends a request and blocks until the service replies:
 
-```
-Agent                           Service
-  │                                │
-  │ IpcCall(channel, request) ──→  │
-  │ (agent thread blocks)         │
-  │                                │ (service processes request)
-  │                                │
-  │ ←── IpcReply(reply)            │
-  │ (agent thread resumes)         │
-  │                                │
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant S as Service
+
+    A->>S: IpcCall(channel, request)
+    Note left of A: agent thread blocks
+    Note right of S: service processes request
+    S-->>A: IpcReply(reply)
+    Note left of A: agent thread resumes
 ```
 
 **Why synchronous:** Synchronous IPC is simpler, debuggable, and avoids the complexity of asynchronous callback chains. For a microkernel where every system call is an IPC, synchronous is the proven approach (seL4, L4, QNX all use synchronous IPC). Synchronous call-reply also structurally prevents callback-cycle deadlocks — see [deadlock-prevention.md §8](./deadlock-prevention.md).
@@ -1241,32 +1237,37 @@ Every IPC technique in §12 exists in at least one other kernel. This section de
 
 **AIRS is advisory. The kernel is authoritative.** This is the inviolable architectural constraint for every feature in this section. It extends security.md §9.2 ("Resource Intelligence as Optimization, Not Security") to AI-native IPC:
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  AIRS CAN:                                                        │
-│    ├── Suggest IPC routes (§13.1)                                │
-│    ├── Predict future channel needs (§13.2)                      │
-│    ├── Recommend batch parameters (§13.3)                        │
-│    ├── Publish context hints for scheduling (§13.4)              │
-│    └── Screen data provenance for taint (§13.5)                  │
-│                                                                   │
-│  AIRS CANNOT:                                                     │
-│    ├── Grant, create, or expand capabilities (NEVER)             │
-│    ├── Bypass kernel capability checks on any IPC path           │
-│    ├── Route an agent to a service the agent has no cap for      │
-│    ├── Override kernel resource limits or blast radius policies   │
-│    ├── Suppress provenance tags or audit logging                 │
-│    └── Prevent the kernel from falling back to static behavior   │
-│                                                                   │
-│  IF AIRS IS DISABLED OR COMPROMISED:                              │
-│    ├── Intent routing: returns ENOTSUP, agent uses direct IPC    │
-│    ├── Predictive warming: no pre-warming, cold-start latency    │
-│    ├── Inference batching: no batching, sequential processing    │
-│    ├── Context scheduling: all agents run at their static class  │
-│    ├── Provenance taint screening: tags still propagated by      │
-│    │   kernel, but AIRS-based screening disabled                 │
-│    └── System is SLOWER but EQUALLY SECURE                       │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph can["AIRS CAN"]
+        C1["Suggest IPC routes (§13.1)"]
+        C2["Predict future channel needs (§13.2)"]
+        C3["Recommend batch parameters (§13.3)"]
+        C4["Publish context hints for scheduling (§13.4)"]
+        C5["Screen data provenance for taint (§13.5)"]
+    end
+
+    subgraph cannot["AIRS CANNOT"]
+        N1["Grant, create, or expand capabilities (NEVER)"]
+        N2["Bypass kernel capability checks on any IPC path"]
+        N3["Route an agent to a service the agent has no cap for"]
+        N4["Override kernel resource limits or blast radius policies"]
+        N5["Suppress provenance tags or audit logging"]
+        N6["Prevent the kernel from falling back to static behavior"]
+    end
+
+    subgraph degraded["IF AIRS IS DISABLED OR COMPROMISED"]
+        D1["Intent routing: returns ENOTSUP, agent uses direct IPC"]
+        D2["Predictive warming: no pre-warming, cold-start latency"]
+        D3["Inference batching: no batching, sequential processing"]
+        D4["Context scheduling: all agents run at their static class"]
+        D5["Provenance taint screening: tags still propagated by kernel, but AIRS-based screening disabled"]
+        D6["System is SLOWER but EQUALLY SECURE"]
+    end
+
+    style can fill:#1a3a1a,stroke:#44ff44,color:#ffffff
+    style cannot fill:#3a1a1a,stroke:#ff4444,color:#ffffff
+    style degraded fill:#3a3a1a,stroke:#ffaa00,color:#ffffff
 ```
 
 Every subsection below includes a **"Damage ceiling"** analysis: the worst-case outcome if AIRS is compromised or an agent attempts to exploit the feature. If the damage ceiling for any feature exceeds "degraded performance / wrong optimization," that feature violates this guarantee and must be redesigned or removed.

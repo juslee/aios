@@ -4,7 +4,7 @@
 **Target:** aarch64 (ARM64)
 **Language:** Rust (kernel + userspace)
 **License:** BSD-2-Clause (kernel, tools, SDK)
-**Timeline:** 30 phases across ~138 weeks (~2.7 years)
+**Timeline:** 28 phases across ~130 weeks (~2.5 years)
 ---
 ## 1. Vision
 AIOS is a clean-sheet microkernel operating system written in Rust for aarch64 where every subsystem is designed assuming AI exists. AI is not an application running on the OS — it is the infrastructure that makes every abstraction work better than on any other operating system.
@@ -36,99 +36,108 @@ The user never has to interact with AI to use the computer. AI enhances silently
 ---
 ## 2. System Architecture
 ### 2.1 Full Stack Overview
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        EXPERIENCE LAYER                             │
-│                                                                     │
-│  Workspace        Conversation    Media Player    Web Browser       │
-│  (contextual      Bar (always     (music, video,  (Servo-based,     │
-│   home view)      available,      podcasts,       semantic           │
-│                   user-invoked)   streaming)      indexing)          │
-│                                                                     │
-│  Game Launcher    Inspector       Agent Store     Settings           │
-│  (library,        (provenance,    (discover,      (conversational,   │
-│   saves as        security        approve         AI-mediated)       │
-│   space objects)  visibility)     capabilities)                      │
-├─────────────────────────────────────────────────────────────────────┤
-│                        SERVICES LAYER                               │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ AI Runtime Service (AIRS) — hot-swappable privileged service │   │
-│  │                                                             │   │
-│  │  Inference Engine    Model Registry    Agent Lifecycle      │   │
-│  │  (GGML, NEON SIMD)  (GGUF, LRU)      (create, sandbox)    │   │
-│  │                                                             │   │
-│  │  Context Manager     Tool Manager     Space Indexer         │   │
-│  │  (state, compress)   (register, exec) (embed, relate)      │   │
-│  │                                                             │   │
-│  │  Context Engine      Attention Mgr    Intent Verifier       │   │
-│  │  (infer work/play)   (triage, digest) (action alignment)    │   │
-│  │                                                             │   │
-│  │  Behavioral Monitor  Adversarial Def  Inference Scheduler   │   │
-│  │  (anomaly detect)    (injection det)  (priority, deadline)  │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  Space Storage     Task Manager    Flow Service    Identity Svc     │
-│  (object store,    (intent →       (context-aware  (crypto keys,    │
-│   block engine,    subtasks,       data transfer,  relationships,   │
-│   content-addr)    orchestrate)    transform)      trust model)     │
-│                                                                     │
-│  Network           Preference Svc  Compositor      Audio Service    │
-│  Translation       (conversational (GPU-native,    (mixing, route,  │
-│  Module            config, learn)  semantic-ready) decode, output)  │
-│  (spaces → net)                                                     │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ Subsystem Framework — universal hardware abstraction         │   │
-│  │                                                             │   │
-│  │  Capability Gate    Sessions       Data Channels            │   │
-│  │  (kernel-enforced)  (bounded use)  (Flow-connected)         │   │
-│  │                                                             │   │
-│  │  Device Registry    Audit Spaces   Power Manager            │   │
-│  │  (system/devices/)  (system/audit/) (idle policies)         │   │
-│  │                                                             │   │
-│  │  POSIX Bridge       Conflict Res   Hotplug Handler          │   │
-│  │  (/dev nodes)       (share/queue)  (USB, BT, etc.)         │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  POSIX Compat      Agent Runtime   Connector Svc   Device Drivers   │
-│  (BSD userland,    (sandbox, SDK   (Slack, GitHub,  (VirtIO, USB,   │
-│   musl libc,       runtime, tool   external APIs)   WiFi, BT)      │
-│   translation)     execution)                                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                         KERNEL SPACE                                │
-│                                                                     │
-│  AI Kernel Primitives                                               │
-│  ├── Model memory regions (shared, pinned, ref-counted)             │
-│  ├── Compute device abstraction (CPU/GPU/NPU)                       │
-│  ├── Agent capability tokens (fine-grained, revocable, expiring)    │
-│  ├── Provenance chain (append-only, Merkle-linked, signed)          │
-│  └── Inference scheduling primitives (priority, deadline, preempt)  │
-│                                                                     │
-│  Core Microkernel                                                   │
-│  ├── Virtual Memory Manager (4-level, TTBR0/TTBR1, W^X, KASLR)    │
-│  ├── IPC (sync message passing, capability transfer, zero-copy)     │
-│  ├── Scheduler (priority + deadline, context-aware hints)           │
-│  ├── Capability Manager (create, transfer, revoke, attenuate)       │
-│  ├── Cryptographic Core (Ed25519, AES-256, key storage)             │
-│  ├── Audit Log (kernel-enforced, tamper-evident)                    │
-│  └── Process Manager (create, isolate, terminate)                   │
-│                                                                     │
-│  Hardware Abstraction Layer (hal.md)                                │
-│  ├── Platform trait (7 init methods, one per hardware class)        │
-│  ├── InterruptController (GICv2 on Pi 4, GICv3 on Pi 5/QEMU)      │
-│  ├── Timer (ARM Generic Timer, platform-specific frequency)          │
-│  ├── Uart (PL011 UART)                                             │
-│  ├── GpuDevice (VirtIO-GPU / VideoCore VI / VideoCore VII)         │
-│  ├── NetworkDevice (VirtIO-Net / Broadcom Genet)                   │
-│  ├── StorageDevice (VirtIO-Blk / Arasan SDHCI)                    │
-│  ├── RngDevice (VirtIO-RNG / bcm2835-rng)                         │
-│  ├── UEFI Runtime Services                                          │
-│  └── Device Tree Parsing + Platform Detection                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                          HARDWARE                                   │
-│  CPU (aarch64)  │  RAM  │  GPU  │  NPU  │  Storage  │  Network     │
-└─────────────────────────────────────────────────────────────────────┘
+
+```mermaid
+graph TD
+    subgraph EXP["EXPERIENCE LAYER"]
+        Workspace["Workspace<br/><i>contextual home view</i>"]
+        ConvBar["Conversation Bar<br/><i>always available, user-invoked</i>"]
+        MediaPlayer["Media Player<br/><i>music, video, podcasts, streaming</i>"]
+        WebBrowser["Web Browser<br/><i>Servo-based, semantic indexing</i>"]
+        GameLauncher["Game Launcher<br/><i>library, saves as space objects</i>"]
+        Inspector["Inspector<br/><i>provenance, security visibility</i>"]
+        AgentStore["Agent Store<br/><i>discover, approve capabilities</i>"]
+        Settings["Settings<br/><i>conversational, AI-mediated</i>"]
+    end
+
+    subgraph SVC["SERVICES LAYER"]
+        subgraph AIRS["AI Runtime Service — hot-swappable privileged service"]
+            InfEngine["Inference Engine<br/><i>GGML, NEON SIMD</i>"]
+            ModelReg["Model Registry<br/><i>GGUF, LRU</i>"]
+            AgentLife["Agent Lifecycle<br/><i>create, sandbox</i>"]
+            CtxMgr["Context Manager<br/><i>state, compress</i>"]
+            ToolMgr["Tool Manager<br/><i>register, exec</i>"]
+            SpaceIdx["Space Indexer<br/><i>embed, relate</i>"]
+            CtxEngine["Context Engine<br/><i>infer work/play</i>"]
+            AttnMgr["Attention Mgr<br/><i>triage, digest</i>"]
+            IntentVer["Intent Verifier<br/><i>action alignment</i>"]
+            BehMon["Behavioral Monitor<br/><i>anomaly detect</i>"]
+            AdvDef["Adversarial Def<br/><i>injection detect</i>"]
+            InfSched["Inference Scheduler<br/><i>priority, deadline</i>"]
+        end
+
+        SpaceStorage["Space Storage<br/><i>object store, block engine, content-addr</i>"]
+        TaskMgr["Task Manager<br/><i>intent to subtasks, orchestrate</i>"]
+        FlowSvc["Flow Service<br/><i>context-aware data transfer, transform</i>"]
+        IdentitySvc["Identity Svc<br/><i>crypto keys, relationships, trust model</i>"]
+        NTM["Network Translation Module<br/><i>spaces to net</i>"]
+        PrefSvc["Preference Svc<br/><i>conversational config, learn</i>"]
+        Compositor["Compositor<br/><i>GPU-native, semantic-ready</i>"]
+        AudioSvc["Audio Service<br/><i>mixing, route, decode, output</i>"]
+
+        subgraph SUBSYS["Subsystem Framework — universal hardware abstraction"]
+            CapGate["Capability Gate<br/><i>kernel-enforced</i>"]
+            Sessions["Sessions<br/><i>bounded use</i>"]
+            DataChan["Data Channels<br/><i>Flow-connected</i>"]
+            DevReg["Device Registry<br/><i>system/devices/</i>"]
+            AuditSp["Audit Spaces<br/><i>system/audit/</i>"]
+            PwrMgr["Power Manager<br/><i>idle policies</i>"]
+            PosixBr["POSIX Bridge<br/><i>/dev nodes</i>"]
+            ConflRes["Conflict Res<br/><i>share/queue</i>"]
+            Hotplug["Hotplug Handler<br/><i>USB, BT, etc.</i>"]
+        end
+
+        POSIXCompat["POSIX Compat<br/><i>BSD userland, musl libc, translation</i>"]
+        AgentRT["Agent Runtime<br/><i>sandbox, SDK runtime, tool execution</i>"]
+        ConnSvc["Connector Svc<br/><i>Slack, GitHub, external APIs</i>"]
+        DevDrivers["Device Drivers<br/><i>VirtIO, USB, WiFi, BT</i>"]
+    end
+
+    subgraph KERN["KERNEL SPACE"]
+        subgraph AIKP["AI Kernel Primitives"]
+            ModelMem["Model memory regions<br/><i>shared, pinned, ref-counted</i>"]
+            ComputeAbs["Compute device abstraction<br/><i>CPU/GPU/NPU</i>"]
+            AgentCap["Agent capability tokens<br/><i>fine-grained, revocable, expiring</i>"]
+            ProvChain["Provenance chain<br/><i>append-only, Merkle-linked, signed</i>"]
+            InfPrim["Inference scheduling primitives<br/><i>priority, deadline, preempt</i>"]
+        end
+
+        subgraph MICRO["Core Microkernel"]
+            VMM["Virtual Memory Manager<br/><i>4-level, TTBR0/TTBR1, W^X, KASLR</i>"]
+            IPC["IPC<br/><i>sync message passing, capability transfer, zero-copy</i>"]
+            Sched["Scheduler<br/><i>priority + deadline, context-aware hints</i>"]
+            CapMgr["Capability Manager<br/><i>create, transfer, revoke, attenuate</i>"]
+            CryptoCore["Cryptographic Core<br/><i>Ed25519, AES-256, key storage</i>"]
+            AuditLog["Audit Log<br/><i>kernel-enforced, tamper-evident</i>"]
+            ProcMgr["Process Manager<br/><i>create, isolate, terminate</i>"]
+        end
+
+        subgraph HAL["Hardware Abstraction Layer"]
+            PlatTrait["Platform trait<br/><i>7 init methods, one per hardware class</i>"]
+            IntCtrl["InterruptController<br/><i>GICv2 on Pi 4, GICv3 on Pi 5/QEMU</i>"]
+            Timer["Timer<br/><i>ARM Generic Timer</i>"]
+            Uart["Uart<br/><i>PL011 UART</i>"]
+            GpuDev["GpuDevice<br/><i>VirtIO-GPU / VideoCore VI / VII</i>"]
+            NetDev["NetworkDevice<br/><i>VirtIO-Net / Broadcom Genet</i>"]
+            StorDev["StorageDevice<br/><i>VirtIO-Blk / Arasan SDHCI</i>"]
+            RngDev["RngDevice<br/><i>VirtIO-RNG / bcm2835-rng</i>"]
+            UEFIRS["UEFI Runtime Services"]
+            DTBParse["Device Tree Parsing + Platform Detection"]
+        end
+    end
+
+    subgraph HW["HARDWARE"]
+        CPU["CPU<br/><i>aarch64</i>"]
+        RAM["RAM"]
+        GPU["GPU"]
+        NPU["NPU"]
+        Storage["Storage"]
+        Network["Network"]
+    end
+
+    EXP --> SVC
+    SVC --> KERN
+    KERN --> HW
 ```
 ### 2.2 Core Abstractions
 **Spaces** replace the traditional filesystem. Objects instead of files. Semantic relationships instead of directory trees. Content-addressed storage with AI-maintained indexes.
@@ -235,9 +244,6 @@ pub struct ContextLink {
 pub struct AgentManifest {
     name: String,
     author: Identity,
-    /// Capability profiles: pre-audited, named bundles composed in layers.
-    /// See security.md §3.7 for profile types and resolution algorithm.
-    profiles: Vec<ProfileReference>,
     requested_capabilities: Vec<CapabilityRequest>,
     code: ContentHash,
     dependencies: Vec<Dependency>,
@@ -273,41 +279,19 @@ pub struct ProvenanceChain {
 ## 3. Security Architecture
 ### 3.1 Eight-Layer Security Model
 Every action by every agent passes through all eight layers. No single layer failing compromises the system.
-```
-┌──────────────────────────────────────────────────────┐
-│  Layer 1: Intent Verification                         │
-│  Does this action align with the declared task/intent?│
-│  AI compares observed actions against user's goal.    │
-├──────────────────────────────────────────────────────┤
-│  Layer 2: Capability Check                            │
-│  Does the agent hold the required capability token?   │
-│  Kernel-enforced, unforgeable, revocable, expiring.   │
-├──────────────────────────────────────────────────────┤
-│  Layer 3: Behavioral Boundary                         │
-│  Is the access pattern normal for this agent?         │
-│  Rate limits, anomaly detection, baseline comparison. │
-├──────────────────────────────────────────────────────┤
-│  Layer 4: Security Zone                               │
-│  Is this data in a zone this agent can reach?         │
-│  Core / Personal / Collaborative / Untrusted /         │
-│  Ephemeral zones.                                      │
-├──────────────────────────────────────────────────────┤
-│  Layer 5: Adversarial Defense                         │
-│  Is this action the result of prompt injection?       │
-│  Control/data plane separation, injection detection.  │
-├──────────────────────────────────────────────────────┤
-│  Layer 6: Cryptographic Enforcement                   │
-│  Does the agent have the decryption key?              │
-│  Spaces encrypted at rest with per-space keys.        │
-├──────────────────────────────────────────────────────┤
-│  Layer 7: Provenance Recording                        │
-│  Action logged to tamper-evident Merkle chain.        │
-│  Cryptographically signed, append-only.               │
-├──────────────────────────────────────────────────────┤
-│  Layer 8: Blast Radius Containment                    │
-│  Even if all above fail, damage is bounded.           │
-│  Max objects writable, auto-snapshot before bulk ops. │
-└──────────────────────────────────────────────────────┘
+
+```mermaid
+graph TD
+    L1["Layer 1: Intent Verification<br/><i>Does this action align with the declared task/intent?<br/>AI compares observed actions against user's goal.</i>"]
+    L2["Layer 2: Capability Check<br/><i>Does the agent hold the required capability token?<br/>Kernel-enforced, unforgeable, revocable, expiring.</i>"]
+    L3["Layer 3: Behavioral Boundary<br/><i>Is the access pattern normal for this agent?<br/>Rate limits, anomaly detection, baseline comparison.</i>"]
+    L4["Layer 4: Security Zone<br/><i>Is this data in a zone this agent can reach?<br/>Core / Personal / Collaborative / Untrusted / Ephemeral.</i>"]
+    L5["Layer 5: Adversarial Defense<br/><i>Is this action the result of prompt injection?<br/>Control/data plane separation, injection detection.</i>"]
+    L6["Layer 6: Cryptographic Enforcement<br/><i>Does the agent have the decryption key?<br/>Spaces encrypted at rest with per-space keys.</i>"]
+    L7["Layer 7: Provenance Recording<br/><i>Action logged to tamper-evident Merkle chain.<br/>Cryptographically signed, append-only.</i>"]
+    L8["Layer 8: Blast Radius Containment<br/><i>Even if all above fail, damage is bounded.<br/>Max objects writable, auto-snapshot before bulk ops.</i>"]
+
+    L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7 --> L8
 ```
 ### 3.2 ARM Hardware Security Integration
 | Feature | Purpose | Phase |
@@ -322,13 +306,22 @@ Every action by every agent passes through all eight layers. No single layer fai
 ---
 ## 4. Subsystem Framework
 Every hardware subsystem implements the same five-layer architecture:
-```
-Agent API Layer        → What agents see: typed, semantic, capability-gated
-POSIX Translation      → What BSD tools see: /dev nodes, ioctl, read/write
-Subsystem Service      → Policy, multiplexing, routing, format negotiation
-Device Abstraction     → Uniform trait per device class, regardless of hardware
-Hardware Driver        → VirtIO, USB, PCI, platform-specific
-    ↕ Capability Gate (kernel-enforced) + Audit Space (all access logged)
+
+```mermaid
+graph TD
+    A["Agent API Layer<br/><i>What agents see: typed, semantic, capability-gated</i>"]
+    B["POSIX Translation<br/><i>What BSD tools see: /dev nodes, ioctl, read/write</i>"]
+    C["Subsystem Service<br/><i>Policy, multiplexing, routing, format negotiation</i>"]
+    D["Device Abstraction<br/><i>Uniform trait per device class, regardless of hardware</i>"]
+    E["Hardware Driver<br/><i>VirtIO, USB, PCI, platform-specific</i>"]
+    F(["Capability Gate (kernel-enforced) + Audit Space (all access logged)"])
+
+    A --> C
+    B --> C
+    C --> D --> E
+    F -.- C
+    F -.- D
+    F -.- E
 ```
 All subsystems at a glance:
 | Subsystem | Channel Format | Conflict Policy | POSIX Interface | Phase |
@@ -347,24 +340,27 @@ All subsystems at a glance:
 ---
 ## 5. Network Translation Module
 Applications never see the network. There are only space operations — some of which happen to involve remote spaces — and the OS handles everything else.
-```
-Application:  space::read("openai/v1/models")
-                    ↓
-Network Translation Module:
-  ├── Space Resolver      (semantic name → endpoint + protocol + auth)
-  ├── Connection Manager  (pool, TLS, multiplex, keepalive)
-  ├── Shadow Engine       (offline transparency, local cache, sync)
-  ├── Resilience Engine   (retry, backoff, circuit breaker)
-  ├── Bandwidth Scheduler (priority, multi-path, QoS, metered awareness)
-  └── Capability Gate     (verify net capability before ANY operation)
-                    ↓
-Protocol Engines:  HTTP/2 │ HTTP/3/QUIC │ AIOS Peer │ MQTT │ Raw Socket
-                    ↓
-Transport:         TLS 1.3 (rustls) │ QUIC (quinn) │ Plain TCP/UDP
-                    ↓
-Network Stack:     smoltcp (TCP/UDP/ICMP/IPv4/IPv6/ARP/DHCP)
-                    ↓
-Interface Drivers: VirtIO-Net │ Ethernet │ WiFi │ Bluetooth │ Cellular
+
+```mermaid
+graph TD
+    App["Application<br/>space::read#40;openai/v1/models#41;"]
+
+    subgraph NTM["Network Translation Module"]
+        SpaceRes["Space Resolver<br/><i>semantic name to endpoint + protocol + auth</i>"]
+        ConnMgr["Connection Manager<br/><i>pool, TLS, multiplex, keepalive</i>"]
+        Shadow["Shadow Engine<br/><i>offline transparency, local cache, sync</i>"]
+        Resilience["Resilience Engine<br/><i>retry, backoff, circuit breaker</i>"]
+        BWSched["Bandwidth Scheduler<br/><i>priority, multi-path, QoS, metered awareness</i>"]
+        CapGate["Capability Gate<br/><i>verify net capability before ANY operation</i>"]
+    end
+
+    Proto["Protocol Engines<br/><i>HTTP/2 | HTTP/3/QUIC | AIOS Peer | MQTT | Raw Socket</i>"]
+    Transport["Transport<br/><i>TLS 1.3 rustls | QUIC quinn | Plain TCP/UDP</i>"]
+    NetStack["Network Stack<br/><i>smoltcp: TCP/UDP/ICMP/IPv4/IPv6/ARP/DHCP</i>"]
+    Drivers["Interface Drivers<br/><i>VirtIO-Net | Ethernet | WiFi | Bluetooth | Cellular</i>"]
+
+    App --> NTM
+    NTM --> Proto --> Transport --> NetStack --> Drivers
 ```
 ---
 ## 6. Browser Architecture
@@ -460,18 +456,11 @@ Secure boot, Linux compatibility, enterprise features, hardware certification, l
 | 25 | Linux Binary & Wayland Compatibility | 5 weeks | Run unmodified Linux apps and GUI programs |
 | 26 | Enterprise & Multi-Device | 4 weeks | MDM, fleet management, cross-device sync |
 | 27 | Real Hardware, Certification & Launch | 4 weeks | Pi 4/5, Pine64, VM images, documentation site |
-### Tier 8: Security Intelligence — Phases 28–29 (Weeks 131–138)
-Composable capability profiles and AIRS-powered agent capability intelligence.
-| Phase | Name | Duration | Deliverable |
-|---|---|---|---|
-| 28 | Composable Capability Profiles | 4 weeks | Profile types, resolution algorithm, manifest integration |
-| 29 | AIRS Capability Intelligence | 4 weeks | 5-stage analysis pipeline, audit tool, corpus-based outlier detection |
 ### Timeline Summary
 ```
 Year 1 (Weeks 1-54):    Tiers 1-3 — Functioning AI-first OS on QEMU
 Year 2 (Weeks 55-92):   Tiers 4-5 — Developer platform with real hardware support
 Year 2.5 (Weeks 93-130): Tiers 6-7 — Production OS ready for daily use
-Year 2.7 (Weeks 131-138): Tier 8 — Security intelligence and capability profiles
 ```
 ---
 ## 11. Document Index
@@ -483,13 +472,11 @@ docs/
 ├── project/
 │   ├── overview.md                    ← This document
 │   ├── architecture.md               System architecture deep dive
-│   ├── development-plan.md           Timeline, risks, dependencies
-│   └── language-ecosystem.md         Language runtimes (Rust, Python, TS, WASM)
+│   └── development-plan.md           Timeline, risks, dependencies
 │
 ├── kernel/
 │   ├── boot.md                       Boot sequence and service startup
 │   ├── boot-lifecycle.md             Boot lifecycle deep analysis
-│   ├── deadlock-prevention.md        Deadlock prevention strategies
 │   ├── hal.md                        Hardware Abstraction Layer
 │   ├── ipc.md                        IPC and syscall interface
 │   ├── memory.md                     Memory management
@@ -522,18 +509,15 @@ docs/
 ├── applications/
 │   ├── agents.md                     Agent framework
 │   ├── browser.md                    Decomposed web browser
-│   ├── inspector.md                  Inspector security dashboard
 │   └── ui-toolkit.md                 Portable UI toolkit
 │
 ├── security/
-│   ├── security.md                   Security architecture
-│   ├── fuzzing-and-hardening.md      Fuzzing and input hardening
-│   └── static-analysis.md            Static analysis and formal verification
+│   └── security.md                   Security architecture
 │
 └── phases/                           Implementation milestones per phase
     ├── 00-foundation-and-tooling.md  Phase 0: project scaffold, CI, build
     ├── 01-boot-and-first-pixels.md   Phase 1: boot flow and first pixels
-    └── ...                           (30 phases total, created as work begins)
+    └── ...                           (28 phases total, created as work begins)
 ```
 
 ### Phase Implementation Documents

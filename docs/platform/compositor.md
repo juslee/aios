@@ -19,63 +19,50 @@ The compositor is also the **display subsystem** in the subsystem framework. It 
 
 ## 2. Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Experience Layer                          │
-│  Workspace │ Browser │ Media Player │ Settings │ Inspector   │
-│  (each an agent with compositor capabilities)                │
-└────────────────────────┬────────────────────────────────────┘
-                         │ IPC: surface creation, damage, hints
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Compositor Service                       │
-│                                                              │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │   Window     │  │   Layout     │  │    Semantic       │  │
-│  │   Manager    │  │   Engine     │  │    Hints          │  │
-│  │             │  │              │  │                   │  │
-│  │  z-order    │  │  tiling      │  │  content type    │  │
-│  │  focus      │  │  floating    │  │  urgency         │  │
-│  │  minimize   │  │  fullscreen  │  │  interaction     │  │
-│  │  close      │  │  split       │  │  state           │  │
-│  └─────────────┘  └──────────────┘  └───────────────────┘  │
-│                                                              │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │   Render    │  │   Animation  │  │    Input          │  │
-│  │   Pipeline  │  │   System     │  │    Router         │  │
-│  │             │  │              │  │                   │  │
-│  │  damage     │  │  transitions │  │  focus → agent   │  │
-│  │  composite  │  │  easing      │  │  global hotkeys  │  │
-│  │  present    │  │  60fps       │  │  gesture recog   │  │
-│  └─────────────┘  └──────────────┘  └───────────────────┘  │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                  Accessibility Layer                    │ │
-│  │  Accessibility tree │ Screen reader │ Keyboard nav     │ │
-│  └────────────────────────────────────────────────────────┘ │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      GPU Abstraction                          │
-│                                                              │
-│  wgpu (Rust GPU abstraction)                                 │
-│  ├── Vulkan backend (primary, Pi 4/5)                        │
-│  ├── VirtIO-GPU backend (QEMU development)                   │
-│  └── Software renderer (fallback)                            │
-│                                                              │
-│  Render operations:                                          │
-│  ├── Surface composition (alpha blend, z-order)              │
-│  ├── Damage tracking (only redraw changed regions)           │
-│  ├── VSync (tear-free presentation)                          │
-│  └── Multi-monitor (independent render per output)           │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Display Drivers                            │
-│  VirtIO-GPU │ VC4/V3D (Pi 4) │ HDMI │ DSI │ Framebuffer    │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Experience["Experience Layer"]
+        Workspace
+        Browser
+        MediaPlayer["Media Player"]
+        Settings
+        Inspector
+    end
+
+    Experience -->|"IPC: surface creation, damage, hints"| Compositor
+
+    subgraph Compositor["Compositor Service"]
+        subgraph CoreModules[" "]
+            WM["Window Manager<br/>z-order, focus,<br/>minimize, close"]
+            LE["Layout Engine<br/>tiling, floating,<br/>fullscreen, split"]
+            SH["Semantic Hints<br/>content type, urgency,<br/>interaction state"]
+        end
+        subgraph PipelineModules[" "]
+            RP["Render Pipeline<br/>damage, composite,<br/>present"]
+            AS["Animation System<br/>transitions, easing,<br/>60fps"]
+            IR["Input Router<br/>focus to agent,<br/>global hotkeys,<br/>gesture recog"]
+        end
+        AL["Accessibility Layer<br/>Accessibility tree | Screen reader | Keyboard nav"]
+    end
+
+    Compositor --> GPU
+
+    subgraph GPU["GPU Abstraction — wgpu"]
+        Vulkan["Vulkan backend<br/>(primary, Pi 4/5)"]
+        VirtIOGPU["VirtIO-GPU backend<br/>(QEMU development)"]
+        SoftwareRenderer["Software renderer<br/>(fallback)"]
+        RenderOps["Render operations:<br/>Surface composition, Damage tracking,<br/>VSync, Multi-monitor"]
+    end
+
+    GPU --> Drivers
+
+    subgraph Drivers["Display Drivers"]
+        VirtIO["VirtIO-GPU"]
+        VC4["VC4/V3D (Pi 4)"]
+        HDMI
+        DSI
+        Framebuffer
+    end
 ```
 
 -----

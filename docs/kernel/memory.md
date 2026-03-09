@@ -317,32 +317,25 @@ impl FrameAllocator {
 
 Physical memory is divided into pools at boot based on total RAM. Each pool reserves a region of physical memory for a specific purpose. This prevents one subsystem from starving another.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Physical Memory Layout                 │
-│                                                          │
-│  ┌──────────┐  ┌───────────────────┐  ┌──────────────┐ │
-│  │  Kernel   │  │   Model (pinned)   │  │    User      │ │
-│  │  Pool     │  │   Pool             │  │    Pool      │ │
-│  │           │  │                    │  │              │ │
-│  │  page     │  │  model weights     │  │  agent       │ │
-│  │  tables,  │  │  KV caches         │  │  heaps,      │ │
-│  │  kernel   │  │  embedding stores  │  │  stacks,     │ │
-│  │  heap,    │  │                    │  │  shared mem  │ │
-│  │  slab     │  │  2 MB huge pages   │  │              │ │
-│  │  caches   │  │  pinned, never     │  │  4 KB pages  │ │
-│  │           │  │  swapped           │  │  demand-     │ │
-│  │  4 KB     │  │                    │  │  paged       │ │
-│  │  pages    │  │                    │  │              │ │
-│  └──────────┘  └───────────────────┘  └──────────────┘ │
-│  ┌──────────┐  ┌───────────────────┐                    │
-│  │   DMA    │  │   Reserved         │                    │
-│  │   Pool   │  │   (firmware, MMIO) │                    │
-│  │          │  │                    │                    │
-│  │  contig  │  │                    │                    │
-│  │  aligned │  │                    │                    │
-│  └──────────┘  └───────────────────┘                    │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph PML["Physical Memory Layout"]
+        subgraph KP["Kernel Pool"]
+            KPD["page tables, kernel heap,<br/>slab caches<br/>4 KB pages"]
+        end
+        subgraph MP["Model Pool (pinned)"]
+            MPD["model weights, KV caches,<br/>embedding stores<br/>2 MB huge pages,<br/>pinned, never swapped"]
+        end
+        subgraph UP["User Pool"]
+            UPD["agent heaps, stacks,<br/>shared mem<br/>4 KB pages,<br/>demand-paged"]
+        end
+        subgraph DP["DMA Pool"]
+            DPD["contiguous, aligned"]
+        end
+        subgraph RP["Reserved"]
+            RPD["firmware, MMIO"]
+        end
+    end
 ```
 
 Pool sizing is determined at boot based on detected RAM:
@@ -455,50 +448,37 @@ The model pool is the largest allocation on devices with 4 GB+ RAM. This is inte
 
 ARM64 with 48-bit virtual addresses provides 256 TB of virtual address space, split between kernel (upper half, TTBR1) and user (lower half, TTBR0):
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                    Virtual Address Space                      │
-│                     (48-bit, 256 TB)                         │
-│                                                              │
-│  0xFFFF_FFFF_FFFF_FFFF ┌────────────────────────────────┐  │
-│                         │ Per-CPU data, temp mappings     │  │
-│  0xFFFF_FF00_0000_0000 ├────────────────────────────────┤  │
-│                         │         (gap)                   │  │
-│  0xFFFF_0010_0000_0000 ├────────────────────────────────┤  │
-│                         │ MMIO regions                    │  │
-│  0xFFFF_0002_0000_0000 ├────────────────────────────────┤  │
-│                         │ Physical memory direct map      │  │
-│  0xFFFF_0001_0000_0000 ├────────────────────────────────┤  │
-│                         │ Kernel heap                     │  │
-│  0xFFFF_0000_4000_0000 ├────────────────────────────────┤  │
-│    TTBR1                │ Kernel data (.data, .bss)       │  │
-│    (kernel)             │ Kernel text (.text, read-only)  │  │
-│  0xFFFF_0000_0000_0000 ├════════════════════════════════┤  │
-│                         │                                 │  │
-│                         │   Non-canonical address hole    │  │
-│                         │   (inaccessible — hardware      │  │
-│                         │    enforced gap)                 │  │
-│                         │                                 │  │
-│  0x0000_8000_0000_0000 ├════════════════════════════════┤  │
-│  0x0000_7FFF_FFFF_F000 ├────────────────────────────────┤  │
-│                         │ Stack (grows down)              │  │
-│  0x0000_7FFF_FFC0_0000 ├────────────────────────────────┤  │
-│                         │         (gap)                   │  │
-│  0x0000_0010_0000_0000 ├────────────────────────────────┤  │
-│                         │ Memory-mapped spaces            │  │
-│  0x0000_0001_0000_0000 ├────────────────────────────────┤  │
-│                         │ Shared memory (IPC regions)     │  │
-│  0x0000_0000_1000_0000 ├────────────────────────────────┤  │
-│    TTBR0                │ Agent heap (grows up)           │  │
-│    (user, per-agent)    │ Agent data (.data, .bss)        │  │
-│  0x0000_0000_0040_1000 ├────────────────────────────────┤  │
-│                         │ Guard page (4 KB, unmapped)     │  │
-│  0x0000_0000_0040_0000 ├────────────────────────────────┤  │
-│                         │ Agent text (.text, read-only)   │  │
-│  0x0000_0000_0010_0000 ├────────────────────────────────┤  │
-│                         │ Guard page (unmapped)           │  │
-│  0x0000_0000_0000_0000 └────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph vas["Virtual Address Space (48-bit, 256 TB)"]
+        subgraph ttbr1["TTBR1 — Kernel Space"]
+            K1["0xFFFF_FFFF_FFFF_FFFF<br/>Per-CPU data, temp mappings"]
+            K2["0xFFFF_FF00_0000_0000<br/>(gap)"]
+            K3["0xFFFF_0010_0000_0000<br/>MMIO regions"]
+            K4["0xFFFF_0002_0000_0000<br/>Physical memory direct map"]
+            K5["0xFFFF_0001_0000_0000<br/>Kernel heap"]
+            K6["0xFFFF_0000_4000_0000<br/>Kernel data (.data, .bss)<br/>Kernel text (.text, read-only)"]
+            K1 --- K2 --- K3 --- K4 --- K5 --- K6
+        end
+        HOLE["0xFFFF_0000_0000_0000 — 0x0000_8000_0000_0000<br/>Non-canonical address hole<br/>(inaccessible — hardware enforced gap)"]
+        subgraph ttbr0["TTBR0 — User Space (per-agent)"]
+            U1["0x0000_7FFF_FFFF_F000<br/>Stack (grows down)"]
+            U2["0x0000_7FFF_FFC0_0000<br/>(gap)"]
+            U3["0x0000_0010_0000_0000<br/>Memory-mapped spaces"]
+            U4["0x0000_0001_0000_0000<br/>Shared memory (IPC regions)"]
+            U5["0x0000_0000_1000_0000<br/>Agent heap (grows up)<br/>Agent data (.data, .bss)"]
+            U6["0x0000_0000_0040_1000<br/>Guard page (4 KB, unmapped)"]
+            U7["0x0000_0000_0040_0000<br/>Agent text (.text, read-only)"]
+            U8["0x0000_0000_0010_0000<br/>Guard page (unmapped)"]
+            U9["0x0000_0000_0000_0000"]
+            U1 --- U2 --- U3 --- U4 --- U5 --- U6 --- U7 --- U8 --- U9
+        end
+        ttbr1 --- HOLE --- ttbr0
+    end
+
+    style HOLE fill:#440000,stroke:#ff4444,color:#ffffff
+    style ttbr1 fill:#1a1a3a,stroke:#6688ff,color:#ffffff
+    style ttbr0 fill:#1a3a1a,stroke:#66ff88,color:#ffffff
 ```
 
 **Kernel space (TTBR1)** is identical across all processes. The same physical page tables back the upper-half mapping for every address space. Kernel code, data, heap, the physical memory direct map, and MMIO regions are always accessible when executing in EL1.
@@ -509,30 +489,32 @@ ARM64 with 48-bit virtual addresses provides 256 TB of virtual address space, sp
 
 ARM64 with a 4 KB granule uses 4-level page tables. Each level indexes 9 bits of the virtual address:
 
-```
-48-bit Virtual Address:
-┌───────┬───────┬───────┬───────┬────────────┐
-│  PGD  │  PUD  │  PMD  │  PTE  │   Offset   │
-│[47:39]│[38:30]│[29:21]│[20:12]│  [11:0]    │
-│ 9 bits│ 9 bits│ 9 bits│ 9 bits│  12 bits   │
-└───┬───┴───┬───┴───┬───┴───┬───┴────────────┘
-    │       │       │       │
-    ▼       ▼       ▼       ▼
-   PGD     PUD     PMD     PTE → Physical Frame
-  table    table   table   table
-  (512     (512    (512    (512
-  entries) entries)entries)entries)
+```mermaid
+graph TD
+    subgraph va48["48-bit Virtual Address (4 KB pages)"]
+        PGD_F["PGD [47:39]<br/>9 bits"]
+        PUD_F["PUD [38:30]<br/>9 bits"]
+        PMD_F["PMD [29:21]<br/>9 bits"]
+        PTE_F["PTE [20:12]<br/>9 bits"]
+        OFF_F["Offset [11:0]<br/>12 bits"]
+        PGD_F --- PUD_F --- PMD_F --- PTE_F --- OFF_F
+    end
 
-For 2 MB huge pages (model memory):
-┌───────┬───────┬───────┬─────────────────────┐
-│  PGD  │  PUD  │  PMD  │      Offset          │
-│[47:39]│[38:30]│[29:21]│     [20:0]           │
-│ 9 bits│ 9 bits│ 9 bits│     21 bits          │
-└───────┴───────┴───┬───┴─────────────────────┘
-                     │
-                     ▼
-                    PMD entry points directly to
-                    2 MB physical block (no PTE level)
+    PGD_F --> PGD_T["PGD table<br/>(512 entries)"]
+    PUD_F --> PUD_T["PUD table<br/>(512 entries)"]
+    PMD_F --> PMD_T["PMD table<br/>(512 entries)"]
+    PTE_F --> PTE_T["PTE table<br/>(512 entries)"]
+    PTE_T --> PHYS["Physical Frame"]
+
+    subgraph va2m["48-bit Virtual Address (2 MB huge pages — model memory)"]
+        PGD_H["PGD [47:39]<br/>9 bits"]
+        PUD_H["PUD [38:30]<br/>9 bits"]
+        PMD_H["PMD [29:21]<br/>9 bits"]
+        OFF_H["Offset [20:0]<br/>21 bits"]
+        PGD_H --- PUD_H --- PMD_H --- OFF_H
+    end
+
+    PMD_H --> BLOCK["2 MB physical block<br/>(no PTE level)"]
 ```
 
 ```rust
@@ -862,36 +844,34 @@ Single-page and ASID invalidations include the `IS` (Inner Shareable) suffix to 
 
 The kernel needs to allocate variable-sized objects frequently — page table pages, IPC message buffers, capability tokens, process descriptors. A raw buddy allocator wastes memory on small allocations (allocating 64 bytes wastes 4032 bytes of a 4 KB page). The slab allocator solves this.
 
-```
-Slab Allocator Architecture:
+```mermaid
+graph TD
+    subgraph SLAB["Slab Allocator"]
+        subgraph CACHES["Slab Caches"]
+            subgraph IPC["Cache: IPC Message (64 bytes)"]
+                IS1["slab (free)"]
+                IS2["slab (full)"]
+                IS3["slab (partial)"]
+            end
+            subgraph CAP["Cache: Cap Token (128 bytes)"]
+                CS1["slab (free)"]
+                CS2["slab (full)"]
+            end
+            subgraph PTE["Cache: PTE Page (4096 bytes)"]
+                PS1["slab (free)"]
+                PS2["slab (full)"]
+            end
+        end
 
-┌─────────────────────────────────────────────────────┐
-│              Slab Allocator                           │
-│                                                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
-│  │ Cache: IPC   │  │ Cache: Cap   │  │ Cache: PTE  │ │
-│  │ Message      │  │ Token        │  │ Page         │ │
-│  │ (64 bytes)   │  │ (128 bytes)  │  │ (4096 bytes) │ │
-│  │              │  │              │  │              │ │
-│  │ ┌────┐ free  │  │ ┌────┐ free │  │ ┌────┐ free │ │
-│  │ │slab│──→    │  │ │slab│──→   │  │ │slab│──→   │ │
-│  │ ├────┤       │  │ ├────┤      │  │ ├────┤      │ │
-│  │ │slab│ full  │  │ │slab│ full │  │ │slab│ full │ │
-│  │ ├────┤       │  │ ├────┤      │  │ ├────┤      │ │
-│  │ │slab│partial│  │ │slab│      │  │ │slab│      │ │
-│  │ └────┘       │  │ └────┘      │  │ └────┘      │ │
-│  └─────────────┘  └─────────────┘  └─────────────┘ │
-│                                                      │
-│  Per-CPU Magazine Layer (lock-free fast path)        │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐               │
-│  │ CPU 0   │ │ CPU 1   │ │ CPU 2   │ ...           │
-│  │ loaded  │ │ loaded  │ │ loaded  │               │
-│  │ prev    │ │ prev    │ │ prev    │               │
-│  └─────────┘ └─────────┘ └─────────┘               │
-│                    │                                 │
-│                    ▼                                 │
-│           Buddy Allocator (for slab backing pages)   │
-└─────────────────────────────────────────────────────┘
+        subgraph MAG["Per-CPU Magazine Layer (lock-free fast path)"]
+            M0["CPU 0<br/>loaded / prev"]
+            M1["CPU 1<br/>loaded / prev"]
+            M2["CPU 2<br/>loaded / prev"]
+        end
+
+        CACHES --> MAG
+        MAG --> BUDDY["Buddy Allocator (for slab backing pages)"]
+    end
 ```
 
 ```rust
@@ -1112,28 +1092,20 @@ Kernel allocation failure in core data paths (page table allocation during proce
 
 Each agent gets its own address space — a unique TTBR0 page table tree. No two agents share virtual-to-physical mappings except through explicit shared memory regions.
 
-```
-Agent "research-assistant"              Agent "code-editor"
-┌─────────────────────────┐            ┌─────────────────────────┐
-│  TTBR0: 0x1A2B_0000     │            │  TTBR0: 0x3C4D_0000     │
-│  ASID: 42                │            │  ASID: 43                │
-│                          │            │                          │
-│  0x0040_0000  data  (RW-)│            │  0x0040_0000  data  (RW-)│
-│  0x0080_0000  data  (RW-)│            │  0x0080_0000  data  (RW-)│
-│  0x0100_0000  heap  (RW-)│            │  0x0100_0000  heap  (RW-)│
-│       ...                │            │       ...                │
-│  0x1_0000_0000 shm  (RW-)│──┐         │  0x1_0000_0000 shm  (RW-)│──┐
-│       ...                │  │         │       ...                │  │
-│  0x7FFF_FFC0_0000 stack  │  │         │  0x7FFF_FFC0_0000 stack  │  │
-└─────────────────────────┘  │         └─────────────────────────┘  │
-                              │                                      │
-                              │    ┌───────────────────┐             │
-                              └───→│  Shared Memory     │←────────────┘
-                                   │  Region #17        │
-                                   │  Physical: 0x5000  │
-                                   │  Size: 64 KB       │
-                                   │  Refcount: 2       │
-                                   └───────────────────┘
+```mermaid
+graph TD
+    subgraph A1["Agent: research-assistant<br/>TTBR0: 0x1A2B_0000, ASID: 42"]
+        A1D["0x0040_0000 data (RW-)<br/>0x0080_0000 data (RW-)<br/>0x0100_0000 heap (RW-)<br/>...<br/>0x1_0000_0000 shm (RW-)<br/>...<br/>0x7FFF_FFC0_0000 stack"]
+    end
+
+    subgraph A2["Agent: code-editor<br/>TTBR0: 0x3C4D_0000, ASID: 43"]
+        A2D["0x0040_0000 data (RW-)<br/>0x0080_0000 data (RW-)<br/>0x0100_0000 heap (RW-)<br/>...<br/>0x1_0000_0000 shm (RW-)<br/>...<br/>0x7FFF_FFC0_0000 stack"]
+    end
+
+    SHM["Shared Memory Region #17<br/>Physical: 0x5000<br/>Size: 64 KB<br/>Refcount: 2"]
+
+    A1 -->|shm mapping| SHM
+    A2 -->|shm mapping| SHM
 ```
 
 When the kernel creates an agent process, it:
@@ -2115,36 +2087,29 @@ pub enum MteMode {
 
 Guard pages are unmapped virtual memory regions placed between sensitive areas. Any access to a guard page triggers an immediate page fault, which the kernel handles as a clean error rather than allowing silent corruption.
 
-```
-Agent address space with guard pages:
+```mermaid
+graph TD
+    G1["0x0000_0000_0000_0000<br/>GUARD (unmapped)<br/>NULL pointer dereference → fault"]
+    T["0x0000_0000_0010_0000<br/>Agent text"]
+    G2["0x0000_0000_0040_0000<br/>GUARD<br/>text/data boundary"]
+    D["0x0000_0000_0040_1000<br/>Agent data<br/>Agent heap<br/>... Heap top"]
+    G3["0x0000_xxxx_xxxx_xxxx<br/>GUARD<br/>heap/shared boundary"]
+    S["0x0000_0001_0000_0000<br/>Shared memory"]
+    G4["GUARD<br/>shared/stack gap"]
+    STK["0x0000_7FFF_FFC0_0000<br/>Stack (grows down)"]
+    G5["0x0000_7FFF_FFBF_F000<br/>GUARD<br/>stack overflow → fault, not corruption<br/>0x0000_7FFF_FFBF_E000"]
 
-0x0000_0000_0000_0000  ┌────────────────┐
-                        │ GUARD (unmapped)│  ← NULL pointer dereference → fault
-0x0000_0000_0010_0000  ├────────────────┤
-                        │ Agent text      │
-0x0000_0000_0040_0000  ├────────────────┤
-                        │ GUARD           │  ← text/data boundary
-0x0000_0000_0040_1000  ├────────────────┤
-                        │ Agent data      │
-                        │ Agent heap      │
-                        │      ...        │
-                        │ Heap top        │
-0x0000_xxxx_xxxx_xxxx  ├────────────────┤
-                        │ GUARD           │  ← heap/shared boundary
-                        │      ...        │
-0x0000_0001_0000_0000  ├────────────────┤
-                        │ Shared memory   │
-                        │      ...        │
-                        ├────────────────┤
-                        │ GUARD           │  ← shared/stack gap
-                        │      ...        │
-0x0000_7FFF_FFC0_0000  ├────────────────┤
-                        │ Stack           │
-                        │ (grows down)    │
-                        │      ...        │
-0x0000_7FFF_FFBF_F000  ├────────────────┤
-                        │ GUARD           │  ← stack overflow → fault, not corruption
-0x0000_7FFF_FFBF_E000  └────────────────┘
+    G1 --- T --- G2 --- D --- G3 --- S --- G4 --- STK --- G5
+
+    style G1 fill:#440000,stroke:#ff4444,color:#ffffff
+    style G2 fill:#440000,stroke:#ff4444,color:#ffffff
+    style G3 fill:#440000,stroke:#ff4444,color:#ffffff
+    style G4 fill:#440000,stroke:#ff4444,color:#ffffff
+    style G5 fill:#440000,stroke:#ff4444,color:#ffffff
+    style T fill:#1a1a3a,stroke:#6688ff,color:#ffffff
+    style D fill:#1a3a1a,stroke:#66ff88,color:#ffffff
+    style S fill:#2a2a1a,stroke:#ffaa44,color:#ffffff
+    style STK fill:#1a3a3a,stroke:#44dddd,color:#ffffff
 ```
 
 Stack overflow is the most common case. Without a guard page, a stack overflow silently writes into adjacent memory (heap or other data), causing corruption that may not be detected until much later. With a guard page, the overflow triggers an immediate, clean page fault. The kernel terminates the offending thread with a clear error message.
@@ -2423,24 +2388,37 @@ zram provides the second tier of memory reclamation. Instead of writing inactive
 
 **Architecture:**
 
-```
-Before compression:                    After compression:
+```mermaid
+graph LR
+    subgraph before["Before compression (12 KB occupied)"]
+        A1["Page A (inactive) — 4 KB"]
+        B1["Page B (inactive) — 4 KB"]
+        C1["Page C (inactive) — 4 KB"]
+        A1 --- B1 --- C1
+    end
 
-┌───────────┐                          ┌───────────┐
-│ Page A     │  4 KB                   │ Page A     │  compressed: 1.2 KB ──┐
-│ (inactive) │                         │ (freed)    │                       │
-├───────────┤                          ├───────────┤    ┌─────────────────┐ │
-│ Page B     │  4 KB                   │ Page B     │    │ zram pool       │ │
-│ (inactive) │                         │ (freed)    │    │                 │ │
-├───────────┤                          ├───────────┤    │ ┌─A─┬─B─┬─C─┐  │◄┘
-│ Page C     │  4 KB                   │ Page C     │    │ │1.2│0.8│1.5│  │
-│ (inactive) │                         │ (freed)    │    │ │KB │KB │KB │  │
-├───────────┤                          ├───────────┤    │ └───┴───┴───┘  │
-│ ...        │                         │ (free)     │    │ 3.5 KB used    │
-│            │                         │ 12 KB free │    │ (was 12 KB)    │
-└───────────┘                          └───────────┘    └─────────────────┘
+    before -- "compress" --> after
 
-12 KB occupied  →  3.5 KB occupied  (3.4:1 ratio, 8.5 KB freed)
+    subgraph after["After compression (3.5 KB occupied)"]
+        subgraph freed["Freed pages (12 KB free)"]
+            A2["Page A (freed)"]
+            B2["Page B (freed)"]
+            C2["Page C (freed)"]
+            A2 --- B2 --- C2
+        end
+        subgraph zram["zram pool — 3.5 KB used (was 12 KB)"]
+            AZ["A: 1.2 KB"]
+            BZ["B: 0.8 KB"]
+            CZ["C: 1.5 KB"]
+        end
+        freed -.-> zram
+    end
+
+    note["3.4:1 ratio, 8.5 KB freed"]
+
+    style before fill:#3a1a1a,stroke:#ff6644,color:#ffffff
+    style after fill:#1a3a1a,stroke:#44ff66,color:#ffffff
+    style zram fill:#1a1a3a,stroke:#6688ff,color:#ffffff
 ```
 
 **Compression algorithm selection:**
@@ -2646,26 +2624,40 @@ When an agent accesses a page that has been compressed (zram) or swapped to disk
 
 When a page is reclaimed, its PTE is modified to indicate where the data went. The PTE's "valid" bit is cleared (causing a fault on access), and the remaining bits encode the location:
 
-```
-Valid PTE (page in physical RAM):
-  ┌─────────────────────────────────────────────────────────┐
-  │ Physical Frame Number (bits 47:12) │ Flags │ V=1        │
-  └─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph valid["Valid PTE (page in physical RAM)"]
+        V_PFN["Physical Frame Number<br/>(bits 47:12)"]
+        V_FLAGS["Flags"]
+        V_BIT["V=1"]
+        V_PFN --- V_FLAGS --- V_BIT
+    end
 
-Compressed PTE (page in zram):
-  ┌─────────────────────────────────────────────────────────┐
-  │ zram index (bits 47:2)             │ Type=01 │ V=0      │
-  └─────────────────────────────────────────────────────────┘
+    subgraph compressed["Compressed PTE (page in zram)"]
+        C_IDX["zram index<br/>(bits 47:2)"]
+        C_TYPE["Type=01"]
+        C_BIT["V=0"]
+        C_IDX --- C_TYPE --- C_BIT
+    end
 
-Swapped PTE (page on disk):
-  ┌─────────────────────────────────────────────────────────┐
-  │ Swap slot number (bits 47:2)       │ Type=10 │ V=0      │
-  └─────────────────────────────────────────────────────────┘
+    subgraph swapped["Swapped PTE (page on disk)"]
+        S_SLOT["Swap slot number<br/>(bits 47:2)"]
+        S_TYPE["Type=10"]
+        S_BIT["V=0"]
+        S_SLOT --- S_TYPE --- S_BIT
+    end
 
-Zero PTE (never accessed — demand-zero on first fault):
-  ┌─────────────────────────────────────────────────────────┐
-  │ 0000000000000000000000000000000000 │ Type=00 │ V=0      │
-  └─────────────────────────────────────────────────────────┘
+    subgraph zero["Zero PTE (never accessed — demand-zero on first fault)"]
+        Z_DATA["0000...0000"]
+        Z_TYPE["Type=00"]
+        Z_BIT["V=0"]
+        Z_DATA --- Z_TYPE --- Z_BIT
+    end
+
+    style valid fill:#1a3a1a,stroke:#44ff66,color:#ffffff
+    style compressed fill:#1a1a3a,stroke:#6688ff,color:#ffffff
+    style swapped fill:#3a2a1a,stroke:#ffaa44,color:#ffffff
+    style zero fill:#2a2a2a,stroke:#888888,color:#ffffff
 ```
 
 **PTE state classification and fault type:**

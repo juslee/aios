@@ -32,52 +32,43 @@ The Policy Engine is a privileged userspace service that:
 
 ## 2. Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                   Power Management Policy Engine                     │
-│                  (privileged userspace service)                       │
-│                                                                      │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                     Sensor Aggregator                          │  │
-│  │                                                               │  │
-│  │  BatterySensor   ThermalSensor    LidSwitch    AcAdapter      │  │
-│  │  (SoC%, health,  (per-zone °C,   (open/close  (plugged/      │  │
-│  │   cycle count)    trip points)     events)      unplugged)     │  │
-│  │                                                               │  │
-│  │  UserActivity    AirsPrediction   ContextState  SystemLoad    │  │
-│  │  (last input     (next wake       (from Context (CPU util,    │  │
-│  │   timestamp)      probability)     Engine)       runnable)     │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                              │                                       │
-│                              ▼                                       │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                     Policy Rule Engine                         │  │
-│  │                                                               │  │
-│  │  Rule Table           State Machine         Transition Guards  │  │
-│  │  (priority-ordered    (S0 → S0ix → S3      (conditions that   │  │
-│  │   condition→action     → S4 → S5)           block transitions) │  │
-│  │   rules)                                                      │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                              │                                       │
-│                              ▼                                       │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                     Transition Executor                        │  │
-│  │                                                               │  │
-│  │  KernelCommands      ServiceManager      SubsystemFramework   │  │
-│  │  (PSCI suspend,      (quiesce, resume    (device power        │  │
-│  │   hibernate image,    services)           transitions)         │  │
-│  │   RTC alarm, DVFS)                                            │  │
-│  │                                                               │  │
-│  │  AuditLogger         SchedulerHints      ThermalGovernor      │  │
-│  │  (system/audit/      (DvfsPolicy,        (zone→action         │  │
-│  │   power/)             battery mode)        mapping)            │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-        │                    │                     │
-        ▼                    ▼                     ▼
-   Kernel (HAL,        Service Manager        Subsystem Framework
-    scheduler,         (lifecycle              (per-device
-    PSCI, RTC)          channel)               PowerManaged trait)
+```mermaid
+graph TD
+    subgraph PolicyEngine["Power Management Policy Engine (privileged userspace service)"]
+        subgraph Sensors["Sensor Aggregator"]
+            BatterySensor["BatterySensor<br/>(SoC%, health, cycle count)"]
+            ThermalSensor["ThermalSensor<br/>(per-zone C, trip points)"]
+            LidSwitch["LidSwitch<br/>(open/close events)"]
+            AcAdapter["AcAdapter<br/>(plugged/unplugged)"]
+            UserActivity["UserActivity<br/>(last input timestamp)"]
+            AirsPrediction["AirsPrediction<br/>(next wake probability)"]
+            ContextState["ContextState<br/>(from Context Engine)"]
+            SystemLoad["SystemLoad<br/>(CPU util, runnable)"]
+        end
+
+        Sensors --> RuleEngine
+
+        subgraph RuleEngine["Policy Rule Engine"]
+            RuleTable["Rule Table<br/>(priority-ordered<br/>condition to action rules)"]
+            StateMachine["State Machine<br/>(S0 to S0ix to S3<br/>to S4 to S5)"]
+            Guards["Transition Guards<br/>(conditions that<br/>block transitions)"]
+        end
+
+        RuleEngine --> Executor
+
+        subgraph Executor["Transition Executor"]
+            KernelCmds["KernelCommands<br/>(PSCI suspend, hibernate<br/>image, RTC alarm, DVFS)"]
+            SvcMgr["ServiceManager<br/>(quiesce, resume<br/>services)"]
+            SubFw["SubsystemFramework<br/>(device power<br/>transitions)"]
+            AuditLogger["AuditLogger<br/>(system/audit/power/)"]
+            SchedHints["SchedulerHints<br/>(DvfsPolicy, battery mode)"]
+            ThermalGov["ThermalGovernor<br/>(zone to action mapping)"]
+        end
+    end
+
+    Executor --> Kernel["Kernel<br/>(HAL, scheduler, PSCI, RTC)"]
+    Executor --> ServiceManager["Service Manager<br/>(lifecycle channel)"]
+    Executor --> SubsystemFw["Subsystem Framework<br/>(per-device PowerManaged trait)"]
 ```
 
 ### 2.1 Service Position in Boot
@@ -135,36 +126,26 @@ S5       Off               Off            Off             Off          Cold boot
 
 ### 3.1 Power State Machine
 
-```
-                         ┌──────────────────────────────────────┐
-                         │                                      │
-                         ▼                                      │
-┌──────┐  idle timeout  ┌──────┐  lid close /    ┌──────┐     │
-│      │ ──────────────→│      │  power button   │      │     │
-│  S0  │                │ S0ix │ ───────────────→│  S3  │     │
-│Active│ ←──────────────│ Idle │ ←───────────────│Susp. │     │
-│      │  user activity │      │  wake source    │      │     │
-└──┬───┘                └──┬───┘                 └──┬───┘     │
-   │                       │                        │          │
-   │                       │  critical battery      │  power   │
-   │                       │  (< 5% on battery)     │  loss    │
-   │                       │                        │  during  │
-   │                       ▼                        │  S3      │
-   │                    ┌──────┐                    │          │
-   │  cold boot         │      │ ←──────────────────┘          │
-   │  ┌────────────────│  S4  │                               │
-   │  │                │Hiber.│ ───────────────────────────────┘
-   │  │                │      │  hibernate resume
-   │  │                └──┬───┘
-   │  │                   │
-   │  │  shutdown         │  shutdown (from any state)
-   │  │                   ▼
-   │  │                ┌──────┐
-   │  └───────────────→│      │
-   │                   │  S5  │
-   └──────────────────→│ Off  │
-      shutdown          │      │
-                       └──────┘
+```mermaid
+stateDiagram-v2
+    [*] --> S0 : cold boot
+
+    S0 : S0 — Active
+    S0ix : S0ix — Idle
+    S3 : S3 — Suspend-to-RAM
+    S4 : S4 — Hibernate
+    S5 : S5 — Off
+
+    S0 --> S0ix : idle timeout
+    S0ix --> S0 : user activity
+    S0ix --> S3 : lid close / power button
+    S3 --> S0ix : wake source
+    S0ix --> S4 : critical battery (< 5%)
+    S3 --> S4 : power loss during S3
+    S4 --> S0ix : hibernate resume
+    S4 --> S5 : shutdown
+    S0 --> S5 : shutdown
+    S5 --> S0 : cold boot
 ```
 
 ### 3.2 State Definitions
@@ -224,21 +205,28 @@ pub enum IdleDepth {
 
 The Policy Engine progressively deepens idle state as inactivity continues. This avoids the latency penalty of deep idle for brief pauses (checking a notification) while achieving full power savings for sustained inactivity (user walked away).
 
-```
-Time since last user input:
+```mermaid
+graph LR
+    subgraph T0["0s - 30s"]
+        S0["S0 Active\n(full power)"]
+    end
+    subgraph T1["30s - 2min"]
+        S0ix_WFI["S0ix/WFI\n(screen dim)"]
+    end
+    subgraph T2["2min - 5min"]
+        S0ix_CG["S0ix/ClockGated\n(screen off)"]
+    end
+    subgraph T3["5min+"]
+        S3["S3 Suspend\n(< 50 mW)"]
+    end
 
-0s                    30s                 2min                5min
-│                     │                   │                   │
-├── S0 Active ────────┤                   │                   │
-│   (full power)      │                   │                   │
-│                     ├── S0ix/WFI ───────┤                   │
-│                     │   (screen dim)    │                   │
-│                     │                   ├── S0ix/ClockGated │
-│                     │                   │   (screen off)    │
-│                     │                   │                   ├── S3 Suspend
-│                     │                   │                   │   (< 50 mW)
-│                     │                   │                   │
-│← any user input returns to S0 Active instantly ────────────→│
+    S0 -->|"inactivity 30s"| S0ix_WFI
+    S0ix_WFI -->|"inactivity 2min"| S0ix_CG
+    S0ix_CG -->|"inactivity 5min"| S3
+
+    S3 -->|"any user input: instant return"| S0
+    S0ix_CG -->|"any user input: instant return"| S0
+    S0ix_WFI -->|"any user input: instant return"| S0
 ```
 
 ```rust
@@ -659,32 +647,16 @@ impl PolicyEngine {
 
 Each platform exposes thermal zones through the HAL. The Policy Engine reads all zones and drives the scheduler's thermal response.
 
-```
-Sensor Reading     Policy Engine      Scheduler Response
-─────────────      ─────────────      ──────────────────
+```mermaid
+graph LR
+    CPU["cpu-thermal"] --> AGG["Aggregate zones,\nselect worst-case"]
+    GPU["gpu-thermal"] --> AGG
+    BAT["battery-temp"] --> AGG
 
-                   ┌─────────────┐
- cpu-thermal ─────→│             │    ┌──────────────────────────────────┐
-                   │  Aggregate  │    │ ThermalState::Normal             │
- gpu-thermal ─────→│  zones,     │───→│   → All classes enabled          │
-                   │  select     │    │   → Default inference chunks (8) │
- battery-temp ────→│  worst-case │    │   → DVFS: OnDemand               │
-                   │             │    ├──────────────────────────────────┤
-                   └─────────────┘    │ ThermalState::Warm               │
-                                      │   → Idle class disabled          │
-                                      │   → Inference chunks: 4          │
-                                      │   → DVFS: OnDemand               │
-                                      ├──────────────────────────────────┤
-                                      │ ThermalState::Throttled          │
-                                      │   → WCET scaling applied         │
-                                      │   → Inference chunks: 2          │
-                                      │   → DVFS: firmware-controlled    │
-                                      ├──────────────────────────────────┤
-                                      │ ThermalState::Critical           │
-                                      │   → Normal + Idle suspended      │
-                                      │   → Only RT + Interactive run    │
-                                      │   → Policy: initiate hibernate   │
-                                      └──────────────────────────────────┘
+    AGG --> NORMAL["ThermalState::Normal\n- All classes enabled\n- Default inference chunks (8)\n- DVFS: OnDemand"]
+    AGG --> WARM["ThermalState::Warm\n- Idle class disabled\n- Inference chunks: 4\n- DVFS: OnDemand"]
+    AGG --> THROTTLED["ThermalState::Throttled\n- WCET scaling applied\n- Inference chunks: 2\n- DVFS: firmware-controlled"]
+    AGG --> CRITICAL["ThermalState::Critical\n- Normal + Idle suspended\n- Only RT + Interactive run\n- Policy: initiate hibernate"]
 ```
 
 ### 6.2 Per-Platform Thermal Zones
@@ -899,30 +871,16 @@ AIRS provides two capabilities to the Policy Engine: proactive wake scheduling a
 
 Proactive Wake is described in boot-lifecycle.md §15.5. The Policy Engine is responsible for the operational mechanics: programming the RTC alarm, handling the wake event, and deciding whether to re-suspend.
 
-```
-                        ┌──────────────────────┐
-                        │ AIRS Usage Model     │
-                        │ (7×24 probability    │
-                        │  grid + calendar     │
-                        │  events)             │
-                        └──────────┬───────────┘
-                                   │
-                                   ▼
-                        ┌──────────────────────┐
-                        │ Policy Engine        │
-                        │                      │
-            ┌───────────┤ 1. Receive prediction│
-            │           │ 2. Check power policy│
-            │           │ 3. Compute lead time │
-            │           │ 4. Program RTC alarm │
-            │           └──────────┬───────────┘
-            │                      │
-    ┌───────▼─────────┐    ┌───────▼─────────┐
-    │ Guard: power     │    │ Kernel: program  │
-    │ sufficient?     │    │ RTC alarm via    │
-    │ (AC or battery  │    │ platform HAL     │
-    │  > 50%)         │    │                  │
-    └─────────────────┘    └──────────────────┘
+```mermaid
+graph TD
+    AIRS["AIRS Usage Model\n(7x24 probability grid\n+ calendar events)"]
+    PE["Policy Engine\n1. Receive prediction\n2. Check power policy\n3. Compute lead time\n4. Program RTC alarm"]
+    GUARD["Guard: power sufficient?\n(AC or battery > 50%)"]
+    KERNEL["Kernel: program RTC\nalarm via platform HAL"]
+
+    AIRS --> PE
+    PE --> GUARD
+    PE --> KERNEL
 ```
 
 ```rust
@@ -1332,76 +1290,40 @@ The Policy Engine orchestrates suspend/resume through a three-phase protocol coo
 
 ### 10.1 Suspend Protocol
 
-```
-PolicyEngine                 ServiceManager              HAL / Kernel
-    │                            │                           │
-    │  RequestSuspend            │                           │
-    │ ──────────────────────────→│                           │
-    │                            │  SuspendPrepare           │
-    │                            │  (broadcast to all        │
-    │                            │   services, 2s timeout)   │
-    │                            │ ──────────────────────────→│
-    │                            │                           │
-    │                            │  [services quiesce:       │
-    │                            │   flush I/O, save state,  │
-    │                            │   park DMA engines]       │
-    │                            │                           │
-    │                            │  SuspendReady             │
-    │                            │ ←──────────────────────────│
-    │  AllServicesQuiesced       │                           │
-    │ ←──────────────────────────│                           │
-    │                            │                           │
-    │  [verify guards: no DMA,  │                           │
-    │   no imminent RT deadline] │                           │
-    │                            │                           │
-    │  KernelSuspend             │                           │
-    │ ─────────────────────────────────────────────────────→│
-    │                            │                           │  save GIC state
-    │                            │                           │  save timer state
-    │                            │                           │  save per-core regs
-    │                            │                           │  platform.suspend_devices()
-    │                            │                           │  park secondary CPUs
-    │                            │                           │  PSCI SYSTEM_SUSPEND
-    │                            │                           │
-    │  ═══════════════════ SYSTEM IN S3 ════════════════════│
+```mermaid
+sequenceDiagram
+    participant PE as PolicyEngine
+    participant SM as ServiceManager
+    participant HAL as HAL / Kernel
+
+    PE->>SM: RequestSuspend
+    SM->>HAL: SuspendPrepare<br/>(broadcast to all services, 2s timeout)
+    Note over HAL: services quiesce:<br/>flush I/O, save state,<br/>park DMA engines
+    HAL-->>SM: SuspendReady
+    SM-->>PE: AllServicesQuiesced
+    Note over PE: verify guards: no DMA,<br/>no imminent RT deadline
+    PE->>HAL: KernelSuspend
+    Note over HAL: save GIC state<br/>save timer state<br/>save per-core regs<br/>platform.suspend_devices()<br/>park secondary CPUs<br/>PSCI SYSTEM_SUSPEND
+    Note over PE,HAL: SYSTEM IN S3
 ```
 
 ### 10.2 Resume Protocol
 
-```
-    │  ═══════════ WAKE SOURCE FIRES ═══════════════════════│
-    │                            │                           │
-    │                            │                           │  firmware restarts
-    │                            │                           │  boot CPU at resume
-    │                            │                           │  entry point
-    │                            │                           │
-    │                            │                           │  restore MMU, stack
-    │                            │                           │  restore GIC, timer
-    │                            │                           │  platform.resume_devices()
-    │                            │                           │  resume secondary CPUs
-    │                            │                           │
-    │  KernelResumed             │                           │
-    │ ←─────────────────────────────────────────────────────│
-    │                            │                           │
-    │  [re-read battery state   │                           │
-    │   — may have changed      │                           │
-    │   significantly during    │                           │
-    │   suspend]                │                           │
-    │                            │                           │
-    │  ResumeNotify              │                           │
-    │ ──────────────────────────→│                           │
-    │                            │  ResumeNotify             │
-    │                            │  (broadcast to all        │
-    │                            │   services)               │
-    │                            │ ──────────────────────────→│
-    │                            │                           │
-    │                            │  [services restore state, │
-    │                            │   re-establish connections]│
-    │                            │                           │
-    │  [evaluate rules with     │                           │
-    │   fresh sensor inputs —   │                           │
-    │   battery may be critical │                           │
-    │   after long suspend]     │                           │
+```mermaid
+sequenceDiagram
+    participant PE as PolicyEngine
+    participant SM as ServiceManager
+    participant HAL as HAL / Kernel
+
+    Note over PE,HAL: WAKE SOURCE FIRES
+    Note over HAL: firmware restarts<br/>boot CPU at resume entry point
+    Note over HAL: restore MMU, stack<br/>restore GIC, timer<br/>platform.resume_devices()<br/>resume secondary CPUs
+    HAL-->>PE: KernelResumed
+    Note over PE: re-read battery state<br/>(may have changed significantly<br/>during suspend)
+    PE->>SM: ResumeNotify
+    SM->>HAL: ResumeNotify<br/>(broadcast to all services)
+    Note over HAL: services restore state,<br/>re-establish connections
+    Note over PE: evaluate rules with fresh<br/>sensor inputs — battery may be<br/>critical after long suspend
 ```
 
 ### 10.3 Per-Device Suspend/Resume Requirements

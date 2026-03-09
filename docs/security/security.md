@@ -31,61 +31,25 @@ AIOS runs autonomous agents that perform actions on behalf of the user. This is 
 
 ### 1.2 Trust Boundaries
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  TRUST LEVEL 0: Kernel                                          │
-│                                                                 │
-│  Full hardware access. Manages all memory, capabilities, IPC.   │
-│  Defines the rules everyone else follows. 31 syscalls.         │
-│  If this is compromised, all bets are off (see §1.3).           │
-│                                                                 │
-│  CAN: everything                                                │
-│  CANNOT: nothing (it IS the enforcement mechanism)              │
-├─────────────────────────────────────────────────────────────────┤
-│  TRUST LEVEL 1: System services                                 │
-│                                                                 │
-│  AIRS, Space Storage, Service Manager, Compositor, Network      │
-│  Translation Module. Run as userspace processes with elevated   │
-│  capability sets. First to boot, last to terminate.             │
-│                                                                 │
-│  CAN: access system spaces, manage other processes' caps,       │
-│       perform crypto operations, access all subsystem hardware  │
-│  CANNOT: modify kernel memory, forge capability tokens,         │
-│          bypass IPC mediation, access other services' memory    │
-├─────────────────────────────────────────────────────────────────┤
-│  TRUST LEVEL 2: Native experience agents                        │
-│                                                                 │
-│  Workspace, Browser Shell, Media Player, Inspector, Settings.   │
-│  Shipped with the OS. Signed by AIOS root key. Broad caps      │
-│  but still bounded by the capability system.                    │
-│                                                                 │
-│  CAN: create surfaces, access multiple spaces, post attention   │
-│       items, use inference, spawn tab agents                    │
-│  CANNOT: access system spaces directly, modify other agents'    │
-│          capabilities, bypass intent verification               │
-├─────────────────────────────────────────────────────────────────┤
-│  TRUST LEVEL 3: Third-party agents                              │
-│                                                                 │
-│  Installed from Agent Store. Signed by developer keys.          │
-│  Capabilities explicitly approved by user at install time.      │
-│                                                                 │
-│  CAN: only what their manifest declares and user approved       │
-│  CANNOT: access spaces not in manifest, use hardware not        │
-│          declared, spawn agents without SpawnAgent cap,          │
-│          communicate with agents outside IPC channels           │
-├─────────────────────────────────────────────────────────────────┤
-│  TRUST LEVEL 4: Web content / Tab agents (lowest trust)         │
-│                                                                 │
-│  Each browser tab is an agent. Runs arbitrary JS from any       │
-│  origin. Capabilities derived from URL origin, not manifest.    │
-│  Mandatory OS-managed TLS and HTTP. Cannot opt out.             │
-│                                                                 │
-│  CAN: render content, make network requests to own origin,      │
-│       use Web APIs (with user prompts for camera/mic/GPS)       │
-│  CANNOT: access any space outside web-storage/[origin]/,        │
-│          use raw sockets, bypass OS network management,          │
-│          interact with other tab agents' memory                 │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph TL0["TRUST LEVEL 0: Kernel"]
+        TL0_desc["Full hardware access. Manages all memory, capabilities, IPC.<br/>Defines the rules everyone else follows. 31 syscalls.<br/>If this is compromised, all bets are off (see section 1.3).<br/><br/>CAN: everything<br/>CANNOT: nothing (it IS the enforcement mechanism)"]
+    end
+    subgraph TL1["TRUST LEVEL 1: System services"]
+        TL1_desc["AIRS, Space Storage, Service Manager, Compositor, Network<br/>Translation Module. Run as userspace processes with elevated<br/>capability sets. First to boot, last to terminate.<br/><br/>CAN: access system spaces, manage other processes' caps,<br/>perform crypto operations, access all subsystem hardware<br/>CANNOT: modify kernel memory, forge capability tokens,<br/>bypass IPC mediation, access other services' memory"]
+    end
+    subgraph TL2["TRUST LEVEL 2: Native experience agents"]
+        TL2_desc["Workspace, Browser Shell, Media Player, Inspector, Settings.<br/>Shipped with the OS. Signed by AIOS root key. Broad caps<br/>but still bounded by the capability system.<br/><br/>CAN: create surfaces, access multiple spaces, post attention<br/>items, use inference, spawn tab agents<br/>CANNOT: access system spaces directly, modify other agents'<br/>capabilities, bypass intent verification"]
+    end
+    subgraph TL3["TRUST LEVEL 3: Third-party agents"]
+        TL3_desc["Installed from Agent Store. Signed by developer keys.<br/>Capabilities explicitly approved by user at install time.<br/><br/>CAN: only what their manifest declares and user approved<br/>CANNOT: access spaces not in manifest, use hardware not<br/>declared, spawn agents without SpawnAgent cap,<br/>communicate with agents outside IPC channels"]
+    end
+    subgraph TL4["TRUST LEVEL 4: Web content / Tab agents (lowest trust)"]
+        TL4_desc["Each browser tab is an agent. Runs arbitrary JS from any<br/>origin. Capabilities derived from URL origin, not manifest.<br/>Mandatory OS-managed TLS and HTTP. Cannot opt out.<br/><br/>CAN: render content, make network requests to own origin,<br/>use Web APIs (with user prompts for camera/mic/GPS)<br/>CANNOT: access any space outside web-storage/origin/,<br/>use raw sockets, bypass OS network management,<br/>interact with other tab agents' memory"]
+    end
+
+    TL0 --> TL1 --> TL2 --> TL3 --> TL4
 ```
 
 Every boundary in this diagram is enforced by the kernel. Trust Level N cannot acquire Trust Level N-1 privileges without a kernel-mediated capability grant. There is no `sudo` equivalent — capability escalation requires user approval through the OS UI.
@@ -398,38 +362,17 @@ pub enum RecommendedAction {
 
 **Verification flow:**
 
-```
-Agent requests action
-        │
-        ▼
-┌─────────────────┐     YES     ┌──────────┐
-│ On allow list?  ├────────────→│ ALLOW    │
-└────────┬────────┘             └──────────┘
-         │ NO
-         ▼
-┌─────────────────┐     YES     ┌──────────────────────────────┐
-│ AIRS available? ├────────────→│ Send IntentCheckRequest      │
-└────────┬────────┘             │ to AIRS via IPC              │
-         │ NO                   │                              │
-         ▼                      │ AIRS compares:               │
-┌─────────────────┐             │  - declared task description │
-│ Apply fallback  │             │  - observed action type      │
-│ policy          │             │  - action history/sequence   │
-│ (skip/block/ro) │             │  - agent's behavioral norms  │
-└─────────────────┘             │                              │
-                                │ Returns: VerificationResult  │
-                                └──────────────┬───────────────┘
-                                               │
-                                    ┌──────────┴──────────┐
-                                    │                     │
-                              confidence ≥ threshold  confidence < threshold
-                                    │                     │
-                                    ▼                     ▼
-                              ┌──────────┐        ┌──────────────┐
-                              │ ALLOW    │        │ BLOCK or     │
-                              │ (cached) │        │ ESCALATE to  │
-                              └──────────┘        │ user         │
-                                                  └──────────────┘
+```mermaid
+graph TD
+    A["Agent requests action"] --> B{"On allow list?"}
+    B -- YES --> C["ALLOW"]
+    B -- NO --> D{"AIRS available?"}
+    D -- YES --> E["Send IntentCheckRequest\nto AIRS via IPC"]
+    D -- NO --> F["Apply fallback policy\n(skip/block/ro)"]
+    E --> G["AIRS compares:\n- declared task description\n- observed action type\n- action history/sequence\n- agent's behavioral norms\n\nReturns: VerificationResult"]
+    G --> H{"confidence >= threshold?"}
+    H -- YES --> I["ALLOW\n(cached)"]
+    H -- NO --> J["BLOCK or\nESCALATE to user"]
 ```
 
 **Caching:** High-frequency actions (repeated reads from the same space) are cached after the first verification. The cache key is `(agent_id, action_type, target)`. Cache entries expire after 5 minutes or when the agent's task changes. Destructive actions (writes, deletes, network sends) are never cached if `always_verify` includes them.
@@ -500,62 +443,21 @@ pub struct CapabilityToken {
 
 **Validation flow:**
 
-```
-Agent issues syscall with CapabilityHandle
-                    │
-                    ▼
-    ┌───────────────────────────────┐
-    │ 1. Handle bounds check        │
-    │    handle < table.tokens.len? │
-    │    NO → EPERM + audit         │
-    └───────────────┬───────────────┘
-                    │ YES
-                    ▼
-    ┌───────────────────────────────┐
-    │ 2. Slot occupied?             │
-    │    table.tokens[handle].is_some? │
-    │    NO → EPERM + audit         │
-    └───────────────┬───────────────┘
-                    │ YES
-                    ▼
-    ┌───────────────────────────────┐
-    │ 3. Token revoked?             │
-    │    token.revoked?             │
-    │    YES → EPERM + audit        │
-    └───────────────┬───────────────┘
-                    │ NO
-                    ▼
-    ┌───────────────────────────────┐
-    │ 4. Token expired?             │
-    │    token.expires < now()?     │
-    │    YES → EPERM + audit        │
-    │    (mark token revoked)       │
-    └───────────────┬───────────────┘
-                    │ NO
-                    ▼
-    ┌───────────────────────────────┐
-    │ 5. Capability matches action? │
-    │    token.capability.permits(  │
-    │      requested_action)?       │
-    │    NO → EPERM + audit         │
-    └───────────────┬───────────────┘
-                    │ YES
-                    ▼
-    ┌───────────────────────────────┐
-    │ 6. Attenuations satisfied?    │
-    │    All attenuations checked   │
-    │    (path prefix, time window, │
-    │     operation subset, etc.)   │
-    │    NO → EPERM + audit         │
-    └───────────────┬───────────────┘
-                    │ YES
-                    ▼
-    ┌───────────────────────────────┐
-    │ 7. GRANTED                    │
-    │    token.usage_count += 1     │
-    │    token.last_used = now()    │
-    │    audit(APPROVED)            │
-    └───────────────────────────────┘
+```mermaid
+graph TD
+    A["Agent issues syscall with CapabilityHandle"] --> B{"1. Handle bounds check\nhandle < table.tokens.len?"}
+    B -- NO --> B_deny["EPERM + audit"]
+    B -- YES --> C{"2. Slot occupied?\ntable.tokens[handle].is_some?"}
+    C -- NO --> C_deny["EPERM + audit"]
+    C -- YES --> D{"3. Token revoked?\ntoken.revoked?"}
+    D -- YES --> D_deny["EPERM + audit"]
+    D -- NO --> E{"4. Token expired?\ntoken.expires < now()?"}
+    E -- YES --> E_deny["EPERM + audit\n(mark token revoked)"]
+    E -- NO --> F{"5. Capability matches action?\ntoken.capability.permits(\nrequested_action)?"}
+    F -- NO --> F_deny["EPERM + audit"]
+    F -- YES --> G{"6. Attenuations satisfied?\nAll attenuations checked\n(path prefix, time window,\noperation subset, etc.)"}
+    G -- NO --> G_deny["EPERM + audit"]
+    G -- YES --> H["7. GRANTED\ntoken.usage_count += 1\ntoken.last_used = now()\naudit(APPROVED)"]
 ```
 
 All seven steps execute in kernel space. No IPC, no context switch, no service call. This is O(1) per check — a table index lookup followed by field comparisons. The audit log write is asynchronous (ring buffer append).
@@ -825,39 +727,22 @@ pub enum AuditLevel {
 
 **Zone assignment rules:**
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         Core Zone                            │
-│  system/audit/*, system/config/*, system/models/*,          │
-│  system/agents/*, system/devices/*, system/credentials/*    │
-│                                                             │
-│  Access: system services only                               │
-│  Encryption: not encrypted (system data, not user data)     │
-│  Audit: full                                                │
-├─────────────────────────────────────────────────────────────┤
-│                       Personal Zone                          │
-│  user/home/*, user/documents/*, user/media/*,               │
-│  user/conversations/*, user/preferences/*                   │
-│                                                             │
-│  Access: agents with explicit ReadSpace/WriteSpace caps     │
-│  Encryption: required (per-space keys from identity)        │
-│  Audit: metadata (access logged, content not logged)        │
-├─────────────────────────────────────────────────────────────┤
-│                    Collaborative Zone                         │
-│  shared/[space-name]/*                                      │
-│                                                             │
-│  Access: agents with caps + identity in members list        │
-│  Encryption: required (shared key via capability exchange)  │
-│  Audit: full (multi-user accountability)                    │
-├─────────────────────────────────────────────────────────────┤
-│                      Untrusted Zone                          │
-│  web-storage/[origin]/*, downloads/*, temp/*                │
-│                                                             │
-│  Access: origin-scoped capabilities for web-storage;        │
-│          broad read for downloads (user-initiated)          │
-│  Encryption: required (per-origin keys)                     │
-│  Audit: metadata                                            │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Core["Core Zone"]
+        Core_desc["system/audit/*, system/config/*, system/models/*,<br/>system/agents/*, system/devices/*, system/credentials/*<br/><br/>Access: system services only<br/>Encryption: not encrypted (system data, not user data)<br/>Audit: full"]
+    end
+    subgraph Personal["Personal Zone"]
+        Personal_desc["user/home/*, user/documents/*, user/media/*,<br/>user/conversations/*, user/preferences/*<br/><br/>Access: agents with explicit ReadSpace/WriteSpace caps<br/>Encryption: required (per-space keys from identity)<br/>Audit: metadata (access logged, content not logged)"]
+    end
+    subgraph Collaborative["Collaborative Zone"]
+        Collab_desc["shared/[space-name]/*<br/><br/>Access: agents with caps + identity in members list<br/>Encryption: required (shared key via capability exchange)<br/>Audit: full (multi-user accountability)"]
+    end
+    subgraph Untrusted["Untrusted Zone"]
+        Untrusted_desc["web-storage/[origin]/*, downloads/*, temp/*<br/><br/>Access: origin-scoped capabilities for web-storage;<br/>broad read for downloads (user-initiated)<br/>Encryption: required (per-origin keys)<br/>Audit: metadata"]
+    end
+
+    Core --> Personal --> Collaborative --> Untrusted
 ```
 
 **Cross-zone access:** An agent in the Untrusted zone (e.g., a tab agent) cannot read Personal zone data. If a user wants to upload a personal document to a web form, the Flow system mediates: user explicitly selects the file through the OS file picker (not the web page), the file is copied from Personal to a temporary Untrusted-zone object, and the tab agent reads the temporary copy. The tab agent never receives a capability for the Personal zone.
@@ -1024,33 +909,13 @@ Even if an agent somehow bypasses capability checks (kernel bug), it still canno
 
 **Key derivation chain:**
 
-```
-User password / biometric / hardware key
-                │
-                ▼
-┌──────────────────────────────────────────┐
-│  Argon2id(password, device_salt,         │
-│           t=3, m=64MB, p=4)              │
-│                                          │
-│  → master_key (256-bit)                  │
-└──────────────────┬───────────────────────┘
-                   │
-          ┌────────┴────────────────────┐
-          │                             │
-          ▼                             ▼
-┌──────────────────┐         ┌──────────────────┐
-│ HKDF-SHA256(     │         │ HKDF-SHA256(     │
-│  master_key,     │         │  master_key,     │
-│  "space:" +      │         │  "space:" +      │
-│  space_id_1)     │         │  space_id_2)     │
-│                  │         │                  │
-│ → space_key_1    │         │ → space_key_2    │
-│   (256-bit)      │         │   (256-bit)      │
-└──────────────────┘         └──────────────────┘
-          │                             │
-          ▼                             ▼
-  AES-256-GCM encrypt/         AES-256-GCM encrypt/
-  decrypt space 1 objects      decrypt space 2 objects
+```mermaid
+graph TD
+    A["User password / biometric / hardware key"] --> B["Argon2id(password, device_salt,\nt=3, m=64MB, p=4)\n\n-> master_key (256-bit)"]
+    B --> C["HKDF-SHA256(\nmaster_key,\n'space:' + space_id_1)\n\n-> space_key_1 (256-bit)"]
+    B --> D["HKDF-SHA256(\nmaster_key,\n'space:' + space_id_2)\n\n-> space_key_2 (256-bit)"]
+    C --> E["AES-256-GCM encrypt/\ndecrypt space 1 objects"]
+    D --> F["AES-256-GCM encrypt/\ndecrypt space 2 objects"]
 ```
 
 **Encryption details:**
@@ -1090,30 +955,15 @@ pub struct EncryptedBlock {
 
 **Key release protocol:**
 
-```
-Agent requests space read
-        │
-        ▼
-1. Capability check (Layer 2): does agent hold ReadSpace(space_id)?
-        │ YES
-        ▼
-2. Intent verification (Layer 1): does read align with declared task?
-        │ YES (or AIRS unavailable → skip)
-        ▼
-3. Zone check (Layer 4): is agent allowed in this zone?
-        │ YES
-        ▼
-4. Key derivation: HKDF(master_key, "space:" + space_id) → space_key
-   (cached in kernel keyring after first derivation)
-        │
-        ▼
-5. Decrypt block: AES-256-GCM(space_key, nonce, ciphertext) → plaintext
-        │
-        ▼
-6. Return plaintext to agent via IPC shared memory
-        │
-        ▼
-7. Audit log: (agent, space, object, timestamp, capability_used, KEY_RELEASED)
+```mermaid
+graph TD
+    A["Agent requests space read"] --> B["1. Capability check (Layer 2):\ndoes agent hold ReadSpace(space_id)?"]
+    B -- YES --> C["2. Intent verification (Layer 1):\ndoes read align with declared task?"]
+    C -- "YES (or AIRS unavailable: skip)" --> D["3. Zone check (Layer 4):\nis agent allowed in this zone?"]
+    D -- YES --> E["4. Key derivation:\nHKDF(master_key, 'space:' + space_id) -> space_key\n(cached in kernel keyring after first derivation)"]
+    E --> F["5. Decrypt block:\nAES-256-GCM(space_key, nonce, ciphertext) -> plaintext"]
+    F --> G["6. Return plaintext to agent\nvia IPC shared memory"]
+    G --> H["7. Audit log:\n(agent, space, object, timestamp,\ncapability_used, KEY_RELEASED)"]
 ```
 
 **Key release is logged.** The audit chain records every time a space key is used to decrypt data, linking it to the agent, capability, and intent that authorized the decryption.
@@ -1493,18 +1343,13 @@ impl BlastRadiusTracker {
 
 ### 3.1 Capability Token Lifecycle
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  Capability Token Lifecycle                    │
-│                                                              │
-│  CREATE ──→ GRANT ──→ USE ──→ ATTENUATE ──→ DELEGATE ──→ REVOKE
-│    │          │        │         │              │           │
-│  kernel    user      agent    agent/kernel    agent       user/
-│  creates   approves  presents restricts     transfers    kernel/
-│  token     install   token    token further  to child    timeout
-│                      to                      agent
-│                      kernel
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    CREATE["CREATE\n\nkernel\ncreates\ntoken"] --> GRANT["GRANT\n\nuser\napproves\ninstall"]
+    GRANT --> USE["USE\n\nagent\npresents\ntoken to\nkernel"]
+    USE --> ATTENUATE["ATTENUATE\n\nagent/kernel\nrestricts\ntoken further"]
+    ATTENUATE --> DELEGATE["DELEGATE\n\nagent\ntransfers\nto child\nagent"]
+    DELEGATE --> REVOKE["REVOKE\n\nuser/\nkernel/\ntimeout"]
 ```
 
 **Step by step:**
@@ -1730,70 +1575,28 @@ Attenuate: expires in 730 days                ← longer, DENIED
 
 ### 3.4 Capability Request and Approval Flow
 
-```
-Developer declares capabilities in agent manifest
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────────┐
-│  Agent Manifest (signed by developer key)                │
-│                                                          │
-│  [capabilities]                                          │
-│  spaces.read = ["research/*"]                            │
-│  spaces.write = ["research/papers/"]                     │
-│  network = ["api.anthropic.com", "arxiv.org"]            │
-│  inference = { priority = "normal" }                     │
-│                                                          │
-│  [rationale]                                             │
-│  spaces.read = "Search existing research for context"    │
-│  network = "Query Anthropic API and fetch arXiv papers"  │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼ User installs agent
-┌─────────────────────────────────────────────────────────┐
-│  Approval UI (human-readable)                            │
-│                                                          │
-│  "Research Assistant" wants to:                          │
-│                                                          │
-│  ✓ Read your "research" space                            │
-│     Why: Search existing research for context            │
-│                                                          │
-│  ✓ Write to "research/papers/" in your research space    │
-│     Why: Save discovered papers                          │
-│                                                          │
-│  ✓ Connect to api.anthropic.com and arxiv.org            │
-│     Why: Query Anthropic API and fetch arXiv papers      │
-│                                                          │
-│  ✓ Use AI inference (normal priority)                    │
-│     Why: Analyze and summarize papers                    │
-│                                                          │
-│  [Approve]  [Deny]  [Customize]                          │
-└──────────────────────┬──────────────────────────────────┘
-                       │ User clicks Approve
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│  Kernel creates CapabilityTokens                         │
-│                                                          │
-│  Token 1: ReadSpace("research/*")                        │
-│  Token 2: WriteSpace("research/papers/")                 │
-│  Token 3: Network(["api.anthropic.com", "arxiv.org"])    │
-│  Token 4: InferenceCpu(Priority::Normal)                 │
-│                                                          │
-│  All tokens:                                             │
-│    holder = research_assistant_agent                      │
-│    granted_by = user_identity                            │
-│    expires = 1 year from now                             │
-│    delegatable = false (default)                         │
-│                                                          │
-│  Tokens placed in agent's CapabilityTable                │
-└─────────────────────────────────────────────────────────┘
-                       │
-                       ▼ Agent runs, uses tokens
-                       │
-                       ▼ User can revoke anytime via:
-                         - Inspector (per-token revocation)
-                         - Settings (per-agent revocation)
-                         - Conversation Bar ("revoke network
-                           access for Research Assistant")
+```mermaid
+graph TD
+    A["Developer declares capabilities in agent manifest"] --> B
+
+    subgraph B["Agent Manifest (signed by developer key)"]
+        B_desc["[capabilities]\nspaces.read = [research/*]\nspaces.write = [research/papers/]\nnetwork = [api.anthropic.com, arxiv.org]\ninference = priority: normal\n\n[rationale]\nspaces.read = Search existing research for context\nnetwork = Query Anthropic API and fetch arXiv papers"]
+    end
+
+    B -- "User installs agent" --> C
+
+    subgraph C["Approval UI (human-readable)"]
+        C_desc["Research Assistant wants to:\n\nRead your research space\nWhy: Search existing research for context\n\nWrite to research/papers/ in your research space\nWhy: Save discovered papers\n\nConnect to api.anthropic.com and arxiv.org\nWhy: Query Anthropic API and fetch arXiv papers\n\nUse AI inference (normal priority)\nWhy: Analyze and summarize papers\n\n[Approve] [Deny] [Customize]"]
+    end
+
+    C -- "User clicks Approve" --> D
+
+    subgraph D["Kernel creates CapabilityTokens"]
+        D_desc["Token 1: ReadSpace(research/*)\nToken 2: WriteSpace(research/papers/)\nToken 3: Network([api.anthropic.com, arxiv.org])\nToken 4: InferenceCpu(Priority::Normal)\n\nAll tokens:\nholder = research_assistant_agent\ngranted_by = user_identity\nexpires = 1 year from now\ndelegatable = false (default)\n\nTokens placed in agent's CapabilityTable"]
+    end
+
+    D --> E["Agent runs, uses tokens"]
+    E --> F["User can revoke anytime via:\n- Inspector (per-token revocation)\n- Settings (per-agent revocation)\n- Conversation Bar"]
 ```
 
 ### 3.5 Capability Delegation
@@ -2270,76 +2073,34 @@ Profiles are space objects — content-addressed, versioned, and distributed thr
 
 The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces.md §6](../storage/spaces.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces.md §4.10](../storage/spaces.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces.md §4.10 single-passphrase mode).
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                    Key Hierarchy                          │
-│                                                          │
-│  Device Key (spaces.md §4.10)                            │
-│  ├── Location: kernel memory (pinned, no-dump)           │
-│  ├── Derived from: hardware TPM/TrustZone or             │
-│  │   Argon2id(boot_passphrase, device_salt)              │
-│  ├── Lifetime: boot to shutdown                          │
-│  ├── Encrypts: every block before storage drivers        │
-│  └── Destroyed: on shutdown / device removal             │
-│                                                          │
-│  Master Key                                              │
-│  ├── Location: kernel keyring (kernel memory only)       │
-│  ├── Derived from: Argon2id(password, identity_salt)     │
-│  ├── Lifetime: in memory while user is authenticated     │
-│  └── Destroyed: on lock screen / identity switch         │
-│                                                          │
-│  Space Keys (derived from master via HKDF)               │
-│  ├── Location: kernel keyring (cached after derivation)  │
-│  ├── Derived on demand: first access to encrypted space  │
-│  ├── Evicted: LRU eviction when keyring is full         │
-│  └── Destroyed: on lock screen / identity switch         │
-│                                                          │
-│  Kernel Signing Key (Ed25519)                            │
-│  ├── Location: kernel memory (Phase 1-23)                │
-│  │             TrustZone secure world (Phase 24+)        │
-│  ├── Generated: first boot                               │
-│  ├── Used for: provenance chain signatures               │
-│  └── Never leaves kernel / secure world                  │
-│                                                          │
-│  Agent Developer Keys (Ed25519)                          │
-│  ├── Location: developer's machine                       │
-│  ├── Used for: signing agent manifests                   │
-│  └── Public key registered in Agent Store                │
-│                                                          │
-│  AIOS Root CA Key                                        │
-│  ├── Location: offline, HSM-protected                    │
-│  ├── Used for: signing intermediate CAs                  │
-│  └── Never on user devices                               │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph KH["Key Hierarchy"]
+        DK["Device Key (spaces.md section 4.10)\n\nLocation: kernel memory (pinned, no-dump)\nDerived from: hardware TPM/TrustZone or\nArgon2id(boot_passphrase, device_salt)\nLifetime: boot to shutdown\nEncrypts: every block before storage drivers\nDestroyed: on shutdown / device removal"]
+
+        MK["Master Key\n\nLocation: kernel keyring (kernel memory only)\nDerived from: Argon2id(password, identity_salt)\nLifetime: in memory while user is authenticated\nDestroyed: on lock screen / identity switch"]
+
+        SK["Space Keys (derived from master via HKDF)\n\nLocation: kernel keyring (cached after derivation)\nDerived on demand: first access to encrypted space\nEvicted: LRU eviction when keyring is full\nDestroyed: on lock screen / identity switch"]
+
+        KSK["Kernel Signing Key (Ed25519)\n\nLocation: kernel memory (Phase 1-23)\nor TrustZone secure world (Phase 24+)\nGenerated: first boot\nUsed for: provenance chain signatures\nNever leaves kernel / secure world"]
+
+        ADK["Agent Developer Keys (Ed25519)\n\nLocation: developer's machine\nUsed for: signing agent manifests\nPublic key registered in Agent Store"]
+
+        RCA["AIOS Root CA Key\n\nLocation: offline, HSM-protected\nUsed for: signing intermediate CAs\nNever on user devices"]
+    end
+
+    DK --- MK --- SK --- KSK --- ADK --- RCA
 ```
 
 ### 4.3 Certificate Chain
 
-```
-AIOS Root CA (offline, HSM)
-        │
-        │ signs
-        ▼
-Agent Store Signing Key (AIOS infrastructure)
-        │
-        │ signs (at developer enrollment)
-        ▼
-Developer Signing Key (developer's machine)
-        │
-        │ signs (at agent publish)
-        ▼
-Agent Manifest Signature
-        │
-        │ verified by
-        ▼
-Kernel (at agent install time)
-        │
-        │ checks: is the chain valid?
-        │ checks: is the developer key not revoked?
-        │ checks: does the manifest hash match the code hash?
-        │
-        ▼
-Agent approved for installation (if user also approves caps)
+```mermaid
+graph TD
+    A["AIOS Root CA\n(offline, HSM)"] -- "signs" --> B["Agent Store Signing Key\n(AIOS infrastructure)"]
+    B -- "signs (at developer enrollment)" --> C["Developer Signing Key\n(developer's machine)"]
+    C -- "signs (at agent publish)" --> D["Agent Manifest Signature"]
+    D -- "verified by" --> E["Kernel (at agent install time)\n\nchecks: is the chain valid?\nchecks: is the developer key not revoked?\nchecks: does the manifest hash match the code hash?"]
+    E --> F["Agent approved for installation\n(if user also approves caps)"]
 ```
 
 **Certificate revocation:** A compromised developer key can be revoked via the Agent Store. The OS periodically checks revocation lists (via NTM, background sync). If a developer key is revoked, all agents signed by that key are flagged. The user is notified and can choose to uninstall or continue at their own risk.
@@ -2500,30 +2261,17 @@ ARM TrustZone provides a hardware-isolated "secure world" that the normal world 
 - **Attestation:** The secure world can attest to the boot chain integrity — proving to a remote party that the device is running genuine AIOS with a valid kernel.
 - **Sealed storage:** Sensitive data (like the kernel signing key) is encrypted with a TrustZone-derived key that is only available when the secure world is intact.
 
-```
-┌─────────────────────────────────────────┐
-│           Normal World (EL0/EL1)         │
-│                                          │
-│  Kernel, services, agents                │
-│  Can request: sign, verify, encrypt,     │
-│               decrypt, derive_key        │
-│  Cannot: read key material, modify       │
-│          secure world code/data          │
-│                                          │
-│          SMC instruction                 │
-│              │                           │
-└──────────────┼───────────────────────────┘
-               │ Secure Monitor Call
-┌──────────────┼───────────────────────────┐
-│              ▼                           │
-│           Secure World (S-EL0/S-EL1)     │
-│                                          │
-│  Key storage, crypto operations,         │
-│  attestation, secure boot verification   │
-│                                          │
-│  Memory: inaccessible from normal world  │
-│  (hardware enforced via TZASC)           │
-└──────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph NW["Normal World (EL0/EL1)"]
+        NW_desc["Kernel, services, agents\n\nCan request: sign, verify, encrypt,\ndecrypt, derive_key\nCannot: read key material, modify\nsecure world code/data"]
+    end
+
+    subgraph SW["Secure World (S-EL0/S-EL1)"]
+        SW_desc["Key storage, crypto operations,\nattestation, secure boot verification\n\nMemory: inaccessible from normal world\n(hardware enforced via TZASC)"]
+    end
+
+    NW -- "SMC instruction\n(Secure Monitor Call)" --> SW
 ```
 
 ### 5.5 W^X Enforcement
@@ -2564,59 +2312,37 @@ The kernel's base address is randomized at each boot, making it harder for attac
 
 ### 6.1 Detection → Response Pipeline
 
-```
-Security event occurs
-        │
-        ▼
-┌─────────────────────────────────────────────────────────┐
-│  DETECTION                                               │
-│  Source: kernel (cap violation), AIRS (intent/behavior/  │
-│  injection), blast radius tracker, MTE/PAC hardware      │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│  CLASSIFICATION                                          │
-│                                                          │
-│  Critical: chain integrity, PAC/BTI violation,           │
-│            kernel memory corruption                      │
-│  High: capability violation, injection detected,         │
-│        intent mismatch on destructive action             │
-│  Medium: behavioral anomaly, blast radius warning,       │
-│          new target access                               │
-│  Low: rate limit hit, MTE async tag mismatch,            │
-│       expired capability use                             │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│  IMMEDIATE RESPONSE (automated, no user involvement)     │
-│                                                          │
-│  Critical → terminate agent, alert user, lock affected   │
-│             spaces, begin chain integrity audit           │
-│  High     → block action, pause agent, queue for user    │
-│  Medium   → rate limit, continue monitoring, log         │
-│  Low      → log, continue                                │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│  USER NOTIFICATION                                       │
-│                                                          │
-│  Critical → immediate attention item (Urgency::Interrupt)│
-│  High     → next-break notification with action buttons  │
-│  Medium   → digest (batched into periodic summary)       │
-│  Low      → Inspector only (visible if user looks)       │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│  AUDIT                                                   │
-│                                                          │
-│  All events → provenance chain (always)                  │
-│  All events → system/audit/security/ space               │
-│  All events → Inspector visible                          │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    A["Security event occurs"] --> B
+
+    subgraph B["DETECTION"]
+        B_desc["Source: kernel (cap violation), AIRS (intent/behavior/\ninjection), blast radius tracker, MTE/PAC hardware"]
+    end
+
+    B --> C
+
+    subgraph C["CLASSIFICATION"]
+        C_desc["Critical: chain integrity, PAC/BTI violation,\nkernel memory corruption\nHigh: capability violation, injection detected,\nintent mismatch on destructive action\nMedium: behavioral anomaly, blast radius warning,\nnew target access\nLow: rate limit hit, MTE async tag mismatch,\nexpired capability use"]
+    end
+
+    C --> D
+
+    subgraph D["IMMEDIATE RESPONSE (automated, no user involvement)"]
+        D_desc["Critical: terminate agent, alert user, lock affected\nspaces, begin chain integrity audit\nHigh: block action, pause agent, queue for user\nMedium: rate limit, continue monitoring, log\nLow: log, continue"]
+    end
+
+    D --> E
+
+    subgraph E["USER NOTIFICATION"]
+        E_desc["Critical: immediate attention item (Urgency::Interrupt)\nHigh: next-break notification with action buttons\nMedium: digest (batched into periodic summary)\nLow: Inspector only (visible if user looks)"]
+    end
+
+    E --> F
+
+    subgraph F["AUDIT"]
+        F_desc["All events: provenance chain (always)\nAll events: system/audit/security/ space\nAll events: Inspector visible"]
+    end
 ```
 
 ### 6.2 Incident Types and Responses
@@ -2656,41 +2382,25 @@ The Inspector is a native experience agent (Trust Level 2) that provides full vi
 
 **Inspector views:**
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Inspector                                                │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Agent View                                       │   │
-│  │  Per-agent: capabilities, usage history, current  │   │
-│  │  sessions, behavioral baseline, anomaly score     │   │
-│  └──────────────────────────────────────────────────┘   │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Provenance View                                  │   │
-│  │  Full Merkle chain browser. Filter by agent,      │   │
-│  │  action type, target, time range. Visual timeline. │   │
-│  └──────────────────────────────────────────────────┘   │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Security Events View                             │   │
-│  │  Real-time feed of security events. Severity      │   │
-│  │  filtering. Historical search.                    │   │
-│  └──────────────────────────────────────────────────┘   │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Hardware View                                    │   │
-│  │  Cross-subsystem audit. Which agents accessed     │   │
-│  │  camera, mic, GPS, network. Active sessions.      │   │
-│  └──────────────────────────────────────────────────┘   │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Capability View                                  │   │
-│  │  All capability tokens across all agents.         │   │
-│  │  Delegation chains. Expiry timelines. Revocation  │   │
-│  │  buttons.                                         │   │
-│  └──────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Inspector["Inspector"]
+        subgraph AV["Agent View"]
+            AV_desc["Per-agent: capabilities, usage history, current\nsessions, behavioral baseline, anomaly score"]
+        end
+        subgraph PV["Provenance View"]
+            PV_desc["Full Merkle chain browser. Filter by agent,\naction type, target, time range. Visual timeline."]
+        end
+        subgraph SEV["Security Events View"]
+            SEV_desc["Real-time feed of security events. Severity\nfiltering. Historical search."]
+        end
+        subgraph HV["Hardware View"]
+            HV_desc["Cross-subsystem audit. Which agents accessed\ncamera, mic, GPS, network. Active sessions."]
+        end
+        subgraph CV["Capability View"]
+            CV_desc["All capability tokens across all agents.\nDelegation chains. Expiry timelines. Revocation\nbuttons."]
+        end
+    end
 ```
 
 The Inspector uses `AuditRead` capability to query the provenance chain and audit spaces. It runs as a regular agent — no special kernel backdoors. Its elevated visibility comes from having `AuditRead(Scope::All)` capability, granted because it is a system-shipped agent signed by the AIOS root key.
@@ -2956,30 +2666,22 @@ AIRS needs memory to run. AIRS controls memory allocation. This creates a potent
 
 **Resolution:** AIRS is a Trust Level 1 userspace service, so its process memory lives in the **user pool**. However, the AIRS resource directives can only resize the boundary between the model pool and user pool — they cannot evict AIRS's own pages. The kernel enforces a per-agent memory floor for AIRS (configured at boot), ensuring AIRS always has enough memory to run. The circular dependency is broken by this structural separation: AIRS can resize pools but cannot evict itself.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Kernel Pool (128-256 MB)                            │
-│  ├── Kernel data structures (page tables, slab caches)│
-│  └── Kernel heap                                     │
-│  NOT subject to AIRS directives. Fixed at boot.      │
-├─────────────────────────────────────────────────────┤
-│  Model Pool (0-8 GB)                                 │
-│  ├── LLM weights (pinned, 2 MB huge pages)           │
-│  └── KV caches                                       │
-│  AIRS can resize boundary with User Pool.            │
-├─────────────────────────────────────────────────────┤
-│  User Pool (1.5-7.5 GB)                              │
-│  ├── AIRS process memory (protected floor)           │
-│  ├── Agent heaps                                     │
-│  ├── Shared memory regions                           │
-│  └── Page cache                                      │
-│  AIRS can resize boundary with Model Pool.           │
-│  Per-agent limits enforced by blast radius (Layer 8). │
-├─────────────────────────────────────────────────────┤
-│  DMA Pool (64-128 MB)                                │
-│  └── Device I/O buffers                              │
-│  NOT subject to AIRS directives. Fixed at boot.      │
-└─────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph KP["Kernel Pool (128-256 MB)"]
+        KP_desc["Kernel data structures (page tables, slab caches)\nKernel heap\n\nNOT subject to AIRS directives. Fixed at boot."]
+    end
+    subgraph MP["Model Pool (0-8 GB)"]
+        MP_desc["LLM weights (pinned, 2 MB huge pages)\nKV caches\n\nAIRS can resize boundary with User Pool."]
+    end
+    subgraph UP["User Pool (1.5-7.5 GB)"]
+        UP_desc["AIRS process memory (protected floor)\nAgent heaps\nShared memory regions\nPage cache\n\nAIRS can resize boundary with Model Pool.\nPer-agent limits enforced by blast radius (Layer 8)."]
+    end
+    subgraph DP["DMA Pool (64-128 MB)"]
+        DP_desc["Device I/O buffers\n\nNOT subject to AIRS directives. Fixed at boot."]
+    end
+
+    KP --> MP --> UP --> DP
 ```
 
 AIRS controls the boundary between Model Pool and User Pool. It does not control the Kernel Pool or DMA Pool boundaries. This limits AIRS's resource authority to a well-defined surface area: the tradeoff between model memory and agent memory.
@@ -3114,37 +2816,18 @@ This is not just logging — it is active enforcement based on behavioral contex
 
 ### 10.4 Zero Trust Enforcement Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Zero Trust Enforcement                       │
-│                                                                  │
-│  Every IPC call passes through ALL of:                          │
-│                                                                  │
-│  1. STRUCTURAL CHECK (kernel, per-message)                      │
-│     └── Does the agent hold a valid, non-expired, non-revoked   │
-│         capability for this channel?                             │
-│                                                                  │
-│  2. PROTOCOL CHECK (kernel, per-message)                        │
-│     └── Does the message type match the channel's registered    │
-│         protocol? (See ipc.md §12.2, Gap 4)                    │
-│                                                                  │
-│  3. BEHAVIORAL CHECK (AIRS → kernel, continuous)                │
-│     └── Is this agent's IPC pattern consistent with its         │
-│         behavioral baseline? If anomalous, rate-limit or        │
-│         suspend. (Degrades gracefully if AIRS unavailable)      │
-│                                                                  │
-│  4. SERVICE CHECK (service, per-request)                        │
-│     └── Does the agent's operation-level capability permit      │
-│         this specific action? (Existing Layer 2)                │
-│                                                                  │
-│  5. AUDIT (kernel, per-message)                                 │
-│     └── Log source, destination, message type, timestamp,       │
-│         capability used, success/failure. (Existing Layer 7)    │
-│                                                                  │
-│  Checks 1, 2, and 5 are always active (kernel-enforced).       │
-│  Check 3 is active when AIRS is available (graceful fallback).  │
-│  Check 4 is always active (service-enforced).                   │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    title["Every IPC call passes through ALL of:"]
+
+    S1["1. STRUCTURAL CHECK (kernel, per-message)\nDoes the agent hold a valid, non-expired,\nnon-revoked capability for this channel?"]
+    S2["2. PROTOCOL CHECK (kernel, per-message)\nDoes the message type match the channel's\nregistered protocol? (See ipc.md section 12.2, Gap 4)"]
+    S3["3. BEHAVIORAL CHECK (AIRS to kernel, continuous)\nIs this agent's IPC pattern consistent with its\nbehavioral baseline? If anomalous, rate-limit or\nsuspend. (Degrades gracefully if AIRS unavailable)"]
+    S4["4. SERVICE CHECK (service, per-request)\nDoes the agent's operation-level capability permit\nthis specific action? (Existing Layer 2)"]
+    S5["5. AUDIT (kernel, per-message)\nLog source, destination, message type, timestamp,\ncapability used, success/failure. (Existing Layer 7)"]
+    NOTE["Checks 1, 2, and 5 are always active (kernel-enforced).\nCheck 3 is active when AIRS is available (graceful fallback).\nCheck 4 is always active (service-enforced)."]
+
+    title --> S1 --> S2 --> S3 --> S4 --> S5 --> NOTE
 ```
 
 ### 10.5 Comparison: AIOS Zero Trust vs. Network Zero Trust

@@ -23,40 +23,27 @@ The Context Engine is an intelligence service within AIRS. When AIRS is availabl
 
 ## 2. Architecture
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                     Context Engine                          │
-│                  (AIRS intelligence service)                │
-│                                                            │
-│  ┌────────────────┐  ┌─────────────────┐  ┌────────────┐  │
-│  │    Signal       │  │   Context       │  │  Override   │  │
-│  │    Collector    │  │   Model         │  │  Manager    │  │
-│  │                 │  │                 │  │             │  │
-│  │  gather input   │  │  AIRS inference │  │  explicit   │  │
-│  │  from 8 signal  │  │  or rule-based  │  │  user       │  │
-│  │  sources        │  │  fallback       │  │  intents    │  │
-│  └────────┬────────┘  └────────┬────────┘  └──────┬─────┘  │
-│           │                    │                   │        │
-│           ▼                    ▼                   ▼        │
-│  ┌────────────────┐  ┌─────────────────┐  ┌────────────┐  │
-│  │    State        │  │   History       │  │  Fallback   │  │
-│  │    Publisher    │  │   Store         │  │  Engine     │  │
-│  │                 │  │                 │  │             │  │
-│  │  notify all     │  │  learned        │  │  rule-based │  │
-│  │  consumers      │  │  patterns in    │  │  inference  │  │
-│  │  via IPC        │  │  system/context/│  │  (no AIRS)  │  │
-│  └────────┬────────┘  └─────────────────┘  └────────────┘  │
-│           │                                                 │
-└───────────┼─────────────────────────────────────────────────┘
-            │ Publishes ContextState
-            │
-    ┌───────┼──────────────┬──────────────┬──────────────┐
-    ▼       ▼              ▼              ▼              ▼
-Scheduler  Attention    Compositor    Preference     Agent
-(priority  Manager      (UI adapt,   Service        Runtime
- adjust,   (notif       layout,      (theme,        (agent
- context   threshold,   chrome)      brightness)    hints)
- mult.)    digest)
+```mermaid
+graph TD
+    subgraph CE["Context Engine (AIRS intelligence service)"]
+        SC["Signal Collector<br/>gather input from<br/>8 signal sources"]
+        CTM["Context Model<br/>AIRS inference or<br/>rule-based fallback"]
+        OM["Override Manager<br/>explicit user intents"]
+
+        SC --> SP["State Publisher<br/>notify all consumers<br/>via IPC"]
+        CTM --> HS["History Store<br/>learned patterns in<br/>system/context/"]
+        OM --> FE["Fallback Engine<br/>rule-based inference<br/>(no AIRS)"]
+
+        SC --> SP
+        CTM --> SP
+        OM --> SP
+    end
+
+    SP -- "Publishes ContextState" --> Scheduler["Scheduler<br/>(priority adjust,<br/>context mult.)"]
+    SP --> AM["Attention Manager<br/>(notif threshold,<br/>digest)"]
+    SP --> Compositor["Compositor<br/>(UI adapt, layout,<br/>chrome)"]
+    SP --> PS["Preference Service<br/>(theme, brightness)"]
+    SP --> AR["Agent Runtime<br/>(agent hints)"]
 ```
 
 The engine runs as a subservice of AIRS, sharing AIRS's privileged access to system state. It reads signals from other system services via IPC, produces a `ContextState`, and publishes that state to all consumers. Consumers subscribe and react — they never poll.
@@ -1410,21 +1397,20 @@ if context.work_engagement > 0.8 {
 
 ### 9.2 Posting Attention Items
 
-Agents post attention items through the Attention Manager. The agent declares the content and an optional proposed action. The agent cannot set urgency — AIRS assesses urgency based on the actual content, the user's current context, and the agent's track record (see [attention.md §4](./attention.md) for the full urgency assessment pipeline).
+Agents post attention items through the Attention Manager. The agent declares the content and a suggested urgency. AIRS re-assesses the urgency based on the actual content and current context.
 
 ```rust
-ctx.attention().post(AttentionRequest {
-    content: AttentionContent::Schedule {
-        event_name: "Team Standup".into(),
-        time: meeting_time,
-        change: None,
-    },
-    expiry: Some(meeting_time + Duration::from_mins(5)),
-    auto_action: Some(ProposedAction::OpenCalendar),
+ctx.attention().post(AttentionItem {
+    content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
+    urgency: Urgency::NextBreak,
+    relevance: 0.8,
+    auto_actionable: Some(ProposedAction::OpenCalendar),
+    group: Some(GroupId::from("calendar-reminders")),
+    ..Default::default()
 }).await?;
 ```
 
-The agent does not set urgency. AIRS determines urgency from the content, the user's context, and the agent's historical accuracy. An email agent that floods items will find its items consistently triaged to `Digest` by AIRS. An agent whose items the user consistently acts on promptly builds trust, and AIRS may escalate its future items accordingly.
+The agent's declared `urgency` is a hint. AIRS may upgrade or downgrade it. An email agent that declares every message as `Interrupt` will find its messages consistently downgraded to `Digest` by AIRS. An agent that accurately declares urgency builds a better track record and its declarations are trusted more over time.
 
 ### 9.3 Subscribing to Context Changes
 
