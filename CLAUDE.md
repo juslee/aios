@@ -304,7 +304,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 1 M6 — First Pixels):
+Current (post-Phase 2 M7 — Physical Memory Manager):
 
 ```
 aios/
@@ -362,7 +362,7 @@ aios/
 │       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments)
 ├── shared/
 │   ├── Cargo.toml
-│   └── src/lib.rs        BootInfo (incl. fb fields), MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat
+│   └── src/lib.rs        BootInfo (incl. fb fields), MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat, Pool, PoolConfig, MemoryPressure, buddy_of
 └── docs/                 (architecture, phase, and research docs)
 ```
 
