@@ -47,7 +47,14 @@ impl FrameAllocator {
     /// `phys_addr` must have been returned by a prior `alloc_pages` call with
     /// the same `order`.
     pub unsafe fn free_pages(&mut self, phys_addr: usize, order: usize) {
-        if let Some(pool) = self.pools.pool_for_addr(phys_addr) {
+        let pool = self.pools.pool_for_addr(phys_addr);
+        debug_assert!(
+            pool.is_some(),
+            "[mm] BUG: free_pages({:#x}, {}) — address not in any pool",
+            phys_addr,
+            order
+        );
+        if let Some(pool) = pool {
             if let Some(buddy) = self.pools.get_mut(pool) {
                 buddy.free_pages(phys_addr, order);
             }

@@ -59,9 +59,32 @@ pub unsafe fn init_memory(boot_info: &BootInfo) {
         total_usable_bytes += end - start;
     }
 
+    // Validate: we must have found at least some usable memory.
+    assert!(
+        total_usable_bytes > 0 && phys_min < phys_max,
+        "[mm] FATAL: no usable physical memory found in UEFI memory map"
+    );
+
     // Page-align the extent.
     phys_min = (phys_min + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     let phys_max = phys_max & !(PAGE_SIZE - 1);
+
+    // Validate contiguity: on QEMU virt, usable descriptors tile contiguously.
+    // If there are significant gaps (>1% of total), the linear partitioning
+    // approach would treat gaps as allocatable RAM. Warn and use the smaller
+    // value to avoid over-committing.
+    let extent = phys_max - phys_min;
+    let gap = extent.saturating_sub(total_usable_bytes);
+    if gap > extent / 100 {
+        crate::println!(
+            "[mm] WARN: {}% gap in physical range ({:#x}..{:#x}, extent={} MB, usable={} MB)",
+            gap * 100 / extent,
+            phys_min,
+            phys_max,
+            extent / (1024 * 1024),
+            total_usable_bytes / (1024 * 1024)
+        );
+    }
 
     // Step 2: Compute pool sizes.
     let config = PoolConfig::from_total_ram(total_usable_bytes);

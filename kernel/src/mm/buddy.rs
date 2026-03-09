@@ -79,11 +79,13 @@ impl BuddyAllocator {
         let total_pages = (end - base) / PAGE_SIZE;
 
         // Bitmap size: one bit per buddy pair per order.
-        // At order k, we have total_pages >> (k+1) pairs.
-        // Total bits = sum_{k=0}^{MAX_ORDER} (total_pages >> (k+1))
-        //            ≈ total_pages (geometric series).
+        // At order k, we have ceil(total_pages / 2^(k+1)) pairs.
+        // Use div_ceil to account for incomplete pairs at the tail.
+        // Total bits ≈ total_pages (geometric series).
         // Round up to bytes, then to pages.
-        let bitmap_bits: usize = (0..=MAX_ORDER).map(|k| total_pages >> (k + 1)).sum();
+        let bitmap_bits: usize = (0..=MAX_ORDER)
+            .map(|k| total_pages.div_ceil(1 << (k + 1)))
+            .sum();
         let bitmap_bytes = bitmap_bits.div_ceil(8);
         self.bitmap_pages = bitmap_bytes.div_ceil(PAGE_SIZE);
         self.bitmap = base;
@@ -122,7 +124,9 @@ impl BuddyAllocator {
         let total_pages = (end - base) / PAGE_SIZE;
 
         // Compute and zero bitmap (same as init_with_range).
-        let bitmap_bits: usize = (0..=MAX_ORDER).map(|k| total_pages >> (k + 1)).sum();
+        let bitmap_bits: usize = (0..=MAX_ORDER)
+            .map(|k| total_pages.div_ceil(1 << (k + 1)))
+            .sum();
         let bitmap_bytes = bitmap_bits.div_ceil(8);
         self.bitmap_pages = bitmap_bytes.div_ceil(PAGE_SIZE);
         self.bitmap = base;
@@ -167,10 +171,11 @@ impl BuddyAllocator {
         let pair_index = pfn >> (order + 1);
 
         // Offset: sum of pair counts for orders 0..order.
+        // Must use div_ceil to match bitmap sizing (accounts for incomplete pairs).
         let total_pages = (self.end - self.base) / PAGE_SIZE;
         let mut offset = 0;
         for k in 0..order {
-            offset += total_pages >> (k + 1);
+            offset += total_pages.div_ceil(1 << (k + 1));
         }
 
         let bit_pos = offset + pair_index;
@@ -338,6 +343,17 @@ impl BuddyAllocator {
             self.push_block(phys_addr, order);
             return;
         }
+
+        // Security: double-free detection via poison pattern check.
+        // If the first word already contains the poison pattern, the block was
+        // already freed — this is a double-free bug.
+        let first_word = core::ptr::read_volatile(phys_addr as *const u32);
+        assert!(
+            first_word != POISON_PATTERN,
+            "[mm] BUG: double-free detected at {:#x} order {}",
+            phys_addr,
+            order
+        );
 
         // Security: poison freed pages with 0xDEAD_DEAD pattern.
         let block_bytes = PAGE_SIZE << order;
