@@ -182,6 +182,16 @@ pub struct AgentManifest {
     /// Dependencies (other agent bundles this agent requires)
     dependencies: Vec<Dependency>,
 
+    // === Capability Profiles (Phase 28) ===
+
+    /// Capability profiles this agent references (not bundled — loaded from
+    /// system/config/capability-profiles/ at install time).
+    /// Profiles are pre-audited, named bundles of capabilities that compose
+    /// in numbered layers. See security.md §3.7 for the profile system.
+    /// Resolved at install time into a flat CapabilitySet for kernel enforcement.
+    /// Defaults to empty if omitted (backward-compatible with pre-Phase 28 manifests).
+    profiles: Vec<ProfileReference>,
+
     // === Capabilities ===
 
     /// What this agent requests permission to do
@@ -222,6 +232,18 @@ pub struct AgentManifest {
     ai_analysis: Option<SecurityAnalysis>,
     /// Minimum AIOS version required
     min_os_version: Option<Version>,
+}
+
+/// Reference to a capability profile included by an agent manifest.
+/// See security.md §3.7 for the full CapabilityProfile definition.
+pub struct ProfileReference {
+    /// Profile ID (e.g., "runtime.python.v1", "subsystem.network-client.v1")
+    profile_id: ProfileId,
+    /// Semantic version requirement (e.g., "^1.0")
+    version_req: String,
+    /// Whether the agent requires this profile to start.
+    /// If true and the profile is unavailable, installation fails.
+    required: bool,
 }
 
 pub enum RuntimeType {
@@ -367,17 +389,37 @@ Agents are distributed as `.aios-agent` packages (see Section 8.2). The installa
 │     Reject if signature invalid or author unknown             │
 │                          │                                     │
 │                          ▼                                     │
-│  3. AIRS security analysis                                    │
-│     Static analysis of code bundle                            │
-│     Verify capabilities used match capabilities declared      │
-│     Flag unused capabilities, suspicious patterns             │
-│     Produce SecurityAnalysis, attach to manifest              │
+│  3. Profile resolution & AIRS security analysis                │
+│                                                                │
+│     3a. Resolve capability profiles:                           │
+│         Load referenced profiles from                          │
+│         system/config/capability-profiles/                     │
+│         Run resolution algorithm (security.md §3.7.4)         │
+│         Produce flat ResolvedCapabilitySet                     │
+│                                                                │
+│     3b. Run AIRS 5-stage analysis pipeline (airs.md §5.9):    │
+│         Static code analysis of code bundle                    │
+│         Manifest review (profiles + individual capabilities)   │
+│         Behavioral prediction                                  │
+│         Corpus comparison                                      │
+│         Profile suggestion                                     │
+│         Verify capabilities used match capabilities declared   │
+│         Flag unused capabilities, suspicious patterns          │
+│         Produce SecurityAnalysis, attach to manifest           │
 │                          │                                     │
 │                          ▼                                     │
 │  4. Present to user                                           │
 │     Show: name, author, description, risk level               │
 │     Show: each requested capability with justification        │
 │     Show: AIRS analysis summary and concerns                  │
+│     Show: profile suggestions from AIRS (e.g., "This agent   │
+│       could use 'subsystem.network-client.v1' instead of 3   │
+│       individual network capabilities — this profile is       │
+│       pre-audited")                                            │
+│     Show: missing capabilities (e.g., "This agent's code     │
+│       uses ReadSpace('research/') but doesn't declare it")    │
+│     Show: over-provisioned capabilities (e.g., "InferenceCpu │
+│       is declared but never used in the code")                │
 │     User approves, denies, or approves with restrictions      │
 │                          │                                     │
 │                          ▼                                     │

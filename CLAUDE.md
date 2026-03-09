@@ -60,6 +60,8 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); virtual 0xFFFF
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
 | Security model | `docs/security/security.md` | All (all phases) |
+| Composable capability profiles | `docs/security/security.md` | §3.7 (Phase 28) |
+| AIRS capability intelligence | `docs/intelligence/airs.md` | §5.9 (Phase 29) |
 | Fuzzing & input hardening | `docs/security/fuzzing-and-hardening.md` | All (all phases) |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
