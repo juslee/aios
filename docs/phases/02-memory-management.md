@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 4 weeks
 **Deliverable:** Virtual memory, heap, W^X, KASLR
-**Status:** In Progress (M7 complete)
+**Status:** In Progress (M8 complete)
 **Prerequisites:** Phase 1 (Boot and First Pixels)
 **Unlocks:** Phase 3 (IPC & Capability System)
 
@@ -131,14 +131,14 @@ Values are consistent with the QEMU `-m 2G` configuration.
 **What:** Implement 4-level page table (PGD/PUD/PMD/PTE) data structures with W^X enforcement built into the PTE API.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/pgtable.rs` — `PageTable` (512 entries, 4 KB aligned), `PageTableEntry` with all aarch64 bit fields (memory.md §3.2)
-- [ ] Implement PTE helpers: `is_valid`, `is_writable`, `is_executable`, `frame`, `set_writable` (clears exec), `set_executable` (sets read-only) — W^X enforced at API level
-- [ ] Implement `AddressSpace` struct: PGD physical frame, ASID, VmRegion BTreeMap, MemoryStats (memory.md §3.2)
-- [ ] Implement `AddressSpace::map_page(addr, frame, perms)` — walks/allocates intermediate tables, writes leaf PTE, asserts W^X
-- [ ] Intermediate page table pages allocated from `frame::alloc_page()` (Pool::Kernel)
-- [ ] Implement `AddressSpace::lookup_pte(addr)` — 4-level walk returning leaf PTE reference
-- [ ] Implement `AddressSpace::unmap_page(addr)` — clears PTE, issues TLB invalidation
-- [ ] Add `VmRegion`, `VmFlags` (with W^X constraint), and `VmRegionKind` types (memory.md §3.2)
+- [x] Create `kernel/src/mm/pgtable.rs` — `PageTable` (512 entries, 4 KB aligned), `PageTableEntry` with all aarch64 bit fields (memory.md §3.2)
+- [x] Implement PTE helpers: `is_valid`, `is_writable`, `is_executable`, `frame`, `set_writable` (clears exec), `set_executable` (sets read-only) — W^X enforced at API level
+- [x] Implement `AddressSpace` struct: PGD physical frame, ASID, VmRegion BTreeMap, MemoryStats (memory.md §3.2)
+- [x] Implement `AddressSpace::map_page(addr, frame, perms)` — walks/allocates intermediate tables, writes leaf PTE, asserts W^X
+- [x] Intermediate page table pages allocated from `frame::alloc_page()` (Pool::Kernel)
+- [x] Implement `AddressSpace::lookup_pte(addr)` — 4-level walk returning leaf PTE reference
+- [x] Implement `AddressSpace::unmap_page(addr)` — clears PTE, issues TLB invalidation
+- [x] Add `VmRegion`, `VmFlags` (with W^X constraint), and `VmRegionKind` types (memory.md §3.2)
 
 **Key reference:** [memory.md §3.2](../kernel/memory.md) — Page Tables
 
@@ -152,26 +152,26 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **Tasks (Phase A — boot.S):**
 
-- [ ] Update `kernel/src/arch/aarch64/linker.ld`: VMA at `KERNEL_BASE` (0xFFFF_0000_0000_0000), LMA at physical `0x40080000` (AT clause)
-- [ ] Add linker symbols: `__kernel_virt_base`, `__kernel_phys_base`, `__virt_phys_offset`
-- [ ] Update `uefi-stub/src/elf.rs`: convert `e_entry` from virtual to physical (track `lowest_vaddr` in Pass 1, compute `physical_entry = e_entry - lowest_vaddr + lowest_paddr`)
-- [ ] Update `kernel/src/arch/aarch64/boot.S`: build minimal TTBR1 tables (static L0/L1/L2 in BSS, 2MB block descriptors covering kernel image)
-- [ ] Set TCR_EL1 T1SZ=16 for 48-bit kernel VA before writing TTBR1_EL1
-- [ ] Use MAIR index 3 (Write-Back cacheable, 0xff) for kernel normal memory in TTBR1 — no MAIR register change needed (edk2 MAIR already has Attr3=WB)
-- [ ] Branch to virtual kernel_main address after TTBR1 install
-- [ ] Update `_secondary_entry` in boot.S to also install TTBR1 (reuse boot CPU's tables)
+- [x] Update `kernel/src/arch/aarch64/linker.ld`: VMA at `KERNEL_BASE` (0xFFFF_0000_0000_0000), LMA at physical `0x40080000` (AT clause)
+- [x] Add linker symbols: `__kernel_virt_base`, `__kernel_phys_base`, `__virt_phys_offset`
+- [x] Update `uefi-stub/src/elf.rs`: convert `e_entry` from virtual to physical (track `lowest_vaddr` in Pass 1, compute `physical_entry = e_entry - lowest_vaddr + lowest_paddr`)
+- [x] Update `kernel/src/arch/aarch64/boot.S`: build minimal TTBR1 tables (static L0/L1/L2 in BSS, 2MB block descriptors covering kernel image)
+- [x] Set TCR_EL1 T1SZ=16 for 48-bit kernel VA before writing TTBR1_EL1
+- [x] Use MAIR index 3 (Write-Back cacheable, 0xff) for kernel normal memory in TTBR1 — no MAIR register change needed (edk2 MAIR already has Attr3=WB)
+- [x] Branch to virtual kernel_main address after TTBR1 install
+- [x] Update `_secondary_entry` in boot.S to also install TTBR1 (reuse boot CPU's tables)
 
 **Tasks (Phase B — kernel_main, in kmap.rs):**
 
-- [ ] Create `kernel/src/mm/kmap.rs` — `init_kernel_address_space(boot_info, slide)` builds full TTBR1
-- [ ] Map kernel text section: read-only + executable (R-X), 4KB pages, Attr3 WB
-- [ ] Map kernel rodata: read-only + no-execute
-- [ ] Map kernel data/BSS sections: read-write + no-execute (RW-)
-- [ ] Map physical memory direct map at `0xFFFF_0001_0000_0000` — all RAM, RW+XN (2MB blocks for efficiency)
-- [ ] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0010_0000_0000` with device memory attributes (Attr0, nGnRnE)
-- [ ] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1IS`, `DSB ISH`, `ISB`
-- [ ] Fix TTBR0 RAM blocks from NC (Attr1) to WB (Attr3) after TTBR1 active — prevents CONSTRAINED UNPREDICTABLE from mismatched attributes on same physical pages
-- [ ] Verify kernel continues executing after the switch (UART still works)
+- [x] Create `kernel/src/mm/kmap.rs` — `init_kernel_address_space(boot_info, slide)` builds full TTBR1
+- [x] Map kernel text section: read-only + executable (R-X), 4KB pages, Attr3 WB
+- [x] Map kernel rodata: read-only + no-execute
+- [x] Map kernel data/BSS sections: read-write + no-execute (RW-)
+- [x] Map physical memory direct map at `0xFFFF_0001_0000_0000` — all RAM, RW+XN (2MB blocks for efficiency)
+- [x] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0010_0000_0000` with device memory attributes (Attr0, nGnRnE)
+- [x] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1IS`, `DSB ISH`, `ISB`
+- [x] Fix TTBR0 RAM blocks from NC (Attr1) to WB (Attr3) after TTBR1 active — prevents CONSTRAINED UNPREDICTABLE from mismatched attributes on same physical pages
+- [x] Verify kernel continues executing after the switch (UART still works)
 
 **Note:** The direct map allows the kernel to access any physical address by adding `DIRECT_MAP_BASE`. This is how `PhysicalFrame::as_ptr()` works (memory.md §2.2). boot.S creates minimal TTBR1 for virtual kernel execution; full TTBR1 with KASLR/direct map built in kernel_main after pool init.
 
@@ -189,11 +189,11 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **Tasks:**
 
-- [ ] Create `kernel/src/mm/kaslr.rs` — `KaslrConfig` struct (memory.md §3.3)
-- [ ] Implement `compute_slide(entropy)` — 2 MB aligned slide within 0..128 MB range (64 possible positions)
-- [ ] Read entropy source: try `BootInfo.rng_seed` (from UEFI RNG protocol), fall back to `CNTPCT_EL0` (weak but non-deterministic)
-- [ ] Pass slide to `init_kernel_address_space()` in Step 5 Phase B — full TTBR1 maps kernel at KERNEL_BASE + slide
-- [ ] Print actual kernel base to UART for verification: `[kaslr] Kernel base: 0x<addr> (slide: 0x<slide>)`
+- [x] Create `kernel/src/mm/kaslr.rs` — `KaslrConfig` struct (memory.md §3.3)
+- [x] Implement `compute_slide(entropy)` — 2 MB aligned slide within 0..128 MB range (64 possible positions)
+- [x] Read entropy source: try `BootInfo.rng_seed` (from UEFI RNG protocol), fall back to `CNTPCT_EL0` (weak but non-deterministic)
+- [x] Pass slide to `init_kernel_address_space()` in Step 5 Phase B — full TTBR1 maps kernel at KERNEL_BASE + slide
+- [x] Print actual kernel base to UART for verification: `[kaslr] Kernel base: 0x<addr> (slide: 0x<slide>)`
 
 **Key reference:** [memory.md §3.3](../kernel/memory.md) — KASLR
 
@@ -206,15 +206,15 @@ Values are consistent with the QEMU `-m 2G` configuration.
 **What:** Implement 16-bit ASID allocation and TLB invalidation primitives needed for per-agent address spaces.
 
 **Tasks:**
-- [ ] Create `kernel/src/mm/asid.rs` — `AsidAllocator` with generation tracking (memory.md §3.4)
-- [ ] Implement `alloc()` — returns `Asid { value, generation }`, wraps with full TLB flush at generation boundary
-- [ ] Implement `is_valid(asid)` — checks generation match
-- [ ] Create `kernel/src/mm/tlb.rs` — TLB invalidation wrappers:
+- [x] Create `kernel/src/mm/asid.rs` — `AsidAllocator` with generation tracking (memory.md §3.4)
+- [x] Implement `alloc()` — returns `Asid { value, generation }`, wraps with full TLB flush at generation boundary
+- [x] Implement `is_valid(asid)` — checks generation match
+- [x] Create `kernel/src/mm/tlb.rs` — TLB invalidation wrappers:
   - `tlb_invalidate_page(asid, va)` → `TLBI VAE1IS`
   - `tlb_invalidate_asid(asid)` → `TLBI ASIDE1IS`
   - `tlbi_all()` → `TLBI VMALLE1IS`
-- [ ] All invalidations include `DSB ISH` + `ISB` barriers
-- [ ] Wire `tlb_invalidate_page` into `AddressSpace::update_pte` and `unmap_page`
+- [x] All invalidations include `DSB ISH` + `ISB` barriers
+- [x] Wire `tlb_invalidate_page` into `AddressSpace::update_pte` and `unmap_page`
 
 **Key reference:** [memory.md §3.4](../kernel/memory.md) — TLB Management
 
@@ -330,12 +330,12 @@ just run     → boot log shows: pool stats, KASLR base, heap ready, address spa
 
 - [x] Buddy allocator with orders 0–10, split/merge, O(log n) alloc/free
 - [x] Page pools partitioned by RAM tier (kernel/user/model/DMA)
-- [ ] 4-level page tables (PGD/PUD/PMD/PTE) with W^X enforcement at API level
-- [ ] Kernel mapped through TTBR1 with correct permissions: text=R-X, data=RW-, MMIO=device
-- [ ] Physical memory direct map at `0xFFFF_0001_0000_0000`
-- [ ] KASLR functional: different base address on each boot
-- [ ] ASID allocator with generation tracking
-- [ ] TLB invalidation primitives (`TLBI VAE1IS`, `TLBI ASIDE1IS`, `TLBI VMALLE1IS`)
+- [x] 4-level page tables (PGD/PUD/PMD/PTE) with W^X enforcement at API level
+- [x] Kernel mapped through TTBR1 with correct permissions: text=R-X, data=RW-, MMIO=device
+- [x] Physical memory direct map at `0xFFFF_0001_0000_0000`
+- [x] KASLR functional: different base address on each boot
+- [x] ASID allocator with generation tracking
+- [x] TLB invalidation primitives (`TLBI VAE1IS`, `TLBI ASIDE1IS`, `TLBI VMALLE1IS`)
 - [ ] Slab allocator with per-CPU magazines and standard kernel caches
 - [ ] `kalloc`/`kfree` and `#[global_allocator]` working
 - [ ] Per-agent address spaces with TTBR0 switching

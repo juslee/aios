@@ -251,13 +251,29 @@ Kernel ELF ESP path:          /EFI/AIOS/aios.elf
 ACPI RSDP GUID:               8868e871-e4f1-11d3-bc22-0080c73c8881
 DTB Table GUID:               b1b621d5-f19c-41a5-830b-d9152c69aae0
 uefi crate version:           0.36 (features: alloc, global_allocator, panic_handler, logger)
-SMP secondary entry:          _secondary_entry in boot.S (FPU → VBAR → MMU enable → stack → secondary_main)
-Secondary MMU enable:         MAIR/TCR/TTBR0 write (safe: MMU off) → ISB → DSB SY → SCTLR write → ISB
+SMP secondary entry:          _secondary_entry in boot.S (FPU → VBAR → TTBR1 install → MMU enable → stack → secondary_main)
+Secondary MMU enable:         MAIR/TCR/TTBR0/TTBR1 write (safe: MMU off) → ISB → DSB SY → SCTLR write → ISB
 GICv3 redistributor spacing:  128 KiB (0x20000) per core
 NC memory atomic limitation:  Exclusive load/store pairs (ldaxr/stlxr) require global exclusive monitor
                               → needs Inner Shareable + Cacheable. spin::Mutex HANGS on NC memory.
                               Use only load(Acquire)/store(Release) for inter-core sync in Phase 1.
+                              Phase 2 M8 upgrades TTBR0 RAM blocks to WB (Attr3) — spinlocks safe after TTBR1 active.
 GOP framebuffer on QEMU:      800x600 Bgr8, stride=3200B, at ~0xBC7A0000 (NC Normal via L1[1])
+Virtual kernel VMA:           0xFFFF_0000_0008_0000 (KERNEL_VIRT; linker VMA, Phase 2 M8+)
+Kernel LMA:                   0x4008_0000 (unchanged physical load address; AT clause in linker.ld)
+VIRT_PHYS_OFFSET:             0xFFFE_FFFF_C000_0000 (= KERNEL_VIRT - KERNEL_PHYS; add to phys to get virt)
+DIRECT_MAP_BASE:              0xFFFF_0001_0000_0000 (all RAM mapped RW+XN, 2MB blocks)
+MMIO_BASE:                    0xFFFF_0010_0000_0000 (UART/GIC/etc. mapped with Attr0 device memory)
+Boot TTBR1 (boot.S):          3 static pages in BSS (L0/L1/L2); 4×2MB block descriptors covering kernel image
+                              → minimal map sufficient to jump to virtual kernel_main
+Full TTBR1 (kmap.rs):         Built in kernel_main after pool init; text=RX (38 pages), rodata=RO (42 pages),
+                              data=RW (13 pages); direct map + MMIO; replaces boot TTBR1 via TLBI VMALLE1IS
+TTBR1 T1SZ:                   16 (48-bit kernel VA); set in boot.S before TTBR1_EL1 write
+KASLR slide (M8):             Computed (entropy from CNTPCT_EL0 or BootInfo.rng_seed); slide=0 applied
+                              (KASLR infrastructure complete; non-zero slide activated in later milestone)
+ASID width:                   16-bit; AsidAllocator tracks generation; full TLBI VMALLE1IS on generation wrap
+Secondary TTBR1 install:      _secondary_entry reuses boot CPU's L0/L1/L2 tables; TTBR1_EL1 set before MMU enable
+PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry symbol to physical before PSCI CPU_ON call
 ramfb device:                 -device ramfb in QEMU; provides GOP without a full GPU driver
 ```
 
@@ -304,7 +320,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 2 M7 — Physical Memory Manager):
+Current (post-Phase 2 M8 — Virtual Memory & KASLR):
 
 ```
 aios/
@@ -344,22 +360,27 @@ aios/
 │       │   ├── slab.rs   Slab allocator (10 size classes), backed by frame allocator
 │       │   ├── pools.rs  PagePools: 4 buddy instances (kernel/user/model/dma)
 │       │   ├── frame.rs  FrameAllocator: pool-aware alloc/free, pressure, global static
-│       │   └── init.rs   init_memory(): UEFI map walk, pool config, bootstrap
+│       │   ├── init.rs   init_memory(): UEFI map walk, pool config, bootstrap
+│       │   ├── pgtable.rs 4-level page tables (PGD/PUD/PMD/PTE), PageTableEntry bit fields, AddressSpace, W^X API
+│       │   ├── kmap.rs   init_kernel_address_space(): full TTBR1 build (text=RX, rodata=RO, data=RW, direct map, MMIO)
+│       │   ├── kaslr.rs  KaslrConfig, compute_slide(): 2MB-aligned slide 0..128MB, CNTPCT_EL0/rng_seed entropy
+│       │   ├── asid.rs   AsidAllocator: 16-bit ASID alloc with generation tracking, full TLB flush on wrap
+│       │   └── tlb.rs    TLB invalidation wrappers: tlb_invalidate_page (TLBI VAE1IS), tlb_invalidate_asid (TLBI ASIDE1IS), tlbi_all (TLBI VMALLE1IS)
 │       └── arch/aarch64/
 │           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
-│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, MMU enable, stack, branch)
+│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, minimal TTBR1 build, MMU enable, stack, branch to virtual kernel_main)
 │           ├── uart.rs   PL011 driver with full init (IBRD/FBRD/LCR_H/CR)
 │           ├── exceptions.rs  Rust exception vector table + CPU register helpers
 │           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface + init_gicv3_secondary
-│           ├── psci.rs   PSCI CPU_ON via HVC/SMC (SMCCC ABI)
+│           ├── psci.rs   PSCI CPU_ON via HVC/SMC (SMCCC ABI); entry point converted virt→phys in smp.rs
 │           ├── timer.rs  ARM Generic Timer: frequency, tick, PPI wiring
-│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks), edk2-compatible, MMU state export
-│           └── linker.ld page-aligned sections with __kernel_end symbol
+│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks, upgraded to WB Attr3 post-M8), edk2-compatible, MMU state export
+│           └── linker.ld VMA=0xFFFF_0000_0008_0000 / LMA=0x4008_0000 (AT clause); __kernel_virt_base, __kernel_phys_base, __virt_phys_offset symbols
 ├── uefi-stub/
 │   ├── Cargo.toml        deps: shared, uefi 0.36, log
 │   └── src/
 │       ├── main.rs       UEFI entry, BootInfo assembly (incl. framebuffer), ExitBootServices, kernel jump
-│       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments)
+│       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments); converts virtual e_entry to physical for virtually-linked kernel
 ├── shared/
 │   ├── Cargo.toml
 │   └── src/lib.rs        BootInfo (incl. fb fields), MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat, Pool, PoolConfig, MemoryPressure, buddy_of
