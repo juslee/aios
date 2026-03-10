@@ -289,7 +289,7 @@ Slab magazine size:            32 objects per MagazineRound; current/prev swap f
 Slab red zones:                8 bytes before/after each object (except 4096-byte cache); pattern 0xFEFE_FEFE_FEFE_FEFE
 User VA layout (memory.md §9.5): TEXT=0x400000, DATA=0x1000000, HEAP=0x10000000, STACK_TOP=0x7FFF_FFFF_F000
 TTBR0 format:                  bits[63:48]=ASID, bits[47:0]=PGD physical address
-TTBR0 switch barriers:         DSB SY → MSR TTBR0_EL1 → TLBI VMALLE1 → DSB NSH → ISB
+TTBR0 switch barriers:         DSB SY → MSR TTBR0_EL1 → TLBI VMALLE1IS → DSB ISH → ISB
 Boot CPU SP:                   Converted from physical to virtual in boot.S (add VIRT_PHYS_OFFSET before br to kernel_main)
 Secondary TTBR1 install:      _secondary_entry reuses boot CPU's L0/L1/L2 tables; TTBR1_EL1 set before MMU enable
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry symbol to physical before PSCI CPU_ON call

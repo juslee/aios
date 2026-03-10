@@ -11,7 +11,7 @@
 
 ## Objective
 
-Build the full memory management subsystem on top of Phase 1's allocators and identity-mapped page tables. Phase 1 established a bump allocator, buddy allocator (orders 0–10 with splitting but no coalescing), slab allocator (10 size classes), a switchable `#[global_allocator]` (bump→slab), and an edk2-compatible MMU identity map. Phase 2 enhances these with production-grade components: buddy coalescing with bitmap tracking, page pool partitioning, 4-level page tables with W^X enforcement, an ASID-tagged TLB scheme, KASLR, per-CPU slab magazines, and a typed kernel heap API.
+Build the full memory management subsystem on top of Phase 1's allocators and identity-mapped page tables. Phase 1 established a bump allocator, buddy allocator (orders 0–10 with splitting but no coalescing), slab allocator (10 size classes), a switchable `#[global_allocator]` (bump→slab), and an edk2-compatible MMU identity map. Phase 2 enhances these with production-grade components: buddy coalescing with bitmap tracking, page pool partitioning, 4-level page tables with W^X enforcement, an ASID-tagged TLB scheme, KASLR, slab consolidation to 5 standard caches with per-CPU magazines, and a typed kernel heap API.
 
 By the end of this phase, the kernel manages physical memory through a buddy allocator partitioned into kernel/user/model/DMA pools, maps all kernel memory through proper TTBR1 page tables with W^X enforcement, randomizes its base address via KASLR, and provides a working `kalloc`/`kfree` heap. A test that allocates, writes, reads back, and frees memory through the heap confirms end-to-end correctness. Per-agent address spaces (TTBR0 switching) are also functional, preparing the ground for process isolation in Phase 3.
 
@@ -231,10 +231,10 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 ### Step 8: Slab Allocator
 
-**What:** Enhance the existing slab allocator (10 size classes, 8–4096 bytes) with per-CPU magazines for lock-free fast-path allocation.
+**What:** Consolidate the slab allocator to 5 standard size classes (64–4096 bytes) and add per-CPU magazines for lock-free fast-path allocation.
 
 **Tasks:**
-- [x] `kernel/src/mm/slab.rs` exists — `SlabCache` with 10 size classes, intrusive free list, backed by buddy
+- [x] `kernel/src/mm/slab.rs` exists — `SlabCache` with 5 size classes (64, 128, 256, 512, 4096), intrusive free list, backed by buddy
 - [x] `SlabCache::alloc()` and `SlabCache::free(ptr)` implemented (slow-path only)
 - [x] Add `Magazine` layer — `MagazineRound` with `MAGAZINE_SIZE = 32` object slots, current/prev swap
 - [x] Enhance `SlabCache::alloc()` — fast path: pop from magazine; slow path: refill from shared slab
