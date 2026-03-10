@@ -110,6 +110,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     advance_boot_phase(EarlyBootPhase::TimerReady);
     kinfo!(Boot, "CNTFRQ={}Hz", timer.frequency());
 
+    // Store tick interval for IRQ handler and secondary core init.
+    crate::arch::aarch64::timer::set_tick_interval(timer.tick_interval());
+
     // --- Step 6: MMU, Buddy Allocator, Heap ---
 
     // SAFETY: Called once from boot CPU. Page table statics are not accessed
@@ -252,9 +255,16 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     kinfo!(Boot, "Boot sequence complete, entering idle loop");
     observability::drain_logs();
 
+    // Unmask IRQ (DAIF.I) — timer interrupts now fire every 1ms.
+    // Must be after ALL boot initialization is complete.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit only. All interrupt
+    // infrastructure (GIC, timer, vector table, handlers) is initialized.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
     loop {
         // SAFETY: wfe is a hint instruction that puts the core in low-power
-        // state until an event occurs. Safe to execute at EL1.
+        // state until an event occurs. Timer IRQs will wake the core every 1ms,
+        // the handler runs and returns, and the core re-enters wfe.
         unsafe { core::arch::asm!("wfe") }
     }
 }

@@ -113,7 +113,6 @@ pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
 
 /// Store the tick interval for use by the tick handler and secondary cores.
 /// Called once during boot CPU timer init.
-#[allow(dead_code)]
 pub fn set_tick_interval(interval: u64) {
     TICK_INTERVAL.store(interval, Ordering::Relaxed);
 }
@@ -122,7 +121,6 @@ pub fn set_tick_interval(interval: u64) {
 ///
 /// Programs CNTP_TVAL_EL0 and enables the physical timer. Uses the
 /// tick interval stored by the boot CPU during init.
-#[allow(dead_code)]
 pub fn init_timer_secondary() {
     let interval = TICK_INTERVAL.load(Ordering::Relaxed);
     if interval == 0 {

@@ -194,7 +194,16 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     // Signal next core's turn to print.
     PRINT_TURN.store(core_id + 1, Ordering::Release);
 
+    // Initialize per-core timer (programs CNTP_TVAL_EL0 + CNTP_CTL_EL0).
+    crate::arch::aarch64::timer::init_timer_secondary();
+
+    // Unmask IRQ — timer interrupts fire every 1ms on this core.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit only. GIC + timer
+    // are initialized for this core.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
     // Enter idle loop — scheduler assigns work in Phase 3.
+    // Timer IRQs wake the core, handler runs drain_logs, core re-enters wfe.
     loop {
         // SAFETY: WFE is a hint instruction, safe at EL1.
         unsafe { core::arch::asm!("wfe") };
