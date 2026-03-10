@@ -220,6 +220,16 @@ pub unsafe fn map_user_page(as_: &mut UserAddressSpace, va: usize, pa: usize, fl
         "map_user_page: VA {:#x} is outside user address range",
         va
     );
+    assert!(
+        va & (PAGE_SIZE - 1) == 0,
+        "map_user_page: VA {:#x} is not page-aligned",
+        va
+    );
+    assert!(
+        pa & (PAGE_SIZE - 1) == 0,
+        "map_user_page: PA {:#x} is not page-aligned",
+        pa
+    );
     map_page_dmap(as_.pgd_phys, va, pa, mmu::MAIR_NORMAL_WB_IDX, flags);
     as_.stats.track_alloc();
 }

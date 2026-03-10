@@ -326,7 +326,8 @@ pub static SLAB: spin::Mutex<SlabAllocator> = spin::Mutex::new(SlabAllocator::ne
 /// Allocate from the slab allocator.
 ///
 /// # Safety
-/// Buddy allocator must be initialized. Identity map must be active.
+/// Buddy allocator must be initialized. Kernel memory must be accessible
+/// (identity map during early boot, or TTBR1 direct map after kmap init).
 pub unsafe fn alloc(layout: Layout) -> *mut u8 {
     // Use the larger of size and alignment to ensure the buddy allocator
     // returns a block that satisfies both requirements.
@@ -352,6 +353,16 @@ pub unsafe fn alloc(layout: Layout) -> *mut u8 {
     let Some(idx) = SlabAllocator::cache_index(&layout) else {
         return core::ptr::null_mut();
     };
+
+    // Red zones offset the user pointer by RED_ZONE_SIZE (8 bytes), which
+    // satisfies alignment <= 8. Larger alignments are not currently needed
+    // in the kernel (no SIMD or #[repr(align(>8))] types).
+    debug_assert!(
+        layout.align() <= RED_ZONE_SIZE || CACHE_SIZES[idx] == PAGE_SIZE,
+        "slab: layout align {} exceeds red zone offset {} — alignment broken",
+        layout.align(),
+        RED_ZONE_SIZE,
+    );
 
     let mut slab = SLAB.lock();
     slab.caches[idx].alloc()

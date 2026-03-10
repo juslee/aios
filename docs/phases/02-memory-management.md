@@ -258,7 +258,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 - [x] Create `kernel/src/mm/heap.rs` — `kalloc<T>()` and `kfree<T>(ptr)` typed functions (memory.md §4.2)
 - [x] `kalloc`: use slab allocator for sizes ≤ largest cache; fall back to buddy allocator for larger allocations
 - [x] `kfree`: route to slab or buddy based on size
-- [x] Enhance `KernelAllocator` to delegate through `kalloc`/`kfree`
+- [x] Typed `kalloc`/`kfree` API wraps slab allocator (`KernelAllocator` routes to slab directly)
 - [x] Print heap ready message: `[mm] Kernel heap ready (slab caches: 64, 128, 256, 512, 4096)`
 - [x] Test: allocate a `Box<[u8; 1024]>`, write pattern, read back, drop — verify no panic
 
@@ -274,7 +274,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **Tasks:**
 - [x] Create `kernel/src/mm/uspace.rs` — `create_user_address_space()` → allocates PGD, assigns ASID via global `AsidAllocator`
-- [x] Implement `switch_address_space(target)` — writes TTBR0 with ASID in bits[63:48], DSB SY + TLBI + DSB NSH + ISB barrier sequence
+- [x] Implement `switch_address_space(target)` — writes TTBR0 with ASID in bits[63:48], DSB SY + TLBI VMALLE1IS + DSB ISH + ISB barrier sequence
 - [x] Guard pages are implicit — zeroed PGD entries cause synchronous aborts on unmapped VA access
 - [x] Implement basic `MemoryStats` tracking per address space: pages allocated, peak usage
 - [x] Test: create two address spaces, map user pages, switch TTBR0 between them

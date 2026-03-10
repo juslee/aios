@@ -214,9 +214,13 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         // Switch between address spaces (verifies TTBR0 programming doesn't fault)
         // SAFETY: Both address spaces have valid PGDs with mapped pages.
         unsafe {
-            println!("[mm] TTBR0 switch: ASID 0 -> ASID 1");
+            println!("[mm] TTBR0 switch: ASID 0 -> ASID {}", as_a.asid().value);
             uspace::switch_address_space(&as_a);
-            println!("[mm] TTBR0 switch: ASID 1 -> ASID 2");
+            println!(
+                "[mm] TTBR0 switch: ASID {} -> ASID {}",
+                as_a.asid().value,
+                as_b.asid().value
+            );
             uspace::switch_address_space(&as_b);
         }
         println!("[mm] Address space switching verified");
