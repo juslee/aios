@@ -72,8 +72,7 @@ pub fn advance_boot_phase(phase: EarlyBootPhase) {
     CURRENT_PHASE.store(phase as u64, Ordering::Relaxed);
 
     // Only print if we're past UartReady (UART is initialized).
-    // Use println! directly here (not klog!) since LogRingsReady may not
-    // have been reached yet, and the log macros need the boot phase check.
+    // klog! handles the pre-LogRingsReady case by falling back to direct UART.
     if phase >= EarlyBootPhase::UartReady {
         crate::kinfo!(Boot, "{:?} — {}ms", phase, boot_elapsed_ms());
     }

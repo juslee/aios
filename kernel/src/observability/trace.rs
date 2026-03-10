@@ -6,6 +6,7 @@
 #[cfg(feature = "kernel-tracing")]
 mod enabled {
     use crate::smp::MAX_CORES;
+    use core::cell::UnsafeCell;
     use core::sync::atomic::{AtomicU32, Ordering};
 
     // -----------------------------------------------------------------------
@@ -123,14 +124,14 @@ mod enabled {
     const TRACE_RING_MASK: u32 = (TRACE_RING_SIZE as u32) - 1;
 
     pub struct TraceRing {
-        entries: [TraceRecord; TRACE_RING_SIZE],
+        entries: UnsafeCell<[TraceRecord; TRACE_RING_SIZE]>,
         head: AtomicU32,
         tail: AtomicU32,
     }
 
     impl TraceRing {
         const INIT: Self = Self {
-            entries: [TraceRecord::ZERO; TRACE_RING_SIZE],
+            entries: UnsafeCell::new([TraceRecord::ZERO; TRACE_RING_SIZE]),
             head: AtomicU32::new(0),
             tail: AtomicU32::new(0),
         };
@@ -138,9 +139,11 @@ mod enabled {
         fn push(&self, record: TraceRecord) {
             let head = self.head.load(Ordering::Relaxed);
             let idx = (head & TRACE_RING_MASK) as usize;
-            // SAFETY: Single producer (owning core).
+            // SAFETY: Single producer (owning core). UnsafeCell provides interior
+            // mutability. No concurrent writes to this index because head is only
+            // advanced by the owning core.
             unsafe {
-                let slot = &self.entries[idx] as *const TraceRecord as *mut TraceRecord;
+                let slot = (*self.entries.get()).as_mut_ptr().add(idx);
                 core::ptr::write(slot, record);
             }
             self.head.store(head.wrapping_add(1), Ordering::Release);

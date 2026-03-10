@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 6 weeks
 **Deliverable:** Synchronous IPC with < 10 μs round-trip, capability-enforced channels, scheduler with 4 scheduling classes, kernel observability, service manager
-**Status:** Planned
+**Status:** In Progress (M10 complete)
 **Prerequisites:** Phase 2 (Memory Management)
 **Unlocks:** Phase 4 (Block Storage & Object Store), Phase 28 (Composable Capability Profiles)
 
@@ -66,17 +66,17 @@ Milestones are numbered continuously across all phases. Phase 2 used M7–M9; Ph
 **What:** Implement per-core LogRing, LogEntry, log levels, subsystem tags, and `klog!`/`kinfo!`/`kwarn!`/`kerror!` macros. Replace all existing `println!()` calls in the kernel with structured logging macros. Add UART drain function.
 
 **Tasks:**
-- [ ] Create `kernel/src/observability/mod.rs` — `LogLevel` enum (Trace/Debug/Info/Warn/Error/Fatal), `Subsystem` enum (Boot/Mm/Sched/Ipc/Cap/Irq/Timer/Uart/Gic/Mmu/Smp/Storage/Audit), `LogEntry` struct (64 bytes: timestamp, core_id, level, subsystem, flags, msg_len, message[48])
-- [ ] Implement `LogRing` — 256 entries (16 KiB per core), single-producer/single-consumer ring buffer with `head`/`tail` `AtomicU32`. Static `LOG_RINGS: [LogRing; MAX_CORES]` array (observability.md §2.5)
-- [ ] Implement `log_impl(level, subsystem, args)` — writes to current core's ring buffer; reads `MPIDR_EL1` for core ID, `CNTVCT_EL0` for timestamp
-- [ ] Implement `klog!`, `kinfo!`, `kwarn!`, `kerror!`, `kdebug!`, `ktrace!` macros with compile-time level filtering via `cfg(feature = "log-level-*")` (observability.md §2.6)
-- [ ] Early boot fallback: before `LogRingsReady` phase, `klog!` writes directly to UART (observability.md §2.8)
-- [ ] Add `LogRingsReady` variant to `EarlyBootPhase` enum in `boot_phase.rs`
-- [ ] Implement UART drain function: reads all per-core rings round-robin, formats `[secs.micros] [core] LEVEL Subsys Message`, writes to UART (observability.md §2.7)
-- [ ] Replace all `println!("[boot]..."` / `println!("[mm]..."` calls in `main.rs`, `smp.rs`, `mm/*.rs` with appropriate `kinfo!`/`kwarn!`/`kerror!` calls
-- [ ] Create `kernel/src/observability/metrics.rs` — `Counter` (per-core sharded `AtomicU64`), `Gauge` (`AtomicI64`), `Histogram<N>` (fixed-bucket), `KernelMetrics` BSS registry with initial counters (mm_page_alloc, mm_page_free, mm_slab_alloc, mm_slab_free, irq_total, irq_timer) (observability.md §3.2–3.5). **Note:** observability.md §8 schedules `Histogram` for Phase 4; this phase pulls it forward because IPC round-trip and context switch latency histograms are needed for Gate 1 benchmarking.
-- [ ] Feature gate: `cfg(feature = "kernel-metrics")` — when disabled, Counter/Gauge/Histogram become zero-sized no-ops (observability.md §3.6)
-- [ ] Create `kernel/src/observability/trace.rs` — `TraceEvent` enum, `TraceRecord` (32 bytes), `TraceRing` (4096 entries = 128 KiB/core), `trace_point!` macro. Feature-gated: `cfg(feature = "kernel-tracing")`, off by default in release (observability.md §4.2–4.5). **Note:** observability.md §8 schedules trace infrastructure for Phase 4; this phase pulls it forward because the scheduler and IPC direct switch are difficult to debug without trace points. The feature gate ensures zero cost when disabled.
+- [x] Create `kernel/src/observability/mod.rs` — `LogLevel` enum (Trace/Debug/Info/Warn/Error/Fatal), `Subsystem` enum (Boot/Mm/Sched/Ipc/Cap/Irq/Timer/Uart/Gic/Mmu/Smp/Storage/Audit), `LogEntry` struct (64 bytes: timestamp, core_id, level, subsystem, flags, msg_len, message[48])
+- [x] Implement `LogRing` — 256 entries (16 KiB per core), single-producer/single-consumer ring buffer with `head`/`tail` `AtomicU32`. Static `LOG_RINGS: [LogRing; MAX_CORES]` array (observability.md §2.5)
+- [x] Implement `log_impl(level, subsystem, args)` — writes to current core's ring buffer; reads `MPIDR_EL1` for core ID, `CNTVCT_EL0` for timestamp
+- [x] Implement `klog!`, `kinfo!`, `kwarn!`, `kerror!`, `kdebug!`, `ktrace!` macros with compile-time level filtering via `cfg(feature = "log-level-*")` (observability.md §2.6)
+- [x] Early boot fallback: before `LogRingsReady` phase, `klog!` writes directly to UART (observability.md §2.8)
+- [x] Add `LogRingsReady` variant to `EarlyBootPhase` enum in `boot_phase.rs`
+- [x] Implement UART drain function: reads all per-core rings round-robin, formats `[secs.micros] [core] LEVEL Subsys Message`, writes to UART (observability.md §2.7)
+- [x] Replace all `println!("[boot]..."` / `println!("[mm]..."` calls in `main.rs`, `smp.rs`, `mm/*.rs` with appropriate `kinfo!`/`kwarn!`/`kerror!` calls
+- [x] Create `kernel/src/observability/metrics.rs` — `Counter` (per-core sharded `AtomicU64`), `Gauge` (`AtomicI64`), `Histogram<N>` (fixed-bucket), `KernelMetrics` BSS registry with initial counters (mm_page_alloc, mm_page_free, mm_slab_alloc, mm_slab_free, irq_total, irq_timer) (observability.md §3.2–3.5). **Note:** observability.md §8 schedules `Histogram` for Phase 4; this phase pulls it forward because IPC round-trip and context switch latency histograms are needed for Gate 1 benchmarking.
+- [x] Feature gate: `cfg(feature = "kernel-metrics")` — when disabled, Counter/Gauge/Histogram become zero-sized no-ops (observability.md §3.6)
+- [x] Create `kernel/src/observability/trace.rs` — `TraceEvent` enum, `TraceRecord` (32 bytes), `TraceRing` (4096 entries = 128 KiB/core), `trace_point!` macro. Feature-gated: `cfg(feature = "kernel-tracing")`, off by default in release (observability.md §4.2–4.5). **Note:** observability.md §8 schedules trace infrastructure for Phase 4; this phase pulls it forward because the scheduler and IPC direct switch are difficult to debug without trace points. The feature gate ensures zero cost when disabled.
 
 **Key reference:** [observability.md §2–4](../kernel/observability.md) — Structured Logging, Metric Counters, Trace Points
 
@@ -94,13 +94,13 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Define Thread, ThreadContext, FpContext, SchedEntity, ProcessControl, and ThreadState. Implement kernel thread creation and tracking. No scheduling yet — threads are created and tracked but not dispatched.
 
 **Tasks:**
-- [ ] Create `kernel/src/task/mod.rs` — `Thread` struct with `ThreadId`, `ThreadContext` (GP regs x0–x30, SP_EL0, ELR_EL1, SPSR_EL1, TTBR0, per-thread timer state), `FpContext` (v0–v31, FPCR, FPSR) (scheduler.md §4.1)
-- [ ] Define `ThreadState` enum: `Runnable`, `Running`, `BlockedIpc { channel: ChannelId }`, `BlockedTimer { wake_at: Timestamp }`, `BlockedIo`, `Suspended`, `Dead` (scheduler.md §3.3)
-- [ ] Define `SchedEntity` — `thread_id`, `agent_id`, `class` (`SchedulerClass` enum: RealTime/Interactive/Normal/Idle), `priority` (u8), `deadline` (Option), `cpu_quota`, `vruntime` (u64), `time_slice_remaining`, `effective_class`/`effective_priority`, `inherited_class`/`inherited_priority`/`inherited_deadline`, `affinity` (CpuSet), `state` (scheduler.md §3.3)
-- [ ] Create `kernel/src/task/process.rs` — `ProcessControl` struct: `pid` (ProcessId), `address_space` (UserAddressSpace from Phase 2 `uspace.rs`), `capability_table`, `resource_limits` (KernelResourceLimits), `threads` list (ipc.md §3.3)
-- [ ] Define `KernelResourceLimits` — `max_channels`, `max_shared_regions`, `max_pending_messages`, `max_notification_subscriptions`, `max_child_processes` with trust-level defaults (ipc.md §3.3)
-- [ ] Implement `Thread::new_kernel(entry_fn, stack_page)` — creates a kernel thread with initial context (ELR = entry, SPSR = EL1h, SP = stack top, TTBR0 = kernel)
-- [ ] Static `PROCESS_TABLE` and `THREAD_TABLE` (bounded slab-backed arrays)
+- [x] Create `kernel/src/task/mod.rs` — `Thread` struct with `ThreadId`, `ThreadContext` (GP regs x0–x30, SP_EL0, ELR_EL1, SPSR_EL1, TTBR0, per-thread timer state), `FpContext` (v0–v31, FPCR, FPSR) (scheduler.md §4.1)
+- [x] Define `ThreadState` enum: `Runnable`, `Running`, `BlockedIpc { channel: ChannelId }`, `BlockedTimer { wake_at: Timestamp }`, `BlockedIo`, `Suspended`, `Dead` (scheduler.md §3.3)
+- [x] Define `SchedEntity` — `thread_id`, `agent_id`, `class` (`SchedulerClass` enum: RealTime/Interactive/Normal/Idle), `priority` (u8), `deadline` (Option), `cpu_quota`, `vruntime` (u64), `time_slice_remaining`, `effective_class`/`effective_priority`, `inherited_class`/`inherited_priority`/`inherited_deadline`, `affinity` (CpuSet), `state` (scheduler.md §3.3)
+- [x] Create `kernel/src/task/process.rs` — `ProcessControl` struct: `pid` (ProcessId), `address_space` (UserAddressSpace from Phase 2 `uspace.rs`), `capability_table`, `resource_limits` (KernelResourceLimits), `threads` list (ipc.md §3.3)
+- [x] Define `KernelResourceLimits` — `max_channels`, `max_shared_regions`, `max_pending_messages`, `max_notification_subscriptions`, `max_child_processes` with trust-level defaults (ipc.md §3.3)
+- [x] Implement `Thread::new_kernel(entry_fn, stack_page)` — creates a kernel thread with initial context (ELR = entry, SPSR = EL1h, SP = stack top, TTBR0 = kernel)
+- [x] Static `PROCESS_TABLE` and `THREAD_TABLE` (bounded slab-backed arrays)
 - [ ] Unit tests in `shared/` for `KernelResourceLimits` trust-level defaults, `ThreadState` transitions
 
 **Key reference:** [scheduler.md §3.3](../kernel/scheduler.md) — SchedEntity; [scheduler.md §4.1](../kernel/scheduler.md) — ThreadContext; [ipc.md §3.3](../kernel/ipc.md) — Kernel Resource Limits
@@ -114,13 +114,13 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Wire the "Lower EL using AArch64 — Synchronous" exception vector entry to a syscall dispatcher. Define the syscall number table and error codes. Implement register save/restore for the EL0-to-EL1 transition. Initially, only `DebugPrint` is functional.
 
 **Tasks:**
-- [ ] Create `kernel/src/arch/aarch64/trap.rs` — `TrapFrame` struct (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1)
-- [ ] Modify exception vector table in `exceptions.rs`: the "Lower EL using AArch64 — Synchronous" entry saves all GP registers to a `TrapFrame` on the kernel stack, reads `ESR_EL1` to determine exception class (EC), dispatches to `svc_handler` if EC == 0x15 (SVC from AArch64)
-- [ ] Create `kernel/src/syscall/mod.rs` — `Syscall` enum (numeric IDs: 0=IpcCall, 1=IpcSend, 2=IpcRecv, 3=IpcReply, 4=IpcCancel, 5=IpcSelect, 6=ChannelCreate, 7=ChannelDestroy, ..., 30=DebugPrint) and `IpcError` repr(i32) (ETIMEDOUT=-1 through ECAP_DORMANT=-10) (ipc.md §3.1–3.2)
-- [ ] Implement `syscall_dispatch(tf: &mut TrapFrame)`: reads syscall number from `x8`, arguments from `x0`–`x5`, dispatches to handler, writes return value to `tf.x[0]` (ipc.md §3.2)
-- [ ] Implement `DebugPrint` handler: validates user pointer (must be in TTBR0 range), copies message to kernel buffer, writes to UART via `klog!`
-- [ ] Implement stub handlers for all other syscalls returning `ENOTSUP` (-9)
-- [ ] Create `kernel/src/arch/aarch64/context_switch.S` — `save_context` and `restore_context` assembly routines: save/restore callee-saved registers (x19–x30), SP_EL0, ELR_EL1, SPSR_EL1 for kernel-to-kernel switch; full frame for user-to-kernel (scheduler.md §4.1)
+- [x] Create `kernel/src/arch/aarch64/trap.rs` — `TrapFrame` struct (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1)
+- [x] Modify exception vector table in `exceptions.rs`: the "Lower EL using AArch64 — Synchronous" entry saves all GP registers to a `TrapFrame` on the kernel stack, reads `ESR_EL1` to determine exception class (EC), dispatches to `svc_handler` if EC == 0x15 (SVC from AArch64)
+- [x] Create `kernel/src/syscall/mod.rs` — `Syscall` enum (numeric IDs: 0=IpcCall, 1=IpcSend, 2=IpcRecv, 3=IpcReply, 4=IpcCancel, 5=IpcSelect, 6=ChannelCreate, 7=ChannelDestroy, ..., 30=DebugPrint) and `IpcError` repr(i32) (ETIMEDOUT=-1 through ECAP_DORMANT=-10) (ipc.md §3.1–3.2)
+- [x] Implement `syscall_dispatch(tf: &mut TrapFrame)`: reads syscall number from `x8`, arguments from `x0`–`x5`, dispatches to handler, writes return value to `tf.x[0]` (ipc.md §3.2)
+- [x] Implement `DebugPrint` handler: validates user pointer (must be in TTBR0 range), copies message to kernel buffer, writes to UART via `klog!`
+- [x] Implement stub handlers for all other syscalls returning `ENOTSUP` (-9)
+- [x] Create `kernel/src/arch/aarch64/context_switch.S` — `save_context` and `restore_context` assembly routines: save/restore callee-saved registers (x19–x30), SP_EL0, ELR_EL1, SPSR_EL1 for kernel-to-kernel switch; full frame for user-to-kernel (scheduler.md §4.1)
 
 **Key reference:** [ipc.md §3.1–3.2](../kernel/ipc.md) — Syscall Table, Syscall ABI; [scheduler.md §4.1](../kernel/scheduler.md) — Context save/restore
 
@@ -133,15 +133,15 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Wire the ARM Generic Timer to fire IRQs at 1 kHz. The IRQ handler updates tick counters, calls the UART log drain, and sets the `need_resched` flag on the current thread. Implement `TimeGet`, `TimeSleep`, and `TimerSet` syscalls.
 
 **Tasks:**
-- [ ] Wire GICv3 IRQ handler in exception vector table: "Current EL with SP_ELx — IRQ" entry saves minimal state, reads IAR, dispatches to `irq_handler`
-- [ ] `irq_handler` in `gic.rs`: reads IAR, if INTID matches the EL1 physical timer PPI (configured via DT/hal; INTID 30 on QEMU), calls `timer_tick_handler`, writes EOIR
-- [ ] `timer_tick_handler` in `timer.rs`: rearm timer for next 1 ms tick (`CNTFRQ_EL0 / 1000` counts), increment global tick counter, call `observability::drain_logs()`, set `need_resched` flag on current thread's `SchedEntity`
-- [ ] Implement `TimeGet` syscall: reads `CNTVCT_EL0`, returns monotonic nanoseconds
-- [ ] Implement `TimeSleep` syscall: computes `wake_at = now + duration`, sets thread state to `BlockedTimer`, triggers reschedule (stub: immediately returns until scheduler is wired in Step 5)
-- [ ] Implement `TimerSet` syscall: sets a one-shot or repeating timer that wakes `IpcSelect`; stub returns `ENOTSUP` until `IpcSelect` is wired in Step 10 (ipc.md §3.1)
-- [ ] Metric instrumentation: increment `KernelMetrics.irq_timer` on every tick
-- [ ] Enable timer interrupts on boot CPU: unmask `DAIF.I` after VBAR and GIC init
-- [ ] Enable timer interrupts on secondary cores via `init_gicv3_secondary` (existing from Phase 1)
+- [x] Wire GICv3 IRQ handler in exception vector table: "Current EL with SP_ELx — IRQ" entry saves minimal state, reads IAR, dispatches to `irq_handler`
+- [x] `irq_handler` in `gic.rs`: reads IAR, if INTID matches the EL1 physical timer PPI (configured via DT/hal; INTID 30 on QEMU), calls `timer_tick_handler`, writes EOIR
+- [x] `timer_tick_handler` in `timer.rs`: rearm timer for next 1 ms tick (`CNTFRQ_EL0 / 1000` counts), increment global tick counter, call `observability::drain_logs()`, set `need_resched` flag on current thread's `SchedEntity`
+- [x] Implement `TimeGet` syscall: reads `CNTVCT_EL0`, returns monotonic nanoseconds
+- [x] Implement `TimeSleep` syscall: computes `wake_at = now + duration`, sets thread state to `BlockedTimer`, triggers reschedule (stub: immediately returns until scheduler is wired in Step 5)
+- [x] Implement `TimerSet` syscall: sets a one-shot or repeating timer that wakes `IpcSelect`; stub returns `ENOTSUP` until `IpcSelect` is wired in Step 10 (ipc.md §3.1)
+- [x] Metric instrumentation: increment `KernelMetrics.irq_timer` on every tick
+- [x] Enable timer interrupts on boot CPU: unmask `DAIF.I` after VBAR and GIC init
+- [x] Enable timer interrupts on secondary cores via `init_gicv3_secondary` (existing from Phase 1)
 
 **Key reference:** [scheduler.md §10](../kernel/scheduler.md) — Timer and Preemption; [observability.md §2.7](../kernel/observability.md) — UART Drain; [ipc.md §3.1](../kernel/ipc.md) — TimeGet, TimeSleep, TimerSet
 
