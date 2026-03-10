@@ -112,7 +112,13 @@ fn sys_debug_print(tf: &TrapFrame) -> i64 {
     }
 
     // Validate pointer is in user VA range.
-    if ptr >= 0x0000_8000_0000_0000 || ptr.wrapping_add(len) > 0x0000_8000_0000_0000 {
+    // Use checked_add to reject overflow (defense-in-depth; the first check
+    // already catches all kernel-range pointers).
+    let end = match ptr.checked_add(len) {
+        Some(e) => e,
+        None => return IpcError::Eperm as i64,
+    };
+    if ptr >= 0x0000_8000_0000_0000 || end > 0x0000_8000_0000_0000 {
         return IpcError::Eperm as i64;
     }
 

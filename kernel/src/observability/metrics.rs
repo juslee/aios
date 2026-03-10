@@ -149,6 +149,7 @@ mod disabled {
             0
         }
     }
+    // SAFETY: Counter is a ZST with no state — trivially Sync.
     unsafe impl Sync for Counter {}
 
     pub struct Gauge;
@@ -163,6 +164,7 @@ mod disabled {
         pub fn inc(&self) {}
         pub fn dec(&self) {}
     }
+    // SAFETY: Gauge is a ZST with no state — trivially Sync.
     unsafe impl Sync for Gauge {}
 
     pub struct Histogram<const N: usize>;
@@ -175,6 +177,7 @@ mod disabled {
             0
         }
     }
+    // SAFETY: Histogram is a ZST with no state — trivially Sync.
     unsafe impl<const N: usize> Sync for Histogram<N> {}
 }
 
