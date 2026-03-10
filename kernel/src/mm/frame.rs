@@ -100,16 +100,18 @@ impl FrameAllocator {
         let model_mb = self.pools.model.as_ref().map_or(0, pool_mb);
         let dma_mb = pool_mb(&self.pools.dma);
 
-        crate::println!("[mm] Physical memory: {} MB total", total_mb);
-        crate::println!(
-            "[mm] Pools: kernel={} MB, user={} MB, model={} MB, dma={} MB",
+        crate::kinfo!(Mm, "Physical memory: {} MB total", total_mb);
+        crate::kinfo!(
+            Mm,
+            "Pools: kernel={} MB, user={} MB, model={} MB, dma={} MB",
             kernel_mb,
             user_mb,
             model_mb,
             dma_mb
         );
-        crate::println!(
-            "[mm] Free pages: {} / {}",
+        crate::kinfo!(
+            Mm,
+            "Free pages: {} / {}",
             self.total_free_pages(),
             self.total_pages
         );

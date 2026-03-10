@@ -85,8 +85,9 @@ pub fn compute_slide(rng_seed: &[u8; 32]) -> KaslrConfig {
     let slide = ((entropy as usize) % steps) * config.alignment;
     config.slide = slide;
 
-    crate::println!(
-        "[kaslr] Kernel base: {:#x} (slide: {:#x}, {} MiB)",
+    crate::kinfo!(
+        Mm,
+        "KASLR base: {:#x} (slide: {:#x}, {} MiB)",
         config.base.wrapping_add(slide),
         slide,
         slide / (1024 * 1024)

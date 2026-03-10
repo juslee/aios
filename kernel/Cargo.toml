@@ -8,3 +8,8 @@ license.workspace = true
 shared = { path = "../shared" }
 fdt-parser = "0.5"
 spin = { version = "0.9", default-features = false, features = ["mutex", "spin_mutex"] }
+
+[features]
+default = ["kernel-metrics"]
+kernel-metrics = []
+kernel-tracing = []

@@ -64,12 +64,35 @@ pub fn enable_slab_allocator() {
 /// Print heap readiness message with configured cache sizes.
 pub fn init_heap() {
     let sizes = slab::cache_sizes();
-    crate::print!("[mm] Kernel heap ready (slab caches:");
+    // Build the cache size list into a stack buffer to emit a single log entry.
+    let mut buf = [0u8; 64];
+    let mut pos = 0;
     for (i, s) in sizes.iter().enumerate() {
         if i > 0 {
-            crate::print!(",");
+            buf[pos] = b',';
+            pos += 1;
         }
-        crate::print!(" {}", s);
+        buf[pos] = b' ';
+        pos += 1;
+        // Write the decimal number.
+        let mut tmp = [0u8; 8];
+        let mut n = *s;
+        let mut len = 0;
+        loop {
+            tmp[len] = b'0' + (n % 10) as u8;
+            len += 1;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        for j in (0..len).rev() {
+            if pos < buf.len() {
+                buf[pos] = tmp[j];
+                pos += 1;
+            }
+        }
     }
-    crate::println!(")");
+    let cache_str = core::str::from_utf8(&buf[..pos]).unwrap_or("?");
+    crate::kinfo!(Mm, "Kernel heap ready (slab caches:{})", cache_str);
 }

@@ -294,21 +294,24 @@ pub unsafe fn init_kernel_address_space(ram_start: usize, ram_size: usize) {
     // is safe even though it broadcasts.
     core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb",);
 
-    crate::println!("[mm] TTBR1 active — kernel mapped with W^X");
-    crate::println!(
-        "[mm] W^X: text=RX ({} pages), rodata=RO ({} pages), data=RW ({} pages)",
+    crate::kinfo!(Mm, "TTBR1 active — kernel mapped with W^X");
+    crate::kinfo!(
+        Mm,
+        "W^X: text=RX ({} pages), rodata=RO ({} pages), data=RW ({} pages)",
         text_pages,
         rodata_pages,
         data_pages
     );
-    crate::println!(
-        "[mm] Direct map: {:#x}..{:#x} ({} MB)",
+    crate::kinfo!(
+        Mm,
+        "Direct map: {:#x}..{:#x} ({} MB)",
         dm_va_start,
         dm_va_end,
         ram_size / (1024 * 1024)
     );
-    crate::println!(
-        "[mm] MMIO: {:#x}..{:#x}",
+    crate::kinfo!(
+        Mm,
+        "MMIO: {:#x}..{:#x}",
         mmu::MMIO_BASE,
         mmu::MMIO_BASE + 0x4000_0000_usize
     );

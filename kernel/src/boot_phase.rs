@@ -20,14 +20,15 @@ pub enum EarlyBootPhase {
     MmuEnabled = 6,
     PageAllocatorReady = 7,
     HeapReady = 8,
-    RngReady = 9,
-    KaslrApplied = 10,
-    CapabilityManagerReady = 11,
-    IpcReady = 12,
-    AuditLogReady = 13,
-    ProcessManagerReady = 14,
-    ProvenanceReady = 15,
-    Complete = 16,
+    LogRingsReady = 9,
+    RngReady = 10,
+    KaslrApplied = 11,
+    CapabilityManagerReady = 12,
+    IpcReady = 13,
+    AuditLogReady = 14,
+    ProcessManagerReady = 15,
+    ProvenanceReady = 16,
+    Complete = 17,
 }
 
 static BOOT_START_TICKS: AtomicU64 = AtomicU64::new(0);
@@ -70,9 +71,11 @@ pub fn boot_elapsed_ms() -> u64 {
 pub fn advance_boot_phase(phase: EarlyBootPhase) {
     CURRENT_PHASE.store(phase as u64, Ordering::Relaxed);
 
-    // Only print if we're past UartReady (UART is initialized)
+    // Only print if we're past UartReady (UART is initialized).
+    // Use println! directly here (not klog!) since LogRingsReady may not
+    // have been reached yet, and the log macros need the boot phase check.
     if phase >= EarlyBootPhase::UartReady {
-        crate::println!("[boot] {:?} — {}ms", phase, boot_elapsed_ms());
+        crate::kinfo!(Boot, "{:?} — {}ms", phase, boot_elapsed_ms());
     }
 }
 
@@ -80,9 +83,9 @@ pub fn advance_boot_phase(phase: EarlyBootPhase) {
 #[allow(dead_code)]
 pub fn current_boot_phase() -> EarlyBootPhase {
     let val = CURRENT_PHASE.load(Ordering::Relaxed) as u32;
-    // SAFETY: All values 0..=16 are valid EarlyBootPhase variants.
-    if val <= 16 {
-        // SAFETY: repr(u32) enum with contiguous values 0..=16.
+    // SAFETY: All values 0..=17 are valid EarlyBootPhase variants.
+    if val <= 17 {
+        // SAFETY: repr(u32) enum with contiguous values 0..=17.
         unsafe { core::mem::transmute::<u32, EarlyBootPhase>(val) }
     } else {
         EarlyBootPhase::EntryPoint
