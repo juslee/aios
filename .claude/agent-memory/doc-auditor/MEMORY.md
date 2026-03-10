@@ -56,7 +56,36 @@
 
 - §4 Block Engine | §4.2 Write Path | §4.3 Read Path | §4.4 Crash Recovery | §4.8 Write Amplification Tracking
 
+## Key Section Map (ipc.md)
+- §3.1 Syscall Table (31 syscalls: 0=IpcCall..30=DebugPrint) | §3.2 Syscall ABI | §3.3 Kernel Resource Limits | §3.4 Syscall Count
+- §4.1 Channels | §4.2 Synchronous IPC | §4.3 Message Format | §4.4 Zero-Copy | §4.5 Shared Memory Lifecycle | §4.6 Capability Transfer
+- §5.4 Multi-Client Service Model | §5.5 Service Restart and Reconnection
+- §6 Notification Mechanism | §8.3 Capability Enforcement | §9.1 Fast Path | §9.2 Priority Inheritance
+
+## Key Section Map (scheduler.md)
+- §3.1 Scheduling Classes | §3.2 Scheduler Architecture | §3.3 The SchedEntity
+- §4.1 Save/Restore | §4.2 IPC Direct Switch | §4.3 Context Switch Latency Budget
+- §9.1 Strategy (Load Balancing) | §10.1 ARM Generic Timer | §10.2 Time Slices | §10.3 Preemption Model
+
+## Key Section Map (deadlock-prevention.md)
+- §3 Lock Ordering | §4 Mandatory IPC Timeouts | §5 Priority Inheritance | §7 Capability-Based Resource Model | §8 Synchronous IPC
+
+## Common Phase Doc Issues (Phase 3 audit)
+- Timer PPI: INTID 30 = EL1 physical timer (used by kernel tick). INTID 27 = virtual timer. Easy to confuse.
+- `SharedMemoryClone` does NOT exist in ipc.md syscall table. Use `SharedMemoryShare` with flags attenuation.
+- `SharedMemoryUnmap` is NOT a separate syscall. Use `MemoryUnmap` (handles both private and shared).
+- observability.md §8 schedules Histogram + trace infra for Phase 4, NOT Phase 3. Phase docs may pull forward with note.
+- ipc.md `RawMessage` uses pointer `data: *const u8`, not inline buffer. 256-byte inline is implementation detail.
+- `IpcReply` does NOT require ChannelAccess capability — kernel tracks the caller internally (ipc.md §3.1)
+- security.md `CapabilityToken` field is `capability: Capability`, NOT `scope: CapabilityScope`
+- security.md `MAX_CAPS_PER_AGENT = 256`, NOT 128. Phase docs must use 256.
+- scheduler.md `BlockedTimer { wake_at: Timestamp }`, NOT `wake_at: u64`
+- Phase docs must account for ALL 31 syscalls somewhere (implemented or stubbed with ENOTSUP)
+- `RingChannelCreate`/`RingChannelDestroy` are in the 31 but deferred — must be explicitly stubbed
+
 ## Naming Conventions (verified)
 - `BehavioralBaseline` (not `BehaviorBaseline`) — canonical in security.md and agents.md
 - `BehavioralMonitor`, `BehavioralPolicy` — security.md canonical
 - `BehavioralRule`, `BehavioralCondition`, `BehavioralAction` — airs.md (fixed from `Behavior*`)
+- `CapabilityTokenId` (ipc.md), `TokenId` (security.md) — same concept, different names in different docs
+- Phase 3 doc now uses `Capability` enum (matching security.md), not `CapabilityScope`
