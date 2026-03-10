@@ -22,11 +22,8 @@ use spin::Mutex;
 // Configuration (scheduler.md §10.2)
 // ---------------------------------------------------------------------------
 
-/// Time slice per class in nanoseconds (scheduler.md §10.2).
-const RT_SLICE_NS: u64 = 4_000_000; // 4ms
-const INTERACTIVE_SLICE_NS: u64 = 10_000_000; // 10ms
-const NORMAL_SLICE_NS: u64 = 50_000_000; // 50ms
-const IDLE_SLICE_NS: u64 = 50_000_000; // 50ms
+// Re-export time slice constants from shared for use in this module.
+use shared::{default_slice, IDLE_SLICE_NS, NORMAL_SLICE_NS};
 
 /// Nanoseconds per tick (1ms = 1_000_000 ns).
 const NS_PER_TICK: u64 = 1_000_000;
@@ -121,18 +118,7 @@ extern "C" {
     fn restore_context(ctx: *const ThreadContext) -> !;
 }
 
-// ---------------------------------------------------------------------------
-// Time slice helper
-// ---------------------------------------------------------------------------
-
-fn default_slice(class: SchedulerClass) -> u64 {
-    match class {
-        SchedulerClass::RealTime => RT_SLICE_NS,
-        SchedulerClass::Interactive => INTERACTIVE_SLICE_NS,
-        SchedulerClass::Normal => NORMAL_SLICE_NS,
-        SchedulerClass::Idle => IDLE_SLICE_NS,
-    }
-}
+// Time slice helper: uses shared::default_slice()
 
 // ---------------------------------------------------------------------------
 // Thread allocation helper

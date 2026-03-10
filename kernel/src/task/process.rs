@@ -10,80 +10,8 @@ use super::ThreadId;
 use crate::mm::uspace::UserAddressSpace;
 use spin::Mutex;
 
-// ---------------------------------------------------------------------------
-// Process identity
-// ---------------------------------------------------------------------------
-
-/// Unique process identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProcessId(pub u32);
-
-// ---------------------------------------------------------------------------
-// Kernel resource limits (ipc.md §3.3)
-// ---------------------------------------------------------------------------
-
-/// Hard limits on kernel object creation per process.
-///
-/// Set at `ProcessCreate` and cannot be increased. A child process
-/// cannot exceed its parent's limits (monotonic restriction).
-#[derive(Debug, Clone, Copy)]
-pub struct KernelResourceLimits {
-    pub max_channels: u32,
-    pub max_shared_regions: u32,
-    pub max_pending_messages: u32,
-    pub max_notification_subscriptions: u32,
-    pub max_child_processes: u32,
-}
-
-impl KernelResourceLimits {
-    /// Level 1 (System) trust level defaults.
-    #[allow(dead_code)]
-    pub const fn system() -> Self {
-        Self {
-            max_channels: 256,
-            max_shared_regions: 128,
-            max_pending_messages: 1024,
-            max_notification_subscriptions: 64,
-            max_child_processes: 32,
-        }
-    }
-
-    /// Level 2 (Native) trust level defaults.
-    #[allow(dead_code)]
-    pub const fn native() -> Self {
-        Self {
-            max_channels: 128,
-            max_shared_regions: 64,
-            max_pending_messages: 512,
-            max_notification_subscriptions: 32,
-            max_child_processes: 16,
-        }
-    }
-
-    /// Level 3 (Third-party) trust level defaults.
-    #[allow(dead_code)]
-    pub const fn third_party() -> Self {
-        Self {
-            max_channels: 64,
-            max_shared_regions: 32,
-            max_pending_messages: 256,
-            max_notification_subscriptions: 16,
-            max_child_processes: 8,
-        }
-    }
-
-    /// Level 4 (Web) trust level defaults.
-    #[allow(dead_code)]
-    pub const fn web() -> Self {
-        Self {
-            max_channels: 16,
-            max_shared_regions: 8,
-            max_pending_messages: 64,
-            max_notification_subscriptions: 4,
-            max_child_processes: 0,
-        }
-    }
-}
+// Re-export shared types.
+pub use shared::{KernelResourceLimits, ProcessId};
 
 // ---------------------------------------------------------------------------
 // Process control block

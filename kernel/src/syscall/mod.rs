@@ -324,9 +324,5 @@ fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
 
 /// Validate a user-space pointer is within the valid user VA range.
 fn validate_user_ptr(ptr: usize, len: usize) -> bool {
-    let end = match ptr.checked_add(len) {
-        Some(e) => e,
-        None => return false,
-    };
-    ptr < 0x0000_8000_0000_0000 && end <= 0x0000_8000_0000_0000
+    shared::validate_user_va(ptr, len)
 }
