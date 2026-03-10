@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [security.md](../security/security.md) — Provenance recording (§7), behavioral baselines (§2 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [memory.md](./memory.md) — MemoryPressure (§2.3), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
+**Related:** [security.md](../security/security.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [memory.md](./memory.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
 
 -----
 
@@ -11,7 +11,7 @@
 
 The kernel needs to answer two fundamentally different questions about itself. The first is a security question: "What did agent X do, and was it authorized?" The second is an operational question: "Why is the scheduler stalling on core 2, and how many pages did the buddy allocator split in the last second?"
 
-The security question is answered by the **provenance system** — a tamper-evident Merkle chain of agent actions, designed in [security.md](../security/security.md) §7 and consumed by the [Inspector](../applications/inspector.md). The operational question has no answer today. The kernel uses `println!()` to a PL011 UART with informal `[boot]` and `[mm]` prefixes. There are no log levels, no structured format, no metric counters, no trace points. Once the scheduler is running across four cores, interleaved `println!()` output is unreadable, and there is no way to measure IPC latency, context switch frequency, or memory pressure trends.
+The security question is answered by the **provenance system** — a tamper-evident Merkle chain of agent actions, designed in [security.md](../security/security.md) §2.7 and consumed by the [Inspector](../applications/inspector.md). The operational question has no answer today. The kernel uses `println!()` to a PL011 UART with informal `[boot]` and `[mm]` prefixes. There are no log levels, no structured format, no metric counters, no trace points. Once the scheduler is running across four cores, interleaved `println!()` output is unreadable, and there is no way to measure IPC latency, context switch frequency, or memory pressure trends.
 
 This document specifies the kernel's **operational observability** infrastructure — the producer side that generates structured telemetry for debugging, performance analysis, and health monitoring. It covers three pillars:
 
@@ -72,9 +72,9 @@ graph TD
 
 This document does **not** cover:
 
-- **Agent-action provenance** — The `ProvenanceRecord` Merkle chain that records "agent X read space Y" is specified in [security.md](../security/security.md) §7. That is a security audit system with cryptographic integrity guarantees. Operational logs do not go into the Merkle chain.
+- **Agent-action provenance** — The `ProvenanceRecord` Merkle chain that records "agent X read space Y" is specified in [security.md](../security/security.md) §2.7. That is a security audit system with cryptographic integrity guarantees. Operational logs do not go into the Merkle chain.
 - **Per-subsystem hardware audit events** — The `AuditRecord` trait and per-subsystem audit spaces (`system/audit/network/`, `system/audit/audio/`, etc.) are specified in [subsystem-framework.md](../platform/subsystem-framework.md) §7. Those record hardware access for user-facing transparency.
-- **Behavioral baselines and anomaly detection** — The `BehavioralBaseline` and `AnomalyType` system is specified in [security.md](../security/security.md) §2 (Layer 3). That system uses statistical analysis of agent behavior patterns.
+- **Behavioral baselines and anomaly detection** — The `BehavioralBaseline` and `AnomalyType` system is specified in [security.md](../security/security.md) §2.3 (Layer 3). That system uses statistical analysis of agent behavior patterns.
 - **Inspector UI/UX** — The Inspector dashboard layout, views, and refresh rates are specified in [inspector.md](../applications/inspector.md).
 
 This document specifies the **kernel-internal instrumentation primitives** that these higher-level systems may consume, but the two streams (security provenance and operational telemetry) remain architecturally separate.
@@ -85,11 +85,11 @@ This document specifies the **kernel-internal instrumentation primitives** that 
 
 ### 2.1 Problem
 
-The current `println!()` macro in [uart.rs](../../kernel/src/arch/aarch64/uart.rs) writes directly to the PL011 UART, byte by byte, with a spinlock held for the duration of formatting. This has three problems:
+The current `println!()` macro in [uart.rs](../../kernel/src/arch/aarch64/uart.rs) writes directly to the PL011 UART, byte by byte, without any locking (UART locking is deferred — spinlocks are unsafe on Phase 1 Non-Cacheable memory). This has three problems:
 
 1. **No filtering** — Every message goes to the UART at UART speed (115200 baud = ~11.5 KB/s). A burst of debug output during memory init blocks the boot sequence for hundreds of milliseconds.
 2. **No structure** — Messages are free-form strings. The `[boot]` and `[mm]` prefixes are conventions, not enforced tags. There is no way to filter by subsystem or severity programmatically.
-3. **No SMP safety** — Under multi-core execution, output from different cores interleaves at the character level, producing garbled output. The Phase 1 turn-based protocol (`PRINT_TURN` in [smp.rs](../../kernel/src/smp.rs)) solved this for boot, but it serializes all cores — unacceptable for a running system.
+3. **No SMP safety** — Under multi-core execution, unlocked byte-by-byte writes from different cores interleave at the character level, producing garbled output. The Phase 1 turn-based protocol (`PRINT_TURN` in [smp.rs](../../kernel/src/smp.rs)) solved this for boot, but it serializes all cores — unacceptable for a running system.
 
 ### 2.2 Log Levels
 
@@ -140,6 +140,10 @@ pub enum Subsystem {
     Storage = 11,  // Block engine: WAL, LSM, compaction (Phase 4+)
     Audit   = 12,  // Audit subsystem: provenance, export
 }
+
+impl Subsystem {
+    pub const COUNT: usize = 13;
+}
 ```
 
 ### 2.4 Log Entry Format
@@ -151,7 +155,7 @@ pub enum Subsystem {
 #[repr(C)]
 pub struct LogEntry {
     /// Monotonic timestamp from CNTVCT_EL0 (timer ticks, not wall clock).
-    /// At 62.5 MHz, this gives ~16 ns resolution and wraps after ~9,300 years.
+    /// Resolution depends on CNTFRQ_EL0 (e.g., ~16 ns at 62.5 MHz on QEMU).
     pub timestamp: u64,          // 8 bytes
     /// CPU core that produced this entry (0-based).
     pub core_id: u8,             // 1 byte
@@ -195,7 +199,7 @@ pub struct LogRing {
 }
 
 /// Global log rings, one per core. BSS-allocated (zero-initialized at boot).
-/// 4 cores * 16 KiB = 64 KiB total — fits comfortably in the kernel BSS.
+/// MAX_CORES (8) * 16 KiB = 128 KiB total — fits comfortably in the kernel BSS.
 static LOG_RINGS: [LogRing; MAX_CORES] = LogRing::INIT_ARRAY;
 ```
 
@@ -506,19 +510,21 @@ pub enum TraceEvent {
 ```rust
 /// Compact trace record: 32 bytes (two per cache line).
 ///
-/// The record carries a timestamp, core ID, and the event itself.
-/// Padding ensures exactly 32 bytes for efficient ring buffer indexing.
+/// Uses an explicit tag + payload union rather than a Rust enum to guarantee
+/// a stable binary layout regardless of compiler enum layout decisions.
 #[repr(C)]
 pub struct TraceRecord {
     /// Monotonic timestamp from CNTVCT_EL0 (same timebase as LogEntry).
     pub timestamp: u64,          // 8 bytes
     /// Core that produced this record.
     pub core_id: u8,             // 1 byte
-    /// The trace event (discriminant + payload).
-    pub event: TraceEvent,       // up to 17 bytes (u8 discriminant + max payload)
-    /// Padding to 32 bytes.
-    pub _pad: [u8; 6],           // remaining bytes
-}
+    /// Event type discriminant (TraceEvent variant as u8).
+    pub event_tag: u8,           // 1 byte
+    /// Event payload (largest variant: 2×u32 + u8 = 9 bytes; padded to 14).
+    pub event_data: [u8; 14],    // 14 bytes
+    /// Reserved.
+    pub _pad: [u8; 8],           // 8 bytes
+}                                // Total: 32 bytes
 
 const _: () = assert!(core::mem::size_of::<TraceRecord>() == 32);
 ```
@@ -530,7 +536,7 @@ const _: () = assert!(core::mem::size_of::<TraceRecord>() == 32);
 /// fire at much higher frequency (every context switch, every page alloc).
 ///
 /// 4096 entries * 32 bytes = 128 KiB per core.
-/// 4 cores * 128 KiB = 512 KiB total.
+/// MAX_CORES (8) * 128 KiB = 1 MiB total.
 ///
 /// At 1,000 context switches/sec + 500 page allocs/sec, this holds ~2.7 seconds
 /// of trace history per core — sufficient for post-mortem debugging.
@@ -631,21 +637,26 @@ impl HealthRegistry {
 
     /// Read a subsystem's current health level.
     pub fn get(&self, subsystem: Subsystem) -> HealthLevel {
-        // SAFETY: HealthLevel repr(u8) with values 0..=3; store only writes valid values.
-        unsafe {
-            core::mem::transmute(
-                self.levels[subsystem as usize].load(Ordering::Acquire)
-            )
+        match self.levels[subsystem as usize].load(Ordering::Acquire) {
+            0 => HealthLevel::Normal,
+            1 => HealthLevel::Degraded,
+            2 => HealthLevel::Critical,
+            _ => HealthLevel::Failed,
         }
     }
 
     /// System-wide health: the worst (highest) level across all subsystems.
     pub fn system_health(&self) -> HealthLevel {
-        self.levels.iter()
+        let max = self.levels.iter()
             .map(|l| l.load(Ordering::Acquire))
             .max()
-            .map(|v| unsafe { core::mem::transmute(v) })
-            .unwrap_or(HealthLevel::Normal)
+            .unwrap_or(0);
+        match max {
+            0 => HealthLevel::Normal,
+            1 => HealthLevel::Degraded,
+            2 => HealthLevel::Critical,
+            _ => HealthLevel::Failed,
+        }
     }
 }
 
@@ -730,6 +741,8 @@ pub struct KernelInfoPage {
     /// Number of active CPU cores.
     pub core_count: u8,
     /// Per-subsystem health levels (indexed by Subsystem enum).
+    /// Sized to 16 for ABI stability — reserves room for future subsystems
+    /// beyond the current Subsystem::COUNT (13). Unused slots read as 0 (Normal).
     pub health: [u8; 16],
     /// System-wide health (worst of all subsystems).
     pub system_health: u8,
@@ -768,15 +781,18 @@ The seqlock pattern requires no atomic RMW on the reader side — just two `load
 
 When the Inspector and AIRS security infrastructure is implemented in Phase 13, the existing `AuditRead` syscall is extended with a `Scope::Operational` variant:
 
+The existing `Scope` enum used by `AuditRead` is extended with an `Operational` variant:
+
 ```rust
-pub enum AuditScope {
-    /// Read the agent's own provenance records (default for untrusted agents).
+/// Extended from the existing Scope enum in ipc.md.
+pub enum Scope {
+    /// Read the agent's own provenance records (existing).
     Own,
-    /// Read all provenance records (requires AuditRead capability).
+    /// Read all provenance records (existing, requires AuditRead capability).
     All,
     /// Read operational telemetry: log entries, metric snapshots, health.
-    /// Requires AuditRead capability. Returns data from the operational
-    /// ring buffers, not from the provenance Merkle chain.
+    /// New variant. Requires AuditRead capability. Returns data from the
+    /// operational ring buffers, not from the provenance Merkle chain.
     Operational,
 }
 ```
