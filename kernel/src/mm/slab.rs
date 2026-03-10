@@ -214,6 +214,9 @@ impl SlabCache {
             // Try once more after growing
             while refilled < MAGAZINE_SIZE && self.free_head != 0 {
                 let slot_addr = self.free_head;
+                // SAFETY: free_head points to a free slot whose first 8 bytes
+                // contain the next pointer. The slot is in a buddy-allocated page
+                // (just allocated by grow() above).
                 self.free_head = core::ptr::read(slot_addr as *const usize);
 
                 let user_ptr = (slot_addr + rz) as *mut u8;

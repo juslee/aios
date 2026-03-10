@@ -225,7 +225,6 @@ pub unsafe fn map_user_page(as_: &mut UserAddressSpace, va: usize, pa: usize, fl
 /// # Safety
 /// `target` must have a valid, initialized PGD.
 pub unsafe fn switch_address_space(target: &UserAddressSpace) {
-    let _old_asid = CURRENT_ASID.load(Ordering::Relaxed);
     let ttbr0_val = ((target.asid.value as u64) << 48) | (target.pgd_phys as u64);
 
     // SAFETY: Writing TTBR0_EL1 switches user-space page tables.
