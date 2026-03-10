@@ -20,6 +20,8 @@ pub mod pools;
 pub mod slab;
 #[allow(dead_code)]
 pub mod tlb;
+#[allow(dead_code)]
+pub mod uspace;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicBool, Ordering};

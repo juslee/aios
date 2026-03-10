@@ -1,11 +1,11 @@
 //! Exception vector table and boot diagnostics for aarch64.
 //!
-//! Phase 0: All 16 vector table entries branch-to-self (halt on exception).
-//! Phase 1 replaces stubs with real exception handlers.
-//!
 //! The boot.S stub vectors serve as a safety net for the window between `_start`
-//! and `kernel_main`. This Rust-owned table is installed from `kernel_main` and
-//! is where Phase 1+ exception handlers will be added.
+//! and `kernel_main`. This Rust-owned table is installed from `kernel_main`.
+//!
+//! Current EL with SP_ELx synchronous handler: reads ESR_EL1/FAR_EL1 and
+//! prints diagnostics for data/instruction aborts (guard page faults).
+//! All other vector entries halt on exception.
 
 use core::arch::global_asm;
 
@@ -30,13 +30,26 @@ global_asm!(
     ".balign 128",
     "    b .",
     "",
-    "// Current EL with SP_ELx",
+    "// Current EL with SP_ELx — Synchronous",
+    ".balign 128",
+    "    stp x29, x30, [sp, #-16]!",
+    "    stp x0, x1, [sp, #-16]!",
+    "    stp x2, x3, [sp, #-16]!",
+    "    mrs x0, ESR_EL1",
+    "    mrs x1, FAR_EL1",
+    "    mrs x2, ELR_EL1",
+    "    bl sync_exception_handler",
+    "    ldp x2, x3, [sp], #16",
+    "    ldp x0, x1, [sp], #16",
+    "    ldp x29, x30, [sp], #16",
+    "    b .", // halt after handler (no eret for now)
+    "// Current EL with SP_ELx — IRQ",
     ".balign 128",
     "    b .",
+    "// Current EL with SP_ELx — FIQ",
     ".balign 128",
     "    b .",
-    ".balign 128",
-    "    b .",
+    "// Current EL with SP_ELx — SError",
     ".balign 128",
     "    b .",
     "",
@@ -104,6 +117,62 @@ pub fn install_vector_table() -> u64 {
         );
     }
     addr
+}
+
+/// Synchronous exception handler called from the vector table.
+///
+/// Decodes ESR_EL1 to identify the exception class and prints diagnostics.
+/// Uses direct putc() instead of println!() to avoid recursive faults when
+/// TTBR0 has been switched away from the identity map.
+#[no_mangle]
+extern "C" fn sync_exception_handler(esr: u64, far: u64, elr: u64) {
+    use crate::arch::aarch64::uart::putc;
+
+    let ec = (esr >> 26) & 0x3F;
+
+    // Print using only putc — safe even when TTBR0 is switched
+    put_str("EXCEPTION: ESR=0x");
+    put_hex(esr);
+    put_str(" EC=0x");
+    put_hex(ec);
+    put_str(" FAR=0x");
+    put_hex(far);
+    put_str(" ELR=0x");
+    put_hex(elr);
+    putc(b'\r');
+    putc(b'\n');
+
+    match ec {
+        0x24 | 0x25 => {
+            put_str("  Data Abort at 0x");
+            put_hex(far);
+            putc(b'\r');
+            putc(b'\n');
+        }
+        0x20 | 0x21 => {
+            put_str("  Instruction Abort at 0x");
+            put_hex(far);
+            putc(b'\r');
+            putc(b'\n');
+        }
+        _ => {}
+    }
+}
+
+/// Print a string using direct putc (no formatting machinery).
+fn put_str(s: &str) {
+    for b in s.bytes() {
+        crate::arch::aarch64::uart::putc(b);
+    }
+}
+
+/// Print a 64-bit value as hex using direct putc.
+fn put_hex(val: u64) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for i in (0..16).rev() {
+        let nibble = ((val >> (i * 4)) & 0xF) as usize;
+        crate::arch::aarch64::uart::putc(HEX[nibble]);
+    }
 }
 
 /// Read the current `VBAR_EL1` value.

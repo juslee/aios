@@ -240,7 +240,7 @@ _start:
     //                  = 0xFFFE_FFFF_C000_0000
     //
     // After `br x2`, instruction fetches go through TTBR1 (upper-half VA).
-    // Stack pointer remains physical (lower-half), accessed via TTBR0.
+    // Stack pointer is converted to virtual below (same offset as code).
     // ─────────────────────────────────────────────────────────────────────
     adrp    x2, kernel_main
     add     x2, x2, :lo12:kernel_main       // x2 = physical addr of kernel_main
@@ -250,6 +250,12 @@ _start:
     movk    x3, #0xFFFF, lsl #32
     movk    x3, #0xC000, lsl #16
     add     x2, x2, x3                      // x2 = virtual addr of kernel_main
+
+    // Convert SP from physical to virtual — x3 still has VIRT_PHYS_OFFSET.
+    // The boot TTBR1 covers the stack region (within first 2MB block at
+    // PA 0x40000000 → VA 0xFFFF_0000_0000_0000). Without this, any stack
+    // access after TTBR0 is switched to a user PGD would fault.
+    add     sp, sp, x3
 
     mov     x0, x19                          // x0 = BootInfo pointer (physical)
     br      x2                               // Branch to virtual kernel_main

@@ -173,6 +173,53 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         println!("[boot] No framebuffer available — skipping display");
     }
 
+    // --- Step 10: Per-agent address spaces ---
+    // Test TTBR0 switching after all boot steps that need the identity map.
+    // Switch UART to TTBR1 MMIO mapping before TTBR0 is repurposed.
+    crate::arch::aarch64::uart::update_base(crate::arch::aarch64::mmu::MMIO_BASE + 0x0900_0000);
+
+    {
+        use crate::mm::uspace;
+
+        // SAFETY: Frame allocator and TTBR1 direct map are initialized.
+        let mut as_a = unsafe { uspace::create_user_address_space("A") };
+        let mut as_b = unsafe { uspace::create_user_address_space("B") };
+
+        // Map a test page into each at USER_DATA_BASE
+        let test_pa_a = crate::mm::frame::alloc_page().expect("test page A");
+        let test_pa_b = crate::mm::frame::alloc_page().expect("test page B");
+        // SAFETY: Frame allocator pages are valid physical addresses.
+        // TTBR1 direct map is active for page table construction.
+        unsafe {
+            uspace::map_user_page(
+                &mut as_a,
+                uspace::USER_DATA_BASE,
+                test_pa_a,
+                crate::mm::pgtable::VmFlags::READ
+                    | crate::mm::pgtable::VmFlags::WRITE
+                    | crate::mm::pgtable::VmFlags::USER,
+            );
+            uspace::map_user_page(
+                &mut as_b,
+                uspace::USER_DATA_BASE,
+                test_pa_b,
+                crate::mm::pgtable::VmFlags::READ
+                    | crate::mm::pgtable::VmFlags::WRITE
+                    | crate::mm::pgtable::VmFlags::USER,
+            );
+        }
+
+        // Switch between address spaces (verifies TTBR0 programming doesn't fault)
+        // SAFETY: Both address spaces have valid PGDs with mapped pages.
+        unsafe {
+            println!("[mm] TTBR0 switch: ASID 0 -> ASID 1");
+            uspace::switch_address_space(&as_a);
+            println!("[mm] TTBR0 switch: ASID 1 -> ASID 2");
+            uspace::switch_address_space(&as_b);
+        }
+        println!("[mm] Address space switching verified");
+    }
+
     println!("[boot] Boot sequence complete, entering idle loop");
 
     loop {
