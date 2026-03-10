@@ -132,7 +132,8 @@ When implementing Phase N:
 
 9. **PR** after audits pass clean: push branch, create PR to `main`
    - One PR per milestone — keeps reviews small and focused
-   - After PR creation: check Copilot/reviewer comments, fix issues, reply and resolve conversations
+   - After PR creation: wait 3–7 minutes for Copilot/automated reviewers to post comments
+   - Check Copilot/reviewer comments, fix issues, reply and resolve conversations
    - Merge to `main` before starting the next milestone
 
 **BLOCKED?** Read the referenced architecture doc section. Architecture docs are the source of truth. Never invent register offsets, struct fields, or memory addresses.
