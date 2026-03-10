@@ -95,7 +95,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 **Tasks:**
 - [ ] Create `kernel/src/task/mod.rs` — `Thread` struct with `ThreadId`, `ThreadContext` (GP regs x0–x30, SP_EL0, ELR_EL1, SPSR_EL1, TTBR0, per-thread timer state), `FpContext` (v0–v31, FPCR, FPSR) (scheduler.md §4.1)
-- [ ] Define `ThreadState` enum: `Runnable`, `Running`, `BlockedIpc { channel: ChannelId }`, `BlockedTimer { wake_at: u64 }`, `BlockedIo`, `Suspended`, `Dead` (scheduler.md §3.3)
+- [ ] Define `ThreadState` enum: `Runnable`, `Running`, `BlockedIpc { channel: ChannelId }`, `BlockedTimer { wake_at: Timestamp }`, `BlockedIo`, `Suspended`, `Dead` (scheduler.md §3.3)
 - [ ] Define `SchedEntity` — `thread_id`, `agent_id`, `class` (`SchedulerClass` enum: RealTime/Interactive/Normal/Idle), `priority` (u8), `deadline` (Option), `cpu_quota`, `vruntime` (u64), `time_slice_remaining`, `effective_class`/`effective_priority`, `inherited_class`/`inherited_priority`/`inherited_deadline`, `affinity` (CpuSet), `state` (scheduler.md §3.3)
 - [ ] Create `kernel/src/task/process.rs` — `ProcessControl` struct: `pid` (ProcessId), `address_space` (UserAddressSpace from Phase 2 `uspace.rs`), `capability_table`, `resource_limits` (KernelResourceLimits), `threads` list (ipc.md §3.3)
 - [ ] Define `KernelResourceLimits` — `max_channels`, `max_shared_regions`, `max_pending_messages`, `max_notification_subscriptions`, `max_child_processes` with trust-level defaults (ipc.md §3.3)
@@ -130,7 +130,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 ### Step 4: Timer Tick and Preemption Support
 
-**What:** Wire the ARM Generic Timer to fire IRQs at 1 kHz. The IRQ handler updates tick counters, calls the UART log drain, and sets the `need_resched` flag on the current thread. Implement `TimeGet` and `TimeSleep` syscalls.
+**What:** Wire the ARM Generic Timer to fire IRQs at 1 kHz. The IRQ handler updates tick counters, calls the UART log drain, and sets the `need_resched` flag on the current thread. Implement `TimeGet`, `TimeSleep`, and `TimerSet` syscalls.
 
 **Tasks:**
 - [ ] Wire GICv3 IRQ handler in exception vector table: "Current EL with SP_ELx — IRQ" entry saves minimal state, reads IAR, dispatches to `irq_handler`
@@ -138,11 +138,12 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 - [ ] `timer_tick_handler` in `timer.rs`: rearm timer for next 1 ms tick (62500 counts at 62.5 MHz), increment global tick counter, call `observability::drain_logs()`, set `need_resched` flag on current thread's `SchedEntity`
 - [ ] Implement `TimeGet` syscall: reads `CNTVCT_EL0`, returns monotonic nanoseconds
 - [ ] Implement `TimeSleep` syscall: computes `wake_at = now + duration`, sets thread state to `BlockedTimer`, triggers reschedule (stub: immediately returns until scheduler is wired in Step 5)
+- [ ] Implement `TimerSet` syscall: sets a one-shot or repeating timer that wakes `IpcSelect`; stub returns `ENOTSUP` until `IpcSelect` is wired in Step 10 (ipc.md §3.1)
 - [ ] Metric instrumentation: increment `KernelMetrics.irq_timer` on every tick
 - [ ] Enable timer interrupts on boot CPU: unmask `DAIF.I` after VBAR and GIC init
 - [ ] Enable timer interrupts on secondary cores via `init_gicv3_secondary` (existing from Phase 1)
 
-**Key reference:** [scheduler.md §10](../kernel/scheduler.md) — Timer and Preemption; [observability.md §2.7](../kernel/observability.md) — UART Drain; [ipc.md §3.1](../kernel/ipc.md) — TimeGet, TimeSleep
+**Key reference:** [scheduler.md §10](../kernel/scheduler.md) — Timer and Preemption; [observability.md §2.7](../kernel/observability.md) — UART Drain; [ipc.md §3.1](../kernel/ipc.md) — TimeGet, TimeSleep, TimerSet
 
 **Acceptance:** `just run` shows periodic structured log drain output from the timer tick (log entries appear at regular intervals, not just at boot). Timer tick counter increments visibly in log output. `just check` passes.
 
@@ -178,19 +179,22 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 ### Step 6: IPC Channels and Synchronous Call/Reply
 
-**What:** Implement Channel, `ChannelCreate`/`ChannelDestroy` syscalls, `IpcCall` with mandatory timeout, `IpcRecv`, `IpcReply`, and `IpcCancel`. Message queue is a fixed-size ring buffer. No capability enforcement yet — that comes in Step 8.
+**What:** Implement Channel, `ChannelCreate`/`ChannelDestroy` syscalls, `IpcCall` with mandatory timeout, `IpcSend` (async fire-and-forget), `IpcRecv`, `IpcReply`, and `IpcCancel`. Message queue is a fixed-size ring buffer. No capability enforcement yet — that comes in Step 8.
 
 **Tasks:**
 - [ ] Create `kernel/src/ipc/mod.rs` — `Channel` struct: `id` (ChannelId), `endpoint_a`/`endpoint_b` (ProcessId), `state_a`/`state_b` (EndpointState), `message_queue` (RingBuffer of RawMessage), `stats` (ChannelStatsData) (ipc.md §4.1)
 - [ ] Implement `RingBuffer<RawMessage>` with fixed capacity (from `ChannelFlags.queue_depth`, default 64)
-- [ ] Implement `RawMessage`: channel, message_type (u32), inline data buffer (up to 256 bytes), capability and shared memory arrays (fixed-size, max 4 each) (ipc.md §4.3)
+- [ ] Implement `RawMessage`: channel, message_type (u32), data pointer (`*const u8`) with length, capability and shared memory arrays (fixed-size, max 4 each) (ipc.md §4.3)
 - [ ] Global `CHANNEL_TABLE`: bounded slab-allocated array of `Channel` objects
 - [ ] `ChannelCreate` syscall: allocates Channel, returns `ChannelId` (ipc.md §3.1)
 - [ ] `ChannelDestroy` syscall: marks endpoint as `Dead`, unblocks peer with `EPIPE` (ipc.md §4.1)
 - [ ] `IpcCall` syscall: validates channel, copies message from user buffer to kernel `RawMessage`. If receiver is `BlockedIpc` on this channel, trigger direct switch (Step 7). Otherwise enqueue message, block sender with mandatory timeout. On timeout expiry, unblock sender with `ETIMEDOUT` (ipc.md §4.2; deadlock-prevention.md §4)
 - [ ] `IpcRecv` syscall: if message in queue, dequeue and copy to user buffer, return. Otherwise block with timeout (ipc.md §4.2)
 - [ ] `IpcReply` syscall: kernel tracks pending caller per channel, copies reply to caller's buffer, unblocks caller (ipc.md §4.2)
+- [ ] `IpcSend` syscall: enqueue message without blocking for reply; returns `EAGAIN` if queue full (ipc.md §3.1, §4.2)
 - [ ] `IpcCancel` syscall: if caller is blocked, unblock with `ECANCELED` (ipc.md §3.1)
+- [ ] Implement `ChannelStats` syscall: copies `ChannelStatsData` for a given channel to user buffer (ipc.md §3.1)
+- [ ] Stub `RingChannelCreate` and `RingChannelDestroy` syscalls: return `ENOTSUP` — ring buffer channels are deferred to a later phase when high-frequency streaming IPC is needed (ipc.md §3.1)
 - [ ] Peer death cleanup: when process dies, all its channel endpoints set to `Dead`, all blocked peers unblocked with `EPIPE`
 - [ ] Metric instrumentation: `KernelMetrics.ipc_call`, `ipc_send`, `ipc_recv`, `ipc_timeout`; update `ChannelStatsData` per operation
 
@@ -221,13 +225,13 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 ### Step 8: Capability System and IPC Enforcement
 
-**What:** Implement `CapabilityToken`, `CapabilityScope`, per-process `CapabilityTable`, and wire capability checks into every IPC channel operation. Implement `CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList` syscalls.
+**What:** Implement `CapabilityToken`, `Capability` enum (Phase 3 subset), per-process `CapabilityTable`, and wire capability checks into every IPC channel operation. Implement `CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList` syscalls.
 
 **Tasks:**
-- [ ] Create `kernel/src/cap/mod.rs` — `CapabilityToken`: `id` (CapabilityTokenId), `holder` (ProcessId), `scope` (CapabilityScope), `delegatable` (bool), `expiry` (Option<u64>) (security.md §3.1)
-- [ ] Define `CapabilityScope` enum: `ChannelCreate`, `ChannelAccess(ChannelId)`, `SharedMemoryCreate`, `SharedMemoryAccess(SharedMemoryId)`, `SpawnAgent`, `DebugPrint`, plus future-reserved variants (`ReadSpace`, `WriteSpace`, `Network`, `Inference` — stubs for later phases) (security.md §2.2)
-- [ ] Per-process `CapabilityTable`: fixed-size array `[Option<CapabilityToken>; 128]` per `ProcessControl` (security.md §3.2)
-- [ ] Wire capability enforcement into IPC syscalls: `ChannelCreate` requires `ChannelCreate` scope; `IpcCall`/`IpcSend`/`IpcRecv`/`IpcReply` require `ChannelAccess(channel_id)` scope; `ChannelDestroy` requires `ChannelAccess`. Return `EPERM` (-6) on missing capability (ipc.md §8.3)
+- [ ] Create `kernel/src/cap/mod.rs` — `CapabilityToken`: `id` (CapabilityTokenId), `holder` (ProcessId), `capability` (Capability), `delegatable` (bool), `expiry` (Option<Timestamp>) (security.md §3.1). **Note:** security.md uses the field name `capability` with type `Capability`; this phase implements a Phase 3 subset of the full `Capability` enum.
+- [ ] Define `Capability` enum (Phase 3 subset): `ChannelCreate`, `ChannelAccess(ChannelId)`, `SharedMemoryCreate`, `SharedMemoryAccess(SharedMemoryId)`, `SpawnAgent`, `DebugPrint`, plus future-reserved variants (`ReadSpace`, `WriteSpace`, `Network`, `Inference` — stubs for later phases) (security.md §2.2)
+- [ ] Per-process `CapabilityTable`: fixed-size array `[Option<CapabilityToken>; 256]` per `ProcessControl` (security.md §3.2, `MAX_CAPS_PER_AGENT = 256`)
+- [ ] Wire capability enforcement into IPC syscalls: `ChannelCreate` requires `Capability::ChannelCreate`; `IpcCall`/`IpcSend`/`IpcRecv` require `Capability::ChannelAccess(channel_id)`; `IpcReply` does NOT require a channel capability (kernel tracks the caller per ipc.md §3.1); `ChannelDestroy` requires `ChannelAccess`. Return `EPERM` (-6) on missing capability (ipc.md §8.3)
 - [ ] `Channel.creation_capability` field: on `CapabilityRevoke`, kernel walks `CHANNEL_TABLE` and destroys channels whose `creation_capability` was revoked (ipc.md §4.6)
 - [ ] `CapabilityTransfer` syscall: verify caller holds cap, verify `delegatable`, move or clone to receiver via channel (ipc.md §4.6; security.md §3.5)
 - [ ] `CapabilityAttenuate` syscall: create new cap with subset scope from existing cap (e.g., reduce permissions, add expiry) (security.md §3.3)
@@ -250,16 +254,17 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 ### Step 9: Shared Memory Manager
 
-**What:** Implement `SharedMemoryRegion`, `SharedMemoryCreate`/`SharedMemoryMap`/`SharedMemoryShare` syscalls (plus `MemoryUnmap` for shared region teardown), reference-counted lifecycle, and cleanup on process death.
+**What:** Implement `SharedMemoryRegion`, `SharedMemoryCreate`/`SharedMemoryMap`/`SharedMemoryShare`/`MemoryMap`/`MemoryUnmap` syscalls, reference-counted shared memory lifecycle, and cleanup on process death.
 
 **Tasks:**
 - [ ] Create `kernel/src/ipc/shmem.rs` — `SharedMemoryRegion`: `id` (SharedMemoryId), `physical_pages` (PageRange from frame allocator, Pool::User), `ref_count` (AtomicU32), `creator` (ProcessId), `max_flags` (VmFlags), `mappings` array `[Option<SharedMapping>; 8]`, `capability` (CapabilityTokenId) (ipc.md §4.5)
 - [ ] `SharedMapping`: `process` (ProcessId), `vaddr` (VirtualAddress), `flags` (VmFlags, must be subset of `max_flags`)
 - [ ] Global `SHARED_REGION_TABLE`: bounded slab-allocated array
-- [ ] `SharedMemoryCreate` syscall: allocates physical pages from Pool::User via frame allocator, creates region, `ref_count = 1`, capability check (`SharedMemoryCreate` scope) (ipc.md §4.5)
+- [ ] `SharedMemoryCreate` syscall: allocates physical pages from Pool::User via frame allocator, creates region, `ref_count = 1`, capability check (`Capability::SharedMemoryCreate`) (ipc.md §4.5)
 - [ ] `SharedMemoryMap` syscall: maps region pages into caller's address space via Phase 2 `uspace::map_user_page`, increments `ref_count`, records mapping (ipc.md §4.5)
-- [ ] `SharedMemoryShare` syscall: sends region ID through channel (capability check: `SharedMemoryAccess` + `ChannelAccess`), with flags attenuation (read-only share supported via `flags` parameter that must be subset of `max_flags`) (ipc.md §4.5)
-- [ ] `MemoryUnmap` for shared regions: unmaps from caller's page table, decrements `ref_count`, frees pages if `ref_count` reaches 0 (ipc.md §4.5; `MemoryUnmap` in §3.1 handles both private and shared mappings)
+- [ ] `SharedMemoryShare` syscall: sends region ID through channel (capability check: `Capability::SharedMemoryAccess` + `Capability::ChannelAccess`), with flags attenuation (read-only share supported via `flags` parameter that must be subset of `max_flags`) (ipc.md §4.5)
+- [ ] `MemoryMap` syscall: allocates virtual memory in caller's address space with specified flags (ipc.md §3.1). Builds on Phase 2 `uspace::map_user_page`; W^X enforced
+- [ ] `MemoryUnmap` for shared and private regions: unmaps from caller's page table, decrements `ref_count` for shared regions, frees pages if `ref_count` reaches 0 (ipc.md §3.1, §4.5; `MemoryUnmap` handles both private and shared mappings)
 - [ ] Process death cleanup: iterate process's shared memory mappings, unmap all, decrement `ref_count`, free pages when 0
 - [ ] W^X enforcement: shared memory cannot be mapped WRITE + EXECUTE simultaneously (memory.md §9.1)
 
@@ -297,6 +302,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 - [ ] Implement `ProcessExit` syscall: marks process as dead, cleans up all channels (`EPIPE`), shared memory (unmap/deref), capabilities (revoke derived), threads (set `Dead`) (ipc.md §3.1)
 - [ ] Implement `ProcessWait` syscall: block until child exits, return exit code (ipc.md §3.1)
 - [ ] Service manager bootstrap: at end of kernel boot, service manager creates a "test service" process with a channel to the boot process. Test service enters `IpcRecv` loop, echoes messages (ipc.md §5.4)
+- [ ] Implement `AuditLog` syscall: validates user pointer, copies event to kernel audit ring buffer, tags with caller's process ID and timestamp (ipc.md §3.1)
 - [ ] Service restart detection: when a service process exits, service manager is notified, can recreate channels (ipc.md §5.5)
 - [ ] Load balancer (basic): periodic 4 ms balance check, migrate threads from overloaded to underloaded CPUs using ascending CPU ID lock ordering (scheduler.md §9.1; deadlock-prevention.md §3)
 - [ ] Trace instrumentation: `trace_point!(SchedMigrate { tid, from_core, to_core })` (observability.md §4.2)
@@ -352,7 +358,7 @@ just run     → boot log shows: structured logging, scheduler running, IPC benc
 |---|---|---|---|
 | Run queue data structures | Step 5 | Sorted arrays vs intrusive red-black trees | Sorted arrays are simpler and sufficient for small thread counts; RB-trees scale better but add complexity. Can upgrade in Phase 14. |
 | IPC message inline size | Step 6 | 64 bytes (register-only) vs 256 bytes (buffer copy) | 64-byte register path is fastest; 256-byte inline avoids shared memory for medium messages. Both are needed. |
-| Capability table storage | Step 8 | Fixed array (128 slots) vs slab-backed growable | Fixed array is predictable (no heap allocation during cap operations); 128 is sufficient for Phase 3. |
+| Capability table storage | Step 8 | Fixed array (256 slots per security.md §3.2) vs slab-backed growable | Fixed array is predictable (no heap allocation during cap operations); 256 matches security.md `MAX_CAPS_PER_AGENT`. |
 | Shared memory page source | Step 9 | Pool::User vs Pool::Kernel | User pool is correct — shared memory is for agent data, not kernel structures. Kernel pool reserved for page tables and slab. |
 | Load balancer frequency | Step 11 | 4 ms (every 4 ticks) vs adaptive | Fixed 4 ms is simple and matches architecture spec. Adaptive adds complexity for marginal gain at low core counts. |
 | Gate 1 threshold | Step 12 | Strict (< 5 μs IPC) vs relaxed (< 10 μs) | Gate uses relaxed threshold (< 10 μs); target (< 5 μs) is for post-optimization in Phase 14. |
