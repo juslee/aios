@@ -15,6 +15,7 @@ use crate::task::{
     CpuSet, SchedulerClass, Thread, ThreadContext, ThreadId, ThreadState, CURRENT_THREAD,
     MAX_THREADS, THREAD_TABLE,
 };
+use shared::FixedQueue;
 use spin::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -31,63 +32,18 @@ const IDLE_SLICE_NS: u64 = 50_000_000; // 50ms
 const NS_PER_TICK: u64 = 1_000_000;
 
 // ---------------------------------------------------------------------------
-// FixedQueue — circular buffer of ThreadIds
+// Per-CPU RunQueue (uses shared::FixedQueue<T, N>)
 // ---------------------------------------------------------------------------
 
-/// Simple FIFO circular buffer for run queue entries.
-struct FixedQueue {
-    buf: [Option<ThreadId>; MAX_THREADS],
-    head: usize,
-    tail: usize,
-    len: usize,
-}
-
-impl FixedQueue {
-    const fn new() -> Self {
-        Self {
-            buf: [None; MAX_THREADS],
-            head: 0,
-            tail: 0,
-            len: 0,
-        }
-    }
-
-    fn push_back(&mut self, tid: ThreadId) -> bool {
-        if self.len >= MAX_THREADS {
-            return false;
-        }
-        self.buf[self.tail] = Some(tid);
-        self.tail = (self.tail + 1) % MAX_THREADS;
-        self.len += 1;
-        true
-    }
-
-    fn pop_front(&mut self) -> Option<ThreadId> {
-        if self.len == 0 {
-            return None;
-        }
-        let tid = self.buf[self.head].take();
-        self.head = (self.head + 1) % MAX_THREADS;
-        self.len -= 1;
-        tid
-    }
-
-    #[allow(dead_code)]
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Per-CPU RunQueue
-// ---------------------------------------------------------------------------
+/// Type alias for scheduler queue (ThreadId elements, MAX_THREADS capacity).
+type SchedQueue = FixedQueue<ThreadId, MAX_THREADS>;
 
 /// Per-CPU run queue with 4 scheduling classes.
 struct RunQueue {
-    rt: FixedQueue,
-    interactive: FixedQueue,
-    normal: FixedQueue,
-    idle: FixedQueue,
+    rt: SchedQueue,
+    interactive: SchedQueue,
+    normal: SchedQueue,
+    idle: SchedQueue,
 }
 
 impl RunQueue {
@@ -124,7 +80,7 @@ impl RunQueue {
     }
 
     fn total_depth(&self) -> usize {
-        self.rt.len + self.interactive.len + self.normal.len + self.idle.len
+        self.rt.len() + self.interactive.len() + self.normal.len() + self.idle.len()
     }
 }
 

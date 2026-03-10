@@ -260,6 +260,71 @@ impl MemoryDescriptor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// FixedQueue — generic circular buffer (used by scheduler run queues)
+// ---------------------------------------------------------------------------
+
+/// Simple FIFO circular buffer with compile-time capacity.
+///
+/// Used by the scheduler for per-class run queues. Generic over element type
+/// and capacity so it can be tested on the host and reused across subsystems.
+pub struct FixedQueue<T: Copy, const N: usize> {
+    buf: [Option<T>; N],
+    head: usize,
+    tail: usize,
+    len: usize,
+}
+
+impl<T: Copy, const N: usize> Default for FixedQueue<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Copy, const N: usize> FixedQueue<T, N> {
+    /// Create an empty queue.
+    pub const fn new() -> Self {
+        Self {
+            buf: [None; N],
+            head: 0,
+            tail: 0,
+            len: 0,
+        }
+    }
+
+    /// Push an element to the back. Returns false if full.
+    pub fn push_back(&mut self, val: T) -> bool {
+        if self.len >= N {
+            return false;
+        }
+        self.buf[self.tail] = Some(val);
+        self.tail = (self.tail + 1) % N;
+        self.len += 1;
+        true
+    }
+
+    /// Pop an element from the front. Returns None if empty.
+    pub fn pop_front(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return None;
+        }
+        let val = self.buf[self.head].take();
+        self.head = (self.head + 1) % N;
+        self.len -= 1;
+        val
+    }
+
+    /// Returns true if the queue is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the number of elements in the queue.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,5 +486,123 @@ mod tests {
         assert!(MemoryPressure::Normal < MemoryPressure::Low);
         assert!(MemoryPressure::Low < MemoryPressure::Critical);
         assert!(MemoryPressure::Critical < MemoryPressure::Oom);
+    }
+
+    // ── FixedQueue tests ────────────────────────────────────────────────
+
+    #[test]
+    fn queue_empty_on_new() {
+        let q = FixedQueue::<u32, 8>::new();
+        assert!(q.is_empty());
+        assert_eq!(q.len(), 0);
+    }
+
+    #[test]
+    fn queue_push_pop_basic() {
+        let mut q = FixedQueue::<u32, 8>::new();
+        assert!(q.push_back(10));
+        assert!(q.push_back(20));
+        assert!(q.push_back(30));
+        assert_eq!(q.len(), 3);
+        assert!(!q.is_empty());
+
+        assert_eq!(q.pop_front(), Some(10));
+        assert_eq!(q.pop_front(), Some(20));
+        assert_eq!(q.pop_front(), Some(30));
+        assert_eq!(q.pop_front(), None);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn queue_fifo_order() {
+        let mut q = FixedQueue::<u32, 64>::new();
+        for i in 0..50 {
+            assert!(q.push_back(i));
+        }
+        for i in 0..50 {
+            assert_eq!(q.pop_front(), Some(i));
+        }
+    }
+
+    #[test]
+    fn queue_full_rejects() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        assert!(q.push_back(1));
+        assert!(q.push_back(2));
+        assert!(q.push_back(3));
+        assert!(q.push_back(4));
+        assert!(!q.push_back(5)); // full
+        assert_eq!(q.len(), 4);
+    }
+
+    #[test]
+    fn queue_wraparound() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        // Fill and drain twice to force head/tail wrap.
+        for round in 0..3 {
+            let base = round * 10;
+            assert!(q.push_back(base + 1));
+            assert!(q.push_back(base + 2));
+            assert!(q.push_back(base + 3));
+            assert_eq!(q.pop_front(), Some(base + 1));
+            assert_eq!(q.pop_front(), Some(base + 2));
+            assert_eq!(q.pop_front(), Some(base + 3));
+            assert!(q.is_empty());
+        }
+    }
+
+    #[test]
+    fn queue_interleaved_push_pop() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        // Push 2, pop 1, push 2, pop 1 — tests wrap with partial fill.
+        assert!(q.push_back(1));
+        assert!(q.push_back(2));
+        assert_eq!(q.pop_front(), Some(1));
+        assert!(q.push_back(3));
+        assert!(q.push_back(4));
+        assert_eq!(q.pop_front(), Some(2));
+        assert!(q.push_back(5));
+        assert_eq!(q.pop_front(), Some(3));
+        assert_eq!(q.pop_front(), Some(4));
+        assert_eq!(q.pop_front(), Some(5));
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn queue_capacity_1() {
+        let mut q = FixedQueue::<u32, 1>::new();
+        assert!(q.push_back(42));
+        assert!(!q.push_back(99));
+        assert_eq!(q.pop_front(), Some(42));
+        assert!(q.push_back(99));
+        assert_eq!(q.pop_front(), Some(99));
+    }
+
+    #[test]
+    fn queue_pop_empty() {
+        let mut q = FixedQueue::<u32, 8>::new();
+        assert_eq!(q.pop_front(), None);
+        assert_eq!(q.pop_front(), None);
+        // Push then drain, pop again.
+        q.push_back(1);
+        q.pop_front();
+        assert_eq!(q.pop_front(), None);
+    }
+
+    #[test]
+    fn queue_fill_drain_cycles() {
+        let mut q = FixedQueue::<u32, 8>::new();
+        // Repeated fill-to-capacity, drain-to-empty cycles.
+        for cycle in 0..10u32 {
+            for i in 0..8 {
+                assert!(q.push_back(cycle * 100 + i));
+            }
+            assert!(!q.push_back(999)); // full
+            assert_eq!(q.len(), 8);
+            for i in 0..8 {
+                assert_eq!(q.pop_front(), Some(cycle * 100 + i));
+            }
+            assert!(q.is_empty());
+        }
     }
 }
