@@ -110,20 +110,29 @@ When implementing Phase N:
    - For QEMU output: match exact strings in acceptance criteria
    - For objdump: check section addresses match linker script values
 
-6. **UPDATE ALL DOCS** after each milestone:
+6. **COMMIT + PUSH** after each step completes:
+   - Format: `Phase N MK: Step X — <step description>`
+   - Example: `Phase 2 M8: Step 4 — page table infrastructure`
+   - Commit and push immediately after each step passes verification
+   - Do not batch multiple steps into a single commit
+
+7. **UPDATE ALL DOCS** after each milestone:
    - **CLAUDE.md**: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
    - **README.md**: Project Structure, Build Commands, status text — anything that changed
    - **Phase doc** (`docs/phases/NN-*.md`): Check off completed task boxes (`[ ]` → `[x]`), update Status field (e.g. "In Progress (M4 complete)")
    - **Phase Completion Criteria**: Check off the completed milestone checkbox
    - **Architecture docs** (`docs/kernel/*.md`, `docs/project/*.md`, etc.): Update any referenced architecture docs if the implementation revealed corrections, new facts, or deviations from the spec
 
-7. **COMMIT** after each Milestone completes:
-   - Format: `Phase N MK: <Milestone name>`
-   - Example: `Phase 0 M1: Compiles — aarch64 ELF with zero warnings`
-   - Include CLAUDE.md updates in the same commit
+8. **AUDIT** after all steps complete, before PR — run recursively until all reach 0 issues:
+   - **Doc audit**: Cross-reference errors, technical accuracy, naming consistency in all modified docs
+   - **Code review**: Convention compliance, unsafe documentation, W^X, naming, dead code
+   - **Security/bug review**: Logic errors, address confusion (virt vs phys), PTE bit correctness, race conditions
+   - Fix all genuine issues found, commit, and re-run all three audits
+   - Repeat until a full round returns 0 issues across all three categories
 
-8. **PR** after each milestone completes: push branch, create PR to `main`
+9. **PR** after audits pass clean: push branch, create PR to `main`
    - One PR per milestone — keeps reviews small and focused
+   - After PR creation: check Copilot/reviewer comments, fix issues, reply and resolve conversations
    - Merge to `main` before starting the next milestone
 
 **BLOCKED?** Read the referenced architecture doc section. Architecture docs are the source of truth. Never invent register offsets, struct fields, or memory addresses.
