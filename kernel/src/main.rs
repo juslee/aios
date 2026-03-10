@@ -176,7 +176,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // --- Step 10: Per-agent address spaces ---
     // Test TTBR0 switching after all boot steps that need the identity map.
     // Switch UART to TTBR1 MMIO mapping before TTBR0 is repurposed.
-    crate::arch::aarch64::uart::update_base(crate::arch::aarch64::mmu::MMIO_BASE + 0x0900_0000);
+    crate::arch::aarch64::uart::update_base(
+        crate::arch::aarch64::mmu::MMIO_BASE + crate::arch::aarch64::uart::UART_PHYS,
+    );
 
     {
         use crate::mm::uspace;

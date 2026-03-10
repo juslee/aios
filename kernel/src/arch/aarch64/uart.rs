@@ -17,8 +17,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 // Phase 2 enables WB cacheable memory, making spinlocks safe.
 // Brief interleaved output during SMP bringup is acceptable for Phase 1.
 
+/// PL011 UART physical base address on QEMU virt (hal.md §4.3).
+pub const UART_PHYS: usize = 0x0900_0000;
+
 /// Current UART base address — starts with QEMU default, updated after DTB parse.
-static UART_BASE_ADDR: AtomicUsize = AtomicUsize::new(0x0900_0000);
+static UART_BASE_ADDR: AtomicUsize = AtomicUsize::new(UART_PHYS);
 
 // PL011 register offsets (hal.md §4.3)
 const UARTDR: usize = 0x000;

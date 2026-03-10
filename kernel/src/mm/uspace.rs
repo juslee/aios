@@ -127,6 +127,7 @@ fn phys_to_dmap(pa: usize) -> usize {
 /// `table_phys` must be a valid, page-aligned physical address of a page table.
 /// TTBR1 direct map must be active.
 unsafe fn ensure_table_dmap(table_phys: usize, index: usize) -> usize {
+    debug_assert!(index < 512, "page table index out of bounds: {}", index);
     let entry_va = phys_to_dmap(table_phys) + index * 8;
     // SAFETY: entry_va is in the direct map region, which maps all RAM via
     // TTBR1. table_phys is a valid page table; index < 512 keeps us in-page.
