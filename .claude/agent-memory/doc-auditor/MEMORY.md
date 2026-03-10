@@ -41,6 +41,21 @@
 ## Key Section Map (context-engine.md)
 - §8 Fallback (Without AIRS) | §8.1 Rule-Based Fallback
 
+## Key Section Map (observability.md)
+
+- §1.1 Relationship to Security Observability | §1.2 Scope Exclusions
+- §2.1 Problem | §2.2 Log Levels | §2.3 Subsystem Tags | §2.4 Log Entry Format
+- §2.5 Per-Core Ring Buffer | §2.6 Logging Macros | §2.7 UART Drain | §2.8 Early Boot Fallback
+- §3.2 Counter | §3.3 Gauge | §3.4 Histogram | §3.5 Kernel Metrics Registry | §3.6 Feature Gating
+- §4.2 Trace Events | §4.3 Trace Record | §4.4 Per-Core Trace Ring | §4.5 Trace Point Macro | §4.6 Trace Export
+- §5.2 Health Level | §5.3 Health Registry | §5.4 Per-Subsystem Thresholds | §5.5 Relationship to MemoryPressure
+- §6.2 UART Drain (Phase 3) | §6.3 Kernel Info Page | §6.4 AuditRead Extension (Phase 13)
+- §7.2 Storage Metrics | §7.3 Integration Points | §7.4 Health Signal Integration
+
+## Key Section Map (spaces.md)
+
+- §4 Block Engine | §4.2 Write Path | §4.3 Read Path | §4.4 Crash Recovery | §4.8 Write Amplification Tracking
+
 ## Naming Conventions (verified)
 - `BehavioralBaseline` (not `BehaviorBaseline`) — canonical in security.md and agents.md
 - `BehavioralMonitor`, `BehavioralPolicy` — security.md canonical
