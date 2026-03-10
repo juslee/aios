@@ -8,6 +8,7 @@ pub mod asid;
 pub mod buddy;
 pub mod bump;
 pub mod frame;
+pub mod heap;
 pub mod init;
 #[allow(dead_code)]
 pub mod kaslr;
@@ -19,6 +20,8 @@ pub mod pools;
 pub mod slab;
 #[allow(dead_code)]
 pub mod tlb;
+#[allow(dead_code)]
+pub mod uspace;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -56,4 +59,17 @@ unsafe impl GlobalAlloc for KernelAllocator {
 /// After this call, all `alloc::` allocations go through the slab allocator.
 pub fn enable_slab_allocator() {
     SLAB_READY.store(true, Ordering::Release);
+}
+
+/// Print heap readiness message with configured cache sizes.
+pub fn init_heap() {
+    let sizes = slab::cache_sizes();
+    crate::print!("[mm] Kernel heap ready (slab caches:");
+    for (i, s) in sizes.iter().enumerate() {
+        if i > 0 {
+            crate::print!(",");
+        }
+        crate::print!(" {}", s);
+    }
+    crate::println!(")");
 }
