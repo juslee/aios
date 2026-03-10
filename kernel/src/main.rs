@@ -116,14 +116,21 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // Switch global allocator from bump to slab (backed by buddy).
     crate::mm::enable_slab_allocator();
+    crate::mm::init_heap();
     advance_boot_phase(EarlyBootPhase::HeapReady);
 
-    // Verify heap works with a Box allocation.
+    // Verify heap works with a Box<[u8; 1024]> write/read/drop cycle.
     {
         use alloc::boxed::Box;
-        let x = Box::new(42u32);
-        assert_eq!(*x, 42);
-        println!("[boot] Box::new(42) = {} — heap verified", *x);
+        let mut buf = Box::new([0u8; 1024]);
+        for (i, byte) in buf.iter_mut().enumerate() {
+            *byte = (i & 0xFF) as u8;
+        }
+        for (i, byte) in buf.iter().enumerate() {
+            assert_eq!(*byte, (i & 0xFF) as u8);
+        }
+        println!("[boot] Box<[u8; 1024]> write/read/drop — heap verified");
+        // buf drops here, exercising the kfree path through GlobalAlloc::dealloc
     }
 
     // --- Step 6b: KASLR + Full TTBR1 with W^X ---

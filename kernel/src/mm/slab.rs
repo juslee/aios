@@ -104,12 +104,29 @@ struct SlabCache {
 
 impl SlabCache {
     const fn new(size: usize) -> Self {
+        // Red zones are only added for objects smaller than PAGE_SIZE.
+        // The 4096-byte cache fills the entire page — no room for guard bytes.
+        let red_zone = if size < PAGE_SIZE { RED_ZONE_SIZE } else { 0 };
         Self {
             object_size: size,
-            alloc_size: size + 2 * RED_ZONE_SIZE,
+            alloc_size: size + 2 * red_zone,
             free_head: 0,
             pages_used: 0,
             magazine: Magazine::new(),
+        }
+    }
+
+    /// Returns true if this cache uses red zone guard bytes.
+    const fn has_red_zones(&self) -> bool {
+        self.alloc_size > self.object_size
+    }
+
+    /// Returns the red zone offset for this cache (0 for PAGE_SIZE caches).
+    const fn red_zone_offset(&self) -> usize {
+        if self.has_red_zones() {
+            RED_ZONE_SIZE
+        } else {
+            0
         }
     }
 
@@ -145,8 +162,10 @@ impl SlabCache {
     /// # Safety
     /// `ptr` must have been returned by `alloc` on this same cache.
     unsafe fn dealloc(&mut self, ptr: *mut u8) {
-        // Verify red zones before returning to cache
-        self.check_red_zones(ptr);
+        // Verify red zones before returning to cache (if applicable)
+        if self.has_red_zones() {
+            self.check_red_zones(ptr);
+        }
 
         // Fast path: push to current magazine
         if self.magazine.current.push(ptr) {
@@ -169,6 +188,7 @@ impl SlabCache {
     /// Refill the current magazine from the shared free list.
     /// If the free list is also empty, grows the cache from buddy.
     unsafe fn refill_magazine(&mut self) {
+        let rz = self.red_zone_offset();
         let mut refilled = 0;
         while refilled < MAGAZINE_SIZE && self.free_head != 0 {
             let slot_addr = self.free_head;
@@ -177,9 +197,11 @@ impl SlabCache {
             self.free_head = core::ptr::read(slot_addr as *const usize);
 
             // The slot_addr points to the start of the alloc_size region.
-            // Return the user pointer (after the leading red zone).
-            let user_ptr = (slot_addr + RED_ZONE_SIZE) as *mut u8;
-            self.fill_red_zones(slot_addr);
+            // Return the user pointer (after the leading red zone, if any).
+            let user_ptr = (slot_addr + rz) as *mut u8;
+            if self.has_red_zones() {
+                self.fill_red_zones(slot_addr);
+            }
 
             let ok = self.magazine.current.push(user_ptr);
             debug_assert!(ok);
@@ -194,8 +216,10 @@ impl SlabCache {
                 let slot_addr = self.free_head;
                 self.free_head = core::ptr::read(slot_addr as *const usize);
 
-                let user_ptr = (slot_addr + RED_ZONE_SIZE) as *mut u8;
-                self.fill_red_zones(slot_addr);
+                let user_ptr = (slot_addr + rz) as *mut u8;
+                if self.has_red_zones() {
+                    self.fill_red_zones(slot_addr);
+                }
 
                 let ok = self.magazine.current.push(user_ptr);
                 debug_assert!(ok);
@@ -206,9 +230,10 @@ impl SlabCache {
 
     /// Flush the current magazine back to the shared free list.
     unsafe fn flush_magazine_to_freelist(&mut self) {
+        let rz = self.red_zone_offset();
         while let Some(user_ptr) = self.magazine.current.pop() {
-            // Convert user pointer back to slot start (before red zone)
-            let slot_addr = user_ptr as usize - RED_ZONE_SIZE;
+            // Convert user pointer back to slot start (before red zone, if any)
+            let slot_addr = user_ptr as usize - rz;
             // SAFETY: slot_addr was originally from the free list; writing
             // the next pointer into the first 8 bytes is safe.
             core::ptr::write(slot_addr as *mut usize, self.free_head);
