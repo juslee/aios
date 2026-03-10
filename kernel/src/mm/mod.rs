@@ -3,12 +3,22 @@
 //! Provides the global allocator (switchable from bump to slab), the buddy
 //! physical page allocator, and the slab object allocator.
 
+#[allow(dead_code)]
+pub mod asid;
 pub mod buddy;
 pub mod bump;
 pub mod frame;
 pub mod init;
+#[allow(dead_code)]
+pub mod kaslr;
+#[allow(dead_code)]
+pub mod kmap;
+#[allow(dead_code)]
+pub mod pgtable;
 pub mod pools;
 pub mod slab;
+#[allow(dead_code)]
+pub mod tlb;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicBool, Ordering};

@@ -16,7 +16,7 @@ Linker script:  emitted via build.rs (not .cargo/config.toml)
 Relocation:     static (relocation-model=static throughout all phases)
 QEMU machine:   virt, cpu=cortex-a72, -smp 4 -m 2G
 UART:           PL011 at 0x0900_0000 (QEMU); DTB-sourced Phase 1+
-Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); virtual 0xFFFF_0000_0000_0000+ (Phase 2+)
+Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_0000_0008_0000 (Phase 2+)
 ```
 
 ---
@@ -110,20 +110,29 @@ When implementing Phase N:
    - For QEMU output: match exact strings in acceptance criteria
    - For objdump: check section addresses match linker script values
 
-6. **UPDATE ALL DOCS** after each milestone:
+6. **COMMIT + PUSH** after each step completes:
+   - Format: `Phase N MK: Step X — <step description>`
+   - Example: `Phase 2 M8: Step 4 — page table infrastructure`
+   - Commit and push immediately after each step passes verification
+   - Do not batch multiple steps into a single commit
+
+7. **UPDATE ALL DOCS** after each milestone:
    - **CLAUDE.md**: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
    - **README.md**: Project Structure, Build Commands, status text — anything that changed
    - **Phase doc** (`docs/phases/NN-*.md`): Check off completed task boxes (`[ ]` → `[x]`), update Status field (e.g. "In Progress (M4 complete)")
    - **Phase Completion Criteria**: Check off the completed milestone checkbox
    - **Architecture docs** (`docs/kernel/*.md`, `docs/project/*.md`, etc.): Update any referenced architecture docs if the implementation revealed corrections, new facts, or deviations from the spec
 
-7. **COMMIT** after each Milestone completes:
-   - Format: `Phase N MK: <Milestone name>`
-   - Example: `Phase 0 M1: Compiles — aarch64 ELF with zero warnings`
-   - Include CLAUDE.md updates in the same commit
+8. **AUDIT** after all steps complete, before PR — run recursively until all reach 0 issues:
+   - **Doc audit**: Cross-reference errors, technical accuracy, naming consistency in all modified docs
+   - **Code review**: Convention compliance, unsafe documentation, W^X, naming, dead code
+   - **Security/bug review**: Logic errors, address confusion (virt vs phys), PTE bit correctness, race conditions
+   - Fix all genuine issues found, commit, and re-run all three audits
+   - Repeat until a full round returns 0 issues across all three categories
 
-8. **PR** after each milestone completes: push branch, create PR to `main`
+9. **PR** after audits pass clean: push branch, create PR to `main`
    - One PR per milestone — keeps reviews small and focused
+   - After PR creation: check Copilot/reviewer comments, fix issues, reply and resolve conversations
    - Merge to `main` before starting the next milestone
 
 **BLOCKED?** Read the referenced architecture doc section. Architecture docs are the source of truth. Never invent register offsets, struct fields, or memory addresses.
@@ -161,7 +170,7 @@ When implementing Phase N:
 - Entry symbols: `#[no_mangle]` on the Rust side
 - Vector table: `.align 7` (128 bytes) per entry in assembly; `ALIGN(2048)` for section in linker script
 - All 16 exception vector entries present; stubs `b .` until real handlers added
-- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → branch to `kernel_main`
+- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → branch to virtual `kernel_main`
 
 ### Crate & Dependency Rules
 
@@ -178,7 +187,7 @@ When implementing Phase N:
 kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, boot.S, linker.ld)
 kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
-kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, GlobalAlloc)
+kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, pgtable, kmap, kaslr, asid, tlb, GlobalAlloc)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
 shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, Pool, PoolConfig, MemoryPressure, etc.)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
@@ -233,7 +242,8 @@ edk2 MMU state post-EBS:      MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
 edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr3=WB)
 Phase 1 MMU strategy:         TTBR0-only swap; reuse edk2 MAIR/TCR (changing while MMU on = UNPREDICTABLE)
 Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1
-TLBI with SMP:                Use tlbi vmalle1 + dsb nsh (not tlbi alle1 + dsb sy — broadcast hangs with parked cores)
+TLBI Phase 1 (init_mmu):      tlbi vmalle1 + dsb nsh (non-broadcast; broadcast hangs with parked cores under NC memory)
+TLBI Phase 2+ (kmap/tlb):     tlbi vmalle1is + dsb ish (broadcast; safe after WB upgrade enables global exclusive monitor)
 Buddy allocator:              Orders 0-10 (4KiB-4MiB), bitmap coalescing, poison fill on free
 Page pools (QEMU 2G):         kernel=128MB, user=1792MB, model=0, dma=64MB, reserved=64MB
 Free pages (QEMU 2G):         ~508K / ~522K (bitmap + exclusions consume ~14K)
@@ -251,13 +261,29 @@ Kernel ELF ESP path:          /EFI/AIOS/aios.elf
 ACPI RSDP GUID:               8868e871-e4f1-11d3-bc22-0080c73c8881
 DTB Table GUID:               b1b621d5-f19c-41a5-830b-d9152c69aae0
 uefi crate version:           0.36 (features: alloc, global_allocator, panic_handler, logger)
-SMP secondary entry:          _secondary_entry in boot.S (FPU → VBAR → MMU enable → stack → secondary_main)
-Secondary MMU enable:         MAIR/TCR/TTBR0 write (safe: MMU off) → ISB → DSB SY → SCTLR write → ISB
+SMP secondary entry:          _secondary_entry in boot.S (FPU → VBAR → TTBR1 install → MMU enable → stack → secondary_main)
+Secondary MMU enable:         MAIR/TCR/TTBR0/TTBR1 write (safe: MMU off) → ISB → DSB SY → SCTLR write → ISB
 GICv3 redistributor spacing:  128 KiB (0x20000) per core
 NC memory atomic limitation:  Exclusive load/store pairs (ldaxr/stlxr) require global exclusive monitor
                               → needs Inner Shareable + Cacheable. spin::Mutex HANGS on NC memory.
                               Use only load(Acquire)/store(Release) for inter-core sync in Phase 1.
+                              Phase 2 M8 upgrades TTBR0 RAM blocks to WB (Attr3) — spinlocks safe after TTBR1 active.
 GOP framebuffer on QEMU:      800x600 Bgr8, stride=3200B, at ~0xBC7A0000 (NC Normal via L1[1])
+Virtual kernel VMA:           0xFFFF_0000_0008_0000 (first section VMA = KERNEL_BASE + 0x80000; linker.ld Phase 2 M8+)
+Kernel LMA:                   0x4008_0000 (unchanged physical load address; AT clause in linker.ld)
+VIRT_PHYS_OFFSET:             0xFFFE_FFFF_C000_0000 (= KERNEL_VIRT - KERNEL_PHYS; add to phys to get virt)
+DIRECT_MAP_BASE:              0xFFFF_0001_0000_0000 (all RAM mapped RW+XN, 2MB blocks)
+MMIO_BASE:                    0xFFFF_0010_0000_0000 (UART/GIC/etc. mapped with Attr0 device memory)
+Boot TTBR1 (boot.S):          3 static pages in BSS (L0/L1/L2); 4×2MB block descriptors covering kernel image
+                              → minimal map sufficient to jump to virtual kernel_main
+Full TTBR1 (kmap.rs):         Built in kernel_main after pool init; text=RX (38 pages), rodata=RO (42 pages),
+                              data=RW (13 pages); direct map + MMIO; replaces boot TTBR1 via TLBI VMALLE1IS
+TTBR1 T1SZ:                   16 (48-bit kernel VA); set in boot.S before TTBR1_EL1 write
+KASLR slide (M8):             Computed (entropy from CNTPCT_EL0 or BootInfo.rng_seed); logged but NOT applied
+                              to TTBR1 (init_kernel_address_space ignores slide; non-zero slide in later milestone)
+ASID width:                   16-bit; AsidAllocator tracks generation; full TLBI VMALLE1IS on generation wrap
+Secondary TTBR1 install:      _secondary_entry reuses boot CPU's L0/L1/L2 tables; TTBR1_EL1 set before MMU enable
+PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry symbol to physical before PSCI CPU_ON call
 ramfb device:                 -device ramfb in QEMU; provides GOP without a full GPU driver
 ```
 
@@ -304,7 +330,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 2 M7 — Physical Memory Manager):
+Current (post-Phase 2 M8 — Virtual Memory & KASLR):
 
 ```
 aios/
@@ -344,22 +370,27 @@ aios/
 │       │   ├── slab.rs   Slab allocator (10 size classes), backed by frame allocator
 │       │   ├── pools.rs  PagePools: 4 buddy instances (kernel/user/model/dma)
 │       │   ├── frame.rs  FrameAllocator: pool-aware alloc/free, pressure, global static
-│       │   └── init.rs   init_memory(): UEFI map walk, pool config, bootstrap
+│       │   ├── init.rs   init_memory(): UEFI map walk, pool config, bootstrap
+│       │   ├── pgtable.rs 4-level page tables (PGD/PUD/PMD/PTE), PageTableEntry bit fields, AddressSpace, W^X API
+│       │   ├── kmap.rs   init_kernel_address_space(): full TTBR1 build (text=RX, rodata=RO, data=RW, direct map, MMIO)
+│       │   ├── kaslr.rs  KaslrConfig, compute_slide(): 2MB-aligned slide 0..128MB, CNTPCT_EL0/rng_seed entropy
+│       │   ├── asid.rs   AsidAllocator: 16-bit ASID alloc with generation tracking, full TLB flush on wrap
+│       │   └── tlb.rs    TLB invalidation wrappers: tlb_invalidate_page (TLBI VAE1IS), tlb_invalidate_asid (TLBI ASIDE1IS), tlbi_all (TLBI VMALLE1IS)
 │       └── arch/aarch64/
 │           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
-│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, MMU enable, stack, branch)
+│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, minimal TTBR1 build, TCR T1SZ=16, MMU enable, stack, branch to virtual kernel_main)
 │           ├── uart.rs   PL011 driver with full init (IBRD/FBRD/LCR_H/CR)
 │           ├── exceptions.rs  Rust exception vector table + CPU register helpers
 │           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface + init_gicv3_secondary
-│           ├── psci.rs   PSCI CPU_ON via HVC/SMC (SMCCC ABI)
+│           ├── psci.rs   PSCI CPU_ON via HVC/SMC (SMCCC ABI); entry point converted virt→phys in smp.rs
 │           ├── timer.rs  ARM Generic Timer: frequency, tick, PPI wiring
-│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks), edk2-compatible, MMU state export
-│           └── linker.ld page-aligned sections with __kernel_end symbol
+│           ├── mmu.rs    TTBR0 identity map (3×1GB blocks, upgraded to WB Attr3 post-M8), edk2-compatible, MMU state export
+│           └── linker.ld VMA=0xFFFF_0000_0008_0000 / LMA=0x4008_0000 (AT clause); __kernel_virt_base, __kernel_phys_base, __virt_phys_offset symbols
 ├── uefi-stub/
 │   ├── Cargo.toml        deps: shared, uefi 0.36, log
 │   └── src/
 │       ├── main.rs       UEFI entry, BootInfo assembly (incl. framebuffer), ExitBootServices, kernel jump
-│       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments)
+│       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments); converts virtual e_entry to physical for virtually-linked kernel
 ├── shared/
 │   ├── Cargo.toml
 │   └── src/lib.rs        BootInfo (incl. fb fields), MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat, Pool, PoolConfig, MemoryPressure, buddy_of

@@ -135,7 +135,10 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
     extern "C" {
         static _secondary_entry: u8;
     }
-    let entry_addr = core::ptr::addr_of!(_secondary_entry) as u64;
+    // With virtual linking, addr_of! returns a virtual address but PSCI CPU_ON
+    // needs a physical entry point (secondary cores start with MMU off).
+    let entry_virt = core::ptr::addr_of!(_secondary_entry) as u64;
+    let entry_addr = crate::arch::aarch64::mmu::virt_to_phys(entry_virt);
 
     for i in 1..cpu_count {
         let mpidr = dt.cpu_mpidr(i);

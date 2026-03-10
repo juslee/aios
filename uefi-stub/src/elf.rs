@@ -103,8 +103,14 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
     }
 
     // Pass 1: Find the total physical memory extent across all PT_LOAD segments.
-    let mut lowest_addr: u64 = u64::MAX;
+    // Also track lowest_vaddr for virtual-to-physical entry point conversion
+    // (needed after Phase 2 M8 virtual linking: e_entry is a virtual address).
+    // All PT_LOAD segments must share the same vaddr-paddr delta (constant
+    // VMA-LMA offset from linker.ld). Assert this to catch malformed ELFs.
+    let mut lowest_paddr: u64 = u64::MAX;
+    let mut lowest_vaddr: u64 = u64::MAX;
     let mut highest_end: u64 = 0;
+    let mut virt_phys_delta: Option<u64> = None;
 
     for i in 0..e_phnum as usize {
         let phdr = get_phdr(file_data, e_phoff, e_phentsize, i)?;
@@ -114,21 +120,30 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
         if phdr.p_filesz > phdr.p_memsz {
             return Err("PT_LOAD filesz > memsz");
         }
+        let delta = phdr.p_vaddr.wrapping_sub(phdr.p_paddr);
+        match virt_phys_delta {
+            None => virt_phys_delta = Some(delta),
+            Some(d) if d != delta => {
+                return Err("PT_LOAD segments have inconsistent vaddr-paddr delta")
+            }
+            _ => {}
+        }
         let end = phdr.p_paddr.checked_add(phdr.p_memsz).ok_or("overflow")?;
-        if phdr.p_paddr < lowest_addr {
-            lowest_addr = phdr.p_paddr;
+        if phdr.p_paddr < lowest_paddr {
+            lowest_paddr = phdr.p_paddr;
+            lowest_vaddr = phdr.p_vaddr;
         }
         if end > highest_end {
             highest_end = end;
         }
     }
 
-    if lowest_addr == u64::MAX {
+    if lowest_paddr == u64::MAX {
         return Err("No PT_LOAD segments found");
     }
 
     // Allocate the entire kernel range in one shot (page-aligned base).
-    let alloc_base = lowest_addr & !0xFFF;
+    let alloc_base = lowest_paddr & !0xFFF;
     let alloc_end = highest_end.div_ceil(0x1000) * 0x1000;
     let total_pages = ((alloc_end - alloc_base) / 0x1000) as usize;
 
@@ -165,9 +180,16 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
         }
     }
 
+    // Convert virtual entry point to physical address.
+    // With virtual linking (Phase 2 M8), e_entry is a virtual address.
+    // Physical entry = e_entry - lowest_vaddr + lowest_paddr.
+    let phys_entry = e_entry
+        .wrapping_sub(lowest_vaddr)
+        .wrapping_add(lowest_paddr);
+
     Ok(LoadedKernel {
-        entry: e_entry,
-        phys_base: lowest_addr,
-        size: highest_end - lowest_addr,
+        entry: phys_entry,
+        phys_base: lowest_paddr,
+        size: highest_end - lowest_paddr,
     })
 }
