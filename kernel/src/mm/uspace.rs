@@ -210,9 +210,14 @@ pub unsafe fn create_user_address_space(label: &str) -> UserAddressSpace {
 /// # Safety
 /// TTBR1 direct map must be active. `as_` must have a valid PGD.
 pub unsafe fn map_user_page(as_: &mut UserAddressSpace, va: usize, pa: usize, flags: VmFlags) {
-    debug_assert!(
+    assert!(
         flags.contains(VmFlags::USER),
         "map_user_page: flags must include USER"
+    );
+    assert!(
+        va < 0x0001_0000_0000_0000,
+        "map_user_page: VA {:#x} is outside user address range",
+        va
     );
     map_page_dmap(as_.pgd_phys, va, pa, mmu::MAIR_NORMAL_WB_IDX, flags);
     as_.stats.track_alloc();
@@ -228,17 +233,18 @@ pub unsafe fn switch_address_space(target: &UserAddressSpace) {
     let ttbr0_val = ((target.asid.value as u64) << 48) | (target.pgd_phys as u64);
 
     // SAFETY: Writing TTBR0_EL1 switches user-space page tables.
+    // Caller must ensure no preemption/interrupts during the switch.
     // The TTBR0 write requires barriers:
     // - DSB SY ensures all prior memory operations complete
     // - MSR writes the new TTBR0 value
-    // - TLBI invalidates stale TLB entries for the old address space
-    // - DSB NSH ensures TLBI completion on this core
+    // - TLBI VMALLE1IS (broadcast) invalidates stale TLB entries on all cores
+    // - DSB ISH ensures TLBI completion across the inner shareable domain
     // - ISB synchronizes instruction fetch with new translations
     core::arch::asm!(
         "dsb sy",
         "msr TTBR0_EL1, {val}",
-        "tlbi vmalle1",
-        "dsb nsh",
+        "tlbi vmalle1is",
+        "dsb ish",
         "isb",
         val = in(reg) ttbr0_val,
     );
