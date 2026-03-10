@@ -233,7 +233,8 @@ edk2 MMU state post-EBS:      MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
 edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr3=WB)
 Phase 1 MMU strategy:         TTBR0-only swap; reuse edk2 MAIR/TCR (changing while MMU on = UNPREDICTABLE)
 Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1
-TLBI with SMP:                Use tlbi vmalle1 + dsb nsh (not tlbi alle1 + dsb sy — broadcast hangs with parked cores)
+TLBI Phase 1 (init_mmu):      tlbi vmalle1 + dsb nsh (non-broadcast; broadcast hangs with parked cores under NC memory)
+TLBI Phase 2+ (kmap/tlb):     tlbi vmalle1is + dsb ish (broadcast; safe after WB upgrade enables global exclusive monitor)
 Buddy allocator:              Orders 0-10 (4KiB-4MiB), bitmap coalescing, poison fill on free
 Page pools (QEMU 2G):         kernel=128MB, user=1792MB, model=0, dma=64MB, reserved=64MB
 Free pages (QEMU 2G):         ~508K / ~522K (bitmap + exclusions consume ~14K)
@@ -259,7 +260,7 @@ NC memory atomic limitation:  Exclusive load/store pairs (ldaxr/stlxr) require g
                               Use only load(Acquire)/store(Release) for inter-core sync in Phase 1.
                               Phase 2 M8 upgrades TTBR0 RAM blocks to WB (Attr3) — spinlocks safe after TTBR1 active.
 GOP framebuffer on QEMU:      800x600 Bgr8, stride=3200B, at ~0xBC7A0000 (NC Normal via L1[1])
-Virtual kernel VMA:           0xFFFF_0000_0008_0000 (KERNEL_VIRT; linker VMA, Phase 2 M8+)
+Virtual kernel VMA:           0xFFFF_0000_0008_0000 (first section VMA = KERNEL_BASE + 0x80000; linker.ld Phase 2 M8+)
 Kernel LMA:                   0x4008_0000 (unchanged physical load address; AT clause in linker.ld)
 VIRT_PHYS_OFFSET:             0xFFFE_FFFF_C000_0000 (= KERNEL_VIRT - KERNEL_PHYS; add to phys to get virt)
 DIRECT_MAP_BASE:              0xFFFF_0001_0000_0000 (all RAM mapped RW+XN, 2MB blocks)
@@ -368,7 +369,7 @@ aios/
 │       │   └── tlb.rs    TLB invalidation wrappers: tlb_invalidate_page (TLBI VAE1IS), tlb_invalidate_asid (TLBI ASIDE1IS), tlbi_all (TLBI VMALLE1IS)
 │       └── arch/aarch64/
 │           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
-│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, minimal TTBR1 build, MMU enable, stack, branch to virtual kernel_main)
+│           ├── boot.S    _start + _secondary_entry (FPU, VBAR, minimal TTBR1 build, TCR T1SZ=16, MMU enable, stack, branch to virtual kernel_main)
 │           ├── uart.rs   PL011 driver with full init (IBRD/FBRD/LCR_H/CR)
 │           ├── exceptions.rs  Rust exception vector table + CPU register helpers
 │           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface + init_gicv3_secondary

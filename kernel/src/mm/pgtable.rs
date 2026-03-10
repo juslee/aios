@@ -68,6 +68,11 @@ impl PageTableEntry {
         }
         if !flags.contains(VmFlags::EXECUTE) {
             pte |= Self::PXN | Self::UXN;
+        } else if !flags.contains(VmFlags::USER) {
+            // Kernel-only executable: EL1 can execute (PXN=0), EL0 cannot (UXN=1).
+            // Without this, kernel .text pages would be executable at EL0 — the
+            // aarch64 equivalent of missing SMEP.
+            pte |= Self::UXN;
         }
         if flags.contains(VmFlags::USER) {
             pte |= Self::AP_USER;
@@ -99,6 +104,8 @@ impl PageTableEntry {
         }
         if !flags.contains(VmFlags::EXECUTE) {
             pte |= Self::PXN | Self::UXN;
+        } else if !flags.contains(VmFlags::USER) {
+            pte |= Self::UXN; // kernel-only executable (see new_page)
         }
         if flags.contains(VmFlags::USER) {
             pte |= Self::AP_USER;
@@ -127,9 +134,9 @@ impl PageTableEntry {
     }
 
     /// True if this page is executable at EL1 (kernel).
-    /// Both PXN and UXN must be clear for kernel execution.
+    /// PXN (Privileged Execute-Never) controls EL1 execution.
     pub const fn is_executable(&self) -> bool {
-        self.0 & (Self::PXN | Self::UXN) == 0
+        self.0 & Self::PXN == 0
     }
 
     pub const fn is_user(&self) -> bool {
@@ -159,10 +166,12 @@ impl PageTableEntry {
         self.0 |= Self::PXN | Self::UXN;
     }
 
-    /// Make this page executable (sets read-only, clears PXN+UXN).
+    /// Make this page kernel-executable (sets read-only, clears PXN, sets UXN).
+    /// EL1 can execute (PXN=0), EL0 cannot (UXN=1).
     pub fn set_executable(&mut self) {
         self.0 |= Self::AP_RO;
-        self.0 &= !(Self::PXN | Self::UXN);
+        self.0 &= !Self::PXN;
+        self.0 |= Self::UXN; // block EL0 execution
     }
 }
 

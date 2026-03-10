@@ -169,7 +169,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 - [x] Map kernel data/BSS sections: read-write + no-execute (RW-)
 - [x] Map physical memory direct map at `0xFFFF_0001_0000_0000` — all RAM, RW+XN (2MB blocks for efficiency)
 - [x] Map MMIO regions (UART, GIC, etc.) at `0xFFFF_0010_0000_0000` with device memory attributes (Attr0, nGnRnE)
-- [x] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1`, `DSB NSH`, `ISB` (non-IS variant sufficient since SMP not yet started)
+- [x] Switch TTBR1 to full tables (replacing boot.S minimal tables): `TLBI VMALLE1IS`, `DSB ISH`, `ISB` (broadcast variant — safe even though secondaries are not yet online)
 - [x] Build TTBR0 RAM blocks with WB (Attr3) from init — mmu.rs `MAIR_NORMAL_IDX` set to WB (was NC in Phase 1); prevents CONSTRAINED UNPREDICTABLE from mismatched attributes with TTBR1
 - [x] Verify kernel continues executing after the switch (UART still works)
 
@@ -185,7 +185,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **What:** Randomize the kernel base address at boot using entropy from UEFI RNG or ARM generic counter.
 
-**Note:** KASLR is deferred to the full TTBR1 rebuild in kernel_main (Step 5 Phase B). boot.S uses fixed KERNEL_BASE; kernel_main computes slide after pool init, then builds full TTBR1 with slide applied. The transition works because aarch64 ADRP+ADD offsets are PC-relative and the entire image shifts uniformly — no pointer fixups needed.
+**Note:** KASLR slide is computed in M8 but NOT applied — `init_kernel_address_space()` ignores the slide value, so the kernel runs at fixed KERNEL_BASE. Non-zero slide application (rebuilding TTBR1 with the slide offset) is deferred to a later milestone. When applied, aarch64 ADRP+ADD offsets are PC-relative and the entire image shifts uniformly — no pointer fixups needed.
 
 **Tasks:**
 
@@ -197,7 +197,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **Key reference:** [memory.md §3.3](../kernel/memory.md) — KASLR
 
-**Acceptance:** `just run` prints KASLR base address. Two consecutive boots show different slide values (non-deterministic). Kernel functions correctly at the randomised address.
+**Acceptance:** `just run` prints KASLR base address and slide value. Two consecutive boots show different slide values (non-deterministic entropy). Note: the slide is computed but not applied in M8 — the kernel continues running at the fixed base address.
 
 -----
 
