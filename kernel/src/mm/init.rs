@@ -94,8 +94,9 @@ pub unsafe fn init_memory(boot_info: &BootInfo) {
     let extent = phys_max - phys_min;
     let gap = extent.saturating_sub(total_usable_bytes);
     if gap > extent / 100 {
-        crate::println!(
-            "[mm] WARN: {}% gap in physical range ({:#x}..{:#x}, extent={} MB, usable={} MB)",
+        crate::kwarn!(
+            Mm,
+            "{}% gap in physical range ({:#x}..{:#x}, extent={} MB, usable={} MB)",
             gap * 100 / extent,
             phys_min,
             phys_max,

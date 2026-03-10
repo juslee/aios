@@ -188,10 +188,13 @@ When implementing Phase N:
 ## File Placement
 
 ```
-kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, boot.S, linker.ld)
-kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci)
+kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, trap, boot.S, context_switch.S, linker.ld)
+kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci, trap)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
 kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, pgtable, kmap, kaslr, asid, tlb, GlobalAlloc)
+kernel/src/observability/      Structured logging, metrics, trace points
+kernel/src/task/               Thread/process data structures for scheduler and IPC
+kernel/src/syscall/            Syscall dispatch and handlers
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
 shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, Pool, PoolConfig, MemoryPressure, etc.)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
@@ -296,6 +299,22 @@ Boot CPU SP:                   Converted from physical to virtual in boot.S (add
 Secondary TTBR1 install:      _secondary_entry reuses boot CPU's L0/L1/L2 tables; TTBR1_EL1 set before MMU enable
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry symbol to physical before PSCI CPU_ON call
 ramfb device:                 -device ramfb in QEMU; provides GOP without a full GPU driver
+Timer tick frequency:         1 kHz (CNTFRQ_EL0 / 1000 counts per tick)
+TICK_COUNT:                   Global AtomicU64 incremented every 1ms by timer_tick_handler
+NEED_RESCHED:                 Global AtomicBool set by timer tick, checked by scheduler (M11)
+Syscall ABI:                  SVC #0 from EL0; x8=syscall number, x0-x5=args, x0=return
+Syscall count:                31 (IpcCall=0 through DebugPrint=30)
+TrapFrame size:               272 bytes (31 GP regs + SP_EL0 + ELR_EL1 + SPSR_EL1)
+ThreadContext size:           296 bytes (31 GP regs + SP + PC + PSTATE + TTBR0 + timer_cval + timer_ctl)
+FpContext size:               528 bytes (32x128-bit vregs + FPCR + FPSR, 16-byte aligned)
+LogEntry size:                64 bytes (one per cache line, 48-byte message field)
+LogRing size:                 256 entries per core (16 KiB)
+TraceRecord size:             32 bytes
+TraceRing size:               4096 entries per core (128 KiB)
+Timer PPI INTID:              30 (EL1 physical timer on QEMU)
+MAX_THREADS:                  64 system-wide
+MAX_PROCESSES:                32 system-wide
+EarlyBootPhase count:         18 variants (EntryPoint=0 through Complete=17)
 ```
 
 ---
@@ -341,7 +360,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 2 M9 — Kernel Heap & Per-Agent Address Spaces):
+Current (post-Phase 3 M10 — Kernel Observability & Process Model):
 
 ```
 aios/
@@ -363,14 +382,23 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin; features: kernel-metrics (default), kernel-tracing
 │   ├── build.rs          emits linker script path
 │   └── src/
-│       ├── main.rs       kernel_main: full boot sequence Steps 1-10, extern crate alloc
-│       ├── boot_phase.rs EarlyBootPhase enum, advance_boot_phase(), boot timing
+│       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
+│       ├── boot_phase.rs EarlyBootPhase enum (18 phases incl. LogRingsReady), advance_boot_phase(), boot timing
 │       ├── dtb.rs        DeviceTree wrapper (fdt-parser), DTB parse + QEMU defaults + MPIDR extraction
-│       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main
+│       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main, per-core timer init + IRQ unmask
 │       ├── framebuffer.rs GOP framebuffer driver: fill_rect, render_test_pattern (#5B8CFF)
+│       ├── observability/
+│       │   ├── mod.rs    LogLevel, Subsystem, LogEntry (64B), LogRing (256/core), klog!/kinfo!/kwarn!/kerror! macros, drain_logs()
+│       │   ├── metrics.rs Counter (per-core sharded), Gauge, Histogram<N>, KernelMetrics registry; feature-gated kernel-metrics
+│       │   └── trace.rs  TraceEvent enum, TraceRecord (32B), TraceRing (4096/core), trace_point! macro; feature-gated kernel-tracing
+│       ├── task/
+│       │   ├── mod.rs    Thread, ThreadId, ThreadContext (296B), FpContext (528B), SchedEntity, ThreadState, SchedulerClass, CpuSet, THREAD_TABLE
+│       │   └── process.rs ProcessControl, ProcessId, KernelResourceLimits (trust-level defaults), PROCESS_TABLE
+│       ├── syscall/
+│       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(), DebugPrint/TimeGet/TimeSleep handlers
 │       ├── platform/
 │       │   ├── mod.rs    Platform trait, detect_platform()
 │       │   └── qemu.rs   QemuPlatform: init_uart, init_interrupts, init_timer
@@ -390,13 +418,15 @@ aios/
 │       │   ├── heap.rs   Typed kernel heap API: kalloc<T>/kfree<T>, kalloc_layout/kfree_layout
 │       │   └── uspace.rs Per-agent user address spaces: UserAddressSpace, create/map/switch via TTBR1 direct map
 │       └── arch/aarch64/
-│           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
+│           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci, trap
 │           ├── boot.S    _start + _secondary_entry (FPU, VBAR, minimal TTBR1 build, TCR T1SZ=16, MMU enable, stack, branch to virtual kernel_main)
 │           ├── uart.rs   PL011 driver with full init (IBRD/FBRD/LCR_H/CR)
-│           ├── exceptions.rs  Rust exception vector table + CPU register helpers
-│           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface + init_gicv3_secondary
+│           ├── exceptions.rs  Rust exception vector table, IRQ/SVC entry stubs (TrapFrame save/restore + eret), CPU register helpers
+│           ├── gic.rs    GICv3 driver: distributor, redistributor, CPU interface + init_gicv3_secondary + irq_handler_el1
 │           ├── psci.rs   PSCI CPU_ON via HVC/SMC (SMCCC ABI); entry point converted virt→phys in smp.rs
-│           ├── timer.rs  ARM Generic Timer: frequency, tick, PPI wiring
+│           ├── timer.rs  ARM Generic Timer: frequency, tick, PPI wiring, timer_tick_handler, TICK_COUNT, NEED_RESCHED
+│           ├── trap.rs   TrapFrame (272B), lower_el_sync_handler: SVC dispatch, data/instruction abort logging
+│           ├── context_switch.S save_context/restore_context: callee-saved regs (x19-x30), SP, LR for kernel-to-kernel switch
 │           ├── mmu.rs    TTBR0 identity map (3×1GB blocks, upgraded to WB Attr3 post-M8), edk2-compatible, MMU state export
 │           └── linker.ld VMA=0xFFFF_0000_0008_0000 / LMA=0x4008_0000 (AT clause); __kernel_virt_base, __kernel_phys_base, __virt_phys_offset symbols
 ├── uefi-stub/

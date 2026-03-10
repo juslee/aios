@@ -205,3 +205,52 @@ impl InterruptController {
         self.gicr_base = gicr;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Standalone IRQ handler (called from assembly, no instance needed)
+// ---------------------------------------------------------------------------
+
+/// Read ICC_IAR1_EL1 (acknowledge interrupt, get INTID).
+#[inline(always)]
+fn read_icc_iar1_el1() -> u32 {
+    let val: u64;
+    // SAFETY: ICC_IAR1_EL1 is readable at EL1.
+    unsafe { core::arch::asm!("mrs {}, ICC_IAR1_EL1", out(reg) val) };
+    val as u32
+}
+
+/// Write ICC_EOIR1_EL1 (signal end of interrupt).
+#[inline(always)]
+fn write_icc_eoir1_el1(intid: u32) {
+    // SAFETY: ICC_EOIR1_EL1 is writable at EL1.
+    unsafe { core::arch::asm!("msr ICC_EOIR1_EL1, {}", in(reg) intid as u64) };
+}
+
+/// Top-level IRQ handler called from the exception vector assembly stubs.
+///
+/// Reads the interrupt ID, dispatches to the appropriate handler,
+/// and signals end of interrupt. Does not require an InterruptController
+/// instance — uses direct system register access.
+#[no_mangle]
+extern "C" fn irq_handler_el1() {
+    let intid = read_icc_iar1_el1();
+
+    // Spurious interrupt (no pending IRQ).
+    if intid >= 1020 {
+        return;
+    }
+
+    match intid {
+        30 => {
+            // PPI 30: NS Physical Timer interrupt.
+            crate::arch::aarch64::timer::timer_tick_handler();
+        }
+        _ => {
+            // Unknown IRQ — increment spurious counter if metrics enabled.
+            #[cfg(feature = "kernel-metrics")]
+            crate::observability::metrics::METRICS.irq_spurious.inc();
+        }
+    }
+
+    write_icc_eoir1_el1(intid);
+}

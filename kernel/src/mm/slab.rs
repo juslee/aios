@@ -264,8 +264,9 @@ impl SlabCache {
         let trailing = core::ptr::read(trailing_addr as *const u64);
 
         if leading != RED_ZONE_PATTERN || trailing != RED_ZONE_PATTERN {
-            crate::println!(
-                "[slab] RED ZONE CORRUPTION: cache={} ptr={:#x} leading={:#x} trailing={:#x}",
+            crate::kerror!(
+                Mm,
+                "RED ZONE CORRUPTION: cache={} ptr={:#x} leading={:#x} trailing={:#x}",
                 self.object_size,
                 user_ptr as usize,
                 leading,

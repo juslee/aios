@@ -10,8 +10,13 @@ mod boot_phase;
 mod dtb;
 mod framebuffer;
 mod mm;
+mod observability;
 mod platform;
 mod smp;
+#[allow(dead_code)]
+mod syscall;
+#[allow(dead_code)]
+mod task;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -21,12 +26,14 @@ use crate::boot_phase::{advance_boot_phase, EarlyBootPhase};
 
 // Include the assembly boot code (entry point + exception vector stubs).
 core::arch::global_asm!(include_str!("arch/aarch64/boot.S"));
+// Include context switch assembly (save_context / restore_context).
+core::arch::global_asm!(include_str!("arch/aarch64/context_switch.S"));
 
 #[no_mangle]
 pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     use crate::arch::aarch64::exceptions;
 
-    println!("AIOS kernel booting...");
+    kinfo!(Boot, "AIOS kernel booting...");
 
     // Initialize boot timing from ARM Generic Timer counter.
     boot_phase::init_boot_timing();
@@ -40,17 +47,19 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         // non-zero; the magic check below confirms the struct is intact.
         let bi = unsafe { &*(boot_info_ptr as *const BootInfo) };
         if bi.magic == BOOTINFO_MAGIC {
-            println!("[boot] BootInfo at {:#x}, magic OK", boot_info_ptr);
+            kinfo!(Boot, "BootInfo at {:#x}, magic OK", boot_info_ptr);
         } else {
-            println!(
-                "[boot] BootInfo at {:#x}, BAD magic {:#x} — halting",
-                boot_info_ptr, bi.magic
+            kerror!(
+                Boot,
+                "BootInfo at {:#x}, BAD magic {:#x} — halting",
+                boot_info_ptr,
+                bi.magic
             );
             halt();
         }
         bi
     } else {
-        println!("[boot] No BootInfo (Phase 0 mode) — halting");
+        kerror!(Boot, "No BootInfo (Phase 0 mode) — halting");
         halt();
     };
 
@@ -58,9 +67,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     let vbar = exceptions::install_vector_table();
 
     // Boot diagnostics.
-    println!("[boot] EL:       {}", exceptions::current_el());
-    println!("[boot] Core ID:  {}", exceptions::core_id());
-    println!("[boot] VBAR_EL1: {:#018x}", vbar);
+    kinfo!(Boot, "EL: {}", exceptions::current_el());
+    kinfo!(Boot, "Core ID: {}", exceptions::core_id());
+    kinfo!(Boot, "VBAR_EL1: {:#018x}", vbar);
     debug_assert_eq!(vbar, exceptions::read_vbar_el1());
 
     advance_boot_phase(EarlyBootPhase::ExceptionVectors);
@@ -75,14 +84,15 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     };
 
     let dt = dt.unwrap_or_else(|| {
-        println!("[boot] No DTB — using QEMU virt defaults");
+        kwarn!(Boot, "No DTB — using QEMU virt defaults");
         dtb::DeviceTree::qemu_defaults()
     });
 
     let platform = platform::detect_platform(&dt);
-    println!("[boot] DeviceTreeParsed — {}", platform.name());
-    println!(
-        "[boot]   CPUs: {}, PSCI: {}",
+    kinfo!(Boot, "DeviceTreeParsed — {}", platform.name());
+    kinfo!(
+        Boot,
+        "CPUs: {}, PSCI: {}",
         dt.cpu_count(),
         dt.psci_method().unwrap_or("none")
     );
@@ -98,7 +108,10 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     let timer = platform.init_timer(&dt, &ic);
     advance_boot_phase(EarlyBootPhase::TimerReady);
-    println!("[boot]   CNTFRQ={}Hz", timer.frequency());
+    kinfo!(Boot, "CNTFRQ={}Hz", timer.frequency());
+
+    // Store tick interval for IRQ handler and secondary core init.
+    crate::arch::aarch64::timer::set_tick_interval(timer.tick_interval());
 
     // --- Step 6: MMU, Buddy Allocator, Heap ---
 
@@ -119,6 +132,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     crate::mm::init_heap();
     advance_boot_phase(EarlyBootPhase::HeapReady);
 
+    // Log rings are now safe to use (heap + slab ready for drain formatting).
+    advance_boot_phase(EarlyBootPhase::LogRingsReady);
+
     // Verify heap works with a Box<[u8; 1024]> write/read/drop cycle.
     {
         use alloc::boxed::Box;
@@ -129,9 +145,12 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         for (i, byte) in buf.iter().enumerate() {
             assert_eq!(*byte, (i & 0xFF) as u8);
         }
-        println!("[boot] Box<[u8; 1024]> write/read/drop — heap verified");
+        kinfo!(Boot, "Box<[u8; 1024]> write/read/drop — heap verified");
         // buf drops here, exercising the kfree path through GlobalAlloc::dealloc
     }
+
+    // Flush ring-buffered log entries to UART (no timer tick yet).
+    observability::drain_logs();
 
     // --- Step 6b: KASLR + Full TTBR1 with W^X ---
 
@@ -153,14 +172,17 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         crate::mm::kmap::init_kernel_address_space(ram_start, ram_size);
     };
 
+    observability::drain_logs();
+
     // --- Step 7: SMP Secondary Core Bringup ---
     let _sched = smp::bring_secondaries_online(&dt, ic.gicr_base());
     advance_boot_phase(EarlyBootPhase::ProcessManagerReady);
 
     // --- Step 8: Framebuffer and First Pixels ---
     if let Some(mut fb) = framebuffer::Framebuffer::from_boot_info(boot_info) {
-        println!(
-            "[boot] Framebuffer: {}x{} stride={}B format={} at {:#x}",
+        kinfo!(
+            Boot,
+            "Framebuffer: {}x{} stride={}B format={} at {:#x}",
             fb.width(),
             fb.height(),
             fb.stride(),
@@ -168,9 +190,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
             fb.base_addr()
         );
         fb.render_test_pattern();
-        println!("[boot] Test pattern rendered");
+        kinfo!(Boot, "Test pattern rendered");
     } else {
-        println!("[boot] No framebuffer available — skipping display");
+        kinfo!(Boot, "No framebuffer available — skipping display");
     }
 
     // --- Step 10: Per-agent address spaces ---
@@ -214,23 +236,35 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         // Switch between address spaces (verifies TTBR0 programming doesn't fault)
         // SAFETY: Both address spaces have valid PGDs with mapped pages.
         unsafe {
-            println!("[mm] TTBR0 switch: ASID 0 -> ASID {}", as_a.asid().value);
+            kinfo!(Mm, "TTBR0 switch: ASID 0 -> ASID {}", as_a.asid().value);
             uspace::switch_address_space(&as_a);
-            println!(
-                "[mm] TTBR0 switch: ASID {} -> ASID {}",
+            kinfo!(
+                Mm,
+                "TTBR0 switch: ASID {} -> ASID {}",
                 as_a.asid().value,
                 as_b.asid().value
             );
             uspace::switch_address_space(&as_b);
         }
-        println!("[mm] Address space switching verified");
+        kinfo!(Mm, "Address space switching verified");
     }
 
-    println!("[boot] Boot sequence complete, entering idle loop");
+    // Final drain before entering idle loop (timer tick takes over in Step 4).
+    observability::drain_logs();
+
+    kinfo!(Boot, "Boot sequence complete, entering idle loop");
+    observability::drain_logs();
+
+    // Unmask IRQ (DAIF.I) — timer interrupts now fire every 1ms.
+    // Must be after ALL boot initialization is complete.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit only. All interrupt
+    // infrastructure (GIC, timer, vector table, handlers) is initialized.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     loop {
         // SAFETY: wfe is a hint instruction that puts the core in low-power
-        // state until an event occurs. Safe to execute at EL1.
+        // state until an event occurs. Timer IRQs will wake the core every 1ms,
+        // the handler runs and returns, and the core re-enters wfe.
         unsafe { core::arch::asm!("wfe") }
     }
 }

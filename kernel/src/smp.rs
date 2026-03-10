@@ -148,7 +148,7 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
             crate::arch::aarch64::psci::cpu_on_smc(mpidr, entry_addr, i as u64)
         };
         if ret != 0 {
-            crate::println!("[boot] PSCI CPU_ON core {} failed: {}", i, ret);
+            crate::kerror!(Smp, "PSCI CPU_ON core {} failed: {}", i, ret);
         }
     }
 
@@ -157,8 +157,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
     let start = crate::boot_phase::boot_elapsed_ms();
     while PRINT_TURN.load(Ordering::Acquire) < cpu_count {
         if crate::boot_phase::boot_elapsed_ms() - start > 100 {
-            crate::println!(
-                "[boot] SMP timeout: {}/{} cores online",
+            crate::kwarn!(
+                Smp,
+                "SMP timeout: {}/{} cores online",
                 PRINT_TURN.load(Ordering::Acquire),
                 cpu_count
             );
@@ -169,7 +170,7 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
 
     let online = PRINT_TURN.load(Ordering::Acquire);
     ONLINE_CPUS.store(online, Ordering::Relaxed);
-    crate::println!("[boot] {} CPUs online", online);
+    crate::kinfo!(Smp, "{} CPUs online", online);
     sched
 }
 
@@ -188,12 +189,21 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
         core::hint::spin_loop();
     }
 
-    crate::println!("[boot] Core {} online", core_id);
+    crate::kinfo!(Smp, "Core {} online", core_id);
 
     // Signal next core's turn to print.
     PRINT_TURN.store(core_id + 1, Ordering::Release);
 
+    // Initialize per-core timer (programs CNTP_TVAL_EL0 + CNTP_CTL_EL0).
+    crate::arch::aarch64::timer::init_timer_secondary();
+
+    // Unmask IRQ — timer interrupts fire every 1ms on this core.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit only. GIC + timer
+    // are initialized for this core.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
     // Enter idle loop — scheduler assigns work in Phase 3.
+    // Timer IRQs wake the core, handler runs drain_logs, core re-enters wfe.
     loop {
         // SAFETY: WFE is a hint instruction, safe at EL1.
         unsafe { core::arch::asm!("wfe") };

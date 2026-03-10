@@ -17,7 +17,7 @@ The hardware target is aarch64, starting with QEMU's `virt` machine (`cortex-a72
 
 The architecture is a capability-based microkernel. User processes communicate through typed IPC channels; hardware access is gated by unforgeable capability tokens. On top of the microkernel sit Spaces — isolated execution environments analogous to processes, but with explicit capability grants — and AIRS, the AI Runtime System, which manages inference engines, context stores, and agent lifecycles as native OS services. A compositor, storage subsystem, and networking stack complete the platform layer before the experience layer exposes Workspaces, a Conversation Bar, a browser, and a settings UI.
 
-Phase 0 (toolchain and bare-metal boot), Phase 1 (boot and first pixels), and Phase 2 (memory management) are complete. The kernel boots via edk2 firmware on QEMU virt with 4 SMP cores online, a framebuffer test pattern rendered, full TTBR1 kernel page tables with W^X enforcement, a slab-backed kernel heap (`kalloc`/`kfree`), and per-agent address spaces with TTBR0 switching.
+Phase 0 (toolchain and bare-metal boot), Phase 1 (boot and first pixels), and Phase 2 (memory management) are complete. The kernel boots via edk2 firmware on QEMU virt with 4 SMP cores online, a framebuffer test pattern rendered, full TTBR1 kernel page tables with W^X enforcement, a slab-backed kernel heap (`kalloc`/`kfree`), and per-agent address spaces with TTBR0 switching. Phase 3 is in progress: Milestone 10 added structured per-core kernel logging (`klog!` macros), thread and process control structures, SVC-based syscall dispatch with all 31 syscall numbers defined, and a 1 kHz timer tick driving preemption flags and log drain.
 
 ---
 

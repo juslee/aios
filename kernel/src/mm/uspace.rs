@@ -195,7 +195,7 @@ pub unsafe fn create_user_address_space(label: &str) -> UserAddressSpace {
         tlb::tlbi_all();
     }
 
-    crate::println!("[mm] Address space {} created (ASID={})", label, asid.value);
+    crate::kinfo!(Mm, "Address space {} created (ASID={})", label, asid.value);
 
     UserAddressSpace {
         pgd_phys,

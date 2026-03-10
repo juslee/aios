@@ -3,6 +3,8 @@
 //! Configures the physical timer (CNTP) for a 1 ms scheduler tick.
 //! Per hal.md §4.2.
 
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
 use crate::arch::aarch64::gic::InterruptController;
 
 /// ARM Generic Timer state.
@@ -93,5 +95,80 @@ impl Timer {
     pub fn set_next_deadline(&self, ticks: u64) {
         // SAFETY: CNTP_TVAL_EL0 write is safe at EL1.
         unsafe { core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) ticks) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Timer tick infrastructure (Phase 3 M10 Step 4)
+// ---------------------------------------------------------------------------
+
+/// Tick interval in timer counts (set during init, read by all cores).
+static TICK_INTERVAL: AtomicU64 = AtomicU64::new(0);
+
+/// Monotonic tick counter (incremented every 1ms on each core).
+pub static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Preemption needed flag (checked by scheduler return path in M11).
+pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
+
+/// Store the tick interval for use by the tick handler and secondary cores.
+/// Called once during boot CPU timer init.
+pub fn set_tick_interval(interval: u64) {
+    TICK_INTERVAL.store(interval, Ordering::Relaxed);
+}
+
+/// Initialize the timer on a secondary core.
+///
+/// Programs CNTP_TVAL_EL0 and enables the physical timer. Uses the
+/// tick interval stored by the boot CPU during init.
+pub fn init_timer_secondary() {
+    let interval = TICK_INTERVAL.load(Ordering::Relaxed);
+    if interval == 0 {
+        return;
+    }
+
+    // SAFETY: CNTP_TVAL_EL0 and CNTP_CTL_EL0 are per-core timer registers,
+    // safe to write at EL1. ISB ensures the writes take effect before the
+    // timer can fire.
+    unsafe {
+        core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) interval);
+        core::arch::asm!("msr CNTP_CTL_EL0, {}", in(reg) 1u64);
+        core::arch::asm!("isb");
+    }
+}
+
+/// Timer tick handler. Called from `irq_handler_el1` on PPI 30.
+///
+/// 1. Rearm timer (must happen before EOIR to prevent immediate re-fire)
+/// 2. Increment tick counter
+/// 3. Drain log ring buffers to UART
+/// 4. Set preemption flag (checked by scheduler in M11)
+///
+/// MUST NOT call klog! — this is called from IRQ context and drain_logs()
+/// would deadlock or cause re-entrancy issues.
+pub fn timer_tick_handler() {
+    // 1. Rearm timer.
+    let interval = TICK_INTERVAL.load(Ordering::Relaxed);
+    if interval > 0 {
+        // SAFETY: CNTP_TVAL_EL0 is a per-core timer register, safe at EL1.
+        unsafe {
+            core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) interval);
+        }
+    }
+
+    // 2. Increment tick counter.
+    TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // 3. Drain log ring buffers to UART.
+    crate::observability::drain_logs();
+
+    // 4. Signal preemption needed (scheduler checks this in M11).
+    NEED_RESCHED.store(true, Ordering::Release);
+
+    // 5. Increment IRQ metrics.
+    #[cfg(feature = "kernel-metrics")]
+    {
+        crate::observability::metrics::METRICS.irq_total.inc();
+        crate::observability::metrics::METRICS.irq_timer.inc();
     }
 }
