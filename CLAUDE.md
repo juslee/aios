@@ -43,6 +43,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | IPC & syscalls | `docs/kernel/ipc.md` | All (Phase 3+) |
 | Scheduler | `docs/kernel/scheduler.md` | All (Phase 3+) |
 | Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
+| Kernel observability | `docs/kernel/observability.md` | All (Phase 3+) |
 | Space Storage | `docs/storage/spaces.md` | All (Phase 4+) |
 | Flow (smart clipboard) | `docs/storage/flow.md` | All (Phase 11+) |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |

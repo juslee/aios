@@ -11,6 +11,7 @@
 - [boot.md](../kernel/boot.md) — Boot sequence and init system deep dive
 - [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Boot lifecycle, advanced topics, and design principles
 - [hal.md](../kernel/hal.md) — Hardware Abstraction Layer (Platform trait, device drivers, porting guide)
+- [observability.md](../kernel/observability.md) — Kernel observability (structured logging, metrics, tracing, health)
 - [spaces.md](../storage/spaces.md) — Space storage system deep dive
 - [compositor.md](../platform/compositor.md) — GPU compositor and window management
 - [networking.md](../platform/networking.md) — Network Translation Module deep dive
