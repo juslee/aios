@@ -9,12 +9,44 @@
 //! Per memory.md §3.
 
 use core::ptr;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::arch::aarch64::mmu;
 use crate::mm::{frame, pgtable::*};
 
 const PAGE_SIZE: usize = 4096;
 const BLOCK_2M: usize = 2 * 1024 * 1024;
+
+/// The full kernel TTBR1 PGD physical address. Set by init_kernel_address_space(),
+/// read by secondary cores to update their TTBR1_EL1 (boot.S installs a minimal
+/// TTBR1 that lacks MMIO and direct map). Zero means not yet initialized.
+static KMAP_PGD: AtomicU64 = AtomicU64::new(0);
+
+/// Install the full kmap TTBR1 on the current (secondary) core.
+/// Must be called after GIC init and before any code that accesses
+/// MMIO or direct-map virtual addresses.
+///
+/// # Safety
+/// Caller must be a secondary core with MMU enabled and boot.S TTBR1 active.
+/// The kmap PGD must have been initialized by the boot CPU.
+pub unsafe fn install_kmap_ttbr1_secondary() {
+    let pgd = KMAP_PGD.load(Ordering::Acquire);
+    if pgd == 0 {
+        return; // Not yet initialized — boot.S TTBR1 stays active.
+    }
+    // SAFETY: Write TTBR1_EL1 with the same PGD that core 0 uses.
+    // The page tables are shared (read-only by all cores). TLBI ensures
+    // stale boot.S TLB entries are flushed on this core.
+    core::arch::asm!(
+        "dsb sy",
+        "msr TTBR1_EL1, {pgd}",
+        "isb",
+        "tlbi vmalle1",
+        "dsb nsh",
+        "isb",
+        pgd = in(reg) pgd,
+    );
+}
 
 // Linker-defined section boundaries (virtual addresses with virtual linking).
 extern "C" {
@@ -290,9 +322,12 @@ pub unsafe fn init_kernel_address_space(ram_start: usize, ram_size: usize) {
     );
     // SAFETY: TLBI VMALLE1IS broadcasts TLB invalidation to all PEs in the
     // Inner Shareable domain. DSB ISH ensures completion before proceeding.
-    // Secondary cores are not yet online (SMP bringup is step 7), so this
-    // is safe even though it broadcasts.
+    // Secondary cores have their own boot.S TTBR1; they install this PGD
+    // via install_kmap_ttbr1_secondary() before accessing MMIO or direct map.
     core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb",);
+
+    // Store the PGD physical address for secondary cores to install.
+    KMAP_PGD.store(pgd as u64, Ordering::Release);
 
     crate::kinfo!(Mm, "TTBR1 active — kernel mapped with W^X");
     crate::kinfo!(

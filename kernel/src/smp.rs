@@ -39,6 +39,11 @@ static ONLINE_CPUS: AtomicUsize = AtomicUsize::new(1);
 /// GIC redistributor base address (set by boot CPU before SMP bringup).
 static GICR_BASE: AtomicUsize = AtomicUsize::new(0);
 
+/// Return the number of online CPUs.
+pub fn online_cpus() -> usize {
+    ONLINE_CPUS.load(Ordering::Relaxed)
+}
+
 // ── Per-core info and Scheduler stub ────────────────────────────────
 
 /// Per-core state tracked by the Scheduler.
@@ -183,6 +188,14 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     let gicr_base = GICR_BASE.load(Ordering::Relaxed);
     crate::arch::aarch64::gic::init_gicv3_secondary(gicr_base, core_id);
 
+    // Install the full kmap TTBR1 (with MMIO + direct map) on this core.
+    // boot.S only installs a minimal TTBR1 covering the kernel image.
+    // Without this, any MMIO access (e.g. UART putc) through the TTBR1
+    // virtual address would fault.
+    // SAFETY: MMU is enabled, GIC is initialized. The kmap PGD was built
+    // by the boot CPU and stored in KMAP_PGD.
+    unsafe { crate::mm::kmap::install_kmap_ttbr1_secondary() };
+
     // Wait for our turn to print (serializes UART output across cores).
     // Uses only load(Acquire) — no exclusive pairs — safe on NC memory.
     while PRINT_TURN.load(Ordering::Acquire) != core_id {
@@ -202,10 +215,6 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     // are initialized for this core.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
-    // Enter idle loop — scheduler assigns work in Phase 3.
-    // Timer IRQs wake the core, handler runs drain_logs, core re-enters wfe.
-    loop {
-        // SAFETY: WFE is a hint instruction, safe at EL1.
-        unsafe { core::arch::asm!("wfe") };
-    }
+    // Enter the scheduler — picks the first thread and never returns.
+    crate::sched::enter_scheduler();
 }

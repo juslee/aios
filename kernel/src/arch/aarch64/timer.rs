@@ -162,10 +162,14 @@ pub fn timer_tick_handler() {
     // 3. Drain log ring buffers to UART.
     crate::observability::drain_logs();
 
-    // 4. Signal preemption needed (scheduler checks this in M11).
+    // 4. Scheduler tick: decrement current thread's time slice.
+    let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
+    crate::sched::timer_tick(cpu);
+
+    // 5. Signal preemption needed.
     NEED_RESCHED.store(true, Ordering::Release);
 
-    // 5. Increment IRQ metrics.
+    // 6. Increment IRQ metrics.
     #[cfg(feature = "kernel-metrics")]
     {
         crate::observability::metrics::METRICS.irq_total.inc();

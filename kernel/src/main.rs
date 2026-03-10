@@ -12,6 +12,7 @@ mod framebuffer;
 mod mm;
 mod observability;
 mod platform;
+mod sched;
 mod smp;
 #[allow(dead_code)]
 mod syscall;
@@ -172,6 +173,11 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         crate::mm::kmap::init_kernel_address_space(ram_start, ram_size);
     };
 
+    // Enable direct-map mode for the buddy allocator. After this point,
+    // physical memory accesses go through TTBR1 direct map instead of
+    // the TTBR0 identity map (which may be switched away for user spaces).
+    crate::mm::buddy::enable_direct_map();
+
     observability::drain_logs();
 
     // --- Step 7: SMP Secondary Core Bringup ---
@@ -252,7 +258,11 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // Final drain before entering idle loop (timer tick takes over in Step 4).
     observability::drain_logs();
 
-    kinfo!(Boot, "Boot sequence complete, entering idle loop");
+    // --- Step 5: Scheduler Init ---
+    sched::init();
+    observability::drain_logs();
+
+    kinfo!(Boot, "Boot sequence complete, entering scheduler");
     observability::drain_logs();
 
     // Unmask IRQ (DAIF.I) — timer interrupts now fire every 1ms.
@@ -261,12 +271,8 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // infrastructure (GIC, timer, vector table, handlers) is initialized.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
-    loop {
-        // SAFETY: wfe is a hint instruction that puts the core in low-power
-        // state until an event occurs. Timer IRQs will wake the core every 1ms,
-        // the handler runs and returns, and the core re-enters wfe.
-        unsafe { core::arch::asm!("wfe") }
-    }
+    // Enter the scheduler — picks the first thread and never returns.
+    sched::enter_scheduler();
 }
 
 /// Halt the CPU in a low-power loop (never returns).
