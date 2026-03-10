@@ -5,6 +5,8 @@
 //!
 //! Per memory.md §2.1 (Bootstrap) and boot.md §2.2 (BootInfo).
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use shared::{BootInfo, MemoryDescriptor, PoolConfig};
 
 use super::buddy::PAGE_SIZE;
@@ -12,6 +14,20 @@ use super::frame::{FrameAllocator, FRAME_ALLOC};
 use super::pools::PagePools;
 
 use crate::arch::aarch64::mmu;
+
+/// Discovered physical RAM extent (set by `init_memory()`).
+/// Used by `kmap::init_kernel_address_space()` to build the direct map.
+static PHYS_RAM_START: AtomicUsize = AtomicUsize::new(0);
+static PHYS_RAM_END: AtomicUsize = AtomicUsize::new(0);
+
+/// Returns the discovered physical RAM range `(start, end)`.
+/// Only valid after `init_memory()` has been called.
+pub fn phys_ram_range() -> (usize, usize) {
+    (
+        PHYS_RAM_START.load(Ordering::Relaxed),
+        PHYS_RAM_END.load(Ordering::Relaxed),
+    )
+}
 
 /// Initialize the physical memory subsystem from the UEFI memory map.
 ///
@@ -118,6 +134,10 @@ pub unsafe fn init_memory(boot_info: &BootInfo) {
         (kernel_start, kernel_end),
         (map_buf_start, map_buf_end),
     );
+
+    // Export discovered RAM extent for kmap direct map.
+    PHYS_RAM_START.store(phys_min, Ordering::Relaxed);
+    PHYS_RAM_END.store(phys_max, Ordering::Relaxed);
 
     // Step 5: Create and store global FrameAllocator.
     let fa = FrameAllocator::new(pools, total_pages);

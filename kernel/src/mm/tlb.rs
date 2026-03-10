@@ -23,7 +23,7 @@ pub fn tlb_invalidate_page(asid: Asid, va: usize) {
             "dsb ish",
             "isb",
             in(reg) operand,
-            options(nostack, nomem),
+            options(nostack),
         );
     }
 }
@@ -41,7 +41,7 @@ pub fn tlb_invalidate_asid(asid: Asid) {
             "dsb ish",
             "isb",
             in(reg) operand,
-            options(nostack, nomem),
+            options(nostack),
         );
     }
 }
@@ -53,6 +53,6 @@ pub fn tlb_invalidate_asid(asid: Asid) {
 pub fn tlbi_all() {
     // SAFETY: TLBI VMALLE1IS is a TLB maintenance instruction safe at EL1.
     unsafe {
-        core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb", options(nostack, nomem),);
+        core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb", options(nostack),);
     }
 }

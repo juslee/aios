@@ -135,14 +135,15 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // Build full kernel address space: W^X sections, direct map, MMIO.
     // Replaces boot.S minimal TTBR1 (2MB RWX blocks) with 4KB W^X pages.
+    // Derive RAM range from the UEFI memory map walk (no hard-coded values).
+    let (ram_start, ram_end) = crate::mm::init::phys_ram_range();
+    let ram_size = ram_end - ram_start;
+
     // SAFETY: Called once from boot CPU after pool init. TTBR0 identity map
     // and boot.S TTBR1 are both active. The switch preserves kernel virtual
     // addresses (slide=0), so execution continues transparently.
     unsafe {
-        crate::mm::kmap::init_kernel_address_space(
-            0x4000_0000, // QEMU virt RAM base
-            0x8000_0000, // 2 GB RAM
-        );
+        crate::mm::kmap::init_kernel_address_space(ram_start, ram_size);
     };
 
     // --- Step 7: SMP Secondary Core Bringup ---

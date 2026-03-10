@@ -29,7 +29,7 @@ extern "C" {
 /// Convert a kernel virtual address to its physical address.
 #[inline]
 fn virt_to_phys(va: usize) -> usize {
-    va.wrapping_sub(mmu::VIRT_PHYS_OFFSET as usize)
+    mmu::virt_to_phys(va as u64) as usize
 }
 
 // ── Page table walk helpers ─────────────────────────────────────────────
@@ -98,8 +98,13 @@ unsafe fn map_page(pgd: usize, va: usize, pa: usize, mair_idx: u64, flags: VmFla
 ///
 /// # Safety
 /// TTBR0 identity map must be active. `pgd` must be a valid L0 table.
-/// `pa` must be 2MB-aligned.
+/// Both `va` and `pa` must be 2MB-aligned.
 unsafe fn map_block_2m(pgd: usize, va: usize, pa: usize, mair_idx: u64, flags: VmFlags) {
+    assert!(
+        va & (BLOCK_2M - 1) == 0,
+        "map_block_2m: VA {:#x} not 2MB-aligned",
+        va
+    );
     let l1 = ensure_table(pgd, l0_index(va));
     let l2 = ensure_table(l1, l1_index(va));
 
@@ -145,6 +150,16 @@ unsafe fn map_range_2m(
     mair_idx: u64,
     flags: VmFlags,
 ) {
+    assert!(
+        va_start & (BLOCK_2M - 1) == 0,
+        "map_range_2m: va_start {:#x} not 2MB-aligned",
+        va_start
+    );
+    assert!(
+        pa_start & (BLOCK_2M - 1) == 0,
+        "map_range_2m: pa_start {:#x} not 2MB-aligned",
+        pa_start
+    );
     let mut va = va_start;
     let mut pa = pa_start;
     let end = (va_end + BLOCK_2M - 1) & !(BLOCK_2M - 1); // round up

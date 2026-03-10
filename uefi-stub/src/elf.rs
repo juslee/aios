@@ -105,9 +105,12 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
     // Pass 1: Find the total physical memory extent across all PT_LOAD segments.
     // Also track lowest_vaddr for virtual-to-physical entry point conversion
     // (needed after Phase 2 M8 virtual linking: e_entry is a virtual address).
+    // All PT_LOAD segments must share the same vaddr-paddr delta (constant
+    // VMA-LMA offset from linker.ld). Assert this to catch malformed ELFs.
     let mut lowest_paddr: u64 = u64::MAX;
     let mut lowest_vaddr: u64 = u64::MAX;
     let mut highest_end: u64 = 0;
+    let mut virt_phys_delta: Option<u64> = None;
 
     for i in 0..e_phnum as usize {
         let phdr = get_phdr(file_data, e_phoff, e_phentsize, i)?;
@@ -116,6 +119,14 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
         }
         if phdr.p_filesz > phdr.p_memsz {
             return Err("PT_LOAD filesz > memsz");
+        }
+        let delta = phdr.p_vaddr.wrapping_sub(phdr.p_paddr);
+        match virt_phys_delta {
+            None => virt_phys_delta = Some(delta),
+            Some(d) if d != delta => {
+                return Err("PT_LOAD segments have inconsistent vaddr-paddr delta")
+            }
+            _ => {}
         }
         let end = phdr.p_paddr.checked_add(phdr.p_memsz).ok_or("overflow")?;
         if phdr.p_paddr < lowest_paddr {

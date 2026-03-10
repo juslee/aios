@@ -133,12 +133,13 @@ Values are consistent with the QEMU `-m 2G` configuration.
 **Tasks:**
 - [x] Create `kernel/src/mm/pgtable.rs` — `PageTable` (512 entries, 4 KB aligned), `PageTableEntry` with all aarch64 bit fields (memory.md §3.2)
 - [x] Implement PTE helpers: `is_valid`, `is_writable`, `is_executable`, `frame`, `set_writable` (clears exec), `set_executable` (sets read-only) — W^X enforced at API level
-- [x] Implement `AddressSpace` struct: PGD physical frame, ASID, VmRegion BTreeMap, MemoryStats (memory.md §3.2)
-- [x] Implement `AddressSpace::map_page(addr, frame, perms)` — walks/allocates intermediate tables, writes leaf PTE, asserts W^X
+- [ ] Implement `AddressSpace` struct: PGD physical frame, ASID, VmRegion BTreeMap, MemoryStats (memory.md §3.2) — deferred to Phase 3 (process isolation)
+- [x] Implement page table walk and mapping via `kmap.rs` helpers (`ensure_table`, `map_page`, `map_block_2m`) — walks/allocates intermediate tables, writes leaf PTE, asserts W^X
 - [x] Intermediate page table pages allocated from `frame::alloc_page()` (Pool::Kernel)
-- [x] Implement `AddressSpace::lookup_pte(addr)` — 4-level walk returning leaf PTE reference
-- [x] Implement `AddressSpace::unmap_page(addr)` — clears PTE, issues TLB invalidation
-- [x] Add `VmRegion`, `VmFlags` (with W^X constraint), and `VmRegionKind` types (memory.md §3.2)
+- [ ] Implement `AddressSpace::lookup_pte(addr)` — deferred to Phase 3
+- [ ] Implement `AddressSpace::unmap_page(addr)` — deferred to Phase 3
+- [x] Add `VmFlags` (with W^X constraint) type (memory.md §3.2)
+- [ ] Add `VmRegion` and `VmRegionKind` types — deferred to Phase 3
 
 **Key reference:** [memory.md §3.2](../kernel/memory.md) — Page Tables
 
@@ -333,7 +334,7 @@ just run     → boot log shows: pool stats, KASLR base, heap ready, address spa
 - [x] 4-level page tables (PGD/PUD/PMD/PTE) with W^X enforcement at API level
 - [x] Kernel mapped through TTBR1 with correct permissions: text=R-X, data=RW-, MMIO=device
 - [x] Physical memory direct map at `0xFFFF_0001_0000_0000`
-- [x] KASLR functional: different base address on each boot
+- [x] KASLR slide computed/logged with non-deterministic entropy (application of slide deferred)
 - [x] ASID allocator with generation tracking
 - [x] TLB invalidation primitives (`TLBI VAE1IS`, `TLBI ASIDE1IS`, `TLBI VMALLE1IS`)
 - [ ] Slab allocator with per-CPU magazines and standard kernel caches

@@ -468,10 +468,10 @@ Per-CPU data, temp mappings`"]
 MMIO regions`"]
             K4["`0xFFFF_0001_0000_0000
 Physical memory direct map`"]
-            K5["`0xFFFF_0000_0000_0000
-Kernel text (.text, read-only)
-Kernel data (.data, .bss)
-Kernel heap`"]
+            K5["`0xFFFF_0000_0008_0000
+Kernel text, rodata, data, bss
+(VMA = KERNEL_BASE + 0x80000
+for 2MiB alignment)`"]
             K1 --- K2 --- K3 --- K4 --- K5
         end
         HOLE["`0xFFFF_0000_0000_0000 — 0x0000_8000_0000_0000
@@ -782,15 +782,17 @@ Phase B — kernel_main (after pool init):
    - Preferred: BootInfo.rng_seed from UEFI RNG protocol (EFI_RNG_PROTOCOL)
    - Fallback: ARM generic counter CNTPCT_EL0 (weak entropy)
 6. Compute slide: (entropy % 64) * 2MB within 0..128 MB range
+   - Currently: slide computed and logged but NOT applied (kernel runs at fixed base)
+   - Future milestone: apply slide to TTBR1 mapping + branch to slid address
 7. Build full TTBR1 with fine-grained W^X (4KB pages):
-   - Kernel mapped at KERNEL_BASE + slide
-   - Direct map at DIRECT_MAP_BASE
+   - Kernel mapped at KERNEL_BASE (fixed base; +slide when KASLR fully applied)
+   - Direct map at DIRECT_MAP_BASE (derived from UEFI memory map)
    - MMIO at MMIO_BASE
-8. Switch TTBR1 to full tables, branch to KASLR-slid address
+8. Switch TTBR1 to full tables (replacing boot.S minimal 2MB blocks)
 
 Note: aarch64 Rust uses PC-relative ADRP+ADD addressing by default.
 When the entire kernel image shifts uniformly, all PC-relative references
-resolve correctly — no pointer fixups are needed for KASLR.
+resolve correctly — no pointer fixups will be needed when KASLR slide is applied.
 ```
 
 ```rust
