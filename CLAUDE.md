@@ -170,7 +170,9 @@ When implementing Phase N:
 - Entry symbols: `#[no_mangle]` on the Rust side
 - Vector table: `.align 7` (128 bytes) per entry in assembly; `ALIGN(2048)` for section in linker script
 - All 16 exception vector entries present; stubs `b .` until real handlers added
-- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → branch to virtual `kernel_main`
+- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → convert SP to virtual → branch to virtual `kernel_main`
+- Boot CPU SP: converted from physical to virtual in boot.S (add VIRT_PHYS_OFFSET) before branching to kernel_main. Secondary core SPs remain physical (accessed via TTBR0 identity map).
+- Exception handler: uses direct `putc()` output, not `println!()`, to prevent recursive faults when TTBR0 is switched away from identity map
 
 ### Crate & Dependency Rules
 
@@ -247,7 +249,7 @@ TLBI Phase 2+ (kmap/tlb):     tlbi vmalle1is + dsb ish (broadcast; safe after WB
 Buddy allocator:              Orders 0-10 (4KiB-4MiB), bitmap coalescing, poison fill on free
 Page pools (QEMU 2G):         kernel=128MB, user=1792MB, model=0, dma=64MB, reserved=64MB
 Free pages (QEMU 2G):         ~508K / ~522K (bitmap + exclusions consume ~14K)
-Slab allocator:               10 size classes (8-4096B), backed by frame allocator (kernel pool)
+Slab allocator:               5 size classes (64, 128, 256, 512, 4096B), backed by frame allocator (kernel pool)
 Vector table alignment:       section ALIGN(2048) in linker.ld + .balign 128 per entry in asm
 Boot stub vectors section:    .text.vectors (boot.S, early boot safety net)
 Rust vectors section:         .text.rvectors (exceptions.rs, installed from kernel_main)
@@ -282,6 +284,13 @@ TTBR1 T1SZ:                   16 (48-bit kernel VA); set in boot.S before TTBR1_
 KASLR slide (M8):             Computed (entropy from CNTPCT_EL0 or BootInfo.rng_seed); logged but NOT applied
                               to TTBR1 (init_kernel_address_space ignores slide; non-zero slide in later milestone)
 ASID width:                   16-bit; AsidAllocator tracks generation; full TLBI VMALLE1IS on generation wrap
+Slab cache sizes (M9):        5 classes: 64, 128, 256, 512, 4096 bytes; smaller rounds up to 64
+Slab magazine size:            32 objects per MagazineRound; current/prev swap for two-chance fast path
+Slab red zones:                8 bytes before/after each object (except 4096-byte cache); pattern 0xFEFE_FEFE_FEFE_FEFE
+User VA layout (memory.md §9.5): TEXT=0x400000, DATA=0x1000000, HEAP=0x10000000, STACK_TOP=0x7FFF_FFFF_F000
+TTBR0 format:                  bits[63:48]=ASID, bits[47:0]=PGD physical address
+TTBR0 switch barriers:         DSB SY → MSR TTBR0_EL1 → TLBI VMALLE1 → DSB NSH → ISB
+Boot CPU SP:                   Converted from physical to virtual in boot.S (add VIRT_PHYS_OFFSET before br to kernel_main)
 Secondary TTBR1 install:      _secondary_entry reuses boot CPU's L0/L1/L2 tables; TTBR1_EL1 set before MMU enable
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry symbol to physical before PSCI CPU_ON call
 ramfb device:                 -device ramfb in QEMU; provides GOP without a full GPU driver
@@ -330,7 +339,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 2 M8 — Virtual Memory & KASLR):
+Current (post-Phase 2 M9 — Kernel Heap & Per-Agent Address Spaces):
 
 ```
 aios/
@@ -355,7 +364,7 @@ aios/
 │   ├── Cargo.toml        deps: shared, fdt-parser, spin
 │   ├── build.rs          emits linker script path
 │   └── src/
-│       ├── main.rs       kernel_main: full boot sequence Steps 1-8, extern crate alloc
+│       ├── main.rs       kernel_main: full boot sequence Steps 1-10, extern crate alloc
 │       ├── boot_phase.rs EarlyBootPhase enum, advance_boot_phase(), boot timing
 │       ├── dtb.rs        DeviceTree wrapper (fdt-parser), DTB parse + QEMU defaults + MPIDR extraction
 │       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main
@@ -367,7 +376,7 @@ aios/
 │       │   ├── mod.rs    Switchable GlobalAlloc (bump → slab), enable_slab_allocator()
 │       │   ├── bump.rs   128 KiB static bump allocator for early boot
 │       │   ├── buddy.rs  Buddy allocator: bitmap coalescing, poison fill, orders 0-10
-│       │   ├── slab.rs   Slab allocator (10 size classes), backed by frame allocator
+│       │   ├── slab.rs   Slab allocator (5 size classes: 64-4096B), magazine layer, red zones
 │       │   ├── pools.rs  PagePools: 4 buddy instances (kernel/user/model/dma)
 │       │   ├── frame.rs  FrameAllocator: pool-aware alloc/free, pressure, global static
 │       │   ├── init.rs   init_memory(): UEFI map walk, pool config, bootstrap
@@ -375,7 +384,9 @@ aios/
 │       │   ├── kmap.rs   init_kernel_address_space(): full TTBR1 build (text=RX, rodata=RO, data=RW, direct map, MMIO)
 │       │   ├── kaslr.rs  KaslrConfig, compute_slide(): 2MB-aligned slide 0..128MB, CNTPCT_EL0/rng_seed entropy
 │       │   ├── asid.rs   AsidAllocator: 16-bit ASID alloc with generation tracking, full TLB flush on wrap
-│       │   └── tlb.rs    TLB invalidation wrappers: tlb_invalidate_page (TLBI VAE1IS), tlb_invalidate_asid (TLBI ASIDE1IS), tlbi_all (TLBI VMALLE1IS)
+│       │   ├── tlb.rs    TLB invalidation wrappers: tlb_invalidate_page (TLBI VAE1IS), tlb_invalidate_asid (TLBI ASIDE1IS), tlbi_all (TLBI VMALLE1IS)
+│       │   ├── heap.rs   Typed kernel heap API: kalloc<T>/kfree<T>, kalloc_layout/kfree_layout
+│       │   └── uspace.rs Per-agent user address spaces: UserAddressSpace, create/map/switch via TTBR1 direct map
 │       └── arch/aarch64/
 │           ├── mod.rs    pub mod uart, exceptions, gic, timer, mmu, psci
 │           ├── boot.S    _start + _secondary_entry (FPU, VBAR, minimal TTBR1 build, TCR T1SZ=16, MMU enable, stack, branch to virtual kernel_main)
