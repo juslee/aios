@@ -13,6 +13,8 @@ mod mm;
 mod observability;
 mod platform;
 mod smp;
+#[allow(dead_code)]
+mod task;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
