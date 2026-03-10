@@ -124,7 +124,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 **Key reference:** [ipc.md §3.1–3.2](../kernel/ipc.md) — Syscall Table, Syscall ABI; [scheduler.md §4.1](../kernel/scheduler.md) — Context save/restore
 
-**Acceptance:** `just run` with a test that triggers `SVC #0` from EL1 with x8=30 (DebugPrint) prints the message to UART via structured logging. Exception does not hang. `just check` passes.
+**Acceptance:** `just run` with a test that triggers `SVC #0` from EL0/user mode with x8=30 (DebugPrint) and a TTBR0-backed user pointer prints the message to UART via structured logging. Exception does not hang. `just check` passes.
 
 -----
 
@@ -134,8 +134,8 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 **Tasks:**
 - [ ] Wire GICv3 IRQ handler in exception vector table: "Current EL with SP_ELx — IRQ" entry saves minimal state, reads IAR, dispatches to `irq_handler`
-- [ ] `irq_handler` in `gic.rs`: reads IAR, if INTID == 30 (PPI for EL1 physical timer), calls `timer_tick_handler`, writes EOIR
-- [ ] `timer_tick_handler` in `timer.rs`: rearm timer for next 1 ms tick (62500 counts at 62.5 MHz), increment global tick counter, call `observability::drain_logs()`, set `need_resched` flag on current thread's `SchedEntity`
+- [ ] `irq_handler` in `gic.rs`: reads IAR, if INTID matches the EL1 physical timer PPI (configured via DT/hal; INTID 30 on QEMU), calls `timer_tick_handler`, writes EOIR
+- [ ] `timer_tick_handler` in `timer.rs`: rearm timer for next 1 ms tick (`CNTFRQ_EL0 / 1000` counts), increment global tick counter, call `observability::drain_logs()`, set `need_resched` flag on current thread's `SchedEntity`
 - [ ] Implement `TimeGet` syscall: reads `CNTVCT_EL0`, returns monotonic nanoseconds
 - [ ] Implement `TimeSleep` syscall: computes `wake_at = now + duration`, sets thread state to `BlockedTimer`, triggers reschedule (stub: immediately returns until scheduler is wired in Step 5)
 - [ ] Implement `TimerSet` syscall: sets a one-shot or repeating timer that wakes `IpcSelect`; stub returns `ENOTSUP` until `IpcSelect` is wired in Step 10 (ipc.md §3.1)
@@ -163,7 +163,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 - [ ] Create `kernel/src/sched/mod.rs` — `Scheduler` struct: per-CPU `RunQueue` array, `nr_cpus`, `SchedulerConfig` (tick_hz=1000, interactive_slice=4ms, normal_slice=10ms, idle_slice=50ms, balance_interval=4ms) (scheduler.md §3.2)
 - [ ] Implement `RunQueue` with class-specific queues: `rt_queue` (sorted by deadline), `interactive_queue` (priority list with round-robin), `normal_queue` (sorted by vruntime), `idle_queue` (FIFO). Use slab-allocated intrusive containers (scheduler.md §3.1–3.2)
 - [ ] Implement `schedule()`: called from timer tick and voluntary yield points. Picks next thread from highest-priority non-empty class. Saves current thread context via `save_context`, restores next thread context via `restore_context` (scheduler.md §4.1)
-- [ ] Wire context switch assembly (`context_switch.S`): full register save/restore (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1), TTBR0 switch with ASID (DSB SY → MSR TTBR0_EL1 → TLBI VMALLE1IS → DSB ISH → ISB), lazy FP save via CPACR_EL1 trap bit (scheduler.md §4.1–4.2)
+- [ ] Wire context switch assembly (`context_switch.S`): full register save/restore (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1), TTBR0 switch with ASID (DSB ISH → MSR TTBR0_EL1 → ISB; no broadcast TLBI — ASIDs prevent stale translations; targeted TLBI ASIDE1IS only on ASID reuse/teardown), lazy FP save via CPACR_EL1 trap bit (scheduler.md §4.1–4.2)
 - [ ] Convert secondary core idle loops (currently `wfe` in `smp.rs`) to proper idle threads that call `schedule()` when woken
 - [ ] Timer tick handler calls `schedule()` when `need_resched` is set
 - [ ] Implement `thread_yield()` — current thread voluntarily yields, calls `schedule()`
@@ -318,7 +318,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Run the Gate 1 benchmark suite: IPC round-trip latency, context switch latency, capability enforcement overhead. Print results to UART. Verify all Tier 1 success metrics. Run full quality gates.
 
 **Tasks:**
-- [ ] Create `kernel/src/bench.rs` — benchmark harness: runs N iterations, computes min/avg/max/p99 latency using `CNTVCT_EL0` (16 ns resolution at 62.5 MHz)
+- [ ] Create `kernel/src/bench.rs` — benchmark harness: runs N iterations, computes min/avg/max/p99 latency using `CNTVCT_EL0` (resolution = `1 / CNTFRQ_EL0`; e.g., 16 ns at 62.5 MHz under QEMU)
 - [ ] IPC round-trip benchmark: two threads on same core, `IpcCall`/`IpcReply` ping-pong, 10000 iterations. Report in microseconds
 - [ ] IPC cross-core benchmark: two threads on different cores, same `IpcCall`/`IpcReply` pattern
 - [ ] Context switch benchmark: two Normal-class threads yield back and forth, measure switch time
