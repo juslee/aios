@@ -14,6 +14,8 @@ mod observability;
 mod platform;
 mod smp;
 #[allow(dead_code)]
+mod syscall;
+#[allow(dead_code)]
 mod task;
 
 use core::fmt::Write;
@@ -24,6 +26,8 @@ use crate::boot_phase::{advance_boot_phase, EarlyBootPhase};
 
 // Include the assembly boot code (entry point + exception vector stubs).
 core::arch::global_asm!(include_str!("arch/aarch64/boot.S"));
+// Include context switch assembly (save_context / restore_context).
+core::arch::global_asm!(include_str!("arch/aarch64/context_switch.S"));
 
 #[no_mangle]
 pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
