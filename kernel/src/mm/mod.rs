@@ -68,17 +68,22 @@ pub fn init_heap() {
     let mut buf = [0u8; 64];
     let mut pos = 0;
     for (i, s) in sizes.iter().enumerate() {
-        if i > 0 {
+        if i > 0 && pos < buf.len() {
             buf[pos] = b',';
             pos += 1;
         }
-        buf[pos] = b' ';
-        pos += 1;
-        // Write the decimal number.
+        if pos < buf.len() {
+            buf[pos] = b' ';
+            pos += 1;
+        }
+        // Write the decimal number (max 5 digits for sizes up to 99999).
         let mut tmp = [0u8; 8];
         let mut n = *s;
         let mut len = 0;
         loop {
+            if len >= tmp.len() {
+                break;
+            }
             tmp[len] = b'0' + (n % 10) as u8;
             len += 1;
             n /= 10;

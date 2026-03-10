@@ -71,9 +71,10 @@ impl CpuSet {
         Self { bits: !0 }
     }
 
-    /// Single CPU allowed.
+    /// Single CPU allowed. Panics if `cpu >= 64`.
     #[allow(dead_code)]
     pub const fn single(cpu: usize) -> Self {
+        assert!(cpu < 64, "CpuSet: cpu index out of range");
         Self { bits: 1 << cpu }
     }
 
@@ -83,9 +84,12 @@ impl CpuSet {
         Self { bits: mask }
     }
 
-    /// Check if a specific CPU is in the set.
+    /// Check if a specific CPU is in the set. Returns false if `cpu >= 64`.
     #[allow(dead_code)]
     pub const fn contains(&self, cpu: usize) -> bool {
+        if cpu >= 64 {
+            return false;
+        }
         self.bits & (1 << cpu) != 0
     }
 }

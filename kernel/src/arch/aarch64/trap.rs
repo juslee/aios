@@ -82,6 +82,7 @@ extern "C" fn lower_el_sync_handler(tf: &mut TrapFrame) {
             put_hex(tf.elr_el1);
             putc(b'\r');
             putc(b'\n');
+            halt_abort();
         }
         EC_INST_ABORT_LOWER => {
             let far: u64;
@@ -95,6 +96,7 @@ extern "C" fn lower_el_sync_handler(tf: &mut TrapFrame) {
             put_hex(tf.elr_el1);
             putc(b'\r');
             putc(b'\n');
+            halt_abort();
         }
         _ => {
             put_str("UNKNOWN EXCEPTION (EL0): EC=0x");
@@ -103,7 +105,17 @@ extern "C" fn lower_el_sync_handler(tf: &mut TrapFrame) {
             put_hex(esr);
             putc(b'\r');
             putc(b'\n');
+            halt_abort();
         }
+    }
+}
+
+/// Halt the CPU after a fatal EL0 exception. Prevents returning to
+/// a faulting instruction which would cause an infinite abort loop.
+fn halt_abort() -> ! {
+    loop {
+        // SAFETY: wfe is a hint instruction, safe at any EL.
+        unsafe { core::arch::asm!("wfe") }
     }
 }
 

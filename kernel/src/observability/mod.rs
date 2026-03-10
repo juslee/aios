@@ -156,9 +156,17 @@ impl LogRing {
         tail: AtomicU32::new(0),
     };
 
-    /// Push a log entry. Overwrites oldest on full.
+    /// Push a log entry. Overwrites oldest on full (advances tail).
     fn push(&self, entry: LogEntry) {
         let head = self.head.load(Ordering::Relaxed);
+        let next_head = head.wrapping_add(1);
+
+        // If the ring is full, advance tail to discard the oldest entry.
+        let tail = self.tail.load(Ordering::Relaxed);
+        if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
+            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+        }
+
         let idx = (head & LOG_RING_MASK) as usize;
 
         // SAFETY: Single producer (owning core). UnsafeCell provides interior
@@ -169,7 +177,7 @@ impl LogRing {
             core::ptr::write(slot, entry);
         }
 
-        self.head.store(head.wrapping_add(1), Ordering::Release);
+        self.head.store(next_head, Ordering::Release);
     }
 
     /// Pop the next entry for the drain consumer. Returns None if empty.
@@ -298,6 +306,16 @@ pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     LOG_RINGS[core].push(entry);
 }
 
+/// Convert a timer tick count to (seconds, microseconds) using u128 to avoid
+/// divide-by-zero when freq < 1_000_000 and precision loss from integer truncation.
+fn timestamp_to_secs_micros(timestamp: u64, freq: u64) -> (u64, u64) {
+    if freq == 0 {
+        return (0, 0);
+    }
+    let total_us = (timestamp as u128 * 1_000_000 / freq as u128) as u64;
+    (total_us / 1_000_000, total_us % 1_000_000)
+}
+
 /// Early boot log: format directly to UART, synchronous.
 fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     use crate::arch::aarch64::uart::UartWriter;
@@ -307,12 +325,7 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     let freq = read_cntfrq();
     let core = current_core_id().min(MAX_CORES - 1);
 
-    let (secs, micros) = if freq > 0 {
-        let total_us = timestamp / (freq / 1_000_000);
-        (total_us / 1_000_000, total_us % 1_000_000)
-    } else {
-        (0, 0)
-    };
+    let (secs, micros) = timestamp_to_secs_micros(timestamp, freq);
 
     let mut w = UartWriter;
     let _ = write!(
@@ -349,12 +362,7 @@ pub fn drain_logs() {
     for ring in LOG_RINGS.iter() {
         while drained < DRAIN_BATCH_SIZE {
             if let Some(entry) = ring.pop() {
-                let (secs, micros) = if freq > 0 {
-                    let total_us = entry.timestamp / (freq / 1_000_000);
-                    (total_us / 1_000_000, total_us % 1_000_000)
-                } else {
-                    (0, 0)
-                };
+                let (secs, micros) = timestamp_to_secs_micros(entry.timestamp, freq);
 
                 let msg_len = (entry.msg_len as usize).min(48);
                 let msg = core::str::from_utf8(&entry.message[..msg_len]).unwrap_or("<invalid>");
