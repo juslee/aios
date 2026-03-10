@@ -9,6 +9,7 @@ mod arch {
 mod boot_phase;
 mod dtb;
 mod framebuffer;
+mod ipc;
 mod mm;
 mod observability;
 mod platform;
@@ -260,6 +261,10 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // --- Step 5: Scheduler Init ---
     sched::init();
+    observability::drain_logs();
+
+    // --- Step 6: IPC Init ---
+    ipc::init();
     observability::drain_logs();
 
     kinfo!(Boot, "Boot sequence complete, entering scheduler");

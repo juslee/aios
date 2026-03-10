@@ -166,10 +166,13 @@ pub fn timer_tick_handler() {
     let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
     crate::sched::timer_tick(cpu);
 
-    // 5. Signal preemption needed.
+    // 5. Check IPC timeouts (uses try_lock — safe from IRQ context).
+    crate::ipc::check_timeouts();
+
+    // 6. Signal preemption needed.
     NEED_RESCHED.store(true, Ordering::Release);
 
-    // 6. Increment IRQ metrics.
+    // 7. Increment IRQ metrics.
     #[cfg(feature = "kernel-metrics")]
     {
         crate::observability::metrics::METRICS.irq_total.inc();

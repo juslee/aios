@@ -281,7 +281,9 @@ extern "C" fn sync_exception_handler(esr: u64, far: u64, elr: u64) {
     let ec = (esr >> 26) & 0x3F;
 
     // Print using only putc — safe even when TTBR0 is switched
-    put_str("EXCEPTION: ESR=0x");
+    put_str("EXCEPTION[CPU ");
+    putc(b'0' + core_id());
+    put_str("]: ESR=0x");
     put_hex(esr);
     put_str(" EC=0x");
     put_hex(ec);
@@ -306,6 +308,12 @@ extern "C" fn sync_exception_handler(esr: u64, far: u64, elr: u64) {
             putc(b'\n');
         }
         _ => {}
+    }
+
+    // Halt this core to prevent infinite re-fault loops.
+    // SAFETY: wfe is a hint instruction, safe at any EL.
+    loop {
+        unsafe { core::arch::asm!("wfe") };
     }
 }
 

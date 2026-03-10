@@ -95,6 +95,11 @@ static RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES] = {
     [RQ; MAX_CORES]
 };
 
+/// Enqueue a thread on a specific CPU's run queue.
+pub fn enqueue_on_cpu(cpu: usize, tid: ThreadId, class: SchedulerClass) {
+    RUN_QUEUES[cpu].lock().enqueue(tid, class);
+}
+
 /// Re-entrancy guard per CPU. Prevents nested schedule() calls from
 /// timer tick while already inside the scheduler.
 static IN_SCHEDULER: [AtomicBool; MAX_CORES] = {
@@ -134,7 +139,7 @@ fn default_slice(class: SchedulerClass) -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Allocate a thread slot in the global THREAD_TABLE. Returns the index.
-fn allocate_thread(thread: Thread) -> Option<usize> {
+pub fn allocate_thread(thread: Thread) -> Option<usize> {
     let mut table = THREAD_TABLE.lock();
     for (i, slot) in table.iter_mut().enumerate() {
         if slot.is_none() {
@@ -145,23 +150,28 @@ fn allocate_thread(thread: Thread) -> Option<usize> {
     None
 }
 
-/// Allocate a kernel stack (16 KiB = 4 pages, order 2) from the frame allocator.
+/// Stack order: order 3 = 8 pages = 32 KiB per thread stack.
+const STACK_ORDER: usize = 3;
+/// Stack size in bytes (2^STACK_ORDER * PAGE_SIZE).
+pub const STACK_SIZE: usize = (1 << STACK_ORDER) * PAGE_SIZE;
+
+/// Allocate a kernel stack from the frame allocator.
 /// Returns the physical base address.
-fn alloc_kernel_stack() -> usize {
+pub fn alloc_kernel_stack() -> usize {
     let mut guard = crate::mm::frame::FRAME_ALLOC.lock();
     if let Some(fa) = guard.as_mut() {
         // SAFETY: Frame allocator is initialized; identity map is active.
-        unsafe { fa.alloc_pages(shared::Pool::Kernel, 2) }
+        unsafe { fa.alloc_pages(shared::Pool::Kernel, STACK_ORDER) }
     } else {
         // SAFETY: Fallback to legacy buddy.
-        unsafe { crate::mm::buddy::BUDDY.lock().alloc_pages(2) }
+        unsafe { crate::mm::buddy::BUDDY.lock().alloc_pages(STACK_ORDER) }
     }
     .expect("Failed to allocate kernel thread stack")
 }
 
 /// Convert a physical address to a virtual address via the direct map.
 #[inline]
-fn phys_to_virt(phys: usize) -> usize {
+pub fn phys_to_virt(phys: usize) -> usize {
     crate::arch::aarch64::mmu::DIRECT_MAP_BASE + phys
 }
 
@@ -180,7 +190,7 @@ pub fn init() {
     for cpu in 0..online {
         let tid = ThreadId((cpu as u32) | 0x8000_0000); // High bit = idle thread
         let stack_phys = alloc_kernel_stack();
-        let stack_virt_top = phys_to_virt(stack_phys) + 4 * PAGE_SIZE;
+        let stack_virt_top = phys_to_virt(stack_phys) + STACK_SIZE;
 
         let mut thread = Thread::new_kernel(
             tid,
@@ -208,7 +218,7 @@ pub fn init() {
     for i in 0..4u32 {
         let tid = ThreadId(0x100 + i);
         let stack_phys = alloc_kernel_stack();
-        let stack_virt_top = phys_to_virt(stack_phys) + 4 * PAGE_SIZE;
+        let stack_virt_top = phys_to_virt(stack_phys) + STACK_SIZE;
 
         let name = match i {
             0 => b"test-A\0\0\0\0\0\0\0\0\0\0",
@@ -246,6 +256,24 @@ pub fn init() {
     SCHED_READY.store(true, Ordering::Release);
 }
 
+/// Validate that a ThreadContext has a non-zero pc (entry point) before
+/// restore_context. Catches context corruption early.
+fn assert_valid_ctx(ctx: *const ThreadContext, tid: ThreadId) {
+    // SAFETY: ctx was just obtained from a locked THREAD_TABLE entry.
+    let pc = unsafe { (*ctx).pc };
+    let sp = unsafe { (*ctx).sp };
+    if pc == 0 {
+        crate::kerror!(
+            Sched,
+            "BUG: restore_context pc=0 for tid={} sp={:#x}",
+            tid.0,
+            sp
+        );
+        crate::observability::drain_logs();
+        panic!("restore_context with pc=0");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scheduler entry point (called once per CPU, never returns)
 // ---------------------------------------------------------------------------
@@ -270,28 +298,42 @@ pub fn enter_scheduler() -> ! {
     // Try to pick and run a thread. Loop on failure (shouldn't happen
     // after init, since every CPU has at least an idle thread).
     loop {
+        // Mask IRQs before touching THREAD_TABLE / CURRENT_THREAD.
+        // A timer IRQ while holding these locks would deadlock (same-core
+        // re-entrant spinlock).
+        // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
+        unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
+
         let tid = {
             let mut rq = RUN_QUEUES[cpu].lock();
             rq.pick_next()
         };
 
         if let Some(tid) = tid {
-            let table = THREAD_TABLE.lock();
-            if let Some(thread) = &table[tid.0 as usize] {
+            let mut table = THREAD_TABLE.lock();
+            if let Some(thread) = &mut table[tid.0 as usize] {
+                // Mark thread as Running so schedule() handles it correctly.
+                thread.sched.state = ThreadState::Running;
                 // Set this thread as current on this CPU.
                 *CURRENT_THREAD[cpu].lock() = Some(tid);
                 let ctx_ptr = &thread.context as *const ThreadContext;
                 drop(table);
+
+                assert_valid_ctx(ctx_ptr, tid);
+
                 // SAFETY: The ThreadContext was set up by Thread::new_kernel with
                 // a valid entry point and stack. restore_context will load callee-saved
-                // regs, set SP, and branch to the entry function.
+                // regs, set SP, and branch to the entry function. IRQs remain masked;
+                // the thread entry or resume path will unmask when ready.
                 unsafe { restore_context(ctx_ptr) };
             } else {
                 drop(table);
             }
         }
 
-        // No thread yet — wait for next timer interrupt.
+        // No thread yet — unmask IRQs and wait for next timer interrupt.
+        // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+        unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
         // SAFETY: wfe is a hint instruction, safe at EL1.
         unsafe { core::arch::asm!("wfe") };
     }
@@ -431,6 +473,8 @@ pub fn schedule() {
         // Increment context switch counter.
         METRICS.sched_context_switch.inc();
 
+        // (debug tracing removed)
+
         // Perform the context switch.
         if !old_ctx_ptr.is_null() {
             // SAFETY: old_ctx_ptr points to the current thread's ThreadContext
@@ -441,30 +485,30 @@ pub fn schedule() {
 
             // After save_context returns, we might be the OLD thread being
             // resumed later, OR we just saved and are about to restore the
-            // new thread. We use a simple flag approach: save_context returns
-            // immediately (we're still the old thread), then we call
-            // restore_context which never returns.
+            // new thread.
             //
-            // BUT: save_context also returns when we're RESTORED later.
-            // We need to distinguish: "just saved" vs "just restored".
-            // We check if we're still the thread that called schedule().
-            let current_now = { *CURRENT_THREAD[cpu].lock() };
+            // Re-read CPU ID from hardware because if we were restored,
+            // we might now be on a different core than when we saved.
+            let actual_cpu = exceptions::core_id() as usize;
+            let current_now = { *CURRENT_THREAD[actual_cpu].lock() };
             if current_now != Some(next_tid) {
                 // We were restored as the old thread — schedule() is done for us.
-                IN_SCHEDULER[cpu].store(false, Ordering::Release);
+                IN_SCHEDULER[actual_cpu].store(false, Ordering::Release);
                 return;
             }
 
             // We're still the caller — switch to the next thread.
+            IN_SCHEDULER[actual_cpu].store(false, Ordering::Release);
             // SAFETY: next_ctx_ptr points to the next thread's ThreadContext.
             // restore_context loads callee-saved regs, SP, and branches to
             // the saved PC. This never returns.
-            IN_SCHEDULER[cpu].store(false, Ordering::Release);
+            assert_valid_ctx(next_ctx_ptr, next_tid);
             unsafe { restore_context(next_ctx_ptr) };
         } else {
             // No current thread (first schedule on this CPU).
             IN_SCHEDULER[cpu].store(false, Ordering::Release);
             // SAFETY: next_ctx_ptr is valid (checked above).
+            assert_valid_ctx(next_ctx_ptr, next_tid);
             unsafe { restore_context(next_ctx_ptr) };
         }
     }
@@ -531,14 +575,50 @@ pub fn block_current(new_state: ThreadState) {
 }
 
 /// Unblock a thread: set it to Runnable and enqueue it on a suitable CPU.
+///
+/// Masks IRQs internally because this function locks THREAD_TABLE and
+/// RUN_QUEUES — both of which are also locked from the timer tick handler.
+/// Without IRQ masking, a timer tick on the same core would deadlock.
+///
+/// Saves and restores DAIF state to avoid unmasking IRQs when called from
+/// IRQ context (e.g., check_timeouts → wake_with_error → unblock).
 #[allow(dead_code)]
 pub fn unblock(tid: ThreadId) {
+    // Save current DAIF state so we can restore it on exit.
+    // SAFETY: Reading DAIF is a pure register read with no side effects.
+    let daif: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, DAIF", out(reg) daif, options(nomem, nostack, preserves_flags))
+    };
+    let irqs_were_masked = (daif & (1 << 7)) != 0; // DAIF.I = bit 7
+
+    // Mask IRQs to prevent timer_tick() deadlock on THREAD_TABLE/RUN_QUEUES.
+    // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
+
     let mut table = THREAD_TABLE.lock();
     let (class, affinity) = if let Some(thread) = &mut table[tid.0 as usize] {
+        // Guard: only unblock threads that are actually blocked.
+        // Prevents double-enqueue if a thread is already Running/Runnable.
+        match thread.sched.state {
+            ThreadState::Running | ThreadState::Runnable => {
+                drop(table);
+                if !irqs_were_masked {
+                    // SAFETY: Restore IRQ state. Safe at EL1.
+                    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+                }
+                return;
+            }
+            _ => {}
+        }
         thread.sched.state = ThreadState::Runnable;
         thread.sched.time_slice_remaining = default_slice(thread.sched.effective_class);
         (thread.sched.effective_class, thread.sched.affinity)
     } else {
+        if !irqs_were_masked {
+            // SAFETY: Restore IRQ state. Safe at EL1.
+            unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+        }
         return;
     };
     drop(table);
@@ -553,6 +633,13 @@ pub fn unblock(tid: ThreadId) {
     };
 
     RUN_QUEUES[target].lock().enqueue(tid, class);
+
+    // Restore original IRQ masking state. Only unmask if IRQs were unmasked
+    // on entry. This prevents unmasking IRQs inside an IRQ handler.
+    if !irqs_were_masked {
+        // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+        unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -560,8 +647,12 @@ pub fn unblock(tid: ThreadId) {
 // ---------------------------------------------------------------------------
 
 /// Idle thread: loops forever executing wfe. Timer interrupts wake it,
-/// schedule() runs, and if no other thread is ready, it returns here.
+/// and if preemption is needed, yields to let another thread run.
 fn idle_thread_entry() -> ! {
+    // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
     loop {
         #[cfg(feature = "kernel-metrics")]
         METRICS.sched_idle_ticks.inc();
@@ -570,8 +661,9 @@ fn idle_thread_entry() -> ! {
         unsafe { core::arch::asm!("wfe") };
 
         // Check if preemption needed after wakeup.
+        // Use thread_yield() which properly masks IRQs around schedule().
         if NEED_RESCHED.load(Ordering::Acquire) {
-            schedule();
+            thread_yield();
         }
     }
 }
@@ -583,6 +675,10 @@ fn idle_thread_entry() -> ! {
 /// Test thread: prints its ID and the core it's running on, yields a few
 /// times, then loops. Proves multi-core context switching works.
 fn test_thread_entry() -> ! {
+    // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
     // Thread index passed in x19 (callee-saved, set in ThreadContext.gp_regs[19]).
     // restore_context restores x19-x30 from the context, so x19 has our index.
     let thread_idx: u64;
