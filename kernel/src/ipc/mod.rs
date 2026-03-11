@@ -16,52 +16,11 @@ use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 use spin::Mutex;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Maximum channels system-wide.
-const MAX_CHANNELS: usize = 128;
-
-/// Maximum messages in a channel's ring buffer.
-const RING_CAPACITY: usize = 16;
-
-/// Maximum inline message payload (bytes).
-pub const MAX_MESSAGE_SIZE: usize = 256;
-
-/// Default IPC timeout in ticks (5 seconds at 1 kHz).
-pub const DEFAULT_TIMEOUT_TICKS: u64 = 5_000;
-
-// ---------------------------------------------------------------------------
-// Channel identity
-// ---------------------------------------------------------------------------
-
-/// Unique channel identifier (index into CHANNEL_TABLE).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChannelId(pub u32);
-
-// ---------------------------------------------------------------------------
-// Message
-// ---------------------------------------------------------------------------
-
-/// Inline IPC message with fixed-size payload.
-#[derive(Clone)]
-pub struct RawMessage {
-    /// Thread that sent this message.
-    pub sender: ThreadId,
-    /// Inline payload.
-    pub data: [u8; MAX_MESSAGE_SIZE],
-    /// Actual length of payload (0..=MAX_MESSAGE_SIZE).
-    pub len: usize,
-}
-
-impl RawMessage {
-    const EMPTY: Self = Self {
-        sender: ThreadId(0),
-        data: [0; MAX_MESSAGE_SIZE],
-        len: 0,
-    };
-}
+// Re-export IPC types from shared crate.
+pub use shared::{
+    ChannelId, EndpointState, RawMessage, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE,
+    RING_CAPACITY,
+};
 
 // ---------------------------------------------------------------------------
 // Message ring buffer
@@ -109,17 +68,6 @@ impl MessageRing {
     fn is_empty(&self) -> bool {
         self.len == 0
     }
-}
-
-// ---------------------------------------------------------------------------
-// Endpoint state
-// ---------------------------------------------------------------------------
-
-/// State of a channel endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EndpointState {
-    Active,
-    Dead,
 }
 
 // ---------------------------------------------------------------------------

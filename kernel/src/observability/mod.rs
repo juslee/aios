@@ -12,124 +12,14 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::smp::MAX_CORES;
 
-// ---------------------------------------------------------------------------
-// Log levels (observability.md §2.2)
-// ---------------------------------------------------------------------------
-
-/// Log severity levels, ordered from most to least verbose.
-/// Compile-time filtering eliminates levels below the configured minimum.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogLevel {
-    Trace = 0,
-    Debug = 1,
-    Info = 2,
-    Warn = 3,
-    Error = 4,
-    #[allow(dead_code)]
-    Fatal = 5,
-}
-
-impl LogLevel {
-    /// 5-character padded name for formatted output.
-    pub const fn name(self) -> &'static str {
-        match self {
-            LogLevel::Trace => "TRACE",
-            LogLevel::Debug => "DEBUG",
-            LogLevel::Info => "INFO ",
-            LogLevel::Warn => "WARN ",
-            LogLevel::Error => "ERROR",
-            LogLevel::Fatal => "FATAL",
-        }
-    }
-}
+// Re-export observability types from shared crate.
+pub use shared::{LogEntry, LogLevel, Subsystem};
 
 /// Compile-time minimum log level. Entries below this are eliminated entirely.
 #[cfg(debug_assertions)]
 pub const MIN_LOG_LEVEL: LogLevel = LogLevel::Debug;
 #[cfg(not(debug_assertions))]
 pub const MIN_LOG_LEVEL: LogLevel = LogLevel::Info;
-
-// ---------------------------------------------------------------------------
-// Subsystem tags (observability.md §2.3)
-// ---------------------------------------------------------------------------
-
-/// Subsystem tag identifying the origin of a log entry.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Subsystem {
-    Boot = 0,
-    Mm = 1,
-    Sched = 2,
-    Ipc = 3,
-    Cap = 4,
-    Irq = 5,
-    Timer = 6,
-    Uart = 7,
-    Gic = 8,
-    Mmu = 9,
-    Smp = 10,
-    Storage = 11,
-    Audit = 12,
-}
-
-impl Subsystem {
-    #[allow(dead_code)]
-    pub const COUNT: usize = 13;
-
-    /// 5-character padded name for formatted output.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Subsystem::Boot => "Boot ",
-            Subsystem::Mm => "Mm   ",
-            Subsystem::Sched => "Sched",
-            Subsystem::Ipc => "Ipc  ",
-            Subsystem::Cap => "Cap  ",
-            Subsystem::Irq => "Irq  ",
-            Subsystem::Timer => "Timer",
-            Subsystem::Uart => "Uart ",
-            Subsystem::Gic => "Gic  ",
-            Subsystem::Mmu => "Mmu  ",
-            Subsystem::Smp => "Smp  ",
-            Subsystem::Storage => "Stor ",
-            Subsystem::Audit => "Audit",
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Log entry (observability.md §2.4)
-// ---------------------------------------------------------------------------
-
-/// A single log entry in the kernel ring buffer.
-/// Fixed 64 bytes — one per cache line on Cortex-A72.
-#[repr(C)]
-pub struct LogEntry {
-    pub timestamp: u64,
-    pub core_id: u8,
-    pub level: LogLevel,
-    pub subsystem: Subsystem,
-    pub flags: u8,
-    pub msg_len: u8,
-    pub _reserved: [u8; 3],
-    pub message: [u8; 48],
-}
-
-const _: () = assert!(core::mem::size_of::<LogEntry>() == 64);
-
-impl LogEntry {
-    const ZERO: Self = Self {
-        timestamp: 0,
-        core_id: 0,
-        level: LogLevel::Trace,
-        subsystem: Subsystem::Boot,
-        flags: 0,
-        msg_len: 0,
-        _reserved: [0; 3],
-        message: [0; 48],
-    };
-}
 
 // ---------------------------------------------------------------------------
 // Per-core ring buffer (observability.md §2.5)
@@ -306,16 +196,6 @@ pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     LOG_RINGS[core].push(entry);
 }
 
-/// Convert a timer tick count to (seconds, microseconds) using u128 to avoid
-/// divide-by-zero when freq < 1_000_000 and precision loss from integer truncation.
-fn timestamp_to_secs_micros(timestamp: u64, freq: u64) -> (u64, u64) {
-    if freq == 0 {
-        return (0, 0);
-    }
-    let total_us = (timestamp as u128 * 1_000_000 / freq as u128) as u64;
-    (total_us / 1_000_000, total_us % 1_000_000)
-}
-
 /// Early boot log: format directly to UART, synchronous.
 fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     use crate::arch::aarch64::uart::UartWriter;
@@ -325,7 +205,7 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     let freq = read_cntfrq();
     let core = current_core_id().min(MAX_CORES - 1);
 
-    let (secs, micros) = timestamp_to_secs_micros(timestamp, freq);
+    let (secs, micros) = shared::timestamp_to_secs_micros(timestamp, freq);
 
     let mut w = UartWriter;
     let _ = write!(
@@ -362,7 +242,7 @@ pub fn drain_logs() {
     for ring in LOG_RINGS.iter() {
         while drained < DRAIN_BATCH_SIZE {
             if let Some(entry) = ring.pop() {
-                let (secs, micros) = timestamp_to_secs_micros(entry.timestamp, freq);
+                let (secs, micros) = shared::timestamp_to_secs_micros(entry.timestamp, freq);
 
                 let msg_len = (entry.msg_len as usize).min(48);
                 let msg = core::str::from_utf8(&entry.message[..msg_len]).unwrap_or("<invalid>");

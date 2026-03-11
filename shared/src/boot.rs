@@ -1,6 +1,7 @@
 //! Boot-time types crossing the UEFI stub / kernel boundary.
 //!
-//! Defines `BootInfo`, `MemoryDescriptor`, `MemoryType`, `PixelFormat`.
+//! Defines `BootInfo`, `MemoryDescriptor`, `MemoryType`, `PixelFormat`,
+//! and `EarlyBootPhase`.
 
 use crate::PhysAddr;
 
@@ -137,5 +138,259 @@ impl MemoryDescriptor {
             11 | 12 => MemoryType::MemoryMappedIO,
             _ => MemoryType::Reserved,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Early boot phases (boot.md §3.1)
+// ---------------------------------------------------------------------------
+
+/// Boot phases from entry point through full initialization.
+///
+/// Each phase represents a milestone in the boot sequence. The kernel
+/// tracks the current phase via an atomic global; structured logging
+/// uses this to decide between direct UART output and ring buffer.
+///
+/// Total: 18 variants (EntryPoint=0 through Complete=17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
+#[allow(dead_code)]
+pub enum EarlyBootPhase {
+    EntryPoint = 0,
+    ExceptionVectors = 1,
+    DeviceTreeParsed = 2,
+    UartReady = 3,
+    InterruptsReady = 4,
+    TimerReady = 5,
+    MmuEnabled = 6,
+    PageAllocatorReady = 7,
+    HeapReady = 8,
+    LogRingsReady = 9,
+    RngReady = 10,
+    KaslrApplied = 11,
+    CapabilityManagerReady = 12,
+    IpcReady = 13,
+    AuditLogReady = 14,
+    ProcessManagerReady = 15,
+    ProvenanceReady = 16,
+    Complete = 17,
+}
+
+/// Total number of boot phase variants.
+pub const EARLY_BOOT_PHASE_COUNT: usize = 18;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- MemoryDescriptor / MemoryType tests ---
+
+    fn make_descriptor(ty: u32) -> MemoryDescriptor {
+        MemoryDescriptor {
+            ty,
+            _pad: 0,
+            phys_start: 0x4000_0000,
+            virt_start: 0,
+            page_count: 256,
+            attribute: 0,
+        }
+    }
+
+    #[test]
+    fn memory_type_loader_code() {
+        assert_eq!(make_descriptor(1).memory_type(), MemoryType::LoaderCode);
+    }
+
+    #[test]
+    fn memory_type_loader_data() {
+        assert_eq!(make_descriptor(2).memory_type(), MemoryType::LoaderData);
+    }
+
+    #[test]
+    fn memory_type_boot_services() {
+        assert_eq!(
+            make_descriptor(3).memory_type(),
+            MemoryType::BootServicesCode
+        );
+        assert_eq!(
+            make_descriptor(4).memory_type(),
+            MemoryType::BootServicesData
+        );
+    }
+
+    #[test]
+    fn memory_type_runtime_services() {
+        assert_eq!(
+            make_descriptor(5).memory_type(),
+            MemoryType::RuntimeServicesCode
+        );
+        assert_eq!(
+            make_descriptor(6).memory_type(),
+            MemoryType::RuntimeServicesData
+        );
+    }
+
+    #[test]
+    fn memory_type_conventional() {
+        assert_eq!(make_descriptor(7).memory_type(), MemoryType::Conventional);
+    }
+
+    #[test]
+    fn memory_type_acpi() {
+        assert_eq!(
+            make_descriptor(9).memory_type(),
+            MemoryType::AcpiReclaimable
+        );
+        assert_eq!(make_descriptor(10).memory_type(), MemoryType::AcpiNvs);
+    }
+
+    #[test]
+    fn memory_type_mmio() {
+        // Both UEFI MMIO (11) and MMIOPortSpace (12) map to MemoryMappedIO.
+        assert_eq!(
+            make_descriptor(11).memory_type(),
+            MemoryType::MemoryMappedIO
+        );
+        assert_eq!(
+            make_descriptor(12).memory_type(),
+            MemoryType::MemoryMappedIO
+        );
+    }
+
+    #[test]
+    fn memory_type_reserved_default() {
+        // UEFI type 0 (Reserved) maps to Reserved.
+        assert_eq!(make_descriptor(0).memory_type(), MemoryType::Reserved);
+        // UEFI type 8 (Unusable) maps to Reserved.
+        assert_eq!(make_descriptor(8).memory_type(), MemoryType::Reserved);
+        // UEFI type 13 (PalCode) maps to Reserved.
+        assert_eq!(make_descriptor(13).memory_type(), MemoryType::Reserved);
+        // Unknown high values map to Reserved.
+        assert_eq!(make_descriptor(99).memory_type(), MemoryType::Reserved);
+        assert_eq!(
+            make_descriptor(u32::MAX).memory_type(),
+            MemoryType::Reserved
+        );
+    }
+
+    #[test]
+    fn memory_type_repr_values() {
+        assert_eq!(MemoryType::Conventional as u32, 0);
+        assert_eq!(MemoryType::LoaderCode as u32, 1);
+        assert_eq!(MemoryType::LoaderData as u32, 2);
+        assert_eq!(MemoryType::Reserved as u32, 7);
+    }
+
+    #[test]
+    fn memory_type_equality() {
+        assert_eq!(MemoryType::Conventional, MemoryType::Conventional);
+        assert_ne!(MemoryType::Conventional, MemoryType::Reserved);
+    }
+
+    // --- PixelFormat tests ---
+
+    #[test]
+    fn pixel_format_repr() {
+        assert_eq!(PixelFormat::Bgr8 as u32, 0);
+        assert_eq!(PixelFormat::Rgb8 as u32, 1);
+    }
+
+    #[test]
+    fn pixel_format_equality() {
+        assert_eq!(PixelFormat::Bgr8, PixelFormat::Bgr8);
+        assert_ne!(PixelFormat::Bgr8, PixelFormat::Rgb8);
+    }
+
+    // --- MemoryDescriptor layout tests ---
+
+    #[test]
+    fn memory_descriptor_size() {
+        // UEFI spec: EFI_MEMORY_DESCRIPTOR is at least 40 bytes.
+        assert_eq!(core::mem::size_of::<MemoryDescriptor>(), 40);
+    }
+
+    #[test]
+    fn memory_descriptor_fields() {
+        let desc = make_descriptor(7);
+        assert_eq!(desc.ty, 7);
+        assert_eq!(desc.phys_start, 0x4000_0000);
+        assert_eq!(desc.page_count, 256);
+    }
+
+    // --- EarlyBootPhase tests ---
+
+    #[test]
+    fn early_boot_phase_count() {
+        assert_eq!(EARLY_BOOT_PHASE_COUNT, 18);
+        assert_eq!(EarlyBootPhase::Complete as u32, 17);
+    }
+
+    #[test]
+    fn early_boot_phase_starts_at_zero() {
+        assert_eq!(EarlyBootPhase::EntryPoint as u32, 0);
+    }
+
+    #[test]
+    fn early_boot_phase_ordering() {
+        assert!(EarlyBootPhase::EntryPoint < EarlyBootPhase::UartReady);
+        assert!(EarlyBootPhase::UartReady < EarlyBootPhase::MmuEnabled);
+        assert!(EarlyBootPhase::MmuEnabled < EarlyBootPhase::HeapReady);
+        assert!(EarlyBootPhase::HeapReady < EarlyBootPhase::LogRingsReady);
+        assert!(EarlyBootPhase::LogRingsReady < EarlyBootPhase::IpcReady);
+        assert!(EarlyBootPhase::IpcReady < EarlyBootPhase::Complete);
+    }
+
+    #[test]
+    fn early_boot_phase_equality() {
+        assert_eq!(EarlyBootPhase::EntryPoint, EarlyBootPhase::EntryPoint);
+        assert_ne!(EarlyBootPhase::EntryPoint, EarlyBootPhase::Complete);
+    }
+
+    #[test]
+    fn early_boot_phase_copy() {
+        let p = EarlyBootPhase::MmuEnabled;
+        let p2 = p;
+        assert_eq!(p, p2);
+    }
+
+    #[test]
+    fn early_boot_phase_contiguous_values() {
+        // All 18 variants have sequential repr values 0..=17.
+        let phases = [
+            EarlyBootPhase::EntryPoint,
+            EarlyBootPhase::ExceptionVectors,
+            EarlyBootPhase::DeviceTreeParsed,
+            EarlyBootPhase::UartReady,
+            EarlyBootPhase::InterruptsReady,
+            EarlyBootPhase::TimerReady,
+            EarlyBootPhase::MmuEnabled,
+            EarlyBootPhase::PageAllocatorReady,
+            EarlyBootPhase::HeapReady,
+            EarlyBootPhase::LogRingsReady,
+            EarlyBootPhase::RngReady,
+            EarlyBootPhase::KaslrApplied,
+            EarlyBootPhase::CapabilityManagerReady,
+            EarlyBootPhase::IpcReady,
+            EarlyBootPhase::AuditLogReady,
+            EarlyBootPhase::ProcessManagerReady,
+            EarlyBootPhase::ProvenanceReady,
+            EarlyBootPhase::Complete,
+        ];
+        for (i, phase) in phases.iter().enumerate() {
+            assert_eq!(*phase as u32, i as u32, "phase {:?} has wrong value", phase);
+        }
+        assert_eq!(phases.len(), EARLY_BOOT_PHASE_COUNT);
+    }
+
+    #[test]
+    fn early_boot_phase_log_rings_before_ipc() {
+        // LogRingsReady must come before IpcReady (logging must work before IPC).
+        assert!(EarlyBootPhase::LogRingsReady < EarlyBootPhase::IpcReady);
+    }
+
+    #[test]
+    fn early_boot_phase_mmu_before_heap() {
+        // MMU must be enabled before heap allocator is ready.
+        assert!(EarlyBootPhase::MmuEnabled < EarlyBootPhase::HeapReady);
     }
 }

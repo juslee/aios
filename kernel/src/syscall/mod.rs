@@ -5,72 +5,10 @@
 
 use crate::arch::aarch64::trap::TrapFrame;
 
-// ---------------------------------------------------------------------------
-// Syscall numbers (ipc.md §3.1, 31 total)
-// ---------------------------------------------------------------------------
-
-/// Syscall numbers matching the IPC architecture spec.
-#[repr(u64)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Syscall {
-    IpcCall = 0,
-    IpcSend = 1,
-    IpcRecv = 2,
-    IpcReply = 3,
-    IpcCancel = 4,
-    IpcSelect = 5,
-    ChannelCreate = 6,
-    ChannelDestroy = 7,
-    RingChannelCreate = 8,
-    RingChannelDestroy = 9,
-    NotificationCreate = 10,
-    NotificationSignal = 11,
-    NotificationWait = 12,
-    ChannelStats = 13,
-    CapabilityTransfer = 14,
-    CapabilityAttenuate = 15,
-    CapabilityRevoke = 16,
-    CapabilityList = 17,
-    MemoryMap = 18,
-    MemoryUnmap = 19,
-    SharedMemoryCreate = 20,
-    SharedMemoryMap = 21,
-    SharedMemoryShare = 22,
-    ProcessCreate = 23,
-    ProcessExit = 24,
-    ProcessWait = 25,
-    TimeGet = 26,
-    TimeSleep = 27,
-    TimerSet = 28,
-    AuditLog = 29,
-    DebugPrint = 30,
-}
-
-/// Total number of defined syscalls.
-#[allow(dead_code)]
-pub const SYSCALL_COUNT: usize = 31;
-
-// ---------------------------------------------------------------------------
-// IPC error codes (ipc.md §3.2)
-// ---------------------------------------------------------------------------
-
-/// Error codes returned in x0 (negative values).
-#[repr(i64)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum IpcError {
-    Etimedout = -1,
-    Epipe = -2,
-    Eagain = -3,
-    Ecanceled = -4,
-    Eacces = -5,
-    Eperm = -6,
-    Enospc = -7,
-    Eproto = -8,
-    Enotsup = -9,
-    EcapDormant = -10,
-}
+// Re-export ABI types from shared crate.
+pub use shared::IpcError;
+#[allow(unused_imports)]
+pub use shared::{Syscall, SYSCALL_COUNT};
 
 // ---------------------------------------------------------------------------
 // Syscall dispatch
