@@ -281,9 +281,10 @@ fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
     IpcError::Enotsup as i64
 }
 
-/// CapabilityAttenuate (nr=15): x0=cap_handle, x1=new_cap_type, x2=new_expiry.
+/// CapabilityAttenuate (nr=15): x0=cap_handle, x1=new_cap_type, x2=new_expiry, x3=resource_id.
 ///
 /// Create a narrower child capability from an existing one.
+/// x3 is required when new_cap_type is ChannelAccess(1) or SharedMemoryAccess(3).
 fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     let handle = shared::CapabilityHandle(tf.x[0] as u32);
     let new_cap_type = tf.x[1];

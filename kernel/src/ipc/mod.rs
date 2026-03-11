@@ -182,8 +182,9 @@ static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
 /// Requires `Capability::ChannelCreate` on the creator's process.
 pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
     // Capability enforcement: check ChannelCreate (fail-closed).
+    // Returns the authorizing token ID for cascade revocation tracking.
     let pid = crate::cap::process_of_thread(creator).ok_or(IpcError::Eperm as i64)?;
-    crate::cap::check_channel_create(pid)?;
+    let auth_token = crate::cap::check_channel_create(pid)?;
 
     let mut table = CHANNEL_TABLE.lock();
     // Find a free slot.
@@ -194,7 +195,9 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
     };
 
     let id = ChannelId(idx as u32);
-    table[idx] = Some(Channel::new(id, creator));
+    let mut ch = Channel::new(id, creator);
+    ch.creation_cap = Some(auth_token);
+    table[idx] = Some(ch);
     crate::kinfo!(Ipc, "Channel {} created by thread {}", idx, creator.0);
     Ok(id)
 }
@@ -323,6 +326,8 @@ pub fn ipc_call(
         if let Some(recv_tid) = direct_switch_target {
             // Receiver found — we'll attempt direct switch below.
             // Don't unblock via scheduler; direct switch is faster.
+            // Clear the receiver's timeout first (they're being woken by message delivery).
+            clear_timeout(recv_tid);
             drop(table);
 
             // Register reply buffer BEFORE direct switch (we'll be blocked).
@@ -612,6 +617,10 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
         }
     }
 
+    // Clear the caller's timeout — the reply arrived, so the timeout must
+    // not fire later and spuriously fail the call with ETIMEDOUT.
+    clear_timeout(caller_tid);
+
     // Try direct switch back to caller (fast path).
     // This bypasses the scheduler — replier switches directly to caller.
     if direct::try_reply_switch(replier_tid, caller_tid) {
@@ -672,9 +681,10 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         return IpcError::Eagain as i64;
     }
 
-    // Wake receiver if waiting.
+    // Wake receiver if waiting — clear their timeout first.
     if let Some(recv_tid) = ch.waiting_receiver.take() {
         drop(table);
+        clear_timeout(recv_tid);
         sched::unblock(recv_tid);
     }
 
@@ -774,13 +784,18 @@ pub fn current_thread_id() -> Option<ThreadId> {
 /// Wake a blocked thread and signal an error condition.
 ///
 /// We store the error code in a per-thread wakeup error slot so the
-/// thread can check it after being unblocked.
+/// thread can check it after being unblocked. Also clears any pending
+/// timeout entry to prevent stale timeouts from firing later.
 fn wake_with_error(tid: ThreadId, error: i64) {
     // Store error in the wakeup error slot.
     {
         let mut errors = WAKEUP_ERRORS.lock();
         errors[tid.0 as usize] = error;
     }
+    // Clear any pending timeout — the thread is being woken for a
+    // different reason (cancel, destroy, etc.), so the timeout must
+    // not fire later and overwrite this error code.
+    clear_timeout(tid);
     sched::unblock(tid);
 }
 
@@ -795,6 +810,18 @@ fn get_wakeup_error(tid: ThreadId) -> i64 {
 /// Per-thread wakeup error codes. Set by wake_with_error(), read by
 /// the woken thread to distinguish normal wakeup from error wakeup.
 static WAKEUP_ERRORS: Mutex<[i64; MAX_THREADS]> = Mutex::new([0; MAX_THREADS]);
+
+/// Clear any pending timeout entry for a thread.
+/// Called when a thread is woken by a non-timeout path (reply, send,
+/// cancel, destroy) to prevent stale timeouts from firing later.
+fn clear_timeout(tid: ThreadId) {
+    if let Some(mut tq) = TIMEOUT_QUEUE.try_lock() {
+        tq[tid.0 as usize] = None;
+    }
+    // If the lock is contended (IRQ handler running check_timeouts),
+    // skip — the timeout handler will see the thread is already awake
+    // and the wakeup error slot is already set, so it's benign.
+}
 
 /// Sleep the current thread for the given number of ticks.
 ///

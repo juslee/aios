@@ -71,11 +71,13 @@ impl<T: Copy, const N: usize> FixedQueue<T, N> {
 // RingBuffer — Clone-based circular buffer (used by IPC message queues)
 // ---------------------------------------------------------------------------
 
-/// Fixed-capacity ring buffer that clones elements on push/pop.
+/// Fixed-capacity ring buffer.
 ///
 /// Unlike `FixedQueue` (which uses `Option<T>` + `Copy`), this stores
-/// elements directly and requires `Clone` + a const default initializer.
-/// Used by IPC `MessageRing` where elements are large (256+ bytes).
+/// elements directly. Requires `Copy` for construction (array fill) and
+/// `Clone` on the impl bound for consistency. Push/pop move values by
+/// assignment (no explicit `.clone()`). Used by IPC `MessageRing` where
+/// elements are large (256+ bytes).
 pub struct RingBuffer<T, const N: usize> {
     buf: [T; N],
     head: usize,

@@ -98,21 +98,30 @@ impl CapabilityTable {
     /// Check if this table holds a valid (non-revoked, non-expired) token
     /// that permits the given action.
     pub fn has_capability(&self, cap: &Capability, now_tick: u64) -> bool {
-        self.tokens.iter().any(|slot| {
-            if let Some(token) = slot {
-                if token.revoked {
-                    return false;
-                }
-                if let Some(exp) = token.expires_at_tick {
-                    if now_tick >= exp {
-                        return false;
-                    }
-                }
-                token.capability.permits(cap)
-            } else {
-                false
+        self.find_authorizing_token(cap, now_tick).is_some()
+    }
+
+    /// Find the first valid token that authorizes the given capability.
+    /// Returns the token's ID, or None if no matching token exists.
+    pub fn find_authorizing_token(
+        &self,
+        cap: &Capability,
+        now_tick: u64,
+    ) -> Option<CapabilityTokenId> {
+        for token in self.tokens.iter().flatten() {
+            if token.revoked {
+                continue;
             }
-        })
+            if let Some(exp) = token.expires_at_tick {
+                if now_tick >= exp {
+                    continue;
+                }
+            }
+            if token.capability.permits(cap) {
+                return Some(token.id);
+            }
+        }
+        None
     }
 
     /// Revoke a token by ID, cascading to all children.
@@ -229,7 +238,8 @@ pub fn current_process_id() -> Option<ProcessId> {
 }
 
 /// Check that a process holds ChannelCreate capability.
-pub fn check_channel_create(pid: ProcessId) -> Result<(), i64> {
+/// Returns the authorizing token ID on success (for recording in Channel.creation_cap).
+pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
     let proc = match &table[pid.0 as usize] {
@@ -241,16 +251,17 @@ pub fn check_channel_create(pid: ProcessId) -> Result<(), i64> {
         }
     };
 
-    if proc
+    match proc
         .cap_table
-        .has_capability(&Capability::ChannelCreate, now)
+        .find_authorizing_token(&Capability::ChannelCreate, now)
     {
-        Ok(())
-    } else {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        crate::kwarn!(Cap, "pid={}: denied ChannelCreate", pid.0);
-        Err(IpcError::Eperm as i64)
+        Some(token_id) => Ok(token_id),
+        None => {
+            #[cfg(feature = "kernel-metrics")]
+            METRICS.ipc_cap_denied.inc();
+            crate::kwarn!(Cap, "pid={}: denied ChannelCreate", pid.0);
+            Err(IpcError::Eperm as i64)
+        }
     }
 }
 
