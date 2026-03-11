@@ -343,7 +343,9 @@ fn revoke_channels_for_cap(token_id: CapabilityTokenId) {
     }
 
     // Destroy outside the lock to avoid lock ordering issues.
+    // Use unchecked destroy — this is a kernel-initiated teardown during
+    // cascade revocation, so capability checks must be bypassed.
     for ch_id in channels_to_destroy[..count].iter().flatten() {
-        let _ = crate::ipc::channel_destroy(*ch_id);
+        let _ = crate::ipc::channel_destroy_unchecked(*ch_id);
     }
 }

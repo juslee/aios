@@ -218,6 +218,12 @@ pub fn channel_destroy(channel: ChannelId) -> Result<(), i64> {
     let pid = crate::cap::current_process_id().ok_or(IpcError::Eperm as i64)?;
     crate::cap::check_channel_access(pid, channel)?;
 
+    channel_destroy_unchecked(channel)
+}
+
+/// Internal channel destruction — bypasses capability checks.
+/// Used by cascade revocation (kernel-initiated teardown).
+pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
     let mut table = CHANNEL_TABLE.lock();
     let idx = channel.0 as usize;
     let ch = match table[idx].take() {

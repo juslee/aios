@@ -96,6 +96,7 @@ aios/
 | 5 | Hardware & Connectivity | 16–19 | NTM, USB, wireless, power management |
 | 6 | Rich Experience | 20–23 | UI toolkit, browser, media, accessibility |
 | 7 | Production OS | 24–27 | Secure boot, Linux compatibility, launch |
+| 8 | Security Intelligence | 28–29 | Composable capability profiles, AIRS capability intelligence |
 
 See [docs/project/development-plan.md](docs/project/development-plan.md) for the full phase breakdown.
 

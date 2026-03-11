@@ -101,7 +101,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 - [x] Define `KernelResourceLimits` — `max_channels`, `max_shared_regions`, `max_pending_messages`, `max_notification_subscriptions`, `max_child_processes` with trust-level defaults (ipc.md §3.3)
 - [x] Implement `Thread::new_kernel(entry_fn, stack_page)` — creates a kernel thread with initial context (ELR = entry, SPSR = EL1h, SP = stack top, TTBR0 = kernel)
 - [x] Static `PROCESS_TABLE` and `THREAD_TABLE` (bounded slab-backed arrays)
-- [ ] Unit tests in `shared/` for `KernelResourceLimits` trust-level defaults, `ThreadState` transitions
+- [x] Unit tests in `shared/` for `KernelResourceLimits` trust-level defaults, `ThreadState` transitions
 
 **Key reference:** [scheduler.md §3.3](../kernel/scheduler.md) — SchedEntity; [scheduler.md §4.1](../kernel/scheduler.md) — ThreadContext; [ipc.md §3.3](../kernel/ipc.md) — Kernel Resource Limits
 
@@ -160,7 +160,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement the 4-class per-CPU run queue structure and context switching. Kernel threads can be created, enqueued, and scheduled across all 4 cores. The idle loop on each core becomes a proper idle thread.
 
 **Tasks:**
-- [x] Create `kernel/src/sched/mod.rs` — `Scheduler` struct: per-CPU `RunQueue` array, `nr_cpus`, `SchedulerConfig` (tick_hz=1000, interactive_slice=4ms, normal_slice=10ms, idle_slice=50ms, balance_interval=4ms) (scheduler.md §3.2)
+- [x] Create `kernel/src/sched/mod.rs` — `Scheduler` struct: per-CPU `RunQueue` array, `nr_cpus`, `SchedulerConfig` (tick_hz=1000, rt_slice=4ms, interactive_slice=10ms, normal_slice=50ms, idle_slice=50ms, balance_interval=4ms) (scheduler.md §3.2)
 - [x] Implement `RunQueue` with class-specific queues: `rt_queue` (sorted by deadline), `interactive_queue` (priority list with round-robin), `normal_queue` (sorted by vruntime), `idle_queue` (FIFO). Use slab-allocated intrusive containers (scheduler.md §3.1–3.2)
 - [x] Implement `schedule()`: called from timer tick and voluntary yield points. Picks next thread from highest-priority non-empty class. Saves current thread context via `save_context`, restores next thread context via `restore_context` (scheduler.md §4.1)
 - [x] Wire context switch assembly (`context_switch.S`): full register save/restore (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1), TTBR0 switch with ASID (DSB ISH → MSR TTBR0_EL1 → ISB; no broadcast TLBI — ASIDs prevent stale translations; targeted TLBI ASIDE1IS only on ASID reuse/teardown), lazy FP save via CPACR_EL1 trap bit (scheduler.md §4.1–4.2)
