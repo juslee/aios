@@ -67,7 +67,7 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     // Bounds check.
     if sender_idx >= table.len() || receiver_idx >= table.len() {
         drop(table);
-        // SAFETY: Restore IRQ state.
+        // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
         return false;
     }
