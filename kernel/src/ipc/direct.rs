@@ -25,9 +25,8 @@ use crate::arch::aarch64::exceptions;
 use crate::observability::metrics::METRICS;
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
 
-/// Maximum priority inheritance depth (ipc.md §9.2).
-/// Prevents runaway transitive inheritance chains.
-pub const MAX_INHERITANCE_DEPTH: u8 = 8;
+// Re-export from shared crate so kernel code can use `direct::MAX_INHERITANCE_DEPTH`.
+pub use shared::MAX_INHERITANCE_DEPTH;
 
 extern "C" {
     fn save_context(ctx: *mut ThreadContext);

@@ -23,7 +23,7 @@ pub use boot::{BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelForm
 pub use collections::{FixedQueue, RingBuffer};
 pub use ipc::{
     validate_user_va, ChannelId, EndpointState, RawMessage, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS,
-    MAX_MESSAGE_SIZE, RING_CAPACITY, USER_VA_LIMIT,
+    MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE, RING_CAPACITY, USER_VA_LIMIT,
 };
 pub use kaslr::{compute_slide_from_entropy, KaslrConfig};
 pub use memory::{buddy_of, MemoryPressure, Pool, PoolConfig};

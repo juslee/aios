@@ -20,6 +20,13 @@ pub const MAX_MESSAGE_SIZE: usize = 256;
 /// Default IPC timeout in ticks (5 seconds at 1 kHz).
 pub const DEFAULT_TIMEOUT_TICKS: u64 = 5_000;
 
+/// Maximum priority inheritance depth (ipc.md §9.2).
+///
+/// Bounds transitive inheritance chains to prevent runaway elevation.
+/// When thread A calls B calls C calls D..., each hop increments the
+/// depth counter. At depth 8, no further inheritance propagation occurs.
+pub const MAX_INHERITANCE_DEPTH: u8 = 8;
+
 // ---------------------------------------------------------------------------
 // Channel identity
 // ---------------------------------------------------------------------------
@@ -111,6 +118,36 @@ mod tests {
     #[test]
     fn default_timeout_is_5_seconds() {
         assert_eq!(DEFAULT_TIMEOUT_TICKS, 5_000);
+    }
+
+    #[test]
+    fn max_inheritance_depth_is_8() {
+        assert_eq!(MAX_INHERITANCE_DEPTH, 8);
+    }
+
+    #[test]
+    fn max_inheritance_depth_fits_in_u8() {
+        // Ensure the constant is small enough to track in a single byte.
+        assert!(MAX_INHERITANCE_DEPTH <= u8::MAX);
+    }
+
+    #[test]
+    fn inheritance_depth_bounding() {
+        // Simulates the kernel's `(depth + 1).min(MAX_INHERITANCE_DEPTH)` logic.
+        // At depth 0 (fresh call): increments to 1.
+        assert_eq!((0u8 + 1).min(MAX_INHERITANCE_DEPTH), 1);
+        // At depth 7: increments to 8 (the max).
+        assert_eq!((7u8 + 1).min(MAX_INHERITANCE_DEPTH), 8);
+        // At depth 8 (already max): stays at 8.
+        assert_eq!((MAX_INHERITANCE_DEPTH + 1).min(MAX_INHERITANCE_DEPTH), 8);
+    }
+
+    #[test]
+    fn inheritance_depth_saturating_sub_on_reply() {
+        // Simulates the kernel's `depth.saturating_sub(1)` on reply switch.
+        assert_eq!(MAX_INHERITANCE_DEPTH.saturating_sub(1), 7);
+        assert_eq!(1u8.saturating_sub(1), 0);
+        assert_eq!(0u8.saturating_sub(1), 0); // No underflow.
     }
 
     // --- ChannelId tests ---
