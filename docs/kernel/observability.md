@@ -934,7 +934,7 @@ The core architectural principle of AI-enhanced observability is the **closed-lo
 
 ```
 Kernel emits metrics/traces
-    → AIRS consumes via IPC (§6 export interface)
+    → AIRS consumes via §6 export interfaces (AuditRead, KernelInfoPage, UART drain)
     → AIRS analyzes (ML models at Idle scheduler class)
     → AIRS adjusts kernel params via syscall
     → Kernel observes impact of adjustments
@@ -945,7 +945,7 @@ Kernel emits metrics/traces
 
 1. **One-directional data flow.** The kernel emits telemetry through its existing export interface (§6). AIRS reads this data. The kernel never reads AIRS's internal state — the kernel has no dependency on AI availability.
 2. **AI optimizes, kernel guarantees.** AIRS suggests parameter adjustments (timeouts, sampling rates, buffer sizes). The kernel validates all adjustments against safety bounds before applying them. An invalid suggestion is silently dropped.
-3. **Graceful degradation.** If AIRS is unavailable, all observability subsystems operate with their static defaults (§1–9). No telemetry is lost; it simply isn't analyzed.
+3. **Graceful degradation.** If AIRS is unavailable, all observability subsystems operate with their static defaults (§1–9). No telemetry that the kernel emits in this configuration is lost; it simply isn't analyzed.
 
 This feedback loop is the foundation for all mechanisms in §10.2–10.8 and powers the AI-driven improvements in scheduling (scheduler.md §16) and deadlock prevention (deadlock-prevention.md §13).
 
@@ -953,13 +953,13 @@ This feedback loop is the foundation for all mechanisms in §10.2–10.8 and pow
 
 ### 10.2 Adaptive Trace Sampling
 
-**Problem.** Trace points (§4) are controlled by a compile-time feature gate (`kernel-tracing`): either all trace events are recorded, or none are. In production, enabling all traces overwhelms the per-core trace rings (4096 entries at 32 bytes each = 128 KiB per core), while disabling them loses diagnostic visibility.
+**Problem.** Trace points (§4) are controlled by a compile-time feature gate (`kernel-tracing`) that decides whether tracepoints are compiled in at all. When `kernel-tracing` is enabled, every compiled tracepoint records an event; when disabled, no tracepoints exist. In production, enabling all traces overwhelms the per-core trace rings (4096 entries at 32 bytes each = 128 KiB per core), while disabling them loses diagnostic visibility.
 
-**AI solution.** AIRS learns which trace events are diagnostically valuable based on historical correlation with anomalies. Rare events that frequently precede problems (scheduler anomalies during IPC, unexpected lock contention spikes) are always traced at 100%. Routine events (timer ticks, periodic metric updates) are sampled at 1–10%. The sampling rates adapt continuously based on system state.
+**AI solution.** In builds where `kernel-tracing` is enabled (so tracepoints are compiled in), AIRS learns which trace events are diagnostically valuable based on historical correlation with anomalies. Rare events that frequently precede problems (scheduler anomalies during IPC, unexpected lock contention spikes) are always traced at 100%. Routine events (timer ticks, periodic metric updates) are sampled at 1–10%. The sampling rates adapt continuously based on system state. This is a **runtime policy over compiled-in tracepoints**, not a replacement for the compile-time feature gate.
 
 **Effect.** Reduces trace buffer pressure by 10–100× without losing the events that matter for diagnosis. Enables production tracing that was previously infeasible due to buffer overflow.
 
-**Safety and fallback.** The kernel enforces a minimum sampling rate (0.1%) for all event types — no event can be completely silenced by AIRS. If AIRS is unavailable, the compile-time feature gate (§4) determines tracing behavior (all-or-nothing).
+**Safety and fallback.** When `kernel-tracing` is enabled, the kernel enforces a minimum sampling rate (0.1%) for all event types — no event can be completely silenced by AIRS. If AIRS is unavailable but tracing is enabled, all tracepoints record at their default rate (all-or-nothing). In builds where `kernel-tracing` is disabled, no trace events are produced and adaptive sampling does not apply.
 
 **Research.** The eBPF ecosystem [R10] enables low-overhead dynamic tracing in production Linux systems. Industry AIOps platforms (Datadog, Grafana) achieve adaptive sampling via ML classifiers on event streams, reducing trace volume while preserving diagnostic value.
 
@@ -983,7 +983,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 ### 10.4 Automatic Causal Correlation
 
-**Problem.** The kernel emits metrics from independent subsystems — scheduler queue depth, IPC latency, memory pressure, lock contention. These metrics are currently independent counters (§3) with no cross-analysis capability. When multiple metrics spike simultaneously, there is no automated way to determine which is the cause and which is the effect.
+**Problem.** The kernel emits metrics from independent subsystems — scheduler queue depth, IPC latency, memory pressure, and (future) lock contention. These metrics are currently independent counters (§3) with no cross-analysis capability. Lock contention telemetry will require additional metrics and tracepoints beyond the current `KernelMetrics` registry. When multiple metrics spike simultaneously, there is no automated way to determine which is the cause and which is the effect.
 
 **AI solution.** AIRS cross-correlates metrics across subsystems using time-series analysis and learned causal models. When correlated anomalies are detected, it reports root cause chains: "IPC latency rose to 50 ms (normal: 2 ms) because scheduler queue depth reached 15 (normal: 3), root cause: inference thread consuming 80% of CPU 2."
 

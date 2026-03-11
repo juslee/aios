@@ -379,7 +379,7 @@ Layer 5: Capability restrictions → constrained dependency graph
 Layer 6: Synchronous IPC         → no callback cycles
 Layer 7: Preemptive kernel       → liveness: no CPU starvation of lock waiters
 Layer 8: Wait-Die / Wound-Wait   → progress guarantee for contested resources (future)
-Layer 9:  AI prediction          → break cycles before they form (future, §13.1)
+Layer 9: AI prediction           → break cycles before they form (future, §13.1)
 Layer 10: AI lock management     → adaptive splitting + elision (future, §13.2/§13.5)
 Layer 11: AI calibration         → learned timeouts per service (future, §13.3)
 Layer 12: AI deploy-time check   → cycle detection at install time (future, §13.4)
@@ -414,7 +414,7 @@ All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler 
 
 **Problem.** Mandatory timeouts (§4) detect deadlocks only after they have formed, wasting up to 5 seconds of blocked time before recovery.
 
-**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data (observability.md §4) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it proactively cancels the youngest call via `IpcCancel` (ipc.md §3.1) *before* all parties block.
+**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data (observability.md §4) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it signals the service owning the youngest pending call to cancel via `IpcCancel` (ipc.md §3.1), or uses a privileged kernel cancellation interface, *before* all parties block.
 
 **Advantage.** Breaks cycles in milliseconds rather than waiting for a 5-second timeout. Reduces wasted CPU time and improves tail latency for all services in the call chain.
 
@@ -428,7 +428,7 @@ All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler 
 
 **Problem.** Static lock ordering (§3) prevents deadlocks but cannot adapt to runtime contention. Two locks that are rarely contested together may become a hot pair under specific workloads, causing latency spikes without ever deadlocking.
 
-**AI solution.** An AIRS model running at `Idle` class analyzes lock timing traces from the kernel metrics subsystem (observability.md §3). It identifies hot lock pairs — locks that are frequently held simultaneously across cores — and suggests dynamic lock splitting for high-contention paths (e.g., separating CPU migration locks from scheduler state locks).
+**AI solution.** An AIRS model running at `Idle` class analyzes lock timing data from kernel tracepoints (observability.md §4; lock contention tracepoints are a future addition to the trace infrastructure). It identifies hot lock pairs — locks that are frequently held simultaneously across cores — and suggests dynamic lock splitting for high-contention paths (e.g., separating CPU migration locks from scheduler state locks).
 
 **Safety and fallback.** The ascending CPU ID ordering invariant (§3) is preserved by construction — the AI suggests *new* fine-grained locks that slot into the existing hierarchy, never reorders existing locks. If AIRS is unavailable, the static global ordering (§3) remains in effect.
 
