@@ -47,7 +47,6 @@ pub fn online_cpus() -> usize {
 // ── Per-core info and Scheduler stub ────────────────────────────────
 
 /// Per-core state tracked by the Scheduler.
-#[allow(dead_code)]
 pub struct CoreInfo {
     pub mpidr: u64,
     pub stack_base: usize,
@@ -56,7 +55,6 @@ pub struct CoreInfo {
 }
 
 impl CoreInfo {
-    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             mpidr: 0,

@@ -25,6 +25,7 @@ const MAX_THREADS_PER_PROCESS: usize = 16;
 pub const MAX_PROCESSES: usize = 32;
 
 /// Process control block — owns an address space and tracks its threads.
+#[allow(dead_code)]
 pub struct ProcessControl {
     /// Process identifier.
     pub pid: ProcessId,

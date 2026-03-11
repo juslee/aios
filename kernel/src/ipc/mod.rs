@@ -627,7 +627,6 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
 /// Send a message without waiting for reply.
 ///
 /// Returns 0 on success, negative error on failure.
-#[allow(dead_code)]
 pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
     if send_buf.len() > MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
@@ -682,7 +681,6 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
 
 /// Cancel a pending IpcCall on a channel. The blocked caller is woken
 /// with ECANCELED.
-#[allow(dead_code)]
 pub fn ipc_cancel(channel: ChannelId) -> i64 {
     let mut table = CHANNEL_TABLE.lock();
     let ch = match &mut table[channel.0 as usize] {
@@ -783,7 +781,6 @@ static WAKEUP_ERRORS: Mutex<[i64; MAX_THREADS]> = Mutex::new([0; MAX_THREADS]);
 ///
 /// Uses the IPC timeout infrastructure to wake the thread after the deadline.
 /// error_code=0 distinguishes sleep wake from error wake.
-#[allow(dead_code)]
 pub fn sleep_ticks(ticks: u64) {
     if ticks == 0 {
         return;

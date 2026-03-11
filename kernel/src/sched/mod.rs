@@ -536,7 +536,6 @@ pub fn thread_yield() {
 
 /// Block the current thread with the given state. Triggers a reschedule.
 /// The thread is NOT re-enqueued; the unblock() caller must re-enqueue it.
-#[allow(dead_code)]
 pub fn block_current(new_state: ThreadState) {
     // Mask IRQs during schedule.
     // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
@@ -568,7 +567,6 @@ pub fn block_current(new_state: ThreadState) {
 ///
 /// Saves and restores DAIF state to avoid unmasking IRQs when called from
 /// IRQ context (e.g., check_timeouts → wake_with_error → unblock).
-#[allow(dead_code)]
 pub fn unblock(tid: ThreadId) {
     // Save current DAIF state so we can restore it on exit.
     // SAFETY: Reading DAIF is a pure register read with no side effects.

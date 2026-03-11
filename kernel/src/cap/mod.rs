@@ -190,7 +190,6 @@ impl CapabilityTable {
     }
 
     /// List non-revoked token IDs into an output buffer. Returns count written.
-    #[allow(dead_code)]
     pub fn list(&self, out: &mut [CapabilityTokenId], max: usize) -> usize {
         let mut written = 0;
         for slot in self.tokens.iter() {

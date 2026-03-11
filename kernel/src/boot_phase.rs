@@ -56,7 +56,6 @@ pub fn advance_boot_phase(phase: EarlyBootPhase) {
 }
 
 /// Get the current boot phase.
-#[allow(dead_code)]
 pub fn current_boot_phase() -> EarlyBootPhase {
     let val = CURRENT_PHASE.load(Ordering::Relaxed) as u32;
     // SAFETY: All values 0..=17 are valid EarlyBootPhase variants.

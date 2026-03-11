@@ -16,9 +16,7 @@ mod observability;
 mod platform;
 mod sched;
 mod smp;
-#[allow(dead_code)]
 mod syscall;
-#[allow(dead_code)]
 mod task;
 
 use core::fmt::Write;

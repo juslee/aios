@@ -17,6 +17,7 @@ pub use shared::{CpuSet, SchedulerClass, ThreadId, ThreadState};
 // ---------------------------------------------------------------------------
 
 /// Per-thread scheduling metadata used by the scheduler for all decisions.
+#[allow(dead_code)]
 pub struct SchedEntity {
     /// Unique thread identifier.
     pub thread_id: ThreadId,
@@ -87,6 +88,7 @@ pub struct ThreadContext {
 const _: () = assert!(core::mem::size_of::<ThreadContext>() == 296);
 
 impl ThreadContext {
+    #[allow(dead_code)]
     const ZERO: Self = Self {
         gp_regs: [0; 31],
         sp: 0,
@@ -127,6 +129,7 @@ const _: () = assert!(core::mem::size_of::<FpContext>() == 528);
 pub const MAX_THREADS: usize = 64;
 
 /// A kernel or user thread.
+#[allow(dead_code)]
 pub struct Thread {
     /// Scheduling metadata.
     pub sched: SchedEntity,
@@ -155,7 +158,6 @@ impl Thread {
     ///
     /// PSTATE = 0x3C5: EL1h, DAIF all masked (the thread unmasks as needed).
     /// TTBR0 = 0 (kernel threads don't have a user address space).
-    #[allow(dead_code)]
     pub fn new_kernel(id: ThreadId, name: &[u8], entry_fn: usize, stack_phys: usize) -> Self {
         let mut name_buf = [0u8; 16];
         let copy_len = name.len().min(16);
@@ -215,7 +217,6 @@ pub static THREAD_TABLE: Mutex<[Option<Thread>; MAX_THREADS]> = {
 
 /// Per-CPU currently running thread ID. Used by the scheduler to know
 /// which thread is active on each core without locking the thread table.
-#[allow(dead_code)]
 pub static CURRENT_THREAD: [Mutex<Option<ThreadId>>; MAX_CORES] = {
     #[allow(clippy::declare_interior_mutable_const)]
     const NONE: Mutex<Option<ThreadId>> = Mutex::new(None);

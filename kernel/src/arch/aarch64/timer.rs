@@ -25,7 +25,6 @@ fn read_cntfrq() -> u64 {
 }
 
 /// Read CNTVCT_EL0 (virtual timer count).
-#[allow(dead_code)]
 #[inline(always)]
 pub fn read_counter() -> u64 {
     let val: u64;
