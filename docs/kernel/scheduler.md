@@ -2467,3 +2467,103 @@ No existing OS scheduler combines these capabilities. Linux CFS/EEVDF handles fa
 11. **Cross-subsystem scheduling integration.** The scheduler is not isolated — it responds to memory pressure (reducing inference weight when RAM is scarce, §8.3), thermal state (scaling WCET budgets when frequency drops, §8.4), and user context (via the Context Engine, §8.1). Multiple pressure sources are reconciled via min-wins policy (§8.3) to prevent race conditions. Traditional OS schedulers are CPU-only; AIOS's scheduler participates in system-wide resource orchestration.
 
 12. **Latency-nice orthogonal to weight.** Borrowed from Linux 6.x EEVDF and adapted for AI workloads: system services that handle IPC get fast wakeup (`latency_nice = -10`) without getting more total CPU time, while batch inference tolerates scheduling jitter (`latency_nice = +15`) in exchange for fewer preemptions. This separates "how quickly should I be scheduled?" from "how much CPU should I get?" — essential when both low-latency IPC handlers and high-throughput inference share the Normal class.
+
+-----
+
+## 16. AI-Driven Scheduling
+
+Sections 1–15 describe the scheduler's traditional mechanisms — per-CPU run queues, class-based FIFO, context-aware weight adjustment, inference scheduling, and power management. These are reactive: they respond to events (timer ticks, context changes, IPC wakeups) after they occur. AIOS's intelligence layer (AIRS) extends the scheduler with machine learning, enabling **predictive and self-tuning** behavior that no traditional scheduler can achieve.
+
+All AI-driven scheduling mechanisms run as AIRS services in user space. They consume kernel telemetry via the observability feedback loop (observability.md §10) and issue adjustments via syscalls. The kernel scheduler never depends on AI availability — every mechanism has a traditional fallback.
+
+### 16.1 Self-Tuning Kernel Parameters
+
+**Problem.** Scheduler parameters (timeslice lengths, RT deadline budgets, IPC timeout defaults, load balancer periods) are hardcoded constants chosen for "reasonable defaults." No single set of constants is optimal across all workloads — compiling, browsing, inference, media playback all have different optimal scheduling configurations.
+
+**AI solution.** A Bayesian optimizer running at `Idle` scheduler class conducts 10-minute A/B trials. It adjusts five parameters — spinlock budget, RT deadline, IPC timeout default, load balancer period, and interactive timeslice — while measuring a multi-objective score: IPC p99 latency, timeout rate, frame drops, and throughput.
+
+**Safety and fallback.** Exploration is bounded: no parameter moves more than ±50% from its default in a single trial. If any metric regresses by >5% compared to the control period, the optimizer automatically rolls back to the previous configuration. If AIRS is unavailable, hardcoded defaults remain in effect.
+
+**Research.** STUN [R2] directly validates this approach — Q-learning optimizes 5 Linux scheduler parameters (timeslice, migration cost, cache hot time, etc.) and achieves measurable throughput gains on a running system. Alps [R3] (USENIX ATC'24) uses online learning for priority and timeslice adaptation with bounded exploration, demonstrating convergence within minutes.
+
+**Target.** Phase 14+ (requires stable observability metrics as optimization objective — see observability.md §10).
+
+### 16.2 Lock-Aware Scheduler Priority
+
+**Problem.** Priority inheritance in AIOS currently applies only to IPC calls (ipc.md §9.2): when a high-priority thread calls a low-priority service, the service inherits the caller's priority. But in-kernel locks have no such mechanism — if a high-priority thread attempts to acquire a lock held by a low-priority thread, it must spin or wait without any priority boost for the holder.
+
+**AI solution.** AIRS monitors lock contention data (requires future lock instrumentation in the tracepoint and metrics infrastructure; see observability.md §3–4) to identify cases where high-priority threads are frequently delayed by low-priority lock holders. When a persistent pattern is detected, AIRS recommends extending priority inheritance to specific sleepable kernel mutexes involved in that contention. For very short (<1 μs) spinlock critical sections, the design continues to rely on bounded hold times (§12) rather than inheritance. The kernel applies the inheritance: when a high-priority thread would block on a flagged sleepable lock, the current holder receives a temporary priority boost for the duration of the critical section.
+
+**Safety and fallback.** The priority boost is bounded (same depth limit as IPC priority inheritance: `MAX_INHERITANCE_DEPTH = 8`). Lock ordering invariants (deadlock-prevention.md §3) are unaffected — priority inheritance changes *when* a thread runs, not *which* locks it acquires. AIRS selects which locks receive inheritance based on observed contention data; the kernel mechanism itself is deterministic once activated. If AIRS is unavailable, standard IPC priority inheritance remains the only inheritance mechanism.
+
+**Research.** KernelAGI [R6] proposes kernel-embedded ML for resource arbitration including lock-aware scheduling. The AI+OS survey [R7] identifies lock-scheduler co-optimization as an open research area in AI-driven OS design.
+
+**Target.** Phase 11+.
+
+### 16.3 Workload Phase Detection
+
+**Problem.** Context-aware scheduling (§8) reacts to Context Engine signals *after* the user's activity changes — there is an inherent delay between the user switching tasks and the scheduler adapting. For fast transitions (e.g., switching from writing code to running a build), this delay causes suboptimal scheduling for the first few hundred milliseconds.
+
+**AI solution.** AIRS trains a workload phase detector that recognizes activity patterns ("compiling" vs. "debugging" vs. "writing" vs. "reviewing") from system call traces and IPC patterns. Unlike the Context Engine (§8), which reacts to explicit signals (app focus changes, user-mode hints), phase detection *predicts* transitions — adjusting scheduling policy *before* the user context changes.
+
+**Safety and fallback.** Phase detection is advisory: it adjusts WFQ weights and timeslice lengths within the same bounds as context-aware scheduling (§8). False predictions cause at most a few hundred milliseconds of suboptimal scheduling before the Context Engine corrects. If AIRS is unavailable, reactive context-aware scheduling (§8) remains fully functional.
+
+**Research.** ASA [R5] (Mixture-of-Schedulers) detects workload patterns and dynamically switches between scheduling policies via Linux's sched_ext framework — directly validating this concept. ghOSt [R4] enables policy hot-swapping at Google scale. KernelOracle [R1] demonstrates that ML can predict scheduler decisions from trace features with high accuracy.
+
+**Target.** Phase 14+.
+
+### 16.4 Predictive Thread Wakeup
+
+**Problem.** When a thread blocks on IPC, the scheduler places it in a wait queue. When the reply arrives, the thread is woken and must re-warm its cache (L1/L2/TLB) before executing efficiently. For IPC-heavy workloads with predictable reply times, this cache-cold penalty is avoidable.
+
+**AI solution.** AIRS learns IPC service response time patterns from historical trace data (observability.md §4). When a reply is predicted to arrive within N microseconds, the scheduler pre-positions the waiting thread: migrating it to the core where it will run and touching its stack pages to warm the TLB. This reduces the cache-cold penalty on wakeup.
+
+**Safety and fallback.** Pre-positioning is speculative — if the prediction is wrong, the thread simply waits in its pre-positioned location (no worse than the current behavior). The cost of a false prediction is one unnecessary thread migration. If AIRS is unavailable, standard reactive wakeup applies.
+
+**Research.** Alps [R3] uses learning to predict thread behavior and pre-adapt scheduling decisions. The AI+OS survey [R7] identifies predictive resource pre-allocation as a defining capability of Stage 3 ("AI-driven") operating systems.
+
+**Target.** Phase 14+.
+
+### 16.5 Thread Affinity Learning
+
+**Problem.** AIOS uses load-balanced thread placement across cores (§9), but this does not account for data sharing between threads. Two threads that frequently access the same memory regions benefit from co-location on the same core (shared L2 cache) or same cluster (shared L3). Current placement is workload-unaware.
+
+**AI solution.** AIRS observes cache miss rates per-thread-per-core via Performance Monitoring Unit (PMU) counters exposed through the observability subsystem (observability.md §3). Over time, it learns optimal core assignments: threads that share data are co-located, while threads that contend for cache are separated. This differs from the existing core assignment strategy (§9.2): core assignment operates at the agent-group level; affinity learning operates at the individual thread level.
+
+**Safety and fallback.** Learned affinities are soft hints — the scheduler may override them for load balancing or thermal management. Affinity suggestions are bounded to the same core mask constraints as the existing `CpuSet` mechanism. If AIRS is unavailable, round-robin or static affinity applies (existing behavior).
+
+**Research.** STUN [R2] includes CPU affinity as one of its tunable parameters, validating that affinity can be optimized online. ghOSt [R4] demonstrates per-thread placement decisions at production scale at Google. KernelOracle [R1] shows that trace-based features (including cache metrics) can predict optimal scheduling outcomes.
+
+**Target.** Phase 14+.
+
+### 16.6 Jitter-Aware Real-Time Scheduling
+
+**Problem.** The RT scheduler class (§5) uses EDF with admission control (70% CPU cap per core). However, RT tasks can still miss deadlines due to jitter sources — kernel housekeeping events (slab refill, buddy coalescing), timer ISR processing, or background agent garbage collection that briefly consumes CPU. These jitter events are individually small but can cause frame drops when they coincide with an RT deadline.
+
+**AI solution.** AIRS predicts when jitter events will fire based on historical patterns (e.g., slab refill typically occurs every ~100 ms when allocation rate exceeds threshold X). It proactively adjusts RT frame timing to avoid collision with predicted jitter windows — shifting the compositor's render deadline by a few hundred microseconds to dodge the predicted jitter.
+
+**Safety and fallback.** Jitter avoidance is advisory — it adjusts timing within the existing EDF framework (§5). The worst case for a wrong prediction is no improvement (not degradation). If AIRS is unavailable, standard EDF scheduling applies (§5).
+
+**Research.** ADIOS [R9] applies learning-based deadline adaptation to I/O scheduling, demonstrating that learned timing adjustments improve deadline adherence. ASA [R5] demonstrates real-time workload classification for scheduling policy selection.
+
+**Target.** Phase 19+ (after power management stabilizes and compositor deadlines are established).
+
+### 16.7 Cross-References
+
+The AI-driven scheduling mechanisms form a feedback triangle with the other AI-enhanced subsystems:
+
+- **Observability** (observability.md §10): The feedback loop provides the telemetry (metrics, traces) that drives all learning in §16.1–16.6. Self-tuning parameters (§16.1) uses observability metrics as its optimization objective.
+- **Deadlock prevention** (deadlock-prevention.md §13): Learned timeout calibration (§13.3) and scheduler self-tuning (§16.1) share the same AIRS infrastructure for parameter optimization. Lock-aware priority (§16.2) complements adaptive lock management (§13.2).
+
+### 16.8 References
+
+| Ref | Paper/Project | Venue | URL |
+|-----|--------------|-------|-----|
+| R1 | Gupta et al., "KernelOracle: Deep Learning for Linux CFS Scheduling" | arXiv 2025 | https://arxiv.org/abs/2505.15213 |
+| R2 | Nair et al., "STUN: Q-Learning Optimization of Scheduler Parameters" | Applied Sciences 2022 | https://www.mdpi.com/2076-3417/12/14/7072 |
+| R3 | Fu et al., "Alps: Adaptive Learning Priority Scheduler" | USENIX ATC'24 | https://www.usenix.org/system/files/atc24-fu.pdf |
+| R4 | Humphries et al., "ghOSt: Fast & Flexible User-Space Delegation of Linux Scheduling" | SOSP'21 | https://dl.acm.org/doi/10.1145/3477132.3483542 |
+| R5 | "ASA: Adaptive Scheduling Agent via Mixture-of-Schedulers" | arXiv 2025 | https://arxiv.org/abs/2511.11628 |
+| R6 | "KernelAGI: Composable OS Kernel with Embedded ML Subsystem" | arXiv 2025 | https://arxiv.org/abs/2508.00604 |
+| R7 | "AI for Operating Systems: Survey and Roadmap" | arXiv 2024 | https://arxiv.org/abs/2407.14567 |
+| R9 | "ADIOS: Adaptive Deadline I/O Scheduler" | GitHub | https://github.com/firelzrd/adios |

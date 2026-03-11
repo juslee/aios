@@ -379,9 +379,13 @@ Layer 5: Capability restrictions → constrained dependency graph
 Layer 6: Synchronous IPC         → no callback cycles
 Layer 7: Preemptive kernel       → liveness: no CPU starvation of lock waiters
 Layer 8: Wait-Die / Wound-Wait   → progress guarantee for contested resources (future)
+Layer 9: AI prediction           → break cycles before they form (future, §13.1)
+Layer 10: AI lock management     → adaptive splitting + elision (future, §13.2/§13.5)
+Layer 11: AI calibration         → learned timeouts per service (future, §13.3)
+Layer 12: AI deploy-time check   → cycle detection at install time (future, §13.4)
 ```
 
-Layers 1 and 4–6 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layers 3 and 7 are liveness mechanisms: Layer 3 (priority inheritance) prevents unbounded priority inversion from mimicking deadlock; Layer 7 (preemptive kernel) ensures that no thread can monopolize the CPU and starve lock waiters. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
+Layers 1 and 4–6 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layers 3 and 7 are liveness mechanisms: Layer 3 (priority inheritance) prevents unbounded priority inversion from mimicking deadlock; Layer 7 (preemptive kernel) ensures that no thread can monopolize the CPU and starve lock waiters. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. Layers 9–12 represent AIOS's AI-driven future: AIRS consumes kernel telemetry (observability.md §10) and applies machine learning to predict, prevent, and calibrate concurrency mechanisms — shifting deadlock prevention from reactive to proactive (§13). The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
 
 -----
 
@@ -397,3 +401,86 @@ When adding new kernel code that introduces locks or blocking operations:
 6. **If your service handles IPC calls from higher-priority callers**, do not drop or ignore the inherited scheduling context. Complete the request promptly — the caller is blocked at your priority level (§5).
 7. **Prefer synchronous `IpcCall`/`IpcReply`** for request-reply patterns. If asynchronous `IpcSend` is necessary, handle `EAGAIN` backpressure explicitly — never spin or block waiting for queue space (§8).
 8. **Spinlock hold times must remain under 1 μs.** If your critical section might exceed this, restructure the code to do work outside the lock.
+
+-----
+
+## 13. AI-Driven Deadlock Prevention
+
+Traditional deadlock prevention (§1–12) relies on static invariants — lock ordering, timeouts, capability restrictions. These are sound but inherently reactive: timeouts fire *after* a deadlock has formed, and static ordering cannot adapt to runtime contention patterns. AIOS's intelligence layer (AIRS) extends these mechanisms with machine learning, shifting deadlock prevention from reactive to **proactive and adaptive**.
+
+All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler class. They consume kernel telemetry via the observability feedback loop (observability.md §10) and issue adjustments via syscalls. The kernel never depends on AI availability — every AI mechanism has a traditional fallback (the existing layers 1–8).
+
+### 13.1 Predictive Deadlock Detection
+
+**Problem.** Mandatory timeouts (§4) detect deadlocks only after they have formed, wasting up to 5 seconds of blocked time before recovery.
+
+**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data (observability.md §4) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it signals the service owning the youngest pending call to cancel via `IpcCancel` (ipc.md §3.1), or uses a privileged kernel cancellation interface, *before* all parties block.
+
+**Advantage.** Breaks cycles in milliseconds rather than waiting for a 5-second timeout. Reduces wasted CPU time and improves tail latency for all services in the call chain.
+
+**Safety and fallback.** The GNN operates on a snapshot of the call graph and cannot cause harm — the worst case is a false positive that cancels a call that would have succeeded. The caller handles the cancellation error like any other IPC failure. If AIRS is unavailable, mandatory timeouts (Layer 2) remain the backstop.
+
+**Research.** KernelOracle [R1] demonstrates that deep learning can predict Linux CFS scheduler decisions from kernel traces with high accuracy — the same trace-based learning approach applied to IPC call graphs. KernelAGI [R6] proposes an embedded ML subsystem for kernel-level prediction, validating the architectural pattern of AI consuming kernel telemetry.
+
+**Target.** Phase 11+ (after AIRS and observability trace infrastructure are stable).
+
+### 13.2 Adaptive Lock Management
+
+**Problem.** Static lock ordering (§3) prevents deadlocks but cannot adapt to runtime contention. Two locks that are rarely contested together may become a hot pair under specific workloads, causing latency spikes without ever deadlocking.
+
+**AI solution.** An AIRS model running at `Idle` class analyzes lock timing data from kernel tracepoints (observability.md §4; lock contention tracepoints are a future addition to the trace infrastructure). It identifies hot lock pairs — locks that are frequently held simultaneously across cores — and suggests dynamic lock splitting for high-contention paths (e.g., separating CPU migration locks from scheduler state locks).
+
+**Safety and fallback.** The ascending CPU ID ordering invariant (§3) is preserved by construction — the AI suggests *new* fine-grained locks that slot into the existing hierarchy, never reorders existing locks. If AIRS is unavailable, the static global ordering (§3) remains in effect.
+
+**Research.** LOFT [R8] (EuroSys'25) demonstrates ML-guided lock-free index structures that dynamically adapt to contention patterns. The AI+OS survey [R7] identifies lock contention prediction as a key capability of "AI-refactored" operating systems.
+
+**Target.** Phase 11+.
+
+### 13.3 Learned Timeout Calibration
+
+**Problem.** The fixed 5-second IPC timeout (§4) is a compromise: too short for slow services (false timeouts), too long for fast services (wasted blocking time when a real deadlock occurs).
+
+**AI solution.** AIRS learns per-service IPC response time distributions from historical call data. It sets optimal timeouts per call pair: if service A typically replies to service B in 200 μs, the timeout is set to 10 ms (50× headroom) rather than 5 s (25,000× headroom). This simultaneously reduces false timeouts *and* wasted wait time during real deadlocks.
+
+**Safety and fallback.** Learned timeouts are always ≥ the observed p99.9 latency, bounding false positive risk. A floor of 100 ms prevents pathologically short timeouts. If AIRS is unavailable, the fixed 5-second default (§4) applies.
+
+**Research.** STUN [R2] validates that Q-learning can optimize OS timing parameters online, achieving measurable throughput gains by tuning scheduler parameters on a running system. ADIOS [R9] applies learning-based deadline calibration to I/O scheduling — the same principle applied to IPC timeouts.
+
+**Target.** Phase 14+ (requires stable per-service latency telemetry).
+
+### 13.4 Deploy-Time Cycle Detection
+
+**Problem.** Runtime deadlock detection catches cycles only after they cause blocking. Static lock ordering prevents kernel-level cycles but cannot prevent application-level IPC cycles between agents.
+
+**AI solution.** When a new agent is installed, AIRS analyzes its declared IPC channels against the existing capability topology (security.md §3). Using the capability graph and historical call patterns, it warns if the new agent creates a potential circular dependency *before it ever runs*. This shifts deadlock prevention from runtime (reactive) to deploy-time (proactive).
+
+**Safety and fallback.** Deploy-time analysis is advisory — it warns but does not block installation. Runtime timeouts (§4) catch cycles that escape static analysis. False positives are acceptable because the warning is informational, not enforced.
+
+**Research.** Linux Lockdep [R11] performs runtime lock dependency graph analysis to detect potential deadlocks at lock acquisition time. AIOS extends this concept to static deploy-time analysis using AI over the capability topology. The AI+OS survey [R7] identifies proactive resource management as a hallmark of Stage 2 ("AI-refactored") operating systems.
+
+**Target.** Phase 11+ (after capability system is stable).
+
+### 13.5 Automatic Lock Elision
+
+**Problem.** All locks impose overhead even when uncontested. On single-core or low-parallelism workloads, many locks protect data that is only accessed from one core, making the synchronization unnecessary.
+
+**AI solution.** AIRS monitors lock contention metrics (observability.md §3) and identifies locks with near-zero contention over sustained periods. For these locks, it suggests a runtime switch to a lock-free path — removing the atomic RMW overhead on the hot path. If contention is subsequently detected (a second core accesses the data), the locked path is automatically restored.
+
+**Safety and fallback.** Lock elision is conservative: it only removes locks that have shown zero contention over a configurable window (default: 60 seconds). The reversion to locked mode is immediate (within one scheduling quantum) when contention is detected. If AIRS is unavailable, all locks remain active (current behavior).
+
+**Research.** LOFT [R8] (EuroSys'25) demonstrates ML-guided transitions between locked and lock-free data structures based on observed contention, achieving significant throughput improvements. ghOSt [R4] shows that runtime policy switching is production-viable at Google scale.
+
+**Target.** Phase 14+ (requires stable contention metrics and lock-free alternatives for target locks).
+
+### 13.6 References
+
+| Ref | Paper/Project | Venue | URL |
+|-----|--------------|-------|-----|
+| R1 | Gupta et al., "KernelOracle: Deep Learning for Linux CFS Scheduling" | arXiv 2025 | https://arxiv.org/abs/2505.15213 |
+| R2 | Nair et al., "STUN: Q-Learning Optimization of Scheduler Parameters" | Applied Sciences 2022 | https://www.mdpi.com/2076-3417/12/14/7072 |
+| R4 | Humphries et al., "ghOSt: Fast & Flexible User-Space Delegation of Linux Scheduling" | SOSP'21 | https://dl.acm.org/doi/10.1145/3477132.3483542 |
+| R6 | "KernelAGI: Composable OS Kernel with Embedded ML Subsystem" | arXiv 2025 | https://arxiv.org/abs/2508.00604 |
+| R7 | "AI for Operating Systems: Survey and Roadmap" | arXiv 2024 | https://arxiv.org/abs/2407.14567 |
+| R8 | "LOFT: Lock-Free Adaptive Learned Index" | EuroSys'25 | https://dl.acm.org/doi/10.1145/3689031.3717458 |
+| R9 | "ADIOS: Adaptive Deadline I/O Scheduler" | GitHub | https://github.com/firelzrd/adios |
+| R11 | Linux Lockdep — Runtime Lock Dependency Validator | kernel.org | https://docs.kernel.org/locking/lockdep-design.html |
