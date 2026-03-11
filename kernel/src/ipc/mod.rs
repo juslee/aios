@@ -7,6 +7,8 @@
 //! Phase 3 kernel threads invoke IPC via direct function calls (not SVC).
 //! The SVC dispatch path is wired in parallel for future EL0 user threads.
 
+pub mod direct;
+
 use core::sync::atomic::Ordering;
 
 use crate::arch::aarch64::timer::TICK_COUNT;
@@ -256,6 +258,8 @@ pub fn ipc_call(
     msg.data[..send_buf.len()].copy_from_slice(send_buf);
 
     // Enqueue message and register as pending caller.
+    // Also check for direct switch opportunity (receiver already waiting).
+    let direct_switch_target: Option<ThreadId>;
     {
         let mut table = CHANNEL_TABLE.lock();
         let ch = match &mut table[channel.0 as usize] {
@@ -281,43 +285,84 @@ pub fn ipc_call(
         // Register as pending caller.
         ch.pending_caller = Some(caller_tid);
 
-        // If a receiver is waiting, unblock it so it can process the message.
-        if let Some(recv_tid) = ch.waiting_receiver.take() {
+        // Check for direct switch: is a receiver already waiting?
+        direct_switch_target = ch.waiting_receiver.take();
+
+        if let Some(recv_tid) = direct_switch_target {
+            // Receiver found — we'll attempt direct switch below.
+            // Don't unblock via scheduler; direct switch is faster.
             drop(table);
-            sched::unblock(recv_tid);
+
+            // Register reply buffer BEFORE direct switch (we'll be blocked).
+            {
+                let mut slots = REPLY_SLOTS.lock();
+                slots[caller_tid.0 as usize] = Some(ReplySlot {
+                    buf: recv_buf.as_mut_ptr(),
+                    buf_len: recv_buf.len(),
+                    bytes_written: 0,
+                });
+            }
+
+            // Register timeout (even with direct switch, the receiver
+            // might not reply in time).
+            if timeout_ticks > 0 {
+                let deadline = TICK_COUNT.load(Ordering::Relaxed) + timeout_ticks;
+                let mut tq = TIMEOUT_QUEUE.lock();
+                tq[caller_tid.0 as usize] = Some(TimeoutEntry {
+                    tid: caller_tid,
+                    wake_at_tick: deadline,
+                    error_code: IpcError::Etimedout as i64,
+                });
+            }
+
+            #[cfg(feature = "kernel-metrics")]
+            METRICS.ipc_call.inc();
+
+            // Attempt direct switch — bypasses scheduler entirely.
+            if direct::try_direct_switch(caller_tid, recv_tid) {
+                // We've been restored after the reply. Continue below
+                // to check result (same as scheduler-woken path).
+            } else {
+                // Direct switch failed — fall back to scheduler path.
+                sched::unblock(recv_tid);
+                sched::block_current(ThreadState::BlockedIpc {
+                    channel: channel.0 as u64,
+                });
+            }
         } else {
+            // No receiver waiting — use scheduler path.
             drop(table);
+
+            // Register reply buffer.
+            {
+                let mut slots = REPLY_SLOTS.lock();
+                slots[caller_tid.0 as usize] = Some(ReplySlot {
+                    buf: recv_buf.as_mut_ptr(),
+                    buf_len: recv_buf.len(),
+                    bytes_written: 0,
+                });
+            }
+
+            // Register timeout.
+            if timeout_ticks > 0 {
+                let deadline = TICK_COUNT.load(Ordering::Relaxed) + timeout_ticks;
+                let mut tq = TIMEOUT_QUEUE.lock();
+                tq[caller_tid.0 as usize] = Some(TimeoutEntry {
+                    tid: caller_tid,
+                    wake_at_tick: deadline,
+                    error_code: IpcError::Etimedout as i64,
+                });
+            }
+
+            #[cfg(feature = "kernel-metrics")]
+            METRICS.ipc_call.inc();
+
+            // Block until reply or timeout.
+            sched::block_current(ThreadState::BlockedIpc {
+                channel: channel.0 as u64,
+            });
         }
     }
-
-    // Register reply buffer.
-    {
-        let mut slots = REPLY_SLOTS.lock();
-        slots[caller_tid.0 as usize] = Some(ReplySlot {
-            buf: recv_buf.as_mut_ptr(),
-            buf_len: recv_buf.len(),
-            bytes_written: 0,
-        });
-    }
-
-    // Register timeout.
-    if timeout_ticks > 0 {
-        let deadline = TICK_COUNT.load(Ordering::Relaxed) + timeout_ticks;
-        let mut tq = TIMEOUT_QUEUE.lock();
-        tq[caller_tid.0 as usize] = Some(TimeoutEntry {
-            tid: caller_tid,
-            wake_at_tick: deadline,
-            error_code: IpcError::Etimedout as i64,
-        });
-    }
-
-    #[cfg(feature = "kernel-metrics")]
-    METRICS.ipc_call.inc();
-
-    // Block until reply or timeout.
-    sched::block_current(ThreadState::BlockedIpc {
-        channel: channel.0 as u64,
-    });
 
     // Woken up — check result.
     // Clear timeout entry.
@@ -489,12 +534,17 @@ pub fn ipc_recv(
 /// `reply_buf`: reply payload.
 ///
 /// No capability check required (ipc.md §9.1).
+/// Uses direct switch when the caller is on the same CPU (fast path).
 pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
     if reply_buf.len() > MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
 
     let caller_tid;
+    let replier_tid = match current_thread_id() {
+        Some(t) => t,
+        None => return IpcError::Eperm as i64,
+    };
 
     // Find and clear the pending caller.
     {
@@ -526,7 +576,15 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
         }
     }
 
-    // Unblock the caller.
+    // Try direct switch back to caller (fast path).
+    // This bypasses the scheduler — replier switches directly to caller.
+    if direct::try_reply_switch(replier_tid, caller_tid) {
+        // Replier was saved and will be resumed by scheduler later.
+        // The caller has already been restored and is running.
+        return 0;
+    }
+
+    // Fallback: unblock via scheduler (caller on different CPU, etc.)
     sched::unblock(caller_tid);
 
     0
@@ -716,6 +774,9 @@ pub fn sleep_ticks(ticks: u64) {
 /// Channel ID shared between IPC test threads (set by init).
 static TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 
+/// Channel ID for priority inheritance test threads.
+static PI_TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
+
 /// Initialize IPC test threads: a server and a caller that perform
 /// synchronous IPC call/reply, plus a timeout test.
 ///
@@ -792,7 +853,62 @@ pub fn init() {
         sched::enqueue_on_cpu(2, ThreadId(idx as u32), SchedulerClass::Normal);
     }
 
-    crate::kinfo!(Ipc, "IPC test threads created (server, caller, timeout)");
+    // Create priority inheritance test threads:
+    // An Interactive-class caller and a Normal-class server on the same CPU.
+    // The server should be elevated to Interactive during request processing.
+    {
+        let pi_caller_tid = ThreadId(0x300);
+        let pi_server_tid = ThreadId(0x301);
+
+        let pi_ch = channel_create(pi_caller_tid).expect("Failed to create PI test channel");
+        channel_set_peer(pi_ch, pi_server_tid).expect("Failed to set PI channel peer");
+        *PI_TEST_CHANNEL.lock() = Some(pi_ch);
+
+        // Normal-class server (should be elevated to Interactive during request).
+        {
+            let stack_phys = sched::alloc_kernel_stack();
+            let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+            let mut thread = Thread::new_kernel(
+                pi_server_tid,
+                b"pi-server\0\0\0\0\0\0\0",
+                pi_server_entry as *const () as usize,
+                stack_phys,
+            );
+            thread.sched.class = SchedulerClass::Normal;
+            thread.sched.effective_class = SchedulerClass::Normal;
+            thread.sched.affinity = CpuSet::all();
+            thread.context.sp = stack_virt_top as u64;
+
+            let idx = sched::allocate_thread(thread).expect("thread table full for PI server");
+            sched::enqueue_on_cpu(3, ThreadId(idx as u32), SchedulerClass::Normal);
+        }
+
+        // Interactive-class caller.
+        {
+            let stack_phys = sched::alloc_kernel_stack();
+            let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+            let mut thread = Thread::new_kernel(
+                pi_caller_tid,
+                b"pi-caller\0\0\0\0\0\0\0",
+                pi_caller_entry as *const () as usize,
+                stack_phys,
+            );
+            thread.sched.class = SchedulerClass::Interactive;
+            thread.sched.effective_class = SchedulerClass::Interactive;
+            thread.sched.affinity = CpuSet::all();
+            thread.context.sp = stack_virt_top as u64;
+
+            let idx = sched::allocate_thread(thread).expect("thread table full for PI caller");
+            sched::enqueue_on_cpu(3, ThreadId(idx as u32), SchedulerClass::Interactive);
+        }
+    }
+
+    crate::kinfo!(
+        Ipc,
+        "IPC test threads created (server, caller, timeout, priority-inheritance)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -957,6 +1073,152 @@ fn ipc_timeout_entry() -> ! {
         _ => {
             crate::kwarn!(Ipc, "Destroy test: unexpected result {:?}", result);
         }
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Priority inheritance test threads
+// ---------------------------------------------------------------------------
+
+/// PI server: Normal-class server that checks if it was elevated to
+/// Interactive during request processing (via priority inheritance).
+fn pi_server_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    let ch = loop {
+        if let Some(ch) = *PI_TEST_CHANNEL.lock() {
+            break ch;
+        }
+        sched::thread_yield();
+    };
+    crate::kinfo!(Ipc, "PI-Server: started (Normal class), channel={}", ch.0);
+
+    let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
+
+    for i in 0..3u32 {
+        match ipc_recv(ch, &mut recv_buf, DEFAULT_TIMEOUT_TICKS) {
+            Ok((len, sender)) => {
+                // Check our effective class — should be elevated to Interactive
+                // if priority inheritance is working.
+                let my_tid = current_thread_id().unwrap_or(ThreadId(0));
+                let effective_class = {
+                    let table = crate::task::THREAD_TABLE.lock();
+                    table[my_tid.0 as usize]
+                        .as_ref()
+                        .map(|t| t.sched.effective_class)
+                };
+
+                if let Some(eff) = effective_class {
+                    let class_name = match eff {
+                        crate::task::SchedulerClass::RealTime => "RT",
+                        crate::task::SchedulerClass::Interactive => "Interactive",
+                        crate::task::SchedulerClass::Normal => "Normal",
+                        crate::task::SchedulerClass::Idle => "Idle",
+                    };
+                    crate::kinfo!(
+                        Ipc,
+                        "PI-Server: recv {} bytes from {}, effective_class={} iter={}",
+                        len,
+                        sender.0,
+                        class_name,
+                        i
+                    );
+                }
+
+                // Reply with class info.
+                let mut reply = [0u8; MAX_MESSAGE_SIZE];
+                let prefix = b"PI-OK:";
+                let reply_len = (prefix.len() + len).min(MAX_MESSAGE_SIZE);
+                reply[..prefix.len()].copy_from_slice(prefix);
+                let data_len = reply_len - prefix.len();
+                reply[prefix.len()..reply_len].copy_from_slice(&recv_buf[..data_len]);
+
+                let result = ipc_reply(ch, &reply[..reply_len]);
+                if result < 0 {
+                    crate::kwarn!(Ipc, "PI-Server: reply failed with {}", result);
+                }
+
+                // After reply, check our class is restored to Normal.
+                let restored_class = {
+                    let table = crate::task::THREAD_TABLE.lock();
+                    table[my_tid.0 as usize]
+                        .as_ref()
+                        .map(|t| t.sched.effective_class)
+                };
+                if let Some(eff) = restored_class {
+                    let class_name = match eff {
+                        crate::task::SchedulerClass::RealTime => "RT",
+                        crate::task::SchedulerClass::Interactive => "Interactive",
+                        crate::task::SchedulerClass::Normal => "Normal",
+                        crate::task::SchedulerClass::Idle => "Idle",
+                    };
+                    crate::kinfo!(
+                        Ipc,
+                        "PI-Server: after reply, effective_class={} iter={}",
+                        class_name,
+                        i
+                    );
+                }
+            }
+            Err(e) => {
+                crate::kwarn!(Ipc, "PI-Server: recv failed with {} iter={}", e, i);
+            }
+        }
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+/// PI caller: Interactive-class caller that exercises priority inheritance.
+fn pi_caller_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    let ch = loop {
+        if let Some(ch) = *PI_TEST_CHANNEL.lock() {
+            break ch;
+        }
+        sched::thread_yield();
+    };
+
+    // Small delay to let server start first and enter ipc_recv().
+    for _ in 0..3 {
+        sched::thread_yield();
+    }
+
+    for i in 0..3u32 {
+        let msg = b"PI-PING";
+        let mut reply_buf = [0u8; MAX_MESSAGE_SIZE];
+
+        let start = crate::arch::aarch64::timer::read_counter();
+        let result = ipc_call(ch, msg, &mut reply_buf, DEFAULT_TIMEOUT_TICKS);
+        let end = crate::arch::aarch64::timer::read_counter();
+
+        if result >= 0 {
+            let elapsed_ticks = end.wrapping_sub(start);
+            let elapsed_ns = elapsed_ticks * 16;
+            let reply_len = result as usize;
+            let reply_str =
+                core::str::from_utf8(&reply_buf[..reply_len]).unwrap_or("<invalid utf8>");
+            crate::kinfo!(
+                Ipc,
+                "PI-Caller(Interactive): got '{}' in {}us iter={}",
+                reply_str,
+                elapsed_ns / 1000,
+                i
+            );
+        } else {
+            crate::kwarn!(Ipc, "PI-Caller: ipc_call failed with {} iter={}", result, i);
+        }
+
+        sched::thread_yield();
     }
 
     loop {

@@ -134,6 +134,10 @@ pub struct Thread {
     pub context: ThreadContext,
     /// FP/NEON context (allocated lazily on first FP use).
     pub fp_context: Option<FpContext>,
+    /// Priority inheritance depth — tracks how many IPC call levels deep
+    /// the inheritance chain is. Bounded to MAX_INHERITANCE_DEPTH (8).
+    /// See ipc.md §9.2 for transitive inheritance design.
+    pub inheritance_depth: u8,
     /// Physical address of the thread's stack base.
     pub stack_phys: usize,
     /// Human-readable name (for debugging).
@@ -182,6 +186,7 @@ impl Thread {
                 timer_ctl: 0,
             },
             fp_context: None,
+            inheritance_depth: 0,
             stack_phys,
             name: name_buf,
         }
