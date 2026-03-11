@@ -921,3 +921,155 @@ Phase 3 is the natural landing point for most infrastructure because the schedul
 | **Provenance separation** | (a) Merge operational logs into Merkle chain; (b) Separate streams, shared access API | Separate streams | Merkle chain is for agent actions with cryptographic integrity guarantees. Kernel operational logs are high-volume (~1,000/sec) and low-security-relevance. Merging would bloat the chain 100× and slow provenance verification. Access is unified through `AuditRead` scope variants. |
 | **Trace compile-time control** | (a) Runtime flag; (b) Cargo feature (compile-time) | Cargo feature (`kernel-tracing`, off by default in release) | Zero cost when disabled — the compiler eliminates all trace point call sites. Runtime flags would leave the function call overhead even when tracing is "off." |
 | **Health signal model** | (a) Per-subsystem custom enums; (b) Unified `HealthLevel` with per-subsystem thresholds | Unified `HealthLevel` | Consistent API across all subsystems. Inspector can display system health as a single aggregate value or drill into per-subsystem health. The threshold table (§5.4) preserves subsystem-specific semantics. |
+
+-----
+
+## 10. AI-Enhanced Observability
+
+Sections 1–9 describe the kernel's observability infrastructure — structured logging, metric counters, trace points, health signals, and export interfaces. This infrastructure *emits* data but does not *analyze* it. AIOS's intelligence layer (AIRS) closes the loop: consuming kernel telemetry, applying machine learning to detect anomalies and optimize behavior, and feeding adjustments back into the kernel.
+
+### 10.1 The Feedback Loop
+
+The core architectural principle of AI-enhanced observability is the **closed-loop feedback cycle**:
+
+```
+Kernel emits metrics/traces
+    → AIRS consumes via IPC (§6 export interface)
+    → AIRS analyzes (ML models at Idle scheduler class)
+    → AIRS adjusts kernel params via syscall
+    → Kernel observes impact of adjustments
+    → Loop
+```
+
+**Key invariants:**
+
+1. **One-directional data flow.** The kernel emits telemetry through its existing export interface (§6). AIRS reads this data. The kernel never reads AIRS's internal state — the kernel has no dependency on AI availability.
+2. **AI optimizes, kernel guarantees.** AIRS suggests parameter adjustments (timeouts, sampling rates, buffer sizes). The kernel validates all adjustments against safety bounds before applying them. An invalid suggestion is silently dropped.
+3. **Graceful degradation.** If AIRS is unavailable, all observability subsystems operate with their static defaults (§1–9). No telemetry is lost; it simply isn't analyzed.
+
+This feedback loop is the foundation for all mechanisms in §10.2–10.8 and powers the AI-driven improvements in scheduling (scheduler.md §16) and deadlock prevention (deadlock-prevention.md §13).
+
+**Research.** KernelAGI [R6] formalizes this pattern as the "Kernel ML Subsystem" feedback architecture. The AI+OS survey [R7] identifies the closed-loop telemetry→action cycle as the defining feature of Stage 3 ("AI-driven") operating system design.
+
+### 10.2 Adaptive Trace Sampling
+
+**Problem.** Trace points (§4) are controlled by a compile-time feature gate (`kernel-tracing`): either all trace events are recorded, or none are. In production, enabling all traces overwhelms the per-core trace rings (4096 entries at 32 bytes each = 128 KiB per core), while disabling them loses diagnostic visibility.
+
+**AI solution.** AIRS learns which trace events are diagnostically valuable based on historical correlation with anomalies. Rare events that frequently precede problems (scheduler anomalies during IPC, unexpected lock contention spikes) are always traced at 100%. Routine events (timer ticks, periodic metric updates) are sampled at 1–10%. The sampling rates adapt continuously based on system state.
+
+**Effect.** Reduces trace buffer pressure by 10–100× without losing the events that matter for diagnosis. Enables production tracing that was previously infeasible due to buffer overflow.
+
+**Safety and fallback.** The kernel enforces a minimum sampling rate (0.1%) for all event types — no event can be completely silenced by AIRS. If AIRS is unavailable, the compile-time feature gate (§4) determines tracing behavior (all-or-nothing).
+
+**Research.** The eBPF ecosystem [R10] enables low-overhead dynamic tracing in production Linux systems. Industry AIOps platforms (Datadog, Grafana) achieve adaptive sampling via ML classifiers on event streams, reducing trace volume while preserving diagnostic value.
+
+**Target.** Phase 11+.
+
+### 10.3 Anomaly-Triggered Trace Escalation
+
+**Problem.** When a production issue occurs (IPC latency spike, scheduler queue depth anomaly), the relevant trace data has often already been overwritten in the fixed-size trace rings. Increasing trace verbosity *after* detecting a problem misses the events that caused it.
+
+**AI solution.** AIRS monitors kernel metrics (§3) in real time. When its anomaly detector spots an unusual metric (e.g., IPC latency exceeding 3σ from the learned baseline), it automatically escalates trace verbosity for the affected subsystem — increasing sampling rates and enabling additional trace points. This "focuses the microscope where the problem is."
+
+When the anomaly resolves (metrics return to baseline), trace verbosity automatically de-escalates to avoid unnecessary overhead.
+
+**Effect.** Captures detailed trace data during anomalies without the overhead of always-on verbose tracing. Transforms trace rings from "hope we caught it" to "always catch it when it matters."
+
+**Safety and fallback.** Escalation is bounded: the total trace event rate is capped at a configurable maximum (default: 10,000 events/sec system-wide) to prevent trace storms from impacting system performance. If AIRS is unavailable, trace verbosity remains static (current behavior).
+
+**Research.** Industry AIOps platforms [R10] — Datadog and Grafana implement anomaly-triggered deep dives that auto-escalate collection granularity. The AI+OS survey [R7] identifies adaptive instrumentation as a key capability of AI-powered operating systems.
+
+**Target.** Phase 11+.
+
+### 10.4 Automatic Causal Correlation
+
+**Problem.** The kernel emits metrics from independent subsystems — scheduler queue depth, IPC latency, memory pressure, lock contention. These metrics are currently independent counters (§3) with no cross-analysis capability. When multiple metrics spike simultaneously, there is no automated way to determine which is the cause and which is the effect.
+
+**AI solution.** AIRS cross-correlates metrics across subsystems using time-series analysis and learned causal models. When correlated anomalies are detected, it reports root cause chains: "IPC latency rose to 50 ms (normal: 2 ms) because scheduler queue depth reached 15 (normal: 3), root cause: inference thread consuming 80% of CPU 2."
+
+**Effect.** Transforms raw counters into actionable diagnostic reports. Reduces mean time to resolution (MTTR) by eliminating manual cross-correlation of independent metric streams.
+
+**Safety and fallback.** Causal reports are advisory — they do not trigger automatic remediation. The underlying metrics (§3) remain available for manual analysis regardless of AIRS availability.
+
+**Research.** Industry AIOps platforms [R10] demonstrate 50% MTTR reduction through ML-based causal correlation across metrics in production systems. KernelAGI [R6] proposes neurosymbolic reasoning over kernel telemetry for automated root cause analysis.
+
+**Target.** Phase 14+.
+
+### 10.5 Predictive Metric Alerting
+
+**Problem.** The kernel's metric counters (§3) emit raw values with no alerting mechanism. Fixed-threshold alerts (e.g., "alert if queue depth > 10") generate false positives during legitimate high-load periods and miss anomalies during low-load periods where a queue depth of 5 is abnormal.
+
+**AI solution.** AIRS learns normal distributions per metric, per time-of-day, per workload context. It alerts on statistical anomalies (3σ deviation from the learned baseline) rather than fixed thresholds. Baselines adapt as workload patterns evolve — a metric that gradually increases over weeks causes a baseline shift, not a sustained alert.
+
+**Effect.** Achieves meaningful alerting with 30% fewer false positives compared to fixed-threshold approaches, while catching subtle anomalies that fixed thresholds miss entirely.
+
+**Safety and fallback.** Alert thresholds have a configurable floor — even if the learned baseline is very low, critical metrics always trigger at absolute safety limits (e.g., memory pressure always alerts at `HealthLevel::Critical` regardless of learned baseline). If AIRS is unavailable, no alerting occurs (current behavior — raw counters only).
+
+**Research.** Industry AIOps platforms [R10] demonstrate that ML-based anomaly detection achieves 30% fewer false positives vs. fixed thresholds in production monitoring. The AI+OS survey [R7] identifies learned baselines as a defining feature of AI-powered observability.
+
+**Target.** Phase 14+.
+
+### 10.6 Semantic Log Compression
+
+**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, important log entries are overwritten within seconds. The log ring treats all entries as equally important — a routine "timer tick" entry displaces a diagnostic "IPC timeout on channel 7" entry.
+
+**AI solution.** AIRS learns normal log patterns from historical data. Common sequences — such as "IPC blocked on channel X" followed by "IPC unblocked on channel X" — are compressed to a single summary entry. Deviations from learned patterns are flagged and preserved at higher priority: "IPC blocked on channel 7 but unblocked by TIMEOUT instead of reply" is more informative than the two routine entries it replaces.
+
+**Effect.** 10× more effective use of fixed-size log rings. The ring holds 10× as many semantically distinct events because routine patterns are compressed. Anomalous entries are never displaced by routine entries.
+
+**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, overwrite-on-full, no pattern awareness.
+
+**Research.** KernelAGI [R6] proposes pattern-aware kernel logging as part of its ML subsystem. eBPF [R10] enables in-kernel log filtering and aggregation, which AIOS extends with learned pattern recognition.
+
+**Target.** Phase 14+.
+
+### 10.7 Intelligent Ring Management
+
+**Problem.** Per-core trace rings are fixed at 4096 entries (128 KiB) per core regardless of activity level (§4). Busy cores (running the compositor, handling IPC) overflow their rings quickly, while idle cores waste allocated capacity.
+
+**AI solution.** AIRS dynamically redistributes trace ring capacity based on per-core event rates. Busy cores receive larger rings (up to 2× default); quiet cores donate capacity. The total system-wide trace memory budget remains constant — this is a reallocation, not an increase.
+
+**Effect.** Busy cores retain trace history for longer periods without increasing total memory usage. Idle cores contribute their unused capacity where it's needed.
+
+**Safety and fallback.** Each core always retains a minimum ring size (1024 entries = 32 KiB) — no core can be starved. Ring resizing is performed atomically during timer tick processing when no trace write is in progress. If AIRS is unavailable, fixed 4096 entries/core (§4) applies.
+
+**Research.** Alps [R3] demonstrates adaptive resource allocation based on learned workload characteristics. The AI+OS survey [R7] identifies dynamic telemetry buffer management as a low-hanging-fruit improvement for AI-powered kernels.
+
+**Target.** Phase 11+.
+
+### 10.8 Concurrency Anomaly Detection
+
+**Problem.** Race conditions — TOCTOU (time-of-check-to-time-of-use), use-after-free, double-wake, and data races — are fundamentally different from deadlocks. Deadlock prevention (deadlock-prevention.md §1–13) addresses circular waits through structural invariants. Race conditions occur when concurrent operations interleave in unexpected ways, and they are notoriously difficult to detect because they are timing-dependent and may not manifest under normal load.
+
+**AI solution.** AIRS analyzes kernel trace sequences (§4) and IPC event logs (§2) to detect race condition signatures:
+
+- **TOCTOU detection.** AIRS learns the expected timing between "check" and "use" operations on shared state (e.g., channel existence check → channel access). When the gap between check and use exceeds learned thresholds, or when a "destroy" event appears between check and use for the same resource, AIRS flags a potential TOCTOU race.
+- **Double-wake detection.** By correlating scheduler traces (scheduler.md §12) with IPC traces, AIRS detects when a thread is woken twice for the same event — a pattern indicating that a timeout and a reply raced on the same blocked thread.
+- **Use-after-free detection.** AIRS monitors memory allocator traces (§7) correlated with access traces. When a free event for a resource is followed by an access to the same address from a different thread, it flags a potential use-after-free.
+- **Lock ordering violation detection.** Beyond static lock ordering (deadlock-prevention.md §3), AIRS detects *runtime* lock ordering violations — cases where the dynamic acquisition order diverges from the declared static hierarchy, indicating a potential deadlock or race not covered by the static analysis.
+
+**Effect.** Shifts race condition detection from "hope we find it in code review" to "the system detects it from runtime behavior." Particularly valuable for timing-dependent bugs that only manifest under specific scheduling interleavings.
+
+**Safety and fallback.** Detection is advisory — AIRS reports suspected races to the Inspector dashboard (inspector.md) but does not intervene. False positives are expected and acceptable; the goal is to surface candidates for developer investigation. If AIRS is unavailable, no race detection occurs (current behavior).
+
+**Research.** Linux Lockdep [R11] performs runtime lock dependency analysis to detect potential deadlocks at lock acquisition time — AIOS extends this to runtime race detection via trace analysis. KernelAGI [R6] proposes neurosymbolic reasoning over kernel telemetry for automated anomaly classification. ThreadSanitizer (TSan) and similar tools detect data races at compile/run time; AIOS applies similar principles using production trace data rather than instrumented builds.
+
+**Target.** Phase 14+ (requires stable trace infrastructure and sufficient historical data for pattern learning).
+
+### 10.9 Cross-References
+
+The AI-enhanced observability system is the foundation for AI-driven improvements across the kernel:
+
+- **Scheduling** (scheduler.md §16): The feedback loop (§10.1) provides the telemetry that drives self-tuning kernel parameters (§16.1), workload phase detection (§16.3), predictive thread wakeup (§16.4), and thread affinity learning (§16.5).
+- **Deadlock prevention** (deadlock-prevention.md §13): Predictive deadlock detection (§13.1) consumes IPC call graph data from trace points (§4). Learned timeout calibration (§13.3) uses per-service latency metrics (§3). Adaptive lock management (§13.2) relies on lock contention metrics.
+- **The feedback triangle.** Observability emits data → AIRS analyzes → AIRS adjusts scheduler and deadlock-prevention parameters → kernel observes impact → loop. All three subsystems are connected through the AIRS intelligence layer, but the kernel treats each independently — no circular dependencies.
+
+### 10.10 References
+
+| Ref | Paper/Project | Venue | URL |
+|-----|--------------|-------|-----|
+| R3 | Fu et al., "Alps: Adaptive Learning Priority Scheduler" | USENIX ATC'24 | https://www.usenix.org/system/files/atc24-fu.pdf |
+| R6 | "KernelAGI: Composable OS Kernel with Embedded ML Subsystem" | arXiv 2025 | https://arxiv.org/abs/2508.00604 |
+| R7 | "AI for Operating Systems: Survey and Roadmap" | arXiv 2024 | https://arxiv.org/abs/2407.14567 |
+| R10 | eBPF + AIOps — Industry ML-driven observability platforms | Datadog, Grafana | Industry reports |
+| R11 | Linux Lockdep — Runtime Lock Dependency Validator | kernel.org | https://docs.kernel.org/locking/lockdep-design.html |
