@@ -24,8 +24,10 @@ pub use boot::{BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelForm
 pub use cap::{Capability, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS};
 pub use collections::{FixedQueue, RingBuffer};
 pub use ipc::{
-    validate_user_va, ChannelId, EndpointState, RawMessage, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS,
-    MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE, RING_CAPACITY, USER_VA_LIMIT,
+    validate_user_va, ChannelId, EndpointState, NotificationId, RawMessage, SharedMemoryId,
+    DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE,
+    MAX_NOTIFICATIONS, MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS, MAX_WAITERS_PER_NOTIFICATION,
+    RING_CAPACITY, USER_VA_LIMIT,
 };
 pub use kaslr::{compute_slide_from_entropy, KaslrConfig};
 pub use memory::{buddy_of, MemoryPressure, Pool, PoolConfig};

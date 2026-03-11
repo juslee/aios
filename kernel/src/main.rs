@@ -259,11 +259,20 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     observability::drain_logs();
 
     // --- Step 5: Scheduler Init ---
+    // Create idle + test threads but do NOT release secondary cores yet.
+    // Secondary cores are parked in enter_scheduler() waiting on SCHED_READY.
     sched::init();
     observability::drain_logs();
 
     // --- Step 6: IPC Init ---
+    // Must run while secondary cores are still parked — ipc::init() allocates
+    // threads and processes. If secondary cores were scheduling, they'd starve
+    // the boot CPU's THREAD_TABLE access (spin::Mutex has no fairness).
     ipc::init();
+    observability::drain_logs();
+
+    // --- Step 7: Release secondary cores ---
+    sched::start();
     observability::drain_logs();
 
     kinfo!(Boot, "Boot sequence complete, entering scheduler");

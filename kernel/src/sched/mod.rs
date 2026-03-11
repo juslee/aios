@@ -241,9 +241,23 @@ pub fn init() {
 
     crate::kinfo!(Sched, "Created {} idle + 4 test threads", online);
 
-    // Signal that scheduler initialization is complete.
-    // Secondary cores waiting in enter_scheduler() will proceed.
+    // NOTE: Do NOT set SCHED_READY here. Call sched::start() after all
+    // initialization (ipc::init(), etc.) is complete. This prevents
+    // secondary cores from starting the scheduler and starving the boot
+    // CPU's THREAD_TABLE access during init.
+}
+
+/// Signal secondary cores to start scheduling.
+///
+/// Must be called after all initialization that touches THREAD_TABLE
+/// (sched::init, ipc::init, etc.) is complete. Secondary cores are
+/// parked in enter_scheduler() waiting on SCHED_READY.
+pub fn start() {
     SCHED_READY.store(true, Ordering::Release);
+    // Wake parked secondary cores (they're in wfe loops).
+    // SAFETY: sev is a hint instruction, safe at EL1.
+    unsafe { core::arch::asm!("sev") };
+    crate::kinfo!(Sched, "Scheduler started — secondary cores released");
 }
 
 /// Validate that a ThreadContext has a non-zero pc (entry point) before
@@ -277,11 +291,16 @@ pub fn enter_scheduler() -> ! {
     let cpu = exceptions::core_id() as usize;
 
     // Wait for scheduler initialization to complete.
+    // Secondary cores have IRQs masked at this point (deferred from smp.rs)
+    // to avoid exclusive monitor traffic starving boot CPU locks during init.
     while !SCHED_READY.load(Ordering::Acquire) {
         // SAFETY: wfe is a hint instruction, safe at EL1.
-        // Timer interrupts will wake us periodically.
         unsafe { core::arch::asm!("wfe") };
     }
+
+    // Unmask IRQs now that initialization is complete.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. GIC + timer are initialized.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     crate::kinfo!(Sched, "CPU {} entering scheduler", cpu);
 
@@ -337,20 +356,30 @@ pub fn enter_scheduler() -> ! {
 /// time slice and triggers a reschedule if expired.
 pub fn timer_tick(cpu: usize) {
     // Decrement current thread's time slice.
-    let current = { *CURRENT_THREAD[cpu].lock() };
+    // Use try_lock to avoid deadlock: if schedule() or enter_scheduler()
+    // on this core already holds THREAD_TABLE/CURRENT_THREAD and a timer
+    // IRQ fires, a blocking lock() would deadlock (same-core spinlock).
+    let current = match CURRENT_THREAD[cpu].try_lock() {
+        Some(guard) => *guard,
+        None => return, // Lock held on this core — skip this tick.
+    };
     if let Some(tid) = current {
-        let mut table = THREAD_TABLE.lock();
-        if let Some(thread) = &mut table[tid.0 as usize] {
-            let decrement = NS_PER_TICK.min(thread.sched.time_slice_remaining);
-            thread.sched.time_slice_remaining -= decrement;
+        if let Some(mut table) = THREAD_TABLE.try_lock() {
+            if let Some(thread) = &mut table[tid.0 as usize] {
+                let decrement = NS_PER_TICK.min(thread.sched.time_slice_remaining);
+                thread.sched.time_slice_remaining -= decrement;
+            }
         }
+        // If try_lock fails, we skip the time slice decrement this tick.
+        // The next tick will catch it — missing one 1ms tick is harmless.
     }
 
     // Update run queue depth metrics.
     #[cfg(feature = "kernel-metrics")]
     {
-        let rq = RUN_QUEUES[cpu].lock();
-        METRICS.sched_runqueue_depth[cpu].set(rq.total_depth() as i64);
+        if let Some(rq) = RUN_QUEUES[cpu].try_lock() {
+            METRICS.sched_runqueue_depth[cpu].set(rq.total_depth() as i64);
+        }
     }
 }
 
@@ -695,9 +724,10 @@ fn test_thread_entry() -> ! {
         thread_yield();
     }
 
-    // After test iterations, keep yielding forever (idle-like behavior).
+    // After test iterations, sleep in wfe loop (avoids THREAD_TABLE starvation).
     loop {
-        thread_yield();
+        // SAFETY: wfe is a hint instruction, safe at EL1.
+        unsafe { core::arch::asm!("wfe") };
     }
 }
 

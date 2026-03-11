@@ -32,11 +32,18 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         6 => sys_channel_create(tf),
         7 => sys_channel_destroy(tf),
         8 | 9 => IpcError::Enotsup as i64, // RingChannel — future
+        10..=12 => IpcError::Enotsup as i64, // Notification — Step 10
         13 => IpcError::Enotsup as i64,    // ChannelStats — future
         14 => sys_capability_transfer(tf),
         15 => sys_capability_attenuate(tf),
         16 => sys_capability_revoke(tf),
         17 => sys_capability_list(tf),
+        18 => sys_memory_map(tf),
+        19 => sys_memory_unmap(tf),
+        20 => sys_shared_memory_create(tf),
+        21 => sys_shared_memory_map(tf),
+        22 => sys_shared_memory_share(tf),
+        23..=25 => IpcError::Enotsup as i64, // Process — Step 11
         26 => sys_time_get(tf),
         27 => sys_time_sleep(tf),
         28 => IpcError::Enotsup as i64,
@@ -386,4 +393,101 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
     }
 
     count as i64
+}
+
+// ---------------------------------------------------------------------------
+// Memory syscalls (nr=18-22)
+// ---------------------------------------------------------------------------
+
+/// MemoryMap (nr=18): x0=size, x1=flags.
+///
+/// Allocate private pages from Pool::User.
+fn sys_memory_map(tf: &TrapFrame) -> i64 {
+    let size = tf.x[0] as usize;
+    let flags_raw = tf.x[1] as u32;
+    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::memory_map(pid, size, flags) {
+        Ok(va) => va as i64,
+        Err(e) => e,
+    }
+}
+
+/// MemoryUnmap (nr=19): x0=va, x1=size.
+///
+/// Handles both private and shared memory unmap.
+fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
+    let va = tf.x[0] as usize;
+    let size = tf.x[1] as usize;
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::memory_unmap(pid, va, size) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+/// SharedMemoryCreate (nr=20): x0=size, x1=flags.
+///
+/// Create a new shared memory region.
+fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
+    let size = tf.x[0] as usize;
+    let flags_raw = tf.x[1] as u32;
+    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::shared_memory_create(pid, size, flags) {
+        Ok(id) => id.0 as i64,
+        Err(e) => e,
+    }
+}
+
+/// SharedMemoryMap (nr=21): x0=region_id, x1=flags.
+///
+/// Map a shared memory region into the caller's address space.
+fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
+    let region_id = shared::SharedMemoryId(tf.x[0] as u32);
+    let flags_raw = tf.x[1] as u32;
+    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::shared_memory_map(pid, region_id, flags) {
+        Ok(va) => va as i64,
+        Err(e) => e,
+    }
+}
+
+/// SharedMemoryShare (nr=22): x0=region_id, x1=target_pid.
+///
+/// Share a region with another process by granting capability.
+fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
+    let region_id = shared::SharedMemoryId(tf.x[0] as u32);
+    let target_pid = crate::task::process::ProcessId(tf.x[1] as u32);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::shared_memory_share(pid, region_id, target_pid) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
 }

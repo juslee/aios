@@ -27,6 +27,18 @@ pub const DEFAULT_TIMEOUT_TICKS: u64 = 5_000;
 /// depth counter. At depth 8, no further inheritance propagation occurs.
 pub const MAX_INHERITANCE_DEPTH: u8 = 8;
 
+/// Maximum shared memory regions system-wide.
+pub const MAX_SHARED_REGIONS: usize = 64;
+
+/// Maximum per-region mappings (processes that can map the same region).
+pub const MAX_SHARED_MAPPINGS: usize = 8;
+
+/// Maximum notification objects system-wide.
+pub const MAX_NOTIFICATIONS: usize = 64;
+
+/// Maximum waiters per notification object.
+pub const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
+
 // ---------------------------------------------------------------------------
 // Channel identity
 // ---------------------------------------------------------------------------
@@ -34,6 +46,14 @@ pub const MAX_INHERITANCE_DEPTH: u8 = 8;
 /// Unique channel identifier (index into CHANNEL_TABLE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelId(pub u32);
+
+/// Unique shared memory region identifier (index into SHARED_REGION_TABLE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedMemoryId(pub u32);
+
+/// Unique notification object identifier (index into NOTIFICATION_TABLE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotificationId(pub u32);
 
 // ---------------------------------------------------------------------------
 // Endpoint state
@@ -148,6 +168,72 @@ mod tests {
         assert_eq!(MAX_INHERITANCE_DEPTH.saturating_sub(1), 7);
         assert_eq!(1u8.saturating_sub(1), 0);
         assert_eq!(0u8.saturating_sub(1), 0); // No underflow.
+    }
+
+    // --- SharedMemoryId tests ---
+
+    #[test]
+    fn shared_memory_id_copy_clone() {
+        let id = SharedMemoryId(7);
+        let id2 = id;
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn shared_memory_id_equality() {
+        assert_eq!(SharedMemoryId(0), SharedMemoryId(0));
+        assert_ne!(SharedMemoryId(0), SharedMemoryId(1));
+    }
+
+    #[test]
+    fn shared_memory_id_max_valid() {
+        let id = SharedMemoryId((MAX_SHARED_REGIONS - 1) as u32);
+        assert_eq!(id.0 as usize, MAX_SHARED_REGIONS - 1);
+    }
+
+    // --- NotificationId tests ---
+
+    #[test]
+    fn notification_id_copy_clone() {
+        let id = NotificationId(3);
+        let id2 = id;
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn notification_id_equality() {
+        assert_eq!(NotificationId(0), NotificationId(0));
+        assert_ne!(NotificationId(0), NotificationId(1));
+    }
+
+    #[test]
+    fn notification_id_max_valid() {
+        let id = NotificationId((MAX_NOTIFICATIONS - 1) as u32);
+        assert_eq!(id.0 as usize, MAX_NOTIFICATIONS - 1);
+    }
+
+    // --- Shared memory / notification constants ---
+
+    #[test]
+    fn max_shared_regions_is_power_of_two() {
+        assert!(MAX_SHARED_REGIONS.is_power_of_two());
+    }
+
+    #[test]
+    fn max_notifications_is_power_of_two() {
+        assert!(MAX_NOTIFICATIONS.is_power_of_two());
+    }
+
+    #[test]
+    fn max_shared_mappings_bounded() {
+        assert!(MAX_SHARED_MAPPINGS <= 16);
+        assert!(MAX_SHARED_MAPPINGS > 0);
+    }
+
+    #[test]
+    fn max_waiters_per_notification_bounded() {
+        assert!(MAX_WAITERS_PER_NOTIFICATION <= 16);
+        assert!(MAX_WAITERS_PER_NOTIFICATION > 0);
     }
 
     // --- ChannelId tests ---

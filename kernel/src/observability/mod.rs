@@ -226,6 +226,11 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 // ---------------------------------------------------------------------------
 
 /// Maximum entries to drain per call (bounds UART hold time).
+/// Maximum log entries drained per call. Kept small so timer_tick_handler
+/// completes within the 1ms tick budget at 115200 baud (~7ms per log line).
+/// With drain every 4th tick (4ms) and 1 entry/call, effective throughput
+/// is ~1 entry/4ms which keeps the handler fast. Burst draining happens
+/// from explicit drain_logs() calls in kernel_main (boot sequence).
 const DRAIN_BATCH_SIZE: usize = 16;
 
 /// Drain all per-core log rings and write formatted entries to UART.

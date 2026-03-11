@@ -64,6 +64,12 @@ pub enum ThreadState {
     BlockedTimer { wake_at: u64 },
     /// Blocked waiting for I/O completion.
     BlockedIo,
+    /// Blocked waiting for a notification signal.
+    BlockedNotification { notification: u32 },
+    /// Blocked in IpcSelect (multi-wait on channels + notifications).
+    BlockedSelect,
+    /// Blocked waiting for a child process to exit.
+    BlockedProcessWait { pid: u32 },
     /// Suspended by the kernel (memory limit, debugging).
     Suspended,
     /// Thread has exited.

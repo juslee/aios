@@ -8,6 +8,7 @@
 //! The SVC dispatch path is wired in parallel for future EL0 user threads.
 
 pub mod direct;
+pub mod shmem;
 
 use core::sync::atomic::Ordering;
 
@@ -872,6 +873,8 @@ pub fn init() {
     use crate::task::{CpuSet, SchedulerClass, Thread, THREAD_TABLE};
 
     // --- Create processes ---
+    crate::kinfo!(Ipc, "Creating processes...");
+    crate::observability::drain_logs();
 
     // Process 0: kernel (owns idle threads, scheduler test threads).
     {
@@ -887,11 +890,16 @@ pub fn init() {
             name,
         });
     }
+    crate::kinfo!(Ipc, "P0 created, granting caps...");
+    crate::observability::drain_logs();
+
     // Grant kernel process all capability types.
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::DebugPrint, true);
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::SpawnAgent, true);
     let _ = cap::grant_to_process(ProcessId(0), shared::Capability::SharedMemoryCreate, true);
+    crate::kinfo!(Ipc, "P0 caps granted");
+    crate::observability::drain_logs();
 
     // Assign existing idle + test threads to kernel process.
     {
@@ -919,6 +927,8 @@ pub fn init() {
     }
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::DebugPrint, false);
+    crate::kinfo!(Ipc, "P1 done");
+    crate::observability::drain_logs();
 
     // Process 2: PI test (priority inheritance server + caller).
     {
@@ -936,6 +946,8 @@ pub fn init() {
     }
     let _ = cap::grant_to_process(ProcessId(2), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(2), shared::Capability::DebugPrint, false);
+    crate::kinfo!(Ipc, "P2 done");
+    crate::observability::drain_logs();
 
     // Process 3: cap-test-denied (NO ChannelCreate — used to test enforcement).
     {
@@ -953,8 +965,29 @@ pub fn init() {
     }
     // Process 3 gets DebugPrint only — no ChannelCreate, no ChannelAccess.
     let _ = cap::grant_to_process(ProcessId(3), shared::Capability::DebugPrint, false);
+    crate::kinfo!(Ipc, "P3 done");
+    crate::observability::drain_logs();
 
-    crate::kinfo!(Cap, "Processes 0-3 created with capabilities");
+    // Process 4: shm-test (shared memory writer + reader).
+    {
+        let mut procs = PROCESS_TABLE.lock();
+        let mut name = [0u8; 32];
+        name[..8].copy_from_slice(b"shm-test");
+        procs[4] = Some(ProcessControl {
+            pid: ProcessId(4),
+            address_space: None,
+            resource_limits: KernelResourceLimits::native(),
+            cap_table: cap::CapabilityTable::new(),
+            thread_ids: [None; 16],
+            name,
+        });
+    }
+    let _ = cap::grant_to_process(ProcessId(4), shared::Capability::SharedMemoryCreate, true);
+    let _ = cap::grant_to_process(ProcessId(4), shared::Capability::DebugPrint, false);
+    crate::kinfo!(Ipc, "P4 done");
+    crate::observability::drain_logs();
+
+    crate::kinfo!(Cap, "Processes 0-4 created with capabilities");
 
     // --- Create IPC test channel ---
     // (channel_create now checks caps — process 1 holds ChannelCreate)
@@ -1118,9 +1151,74 @@ pub fn init() {
         sched::enqueue_on_cpu(0, ThreadId(idx as u32), SchedulerClass::Normal);
     }
 
+    // --- Shared memory test threads ---
+    // Process 4: writer creates region, writes 0xAA, shares; reader maps and verifies.
+    {
+        let shm_writer_tid = ThreadId(0x500);
+        let shm_reader_tid = ThreadId(0x501);
+
+        // Writer thread (process 4).
+        {
+            let stack_phys = sched::alloc_kernel_stack();
+            let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+            let mut thread = Thread::new_kernel(
+                shm_writer_tid,
+                b"shm-writer\0\0\0\0\0\0",
+                shm_writer_entry as *const () as usize,
+                stack_phys,
+            );
+            thread.sched.class = SchedulerClass::Normal;
+            thread.sched.effective_class = SchedulerClass::Normal;
+            thread.sched.affinity = CpuSet::all();
+            thread.context.sp = stack_virt_top as u64;
+            thread.owner_pid = Some(ProcessId(4));
+
+            let idx = sched::allocate_thread(thread).expect("thread table full for shm-writer");
+            sched::enqueue_on_cpu(0, ThreadId(idx as u32), SchedulerClass::Normal);
+        }
+
+        // Reader thread (process 4 — same process, since share grants cap to target pid).
+        // We'll create a second process (5) for the reader to test cross-process sharing.
+        {
+            let mut procs = PROCESS_TABLE.lock();
+            let mut name = [0u8; 32];
+            name[..10].copy_from_slice(b"shm-reader");
+            procs[5] = Some(ProcessControl {
+                pid: ProcessId(5),
+                address_space: None,
+                resource_limits: KernelResourceLimits::native(),
+                cap_table: cap::CapabilityTable::new(),
+                thread_ids: [None; 16],
+                name,
+            });
+        }
+        let _ = cap::grant_to_process(ProcessId(5), shared::Capability::DebugPrint, false);
+
+        {
+            let stack_phys = sched::alloc_kernel_stack();
+            let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+            let mut thread = Thread::new_kernel(
+                shm_reader_tid,
+                b"shm-reader\0\0\0\0\0\0",
+                shm_reader_entry as *const () as usize,
+                stack_phys,
+            );
+            thread.sched.class = SchedulerClass::Normal;
+            thread.sched.effective_class = SchedulerClass::Normal;
+            thread.sched.affinity = CpuSet::all();
+            thread.context.sp = stack_virt_top as u64;
+            thread.owner_pid = Some(ProcessId(5));
+
+            let idx = sched::allocate_thread(thread).expect("thread table full for shm-reader");
+            sched::enqueue_on_cpu(1, ThreadId(idx as u32), SchedulerClass::Normal);
+        }
+    }
+
     crate::kinfo!(
         Ipc,
-        "IPC test threads created (server, caller, timeout, PI, cap-denied)"
+        "IPC test threads created (server, caller, timeout, PI, cap-denied, shm-writer, shm-reader)"
     );
 }
 
@@ -1414,17 +1512,22 @@ fn cap_denied_entry() -> ! {
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
-    // Small delay to let other threads initialize.
-    for _ in 0..5 {
-        sched::thread_yield();
-    }
+    crate::kinfo!(Cap, "Cap denied: started");
 
     let my_tid = match current_thread_id() {
-        Some(t) => t,
-        None => loop {
-            sched::thread_yield();
-        },
+        Some(t) => {
+            crate::kinfo!(Cap, "Cap denied: tid={}", t.0);
+            t
+        }
+        None => {
+            crate::kwarn!(Cap, "Cap denied: tid=None!");
+            loop {
+                sched::thread_yield();
+            }
+        }
     };
+
+    crate::kinfo!(Cap, "Cap denied: calling channel_create");
 
     // Attempt channel_create — should fail with EPERM because process 3
     // does not hold ChannelCreate capability.
@@ -1441,6 +1544,194 @@ fn cap_denied_entry() -> ! {
         }
         Err(e) => {
             crate::kwarn!(Cap, "Cap: unexpected error {} on ChannelCreate", e);
+        }
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared memory test threads
+// ---------------------------------------------------------------------------
+
+/// Synchronization: writer stores the SharedMemoryId here once the region is ready.
+/// Reader spins until it sees a non-u32::MAX value.
+static SHM_TEST_REGION: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(u32::MAX);
+
+/// Shared memory writer: creates a region, fills with 0xAA, shares with process 5.
+fn shm_writer_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    crate::kinfo!(Mm, "SHM writer: thread started");
+
+    // Small delay to let other threads initialize.
+    for _ in 0..2 {
+        sched::thread_yield();
+    }
+
+    crate::kinfo!(Mm, "SHM writer: past yields, starting work");
+
+    let pid = crate::task::process::ProcessId(4);
+
+    // Create a 4 KiB shared memory region (READ + WRITE).
+    let flags = crate::mm::pgtable::VmFlags::READ | crate::mm::pgtable::VmFlags::WRITE;
+    let region_id = match shmem::shared_memory_create(pid, 4096, flags) {
+        Ok(id) => {
+            crate::kinfo!(Mm, "SHM writer: created region {}", id.0);
+            id
+        }
+        Err(e) => {
+            crate::kwarn!(Mm, "SHM writer: create failed with {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    };
+
+    // Map the region (writer side).
+    match shmem::shared_memory_map(pid, region_id, flags) {
+        Ok(va) => {
+            crate::kinfo!(Mm, "SHM writer: mapped region {} at {:#x}", region_id.0, va);
+        }
+        Err(e) => {
+            crate::kwarn!(Mm, "SHM writer: map failed with {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    }
+
+    // Write 0xAA pattern via the direct map.
+    if let Some(dmap_addr) = shmem::region_dmap_addr(region_id) {
+        let ptr = dmap_addr as *mut u8;
+        for i in 0..4096 {
+            // SAFETY: dmap_addr is a valid direct-map address for the allocated region.
+            unsafe { core::ptr::write_volatile(ptr.add(i), 0xAA) };
+        }
+        crate::kinfo!(Mm, "SHM writer: wrote 0xAA pattern (4096 bytes)");
+    }
+
+    // Share with process 5 (reader).
+    let target_pid = crate::task::process::ProcessId(5);
+    match shmem::shared_memory_share(pid, region_id, target_pid) {
+        Ok(()) => {
+            crate::kinfo!(Mm, "SHM writer: shared region {} with pid=5", region_id.0);
+        }
+        Err(e) => {
+            crate::kwarn!(Mm, "SHM writer: share failed with {}", e);
+        }
+    }
+
+    // Signal the reader that the region is ready.
+    SHM_TEST_REGION.store(region_id.0, Ordering::Release);
+
+    // Log ref_count.
+    {
+        let table = shmem::SHARED_REGION_TABLE.lock();
+        if let Some(region) = &table[region_id.0 as usize] {
+            crate::kinfo!(
+                Mm,
+                "SHM writer: ref_count={} after share",
+                region.ref_count.load(Ordering::Relaxed)
+            );
+        }
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+/// Shared memory reader: waits for writer, maps region, verifies 0xAA pattern.
+fn shm_reader_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    crate::kinfo!(Mm, "SHM reader: thread started");
+
+    // Wait for the writer to signal the region ID.
+    let region_id = loop {
+        let val = SHM_TEST_REGION.load(Ordering::Acquire);
+        if val != u32::MAX {
+            break shared::SharedMemoryId(val);
+        }
+        sched::thread_yield();
+    };
+
+    let pid = crate::task::process::ProcessId(5);
+    crate::kinfo!(Mm, "SHM reader: got region {} from writer", region_id.0);
+
+    // Map the region (read-only).
+    let read_flags = crate::mm::pgtable::VmFlags::READ;
+    match shmem::shared_memory_map(pid, region_id, read_flags) {
+        Ok(va) => {
+            crate::kinfo!(Mm, "SHM reader: mapped region {} at {:#x}", region_id.0, va);
+        }
+        Err(e) => {
+            crate::kwarn!(Mm, "SHM reader: map failed with {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    }
+
+    // Verify 0xAA pattern via direct map.
+    let mut mismatches = 0u32;
+    if let Some(dmap_addr) = shmem::region_dmap_addr(region_id) {
+        let ptr = dmap_addr as *const u8;
+        for i in 0..4096 {
+            // SAFETY: dmap_addr is a valid direct-map address for the shared region.
+            let val = unsafe { core::ptr::read_volatile(ptr.add(i)) };
+            if val != 0xAA {
+                mismatches += 1;
+            }
+        }
+    }
+
+    if mismatches == 0 {
+        crate::kinfo!(Mm, "SHM reader: verified 0xAA pattern — 4096/4096 bytes OK");
+    } else {
+        crate::kwarn!(
+            Mm,
+            "SHM reader: pattern verification FAILED — {} mismatches",
+            mismatches
+        );
+    }
+
+    // Log ref_count.
+    {
+        let table = shmem::SHARED_REGION_TABLE.lock();
+        if let Some(region) = &table[region_id.0 as usize] {
+            crate::kinfo!(
+                Mm,
+                "SHM reader: ref_count={} after both mapped",
+                region.ref_count.load(Ordering::Relaxed)
+            );
+        }
+    }
+
+    // Unmap our side and check ref_count decreases.
+    match shmem::shared_memory_unmap(pid, region_id) {
+        Ok(()) => {
+            crate::kinfo!(Mm, "SHM reader: unmapped region {}", region_id.0);
+        }
+        Err(e) => {
+            crate::kwarn!(Mm, "SHM reader: unmap failed with {}", e);
+        }
+    }
+
+    {
+        let table = shmem::SHARED_REGION_TABLE.lock();
+        if let Some(region) = &table[region_id.0 as usize] {
+            crate::kinfo!(
+                Mm,
+                "SHM reader: ref_count={} after reader unmap",
+                region.ref_count.load(Ordering::Relaxed)
+            );
         }
     }
 

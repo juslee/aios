@@ -291,6 +291,64 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
     }
 }
 
+/// Check that a process holds SharedMemoryCreate capability.
+pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
+    let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
+    let table = PROCESS_TABLE.lock();
+    let proc = match &table[pid.0 as usize] {
+        Some(p) => p,
+        None => {
+            #[cfg(feature = "kernel-metrics")]
+            METRICS.ipc_cap_denied.inc();
+            return Err(IpcError::Eperm as i64);
+        }
+    };
+
+    match proc
+        .cap_table
+        .find_authorizing_token(&Capability::SharedMemoryCreate, now)
+    {
+        Some(token_id) => Ok(token_id),
+        None => {
+            #[cfg(feature = "kernel-metrics")]
+            METRICS.ipc_cap_denied.inc();
+            crate::kwarn!(Cap, "pid={}: denied SharedMemoryCreate", pid.0);
+            Err(IpcError::Eperm as i64)
+        }
+    }
+}
+
+/// Check that a process holds SharedMemoryAccess(region_id) capability.
+pub fn check_shared_memory_access(pid: ProcessId, region_id: u32) -> Result<(), i64> {
+    let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
+    let table = PROCESS_TABLE.lock();
+    let proc = match &table[pid.0 as usize] {
+        Some(p) => p,
+        None => {
+            #[cfg(feature = "kernel-metrics")]
+            METRICS.ipc_cap_denied.inc();
+            return Err(IpcError::Eperm as i64);
+        }
+    };
+
+    if proc
+        .cap_table
+        .has_capability(&Capability::SharedMemoryAccess(region_id), now)
+    {
+        Ok(())
+    } else {
+        #[cfg(feature = "kernel-metrics")]
+        METRICS.ipc_cap_denied.inc();
+        crate::kwarn!(
+            Cap,
+            "pid={}: denied SharedMemoryAccess({})",
+            pid.0,
+            region_id
+        );
+        Err(IpcError::Eperm as i64)
+    }
+}
+
 /// Grant a capability to a process. Returns the handle.
 pub fn grant_to_process(
     pid: ProcessId,

@@ -93,7 +93,11 @@ impl Timer {
     /// Set the next timer deadline (ticks from now).
     pub fn set_next_deadline(&self, ticks: u64) {
         // SAFETY: CNTP_TVAL_EL0 write is safe at EL1.
-        unsafe { core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) ticks) };
+        // ISB ensures ISTATUS is cleared before any subsequent EOIR.
+        unsafe {
+            core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) ticks);
+            core::arch::asm!("isb");
+        }
     }
 }
 
@@ -147,22 +151,43 @@ pub fn init_timer_secondary() {
 /// would deadlock or cause re-entrancy issues.
 pub fn timer_tick_handler() {
     // 1. Rearm timer.
+    // ISB after TVAL write ensures ISTATUS is cleared before irq_handler_el1
+    // writes EOIR. PPI 30 is level-sensitive — without the barrier, the GIC
+    // may still see the interrupt asserted and immediately re-pend it after
+    // EOIR, causing an infinite IRQ loop.
     let interval = TICK_INTERVAL.load(Ordering::Relaxed);
     if interval > 0 {
         // SAFETY: CNTP_TVAL_EL0 is a per-core timer register, safe at EL1.
+        // ISB ensures the timer state update (ISTATUS clear) is visible
+        // to the GIC before the handler returns and EOIR is written.
         unsafe {
             core::arch::asm!("msr CNTP_TVAL_EL0, {}", in(reg) interval);
+            core::arch::asm!("isb");
         }
     }
 
-    // 2. Increment tick counter.
-    TICK_COUNT.fetch_add(1, Ordering::Relaxed);
-
-    // 3. Drain log ring buffers to UART.
-    crate::observability::drain_logs();
+    // 2-3. CPU 0 only: increment global tick counter and drain log ring buffers.
+    // TICK_COUNT is a system-wide monotonic counter — only one core should advance it.
+    // drain_logs() pops from SPSC ring buffers — only safe with a single consumer.
+    // Rate-limited to every 4th tick to keep total handler time < 1ms (the tick
+    // interval). At 115200 baud, each log entry (~80 chars) takes ~7ms, so we
+    // can only safely drain ~1 entry per 8 ticks. Draining every 4th tick with
+    // the per-call limit in drain_logs keeps us within budget.
+    let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
+    if cpu == 0 {
+        let tick = TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+        if tick.is_multiple_of(4) {
+            crate::observability::drain_logs();
+        }
+        // Heartbeat every 1000 ticks (1s) to verify timer is alive.
+        if tick.is_multiple_of(1000) {
+            use core::fmt::Write;
+            let mut w = crate::arch::aarch64::uart::UartWriter;
+            let _ = writeln!(w, "[heartbeat] tick={}", tick);
+        }
+    }
 
     // 4. Scheduler tick: decrement current thread's time slice.
-    let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
     crate::sched::timer_tick(cpu);
 
     // 5. Check IPC timeouts (uses try_lock — safe from IRQ context).

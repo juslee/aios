@@ -197,6 +197,12 @@ impl VmFlags {
         self.0
     }
 
+    /// Reconstruct flags from raw bits. Masks to valid flag bits only.
+    pub const fn from_bits(bits: u32) -> Self {
+        // Valid bits: READ(0x1) | WRITE(0x2) | EXECUTE(0x4) | USER(0x8)
+        Self(bits & 0b0000_1111)
+    }
+
     pub const fn contains(&self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
