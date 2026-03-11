@@ -379,12 +379,13 @@ Layer 5: Capability restrictions → constrained dependency graph
 Layer 6: Synchronous IPC         → no callback cycles
 Layer 7: Preemptive kernel       → liveness: no CPU starvation of lock waiters
 Layer 8: Wait-Die / Wound-Wait   → progress guarantee for contested resources (future)
-Layer 9: AI anomaly detection    → early warning on concurrency anomalies (future, §13)
-Layer 10: Predictive deadlock    → break cycles before they form (future, §13.1)
-Layer 11: Learned calibration    → optimal timeouts per service (future, §13.3)
+Layer 9:  AI prediction          → break cycles before they form (future, §13.1)
+Layer 10: AI lock management     → adaptive splitting + elision (future, §13.2/§13.5)
+Layer 11: AI calibration         → learned timeouts per service (future, §13.3)
+Layer 12: AI deploy-time check   → cycle detection at install time (future, §13.4)
 ```
 
-Layers 1 and 4–6 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layers 3 and 7 are liveness mechanisms: Layer 3 (priority inheritance) prevents unbounded priority inversion from mimicking deadlock; Layer 7 (preemptive kernel) ensures that no thread can monopolize the CPU and starve lock waiters. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. Layers 9–11 represent AIOS's AI-driven future: AIRS consumes kernel telemetry (observability.md §10) and applies machine learning to predict, prevent, and calibrate concurrency mechanisms — shifting deadlock prevention from reactive to proactive (§13). The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
+Layers 1 and 4–6 prevent deadlocks structurally (making them impossible by construction). Layer 2 (timeouts) provides detection and recovery — bounding the cost when structural prevention alone is insufficient. Layers 3 and 7 are liveness mechanisms: Layer 3 (priority inheritance) prevents unbounded priority inversion from mimicking deadlock; Layer 7 (preemptive kernel) ensures that no thread can monopolize the CPU and starve lock waiters. The Wound-Wait scheme (§10) offers a path to **guaranteed progress** — eliminating the livelock risk that pure timeouts leave open. Layers 9–12 represent AIOS's AI-driven future: AIRS consumes kernel telemetry (observability.md §10) and applies machine learning to predict, prevent, and calibrate concurrency mechanisms — shifting deadlock prevention from reactive to proactive (§13). The system never hangs — it either completes the operation or reports a timeout error that the caller can handle.
 
 -----
 
@@ -413,7 +414,7 @@ All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler 
 
 **Problem.** Mandatory timeouts (§4) detect deadlocks only after they have formed, wasting up to 5 seconds of blocked time before recovery.
 
-**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data (observability.md §4) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it proactively cancels the youngest call via `IpcCancel` (ipc.md §4.3) *before* all parties block.
+**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data (observability.md §4) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it proactively cancels the youngest call via `IpcCancel` (ipc.md §3.1) *before* all parties block.
 
 **Advantage.** Breaks cycles in milliseconds rather than waiting for a 5-second timeout. Reduces wasted CPU time and improves tail latency for all services in the call chain.
 
@@ -476,6 +477,7 @@ All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler 
 | Ref | Paper/Project | Venue | URL |
 |-----|--------------|-------|-----|
 | R1 | Gupta et al., "KernelOracle: Deep Learning for Linux CFS Scheduling" | arXiv 2025 | https://arxiv.org/abs/2505.15213 |
+| R2 | Nair et al., "STUN: Q-Learning Optimization of Scheduler Parameters" | Applied Sciences 2022 | https://www.mdpi.com/2076-3417/12/14/7072 |
 | R4 | Humphries et al., "ghOSt: Fast & Flexible User-Space Delegation of Linux Scheduling" | SOSP'21 | https://dl.acm.org/doi/10.1145/3477132.3483542 |
 | R6 | "KernelAGI: Composable OS Kernel with Embedded ML Subsystem" | arXiv 2025 | https://arxiv.org/abs/2508.00604 |
 | R7 | "AI for Operating Systems: Survey and Roadmap" | arXiv 2024 | https://arxiv.org/abs/2407.14567 |

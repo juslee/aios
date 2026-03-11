@@ -1060,7 +1060,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 The AI-enhanced observability system is the foundation for AI-driven improvements across the kernel:
 
-- **Scheduling** (scheduler.md §16): The feedback loop (§10.1) provides the telemetry that drives self-tuning kernel parameters (§16.1), workload phase detection (§16.3), predictive thread wakeup (§16.4), and thread affinity learning (§16.5).
+- **Scheduling** (scheduler.md §16): The feedback loop (§10.1) provides the telemetry that drives self-tuning kernel parameters (§16.1), lock-aware scheduler priority (§16.2), workload phase detection (§16.3), predictive thread wakeup (§16.4), thread affinity learning (§16.5), and jitter-aware RT scheduling (§16.6).
 - **Deadlock prevention** (deadlock-prevention.md §13): Predictive deadlock detection (§13.1) consumes IPC call graph data from trace points (§4). Learned timeout calibration (§13.3) uses per-service latency metrics (§3). Adaptive lock management (§13.2) relies on lock contention metrics.
 - **The feedback triangle.** Observability emits data → AIRS analyzes → AIRS adjusts scheduler and deadlock-prevention parameters → kernel observes impact → loop. All three subsystems are connected through the AIRS intelligence layer, but the kernel treats each independently — no circular dependencies.
 

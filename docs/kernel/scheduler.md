@@ -2492,9 +2492,9 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Problem.** Priority inheritance in AIOS currently applies only to IPC calls (ipc.md §9.2): when a high-priority thread calls a low-priority service, the service inherits the caller's priority. But kernel spinlocks have no such mechanism — a high-priority thread waiting on a spinlock held by a low-priority thread must wait without any priority boost for the holder.
 
-**AI solution.** Extend priority inheritance from IPC to kernel spinlocks. When a high-priority thread blocks waiting for a lock, the lock holder receives a temporary priority boost for the duration of the critical section. This is the same inheritance pattern as IPC (ipc.md §9.2), applied at the kernel lock level.
+**AI solution.** AIRS monitors lock contention metrics (observability.md §3) to identify cases where high-priority threads are frequently delayed by low-priority lock holders. When a persistent pattern is detected, AIRS recommends extending priority inheritance to the specific kernel spinlocks involved. The kernel applies the inheritance: when a high-priority thread blocks waiting for a flagged lock, the lock holder receives a temporary priority boost for the duration of the critical section.
 
-**Safety and fallback.** The priority boost is bounded (same depth limit as IPC priority inheritance: `MAX_INHERITANCE_DEPTH = 8`). Lock ordering invariants (deadlock-prevention.md §3) are unaffected — priority inheritance changes *when* a thread runs, not *which* locks it acquires. If AIRS is unavailable, standard IPC priority inheritance remains the only inheritance mechanism.
+**Safety and fallback.** The priority boost is bounded (same depth limit as IPC priority inheritance: `MAX_INHERITANCE_DEPTH = 8`). Lock ordering invariants (deadlock-prevention.md §3) are unaffected — priority inheritance changes *when* a thread runs, not *which* locks it acquires. AIRS selects which locks receive inheritance based on observed contention data; the kernel mechanism itself is deterministic once activated. If AIRS is unavailable, standard IPC priority inheritance remains the only inheritance mechanism.
 
 **Research.** KernelAGI [R6] proposes kernel-embedded ML for resource arbitration including lock-aware scheduling. The AI+OS survey [R7] identifies lock-scheduler co-optimization as an open research area in AI-driven OS design.
 
@@ -2528,7 +2528,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Problem.** AIOS uses load-balanced thread placement across cores (§9), but this does not account for data sharing between threads. Two threads that frequently access the same memory regions benefit from co-location on the same core (shared L2 cache) or same cluster (shared L3). Current placement is workload-unaware.
 
-**AI solution.** AIRS observes cache miss rates per-thread-per-core via Performance Monitoring Unit (PMU) counters exposed through the observability subsystem (observability.md §3). Over time, it learns optimal core assignments: threads that share data are co-located, while threads that contend for cache are separated. This differs from the existing workload-aware core partitioning (§8.4): partitioning operates at the agent-group level; affinity learning operates at the individual thread level.
+**AI solution.** AIRS observes cache miss rates per-thread-per-core via Performance Monitoring Unit (PMU) counters exposed through the observability subsystem (observability.md §3). Over time, it learns optimal core assignments: threads that share data are co-located, while threads that contend for cache are separated. This differs from the existing core assignment strategy (§9.2): core assignment operates at the agent-group level; affinity learning operates at the individual thread level.
 
 **Safety and fallback.** Learned affinities are soft hints — the scheduler may override them for load balancing or thermal management. Affinity suggestions are bounded to the same core mask constraints as the existing `CpuSet` mechanism. If AIRS is unavailable, round-robin or static affinity applies (existing behavior).
 
