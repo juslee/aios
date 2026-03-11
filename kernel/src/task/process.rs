@@ -7,6 +7,7 @@
 //! Per scheduler.md §3, ipc.md §3.3.
 
 use super::ThreadId;
+use crate::cap::CapabilityTable;
 use crate::mm::uspace::UserAddressSpace;
 use spin::Mutex;
 
@@ -31,6 +32,8 @@ pub struct ProcessControl {
     pub address_space: Option<UserAddressSpace>,
     /// Kernel resource limits for this process.
     pub resource_limits: KernelResourceLimits,
+    /// Per-process capability table (security.md §3.1).
+    pub cap_table: CapabilityTable,
     /// Thread IDs belonging to this process.
     pub thread_ids: [Option<ThreadId>; MAX_THREADS_PER_PROCESS],
     /// Human-readable name (for debugging).

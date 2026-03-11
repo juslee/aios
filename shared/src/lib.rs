@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod boot;
+pub mod cap;
 pub mod collections;
 pub mod ipc;
 pub mod kaslr;
@@ -20,6 +21,7 @@ pub const BOOTINFO_MAGIC: u64 = 0x41494F53_424F4F54;
 
 // Re-export commonly used types at crate root for ergonomic imports.
 pub use boot::{BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat};
+pub use cap::{Capability, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS};
 pub use collections::{FixedQueue, RingBuffer};
 pub use ipc::{
     validate_user_va, ChannelId, EndpointState, RawMessage, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS,

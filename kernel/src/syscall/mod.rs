@@ -33,6 +33,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         7 => sys_channel_destroy(tf),
         8 | 9 => IpcError::Enotsup as i64, // RingChannel — future
         13 => IpcError::Enotsup as i64,    // ChannelStats — future
+        14 => sys_capability_transfer(tf),
+        15 => sys_capability_attenuate(tf),
+        16 => sys_capability_revoke(tf),
+        17 => sys_capability_list(tf),
         26 => sys_time_get(tf),
         27 => sys_time_sleep(tf),
         28 => IpcError::Enotsup as i64,
@@ -263,4 +267,122 @@ fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
 /// Validate a user-space pointer is within the valid user VA range.
 fn validate_user_ptr(ptr: usize, len: usize) -> bool {
     shared::validate_user_va(ptr, len)
+}
+
+// ---------------------------------------------------------------------------
+// Capability syscalls (nr=14-17)
+// ---------------------------------------------------------------------------
+
+/// CapabilityTransfer (nr=14): x0=channel_id, x1=cap_handle.
+///
+/// Transfer a capability to the peer process via the channel.
+/// Stub for Phase 3 — full implementation requires peer process tracking.
+fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
+    IpcError::Enotsup as i64
+}
+
+/// CapabilityAttenuate (nr=15): x0=cap_handle, x1=new_cap_type, x2=new_expiry.
+///
+/// Create a narrower child capability from an existing one.
+fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
+    let handle = shared::CapabilityHandle(tf.x[0] as u32);
+    let new_cap_type = tf.x[1];
+    let new_expiry = if tf.x[2] == 0 { None } else { Some(tf.x[2]) };
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    // Decode capability type from x1.
+    // Encoding: 0=ChannelCreate, 1=ChannelAccess(x3), 2=ShmCreate,
+    //           3=ShmAccess(x3), 4=SpawnAgent, 5=DebugPrint
+    let new_cap = match new_cap_type {
+        0 => shared::Capability::ChannelCreate,
+        1 => shared::Capability::ChannelAccess(shared::ChannelId(tf.x[3] as u32)),
+        2 => shared::Capability::SharedMemoryCreate,
+        3 => shared::Capability::SharedMemoryAccess(tf.x[3] as u32),
+        4 => shared::Capability::SpawnAgent,
+        5 => shared::Capability::DebugPrint,
+        _ => return IpcError::Eperm as i64,
+    };
+
+    let mut table = crate::task::process::PROCESS_TABLE.lock();
+    let proc = match &mut table[pid.0 as usize] {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match proc.cap_table.attenuate(handle, new_cap, new_expiry, pid) {
+        Ok(h) => h.0 as i64,
+        Err(e) => e,
+    }
+}
+
+/// CapabilityRevoke (nr=16): x0=cap_handle.
+///
+/// Revoke a capability and cascade to all children. Destroys channels
+/// created under the revoked capability.
+fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
+    let handle = shared::CapabilityHandle(tf.x[0] as u32);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    // Get the token ID before revoking.
+    let token_id = {
+        let table = crate::task::process::PROCESS_TABLE.lock();
+        let proc = match &table[pid.0 as usize] {
+            Some(p) => p,
+            None => return IpcError::Eperm as i64,
+        };
+        match proc.cap_table.get(handle) {
+            Some(token) => token.id,
+            None => return IpcError::Eperm as i64,
+        }
+    };
+
+    crate::cap::revoke_in_process(pid, token_id);
+    0
+}
+
+/// CapabilityList (nr=17): x0=buf_ptr, x1=max_count.
+///
+/// List non-revoked capability token IDs into a user buffer.
+/// Returns number of token IDs written.
+fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
+    let buf_ptr = tf.x[0] as usize;
+    let max_count = tf.x[1] as usize;
+
+    // Each token ID is u64 = 8 bytes.
+    let byte_len = max_count.saturating_mul(8);
+    if !validate_user_ptr(buf_ptr, byte_len) {
+        return IpcError::Eperm as i64;
+    }
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    let table = crate::task::process::PROCESS_TABLE.lock();
+    let proc = match &table[pid.0 as usize] {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    // Collect to kernel stack buffer (max 256 entries × 8 bytes = 2 KiB).
+    let capped = max_count.min(shared::MAX_CAPS_PER_PROCESS);
+    let mut ids = [shared::CapabilityTokenId(0); 256];
+    let count = proc.cap_table.list(&mut ids, capped);
+
+    // Copy to user buffer.
+    // SAFETY: buf_ptr validated in user VA range, bounded by count × 8 bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(ids.as_ptr() as *const u8, buf_ptr as *mut u8, count * 8);
+    }
+
+    count as i64
 }

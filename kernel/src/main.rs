@@ -7,6 +7,7 @@ mod arch {
     pub mod aarch64;
 }
 mod boot_phase;
+mod cap;
 mod dtb;
 mod framebuffer;
 mod ipc;

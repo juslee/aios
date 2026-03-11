@@ -138,6 +138,8 @@ pub struct Thread {
     /// the inheritance chain is. Bounded to MAX_INHERITANCE_DEPTH (8).
     /// See ipc.md §9.2 for transitive inheritance design.
     pub inheritance_depth: u8,
+    /// Owning process (for capability lookups). None for unassigned threads.
+    pub owner_pid: Option<shared::ProcessId>,
     /// Physical address of the thread's stack base.
     pub stack_phys: usize,
     /// Human-readable name (for debugging).
@@ -187,6 +189,7 @@ impl Thread {
             },
             fp_context: None,
             inheritance_depth: 0,
+            owner_pid: None,
             stack_phys,
             name: name_buf,
         }

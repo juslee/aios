@@ -83,7 +83,7 @@ impl MessageRing {
 /// For synchronous IPC, the ring holds the request; the reply is
 /// delivered directly to the blocked caller's reply buffer.
 #[allow(dead_code)]
-struct Channel {
+pub(crate) struct Channel {
     id: ChannelId,
     state_a: EndpointState,
     state_b: EndpointState,
@@ -98,6 +98,9 @@ struct Channel {
     /// Thread currently blocked in ipc_call() waiting for a reply.
     /// The receiver uses this to deliver the reply.
     pending_caller: Option<ThreadId>,
+    /// Capability token that authorized this channel's creation.
+    /// Used for cascade revocation: revoking this token destroys the channel.
+    pub(crate) creation_cap: Option<shared::CapabilityTokenId>,
 }
 
 impl Channel {
@@ -111,6 +114,7 @@ impl Channel {
             ring: MessageRing::new(),
             waiting_receiver: None,
             pending_caller: None,
+            creation_cap: None,
         }
     }
 }
@@ -119,7 +123,7 @@ impl Channel {
 // Global channel table
 // ---------------------------------------------------------------------------
 
-static CHANNEL_TABLE: Mutex<[Option<Channel>; MAX_CHANNELS]> = {
+pub(crate) static CHANNEL_TABLE: Mutex<[Option<Channel>; MAX_CHANNELS]> = {
     const NONE: Option<Channel> = None;
     Mutex::new([NONE; MAX_CHANNELS])
 };
@@ -170,11 +174,18 @@ static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
 // Channel create / destroy
 // ---------------------------------------------------------------------------
 
-/// Create a new IPC channel. Returns (channel_id, endpoint_a, endpoint_b).
+/// Create a new IPC channel. Returns channel_id.
 ///
 /// The creator thread owns endpoint A. Endpoint B can be assigned to
 /// another thread via `channel_set_peer()`.
+///
+/// Requires `Capability::ChannelCreate` on the creator's process.
 pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
+    // Capability enforcement: check ChannelCreate.
+    if let Some(pid) = crate::cap::process_of_thread(creator) {
+        crate::cap::check_channel_create(pid)?;
+    }
+
     let mut table = CHANNEL_TABLE.lock();
     // Find a free slot.
     let slot = table.iter().position(|s| s.is_none());
@@ -201,7 +212,14 @@ pub fn channel_set_peer(channel: ChannelId, peer: ThreadId) -> Result<(), i64> {
 }
 
 /// Destroy a channel. Any thread blocked on this channel is woken with EPIPE.
+///
+/// Requires `Capability::ChannelAccess(channel)` on the caller's process.
 pub fn channel_destroy(channel: ChannelId) -> Result<(), i64> {
+    // Capability enforcement: check ChannelAccess.
+    if let Some(pid) = crate::cap::current_process_id() {
+        crate::cap::check_channel_access(pid, channel)?;
+    }
+
     let mut table = CHANNEL_TABLE.lock();
     let idx = channel.0 as usize;
     let ch = match table[idx].take() {
@@ -250,6 +268,13 @@ pub fn ipc_call(
         Some(t) => t,
         None => return IpcError::Eperm as i64,
     };
+
+    // Capability enforcement: check ChannelAccess.
+    if let Some(pid) = crate::cap::process_of_thread(caller_tid) {
+        if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+            return e;
+        }
+    }
 
     // Build message.
     let mut msg = RawMessage::EMPTY;
@@ -425,6 +450,11 @@ pub fn ipc_recv(
         Some(t) => t,
         None => return Err(IpcError::Eperm as i64),
     };
+
+    // Capability enforcement: check ChannelAccess.
+    if let Some(pid) = crate::cap::process_of_thread(receiver_tid) {
+        crate::cap::check_channel_access(pid, channel)?;
+    }
 
     // Try to dequeue a message.
     {
@@ -608,6 +638,13 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         None => return IpcError::Eperm as i64,
     };
 
+    // Capability enforcement: check ChannelAccess.
+    if let Some(pid) = crate::cap::process_of_thread(sender_tid) {
+        if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+            return e;
+        }
+    }
+
     let mut msg = RawMessage::EMPTY;
     msg.sender = sender_tid;
     msg.len = send_buf.len();
@@ -777,19 +814,121 @@ static TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// Channel ID for priority inheritance test threads.
 static PI_TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 
-/// Initialize IPC test threads: a server and a caller that perform
-/// synchronous IPC call/reply, plus a timeout test.
+/// Initialize processes, grant capabilities, create IPC test threads.
 ///
 /// Called from main.rs after sched::init() but before enter_scheduler().
+///
+/// Creates:
+/// - Process 0 ("kernel"): owns idle + scheduler test threads, all caps
+/// - Process 1 ("ipc-test"): owns IPC server/caller/timeout, IPC caps
+/// - Process 2 ("pi-test"): owns PI server/caller, IPC caps
+/// - Process 3 ("cap-test-denied"): NO ChannelCreate cap (for enforcement test)
 pub fn init() {
-    use crate::task::{CpuSet, SchedulerClass, Thread};
+    use crate::cap;
+    use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
+    use crate::task::{CpuSet, SchedulerClass, Thread, THREAD_TABLE};
 
-    // Create a test channel.
+    // --- Create processes ---
+
+    // Process 0: kernel (owns idle threads, scheduler test threads).
+    {
+        let mut procs = PROCESS_TABLE.lock();
+        let mut name = [0u8; 32];
+        name[..6].copy_from_slice(b"kernel");
+        procs[0] = Some(ProcessControl {
+            pid: ProcessId(0),
+            address_space: None,
+            resource_limits: KernelResourceLimits::system(),
+            cap_table: cap::CapabilityTable::new(),
+            thread_ids: [None; 16],
+            name,
+        });
+    }
+    // Grant kernel process all capability types.
+    let _ = cap::grant_to_process(ProcessId(0), shared::Capability::ChannelCreate, true);
+    let _ = cap::grant_to_process(ProcessId(0), shared::Capability::DebugPrint, true);
+    let _ = cap::grant_to_process(ProcessId(0), shared::Capability::SpawnAgent, true);
+    let _ = cap::grant_to_process(ProcessId(0), shared::Capability::SharedMemoryCreate, true);
+
+    // Assign existing idle + test threads to kernel process.
+    {
+        let mut table = THREAD_TABLE.lock();
+        for thread in table.iter_mut().flatten() {
+            if thread.owner_pid.is_none() {
+                thread.owner_pid = Some(ProcessId(0));
+            }
+        }
+    }
+
+    // Process 1: IPC test (server, caller, timeout).
+    {
+        let mut procs = PROCESS_TABLE.lock();
+        let mut name = [0u8; 32];
+        name[..8].copy_from_slice(b"ipc-test");
+        procs[1] = Some(ProcessControl {
+            pid: ProcessId(1),
+            address_space: None,
+            resource_limits: KernelResourceLimits::native(),
+            cap_table: cap::CapabilityTable::new(),
+            thread_ids: [None; 16],
+            name,
+        });
+    }
+    let _ = cap::grant_to_process(ProcessId(1), shared::Capability::ChannelCreate, true);
+    let _ = cap::grant_to_process(ProcessId(1), shared::Capability::DebugPrint, false);
+
+    // Process 2: PI test (priority inheritance server + caller).
+    {
+        let mut procs = PROCESS_TABLE.lock();
+        let mut name = [0u8; 32];
+        name[..7].copy_from_slice(b"pi-test");
+        procs[2] = Some(ProcessControl {
+            pid: ProcessId(2),
+            address_space: None,
+            resource_limits: KernelResourceLimits::native(),
+            cap_table: cap::CapabilityTable::new(),
+            thread_ids: [None; 16],
+            name,
+        });
+    }
+    let _ = cap::grant_to_process(ProcessId(2), shared::Capability::ChannelCreate, true);
+    let _ = cap::grant_to_process(ProcessId(2), shared::Capability::DebugPrint, false);
+
+    // Process 3: cap-test-denied (NO ChannelCreate — used to test enforcement).
+    {
+        let mut procs = PROCESS_TABLE.lock();
+        let mut name = [0u8; 32];
+        name[..15].copy_from_slice(b"cap-test-denied");
+        procs[3] = Some(ProcessControl {
+            pid: ProcessId(3),
+            address_space: None,
+            resource_limits: KernelResourceLimits::native(),
+            cap_table: cap::CapabilityTable::new(),
+            thread_ids: [None; 16],
+            name,
+        });
+    }
+    // Process 3 gets DebugPrint only — no ChannelCreate, no ChannelAccess.
+    let _ = cap::grant_to_process(ProcessId(3), shared::Capability::DebugPrint, false);
+
+    crate::kinfo!(Cap, "Processes 0-3 created with capabilities");
+
+    // --- Create IPC test channel ---
+    // (channel_create now checks caps — process 1 holds ChannelCreate)
+
+    // We create the channel on behalf of the caller thread (process 1).
+    // For init-time channels, we temporarily bypass cap checks by using
+    // channel_create_unchecked (the cap check inside channel_create would
+    // fail because the thread doesn't exist yet to look up owner_pid).
     let caller_tid = ThreadId(0x200);
-    let ch = channel_create(caller_tid).expect("Failed to create IPC test channel");
     let server_tid = ThreadId(0x201);
+
+    let ch = channel_create_unchecked(caller_tid);
     channel_set_peer(ch, server_tid).expect("Failed to set IPC channel peer");
     *TEST_CHANNEL.lock() = Some(ch);
+
+    // Grant ChannelAccess for the test channel to process 1.
+    let _ = cap::grant_to_process(ProcessId(1), shared::Capability::ChannelAccess(ch), false);
 
     // Create server thread (receives requests, sends replies).
     {
@@ -806,9 +945,9 @@ pub fn init() {
         thread.sched.effective_class = SchedulerClass::Normal;
         thread.sched.affinity = CpuSet::all();
         thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(1));
 
         let idx = sched::allocate_thread(thread).expect("thread table full for IPC server");
-        // Enqueue on CPU 0.
         sched::enqueue_on_cpu(0, ThreadId(idx as u32), SchedulerClass::Normal);
     }
 
@@ -827,9 +966,9 @@ pub fn init() {
         thread.sched.effective_class = SchedulerClass::Normal;
         thread.sched.affinity = CpuSet::all();
         thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(1));
 
         let idx = sched::allocate_thread(thread).expect("thread table full for IPC caller");
-        // Enqueue on CPU 1 to exercise cross-core IPC.
         sched::enqueue_on_cpu(1, ThreadId(idx as u32), SchedulerClass::Normal);
     }
 
@@ -848,23 +987,29 @@ pub fn init() {
         thread.sched.effective_class = SchedulerClass::Normal;
         thread.sched.affinity = CpuSet::all();
         thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(1));
 
         let idx = sched::allocate_thread(thread).expect("thread table full for IPC timeout");
         sched::enqueue_on_cpu(2, ThreadId(idx as u32), SchedulerClass::Normal);
     }
 
-    // Create priority inheritance test threads:
-    // An Interactive-class caller and a Normal-class server on the same CPU.
-    // The server should be elevated to Interactive during request processing.
+    // --- Priority inheritance test threads ---
     {
         let pi_caller_tid = ThreadId(0x300);
         let pi_server_tid = ThreadId(0x301);
 
-        let pi_ch = channel_create(pi_caller_tid).expect("Failed to create PI test channel");
+        let pi_ch = channel_create_unchecked(pi_caller_tid);
         channel_set_peer(pi_ch, pi_server_tid).expect("Failed to set PI channel peer");
         *PI_TEST_CHANNEL.lock() = Some(pi_ch);
 
-        // Normal-class server (should be elevated to Interactive during request).
+        // Grant ChannelAccess for PI channel to process 2.
+        let _ = cap::grant_to_process(
+            ProcessId(2),
+            shared::Capability::ChannelAccess(pi_ch),
+            false,
+        );
+
+        // Normal-class server.
         {
             let stack_phys = sched::alloc_kernel_stack();
             let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
@@ -879,6 +1024,7 @@ pub fn init() {
             thread.sched.effective_class = SchedulerClass::Normal;
             thread.sched.affinity = CpuSet::all();
             thread.context.sp = stack_virt_top as u64;
+            thread.owner_pid = Some(ProcessId(2));
 
             let idx = sched::allocate_thread(thread).expect("thread table full for PI server");
             sched::enqueue_on_cpu(3, ThreadId(idx as u32), SchedulerClass::Normal);
@@ -899,16 +1045,59 @@ pub fn init() {
             thread.sched.effective_class = SchedulerClass::Interactive;
             thread.sched.affinity = CpuSet::all();
             thread.context.sp = stack_virt_top as u64;
+            thread.owner_pid = Some(ProcessId(2));
 
             let idx = sched::allocate_thread(thread).expect("thread table full for PI caller");
             sched::enqueue_on_cpu(3, ThreadId(idx as u32), SchedulerClass::Interactive);
         }
     }
 
+    // --- Capability enforcement test thread ---
+    // Process 3 has NO ChannelCreate cap. This thread attempts channel_create
+    // and expects EPERM.
+    {
+        let stack_phys = sched::alloc_kernel_stack();
+        let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+        let mut thread = Thread::new_kernel(
+            ThreadId(0x400),
+            b"cap-denied\0\0\0\0\0\0",
+            cap_denied_entry as *const () as usize,
+            stack_phys,
+        );
+        thread.sched.class = SchedulerClass::Normal;
+        thread.sched.effective_class = SchedulerClass::Normal;
+        thread.sched.affinity = CpuSet::all();
+        thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(3));
+
+        let idx = sched::allocate_thread(thread).expect("thread table full for cap-denied");
+        sched::enqueue_on_cpu(0, ThreadId(idx as u32), SchedulerClass::Normal);
+    }
+
     crate::kinfo!(
         Ipc,
-        "IPC test threads created (server, caller, timeout, priority-inheritance)"
+        "IPC test threads created (server, caller, timeout, PI, cap-denied)"
     );
+}
+
+/// Create a channel without capability checks (for init-time setup).
+/// Used when threads don't exist yet so owner_pid lookup would fail.
+fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
+    let mut table = CHANNEL_TABLE.lock();
+    let idx = table
+        .iter()
+        .position(|s| s.is_none())
+        .expect("channel table full");
+    let id = ChannelId(idx as u32);
+    table[idx] = Some(Channel::new(id, owner));
+    crate::kinfo!(
+        Ipc,
+        "Channel {} created (unchecked) by thread {}",
+        idx,
+        owner.0
+    );
+    id
 }
 
 // ---------------------------------------------------------------------------
@@ -1168,6 +1357,47 @@ fn pi_server_entry() -> ! {
             Err(e) => {
                 crate::kwarn!(Ipc, "PI-Server: recv failed with {} iter={}", e, i);
             }
+        }
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+/// Capability enforcement test: thread in process 3 (no ChannelCreate cap)
+/// attempts to create a channel. Should get EPERM.
+fn cap_denied_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    // Small delay to let other threads initialize.
+    for _ in 0..5 {
+        sched::thread_yield();
+    }
+
+    let my_tid = match current_thread_id() {
+        Some(t) => t,
+        None => loop {
+            sched::thread_yield();
+        },
+    };
+
+    // Attempt channel_create — should fail with EPERM because process 3
+    // does not hold ChannelCreate capability.
+    match channel_create(my_tid) {
+        Ok(ch) => {
+            crate::kwarn!(
+                Cap,
+                "Cap: UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
+                ch.0
+            );
+        }
+        Err(e) if e == crate::syscall::IpcError::Eperm as i64 => {
+            crate::kinfo!(Cap, "Cap: unauthorized ChannelCreate -> EPERM (expected)");
+        }
+        Err(e) => {
+            crate::kwarn!(Cap, "Cap: unexpected error {} on ChannelCreate", e);
         }
     }
 
