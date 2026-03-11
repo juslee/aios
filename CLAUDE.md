@@ -193,10 +193,13 @@ kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions,
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
 kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, pgtable, kmap, kaslr, asid, tlb, GlobalAlloc)
 kernel/src/observability/      Structured logging, metrics, trace points
+kernel/src/sched/              Scheduler: per-CPU run queues (4-class FIFO), schedule(), block/unblock, idle threads
+kernel/src/ipc/                IPC channels, synchronous call/reply, direct switch fast path, timeouts, sleep queue
+kernel/src/cap/                Capability system: per-process tables, enforcement API, cascade revocation
 kernel/src/task/               Thread/process data structures for scheduler and IPC
-kernel/src/syscall/            Syscall dispatch and handlers
+kernel/src/syscall/            Syscall dispatch and handlers (IPC nr 0-7, Cap nr 14-17, Time nr 26-27, Debug nr 30)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
-shared/src/lib.rs              types crossing kernel/stub boundary (BootInfo, PixelFormat, Pool, PoolConfig, MemoryPressure, etc.)
+shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
 docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
 ```
@@ -315,6 +318,23 @@ Timer PPI INTID:              30 (EL1 physical timer on QEMU)
 MAX_THREADS:                  64 system-wide
 MAX_PROCESSES:                32 system-wide
 EarlyBootPhase count:         18 variants (EntryPoint=0 through Complete=17)
+Scheduler classes:            RT (4ms), Interactive (10ms), Normal (50ms), Idle (50ms) — FIFO per class
+Per-CPU run queues:           RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES], lock order = ascending CPU ID
+Idle threads:                 One per CPU (class=Idle), created in sched::init(), ensures pick_next() never returns None
+IN_SCHEDULER guard:           Per-CPU AtomicBool prevents re-entrant schedule() from timer tick
+IPC channel table:            CHANNEL_TABLE: Mutex<[Option<Channel>; 128]>, each channel has 16-slot MessageRing
+MAX_MESSAGE_SIZE:             256 bytes (inline payload in RawMessage)
+RING_CAPACITY:                16 messages per channel ring buffer
+MAX_CHANNELS:                 128 system-wide
+DEFAULT_TIMEOUT_TICKS:        5000 (5 seconds at 1 kHz)
+IPC direct switch:            Bypasses scheduler when receiver already waiting; saves/restores via save_context/restore_context
+Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; stored in SchedEntity inherited_* fields
+Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
+Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
+Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
+Lock ordering (cap):          PROCESS_TABLE before CHANNEL_TABLE (avoids deadlock in revoke path)
+Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
+Shared crate unit tests:      159 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
 ```
 
 ---
@@ -360,7 +380,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 3 M10 — Kernel Observability & Process Model):
+Current (post-Phase 3 M11 — Scheduler & IPC Core):
 
 ```
 aios/
@@ -394,11 +414,18 @@ aios/
 │       │   ├── mod.rs    LogLevel, Subsystem, LogEntry (64B), LogRing (256/core), klog!/kinfo!/kwarn!/kerror! macros, drain_logs()
 │       │   ├── metrics.rs Counter (per-core sharded), Gauge, Histogram<N>, KernelMetrics registry; feature-gated kernel-metrics
 │       │   └── trace.rs  TraceEvent enum, TraceRecord (32B), TraceRing (4096/core), trace_point! macro; feature-gated kernel-tracing
+│       ├── sched/
+│       │   └── mod.rs    Scheduler, RunQueue (4-class FIFO), FixedQueue, schedule(), idle threads, block/unblock, timer_tick()
+│       ├── ipc/
+│       │   ├── mod.rs    Channel, CHANNEL_TABLE, MessageRing, ipc_call/send/recv/reply/cancel, channel_create/destroy, timeouts
+│       │   └── direct.rs IPC direct switch (bypass scheduler), priority inheritance, reply switch
+│       ├── cap/
+│       │   └── mod.rs    CapabilityToken, CapabilityTable (256/process), check/grant/revoke/attenuate/list, cascade revocation
 │       ├── task/
 │       │   ├── mod.rs    Thread, ThreadId, ThreadContext (296B), FpContext (528B), SchedEntity, ThreadState, SchedulerClass, CpuSet, THREAD_TABLE
 │       │   └── process.rs ProcessControl, ProcessId, KernelResourceLimits (trust-level defaults), PROCESS_TABLE
 │       ├── syscall/
-│       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(), DebugPrint/TimeGet/TimeSleep handlers
+│       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-7), Cap(14-17), Time(26-27), Debug(30)
 │       ├── platform/
 │       │   ├── mod.rs    Platform trait, detect_platform()
 │       │   └── qemu.rs   QemuPlatform: init_uart, init_interrupts, init_timer
@@ -436,7 +463,17 @@ aios/
 │       └── elf.rs        Minimal ELF64 loader (PT_LOAD segments); converts virtual e_entry to physical for virtually-linked kernel
 ├── shared/
 │   ├── Cargo.toml
-│   └── src/lib.rs        BootInfo (incl. fb fields), MemoryDescriptor, PhysAddr, VirtAddr, MemoryType, PixelFormat, Pool, PoolConfig, MemoryPressure, buddy_of
+│   └── src/
+│       ├── lib.rs        PhysAddr, VirtAddr, BOOTINFO_MAGIC, re-exports from submodules
+│       ├── boot.rs       BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat
+│       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
+│       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests
+│       ├── ipc.rs        ChannelId, EndpointState, RawMessage, IPC constants, validate_user_va()
+│       ├── kaslr.rs      KaslrConfig, compute_slide_from_entropy()
+│       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of()
+│       ├── observability.rs LogLevel, Subsystem enums for shared use
+│       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
+│       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```
 

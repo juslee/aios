@@ -146,10 +146,14 @@ pub const STACK_SIZE: usize = (1 << STACK_ORDER) * PAGE_SIZE;
 pub fn alloc_kernel_stack() -> usize {
     let mut guard = crate::mm::frame::FRAME_ALLOC.lock();
     if let Some(fa) = guard.as_mut() {
-        // SAFETY: Frame allocator is initialized; identity map is active.
+        // SAFETY: Frame allocator is initialized and pools are configured by init_memory().
+        // The returned physical address is valid RAM in the kernel pool.
+        // Caller converts to virtual address before use as stack pointer.
         unsafe { fa.alloc_pages(shared::Pool::Kernel, STACK_ORDER) }
     } else {
-        // SAFETY: Fallback to legacy buddy.
+        // SAFETY: Buddy allocator is initialized during early boot (init_memory).
+        // Returns a physical page address from the kernel memory region.
+        // Caller converts to virtual address before use as stack pointer.
         unsafe { crate::mm::buddy::BUDDY.lock().alloc_pages(STACK_ORDER) }
     }
     .expect("Failed to allocate kernel thread stack")

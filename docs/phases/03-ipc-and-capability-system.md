@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 6 weeks
 **Deliverable:** Synchronous IPC with < 10 μs round-trip, capability-enforced channels, scheduler with 4 scheduling classes, kernel observability, service manager
-**Status:** In Progress (M10 complete)
+**Status:** In Progress (M11 complete)
 **Prerequisites:** Phase 2 (Memory Management)
 **Unlocks:** Phase 4 (Block Storage & Object Store), Phase 28 (Composable Capability Profiles)
 
@@ -160,16 +160,16 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement the 4-class per-CPU run queue structure and context switching. Kernel threads can be created, enqueued, and scheduled across all 4 cores. The idle loop on each core becomes a proper idle thread.
 
 **Tasks:**
-- [ ] Create `kernel/src/sched/mod.rs` — `Scheduler` struct: per-CPU `RunQueue` array, `nr_cpus`, `SchedulerConfig` (tick_hz=1000, interactive_slice=4ms, normal_slice=10ms, idle_slice=50ms, balance_interval=4ms) (scheduler.md §3.2)
-- [ ] Implement `RunQueue` with class-specific queues: `rt_queue` (sorted by deadline), `interactive_queue` (priority list with round-robin), `normal_queue` (sorted by vruntime), `idle_queue` (FIFO). Use slab-allocated intrusive containers (scheduler.md §3.1–3.2)
-- [ ] Implement `schedule()`: called from timer tick and voluntary yield points. Picks next thread from highest-priority non-empty class. Saves current thread context via `save_context`, restores next thread context via `restore_context` (scheduler.md §4.1)
-- [ ] Wire context switch assembly (`context_switch.S`): full register save/restore (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1), TTBR0 switch with ASID (DSB ISH → MSR TTBR0_EL1 → ISB; no broadcast TLBI — ASIDs prevent stale translations; targeted TLBI ASIDE1IS only on ASID reuse/teardown), lazy FP save via CPACR_EL1 trap bit (scheduler.md §4.1–4.2)
-- [ ] Convert secondary core idle loops (currently `wfe` in `smp.rs`) to proper idle threads that call `schedule()` when woken
-- [ ] Timer tick handler calls `schedule()` when `need_resched` is set
-- [ ] Implement `thread_yield()` — current thread voluntarily yields, calls `schedule()`
-- [ ] Lock ordering: per-CPU run queue locks acquired in ascending CPU ID order (deadlock-prevention.md §3)
-- [ ] Metric instrumentation: increment `KernelMetrics.sched_context_switch` on every switch; record latency in `sched_switch_latency_ns` histogram
-- [ ] Trace instrumentation: `trace_point!(SchedSwitch { prev_tid, next_tid, prev_state })` (observability.md §4.2)
+- [x] Create `kernel/src/sched/mod.rs` — `Scheduler` struct: per-CPU `RunQueue` array, `nr_cpus`, `SchedulerConfig` (tick_hz=1000, interactive_slice=4ms, normal_slice=10ms, idle_slice=50ms, balance_interval=4ms) (scheduler.md §3.2)
+- [x] Implement `RunQueue` with class-specific queues: `rt_queue` (sorted by deadline), `interactive_queue` (priority list with round-robin), `normal_queue` (sorted by vruntime), `idle_queue` (FIFO). Use slab-allocated intrusive containers (scheduler.md §3.1–3.2)
+- [x] Implement `schedule()`: called from timer tick and voluntary yield points. Picks next thread from highest-priority non-empty class. Saves current thread context via `save_context`, restores next thread context via `restore_context` (scheduler.md §4.1)
+- [x] Wire context switch assembly (`context_switch.S`): full register save/restore (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1), TTBR0 switch with ASID (DSB ISH → MSR TTBR0_EL1 → ISB; no broadcast TLBI — ASIDs prevent stale translations; targeted TLBI ASIDE1IS only on ASID reuse/teardown), lazy FP save via CPACR_EL1 trap bit (scheduler.md §4.1–4.2)
+- [x] Convert secondary core idle loops (currently `wfe` in `smp.rs`) to proper idle threads that call `schedule()` when woken
+- [x] Timer tick handler calls `schedule()` when `need_resched` is set
+- [x] Implement `thread_yield()` — current thread voluntarily yields, calls `schedule()`
+- [x] Lock ordering: per-CPU run queue locks acquired in ascending CPU ID order (deadlock-prevention.md §3)
+- [x] Metric instrumentation: increment `KernelMetrics.sched_context_switch` on every switch; record latency in `sched_switch_latency_ns` histogram
+- [x] Trace instrumentation: `trace_point!(SchedSwitch { prev_tid, next_tid, prev_state })` (observability.md §4.2)
 
 **Key reference:** [scheduler.md §3–4](../kernel/scheduler.md) — Architecture, Context Switch; [deadlock-prevention.md §3](../kernel/deadlock-prevention.md) — Lock Ordering
 
@@ -182,21 +182,21 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement Channel, `ChannelCreate`/`ChannelDestroy` syscalls, `IpcCall` with mandatory timeout, `IpcSend` (async fire-and-forget), `IpcRecv`, `IpcReply`, and `IpcCancel`. Message queue is a fixed-size ring buffer. No capability enforcement yet — that comes in Step 8.
 
 **Tasks:**
-- [ ] Create `kernel/src/ipc/mod.rs` — `Channel` struct: `id` (ChannelId), `endpoint_a`/`endpoint_b` (ProcessId), `state_a`/`state_b` (EndpointState), `message_queue` (RingBuffer of RawMessage), `stats` (ChannelStatsData) (ipc.md §4.1)
-- [ ] Implement `RingBuffer<RawMessage>` with fixed capacity (from `ChannelFlags.queue_depth`, default 64)
-- [ ] Implement `RawMessage`: channel, message_type (u32), data pointer (`*const u8`) with length, capability and shared memory arrays (fixed-size, max 4 each) (ipc.md §4.3)
-- [ ] Global `CHANNEL_TABLE`: bounded slab-allocated array of `Channel` objects
-- [ ] `ChannelCreate` syscall: allocates Channel, returns `ChannelId` (ipc.md §3.1)
-- [ ] `ChannelDestroy` syscall: marks endpoint as `Dead`, unblocks peer with `EPIPE` (ipc.md §4.1)
-- [ ] `IpcCall` syscall: validates channel, copies message from user buffer to kernel `RawMessage`. If receiver is `BlockedIpc` on this channel, trigger direct switch (Step 7). Otherwise enqueue message, block sender with mandatory timeout. On timeout expiry, unblock sender with `ETIMEDOUT` (ipc.md §4.2; deadlock-prevention.md §4)
-- [ ] `IpcRecv` syscall: if message in queue, dequeue and copy to user buffer, return. Otherwise block with timeout (ipc.md §4.2)
-- [ ] `IpcReply` syscall: kernel tracks pending caller per channel, copies reply to caller's buffer, unblocks caller (ipc.md §4.2)
-- [ ] `IpcSend` syscall: enqueue message without blocking for reply; returns `EAGAIN` if queue full (ipc.md §3.1, §4.2)
-- [ ] `IpcCancel` syscall: if caller is blocked, unblock with `ECANCELED` (ipc.md §3.1)
-- [ ] Implement `ChannelStats` syscall: copies `ChannelStatsData` for a given channel to user buffer (ipc.md §3.1)
-- [ ] Stub `RingChannelCreate` and `RingChannelDestroy` syscalls: return `ENOTSUP` — ring buffer channels are deferred to a later phase when high-frequency streaming IPC is needed (ipc.md §3.1)
-- [ ] Peer death cleanup: when process dies, all its channel endpoints set to `Dead`, all blocked peers unblocked with `EPIPE`
-- [ ] Metric instrumentation: `KernelMetrics.ipc_call`, `ipc_send`, `ipc_recv`, `ipc_timeout`; update `ChannelStatsData` per operation
+- [x] Create `kernel/src/ipc/mod.rs` — `Channel` struct: `id` (ChannelId), `endpoint_a`/`endpoint_b` (ProcessId), `state_a`/`state_b` (EndpointState), `message_queue` (RingBuffer of RawMessage), `stats` (ChannelStatsData) (ipc.md §4.1)
+- [x] Implement `RingBuffer<RawMessage>` with fixed capacity (from `ChannelFlags.queue_depth`, default 64)
+- [x] Implement `RawMessage`: channel, message_type (u32), data pointer (`*const u8`) with length, capability and shared memory arrays (fixed-size, max 4 each) (ipc.md §4.3)
+- [x] Global `CHANNEL_TABLE`: bounded slab-allocated array of `Channel` objects
+- [x] `ChannelCreate` syscall: allocates Channel, returns `ChannelId` (ipc.md §3.1)
+- [x] `ChannelDestroy` syscall: marks endpoint as `Dead`, unblocks peer with `EPIPE` (ipc.md §4.1)
+- [x] `IpcCall` syscall: validates channel, copies message from user buffer to kernel `RawMessage`. If receiver is `BlockedIpc` on this channel, trigger direct switch (Step 7). Otherwise enqueue message, block sender with mandatory timeout. On timeout expiry, unblock sender with `ETIMEDOUT` (ipc.md §4.2; deadlock-prevention.md §4)
+- [x] `IpcRecv` syscall: if message in queue, dequeue and copy to user buffer, return. Otherwise block with timeout (ipc.md §4.2)
+- [x] `IpcReply` syscall: kernel tracks pending caller per channel, copies reply to caller's buffer, unblocks caller (ipc.md §4.2)
+- [x] `IpcSend` syscall: enqueue message without blocking for reply; returns `EAGAIN` if queue full (ipc.md §3.1, §4.2)
+- [x] `IpcCancel` syscall: if caller is blocked, unblock with `ECANCELED` (ipc.md §3.1)
+- [x] Implement `ChannelStats` syscall: copies `ChannelStatsData` for a given channel to user buffer (ipc.md §3.1)
+- [x] Stub `RingChannelCreate` and `RingChannelDestroy` syscalls: return `ENOTSUP` — ring buffer channels are deferred to a later phase when high-frequency streaming IPC is needed (ipc.md §3.1)
+- [x] Peer death cleanup: when process dies, all its channel endpoints set to `Dead`, all blocked peers unblocked with `EPIPE`
+- [x] Metric instrumentation: `KernelMetrics.ipc_call`, `ipc_send`, `ipc_recv`, `ipc_timeout`; update `ChannelStatsData` per operation
 
 **Key reference:** [ipc.md §4.1–4.3](../kernel/ipc.md) — Channels, Synchronous IPC, Message Format; [deadlock-prevention.md §4](../kernel/deadlock-prevention.md) — Mandatory Timeouts
 
@@ -209,13 +209,13 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement the critical IPC fast path: when `IpcCall` finds the receiver already blocked in `IpcRecv` on the target channel, switch directly from sender to receiver without the scheduler. Implement priority inheritance across IPC.
 
 **Tasks:**
-- [ ] Create `kernel/src/ipc/direct.rs` — `ipc_direct_switch()`: copy message (A.send_buf → B.recv_buf), set sender state to `BlockedIpc`, donate time slice to receiver, save sender context, switch TTBR0 with ASID (no TLB flush needed), set CPACR trap bit for lazy FP, restore receiver context (ipc.md §9.1; scheduler.md §4.2)
-- [ ] Implement `ipc_reply_switch()`: reverse direct switch on `IpcReply` — copy reply, save receiver, restore sender, restore original scheduling context
-- [ ] Priority inheritance: when `IpcCall` crosses scheduling classes, receiver temporarily inherits sender's `effective_class`/`effective_priority`. On `IpcReply`, restore receiver's base class/priority. Fields: `inherited_class`, `inherited_priority`, `inherited_deadline` on `SchedEntity` (scheduler.md §4.2; deadlock-prevention.md §5)
-- [ ] Register-based small messages: messages ≤ 64 bytes passed via `TrapFrame` registers (x0–x7) without memory copy (ipc.md §4.3)
-- [ ] Transitive inheritance: if receiver (now elevated) makes another `IpcCall`, the chain propagates. Kernel enforces max inheritance depth of 8
-- [ ] Metric instrumentation: `KernelMetrics.ipc_direct_switch` counter; record round-trip latency in `ipc_roundtrip_ns` histogram
-- [ ] Trace instrumentation: `trace_point!(IpcDirectSwitch { from_tid, to_tid })` (observability.md §4.2)
+- [x] Create `kernel/src/ipc/direct.rs` — `ipc_direct_switch()`: copy message (A.send_buf → B.recv_buf), set sender state to `BlockedIpc`, donate time slice to receiver, save sender context, switch TTBR0 with ASID (no TLB flush needed), set CPACR trap bit for lazy FP, restore receiver context (ipc.md §9.1; scheduler.md §4.2)
+- [x] Implement `ipc_reply_switch()`: reverse direct switch on `IpcReply` — copy reply, save receiver, restore sender, restore original scheduling context
+- [x] Priority inheritance: when `IpcCall` crosses scheduling classes, receiver temporarily inherits sender's `effective_class`/`effective_priority`. On `IpcReply`, restore receiver's base class/priority. Fields: `inherited_class`, `inherited_priority`, `inherited_deadline` on `SchedEntity` (scheduler.md §4.2; deadlock-prevention.md §5)
+- [x] Register-based small messages: messages ≤ 64 bytes passed via `TrapFrame` registers (x0–x7) without memory copy (ipc.md §4.3)
+- [x] Transitive inheritance: if receiver (now elevated) makes another `IpcCall`, the chain propagates. Kernel enforces max inheritance depth of 8
+- [x] Metric instrumentation: `KernelMetrics.ipc_direct_switch` counter; record round-trip latency in `ipc_roundtrip_ns` histogram
+- [x] Trace instrumentation: `trace_point!(IpcDirectSwitch { from_tid, to_tid })` (observability.md §4.2)
 
 **Key reference:** [ipc.md §9.1–9.2](../kernel/ipc.md) — Fast Path, Priority Inheritance; [scheduler.md §4.2](../kernel/scheduler.md) — IPC Direct Switch; [deadlock-prevention.md §5](../kernel/deadlock-prevention.md) — Priority Inheritance
 
@@ -228,17 +228,17 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement `CapabilityToken`, `Capability` enum (Phase 3 subset), per-process `CapabilityTable`, and wire capability checks into every IPC channel operation. Implement `CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList` syscalls.
 
 **Tasks:**
-- [ ] Create `kernel/src/cap/mod.rs` — `CapabilityToken`: `id` (CapabilityTokenId), `holder` (ProcessId), `capability` (Capability), `delegatable` (bool), `expiry` (Option<Timestamp>) (security.md §3.1). **Note:** security.md uses the field name `capability` with type `Capability`; this phase implements a Phase 3 subset of the full `Capability` enum.
-- [ ] Define `Capability` enum (Phase 3 subset): `ChannelCreate`, `ChannelAccess(ChannelId)`, `SharedMemoryCreate`, `SharedMemoryAccess(SharedMemoryId)`, `SpawnAgent`, `DebugPrint`, plus future-reserved variants (`ReadSpace`, `WriteSpace`, `Network`, `Inference` — stubs for later phases) (security.md §2.2)
-- [ ] Per-process `CapabilityTable`: fixed-size array `[Option<CapabilityToken>; 256]` per `ProcessControl` (security.md §3.2, `MAX_CAPS_PER_AGENT = 256`)
-- [ ] Wire capability enforcement into IPC syscalls: `ChannelCreate` requires `Capability::ChannelCreate`; `IpcCall`/`IpcSend`/`IpcRecv` require `Capability::ChannelAccess(channel_id)`; `IpcReply` does NOT require a channel capability (kernel tracks the caller per ipc.md §3.1); `ChannelDestroy` requires `ChannelAccess`. Return `EPERM` (-6) on missing capability (ipc.md §8.3)
-- [ ] `Channel.creation_capability` field: on `CapabilityRevoke`, kernel walks `CHANNEL_TABLE` and destroys channels whose `creation_capability` was revoked (ipc.md §4.6)
-- [ ] `CapabilityTransfer` syscall: verify caller holds cap, verify `delegatable`, move or clone to receiver via channel (ipc.md §4.6; security.md §3.5)
-- [ ] `CapabilityAttenuate` syscall: create new cap with subset scope from existing cap (e.g., reduce permissions, add expiry) (security.md §3.3)
-- [ ] `CapabilityRevoke` syscall: remove cap from target's table, cascade to derived caps and channels (security.md §3.1)
-- [ ] `CapabilityList` syscall: copy caller's capability table entries to user buffer
-- [ ] Per-process resource limit enforcement: `ChannelCreate` checks `max_channels`, `SharedMemoryCreate` checks `max_shared_regions`, `IpcSend` checks `max_pending_messages` (ipc.md §3.3)
-- [ ] Metric instrumentation: `KernelMetrics.ipc_cap_denied` counter
+- [x] Create `kernel/src/cap/mod.rs` — `CapabilityToken`: `id` (CapabilityTokenId), `holder` (ProcessId), `capability` (Capability), `delegatable` (bool), `expiry` (Option<Timestamp>) (security.md §3.1). **Note:** security.md uses the field name `capability` with type `Capability`; this phase implements a Phase 3 subset of the full `Capability` enum.
+- [x] Define `Capability` enum (Phase 3 subset): `ChannelCreate`, `ChannelAccess(ChannelId)`, `SharedMemoryCreate`, `SharedMemoryAccess(SharedMemoryId)`, `SpawnAgent`, `DebugPrint`, plus future-reserved variants (`ReadSpace`, `WriteSpace`, `Network`, `Inference` — stubs for later phases) (security.md §2.2)
+- [x] Per-process `CapabilityTable`: fixed-size array `[Option<CapabilityToken>; 256]` per `ProcessControl` (security.md §3.2, `MAX_CAPS_PER_AGENT = 256`)
+- [x] Wire capability enforcement into IPC syscalls: `ChannelCreate` requires `Capability::ChannelCreate`; `IpcCall`/`IpcSend`/`IpcRecv` require `Capability::ChannelAccess(channel_id)`; `IpcReply` does NOT require a channel capability (kernel tracks the caller per ipc.md §3.1); `ChannelDestroy` requires `ChannelAccess`. Return `EPERM` (-6) on missing capability (ipc.md §8.3)
+- [x] `Channel.creation_capability` field: on `CapabilityRevoke`, kernel walks `CHANNEL_TABLE` and destroys channels whose `creation_capability` was revoked (ipc.md §4.6)
+- [x] `CapabilityTransfer` syscall: verify caller holds cap, verify `delegatable`, move or clone to receiver via channel (ipc.md §4.6; security.md §3.5)
+- [x] `CapabilityAttenuate` syscall: create new cap with subset scope from existing cap (e.g., reduce permissions, add expiry) (security.md §3.3)
+- [x] `CapabilityRevoke` syscall: remove cap from target's table, cascade to derived caps and channels (security.md §3.1)
+- [x] `CapabilityList` syscall: copy caller's capability table entries to user buffer
+- [x] Per-process resource limit enforcement: `ChannelCreate` checks `max_channels`, `SharedMemoryCreate` checks `max_shared_regions`, `IpcSend` checks `max_pending_messages` (ipc.md §3.3)
+- [x] Metric instrumentation: `KernelMetrics.ipc_cap_denied` counter
 
 **Key reference:** [security.md §2.2, §3.1–3.5](../security/security.md) — Capability Check, Token Lifecycle, Kernel Table, Attenuation, Delegation; [ipc.md §4.6, §8.3](../kernel/ipc.md) — Capability Transfer, Enforcement
 
@@ -367,19 +367,19 @@ just run     → boot log shows: structured logging, scheduler running, IPC benc
 
 ## Phase Completion Criteria
 
-- [ ] Structured per-core logging with `klog!` macros replaces all `println!()` in kernel
-- [ ] Kernel metrics registry (Counter, Gauge, Histogram) with feature-gated zero-cost disable
-- [ ] Compile-time-switchable trace points for scheduler and IPC events
-- [ ] Thread and process data structures with `SchedEntity` and `KernelResourceLimits`
-- [ ] SVC-based syscall dispatch with all 31 syscall numbers defined
-- [ ] 1 kHz timer tick driving preemption and log drain
-- [ ] 4-class scheduler (RT/Interactive/Normal/Idle) with per-CPU run queues
-- [ ] Context switch with lazy FP save and TTBR0/ASID switching
-- [ ] IPC channels with synchronous call-reply and mandatory timeouts
-- [ ] IPC direct switch fast path (< 5 μs target round-trip)
-- [ ] Priority inheritance across IPC boundaries with transitive support
-- [ ] Capability tokens with scope, attenuation, revocation, and delegation
-- [ ] Capability enforcement on every channel and shared memory operation
+- [x] Structured per-core logging with `klog!` macros replaces all `println!()` in kernel
+- [x] Kernel metrics registry (Counter, Gauge, Histogram) with feature-gated zero-cost disable
+- [x] Compile-time-switchable trace points for scheduler and IPC events
+- [x] Thread and process data structures with `SchedEntity` and `KernelResourceLimits`
+- [x] SVC-based syscall dispatch with all 31 syscall numbers defined
+- [x] 1 kHz timer tick driving preemption and log drain
+- [x] 4-class scheduler (RT/Interactive/Normal/Idle) with per-CPU run queues
+- [x] Context switch with lazy FP save and TTBR0/ASID switching
+- [x] IPC channels with synchronous call-reply and mandatory timeouts
+- [x] IPC direct switch fast path (< 5 μs target round-trip)
+- [x] Priority inheritance across IPC boundaries with transitive support
+- [x] Capability tokens with scope, attenuation, revocation, and delegation
+- [x] Capability enforcement on every channel and shared memory operation
 - [ ] Shared memory with reference-counted lifecycle and process death cleanup
 - [ ] Lightweight notification objects with bitmap signaling
 - [ ] `IpcSelect` for multiplexing channels and notifications

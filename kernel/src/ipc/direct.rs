@@ -75,6 +75,7 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     // Both threads must exist.
     if table[sender_idx].is_none() || table[receiver_idx].is_none() {
         drop(table);
+        // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
         return false;
     }
@@ -86,6 +87,7 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
             ThreadState::BlockedIpc { .. } => {}
             _ => {
                 drop(table);
+                // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
                 unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
                 return false;
             }
@@ -214,12 +216,14 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
 
     if replier_idx >= table.len() || caller_idx >= table.len() {
         drop(table);
+        // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
         return false;
     }
 
     if table[replier_idx].is_none() || table[caller_idx].is_none() {
         drop(table);
+        // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
         return false;
     }
@@ -231,6 +235,7 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
             ThreadState::BlockedIpc { .. } => {}
             _ => {
                 drop(table);
+                // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
                 unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
                 return false;
             }

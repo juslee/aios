@@ -181,10 +181,9 @@ static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
 ///
 /// Requires `Capability::ChannelCreate` on the creator's process.
 pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
-    // Capability enforcement: check ChannelCreate.
-    if let Some(pid) = crate::cap::process_of_thread(creator) {
-        crate::cap::check_channel_create(pid)?;
-    }
+    // Capability enforcement: check ChannelCreate (fail-closed).
+    let pid = crate::cap::process_of_thread(creator).ok_or(IpcError::Eperm as i64)?;
+    crate::cap::check_channel_create(pid)?;
 
     let mut table = CHANNEL_TABLE.lock();
     // Find a free slot.
@@ -215,10 +214,9 @@ pub fn channel_set_peer(channel: ChannelId, peer: ThreadId) -> Result<(), i64> {
 ///
 /// Requires `Capability::ChannelAccess(channel)` on the caller's process.
 pub fn channel_destroy(channel: ChannelId) -> Result<(), i64> {
-    // Capability enforcement: check ChannelAccess.
-    if let Some(pid) = crate::cap::current_process_id() {
-        crate::cap::check_channel_access(pid, channel)?;
-    }
+    // Capability enforcement: check ChannelAccess (fail-closed).
+    let pid = crate::cap::current_process_id().ok_or(IpcError::Eperm as i64)?;
+    crate::cap::check_channel_access(pid, channel)?;
 
     let mut table = CHANNEL_TABLE.lock();
     let idx = channel.0 as usize;
@@ -227,15 +225,15 @@ pub fn channel_destroy(channel: ChannelId) -> Result<(), i64> {
         None => return Err(IpcError::Epipe as i64),
     };
 
-    // Wake any blocked receiver with EPIPE.
-    if let Some(recv_tid) = ch.waiting_receiver {
-        drop(table);
+    // Wake any blocked threads with EPIPE (both receiver and caller).
+    let wake_recv = ch.waiting_receiver;
+    let wake_caller = ch.pending_caller;
+    drop(table);
+    if let Some(recv_tid) = wake_recv {
         wake_with_error(recv_tid, IpcError::Epipe as i64);
-    } else if let Some(caller_tid) = ch.pending_caller {
-        drop(table);
+    }
+    if let Some(caller_tid) = wake_caller {
         wake_with_error(caller_tid, IpcError::Epipe as i64);
-    } else {
-        drop(table);
     }
 
     crate::kinfo!(Ipc, "Channel {} destroyed", idx);
@@ -269,11 +267,14 @@ pub fn ipc_call(
         None => return IpcError::Eperm as i64,
     };
 
-    // Capability enforcement: check ChannelAccess.
-    if let Some(pid) = crate::cap::process_of_thread(caller_tid) {
-        if let Err(e) = crate::cap::check_channel_access(pid, channel) {
-            return e;
+    // Capability enforcement: check ChannelAccess (fail-closed).
+    match crate::cap::process_of_thread(caller_tid) {
+        Some(pid) => {
+            if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+                return e;
+            }
         }
+        None => return IpcError::Eperm as i64,
     }
 
     // Build message.
@@ -451,10 +452,9 @@ pub fn ipc_recv(
         None => return Err(IpcError::Eperm as i64),
     };
 
-    // Capability enforcement: check ChannelAccess.
-    if let Some(pid) = crate::cap::process_of_thread(receiver_tid) {
-        crate::cap::check_channel_access(pid, channel)?;
-    }
+    // Capability enforcement: check ChannelAccess (fail-closed).
+    let pid = crate::cap::process_of_thread(receiver_tid).ok_or(IpcError::Eperm as i64)?;
+    crate::cap::check_channel_access(pid, channel)?;
 
     // Try to dequeue a message.
     {
@@ -637,11 +637,14 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         None => return IpcError::Eperm as i64,
     };
 
-    // Capability enforcement: check ChannelAccess.
-    if let Some(pid) = crate::cap::process_of_thread(sender_tid) {
-        if let Err(e) = crate::cap::check_channel_access(pid, channel) {
-            return e;
+    // Capability enforcement: check ChannelAccess (fail-closed).
+    match crate::cap::process_of_thread(sender_tid) {
+        Some(pid) => {
+            if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+                return e;
+            }
         }
+        None => return IpcError::Eperm as i64,
     }
 
     let mut msg = RawMessage::EMPTY;
@@ -682,6 +685,16 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
 /// Cancel a pending IpcCall on a channel. The blocked caller is woken
 /// with ECANCELED.
 pub fn ipc_cancel(channel: ChannelId) -> i64 {
+    // Capability enforcement: check ChannelAccess (fail-closed).
+    match crate::cap::current_process_id() {
+        Some(pid) => {
+            if let Err(e) = crate::cap::check_channel_access(pid, channel) {
+                return e;
+            }
+        }
+        None => return IpcError::Eperm as i64,
+    }
+
     let mut table = CHANNEL_TABLE.lock();
     let ch = match &mut table[channel.0 as usize] {
         Some(c) => c,
