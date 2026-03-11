@@ -85,7 +85,6 @@ pub fn init_pl011(base: usize) -> Uart {
 }
 
 /// Update the UART base address (e.g., after MMU maps MMIO to virtual addresses).
-#[allow(dead_code)]
 pub fn update_base(new_base: usize) {
     UART_BASE_ADDR.store(new_base, Ordering::Relaxed);
 }

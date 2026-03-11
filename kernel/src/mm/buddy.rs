@@ -11,6 +11,7 @@
 //!
 //! Per memory.md §2.2 and fuzzing-and-hardening.md §3.3.
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use shared::MemoryDescriptor;
 use spin::Mutex;
 
@@ -19,6 +20,29 @@ pub const MAX_ORDER: usize = 10; // 2^10 pages = 4 MiB
 
 /// Poison pattern written to freed pages for use-after-free detection.
 const POISON_PATTERN: u32 = 0xDEAD_DEAD;
+
+/// Flag indicating the TTBR1 direct map is active. When true, physical
+/// addresses must be accessed through `DIRECT_MAP_BASE + phys` rather
+/// than directly (identity map may no longer exist in TTBR0).
+static DIRECT_MAP_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Enable direct-map mode for physical memory access. Called after
+/// `init_kernel_address_space()` installs the TTBR1 direct map.
+pub fn enable_direct_map() {
+    DIRECT_MAP_ACTIVE.store(true, Ordering::Release);
+}
+
+/// Convert a physical address to a pointer usable for read/write.
+/// Uses the identity map (TTBR0) early in boot, switches to the
+/// TTBR1 direct map after `enable_direct_map()` is called.
+#[inline]
+fn phys_to_ptr<T>(phys: usize) -> *mut T {
+    if DIRECT_MAP_ACTIVE.load(Ordering::Relaxed) {
+        (crate::arch::aarch64::mmu::DIRECT_MAP_BASE + phys) as *mut T
+    } else {
+        phys as *mut T
+    }
+}
 
 /// Buddy allocator for physical page frames.
 ///
@@ -190,8 +214,9 @@ impl BuddyAllocator {
     /// The bitmap must be initialized and the address must be within range.
     unsafe fn bitmap_toggle(&self, addr: usize, order: usize) -> bool {
         let (byte_idx, bit) = self.bitmap_index(addr, order);
-        let byte_ptr = (self.bitmap as *mut u8).add(byte_idx);
-        // SAFETY: byte_ptr is within the bitmap area (identity-mapped).
+        let byte_ptr = phys_to_ptr::<u8>(self.bitmap).add(byte_idx);
+        // SAFETY: byte_ptr is within the bitmap area, accessible via
+        // identity map (early boot) or TTBR1 direct map (post-kmap).
         let val = core::ptr::read_volatile(byte_ptr);
         let new_val = val ^ (1 << bit);
         core::ptr::write_volatile(byte_ptr, new_val);
@@ -204,7 +229,7 @@ impl BuddyAllocator {
     /// The bitmap must be initialized.
     unsafe fn bitmap_read(&self, addr: usize, order: usize) -> bool {
         let (byte_idx, bit) = self.bitmap_index(addr, order);
-        let byte_ptr = (self.bitmap as *const u8).add(byte_idx);
+        let byte_ptr = phys_to_ptr::<u8>(self.bitmap).add(byte_idx) as *const u8;
         // SAFETY: byte_ptr is within the bitmap area.
         let val = core::ptr::read_volatile(byte_ptr);
         (val >> bit) & 1 == 1
@@ -218,9 +243,9 @@ impl BuddyAllocator {
     /// `phys_addr` must be page-aligned and point to usable RAM accessible via
     /// the identity map.
     unsafe fn push_block(&mut self, phys_addr: usize, order: usize) {
-        let ptr = phys_addr as *mut usize;
-        // SAFETY: phys_addr is identity-mapped RAM; writing the next pointer
-        // into the first 8 bytes of the free block.
+        let ptr = phys_to_ptr::<usize>(phys_addr);
+        // SAFETY: phys_addr is accessible via identity map or TTBR1 direct map;
+        // writing the next pointer into the first 8 bytes of the free block.
         core::ptr::write_volatile(ptr, self.free_heads[order]);
         self.free_heads[order] = phys_addr;
         self.free_count[order] += 1;
@@ -236,8 +261,9 @@ impl BuddyAllocator {
         if head == 0 {
             return None;
         }
-        // SAFETY: head is a valid identity-mapped address of a free block.
-        let next = core::ptr::read_volatile(head as *const usize);
+        // SAFETY: head is a valid address of a free block, accessible via
+        // identity map or TTBR1 direct map.
+        let next = core::ptr::read_volatile(phys_to_ptr::<usize>(head) as *const usize);
         self.free_heads[order] = next;
         self.free_count[order] -= 1;
         Some(head)
@@ -259,12 +285,14 @@ impl BuddyAllocator {
 
         let mut prev = self.free_heads[order];
         while prev != 0 {
-            // SAFETY: prev is a valid free block in the identity-mapped range.
-            let next = core::ptr::read_volatile(prev as *const usize);
+            // SAFETY: prev is a valid free block, accessible via identity map
+            // or TTBR1 direct map.
+            let next = core::ptr::read_volatile(phys_to_ptr::<usize>(prev) as *const usize);
             if next == target {
                 // Unlink target: prev->next = target->next.
-                let target_next = core::ptr::read_volatile(target as *const usize);
-                core::ptr::write_volatile(prev as *mut usize, target_next);
+                let target_next =
+                    core::ptr::read_volatile(phys_to_ptr::<usize>(target) as *const usize);
+                core::ptr::write_volatile(phys_to_ptr::<usize>(prev), target_next);
                 self.free_count[order] -= 1;
                 return true;
             }
@@ -347,7 +375,7 @@ impl BuddyAllocator {
         // Security: double-free detection via poison pattern check.
         // If the first word already contains the poison pattern, the block was
         // already freed — this is a double-free bug.
-        let first_word = core::ptr::read_volatile(phys_addr as *const u32);
+        let first_word = core::ptr::read_volatile(phys_to_ptr::<u32>(phys_addr) as *const u32);
         assert!(
             first_word != POISON_PATTERN,
             "[mm] BUG: double-free detected at {:#x} order {}",
@@ -357,10 +385,11 @@ impl BuddyAllocator {
 
         // Security: poison freed pages with 0xDEAD_DEAD pattern.
         let block_bytes = PAGE_SIZE << order;
-        let ptr = phys_addr as *mut u32;
+        let ptr = phys_to_ptr::<u32>(phys_addr);
         let words = block_bytes / 4;
         for i in 0..words {
-            // SAFETY: phys_addr is identity-mapped, block_bytes is the allocation size.
+            // SAFETY: phys_addr is accessible via identity map or TTBR1
+            // direct map, block_bytes is the allocation size.
             core::ptr::write_volatile(ptr.add(i), POISON_PATTERN);
         }
 

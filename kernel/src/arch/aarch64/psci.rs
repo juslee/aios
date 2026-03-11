@@ -4,7 +4,6 @@
 //! following the SMCCC (SMC Calling Convention) ABI.
 
 /// PSCI function IDs (64-bit SMCCC).
-#[allow(dead_code)]
 pub const CPU_ON_64: u64 = 0xC400_0003;
 #[allow(dead_code)]
 pub const SYSTEM_RESET: u64 = 0x8400_0009;
@@ -15,7 +14,6 @@ pub const SYSTEM_OFF: u64 = 0x8400_0008;
 ///
 /// Arguments follow SMCCC: x0=function_id, x1=target_cpu (MPIDR),
 /// x2=entry_point, x3=context_id. Returns PSCI status in x0.
-#[allow(dead_code)]
 pub fn cpu_on_hvc(target_cpu: u64, entry_point: u64, context_id: u64) -> i64 {
     let ret: u64;
     // SAFETY: HVC #0 is the SMCCC conduit for hypervisor calls. The function ID
@@ -37,7 +35,6 @@ pub fn cpu_on_hvc(target_cpu: u64, entry_point: u64, context_id: u64) -> i64 {
 }
 
 /// Call PSCI CPU_ON via SMC (real hardware with EL3 firmware).
-#[allow(dead_code)]
 pub fn cpu_on_smc(target_cpu: u64, entry_point: u64, context_id: u64) -> i64 {
     let ret: u64;
     // SAFETY: Same rationale as cpu_on_hvc but using SMC conduit.

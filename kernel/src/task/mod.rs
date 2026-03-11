@@ -9,96 +9,15 @@ use crate::mm::buddy::PAGE_SIZE;
 use crate::smp::MAX_CORES;
 use spin::Mutex;
 
-// ---------------------------------------------------------------------------
-// Thread identity
-// ---------------------------------------------------------------------------
-
-/// Unique thread identifier (generation + index for ABA safety).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ThreadId(pub u32);
-
-// ---------------------------------------------------------------------------
-// Scheduler class (scheduler.md §3.1)
-// ---------------------------------------------------------------------------
-
-/// Scheduling class determines which run queue a thread enters.
-/// Higher numeric value = higher scheduling priority.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum SchedulerClass {
-    Idle = 0,
-    Normal = 1,
-    Interactive = 2,
-    RealTime = 3,
-}
-
-// ---------------------------------------------------------------------------
-// Thread state (scheduler.md §3.3)
-// ---------------------------------------------------------------------------
-
-/// Thread execution states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadState {
-    /// On a run queue, ready to execute.
-    Runnable,
-    /// Currently executing on a CPU.
-    Running,
-    /// Blocked waiting for IPC message.
-    BlockedIpc { channel: u64 },
-    /// Blocked waiting for timer expiry.
-    BlockedTimer { wake_at: u64 },
-    /// Blocked waiting for I/O completion.
-    BlockedIo,
-    /// Suspended by the kernel (memory limit, debugging).
-    Suspended,
-    /// Thread has exited.
-    Dead,
-}
-
-// ---------------------------------------------------------------------------
-// CPU affinity (scheduler.md §3.3)
-// ---------------------------------------------------------------------------
-
-/// CPU affinity bitmask — supports up to 64 cores.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CpuSet {
-    pub bits: u64,
-}
-
-impl CpuSet {
-    /// All CPUs allowed.
-    pub const fn all() -> Self {
-        Self { bits: !0 }
-    }
-
-    /// Single CPU allowed. Panics if `cpu >= 64`.
-    #[allow(dead_code)]
-    pub const fn single(cpu: usize) -> Self {
-        assert!(cpu < 64, "CpuSet: cpu index out of range");
-        Self { bits: 1 << cpu }
-    }
-
-    /// Create from raw bitmask.
-    #[allow(dead_code)]
-    pub const fn from_mask(mask: u64) -> Self {
-        Self { bits: mask }
-    }
-
-    /// Check if a specific CPU is in the set. Returns false if `cpu >= 64`.
-    #[allow(dead_code)]
-    pub const fn contains(&self, cpu: usize) -> bool {
-        if cpu >= 64 {
-            return false;
-        }
-        self.bits & (1 << cpu) != 0
-    }
-}
+// Re-export shared types used throughout the kernel.
+pub use shared::{CpuSet, SchedulerClass, ThreadId, ThreadState};
 
 // ---------------------------------------------------------------------------
 // Scheduling entity (scheduler.md §3.3)
 // ---------------------------------------------------------------------------
 
 /// Per-thread scheduling metadata used by the scheduler for all decisions.
+#[allow(dead_code)]
 pub struct SchedEntity {
     /// Unique thread identifier.
     pub thread_id: ThreadId,
@@ -169,6 +88,7 @@ pub struct ThreadContext {
 const _: () = assert!(core::mem::size_of::<ThreadContext>() == 296);
 
 impl ThreadContext {
+    #[allow(dead_code)]
     const ZERO: Self = Self {
         gp_regs: [0; 31],
         sp: 0,
@@ -209,6 +129,7 @@ const _: () = assert!(core::mem::size_of::<FpContext>() == 528);
 pub const MAX_THREADS: usize = 64;
 
 /// A kernel or user thread.
+#[allow(dead_code)]
 pub struct Thread {
     /// Scheduling metadata.
     pub sched: SchedEntity,
@@ -216,6 +137,12 @@ pub struct Thread {
     pub context: ThreadContext,
     /// FP/NEON context (allocated lazily on first FP use).
     pub fp_context: Option<FpContext>,
+    /// Priority inheritance depth — tracks how many IPC call levels deep
+    /// the inheritance chain is. Bounded to MAX_INHERITANCE_DEPTH (8).
+    /// See ipc.md §9.2 for transitive inheritance design.
+    pub inheritance_depth: u8,
+    /// Owning process (for capability lookups). None for unassigned threads.
+    pub owner_pid: Option<shared::ProcessId>,
     /// Physical address of the thread's stack base.
     pub stack_phys: usize,
     /// Human-readable name (for debugging).
@@ -231,7 +158,6 @@ impl Thread {
     ///
     /// PSTATE = 0x3C5: EL1h, DAIF all masked (the thread unmasks as needed).
     /// TTBR0 = 0 (kernel threads don't have a user address space).
-    #[allow(dead_code)]
     pub fn new_kernel(id: ThreadId, name: &[u8], entry_fn: usize, stack_phys: usize) -> Self {
         let mut name_buf = [0u8; 16];
         let copy_len = name.len().min(16);
@@ -264,6 +190,8 @@ impl Thread {
                 timer_ctl: 0,
             },
             fp_context: None,
+            inheritance_depth: 0,
+            owner_pid: None,
             stack_phys,
             name: name_buf,
         }
@@ -289,7 +217,6 @@ pub static THREAD_TABLE: Mutex<[Option<Thread>; MAX_THREADS]> = {
 
 /// Per-CPU currently running thread ID. Used by the scheduler to know
 /// which thread is active on each core without locking the thread table.
-#[allow(dead_code)]
 pub static CURRENT_THREAD: [Mutex<Option<ThreadId>>; MAX_CORES] = {
     #[allow(clippy::declare_interior_mutable_const)]
     const NONE: Mutex<Option<ThreadId>> = Mutex::new(None);

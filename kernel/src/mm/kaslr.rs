@@ -1,44 +1,10 @@
 //! Kernel Address Space Layout Randomization (KASLR).
 //!
-//! Computes a random slide for the kernel virtual base address.
-//! The slide is a multiple of 2 MiB within a configurable range.
-//!
-//! Entropy source priority:
-//! 1. BootInfo RNG seed (from UEFI RNG protocol, if available)
-//! 2. CNTPCT_EL0 (ARM generic timer counter — weak but non-deterministic)
-//!
-//! The computed slide is printed at boot only. No runtime API exposes
-//! the slide to prevent information leaks.
-//!
+//! Wraps the pure computation from shared::kaslr with hardware entropy sources.
 //! Per memory.md §3.3.
 
-/// KASLR configuration.
-pub struct KaslrConfig {
-    /// Base virtual address (before slide).
-    pub base: usize,
-    /// Alignment of the slide (must be power of 2).
-    pub alignment: usize,
-    /// Maximum slide range in bytes.
-    pub slide_range: usize,
-    /// Computed slide offset.
-    pub slide: usize,
-}
-
-impl KaslrConfig {
-    /// Default KASLR configuration for the kernel.
-    ///
-    /// - Base: KERNEL_BASE (0xFFFF_0000_0000_0000)
-    /// - Alignment: 2 MiB (matches L2 block size for boot.S mapping)
-    /// - Range: 128 MiB (64 possible positions)
-    pub const fn default_config() -> Self {
-        Self {
-            base: 0xFFFF_0000_0000_0000,
-            alignment: 2 * 1024 * 1024,     // 2 MiB
-            slide_range: 128 * 1024 * 1024, // 128 MiB
-            slide: 0,
-        }
-    }
-}
+// Re-export from shared crate.
+pub use shared::{compute_slide_from_entropy, KaslrConfig};
 
 /// Compute a KASLR slide from an entropy source.
 ///
@@ -50,8 +16,6 @@ impl KaslrConfig {
 /// careful TTBR1 rebuild with both old and new mappings active.
 /// The slide value is logged for verification.
 pub fn compute_slide(rng_seed: &[u8; 32]) -> KaslrConfig {
-    let mut config = KaslrConfig::default_config();
-
     // Extract entropy
     let entropy: u64 = if rng_seed.iter().any(|&b| b != 0) {
         // Use first 8 bytes of RNG seed
@@ -80,17 +44,14 @@ pub fn compute_slide(rng_seed: &[u8; 32]) -> KaslrConfig {
         cnt
     };
 
-    // Compute slide: steps = range / alignment, slide = (entropy % steps) * alignment
-    let steps = config.slide_range / config.alignment; // 64 for 128 MiB / 2 MiB
-    let slide = ((entropy as usize) % steps) * config.alignment;
-    config.slide = slide;
+    let config = compute_slide_from_entropy(entropy);
 
     crate::kinfo!(
         Mm,
         "KASLR base: {:#x} (slide: {:#x}, {} MiB)",
-        config.base.wrapping_add(slide),
-        slide,
-        slide / (1024 * 1024)
+        config.base.wrapping_add(config.slide),
+        config.slide,
+        config.slide / (1024 * 1024)
     );
 
     config

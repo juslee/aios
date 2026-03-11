@@ -404,7 +404,6 @@ pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
 }
 
 /// Return the standard cache sizes for diagnostic printing.
-#[allow(dead_code)]
 pub fn cache_sizes() -> &'static [usize] {
     &CACHE_SIZES
 }

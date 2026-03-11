@@ -193,7 +193,6 @@ impl DeviceTree {
     }
 
     /// MPIDR value for a given CPU index (for PSCI CPU_ON target_cpu parameter).
-    #[allow(dead_code)]
     pub fn cpu_mpidr(&self, index: usize) -> u64 {
         self.cpu_mpidrs[index]
     }

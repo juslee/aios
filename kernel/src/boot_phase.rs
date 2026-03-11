@@ -1,35 +1,12 @@
 //! Early boot phase tracking and boot timing.
 //!
-//! Provides the `EarlyBootPhase` enum matching boot.md §3.1 and timing
+//! Provides the `EarlyBootPhase` enum (from shared crate) and timing
 //! functions that read the ARM Generic Timer counter registers directly.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-/// Boot phases from entry point through full initialization.
-/// Matches boot.md §3.1 EarlyBootPhase enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u32)]
-#[allow(dead_code)]
-pub enum EarlyBootPhase {
-    EntryPoint = 0,
-    ExceptionVectors = 1,
-    DeviceTreeParsed = 2,
-    UartReady = 3,
-    InterruptsReady = 4,
-    TimerReady = 5,
-    MmuEnabled = 6,
-    PageAllocatorReady = 7,
-    HeapReady = 8,
-    LogRingsReady = 9,
-    RngReady = 10,
-    KaslrApplied = 11,
-    CapabilityManagerReady = 12,
-    IpcReady = 13,
-    AuditLogReady = 14,
-    ProcessManagerReady = 15,
-    ProvenanceReady = 16,
-    Complete = 17,
-}
+// Re-export from shared crate.
+pub use shared::EarlyBootPhase;
 
 static BOOT_START_TICKS: AtomicU64 = AtomicU64::new(0);
 static CURRENT_PHASE: AtomicU64 = AtomicU64::new(0);
@@ -79,7 +56,6 @@ pub fn advance_boot_phase(phase: EarlyBootPhase) {
 }
 
 /// Get the current boot phase.
-#[allow(dead_code)]
 pub fn current_boot_phase() -> EarlyBootPhase {
     let val = CURRENT_PHASE.load(Ordering::Relaxed) as u32;
     // SAFETY: All values 0..=17 are valid EarlyBootPhase variants.
