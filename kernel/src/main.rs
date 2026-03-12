@@ -15,6 +15,7 @@ mod mm;
 mod observability;
 mod platform;
 mod sched;
+mod service;
 mod smp;
 mod syscall;
 mod task;
@@ -271,7 +272,11 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     ipc::init();
     observability::drain_logs();
 
-    // --- Step 7: Release secondary cores ---
+    // --- Step 7a: Service Manager Init ---
+    service::init();
+    observability::drain_logs();
+
+    // --- Step 7b: Release secondary cores ---
     sched::start();
     observability::drain_logs();
 

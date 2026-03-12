@@ -45,10 +45,13 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         20 => sys_shared_memory_create(tf),
         21 => sys_shared_memory_map(tf),
         22 => sys_shared_memory_share(tf),
-        23..=25 => IpcError::Enotsup as i64, // Process — Step 11
+        23 => IpcError::Enotsup as i64, // ProcessCreate — kernel-only in Phase 3
+        24 => sys_process_exit(tf),
+        25 => sys_process_wait(tf),
         26 => sys_time_get(tf),
         27 => sys_time_sleep(tf),
         28 => IpcError::Enotsup as i64,
+        29 => sys_audit_log(tf),
         30 => sys_debug_print(tf),
         _ => IpcError::Enotsup as i64,
     };
@@ -589,4 +592,73 @@ fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
         }
         Err(e) => e,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Process syscalls (nr=23-25)
+// ---------------------------------------------------------------------------
+
+/// ProcessExit (nr=24): x0=exit_code.
+///
+/// Exit the current process. Cleans up all threads, channels, and
+/// notifies the service manager.
+fn sys_process_exit(tf: &TrapFrame) -> i64 {
+    let exit_code = tf.x[0] as i32;
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    crate::task::process::process_exit(pid, exit_code);
+    0
+}
+
+/// ProcessWait (nr=25): x0=child_pid.
+///
+/// Block until a child process exits, return its exit code.
+fn sys_process_wait(tf: &TrapFrame) -> i64 {
+    let child_pid = shared::ProcessId(tf.x[0] as u32);
+    let tid = match crate::ipc::current_thread_id() {
+        Some(t) => t,
+        None => return IpcError::Eperm as i64,
+    };
+    match crate::task::process::process_wait(tid, child_pid) {
+        Ok(code) => code as i64,
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AuditLog syscall (nr=29)
+// ---------------------------------------------------------------------------
+
+/// AuditLog (nr=29): x0=event_ptr, x1=event_len.
+///
+/// Append an audit event from user space.
+fn sys_audit_log(tf: &TrapFrame) -> i64 {
+    let ptr = tf.x[0] as usize;
+    let len = tf.x[1] as usize;
+
+    if len > 48 {
+        return IpcError::Enospc as i64;
+    }
+
+    if !validate_user_ptr(ptr, len) {
+        return IpcError::Eperm as i64;
+    }
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    let mut buf = [0u8; 48];
+    // SAFETY: ptr validated in user VA range, bounded by len <= 48.
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr as *const u8, buf.as_mut_ptr(), len);
+    }
+
+    crate::service::audit_log(pid, &buf[..len]);
+    0
 }

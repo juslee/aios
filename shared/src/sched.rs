@@ -69,7 +69,7 @@ pub enum ThreadState {
     /// Blocked in IpcSelect (multi-wait on channels + notifications).
     BlockedSelect,
     /// Blocked waiting for a child process to exit.
-    BlockedProcessWait { pid: u32 },
+    BlockedProcessWait { child_pid: u32 },
     /// Suspended by the kernel (memory limit, debugging).
     Suspended,
     /// Thread has exited.

@@ -732,6 +732,97 @@ fn test_thread_entry() -> ! {
 }
 
 // ---------------------------------------------------------------------------
+// Load balancer — called from timer tick handler
+// ---------------------------------------------------------------------------
+
+/// Attempt to balance load across CPU run queues by migrating a thread
+/// from the most loaded CPU to the least loaded CPU.
+///
+/// Called every 4 ticks from timer_tick_handler. Lock ordering: ascending
+/// CPU index to avoid deadlock.
+pub fn try_load_balance() {
+    let online = crate::smp::online_cpus();
+    if online < 2 {
+        return;
+    }
+
+    // Find most loaded and least loaded CPUs.
+    let mut max_cpu = 0;
+    let mut max_depth = 0;
+    let mut min_cpu = 0;
+    let mut min_depth = usize::MAX;
+
+    for (cpu, rq_lock) in RUN_QUEUES.iter().enumerate().take(online) {
+        // Use try_lock to avoid contention from IRQ context.
+        let depth = match rq_lock.try_lock() {
+            Some(rq) => rq.total_depth(),
+            None => continue,
+        };
+        if depth > max_depth {
+            max_depth = depth;
+            max_cpu = cpu;
+        }
+        if depth < min_depth {
+            min_depth = depth;
+            min_cpu = cpu;
+        }
+    }
+
+    // Only migrate if difference > 1.
+    if max_depth <= min_depth + 1 || max_cpu == min_cpu {
+        return;
+    }
+
+    // Lock in ascending CPU order to prevent deadlock.
+    let (first, second) = if max_cpu < min_cpu {
+        (max_cpu, min_cpu)
+    } else {
+        (min_cpu, max_cpu)
+    };
+
+    let mut rq_first = match RUN_QUEUES[first].try_lock() {
+        Some(rq) => rq,
+        None => return,
+    };
+    let mut rq_second = match RUN_QUEUES[second].try_lock() {
+        Some(rq) => rq,
+        None => return,
+    };
+
+    // Determine source and destination from the locked queues.
+    let (src, dst) = if first == max_cpu {
+        (&mut *rq_first, &mut *rq_second)
+    } else {
+        (&mut *rq_second, &mut *rq_first)
+    };
+
+    // Try to migrate from Normal queue (most common, least latency-sensitive).
+    if let Some(tid) = src.normal.pop_front() {
+        // Check affinity before migrating.
+        let can_migrate = {
+            let table = THREAD_TABLE.lock();
+            table[tid.0 as usize]
+                .as_ref()
+                .map(|t| t.sched.affinity.contains(min_cpu))
+                .unwrap_or(false)
+        };
+        if can_migrate {
+            dst.normal.push_back(tid);
+            crate::kinfo!(
+                Sched,
+                "Load balance: migrated tid={} from CPU {} to CPU {}",
+                tid.0,
+                max_cpu,
+                min_cpu
+            );
+        } else {
+            // Put it back — thread is pinned.
+            src.normal.push_back(tid);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Preemption check — called from IRQ return path
 // ---------------------------------------------------------------------------
 

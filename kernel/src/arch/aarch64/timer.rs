@@ -193,10 +193,16 @@ pub fn timer_tick_handler() {
     // 5. Check IPC timeouts (uses try_lock — safe from IRQ context).
     crate::ipc::check_timeouts();
 
-    // 6. Signal preemption needed.
+    // 6. Load balance every 4 ticks.
+    let tick = TICK_COUNT.load(Ordering::Relaxed);
+    if tick.is_multiple_of(4) {
+        crate::sched::try_load_balance();
+    }
+
+    // 7. Signal preemption needed.
     NEED_RESCHED.store(true, Ordering::Release);
 
-    // 7. Increment IRQ metrics.
+    // 8. Increment IRQ metrics.
     #[cfg(feature = "kernel-metrics")]
     {
         crate::observability::metrics::METRICS.irq_total.inc();

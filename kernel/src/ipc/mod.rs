@@ -88,19 +88,19 @@ impl MessageRing {
 #[allow(dead_code)]
 pub(crate) struct Channel {
     id: ChannelId,
-    state_a: EndpointState,
-    state_b: EndpointState,
+    pub(crate) state_a: EndpointState,
+    pub(crate) state_b: EndpointState,
     /// Owner thread of endpoint A (creator).
-    owner_a: ThreadId,
+    pub(crate) owner_a: ThreadId,
     /// Owner thread of endpoint B (peer).
-    owner_b: Option<ThreadId>,
+    pub(crate) owner_b: Option<ThreadId>,
     /// Message ring buffer (requests and async sends).
     pub(crate) ring: MessageRing,
     /// Thread currently blocked in ipc_recv() on this channel, if any.
-    waiting_receiver: Option<ThreadId>,
+    pub(crate) waiting_receiver: Option<ThreadId>,
     /// Thread currently blocked in ipc_call() waiting for a reply.
     /// The receiver uses this to deliver the reply.
-    pending_caller: Option<ThreadId>,
+    pub(crate) pending_caller: Option<ThreadId>,
     /// Capability token that authorized this channel's creation.
     /// Used for cascade revocation: revoking this token destroys the channel.
     pub(crate) creation_cap: Option<shared::CapabilityTokenId>,
@@ -1309,7 +1309,7 @@ pub fn init() {
 
 /// Create a channel without capability checks (for init-time setup).
 /// Used when threads don't exist yet so owner_pid lookup would fail.
-fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
+pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
     let mut table = CHANNEL_TABLE.lock();
     let idx = table
         .iter()
