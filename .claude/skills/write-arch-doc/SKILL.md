@@ -53,9 +53,11 @@ Present proposed scope summary. Iterate until user approves.
 
 Create an isolated worktree for this work:
 
-1. Run: `git worktree add .claude/worktrees/docs-$TOPIC -b claude/docs-$TOPIC main`
-   - Where `$TOPIC` is derived from `$ARGUMENTS` (e.g., `networking`, `memory`)
-2. All subsequent file operations happen in the worktree path
+1. Derive a sanitized `$TOPIC` slug from `$ARGUMENTS` for safe use in paths and branch names:
+   - Lowercase, replace spaces/slashes/non-alphanumeric with `-`, trim leading/trailing `-`
+   - Restrict to `[a-z0-9-]` (e.g., `docs/kernel/memory.md` → `memory`, `Shared Memory` → `shared-memory`)
+2. Run: `git worktree add .claude/worktrees/docs-$TOPIC -b claude/docs-update-$TOPIC main`
+3. All subsequent file operations happen in the worktree path
 
 ## Step 4: Outline / Change Plan (Interactive)
 
@@ -129,7 +131,7 @@ Write each major section, presenting to the user for review after each:
 1. Add or update the entry in CLAUDE.md Architecture Document Map
 2. Update any existing docs that should reference this new/updated doc
 3. Ensure phase docs that reference this subsystem have correct pointers
-4. Check `docs/project/developer-guide.md` cross-reference index
+4. If `docs/project/developer-guide.md` exists, check its cross-reference index
 
 ## Step 8: Audit Loop (Mandatory)
 

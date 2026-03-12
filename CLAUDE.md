@@ -535,7 +535,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
-| `/write-arch-doc <topic>` | Architecture doc request | Interactive create/update architecture docs with research |
+| `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
