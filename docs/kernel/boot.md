@@ -555,7 +555,7 @@ Secondary core (_secondary_entry in boot.S → secondary_main in smp.rs):
   10. Enter scheduler (parks in wfe until SCHED_READY)
 ```
 
-**Critical: NC memory atomics.** The turn-based printing protocol uses only `load(Acquire)` / `store(Release)` — plain loads/stores with ordering, not exclusive pairs. This is safe on Non-Cacheable memory (Phase 1 identity map uses edk2 MAIR Attr1=0x44). `spin::Mutex` and `fetch_add` would hang. See `uart.rs` and `smp.rs` header comments.
+**Historical note: NC memory atomics.** The turn-based printing protocol uses only `load(Acquire)` / `store(Release)` — plain loads/stores with ordering, not exclusive pairs. This pattern was essential in Phase 1 when the identity map used Non-Cacheable memory (MAIR Attr1=0x44). Phase 2 M8 upgraded TTBR0 RAM blocks to Write-Back cacheable (MAIR Attr3=0xFF), making `spin::Mutex` and exclusive pairs safe. The conservative protocol remains as defense-in-depth — it works regardless of memory attributes.
 
 **Critical: IRQ deferral.** Secondary cores do NOT unmask IRQs in `secondary_main`. Timer tick handlers use `compare_exchange` (exclusive monitor), which can starve the boot CPU's spinlock acquisitions during init. IRQs are unmasked later in `enter_scheduler()` after `SCHED_READY` is set.
 
