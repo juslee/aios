@@ -56,6 +56,84 @@ pub struct SharedMemoryId(pub u32);
 pub struct NotificationId(pub u32);
 
 // ---------------------------------------------------------------------------
+// Select (multi-wait) types
+// ---------------------------------------------------------------------------
+
+/// Maximum entries in a single IpcSelect wait set.
+pub const MAX_SELECT_ENTRIES: usize = 8;
+
+/// Kind of source in a select wait set (ipc.md §5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectKind {
+    /// Wait for a message on a channel.
+    Channel(ChannelId),
+    /// Wait for notification bits matching a mask.
+    Notification(NotificationId, u64),
+}
+
+/// A single entry in the IpcSelect wait set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectEntry {
+    pub kind: SelectKind,
+}
+
+// ---------------------------------------------------------------------------
+// Service types
+// ---------------------------------------------------------------------------
+
+/// Maximum number of registered services.
+pub const MAX_SERVICES: usize = 16;
+
+/// Maximum service name length in bytes.
+pub const MAX_SERVICE_NAME_LEN: usize = 32;
+
+/// Service lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceState {
+    Running,
+    Dead,
+}
+
+/// Fixed-size service name with length tracking.
+///
+/// Service names are stored as byte arrays for `no_std` compatibility.
+/// Names are compared by value (not pointer), truncated to 32 bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct ServiceName {
+    pub bytes: [u8; MAX_SERVICE_NAME_LEN],
+    pub len: usize,
+}
+
+impl ServiceName {
+    /// Create a service name from a byte slice (truncated to 32 bytes).
+    pub fn from_bytes(name: &[u8]) -> Self {
+        let len = name.len().min(MAX_SERVICE_NAME_LEN);
+        let mut bytes = [0u8; MAX_SERVICE_NAME_LEN];
+        bytes[..len].copy_from_slice(&name[..len]);
+        Self { bytes, len }
+    }
+
+    /// Get the name as a byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    /// Check if this name matches a byte slice.
+    pub fn matches(&self, other: &[u8]) -> bool {
+        let other_len = other.len().min(MAX_SERVICE_NAME_LEN);
+        self.len == other_len && self.bytes[..self.len] == other[..other_len]
+    }
+}
+
+impl PartialEq for ServiceName {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.bytes[..self.len] == other.bytes[..other.len]
+    }
+}
+
+impl Eq for ServiceName {}
+
+// ---------------------------------------------------------------------------
 // Endpoint state
 // ---------------------------------------------------------------------------
 
@@ -355,5 +433,127 @@ mod tests {
     fn user_va_large_valid() {
         assert!(validate_user_va(0, USER_VA_LIMIT));
         assert!(validate_user_va(0, USER_VA_LIMIT - 1));
+    }
+
+    // --- SelectKind / SelectEntry tests ---
+
+    #[test]
+    fn select_kind_channel_equality() {
+        let a = SelectKind::Channel(ChannelId(5));
+        let b = SelectKind::Channel(ChannelId(5));
+        let c = SelectKind::Channel(ChannelId(6));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn select_kind_notification_equality() {
+        let a = SelectKind::Notification(NotificationId(1), 0xFF);
+        let b = SelectKind::Notification(NotificationId(1), 0xFF);
+        let c = SelectKind::Notification(NotificationId(1), 0x0F);
+        let d = SelectKind::Notification(NotificationId(2), 0xFF);
+        assert_eq!(a, b);
+        assert_ne!(a, c); // Different mask.
+        assert_ne!(a, d); // Different notification id.
+    }
+
+    #[test]
+    fn select_kind_cross_variant() {
+        let ch = SelectKind::Channel(ChannelId(0));
+        let nf = SelectKind::Notification(NotificationId(0), 0);
+        assert_ne!(ch, nf);
+    }
+
+    #[test]
+    fn select_entry_copy_clone() {
+        let e = SelectEntry {
+            kind: SelectKind::Channel(ChannelId(42)),
+        };
+        let e2 = e;
+        assert_eq!(e, e2);
+    }
+
+    #[test]
+    fn max_select_entries_bounded() {
+        assert!(MAX_SELECT_ENTRIES >= 2);
+        assert!(MAX_SELECT_ENTRIES <= 64);
+    }
+
+    // --- ServiceState tests ---
+
+    #[test]
+    fn service_state_equality() {
+        assert_eq!(ServiceState::Running, ServiceState::Running);
+        assert_eq!(ServiceState::Dead, ServiceState::Dead);
+        assert_ne!(ServiceState::Running, ServiceState::Dead);
+    }
+
+    #[test]
+    fn service_state_copy() {
+        let s = ServiceState::Running;
+        let s2 = s;
+        assert_eq!(s, s2);
+    }
+
+    // --- ServiceName tests ---
+
+    #[test]
+    fn service_name_from_bytes() {
+        let name = ServiceName::from_bytes(b"echo");
+        assert_eq!(name.len, 4);
+        assert_eq!(name.as_bytes(), b"echo");
+    }
+
+    #[test]
+    fn service_name_empty() {
+        let name = ServiceName::from_bytes(b"");
+        assert_eq!(name.len, 0);
+        assert_eq!(name.as_bytes(), b"");
+    }
+
+    #[test]
+    fn service_name_truncation() {
+        // Exactly 32 bytes.
+        let long = [b'a'; 32];
+        let name = ServiceName::from_bytes(&long);
+        assert_eq!(name.len, 32);
+        assert_eq!(name.as_bytes(), &long[..]);
+
+        // 64 bytes — should truncate to 32.
+        let too_long = [b'b'; 64];
+        let name = ServiceName::from_bytes(&too_long);
+        assert_eq!(name.len, 32);
+    }
+
+    #[test]
+    fn service_name_matches() {
+        let name = ServiceName::from_bytes(b"echo");
+        assert!(name.matches(b"echo"));
+        assert!(!name.matches(b"ech"));
+        assert!(!name.matches(b"echo!"));
+        assert!(!name.matches(b"ECHO"));
+        assert!(!name.matches(b""));
+    }
+
+    #[test]
+    fn service_name_equality() {
+        let a = ServiceName::from_bytes(b"hello");
+        let b = ServiceName::from_bytes(b"hello");
+        let c = ServiceName::from_bytes(b"world");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn service_name_different_lengths() {
+        let a = ServiceName::from_bytes(b"foo");
+        let b = ServiceName::from_bytes(b"foobar");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn max_services_bounded() {
+        assert!(MAX_SERVICES >= 4);
+        assert!(MAX_SERVICES <= 256);
     }
 }

@@ -15,20 +15,11 @@ use spin::Mutex;
 // Service registry
 // ---------------------------------------------------------------------------
 
-/// Maximum number of registered services.
-const MAX_SERVICES: usize = 16;
-
-/// Service lifecycle state.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ServiceState {
-    Running,
-    Dead,
-}
+use shared::{ServiceName, ServiceState, MAX_SERVICES};
 
 /// Entry in the service registry.
 pub struct ServiceEntry {
-    pub name: [u8; 32],
-    pub name_len: usize,
+    pub name: ServiceName,
     pub pid: ProcessId,
     pub channel: ChannelId,
     pub state: ServiceState,
@@ -56,11 +47,11 @@ pub static SERVICE_MANAGER: Mutex<ServiceManager> = Mutex::new(ServiceManager::n
 /// Register a service in the registry.
 pub fn service_register(name: &[u8], pid: ProcessId, channel: ChannelId) -> Result<(), i64> {
     let mut mgr = SERVICE_MANAGER.lock();
+    let svc_name = ServiceName::from_bytes(name);
 
     // Check for duplicate name.
-    let name_len = name.len().min(32);
     for entry in mgr.services.iter().flatten() {
-        if entry.name_len == name_len && entry.name[..name_len] == name[..name_len] {
+        if entry.name == svc_name {
             return Err(crate::syscall::IpcError::Enospc as i64);
         }
     }
@@ -72,23 +63,19 @@ pub fn service_register(name: &[u8], pid: ProcessId, channel: ChannelId) -> Resu
         .position(|s| s.is_none())
         .ok_or(crate::syscall::IpcError::Enospc as i64)?;
 
-    let mut entry_name = [0u8; 32];
-    entry_name[..name_len].copy_from_slice(&name[..name_len]);
-
     mgr.services[slot] = Some(ServiceEntry {
-        name: entry_name,
-        name_len,
+        name: svc_name,
         pid,
         channel,
         state: ServiceState::Running,
     });
     mgr.count += 1;
 
-    let svc_name = core::str::from_utf8(&name[..name_len]).unwrap_or("<binary>");
+    let name_str = core::str::from_utf8(svc_name.as_bytes()).unwrap_or("<binary>");
     crate::kinfo!(
         Ipc,
         "Service '{}' registered (pid={}, ch={})",
-        svc_name,
+        name_str,
         pid.0,
         channel.0
     );
@@ -98,12 +85,8 @@ pub fn service_register(name: &[u8], pid: ProcessId, channel: ChannelId) -> Resu
 /// Look up a service by name. Returns (pid, channel) if found and running.
 pub fn service_lookup(name: &[u8]) -> Option<(ProcessId, ChannelId)> {
     let mgr = SERVICE_MANAGER.lock();
-    let name_len = name.len().min(32);
     for entry in mgr.services.iter().flatten() {
-        if entry.state == ServiceState::Running
-            && entry.name_len == name_len
-            && entry.name[..name_len] == name[..name_len]
-        {
+        if entry.state == ServiceState::Running && entry.name.matches(name) {
             return Some((entry.pid, entry.channel));
         }
     }
@@ -116,8 +99,7 @@ pub fn service_on_death(pid: ProcessId) {
     for entry in mgr.services.iter_mut().flatten() {
         if entry.pid == pid && entry.state == ServiceState::Running {
             entry.state = ServiceState::Dead;
-            let name_str =
-                core::str::from_utf8(&entry.name[..entry.name_len]).unwrap_or("<binary>");
+            let name_str = core::str::from_utf8(entry.name.as_bytes()).unwrap_or("<binary>");
             crate::kinfo!(Ipc, "Service '{}' marked dead (pid={})", name_str, pid.0);
 
             // Drop the manager lock before calling audit_log to avoid potential

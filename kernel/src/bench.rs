@@ -128,15 +128,10 @@ impl BenchResult {
 // ---------------------------------------------------------------------------
 
 /// Convert counter ticks to nanoseconds.
+/// Delegates to the shared crate's portable implementation.
 #[inline(always)]
 fn ticks_to_ns(ticks: u64) -> u64 {
-    let freq = timer::read_cntfrq();
-    if freq == 0 {
-        return 0;
-    }
-    // ns = ticks * 1_000_000_000 / freq
-    // Use u128 to avoid overflow.
-    ((ticks as u128 * 1_000_000_000) / freq as u128) as u64
+    shared::ticks_to_ns(ticks, timer::read_cntfrq())
 }
 
 // ---------------------------------------------------------------------------

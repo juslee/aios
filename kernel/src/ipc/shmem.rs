@@ -603,13 +603,7 @@ pub fn region_size(region_id: SharedMemoryId) -> Option<usize> {
 // ---------------------------------------------------------------------------
 
 /// Compute the smallest buddy order such that `2^order >= pages`.
+/// Delegates to the shared crate's portable implementation.
 fn order_for_pages(pages: usize) -> usize {
-    if pages <= 1 {
-        return 0;
-    }
-    let mut order = 0;
-    while (1usize << order) < pages {
-        order += 1;
-    }
-    order
+    shared::order_for_pages(pages)
 }

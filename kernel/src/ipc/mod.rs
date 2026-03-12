@@ -2011,8 +2011,8 @@ fn select_test_entry() -> ! {
     );
 
     // Build select entries: wait on our notification.
-    let entries = [select::SelectEntry {
-        kind: select::SelectKind::Notification(nid, 0xFF),
+    let entries = [shared::SelectEntry {
+        kind: shared::SelectKind::Notification(nid, 0xFF),
     }];
 
     match select::ipc_select(&entries, DEFAULT_TIMEOUT_TICKS) {

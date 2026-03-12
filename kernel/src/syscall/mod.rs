@@ -326,7 +326,11 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
         None => return IpcError::Eperm as i64,
     };
 
-    match proc.cap_table.attenuate(handle, new_cap, new_expiry, pid) {
+    let new_id = crate::cap::new_token_id();
+    match proc
+        .cap_table
+        .attenuate(handle, new_cap, new_expiry, pid, new_id)
+    {
         Ok(h) => h.0 as i64,
         Err(e) => e,
     }
@@ -552,7 +556,7 @@ fn sys_notification_wait(tf: &TrapFrame) -> i64 {
 ///
 /// For Phase 3 kernel threads, entries_ptr points to kernel memory.
 fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
-    use crate::ipc::select::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
+    use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
 
     let entries_ptr = tf.x[0] as usize;
     let entry_count = tf.x[1] as usize;

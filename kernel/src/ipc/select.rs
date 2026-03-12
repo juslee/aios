@@ -7,28 +7,8 @@
 
 use crate::sched;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
-use shared::{ChannelId, NotificationId};
+use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
 use spin::Mutex;
-
-/// Maximum entries in a single select wait set.
-pub const MAX_SELECT_ENTRIES: usize = 8;
-
-// ---------------------------------------------------------------------------
-// Data structures
-// ---------------------------------------------------------------------------
-
-/// Kind of source in a select wait set.
-#[derive(Clone, Copy)]
-pub enum SelectKind {
-    Channel(ChannelId),
-    Notification(NotificationId, u64), // (id, mask)
-}
-
-/// A single entry in the select wait set.
-#[derive(Clone, Copy)]
-pub struct SelectEntry {
-    pub kind: SelectKind,
-}
 
 /// Per-thread select registration: what sources a BlockedSelect thread is
 /// waiting on, and which one fired.
