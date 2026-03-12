@@ -13,6 +13,22 @@ Interactive, human-guided workflow for creating new architecture docs or updatin
 existing ones. Includes research for state-of-the-art improvements from OS research
 and production systems.
 
+## ⚠️ Critical Principle: Architecture Docs ≠ Implementation Docs
+
+Architecture documents describe the **target design** (the vision/future state).
+Phase docs (`docs/phases/`) track what has been implemented.
+
+**Rules:**
+- **NEVER** add implementation status banners ("as of Phase X", "Current state:",
+  "Implementation status:", "Steps N-M planned for future phases")
+- **NEVER** remove aspirational/future content (e.g., future Platform trait methods,
+  Apple Silicon targets, `maxcpus=` options) just because it isn't implemented yet
+- **DO** fix factual errors: wrong struct field names, wrong function names, wrong
+  register addresses, wrong constant values — compare against actual code
+- **DO** add research-informed improvements to a "Future Directions" section
+- When in doubt: if content describes where the system is *going*, it stays.
+  If content describes where the system *is*, it belongs in phase docs instead.
+
 ## Step 1: Discover & Detect Mode
 
 Determine whether this is a CREATE or MAINTAIN operation:
@@ -23,6 +39,9 @@ Determine whether this is a CREATE or MAINTAIN operation:
 **If a doc exists** → MAINTAIN mode:
 - Read the existing architecture doc fully
 - Read recent git log for implementation commits that may have changed this subsystem
+- Compare doc's code references (struct names, function names, constants, file paths) against actual code
+- Identify sections with **factual errors** (wrong names, addresses, types) vs sections that are
+  aspirational/future-looking (these are correct by design and should NOT be changed)
 - Identify sections that may be stale or incomplete
 
 **If no doc exists** → CREATE mode:
@@ -47,6 +66,12 @@ Use AskUserQuestion to clarify scope with the user:
 - Which sections need updating? (propose based on git diff analysis)
 - Any new sections to add?
 
+**Categorize proposed changes as:**
+- **Factual corrections** — struct/function/constant names that don't match code (MUST fix)
+- **Structural improvements** — better organization, missing cross-references, diagrams
+- **Research additions** — new "Future Directions" content from external research
+- **Remove implementation status** — delete any "as of Phase X" banners or "Current state" paragraphs
+
 Present proposed scope summary. Iterate until user approves.
 
 ## Step 3: Worktree & Branch
@@ -54,8 +79,8 @@ Present proposed scope summary. Iterate until user approves.
 Create an isolated worktree for this work:
 
 1. Derive a sanitized `$TOPIC` slug from `$ARGUMENTS` for safe use in paths and branch names:
-   - Lowercase, replace spaces/slashes/non-alphanumeric with `-`, trim leading/trailing `-`
-   - Restrict to `[a-z0-9-]` (e.g., `docs/kernel/memory.md` → `memory`, `Shared Memory` → `shared-memory`)
+   - If `$ARGUMENTS` is a path, first take the basename without extension (e.g., `docs/kernel/memory.md` → `memory`)
+   - Then: lowercase, replace spaces/non-alphanumeric with `-`, collapse repeats, trim leading/trailing `-`, restrict to `[a-z0-9-]` (e.g., `Shared Memory` → `shared-memory`)
 2. Run: `git worktree add .claude/worktrees/docs-$TOPIC -b claude/docs-update-$TOPIC main`
 3. All subsequent file operations happen in the worktree path
 
@@ -126,6 +151,17 @@ Write each major section, presenting to the user for review after each:
 - For design trade-offs with multiple valid approaches: ask the user for their input
 - Commit incrementally if the doc is large (one commit per major section)
 
+**Content rules (CRITICAL):**
+- **Keep aspirational content** — future API methods, planned platform targets, design goals
+  that aren't yet implemented. This is the *architecture* doc, not the *status* doc.
+- **Remove implementation status language** — delete any "as of Phase X", "Currently only X
+  is implemented", "Steps N-M are planned for future phases", "Implementation status:"
+- **Fix factual references only** — if the doc says `UART_BASE: AtomicU64` but code says
+  `UART_BASE_ADDR: AtomicUsize`, fix the doc. If the doc describes a future API that
+  doesn't exist yet, leave it.
+- **All code blocks must have language specifiers** — use `rust`, `asm`, `text`, etc.
+  Never leave bare ``` fences (causes markdown lint failures).
+
 ## Step 7: Cross-reference Updates
 
 1. Add or update the entry in CLAUDE.md Architecture Document Map
@@ -142,6 +178,14 @@ Run doc-auditor to validate the document:
 3. Re-audit until clean (max 10 passes)
 4. Commit audit fixes
 
+**Common issues the auditor catches (from experience):**
+- **Naming mismatches**: Doc says `UART_BASE` but code says `UART_BASE_ADDR` — fix doc to match code
+- **Type mismatches**: Doc says `AtomicU64` but code says `AtomicUsize` — fix doc to match code
+- **File path errors**: Doc references `mm/asid.rs` but the symbol actually lives in `mm/uspace.rs`
+- **Unfenced code blocks**: Bare ``` without language specifier — add `rust`, `asm`, `text`, etc.
+- **Double blank lines**: Left behind after removing sections — collapse to single blank line
+- **Stale cross-references**: Links to sections/docs that were renamed or restructured
+
 ## Step 9: Commit + PR
 
 1. Commit with message: `Docs: Add <topic> architecture document` (CREATE)
@@ -156,7 +200,7 @@ Run doc-auditor to validate the document:
 
 Create these todo items at the start:
 
-```
+```text
 1. Discover & detect mode (CREATE or MAINTAIN)
 2. Scope discussion with user
 3. Create worktree and branch
