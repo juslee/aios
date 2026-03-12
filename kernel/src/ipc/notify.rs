@@ -131,8 +131,15 @@ pub fn notification_signal(id: NotificationId, bits: u64) {
         }
         drop(results);
 
-        for &(tid, _) in to_wake.iter().take(wake_count) {
-            sched::unblock(tid);
+        for &(tid, matched) in to_wake.iter().take(wake_count) {
+            // If the thread is select-blocked, wake via select path (sets ready_index).
+            if !super::select::try_wake_select(
+                tid,
+                shared::SelectKind::Notification(id, matched),
+                matched,
+            ) {
+                sched::unblock(tid);
+            }
         }
     }
 
@@ -299,9 +306,10 @@ pub fn check_notification_timeouts(now: u64) {
             deadlines[tid_idx] = u64::MAX;
 
             // Check thread state to determine cleanup path.
-            let thread_state = {
-                let table = crate::task::THREAD_TABLE.lock();
-                table[tid_idx].as_ref().map(|t| t.sched.state)
+            // Use try_lock: called from IRQ context (timer tick), must not block.
+            let thread_state = match crate::task::THREAD_TABLE.try_lock() {
+                Some(table) => table[tid_idx].as_ref().map(|t| t.sched.state),
+                None => continue, // Contended — retry next tick.
             };
 
             match thread_state {

@@ -155,6 +155,7 @@ static BENCH_YIELD_PARTNER_READY: AtomicBool = AtomicBool::new(false);
 // ---------------------------------------------------------------------------
 
 /// Bench IPC server: sits in ipc_recv loop, replies immediately.
+/// IRQs masked during benchmark to avoid timer preemption skewing results.
 fn bench_server_entry() -> ! {
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -170,6 +171,12 @@ fn bench_server_entry() -> ! {
 
     // Signal ready.
     BENCH_SERVER_READY.store(true, Ordering::Release);
+
+    // Mask IRQs — the bench main thread uses direct-switch IPC which
+    // doesn't need timer interrupts. This prevents preemption during
+    // measurement from skewing results.
+    // SAFETY: DAIFSet #0x2 sets the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
@@ -218,10 +225,16 @@ fn bench_ipc_same_core(ch: ChannelId) -> BenchResult {
     let send_buf = [0xABu8; 8];
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
-    // Warm up.
+    // Warm up (IRQs still enabled for scheduler).
     for _ in 0..100 {
         let _ = ipc::ipc_call(ch, &send_buf, &mut recv_buf, 1000);
     }
+
+    // Mask IRQs during measurement to prevent timer preemption from
+    // skewing results. IPC direct-switch path is synchronous and doesn't
+    // need timer interrupts.
+    // SAFETY: DAIFSet/DAIFClr #0x2 mask/unmask IRQs. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
 
     for _i in 0..IPC_ITERATIONS {
         let start = timer::read_counter();
@@ -232,6 +245,10 @@ fn bench_ipc_same_core(ch: ChannelId) -> BenchResult {
             result.record(ns);
         }
     }
+
+    // SAFETY: Restore IRQs after measurement.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
     result
 }
 

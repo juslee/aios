@@ -326,6 +326,17 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
         }
     };
 
+    // Guard against underflow: if ref_count is already 0, something is
+    // seriously wrong (double unmap). Log and bail rather than wrapping.
+    let current_ref = region.ref_count.load(Ordering::Relaxed);
+    if current_ref == 0 {
+        crate::kwarn!(
+            Mm,
+            "shm_unmap: ref_count already 0 (region={}), skipping",
+            region_id.0
+        );
+        return Err(IpcError::Einval as i64);
+    }
     let old_ref = region.ref_count.fetch_sub(1, Ordering::Relaxed);
     let base_phys = region.base_phys;
     let order = region.order;
@@ -339,9 +350,9 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 
     drop(table);
 
-    // TODO: Unmap pages from the process's user page tables.
-    // For Phase 3 (kernel-only threads), page table teardown is deferred.
+    // Phase 3 (kernel-only threads): page table teardown is deferred.
     // The pages are still accessible via direct map until process exit.
+    // Phase 4+ will unmap pages from the process's user page tables here.
     let _ = mapping_info;
 
     if should_free {

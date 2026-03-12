@@ -791,7 +791,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | < 100 lines | Small, focused utility | `bump.rs` (44), `heap.rs` (68) |
 | 100--300 lines | Typical module | `uart.rs` (157), `timer.rs` (211), `cap/mod.rs` (236), `smp.rs` (218) |
 | 300--500 lines | Larger subsystem | `pgtable.rs` (436), `slab.rs` (409), `service/mod.rs` (403) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `syscall/mod.rs` (668), `shmem.rs` (609), `bench.rs` (528) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `syscall/mod.rs` (668), `shmem.rs` (609), `bench.rs` (545) |
 | > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
 
 **Guidelines:**

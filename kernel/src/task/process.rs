@@ -8,7 +8,7 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use super::{ThreadId, ThreadState, THREAD_TABLE};
+use super::{ThreadId, ThreadState, MAX_THREADS, THREAD_TABLE};
 use crate::cap::CapabilityTable;
 use crate::mm::uspace::UserAddressSpace;
 use spin::Mutex;
@@ -100,24 +100,35 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
 
     // 2. Walk channel table: destroy channels owned by threads of this process.
     //    Wake any blocked threads with EPIPE.
+    //    Lock ordering: THREAD_TABLE before CHANNEL_TABLE to avoid deadlock.
+    //    Build a thread→pid lookup first, then scan channels.
     {
+        // Snapshot thread ownership under THREAD_TABLE lock (released before CHANNEL_TABLE).
+        let thread_pids: [Option<ProcessId>; MAX_THREADS] = {
+            let table = THREAD_TABLE.lock();
+            let mut pids = [None; MAX_THREADS];
+            for (i, slot) in table.iter().enumerate() {
+                if let Some(t) = slot {
+                    pids[i] = t.owner_pid;
+                }
+            }
+            pids
+        };
+
         let mut channels = crate::ipc::CHANNEL_TABLE.lock();
         for ch in channels.iter_mut().flatten() {
-            // Check if either endpoint owner belongs to this process.
             let owner_a_pid = {
-                let table = THREAD_TABLE.lock();
                 let idx = ch.owner_a.0 as usize;
-                if idx < table.len() {
-                    table[idx].as_ref().and_then(|t| t.owner_pid)
+                if idx < thread_pids.len() {
+                    thread_pids[idx]
                 } else {
                     None
                 }
             };
             let owner_b_pid = ch.owner_b.and_then(|tid| {
-                let table = THREAD_TABLE.lock();
                 let idx = tid.0 as usize;
-                if idx < table.len() {
-                    table[idx].as_ref().and_then(|t| t.owner_pid)
+                if idx < thread_pids.len() {
+                    thread_pids[idx]
                 } else {
                     None
                 }

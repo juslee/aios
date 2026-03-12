@@ -3,7 +3,7 @@
 **Tier:** 1 — Hardware Foundation
 **Duration:** 6 weeks
 **Deliverable:** Synchronous IPC with < 10 μs round-trip, capability-enforced channels, scheduler with 4 scheduling classes, kernel observability, service manager
-**Status:** In Progress (M11 complete)
+**Status:** Complete (M10–M12 done)
 **Prerequisites:** Phase 2 (Memory Management)
 **Unlocks:** Phase 4 (Block Storage & Object Store), Phase 28 (Composable Capability Profiles)
 
@@ -257,16 +257,16 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement `SharedMemoryRegion`, `SharedMemoryCreate`/`SharedMemoryMap`/`SharedMemoryShare`/`MemoryMap`/`MemoryUnmap` syscalls, reference-counted shared memory lifecycle, and cleanup on process death.
 
 **Tasks:**
-- [ ] Create `kernel/src/ipc/shmem.rs` — `SharedMemoryRegion`: `id` (SharedMemoryId), `physical_pages` (PageRange from frame allocator, Pool::User), `ref_count` (AtomicU32), `creator` (ProcessId), `max_flags` (VmFlags), `mappings` array `[Option<SharedMapping>; 8]`, `capability` (CapabilityTokenId) (ipc.md §4.5)
-- [ ] `SharedMapping`: `process` (ProcessId), `vaddr` (VirtualAddress), `flags` (VmFlags, must be subset of `max_flags`)
-- [ ] Global `SHARED_REGION_TABLE`: bounded slab-allocated array
-- [ ] `SharedMemoryCreate` syscall: allocates physical pages from Pool::User via frame allocator, creates region, `ref_count = 1`, capability check (`Capability::SharedMemoryCreate`) (ipc.md §4.5)
-- [ ] `SharedMemoryMap` syscall: maps region pages into caller's address space via Phase 2 `uspace::map_user_page`, increments `ref_count`, records mapping (ipc.md §4.5)
-- [ ] `SharedMemoryShare` syscall: sends region ID through channel (capability check: `Capability::SharedMemoryAccess` + `Capability::ChannelAccess`), with flags attenuation (read-only share supported via `flags` parameter that must be subset of `max_flags`) (ipc.md §4.5)
-- [ ] `MemoryMap` syscall: allocates virtual memory in caller's address space with specified flags (ipc.md §3.1). Builds on Phase 2 `uspace::map_user_page`; W^X enforced
-- [ ] `MemoryUnmap` for shared and private regions: unmaps from caller's page table, decrements `ref_count` for shared regions, frees pages if `ref_count` reaches 0 (ipc.md §3.1, §4.5; `MemoryUnmap` handles both private and shared mappings)
-- [ ] Process death cleanup: iterate process's shared memory mappings, unmap all, decrement `ref_count`, free pages when 0
-- [ ] W^X enforcement: shared memory cannot be mapped WRITE + EXECUTE simultaneously (memory.md §9.1)
+- [x] Create `kernel/src/ipc/shmem.rs` — `SharedMemoryRegion`: `id` (SharedMemoryId), `physical_pages` (PageRange from frame allocator, Pool::User), `ref_count` (AtomicU32), `creator` (ProcessId), `max_flags` (VmFlags), `mappings` array `[Option<SharedMapping>; 8]`, `capability` (CapabilityTokenId) (ipc.md §4.5)
+- [x]`SharedMapping`: `process` (ProcessId), `vaddr` (VirtualAddress), `flags` (VmFlags, must be subset of `max_flags`)
+- [x]Global `SHARED_REGION_TABLE`: bounded slab-allocated array
+- [x]`SharedMemoryCreate` syscall: allocates physical pages from Pool::User via frame allocator, creates region, `ref_count = 1`, capability check (`Capability::SharedMemoryCreate`) (ipc.md §4.5)
+- [x]`SharedMemoryMap` syscall: maps region pages into caller's address space via Phase 2 `uspace::map_user_page`, increments `ref_count`, records mapping (ipc.md §4.5)
+- [x]`SharedMemoryShare` syscall: sends region ID through channel (capability check: `Capability::SharedMemoryAccess` + `Capability::ChannelAccess`), with flags attenuation (read-only share supported via `flags` parameter that must be subset of `max_flags`) (ipc.md §4.5)
+- [x]`MemoryMap` syscall: allocates virtual memory in caller's address space with specified flags (ipc.md §3.1). Builds on Phase 2 `uspace::map_user_page`; W^X enforced
+- [x]`MemoryUnmap` for shared and private regions: unmaps from caller's page table, decrements `ref_count` for shared regions, frees pages if `ref_count` reaches 0 (ipc.md §3.1, §4.5; `MemoryUnmap` handles both private and shared mappings)
+- [x]Process death cleanup: iterate process's shared memory mappings, unmap all, decrement `ref_count`, free pages when 0
+- [x]W^X enforcement: shared memory cannot be mapped WRITE + EXECUTE simultaneously (memory.md §9.1)
 
 **Key reference:** [ipc.md §4.4–4.5](../kernel/ipc.md) — Zero-Copy Transfers, Shared Memory Lifecycle; [memory.md §7](../kernel/memory.md) — Shared Memory
 
@@ -279,12 +279,12 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement lightweight notification objects (single-word bitmap signals). Implement `NotificationCreate`, `NotificationSignal`, `NotificationWait` syscalls and `IpcSelect` for multiplexing.
 
 **Tasks:**
-- [ ] Create `kernel/src/ipc/notify.rs` — `NotificationObject`: `id` (NotificationId), `word` (AtomicU64), `waiters` list (bounded array of waiting ThreadId + mask) (ipc.md §6)
-- [ ] `NotificationCreate` syscall: allocates notification object, returns `NotificationId` (ipc.md §3.1)
-- [ ] `NotificationSignal` syscall: atomic OR of bits into notification word (~10 cycles). If any waiter's mask matches, wake the waiter by enqueuing on run queue (ipc.md §6)
-- [ ] `NotificationWait` syscall: if any bits in mask are set, return them and atomically clear. Otherwise block until bits are set or timeout (ipc.md §6)
-- [ ] Implement `IpcSelect` syscall: wait on multiple channels and/or notifications simultaneously. Returns which channel/notification is ready. Uses a bounded wait set. Timer-based timeout (ipc.md §3.1)
-- [ ] Notification-based wakeup integration with scheduler: signaling a notification that wakes a thread enqueues that thread on its CPU's run queue
+- [x]Create `kernel/src/ipc/notify.rs` — `NotificationObject`: `id` (NotificationId), `word` (AtomicU64), `waiters` list (bounded array of waiting ThreadId + mask) (ipc.md §6)
+- [x]`NotificationCreate` syscall: allocates notification object, returns `NotificationId` (ipc.md §3.1)
+- [x]`NotificationSignal` syscall: atomic OR of bits into notification word (~10 cycles). If any waiter's mask matches, wake the waiter by enqueuing on run queue (ipc.md §6)
+- [x]`NotificationWait` syscall: if any bits in mask are set, return them and atomically clear. Otherwise block until bits are set or timeout (ipc.md §6)
+- [x]Implement `IpcSelect` syscall: wait on multiple channels and/or notifications simultaneously. Returns which channel/notification is ready. Uses a bounded wait set. Timer-based timeout (ipc.md §3.1)
+- [x]Notification-based wakeup integration with scheduler: signaling a notification that wakes a thread enqueues that thread on its CPU's run queue
 
 **Key reference:** [ipc.md §6](../kernel/ipc.md) — Notification Mechanism; [ipc.md §3.1](../kernel/ipc.md) — IpcSelect
 
@@ -297,15 +297,15 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement a kernel-internal service manager that can spawn processes (using Phase 2 user address spaces), distribute channels and capabilities, monitor service health, and perform basic load balancing.
 
 **Tasks:**
-- [ ] Create `kernel/src/service/mod.rs` — `ServiceManager`: service registry (name → ProcessId + ChannelId), service lifecycle tracking
-- [ ] Implement `ProcessCreate` syscall: allocates `ProcessControl`, creates `UserAddressSpace` (Phase 2 `uspace.rs`), loads minimal test image (raw binary from known physical address), sets up initial thread with entry point, distributes capabilities per `KernelResourceLimits` (ipc.md §3.1)
-- [ ] Implement `ProcessExit` syscall: marks process as dead, cleans up all channels (`EPIPE`), shared memory (unmap/deref), capabilities (revoke derived), threads (set `Dead`) (ipc.md §3.1)
-- [ ] Implement `ProcessWait` syscall: block until child exits, return exit code (ipc.md §3.1)
-- [ ] Service manager bootstrap: at end of kernel boot, service manager creates a "test service" process with a channel to the boot process. Test service enters `IpcRecv` loop, echoes messages (ipc.md §5.4)
-- [ ] Implement `AuditLog` syscall: validates user pointer, copies event to kernel audit ring buffer, tags with caller's process ID and timestamp (ipc.md §3.1)
-- [ ] Service restart detection: when a service process exits, service manager is notified, can recreate channels (ipc.md §5.5)
-- [ ] Load balancer (basic): periodic 4 ms balance check, migrate threads from overloaded to underloaded CPUs using ascending CPU ID lock ordering (scheduler.md §9.1; deadlock-prevention.md §3)
-- [ ] Trace instrumentation: `trace_point!(SchedMigrate { tid, from_core, to_core })` (observability.md §4.2)
+- [x]Create `kernel/src/service/mod.rs` — `ServiceManager`: service registry (name → ProcessId + ChannelId), service lifecycle tracking
+- [x]Implement `ProcessCreate` syscall: allocates `ProcessControl`, creates `UserAddressSpace` (Phase 2 `uspace.rs`), loads minimal test image (raw binary from known physical address), sets up initial thread with entry point, distributes capabilities per `KernelResourceLimits` (ipc.md §3.1)
+- [x]Implement `ProcessExit` syscall: marks process as dead, cleans up all channels (`EPIPE`), shared memory (unmap/deref), capabilities (revoke derived), threads (set `Dead`) (ipc.md §3.1)
+- [x]Implement `ProcessWait` syscall: block until child exits, return exit code (ipc.md §3.1)
+- [x]Service manager bootstrap: at end of kernel boot, service manager creates a "test service" process with a channel to the boot process. Test service enters `IpcRecv` loop, echoes messages (ipc.md §5.4)
+- [x]Implement `AuditLog` syscall: validates user pointer, copies event to kernel audit ring buffer, tags with caller's process ID and timestamp (ipc.md §3.1)
+- [x]Service restart detection: when a service process exits, service manager is notified, can recreate channels (ipc.md §5.5)
+- [x]Load balancer (basic): periodic 4 ms balance check, migrate threads from overloaded to underloaded CPUs using ascending CPU ID lock ordering (scheduler.md §9.1; deadlock-prevention.md §3)
+- [x]Trace instrumentation: `trace_point!(SchedMigrate { tid, from_core, to_core })` (observability.md §4.2)
 
 **Key reference:** [ipc.md §5.4–5.5](../kernel/ipc.md) — Multi-Client Service Model, Service Restart; [scheduler.md §9](../kernel/scheduler.md) — Load Balancing; [deadlock-prevention.md §3](../kernel/deadlock-prevention.md) — Lock Ordering
 
@@ -318,14 +318,14 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Run the Gate 1 benchmark suite: IPC round-trip latency, context switch latency, capability enforcement overhead. Print results to UART. Verify all Tier 1 success metrics. Run full quality gates.
 
 **Tasks:**
-- [ ] Create `kernel/src/bench.rs` — benchmark harness: runs N iterations, computes min/avg/max/p99 latency using `CNTVCT_EL0` (resolution = `1 / CNTFRQ_EL0`; e.g., 16 ns at 62.5 MHz under QEMU)
-- [ ] IPC round-trip benchmark: two threads on same core, `IpcCall`/`IpcReply` ping-pong, 10000 iterations. Report in microseconds
-- [ ] IPC cross-core benchmark: two threads on different cores, same `IpcCall`/`IpcReply` pattern
-- [ ] Context switch benchmark: two Normal-class threads yield back and forth, measure switch time
-- [ ] Direct switch benchmark: receiver already waiting, `IpcCall` triggers direct switch, measure end-to-end
-- [ ] Capability overhead benchmark: `IpcCall` with vs without capability check, measure delta
-- [ ] Shared memory throughput: create 1 MB region, write pattern, share, read, measure throughput
-- [ ] Print all results to UART in structured format:
+- [x]Create `kernel/src/bench.rs` — benchmark harness: runs N iterations, computes min/avg/max/p99 latency using `CNTVCT_EL0` (resolution = `1 / CNTFRQ_EL0`; e.g., 16 ns at 62.5 MHz under QEMU)
+- [x]IPC round-trip benchmark: two threads on same core, `IpcCall`/`IpcReply` ping-pong, 10000 iterations. Report in microseconds
+- [x]IPC cross-core benchmark: two threads on different cores, same `IpcCall`/`IpcReply` pattern
+- [x]Context switch benchmark: two Normal-class threads yield back and forth, measure switch time
+- [x]Direct switch benchmark: receiver already waiting, `IpcCall` triggers direct switch, measure end-to-end
+- [x]Capability overhead benchmark: `IpcCall` with vs without capability check, measure delta
+- [x]Shared memory throughput: create 1 MB region, write pattern, share, read, measure throughput
+- [x]Print all results to UART in structured format:
   ```
   [bench] IPC round-trip (same core):    avg=X.XX us, p99=X.XX us
   [bench] IPC round-trip (cross core):   avg=X.XX us, p99=X.XX us
@@ -335,11 +335,11 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
   [bench] Gate 1: IPC < 10 us:           PASS/FAIL
   [bench] Gate 1: Context switch < 20 us: PASS/FAIL
   ```
-- [ ] Verify Gate 1 criteria: IPC round-trip < 10 μs (target < 5 μs), context switch < 20 μs (development-plan.md §5 Gate 1)
-- [ ] Verify `just check` — zero warnings
-- [ ] Verify `just test` — all unit tests pass
-- [ ] Verify `just run` — complete boot log through benchmark results
-- [ ] Update CLAUDE.md: Workspace Layout (add `kernel/src/observability/`, `kernel/src/task/`, `kernel/src/syscall/`, `kernel/src/sched/`, `kernel/src/ipc/`, `kernel/src/cap/`, `kernel/src/service/`, `kernel/src/bench.rs`), Key Technical Facts (IPC latency, context switch time, syscall count)
+- [x]Verify Gate 1 criteria: IPC round-trip < 10 μs (target < 5 μs), context switch < 20 μs (development-plan.md §5 Gate 1)
+- [x]Verify `just check` — zero warnings
+- [x]Verify `just test` — all unit tests pass
+- [x]Verify `just run` — complete boot log through benchmark results
+- [x]Update CLAUDE.md: Workspace Layout (add `kernel/src/observability/`, `kernel/src/task/`, `kernel/src/syscall/`, `kernel/src/sched/`, `kernel/src/ipc/`, `kernel/src/cap/`, `kernel/src/service/`, `kernel/src/bench.rs`), Key Technical Facts (IPC latency, context switch time, syscall count)
 
 **Key reference:** [development-plan.md §5](../project/development-plan.md) — Gate 1 Decision; [ipc.md §9.1](../kernel/ipc.md) — Fast Path Budget; [scheduler.md §4.3](../kernel/scheduler.md) — Context Switch Latency Budget
 
@@ -380,12 +380,12 @@ just run     → boot log shows: structured logging, scheduler running, IPC benc
 - [x] Priority inheritance across IPC boundaries with transitive support
 - [x] Capability tokens with scope, attenuation, revocation, and delegation
 - [x] Capability enforcement on every channel and shared memory operation
-- [ ] Shared memory with reference-counted lifecycle and process death cleanup
-- [ ] Lightweight notification objects with bitmap signaling
-- [ ] `IpcSelect` for multiplexing channels and notifications
-- [ ] Service manager spawns test service with IPC echo
-- [ ] Load balancer with ascending CPU ID lock ordering
-- [ ] Gate 1 data: IPC round-trip < 10 μs, context switch < 20 μs
-- [ ] `just check` — zero warnings
-- [ ] `just test` — all unit tests pass
-- [ ] `just run` — complete boot log through Gate 1 benchmark PASS
+- [x]Shared memory with reference-counted lifecycle and process death cleanup
+- [x]Lightweight notification objects with bitmap signaling
+- [x]`IpcSelect` for multiplexing channels and notifications
+- [x]Service manager spawns test service with IPC echo
+- [x]Load balancer with ascending CPU ID lock ordering
+- [x]Gate 1 data: IPC round-trip < 10 μs, context switch < 20 μs
+- [x]`just check` — zero warnings
+- [x]`just test` — all unit tests pass
+- [x]`just run` — complete boot log through Gate 1 benchmark PASS

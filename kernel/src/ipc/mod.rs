@@ -89,8 +89,8 @@ impl MessageRing {
 /// Messages flow in both directions via a single ring buffer.
 /// For synchronous IPC, the ring holds the request; the reply is
 /// delivered directly to the blocked caller's reply buffer.
-#[allow(dead_code)]
 pub(crate) struct Channel {
+    #[allow(dead_code)]
     pub(crate) id: ChannelId,
     pub(crate) state_a: EndpointState,
     pub(crate) state_b: EndpointState,

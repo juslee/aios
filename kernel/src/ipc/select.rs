@@ -224,7 +224,6 @@ fn unregister_from_sources(tid: ThreadId, entries: &[SelectEntry]) {
 ///
 /// Returns true if the thread was select-woken (caller should NOT do
 /// separate unblock).
-#[allow(dead_code)]
 pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64) -> bool {
     // Check thread state first (cheap — avoids SELECT_WAITERS lock if not select-blocked).
     let is_select = {
@@ -265,4 +264,30 @@ pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64) -> boo
     }
 
     false
+}
+
+/// Set the select-ready metadata for a thread without unblocking it.
+/// Used by ipc_call's direct-switch path where unblock happens separately.
+/// No-op if the thread is not select-blocked.
+pub fn set_select_ready(tid: ThreadId, source_kind: SelectKind, bits: u64) {
+    let mut waiters = SELECT_WAITERS.lock();
+    let sw = match &mut waiters[tid.0 as usize] {
+        Some(sw) => sw,
+        None => return,
+    };
+
+    for i in 0..sw.entry_count {
+        if let Some(entry) = &sw.entries[i] {
+            let matches = match (&entry.kind, &source_kind) {
+                (SelectKind::Channel(a), SelectKind::Channel(b)) => a.0 == b.0,
+                (SelectKind::Notification(a, _), SelectKind::Notification(b, _)) => a.0 == b.0,
+                _ => false,
+            };
+            if matches {
+                sw.ready_index = Some(i);
+                sw.ready_bits = bits;
+                return;
+            }
+        }
+    }
 }

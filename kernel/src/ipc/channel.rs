@@ -11,7 +11,7 @@ use crate::observability::metrics::METRICS;
 use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::{ThreadId, ThreadState};
-use shared::{ChannelId, EndpointState, RawMessage, MAX_MESSAGE_SIZE};
+use shared::{ChannelId, EndpointState, RawMessage, SelectKind, MAX_MESSAGE_SIZE};
 
 use super::timeout::{
     clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, TimeoutEntry, REPLY_SLOTS,
@@ -98,6 +98,9 @@ pub fn ipc_call(
             // Don't unblock via scheduler; direct switch is faster.
             // Clear the receiver's timeout first (they're being woken by message delivery).
             clear_timeout(recv_tid);
+            // If the receiver is select-blocked, set the ready metadata so it knows
+            // which source fired when it resumes from ipc_select.
+            super::select::set_select_ready(recv_tid, SelectKind::Channel(channel), 0);
             drop(table);
 
             // Register reply buffer BEFORE direct switch (we'll be blocked).
@@ -131,7 +134,10 @@ pub fn ipc_call(
                 // to check result (same as scheduler-woken path).
             } else {
                 // Direct switch failed — fall back to scheduler path.
-                sched::unblock(recv_tid);
+                // If select-blocked, wake via select path instead.
+                if !super::select::try_wake_select(recv_tid, SelectKind::Channel(channel), 0) {
+                    sched::unblock(recv_tid);
+                }
                 sched::block_current(ThreadState::BlockedIpc {
                     channel: channel.0 as u64,
                 });
@@ -455,7 +461,10 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
     if let Some(recv_tid) = ch.waiting_receiver.take() {
         drop(table);
         clear_timeout(recv_tid);
-        sched::unblock(recv_tid);
+        // If the receiver is select-blocked, wake via select path (sets ready_index).
+        if !super::select::try_wake_select(recv_tid, SelectKind::Channel(channel), 0) {
+            sched::unblock(recv_tid);
+        }
     }
 
     #[cfg(feature = "kernel-metrics")]
