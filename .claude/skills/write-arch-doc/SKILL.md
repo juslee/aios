@@ -79,8 +79,8 @@ Present proposed scope summary. Iterate until user approves.
 Create an isolated worktree for this work:
 
 1. Derive a sanitized `$TOPIC` slug from `$ARGUMENTS` for safe use in paths and branch names:
-   - Lowercase, replace spaces/slashes/non-alphanumeric with `-`, trim leading/trailing `-`
-   - Restrict to `[a-z0-9-]` (e.g., `docs/kernel/memory.md` → `memory`, `Shared Memory` → `shared-memory`)
+   - If `$ARGUMENTS` is a path, first take the basename without extension (e.g., `docs/kernel/memory.md` → `memory`)
+   - Then: lowercase, replace spaces/non-alphanumeric with `-`, collapse repeats, trim leading/trailing `-`, restrict to `[a-z0-9-]` (e.g., `Shared Memory` → `shared-memory`)
 2. Run: `git worktree add .claude/worktrees/docs-$TOPIC -b claude/docs-update-$TOPIC main`
 3. All subsequent file operations happen in the worktree path
 
@@ -200,7 +200,7 @@ Run doc-auditor to validate the document:
 
 Create these todo items at the start:
 
-```
+```text
 1. Discover & detect mode (CREATE or MAINTAIN)
 2. Scope discussion with user
 3. Create worktree and branch
