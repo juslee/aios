@@ -20,8 +20,8 @@ Before writing code for any phase step, read these documents in order:
    - Unsafe Documentation Standard (three-line SAFETY format)
    - Key Technical Facts (addresses, offsets, constants)
    - File Placement (where to put new files)
-3. **Developer guide S3** ([developer-guide.md S3](./developer-guide.md#3-aios-kernel-patterns)) -- The four unsafe patterns (MMIO, page tables, SPSC rings, system registers) and three error handling patterns.
-4. **Developer guide S5** ([developer-guide.md S5](./developer-guide.md#5-common-pitfalls)) -- All seven pitfalls. These represent real bugs discovered during Phases 1-3.
+3. **Developer guide S2** ([developer-guide.md S2](./developer-guide.md#2-aios-kernel-patterns)) -- The four unsafe patterns (MMIO, page tables, SPSC rings, system registers) and three error handling patterns.
+4. **Developer guide S4** ([developer-guide.md S4](./developer-guide.md#4-common-pitfalls)) -- All seven pitfalls. These represent real bugs discovered during Phases 1-3.
 
 ### Task-specific
 
@@ -30,8 +30,8 @@ Before writing code for any phase step, read these documents in order:
 
 ### What to skip
 
-- Developer guide S2 (Rust Competency Model) -- written for humans, not agents
-- Developer guide S6-7 (Build/Debug workflow) -- you execute commands, not read about them
+- Developer guide S1 (Rust Competency Model) -- written for humans, not agents
+- Developer guide S5-6 (Build/Debug workflow) -- you execute commands, not read about them
 - Developer guide S9 (Glossary) -- reference only if you encounter unfamiliar terms
 
 -----
@@ -79,7 +79,7 @@ If you don't know a register offset, address, or constant -- read the architectu
 
 ### Never use spin::Mutex in boot-time code
 
-Phase 1-2 boot code runs on Non-Cacheable memory. `spin::Mutex` hangs. Use `AtomicBool` with `load(Acquire)`/`store(Release)` only. See developer-guide.md S5.1.
+Phase 1-2 boot code runs on Non-Cacheable memory. `spin::Mutex` hangs. Use `AtomicBool` with `load(Acquire)`/`store(Release)` only. See developer-guide.md S4.1.
 
 ### Never leave TODO comments
 
@@ -98,7 +98,7 @@ Follow CLAUDE.md File Placement rules exactly:
 
 ### Never skip ISB after MSR writes
 
-Always add `isb` after writing to: `VBAR_EL1`, `SCTLR_EL1`, `TCR_EL1`, `TTBR0_EL1`, `TTBR1_EL1`, `CPACR_EL1`. See developer-guide.md S5.4.
+Always add `isb` after writing to: `VBAR_EL1`, `SCTLR_EL1`, `TCR_EL1`, `TTBR0_EL1`, `TTBR1_EL1`, `CPACR_EL1`. See developer-guide.md S4.4.
 
 ### Never omit the SAFETY comment
 
@@ -113,7 +113,7 @@ unsafe { ... }
 
 ### Never map a page as RWX
 
-W^X policy: pages are writable OR executable, never both. See developer-guide.md S5.5.
+W^X policy: pages are writable OR executable, never both. See developer-guide.md S4.5.
 
 -----
 

@@ -11,9 +11,9 @@
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
 - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
 
-> **How to read this guide:** Sections 2--3 cover the Rust patterns and kernel idioms
-> you need before touching the codebase. Sections 4--5 cover style rules and known
-> pitfalls (with exact do/don't code). Sections 6--7 cover the build and debug
+> **How to read this guide:** Sections 1--2 cover the Rust patterns and kernel idioms
+> you need before touching the codebase. Sections 3--4 cover style rules and known
+> pitfalls (with exact do/don't code). Sections 5--6 cover the build and debug
 > workflow. Section 8 provides cross-references to architecture documents for
 > deeper topics.
 
@@ -271,7 +271,7 @@ These topics are documented in the architecture docs. Study them when you work o
 
 Understanding what AIOS does *not* use helps set expectations:
 
-- **`std::` anything** -- No filesystem, no networking, no threads library, no `println!`. The kernel provides these services; it cannot use them.
+- **`std::` anything** -- No filesystem, no networking, no threads library, no `println!`. The kernel provides these services; it cannot depend on them. (This restriction applies to *kernel code only*; application developers will have full `std` access via AIOS runtimes in later phases.)
 - **`async`/`await`** -- The kernel scheduler is cooperative/preemptive at the thread level, not at the Rust async task level. There is no executor.
 - **Dynamic dispatch (mostly)** -- Outside the `Platform` trait, AIOS uses monomorphization (generics) rather than trait objects. This avoids vtable indirection on hot paths.
 - **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `MsgBuf` with a 48-byte stack buffer).
@@ -649,7 +649,7 @@ This pattern uses the structured logging system (`kinfo!`/`kerror!`) for diagnos
 | Invariant violated (kernel bug) | `panic!()` | Null pointer, impossible enum match |
 | Boot validation failure | `kerror!` + `halt()` | Bad magic, missing BootInfo |
 
-### 2.6 Atomic Patterns
+### 2.7 Atomic Patterns
 
 **Pattern 1: NC-memory-safe atomics** -- load/store only, no read-modify-write
 
@@ -753,7 +753,7 @@ macro_rules! trace_point {
     ($event:expr) => {
         #[cfg(feature = "kernel-tracing")]
         {
-            $crate::observability::trace::record_trace($event);
+            $crate::observability::trace::record($event);
         }
     };
 }
@@ -860,7 +860,7 @@ macro_rules! trace_point {
     ($event:expr) => {
         #[cfg(feature = "kernel-tracing")]
         {
-            $crate::observability::trace::record_trace($event);
+            $crate::observability::trace::record($event);
         }
     };
 }
@@ -1335,7 +1335,7 @@ kdebug!(Sched, "Context switch: {} -> {}", from_tid, to_tid);
 [   0.010000] [2] INFO  Boot  Secondary core 2 online
 ```
 
-**Available subsystem tags:** `Boot`, `Mm`, `Sched`, `Ipc`, `Cap`, `Hal`, `Trap`, `Syscall`, `Timer`.
+**Available subsystem tags:** `Boot`, `Mm`, `Sched`, `Ipc`, `Cap`, `Irq`, `Timer`, `Uart`, `Gic`, `Mmu`, `Smp`, `Storage`, `Audit`.
 
 **Available log levels:** `Trace`, `Debug`, `Info`, `Warn`, `Error`. In debug builds, all levels from `Debug` up are emitted. In release builds, only `Info` and above.
 
@@ -1656,8 +1656,8 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **Page table format** | [memory.md](../kernel/memory.md) | SS3 (4-level tables, PTE bits) |
 | **Physical memory management** | [memory.md](../kernel/memory.md) | SS2.2 (buddy allocator, pools) |
 | **IPC protocol** | [ipc.md](../kernel/ipc.md) | SS3-4 (channel API, synchronous call/reply) |
-| **Scheduler classes** | [scheduler.md](../kernel/scheduler.md) | SS2 (RT/Interactive/Normal/Idle) |
-| **Security model** | [security.md](../../docs/security/security.md) | All (eight-layer model) |
+| **Scheduler classes** | [scheduler.md](../kernel/scheduler.md) | SS3.1 (RT/Interactive/Normal/Idle) |
+| **Security model** | [security.md](../security/security.md) | All (eight-layer model) |
 | **Capability system** | [ipc.md](../kernel/ipc.md) | SS8 (per-process tables, enforcement) |
 | **Observability** | [observability.md](../kernel/observability.md) | SS2-4 (logging, metrics, tracing) |
 | **Boot sequence** | [boot.md](../kernel/boot.md) | SS3.3 (step-by-step boot) |
