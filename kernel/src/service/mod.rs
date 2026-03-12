@@ -18,15 +18,15 @@ use spin::Mutex;
 use shared::{ServiceName, ServiceState, MAX_SERVICES};
 
 /// Entry in the service registry.
-pub struct ServiceEntry {
-    pub name: ServiceName,
-    pub pid: ProcessId,
-    pub channel: ChannelId,
-    pub state: ServiceState,
+pub(crate) struct ServiceEntry {
+    pub(crate) name: ServiceName,
+    pub(crate) pid: ProcessId,
+    pub(crate) channel: ChannelId,
+    pub(crate) state: ServiceState,
 }
 
 /// Service manager holding the registry.
-pub struct ServiceManager {
+pub(crate) struct ServiceManager {
     services: [Option<ServiceEntry>; MAX_SERVICES],
     count: usize,
 }
@@ -42,7 +42,7 @@ impl ServiceManager {
 }
 
 /// Global service manager.
-pub static SERVICE_MANAGER: Mutex<ServiceManager> = Mutex::new(ServiceManager::new());
+pub(crate) static SERVICE_MANAGER: Mutex<ServiceManager> = Mutex::new(ServiceManager::new());
 
 /// Register a service in the registry.
 pub fn service_register(name: &[u8], pid: ProcessId, channel: ChannelId) -> Result<(), i64> {
@@ -124,11 +124,11 @@ const AUDIT_RING_SIZE: usize = 256;
 
 /// Audit log entry.
 #[allow(dead_code)]
-pub struct AuditEntry {
-    pub timestamp: u64,
-    pub pid: u32,
-    pub event: [u8; 48],
-    pub event_len: usize,
+struct AuditEntry {
+    timestamp: u64,
+    pid: u32,
+    event: [u8; 48],
+    event_len: usize,
 }
 
 impl AuditEntry {

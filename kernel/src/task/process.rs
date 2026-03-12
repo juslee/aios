@@ -149,10 +149,13 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
         }
     }
 
-    // 3. Notify service manager.
+    // 3. Clean up shared memory regions mapped by this process.
+    crate::ipc::shmem::process_cleanup_shared_memory(pid);
+
+    // 4. Notify service manager.
     crate::service::service_on_death(pid);
 
-    // 4. Wake any thread blocked in process_wait() for this pid.
+    // 5. Wake any thread blocked in process_wait() for this pid.
     {
         let mut waiters = PROCESS_WAITERS.lock();
         if let Some(waiter_tid) = waiters[idx].take() {

@@ -183,7 +183,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 
 **Tasks:**
 - [x] Create `kernel/src/ipc/mod.rs` — `Channel` struct: `id` (ChannelId), `endpoint_a`/`endpoint_b` (ProcessId), `state_a`/`state_b` (EndpointState), `message_queue` (RingBuffer of RawMessage), `stats` (ChannelStatsData) (ipc.md §4.1)
-- [x] Implement `RingBuffer<RawMessage>` with fixed capacity (from `ChannelFlags.queue_depth`, default 64)
+- [x] Implement `RingBuffer<RawMessage>` with fixed capacity (RING_CAPACITY = 16)
 - [x] Implement `RawMessage`: channel, message_type (u32), data pointer (`*const u8`) with length, capability and shared memory arrays (fixed-size, max 4 each) (ipc.md §4.3)
 - [x] Global `CHANNEL_TABLE`: bounded slab-allocated array of `Channel` objects
 - [x] `ChannelCreate` syscall: allocates Channel, returns `ChannelId` (ipc.md §3.1)

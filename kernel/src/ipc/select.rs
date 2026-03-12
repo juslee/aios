@@ -12,15 +12,15 @@ use spin::Mutex;
 
 /// Per-thread select registration: what sources a BlockedSelect thread is
 /// waiting on, and which one fired.
-#[allow(dead_code)]
-pub struct SelectWaiter {
-    pub tid: ThreadId,
-    pub entries: [Option<SelectEntry>; MAX_SELECT_ENTRIES],
-    pub entry_count: usize,
+pub(super) struct SelectWaiter {
+    #[allow(dead_code)]
+    pub(super) tid: ThreadId,
+    pub(super) entries: [Option<SelectEntry>; MAX_SELECT_ENTRIES],
+    pub(super) entry_count: usize,
     /// Set by the waker to indicate which entry became ready.
-    pub ready_index: Option<usize>,
+    pub(super) ready_index: Option<usize>,
     /// For notification wakes: the matched bits.
-    pub ready_bits: u64,
+    pub(super) ready_bits: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ pub struct SelectWaiter {
 
 /// Per-thread select waiters. Lock ordering: after NOTIFICATION_TABLE,
 /// after CHANNEL_TABLE (per deadlock-prevention §3).
-pub static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
+pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
     Mutex::new([const { None }; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
@@ -49,6 +49,22 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
 
     if entries.is_empty() || entries.len() > MAX_SELECT_ENTRIES {
         return Err(IpcError::Einval as i64);
+    }
+
+    // Validate all entry IDs are within bounds to prevent kernel panics.
+    for entry in entries {
+        match entry.kind {
+            SelectKind::Channel(ch_id) => {
+                if ch_id.0 as usize >= shared::MAX_CHANNELS {
+                    return Err(IpcError::Einval as i64);
+                }
+            }
+            SelectKind::Notification(nid, _) => {
+                if nid.0 as usize >= shared::MAX_NOTIFICATIONS {
+                    return Err(IpcError::Einval as i64);
+                }
+            }
+        }
     }
 
     // --- Non-blocking scan: check each entry ---

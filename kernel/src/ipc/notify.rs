@@ -54,12 +54,13 @@ impl NotificationObject {
 
 /// System-wide notification table. Lock ordering: after SHARED_REGION_TABLE,
 /// before CHANNEL_TABLE (per deadlock-prevention §3).
-pub static NOTIFICATION_TABLE: Mutex<[Option<NotificationObject>; MAX_NOTIFICATIONS]> =
+pub(super) static NOTIFICATION_TABLE: Mutex<[Option<NotificationObject>; MAX_NOTIFICATIONS]> =
     Mutex::new([const { None }; MAX_NOTIFICATIONS]);
 
 /// Per-thread result slot: stores the matched bits for a thread woken from
 /// notification_wait or IpcSelect. Indexed by ThreadId.0.
-pub static NOTIFY_RESULTS: Mutex<[Option<u64>; MAX_THREADS]> = Mutex::new([None; MAX_THREADS]);
+pub(super) static NOTIFY_RESULTS: Mutex<[Option<u64>; MAX_THREADS]> =
+    Mutex::new([None; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
 // API
@@ -87,6 +88,10 @@ pub fn notification_create(pid: crate::task::process::ProcessId) -> Result<Notif
 /// Signal a notification: atomically OR `bits` into the word, then wake any
 /// waiters whose mask intersects the new value.
 pub fn notification_signal(id: NotificationId, bits: u64) {
+    if id.0 as usize >= MAX_NOTIFICATIONS {
+        return;
+    }
+
     // OR the bits in first (before acquiring the table lock).
     // We need the table lock to read waiters, but the atomic OR is lock-free.
     // However, we must hold the lock while checking waiters to avoid races
@@ -153,6 +158,10 @@ pub fn notification_signal(id: NotificationId, bits: u64) {
 /// Returns the matched bits on success, or an error code.
 pub fn notification_wait(id: NotificationId, mask: u64, timeout_ticks: u64) -> Result<u64, i64> {
     use crate::arch::aarch64::timer::TICK_COUNT;
+
+    if id.0 as usize >= MAX_NOTIFICATIONS {
+        return Err(crate::syscall::IpcError::Einval as i64);
+    }
 
     let my_tid = crate::ipc::current_thread_id().ok_or(crate::syscall::IpcError::Einval as i64)?;
 
@@ -248,6 +257,9 @@ pub fn notification_wait(id: NotificationId, mask: u64, timeout_ticks: u64) -> R
 /// Destroy a notification: wake all waiters with error, remove from table.
 #[allow(dead_code)]
 pub fn notification_destroy(id: NotificationId) {
+    if id.0 as usize >= MAX_NOTIFICATIONS {
+        return;
+    }
     let mut table = NOTIFICATION_TABLE.lock();
     let notif = match table[id.0 as usize].take() {
         Some(n) => n,
@@ -293,7 +305,6 @@ pub(crate) fn set_select_deadline(tid: ThreadId, deadline: u64) {
 
 /// Called from timer_tick_handler (via ipc::check_timeouts path) to expire
 /// notification waits. Uses try_lock to be IRQ-safe.
-#[allow(dead_code)]
 pub fn check_notification_timeouts(now: u64) {
     // try_lock: safe from IRQ context — never block in timer tick.
     let mut deadlines = match NOTIFY_DEADLINES.try_lock() {

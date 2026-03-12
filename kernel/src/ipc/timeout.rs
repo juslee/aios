@@ -104,6 +104,9 @@ pub fn check_timeouts() {
     for &(tid, error) in expired[..count].iter() {
         wake_with_error(tid, error);
     }
+
+    // Also check notification/select deadlines (separate table).
+    super::notify::check_notification_timeouts(now);
 }
 
 // ---------------------------------------------------------------------------

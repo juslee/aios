@@ -203,6 +203,10 @@ pub fn shared_memory_map(
     region_id: SharedMemoryId,
     flags: VmFlags,
 ) -> Result<usize, i64> {
+    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+        return Err(IpcError::Einval as i64);
+    }
+
     // W^X enforcement.
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
         return Err(IpcError::Eperm as i64);
@@ -298,6 +302,10 @@ pub fn shared_memory_map(
 /// Decrements the reference count. If ref_count reaches 0, frees the
 /// backing pages.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
+    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+        return Err(IpcError::Einval as i64);
+    }
+
     let mut table = SHARED_REGION_TABLE.lock();
     let region = table[region_id.0 as usize]
         .as_mut()
@@ -396,6 +404,10 @@ pub fn shared_memory_share(
     region_id: SharedMemoryId,
     target_pid: ProcessId,
 ) -> Result<(), i64> {
+    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+        return Err(IpcError::Einval as i64);
+    }
+
     // Verify the caller owns the region.
     {
         let table = SHARED_REGION_TABLE.lock();
@@ -600,6 +612,9 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
 /// (no user address space to map into).
 #[allow(dead_code)]
 pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
+    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+        return None;
+    }
     let table = SHARED_REGION_TABLE.lock();
     table[region_id.0 as usize]
         .as_ref()
@@ -609,6 +624,9 @@ pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
 /// Get the size in bytes of a shared region.
 #[allow(dead_code)]
 pub fn region_size(region_id: SharedMemoryId) -> Option<usize> {
+    if region_id.0 as usize >= MAX_SHARED_REGIONS {
+        return None;
+    }
     let table = SHARED_REGION_TABLE.lock();
     table[region_id.0 as usize].as_ref().map(|r| r.size_bytes)
 }
