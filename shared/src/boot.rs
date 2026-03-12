@@ -154,7 +154,6 @@ impl MemoryDescriptor {
 /// Total: 18 variants (EntryPoint=0 through Complete=17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u32)]
-#[allow(dead_code)]
 pub enum EarlyBootPhase {
     EntryPoint = 0,
     ExceptionVectors = 1,

@@ -8,7 +8,6 @@
 /// Convention: x8 = syscall number, x0-x5 = args, return in x0.
 #[repr(u64)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Syscall {
     IpcCall = 0,
     IpcSend = 1,
@@ -52,7 +51,6 @@ pub const SYSCALL_COUNT: usize = 31;
 /// Per ipc.md §3.2.
 #[repr(i64)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum IpcError {
     Etimedout = -1,
     Epipe = -2,

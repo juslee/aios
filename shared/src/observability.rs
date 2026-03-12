@@ -12,7 +12,6 @@ pub enum LogLevel {
     Info = 2,
     Warn = 3,
     Error = 4,
-    #[allow(dead_code)]
     Fatal = 5,
 }
 
@@ -33,7 +32,6 @@ impl LogLevel {
 /// Subsystem tag identifying the origin of a log entry.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Subsystem {
     Boot = 0,
     Mm = 1,

@@ -94,7 +94,6 @@ impl Capability {
 // ---------------------------------------------------------------------------
 
 /// A capability token granting a specific permission to a process.
-#[allow(dead_code)]
 pub struct CapabilityToken {
     /// Unique token identifier.
     pub id: CapabilityTokenId,
