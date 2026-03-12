@@ -286,6 +286,7 @@ pub(crate) fn set_select_deadline(tid: ThreadId, deadline: u64) {
 
 /// Called from timer_tick_handler (via ipc::check_timeouts path) to expire
 /// notification waits. Uses try_lock to be IRQ-safe.
+#[allow(dead_code)]
 pub fn check_notification_timeouts(now: u64) {
     // try_lock: safe from IRQ context — never block in timer tick.
     let mut deadlines = match NOTIFY_DEADLINES.try_lock() {

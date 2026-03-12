@@ -417,10 +417,15 @@ aios/
 │       │   ├── metrics.rs Counter (per-core sharded), Gauge, Histogram<N>, KernelMetrics registry; feature-gated kernel-metrics
 │       │   └── trace.rs  TraceEvent enum, TraceRecord (32B), TraceRing (4096/core), trace_point! macro; feature-gated kernel-tracing
 │       ├── sched/
-│       │   └── mod.rs    Scheduler, RunQueue (4-class FIFO), FixedQueue, schedule(), idle threads, block/unblock, timer_tick()
+│       │   ├── mod.rs       RunQueue, globals, thread allocation helpers, re-exports
+│       │   ├── scheduler.rs schedule(), enter_scheduler(), timer_tick(), block/unblock, check_preemption
+│       │   └── init.rs      Scheduler init, idle/test thread entries, load balancer
 │       ├── ipc/
-│       │   ├── mod.rs    Channel, CHANNEL_TABLE, MessageRing, ipc_call/send/recv/reply/cancel, channel_create/destroy, timeouts
-│       │   └── direct.rs IPC direct switch (bypass scheduler), priority inheritance, reply switch
+│       │   ├── mod.rs    Channel, CHANNEL_TABLE, MessageRing, channel_create/destroy, re-exports
+│       │   ├── channel.rs ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
+│       │   ├── timeout.rs Timeout queue, sleep helpers, wakeup error delivery
+│       │   ├── tests.rs   IPC test initialization, thread entries, test-only helpers
+│       │   └── direct.rs  IPC direct switch (bypass scheduler), priority inheritance, reply switch
 │       ├── cap/
 │       │   └── mod.rs    CapabilityToken, CapabilityTable (256/process), check/grant/revoke/attenuate/list, cascade revocation
 │       ├── task/

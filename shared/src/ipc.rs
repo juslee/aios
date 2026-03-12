@@ -159,6 +159,9 @@ pub struct RawMessage {
     pub len: usize,
 }
 
+// RawMessage: ThreadId(4B) + padding(4B) + data(256B) + len(8B) = 272B on 64-bit.
+const _: () = assert!(core::mem::size_of::<RawMessage>() == 272);
+
 impl RawMessage {
     /// Empty message constant (for array initialization).
     pub const EMPTY: Self = Self {
