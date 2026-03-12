@@ -2,7 +2,7 @@
 
 **Audience**: Experienced Rust developer new to OS kernel development, OR experienced C kernel developer new to Rust.
 
-**Scope**: Kernel-side development only. For application/agent development, see [architecture.md SS4](./architecture.md).
+**Scope**: Kernel-side development only. For application/agent development, see [architecture.md SS4](./architecture.md#4-developer-experience).
 
 **Related documents**:
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
@@ -42,7 +42,7 @@ This section is organized into three tiers. Tier 1 is prerequisite knowledge for
 
 **`#![no_std]` / `#![no_main]`**
 
-Every crate in `kernel/` and `shared/` uses these attributes. There is no standard library, no runtime, and no heap until the slab allocator is initialized. You work with `core::` types only -- `core::fmt`, `core::sync::atomic`, `core::ptr`, `core::mem`, `core::arch::asm!`. The `alloc` crate (for `Vec`, `Box`, `String`) becomes available after the heap is bootstrapped, but most kernel code avoids heap allocation on hot paths.
+The kernel (`kernel/`) uses both `#![no_std]` and `#![no_main]` because it provides its own entry point (`_start` in `boot.S`). The shared crate (`shared/`) uses `#![no_std]` but *not* `#![no_main]` -- it is a library, not an entry point. There is no standard library and no runtime. You work with `core::` types only -- `core::fmt`, `core::sync::atomic`, `core::ptr`, `core::mem`, `core::arch::asm!`. The `alloc` crate (for `Vec`, `Box`, `String`) becomes available after heap bootstrap: initially via a 128 KiB static bump allocator (`mm/bump.rs`), then via the full slab allocator once `mm::enable_slab_allocator()` runs. Most kernel code avoids heap allocation on hot paths.
 
 **`unsafe` blocks and the SAFETY contract**
 
@@ -204,7 +204,7 @@ Why not `Mutex`? Two reasons: (1) during early boot, spinlocks may not work (NC 
 
 **`spin::Mutex`**
 
-Only safe on Write-Back cacheable memory. On Non-Cacheable memory (Phase 1 identity map), spinlocks HANG because they use exclusive load/store pairs (`ldaxr`/`stlxr`) that require the global exclusive monitor. The global exclusive monitor only functions with Inner Shareable + Cacheable memory attributes. See SS4.1 for the full explanation.
+Uses exclusive load/store pairs (`ldaxr`/`stlxr`) internally, which require the global exclusive monitor. The global exclusive monitor only functions with Inner Shareable + Cacheable memory attributes. **Current status (post-Phase 2 M8):** the TTBR0 identity map now uses WB cacheable (MAIR Attr3), so `spin::Mutex` works correctly on identity-mapped RAM. The NC constraint only applies if you explicitly map memory as Non-Cacheable (e.g., device MMIO regions, or the framebuffer). See SS4.1 for the full history.
 
 **Linker script symbols as `extern "C"` statics**
 
@@ -543,11 +543,11 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // 6. MMU (swap TTBR0 identity map)
     unsafe { mmu::init_mmu(); }
-    advance_boot_phase(EarlyBootPhase::MmuReady);
+    advance_boot_phase(EarlyBootPhase::MmuEnabled);
 
     // 7. Physical memory (buddy allocator + pools)
     mm::init::init_memory(boot_info);
-    advance_boot_phase(EarlyBootPhase::PhysMemReady);
+    advance_boot_phase(EarlyBootPhase::PageAllocatorReady);
 
     // 8. Slab allocator + heap
     mm::enable_slab_allocator();
@@ -789,9 +789,9 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | Range | Interpretation | Examples |
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs`, `heap.rs` |
-| 100--300 lines | Typical module | `uart.rs` (158), `timer.rs` (181), `smp.rs` (218) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (436), `cap/mod.rs` (420), `slab.rs` (409) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `sched/mod.rs` (840) |
+| 100--300 lines | Typical module | `uart.rs`, `timer.rs`, `smp.rs` |
+| 300--500 lines | Larger subsystem | `pgtable.rs`, `cap/mod.rs`, `slab.rs` |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs`, `sched/mod.rs` |
 | > 800 lines | Should split into submodules | `ipc/mod.rs` (currently large, partially split) |
 
 **Guidelines:**
@@ -883,7 +883,7 @@ AIOS follows standard Rust naming with strict consistency:
 | Enum variants | `CamelCase` | `LogLevel::Info`, `ThreadState::Blocked`, `Syscall::IpcCall` |
 | Feature flags | `kebab-case` | `kernel-metrics`, `kernel-tracing` |
 
-**Module-level doc comments** are required for every file. They describe the module's purpose, its role in the system, and reference the relevant architecture doc:
+**Module-level doc comments** are required for every new file (except crate roots like `main.rs` and `lib.rs`, which use crate-level attributes instead). They describe the module's purpose, its role in the system, and reference the relevant architecture doc:
 
 ```rust
 //! PL011 UART driver.
@@ -967,7 +967,9 @@ Each pitfall follows the format: Symptom, Root Cause, Do, Don't. These are real 
 
 **Symptom:** Core hangs during SMP bringup or on first `spin::Mutex::lock()` call. No exception output -- the core is stuck in an infinite loop.
 
-**Root cause:** Phase 1 identity map uses Non-Cacheable Normal memory (edk2 MAIR Attr1=0x44). Atomic read-modify-write operations (`fetch_add`, `compare_exchange`, `swap`) compile to exclusive load/store pairs (`ldaxr`/`stlxr`). These instructions require the global exclusive monitor, which only works with Inner Shareable + Cacheable memory attributes. On NC memory, the exclusive store (`stlxr`) always reports failure, causing an infinite retry loop.
+**Root cause:** The Phase 1 identity map originally used Non-Cacheable Normal memory (edk2 MAIR Attr1=0x44). Atomic read-modify-write operations (`fetch_add`, `compare_exchange`, `swap`) compile to exclusive load/store pairs (`ldaxr`/`stlxr`). These instructions require the global exclusive monitor, which only works with Inner Shareable + Cacheable memory attributes. On NC memory, the exclusive store (`stlxr`) always reports failure, causing an infinite retry loop.
+
+> **Current status (post-Phase 2 M8):** The TTBR0 identity map was upgraded to WB cacheable (MAIR Attr3) in Phase 2 M8. `spin::Mutex` and atomic RMW operations now work correctly on identity-mapped RAM. This pitfall remains relevant if you explicitly map memory as Non-Cacheable (device MMIO regions, framebuffer, etc.).
 
 `spin::Mutex` internally uses `compare_exchange` to acquire the lock. Under contention (or even on first lock if the implementation uses a CAS loop), it hangs on NC memory.
 
@@ -1189,7 +1191,7 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | Command | What it does |
 |---|---|
 | `just build` | Debug kernel build (`cargo build --target aarch64-unknown-none`) |
-| `just build-release` | Release kernel build (with LTO) |
+| `just build-release` | Release kernel build (`cargo build --release`) |
 | `just build-stub` | Compile the UEFI stub (`cargo build -p uefi-stub --target aarch64-unknown-uefi`) |
 | `just disk` | Create the 64 MiB FAT32 ESP disk image with UEFI stub + kernel ELF |
 | `just run` | Build everything and launch QEMU with edk2 UEFI firmware |

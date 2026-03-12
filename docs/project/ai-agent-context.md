@@ -32,7 +32,7 @@ Before writing code for any phase step, read these documents in order:
 
 - Developer guide S1 (Rust Competency Model) -- written for humans, not agents
 - Developer guide S5-6 (Build/Debug workflow) -- you execute commands, not read about them
-- Developer guide S9 (Glossary) -- reference only if you encounter unfamiliar terms
+- Developer guide S10 (Glossary) -- reference only if you encounter unfamiliar terms
 
 -----
 
@@ -79,7 +79,7 @@ If you don't know a register offset, address, or constant -- read the architectu
 
 ### Never use spin::Mutex in boot-time code
 
-Phase 1-2 boot code runs on Non-Cacheable memory. `spin::Mutex` hangs. Use `AtomicBool` with `load(Acquire)`/`store(Release)` only. See developer-guide.md S4.1.
+Post-Phase 2 M8, the TTBR0 identity map uses WB cacheable (Attr3), so `spin::Mutex` works on identity-mapped RAM. However, if you explicitly map memory as Non-Cacheable (device MMIO, framebuffer), spinlocks will HANG there. For NC regions, use `AtomicBool` with `load(Acquire)`/`store(Release)` only. See developer-guide.md S4.1.
 
 ### Never leave TODO comments
 
