@@ -69,6 +69,8 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
+| Developer guide | `docs/project/developer-guide.md` | All (all phases) |
+| AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
 
 ---
 
@@ -398,7 +400,7 @@ aios/
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   └── skills/           build-team, implement-phase, generate-phase-doc, verify-phase
+│   └── skills/           build-team, implement-phase, generate-phase-doc, verify-phase, write-arch-doc
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
@@ -536,6 +538,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
+| `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
