@@ -791,7 +791,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | < 100 lines | Small, focused utility | `bump.rs` (44), `heap.rs` (68) |
 | 100--300 lines | Typical module | `uart.rs` (157), `timer.rs` (211), `cap/mod.rs` (236), `smp.rs` (218) |
 | 300--500 lines | Larger subsystem | `pgtable.rs` (436), `slab.rs` (409), `service/mod.rs` (403) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `syscall/mod.rs` (668), `shmem.rs` (609), `bench.rs` (545) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `syscall/mod.rs` (668), `shmem.rs` (624), `bench.rs` (545) |
 | > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
 
 **Guidelines:**
@@ -805,7 +805,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 ```text
 ipc/
   mod.rs      (215)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
-  channel.rs  (498)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
+  channel.rs  (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs  (182)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs          # Direct switch fast path, priority inheritance, reply switch
   tests.rs    (668)  # Test initialization, thread entries, test-only helpers

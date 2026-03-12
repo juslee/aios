@@ -460,6 +460,10 @@ pub fn process_cleanup_shared_memory(pid: ProcessId) {
             });
 
             if had_mapping {
+                // Guard against underflow (defense-in-depth).
+                if region.ref_count.load(Ordering::Relaxed) == 0 {
+                    continue;
+                }
                 let old_ref = region.ref_count.fetch_sub(1, Ordering::Relaxed);
                 if old_ref == 1 {
                     // Last reference — collect for freeing.

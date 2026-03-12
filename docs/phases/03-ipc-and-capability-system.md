@@ -116,7 +116,7 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **Tasks:**
 - [x] Create `kernel/src/arch/aarch64/trap.rs` — `TrapFrame` struct (x0–x30, SP_EL0, ELR_EL1, SPSR_EL1)
 - [x] Modify exception vector table in `exceptions.rs`: the "Lower EL using AArch64 — Synchronous" entry saves all GP registers to a `TrapFrame` on the kernel stack, reads `ESR_EL1` to determine exception class (EC), dispatches to `svc_handler` if EC == 0x15 (SVC from AArch64)
-- [x] Create `kernel/src/syscall/mod.rs` — `Syscall` enum (numeric IDs: 0=IpcCall, 1=IpcSend, 2=IpcRecv, 3=IpcReply, 4=IpcCancel, 5=IpcSelect, 6=ChannelCreate, 7=ChannelDestroy, ..., 30=DebugPrint) and `IpcError` repr(i32) (ETIMEDOUT=-1 through ECAP_DORMANT=-10) (ipc.md §3.1–3.2)
+- [x] Create `kernel/src/syscall/mod.rs` — `Syscall` enum (numeric IDs: 0=IpcCall, 1=IpcSend, 2=IpcRecv, 3=IpcReply, 4=IpcCancel, 5=IpcSelect, 6=ChannelCreate, 7=ChannelDestroy, ..., 30=DebugPrint) and `IpcError` repr(i64) (ETIMEDOUT=-1 through ENOMEM=-13) (ipc.md §3.1–3.2)
 - [x] Implement `syscall_dispatch(tf: &mut TrapFrame)`: reads syscall number from `x8`, arguments from `x0`–`x5`, dispatches to handler, writes return value to `tf.x[0]` (ipc.md §3.2)
 - [x] Implement `DebugPrint` handler: validates user pointer (must be in TTBR0 range), copies message to kernel buffer, writes to UART via `klog!`
 - [x] Implement stub handlers for all other syscalls returning `ENOTSUP` (-9)
