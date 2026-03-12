@@ -398,7 +398,7 @@ aios/
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   └── skills/           build-team, implement-phase, generate-phase-doc, verify-phase
+│   └── skills/           build-team, implement-phase, generate-phase-doc, verify-phase, write-arch-doc
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
@@ -535,6 +535,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
+| `/write-arch-doc <topic>` | Architecture doc request | Interactive create/update architecture docs with research |
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
