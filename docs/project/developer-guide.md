@@ -29,7 +29,8 @@
 6. [Debugging Techniques](#6-debugging-techniques)
 7. [Contributing a New Subsystem](#7-contributing-a-new-subsystem)
 8. [Cross-Reference Index](#8-cross-reference-index)
-9. [Appendix: AIOS Glossary](#9-appendix-aios-glossary)
+9. [Planned Expansions](#9-planned-expansions)
+10. [Appendix: AIOS Glossary](#10-appendix-aios-glossary)
 
 ---
 
@@ -1669,7 +1670,50 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 
 ---
 
-## 9. Appendix: AIOS Glossary
+## 9. Planned Expansions
+
+This guide is designed to grow alongside the kernel. The following areas are intentionally left as stubs or brief overviews, with expansion planned as the corresponding phases land.
+
+### Section 5: Build, Test, and Verification
+
+| Topic | Expand When | Content to Add |
+|---|---|---|
+| `just` recipe deep-dive | Phase 4+ | Annotated walkthroughs of each recipe, common flag combinations, customization |
+| CI pipeline explanation | Phase 4+ | GitHub Actions workflow breakdown, what each job catches, how to read CI failures |
+| Integration test patterns | Phase 4+ (user-space) | How to write kernel integration tests, QEMU-based acceptance test harness |
+| `shared` crate test patterns | Ongoing | How to add new unit tests, property-based testing with `proptest`, test organization |
+| Cross-compilation troubleshooting | Phase 7+ (multi-platform) | Common linker errors, target-specific build issues, conditional compilation patterns |
+
+### Section 6: Debugging Techniques
+
+| Topic | Expand When | Content to Add |
+|---|---|---|
+| QEMU GDB deep-dive | Ongoing | Breakpoints in exception handlers, `x/8gx` for page table inspection, system register reads |
+| Memory debugging | Phase 4+ | Buddy poison patterns (`0xDEAD_DEAD`), slab red zone detection, diagnosing use-after-free |
+| Common QEMU failure modes | Ongoing | Silent hang (DSB issue), garbage UART (baud misconfiguration), immediate reboot (bad VBAR) |
+| Per-phase debugging recipes | Each phase | E.g., "Phase 4 storage debugging", "Phase 5 compositor debugging" |
+| Multi-core debugging | Phase 4+ | IPC deadlock detection, priority inversion diagnosis, per-core log correlation |
+
+### Section 7: Contributing a New Subsystem
+
+| Topic | Expand When | Content to Add |
+|---|---|---|
+| Real subsystem walkthrough | Phase 4+ | Step-by-step example of how a subsystem (e.g., networking) was added end to end |
+| Architecture doc template | Phase 4+ | What to write before coding: scope, API surface, resource budget, security model |
+| Extending `Subsystem` enum | Ongoing | How to add a new observability subsystem tag and wire it through logging/metrics/tracing |
+
+### New Sections (future)
+
+| Section | Expand When | Content |
+|---|---|---|
+| Performance Profiling | Phase 5+ | Measurement methodology, timer-based profiling, IPC latency benchmarks |
+| Security Review Checklist | Phase 4+ | Expanding beyond W^X: capability audit patterns, trust level verification, syscall boundary checks |
+| Multi-Platform Porting | Phase 7+ (RISC-V) | Platform abstraction patterns, arch-conditional compilation, HAL trait implementation guide |
+| Application Developer Guide | Phase 12+ | `std`-based development, runtime APIs, agent SDK, IPC from user-space |
+
+---
+
+## 10. Appendix: AIOS Glossary
 
 Terms that may be unfamiliar or have AIOS-specific meanings.
 
