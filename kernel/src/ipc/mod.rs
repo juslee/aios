@@ -8,6 +8,8 @@
 //! The SVC dispatch path is wired in parallel for future EL0 user threads.
 
 pub mod direct;
+pub mod notify;
+pub mod select;
 pub mod shmem;
 
 use core::sync::atomic::Ordering;
@@ -30,11 +32,11 @@ pub use shared::{
 // ---------------------------------------------------------------------------
 
 /// Fixed-capacity ring buffer for IPC messages.
-struct MessageRing {
+pub(crate) struct MessageRing {
     entries: [RawMessage; RING_CAPACITY],
     head: usize,
     tail: usize,
-    len: usize,
+    pub(crate) len: usize,
 }
 
 impl MessageRing {
@@ -93,7 +95,7 @@ pub(crate) struct Channel {
     /// Owner thread of endpoint B (peer).
     owner_b: Option<ThreadId>,
     /// Message ring buffer (requests and async sends).
-    ring: MessageRing,
+    pub(crate) ring: MessageRing,
     /// Thread currently blocked in ipc_recv() on this channel, if any.
     waiting_receiver: Option<ThreadId>,
     /// Thread currently blocked in ipc_call() waiting for a reply.
@@ -767,6 +769,9 @@ pub fn check_timeouts() {
     for &(tid, error) in expired[..count].iter() {
         wake_with_error(tid, error);
     }
+
+    // Also check notification timeouts.
+    notify::check_notification_timeouts(now);
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,9 +1221,89 @@ pub fn init() {
         }
     }
 
+    // --- Notification + IpcSelect test threads ---
+    // Process 6: notification test (signaller + waiter).
+    {
+        let mut procs = PROCESS_TABLE.lock();
+        let mut name = [0u8; 32];
+        name[..11].copy_from_slice(b"notify-test");
+        procs[6] = Some(ProcessControl {
+            pid: ProcessId(6),
+            address_space: None,
+            resource_limits: KernelResourceLimits::native(),
+            cap_table: cap::CapabilityTable::new(),
+            thread_ids: [None; 16],
+            name,
+        });
+    }
+    let _ = cap::grant_to_process(ProcessId(6), shared::Capability::DebugPrint, false);
+
+    // Waiter thread (blocks on notification, wakes when signalled).
+    {
+        let stack_phys = sched::alloc_kernel_stack();
+        let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+        let mut thread = Thread::new_kernel(
+            ThreadId(0x601),
+            b"notify-wait\0\0\0\0\0",
+            notify_waiter_entry as *const () as usize,
+            stack_phys,
+        );
+        thread.sched.class = SchedulerClass::Normal;
+        thread.sched.effective_class = SchedulerClass::Normal;
+        thread.sched.affinity = CpuSet::all();
+        thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(6));
+
+        let idx = sched::allocate_thread(thread).expect("thread table full for notify-wait");
+        sched::enqueue_on_cpu(2, ThreadId(idx as u32), SchedulerClass::Normal);
+    }
+
+    // Signaller thread (signals the notification after a short delay).
+    {
+        let stack_phys = sched::alloc_kernel_stack();
+        let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+        let mut thread = Thread::new_kernel(
+            ThreadId(0x600),
+            b"notify-signal\0\0\0",
+            notify_signaller_entry as *const () as usize,
+            stack_phys,
+        );
+        thread.sched.class = SchedulerClass::Normal;
+        thread.sched.effective_class = SchedulerClass::Normal;
+        thread.sched.affinity = CpuSet::all();
+        thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(6));
+
+        let idx = sched::allocate_thread(thread).expect("thread table full for notify-signal");
+        sched::enqueue_on_cpu(3, ThreadId(idx as u32), SchedulerClass::Normal);
+    }
+
+    // IpcSelect test thread (waits on channel + notification via select).
+    {
+        let stack_phys = sched::alloc_kernel_stack();
+        let stack_virt_top = sched::phys_to_virt(stack_phys) + sched::STACK_SIZE;
+
+        let mut thread = Thread::new_kernel(
+            ThreadId(0x602),
+            b"select-test\0\0\0\0\0",
+            select_test_entry as *const () as usize,
+            stack_phys,
+        );
+        thread.sched.class = SchedulerClass::Normal;
+        thread.sched.effective_class = SchedulerClass::Normal;
+        thread.sched.affinity = CpuSet::all();
+        thread.context.sp = stack_virt_top as u64;
+        thread.owner_pid = Some(ProcessId(6));
+
+        let idx = sched::allocate_thread(thread).expect("thread table full for select-test");
+        sched::enqueue_on_cpu(0, ThreadId(idx as u32), SchedulerClass::Normal);
+    }
+
     crate::kinfo!(
         Ipc,
-        "IPC test threads created (server, caller, timeout, PI, cap-denied, shm-writer, shm-reader)"
+        "IPC test threads created (server, caller, timeout, PI, cap-denied, shm, notify, select)"
     );
 }
 
@@ -1783,6 +1868,165 @@ fn pi_caller_entry() -> ! {
         }
 
         sched::thread_yield();
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notification + IpcSelect test thread entry points
+// ---------------------------------------------------------------------------
+
+/// Shared notification ID between signaller and waiter.
+static NOTIFY_TEST_ID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+
+/// Notification waiter: creates a notification, waits for bits.
+fn notify_waiter_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    crate::kinfo!(Ipc, "Notify-waiter: thread started");
+
+    // Small delay to let init complete.
+    for _ in 0..2 {
+        sched::thread_yield();
+    }
+
+    let pid = crate::task::process::ProcessId(6);
+
+    // Create a notification.
+    let nid = match notify::notification_create(pid) {
+        Ok(id) => {
+            crate::kinfo!(Ipc, "Notify-waiter: created notification {}", id.0);
+            id
+        }
+        Err(e) => {
+            crate::kwarn!(Ipc, "Notify-waiter: create failed with {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    };
+
+    // Signal the signaller that notification is ready.
+    NOTIFY_TEST_ID.store(nid.0, Ordering::Release);
+
+    // Wait for bits 0xFF with timeout.
+    crate::kinfo!(Ipc, "Notify-waiter: waiting on notification {}", nid.0);
+    match notify::notification_wait(nid, 0xFF, DEFAULT_TIMEOUT_TICKS) {
+        Ok(bits) => {
+            crate::kinfo!(
+                Ipc,
+                "Notify-waiter: received bits {:#x} (expected 0x05)",
+                bits
+            );
+        }
+        Err(e) => {
+            crate::kwarn!(Ipc, "Notify-waiter: wait FAILED with {}", e);
+        }
+    }
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+/// Notification signaller: waits for notification to be created, then signals it.
+fn notify_signaller_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    crate::kinfo!(Ipc, "Notify-signal: thread started");
+
+    // Spin-poll for the waiter to create the notification. The waiter sets
+    // NOTIFY_TEST_ID from another core; we see it via acquire ordering.
+    let nid = loop {
+        let val = NOTIFY_TEST_ID.load(Ordering::Acquire);
+        if val != u32::MAX {
+            break shared::NotificationId(val);
+        }
+        core::hint::spin_loop();
+    };
+    crate::kinfo!(Ipc, "Notify-signal: got nid={}", nid.0);
+
+    // Brief tick-based delay: wait ~50ms to maximize chance the waiter is blocked
+    // (tests the blocking path). If the waiter is still in the fast/double-check
+    // path, the test still passes via the non-blocking path.
+    {
+        use crate::arch::aarch64::timer::TICK_COUNT;
+        let start = TICK_COUNT.load(Ordering::Relaxed);
+        while TICK_COUNT.load(Ordering::Relaxed) < start + 50 {
+            core::hint::spin_loop();
+        }
+    }
+    crate::kinfo!(
+        Ipc,
+        "Notify-signal: signalling 0x05 on notification {}",
+        nid.0
+    );
+    notify::notification_signal(nid, 0x05);
+    crate::kinfo!(Ipc, "Notify-signal: signal sent");
+
+    loop {
+        sched::thread_yield();
+    }
+}
+
+/// IpcSelect test: creates a notification, pre-signals, then calls select.
+fn select_test_entry() -> ! {
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+
+    crate::kinfo!(Ipc, "Select-test: thread started, deferring...");
+
+    // Wait for notification test to complete first.
+    for _ in 0..20 {
+        sched::thread_yield();
+    }
+
+    let pid = crate::task::process::ProcessId(6);
+
+    // Create a notification for the select test.
+    let nid = match notify::notification_create(pid) {
+        Ok(id) => {
+            crate::kinfo!(Ipc, "Select-test: created notification {}", id.0);
+            id
+        }
+        Err(e) => {
+            crate::kwarn!(Ipc, "Select-test: notify create failed {}", e);
+            loop {
+                sched::thread_yield();
+            }
+        }
+    };
+
+    // Pre-signal the notification so select returns immediately (fast path).
+    notify::notification_signal(nid, 0x42);
+    crate::kinfo!(
+        Ipc,
+        "Select-test: pre-signalled notification {} with 0x42",
+        nid.0
+    );
+
+    // Build select entries: wait on our notification.
+    let entries = [select::SelectEntry {
+        kind: select::SelectKind::Notification(nid, 0xFF),
+    }];
+
+    match select::ipc_select(&entries, DEFAULT_TIMEOUT_TICKS) {
+        Ok((idx, bits)) => {
+            crate::kinfo!(
+                Ipc,
+                "Select-test: idx={} bits={:#x} (expected idx=0 bits=0x42)",
+                idx,
+                bits
+            );
+        }
+        Err(e) => {
+            crate::kwarn!(Ipc, "Select-test: FAILED with {}", e);
+        }
     }
 
     loop {

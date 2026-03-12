@@ -737,7 +737,6 @@ fn test_thread_entry() -> ! {
 
 /// Check if preemption is needed and call schedule() if so.
 /// Called from timer tick handler after incrementing tick.
-#[allow(dead_code)]
 pub fn check_preemption() {
     let cpu = exceptions::core_id() as usize;
     if !NEED_RESCHED.load(Ordering::Acquire) {

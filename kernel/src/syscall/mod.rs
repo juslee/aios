@@ -28,12 +28,14 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         2 => sys_ipc_recv(tf),
         3 => sys_ipc_reply(tf),
         4 => sys_ipc_cancel(tf),
-        5 => IpcError::Enotsup as i64, // IpcSelect — Phase 3+ (requires poll set)
+        5 => sys_ipc_select(tf),
         6 => sys_channel_create(tf),
         7 => sys_channel_destroy(tf),
         8 | 9 => IpcError::Enotsup as i64, // RingChannel — future
-        10..=12 => IpcError::Enotsup as i64, // Notification — Step 10
-        13 => IpcError::Enotsup as i64,    // ChannelStats — future
+        10 => sys_notification_create(tf),
+        11 => sys_notification_signal(tf),
+        12 => sys_notification_wait(tf),
+        13 => IpcError::Enotsup as i64, // ChannelStats — future
         14 => sys_capability_transfer(tf),
         15 => sys_capability_attenuate(tf),
         16 => sys_capability_revoke(tf),
@@ -488,6 +490,103 @@ fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
 
     match crate::ipc::shmem::shared_memory_share(pid, region_id, target_pid) {
         Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notification syscalls (nr=10-12)
+// ---------------------------------------------------------------------------
+
+/// NotificationCreate (nr=10): no args.
+///
+/// Create a new notification object owned by the caller's process.
+fn sys_notification_create(_tf: &TrapFrame) -> i64 {
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::notify::notification_create(pid) {
+        Ok(id) => id.0 as i64,
+        Err(e) => e,
+    }
+}
+
+/// NotificationSignal (nr=11): x0=notification_id, x1=bits.
+///
+/// Atomically OR bits into the notification word and wake matching waiters.
+fn sys_notification_signal(tf: &TrapFrame) -> i64 {
+    let id = shared::NotificationId(tf.x[0] as u32);
+    let bits = tf.x[1];
+
+    crate::ipc::notify::notification_signal(id, bits);
+    0
+}
+
+/// NotificationWait (nr=12): x0=notification_id, x1=mask, x2=timeout_ticks.
+///
+/// Wait for matching bits. Returns matched bits or error.
+fn sys_notification_wait(tf: &TrapFrame) -> i64 {
+    let id = shared::NotificationId(tf.x[0] as u32);
+    let mask = tf.x[1];
+    let timeout = tf.x[2];
+
+    match crate::ipc::notify::notification_wait(id, mask, timeout) {
+        Ok(bits) => bits as i64,
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IpcSelect (nr=5)
+// ---------------------------------------------------------------------------
+
+/// IpcSelect (nr=5): x0=entries_ptr, x1=entry_count, x2=timeout_ticks.
+///
+/// Wait on multiple channels/notifications. Returns ready index in x0,
+/// matched bits (for notifications) in x1.
+///
+/// For Phase 3 kernel threads, entries_ptr points to kernel memory.
+fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
+    use crate::ipc::select::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
+
+    let entries_ptr = tf.x[0] as usize;
+    let entry_count = tf.x[1] as usize;
+    let timeout = tf.x[2];
+
+    if entry_count == 0 || entry_count > MAX_SELECT_ENTRIES || entries_ptr == 0 {
+        return IpcError::Einval as i64;
+    }
+
+    // For Phase 3, entries are in kernel memory — read directly.
+    // Each entry is a (u32 kind, u32 id, u64 mask) = 16 bytes.
+    let mut entries = [SelectEntry {
+        kind: SelectKind::Channel(shared::ChannelId(0)),
+    }; MAX_SELECT_ENTRIES];
+
+    for (i, entry) in entries.iter_mut().enumerate().take(entry_count) {
+        let base = entries_ptr + i * 16;
+        // SAFETY: entries_ptr is kernel memory for Phase 3 kernel threads.
+        let kind = unsafe { core::ptr::read_volatile(base as *const u32) };
+        let id = unsafe { core::ptr::read_volatile((base + 4) as *const u32) };
+        let mask = unsafe { core::ptr::read_volatile((base + 8) as *const u64) };
+
+        *entry = SelectEntry {
+            kind: match kind {
+                0 => SelectKind::Channel(shared::ChannelId(id)),
+                1 => SelectKind::Notification(shared::NotificationId(id), mask),
+                _ => return IpcError::Einval as i64,
+            },
+        };
+    }
+
+    match crate::ipc::select::ipc_select(&entries[..entry_count], timeout) {
+        Ok((idx, bits)) => {
+            // Store matched bits in x1 for the caller.
+            tf.x[1] = bits;
+            idx as i64
+        }
         Err(e) => e,
     }
 }

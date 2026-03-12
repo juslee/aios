@@ -65,10 +65,12 @@ pub enum IpcError {
     Enotsup = -9,
     EcapDormant = -10,
     Eexist = -11,
+    Einval = -12,
+    Enomem = -13,
 }
 
 /// Number of defined IPC error codes.
-pub const IPC_ERROR_COUNT: usize = 11;
+pub const IPC_ERROR_COUNT: usize = 13;
 
 #[cfg(test)]
 mod tests {
@@ -200,9 +202,9 @@ mod tests {
 
     #[test]
     fn ipc_error_count_matches() {
-        assert_eq!(IPC_ERROR_COUNT, 11);
-        // Eexist is the last at -11.
-        assert_eq!(-(IpcError::Eexist as i64) as usize, IPC_ERROR_COUNT);
+        assert_eq!(IPC_ERROR_COUNT, 13);
+        // Enomem is the last at -13.
+        assert_eq!(-(IpcError::Enomem as i64) as usize, IPC_ERROR_COUNT);
     }
 
     #[test]
