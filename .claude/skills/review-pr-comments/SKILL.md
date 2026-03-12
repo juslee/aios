@@ -19,22 +19,22 @@ If this fails, ask the user for the PR number.
 
 ## Step 2: Wait for reviewer comments
 
-Poll every 60 seconds for up to 5 minutes. Stop early if comments appear.
+Poll every 60 seconds for up to 5 minutes. Stop early if any comments appear.
+
+Check all three comment sources and use their **combined count** as the stop condition:
 
 ```bash
-gh pr view --json comments,reviews,reviewRequests --jq '{
-  comments: (.comments | length),
+# PR-level comments + reviews
+gh pr view --json comments,reviews --jq '{
+  issue_comments: (.comments | length),
   reviews: (.reviews | length)
 }'
-```
 
-Also check for PR review comments (inline code comments):
-
-```bash
+# Inline review comments (separate API)
 gh api repos/{owner}/{repo}/pulls/{number}/comments --jq 'length'
 ```
 
-If after 5 minutes there are still 0 comments, inform the user and stop.
+**Stop condition**: `issue_comments + reviews + inline_comments > 0`. If after 5 minutes the combined count is still 0, inform the user and stop.
 
 ## Step 3: Read all comments
 
@@ -66,8 +66,10 @@ After all fixes, create a single commit:
 ```
 Address PR review comments
 
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 ```
+
+Note: Use the generic `Claude` attribution to match project conventions and avoid staleness as models change.
 
 ## Step 6: Reply to each comment
 
@@ -104,19 +106,27 @@ gh api graphql -f query='
 '
 ```
 
-To get thread node IDs, query:
+To get thread node IDs, query with pagination and comment identifiers for reliable mapping:
 
 ```bash
 gh api graphql -f query='
-  query {
+  query($cursor: String) {
     repository(owner: "{owner}", name: "{repo}") {
       pullRequest(number: {number}) {
-        reviewThreads(first: 100) {
+        reviewThreads(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
           nodes {
             id
             isResolved
-            comments(first: 1) {
-              nodes { body }
+            comments(first: 10) {
+              nodes {
+                id
+                databaseId
+                body
+              }
             }
           }
         }
@@ -126,7 +136,9 @@ gh api graphql -f query='
 '
 ```
 
-Only resolve threads that were actually addressed (fixed or answered).
+If `pageInfo.hasNextPage` is true, repeat the query with `$cursor` set to `endCursor` until all threads are fetched.
+
+Map each REST `comment_id` to a thread by matching against the `databaseId` field in thread comments. Only resolve threads that were actually addressed (fixed or answered).
 
 ## Step 8: Push
 
