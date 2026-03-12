@@ -17,7 +17,7 @@ pub struct Timer {
 
 /// Read CNTFRQ_EL0 (timer frequency).
 #[inline(always)]
-fn read_cntfrq() -> u64 {
+pub fn read_cntfrq() -> u64 {
     let val: u64;
     // SAFETY: CNTFRQ_EL0 is always readable at EL1.
     unsafe { core::arch::asm!("mrs {}, CNTFRQ_EL0", out(reg) val) };

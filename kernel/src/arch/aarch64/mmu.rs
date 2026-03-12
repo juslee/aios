@@ -154,19 +154,28 @@ pub unsafe fn init_mmu() {
     // Block 2: 0x8000_0000 – RAM (rest of 2 GB)
     l1[2] = l1_block_descriptor(0x8000_0000, MAIR_NORMAL_IDX, false);
 
-    // SAFETY: DSB SY is a data synchronization barrier — a hint instruction
-    // safe at EL1. Ensures all page table writes are visible before TTBR swap.
+    // SAFETY: DSB SY ensures all page table writes reach Point of Coherency.
     core::arch::asm!("dsb sy");
+
+    // Force page table pages out of cache to physical memory.
+    // Some QEMU versions may have walker coherency quirks.
+    // SAFETY: DC CIVAC cleans+invalidates cache lines by VA. l0/l1 are
+    // valid virtual addresses of our page table statics.
+    let l0_va = l0 as *const [u64; 512] as usize;
+    let l1_va = l1 as *const [u64; 512] as usize;
+    core::arch::asm!(
+        "dc civac, {l0}",
+        "dc civac, {l1}",
+        "dsb sy",
+        l0 = in(reg) l0_va,
+        l1 = in(reg) l1_va,
+    );
 
     // Swap TTBR0 to our identity map page tables.
     // edk2's T0SZ=20 (44-bit VA, L0 start): our L0[0]→L1 with 1GB blocks
     // is compatible — L0 index for all our addresses (0x00–0xBF_FFFF_FFFF) is 0.
-    // We skip pre-swap TLBI: stale edk2 TLB entries map identity VA→PA
-    // (same as ours), so they're harmless. New entries from our tables will
-    // be filled on TLB misses.
     // SAFETY: l0_phys is the physical address of a valid, page-aligned L0 page
     // table built above. Writing TTBR0_EL1 at EL1 is architecturally permitted.
-    // The ISB ensures subsequent instruction fetches use the new translation tables.
     let ttbr0 = l0_phys;
     core::arch::asm!(
         "msr TTBR0_EL1, {ttbr0}",
@@ -174,17 +183,9 @@ pub unsafe fn init_mmu() {
         ttbr0 = in(reg) ttbr0,
     );
 
-    // SAFETY: TLBI and DSB are TLB maintenance instructions safe at EL1.
-    // We use VM-local TLBI + non-shareable DSB instead of broadcast TLBI +
-    // DSB SY because the latter hangs — DSB SY waits for TLBI completion on
-    // all PEs, including secondary cores parked in WFE. This is correct:
-    // stale edk2 TLB entries map identity (VA=PA), same as our tables.
-    // New entries fill on TLB miss from our page tables.
-    core::arch::asm!(
-        "tlbi vmalle1", // VM-local, not broadcast
-        "dsb nsh",      // non-shareable domain — this core only
-        "isb",
-    );
+    // SAFETY: TLBI + DSB ISH invalidate all TLB entries in the Inner Shareable
+    // domain. DSB ISH is safe (does not hang with parked cores on QEMU 10.x).
+    core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb",);
 
     // Save boot CPU's MMU register state for secondary cores.
     // These registers are read-only from here on; secondary cores load them
