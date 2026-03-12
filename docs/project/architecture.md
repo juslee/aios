@@ -32,6 +32,8 @@
 - [audio.md](../platform/audio.md) — Audio subsystem architecture
 - [accessibility.md](../experience/accessibility.md) — Accessibility engine
 - [power-management.md](../platform/power-management.md) — Power management policy engine
+- [developer-guide.md](./developer-guide.md) — Kernel developer guide: Rust patterns, pitfalls, workflow
+- [ai-agent-context.md](./ai-agent-context.md) — AI agent onboarding: required reading, anti-patterns, verification
 
 -----
 
