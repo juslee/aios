@@ -69,6 +69,8 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
+| Developer guide | `docs/project/developer-guide.md` | All (all phases) |
+| AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
 
 ---
 
