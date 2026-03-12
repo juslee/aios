@@ -14,6 +14,18 @@ The parent architecture document describes the boot sequence at a high level: fi
 
 The boot sequence has one invariant that governs every design decision: **the system is usable at each phase boundary.** If any phase after Phase 2 (core services) fails, the user still gets a functional — if degraded — desktop. AIRS failure doesn't block boot. Network failure doesn't block boot. The only hard dependencies on the critical path are: firmware, kernel, storage, display, and the compositor.
 
+### 1.1 Boot Philosophy
+
+AIOS follows the **minimum-kernel, maximum-delegation** principle observed in production microkernels:
+
+- **seL4 model:** The kernel boots minimally and hands the root task a `BootInfo` containing capabilities to all system resources. The root task — not the kernel — sets up drivers, filesystems, and services. AIOS follows this pattern: the kernel initializes hardware, builds page tables, and delegates everything else to the Service Manager via capability handoff.
+
+- **Zircon model:** Fuchsia's Zircon kernel embeds `userboot` (the first userspace process) at compile time. The kernel doesn't decompress or interpret boot images — userboot does. AIOS similarly defers service startup, storage initialization, and AI runtime loading to userspace processes.
+
+- **Two-phase handoff:** The UEFI stub runs in Boot Services (full UEFI API available), assembles a `BootInfo` struct with everything the kernel needs, then calls `ExitBootServices()` — the point of no return. The kernel receives `BootInfo` in `x0` and never calls back into UEFI Boot Services.
+
+The kernel's job during early boot is narrow: enable the FPU, set up exception vectors, parse the device tree, initialize the UART/GIC/timer, build page tables, bring secondary cores online, and initialize the scheduler + IPC subsystem. Everything else — storage, display composition, networking, AI — is userspace work.
+
 -----
 
 ## 2. Firmware Handoff
@@ -48,129 +60,127 @@ DRAM training, PCI enumeration`"]
 
 ### 2.2 What the Kernel Receives
 
-The UEFI stub assembles a `BootInfo` structure and passes it to the kernel entry point in a register (`x0`). This is the kernel's only source of information about the hardware:
+The UEFI stub assembles a `BootInfo` structure and passes it to the kernel entry point in register `x0`. This is the kernel's only source of information about the hardware. The struct uses **flat `u64` fields** (not `Option<T>`) for a stable C ABI across toolchain updates — zero means "not present":
 
 ```rust
-/// Passed from UEFI stub to kernel entry point.
-/// Lives in a region marked as BootInfo in the memory map.
+// Source: shared/src/boot.rs
+
+/// Information passed from UEFI stub to kernel entry point.
+/// All fields use fixed-layout primitives for a stable C ABI.
+/// Fields that may be absent use u64 with 0 meaning "not present".
 #[repr(C)]
 pub struct BootInfo {
     /// Magic number for validation: 0x41494F53_424F4F54 ("AIOSBOOT")
-    magic: u64,
+    pub magic: u64,
 
-    /// UEFI memory map: array of MemoryDescriptor entries.
-    /// The kernel uses this to know what physical memory exists,
-    /// what's reserved, and what's free.
-    memory_map: MemoryMap,
+    /// UEFI memory map: physical address of the MemoryDescriptor array (0 = absent).
+    pub memory_map_addr: u64,
+    /// Number of MemoryDescriptor entries in the memory map.
+    pub memory_map_count: u64,
+    /// Size of each MemoryDescriptor entry in bytes (UEFI descriptor size may exceed sizeof).
+    pub memory_map_entry_size: u64,
 
-    /// Framebuffer for early visual output (before compositor exists).
-    /// Acquired from UEFI GOP. May be None on headless systems.
-    framebuffer: Option<FramebufferInfo>,
+    /// Framebuffer base address (0 = not available / headless).
+    pub framebuffer: u64,
 
-    /// Device tree blob (FDT). On QEMU and Pi, this describes
-    /// all hardware: interrupt controllers, timers, UARTs, etc.
-    device_tree: Option<DeviceTreeInfo>,
+    /// Device tree blob base address (0 = not present).
+    pub device_tree: u64,
 
-    /// ACPI RSDP (Root System Description Pointer).
-    /// QEMU provides both DTB and ACPI. Pi provides DTB only.
-    /// Kernel prefers DTB when both are present.
-    acpi_rsdp: Option<PhysicalAddress>,
+    /// ACPI RSDP physical address (0 = not present).
+    pub acpi_rsdp: u64,
 
-    /// UEFI Runtime Services function table.
-    /// Provides: GetTime, SetTime, ResetSystem, GetVariable.
-    /// Available after ExitBootServices (unlike Boot Services).
-    runtime_services: Option<PhysicalAddress>,
+    /// UEFI Runtime Services table address (0 = not available).
+    pub runtime_services: u64,
 
-    /// Random seed from UEFI RNG protocol. Used for KASLR.
-    /// If unavailable, kernel falls back to timer-based entropy.
-    rng_seed: [u8; 32],
+    /// Random seed from UEFI RNG protocol for KASLR.
+    pub rng_seed: [u8; 32],
 
     /// Physical address where the kernel ELF was loaded.
-    kernel_phys_base: PhysicalAddress,
+    pub kernel_phys_base: PhysAddr,
 
-    /// Size of kernel image in memory (text + rodata + data + bss).
-    kernel_size: usize,
+    /// Size of kernel image in memory.
+    pub kernel_size: u64,
 
-    /// Physical address of the initramfs (cpio archive).
-    initramfs_base: PhysicalAddress,
-    initramfs_size: usize,
+    /// Physical address of the initramfs (0 = not present).
+    pub initramfs_base: u64,
+    /// Size of the initramfs in bytes (0 = not present).
+    pub initramfs_size: u64,
 
-    /// Command line arguments (from UEFI boot variable or config).
-    cmdline: CommandLine,
+    /// Command line string address (0 = not present).
+    pub cmdline_addr: u64,
+    /// Command line length in bytes.
+    pub cmdline_len: u64,
+
+    /// Framebuffer width in pixels (0 = not available).
+    pub fb_width: u32,
+    /// Framebuffer height in pixels.
+    pub fb_height: u32,
+    /// Framebuffer stride in bytes (byte offset from one row to the next).
+    pub fb_stride: u32,
+    /// Framebuffer pixel format: 0 = Bgr8, 1 = Rgb8 (matches PixelFormat repr).
+    pub fb_pixel_format: u32,
+    /// Framebuffer total size in bytes (stride * height).
+    pub fb_size: u64,
 }
+```
 
-#[repr(C)]
-pub struct MemoryMap {
-    entries: *const MemoryDescriptor,
-    entry_count: usize,
-    entry_size: usize,          // UEFI descriptor size (may be > sizeof)
-}
+The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. The UEFI stub populates all available fields before calling `ExitBootServices()`.
+
+**Memory descriptors** follow the EFI_MEMORY_DESCRIPTOR layout with a 4-byte padding field for alignment:
+
+```rust
+// Source: shared/src/boot.rs
 
 #[repr(C)]
 pub struct MemoryDescriptor {
-    memory_type: MemoryType,
-    physical_start: PhysicalAddress,
-    virtual_start: VirtualAddress, // unused, UEFI sets to 0
-    page_count: u64,            // pages of 4 KiB each
-    attributes: u64,            // cacheability, write-protection
+    /// UEFI memory type (EFI_MEMORY_TYPE).
+    pub ty: u32,
+    /// Padding to align phys_start to 8 bytes (UEFI ABI requirement).
+    pub _pad: u32,
+    /// Physical address of the start of the memory region.
+    pub phys_start: u64,
+    /// Virtual address (set by SetVirtualAddressMap; unused by kernel).
+    pub virt_start: u64,
+    /// Number of 4 KiB pages in the region.
+    pub page_count: u64,
+    /// Memory attributes (EFI_MEMORY_ATTRIBUTES).
+    pub attribute: u64,
 }
 
-/// Classification of physical memory (see also memory.md §2 for canonical definition).
+/// Classification of physical memory regions.
+/// See also memory.md §2 for the canonical definition.
+#[repr(u32)]
 pub enum MemoryType {
-    Conventional,               // free, usable by kernel
-    LoaderCode,                 // UEFI stub code, reclaimable
-    LoaderData,                 // UEFI stub data, reclaimable
-    BootServicesCode,           // reclaimable after ExitBootServices
-    BootServicesData,           // reclaimable after ExitBootServices
-    RuntimeServicesCode,        // reserved, UEFI Runtime uses this
-    RuntimeServicesData,        // reserved, UEFI Runtime uses this
-    Reserved,                   // firmware-reserved, do not touch
-    AcpiReclaimable,            // ACPI tables, reclaimable after parsing
-    AcpiNvs,                    // ACPI non-volatile storage, reserved
-    MemoryMappedIO,             // device MMIO, not real RAM
-    BootInfo,                   // the BootInfo struct itself
-    KernelImage,                // where the kernel ELF was loaded
-    Initramfs,                  // the initial ramdisk
+    Conventional = 0,    // free, usable by kernel
+    LoaderCode = 1,      // UEFI stub code, reclaimable
+    LoaderData = 2,      // UEFI stub data, reclaimable
+    BootServicesCode = 3,// reclaimable after ExitBootServices
+    BootServicesData = 4,// reclaimable after ExitBootServices
+    RuntimeServicesCode = 5,// reserved, UEFI Runtime uses this
+    RuntimeServicesData = 6,// reserved, UEFI Runtime uses this
+    Reserved = 7,        // firmware-reserved, do not touch
+    AcpiReclaimable = 8, // ACPI tables, reclaimable after parsing
+    AcpiNvs = 9,         // ACPI non-volatile storage, reserved
+    MemoryMappedIO = 10, // device MMIO, not real RAM
+    BootInfo = 11,       // the BootInfo struct itself
+    KernelImage = 12,    // where the kernel ELF was loaded
+    Initramfs = 13,      // the initial ramdisk
 }
 
-#[repr(C)]
-pub struct FramebufferInfo {
-    base: PhysicalAddress,             // physical address of pixel buffer
-    size: usize,                // total buffer size in bytes
-    width: u32,                 // pixels
-    height: u32,                // pixels
-    stride: u32,                // bytes per row (may include padding)
-    format: PixelFormat,        // Bgr8, Rgb8, or custom bitmask
-}
-
+#[repr(u32)]
 pub enum PixelFormat {
-    Bgr8,                       // most common: blue-green-red, 8 bits each
-    Rgb8,
-    Bitmask {
-        red: PixelBitmask,
-        green: PixelBitmask,
-        blue: PixelBitmask,
-    },
-}
-
-#[repr(C)]
-pub struct DeviceTreeInfo {
-    base: PhysicalAddress,
-    size: usize,
-}
-
-#[repr(C)]
-pub struct CommandLine {
-    ptr: *const u8,
-    len: usize,
+    Bgr8 = 0,           // most common: blue-green-red, 8 bits each
+    Rgb8 = 1,
 }
 ```
+
+**Note on UEFI memory type mapping:** UEFI type values differ from AIOS `MemoryType` values. The `MemoryDescriptor::memory_type()` method translates: UEFI type 0 (Reserved) → `Reserved`, UEFI type 7 (Conventional) → `Conventional`, UEFI types 8 (Unusable) and 13 (PalCode) → `Reserved`, UEFI types 11–12 (MMIO variants) → `MemoryMappedIO`. See `shared/src/boot.rs` for the full translation table.
 
 ### 2.3 Kernel Command Line
 
 The `CommandLine` in `BootInfo` is a UTF-8 string parsed by the kernel during Step 4 (device tree parse). It comes from `boot.cfg` on the ESP or from the UEFI `LoadOptions` variable. Recognized options:
 
-```
+```text
 Option              Default   Description
 ────────────────────────────────────────────────────────────
 quiet               off       Suppress kernel log output to UART. Boot phase
@@ -199,7 +209,7 @@ Unknown options are ignored and logged at `debug` level if `debug` is on. The co
 
 The ESP is a FAT32 partition at the start of the boot device:
 
-```
+```text
 /EFI/BOOT/
     BOOTAA64.EFI            — AIOS UEFI stub (fallback boot path)
 /EFI/AIOS/
@@ -215,7 +225,7 @@ The ESP is small (64-256 MB). It holds only the boot chain. The OS itself lives 
 
 ### 2.5 QEMU Boot vs Real Hardware
 
-```
+```text
                         QEMU                    Raspberry Pi 4/5         Apple Silicon
 ─────────────────────────────────────────────────────────────────────────────────────────
 Firmware                Built-in UEFI           VideoCore + UEFI         m1n1 + U-Boot + UEFI
@@ -240,7 +250,7 @@ Acceleration            HVF (macOS), KVM (Linux) Native aarch64          Native 
 
 AIOS runs at **EL1** (OS kernel privilege). It does not use EL2 (hypervisor) and does not act as a hypervisor. The levels below the kernel:
 
-```
+```text
 Exception Level     Who occupies it            AIOS's relationship
 ────────────────────────────────────────────────────────────────────
 EL3 (Secure Monitor) ARM Trusted Firmware (ATF)  AIOS calls it via SMC for PSCI
@@ -272,44 +282,48 @@ The kernel reads this during Step 4 (device tree parse) and stores it for SMP br
 The kernel abstracts these differences behind a `Platform` trait initialized during early boot. The full HAL specification — device abstractions, MMIO primitives, VirtIO transport, DMA, and the guide for adding new platforms — is in [hal.md](./hal.md).
 
 ```rust
-pub trait Platform: Send + Sync {
-    fn init_interrupts(&self, dt: &DeviceTree) -> Result<InterruptController>;
-    fn init_timer(&self, dt: &DeviceTree) -> Result<Timer>;
-    fn init_uart(&self, dt: &DeviceTree) -> Result<Uart>;
-    fn init_gpu(&self, dt: &DeviceTree) -> Result<GpuDevice>;
-    fn init_network(&self, dt: &DeviceTree) -> Result<NetworkDevice>;
-    fn init_storage(&self, dt: &DeviceTree) -> Result<StorageDevice>;
-    fn init_rng(&self, dt: &DeviceTree) -> Result<RngDevice>;
+// Source: kernel/src/platform/mod.rs
 
-    /// Allows downcasting to concrete platform type for extension trait checks.
-    /// See hal.md §12.3 for the runtime discovery pattern.
-    fn as_any(&self) -> &dyn Any;
+/// Hardware abstraction trait for platform-specific initialization.
+///
+/// Each platform (QEMU virt, Raspberry Pi 4/5, Apple Silicon) implements
+/// this trait. Methods are added as subsystems are implemented across phases.
+pub trait Platform: Send + Sync {
+    fn name(&self) -> &'static str;
+
+    // Phase 1 — kernel early boot
+    fn init_uart(&self, dt: &DeviceTree) -> Uart;
+    fn init_interrupts(&self, dt: &DeviceTree) -> InterruptController;
+    fn init_timer(&self, dt: &DeviceTree, ic: &InterruptController) -> Timer;
+
+    // Phase 2+ — subsystem initialization (added as subsystems land)
+    fn init_gpu(&self, dt: &DeviceTree) -> Option<GpuDevice>;
+    fn init_network(&self, dt: &DeviceTree) -> Option<NetworkDevice>;
+    fn init_storage(&self, dt: &DeviceTree) -> Option<StorageDevice>;
+    fn init_rng(&self, dt: &DeviceTree) -> Option<RngDevice>;
 }
 
-pub struct QemuPlatform;
-pub struct RaspberryPi4Platform;
-pub struct RaspberryPi5Platform;
-pub struct AppleSiliconPlatform { soc: AppleSoc }
-
-/// Selected at boot time by reading the DTB compatible string.
-/// See hal.md §2 for the full platform detection and compatible strings.
-pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
-    let compat = dt.root_compatible();
-    match compat {
-        c if c.contains("qemu") => Box::new(QemuPlatform),
-        c if c.contains("brcm,bcm2711") => Box::new(RaspberryPi4Platform),
-        c if c.contains("brcm,bcm2712") => Box::new(RaspberryPi5Platform),
-        c if c.contains("apple,t8103") => Box::new(AppleSiliconPlatform::new(AppleSoc::T8103)),
-        c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
-        c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
-        c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
-        c if c.contains("apple,t6040") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6040)),
-        _ => panic!("Unknown platform: {}", compat),
+/// Detect the platform from the device tree root compatible string.
+/// Returns a static reference because there is no heap at detection time.
+pub fn detect_platform(dt: &DeviceTree) -> &'static dyn Platform {
+    let compat = dt.root_compatible_str();
+    if compat.contains("virt") || compat.contains("qemu") {
+        static QEMU: qemu::QemuPlatform = qemu::QemuPlatform;
+        return &QEMU;
     }
+    if compat.contains("brcm,bcm2711") {  // Pi 4
+        static PI4: pi4::Pi4Platform = pi4::Pi4Platform;
+        return &PI4;
+    }
+    if compat.contains("brcm,bcm2712") {  // Pi 5
+        static PI5: pi5::Pi5Platform = pi5::Pi5Platform;
+        return &PI5;
+    }
+    panic!("Unknown platform: {}", compat);
 }
 ```
 
-The seven `init_*` methods are called at different points during boot — UART, interrupts, timer, and RNG during kernel early boot (before heap), and GPU, network, and storage during service manager phases (after heap). The trait also includes `as_any()` for extension trait discovery (see hal.md §12). See hal.md §3.2 for the full initialization order.
+Detection returns a `&'static dyn Platform` (not `Box<dyn Platform>`) because there is no heap at detection time. See hal.md §3.2 for the full initialization order and device driver architecture.
 
 -----
 
@@ -319,340 +333,235 @@ Early boot runs entirely in kernel space (EL1). No interrupts, no virtual memory
 
 ### 3.1 Phase Tracking
 
-The kernel tracks its boot progress through an enum. This is written to the UART at each transition and recorded for crash diagnostics:
+The kernel tracks boot progress through an enum with 18 variants (defined in `shared/src/boot.rs`, re-exported in `kernel/src/boot_phase.rs`). Phase transitions are logged to the UART via structured logging macros:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Source: shared/src/boot.rs
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
 pub enum EarlyBootPhase {
-    /// Entered kernel entry point. Stack pointer set. BSS zeroed.
-    EntryPoint,
-    /// Exception vectors installed at VBAR_EL1.
-    ExceptionVectors,
-    /// Device tree parsed. Platform detected.
-    DeviceTreeParsed,
-    /// UART initialized. kprintln!() works from here.
-    UartReady,
-    /// Interrupt controller initialized (GICv3, GICv2, or AIC).
-    InterruptsReady,
-    /// ARM Generic Timer configured. Timer interrupts enabled.
-    TimerReady,
-    /// MMU enabled. TTBR0 (user) and TTBR1 (kernel) page tables active.
-    /// Identity mapping removed. Running on virtual addresses.
-    MmuEnabled,
-    /// Physical page allocator (buddy system) initialized.
-    PageAllocatorReady,
-    /// Kernel heap (slab allocator) initialized. alloc works.
-    HeapReady,
-    /// Hardware RNG initialized. Runtime entropy available.
-    RngReady,
-    /// KASLR slide applied (if RNG seed was available).
-    KaslrApplied,
-    /// Capability manager initialized. Root capability exists.
-    CapabilityManagerReady,
-    /// IPC subsystem initialized. Channels and endpoints available.
-    IpcReady,
-    /// Audit log ring buffer initialized. Kernel events are logged.
-    AuditLogReady,
-    /// Process manager initialized. Can create and schedule processes.
-    ProcessManagerReady,
-    /// Provenance chain initialized. Can sign and record events.
-    ProvenanceReady,
-    /// Early boot complete. Ready to launch Service Manager.
-    Complete,
+    EntryPoint = 0,              // Entered kernel entry point
+    ExceptionVectors = 1,        // Rust vector table installed at VBAR_EL1
+    DeviceTreeParsed = 2,        // Device tree parsed, platform detected
+    UartReady = 3,               // PL011 UART fully initialized
+    InterruptsReady = 4,         // GICv3 distributor + redistributor configured
+    TimerReady = 5,              // ARM Generic Timer configured (1 kHz tick)
+    MmuEnabled = 6,              // TTBR0 identity map built (Phase 1 M5)
+    PageAllocatorReady = 7,      // Buddy allocator initialized from UEFI map
+    HeapReady = 8,               // Slab allocator active, alloc works
+    LogRingsReady = 9,           // Per-core log ring buffers usable
+    RngReady = 10,               // (reserved — not yet advanced to)
+    KaslrApplied = 11,           // (reserved — not yet advanced to)
+    CapabilityManagerReady = 12, // (reserved — not yet advanced to)
+    IpcReady = 13,               // (reserved — not yet advanced to)
+    AuditLogReady = 14,          // (reserved — not yet advanced to)
+    ProcessManagerReady = 15,    // SMP cores online, scheduler initialized
+    ProvenanceReady = 16,        // (reserved — not yet advanced to)
+    Complete = 17,               // Early boot complete
 }
 
-/// Mutable global, accessed only from the boot CPU during single-threaded init.
-static mut BOOT_PHASE: EarlyBootPhase = EarlyBootPhase::EntryPoint;
+pub const EARLY_BOOT_PHASE_COUNT: usize = 18;
+```
 
-fn advance_boot_phase(phase: EarlyBootPhase) {
-    unsafe { BOOT_PHASE = phase; }
-    // If UART is ready, print the transition
-    if phase as u32 >= EarlyBootPhase::UartReady as u32 {
-        kprintln!("[boot] {:?} — {}ms", phase, boot_elapsed_ms());
+The phase is tracked via `AtomicU64` for safe concurrent access:
+
+```rust
+// Source: kernel/src/boot_phase.rs
+
+static CURRENT_PHASE: AtomicU64 = AtomicU64::new(0);
+
+pub fn advance_boot_phase(phase: EarlyBootPhase) {
+    CURRENT_PHASE.store(phase as u64, Ordering::Relaxed);
+    if phase >= EarlyBootPhase::UartReady {
+        crate::kinfo!(Boot, "{:?} — {}ms", phase, boot_elapsed_ms());
     }
 }
 ```
 
+Boot timing reads `CNTVCT_EL0` (ARM Generic Timer virtual count) directly — no interrupts or heap required.
+
 ### 3.2 Kernel State
 
-The kernel maintains a global state structure that tracks all initialized subsystems. This is built up during early boot and consulted by all kernel code:
+There is **no centralized `KernelState` struct**. Each subsystem manages its own global state via `static` variables (atomics for concurrent access, `Mutex<T>` where needed). This avoids a God-object and lets each subsystem be initialized independently:
 
-```rust
-pub struct KernelState {
-    pub boot_info: &'static BootInfo,
-    pub platform: &'static dyn Platform,
-    pub boot_phase: EarlyBootPhase,
-
-    // HAL devices (see hal.md for type definitions)
-    pub interrupt_controller: Option<InterruptController>,
-    pub timer: Option<Timer>,
-    pub uart: Option<Uart>,
-    pub rng: Option<RngDevice>,
-    pub gpu: Option<GpuDevice>,
-    pub network: Option<NetworkDevice>,
-    pub storage: Option<StorageDevice>,
-
-    // Memory
-    pub page_allocator: Option<BuddyAllocator>,
-    pub kernel_page_table: Option<PageTable>,
-    pub heap: Option<SlabAllocator>,
-    pub kaslr_offset: usize,
-
-    // Core subsystems
-    pub capability_manager: Option<CapabilityManager>,
-    pub ipc: Option<IpcSubsystem>,
-    pub audit_log: Option<AuditRingBuffer>,
-    pub process_manager: Option<ProcessManager>,
-    pub provenance: Option<ProvenanceChain>,
-    pub scheduler: Option<Scheduler>,
-
-    // Boot timing
-    pub boot_start: u64,           // timer counter value at entry
-    pub phase_timestamps: [u64; 17], // indexed by EarlyBootPhase as usize (0-based); resize if enum grows
-}
+```text
+Subsystem          Global state                              Location
+──────────────────────────────────────────────────────────────────────────────
+Boot phase         CURRENT_PHASE: AtomicU64                  boot_phase.rs
+Boot timing        BOOT_START_TICKS: AtomicU64               boot_phase.rs
+UART               UART_BASE_ADDR: AtomicUsize                arch/aarch64/uart.rs
+GIC                (init returns InterruptController)         arch/aarch64/gic.rs
+Timer              TICK_INTERVAL: AtomicU64                   arch/aarch64/timer.rs
+                   TICK_COUNT: AtomicU64
+                   NEED_RESCHED: AtomicBool
+Memory pools       FRAME_ALLOC: Mutex<Option<FrameAllocator>> mm/frame.rs
+Slab allocator     SLAB: Mutex<SlabAllocator>                mm/slab.rs
+ASID               ASID_ALLOC: Mutex<AsidAllocator>           mm/uspace.rs
+Scheduler          RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES]  sched/mod.rs
+                   THREAD_TABLE: Mutex<[Option<Thread>; 64]> task/mod.rs
+IPC channels       CHANNEL_TABLE: Mutex<[Option<Channel>]>   ipc/mod.rs
+Capabilities       (per-process CapabilityTable)             cap/mod.rs
+Processes          PROCESS_TABLE: Mutex<[Option<ProcessControl>]> task/process.rs
+Services           SERVICE_MANAGER: Mutex<ServiceManager>    service/mod.rs
 ```
+
+This design emerged from `no_std` constraints: there is no global heap at early boot, so subsystems cannot be heap-allocated into a central struct. Each subsystem's `init()` function writes to its own statics.
 
 ### 3.3 Step-by-Step Early Boot
 
-Each step below includes what it initializes and why it must happen at that point.
+The boot sequence is split between **boot.S** (assembly, pre-Rust) and **kernel_main** (Rust). Each step must complete before the next begins. The step numbers below match the comments in `kernel/src/main.rs`.
 
-**Step 1: Entry point.** The UEFI stub jumps here. The kernel is running on a temporary stack allocated by the UEFI stub. BSS is zeroed. `x0` holds the physical address of `BootInfo`. The processor is at EL1, MMU is on (UEFI's identity mapping), caches are on.
+#### Phase A: boot.S (assembly, before kernel_main)
 
-Immediately at entry, before any other code runs:
+**boot.S Step 1: FPU enable.** The very first instruction enables the Advanced SIMD (NEON) and floating-point unit. Without this, any floating-point or NEON instruction traps to EL1. Rust's codegen freely uses NEON registers for `memcpy`/`memset`, so this must happen before ANY Rust code executes.
 
 ```asm
-// Enable FP/NEON (CPACR_EL1.FPEN = 0b11)
-// Without this, any floating-point or NEON instruction traps to EL1.
-// Rust's codegen freely uses NEON registers for memcpy/memset,
-// so this must happen before ANY Rust code executes.
 mrs  x1, CPACR_EL1
 orr  x1, x1, #(3 << 20)    // FPEN = 0b11: no trapping
 msr  CPACR_EL1, x1
 isb                          // ensure the change is visible
-
-// Save BootInfo pointer
-mov  x19, x0                // x19 is callee-saved
+mov  x19, x0                // save BootInfo pointer (callee-saved)
 ```
 
-This enables the Advanced SIMD (NEON) and floating-point unit. On aarch64, NEON is mandatory (not optional like on ARMv7), but access still traps unless `CPACR_EL1.FPEN` is set. UEFI may or may not have enabled it — the kernel sets it unconditionally. NEON is later used by: GGML runtime (Phase 3 AIRS inference), `memcpy`/`memset` optimizations throughout the kernel, and cryptographic operations (AES-NI equivalent instructions via ARMv8 Crypto Extensions).
+**boot.S Step 2: Stub exception vectors.** Install a minimal exception vector table (`.text.vectors` section) at `VBAR_EL1`. These stub vectors simply loop (`b .`) on any exception — a safety net until the Rust vector table replaces them in kernel_main.
 
-**Step 2: Exception vectors.** Write `VBAR_EL1` to point to the kernel's exception vector table. This must happen first because any unexpected exception before this point would jump to whatever garbage is at the current `VBAR_EL1`. The vectors handle: synchronous exceptions (syscalls, page faults, alignment faults), IRQ, FIQ, and SError. All vectors initially point to a panic handler that dumps registers to UART.
+**boot.S Step 3: Park secondary cores.** Read `MPIDR_EL1[7:0]` to get the core ID. If non-zero, branch to a `wfe` parking loop. Only core 0 (the boot CPU) continues.
 
-```
+**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top` (128 KiB stack at end of BSS, defined in linker.ld).
+
+**boot.S Step 5: Zero BSS.** Loop from `__bss_start` to `__bss_end`, writing zero in 8-byte strides.
+
+**boot.S Step 6: Build minimal TTBR1.** Construct a 3-page page table hierarchy (L0 → L1 → L2) in BSS statics. L2 contains 4 × 2MB block descriptors covering `0x40000000–0x40800000` with MAIR Attr3 (WB cacheable, Inner Shareable, AF set). This minimal map is sufficient to branch to the virtual kernel_main address.
+
+**boot.S Step 7: Configure TCR_EL1.** Set T1SZ=16 (48-bit kernel VA), TG1=4KiB granule, IRGN1/ORGN1=WB WA, SH1=Inner Shareable. Preserve existing TTBR0 configuration (bits[15:0]) from edk2.
+
+**boot.S Step 8: Install TTBR1 and branch to virtual kernel_main.** Write L0 physical address to `TTBR1_EL1`. Execute `TLBI VMALLE1` + `DSB NSH` (non-broadcast — broadcast hangs with parked cores under NC memory). Compute virtual kernel_main address by adding `VIRT_PHYS_OFFSET` (`0xFFFE_FFFF_C000_0000`). Convert SP to virtual. Branch to virtual `kernel_main` with `x0 = x19` (BootInfo physical address).
+
+#### Phase B: kernel_main (Rust)
+
+**Step 1: Boot timing + BootInfo validation.** Read `CNTVCT_EL0` for boot timing baseline. Validate BootInfo pointer is non-zero and magic equals `0x41494F53_424F4F54`. If invalid, halt with error message on UART.
+
+**Step 2: Rust exception vectors.** Install the full Rust-owned exception vector table (`.text.rvectors` section) at `VBAR_EL1`, replacing the boot.S stubs. The Rust vectors handle: synchronous exceptions (syscalls via SVC, page faults, alignment faults), IRQ dispatch to `irq_handler_el1`, and SError/FIQ stubs. All unexpected exceptions dump registers to UART via direct `putc()` (not `println!()`, to prevent recursive faults). Advance phase: `ExceptionVectors`.
+
+```text
 Exception Vector Table (aligned to 2048 bytes):
   Offset    Exception             Handler
   ─────────────────────────────────────────
   0x000     Sync from current EL  sync_current_el_handler
-  0x080     IRQ from current EL   irq_current_el_handler
-  0x100     FIQ from current EL   fiq_current_el_handler
-  0x180     SError from current   serror_current_el_handler
-  0x200     Sync from lower EL    sync_lower_el_handler  (syscalls)
+  0x080     IRQ from current EL   irq_current_el_handler  → irq_handler_el1
+  0x100     FIQ from current EL   fiq_stub (b .)
+  0x180     SError from current   serror_stub (b .)
+  0x200     Sync from lower EL    lower_el_sync_handler   (SVC dispatch)
   0x280     IRQ from lower EL     irq_lower_el_handler
-  0x300     FIQ from lower EL     fiq_lower_el_handler
-  0x380     SError from lower EL  serror_lower_el_handler
+  0x300     FIQ from lower EL     fiq_stub (b .)
+  0x380     SError from lower EL  serror_stub (b .)
 ```
 
-**Step 3: UART initialization.** Parse the device tree (minimal parse — just find the `/chosen/stdout-path` node) to locate the PL011 UART base address. Initialize the UART with 115200 baud, 8N1. From this point, `kprintln!()` works. This is the first sign of life visible to a developer watching the serial console:
+**Note on two-phase vector install:** boot.S installs stub vectors (Step 2 assembly) that are a safety net during the assembly-to-Rust transition. kernel_main installs the full Rust vectors (Step 2 Rust) that handle IRQs, SVCs, and fault diagnostics. The stubs are never invoked during normal boot.
 
-```
-[boot] AIOS kernel v0.1.0 (aarch64)
-[boot] BootInfo at 0x4000_0000, magic OK
-[boot] UartReady — 2ms
-```
+**Step 3: DTB parse + platform detection.** If `boot_info.device_tree != 0`, parse the FDT (flattened device tree) using `fdt-parser`. Extract CPU count, PSCI method, interrupt controller and timer base addresses. If no DTB, fall back to QEMU virt defaults. Detect platform via root compatible string (see §2.6 Platform trait). Advance phase: `DeviceTreeParsed`.
 
-**Step 4: Device tree parse.** Full parse of the FDT (flattened device tree). Extract: CPU count, memory regions (cross-checked against UEFI memory map), interrupt controller type and base address, timer frequency, all device nodes. Platform detection happens here.
+**Step 4: Full PL011 UART initialization.** Call `platform.init_uart(&dt)`. This performs a full UART init sequence: set IBRD=13, FBRD=1 (115200 baud at 24 MHz APB clock), configure LCR_H for 8N1, enable TX+RX+UART via CR register. Advance phase: `UartReady`.
 
-**Step 5: Interrupt controller initialization.** GICv3 on QEMU and Pi 5. GICv2 on Pi 4. AIC (Apple Interrupt Controller) on Apple Silicon — a completely different architecture that uses device tree–assigned hardware IRQ numbers directly (no SPI/PPI distinction), see hal.md §4.1. Configure the distributor and redistributor (GICv3) or distributor and CPU interface (GICv2), or the AIC event registers and per-CPU mask sets (Apple Silicon). Enable the maintenance timer interrupt (for preemptive scheduling). All other device interrupts are disabled until the relevant driver is loaded.
+**Two-phase UART init:** The UEFI stub writes raw bytes to the UART data register after `ExitBootServices()` (before kernel entry). The kernel's `kinfo!()` macro also writes directly to UART before Step 4. Step 4's `init_uart` reconfigures the UART properly — prior output relied on edk2's initialization, which may not persist post-EBS on all firmware versions.
 
-**Step 6: Timer setup.** Read `CNTFRQ_EL0` for the timer frequency (typically 62.5 MHz on QEMU, varies on Pi). Configure `CNTP_CTL_EL0` for the physical timer. Set a **1ms tick** (1000 Hz) for the scheduler — this provides < 1ms worst-case scheduling latency, necessary for the compositor's 16.6ms frame deadline (scheduler.md §10.1). Enable the timer interrupt in the GIC (or register it with AIC on Apple Silicon).
+**Step 5a: TTBR0 identity map.** Build a TTBR0 identity map with 3 × 1GB block descriptors: 0–1GB (device memory, MAIR Attr0), 1–2GB (RAM, MAIR Attr3 WB), 2–3GB (RAM, MAIR Attr3 WB). This must run before GIC/timer init because QEMU 10.x edk2 firmware may not preserve device-memory MMIO mappings in TTBR0 post-ExitBootServices. Advance phase: `MmuEnabled`.
 
-**Watchdog timer:** Also at this step, arm a hardware watchdog using the ARM Generic Timer's watchdog function (or the platform's dedicated watchdog: virtual watchdog on QEMU, bcm2835-wdt on Pi, SoC watchdog on Apple Silicon — see hal.md §12.5 `PlatformWatchdog`). The watchdog is set to a **30-second timeout** — long enough for a normal boot (target ~1.8s) plus margin for slow storage. If the kernel hangs during boot and never clears the watchdog, the hardware forces a reset after 30 seconds, incrementing the `consecutive_failures` counter in UEFI variables (see §9.1). After Phase 5 completes (boot success), the watchdog is reconfigured to a **60-second timeout** and becomes the runtime watchdog — the Service Manager pings it every 30 seconds via syscall. During shutdown, it's shortened to 15 seconds (boot-lifecycle.md §11.2). Recovery mode disables the watchdog to allow interactive debugging via UART.
+**Step 5b: GICv3 + Timer.** Initialize the GICv3 distributor (GICD at `0x0800_0000`) and redistributor (GICR at `0x080A_0000`). Configure the CPU interface via ICC system registers. Then initialize the ARM Generic Timer: read `CNTFRQ_EL0` (62.5 MHz on QEMU), configure 1 kHz tick (62500 counts/tick), wire timer PPI (INTID 30) through GIC. Advance phases: `InterruptsReady`, `TimerReady`.
 
-**Step 7: MMU enable — page table setup.** This is the most complex step, using a two-phase TTBR1 approach:
+**Step 6: Buddy allocator + Slab heap.** Initialize physical memory from the UEFI memory map. Walk the memory descriptors, exclude kernel image, BootInfo, and MMIO regions. Partition into 4 pools: kernel (128 MB), user (1792 MB), model (0), DMA (64 MB). Initialize buddy allocator (orders 0–10, bitmap coalescing, poison fill on free). Then switch the global allocator from the 128 KiB static bump allocator to the slab allocator (5 size classes: 64, 128, 256, 512, 4096 bytes, magazine layer, red zones). From this point, `Box`, `Vec`, `String` work. Advance phases: `PageAllocatorReady`, `HeapReady`, `LogRingsReady`.
 
-```
-Phase A — boot.S (before kernel_main):
-  boot.S builds a minimal TTBR1 using static page tables (3 pages in BSS: L0, L1, L2).
-  L2 uses 2MB block descriptors covering the kernel image at fixed KERNEL_BASE.
-  MAIR Attr3 (WB cacheable) for normal memory. No KASLR at this stage.
-  TCR T1SZ=16 set for 48-bit kernel VA. TTBR1 installed, branch to virtual kernel_main.
+**Step 6b: KASLR + Full TTBR1.** Compute KASLR slide from `BootInfo.rng_seed` or `CNTPCT_EL0` (2 MiB aligned, 0–128 MB range). The slide is **computed and logged but not applied** — the kernel continues at the fixed base. Build full TTBR1 page tables with fine-grained 4KB W^X pages: `.text`=RX, `.rodata`=RO, `.data`/`.bss`=RW+NX. Add physical memory direct map at `DIRECT_MAP_BASE` (`0xFFFF_0001_0000_0000`, 2MB blocks) and MMIO map at `MMIO_BASE` (`0xFFFF_0010_0000_0000`, device memory). Switch TTBR1 to full tables, replacing boot.S minimal 2MB blocks. Enable direct-map mode for the buddy allocator.
 
-  After boot.S:
-    TTBR0_EL1 → Identity map (phys == virt, from Phase 1 init_mmu)
-    TTBR1_EL1 → Minimal static tables (kernel image only at KERNEL_BASE)
+**Step 7: SMP secondary core bringup.** Via PSCI `CPU_ON` (`0xC400_0003`, HVC conduit on QEMU). Each secondary core executes `_secondary_entry` in boot.S: enable FPU → install Rust vectors → load MAIR/TCR/TTBR0/TTBR1 → enable MMU → load per-core SP from `SECONDARY_STACKS` array → branch to `secondary_main`. Secondary stacks are allocated by `smp.rs` during this step. Each secondary core initializes its own GIC redistributor and timer. Advance phase: `ProcessManagerReady`.
 
-Phase B — kernel_main (after pool init, Step 11):
-  Full TTBR1 with fine-grained 4KB pages, W^X, KASLR slide, direct map, MMIO:
-    TTBR1_EL1 → Full kernel page table (high-half mapping)
-      0xFFFF_0000_0000_0000 + slide → kernel text (RX) + rodata (RO) + data/bss (RW, NX)
-      0xFFFF_0001_0000_0000          → physical memory direct map
-      0xFFFF_0010_0000_0000          → MMIO regions (device memory)
+**Step 8: Framebuffer.** If `boot_info.framebuffer != 0`, construct a `Framebuffer` from BootInfo fields (800×600 Bgr8 on QEMU, stride=3200B). Render a test pattern (#5B8CFF blue). This is the early framebuffer — the compositor takes over in Phase 5.
 
-  TTBR0_EL1 → Identity map (RAM blocks built with WB/Attr3 since M8 to prevent
-    CONSTRAINED UNPREDICTABLE from mismatched attributes with TTBR1)
+**Step 9: (not used — reserved)**
 
-Page table format: 4-level, 4 KiB granule, 48-bit VA
-  L0 (PGD) → L1 (PUD) → L2 (PMD) → L3 (PTE)
+**Step 10: Per-agent address spaces.** Switch UART base to the TTBR1 MMIO mapping (needed before TTBR0 is repurposed from identity map to user space). Test TTBR0 switching: create two user address spaces with independent ASIDs, map test pages at `USER_DATA_BASE`, switch between them to verify TTBR0 programming.
 
-W^X enforcement:
-  Every page is either Writable or Executable, never both.
-  Kernel text:   PXN=0, UXN=1, AP=RO   (executable, not writable)
-  Kernel rodata: PXN=1, UXN=1, AP=RO   (not executable, not writable)
-  Kernel data:   PXN=1, UXN=1, AP=RW   (not executable, writable)
-```
+**Step 11: Scheduler init.** Call `sched::init()`: create idle threads (one per CPU, class=Idle), create test threads. Secondary cores are NOT released yet — they park in `enter_scheduler()` waiting on `SCHED_READY`.
 
-**Kernel stack lifecycle:** At entry (Step 1), the boot CPU runs on a temporary stack allocated by the UEFI stub — typically 64 KiB, location unknown to the kernel. During Step 7, the kernel allocates a proper 16 KiB kernel stack at a known virtual address (`0xFFFF_0000_8000_0000 + core_id * 0x10000`) with a **guard page** — a 4 KiB page mapped as no-access immediately below the stack. Stack overflow writes to the guard page, triggering a page fault caught by the exception handler (instead of silently corrupting the heap). After the stack switch, the UEFI stub stack is released. Secondary cores (§3.5) receive their own 16 KiB stacks with guard pages at the same virtual base + offset. User processes receive stacks from the Process Manager (Step 15); user stacks are allocated in the process's TTBR0 address space, default 1 MiB, also with guard pages.
+**Step 12: IPC init.** Call `ipc::init()`: allocate test threads and processes, create IPC channels, test call/reply, direct switch, shared memory, notifications, and select. Must run while secondaries are parked — `spin::Mutex` has no fairness, so secondaries could starve the boot CPU's access to `THREAD_TABLE`.
 
-**Cache coherency:** ARMv8 provides hardware cache coherency between cores (MOESI protocol via the Cache Coherent Interconnect). The kernel does *not* need explicit D-cache maintenance for inter-core communication — hardware handles it. However, two cache maintenance operations are required during boot:
+**Step 13: Service manager + Benchmarks.** Call `service::init()` (service registry, echo service, process lifecycle, audit ring) and `bench::init()` (Gate 1 benchmarks: IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput).
 
-1. **After KASLR remapping (Step 11):** `IC IALLU` (Invalidate All to Point of Unification, inner shareable) + `ISB` — ensures the instruction cache reflects the new kernel virtual addresses. Without this, stale I-cache entries pointing at old addresses cause unpredictable execution.
-2. **After writing exception vectors (Step 2):** `DC CVAU` (Clean by VA to Point of Unification) on the vector table, then `IC IVAU` + `ISB` — ensures instruction cache sees the freshly written handlers. (On most ARMv8 implementations this is handled by hardware, but the architecture does not guarantee it — clean + invalidate is required for correctness.)
+**Step 14: Release secondaries + Enter scheduler.** Call `sched::start()` to set `SCHED_READY` and wake parked secondary cores. Unmask IRQ (`msr DAIFClr, #0x2`) — timer interrupts now fire every 1ms. Call `sched::enter_scheduler()` — picks the first ready thread and never returns.
 
-MMIO regions (device memory) are mapped as `nGnRnE` (non-Gathering, non-Reordering, non-Early Write Acknowledgement) — strongly-ordered, uncacheable. This ensures device register accesses are not reordered or cached.
-
-**Step 8: Physical page allocator.** Initialize a buddy allocator using the free physical pages from the UEFI memory map. Pages of type `Conventional`, `LoaderCode`, `LoaderData`, `BootServicesCode`, and `BootServicesData` are added to the free pool. Pages occupied by the kernel, initramfs, BootInfo, UEFI Runtime, and MMIO are excluded.
-
-The buddy allocator manages pages in orders 0 through 10 (4 KiB to 4 MiB blocks). Allocation and deallocation are O(log n) in the number of orders.
-
-**Step 9: Kernel heap.** Initialize a slab allocator on top of the buddy allocator. The slab allocator provides `alloc::alloc::GlobalAlloc` — from this point, `Box`, `Vec`, `String`, `HashMap`, and all other heap types work. The slab allocator uses named object caches for common kernel types: `ipc_message` (64 bytes), `capability_token` (128 bytes), `channel` (256 bytes), `process_descriptor` (512 bytes), `vm_region` (128 bytes), `page_table` (4096 bytes). Allocations that don't fit any cache go directly to the buddy allocator. See memory.md §4.1 for the full cache definitions.
-
-**Step 10: Hardware RNG.** Call `platform.init_rng(dt)` to initialize the hardware random number generator. On QEMU this is VirtIO-RNG (virtqueue-based, entropy from host `/dev/urandom`). On Pi 4/5 this is the bcm2835-rng (MMIO TRNG). On Apple Silicon this is the Apple TRNG (hardware true random number generator). The returned `RngDevice` is stored in `KernelState.rng` and provides runtime entropy for KASLR, capability token generation, nonces, and key derivation — replacing reliance on the one-shot 32-byte UEFI seed.
-
-**Step 11: KASLR and full TTBR1.** Compute a random kernel base offset (2 MiB aligned, 128 MB range, 64 positions) using `BootInfo.rng_seed` (from UEFI RNG protocol) or `CNTPCT_EL0` as weak fallback. The slide is computed and logged but not yet applied — the kernel continues at the fixed base address (non-zero slide application is deferred to a future milestone). Build full TTBR1 page tables at the fixed base: kernel mapped with fine-grained W^X (4KB pages: .text=RX, .rodata=RO, .data=RW), physical memory direct map at `DIRECT_MAP_BASE`, MMIO at `MMIO_BASE`. Switch TTBR1 to full tables (replacing boot.S minimal 2MB blocks). TTBR0 RAM blocks are built with WB (Attr3) from init_mmu() — no attribute aliasing with TTBR1. When the slide is applied in a future milestone, no pointer fixups will be needed — aarch64 Rust uses PC-relative ADRP+ADD addressing, so all references resolve correctly when the entire image shifts uniformly.
-
-**Step 12: Capability manager.** Create the root capability — the single capability from which all others are derived:
-
-```rust
-pub struct CapabilityManager {
-    root: CapabilityToken,
-    token_table: HashMap<TokenId, CapabilityToken>,
-    next_id: AtomicU64,
-}
-
-impl CapabilityManager {
-    fn bootstrap() -> Self {
-        let root = CapabilityToken {
-            id: TokenId(0),
-            capability: Capability::Root,     // can derive any capability
-            holder: AgentId::KERNEL,
-            granted_by: Identity::Kernel,
-            created_at: Timestamp::BOOT,
-            expires: Timestamp::MAX, // Trust Level 0: Duration::MAX (security.md §10.3)
-            delegatable: true,
-            attenuations: vec![],
-            revoked: false,
-            parent_token: None,
-            usage_count: 0,
-            last_used: Timestamp::BOOT,
-        };
-        Self {
-            root,
-            token_table: HashMap::new(),
-            next_id: AtomicU64::new(1),
-        }
-    }
-}
-```
-
-The root capability is held by the kernel. The Service Manager receives a derived capability that can create any service-level capability but cannot modify the kernel itself.
-
-**Step 13: IPC subsystem.** Initialize the endpoint table and message buffer pools. No channels exist yet — they'll be created when the Service Manager spawns services. But the infrastructure must be ready.
-
-**Step 14: Audit log.** Initialize a kernel ring buffer (64 KiB, circular) for audit events. During early boot, events are buffered here. Once Space Storage is available (Phase 1 of the Service Manager), the ring buffer is flushed to `system/audit/boot/` and subsequent events are written to space storage in real time.
-
-**Step 15: Process manager.** Initialize the process table and scheduler. The scheduler uses four scheduling classes — RT (EDF for compositor/audio deadlines), Interactive (priority round-robin with input boost), Normal (Weighted Fair Queuing for agents and inference), and Idle (FIFO for background maintenance). See scheduler.md §3.1. The kernel itself runs as process 0.
-
-**Step 16: Provenance chain.** Initialize the append-only Merkle-linked provenance log. The first entry records the kernel boot event, signed by the kernel's built-in key. All subsequent system events (service start, capability grant, agent spawn) are appended to this chain.
-
-**Step 17: Early boot complete.** All kernel subsystems are initialized. The kernel is ready to create userspace processes.
-
-```
-[boot] Complete — 180ms
-[boot] Memory: 3847 MiB free of 4096 MiB total
-[boot] Kernel: 1.4 MiB (text: 680 KiB, data: 720 KiB)
-[boot] Launching Service Manager...
+```text
+[boot] AIOS kernel booting...
+[boot] BootInfo at 0x4bf3f000, magic OK
+[boot] EL: 1
+[boot] Core ID: 0
+[boot] ExceptionVectors — 0ms
+[boot] DeviceTreeParsed — QEMU virt
+[boot] UartReady — 1ms
+[boot] MmuEnabled — 1ms
+[boot] InterruptsReady — 1ms
+[boot] TimerReady — 1ms
+[boot] PageAllocatorReady — 5ms
+[boot] HeapReady — 5ms
+[boot] LogRingsReady — 5ms
+[boot] ProcessManagerReady — 8ms
+[boot] Boot sequence complete, entering scheduler
 ```
 
 ### 3.4 PL011 UART for Early Debug
 
 The PL011 UART is the first and last resort for debugging. It's initialized before anything else (after exception vectors) and remains available even after the display subsystem takes over. On Pi hardware, it's accessible via GPIO pins 14/15 (or the dedicated UART header on Pi 5).
 
-The UART is configured at 115200 baud, 8N1, no flow control. The kernel's `kprintln!()` macro writes directly to the UART data register. In early boot (before the heap exists), formatting uses a small fixed buffer on the stack.
+**Two-phase UART init** (see also Step 4 in §3.3):
+
+1. **Pre-init (boot.S → Step 3):** The UART works because edk2 left PL011 configured. The `kinfo!()` macro writes directly to the UART data register at the hardcoded base `0x0900_0000`. No baud rate programming, no lock.
+2. **Full init (Step 4):** `init_pl011()` disables the UART, programs IBRD=13/FBRD=1 (115200 baud at 24 MHz APB clock), sets LCR_H for 8N1 with FIFOs, re-enables TX+RX+UART via CR. Updates the global `UART_BASE_ADDR: AtomicUsize`.
+
+The kernel's structured logging macros (`kinfo!`, `kwarn!`, `kerror!` from `observability/mod.rs`) format into a 48-byte `LogEntry` message field and write to UART character-by-character via `UartWriter` (implements `core::fmt::Write`). No heap allocation — all formatting happens on the stack. Output is unprotected by locks in Phase 1 (see `uart.rs` header comment: `spin::Mutex` hangs on NC memory); brief interleaving during SMP bringup is accepted.
+
+After Step 6b (full TTBR1), the UART base is switched from the TTBR0 identity-mapped physical address to the TTBR1 MMIO virtual address (`MMIO_BASE + UART_PHYS`) via `uart::update_base()`. This must happen before TTBR0 is repurposed for user address spaces.
 
 During normal operation, the UART is used by the recovery shell (see Section 9). In production builds, kernel log output to UART can be disabled via the command line (`quiet` flag in `boot.cfg`).
 
 ### 3.5 SMP Boot: Secondary CPU Bringup
 
-The entire early boot sequence (Steps 1–17) runs on the boot CPU (core 0) only. Secondary cores are parked by firmware in a WFI (Wait For Interrupt) loop. They are brought online after the Process Manager and Scheduler are initialized (after Step 15), but before the Service Manager is launched.
+The entire early boot sequence runs on core 0 (the boot CPU). Secondary cores are parked by boot.S Step 3 in a `wfe` loop. They are brought online in Step 7 of kernel_main, after the full TTBR1 and buddy allocator are ready.
 
-**Why not earlier?** Secondary cores need working page tables (Step 7), a heap (Step 9), and a scheduler (Step 15). Bringing them online before these exist would require separate bootstrap stacks and synchronization primitives that add complexity with no benefit — there's nothing for them to do during single-threaded init.
+**Why not earlier?** Secondary cores need: (1) per-core stacks allocated from the buddy allocator, (2) the full TTBR1 for MMIO access. The boot CPU builds all of this first.
 
-**PSCI (Power State Coordination Interface):** AIOS uses the ARM PSCI interface to bring secondary cores online. PSCI is provided by firmware (EL3 on real hardware, or the hypervisor on QEMU). The kernel discovers the PSCI conduit (HVC or SMC) from the device tree `/psci` node.
+**PSCI (Power State Coordination Interface):** The kernel discovers the PSCI conduit (HVC on QEMU, SMC on Pi) from the device tree `/psci` node. `smp.rs` converts the virtual `_secondary_entry` symbol to a physical address before calling PSCI CPU_ON (secondary cores start with MMU off).
 
-```rust
-pub fn bring_secondary_cpus_online(dt: &DeviceTree, scheduler: &Scheduler) {
-    let psci_method = dt.psci_conduit(); // HVC on QEMU, SMC on Pi
-    let cpu_nodes = dt.cpu_nodes();      // one per core
+**Actual bringup sequence** (source: `kernel/src/smp.rs`):
 
-    for (i, cpu) in cpu_nodes.iter().enumerate().skip(1) {
-        // Skip core 0 (boot CPU, already running)
-        let mpidr = cpu.mpidr();
+```text
+Boot CPU (bring_secondaries_online):
+  1. Allocate 16 KiB stack per secondary core (buddy order 2)
+  2. Write stack top pointers to SECONDARY_STACKS[i]
+  3. DSB SY barrier (ensure stack writes visible)
+  4. Convert _secondary_entry virtual → physical (virt_to_phys)
+  5. For each secondary: PSCI CPU_ON(mpidr, entry_phys, core_id)
+  6. Wait for PRINT_TURN to reach cpu_count (100ms timeout)
 
-        // Allocate a per-core kernel stack (16 KiB)
-        let stack = alloc_kernel_stack(SECONDARY_STACK_SIZE);
-
-        // Set up a trampoline: the secondary core will jump here
-        // and find its stack pointer, page table, and entry function.
-        let trampoline = SecondaryTrampoline {
-            stack_top: stack.top(),
-            page_table: kernel_page_table_phys(),
-            entry: secondary_cpu_entry as usize,
-            core_id: i,
-        };
-        SECONDARY_TRAMPOLINES[i].store(trampoline);
-
-        // PSCI CPU_ON: wake the core
-        // target_cpu: MPIDR of the core to wake
-        // entry_point: physical address of trampoline code
-        // context_id: index into SECONDARY_TRAMPOLINES
-        psci_cpu_on(psci_method, mpidr, secondary_trampoline_phys(), i);
-
-        kprintln!("[boot] CPU {} online (MPIDR: {:#x})", i, mpidr);
-    }
-
-    // Wait for all secondaries to check in
-    while ONLINE_CPU_COUNT.load(Ordering::Acquire) < cpu_nodes.len() {
-        core::hint::spin_loop();
-    }
-    kprintln!("[boot] All {} CPUs online", cpu_nodes.len());
-}
-
-/// Entry point for secondary CPUs after trampoline sets up stack and MMU.
-fn secondary_cpu_entry(core_id: usize) {
-    // Install this core's exception vectors
-    write_vbar_el1(exception_vectors_phys());
-
-    // Enable this core's interrupt controller (GIC redistributor/CPU interface, or AIC)
-    enable_interrupts_for_core(core_id);
-
-    // Enable the timer interrupt for this core (scheduler tick)
-    enable_timer_interrupt();
-
-    // Register this core with the scheduler
-    scheduler_register_core(core_id);
-
-    // Signal that this core is online
-    ONLINE_CPU_COUNT.fetch_add(1, Ordering::Release);
-
-    // Enter the scheduler idle loop — this core will pick up
-    // work when the Service Manager starts spawning services.
-    scheduler_idle_loop();
-}
+Secondary core (_secondary_entry in boot.S → secondary_main in smp.rs):
+  1. FPU enable (boot.S)
+  2. Install Rust exception vectors at VBAR_EL1 (boot.S)
+  3. Load MAIR/TCR/TTBR0/TTBR1, enable MMU (boot.S — safe: MMU was off)
+  4. Load per-core SP from SECONDARY_STACKS[core_id] (boot.S)
+  5. Branch to secondary_main(core_id) (Rust)
+  6. Init GIC redistributor + CPU interface for this core
+  7. Install full kmap TTBR1 (replaces boot.S minimal TTBR1)
+  8. Wait for PRINT_TURN == core_id, print, store core_id + 1
+  9. Init per-core timer (programs CNTP_TVAL_EL0 + CNTP_CTL_EL0)
+  10. Enter scheduler (parks in wfe until SCHED_READY)
 ```
+
+**Historical note: NC memory atomics.** The turn-based printing protocol uses only `load(Acquire)` / `store(Release)` — plain loads/stores with ordering, not exclusive pairs. This pattern was essential in Phase 1 when the identity map used Non-Cacheable memory (MAIR Attr1=0x44). Phase 2 M8 upgraded TTBR0 RAM blocks to Write-Back cacheable (MAIR Attr3=0xFF), making `spin::Mutex` and exclusive pairs safe. The conservative protocol remains as defense-in-depth — it works regardless of memory attributes.
+
+**Critical: IRQ deferral.** Secondary cores do NOT unmask IRQs in `secondary_main`. Timer tick handlers use `compare_exchange` (exclusive monitor), which can starve the boot CPU's spinlock acquisitions during init. IRQs are unmasked later in `enter_scheduler()` after `SCHED_READY` is set.
 
 **Per-platform core counts:**
 
-```
+```text
 Platform            Cores   PSCI Conduit    Notes
 ──────────────────────────────────────────────────────────────────
 QEMU (default)      4      HVC             Configurable via -smp
@@ -665,7 +574,7 @@ Apple M2 Pro       12      HVC             8× Avalanche + 4× Blizzard
 
 **The `maxcpus=` command line option** limits how many secondary cores are brought online. `maxcpus=1` keeps the system single-core (useful for debugging race conditions). Default is all available cores.
 
-**Timing:** Secondary CPU bringup takes ~5ms total (PSCI call + per-core init). It happens between Step 15 (Process Manager) and Step 17 (Early boot complete). By the time the Service Manager launches, all cores are online and the scheduler can distribute work across them.
+**Timing:** SMP bringup takes ~3ms total on QEMU (PSCI call + per-core init + turn-based printing). By the time the scheduler is initialized, all cores are online and parked in `enter_scheduler()`.
 
 ### 3.6 SMMU / IOMMU: DMA Protection
 
@@ -673,7 +582,7 @@ Without an IOMMU, any DMA-capable device can read or write arbitrary physical me
 
 **ARM SMMU (System Memory Management Unit)** provides per-device address translation and access control for DMA transactions, analogous to Intel VT-d:
 
-```
+```text
 Without SMMU:
   Device → DMA request (physical address) → RAM (any address!)
 
@@ -686,7 +595,7 @@ With SMMU:
 
 **Per-platform status:**
 
-```
+```text
 Platform       SMMU Hardware          Status
 ──────────────────────────────────────────────────
 QEMU           VirtIO IOMMU           Optional; enabled with -device virtio-iommu
@@ -738,7 +647,7 @@ The Service Manager is the first userspace process. It's the PID 1 of AIOS — r
 
 The kernel creates the Service Manager directly, without going through the normal `ProcessCreate` syscall path (since there's no process to call the syscall yet):
 
-```
+```text
 1. Kernel reads Service Manager ELF from initramfs
    (the initramfs is in memory, loaded by the UEFI stub)
 2. Kernel creates a new address space (TTBR0)
@@ -883,7 +792,7 @@ pub enum FailureReason {
 
 Services report health via a dedicated IPC channel. The protocol is simple:
 
-```
+```text
 Service Manager sends: HealthCheck { deadline: Timestamp }
 Service replies:       HealthStatus::Healthy
                     or HealthStatus::Degraded { reason: String }
@@ -941,7 +850,7 @@ flowchart TD
 
 Within each phase, the Service Manager starts services in dependency order but launches independent services in parallel. For example, in Phase 2:
 
-```
+```text
 t=0ms:   Start device_registry (no dependencies within phase)
          (posix_compat and audio_subsystem are on-demand — not started here;
           see boot-lifecycle.md §17 for activation modes)
@@ -1043,7 +952,7 @@ Storage is the first service phase because almost everything else depends on per
 
 **Block Engine** starts first. It takes ownership of the raw block device (VirtIO-Blk on QEMU, SD/eMMC on Pi). On first boot, it formats the device: writes the superblock, initializes the WAL region, creates the empty LSM-tree index (empty MemTable, no SSTables). On subsequent boots, it reads the superblock, replays the WAL to recover from any incomplete writes, and verifies the SSTable manifest.
 
-```
+```text
 Block Engine startup:
   1. Open raw block device (via kernel device handle)
   2. Read superblock at LBA 0
@@ -1062,7 +971,7 @@ Block Engine startup:
 
 **Space Storage** starts after Object Store. It creates the system spaces on first boot:
 
-```
+```text
 First boot:
   system/             — Core zone
   system/devices/     — Device registry
@@ -1094,7 +1003,7 @@ These services make the system interactive. After Phase 2, there's a screen with
 
 **Input Subsystem** registers with the framework and starts handling keyboard and mouse/touchpad events. On QEMU, this is VirtIO-Input (paravirtualized, no USB stack needed). On Pi, input requires the USB host controller:
 
-```
+```text
 Pi 4/5 Input path:
   1. USB host controller init (DesignWare xHCI on Pi 4, RP1 xHCI on Pi 5)
      - Controller is discovered from Device Registry (device tree node)
@@ -1126,7 +1035,7 @@ On Apple Silicon laptops, the SPI keyboard provides a fallback.
 
 **GPU memory:** VideoCore VI/VII on Pi shares system RAM with the CPU — there is no discrete VRAM. The Pi firmware reserves a contiguous region for the GPU (specified in `config.txt` as `gpu_mem`, default 76 MB on Pi 4, 64 MB on Pi 5). The kernel discovers this reservation via the device tree `/reserved-memory` node during Step 4 and excludes it from the buddy allocator. The Display Subsystem uses this region for scanout buffers, texture memory, and render targets. On Apple Silicon, AGX uses unified memory with no static reservation — the GPU allocates from the same physical pages as the CPU, managed by DART (Apple's IOMMU). Importantly, the AIRS model selection thresholds (§5 Phase 3) account for GPU-reserved memory — "available RAM" means total RAM minus kernel minus GPU reservation:
 
-```
+```text
 Pi 4 (4 GB model):  4096 - ~2 (kernel) - 76 (GPU) = ~4018 MB available
                      → selects 3B Q4_K_M (~2.0 GB)
 Pi 4 (8 GB model):  8192 - ~2 (kernel) - 76 (GPU) = ~8114 MB available
@@ -1158,7 +1067,7 @@ AI services are **not on the critical boot path**. Phase 3 runs in parallel with
 
 **AIRS Core** starts first. It scans `system/models/` for available models, loads the default model's weights into memory (memory-mapped from space storage — this is fast because `mmap` avoids copying), and allocates the initial KV cache. The dominant cost is reading model weights from disk: a 4.5 GB Q4_K_M model takes ~2 seconds to memory-map from NVMe, longer from SD card.
 
-```
+```text
 AIRS startup:
   1. Read model registry from system/models/ space
   2. Select default model based on available RAM
@@ -1208,7 +1117,7 @@ The final phase makes the system user-facing.
 
 **Boot Complete Signal:** The Service Manager records the total boot time in `system/audit/boot/` and logs it to UART:
 
-```
+```text
 [boot] Phase 5 complete — boot to desktop in 1,847ms
 [boot] Services: 20 running, 0 failed, 0 degraded
 [boot] AIRS: healthy (model: llama-3.1-8b-q4_k_m, loaded in 3,200ms)
@@ -1233,7 +1142,7 @@ Design principle 7 says "first boot and normal boot are the same code path." The
 
 **The setup flow** is a compositor overlay rendered by the Identity Service in coordination with the Workspace. It is *not* a separate installer binary — it runs inside the normal service pipeline, using the same compositor, input subsystem, and IPC channels as any other UI.
 
-```
+```text
 First Boot Setup Flow (compositor overlay):
 
 1. Language & Locale Selection
@@ -1277,7 +1186,7 @@ First Boot Setup Flow (compositor overlay):
 
 The critical path is the sequence of steps that cannot be parallelized — each depends on the previous:
 
-```
+```text
 Time (ms)     Phase                    What happens
 ──────────────────────────────────────────────────────────────────
    0          Firmware                 POST, DRAM, UEFI init
@@ -1323,7 +1232,7 @@ Time (ms)     Phase                    What happens
 
 ### 6.2 Budget Breakdown
 
-```
+```text
 Component                Target     Notes
 ─────────────────────────────────────────────────────────────────
 Firmware                 ~500ms     Not controllable. DRAM training dominates.
@@ -1348,7 +1257,7 @@ Total (with firmware):  ~1,850ms    Well under 3-second target.
 
 ### 6.3 Parallel vs Sequential Timeline
 
-```
+```text
 Time: 0       500      1000      1500      2000      2500      3000
       |--------|---------|---------|---------|---------|---------|
       ████████████████████                                        Firmware
@@ -1473,7 +1382,7 @@ impl EarlyFramebuffer {
 
 ### 7.3 Visual Feedback Timeline
 
-```
+```text
 Time      Visual
 ──────────────────────────────────────────
   0ms     Screen off / firmware POST
@@ -1491,7 +1400,7 @@ Time      Visual
 
 When the compositor starts, it takes ownership of the display hardware. The handoff must be smooth — no black frame, no flicker:
 
-```
+```text
 1. Compositor initializes GPU driver (wgpu, VirtIO-GPU or VC4/V3D)
 2. Compositor reads the current framebuffer content
    (the splash screen with progress bar)
@@ -1552,7 +1461,7 @@ pub struct RegisterDump {
 
 The panic handler cannot assume the heap, Space Storage, or even the Block Engine are functional. It uses a layered persistence strategy — try the best option, fall back:
 
-```
+```text
 Persistence priority (try in order):
 
 1. Reserved panic region on block device
@@ -1663,7 +1572,7 @@ boot_success = true`"]
 
 Recovery mode boots with minimal services: kernel + storage + UART console. No compositor, no networking, no AIRS.
 
-```
+```text
 [AIOS RECOVERY MODE]
 Boot failed 3 consecutive times. Starting recovery shell.
 Last failure: Phase 2 — compositor failed to start (HealthCheckTimeout)
@@ -1687,7 +1596,7 @@ The recovery shell is a minimal Rust binary compiled into the initramfs. It comm
 
 Safe mode boots with reduced services. It's triggered by the `safe-boot` command in the recovery shell, or by a keyboard shortcut held during boot (e.g., holding Shift):
 
-```
+```text
 Safe mode service list:
   Phase 1: Storage (full)               — spaces must work
   Phase 2: Core (reduced)               — compositor + input only
@@ -1703,7 +1612,7 @@ Safe mode is useful for diagnosing issues caused by agents, broken preferences, 
 
 If the current kernel or initramfs is broken, the UEFI stub can load the previous versions:
 
-```
+```text
 ESP layout:
   aios.elf              — current kernel
   aios.elf.prev         — previous kernel
@@ -1722,7 +1631,7 @@ This restores the last known-good kernel and service binaries.
 
 Nuclear option. Wipes user spaces but preserves the system:
 
-```
+```text
 Factory reset:
   1. Wipe user/ space (all personal data)
   2. Wipe shared/ space (all collaborative data)
@@ -1744,7 +1653,7 @@ The A/B rollback mechanism (§9.4) protects against bad updates, but this sectio
 
 **Update delivery:** A system update is a signed archive containing any combination of: a new kernel ELF, a new initramfs, and new Phase 3-5 service binaries. Updates are fetched by the Network Translation Module (when available) from a configured update endpoint, or applied manually from a USB drive.
 
-```
+```text
 Update flow:
 
 1. Update agent (Phase 5 background agent) checks for updates
@@ -1793,7 +1702,7 @@ Update flow:
 
 The initramfs is a cpio archive loaded into memory by the UEFI stub. It contains everything needed to reach the end of Phase 2 (core services running), at which point the system can access the persistent storage partition:
 
-```
+```text
 initramfs.cpio contents:
   /svcmgr                — Service Manager binary
   /services/
@@ -1845,7 +1754,7 @@ The UEFI stub extracts the kernel and initramfs into separate physical memory re
 
 Once Space Storage is running (end of Phase 1), services can be loaded from the persistent `system/services/` space instead of the initramfs. This transition matters for Phase 3-5 services:
 
-```
+```text
 Phase 1-2 services:  loaded from initramfs (in memory, fast)
 Phase 3-5 services:  loaded from system/services/ space (persistent storage)
 ```
@@ -1853,6 +1762,34 @@ Phase 3-5 services:  loaded from system/services/ space (persistent storage)
 The distinction matters because Phase 3-5 services can be updated independently of the kernel. Updating AIRS doesn't require a new initramfs — just update the binary in `system/services/`. The initramfs contains only the minimum needed to bootstrap storage and core services.
 
 On first boot, the Service Manager copies Phase 3-5 service binaries from the initramfs to `system/services/`. On subsequent boots, it loads from the space. If a service binary in the space is corrupt, it falls back to the initramfs copy.
+
+-----
+
+## 11. Future Directions
+
+This section captures ideas from OS research and production systems that could improve AIOS's boot sequence in future phases.
+
+### 11.1 Hubris-Style Deterministic Boot
+
+Oxide's Hubris OS builds the entire system image at compile time — task placements, memory regions, and IPC channels are all determined statically. This eliminates runtime allocation during boot and makes the boot sequence fully deterministic and formally verifiable. AIOS could adopt this pattern for the kernel early boot path (Phases A–B), where all allocations are currently from static arrays or the bump allocator. The benefit: formal verification of the boot sequence becomes tractable.
+
+**Reference:** Hubris (Oxide Computer, 2021) — build-time system description, no dynamic task creation.
+
+### 11.2 ZBI-Style Structured Boot Data
+
+Fuchsia's Zircon Boot Image (ZBI) packages the kernel, bootloader, and all boot items into a single structured container with typed headers. Each boot item has a type tag and length, allowing the kernel to iterate items without knowing the container format. AIOS's current `BootInfo` is a flat C struct — adding new fields requires recompilation of both stub and kernel. A ZBI-like approach would allow extensible boot data with forward/backward compatibility.
+
+**Reference:** Zircon Boot Image format (Fuchsia project).
+
+### 11.3 Boot Intelligence (Context-Aware Boot)
+
+The boot-lifecycle.md companion document describes boot intelligence — using past boot traces to predict optimal service startup order, prefetch frequently-accessed data pages, and adapt AIRS model selection based on usage patterns. This is a long-term goal that integrates the Context Engine (Phase 8+) with the boot sequence.
+
+### 11.4 Measured Boot and Attestation
+
+seL4's formally verified boot chain provides a foundation for measured boot: each boot stage hashes the next stage's binary and extends a TPM PCR (or equivalent). AIOS could integrate with ARM TrustZone and the platform TPM (or firmware TPM on QEMU) to provide attestation — proving to a remote verifier that the system booted an unmodified kernel and initramfs. This is critical for enterprise and IoT deployment scenarios.
+
+**Reference:** seL4 Verified Boot (NICTA/Data61), ARM Platform Security Architecture (PSA).
 
 -----
 
