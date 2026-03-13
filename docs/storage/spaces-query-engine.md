@@ -60,12 +60,12 @@ pub enum TraverseDirection {
 pub struct QueryEngine { /* internal state: LSM-tree, full-text index, HNSW index, graph store */ }
 
 impl QueryEngine {
-    pub fn query(&self, space: SpaceId, query: SpaceQuery) -> Result<Vec<ObjectId>> {
-        match query {
-            SpaceQuery::Filter { .. } => self.filter_query(space, query),
-            SpaceQuery::TextSearch { .. } => self.text_query(space, query),
-            SpaceQuery::Semantic { .. } => self.semantic_query(space, query),
-            SpaceQuery::Traverse { .. } => self.traverse_query(space, query),
+    pub fn query(&self, space: SpaceId, query: SpaceQuery) -> Result<Vec<ObjectId>, StorageError> {
+        match &query {
+            SpaceQuery::Filter { .. } => self.filter_query(space, &query),
+            SpaceQuery::TextSearch { .. } => self.text_query(space, &query),
+            SpaceQuery::Semantic { .. } => self.semantic_query(space, &query),
+            SpaceQuery::Traverse { .. } => self.traverse_query(space, &query),
         }
     }
 }

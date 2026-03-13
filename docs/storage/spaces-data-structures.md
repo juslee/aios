@@ -25,19 +25,17 @@ pub struct ObjectId(pub [u8; 16]);        // UUID v4
 pub struct SpaceId(pub [u8; 16]);
 
 /// Agent or service identity. Derived from the agent's Ed25519 public key.
-/// Implementation: newtype `pub struct AgentId([u8; 32]);`
-pub type AgentId = [u8; 32];          // Ed25519 public key
+pub struct AgentId(pub [u8; 32]);     // Ed25519 public key
 
 /// User identity. Each identity has an Ed25519 keypair for provenance signing.
-/// Implementation: newtype `pub struct IdentityId([u8; 32]);`
-pub type IdentityId = [u8; 32];       // Ed25519 public key
+pub struct IdentityId(pub [u8; 32]);  // Ed25519 public key
 
-/// Monotonic timestamp wrapper. Milliseconds since Unix epoch.
+/// Wall-clock timestamp wrapper. Milliseconds since Unix epoch.
 /// Newtype struct (not a type alias) so it can carry associated functions.
 pub struct Timestamp(pub u64);
 
 impl Timestamp {
-    pub fn now() -> Self { Timestamp(/* kernel monotonic clock ms */) }
+    pub fn now() -> Self { Timestamp(/* kernel wall-clock ms since epoch */) }
     pub fn as_millis(&self) -> u64 { self.0 }
 }
 

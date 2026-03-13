@@ -87,7 +87,7 @@ pub struct MountEntry {
 impl PosixSpaceBridge {
     fn open(&self, path: &str, flags: OpenFlags) -> Result<Fd> {
         let (space, object_path) = self.resolve_path(path)?;
-        let cap = if flags.contains(O_WRONLY | O_RDWR) {
+        let cap = if flags.intersects(O_WRONLY | O_RDWR) {
             Capability::WriteSpace(space)
         } else {
             Capability::ReadSpace(space)
@@ -112,12 +112,14 @@ impl PosixSpaceBridge {
         let (space, prefix) = self.resolve_path(path)?;
         let object_ids = space.query(SpaceQuery::Filter {
             parent: Some(prefix),
-            ..default()
+            ..Default::default()
         })?;
-        // query() returns Vec<ObjectId>; resolve each to a full Object
+        // query() returns Vec<ObjectId>; resolve each to a full Object.
+        // Errors from get_object() are propagated — partial results could
+        // hide permission or I/O failures from the caller.
         let objects: Vec<Object> = object_ids.iter()
-            .filter_map(|id| space.get_object(*id).ok())
-            .collect();
+            .map(|id| space.get_object(*id))
+            .collect::<Result<Vec<_>>>()?;
         Ok(objects.iter().map(|o| o.to_dir_entry()).collect())
     }
 

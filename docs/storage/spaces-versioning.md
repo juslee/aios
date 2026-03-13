@@ -47,7 +47,7 @@ pub enum ProvenanceAction {
 }
 ```
 
-**Provenance signatures:** The `signature` field in `ProvenanceEntry` is an Ed25519 signature over the canonical Bincode encoding of `(action, object_id, timestamp, agent_id)`. The agent's signing keypair is held in the kernel identity store — agents never access raw keys directly, they request the kernel to sign on their behalf. On read, the signature is verified against the agent's public key (stored in `system/identity/`). If verification fails, the version node is flagged as corrupted or tampered and a security event is logged. Signatures are immutable — stored in the Merkle DAG and tied to the content hash chain. This provides non-repudiation: an agent cannot later deny creating or modifying an object.
+**Provenance signatures:** The `signature` field in `ProvenanceEntry` is an Ed25519 signature over the canonical Bincode encoding of `(action, agent, task, timestamp)` — the four fields of the entry itself, excluding the signature. The agent's signing keypair is held in the kernel identity store — agents never access raw keys directly, they request the kernel to sign on their behalf. On read, the signature is verified against the agent's public key (stored in `system/identity/`). If verification fails, the version node is flagged as corrupted or tampered and a security event is logged. Signatures are immutable — stored in the Merkle DAG and tied to the content hash chain. This provides non-repudiation: an agent cannot later deny creating or modifying an object.
 
 **diff_summary format:** The `Modified.diff_summary` field contains a human-readable one-line description of the change (e.g., "edited paragraph 3", "appended 2 KB"). This is set by the agent that performed the modification. It is not a machine-parseable diff — for structural diffs, use the `VersionStore.diff()` method (§5.3).
 
@@ -179,6 +179,8 @@ impl VersionStore {
             hash: Hash::compute(&[
                 current_head.hash.as_bytes(),
                 target_version.content_hash.as_bytes(),
+                object.as_bytes(),
+                &Timestamp::now().as_millis().to_le_bytes(),
             ]),
             parent: Some(current_head.hash),
             merge_parent: None,  // rollback is linear, not a merge
