@@ -13,7 +13,7 @@ This document is the hub for the AIOS security architecture. The full model has 
 
 | Document | Sections | Content |
 |---|---|---|
-| **This file** | §1, §12 | Threat model, implementation order |
+| **This file** | §1, §12 | Threat model, attack scenarios, implementation order, cross-reference index |
 | [security-layers.md](./security-layers.md) | §2 | Eight defense layers deep dive |
 | [security-capabilities.md](./security-capabilities.md) | §3 | Token lifecycle, kernel table, attenuation, delegation, temporal caps, composable profiles |
 | [security-hardening.md](./security-hardening.md) | §4, §5, §8 | Cryptographic foundations, ARM hardware security, security testing |

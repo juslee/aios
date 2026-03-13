@@ -329,7 +329,7 @@ The following gaps were identified and have been addressed in the design specs. 
 **Problem.** Capability validation was cached per-channel (checked at creation, not per-message). A revoked capability could continue to grant access on cached channels.
 
 **Resolution.** Capability revocation now invalidates all channels created with the revoked capability. Integrated at:
-- **security.md [§3.2](./security-capabilities.md)**: `revoke()` calls `kernel.invalidate_channels_for_capability(token_id)`
+- **security-capabilities.md [§3.2](./security-capabilities.md)**: `revoke()` calls `kernel.invalidate_channels_for_capability(token_id)`
 - **ipc.md §4.1**: `Channel` struct now tracks `creation_capability: CapabilityTokenId`
 - **ipc.md §4.2**: Latency target notes revocation propagation
 - **ipc.md §8.3**: Five-level enforcement stack documents the structural check
@@ -352,8 +352,8 @@ The per-message capability check can remain cached (it's a valid performance opt
 **Problem.** Capability `expires` field was optional. A capability created with `expires: None` lived forever.
 
 **Resolution.** Expiry is now mandatory. `capability_create()` rejects `expires: None`. Integrated at:
-- **security.md [§3.1](./security-capabilities.md)**: Token creation example uses mandatory expiry (`expires: now() + Duration::days(90)`) with trust-level TTL comment
-- **security.md [§3.1](./security-capabilities.md)**: `capability_create()` documented as rejecting missing expiry
+- **security-capabilities.md [§3.1](./security-capabilities.md)**: Token creation example uses mandatory expiry (`expires: now() + Duration::days(90)`) with trust-level TTL comment
+- **security-capabilities.md [§3.1](./security-capabilities.md)**: `capability_create()` documented as rejecting missing expiry
 
 Maximum TTL per trust level:
 
