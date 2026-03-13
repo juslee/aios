@@ -127,12 +127,12 @@ pub enum Syscall {
     /// Returns the index of the first ready entry and matched bits
     /// (non-zero only for notification entries).
     /// See `SelectEntry` and `SelectKind` in `shared/src/ipc.rs`.
+    /// Raw syscall ABI: x0=entries_ptr, x1=entry_count, x2=timeout_ticks (u64::MAX = indefinite)
+    /// Returns: x0=ready_index (or negative error), x1=matched_bits (notification bits; 0 for channels)
     IpcSelect {
         entries: *const SelectEntry,   // array of SelectEntry
         entry_count: usize,            // max: MAX_SELECT_ENTRIES (8)
-        timeout: Option<Duration>,     // SDK type; raw syscall: timeout_ticks: u64 (u64::MAX = indefinite)
-        ready_index: *mut usize,       // output: index of ready entry
-        ready_bits: *mut u64,          // output: matched notification bits (0 for channels)
+        timeout_ticks: u64,            // u64::MAX = indefinite wait
     },
 
     // === Channel Management ===
@@ -883,13 +883,13 @@ The kernel provides lightweight **notification objects** — single-word (u64) a
 /// Notification object as implemented in `kernel/src/ipc/notify.rs`.
 /// A single-word atomic bitmap with a bounded waiter list.
 pub struct NotificationObject {
-    id: NotificationId,
+    pub id: NotificationId,
     /// Atomic bitmap — signaling ORs bits in; waiting checks a mask
     /// and returns+clears matching bits.
-    word: AtomicU64,
-    creator: ProcessId,
+    pub(crate) word: AtomicU64,
+    pub creator: ProcessId,
     /// Bounded waiter list. Each waiter specifies a bit mask.
-    waiters: [Option<Waiter>; MAX_WAITERS_PER_NOTIFICATION],
+    pub(crate) waiters: [Option<Waiter>; MAX_WAITERS_PER_NOTIFICATION],
 }
 
 struct Waiter {
@@ -901,7 +901,7 @@ const MAX_NOTIFICATIONS: usize = 64;
 const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
 ```
 
-**Signaling** (`NotificationSignal`): Atomically ORs `bits` into the notification word, then wakes any waiters whose mask intersects the new value. The matched bits are atomically cleared before the waiter is woken. Cost: ~10 cycles for the atomic OR; waiter wake adds a scheduler unblock.
+**Signaling** (`NotificationSignal`): Acquires the `NOTIFICATION_TABLE` Mutex, atomically ORs `bits` into the notification word, then wakes any waiters whose mask intersects the new value. The matched bits are atomically cleared before the waiter is woken. The Mutex acquisition dominates cost; the atomic OR itself is cheap but the lock + waiter scan makes this roughly comparable to other locked IPC operations.
 
 **Waiting** (`NotificationWait`): If any bits matching `mask` are already set, returns+clears them immediately (fast path). Otherwise blocks until signaled or timeout expires. Double-checks after re-acquiring the table lock to prevent races.
 

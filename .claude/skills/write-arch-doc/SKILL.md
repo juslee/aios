@@ -236,17 +236,18 @@ Run doc-auditor to validate the document:
 Run this in the worktree directory to find bare opening fences:
 ```bash
 python3 -c "
+fence = chr(96)*3
 lines = open('<file>').readlines()
 inside = False
 for i, line in enumerate(lines, 1):
     stripped = line.strip()
     if not inside:
-        if stripped.startswith('\`\`\`'):
+        if stripped.startswith(fence):
             inside = True
-            if stripped == '\`\`\`':
+            if stripped == fence:
                 print(f'{i}: bare opening fence')
     else:
-        if stripped == '\`\`\`':
+        if stripped == fence:
             inside = False
 "
 ```
