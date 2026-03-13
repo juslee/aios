@@ -19,6 +19,7 @@ mod platform;
 mod sched;
 mod service;
 mod smp;
+mod storage;
 mod syscall;
 mod task;
 
@@ -284,21 +285,7 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // --- Step 7b: Storage Init ---
     if drivers::virtio_blk::init(&dt) {
-        // Write/read test: sector 1000.
-        let mut test_buf = [0u8; 512];
-        for (i, b) in test_buf.iter_mut().enumerate() {
-            *b = (i & 0xFF) as u8;
-        }
-        if drivers::virtio_blk::write_sector(1000, &test_buf).is_ok() {
-            let mut read_buf = [0u8; 512];
-            if drivers::virtio_blk::read_sector(1000, &mut read_buf).is_ok() {
-                if read_buf == test_buf {
-                    kinfo!(Storage, "VirtIO-blk: write/read test sector 1000 — OK");
-                } else {
-                    kerror!(Storage, "VirtIO-blk: read data mismatch!");
-                }
-            }
-        }
+        storage::init();
     }
     observability::drain_logs();
 
