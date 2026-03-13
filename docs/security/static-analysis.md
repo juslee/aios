@@ -306,8 +306,8 @@ Static analysis is adopted incrementally, aligned with the phase at which each s
 | 2+ | cargo-vet, cargo-mutants, Rudra | Dependency provenance, test quality, `unsafe` patterns |
 | 3–5 | Kani, Converos, Loom, Shuttle, Semgrep, MIRAI | Syscall validation, capability operations, scheduler concurrency, kernel patterns |
 | 10–12 | `aios agent audit`, AIRS code review, AI-assisted techniques (§10) | Third-party agent manifests and code bundles |
-| 13+ | TLA+ models, Rudra full scans, Kani CI enforcement, Prusti | Capability state machine, IPC protocol, all `unsafe` blocks, numeric invariants |
-| 24 | Verus proofs, RefinedRust / Coq proofs | Capability no-forge/no-escalate, provenance chain, W^X, unsafe abstraction soundness |
+| 13+ | TLA+ models, Rudra full scans, Kani CI enforcement, Prusti, Flux | Capability state machine, IPC protocol, all `unsafe` blocks, numeric invariants |
+| 24 | Verus proofs, RefinedRust / Coq / Creusot proofs | Capability no-forge/no-escalate, provenance chain, W^X, unsafe abstraction soundness |
 
 Cross-reference: [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §4 for the parallel fuzzing adoption roadmap.
 
