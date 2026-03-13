@@ -428,7 +428,7 @@ pub enum Pool {
 pub struct PagePools {
     kernel: BuddyAllocator,
     user: BuddyAllocator,
-    model: Option<BuddyAllocator>,  // None on 2 GB devices (no local model pool)
+    model: Option<BuddyAllocator>,  // None on <4 GiB systems (model_size=0)
     dma: BuddyAllocator,
 }
 
@@ -1077,7 +1077,7 @@ pub unsafe fn alloc(layout: Layout) -> *mut u8;
 pub unsafe fn dealloc(ptr: *mut u8, layout: Layout);
 ```
 
-The per-cache magazine layer reduces lock contention on the allocation hot path. Each cache maintains a pair of magazine rounds (current/prev) holding up to 32 pre-allocated object pointers. Allocating pops from the current magazine — fast and lock-free within a single `SLAB.lock()` critical section. When the current magazine is empty, it swaps with the prev magazine (two-chance). Only when both magazines are empty does the cache refill from the shared intrusive free list or grow by requesting a new page from the frame allocator. This design also reduces the mutual exclusion Coffman condition for the common-case allocation path — see [deadlock-prevention.md §6](./deadlock-prevention.md).
+The per-cache magazine layer reduces lock contention on the allocation hot path. Each cache maintains a pair of magazine rounds (current/prev) holding up to 32 pre-allocated object pointers. All slab operations are serialized by a single global `spin::Mutex<SlabAllocator>` (`SLAB.lock()`), but the magazine avoids touching the shared intrusive free list on the fast path — a pop from the current magazine requires no free-list traversal, only the single lock acquisition. When the current magazine is empty, it swaps with the prev magazine (two-chance). Only when both magazines are empty does the cache refill from the shared intrusive free list or grow by requesting a new page from the frame allocator. This design also reduces the mutual exclusion Coffman condition for the common-case allocation path — see [deadlock-prevention.md §6](./deadlock-prevention.md).
 
 ### 4.2 Kernel Allocation API
 
@@ -1732,9 +1732,9 @@ Time to first token: 3s vs 45s (15x faster)
 
 This matters enormously for user experience. When the user opens the conversation bar, they expect a response in seconds, not a 45-second wait for model loading. Lazy loading with userfaultfd makes AIRS responsive immediately — the first few layers are enough to begin generating tokens. Inference quality is identical; only the first few tokens have slightly higher latency (page faults during layer traversal). By the time the user reads the first sentence, the full model is resident.
 
-**Fault-around optimization:** Inspired by Linux's `fault_around_bytes` (default 64 KB), the userfaultfd handler maps not just the faulted page but the surrounding 16 pages (64 KB) in the same fault handler invocation. This amortizes the trap overhead: instead of 16 separate page faults for a sequential model layer read, one fault resolves 16 pages. The surrounding pages are loaded from storage speculatively — since model weights are stored contiguously, the speculation hit rate exceeds 95%.
+**Fault-around optimization (proposed):** Inspired by Linux's `fault_around_bytes` (default 64 KB), the target userfaultfd handler would map not just the faulted page but the surrounding 16 pages (64 KB) in the same fault handler invocation. This amortizes the trap overhead: instead of 16 separate page faults for a sequential model layer read, one fault resolves 16 pages. Since model weights are stored contiguously, the speculation hit rate is expected to be very high.
 
-**Deterministic prefetching for transformer inference:** Transformer models have a highly predictable memory access pattern: layer 0 → layer 1 → ... → layer N, repeated for each token. Unlike general application memory access (where future pages are unknown), the userfaultfd handler can exploit this structure. When inference begins processing layer K, the prefetcher issues asynchronous reads for layer K+1 (and optionally K+2) pages that aren't yet resident. This converts most subsequent faults into TLB misses resolved against already-resident pages, eliminating I/O stalls entirely after the first few layers warm up.
+**Deterministic prefetching for transformer inference (proposed):** Transformer models have a highly predictable memory access pattern: layer 0 → layer 1 → ... → layer N, repeated for each token. Unlike general application memory access (where future pages are unknown), the userfaultfd handler can exploit this structure. When inference begins processing layer K, the prefetcher would issue asynchronous reads for layer K+1 (and optionally K+2) pages that aren't yet resident. This would convert most subsequent faults into TLB misses resolved against already-resident pages, eliminating I/O stalls after the first few layers warm up. See §13.4 for related research directions.
 
 ```rust
 /// Policy for model eviction when pool is full
@@ -1975,7 +1975,7 @@ OOM       < 5%      - OOM killer selects victim agent
                     - Kill victim, reclaim all its pages
 ```
 
-**Pressure Stall Information (PSI):** The free-page-percentage model above is a starting point. Production systems (Linux 4.20+, Android) have adopted PSI — a metric that measures the fraction of wall-clock time that tasks are stalled waiting for memory. PSI captures the *impact* of memory pressure on user-visible latency, not just the raw free-page count. AIOS adopts a similar approach: in addition to the threshold-based levels above, the reclaimer tracks the cumulative time threads spend blocked on page faults (§10.5) and memory allocation. When the 10-second PSI window exceeds configurable thresholds, the pressure level is escalated independently of free-page percentage. This design is inspired by Android's `lmkd` daemon, which uses PSI to make priority-aware kill decisions rather than relying solely on free memory watermarks.
+**Pressure Stall Information (PSI, target enhancement):** The free-page-percentage model above is a starting point. Production systems (Linux 4.20+, Android) have adopted PSI — a metric that measures the fraction of wall-clock time that tasks are stalled waiting for memory. PSI captures the *impact* of memory pressure on user-visible latency, not just the raw free-page count. The target design extends the threshold-based levels above with a PSI-inspired metric: the reclaimer would track the cumulative time threads spend blocked on page faults (§10.5) and memory allocation. When the 10-second PSI window exceeds configurable thresholds, the pressure level is escalated independently of free-page percentage. This design is inspired by Android's `lmkd` daemon, which uses PSI to make priority-aware kill decisions rather than relying solely on free memory watermarks.
 
 ### 8.2 OOM Killer
 
@@ -2484,7 +2484,7 @@ These improvements come from generation-based age tracking: instead of a binary 
 
 zram provides the second tier of memory reclamation. Instead of writing inactive pages to a slow SD card, zram compresses them and stores the compressed data in a reserved region of RAM. A 4 KB page typically compresses to 1–2 KB (agent heap data — structs, strings, JSON — is highly compressible). This effectively doubles the amount of data that can reside in RAM without any I/O.
 
-**Why zram, not zswap?** Linux offers two compressed memory approaches: **zswap** (a write-back cache in front of a backing swap device) and **zram** (a self-contained compressed block device in RAM). AIOS uses zram because it requires no backing store — there is no swap partition or file to configure, no disk I/O latency on the decompression fast path, and no risk of SD card wear from writeback. On SBC and diskless systems (the primary AIOS targets), zram is strictly superior: all compressed data stays in RAM, decompression is a pure CPU operation completing in microseconds, and the system works identically whether or not a storage device is present. zswap's advantage (transparent writeback to disk when RAM fills) is irrelevant when disk I/O is 100-1000× slower than RAM access.
+**Why zram, not zswap?** Linux offers two compressed memory approaches: **zswap** (a write-back cache in front of a backing swap device) and **zram** (a self-contained compressed block device in RAM). The AIOS design chooses zram because it requires no backing store — there is no swap partition or file to configure, no disk I/O latency on the decompression fast path, and no risk of SD card wear from writeback. On SBC and diskless systems (the primary AIOS targets), zram is strictly superior: all compressed data stays in RAM, decompression is a pure CPU operation completing in microseconds, and the system works identically whether or not a storage device is present. zswap's advantage (transparent writeback to disk when RAM fills) is irrelevant when disk I/O is 100-1000× slower than RAM access.
 
 **Architecture:**
 
@@ -3297,8 +3297,8 @@ TLB misses are expensive — each miss requires a 4-level page table walk (4 mem
 - **ASIDs:** Context switches do not flush the TLB. Entries from the previous process remain valid for that process's ASID.
 - **Multi-size THP:** Three page sizes (4 KB, 64 KB, 2 MB) matched to workload. 64 KB medium pages for agent heaps and KV cache blocks reduce TLB entries by 16x vs 4 KB. 2 MB huge pages for model weights reduce entries by 512x.
 - **TTBR1 global entries:** Kernel mappings are global (not tagged with an ASID), so they persist across all context switches.
-- **FEAT_CONTPTE (Contiguous PTE hints):** ARMv8.2+ introduces a contiguous bit in PTEs. When 16 consecutive 4 KB PTEs are marked contiguous and map a naturally aligned 64 KB region, the TLB can cache them as a single 64 KB entry — reducing TLB pressure by 16× without requiring a different page table granule. Linux 6.9 (Ryan Roberts, ARM) added FEAT_CONTPTE support for anonymous and file-backed folios. AIOS targets this for direct map regions and model weight mappings. Note: Cortex-A72 (QEMU target) does not implement FEAT_CONTPTE; the contiguous bit is ignored on A72. AIOS sets the bit unconditionally so that A76+ targets benefit automatically.
-- **FEAT_TLBIRANGE (Range TLB Invalidation):** ARMv8.4+ provides `TLBI RVAE1IS` — a single instruction that invalidates a range of virtual addresses, replacing the current per-page `TLBI VAE1IS` loop. For large unmappings (e.g., agent exit, model eviction), this reduces TLBI overhead from O(pages) instructions to O(1). The TLB invalidation API (`mm/tlb.rs`) provides an abstract `tlb_invalidate_range()` that uses per-page TLBI on A72 and FEAT_TLBIRANGE on A76+.
+- **FEAT_CONTPTE (Contiguous PTE hints, target):** ARMv8.2+ introduces a contiguous bit in PTEs. When 16 consecutive 4 KB PTEs are marked contiguous and map a naturally aligned 64 KB region, the TLB can cache them as a single 64 KB entry — reducing TLB pressure by 16× without requiring a different page table granule. Linux 6.9 (Ryan Roberts, ARM) added FEAT_CONTPTE support for anonymous and file-backed folios. AIOS targets this for direct map regions and model weight mappings. Note: Cortex-A72 (QEMU target) does not implement FEAT_CONTPTE; the contiguous bit is ignored on A72. The plan is to set the bit unconditionally so that A76+ targets benefit automatically. See §13.1 for implementation roadmap.
+- **FEAT_TLBIRANGE (Range TLB Invalidation, target):** ARMv8.4+ provides `TLBI RVAE1IS` — a single instruction that invalidates a range of virtual addresses, replacing per-page `TLBI VAE1IS` loops. For large unmappings (e.g., agent exit, model eviction), this reduces TLBI overhead from O(pages) instructions to O(1). The target design introduces a `tlb_invalidate_range()` abstraction in `mm/tlb.rs` that uses per-page TLBI on A72 and FEAT_TLBIRANGE on A76+. See §13.1 for implementation roadmap.
 
 ### 11.2 Cache Awareness
 
@@ -3461,7 +3461,7 @@ This section catalogues improvements informed by OS research and production syst
 
 1. **FEAT_CONTPTE (Contiguous PTE hints).** Group 16 consecutive 4 KB PTEs into a single 64 KB TLB entry. Linux 6.9 added support (Ryan Roberts, ARM) for anonymous and file-backed folios. Primary targets: direct map region, model weight mappings, KV cache block tables. Cortex-A72 ignores the bit; A76+ benefits automatically.
 
-2. **FEAT_TLBIRANGE (Range TLB invalidation).** ARMv8.4+ `TLBI RVAE1IS` invalidates a VA range in a single instruction, replacing per-page TLBI loops. Reduces unmapping overhead from O(pages) to O(1) for agent exit, model eviction, and large `munmap`. Abstract API in `mm/tlb.rs` now; hardware path when targeting A76+.
+2. **FEAT_TLBIRANGE (Range TLB invalidation).** ARMv8.4+ `TLBI RVAE1IS` invalidates a VA range in a single instruction, replacing per-page TLBI loops. Reduces unmapping overhead from O(pages) to O(1) for agent exit, model eviction, and large `munmap`. Introduce an abstract `tlb_invalidate_range()` API in `mm/tlb.rs`; per-page fallback on A72, hardware path when targeting A76+.
 
 3. **ARM GCS (Guarded Control Stack).** ARMv9.4 hardware shadow stacks complement PAC/BTI (§9) with return-address integrity enforced in hardware. Each thread gets a GCS page that the CPU validates on `RET`. Requires kernel support for GCS page allocation, context switching the GCS pointer, and `clone()` semantics for GCS inheritance.
 
