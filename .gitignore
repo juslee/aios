@@ -25,3 +25,7 @@ esp/
 # Debug
 *.log
 core.*
+
+# Claude Code worktrees and agent memory
+.claude/worktrees/**/*
+.claude/agent-memory/**/*
