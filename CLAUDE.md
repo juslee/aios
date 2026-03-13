@@ -210,7 +210,7 @@ kernel/src/syscall/            Syscall dispatch and handlers (IPC 0-9, Notify 10
 kernel/src/drivers/            Device drivers (virtio_blk)
 kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable (Phase 4+)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs, bench.rs)
-shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
+shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
 docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
 ```

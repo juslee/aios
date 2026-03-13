@@ -130,7 +130,6 @@ pub fn write_sector(sector: u64, buf: &[u8; 512]) -> Result<(), StorageError> {
 }
 
 /// Device capacity in sectors, or 0 if no device.
-#[allow(dead_code)]
 pub fn capacity_sectors() -> u64 {
     VIRTIO_BLK.lock().as_ref().map_or(0, |b| b.capacity_sectors)
 }

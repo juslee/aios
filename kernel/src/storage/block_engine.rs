@@ -96,8 +96,9 @@ impl Superblock {
     fn compute_checksum(&self) -> u32 {
         // Checksum covers bytes 0..88 (magic through lsm_l0_offset).
         let offset_of_checksum = 8 + 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8; // 88 bytes
-                                                                                // SAFETY: Superblock is repr(C). We read the first 88 bytes as a contiguous
-                                                                                // byte slice for CRC-32C computation. No pointers or padding issues.
+
+        // SAFETY: Superblock is repr(C). We read the first 88 bytes as a contiguous
+        // byte slice for CRC-32C computation. No pointers or padding issues.
         let bytes = unsafe {
             core::slice::from_raw_parts(self as *const Self as *const u8, offset_of_checksum)
         };
@@ -582,7 +583,6 @@ pub fn flush_superblock() -> Result<(), StorageError> {
 }
 
 /// Access the global Block Engine under lock (for recovery / advanced operations).
-#[allow(dead_code)]
 pub fn with_engine<F, R>(f: F) -> Result<R, StorageError>
 where
     F: FnOnce(&mut BlockEngine) -> R,

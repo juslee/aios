@@ -207,7 +207,6 @@ impl Wal {
     }
 
     /// Advance tail past committed+replayed entries, freeing WAL space.
-    #[allow(dead_code)]
     pub fn trim_committed(&mut self) {
         // Advance tail while entries are committed (best-effort, ignore read errors).
         while self.tail < self.head {

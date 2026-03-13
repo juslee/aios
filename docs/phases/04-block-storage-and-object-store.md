@@ -40,7 +40,7 @@ By the end of this phase, the kernel has a working block device driver (VirtIO-b
 | Subsystem framework (5-layer architecture) | [subsystem-framework.md](../platform/subsystem-framework.md) | §2 What Every Subsystem Shares; §3 The Five-Layer Subsystem Architecture |
 | IPC channels and service model | [ipc.md](../kernel/ipc.md) | §5.4 Multi-Client Service Model |
 | Capability system for access control | [security.md](../security/security.md) | §2.2 Capability Check; §3 Capability System Internals |
-| Memory management (page pools, user pool) | [memory.md](../kernel/memory.md) | §2.2 Buddy Allocator; §2.4 Page Pools |
+| Memory management (page pools, user pool) | [memory-physical.md](../kernel/memory-physical.md) | §2.2 Buddy Allocator; §2.4 Page Pools |
 | Security model and security zones | [security.md](../security/security.md) | §2 The Eight Security Layers (Deep Dive) |
 | System overview and architecture diagram | [architecture.md](../project/architecture.md) | §2.2 Space Storage System |
 
