@@ -29,6 +29,7 @@ pub use shared::{
 pub use channel::{ipc_call, ipc_cancel, ipc_recv, ipc_reply, ipc_send};
 pub(crate) use tests::channel_create_unchecked;
 pub use tests::init;
+pub(crate) use timeout::wake_with_error;
 pub use timeout::{check_timeouts, current_thread_id, sleep_ticks};
 
 // ---------------------------------------------------------------------------

@@ -250,6 +250,7 @@ pub struct KernelMetrics {
     pub shm_unmap: Counter,
 
     // Notifications (Phase 3 M12)
+    pub notify_create: Counter,
     pub notify_signal: Counter,
     pub notify_wait: Counter,
     pub notify_wake: Counter,
@@ -301,6 +302,7 @@ impl KernelMetrics {
             shm_map: Counter::new(),
             shm_unmap: Counter::new(),
 
+            notify_create: Counter::new(),
             notify_signal: Counter::new(),
             notify_wait: Counter::new(),
             notify_wake: Counter::new(),

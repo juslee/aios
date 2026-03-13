@@ -121,7 +121,7 @@ pub fn shared_memory_create(
             1 << order,
             pid.0
         );
-        IpcError::Enospc as i64
+        IpcError::Enomem as i64
     })?;
 
     // Zero the region (defense in depth — prevent information leaks).

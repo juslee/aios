@@ -195,8 +195,8 @@ pub fn ipc_call(
     };
 
     // Check if we were woken due to error (timeout, EPIPE, cancel).
-    // The wake_with_error function stores the error in the thread's
-    // time_slice_remaining field (repurposed as error code when blocked).
+    // The wake_with_error function stores the error in the WAKEUP_ERRORS
+    // table (indexed by ThreadId), retrieved via get_wakeup_error().
     let error = get_wakeup_error(caller_tid);
     if error != 0 {
         // Clean up pending caller state.

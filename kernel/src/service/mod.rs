@@ -52,7 +52,7 @@ pub fn service_register(name: &[u8], pid: ProcessId, channel: ChannelId) -> Resu
     // Check for duplicate name.
     for entry in mgr.services.iter().flatten() {
         if entry.name == svc_name {
-            return Err(crate::syscall::IpcError::Enospc as i64);
+            return Err(crate::syscall::IpcError::Eexist as i64);
         }
     }
 

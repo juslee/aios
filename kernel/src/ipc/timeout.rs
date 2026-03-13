@@ -127,7 +127,7 @@ pub fn current_thread_id() -> Option<ThreadId> {
 /// We store the error code in a per-thread wakeup error slot so the
 /// thread can check it after being unblocked. Also clears any pending
 /// timeout entry to prevent stale timeouts from firing later.
-pub(super) fn wake_with_error(tid: ThreadId, error: i64) {
+pub(crate) fn wake_with_error(tid: ThreadId, error: i64) {
     // Store error in the wakeup error slot.
     {
         let mut errors = WAKEUP_ERRORS.lock();

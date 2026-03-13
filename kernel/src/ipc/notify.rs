@@ -79,7 +79,7 @@ pub fn notification_create(pid: crate::task::process::ProcessId) -> Result<Notif
     drop(table);
 
     #[cfg(feature = "kernel-metrics")]
-    METRICS.notify_signal.inc(); // Reuse signal counter for create events too? No — use a dedicated log.
+    METRICS.notify_create.inc();
 
     crate::kinfo!(Ipc, "Notification {} created by pid={}", idx, pid.0);
     Ok(id)

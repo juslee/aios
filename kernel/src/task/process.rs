@@ -100,8 +100,12 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
 
     // 2. Walk channel table: destroy channels owned by threads of this process.
     //    Wake any blocked threads with EPIPE.
-    //    Lock ordering: THREAD_TABLE before CHANNEL_TABLE to avoid deadlock.
-    //    Build a thread→pid lookup first, then scan channels.
+    //    Lock ordering: THREAD_TABLE before CHANNEL_TABLE; release CHANNEL_TABLE
+    //    before calling wake_with_error (which acquires WAKEUP_ERRORS + scheduler).
+    //    Build a thread→pid lookup first, then scan channels, collect wakeups,
+    //    release lock, then deliver EPIPE wakeups.
+    let mut epipe_wakeups: [Option<ThreadId>; 16] = [None; 16];
+    let mut epipe_count = 0usize;
     {
         // Snapshot thread ownership under THREAD_TABLE lock (released before CHANNEL_TABLE).
         let thread_pids: [Option<ProcessId>; MAX_THREADS] = {
@@ -135,17 +139,30 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
             });
 
             if owner_a_pid == Some(pid) || owner_b_pid == Some(pid) {
-                // Wake any blocked threads on this channel.
-                if let Some(receiver_tid) = ch.waiting_receiver.take() {
-                    crate::sched::unblock(receiver_tid);
-                }
-                if let Some(caller_tid) = ch.pending_caller.take() {
-                    crate::sched::unblock(caller_tid);
-                }
                 // Mark channel as destroyed by setting endpoints to Dead.
                 ch.state_a = shared::EndpointState::Dead;
                 ch.state_b = shared::EndpointState::Dead;
+                // Collect threads to wake outside the lock.
+                if let Some(tid) = ch.waiting_receiver.take() {
+                    if epipe_count < epipe_wakeups.len() {
+                        epipe_wakeups[epipe_count] = Some(tid);
+                        epipe_count += 1;
+                    }
+                }
+                if let Some(tid) = ch.pending_caller.take() {
+                    if epipe_count < epipe_wakeups.len() {
+                        epipe_wakeups[epipe_count] = Some(tid);
+                        epipe_count += 1;
+                    }
+                }
             }
+        }
+    } // CHANNEL_TABLE released here.
+
+    // Deliver EPIPE wakeups outside the channel lock.
+    for wakeup in epipe_wakeups.iter().take(epipe_count) {
+        if let Some(tid) = *wakeup {
+            crate::ipc::wake_with_error(tid, crate::syscall::IpcError::Epipe as i64);
         }
     }
 

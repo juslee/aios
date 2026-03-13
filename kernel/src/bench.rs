@@ -289,13 +289,17 @@ fn bench_shmem_throughput() -> (u64, u64) {
 
     // Map the region (registers the mapping in the table).
     if crate::ipc::shmem::shared_memory_map(pid, region, flags).is_err() {
+        let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
         return (0, 0);
     }
 
     // Phase 3: kernel threads access shared memory via the direct map.
     let dmap_va = match crate::ipc::shmem::region_dmap_addr(region) {
         Some(va) => va,
-        None => return (0, 0),
+        None => {
+            let _ = crate::ipc::shmem::shared_memory_unmap(pid, region);
+            return (0, 0);
+        }
     };
 
     // Write benchmark.
