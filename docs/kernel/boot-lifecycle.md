@@ -56,7 +56,7 @@ ResetSystem(Shutdown or Reboot)`"]
 
 If graceful shutdown takes longer than 10 seconds, the kernel forces the issue:
 
-```
+```text
  0s    Graceful shutdown begins
  5s    Services still running → warning logged
  8s    Remaining services receive SIGKILL
@@ -70,7 +70,7 @@ The watchdog timer (ARM Generic Timer) is set to 15 seconds at shutdown start. I
 
 Agents that need to survive reboot set `persistent: true` in their manifest (see [agents.md](../applications/agents.md) §2.4 `AgentManifest` and §3 Agent Lifecycle). Their state is stored in their designated space:
 
-```
+```text
 Agent receives: ShutdownSignal { deadline: Timestamp }
 Agent has 5 seconds to:
   1. Save conversation context to space
@@ -86,9 +86,9 @@ On next boot: agent is relaunched and reads state from space
 
 ## 12. Implementation Order
 
-The boot sequence maps to the earliest development phases. Week ranges below match the canonical durations in overview.md §10. These are *development plan* phases, not boot phases — see §11 for runtime boot phases.
+The boot sequence maps to the earliest development phases. Week ranges below match the canonical durations in overview.md §10. These are *development plan* phases, not boot phases — see boot.md §4-5 for runtime boot phases.
 
-```
+```text
 Phase 0: Foundation & Tooling (Weeks 1-2)
   - Cross-compilation toolchain (Rust → aarch64)
   - QEMU runner scripts
@@ -170,7 +170,7 @@ The boot sequence is the most critical code path in AIOS — if it breaks, nothi
 
 Every PR runs a QEMU boot smoke test:
 
-```
+```text
 Boot smoke test (runs in CI on every PR):
 
 1. Build kernel + initramfs + UEFI stub
@@ -189,7 +189,7 @@ Total CI time: ~10 seconds per run (dominated by QEMU startup)
 
 ### 13.2 Platform Test Matrix
 
-```
+```text
 Test Level     QEMU (CI)       Pi 4 (manual/nightly)  Pi 5 (manual/nightly)
 ──────────────────────────────────────────────────────────────────────────────
 Normal boot    Every PR        Nightly                 Nightly
@@ -207,7 +207,7 @@ Pi testing uses physical hardware connected to a CI runner via serial console (U
 
 The CI records Phase 5 completion time from UART output. A **regression threshold** of +10% from the rolling average triggers a warning; +20% blocks the PR. This catches accidental performance regressions (e.g., a new service added to the critical path, or an accidentally-synchronous operation in Phase 2).
 
-```
+```text
 Tracked metrics (from UART timestamps):
   - Kernel early boot (entry → Complete)
   - Phase 1 duration (storage)
@@ -238,7 +238,7 @@ This section tracks concepts that boot.md references which are defined (or need 
 | `Platform` trait, 7 `init_*` methods, `InterruptController`, `Timer`, `Uart`, `GpuDevice`, `NetworkDevice`, `StorageDevice`, `RngDevice` | [hal.md](./hal.md) §3 (Platform Trait), §4 (Device Abstractions) | Device trait signatures must match hal.md §3. Initialization order (UART/interrupts/timer early, GPU/network/storage in service phases) must agree with hal.md §3.2. |
 | `Scheduler`, four scheduling classes (RT, Interactive, Normal, Idle), 1ms tick | [scheduler.md](./scheduler.md) §3.1, §10.1 | Timer tick rate (Step 6) and scheduling class names in Step 15 must stay consistent with scheduler.md. |
 | `BuddyAllocator`, `SlabAllocator`, slab size classes | [memory.md](./memory.md) | Buddy allocator order range (0–10) and slab size classes (64–4096 bytes) cited in Steps 8–9 must match memory.md. |
-| `CapabilityManager`, `CapabilityToken`, root capability, trust levels, `Capability::Root` | [security.md](../security/security.md) §10 | `Timestamp::MAX` for Trust Level 0 tokens (Step 12) and capability delegation model (§4.7) must stay aligned. |
+| `CapabilityManager`, `CapabilityToken`, root capability, trust levels, `Capability::Root` | [security.md](../security/security.md) §10 | `Timestamp::MAX` for Trust Level 0 tokens (Step 12) and capability delegation model (§3.5) must stay aligned. |
 | `IpcSubsystem`, `ChannelId`, health check protocol | [ipc.md](./ipc.md) | Health check protocol (boot.md §4.4) and Service Manager IPC channels (ipc.md §4.1) must match ipc.md's channel semantics. |
 | Compositor framebuffer handoff, display subsystem, wgpu pipeline | [compositor.md](../platform/compositor.md) | Handoff sequence (§7.4) and Phase 2 display startup must match compositor.md's initialization. |
 | AIRS model selection by RAM, `system/models/` space, GGML runtime, 5-second timeout | [airs.md](../intelligence/airs.md) | Model size thresholds (§5 Phase 3: ≥16 GB → 8B Q5_K_M, ≥8 GB → 8B Q4_K_M, ≥4 GB → 3B, ≥2 GB → 1B, <2 GB → no local model) and the 5-second health timeout must stay consistent with airs.md §4.6. |
@@ -260,7 +260,7 @@ This section tracks concepts that boot.md references which are defined (or need 
 
 Users rarely cold boot. The daily experience is closing a lid, pressing a power button, or walking away. The system's job is to make returning feel instantaneous and *lossless* — nothing should ever be lost, regardless of how the system went down. AIOS provides four layers of state continuity, from fastest-cheapest to most-resilient:
 
-```
+```text
 Layer               Resume Time    Survives          State Fidelity
 ──────────────────────────────────────────────────────────────────────
 S3 (Suspend-to-RAM)     < 200ms   Lid close/open    Perfect (RAM powered)
@@ -299,7 +299,7 @@ System draws < 50 mW`"]
 
 **Wake sequence:**
 
-```
+```text
 Wake source fires (lid open, power button, RTC alarm, network wake-on-LAN)
      │
      ▼
@@ -327,7 +327,7 @@ Wake source fires (lid open, power button, RTC alarm, network wake-on-LAN)
 
 **Wake sources by platform:**
 
-```
+```text
 Platform    Wake Sources                                Notes
 ──────────────────────────────────────────────────────────────
 QEMU        Keyboard, timer (RTC alarm)                 No lid, no real power mgmt
@@ -399,7 +399,7 @@ pub struct HibernateImage {
 
 **Hibernate partition:** A dedicated raw partition on the block device (not a Space — it must be accessible before Space Storage starts). The Block Engine reserves this during first-boot formatting:
 
-```
+```text
 Block device layout:
   [Superblock] [Panic dump] [Hibernate partition] [WAL] [Main storage]
                               └─ sized to match physical RAM
@@ -520,7 +520,7 @@ Semantic Resume captures state every 60 seconds. But what about the 59 seconds b
 
 This is possible because Spaces already provides content-addressed, versioned storage. The missing piece is making writes *continuous* rather than batched:
 
-```
+```text
 Traditional OS:
   User types → in-memory buffer → "Save" → disk
   Power loss before save → data lost
@@ -556,7 +556,7 @@ pub enum EditOperation {
 
 **On recovery (crash, panic, power loss):**
 
-```
+```text
 1. Block Engine starts, replays WAL
    → Tier 1 edit journal entries applied to objects
    → At most ~2 seconds of edits lost
@@ -580,7 +580,7 @@ pub enum EditOperation {
 
 AIRS observes usage patterns over time: when the user typically wakes the device, how long boot takes, which services and models they use first. Proactive Wake uses this to pre-warm the system *before* the user arrives.
 
-```
+```text
 Monday–Friday:
   User's alarm is 7:00 AM (calendar event in Spaces)
   User typically opens the laptop at 7:15 AM
@@ -636,7 +636,7 @@ pub enum ProactiveWakePowerPolicy {
 
 **Learning:** AIRS maintains a simple usage model in `system/session/proactive_wake`:
 
-```
+```text
 Day-of-week × hour-of-day → probability of first interaction
 ```
 
@@ -711,7 +711,7 @@ flowchart TD
 
 **Service graph adaptation:** The Service Manager reads `BootIntent` from `KernelState` and adjusts the phase plan:
 
-```
+```text
 Intent              Phases Run          Display   AIRS    Network   Services
 ──────────────────────────────────────────────────────────────────────────────
 Interactive         1-5 (full)          On        Yes     Yes       All
@@ -805,7 +805,7 @@ pub enum ActivationMode {
 
 ### 17.2 Which Services Benefit
 
-```
+```text
 Service               Default Mode   Why
 ──────────────────────────────────────────────────────────────
 block_engine          Boot           Critical path. Must exist for everything.
@@ -838,7 +838,7 @@ AIOS encrypts user data at rest. The encryption key is derived from the user's p
 
 ### 18.1 What's Encrypted
 
-```
+```text
 Space                    Encrypted?   Why
 ──────────────────────────────────────────────────────────
 system/config/           No          Needed before unlock (device settings)
@@ -931,7 +931,7 @@ flowchart TD
 
 The compositor includes a minimal accessibility engine that works without AIRS:
 
-```
+```text
 Accessibility Feature          AIRS Required?   Boot Availability
 ──────────────────────────────────────────────────────────────────
 High contrast mode             No               From first frame
@@ -979,7 +979,7 @@ Not every boot has a display. A headless Pi (server, IoT, NAS) has no monitor. E
 
 The Raspberry Pi has a green Activity LED (active-low GPIO on Pi 4, RP1-controlled on Pi 5). AIOS uses this LED to communicate boot progress via blink patterns:
 
-```
+```text
 Pattern                 Meaning                          Duration
 ──────────────────────────────────────────────────────────────────
 Solid on                Firmware running                  0-500ms
@@ -1021,7 +1021,7 @@ On QEMU, the LED indicator is a no-op (no physical LED). The UART output serves 
 
 If an audio output device is detected during Phase 2 (HDMI audio, 3.5mm jack, or USB audio), the kernel can play a short boot chime:
 
-```
+```text
 Boot chime timing:
   Phase 2 complete → play a short tone (200ms, 440 Hz sine wave)
                      Indicates: display + audio + input are working
@@ -1045,7 +1045,7 @@ The traditional first-boot experience is a wizard: fixed steps, fixed order, mul
 
 The first-boot setup flow (§5 Phase 5) already describes the fixed steps: language, passphrase, Wi-Fi, AIRS model. The conversational first boot wraps these steps in a natural interaction:
 
-```
+```text
 [Screen: clean dark background with AIOS logo]
 [After Phase 3 AIRS loads (typically ~3 seconds into boot):]
 
@@ -1286,7 +1286,7 @@ AIOS's phased boot (§4-5) already follows this pattern, but Genode takes it fur
 
 The Service Manager already restarts failed services. Extending this to **live service replacement** — upgrading a running service without rebooting — is the natural next step:
 
-```
+```text
 Live service upgrade:
   1. New binary placed in system/services/ (via OTA or manual update)
   2. Service Manager notices the content hash changed
