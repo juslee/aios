@@ -84,7 +84,11 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Security model | `docs/security/security.md` | All (all phases) |
 | Composable capability profiles | `docs/security/security.md` | §3.7 (Phase 28) |
 | AIRS capability intelligence | `docs/intelligence/airs.md` | §5.9 (Phase 29) |
-| Fuzzing & input hardening | `docs/security/fuzzing-and-hardening.md` | All (all phases) |
+| Fuzzing & input hardening (hub) | `docs/security/fuzzing-and-hardening.md` | §1 Overview, §2 Attack surface, Document Map |
+| Fuzzing hardening strategies | `docs/security/fuzzing-hardening-strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
+| Fuzzing adoption roadmap | `docs/security/fuzzing-adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
+| Fuzzing tooling & catalog | `docs/security/fuzzing-tooling.md` | §5.1–5.4 Tiered tooling, §6 Fuzz target catalog |
+| Fuzzing AI-native strategies | `docs/security/fuzzing-ai-native.md` | §7.1–7.3 Dev-time AI, kernel-internal AI, AIRS-dependent |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |

@@ -66,7 +66,7 @@ For example output and developer UX, see [security.md](security.md) §8.1 and [a
 
 ### 4.1 Rust Compiler — Borrow Checker and Type System
 
-The Rust compiler is AIOS's most powerful static analyzer. Ownership and borrowing eliminate buffer overflow (~35% of kernel CVEs), use-after-free (~20%), and uninitialized memory (~10%) at compile time. For the full breakdown, see [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §3.1.
+The Rust compiler is AIOS's most powerful static analyzer. Ownership and borrowing eliminate buffer overflow (~35% of kernel CVEs), use-after-free (~20%), and uninitialized memory (~10%) at compile time. For the full breakdown, see [fuzzing-hardening-strategies.md](fuzzing-hardening-strategies.md) §3.1.
 
 What remains are `unsafe` blocks, which AIOS requires for MMIO register access, inline assembly, raw pointer manipulation (page table walks), and system register access. Every `unsafe` block follows the documentation standard defined in `CLAUDE.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary target for all tools below.
 
@@ -205,7 +205,7 @@ Static analysis is adopted incrementally, aligned with the phase at which each s
 | 13 | TLA+ models, Rudra full scans, Kani CI enforcement | Capability system, IPC protocol, all `unsafe` blocks |
 | 24 | Coq / Verus proofs | Capability no-forge/no-escalate, provenance chain, W^X |
 
-Cross-reference: [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §4 for the parallel fuzzing adoption roadmap.
+Cross-reference: [fuzzing-adoption-roadmap.md](fuzzing-adoption-roadmap.md) §4 for the parallel fuzzing adoption roadmap.
 
 ---
 
