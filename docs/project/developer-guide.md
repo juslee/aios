@@ -1024,7 +1024,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs      (215)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  mod.rs      (216)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
   channel.rs  (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs  (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs          # Direct switch fast path, priority inheritance, reply switch
