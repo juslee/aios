@@ -5,7 +5,7 @@
 **Parent document:** [architecture.md](../project/architecture.md)
 **Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — Subsystem sessions, [memory.md](./memory.md) — Memory management, shared memory regions (§7), [deadlock-prevention.md](./deadlock-prevention.md) — Deadlock prevention architecture (timeouts §4, priority inheritance §5, synchronous IPC §8)
 
-> **Naming note:** This document uses `MemoryFlags` for memory region permissions. This is a type alias for `VmFlags` defined in [memory.md §3.2](./memory.md): `type MemoryFlags = VmFlags;`. Both names refer to the same bitflags type (READ, WRITE, EXECUTE, USER, SHARED, PINNED, HUGE, NO_DUMP).
+> **Naming note:** This document uses `MemoryFlags` in API descriptions for memory region permissions. The corresponding implementation type is `VmFlags` defined in `kernel/src/mm/pgtable.rs` (see [memory.md §3.2](./memory.md)). Both names refer to the same concept: bitflags controlling page-level permissions (READ, WRITE, EXECUTE, USER, etc.).
 
 -----
 
@@ -122,15 +122,17 @@ pub enum Syscall {
         channel: ChannelId,
     },
 
-    /// Wait for a message on any of multiple channels.
-    /// On success, ready_channel is set to the channel that has data.
+    /// Wait on multiple sources (channels and/or notifications).
+    /// Each entry specifies either a channel or a notification+mask.
+    /// Returns the index of the first ready entry and matched bits
+    /// (non-zero only for notification entries).
+    /// See `SelectEntry` and `SelectKind` in `shared/src/ipc.rs`.
     IpcSelect {
-        channels: *const ChannelId,
-        channel_count: usize,
-        recv_buf: *mut u8,
-        recv_len: usize,
-        timeout: Option<Duration>,     // SDK type; raw syscall: timeout_ns: u64 (0 = non-blocking, u64::MAX = indefinite)
-        ready_channel: *mut ChannelId,
+        entries: *const SelectEntry,   // array of SelectEntry
+        entry_count: usize,            // max: MAX_SELECT_ENTRIES (8)
+        timeout: Option<Duration>,     // SDK type; raw syscall: timeout_ticks: u64 (u64::MAX = indefinite)
+        ready_index: *mut usize,       // output: index of ready entry
+        ready_bits: *mut u64,          // output: matched notification bits (0 for channels)
     },
 
     // === Channel Management ===
@@ -169,7 +171,6 @@ pub enum Syscall {
     /// Create a lightweight notification object (single-word bitmap).
     /// No message body. Each bit position is a signal.
     NotificationCreate {},
-
 
     /// Signal a notification: atomic OR of bits into the notification word.
     /// ~10 cycles. No message allocation, no queue, no serialization.
@@ -317,25 +318,29 @@ pub enum Syscall {
 }
 
 /// Error codes returned in x0 (negative values).
-#[repr(i32)]
+#[repr(i64)]
 pub enum IpcError {
-    ETIMEDOUT    = -1,  // IpcCall timeout elapsed
-    EPIPE        = -2,  // peer endpoint is dead
-    EAGAIN       = -3,  // queue full (IpcSend) or would block
-    ECANCELED    = -4,  // IpcCancel aborted the call
-    EACCES       = -5,  // behavioral gate SUSPENDED
-    EPERM        = -6,  // missing capability
-    ENOSPC       = -7,  // subscriber list full
-    EPROTO       = -8,  // message_type not in channel protocol
-    ENOTSUP      = -9,  // operation not available (e.g., AIRS offline)
-    ECAP_DORMANT = -10, // capability exists but is dormant
+    Etimedout    = -1,  // IpcCall timeout elapsed
+    Epipe        = -2,  // peer endpoint is dead
+    Eagain       = -3,  // queue full (IpcSend) or would block
+    Ecanceled    = -4,  // IpcCancel aborted the call
+    Eacces       = -5,  // behavioral gate SUSPENDED
+    Eperm        = -6,  // missing capability
+    Enospc       = -7,  // subscriber list full
+    Eproto       = -8,  // message_type not in channel protocol
+    Enotsup      = -9,  // operation not available (e.g., AIRS offline)
+    EcapDormant  = -10, // capability exists but is dormant
+    Eexist       = -11, // resource already exists
+    Einval       = -12, // invalid argument
+    Enomem       = -13, // out of memory / resource limit reached
 }
 
 /// IPC channel identifier. Uniquely identifies a channel endpoint.
-pub struct ChannelId(u64);
+/// Inner type is u32 (matching `shared/src/ipc.rs`).
+pub struct ChannelId(pub u32);
 
 /// Ring buffer channel identifier (returned by RingChannelCreate).
-pub struct RingChannelId(u64);
+pub struct RingChannelId(pub u32);
 
 /// Flags for RingChannelCreate.
 pub struct RingChannelFlags(u32);
@@ -343,12 +348,13 @@ pub struct RingChannelFlags(u32);
 // bit 1: SHARED_MEMORY — map the ring into both processes (for zero-copy)
 
 /// Lightweight notification object identifier (returned by NotificationCreate).
-pub struct NotificationId(u64);
+/// Inner type is u32 (matching `shared/src/ipc.rs`).
+pub struct NotificationId(pub u32);
 ```
 
 ### 3.2 Syscall ABI
 
-```
+```text
 Syscall convention (aarch64):
   x8:  syscall number
   x0:  argument 0
@@ -411,45 +417,53 @@ Compare with Linux (~450) or even seL4 (~12). AIOS targets the sweet spot: enoug
 IPC channels are the communication primitive. A channel is a bidirectional pipe between two endpoints:
 
 ```rust
+/// Channel as implemented in `kernel/src/ipc/mod.rs`.
+/// Channels are thread-owned (not process-owned) in the current kernel —
+/// ThreadId is used for endpoint ownership because IPC operations
+/// (call, recv, reply) operate at thread granularity with direct switch.
 pub struct Channel {
     id: ChannelId,
-    endpoint_a: ProcessId,
-    endpoint_b: ProcessId,
     /// State of each endpoint. When a process dies, the kernel sets its
     /// endpoint to Dead. Any IpcCall/IpcSend/IpcRecv on the peer endpoint
     /// returns EPIPE. Any blocked IpcCall on the peer unblocks with EPIPE.
     /// This is the IPC equivalent of TCP RST — immediate, unambiguous.
     state_a: EndpointState,
     state_b: EndpointState,
-    capability: ChannelCapability,
+    /// Thread that owns endpoint A (creator). ThreadId rather than ProcessId
+    /// because IPC direct switch operates at thread granularity.
+    owner_a: ThreadId,
+    /// Thread that owns endpoint B (connected peer). None until connected.
+    owner_b: Option<ThreadId>,
+    /// Fixed-capacity ring buffer for async message queuing (IpcSend).
+    /// Capacity: RING_CAPACITY (16) messages.
+    ring: MessageRing,
+    /// Thread currently blocked in IpcRecv on this channel.
+    waiting_receiver: Option<ThreadId>,
+    /// Thread currently blocked in IpcCall on this channel.
+    pending_caller: Option<ThreadId>,
     /// The capability token that authorized this channel's creation.
     /// On revocation, the kernel walks all channels and destroys any whose
-    /// creation_capability has been revoked (zero trust: §10.3 Gap 1 in
+    /// creation_cap has been revoked (zero trust: §10.3 Gap 1 in
     /// security.md). This ensures cached channel access cannot outlive
-    /// the credential that granted it.
-    creation_capability: CapabilityTokenId,
-    message_queue: RingBuffer<RawMessage>,
-    /// Fixed-size array. Bounded per-channel to prevent kernel heap
-    /// exhaustion from userspace (zero trust: §10.3 Gap 4 in security.md).
-    shared_regions: [Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL],
-    /// Registered protocol — valid message_type values per direction.
-    /// Kernel rejects messages with unregistered types before delivery.
-    /// None for untyped channels (e.g., POSIX pipes).
-    protocol: Option<ChannelProtocol>,
-    /// Per-channel statistics. Updated by kernel on every IPC operation.
-    /// Queryable via ChannelStats syscall (§3.1). Feeds AIRS behavioral monitoring.
-    stats: ChannelStatsData,
-    audit: bool,                        // log all messages?
+    /// the credential that granted it. None for kernel-internal channels.
+    creation_cap: Option<CapabilityTokenId>,
+
+    // --- Target design fields (not yet implemented) ---
+    // shared_regions: [Option<SharedMemoryId>; MAX_SHARED_REGIONS_PER_CHANNEL],
+    // protocol: Option<ChannelProtocol>,
+    // stats: ChannelStatsData,
+    // audit: bool,
 }
 
 pub enum EndpointState {
-    /// Normal operation
+    /// Normal operation.
     Active,
     /// Process has exited or been killed. Peer gets EPIPE on all operations.
     Dead,
-    /// Process suspended by behavioral gating. Peer gets EACCES.
-    /// Same error code as §9.1 behavioral gate SUSPENDED state.
-    Suspended,
+    // --- Target design (not yet implemented) ---
+    // /// Process suspended by behavioral gating. Peer gets EACCES.
+    // /// Same error code as §9.1 behavioral gate SUSPENDED state.
+    // Suspended,
 }
 
 pub struct ChannelStatsData {
@@ -490,7 +504,7 @@ pub struct ChannelFlags {
 ```
 
 **Channel creation flow:**
-```
+```text
 1. Service Manager creates service processes at boot
 2. Service Manager creates channels: (agent ↔ space_service), (agent ↔ audio_service), etc.
 3. Channel endpoints are distributed via capability transfer
@@ -528,23 +542,35 @@ sequenceDiagram
 Messages are untyped byte buffers at the kernel level. The SDK provides typed wrappers:
 
 ```rust
-/// Kernel-level message (untyped). All arrays are fixed-size to avoid
-/// kernel heap allocation on the IPC hot path.
+/// Kernel-level message as implemented in `shared/src/ipc.rs`.
+/// Fixed-size, inline payload — no heap allocation on the IPC hot path.
+/// Total size: 272 bytes (compile-time asserted).
 pub struct RawMessage {
-    channel: ChannelId,
-    /// Discriminates message type at the kernel level. Used by the
-    /// kernel for ChannelProtocol validation (§8.3 level 2, §9.1 step 4).
-    message_type: u32,
-    data: *const u8,
-    len: usize,
-    capabilities: [Option<CapabilityTokenId>; MAX_CAPS_PER_MESSAGE],
-    cap_count: u8,
-    shared_memory: [Option<SharedMemoryId>; MAX_SHARED_PER_MESSAGE],
-    shared_count: u8,
+    /// Thread that sent this message (set by kernel, not caller).
+    pub sender: ThreadId,           // 4 bytes (+4 bytes implicit alignment padding)
+    /// Inline message payload — MAX_MESSAGE_SIZE (256) bytes.
+    /// For messages smaller than 256 bytes, only `len` bytes are valid.
+    pub data: [u8; MAX_MESSAGE_SIZE], // 256 bytes
+    /// Actual length of valid data in `data`.
+    pub len: usize,                 // 8 bytes
 }
 
-const MAX_CAPS_PER_MESSAGE: usize = 4;
-const MAX_SHARED_PER_MESSAGE: usize = 4;
+const MAX_MESSAGE_SIZE: usize = 256;
+
+// --- Target design: future message extensions ---
+// The current RawMessage is minimal for Phase 3 synchronous IPC.
+// Future phases will add capability transfer and typed messages:
+//
+// pub struct ExtendedMessage {
+//     base: RawMessage,
+//     capabilities: [Option<CapabilityTokenId>; MAX_CAPS_PER_MESSAGE],
+//     cap_count: u8,
+//     shared_memory: [Option<SharedMemoryId>; MAX_SHARED_PER_MESSAGE],
+//     shared_count: u8,
+//     message_type: u32,  // for ChannelProtocol validation
+// }
+// const MAX_CAPS_PER_MESSAGE: usize = 4;
+// const MAX_SHARED_PER_MESSAGE: usize = 4;
 
 /// SDK-level typed message (serialized to/from RawMessage)
 pub struct TypedMessage<T: Serialize + Deserialize> {
@@ -563,7 +589,7 @@ pub struct MessageHeader {
 
 For large data (file content, audio buffers, display frames), IPC uses shared memory instead of copying:
 
-```
+```text
 Agent wants to write 1 MB to a space:
 
 Without shared memory (slow):
@@ -585,7 +611,7 @@ Shared memory regions are mapped into both address spaces. The kernel manages ac
 **Available to all userland processes.** Any agent (Trust Levels 1-4) can create shared memory regions via `SharedMemoryCreate` and share them via `SharedMemoryShare`. Third-party agents (Level 3) use shared memory for agent-to-agent communication, large data transfers to Space Storage, display buffers to the Compositor, and audio buffers to the Audio Service. The agent SDK provides typed wrappers that handle the create/map/share lifecycle automatically. Developers never need to manually manage shared memory unless they want fine-grained control.
 
 **Agent-to-agent shared memory.** Two agents can share memory if they have an IPC channel between them:
-```
+```text
 Agent A: SharedMemoryCreate(size) → region_id
 Agent A: SharedMemoryShare(region_id, channel_to_B, READ_WRITE)
 Agent B: receives region_id, calls SharedMemoryMap(region_id, READ_WRITE)
@@ -788,7 +814,7 @@ See [compositor.md](../platform/compositor.md) for the full protocol. The compos
 
 System services handle concurrent clients. The model is single-threaded event loop with `IpcSelect`:
 
-```
+```text
 Service startup:
   1. Service Manager creates per-client channels at boot
   2. Service receives all channel endpoints via capability transfer
@@ -813,7 +839,7 @@ Event loop:
 
 A microkernel's core advantage is that services are restartable. When a service crashes (or is killed by OOM, behavioral gating, or manual action), the Service Manager detects the death, restarts the service, and re-establishes channels:
 
-```
+```text
 Service crash → recovery sequence:
 
 1. KERNEL: Detects service process death
@@ -849,33 +875,49 @@ Service crash → recovery sequence:
 
 ## 6. Notification Mechanism
 
-For asynchronous events (device hotplug, file system changes, attention items), services use **notification channels** — one-way channels where the service can push events to interested agents:
+### 6.1 Kernel-Level Notifications (seL4-style)
+
+The kernel provides lightweight **notification objects** — single-word (u64) atomic bitmaps for fast asynchronous signaling. These are the kernel primitive; higher-level service notifications (§6.2) are built on top.
 
 ```rust
-pub struct NotificationChannel {
+/// Notification object as implemented in `kernel/src/ipc/notify.rs`.
+/// A single-word atomic bitmap with a bounded waiter list.
+pub struct NotificationObject {
     id: NotificationId,
-    /// Bounded subscriber list. When full, Subscribe returns ENOSPC.
-    /// System services (Level 1) have higher limits than agents.
-    subscribers: [Option<ProcessId>; MAX_NOTIFICATION_SUBSCRIBERS],
-    subscriber_count: u16,
-    filter: NotificationFilter,
+    /// Atomic bitmap — signaling ORs bits in; waiting checks a mask
+    /// and returns+clears matching bits.
+    word: AtomicU64,
+    creator: ProcessId,
+    /// Bounded waiter list. Each waiter specifies a bit mask.
+    waiters: [Option<Waiter>; MAX_WAITERS_PER_NOTIFICATION],
 }
 
-const MAX_NOTIFICATION_SUBSCRIBERS: usize = 64;
-
-/// Agent subscribes to notifications
-pub enum NotificationRequest {
-    Subscribe {
-        service: ServiceId,
-        filter: NotificationFilter,
-    },
-    Unsubscribe {
-        subscription: SubscriptionId,
-    },
+struct Waiter {
+    tid: ThreadId,
+    mask: u64,
 }
 
-/// Notifications wake IpcSelect
-pub enum Notification {
+const MAX_NOTIFICATIONS: usize = 64;
+const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
+```
+
+**Signaling** (`NotificationSignal`): Atomically ORs `bits` into the notification word, then wakes any waiters whose mask intersects the new value. The matched bits are atomically cleared before the waiter is woken. Cost: ~10 cycles for the atomic OR; waiter wake adds a scheduler unblock.
+
+**Waiting** (`NotificationWait`): If any bits matching `mask` are already set, returns+clears them immediately (fast path). Otherwise blocks until signaled or timeout expires. Double-checks after re-acquiring the table lock to prevent races.
+
+**Timeout support**: Deadline stored per-thread; checked from the timer tick handler using `try_lock` for IRQ safety. Timed-out waiters are cleaned up and unblocked with no result (caller sees `Etimedout`).
+
+**IpcSelect integration**: Notifications are first-class `IpcSelect` sources via `SelectKind::Notification(id, mask)`. A thread can wait on a mix of channels and notifications simultaneously. When a notification fires and a select-blocked thread has a matching entry, the select path wakes the thread with the entry index and matched bits.
+
+### 6.2 Service-Level Notifications (Target Design)
+
+For higher-level asynchronous events (device hotplug, file system changes, attention items), services build on the kernel notification primitive to provide structured event delivery:
+
+```rust
+/// Service-layer notification (built on kernel NotificationObject).
+/// Each event type maps to a bit position in the notification word.
+/// The service IPC protocol defines the mapping.
+pub enum ServiceNotification {
     SpaceChanged { space: SpaceId, object: ObjectId, change: ChangeType },
     DeviceEvent { subsystem: SubsystemId, event: HardwareEvent },
     AttentionItem { item: AttentionItem },
@@ -883,7 +925,7 @@ pub enum Notification {
 }
 ```
 
-Agents use `IpcSelect` to wait on both their service channels and notification channels simultaneously, handling whichever message arrives first.
+Agents use `IpcSelect` to wait on both their service channels and notification objects simultaneously, handling whichever source becomes ready first.
 
 -----
 
@@ -891,7 +933,7 @@ Agents use `IpcSelect` to wait on both their service channels and notification c
 
 BSD tools use POSIX syscalls (open, read, write, fork, exec, pipe, socket, etc.). The POSIX emulation layer translates these to AIOS syscalls + IPC:
 
-```
+```text
 POSIX syscall          AIOS translation
 ──────────────         ─────────────────
 open("/path", flags)   → IPC to Space Service: resolve path, open object
@@ -967,7 +1009,7 @@ Levels 1, 2, and 5 are always active (kernel-enforced). Level 3 is active when A
 ### 9.1 Fast Path
 
 The IPC fast path (synchronous call/reply, small message, no capability transfer):
-```
+```text
 1. SVC trap to kernel                    ~20 cycles
 2. Validate syscall + parameters          ~30 cycles
 3. Behavioral gate check                  ~15 cycles (see below)
@@ -1077,7 +1119,7 @@ This is the seL4 MCS (Mixed Criticality System) approach, adapted for AIOS's fou
 
 ## 11. Implementation Order
 
-```
+```text
 Phase 3a:  Syscall handler + basic IPC (send/recv)
            IpcCall with mandatory timeout
            IpcReply (capabilityless reply)
@@ -1199,7 +1241,49 @@ Full FIDL-style typed marshaling (generated code, wire format validation) can be
 
 These optimizations are invisible to POSIX callers and maintain correctness (cache invalidation via notification channels when objects change). Implementation belongs in Phase 15 alongside the POSIX translation layer.
 
-### 12.3 Summary
+#### Gap 7: No control-plane / data-plane separation pattern
+
+**Problem.** The current design treats IPC channels and shared memory as independent primitives. There is no codified pattern for when to use which.
+
+**Modern precedent.** LionsOS (seL4-based, 2025) explicitly separates *control plane* (IPC for requests, capability transfer, configuration) from *data plane* (shared-memory ring buffers + notifications for bulk/high-frequency data). Lock-free ring buffers in userspace keep the kernel out of the data path entirely. This is the same pattern as Linux io_uring: shared-memory submission/completion queues with atomic loads/stores, no syscalls during normal operation.
+
+**Recommendation.** Codify the control-plane / data-plane pattern as a first-class architectural idiom in the SDK. `RingChannelCreate` (§3.1) already provides the kernel primitive; the SDK should provide typed wrappers that pair a control channel (for setup, teardown, error reporting) with a data ring (for streaming). See §14.4 for details.
+
+#### Gap 8: No scheduling context donation (passive servers)
+
+**Problem.** AIOS's direct switch (§9.3) is already fast, but the server still runs on its own scheduling context. If the server has a lower priority than the caller, priority inheritance (§9.2) corrects this — but at the cost of tracking and restoring inherited priority.
+
+**Modern precedent.** seL4 MCS (Mixed-Criticality Scheduling) introduces *scheduling contexts* as kernel objects representing CPU time (budget/period). Servers can become *passive* by surrendering their scheduling context while blocked on an endpoint. When a client calls a passive server, the client's scheduling context is automatically donated — the server runs on the client's time budget. This is a true migrating-threads model and eliminates priority inversion structurally rather than correcting it reactively.
+
+**Recommendation.** Evaluate scheduling context donation as a future evolution of direct switch. See §14.2 for details.
+
+#### Gap 9: No interface definition language
+
+**Problem.** Service protocols (§5) are defined informally. No mechanism for versioning, binary compatibility checking, or code generation.
+
+**Modern precedent.** Fuchsia's FIDL (Fuchsia Interface Definition Language) provides versioning annotations, binary/source compatibility guarantees, flexible unions for evolution, and generated bindings for multiple languages. Protocol evolution is governed by explicit rules for what changes are ABI-stable.
+
+**Recommendation.** Define an AIOS IDL for service protocols in a future phase. See §14.6 for details.
+
+### 12.3 Recent Research (2024-2025)
+
+This subsection summarizes relevant findings from recent OS research that inform AIOS's IPC evolution.
+
+**HongMeng / HarmonyOS (OSDI 2024).** The first production microkernel paper at a top venue. Key insights: (1) per-invocation IPC cost is not the only performance concern — *IPC frequency* and *state double-bookkeeping* across services matter more in practice; (2) *differentiated isolation classes* allow mature/verified services to use relaxed isolation (co-location, shared address space) for lower overhead while untrusted services retain full isolation; (3) *address-token-based access control* supplements capabilities for faster checks. Deployed on tens of millions of devices.
+
+**LionsOS (seL4 Microkit, 2025).** A static-architecture OS for embedded/IoT built on seL4. Demonstrates that the control-plane / data-plane separation pattern (IPC for control, shared-memory + notifications for data) outperforms all compared systems on context-switch intensive loads. Confirms that seL4-style notifications + shared memory ring buffers are the optimal data path for high-throughput scenarios.
+
+**LITESHIELD (USENIX ATC 2025).** Decouples traditional kernel functionality into composable userspace µkernel services with low-latency shared-memory IPC. Achieves VM-equivalent isolation with only 22 host syscalls. Demonstrates that fine-grained syscall interception can provide POSIX compatibility without full kernel mediation.
+
+**Asterinas (USENIX ATC 2025).** A Rust "framekernel" — all unsafe code encapsulated in a core library, services in safe Rust within the kernel address space. Avoids microkernel IPC overhead entirely while maintaining isolation via Rust's type system. Supports 230+ Linux syscalls. Relevant to AIOS as a point in the design space: Rust's type safety can substitute for address-space isolation in trusted components.
+
+**Meta IPC Verification (CPP 2022, Iris/Coq).** Applied concurrent separation logic to verify lock-free queue data structures used for IPC. Found 4 algorithmic simplifications and bugs, including unnecessary memory barriers and atomic operations. Completed in person-months by non-experts. Demonstrates that formal verification of IPC data structures is practical.
+
+**BULKHEAD (NDSS 2025).** Uses Intel PKS + ASID for kernel compartmentalization with unlimited compartments at 2.44% overhead. Locality-aware two-level scheme. Relevant to AIOS's future aarch64 compartmentalization strategy.
+
+**SkyBridge (EuroSys 2019) / XPC.** Hardware-assisted IPC: direct address-space switch without kernel trap using Intel VMFUNC. 1.49x–19.6x faster IPC. XPC extends this with message passing across invocation chains. No aarch64 equivalent yet, but future ARM hardware may enable similar optimizations.
+
+### 12.4 Summary
 
 | Technique | Source | Status | Priority |
 |---|---|---|---|
@@ -1235,12 +1319,32 @@ These optimizations are invisible to POSIX callers and maintain correctness (cac
 | Context-adaptive IPC scheduling | Novel | **Specified** (§13.4) | Medium |
 | Provenance-carrying IPC | Novel | **Specified** (§13.5) | High |
 | Semantic capability activation (not negotiation) | Novel | **Specified** (§13.6) | Medium |
+| GNN IPC topology anomaly detection | HetGLM (2022), Novel application | **Specified** (§13.7) | High |
+| IPC state snapshot/resume | AIOS/COLM 2025, Novel application | **Specified** (§13.8) | Medium |
+| Learned service routing tables | Learned Indexes (Kraska/MIT), Novel application | **Specified** (§13.9) | Medium |
+| **Kernel-internal ML (§14.9-14.11 — no AIRS dependency)** | | | |
+| RL-based adaptive IPC scheduling | MobiRL (ACM TACO 2024) | **Specified** (§14.9) | Medium |
+| Predictive IPC prefetching from call stacks | I/O Patterns (ScienceDirect 2025) | **Specified** (§14.10) | Low |
+| ML-driven message coalescing | Novel (Nagle + ML) | **Specified** (§14.11) | Medium |
+| **Identified gaps from modern kernels (§12.2)** | | | |
+| Control-plane / data-plane separation | LionsOS (SOSP 2024) | **Gap** — evaluate for ring channels | Medium |
+| Scheduling context donation / passive servers | seL4 MCS | **Gap** — evaluate for AIRS service | High |
+| Interface definition language (IDL) | Fuchsia FIDL, Android AIDL | **Gap** — no compile-time protocol checks | Medium |
+| **Recent research (§12.3, 2024-2025)** | | | |
+| Differentiated isolation classes | HongMeng (OSDI 2024) | Inform trust-level isolation | Medium |
+| Composable µkernel services | LITESHIELD (ATC 2025) | Inform service composition | Low |
+| Framekernel architecture | Asterinas (ATC 2025) | Inform safe-Rust IPC | Low |
+| Formal verification of IPC structures | Meta Iris/Coq (CPP 2022) | Future correctness proofs | Low |
+| Hardware-assisted IPC | SkyBridge/XPC (EuroSys 2019) | Future aarch64 hardware | Low |
+| Kernel compartmentalization | BULKHEAD (NDSS 2025) | Future PKS/MTE integration | Low |
 
 -----
 
 ## 13. AI-Native IPC: What Only AIOS Can Do
 
 Every IPC technique in §12 exists in at least one other kernel. This section describes capabilities that are unique to AIOS — possible only because the kernel has an integrated AI runtime (AIRS) with semantic understanding of agents, tasks, and user intent. No existing OS kernel has these capabilities, and they cannot be retrofitted onto Linux, seL4, or Fuchsia without an equivalent AI runtime.
+
+**Research validation (2024-2025).** A comprehensive survey of recent OS research (OSDI 2024, SOSP 2024, ATC 2025, NDSS 2025, EuroSys 2019-2024) confirms that no production or research OS implements intent-based IPC routing, predictive channel warming, inference-aware batching, or semantic capability activation at the kernel IPC layer. HongMeng (Huawei) differentiates isolation classes but not IPC semantics. LionsOS separates control/data planes but without AI-driven routing. seL4 MCS donates scheduling contexts but has no semantic awareness. The closest parallel is Fuchsia's FIDL versioning for protocol evolution — but FIDL operates at compile time, not runtime. AIOS's AI-native IPC features remain architecturally novel.
 
 ### 13.0 Kernel Independence Guarantee
 
@@ -1313,7 +1417,7 @@ pub struct IntentConstraints {
 ```
 
 **Example flows:**
-```
+```text
 Agent: "summarize this document" + local_only=true
   → AIRS routes to local inference engine (AIRS §Infer)
   → No network, no cloud, no data exfiltration possible
@@ -1345,7 +1449,7 @@ Agent: "find similar images in my photos"
 
 **What AIOS can do.** AIRS has a behavioral model of every agent (security.md §2, Layer 3). It knows which services each agent typically calls and in what order. The Context Engine knows the user's current activity context. Combined, the kernel can predict future IPC needs:
 
-```
+```text
 Context Engine: user is switching from browsing to coding
   → AIRS predicts: code agent will need Space Storage (project files),
      semantic search (code navigation), inference (code completion)
@@ -1389,7 +1493,7 @@ const MAX_WARMING_SERVICES: usize = 8;
 
 **What AIOS can do.** The kernel can transparently batch independent inference requests at the IPC level:
 
-```
+```text
 Without batching:
   Agent A: IpcCall(AIRS, Infer{prompt_A}) → waits
   AIRS: processes A → replies to A
@@ -1435,7 +1539,7 @@ pub struct BatchConfig {
 
 **What AIOS can do.** The Context Engine continuously publishes the user's activity context (scheduler.md §8.1): work mode, play mode, idle, focus, multi-tasking. The kernel can modulate IPC scheduling based on context:
 
-```
+```text
 Context: FOCUS (user deeply engaged in one agent)
   → Foreground agent's IPC: promoted to Interactive class
   → Background agents' IPC: demoted to Idle class
@@ -1519,7 +1623,7 @@ pub enum ProvenanceOrigin {
 
 **How it works.** At install time, the user approves the agent's manifest, which declares the maximum capability set:
 
-```
+```text
 Agent "Photo Collage" manifest:
   Capabilities requested:
     - ReadSpace("photos")          ← user approves at install
@@ -1532,7 +1636,7 @@ Traditionally, all approved capabilities are active immediately and permanently.
 
 With semantic activation, approved capabilities start **dormant** and are activated just-in-time:
 
-```
+```text
 Install time:
   Kernel creates tokens for all approved capabilities, but marks them DORMANT.
   Agent cannot use dormant capabilities — IPC returns ECAP_DORMANT.
@@ -1572,7 +1676,108 @@ Task complete:
 
 **Why this is better than the status quo.** In a traditional capability OS (seL4, Fuchsia), agents hold all their permissions all the time. A compromised agent has full access to everything in its manifest from the moment it's compromised. With semantic activation, the exposure window is limited to the current task's scope and duration. A compromised photo agent during a "vacation collage" task can read `photos/vacation/` for 30 minutes — not all photos forever.
 
-### 13.7 What Makes These Novel
+### 13.7 GNN-Based IPC Topology Anomaly Detection
+
+**Problem in every other kernel.** Security monitoring treats IPC channels individually — each channel is checked against capability tables, each message is screened for policy violations. But sophisticated attacks manifest as *patterns across the IPC topology*, not as individual channel violations. An agent that exfiltrates data doesn't violate any single channel's policy; it creates a chain of legitimate-looking IPC calls that, taken together, move data from a high-trust space to a low-trust network endpoint.
+
+**What AIOS can do.** AIRS maintains a real-time process communication graph — a directed graph where nodes are agents/services and edges are IPC channels with message frequency, data volume, and timing metadata. AIRS applies graph neural network (GNN) inference to detect anomalous subgraph patterns:
+
+```rust
+/// IPC topology snapshot published by the kernel to AIRS via ring buffer.
+/// Updated every topology_snapshot_interval (default: 1 second).
+pub struct IpcTopologyEdge {
+    source: ProcessId,
+    dest: ProcessId,
+    channel_id: ChannelId,
+    messages_last_interval: u32,
+    bytes_last_interval: u64,
+    avg_latency_ns: u32,
+    trust_level_source: u8,
+    trust_level_dest: u8,
+}
+```
+
+**Detection examples:**
+
+```text
+Normal pattern:
+  Agent → Space Service → Storage (read project files)
+  Low frequency, small messages, consistent timing
+
+Anomalous pattern (data exfiltration):
+  Agent → Space Service → Agent → Network Service (rapid relay)
+  Sudden burst of high-volume reads followed by network sends
+  GNN detects: unusual fan-out from single agent to multiple services
+  AIRS flags behavioral anomaly → kernel suspends agent's capabilities
+```
+
+**Source:** HetGLM (IEEE 2022), CONTINUUM (2025) — heterogeneous graph neural networks for lateral movement detection in enterprise networks. Adapted here from network-level to IPC-level detection.
+
+**Difference from §13's behavioral gating (§9.1).** Behavioral gating is per-process (monitors individual agent behavior). GNN topology detection is graph-level — it detects *relationships between agents* that no single-agent monitor would catch. The two are complementary: behavioral gating catches a misbehaving agent; topology detection catches a coordinated attack across multiple agents that individually behave normally.
+
+**Damage ceiling if AIRS compromised:** AIRS fails to detect topology anomalies. Agents continue operating normally — the kernel's capability enforcement, provenance tracking (§13.5), and per-process behavioral monitoring remain active. **No new attack surface.** GNN detection is defense-in-depth; removing it degrades detection, not protection.
+
+**Fallback:** If AIRS is unavailable, no topology analysis occurs. The audit ring (service/mod.rs) still records all IPC events for post-hoc forensic analysis.
+
+### 13.8 IPC State Snapshot for Agent Suspend/Resume
+
+**Problem in every other kernel.** When an agent is suspended (device sleep, memory pressure, user switches away), its IPC state is lost or corrupted. Open channels time out, pending messages are dropped, shared memory mappings are torn down. Resuming means cold-starting the agent and re-establishing all IPC connections — slow and error-prone.
+
+**What AIOS can do.** AIRS predicts when an agent is likely to be suspended (Context Engine detects user switching away, device entering sleep mode) and proactively snapshots the agent's IPC state:
+
+```text
+AIRS predicts: user switching from coding to browsing
+  → Snapshot coding agent's IPC state:
+     1. Open channels: [Space Service (ch12), AIRS Inference (ch45)]
+     2. Pending messages: [1 pending reply on ch12]
+     3. Shared memory: [project_files region, read-only, 2 mappings]
+     4. Notification subscriptions: [file_change (notif 7, mask 0xFF)]
+  → Agent suspended with IPC state preserved in kernel
+
+Later, user returns to coding:
+  → AIRS predicts resume
+  → Kernel restores IPC state: channels reopened, shmem remapped
+  → Agent resumes mid-conversation — no cold start
+```
+
+**Source:** AIOS (COLM 2025) — LLM context management with snapshot/restore for agent context switching. Adapted from LLM context (KV cache) to IPC channel state.
+
+**Implementation.** The kernel already tracks all IPC state per-process (`ProcessControl` in task/process.rs). The snapshot is a serialization of the process's channel handles, shmem mappings, notification subscriptions, and pending message queues. AIRS's role is *timing* — predicting when to snapshot before the agent is forcibly suspended (which would lose pending state).
+
+**Damage ceiling if AIRS compromised:** Snapshots are taken at wrong times (too early, too late) or not at all. Agents experience cold-start delays on resume — the same behavior as a traditional OS. **No security impact.** Snapshot content is kernel-generated and kernel-validated; AIRS cannot inject fake state into a snapshot.
+
+**Fallback:** Without AIRS, snapshots are taken only at explicit suspend points (system sleep). Agents may experience cold-start delays when switching between activities.
+
+### 13.9 Learned Service Routing Tables
+
+**Problem in every other kernel.** Service lookup in a microkernel is typically O(n) — scan a registry of named services, match the name, return the channel endpoint. With a small number of services this is fast, but as the agent ecosystem grows (dozens of services, hundreds of agents), registry lookup becomes a bottleneck on the IPC fast path.
+
+**What AIOS can do.** AIRS trains a lightweight learned model that maps service request characteristics (intent hash, message type, caller trust level) directly to the target service endpoint — O(1) lookup with high accuracy:
+
+```rust
+/// Learned routing model published by AIRS to kernel via ring buffer.
+/// Kernel uses this for fast-path service resolution.
+pub struct LearnedRouteEntry {
+    /// Hash of (intent_category, message_type, trust_level).
+    feature_hash: u64,
+    /// Predicted target service.
+    predicted_service: ServiceId,
+    /// Confidence (0.0-1.0). Below threshold, fall back to registry scan.
+    confidence: f32,
+    /// Model version (incremented on retrain).
+    model_version: u32,
+}
+```
+
+**Source:** Learned Index Structures (Kraska/MIT, SIGMOD 2018) — demonstrated that ML models can replace B-tree indexes with up to 70% speed improvement. Applied here to service routing rather than database indexing. This is a novel application — no existing OS uses learned indexes for IPC routing.
+
+**How it works.** AIRS observes IPC routing decisions over time, builds a mapping from request features to target services, and publishes a compact lookup table to the kernel. The kernel checks the learned route first; if confidence is below threshold (or model is stale), it falls back to the traditional O(n) registry scan. The model is retrained periodically as new services are added or routing patterns change.
+
+**Damage ceiling if AIRS compromised:** Routing table contains wrong entries — requests go to wrong services. The wrong service either rejects the request (capability mismatch) or returns an error (protocol mismatch). **No capability bypass.** The kernel validates capabilities regardless of how the service was looked up.
+
+**Fallback:** Without AIRS, the kernel uses the traditional O(n) registry scan in the Service Manager. Lookup is slower but correct.
+
+### 13.10 What Makes These Novel
 
 | Capability | Why no existing OS can do this | AIOS enabler | Damage ceiling if AIRS compromised |
 |---|---|---|---|
@@ -1582,7 +1787,183 @@ Task complete:
 | Context-adaptive scheduling | Requires continuous user activity inference | Context Engine (AIRS subsystem) | Wrong priorities (QoS degradation) |
 | Provenance-carrying IPC | Could be done without AI, but *taint-based screening* requires ML | AIRS adversarial defense (Layer 5) | Taint screening disabled (tags still propagate) |
 | Semantic capability activation | Requires understanding *why* an agent needs access | AIRS intent verification (Layer 1) + conversation context | All manifest caps active = traditional OS behavior |
+| GNN topology anomaly detection | Requires ML inference over IPC graph structure | AIRS GNN model + kernel topology snapshots | Anomaly detection disabled (caps still enforced) |
+| IPC state snapshot/resume | Requires predicting user activity transitions | AIRS Context Engine + behavioral model | Cold-start on resume (same as traditional OS) |
+| Learned service routing | Requires ML model of routing patterns | AIRS learned index + kernel fast-path table | O(n) registry scan (slower but correct) |
 
 **Every feature degrades to "traditional OS behavior" when AIRS fails.** None of the §13 features create new attack surfaces that don't exist in a traditional capability OS. They are strictly additive — they make the system better when AIRS works, and no worse when AIRS doesn't.
 
 These capabilities are why AIOS exists as a new OS rather than a Linux distribution. They require co-design between the kernel's IPC layer and the AI runtime — something that cannot be achieved by adding an AI service on top of an existing kernel. The kernel must understand inference latency, batch semantics, behavioral baselines, and conversation context at the IPC scheduling level. That is only possible when the AI runtime is a first-class kernel citizen. But at no point does the kernel *trust* AIRS — it validates every hint, caps every parameter, and falls back to static behavior if AIRS is unavailable. The relationship is: AIRS advises, the kernel decides.
+
+-----
+
+## 14. Future Directions
+
+Research-informed improvements for AIOS IPC, informed by the survey in §12.3. Items are ordered by expected impact.
+
+### 14.1 Control-Plane / Data-Plane Separation
+
+**Source:** LionsOS (SOSP 2024) — demonstrated 2-3x throughput gains by separating control-plane IPC (setup, teardown, policy) from data-plane transfers (bulk data, streaming).
+
+**Opportunity for AIOS.** AIOS already has two IPC primitives: synchronous channels (§4) for control and shared memory (§4.5) for bulk data. LionsOS's contribution is making this separation *architectural* rather than ad-hoc — the system guarantees that data-plane paths never touch the control-plane lock, enabling zero-copy streaming with no contention. AIOS ring channels (`RingChannelCreate`, §3.1) are the natural fit: promote them to first-class data-plane channels with dedicated lock-free rings, while standard channels remain control-plane.
+
+**Design sketch:** Ring channels allocate a shared memory region at creation time. Producers write directly; consumers read directly. The kernel only intervenes for notification (a lightweight signal, not a full IPC call). This eliminates CHANNEL_TABLE contention for high-throughput paths like audio, video, and inference streaming.
+
+### 14.2 Scheduling Context Donation / Passive Servers
+
+**Source:** seL4 MCS (Mixed-Criticality Systems) — decouples scheduling context from threads. A client donates its scheduling context (time budget, priority) to a server during an IPC call. Servers run only on donated time.
+
+**Opportunity for AIOS.** Current priority inheritance (§9.2) only boosts the receiver's priority. Scheduling context donation goes further: the AIRS inference service could be a *passive server* with no scheduling context of its own. When an agent calls AIRS, the agent's time budget and priority are donated. This means:
+
+- AIRS never competes with other threads for CPU time — it runs on the caller's budget
+- Multiple agents calling AIRS get fair sharing proportional to their own priorities
+- If an agent exhausts its time budget mid-inference, the kernel can preempt the inference cleanly
+
+**Integration point:** Extends `ThreadContext` (296B) with an optional `SchedContext` pointer. When `ipc_call` transfers control, the scheduling context is transferred with it. `ipc_reply` returns the context.
+
+### 14.3 Differentiated Isolation Classes
+
+**Source:** HongMeng (OSDI 2024) — instead of one-size-fits-all process isolation, HongMeng provides three isolation classes with different performance/security trade-offs: full address-space isolation, lightweight sandbox, and in-process compartment.
+
+**Opportunity for AIOS.** AIOS trust levels (security.md §2) already define a hierarchy. Differentiated isolation maps trust levels to isolation mechanisms:
+
+- **Trust Level 0 (kernel):** No isolation (in-kernel IPC, current Phase 3 model)
+- **Trust Level 1 (AIRS):** Lightweight sandbox — shared address space with hardware memory tagging (MTE on aarch64) for spatial safety
+- **Trust Level 2-3 (system/user agents):** Full process isolation with TTBR0 switch
+- **Trust Level 4 (web content):** Full isolation + seccomp-style syscall filtering + capability restriction
+
+IPC fast paths can skip full context switch for same-isolation-class communication. Trust Level 1 (AIRS) ↔ Trust Level 0 (kernel) IPC could use a shared-memory ring buffer with no syscall overhead.
+
+### 14.4 io_uring-Style Submission/Completion Queues
+
+**Source:** Linux io_uring — shared-memory ring buffers between kernel and userspace for batched, asynchronous I/O with minimal syscall overhead.
+
+**Opportunity for AIOS.** The current IPC model is synchronous per-call. For high-frequency IPC (sensor data, metrics, log streams), per-call overhead is significant. An io_uring-style submission queue allows agents to batch multiple IPC requests and submit them with a single syscall:
+
+```rust
+/// Submission queue entry (32 bytes, cache-line friendly)
+pub struct SqEntry {
+    opcode: u8,           // IPC operation type
+    flags: u8,            // IOSQE_* flags
+    channel_id: u16,      // target channel
+    user_data: u64,       // opaque, returned in CqEntry
+    msg_ptr: u64,         // pointer to message data
+    msg_len: u32,         // message length
+    _reserved: u32,
+}
+```
+
+This is particularly valuable for the AIRS inference pipeline: an agent can submit multiple inference requests in one batch, then harvest completions asynchronously.
+
+### 14.5 Reply Objects as Kernel Capabilities
+
+**Source:** seL4 MCS — reply capabilities are first-class kernel objects. When a server receives a call, the kernel creates a one-use reply capability. The server must hold this capability to reply. If the server crashes, the reply capability is revoked and the client is unblocked with an error.
+
+**Opportunity for AIOS.** Current implementation uses `pending_caller: Option<ThreadId>` in the Channel struct. This works but has a subtle issue: if the server thread is reused (exits and a new thread gets the same ThreadId), the new thread could accidentally reply to a stale caller. Reply capabilities eliminate this class of bug:
+
+- `ipc_recv` returns a `ReplyCapability` alongside the message
+- `ipc_reply` consumes the `ReplyCapability` (one-shot)
+- If the server crashes, the kernel revokes all outstanding reply capabilities and unblocks waiters with `Epipe`
+- Reply capabilities cannot be stored, duplicated, or transferred — preventing delegation attacks
+
+### 14.6 Interface Definition Language
+
+**Source:** Fuchsia FIDL, Android AIDL, Cap'n Proto — compile-time protocol definitions that generate type-safe client/server stubs, enable protocol versioning, and catch protocol mismatches at build time.
+
+**Opportunity for AIOS.** Current IPC is untyped — `RawMessage.data` is a `[u8; 256]` blob. The `ChannelProtocol` field in the Channel struct (§4.1) is aspirational but not enforced. An IDL would:
+
+- Generate Rust client/server stubs with type-safe request/response enums
+- Enable protocol versioning (Fuchsia-style ordinals) for backward compatibility
+- Allow the kernel to validate message format at the protocol level (optional, debug-mode)
+- Integrate with AIRS intent routing: IDL-described protocols can be matched by semantic similarity
+
+**Design constraint:** The IDL must be `no_std` compatible (kernel-side validation) and generate zero-allocation code for the IPC hot path.
+
+### 14.7 Formal Verification of IPC Data Structures
+
+**Source:** Meta's Iris/Coq verification of lock-free queues (CPP 2022) — proved correctness of concurrent IPC data structures using concurrent separation logic. Found 4 bugs including unnecessary barriers and incorrect atomic orderings.
+
+**Opportunity for AIOS.** `MessageRing` is a ring buffer accessed under `CHANNEL_TABLE` Mutex in the IPC critical path (a future lock-free variant would benefit most from verification). `NotificationObject` uses atomic OR/AND operations. Both are candidates for formal verification:
+
+- Prove linearizability of MessageRing operations
+- Verify memory ordering correctness (Acquire/Release pairs)
+- Prove absence of ABA problems in the ring buffer
+- Verify that notification signal/wait satisfies the intended happens-before relationships
+
+**Practical approach:** Start with model checking (TLA+ or Loom) for the ring buffer, then graduate to Iris/Coq for full proofs. Meta's experience suggests person-months, not person-years, for structures of this complexity.
+
+### 14.8 Hardware-Assisted IPC
+
+**Source:** SkyBridge (EuroSys 2019), XPC — use Intel VMFUNC to switch address spaces without a kernel trap, achieving 1.49x–19.6x faster IPC.
+
+**Opportunity for AIOS.** No aarch64 equivalent of VMFUNC exists today. However, future ARM hardware may provide:
+
+- **Realm Management Extension (RME):** Realm-to-realm communication without hypervisor involvement
+- **Memory Tagging Extension (MTE):** Lightweight compartmentalization within a single address space — IPC between MTE compartments could avoid full TTBR0 switch
+- **Pointer Authentication (PAC):** Authenticate IPC message pointers to prevent forgery
+
+**Current preparation:** The IPC ABI (§3.1) is designed to be trap-agnostic — switching from SVC to a hardware-assisted path requires changing the entry stub, not the protocol. The `save_context`/`restore_context` assembly in `context_switch.S` is already structured for minimal-register save on direct switch, which is the same optimization hardware-assisted IPC targets.
+
+### 14.9 RL-Based Adaptive IPC Scheduling
+
+**Source:** MobiRL (ACM TACO 2024) — reinforcement learning-based CPU/GPU frequency scheduling on mobile OS, achieving 42.8% power reduction while maintaining UI smoothness. ML for Linux Kernel Optimization survey (2025) — RL for CPU scheduling, predictive memory management.
+
+**Opportunity for AIOS.** The kernel currently uses static parameters for IPC scheduling: fixed batch window (§13.3), fixed direct-switch threshold, fixed ring buffer sizes per channel. These parameters are optimal for *average* workloads but suboptimal for *specific* workload phases. A lightweight RL agent (running in-kernel, no AIRS dependency) could learn to adapt these parameters:
+
+- **Batch window:** Expand during burst activity (more messages to coalesce), shrink during interactive use (lower latency)
+- **Direct-switch threshold:** Enable direct switch more aggressively when the receiver is frequently waiting (high hit rate), disable when hit rate drops (wasted overhead)
+- **Ring buffer sizing:** Dynamically resize `RING_CAPACITY` per channel based on observed fill rates — channels that frequently hit capacity get larger rings
+
+**Design constraint:** The RL model must be tiny (decision tree or linear model, not a neural network) to run in the kernel's real-time context. State: per-channel message rate, latency percentiles, fill rate. Action: parameter adjustment. Reward: weighted combination of throughput and tail latency. Training happens offline (AIRS analyzes traces); the kernel runs the frozen policy.
+
+**Key difference from §13.3-§13.4:** Those features require AIRS for semantic understanding (intent, context). This feature is purely statistical — the kernel learns IPC timing patterns without understanding *what* the messages mean. It works independently of AIRS availability.
+
+### 14.10 Predictive IPC Prefetching from Call Stacks
+
+**Source:** I/O Patterns Modeling with Call Stacks (ScienceDirect 2025) — using program call stack analysis to predict future I/O access patterns for prefetching.
+
+**Opportunity for AIOS.** When an agent calls `ipc_call`, the kernel can inspect the agent's call stack (via frame pointer or DWARF unwinding) to identify the *code path* that led to the IPC call. Different code paths predict different follow-up IPC calls:
+
+```text
+Example: file editing agent
+
+Code path A: open_file() → read_metadata() → ipc_call(Space Service)
+  → Predicts: next call will be read_content() → ipc_call(Space Service, READ)
+  → Kernel prefetches: space service channel warm, shmem region pre-mapped
+
+Code path B: save_file() → compute_hash() → ipc_call(Space Service)
+  → Predicts: next call will be write_block() → ipc_call(Block Engine, WRITE)
+  → Kernel prefetches: block engine channel warm, WAL buffer pre-allocated
+```
+
+**Key difference from §13.2 (predictive warming).** §13.2 uses AIRS behavioral models (user context, agent history) to predict *which agent* will need *which service*. Call-stack prefetching is kernel-internal — it uses structural patterns in the *program itself* to predict the next IPC call from the *same agent*. The two are complementary: AIRS predicts inter-agent patterns; call-stack analysis predicts intra-agent sequences.
+
+**Implementation.** A lightweight decision tree (trained offline from IPC traces annotated with call stacks) maps call-stack hashes to predicted next-IPC actions. The tree runs in the `ipc_call` slow path (after message delivery, before returning to the caller). False predictions waste a prefetch — no correctness impact.
+
+### 14.11 ML-Driven Message Coalescing
+
+**Source:** Novel — adapts Nagle's algorithm (TCP) and interrupt coalescing (NIC drivers) to IPC, with ML-driven timing.
+
+**Opportunity for AIOS.** High-frequency IPC channels (sensor data streams, metrics pipelines, log forwarding) generate many small messages per millisecond. Each message incurs IPC overhead (channel lock, message copy, wakeup). Coalescing multiple small messages into a single batch reduces overhead:
+
+```text
+Without coalescing (100 sensor readings/second):
+  100 × ipc_send() → 100 lock acquisitions, 100 wakeups
+  Overhead dominates: ~50% CPU time in IPC machinery
+
+With ML-driven coalescing:
+  Kernel learns: this channel sends ~100 msgs/sec, avg 32 bytes each
+  Kernel sets coalesce window: 10ms (expect ~1 message per ms)
+  10 messages batched into 1 delivery → 10 lock acquisitions, 10 wakeups
+  Overhead reduced to ~5% CPU time
+```
+
+**How it works.** The kernel tracks per-channel message frequency using an exponentially weighted moving average. When frequency exceeds a threshold, the kernel enables coalescing: messages are buffered for a short window (learned from the channel's timing pattern) and delivered as a batch. The receiver sees a burst of messages instead of a steady stream — functionally identical, but with 10x less IPC overhead.
+
+**Adaptive timing.** The coalescing window adapts to the channel's observed pattern:
+
+- **Steady stream** (metrics, sensors): long window (10-50ms), aggressive coalescing
+- **Bursty** (user input, UI updates): short window (1-2ms), light coalescing
+- **Sporadic** (configuration, control): no coalescing (latency-sensitive)
+
+**Design constraint:** Coalescing must be transparent to the receiver — it sees the same messages in the same order, just batched. The kernel adds a `COALESCED` flag to batched deliveries so receivers can opt out if they need per-message timing.
