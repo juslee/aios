@@ -162,6 +162,48 @@ Write each major section, presenting to the user for review after each:
 - **All code blocks must have language specifiers** — use `rust`, `asm`, `text`, etc.
   Never leave bare ``` fences (causes markdown lint failures).
 
+## Step 6b: Document Splitting (when doc exceeds ~2000 lines)
+
+If the document has grown beyond ~2000 lines after updates, propose splitting it:
+
+### When to Split
+- Doc exceeds ~2000 lines (navigability threshold)
+- Doc covers 3+ distinct subsystems that can stand alone
+- User requests it
+
+### Hub + Sub-Document Pattern
+
+1. **Keep the original filename as a hub** — this preserves all existing external links
+2. **Hub contents**: §1 Overview, Document Map table, Implementation Order, Cross-Reference Index
+3. **Sub-document naming**: `{topic}-{subtopic}.md` (e.g., `memory-physical.md`, `memory-virtual.md`)
+4. **Preserve original section numbers** across sub-files for cross-reference stability
+5. **Sub-document header format**:
+   ```markdown
+   # AIOS <Title>
+
+   Part of: [<hub>.md](./<hub>.md) — <Hub Title>
+   **Related:** [sibling-1.md](./sibling-1.md) — description, [sibling-2.md](./sibling-2.md) — description
+   ```
+6. **Hub Document Map table**:
+   ```markdown
+   | Document | Sections | Content |
+   |---|---|---|
+   | **This file** | §1, §N | Overview and ... |
+   | [sub-doc.md](./sub-doc.md) | §2, §4 | Description |
+   ```
+7. **Hub Cross-Reference Index**: table mapping every `§N.N` to its sub-file location
+
+### Execution
+- Create sub-documents in parallel (independent files — use background agents)
+- Group related sections together (e.g., physical memory + heap, virtual memory + shared memory)
+- Update CLAUDE.md Architecture Document Map to point to specific sub-files
+- Run bare code fence check on all new files (agents often create bare ``` fences)
+- External docs linking to the hub still work — readers land on navigation page
+
+### What NOT to Do
+- Don't update every external doc that links to the hub — the hub serves as a redirect
+- Don't renumber sections — stability is more important than sequential ordering within a sub-file
+
 ## Step 7: Cross-reference Updates
 
 1. Add or update the entry in CLAUDE.md Architecture Document Map
@@ -183,8 +225,11 @@ Run doc-auditor to validate the document:
 - **Type mismatches**: Doc says `AtomicU64` but code says `AtomicUsize` — fix doc to match code
 - **File path errors**: Doc references `mm/asid.rs` but the symbol actually lives in `mm/uspace.rs`
 - **Unfenced code blocks**: Bare ``` without language specifier — add `rust`, `asm`, `text`, etc.
+  Especially common when agents create sub-documents during splits. Run a programmatic check:
+  track open/close fence state and verify every opening fence has a language specifier.
 - **Double blank lines**: Left behind after removing sections — collapse to single blank line
 - **Stale cross-references**: Links to sections/docs that were renamed or restructured
+- **Cross-file section refs after split**: `§N.N` references must point to the correct sub-file
 
 ## Step 9: Commit + PR
 

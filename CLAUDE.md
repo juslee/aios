@@ -37,9 +37,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | PL011 UART driver | `docs/kernel/hal.md` | §4.3 |
 | GICv3 interrupt controller | `docs/kernel/hal.md` | §4.1 |
 | ARM Generic Timer | `docs/kernel/hal.md` | §4.2 |
-| Virtual memory & page tables | `docs/kernel/memory.md` | §3-3.2 |
-| Physical memory (buddy allocator) | `docs/kernel/memory.md` | §2.2 |
-| Slab allocator & heap | `docs/kernel/memory.md` | §4.1 |
+| Memory management (hub) | `docs/kernel/memory.md` | §1 Overview, §14 Impl order, doc map |
+| Physical memory (buddy allocator) | `docs/kernel/memory-physical.md` | §2.2 BuddyAllocator, §2.3 FrameAllocator, §2.4 PagePools |
+| Slab allocator & heap | `docs/kernel/memory-physical.md` | §4.1 SlabAllocator, §4.2 Kernel Heap |
+| Virtual memory & page tables | `docs/kernel/memory-virtual.md` | §3.2 PageTableEntry, §3.3 KASLR, §3.4 TLB/ASID |
+| Per-agent address spaces | `docs/kernel/memory-virtual.md` | §5 Per-Agent Memory, §7 Shared Memory |
+| AI model memory | `docs/kernel/memory-ai.md` | §6 Model regions, PagedAttention, KV caches |
+| Memory pressure & reclamation | `docs/kernel/memory-reclamation.md` | §8 Pressure/OOM, §10 Swap/zram, §12 Scaling |
+| Memory hardening | `docs/kernel/memory-hardening.md` | §9 W^X/PAC/BTI/MTE, §11 Perf, §13 Future |
 | IPC & syscalls | `docs/kernel/ipc.md` | All (Phase 3+) |
 | Scheduler | `docs/kernel/scheduler.md` | All (Phase 3+) |
 | Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
