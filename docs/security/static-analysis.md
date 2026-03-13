@@ -120,7 +120,7 @@ Miri interprets Rust's Mid-level Intermediate Representation (MIR) under strict 
 
 **Configuration:** `MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-weak-memory-emulation"` for maximum strictness. Run with `-Zmiri-tree-borrows` as a secondary pass to identify false positives in the Stacked Borrows run.
 
-**Integration:** A `just miri` target running `cargo +nightly miri test -p shared` and any kernel modules with host-testable logic. Runs as a CI job.
+**Integration:** The `just miri` recipe runs `cargo miri test -p shared`. As host-testable kernel modules are extracted, they are added to the Miri target set. Runs as a CI job.
 
 ### 4.4 Rudra — Unsafe Code Analyzer
 
@@ -167,7 +167,7 @@ Five tools form a layered defense against dependency-related risks:
 
 **`cargo-deny`** enforces broader policies via a committed `deny.toml`:
 
-- **Licenses:** BSD-2-Clause, MIT, Apache-2.0, MPL-2.0 only — no GPL in `kernel/` or `shared/` (per `CLAUDE.md` crate rules).
+- **Licenses:** Only approved open-source licenses (e.g., MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Zlib, Unicode-*) — no GPL in `kernel/` or `shared/` (per `CLAUDE.md` crate rules). See `deny.toml` for the full allowlist.
 - **Bans:** specific crates blacklisted if known-problematic.
 - **Duplicates:** warn on duplicate transitive dependencies.
 - **Advisories:** same RustSec database as cargo-audit; CI denies vulnerabilities at all severities (thresholds adjustable if policy changes).
@@ -210,7 +210,7 @@ cargo-careful runs Rust programs and tests with extra undefined behavior detecti
 
 **Relevance to AIOS:** Miri cannot run the kernel binary (inline assembly, MMIO). cargo-careful can run host-side tests with extra UB checks that are cheaper than full Miri interpretation, catching a different subset of UB in `shared/` crate and any host-testable kernel logic.
 
-**Integration:** A `just careful` target running `cargo +nightly careful test -p shared`. Runs alongside `just miri` in CI.
+**Integration (planned):** A `just careful` recipe to run `cargo +nightly careful test -p shared` alongside `just miri` in CI. Not yet wired; planned for near-term CI integration.
 
 ### 4.10 Concurrency Testing — Loom and Shuttle
 
@@ -250,7 +250,7 @@ cargo-mutants performs mutation testing — automatically modifying code (replac
 
 **Relevance to AIOS:** With 275+ tests in `shared/` and growing kernel host tests, mutation testing validates that the tests actually catch real bugs, not just achieve coverage. Particularly important for verifying that Kani proof harnesses and property tests are strong enough — a proof harness that doesn't actually exercise the property is worse than no proof harness (false confidence).
 
-**Integration:** A `just mutants` target running `cargo mutants -p shared`. Periodic runs (weekly or per-milestone), not every PR — mutation testing is too slow for per-commit CI.
+**Integration (planned):** A `just mutants` recipe to run `cargo mutants -p shared` (not yet created). Periodic runs (weekly or per-milestone), not every PR — mutation testing is too slow for per-commit CI.
 
 ### 4.14 Custom Pattern Rules — Semgrep
 
@@ -261,11 +261,11 @@ Semgrep is a pattern-matching static analysis engine that supports custom rules 
 - MMIO register access without `read_volatile`/`write_volatile`
 - TTBR write without subsequent `DSB` + `ISB` barrier sequence
 - Capability check missing before IPC channel operation
-- `spin::Mutex` usage in code paths reachable from Non-Cacheable memory (Phase 1 identity map)
+- `spin::Mutex` usage in code paths that execute before TTBR0 RAM blocks are upgraded to Write-Back cacheable (Phase 2 M8 upgrades to Attr3; before this, exclusive load/store pairs hang on NC memory)
 - Interrupt-disabled critical section exceeding length threshold
 - System register write without `ISB`
 
-**Integration:** Phase 3+ CI integration. Rules committed to `tools/semgrep/` and run via `just semgrep`. Blocks PR if a rule fires. Rules are added incrementally as new kernel patterns emerge.
+**Integration (planned):** Phase 3+ CI integration. Rules to be committed to `tools/semgrep/` and run via a `just semgrep` recipe (not yet created). Blocks PR if a rule fires. Rules are added incrementally as new kernel patterns emerge.
 
 ---
 
@@ -321,13 +321,13 @@ Cross-reference: [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §4 for th
 | `just audit` | Every PR | cargo-audit | Yes (any severity) |
 | `just deny` | Every PR | cargo-deny | Yes (any severity) |
 | `just miri` | Every PR | Miri on `shared/` and host-testable modules | Yes |
-| `just careful` | Every PR (Phase 0+) | cargo-careful on `shared/` | No (findings triaged) |
-| `just semver` | Every PR (Phase 0+) | cargo-semver-checks on `shared/` | Yes |
-| `just geiger` | Weekly (Phase 0+) | cargo-geiger dependency scan | No (report only) |
-| `just kani` | Nightly (Phase 3+) | Kani proof harnesses | Yes for security modules (Phase 13+) |
-| `just semgrep` | Every PR (Phase 3+) | Semgrep custom kernel rules | Yes |
-| `just loom` | Nightly (Phase 3+) | Loom concurrency tests | No (findings triaged) |
-| `just mutants` | Weekly (Phase 2+) | cargo-mutants on `shared/` | No (findings triaged) |
+| `just careful` (planned) | Every PR (Phase 0+) | cargo-careful on `shared/` | No (findings triaged) |
+| `just semver` (planned) | Every PR (Phase 0+) | cargo-semver-checks on `shared/` | Yes |
+| `just geiger` (planned) | Weekly (Phase 0+) | cargo-geiger dependency scan | No (report only) |
+| `just kani` (planned) | Nightly (Phase 3+) | Kani proof harnesses | Yes for security modules (Phase 13+) |
+| `just semgrep` (planned) | Every PR (Phase 3+) | Semgrep custom kernel rules | Yes |
+| `just loom` (planned) | Nightly (Phase 3+) | Loom concurrency tests | No (findings triaged) |
+| `just mutants` (planned) | Weekly (Phase 2+) | cargo-mutants on `shared/` | No (findings triaged) |
 | Rudra scan | Weekly (Phase 2+) | Rudra via Docker | No (findings triaged manually) |
 | cargo-vet check | Every PR (Phase 2+) | cargo-vet | Yes (once fully adopted) |
 | Agent audit | Agent Store submission | Full `aios agent audit` pipeline | Yes |
