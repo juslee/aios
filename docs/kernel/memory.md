@@ -172,8 +172,10 @@ The 64 KB medium page (order 4) is the key innovation from Linux 6.8+ multi-size
 
 Each order maintains a free list. Allocation splits larger blocks when needed; freeing merges adjacent buddies back together.
 
+> **Target API types:** `PhysicalFrame`, `PhysicalAddress`, `VirtualAddress`, `FreeList`, and `Bitmap` shown below are the target design newtypes. The current implementation (`mm/buddy.rs`) uses raw `usize` addresses throughout. These newtypes will be introduced as the memory subsystem matures.
+
 ```rust
-/// A single physical page frame
+/// A single physical page frame (target API — see note above)
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PhysicalFrame {
     /// Physical frame number (address >> 12)
@@ -199,8 +201,29 @@ impl PhysicalFrame {
         Self { pfn: addr.0 >> 12 }
     }
 }
+```
 
-/// Buddy allocator for physical memory
+> **Current implementation** (`mm/buddy.rs`):
+>
+> ```rust
+> pub struct BuddyAllocator {
+>     base: usize,
+>     end: usize,
+>     bitmap: usize,           // physical address of bitmap pages
+>     bitmap_pages: usize,
+>     free_heads: [usize; MAX_ORDER + 1],
+>     free_count: [usize; MAX_ORDER + 1],
+>     total_free: usize,
+>     initialized: bool,
+> }
+> ```
+>
+> Methods use `alloc_pages(&mut self, order: usize) -> Option<usize>` and `free_pages(&mut self, addr: usize, order: usize)` with raw physical addresses. A `phys_to_ptr<T>()` helper switches between identity-map and direct-map pointer conversion depending on boot phase.
+
+The target design below uses the `PhysicalFrame`/`FreeList` abstraction layer:
+
+```rust
+/// Buddy allocator for physical memory (target API)
 pub struct BuddyAllocator {
     /// Free list per order (0..=MAX_ORDER)
     free_lists: [FreeList; MAX_ORDER + 1],
@@ -218,15 +241,15 @@ const MAX_ORDER: usize = 10; // 4 MB max contiguous
 
 impl BuddyAllocator {
     /// Allocate 2^order contiguous pages
-    pub fn alloc(&mut self, order: u32) -> Option<PhysicalFrame> {
+    pub fn alloc(&mut self, order: usize) -> Option<PhysicalFrame> {
         // Try the requested order first
-        if let Some(frame) = self.free_lists[order as usize].pop() {
+        if let Some(frame) = self.free_lists[order].pop() {
             self.free_pages.fetch_sub(1 << order, Ordering::Relaxed);
             return Some(frame);
         }
         // Split a larger block
-        for higher in (order + 1)..=(MAX_ORDER as u32) {
-            if let Some(frame) = self.free_lists[higher as usize].pop() {
+        for higher in (order + 1)..=MAX_ORDER {
+            if let Some(frame) = self.free_lists[higher].pop() {
                 // Split down to requested order, putting buddies on free lists
                 self.split(frame, higher, order);
                 self.free_pages.fetch_sub(1 << order, Ordering::Relaxed);
@@ -237,24 +260,24 @@ impl BuddyAllocator {
     }
 
     /// Free 2^order contiguous pages, merging buddies
-    pub fn free(&mut self, frame: PhysicalFrame, order: u32) {
+    pub fn free(&mut self, frame: PhysicalFrame, order: usize) {
         let mut current = frame;
         let mut current_order = order;
 
         // Merge with buddy if buddy is also free
-        while current_order < MAX_ORDER as u32 {
+        while current_order < MAX_ORDER {
             let buddy = self.buddy_of(current, current_order);
             if !self.bitmap.is_free(buddy, current_order) {
                 break;
             }
-            self.free_lists[current_order as usize].remove(buddy);
+            self.free_lists[current_order].remove(buddy);
             current = PhysicalFrame {
                 pfn: core::cmp::min(current.pfn, buddy.pfn),
             };
             current_order += 1;
         }
 
-        self.free_lists[current_order as usize].push(current);
+        self.free_lists[current_order].push(current);
         self.free_pages.fetch_add(1 << order, Ordering::Relaxed);
     }
 }
@@ -262,11 +285,30 @@ impl BuddyAllocator {
 
 ### 2.3 Frame Allocator Interface
 
-The `FrameAllocator` wraps the buddy allocator and provides the primary API for the rest of the kernel:
+The `FrameAllocator` wraps the page pools and provides the primary API for the rest of the kernel:
+
+> **Current implementation** (`mm/frame.rs`):
+>
+> ```rust
+> pub struct FrameAllocator {
+>     pools: PagePools,
+>     total_pages: usize,
+> }
+> ```
+>
+> Global static: `pub static FRAME_ALLOC: Mutex<Option<FrameAllocator>>` — wrapped in `Mutex<Option<>>` because the allocator is initialized after boot memory discovery. Methods use `&mut self` and return raw `usize` physical addresses:
+>
+> ```rust
+> pub unsafe fn alloc_page(&mut self, pool: Pool) -> Option<usize>
+> pub unsafe fn alloc_pages(&mut self, pool: Pool, order: usize) -> Option<usize>
+> pub unsafe fn free_pages(&mut self, phys_addr: usize, order: usize)
+> pub fn pressure(&self) -> MemoryPressure
+> ```
+
+The target API introduces `AllocatorStats` and uses `PhysicalFrame` return types:
 
 ```rust
 pub struct FrameAllocator {
-    buddy: BuddyAllocator,
     pools: PagePools,
     stats: AllocatorStats,
 }
@@ -287,12 +329,12 @@ impl FrameAllocator {
     }
 
     /// Allocate 2^order contiguous pages from the specified pool
-    pub fn alloc_pages(&self, pool: Pool, order: u32) -> Option<PhysicalFrame> {
+    pub fn alloc_pages(&self, pool: Pool, order: usize) -> Option<PhysicalFrame> {
         self.pools.alloc(pool, order)
     }
 
     /// Free pages back to their pool
-    pub fn free_pages(&self, frame: PhysicalFrame, order: u32) {
+    pub fn free_pages(&self, frame: PhysicalFrame, order: usize) {
         self.pools.free(frame, order)
     }
 
@@ -386,7 +428,7 @@ pub enum Pool {
 pub struct PagePools {
     kernel: BuddyAllocator,
     user: BuddyAllocator,
-    model: BuddyAllocator,
+    model: Option<BuddyAllocator>,  // None on 2 GB devices (no local model pool)
     dma: BuddyAllocator,
 }
 
@@ -582,6 +624,7 @@ impl PageTableEntry {
     const NG: u64          = 1 << 11;  // Not global (uses ASID)
     const PXN: u64         = 1 << 53;  // Privileged execute-never
     const UXN: u64         = 1 << 54;  // Unprivileged execute-never
+    // Software-defined bits (target design — not yet in mm/pgtable.rs):
     const DIRTY: u64       = 1 << 55;  // Software: dirty
     const COW: u64         = 1 << 56;  // Software: copy-on-write
 
@@ -628,7 +671,7 @@ pub struct PageTable {
     entries: [PageTableEntry; 512],
 }
 
-/// Complete address space for a process
+/// Complete address space for a process (target design — see note below)
 pub struct AddressSpace {
     /// Root page table (PGD) physical address — loaded into TTBR0
     pgd: PhysicalFrame,
@@ -639,6 +682,9 @@ pub struct AddressSpace {
     /// Memory statistics
     stats: MemoryStats,
 }
+// Current implementation: UserAddressSpace in mm/uspace.rs
+// { pgd_phys: usize, asid: Asid, stats: MemoryStats }
+// VmRegion tracking and BTreeMap are part of the target design.
 
 /// Describes a contiguous virtual memory region
 pub struct VmRegion {
@@ -650,10 +696,12 @@ pub struct VmRegion {
 
 bitflags::bitflags! {
     pub struct VmFlags: u32 {
+        // Implemented in mm/pgtable.rs:
         const READ     = 0b0001;
         const WRITE    = 0b0010;
         const EXECUTE  = 0b0100;
         const USER     = 0b1000;
+        // Target design (not yet implemented):
         const SHARED   = 0b0001_0000;
         const PINNED   = 0b0010_0000;
         const HUGE     = 0b0100_0000;  // 2 MB pages
@@ -845,8 +893,6 @@ pub struct AsidAllocator {
     next: u16,
     /// Maximum ASID value (hardware-dependent, typically 65535)
     max: u16,
-    /// Map from ASID to owning process
-    owners: [Option<ProcessId>; 65536],
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -856,26 +902,25 @@ pub struct Asid {
 }
 
 impl AsidAllocator {
-    /// Allocate an ASID for a new process
-    pub fn alloc(&mut self) -> Asid {
-        if self.next > self.max {
-            // All ASIDs used — start new generation
-            // This requires a full TLB flush (once per 65536 processes)
-            self.generation += 1;
-            self.next = 1; // ASID 0 is reserved for kernel
-            self.owners = [None; 65536];
-            tlbi_all(); // flush entire TLB — rare operation
+    /// Allocate an ASID for a new process.
+    /// Returns (Asid, needs_flush) — the bool indicates whether a full
+    /// TLB flush is needed due to generation wraparound.
+    pub fn alloc(&mut self) -> (Asid, bool) {
+        let value = self.next;
+        let mut needs_flush = false;
+
+        self.next = self.next.wrapping_add(1);
+        if self.next == 0 {
+            // Wrapped past u16::MAX — skip 0 (kernel reserved), bump generation
+            self.next = 1;
+            self.generation = self.generation.wrapping_add(1);
+            needs_flush = true; // caller must perform full TLB flush
         }
-        let asid = Asid {
-            value: self.next,
-            generation: self.generation,
-        };
-        self.next += 1;
-        asid
+        (Asid { value, generation: self.generation }, needs_flush)
     }
 
     /// Check if an ASID is still valid (same generation)
-    pub fn is_valid(&self, asid: Asid) -> bool {
+    pub fn is_valid(&self, asid: &Asid) -> bool {
         asid.generation == self.generation
     }
 }
@@ -902,183 +947,137 @@ The kernel needs to allocate variable-sized objects frequently — page table pa
 ```mermaid
 flowchart TD
     subgraph SLAB["Slab Allocator"]
-        subgraph CACHES["Slab Caches"]
-            subgraph IPC["Cache: IPC Message (64 bytes)"]
-                IS1["slab (free)"]
-                IS2["slab (full)"]
-                IS3["slab (partial)"]
-            end
-            subgraph CAP["Cache: Cap Token (128 bytes)"]
-                CS1["slab (free)"]
-                CS2["slab (full)"]
-            end
-            subgraph PTE["Cache: PTE Page (4096 bytes)"]
-                PS1["slab (free)"]
-                PS2["slab (full)"]
-            end
+        subgraph CACHES["5 Size-Class Caches"]
+            C64["64 B"]
+            C128["128 B"]
+            C256["256 B"]
+            C512["512 B"]
+            C4096["4096 B"]
         end
 
-        subgraph MAG["Per-CPU Magazine Layer (lock-free fast path)"]
-            M0["`CPU 0
-loaded / prev`"]
-            M1["`CPU 1
-loaded / prev`"]
-            M2["`CPU 2
-loaded / prev`"]
+        subgraph MAG["Per-Cache Magazine Layer"]
+            M0["`current / prev
+(32 objects each)`"]
         end
 
         CACHES --> MAG
-        MAG --> BUDDY["Buddy Allocator (for slab backing pages)"]
+        MAG --> BUDDY["Frame Allocator (kernel pool)"]
     end
 ```
+
+> **Current implementation** (`mm/slab.rs`): 5 generic size classes `[64, 128, 256, 512, 4096]`. Each `SlabCache` uses an intrusive free list (not `LinkedList<Slab>`). Magazine is per-cache, not per-CPU. Red zone guard bytes (8 bytes, pattern `0xFEFE_FEFE_FEFE_FEFE`) surround each object in sub-page caches; checked on dealloc. Global: `pub static SLAB: spin::Mutex<SlabAllocator>`. Public API: `slab::alloc(Layout)` / `slab::dealloc(ptr, Layout)`.
 
 ```rust
 /// A slab cache for fixed-size objects
 pub struct SlabCache {
-    /// Object size (rounded up to alignment)
+    /// User-visible object size
     object_size: usize,
-    /// Objects per slab (per backing page)
-    objects_per_slab: usize,
-    /// List of slabs: partial (has free slots), full, empty
-    partial: LinkedList<Slab>,
-    full: LinkedList<Slab>,
-    empty: LinkedList<Slab>,
-    /// Per-CPU magazine for lock-free fast path (simplified: single magazine shown)
+    /// Internal allocation size (object_size + 2 * RED_ZONE_SIZE for sub-page caches)
+    alloc_size: usize,
+    /// Head of intrusive free list (pointer to next free slot, 0 = empty)
+    free_head: usize,
+    /// Number of pages allocated from buddy for this cache
+    pages_used: usize,
+    /// Per-cache magazine for fast-path alloc/free
     magazine: Magazine,
-    /// Name for debugging
-    name: &'static str,
 }
 
-/// A single slab (backed by one or more physical pages)
-pub struct Slab {
-    /// Backing pages
-    page: PhysicalFrame,
-    /// Free object bitmap
-    free_bitmap: Bitmap,
-    /// Number of allocated objects
-    allocated: usize,
-    /// Total slots
-    capacity: usize,
-}
-
-/// Per-CPU magazine — lock-free fast path for alloc/free
+/// Per-cache magazine with current/prev swap for two-chance fast path
 pub struct Magazine {
-    /// Current magazine (array of free object pointers)
     current: MagazineRound,
-    /// Previous magazine (swap when loaded is empty)
     prev: MagazineRound,
 }
 
 pub struct MagazineRound {
-    objects: [*mut u8; MAGAZINE_SIZE],
+    objects: [usize; MAGAZINE_SIZE],
     count: usize,
 }
 
 const MAGAZINE_SIZE: usize = 32;
 
+/// Red zone size in bytes — guard bytes before and after each object
+/// to detect buffer overflows (per fuzzing-and-hardening.md §3.3).
+const RED_ZONE_SIZE: usize = 8;
+const RED_ZONE_PATTERN: u64 = 0xFEFE_FEFE_FEFE_FEFE;
+
+/// Standard cache sizes. Smaller allocations round up to 64;
+/// 1024/2048 round up to 4096.
+const CACHE_SIZES: [usize; 5] = [64, 128, 256, 512, 4096];
+
 impl SlabCache {
-    /// Create a new slab cache for objects of `size` bytes.
-    /// Allocates one initial slab (one physical page) and fills
-    /// the per-CPU magazine for the boot CPU.
-    pub fn new(name: &'static str, size: usize, fa: &FrameAllocator) -> Self {
-        let aligned_size = size.next_power_of_two().max(8); // minimum 8-byte alignment
-        let objects_per_slab = PAGE_SIZE / aligned_size;
-        let initial_page = fa.alloc_pages(Pool::Kernel, 0).expect("slab init: OOM");
-        // Carve the page into a freelist of fixed-size objects
-        let initial_slab = Self::build_slab(initial_page, aligned_size, objects_per_slab);
-        Self { name, object_size: aligned_size, objects_per_slab,
-               partial: LinkedList::from(initial_slab), full: LinkedList::new(),
-               empty: LinkedList::new(), magazine: Magazine::empty() }
+    /// Create a cache for objects of `size` bytes.
+    /// `const fn` — no heap allocation; pages allocated lazily via grow().
+    const fn new(size: usize) -> Self {
+        // Red zones added for sub-page objects only; 4096-byte objects
+        // fill the entire page — no room for guard bytes.
+        let red_zone = if size < PAGE_SIZE { RED_ZONE_SIZE } else { 0 };
+        Self {
+            object_size: size,
+            alloc_size: size + 2 * red_zone,
+            free_head: 0,
+            pages_used: 0,
+            magazine: Magazine::new(),
+        }
     }
 
     /// Allocate one object from this cache.
-    /// Fast path: pop from per-CPU magazine (no lock, no atomic).
-    /// Slow path: refill magazine from shared freelist (lock required).
-    pub fn alloc(&mut self) -> *mut u8 {
-        // Fast path: per-CPU magazine
+    /// Fast path 1: pop from current magazine.
+    /// Fast path 2: swap current ↔ prev, try again.
+    /// Slow path: refill magazine from shared free list (or grow from buddy).
+    pub unsafe fn alloc(&mut self) -> *mut u8 {
         if let Some(ptr) = self.magazine.current.pop() {
             return ptr;
         }
-        // Swap current ↔ prev magazine
         core::mem::swap(&mut self.magazine.current, &mut self.magazine.prev);
         if let Some(ptr) = self.magazine.current.pop() {
             return ptr;
         }
-        // Slow path: refill magazine from shared freelist
         self.refill_magazine();
-        self.magazine.current.pop().expect("slab: refill failed — OOM")
+        self.magazine.current.pop().unwrap_or(core::ptr::null_mut())
     }
 
     /// Return an object to this cache.
-    /// Fast path: push to per-CPU magazine. If magazine is full,
-    /// swap with prev and push. If both full, flush prev to freelist.
-    pub fn free(&mut self, ptr: *mut u8) {
+    /// Verifies red zone integrity before returning (for sub-page caches).
+    pub unsafe fn dealloc(&mut self, ptr: *mut u8) {
+        if self.has_red_zones() {
+            self.check_red_zones(ptr); // logs corruption if detected
+        }
         if self.magazine.current.push(ptr) { return; }
         core::mem::swap(&mut self.magazine.current, &mut self.magazine.prev);
         if self.magazine.current.push(ptr) { return; }
-        // Both magazines full — flush prev to shared freelist, then push
-        self.flush_magazine(&mut self.magazine.prev);
+        self.flush_magazine_to_freelist();
         self.magazine.current.push(ptr);
     }
-
-    /// Grow the cache by allocating a new backing slab from the frame allocator.
-    /// Called when the shared freelist is empty and a magazine refill is needed.
-    pub fn grow(&mut self, fa: &FrameAllocator) {
-        let page = fa.alloc_pages(Pool::Kernel, 0).expect("slab grow: OOM");
-        let new_slab = Self::build_slab(page, self.object_size, self.objects_per_slab);
-        self.partial.push_back(new_slab);
-    }
 }
 
-/// Top-level slab allocator managing all caches
+/// Top-level slab allocator managing all size-class caches
 pub struct SlabAllocator {
-    caches: [SlabCache; NUM_CACHES],
+    caches: [SlabCache; 5],
 }
+
+/// Global slab allocator instance
+pub static SLAB: spin::Mutex<SlabAllocator> = spin::Mutex::new(SlabAllocator::new());
 
 impl SlabAllocator {
-    /// Allocate `size` bytes with `align` alignment.
-    /// Finds the smallest cache whose object size >= requested size.
-    /// Returns null if no cache fits (caller falls back to buddy allocator
-    /// for allocations larger than the biggest slab cache).
-    pub fn alloc(&mut self, size: usize, align: usize) -> *mut u8 {
-        let effective_size = size.max(align);
-        for cache in &self.caches {
-            if cache.object_size >= effective_size {
-                return cache.alloc();
-            }
-        }
-        core::ptr::null_mut() // too large for slab — caller uses buddy allocator
-    }
-
-    /// Free a previously allocated pointer of the given `size`.
-    /// Routes to the correct slab cache based on size.
-    pub fn free(&mut self, ptr: *mut u8, size: usize) {
-        for cache in &self.caches {
-            if cache.object_size >= size {
-                cache.free(ptr);
-                return;
-            }
-        }
-        panic!("slab free: size {} exceeds all caches — was this allocated from buddy?", size);
-    }
-
-    /// Standard caches created at boot
-    pub fn init(frame_allocator: &FrameAllocator) -> Self {
+    const fn new() -> Self {
         Self {
             caches: [
-                SlabCache::new("ipc_message", 64, frame_allocator),
-                SlabCache::new("capability_token", 128, frame_allocator),
-                SlabCache::new("channel", 256, frame_allocator),
-                SlabCache::new("process_descriptor", 512, frame_allocator),
-                SlabCache::new("vm_region", 128, frame_allocator),
-                SlabCache::new("page_table", 4096, frame_allocator),
+                SlabCache::new(64),
+                SlabCache::new(128),
+                SlabCache::new(256),
+                SlabCache::new(512),
+                SlabCache::new(4096),
             ],
         }
     }
 }
+
+/// Public allocation API (wraps Layout-based routing)
+pub unsafe fn alloc(layout: Layout) -> *mut u8;
+pub unsafe fn dealloc(ptr: *mut u8, layout: Layout);
 ```
 
-The per-CPU magazine layer eliminates lock contention on the allocation hot path. Each CPU maintains a small array of pre-allocated objects. Allocating takes an object from the local magazine — no locks, no atomic operations, just a decrement and a pointer load. Only when the magazine is empty does the CPU need to access the shared slab (which requires a lock). This lock-free design also breaks the mutual exclusion Coffman condition for the common-case allocation path — see [deadlock-prevention.md §6](./deadlock-prevention.md).
+The per-cache magazine layer reduces lock contention on the allocation hot path. Each cache maintains a pair of magazine rounds (current/prev) holding up to 32 pre-allocated object pointers. Allocating pops from the current magazine — fast and lock-free within a single `SLAB.lock()` critical section. When the current magazine is empty, it swaps with the prev magazine (two-chance). Only when both magazines are empty does the cache refill from the shared intrusive free list or grow by requesting a new page from the frame allocator. This design also reduces the mutual exclusion Coffman condition for the common-case allocation path — see [deadlock-prevention.md §6](./deadlock-prevention.md).
 
 ### 4.2 Kernel Allocation API
 
@@ -1614,6 +1613,8 @@ tokens stored = least re-computation cost to reconstruct).
 
 When a KV cache is evicted, the session's conversation history is still in a space object. The cache can be reconstructed by re-processing the conversation — slower than keeping it in RAM, but not data-losing. With prefix caching, reconstruction is faster: only the session-specific suffix needs recomputation; the shared prefix blocks may still be resident from another session.
 
+**Alternative: RadixAttention (SGLang, 2024).** SGLang's RadixAttention organizes prefix sharing as a radix tree rather than flat block tables. Each edge represents a sequence of tokens; shared prefixes naturally coalesce as tree paths. This enables LRU-based prefix eviction at the tree level and automatic deduplication of arbitrary-length common prefixes, not just fixed-size block boundaries. AIOS's PagedAttention block table design can be extended to use radix tree indexing for the prefix layer while retaining per-session block allocation for session-specific suffixes — see §13 (Future Directions).
+
 ### 6.4 Model Loading and Eviction
 
 Models are loaded from space storage into the model pool. AIOS uses **userfaultfd-based lazy loading** — a technique that enables inference to begin before the entire model is resident in RAM. Instead of blocking until all model pages are faulted in, the kernel registers a userfaultfd handler that loads pages on demand with intelligent prefetch, allowing the first inference to start within seconds even for multi-GB models on SD card storage.
@@ -1730,6 +1731,10 @@ Time to first token: 3s vs 45s (15x faster)
 ```
 
 This matters enormously for user experience. When the user opens the conversation bar, they expect a response in seconds, not a 45-second wait for model loading. Lazy loading with userfaultfd makes AIRS responsive immediately — the first few layers are enough to begin generating tokens. Inference quality is identical; only the first few tokens have slightly higher latency (page faults during layer traversal). By the time the user reads the first sentence, the full model is resident.
+
+**Fault-around optimization:** Inspired by Linux's `fault_around_bytes` (default 64 KB), the userfaultfd handler maps not just the faulted page but the surrounding 16 pages (64 KB) in the same fault handler invocation. This amortizes the trap overhead: instead of 16 separate page faults for a sequential model layer read, one fault resolves 16 pages. The surrounding pages are loaded from storage speculatively — since model weights are stored contiguously, the speculation hit rate exceeds 95%.
+
+**Deterministic prefetching for transformer inference:** Transformer models have a highly predictable memory access pattern: layer 0 → layer 1 → ... → layer N, repeated for each token. Unlike general application memory access (where future pages are unknown), the userfaultfd handler can exploit this structure. When inference begins processing layer K, the prefetcher issues asynchronous reads for layer K+1 (and optionally K+2) pages that aren't yet resident. This converts most subsequent faults into TLB misses resolved against already-resident pages, eliminating I/O stalls entirely after the first few layers warm up.
 
 ```rust
 /// Policy for model eviction when pool is full
@@ -1969,6 +1974,8 @@ OOM       < 5%      - OOM killer selects victim agent
                     - Save victim state to space (best effort)
                     - Kill victim, reclaim all its pages
 ```
+
+**Pressure Stall Information (PSI):** The free-page-percentage model above is a starting point. Production systems (Linux 4.20+, Android) have adopted PSI — a metric that measures the fraction of wall-clock time that tasks are stalled waiting for memory. PSI captures the *impact* of memory pressure on user-visible latency, not just the raw free-page count. AIOS adopts a similar approach: in addition to the threshold-based levels above, the reclaimer tracks the cumulative time threads spend blocked on page faults (§10.5) and memory allocation. When the 10-second PSI window exceeds configurable thresholds, the pressure level is escalated independently of free-page percentage. This design is inspired by Android's `lmkd` daemon, which uses PSI to make priority-aware kill decisions rather than relying solely on free memory watermarks.
 
 ### 8.2 OOM Killer
 
@@ -2476,6 +2483,8 @@ These improvements come from generation-based age tracking: instead of a binary 
 ### 10.3 Compressed Memory (zram)
 
 zram provides the second tier of memory reclamation. Instead of writing inactive pages to a slow SD card, zram compresses them and stores the compressed data in a reserved region of RAM. A 4 KB page typically compresses to 1–2 KB (agent heap data — structs, strings, JSON — is highly compressible). This effectively doubles the amount of data that can reside in RAM without any I/O.
+
+**Why zram, not zswap?** Linux offers two compressed memory approaches: **zswap** (a write-back cache in front of a backing swap device) and **zram** (a self-contained compressed block device in RAM). AIOS uses zram because it requires no backing store — there is no swap partition or file to configure, no disk I/O latency on the decompression fast path, and no risk of SD card wear from writeback. On SBC and diskless systems (the primary AIOS targets), zram is strictly superior: all compressed data stays in RAM, decompression is a pure CPU operation completing in microseconds, and the system works identically whether or not a storage device is present. zswap's advantage (transparent writeback to disk when RAM fills) is irrelevant when disk I/O is 100-1000× slower than RAM access.
 
 **Architecture:**
 
@@ -3288,6 +3297,8 @@ TLB misses are expensive — each miss requires a 4-level page table walk (4 mem
 - **ASIDs:** Context switches do not flush the TLB. Entries from the previous process remain valid for that process's ASID.
 - **Multi-size THP:** Three page sizes (4 KB, 64 KB, 2 MB) matched to workload. 64 KB medium pages for agent heaps and KV cache blocks reduce TLB entries by 16x vs 4 KB. 2 MB huge pages for model weights reduce entries by 512x.
 - **TTBR1 global entries:** Kernel mappings are global (not tagged with an ASID), so they persist across all context switches.
+- **FEAT_CONTPTE (Contiguous PTE hints):** ARMv8.2+ introduces a contiguous bit in PTEs. When 16 consecutive 4 KB PTEs are marked contiguous and map a naturally aligned 64 KB region, the TLB can cache them as a single 64 KB entry — reducing TLB pressure by 16× without requiring a different page table granule. Linux 6.9 (Ryan Roberts, ARM) added FEAT_CONTPTE support for anonymous and file-backed folios. AIOS targets this for direct map regions and model weight mappings. Note: Cortex-A72 (QEMU target) does not implement FEAT_CONTPTE; the contiguous bit is ignored on A72. AIOS sets the bit unconditionally so that A76+ targets benefit automatically.
+- **FEAT_TLBIRANGE (Range TLB Invalidation):** ARMv8.4+ provides `TLBI RVAE1IS` — a single instruction that invalidates a range of virtual addresses, replacing the current per-page `TLBI VAE1IS` loop. For large unmappings (e.g., agent exit, model eviction), this reduces TLBI overhead from O(pages) instructions to O(1). The TLB invalidation API (`mm/tlb.rs`) provides an abstract `tlb_invalidate_range()` that uses per-page TLBI on A72 and FEAT_TLBIRANGE on A76+.
 
 ### 11.2 Cache Awareness
 
@@ -3442,7 +3453,54 @@ On 8 GB devices, 8K-32K context is practical. On 16-32 GB devices, 128K+ context
 
 -----
 
-## 13. Implementation Order
+## 13. Future Directions (Research-Informed)
+
+This section catalogues improvements informed by OS research and production systems that align with AIOS's AI-first vision. Items are prioritized by impact and listed with citations for traceability.
+
+### 13.1 ARM Hardware Feature Exploitation
+
+1. **FEAT_CONTPTE (Contiguous PTE hints).** Group 16 consecutive 4 KB PTEs into a single 64 KB TLB entry. Linux 6.9 added support (Ryan Roberts, ARM) for anonymous and file-backed folios. Primary targets: direct map region, model weight mappings, KV cache block tables. Cortex-A72 ignores the bit; A76+ benefits automatically.
+
+2. **FEAT_TLBIRANGE (Range TLB invalidation).** ARMv8.4+ `TLBI RVAE1IS` invalidates a VA range in a single instruction, replacing per-page TLBI loops. Reduces unmapping overhead from O(pages) to O(1) for agent exit, model eviction, and large `munmap`. Abstract API in `mm/tlb.rs` now; hardware path when targeting A76+.
+
+3. **ARM GCS (Guarded Control Stack).** ARMv9.4 hardware shadow stacks complement PAC/BTI (§9) with return-address integrity enforced in hardware. Each thread gets a GCS page that the CPU validates on `RET`. Requires kernel support for GCS page allocation, context switching the GCS pointer, and `clone()` semantics for GCS inheritance.
+
+### 13.2 TLB and Virtual Memory Optimization
+
+1. **Batched TLB invalidation.** Linux's `mmu_gather` pattern: accumulate page unmappings into a batch, then issue a single `TLBI` + `DSB` at the end. Avoids per-page TLBI overhead during large address space teardown. Particularly valuable for agent process exit (thousands of pages).
+
+2. **ASID pinning.** Reserve a subset of ASIDs for latency-critical AIRS processes (inference engine, conversation bar). Pinned ASIDs are excluded from generation wraparound, preventing TLB flush for these processes even when the general ASID space wraps. Reduces worst-case inference latency jitter.
+
+3. **Software TLB prefetch.** Use the `AT S1E1R` (Address Translate) instruction to warm the TLB for upcoming model layer pages. During inference, the runtime knows which layer comes next — issuing `AT` for those pages before the actual load converts TLB misses into hits. Measured benefit: ~15% reduction in page table walk overhead for large models.
+
+4. **Per-VMA locking.** Linux 6.4 (Suren Baghdasaryan, Google) replaced the global `mmap_lock` with per-VMA (Virtual Memory Area) locks. This allows concurrent page faults in different VMAs — critical for multi-threaded agents and parallel COW resolution. AIOS's `AddressSpace` target design (§3.2) can adopt per-`VmRegion` reader-writer locks.
+
+5. **Lazy page table population.** Defer allocation of intermediate page table pages (PUD/PMD) until the first fault in that VA range. Reduces memory overhead for sparse address spaces (common: agents with large virtual address holes between text, heap, and stack).
+
+### 13.3 Physical Memory and Allocator Improvements
+
+1. **KFENCE-style sampling.** Linux KFENCE provides low-overhead (~0.1% CPU) production bug detection by randomly selecting a small subset of allocations and placing them in guard-page-protected slots. Buffer overflows, use-after-free, and double-free on sampled objects trigger immediate faults. Complements the slab red zones (§4.1) with zero-false-positive guard page detection.
+
+2. **Slab hardening.** Randomized freelist ordering (makes heap exploitation harder), XOR-hardened freelist pointers (detects corruption before dereference), and per-domain cache isolation (BULKHEAD, USENIX Security 2023). BULKHEAD partitions slab caches by security domain, preventing cross-domain heap spray attacks.
+
+3. **Folio-aware allocation.** Linux 6.x folio abstraction manages multi-page allocations as a single unit, reducing per-page metadata overhead and simplifying page reclamation for compound pages. AIOS can adopt folios for 64 KB medium pages and 2 MB huge pages, replacing the current per-page tracking.
+
+4. **Watermark-based pool borrowing.** Allow pools to borrow pages from adjacent pools under pressure, with mandatory return when the lending pool hits its own watermark. Example: under Critical pressure, the user pool can borrow from the DMA pool (which typically has low utilization). Borrowing is a last resort before OOM.
+
+### 13.4 AI Memory Optimization
+
+1. **RadixAttention for KV prefix caching.** SGLang's radix tree approach (Zheng et al., 2024) organizes prefix sharing as a tree rather than flat block tables. Enables LRU-based prefix eviction at tree nodes, automatic deduplication of arbitrary-length common prefixes, and more efficient memory reuse across sessions. Extends the PagedAttention block table design (§6.3).
+
+2. **KV cache compression.** Three complementary techniques for reducing KV cache memory footprint:
+    - **KIVI** (Liu et al., 2024): 2-bit quantization of KV cache tensors — reduces memory by 4× with <1% accuracy loss on long-context tasks.
+    - **H2O (Heavy-Hitter Oracle)** (Zhang et al., NeurIPS 2023): Evict low-importance tokens from the KV cache based on accumulated attention scores, keeping only "heavy hitter" tokens.
+    - **StreamingLLM** (Xiao et al., 2024): Retain attention sinks (first few tokens) plus a sliding window of recent tokens, enabling infinite-length generation with fixed KV cache memory.
+
+3. **Deterministic inference prefetching.** Transformer models access layers sequentially (layer 0 → 1 → ... → N). The kernel can exploit this structure: while inference processes layer K, prefetch layer K+1 pages into TLB and cache. Unlike general-purpose prefetching, transformer access patterns are fully deterministic per-token, enabling near-perfect prefetch accuracy.
+
+-----
+
+## 14. Implementation Order
 
 Memory management spans several development phases:
 
