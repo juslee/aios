@@ -80,7 +80,7 @@ When implementing kernel code, use these established patterns:
 
 | Task | Pattern | Reference File |
 |---|---|---|
-| Lock ordering enforcement | Acquire in order per CLAUDE.md: PROCESS_TABLE > CHANNEL_TABLE > ... | `docs/kernel/deadlock-prevention.md` |
+| Lock ordering enforcement | Acquire in order per CLAUDE.md: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
 | Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:58-108` |
@@ -193,7 +193,7 @@ The slab and buddy allocators may block or deadlock under contention. Use pre-al
 
 ### Never confuse physical and virtual addresses
 
-After Phase 2, the kernel runs with TTBR1 virtual addresses. DMA hardware requires physical addresses. `PhysAddr` and `VirtAddr` newtypes in `shared/src/lib.rs` prevent accidental mixing.
+After Phase 2, the kernel runs with TTBR1 virtual addresses. DMA hardware requires physical addresses. `PhysAddr` and `VirtAddr` type aliases in `shared/src/lib.rs` (`pub type PhysAddr = u64`) document intent but do not enforce type safety at compile time -- you must be disciplined about which address space a `u64` represents.
 
 ```text
 WRONG: mmio_write32(0x0900_0000, val)  // physical addr, but MMU is on
@@ -280,7 +280,7 @@ pub fn enter_scheduler() -> !            // scheduler.rs:47
 
 // Core scheduling function. Must be called with IRQs masked.
 // Picks next thread from run queue and context-switches to it.
-fn schedule()                            // scheduler.rs:153
+pub fn schedule()                        // scheduler.rs:153
 
 // Block the current thread with the given new state.
 // Masks IRQs internally, updates state, calls schedule().
@@ -292,7 +292,7 @@ pub fn unblock(tid: ThreadId)            // scheduler.rs:358
 
 // Timer tick handler (called from IRQ at 1 kHz).
 // Uses try_lock to avoid deadlock from same-core re-entrancy.
-pub fn timer_tick()                      // scheduler.rs:114
+pub fn timer_tick(cpu: usize)            // scheduler.rs:114
 ```
 
 **Gotchas**:
@@ -303,15 +303,19 @@ pub fn timer_tick()                      // scheduler.rs:114
 
 - **Lock release before restore_context** (scheduler.rs:247): The THREAD_TABLE lock MUST be dropped before calling `restore_context()`. If the lock is held during restore, a timer IRQ on the newly-running thread will deadlock trying to reacquire.
 
-- **timer_tick() uses try_lock** (scheduler.rs:114-141): Because timer_tick() runs from IRQ context, it cannot block. It uses `try_lock()` on both THREAD_TABLE and RUN_QUEUES. If either is held (by the same core's schedule()), it returns without acting. This is correct; the pending NEED_RESCHED flag will be picked up on the next schedule() call.
+- **timer_tick() uses try_lock** (scheduler.rs:114-141): Because timer_tick() runs from IRQ context, it cannot block. It uses `try_lock()` on CURRENT_THREAD[cpu] first -- if held, it returns immediately (skipping the entire tick). Then it uses `try_lock()` on THREAD_TABLE -- if held, it skips the time slice decrement but does not return early (metrics may still update). RUN_QUEUES is only try_locked for optional metrics collection (`#[cfg(feature = "kernel-metrics")]`), not for core logic.
 
 **Lock ordering**:
 
 ```text
-THREAD_TABLE (global) → CURRENT_THREAD[cpu] (per-CPU) → RUN_QUEUES[cpu]
+RUN_QUEUES[cpu] and THREAD_TABLE are NOT strictly ordered — code acquires them
+in different orders depending on context:
+  enter_scheduler():  RUN_QUEUES → THREAD_TABLE → CURRENT_THREAD
+  schedule():         CURRENT_THREAD → THREAD_TABLE → (drop) → RUN_QUEUES
+  timer_tick():       CURRENT_THREAD (try) → THREAD_TABLE (try) → RUN_QUEUES (try, metrics only)
 ```
 
-Always lock THREAD_TABLE first. CURRENT_THREAD locks are nested inside THREAD_TABLE critical sections. timer_tick() uses try_lock on both to avoid deadlock from same-core IRQ.
+These locks are safe because: (1) enter_scheduler() drops RUN_QUEUES before taking THREAD_TABLE, so they are never held simultaneously; (2) schedule() drops THREAD_TABLE before taking RUN_QUEUES; (3) timer_tick() uses try_lock exclusively, preventing deadlock from same-core IRQ re-entrancy.
 
 **Common mistakes**:
 
@@ -582,17 +586,16 @@ pub fn write_block(
 ) -> Result<(ContentHash, BlockLocation), StorageError>
 
 // Read a block by location. Verifies CRC-32C integrity on read.
+// Returns number of bytes read on success.
 pub fn read_block(
-    &mut self,
+    &self,
     location: &BlockLocation,
     buf: &mut [u8],
-) -> Result<(), StorageError>
+) -> Result<usize, StorageError>
 
-// Format a new disk: write superblock, initialize WAL.
-pub fn format(total_sectors: u64) -> Result<(), StorageError>
-
-// Initialize from existing disk: read and validate superblock.
-pub fn init() -> Result<(), StorageError>
+// Initialize the global Block Engine. Reads superblock; if invalid,
+// formats the disk (write superblock + initialize WAL) automatically.
+pub fn init() -> Result<(), StorageError>  // storage/mod.rs (module-level)
 
 // Compute CRC-32C checksum.
 pub fn crc32c(data: &[u8]) -> u32        // block_engine.rs:44
@@ -665,9 +668,9 @@ pub fn get(
 
 - **WAL checksum covers bytes 0..56** (wal.rs:42-47): The last 8 bytes (checksum + pad2) are excluded. `compute_checksum()` must remain in sync with the layout. Changing field order breaks the checksum.
 
-- **Uncommitted entries discarded on recovery** (wal.rs:5): Entries with `committed == 0` are skipped during replay. This is the crash-safety mechanism. Data blocks corresponding to uncommitted entries remain on disk but are not indexed in the MemTable.
+- **Uncommitted entries may be salvaged on recovery** (block_engine.rs:479-492): Recovery does NOT simply discard all uncommitted entries. For entries with `committed == 0`, the recovery code verifies the data block's CRC on disk (`verify_block_crc`). If the CRC is valid, the entry is salvaged (inserted into MemTable and retroactively committed in the WAL). Only entries with invalid or missing data are truly discarded.
 
-- **MemTable capacity is a hard limit** (lsm.rs:84-86): 65536 entries maximum. When full, `insert()` returns `MemTableFull` even for dedup operations. Recovery requires flushing the MemTable to a persistent SSTable (future L0 flush).
+- **MemTable capacity is a hard limit** (lsm.rs:84-86): 65536 entries maximum. When full, `insert()` returns `MemTableFull` for new key insertions. Dedup operations (existing key, refcount bump) succeed regardless of capacity since they don't add entries. Recovery from a full MemTable requires flushing to a persistent SSTable (future L0 flush).
 
 - **Dedup via refcount** (lsm.rs:78-82): If the same ContentHash (SHA-256 of data) is inserted twice, the existing entry's refcount is incremented instead of creating a duplicate. This is content-addressed deduplication.
 
