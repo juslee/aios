@@ -69,6 +69,16 @@ impl MagazineRound {
     fn is_empty(&self) -> bool {
         self.count == 0
     }
+
+    /// Convert all stored addresses from physical to virtual using the direct map.
+    /// Called once when transitioning from identity map to TTBR1 direct map.
+    fn convert_addrs(&mut self, offset: usize) {
+        for i in 0..self.count {
+            if self.objects[i] != 0 {
+                self.objects[i] += offset;
+            }
+        }
+    }
 }
 
 /// Per-cache magazine with current/prev swap for two-chance fast path.
@@ -275,10 +285,55 @@ impl SlabCache {
         }
     }
 
+    /// Convert all addresses in this cache from physical to virtual.
+    ///
+    /// Walks the intrusive free list, converting each node address and its
+    /// stored next-pointer. Also converts magazine entries.
+    ///
+    /// # Safety
+    /// Must be called exactly once, immediately after `enable_direct_map()`,
+    /// while the identity map is still accessible (TTBR0 not yet switched).
+    unsafe fn convert_to_direct_map(&mut self, offset: usize) {
+        // Convert magazine entries (stored as usize addresses).
+        self.magazine.current.convert_addrs(offset);
+        self.magazine.prev.convert_addrs(offset);
+
+        // Walk and convert the intrusive free list.
+        // Each node's first 8 bytes contain the next pointer (physical).
+        // We convert the node address and the stored next pointer.
+        if self.free_head == 0 {
+            return;
+        }
+
+        // Convert head pointer.
+        self.free_head += offset;
+
+        // Walk the chain: at each node (now virtual), read the next pointer
+        // (still physical), convert it, and write it back.
+        let mut current = self.free_head;
+        loop {
+            // SAFETY: current is a valid virtual address (just converted or
+            // converted in a previous iteration). The identity map is still
+            // active, and the direct map now also maps this address.
+            let next_phys = core::ptr::read(current as *const usize);
+            if next_phys == 0 {
+                break; // End of list.
+            }
+            let next_virt = next_phys + offset;
+            core::ptr::write(current as *mut usize, next_virt);
+            current = next_virt;
+        }
+    }
+
     /// Request a page from the buddy allocator and carve it into free slots.
     unsafe fn grow(&mut self) {
         let page = super::frame::alloc_page().or_else(super::buddy::alloc_page);
-        let Some(page_addr) = page else { return };
+        let Some(phys_addr) = page else { return };
+
+        // Convert physical address to a virtual address usable for read/write.
+        // After enable_direct_map(), TTBR0 may no longer have an identity map,
+        // so physical addresses must go through the TTBR1 direct map.
+        let page_addr = super::buddy::phys_to_virt(phys_addr);
 
         self.pages_used += 1;
 
@@ -319,10 +374,35 @@ impl SlabAllocator {
         let size = layout.size().max(layout.align());
         CACHE_SIZES.iter().position(|&s| s >= size)
     }
+
+    /// Convert all cached addresses from physical to virtual.
+    ///
+    /// # Safety
+    /// Must be called once, immediately after `enable_direct_map()`.
+    unsafe fn convert_to_direct_map(&mut self, offset: usize) {
+        for cache in &mut self.caches {
+            cache.convert_to_direct_map(offset);
+        }
+    }
 }
 
 /// Global slab allocator instance.
 pub static SLAB: spin::Mutex<SlabAllocator> = spin::Mutex::new(SlabAllocator::new());
+
+/// Convert all slab free-list and magazine addresses from physical to virtual.
+///
+/// Called once after `enable_direct_map()` to fix up addresses that were
+/// stored during early boot when the identity map was active. After this,
+/// all slab pointers use TTBR1 direct-map virtual addresses.
+///
+/// # Safety
+/// Must be called exactly once, right after `enable_direct_map()`, while
+/// the identity map is still accessible in TTBR0.
+pub unsafe fn convert_to_direct_map() {
+    let offset = crate::arch::aarch64::mmu::DIRECT_MAP_BASE;
+    let mut slab = SLAB.lock();
+    slab.convert_to_direct_map(offset);
+}
 
 /// Allocate from the slab allocator.
 ///
@@ -348,7 +428,9 @@ pub unsafe fn alloc(layout: Layout) -> *mut u8 {
                 buddy.alloc_pages(page_order)
             }
         };
-        return addr.map_or(core::ptr::null_mut(), |a| a as *mut u8);
+        return addr.map_or(core::ptr::null_mut(), |a| {
+            super::buddy::phys_to_virt(a) as *mut u8
+        });
     }
 
     let Some(idx) = SlabAllocator::cache_index(&layout) else {

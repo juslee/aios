@@ -37,10 +37,18 @@ pub fn enable_direct_map() {
 /// TTBR1 direct map after `enable_direct_map()` is called.
 #[inline]
 fn phys_to_ptr<T>(phys: usize) -> *mut T {
+    phys_to_virt(phys) as *mut T
+}
+
+/// Convert a physical address to a virtual address.
+/// Uses identity (phys == virt) early in boot, TTBR1 direct map after
+/// `enable_direct_map()` is called.
+#[inline]
+pub fn phys_to_virt(phys: usize) -> usize {
     if DIRECT_MAP_ACTIVE.load(Ordering::Relaxed) {
-        (crate::arch::aarch64::mmu::DIRECT_MAP_BASE + phys) as *mut T
+        crate::arch::aarch64::mmu::DIRECT_MAP_BASE + phys
     } else {
-        phys as *mut T
+        phys
     }
 }
 

@@ -11,6 +11,7 @@ use spin::Mutex;
 
 use crate::drivers::virtio_blk;
 
+use super::lsm::MemTable;
 use super::wal::Wal;
 
 // ---------------------------------------------------------------------------
@@ -126,10 +127,11 @@ impl Superblock {
 // Block Engine
 // ---------------------------------------------------------------------------
 
-/// Block Engine state: superblock + WAL + data region append pointer.
+/// Block Engine state: superblock + WAL + MemTable + data region append pointer.
 pub struct BlockEngine {
     superblock: Superblock,
     wal: Wal,
+    memtable: MemTable,
     /// Next free sector in the data region.
     data_next_sector: u64,
 }
@@ -159,11 +161,18 @@ impl BlockEngine {
             let mut wal = Wal::new(sb.wal_start_sector, sb.wal_size_sectors);
             wal.set_positions(sb.wal_head, sb.wal_tail, sb.wal_head + 1);
             let data_next = sb.data_next_sector;
-            Ok(Self {
+            let mut engine = Self {
                 superblock: sb,
                 wal,
+                memtable: MemTable::with_default_capacity(),
                 data_next_sector: data_next,
-            })
+            };
+
+            // Replay WAL to rebuild MemTable index.
+            let recovered = engine.recover();
+            crate::kinfo!(Storage, "WAL recovery: {} entries replayed", recovered);
+
+            Ok(engine)
         } else {
             // Format new disk.
             crate::kinfo!(
@@ -178,6 +187,7 @@ impl BlockEngine {
             Ok(Self {
                 superblock: sb,
                 wal,
+                memtable: MemTable::with_default_capacity(),
                 data_next_sector: data_next,
             })
         }
@@ -234,7 +244,14 @@ impl BlockEngine {
         let hash_bytes: [u8; 32] = hasher.finalize().into();
         let content_hash = ContentHash(hash_bytes);
 
-        // 2. Compute on-disk layout: [crc32c: u32 | data_len: u32 | data | padding]
+        // 2. Dedup check: if hash exists in MemTable, bump refcount and return.
+        if let Some(entry) = self.memtable.get_mut(&content_hash) {
+            entry.refcount += 1;
+            let loc = entry.location;
+            return Ok((content_hash, loc));
+        }
+
+        // 3. Compute on-disk layout: [crc32c: u32 | data_len: u32 | data | padding]
         let header_size = 8; // crc32c (4) + data_len (4)
         let total_bytes = header_size + data.len();
         let sectors_needed = total_bytes.div_ceil(SECTOR_SIZE) as u64;
@@ -245,17 +262,17 @@ impl BlockEngine {
             return Err(StorageError::DeviceFull);
         }
 
-        // 3. CRC-32C of raw data.
+        // 4. CRC-32C of raw data.
         let data_crc = crc32c(data);
 
-        // 4. Build the byte offset and size for BlockLocation.
+        // 5. Build the byte offset and size for BlockLocation.
         let byte_offset = self.data_next_sector * SECTOR_SIZE as u64;
         let byte_size = data.len() as u32;
 
-        // 5. WAL append (uncommitted).
+        // 6. WAL append (uncommitted).
         let seq = self.wal.append(content_hash, byte_offset, byte_size)?;
 
-        // 6. Write data sectors to disk.
+        // 7. Write data sectors to disk.
         let mut sector_buf = [0u8; SECTOR_SIZE];
 
         // First sector: header + beginning of data.
@@ -281,10 +298,10 @@ impl BlockEngine {
             sector_idx += 1;
         }
 
-        // 7. WAL commit.
+        // 8. WAL commit.
         self.wal.commit(seq)?;
 
-        // 8. Advance append pointer.
+        // 9. Advance append pointer.
         self.data_next_sector += sectors_needed;
 
         let location = BlockLocation {
@@ -292,6 +309,9 @@ impl BlockEngine {
             size: byte_size,
             tier: StorageTier::Hot,
         };
+
+        // 10. Insert into MemTable index.
+        let _ = self.memtable.insert(content_hash, location);
 
         Ok((content_hash, location))
     }
@@ -346,6 +366,123 @@ impl BlockEngine {
         Ok(data_len)
     }
 
+    /// Read a data block by content hash (MemTable lookup → disk read).
+    pub fn read_block_by_hash(
+        &self,
+        hash: &ContentHash,
+        buf: &mut [u8],
+    ) -> Result<usize, StorageError> {
+        let entry = self.memtable.get(hash).ok_or(StorageError::BlockNotFound)?;
+        self.read_block(&entry.location, buf)
+    }
+
+    /// Replay WAL entries to rebuild the MemTable after boot.
+    ///
+    /// - Committed entries: insert into MemTable (rebuild index).
+    /// - Uncommitted entries with valid data on disk: salvage (recover + commit).
+    /// - Uncommitted entries with no valid data: discard.
+    ///
+    /// Returns the total number of entries replayed (committed + salvaged).
+    fn recover(&mut self) -> u64 {
+        let mut replayed = 0u64;
+        let mut max_data_sector = self.data_next_sector;
+
+        let tail = self.wal.tail();
+        let head = self.wal.head();
+
+        for idx in tail..head {
+            let entry = match self.wal.read_entry(idx) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if !entry.is_valid() {
+                continue;
+            }
+
+            let content_hash = entry.content_hash();
+            let location = BlockLocation {
+                offset: entry.data_offset,
+                size: entry.data_size,
+                tier: StorageTier::Hot,
+            };
+
+            if entry.committed == 1 {
+                // Committed entry: insert into MemTable.
+                let _ = self.memtable.insert(content_hash, location);
+                replayed += 1;
+            } else {
+                // Uncommitted: check if data block was actually written.
+                let start_sector = entry.data_offset / SECTOR_SIZE as u64;
+                let mut sector_buf = [0u8; SECTOR_SIZE];
+                if virtio_blk::read_sector(start_sector, &mut sector_buf).is_ok() {
+                    let stored_crc = u32::from_le_bytes([
+                        sector_buf[0],
+                        sector_buf[1],
+                        sector_buf[2],
+                        sector_buf[3],
+                    ]);
+                    let stored_len = u32::from_le_bytes([
+                        sector_buf[4],
+                        sector_buf[5],
+                        sector_buf[6],
+                        sector_buf[7],
+                    ]) as usize;
+
+                    // Validate: stored_len matches WAL entry, CRC matches data.
+                    if stored_len == entry.data_size as usize && stored_len > 0 {
+                        let header_size = 8;
+                        let first_chunk = stored_len.min(SECTOR_SIZE - header_size);
+                        let data_crc = if stored_len <= first_chunk {
+                            crc32c(&sector_buf[8..8 + stored_len])
+                        } else {
+                            // Multi-sector: read full data to verify CRC.
+                            // For simplicity, trust single-sector CRC check on first chunk.
+                            // Full verification happens on read_block.
+                            crc32c(&sector_buf[8..8 + first_chunk])
+                        };
+
+                        // For single-sector blocks, full CRC check is exact.
+                        // For multi-sector, we do a partial check — full verify on read.
+                        if stored_len <= first_chunk && data_crc == stored_crc {
+                            // Salvage: data is on disk, insert into MemTable.
+                            let _ = self.memtable.insert(content_hash, location);
+                            // Mark committed in WAL (best-effort).
+                            let _ = self.wal.commit(entry.sequence_number);
+                            replayed += 1;
+                            crate::kinfo!(
+                                Storage,
+                                "WAL recovery: salvaged uncommitted entry seq={}",
+                                entry.sequence_number
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Track highest data sector for append pointer recovery.
+            let entry_sectors = (entry.data_size as u64 + 8).div_ceil(SECTOR_SIZE as u64);
+            let entry_end = entry.data_offset / SECTOR_SIZE as u64 + entry_sectors;
+            if entry_end > max_data_sector {
+                max_data_sector = entry_end;
+            }
+        }
+
+        // Restore append pointer to after the highest known data.
+        if max_data_sector > self.data_next_sector {
+            self.data_next_sector = max_data_sector;
+        }
+
+        // Trim committed entries from WAL to free space.
+        self.wal.trim_committed();
+
+        replayed
+    }
+
+    /// Access the MemTable (read-only).
+    pub fn memtable(&self) -> &MemTable {
+        &self.memtable
+    }
+
     /// Flush the superblock to disk with current state.
     pub fn flush_superblock(&mut self) -> Result<(), StorageError> {
         self.superblock.data_next_sector = self.data_next_sector;
@@ -357,13 +494,13 @@ impl BlockEngine {
         Self::write_superblock(&self.superblock)
     }
 
-    /// Access the WAL (for recovery in Step 4).
+    /// Access the WAL.
     #[allow(dead_code)]
     pub fn wal(&self) -> &Wal {
         &self.wal
     }
 
-    /// Mutable WAL access (for recovery in Step 4).
+    /// Mutable WAL access.
     #[allow(dead_code)]
     pub fn wal_mut(&mut self) -> &mut Wal {
         &mut self.wal
@@ -375,7 +512,7 @@ impl BlockEngine {
         self.data_next_sector
     }
 
-    /// Set data append sector (for recovery).
+    /// Set data append sector.
     #[allow(dead_code)]
     pub fn set_data_next_sector(&mut self, sector: u64) {
         self.data_next_sector = sector;
@@ -400,11 +537,19 @@ pub fn write_block(data: &[u8]) -> Result<(ContentHash, BlockLocation), StorageE
     engine.write_block(data)
 }
 
-/// Read a block via the global Block Engine.
+/// Read a block by location via the global Block Engine.
+#[allow(dead_code)]
 pub fn read_block(loc: &BlockLocation, buf: &mut [u8]) -> Result<usize, StorageError> {
     let guard = BLOCK_ENGINE.lock();
     let engine = guard.as_ref().ok_or(StorageError::DeviceNotFound)?;
     engine.read_block(loc, buf)
+}
+
+/// Read a block by content hash via the global Block Engine.
+pub fn read_block_by_hash(hash: &ContentHash, buf: &mut [u8]) -> Result<usize, StorageError> {
+    let guard = BLOCK_ENGINE.lock();
+    let engine = guard.as_ref().ok_or(StorageError::DeviceNotFound)?;
+    engine.read_block_by_hash(hash, buf)
 }
 
 /// Flush the superblock via the global Block Engine.
