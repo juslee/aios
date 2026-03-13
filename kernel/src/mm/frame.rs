@@ -185,3 +185,22 @@ pub unsafe fn free_user_pages(phys_addr: usize, order: usize) {
         fa.free_pages(phys_addr, order);
     }
 }
+
+/// Allocate a single page from the DMA pool (for device I/O buffers).
+///
+/// NOTE: QEMU virt is DMA-coherent, so WB direct map is safe for DMA buffers.
+/// Real hardware may require Non-Cacheable mapping (hal.md §9).
+pub fn alloc_dma_page() -> Option<usize> {
+    let mut guard = FRAME_ALLOC.lock();
+    let fa = guard.as_mut()?;
+    // SAFETY: Direct map is active after MMU enable.
+    unsafe { fa.alloc_page(Pool::Dma) }
+}
+
+/// Allocate `2^order` contiguous pages from the DMA pool.
+pub fn alloc_dma_pages(order: usize) -> Option<usize> {
+    let mut guard = FRAME_ALLOC.lock();
+    let fa = guard.as_mut()?;
+    // SAFETY: Direct map is active after MMU enable.
+    unsafe { fa.alloc_pages(Pool::Dma, order) }
+}

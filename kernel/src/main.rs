@@ -9,6 +9,7 @@ mod arch {
 mod bench;
 mod boot_phase;
 mod cap;
+mod drivers;
 mod dtb;
 mod framebuffer;
 mod ipc;
@@ -18,6 +19,7 @@ mod platform;
 mod sched;
 mod service;
 mod smp;
+mod storage;
 mod syscall;
 mod task;
 
@@ -184,6 +186,13 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // the TTBR0 identity map (which may be switched away for user spaces).
     crate::mm::buddy::enable_direct_map();
 
+    // Convert slab allocator addresses from physical to virtual (direct map).
+    // Must happen after enable_direct_map() and while identity map is still
+    // active in TTBR0 (before any TTBR0 switch to user address spaces).
+    // SAFETY: Called once from boot CPU. Identity map is active. Direct map
+    // is now enabled. Slab free-list nodes are accessible via both maps.
+    unsafe { crate::mm::slab::convert_to_direct_map() };
+
     observability::drain_logs();
 
     // --- Step 7: SMP Secondary Core Bringup ---
@@ -279,6 +288,12 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // --- Step 7a: Service Manager Init ---
     service::init();
+    observability::drain_logs();
+
+    // --- Step 7b: Storage Init ---
+    if drivers::virtio_blk::init(&dt) {
+        storage::init();
+    }
     observability::drain_logs();
 
     // --- Step 7c: Benchmark Init ---
