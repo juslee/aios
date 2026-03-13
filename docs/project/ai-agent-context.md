@@ -343,11 +343,12 @@ pub fn ipc_call(
 ) -> i64                                 // channel.rs:33
 
 // Receive a message from a channel. Blocks if no message pending.
+// Returns (bytes_received, sender_tid) on success.
 pub fn ipc_recv(
     channel: ChannelId,
     recv_buf: &mut [u8],
     timeout_ticks: u64,
-) -> i64                                 // channel.rs:232
+) -> Result<(usize, ThreadId), i64>     // channel.rs:232
 
 // Reply to a pending caller. No capability check required (spec §9.1).
 pub fn ipc_reply(
@@ -359,12 +360,12 @@ pub fn ipc_reply(
 pub fn ipc_send(
     channel: ChannelId,
     send_buf: &[u8],
-) -> i64                                 // channel.rs:420
+) -> i64                                 // channel.rs:421
 
 // Create a new IPC channel. Requires ChannelCreate capability.
 pub fn channel_create(
-    creator_pid: ProcessId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs
+    creator: ThreadId,
+) -> Result<ChannelId, i64>              // ipc/mod.rs:149
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
