@@ -85,30 +85,35 @@ The HAL handles **boot-time hardware initialization and kernel-level device acce
 
 ## 2. Platform Detection
 
-Platform detection runs during kernel early boot (boot.md §3.3, Step 4) after the device tree is parsed. The kernel reads the root `compatible` string from the flattened device tree and selects the matching platform implementation:
+Platform detection runs during kernel early boot (boot.md §3.3, Step 3) after the device tree is parsed. The kernel reads the root `compatible` string from the flattened device tree and selects the matching platform implementation:
 
 ```rust
 /// Selected at boot time by reading the DTB compatible string.
-pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
-    let compat = dt.root_compatible();
-    match compat {
-        c if c.contains("qemu") => Box::new(QemuPlatform),
-        c if c.contains("brcm,bcm2711") => Box::new(RaspberryPi4Platform),
-        c if c.contains("brcm,bcm2712") => Box::new(RaspberryPi5Platform),
-        c if c.contains("apple,t8103") => Box::new(AppleSiliconPlatform::new(AppleSoc::T8103)),
-        c if c.contains("apple,t6000") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6000)),
-        c if c.contains("apple,t6020") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6020)),
-        c if c.contains("apple,t6031") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6031)),
-        c if c.contains("apple,t6040") => Box::new(AppleSiliconPlatform::new(AppleSoc::T6040)),
-        _ => panic!("Unknown platform: {}", compat),
+///
+/// Returns a static reference — there is no heap at detection time.
+/// See kernel/src/platform/mod.rs for the implementation.
+pub fn detect_platform(dt: &DeviceTree) -> &'static dyn Platform {
+    let compat = dt.root_compatible_str();
+
+    if compat.contains("virt") || compat.contains("qemu") {
+        static QEMU: QemuPlatform = QemuPlatform;
+        return &QEMU;
     }
+
+    // Future platforms (not yet implemented):
+    // c if c.contains("brcm,bcm2711") => &RaspberryPi4Platform,
+    // c if c.contains("brcm,bcm2712") => &RaspberryPi5Platform,
+    // c if c.contains("apple,t8103")  => &AppleSiliconPlatform::new(AppleSoc::T8103),
+    // ...
+
+    panic!("Unknown platform: {}", compat);
 }
 ```
 
 **Compatible strings by platform:**
 
 | Platform | DTB Compatible String | SoC |
-|---|---|---|
+| --- | --- | --- |
 | QEMU virt | `qemu,virt` | Virtual |
 | Raspberry Pi 4 | `brcm,bcm2711` | BCM2711 |
 | Raspberry Pi 5 | `brcm,bcm2712` | BCM2712 |
@@ -120,16 +125,31 @@ pub fn detect_platform(dt: &DeviceTree) -> Box<dyn Platform> {
 
 Apple Silicon Macs use a device tree (ADT — Apple Device Tree) that the Asahi Linux bootloader (m1n1) converts to a standard flattened device tree format compatible with Linux/AIOS. The compatible strings follow the `apple,tXXXX` convention where the number identifies the SoC.
 
-The detected platform is stored in `KernelState.platform` and used for all subsequent hardware initialization.
+The detected platform is stored as a local `&'static dyn Platform` reference in `kernel_main()` and passed to subsequent initialization functions.
 
 -----
 
 ## 3. Platform Trait
 
-The `Platform` trait is the core abstraction. Every supported platform implements seven `init_*` methods — one for each hardware class the kernel needs during boot — plus an `as_any()` method for extension trait discovery (§12.3):
+The `Platform` trait is the core abstraction. The current implementation provides three initialization methods (UART, interrupts, timer) plus a `name()` method. The target design extends this to seven `init_*` methods — one for each hardware class the kernel needs — plus an `as_any()` method for extension trait discovery (§12.3).
+
+The current trait as implemented in `kernel/src/platform/mod.rs`:
 
 ```rust
 pub trait Platform: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn init_uart(&self, dt: &DeviceTree) -> Uart;
+    fn init_interrupts(&self, dt: &DeviceTree) -> InterruptController;
+    fn init_timer(&self, dt: &DeviceTree, ic: &InterruptController) -> Timer;
+}
+```
+
+The target design extends this to the full seven-method trait:
+
+```rust
+pub trait Platform: Send + Sync {
+    fn name(&self) -> &'static str;
+
     /// Initialize the interrupt controller.
     ///
     /// QEMU / Pi 5: GICv3 (distributor + redistributor per CPU).
@@ -146,7 +166,8 @@ pub trait Platform: Send + Sync {
     /// frequency varies. QEMU: 62.5 MHz. Pi 4/5: 54 MHz. Apple: 24 MHz.
     ///
     /// Called during early boot Step 6. Configures the 1ms scheduler tick.
-    fn init_timer(&self, dt: &DeviceTree) -> Result<Timer>;
+    /// Takes an `InterruptController` reference to enable the timer PPI in the GIC.
+    fn init_timer(&self, dt: &DeviceTree, ic: &InterruptController) -> Result<Timer>;
 
     /// Initialize the serial console.
     ///
@@ -236,7 +257,7 @@ Apple Silicon carries the SoC variant because different generations have differe
 
 The seven methods are not called all at once. They're called at specific points during boot as their dependencies become available:
 
-```
+```text
 Early Boot (kernel space):
   Step 3:  init_uart()        — first sign of life (no heap)
   Step 5:  init_interrupts()  — enables IRQ routing (no heap)
@@ -262,13 +283,45 @@ Each `init_*` method returns a device handle that abstracts the underlying hardw
 
 ### 4.1 InterruptController
 
+The current implementation in `kernel/src/arch/aarch64/gic.rs` is GICv3-only:
+
 ```rust
-/// Abstraction over GICv2, GICv3, and Apple AIC.
+/// GICv3 interrupt controller state.
+/// See kernel/src/arch/aarch64/gic.rs for the implementation.
 pub struct InterruptController {
-    variant: IrqControllerVariant,
-    max_irqs: u32,
+    gicd_base: usize,   // Distributor MMIO base
+    gicr_base: usize,   // Redistributor MMIO base (core 0)
 }
 
+impl InterruptController {
+    /// Enable an interrupt by INTID.
+    /// PPIs (INTID 16-31): writes GICR_ISENABLER0 in the SGI frame.
+    /// SPIs (INTID 32+): writes GICD_ISENABLER[n].
+    pub fn enable_irq(&self, irq: u32);
+
+    /// Acknowledge an interrupt (read ICC_IAR1_EL1). Returns the INTID.
+    pub fn acknowledge(&self) -> u32;
+
+    /// Signal end-of-interrupt (write ICC_EOIR1_EL1).
+    pub fn end_of_interrupt(&self, irq: u32);
+
+    /// Get the distributor base address.
+    pub fn gicd_base(&self) -> usize;
+
+    /// Get the redistributor base address.
+    pub fn gicr_base(&self) -> usize;
+
+    /// Update base addresses after MMU enable (physical → virtual).
+    pub fn update_bases(&mut self, gicd: usize, gicr: usize);
+}
+```
+
+The standalone `irq_handler_el1()` function handles IRQ dispatch without an `InterruptController` instance — it reads/writes ICC system registers directly. This avoids passing the controller through the exception vector assembly stubs.
+
+The target design generalizes this to a variant enum supporting GICv2, GICv3, and Apple AIC:
+
+```rust
+/// Target design: abstraction over GICv2, GICv3, and Apple AIC.
 enum IrqControllerVariant {
     /// ARM GICv2 (Pi 4): distributor + CPU interface.
     GicV2 {
@@ -294,22 +347,12 @@ pub enum AicVersion {
     V1,  // M1 family
     V2,  // M2+ family (extended die support)
 }
+```
 
+Additional target methods beyond the current implementation:
+
+```rust
 impl InterruptController {
-    /// Enable a specific interrupt (SPI, PPI, or SGI).
-    pub fn enable_irq(&self, irq: u32);
-
-    /// Disable a specific interrupt.
-    pub fn disable_irq(&self, irq: u32);
-
-    /// Acknowledge an interrupt (read IAR). Returns the interrupt ID.
-    /// Called by the IRQ handler at the start of interrupt servicing.
-    pub fn acknowledge(&self) -> u32;
-
-    /// Signal end-of-interrupt (write EOIR).
-    /// Called by the IRQ handler after servicing completes.
-    pub fn end_of_interrupt(&self, irq: u32);
-
     /// Set interrupt priority (0 = highest, 255 = lowest).
     pub fn set_priority(&self, irq: u32, priority: u8);
 
@@ -323,18 +366,12 @@ impl InterruptController {
     /// Return the interrupt controller type for platform-specific paths.
     pub fn controller_type(&self) -> IrqControllerType;
 }
-
-pub enum IrqControllerType {
-    GicV2,
-    GicV3,
-    Aic,
-}
 ```
 
 **Interrupt controller differences handled internally:**
 
 | Operation | GICv2 (Pi 4) | GICv3 (QEMU, Pi 5) | AIC (Apple) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Acknowledge IRQ | Read GICC_IAR | Read ICC_IAR1_EL1 | Read AIC_EVENT |
 | End of interrupt | Write GICC_EOIR | Write ICC_EOIR1_EL1 | Write AIC_SW_CLR |
 | CPU target | GICD_ITARGETSR (bitmap) | GICD_IROUTER (affinity) | AIC_TARGET_CPU |
@@ -344,50 +381,72 @@ pub enum IrqControllerType {
 
 ### 4.2 Timer
 
+The current implementation in `kernel/src/arch/aarch64/timer.rs`:
+
 ```rust
-/// ARM Generic Timer abstraction.
-///
-/// All aarch64 platforms use the ARM architectural timer. Differences are
-/// limited to frequency (read from CNTFRQ_EL0) and the GIC/AIC IRQ
-/// number for timer interrupts (read from device tree).
+/// ARM Generic Timer state.
+/// See kernel/src/arch/aarch64/timer.rs for the implementation.
 pub struct Timer {
     frequency_hz: u64,
     tick_interval: u64,     // counter ticks per scheduler tick (1ms)
-    timer_irq: u32,         // IRQ number for the physical timer
+    timer_irq: u32,         // IRQ number for the physical timer (PPI 30)
 }
 
 impl Timer {
     /// Read the current counter value (CNTVCT_EL0).
     pub fn now(&self) -> u64;
 
+    /// Timer frequency in Hz.
+    pub fn frequency(&self) -> u64;
+
+    /// Timer interrupt INTID (PPI 30 on QEMU).
+    pub fn irq(&self) -> u32;
+
+    /// Ticks per scheduler interval (1 ms).
+    pub fn tick_interval(&self) -> u64;
+
+    /// Set the next timer deadline (relative ticks from now).
+    /// Writes CNTP_TVAL_EL0 (down-counter), NOT CNTP_CVAL_EL0 (comparator).
+    /// ISB after write ensures ISTATUS is cleared before EOIR.
+    pub fn set_next_deadline(&self, ticks: u64);
+}
+```
+
+The timer tick infrastructure uses module-level atomics rather than Timer methods:
+
+```rust
+/// Tick interval in timer counts (set during init, read by all cores).
+static TICK_INTERVAL: AtomicU64;
+
+/// Monotonic tick counter (incremented every 1ms on CPU 0 only).
+pub static TICK_COUNT: AtomicU64;
+
+/// Preemption needed flag (checked by scheduler return path).
+pub static NEED_RESCHED: AtomicBool;
+```
+
+Target design adds convenience methods:
+
+```rust
+impl Timer {
     /// Convert counter ticks to nanoseconds.
     pub fn ticks_to_ns(&self, ticks: u64) -> u64;
 
     /// Convert nanoseconds to counter ticks.
     pub fn ns_to_ticks(&self, ns: u64) -> u64;
 
-    /// Set the next timer interrupt to fire after `ticks` counter ticks.
-    /// Writes CNTP_CVAL_EL0 = CNTVCT_EL0 + ticks.
-    pub fn set_next_deadline(&self, ticks: u64);
-
     /// Enable the physical timer (CNTP_CTL_EL0.ENABLE = 1).
     pub fn enable(&self);
 
     /// Disable the physical timer.
     pub fn disable(&self);
-
-    /// Return the timer frequency in Hz.
-    pub fn frequency(&self) -> u64;
-
-    /// Return the IRQ number for this timer.
-    pub fn irq(&self) -> u32;
 }
 ```
 
 **Timer frequencies by platform:**
 
 | Platform | CNTFRQ_EL0 | Ticks per 1ms |
-|---|---|---|
+| --- | --- | --- |
 | QEMU virt | 62,500,000 Hz | 62,500 |
 | Raspberry Pi 4 | 54,000,000 Hz | 54,000 |
 | Raspberry Pi 5 | 54,000,000 Hz | 54,000 |
@@ -395,15 +454,39 @@ impl Timer {
 
 ### 4.3 Uart
 
+The current implementation in `kernel/src/arch/aarch64/uart.rs` is PL011-only:
+
 ```rust
-/// Serial console abstraction.
-///
-/// QEMU / Pi 4/5: PL011 (ARM standard UART).
-/// Apple Silicon: S5L UART (Samsung-derived, Apple custom).
+/// PL011 UART handle returned by init_pl011().
+/// See kernel/src/arch/aarch64/uart.rs for the implementation.
 pub struct Uart {
-    variant: UartVariant,
+    base: usize,
 }
 
+/// Current UART base address — starts with QEMU default, updated after DTB parse.
+static UART_BASE_ADDR: AtomicUsize = AtomicUsize::new(0x0900_0000);
+
+impl Uart {
+    /// Get the base address of this UART.
+    pub fn base(&self) -> usize;
+}
+
+/// Write a single byte to the PL011 UART (module-level function).
+pub fn putc(byte: u8);
+
+/// Update the UART base address (e.g., after MMU maps MMIO to virtual addresses).
+pub fn update_base(new_base: usize);
+
+/// A writer that outputs to the PL011 UART, implementing core::fmt::Write.
+pub struct UartWriter;
+```
+
+Output is via the module-level `putc()` function and `UartWriter` struct (used by `print!`/`println!` macros), rather than methods on the `Uart` handle. The global `UART_BASE_ADDR` is updated when the base changes (after DTB parse or MMU virtual remapping).
+
+The target design generalizes this to a variant enum supporting PL011 and Apple S5L:
+
+```rust
+/// Target design: variant enum for multi-platform UART.
 enum UartVariant {
     /// ARM PL011 UART — MMIO at base address from device tree.
     Pl011 { base: *mut u8 },
@@ -414,16 +497,12 @@ enum UartVariant {
 impl Uart {
     /// Write a single byte. Blocks if the transmit FIFO is full.
     pub fn write_byte(&self, byte: u8);
-
     /// Read a single byte. Returns None if the receive FIFO is empty.
     pub fn read_byte(&self) -> Option<u8>;
-
     /// Write a string (convenience wrapper over write_byte).
     pub fn write_str(&self, s: &str);
-
     /// Check if data is available to read.
     pub fn has_data(&self) -> bool;
-
     /// Flush the transmit FIFO (wait until all bytes are sent).
     pub fn flush(&self);
 }
@@ -434,7 +513,7 @@ The UART is initialized to 115200 baud, 8N1, no flow control on all platforms. C
 **PL011 registers used (offset from base) — QEMU, Pi 4/5:**
 
 | Register | Offset | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | UARTDR | 0x000 | Data register (read/write) |
 | UARTFR | 0x018 | Flag register (TXFF, RXFE bits) |
 | UARTIBRD | 0x024 | Integer baud rate divisor |
@@ -448,7 +527,7 @@ The UART is initialized to 115200 baud, 8N1, no flow control on all platforms. C
 The S5L UART uses a Samsung-derived register layout documented in the Asahi Linux project:
 
 | Register | Offset | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | ULCON | 0x000 | Line control (8N1 config) |
 | UCON | 0x004 | Control register (TX/RX mode) |
 | UFCON | 0x008 | FIFO control register |
@@ -538,7 +617,7 @@ impl GpuDevice {
 **GPU differences by platform:**
 
 | Feature | QEMU (VirtIO-GPU) | Pi 4 (VC4) | Pi 5 (V3D 7.1) | Apple (AGX) |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | API | VirtIO virtqueues | V3D MMIO | V3D MMIO | AGX command buffers |
 | Vulkan | Via host GPU | 1.0 (conformant) | 1.2 (conformant) | 1.2 (via MoltenVK-like) |
 | Compute shaders | Host-dependent | No | Yes | Yes |
@@ -600,7 +679,7 @@ impl NetworkDevice {
 **Network differences by platform:**
 
 | Feature | QEMU (VirtIO-Net) | Pi 4/5 (Genet) | Apple (PCIe NIC) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Interface | Virtqueue (2 queues) | MMIO + DMA rings | PCIe BAR + DMA |
 | Speed | Host-dependent | 1 Gbps | 1–10 Gbps |
 | MAC address | QEMU-assigned | OTP fuses | EFI variable |
@@ -679,7 +758,7 @@ impl StorageDevice {
 **Storage differences by platform:**
 
 | Feature | QEMU (VirtIO-Blk) | Pi 4/5 (SD/eMMC) | Apple (ANS NVMe) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Interface | Virtqueue (1 queue) | SDHCI (Arasan) | Apple ANS |
 | Block size | 512 bytes | 512 bytes | 4096 bytes |
 | Max capacity | Host file size | Card dependent | Up to 8 TB |
@@ -728,7 +807,7 @@ impl RngDevice {
 **RNG differences by platform:**
 
 | Feature | QEMU (VirtIO-RNG) | Pi 4/5 (bcm2835-rng) | Apple (TRNG) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Interface | Virtqueue (1 queue) | MMIO (4 registers) | MMIO |
 | Entropy source | Host `/dev/urandom` | Hardware TRNG | Hardware TRNG |
 | Throughput | Host-dependent | ~1 MB/s | ~10 MB/s |
@@ -737,7 +816,7 @@ impl RngDevice {
 **bcm2835-rng registers (offset from base):**
 
 | Register | Offset | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | RNG_CTRL | 0x00 | Control register (enable bit) |
 | RNG_STATUS | 0x04 | Status (bits 24:0 = words available) |
 | RNG_DATA | 0x08 | Random data output (32 bits) |
@@ -746,23 +825,31 @@ impl RngDevice {
 
 ## 5. MMIO Access
 
-All HAL device drivers access hardware through memory-mapped I/O. The HAL provides safe MMIO primitives that enforce volatile semantics and correct memory ordering:
+All HAL device drivers access hardware through memory-mapped I/O. Each driver currently defines its own inline MMIO helpers (in `uart.rs`, `gic.rs`, etc.) using `usize` addresses:
 
 ```rust
-/// Read a 32-bit register at `base + offset`.
-/// Uses volatile read + compiler fence.
+/// Read a 32-bit MMIO register.
+/// Used in gic.rs, uart.rs (per-driver inline helpers).
+#[inline(always)]
+unsafe fn mmio_read32(addr: usize) -> u32 {
+    core::ptr::read_volatile(addr as *const u32)
+}
+
+/// Write a 32-bit MMIO register.
+#[inline(always)]
+unsafe fn mmio_write32(addr: usize, val: u32) {
+    core::ptr::write_volatile(addr as *mut u32, val);
+}
+```
+
+The target design consolidates these into shared helpers with `base + offset` semantics:
+
+```rust
+/// Target design: shared MMIO primitives with base + offset.
 #[inline(always)]
 pub unsafe fn mmio_read32(base: *const u8, offset: usize) -> u32 {
     let addr = base.add(offset) as *const u32;
     core::ptr::read_volatile(addr)
-}
-
-/// Write a 32-bit register at `base + offset`.
-/// Uses volatile write + compiler fence.
-#[inline(always)]
-pub unsafe fn mmio_write32(base: *mut u8, offset: usize, value: u32) {
-    let addr = base.add(offset) as *mut u32;
-    core::ptr::write_volatile(addr, value);
 }
 
 /// Read-modify-write: set specific bits in a register.
@@ -771,16 +858,9 @@ pub unsafe fn mmio_set_bits32(base: *mut u8, offset: usize, bits: u32) {
     let val = mmio_read32(base, offset);
     mmio_write32(base, offset, val | bits);
 }
-
-/// Read-modify-write: clear specific bits in a register.
-#[inline(always)]
-pub unsafe fn mmio_clear_bits32(base: *mut u8, offset: usize, bits: u32) {
-    let val = mmio_read32(base, offset);
-    mmio_write32(base, offset, val & !bits);
-}
 ```
 
-MMIO regions are mapped with device memory attributes (nGnRnE — non-Gathering, non-Reordering, non-Early-write-acknowledgement) in the kernel page tables. This prevents the CPU from reordering or caching device register accesses. The mapping is set up in boot.md §3.3 Step 7 at virtual address `0xFFFF_0002_0000_0000`.
+MMIO regions are mapped with device memory attributes (nGnRnE — non-Gathering, non-Reordering, non-Early-write-acknowledgement) in the kernel page tables. This prevents the CPU from reordering or caching device register accesses. The mapping is set up in boot.md §3.3 Step 6b at virtual address `MMIO_BASE` (`0xFFFF_0010_0000_0000`).
 
 -----
 
@@ -841,7 +921,7 @@ impl VirtioTransport {
 
 VirtIO devices are discovered from the device tree. Each VirtIO MMIO device has a node like:
 
-```
+```dts
 virtio_mmio@a000000 {
     compatible = "virtio,mmio";
     reg = <0x0 0xa000000 0x0 0x200>;
@@ -859,7 +939,7 @@ To add support for a new aarch64 board, implement the seven `Platform` trait met
 
 ### 7.1 Steps
 
-1. **Add a platform struct** in `kernel/hal/platforms/`:
+1. **Add a platform struct** in `kernel/src/platform/`:
 
 ```rust
 pub struct NewBoardPlatform;
@@ -868,7 +948,10 @@ pub struct NewBoardPlatform;
 2. **Add the DTB compatible string** to `detect_platform()`:
 
 ```rust
-c if c.contains("vendor,board-soc") => Box::new(NewBoardPlatform),
+if compat.contains("vendor,board-soc") {
+    static NEW_BOARD: NewBoardPlatform = NewBoardPlatform;
+    return &NEW_BOARD;
+}
 ```
 
 3. **Implement the seven trait methods.** Each method reads the device tree to find the relevant hardware node and its MMIO base address, then initializes the device:
@@ -932,7 +1015,7 @@ The following kernel components are platform-independent and do not change when 
 ### 7.3 What Changes Per Platform
 
 | Component | What varies |
-|---|---|
+| --- | --- |
 | Interrupt controller | GICv2 vs GICv3 vs AIC (register layout, acknowledge/EOI path) |
 | Timer | Frequency only (CNTFRQ_EL0 value) — all aarch64 platforms use ARM Generic Timer |
 | UART | PL011 (QEMU, Pi) vs S5L (Apple) — different register layouts |
@@ -947,11 +1030,14 @@ The timer is the simplest to port — only the frequency changes (all aarch64 pl
 
 ## 8. Kernel Integration
 
-### 8.1 KernelState
+### 8.1 Kernel State Management
 
-The HAL-initialized devices are stored in the global `KernelState` structure (canonical definition in boot.md §3.2; reproduced here for HAL context):
+The current implementation stores HAL-initialized devices in module-level globals and local variables within `kernel_main()` rather than a unified `KernelState` struct. For example, the platform reference is a local `&'static dyn Platform`, and the interrupt controller and timer are locals passed to subsequent init functions.
+
+The target design consolidates this into a `KernelState` struct (see boot.md §3.2 for the current per-subsystem global state approach):
 
 ```rust
+/// Target design: unified kernel state.
 pub struct KernelState {
     pub boot_info: &'static BootInfo,
     pub platform: &'static dyn Platform,
@@ -982,7 +1068,7 @@ pub struct KernelState {
 
     // Boot timing
     pub boot_start: u64,
-    pub phase_timestamps: [u64; 17], // indexed by EarlyBootPhase as usize (0-based); resize if enum grows
+    pub phase_timestamps: [u64; 18],
 }
 ```
 
@@ -1020,14 +1106,14 @@ flowchart TD
 re-arm for next 1ms`"]
     REARM --> SCHED["`2. scheduler.tick()
 update time accounting`"]
-    SCHED --> DEC["Decrement current thread's remaining quantum"]
-    DEC --> EDF["Check EDF deadlines (RT class)"]
-    EDF --> PREEMPT{"Preemption needed?"}
-    PREEMPT -->|Yes| FLAG["Set PREEMPT_PENDING flag"]
+    SCHED --> DEC["Decrement current thread's remaining time slice"]
+    DEC --> CLASS["Check per-class quantum (RT=4ms, Interactive=10ms, Normal=50ms)"]
+    CLASS --> PREEMPT{"Preemption needed?"}
+    PREEMPT -->|Yes| FLAG["Set NEED_RESCHED flag (AtomicBool)"]
     PREEMPT -->|No| RET["3. Return from IRQ handler"]
     FLAG --> RET
-    RET --> CHECK{"PREEMPT_PENDING?"}
-    CHECK -->|Yes| CTX["Context switch to highest-priority thread"]
+    RET --> CHECK{"NEED_RESCHED?"}
+    CHECK -->|Yes| CTX["Context switch to highest-priority thread (FIFO per-class)"]
     CHECK -->|No| RESUME["Resume current thread"]
 ```
 
@@ -1067,7 +1153,7 @@ DMA buffers are mapped with non-cacheable attributes to ensure coherency between
 
 Complete hardware matrix for all supported platforms:
 
-```
+```text
                         QEMU virt           Raspberry Pi 4      Raspberry Pi 5      Apple Silicon (M1–M4)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 SoC                     Virtual             BCM2711             BCM2712             T8103/T6000/T6020+
@@ -1096,8 +1182,8 @@ DTB compatible          qemu,virt           brcm,bcm2711        brcm,bcm2712    
 
 1. **Seven methods, one trait.** The Platform trait covers exactly the hardware every AIOS platform must provide: interrupts, timer, UART, GPU, network, storage, and RNG. If a board can't provide all seven, it can't run AIOS. Optional hardware (USB, WiFi, Bluetooth) uses extension traits (Section 12).
 2. **Device tree as truth.** The HAL never hardcodes MMIO addresses. All addresses come from the device tree. This means the same binary can run on different revisions of the same board. Apple Silicon uses the Asahi Linux m1n1 bootloader to convert Apple's proprietary ADT into a standard flattened device tree.
-3. **No runtime polymorphism in hot paths.** The `GicVariant` enum uses match statements, not trait objects, in the IRQ handler. The compiler inlines the correct path. Interrupt latency is the same as a hand-written driver.
-4. **Early boot is allocation-free.** UART, interrupt controller, timer, and RNG initialization use only stack and static memory. The heap doesn't exist yet when these run.
+3. **No runtime polymorphism in hot paths.** The `IrqControllerVariant` enum uses match statements, not trait objects, in the IRQ handler. The compiler inlines the correct path. Interrupt latency is the same as a hand-written driver.
+4. **Early boot is allocation-free.** UART, interrupt controller, and timer initialization use only stack and static memory. The heap doesn't exist yet when these run. RNG initialization runs just after heap init (Step 10) so VirtIO-RNG can allocate its virtqueue.
 5. **Later devices can allocate.** GPU, network, and storage init happens after the heap is available (Phase 1/2). These drivers can use `Vec`, `Box`, and other heap types.
 6. **Platform structs are zero-sized.** All state lives in the returned device handles. The platform struct is just a namespace for the seven init methods.
 7. **Extension traits for optional hardware.** The core trait is stable. New optional hardware classes are added as extension traits — existing platforms don't break (Section 12).
@@ -1207,11 +1293,13 @@ impl Platform for QemuPlatform {
 ### 12.4 Core vs Extension Decision Rule
 
 A hardware class belongs in the **core trait** if:
+
 - Every realistic AIOS platform has it (interrupts, timer, UART, GPU, network, storage, RNG)
 - The kernel cannot boot or function without it
 - Absence means "this board cannot run AIOS"
 
 A hardware class belongs in an **extension trait** if:
+
 - Some platforms have it and others don't (USB, WiFi, Bluetooth, camera)
 - The kernel can boot and function without it
 - Absence means "this feature is unavailable," not "the OS is broken"
@@ -1231,12 +1319,12 @@ pub trait PlatformUsb: Platform {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | XHCI (virtual) | Emulated xHCI controller |
 | Pi 4 | VL805 XHCI | Via PCIe bridge on BCM2711 |
 | Pi 5 | RP1 XHCI | Integrated in RP1 south bridge |
 
-USB is a meta-subsystem — plugging in a device can surface new hardware for any subsystem (a webcam → Camera, a headset → Audio, a flash drive → Storage). The USB subsystem discovers devices, matches class drivers, and routes them to the appropriate subsystem via the Subsystem Framework (see subsystem-framework.md §USB).
+USB is a meta-subsystem — plugging in a device can surface new hardware for any subsystem (a webcam → Camera, a headset → Audio, a flash drive → Storage). The USB subsystem discovers devices, matches class drivers, and routes them to the appropriate subsystem via the Subsystem Framework (see subsystem-framework.md §12).
 
 **`PlatformAudio`** — Audio input/output.
 
@@ -1273,7 +1361,7 @@ impl AudioDevice {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | VirtIO-Sound | Virtual audio device |
 | Pi 4 | HDMI audio + PWM + I2S | HDMI audio via VC4; I2S for external DACs |
 | Pi 5 | HDMI audio + I2S | HDMI audio via VC7; I2S for external DACs |
@@ -1316,7 +1404,7 @@ impl CameraDevice {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None | No camera emulation by default |
 | Pi 4 | CSI-2 (Unicam) | Supports Pi Camera Module v2/v3 |
 | Pi 5 | CSI-2 (Unicam, 2 ports) | Dual camera support |
@@ -1348,7 +1436,7 @@ impl PcieController {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | Virtual PCIe root complex | Configurable |
 | Pi 4 | BCM2711 PCIe Gen 2 x1 | Used by VL805 USB controller |
 | Pi 5 | BCM2712 PCIe Gen 3 x4 | Exposed via RP1; external slot via FPC |
@@ -1390,7 +1478,7 @@ impl NvmeDevice {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | VirtIO-Blk or emulated NVMe | Via `-drive if=none -device nvme` |
 | Pi 4 | None | PCIe used by USB controller |
 | Pi 5 | Via PCIe Gen 3 x4 | With M.2 HAT or adapter |
@@ -1420,7 +1508,7 @@ impl WatchdogTimer {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | Virtual watchdog | `-device i6300esb` or similar |
 | Pi 4 | BCM2835 watchdog | Shared PM/watchdog block |
 | Pi 5 | BCM2835 watchdog | Same IP block |
@@ -1458,7 +1546,7 @@ pub enum GpioTrigger { RisingEdge, FallingEdge, BothEdges, HighLevel, LowLevel }
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None | No GPIO emulation |
 | Pi 4 | BCM2711 GPIO (58 pins) | Alt functions for I2C, SPI, UART, PWM |
 | Pi 5 | RP1 GPIO (28 pins) | Via RP1 south bridge |
@@ -1492,7 +1580,7 @@ impl I2cBus {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None | No I2C emulation |
 | Pi 4 | BCM2711 BSC (6 buses) | Sensors, HATs, displays |
 | Pi 5 | RP1 I2C (6 buses) | Via RP1 south bridge |
@@ -1521,7 +1609,7 @@ impl SpiBus {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None | No SPI emulation |
 | Pi 4 | BCM2711 SPI (multiple) | External flash, ADCs, displays |
 | Pi 5 | RP1 SPI (multiple) | Via RP1 south bridge |
@@ -1551,7 +1639,7 @@ impl PwmController {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None | No PWM emulation |
 | Pi 4 | BCM2711 PWM (2 channels) | Audio out, LED brightness, servos |
 | Pi 5 | RP1 PWM (4 channels) | Via RP1 south bridge |
@@ -1595,7 +1683,7 @@ impl CryptoAccelerator {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None (or VirtIO-Crypto) | Optional with `-device virtio-crypto` |
 | Pi 4 | ARMv8 CE (AESCE, SHA) | CPU instruction extensions, not a separate device |
 | Pi 5 | ARMv8 CE (AESCE, SHA) | Cortex-A76 crypto extensions |
@@ -1632,7 +1720,7 @@ impl NpuDevice {
 ```
 
 | Platform | Hardware | Notes |
-|---|---|---|
+| --- | --- | --- |
 | QEMU | None | No NPU emulation |
 | Pi 4 | None | GPU compute only |
 | Pi 5 | None | GPU compute only |
@@ -1645,7 +1733,7 @@ Apple Silicon is the first AIOS platform with a dedicated NPU. The Apple Neural 
 
 ### 12.6 Platform Comparison (Extension Traits)
 
-```
+```text
                         QEMU virt           Raspberry Pi 4      Raspberry Pi 5      Apple Silicon
 ──── Tier 1 ────────────────────────────────────────────────────────────────────────────────────────
 USB                     XHCI (virtual)      XHCI (VL805)        XHCI (RP1)          XHCI (Thunderbolt)
@@ -1677,7 +1765,7 @@ pub trait PlatformBluetooth: Platform {
 ```
 
 | Extension Trait | Current Platforms | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `PlatformWifi` | None | External dongles via USB on all current platforms |
 | `PlatformBluetooth` | None | External dongles via USB on all current platforms |
 
@@ -1761,7 +1849,7 @@ pub struct IommuFault {
 **IOMMU support by platform:**
 
 | Platform | IOMMU Hardware | Protection Level |
-|---|---|---|
+| --- | --- | --- |
 | QEMU virt | VirtIO IOMMU or SMMUv3 (configurable) | Full — per-device page tables |
 | Raspberry Pi 4 | None | Bounce buffers only (weaker) |
 | Raspberry Pi 5 | ARM SMMU in BCM2712 | Full — per-device page tables |
@@ -1823,7 +1911,7 @@ pub struct HardwareSecurityCaps {
 **Hardware security capabilities by platform:**
 
 | Feature | QEMU virt | Raspberry Pi 4 | Raspberry Pi 5 | Apple Silicon |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | **PAC** (Pointer Auth) | Emulated | No (Cortex-A72) | Yes (Cortex-A76) | Yes (all generations) |
 | **BTI** (Branch Target ID) | Emulated | No (Cortex-A72) | Yes (Cortex-A76) | Yes (all generations) |
 | **MTE** (Memory Tagging) | Emulated | No | No | Yes (M3/M4 only) |
@@ -1941,7 +2029,7 @@ pub trait UsbHostController {
 
 ### 14.2 xHCI (USB 3.x)
 
-xHCI is the standard USB 3.x host controller interface, used on Pi 5 (VIA VL805 PCIe-USB bridge) and QEMU (emulated xHCI). The xHCI driver manages three ring buffer types:
+xHCI is the standard USB 3.x host controller interface, used on Pi 4 (VIA VL805 PCIe-USB bridge), Pi 5 (RP1 XHCI), and QEMU (emulated xHCI). The xHCI driver manages three ring buffer types:
 
 ```mermaid
 flowchart LR
@@ -2005,7 +2093,7 @@ pub struct DeviceSlot {
 
 **xHCI initialization sequence:**
 
-```
+```text
 1. Reset controller (write USBCMD.HCRST, wait for USBSTS.CNR clear)
 2. Read capability registers: MaxSlots, MaxIntrs, MaxPorts
 3. Program MaxSlotsEn (we use 64, sufficient for hub topologies)
@@ -2045,7 +2133,7 @@ DWC2 is only used on Pi 4. Pi 5 uses xHCI exclusively. QEMU can emulate either. 
 
 After a device connects, the enumeration sequence discovers its identity and capabilities:
 
-```
+```text
 1. Port status change event → device connected
 2. Reset the port (10ms reset, 10ms recovery)
 3. Read device speed (LS/FS/HS/SS from port status register)
@@ -2090,7 +2178,7 @@ impl HidDriver {
 
 USB hubs create a tree topology. The HAL supports up to 5 levels of hub nesting (USB spec maximum). Hub enumeration is recursive:
 
-```
+```text
 For each port on the hub:
   1. Check port status (powered, connected, enabled)
   2. If device connected:
@@ -2273,9 +2361,9 @@ pub trait DevicePowerManagement {
 **Per-device requirements:**
 
 | Device | Suspend Action | Resume Action | Resume Latency |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | GIC (interrupt controller) | Save distributor + redistributor state, mask all IRQs | Restore distributor config, re-enable IRQs | < 1ms |
-| ARM Generic Timer | Save CNTV_CTL, CNTV_CVAL | Restore timer registers, re-arm tick | < 1ms |
+| ARM Generic Timer | Save CNTP_CTL_EL0, CNTP_CVAL_EL0 | Restore timer registers, re-arm tick | < 1ms |
 | UART (serial console) | Drain TX FIFO, save baud/config | Re-init UART with saved config | < 1ms |
 | GPU (framebuffer) | Flush pending draws, save FB base | Re-init display pipeline, restore FB | 10-50ms |
 | GPU (3D/compute) | Wait for command queue drain | Full re-init (context lost) | 50-200ms |
@@ -2292,7 +2380,7 @@ pub trait DevicePowerManagement {
 
 Devices must resume in dependency order:
 
-```
+```text
 1. Timer         — needed for timeouts in subsequent driver init
 2. GIC           — needed for interrupt-driven device init
 3. UART          — needed for debug output during resume
@@ -2355,7 +2443,7 @@ pub struct ThermalThresholds {
 ### 17.2 Per-Platform Thermal Configuration
 
 | Platform | Thermal Zones | Passive Trip | Hot Trip | Critical Trip | Throttling Mechanism |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | QEMU | 1 (virtual) | N/A | N/A | N/A | No real throttling (emulated) |
 | Pi 4 | 1 (cpu) | 80°C | 85°C | 90°C | VideoCore firmware reduces `arm_freq` via mailbox |
 | Pi 5 | 2 (cpu, pmic) | 80°C | 85°C | 90°C | DVFS via SCMI (ARM System Control and Management Interface) |
@@ -2391,12 +2479,14 @@ pub enum ThrottleLevel {
 ```
 
 When `ThrottleLevel::Hot` is reached:
+
 1. The scheduler reduces inference thread priority to Idle class
 2. AIRS pauses background tasks (indexing, embedding generation)
 3. Interactive inference continues at reduced throughput (frequency cap)
 4. The Attention Manager posts a system notification: "System is running hot — AI tasks slowed"
 
 When `ThrottleLevel::Critical` is reached:
+
 1. All inference stops immediately
 2. The scheduler enters thermal emergency mode (only essential services run)
 3. The system logs the thermal event to `system/audit/thermal/`
@@ -2409,3 +2499,147 @@ Thermal monitoring begins in Phase 2 (HAL initialization), before AIRS loads. Du
 - If the device is already warm at boot (e.g., quick reboot after heavy use): delay model loading until temperature drops below passive trip
 - On first boot with no cooling solution: the boot sequence logs a warning if temperature rises rapidly during model pre-faulting
 - The AIRS model selection (see [airs.md §4.6](../intelligence/airs.md)) considers thermal headroom: on a Pi without a heatsink, selecting a smaller model reduces sustained thermal load
+
+-----
+
+## 18. Future Directions
+
+This section captures research-informed improvements under consideration for the AIOS HAL. These are design proposals informed by academic research and production OS practice — not committed roadmap items. Each subsection references the source material and identifies the AIOS phase where the work would naturally fit.
+
+### 18.1 Typed MMIO Registers
+
+**Problem:** The current HAL uses raw `usize` addresses with per-driver inline `mmio_read32`/`mmio_write32` helpers. This is correct but provides no compile-time enforcement of register width, access permissions (read-only vs write-only vs read-write), or field layout. A write to a read-only status register, or a 32-bit write to a 16-bit register, compiles without error.
+
+**Research:** The Tock embedded OS pioneered typed MMIO register access in Rust via the [`tock-registers`](https://crates.io/crates/tock-registers) crate. Each register is described declaratively with its fields, widths, and access modes. The compiler rejects illegal accesses at build time. Google's [`safe-mmio`](https://github.com/nicholasbishop/safe-mmio) crate extends this with ownership-based MMIO — a register block is a Rust struct that enforces exclusive access, preventing aliased volatile reads/writes.
+
+**Potential approach for AIOS:**
+
+```rust
+// Declarative register definition (tock-registers style)
+register_bitfields! [u32,
+    UART_FR [
+        TXFF OFFSET(5) NUMBITS(1) [],   // TX FIFO full (read-only)
+        BUSY OFFSET(3) NUMBITS(1) [],   // UART busy (read-only)
+    ],
+    UART_CR [
+        UARTEN OFFSET(0) NUMBITS(1) [], // UART enable
+        TXE OFFSET(8) NUMBITS(1) [],    // TX enable
+        RXE OFFSET(9) NUMBITS(1) [],    // RX enable
+    ],
+];
+
+// Type-safe access — compiler rejects writes to read-only registers
+let fr: ReadOnly<u32, UART_FR::Register> = ...;
+let busy = fr.read(UART_FR::BUSY);  // OK: read from read-only
+// fr.write(UART_FR::BUSY.val(0));  // COMPILE ERROR: ReadOnly
+```
+
+**Trade-offs:** Adds a crate dependency and macro complexity. The `tock-registers` crate is `no_std`, MIT-licensed, and widely used in embedded Rust. The per-driver inline helpers are simple and correct — this improvement is about catching bugs earlier, not fixing existing ones.
+
+**Phase fit:** Phase 4+ (when adding new device drivers for storage/network). Retrofitting existing PL011/GIC/Timer drivers is optional — they are small and well-tested.
+
+### 18.2 Driver Isolation via Process Boundaries
+
+**Problem:** Currently all device drivers run in kernel mode (EL1) with full access to physical memory. A bug in a driver (e.g., writing to the wrong MMIO address) can corrupt kernel state or crash the system.
+
+**Research:** Production microkernels isolate drivers in userspace processes:
+
+- **Hubris** (Oxide Computer): drivers are separate tasks with hardware-enforced memory protection via the MPU. A faulting driver is restarted without affecting the kernel. The `idol` IDL generates type-safe IPC stubs between kernel and driver tasks.
+- **Redox OS**: drivers run as userspace processes communicating via the `scheme:` IPC namespace. The kernel provides a minimal MMIO mapping API — drivers request specific physical regions, and the kernel maps them into the driver's address space with no access to anything else.
+- **KSplit** (OSDI '22, Huang et al.): automatically partitions monolithic Linux drivers into a trusted kernel stub and an untrusted driver body running in an isolated domain. KSplit uses static analysis to identify the minimal kernel API surface needed by each driver.
+
+**Potential approach for AIOS:**
+
+The AIOS subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) already plans for driver processes communicating via IPC. The HAL would provide:
+
+1. A `DeviceGrant` capability that maps a specific MMIO region into a driver process's address space
+2. An interrupt forwarding mechanism (kernel acknowledges IRQ, sends notification to driver process)
+3. A DMA buffer allocation API that returns physically-contiguous memory mapped into both kernel and driver address spaces
+
+This aligns with AIOS's capability-based security model — a driver can only access the hardware resources granted to it.
+
+**Phase fit:** Phase 4-5 (subsystem framework + first userspace drivers).
+
+### 18.3 Capability-Gated Device Access
+
+**Problem:** The current HAL has no access control on device operations. Any kernel code can call `InterruptController::enable_irq()` or `Timer::set_next_deadline()`. When drivers move to userspace (§18.2), the kernel needs a way to authorize which driver can access which device.
+
+**Research:** seL4 models every kernel object (including device MMIO frames and IRQ numbers) as a capability. A driver process must hold the appropriate capability to:
+
+- Map a device's MMIO frame into its address space (`Untyped` → `Frame` capability derivation)
+- Receive notifications for a specific IRQ number (`IRQHandler` capability)
+- Perform DMA via an IOMMU-managed region
+
+This provides a unified access control model — the same capability mechanism that governs IPC channels and memory regions also governs device access.
+
+**Potential approach for AIOS:**
+
+Extend the existing capability system (see [security.md §3](../security/security.md)) with device-specific capability types:
+
+```rust
+enum Capability {
+    // ... existing variants ...
+    DeviceMmio { phys_base: u64, size: usize },
+    DeviceIrq { intid: u32 },
+    DeviceDma { stream_id: u32, max_size: usize },
+}
+```
+
+The Service Manager grants device capabilities to driver processes during registration. Capability revocation (already implemented with cascade semantics) naturally handles driver hot-unplug and restart.
+
+**Phase fit:** Phase 4+ (capability system extensions, concurrent with subsystem framework).
+
+### 18.4 Batched DMA Operations
+
+**Problem:** IOMMU map/unmap operations are expensive — each requires a command queue entry, a TLB invalidation, and a sync wait. High-throughput devices (NVMe, network) may perform thousands of DMA mappings per second.
+
+**Research:** The **coIOMMU** paper (USENIX ATC '20, Yu et al.) introduced a batched notification mechanism between guest drivers and the IOMMU. Instead of individual map/unmap calls, the driver fills a shared "DMA buffer table" and signals the IOMMU once. The IOMMU processes the entire batch atomically, amortizing the TLB invalidation cost across many mappings. coIOMMU reported 2-3x throughput improvement for NVMe workloads in virtualized environments.
+
+**Potential approach for AIOS:**
+
+For the SMMUv3 driver (§15), implement a batched command submission path:
+
+```rust
+impl SmmuV3 {
+    /// Submit a batch of DMA mappings atomically.
+    /// All mappings are installed before a single TLBI + Sync.
+    fn batch_map(&mut self, mappings: &[DmaMapping]) -> Result<()> {
+        for m in mappings {
+            self.install_mapping_no_sync(m)?;
+        }
+        // Single TLB invalidation for the entire batch
+        self.command_queue.push(SmmuCommand::TlbiAll);
+        self.command_queue.push(SmmuCommand::Sync);
+        self.ring_doorbell();
+        self.wait_for_sync()
+    }
+}
+```
+
+This is purely a performance optimization — correctness is identical to individual operations. The batch size trades latency (larger batches = more delay before the first mapping is visible) for throughput (fewer TLBI operations per mapping).
+
+**Phase fit:** Phase 7+ (networking) or Phase 4 (storage), where high-throughput DMA is first needed.
+
+### 18.5 Type-System Memory Safety for Device Drivers
+
+**Problem:** Even with MMIO typing (§18.1) and process isolation (§18.2), driver code can still have memory safety bugs in its own address space — use-after-free of DMA buffers, buffer overflows in descriptor ring management, etc.
+
+**Research:** **Theseus OS** (OSDI '20, Boos et al.) uses Rust's type system and ownership model to enforce memory safety guarantees that traditionally require hardware protection:
+
+- DMA buffers are owned types (`MappedPages`) that cannot be aliased or used after unmapping
+- Device register blocks are owned by exactly one driver instance — no global mutable state
+- Module boundaries enforce isolation: a loaded driver module can only access symbols explicitly granted to it via trait objects
+
+Theseus demonstrated that type-system safety can replace hardware-enforced isolation for many classes of bugs, with zero runtime overhead compared to traditional monolithic kernels.
+
+**Potential approach for AIOS:**
+
+Apply Theseus-inspired patterns to AIOS driver development:
+
+1. **Owned DMA buffers:** `DmaBuffer` is a move-only type that unmaps on drop. No `Copy`/`Clone`. The compiler rejects use-after-unmap.
+2. **Owned register blocks:** Each driver receives an owned `RegisterBlock<T>` during init. The type encodes which registers exist and their access modes. No global MMIO accessor functions.
+3. **Capability-scoped module loading:** When a driver module is loaded, it receives trait objects for only the kernel services it needs (allocator, IPC, interrupt registration). It cannot call arbitrary kernel functions.
+
+This complements hardware isolation (§18.2) — type-system safety catches bugs at compile time that hardware isolation catches at runtime (with a crash).
+
+**Phase fit:** Ongoing — these patterns can be adopted incrementally as new drivers are written.
