@@ -45,8 +45,8 @@ Shared memory (IPC regions)`"]
 Agent heap (grows up)`"]
             U5b["`0x0000_0000_0100_0000
 Agent data (.data, .bss)`"]
-            U6["`0x0000_0000_0040_1000
-Guard page (4 KB, unmapped)`"]
+            U6["`(target) Guard page
+between text and data`"]
             U7["`0x0000_0000_0040_0000
 Agent text (.text, read-only)`"]
             U8["`0x0000_0000_0000_0000
@@ -144,7 +144,8 @@ impl PageTableEntry {
 
     pub fn is_valid(&self) -> bool { self.0 & Self::VALID != 0 }
     pub fn is_writable(&self) -> bool { self.0 & Self::AP_RO == 0 }
-    pub fn is_executable(&self) -> bool { self.0 & Self::UXN == 0 }
+    pub fn is_user_executable(&self) -> bool { self.0 & Self::UXN == 0 }
+    pub fn is_kernel_executable(&self) -> bool { self.0 & Self::PXN == 0 }
     pub fn is_user(&self) -> bool { self.0 & Self::AP_USER != 0 }
     pub fn is_dirty(&self) -> bool { self.0 & Self::DIRTY != 0 }
     pub fn is_cow(&self) -> bool { self.0 & Self::COW != 0 }
