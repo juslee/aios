@@ -15,12 +15,12 @@ Tools that require no custom infrastructure and integrate directly into the exis
 
 | Tool | Purpose | Target | CI Integration |
 |---|---|---|---|
-| **cargo-fuzz** (libFuzzer) | Host-side fuzz harnesses | `shared/` crate APIs, allocator logic, parsers | Nightly: `cargo fuzz run <target> -- -max_total_time=3600` |
-| **proptest** | Property-based testing with shrinking | Data structure invariants (buddy coalescing, ring buffer ordering, PTE bit manipulation) | Every PR: runs as standard `#[test]` |
-| **Loom** | Exhaustive atomic interleaving exploration | Atomic protocols: `TICK_COUNT`, `NEED_RESCHED`, `IN_SCHEDULER`, slab magazine swap | Every PR: runs as `#[test]` with `--release` |
-| **Rudra** | Unsafe Rust pattern detection | Entire codebase: panic safety, Send/Sync variance, higher-order invariant bugs | Weekly Docker scan |
-| **Kani** | Bit-precise bounded model checking (CBMC) | PTE arithmetic, capability attenuation subset proof, buddy allocator math, W^X invariant | Nightly: `cargo kani --harness <name>` |
-| **Bolero** | Unified fuzz/property-test framework | Dual-mode harnesses: same test runs under proptest (quick) and libFuzzer (deep) | Every PR (proptest mode) + Nightly (fuzz mode) |
+| **cargo-fuzz** (libFuzzer) | Host-side fuzz harnesses | `shared/` crate APIs, allocator logic, parsers | Target: nightly `cargo fuzz run <target> -- -max_total_time=3600` |
+| **proptest** | Property-based testing with shrinking | Data structure invariants (buddy coalescing, ring buffer ordering, PTE bit manipulation) | Target: every PR as standard `#[test]` |
+| **Loom** | Exhaustive atomic interleaving exploration | Atomic protocols: `TICK_COUNT`, `NEED_RESCHED`, `IN_SCHEDULER`, slab magazine swap | Target: every PR as `#[test]` with `--release` |
+| **Rudra** | Unsafe Rust pattern detection | Entire codebase: panic safety, Send/Sync variance, higher-order invariant bugs | Target: weekly Docker scan |
+| **Kani** | Bit-precise bounded model checking (CBMC) | PTE arithmetic, capability attenuation subset proof, buddy allocator math, W^X invariant | Target: nightly `cargo kani --harness <name>` |
+| **Bolero** | Unified fuzz/property-test framework | Dual-mode harnesses: same test runs under proptest (quick) and libFuzzer (deep) | Target: every PR (proptest) + nightly (fuzz) |
 
 **Rudra** (Bae et al., SOSP 2021) detects three bug patterns at ecosystem scale: panic safety in unsafe contexts, higher-order invariant violations, and Send/Sync variance bugs. It has found 264 bugs including 76 CVEs across the Rust ecosystem, including bugs in the standard library. Parts of its analysis are now integrated into the official Rust linter.
 
@@ -50,7 +50,7 @@ Tools that require significant custom development or specialized hardware.
 | Tool | Purpose | Target | Effort |
 |---|---|---|---|
 | **Custom syscall fuzzer** | AIOS-specific grammar-based fuzzer | All 31 syscalls with state dependencies | High — builds on LibAFL + KernelGPT specs |
-| **OZZ-style barrier verifier** | ARM memory ordering correctness | DSB/DMB/ISB placement in kernel code | High — adapts OEMU to ARM memory model |
+| **OZZ-style barrier verifier** | ARM memory ordering correctness | DSB/DMB/ISB placement in kernel code | High — adapts QEMU to ARM memory model |
 | **ARM CoreSight ETM** | Hardware execution tracing | Zero-overhead coverage on real hardware | Very High — requires CoreSight-capable board (Pi 5+) |
 | **Continuous fuzzing farm** | 24/7 corpus evolution | All fuzz targets | High — dedicated CI runners, crash filing, regression generation |
 
@@ -60,7 +60,7 @@ Tools that require significant custom development or specialized hardware.
 
 ### 5.4 Corpus Management
 
-Fuzz corpora live under `fuzz/corpus/<target_name>/`. Interesting inputs are committed; crash-triggering inputs become regression tests under `fuzz/regressions/`. The CI pipeline runs `cargo fuzz run <target> -- -max_total_time=3600` nightly.
+Fuzz corpora will live under `fuzz/corpus/<target_name>/` (created when first fuzz targets are added). Interesting inputs are committed; crash-triggering inputs become regression tests under `fuzz/regressions/`. The target CI pipeline runs `cargo fuzz run <target> -- -max_total_time=3600` nightly.
 
 **Crash triage.** Crashes are deduplicated by stack trace. Each unique crash is filed with: the crashing input, the stack trace, the git commit, and the reproducer command. Crashes that involve `unsafe` blocks are treated as P0 (highest priority).
 

@@ -34,9 +34,9 @@ Every `unsafe` block in AIOS follows the documentation standard defined in `CLAU
 
 Every syscall validates all parameters at the kernel entry point before any kernel state is accessed or modified. The validation sequence is:
 
-1. **Syscall number**: reject if not in `[0, SYSCALL_MAX]`
+1. **Syscall number**: reject if not in `[0, SYSCALL_COUNT)` (currently 31 syscalls, defined in `shared/src/syscall.rs`)
 2. **Capability handles**: bounds-check against process capability table; verify generation counter matches (prevents use-after-revoke)
-3. **Pointer arguments**: must fall within user address range (`0x0000_0000_0000_0000` to `0x0000_FFFF_FFFF_FFFF`); must be aligned to the expected type; must be backed by a mapped, readable (or writable) page
+3. **Pointer arguments**: must fall within user address range (below `USER_VA_LIMIT = 0x0000_8000_0000_0000`); must be aligned to the expected type; must be backed by a mapped, readable (or writable) page
 4. **Length arguments**: reject `0` and values exceeding per-syscall maximums; reject `length > buffer_mapping_size`
 5. **Enum/flag arguments**: reject values outside the valid set; no "reserved for future use" bits accepted
 
