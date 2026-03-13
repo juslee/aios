@@ -225,7 +225,10 @@ pub const VIRTIO_MMIO_DRIVER_FEATURES_SEL: usize = 0x024;
 pub const VIRTIO_MMIO_QUEUE_SEL: usize = 0x030;
 pub const VIRTIO_MMIO_QUEUE_NUM_MAX: usize = 0x034;
 pub const VIRTIO_MMIO_QUEUE_NUM: usize = 0x038;
-pub const VIRTIO_MMIO_QUEUE_READY: usize = 0x044;
+pub const VIRTIO_MMIO_GUEST_PAGE_SIZE: usize = 0x028; // Legacy (v1): write page size (4096)
+pub const VIRTIO_MMIO_QUEUE_ALIGN: usize = 0x03C; // Legacy (v1): queue alignment
+pub const VIRTIO_MMIO_QUEUE_PFN: usize = 0x040; // Legacy (v1): queue page frame number
+pub const VIRTIO_MMIO_QUEUE_READY: usize = 0x044; // Modern (v2) only
 pub const VIRTIO_MMIO_QUEUE_NOTIFY: usize = 0x050;
 pub const VIRTIO_MMIO_INTERRUPT_STATUS: usize = 0x060;
 pub const VIRTIO_MMIO_INTERRUPT_ACK: usize = 0x064;
@@ -350,7 +353,10 @@ mod tests {
     #[test]
     fn hash_debug_format() {
         extern crate alloc;
-        let h = ContentHash([0xAB, 0xCD, 0xEF, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let h = ContentHash([
+            0xAB, 0xCD, 0xEF, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0,
+        ]);
         let s = alloc::format!("{:?}", h);
         assert!(s.contains("abcdef01"));
     }
@@ -415,8 +421,16 @@ mod tests {
 
     #[test]
     fn block_location_different_tiers() {
-        let a = BlockLocation { offset: 0, size: 100, tier: StorageTier::Hot };
-        let b = BlockLocation { offset: 0, size: 100, tier: StorageTier::Cold };
+        let a = BlockLocation {
+            offset: 0,
+            size: 100,
+            tier: StorageTier::Hot,
+        };
+        let b = BlockLocation {
+            offset: 0,
+            size: 100,
+            tier: StorageTier::Cold,
+        };
         assert_ne!(a, b);
     }
 
@@ -426,12 +440,24 @@ mod tests {
     fn content_type_variant_count() {
         // Verify all 18 variants exist by matching.
         let variants = [
-            ContentType::Directory, ContentType::Document, ContentType::Text,
-            ContentType::Code, ContentType::Markdown, ContentType::Json,
-            ContentType::Xml, ContentType::Image, ContentType::Video,
-            ContentType::Audio, ContentType::Config, ContentType::Credential,
-            ContentType::Executable, ContentType::GameSave, ContentType::CacheEntry,
-            ContentType::SessionToken, ContentType::Cookie, ContentType::Binary,
+            ContentType::Directory,
+            ContentType::Document,
+            ContentType::Text,
+            ContentType::Code,
+            ContentType::Markdown,
+            ContentType::Json,
+            ContentType::Xml,
+            ContentType::Image,
+            ContentType::Video,
+            ContentType::Audio,
+            ContentType::Config,
+            ContentType::Credential,
+            ContentType::Executable,
+            ContentType::GameSave,
+            ContentType::CacheEntry,
+            ContentType::SessionToken,
+            ContentType::Cookie,
+            ContentType::Binary,
         ];
         assert_eq!(variants.len(), 18);
     }
@@ -447,8 +473,10 @@ mod tests {
     #[test]
     fn security_zone_all_variants() {
         let zones = [
-            SecurityZone::Core, SecurityZone::Personal,
-            SecurityZone::Collaborative, SecurityZone::Untrusted,
+            SecurityZone::Core,
+            SecurityZone::Personal,
+            SecurityZone::Collaborative,
+            SecurityZone::Untrusted,
             SecurityZone::Ephemeral,
         ];
         assert_eq!(zones.len(), 5);

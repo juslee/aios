@@ -7,6 +7,11 @@ kernel_elf_release := "target/" + target + "/release/kernel"
 stub_efi := "target/" + uefi_target + "/debug/uefi-stub.efi"
 edk2_fw := env("AIOS_EDK2_FW", "/opt/homebrew/share/qemu/edk2-aarch64-code.fd")
 disk_img := "aios.img"
+data_img := "data.img"
+
+# Create 256 MiB raw data disk for storage subsystem (if not exists)
+create-data-disk:
+    @[ -f {{data_img}} ] || dd if=/dev/zero of={{data_img}} bs=1M count=256 2>/dev/null
 
 # Default recipe
 default: build
@@ -33,7 +38,7 @@ disk: build build-stub
     mcopy -i {{disk_img}} {{kernel_elf}} ::/EFI/AIOS/aios.elf
 
 # Build and launch QEMU with edk2 UEFI firmware
-run: disk
+run: disk create-data-disk
     qemu-system-aarch64 \
         -machine virt,gic-version=3 \
         -cpu cortex-a72 \
@@ -43,10 +48,12 @@ run: disk
         -bios {{edk2_fw}} \
         -drive if=none,id=disk0,file={{disk_img}},format=raw \
         -device virtio-blk-pci,drive=disk0 \
+        -drive if=none,id=data0,file={{data_img}},format=raw \
+        -device virtio-blk-device,drive=data0 \
         -device ramfb
 
 # Build and launch QEMU with display (for visual framebuffer verification)
-run-display: disk
+run-display: disk create-data-disk
     qemu-system-aarch64 \
         -machine virt,gic-version=3 \
         -cpu cortex-a72 \
@@ -56,10 +63,12 @@ run-display: disk
         -bios {{edk2_fw}} \
         -drive if=none,id=disk0,file={{disk_img}},format=raw \
         -device virtio-blk-pci,drive=disk0 \
+        -drive if=none,id=data0,file={{data_img}},format=raw \
+        -device virtio-blk-device,drive=data0 \
         -device ramfb
 
 # Build and launch QEMU with GDB server (paused, edk2 boot)
-debug: disk
+debug: disk create-data-disk
     qemu-system-aarch64 \
         -machine virt,gic-version=3 \
         -cpu cortex-a72 \
@@ -69,6 +78,8 @@ debug: disk
         -bios {{edk2_fw}} \
         -drive if=none,id=disk0,file={{disk_img}},format=raw \
         -device virtio-blk-pci,drive=disk0 \
+        -drive if=none,id=data0,file={{data_img}},format=raw \
+        -device virtio-blk-device,drive=data0 \
         -device ramfb \
         -gdb tcp::1234 \
         -S
@@ -121,4 +132,4 @@ security-check: audit deny miri
 # Clean build artifacts
 clean:
     cargo clean
-    rm -f {{disk_img}}
+    rm -f {{disk_img}} {{data_img}}

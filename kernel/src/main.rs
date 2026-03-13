@@ -9,6 +9,7 @@ mod arch {
 mod bench;
 mod boot_phase;
 mod cap;
+mod drivers;
 mod dtb;
 mod framebuffer;
 mod ipc;
@@ -279,6 +280,26 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // --- Step 7a: Service Manager Init ---
     service::init();
+    observability::drain_logs();
+
+    // --- Step 7b: Storage Init ---
+    if drivers::virtio_blk::init(&dt) {
+        // Write/read test: sector 1000.
+        let mut test_buf = [0u8; 512];
+        for (i, b) in test_buf.iter_mut().enumerate() {
+            *b = (i & 0xFF) as u8;
+        }
+        if drivers::virtio_blk::write_sector(1000, &test_buf).is_ok() {
+            let mut read_buf = [0u8; 512];
+            if drivers::virtio_blk::read_sector(1000, &mut read_buf).is_ok() {
+                if read_buf == test_buf {
+                    kinfo!(Storage, "VirtIO-blk: write/read test sector 1000 — OK");
+                } else {
+                    kerror!(Storage, "VirtIO-blk: read data mismatch!");
+                }
+            }
+        }
+    }
     observability::drain_logs();
 
     // --- Step 7c: Benchmark Init ---
