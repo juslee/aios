@@ -6,6 +6,7 @@ extern crate alloc;
 mod arch {
     pub mod aarch64;
 }
+mod bench;
 mod boot_phase;
 mod cap;
 mod dtb;
@@ -15,6 +16,7 @@ mod mm;
 mod observability;
 mod platform;
 mod sched;
+mod service;
 mod smp;
 mod syscall;
 mod task;
@@ -103,7 +105,16 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     let _uart = platform.init_uart(&dt);
     advance_boot_phase(EarlyBootPhase::UartReady);
 
-    // --- Step 5: GICv3 + Timer ---
+    // --- Step 5a: TTBR0 identity map ---
+    // Must run before GIC/timer init: QEMU 10.x edk2 firmware may not
+    // preserve device-memory MMIO mappings in TTBR0 post-ExitBootServices.
+    // Our init_mmu() builds an identity map with 0-1GB device memory.
+    // SAFETY: Called once from boot CPU. Page table statics are not accessed
+    // concurrently. Identity map covers currently executing code at 0x40080000.
+    unsafe { crate::arch::aarch64::mmu::init_mmu() };
+    advance_boot_phase(EarlyBootPhase::MmuEnabled);
+
+    // --- Step 5b: GICv3 + Timer ---
     let ic = platform.init_interrupts(&dt);
     advance_boot_phase(EarlyBootPhase::InterruptsReady);
 
@@ -114,12 +125,7 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // Store tick interval for IRQ handler and secondary core init.
     crate::arch::aarch64::timer::set_tick_interval(timer.tick_interval());
 
-    // --- Step 6: MMU, Buddy Allocator, Heap ---
-
-    // SAFETY: Called once from boot CPU. Page table statics are not accessed
-    // concurrently. Identity map covers currently executing code at 0x40080000.
-    unsafe { crate::arch::aarch64::mmu::init_mmu() };
-    advance_boot_phase(EarlyBootPhase::MmuEnabled);
+    // --- Step 6: Buddy Allocator, Heap ---
 
     // Initialize physical memory pools from UEFI memory map.
     // SAFETY: Memory map is valid, MMU identity map is active, called once
@@ -259,11 +265,28 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     observability::drain_logs();
 
     // --- Step 5: Scheduler Init ---
+    // Create idle + test threads but do NOT release secondary cores yet.
+    // Secondary cores are parked in enter_scheduler() waiting on SCHED_READY.
     sched::init();
     observability::drain_logs();
 
     // --- Step 6: IPC Init ---
+    // Must run while secondary cores are still parked — ipc::init() allocates
+    // threads and processes. If secondary cores were scheduling, they'd starve
+    // the boot CPU's THREAD_TABLE access (spin::Mutex has no fairness).
     ipc::init();
+    observability::drain_logs();
+
+    // --- Step 7a: Service Manager Init ---
+    service::init();
+    observability::drain_logs();
+
+    // --- Step 7c: Benchmark Init ---
+    bench::init();
+    observability::drain_logs();
+
+    // --- Step 7d: Release secondary cores ---
+    sched::start();
     observability::drain_logs();
 
     kinfo!(Boot, "Boot sequence complete, entering scheduler");

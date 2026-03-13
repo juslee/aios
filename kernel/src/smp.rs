@@ -208,11 +208,11 @@ pub extern "C" fn secondary_main(core_id: u64) -> ! {
     // Initialize per-core timer (programs CNTP_TVAL_EL0 + CNTP_CTL_EL0).
     crate::arch::aarch64::timer::init_timer_secondary();
 
-    // Unmask IRQ — timer interrupts fire every 1ms on this core.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit only. GIC + timer
-    // are initialized for this core.
-    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+    // NOTE: Do NOT unmask IRQs here. Timer ticks generate exclusive monitor
+    // traffic (compare_exchange in try_lock) that can starve the boot CPU's
+    // spinlock acquisitions during init. IRQs are unmasked in enter_scheduler()
+    // after SCHED_READY is set.
 
-    // Enter the scheduler — picks the first thread and never returns.
+    // Enter the scheduler — parks in wfe until SCHED_READY, then runs.
     crate::sched::enter_scheduler();
 }

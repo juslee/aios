@@ -124,6 +124,7 @@ When implementing Phase N:
    - **README.md**: Project Structure, Build Commands, status text — anything that changed
    - **Phase doc** (`docs/phases/NN-*.md`): Check off completed task boxes (`[ ]` → `[x]`), update Status field (e.g. "In Progress (M4 complete)")
    - **Phase Completion Criteria**: Check off the completed milestone checkbox
+   - **Developer guide** (`docs/project/developer-guide.md`): Update file size examples (§3.1), test counts (§5.2, §5.4), and any new patterns or lessons learned from the milestone
    - **Architecture docs** (`docs/kernel/*.md`, `docs/project/*.md`, etc.): Update any referenced architecture docs if the implementation revealed corrections, new facts, or deviations from the spec
 
 8. **AUDIT** after all steps complete, before PR — run recursively until all reach 0 issues:
@@ -195,12 +196,13 @@ kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions,
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
 kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, pgtable, kmap, kaslr, asid, tlb, GlobalAlloc)
 kernel/src/observability/      Structured logging, metrics, trace points
-kernel/src/sched/              Scheduler: per-CPU run queues (4-class FIFO), schedule(), block/unblock, idle threads
-kernel/src/ipc/                IPC channels, synchronous call/reply, direct switch fast path, timeouts, sleep queue
+kernel/src/sched/              Scheduler: per-CPU run queues (4-class FIFO), schedule(), block/unblock, idle threads, load balancer
+kernel/src/ipc/                IPC channels, call/reply, direct switch, timeouts, shared memory, notifications, select
 kernel/src/cap/                Capability system: per-process tables, enforcement API, cascade revocation
 kernel/src/task/               Thread/process data structures for scheduler and IPC
-kernel/src/syscall/            Syscall dispatch and handlers (IPC nr 0-7, Cap nr 14-17, Time nr 26-27, Debug nr 30)
-kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs)
+kernel/src/service/            Service manager: registry, echo service, process lifecycle, audit ring
+kernel/src/syscall/            Syscall dispatch and handlers (IPC 0-9, Notify 10-12, Stats 13, Cap 14-17, Mem 18-22, Proc 23-25, Time 26-28, Audit 29, Debug 30)
+kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs, bench.rs)
 shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
 docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
@@ -334,9 +336,18 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (cap):          PROCESS_TABLE before CHANNEL_TABLE (avoids deadlock in revoke path)
+Lock ordering (full M12):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
-Shared crate unit tests:      159 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
+Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
+Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
+IpcSelect:                    Multi-wait on channels + notifications, MAX_SELECT_ENTRIES=8, blocking with timeout
+Service manager:              MAX_SERVICES=16, echo service for testing, service_register/lookup/on_death
+Process lifecycle:            process_create_kernel, process_exit (cleanup: channels, shmem, notifications, caps), process_wait
+Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
+Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
+Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
+RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
+Shared crate unit tests:      242 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
 ```
 
 ---
@@ -382,7 +393,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 3 M11 — Scheduler & IPC Core):
+Current (post-Phase 3 M12 — Shared Memory, Service Manager & Gate 1):
 
 ```
 aios/
@@ -400,7 +411,7 @@ aios/
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   └── skills/           build-team, implement-phase, generate-phase-doc, verify-phase, write-arch-doc
+│   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments, verify-phase, write-arch-doc
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
@@ -417,17 +428,28 @@ aios/
 │       │   ├── metrics.rs Counter (per-core sharded), Gauge, Histogram<N>, KernelMetrics registry; feature-gated kernel-metrics
 │       │   └── trace.rs  TraceEvent enum, TraceRecord (32B), TraceRing (4096/core), trace_point! macro; feature-gated kernel-tracing
 │       ├── sched/
-│       │   └── mod.rs    Scheduler, RunQueue (4-class FIFO), FixedQueue, schedule(), idle threads, block/unblock, timer_tick()
+│       │   ├── mod.rs       RunQueue, globals, thread allocation helpers, re-exports
+│       │   ├── scheduler.rs schedule(), enter_scheduler(), timer_tick(), block/unblock, check_preemption
+│       │   └── init.rs      Scheduler init, idle/test thread entries, load balancer
 │       ├── ipc/
-│       │   ├── mod.rs    Channel, CHANNEL_TABLE, MessageRing, ipc_call/send/recv/reply/cancel, channel_create/destroy, timeouts
-│       │   └── direct.rs IPC direct switch (bypass scheduler), priority inheritance, reply switch
+│       │   ├── mod.rs    Channel, CHANNEL_TABLE, MessageRing, channel_create/destroy, re-exports
+│       │   ├── channel.rs ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
+│       │   ├── timeout.rs Timeout queue, sleep helpers, wakeup error delivery
+│       │   ├── tests.rs   IPC test initialization, thread entries, test-only helpers
+│       │   ├── direct.rs  IPC direct switch (bypass scheduler), priority inheritance, reply switch
+│       │   ├── notify.rs  Notification objects: create/signal/wait, atomic OR + mask wake, timeout support
+│       │   ├── select.rs  IPC select: multi-wait on channels + notifications, blocking with timeout
+│       │   └── shmem.rs   Shared memory: create/map/share/unmap, W^X enforcement, process cleanup
+│       ├── service/
+│       │   └── mod.rs    Service manager: registry, echo service, process lifecycle, audit ring
 │       ├── cap/
 │       │   └── mod.rs    CapabilityToken, CapabilityTable (256/process), check/grant/revoke/attenuate/list, cascade revocation
 │       ├── task/
 │       │   ├── mod.rs    Thread, ThreadId, ThreadContext (296B), FpContext (528B), SchedEntity, ThreadState, SchedulerClass, CpuSet, THREAD_TABLE
 │       │   └── process.rs ProcessControl, ProcessId, KernelResourceLimits (trust-level defaults), PROCESS_TABLE
+│       ├── bench.rs      Gate 1 benchmarks: IPC round-trip, context switch, direct switch, cap overhead, shmem throughput
 │       ├── syscall/
-│       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-7), Cap(14-17), Time(26-27), Debug(30)
+│       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-9), Notify(10-12), Stats(13), Cap(14-17), Mem(18-22), Proc(23-25), Time(26-28), Audit(29), Debug(30)
 │       ├── platform/
 │       │   ├── mod.rs    Platform trait, detect_platform()
 │       │   └── qemu.rs   QemuPlatform: init_uart, init_interrupts, init_timer
@@ -470,9 +492,9 @@ aios/
 │       ├── boot.rs       BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat
 │       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
 │       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests
-│       ├── ipc.rs        ChannelId, EndpointState, RawMessage, IPC constants, validate_user_va()
+│       ├── ipc.rs        ChannelId, SharedMemoryId, NotificationId, RawMessage, ServiceName, SelectKind, IPC/shmem/notify constants
 │       ├── kaslr.rs      KaslrConfig, compute_slide_from_entropy()
-│       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of()
+│       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult

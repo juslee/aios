@@ -788,11 +788,11 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 | Range | Interpretation | Examples |
 |---|---|---|
-| < 100 lines | Small, focused utility | `bump.rs`, `heap.rs` |
-| 100--300 lines | Typical module | `uart.rs`, `timer.rs`, `smp.rs` |
-| 300--500 lines | Larger subsystem | `pgtable.rs`, `cap/mod.rs`, `slab.rs` |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs`, `sched/mod.rs` |
-| > 800 lines | Should split into submodules | `ipc/mod.rs` (currently large, partially split) |
+| < 100 lines | Small, focused utility | `bump.rs` (44), `heap.rs` (68) |
+| 100--300 lines | Typical module | `uart.rs` (157), `timer.rs` (211), `cap/mod.rs` (236), `smp.rs` (218) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (436), `slab.rs` (409), `service/mod.rs` (403) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `syscall/mod.rs` (668), `shmem.rs` (642), `bench.rs` (545) |
+| > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
 
 **Guidelines:**
 
@@ -800,15 +800,28 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 - Consider splitting at approximately 600 lines. Split by extracting a logical sub-concern into its own file within the same directory.
 - Kernel code runs approximately 50% larger than application code due to `// SAFETY:` comments and MMIO boilerplate. A 600-line kernel file is roughly equivalent to a 400-line application file in terms of logic density.
 
-**IPC as a split example:** `ipc/mod.rs` contains the core channel table, message rings, send/recv/call/reply, and timeout handling. The direct-switch fast path has been extracted to a separate file:
+**IPC as a split example:** The original 2035-line `ipc/mod.rs` was split by concern into focused submodules:
 
-```
+```text
 ipc/
-  mod.rs          # Channel table, create/destroy, send/recv/call/reply, timeouts
-  direct.rs       # Direct switch fast path, priority inheritance, reply switch
+  mod.rs      (215)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  channel.rs  (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
+  timeout.rs  (185)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs          # Direct switch fast path, priority inheritance, reply switch
+  tests.rs    (668)  # Test initialization, thread entries, test-only helpers
+  notify.rs          # Notification objects (signal/wait)
+  select.rs          # IPC select (multi-wait)
+  shmem.rs           # Shared memory regions
 ```
 
-As additional IPC features are added (shared memory, notifications, select), they follow the same pattern -- each gets its own file within the `ipc/` directory.
+**Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
+
+```text
+sched/
+  mod.rs         (154)  # RunQueue, globals, thread allocation helpers, re-exports
+  scheduler.rs   (432)  # schedule(), enter_scheduler(), timer_tick(), block/unblock
+  init.rs        (277)  # Scheduler init, idle/test threads, load balancer
+```
 
 ### 3.2 Module Structure Patterns
 
@@ -1234,7 +1247,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 159+ host-side tests pass |
+| **Test** | `just test` | All 242+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1286,7 +1299,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
 ```
 
-Currently 159 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `syscall`.
+Currently 242 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `syscall`.
 
 **Adding a new test:**
 
@@ -1314,6 +1327,84 @@ mod tests {
 ```
 
 Test modules are placed inside the `shared` crate source files alongside the code they test. The `kernel` crate does not contain `#[cfg(test)]` modules -- kernel logic is tested via QEMU boot verification and through the shared crate's unit tests for any extractable logic.
+
+### 5.5 Extracting Kernel Logic for Host Testing
+
+A key testing strategy in AIOS is extracting pure logic from `kernel/` into `shared/` so it can be tested on the host. This was used extensively in Phase 3 to add 83 tests for capabilities, IPC types, memory utilities, and service types.
+
+**What can be extracted:** Any function or data structure that does not depend on kernel-specific state (hardware registers, global statics, inline assembly, interrupt context). Good candidates include:
+
+- Data structure methods (e.g., `CapabilityTable::grant/revoke/attenuate`)
+- Pure computation (e.g., `order_for_pages()`, `ticks_to_ns()`)
+- Validation logic (e.g., `validate_user_va()`, `Capability::permits()`)
+- Type definitions with associated constants (e.g., `SelectEntry`, `ServiceName`)
+
+**What cannot be extracted:** Functions that depend on kernel globals (`CHANNEL_TABLE`, `PROCESS_TABLE`), call assembly intrinsics, or interact with hardware.
+
+**Dependency injection pattern:** When a function is mostly pure but has one kernel dependency, inject it as a parameter:
+
+```rust
+// BEFORE (in kernel): calls kernel-only new_token_id()
+pub fn attenuate(&mut self, handle: CapabilityHandle, ...) -> Result<...> {
+    let new_id = crate::cap::new_token_id();  // AtomicU64 in kernel
+    // ...
+}
+
+// AFTER (in shared): caller provides the ID
+pub fn attenuate(&mut self, handle: CapabilityHandle, ..., new_id: CapabilityTokenId) -> Result<...> {
+    // Pure logic — no kernel dependencies
+}
+```
+
+The kernel call site provides the injected value:
+
+```rust
+// kernel/src/syscall/mod.rs
+let new_id = crate::cap::new_token_id();
+proc.cap_table.attenuate(handle, new_cap, new_expiry, pid, new_id)
+```
+
+**Test helper pattern:** Create helpers at the top of the test module for common setup:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_token(id: u64, cap: Capability) -> CapabilityToken {
+        CapabilityToken {
+            id: CapabilityTokenId(id),
+            capability: cap,
+            holder: ProcessId(1),
+            // ... sensible defaults
+        }
+    }
+
+    #[test]
+    fn grant_and_retrieve() {
+        let mut table = CapabilityTable::new();
+        let token = make_token(1, Capability::ChannelCreate);
+        let handle = table.grant(token).unwrap();
+        assert!(table.get(handle).is_some());
+    }
+}
+```
+
+**`no_std` test constraints:** The `shared` crate is `no_std`, so tests cannot use `Vec`, `String`, or heap allocation. Use fixed-size arrays and stack-based data structures. The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
+
+**Current test distribution (242 tests):**
+
+| Module | Tests | Coverage |
+|---|---|---|
+| `cap` | 53 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
+| `memory` | 40 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
+| `ipc` | 38 | Channel IDs, message validation, select entries, service names, user VA checks |
+| `sched` | 34 | Thread state, scheduler class, CpuSet, resource limits, priority |
+| `collections` | 30 | FixedQueue, RingBuffer edge cases |
+| `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
+| `syscall` | 13 | Syscall numbering, IpcError codes |
+| `kaslr` | 7 | KASLR slide computation, alignment, bounds |
+| `observability` | 5 | Log level ordering, subsystem tags |
 
 ---
 
@@ -1516,6 +1607,52 @@ let phys = (virt - DIRECT_MAP_BASE) + 0x4000_0000;
 // DIRECT_MAP_BASE = 0xFFFF_0001_0000_0000, RAM starts at 0x4000_0000
 ```
 
+### 6.6 Common QEMU Failure Modes
+
+These are failure patterns encountered during AIOS development (Phases 0--3), with root causes and resolutions. They are specific to QEMU `virt` with `-cpu cortex-a72 -smp 4`.
+
+**Silent hang (no output, QEMU unresponsive to Ctrl-C):**
+
+| Cause | Diagnosis | Fix |
+|---|---|---|
+| `dsb sy` with parked secondary cores on NC memory | Hang occurs during SMP init or first TLBI broadcast | Use `dsb nsh` (local only) until cores are fully online with WB memory |
+| `spin::Mutex` on NC memory | Hang on first contended lock acquire | Replace with `load(Acquire)`/`store(Release)` protocol; see SS4.1 |
+| Infinite loop in exception handler | Core took exception but handler loops forever | Add UART putc calls at top of exception vector stubs |
+| PSCI CPU_ON with virtual entry address | Secondary core jumps to virtual address with MMU off | Convert `_secondary_entry` to physical before PSCI call (`smp.rs`) |
+
+**Garbage UART output (random characters instead of text):**
+
+| Cause | Diagnosis | Fix |
+|---|---|---|
+| Wrong baud rate divisors | Phase 1+ after PL011 full init | IBRD=13, FBRD=1 for 115200 baud at 24 MHz APB clock |
+| Writing before UART FIFO ready | Characters dropped or corrupted | Check TXFF (bit 5 of FR) before each write |
+| MMIO base address wrong | All output garbage from start | Verify UART base 0x0900_0000 on QEMU virt |
+
+**Immediate reboot (QEMU restarts the kernel):**
+
+| Cause | Diagnosis | Fix |
+|---|---|---|
+| Missing VBAR_EL1 setup | First exception causes jump to address 0x0 | Set VBAR_EL1 in boot.S before any Rust code runs |
+| Stack pointer misaligned | SP not 16-byte aligned causes fault | Ensure `.balign 16` on stack symbols in linker script |
+| FPU not enabled | First NEON instruction faults | Enable FPU in boot.S: `orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb` |
+
+**QEMU prints exception info then halts:**
+
+| Cause | Diagnosis | Fix |
+|---|---|---|
+| Data abort from unmapped VA | FAR_EL1 shows the unmapped address | Check page table mappings cover the accessed range |
+| W^X violation | Permission fault on write to RX page | Ensure page is mapped RW (not RX) for data sections |
+| Address confusion (virt vs phys) | FAR_EL1 shows physical address while MMU expects virtual | After MMU enable, all pointers must be virtual; convert via `VIRT_PHYS_OFFSET` |
+
+**IPC/scheduler specific failures:**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Thread blocks and never wakes | Notification waiter not registered before signal | Ensure register-then-block ordering with table lock held across both |
+| IPC timeout never fires | `NOTIFY_DEADLINES` lock contention in timer IRQ | Use `try_lock()` in IRQ context, never blocking lock |
+| Double context switch corruption | `IN_SCHEDULER` guard not set | Set per-CPU `IN_SCHEDULER` AtomicBool before schedule(), clear after |
+| Direct switch to wrong thread | CURRENT_THREAD stale after save_context return | Re-read core ID from hardware (`MPIDR_EL1`) after save_context |
+
 ---
 
 ## 7. Contributing a New Subsystem
@@ -1683,7 +1820,7 @@ This guide is designed to grow alongside the kernel. The following areas are int
 | `just` recipe deep-dive | Phase 4+ | Annotated walkthroughs of each recipe, common flag combinations, customization |
 | CI pipeline explanation | Phase 4+ | GitHub Actions workflow breakdown, what each job catches, how to read CI failures |
 | Integration test patterns | Phase 4+ (user-space) | How to write kernel integration tests, QEMU-based acceptance test harness |
-| `shared` crate test patterns | Ongoing | How to add new unit tests, property-based testing with `proptest`, test organization |
+| `shared` crate test patterns | **Done (SS5.5)** | Extraction workflow, dependency injection, test helper patterns, no_std constraints, test distribution |
 | Cross-compilation troubleshooting | Phase 7+ (multi-platform) | Common linker errors, target-specific build issues, conditional compilation patterns |
 
 ### Section 6: Debugging Techniques
@@ -1692,7 +1829,7 @@ This guide is designed to grow alongside the kernel. The following areas are int
 |---|---|---|
 | QEMU GDB deep-dive | Ongoing | Breakpoints in exception handlers, `x/8gx` for page table inspection, system register reads |
 | Memory debugging | Phase 4+ | Buddy poison patterns (`0xDEAD_DEAD`), slab red zone detection, diagnosing use-after-free |
-| Common QEMU failure modes | Ongoing | Silent hang (DSB issue), garbage UART (baud misconfiguration), immediate reboot (bad VBAR) |
+| Common QEMU failure modes | **Done (SS6.6)** | Silent hang, garbage UART, immediate reboot, IPC/scheduler failures |
 | Per-phase debugging recipes | Each phase | E.g., "Phase 4 storage debugging", "Phase 5 compositor debugging" |
 | Multi-core debugging | Phase 4+ | IPC deadlock detection, priority inversion diagnosis, per-core log correlation |
 

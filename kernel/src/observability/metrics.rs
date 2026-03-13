@@ -244,6 +244,17 @@ pub struct KernelMetrics {
     pub ipc_timeout: Counter,
     pub ipc_cap_denied: Counter,
 
+    // Shared memory (Phase 3 M12)
+    pub shm_create: Counter,
+    pub shm_map: Counter,
+    pub shm_unmap: Counter,
+
+    // Notifications (Phase 3 M12)
+    pub notify_create: Counter,
+    pub notify_signal: Counter,
+    pub notify_wait: Counter,
+    pub notify_wake: Counter,
+
     // Interrupts
     pub irq_total: Counter,
     pub irq_timer: Counter,
@@ -286,6 +297,15 @@ impl KernelMetrics {
             ipc_roundtrip_ns: Histogram::new(LATENCY_BUCKETS),
             ipc_timeout: Counter::new(),
             ipc_cap_denied: Counter::new(),
+
+            shm_create: Counter::new(),
+            shm_map: Counter::new(),
+            shm_unmap: Counter::new(),
+
+            notify_create: Counter::new(),
+            notify_signal: Counter::new(),
+            notify_wait: Counter::new(),
+            notify_wake: Counter::new(),
 
             irq_total: Counter::new(),
             irq_timer: Counter::new(),

@@ -253,4 +253,11 @@ extern "C" fn irq_handler_el1() {
     }
 
     write_icc_eoir1_el1(intid);
+
+    // Check if preemption is needed after handling the IRQ.
+    // This enables timer-driven preemption: when NEED_RESCHED is set by
+    // the timer tick, schedule() runs before eret returns to the
+    // interrupted thread. Each thread's stack preserves the IRQ entry
+    // frame, so context-switch + unwind works correctly.
+    crate::sched::check_preemption();
 }

@@ -28,18 +28,30 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         2 => sys_ipc_recv(tf),
         3 => sys_ipc_reply(tf),
         4 => sys_ipc_cancel(tf),
-        5 => IpcError::Enotsup as i64, // IpcSelect — Phase 3+ (requires poll set)
+        5 => sys_ipc_select(tf),
         6 => sys_channel_create(tf),
         7 => sys_channel_destroy(tf),
         8 | 9 => IpcError::Enotsup as i64, // RingChannel — future
-        13 => IpcError::Enotsup as i64,    // ChannelStats — future
+        10 => sys_notification_create(tf),
+        11 => sys_notification_signal(tf),
+        12 => sys_notification_wait(tf),
+        13 => IpcError::Enotsup as i64, // ChannelStats — future
         14 => sys_capability_transfer(tf),
         15 => sys_capability_attenuate(tf),
         16 => sys_capability_revoke(tf),
         17 => sys_capability_list(tf),
+        18 => sys_memory_map(tf),
+        19 => sys_memory_unmap(tf),
+        20 => sys_shared_memory_create(tf),
+        21 => sys_shared_memory_map(tf),
+        22 => sys_shared_memory_share(tf),
+        23 => IpcError::Enotsup as i64, // ProcessCreate — kernel-only in Phase 3
+        24 => sys_process_exit(tf),
+        25 => sys_process_wait(tf),
         26 => sys_time_get(tf),
         27 => sys_time_sleep(tf),
         28 => IpcError::Enotsup as i64,
+        29 => sys_audit_log(tf),
         30 => sys_debug_print(tf),
         _ => IpcError::Enotsup as i64,
     };
@@ -314,7 +326,11 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
         None => return IpcError::Eperm as i64,
     };
 
-    match proc.cap_table.attenuate(handle, new_cap, new_expiry, pid) {
+    let new_id = crate::cap::new_token_id();
+    match proc
+        .cap_table
+        .attenuate(handle, new_cap, new_expiry, pid, new_id)
+    {
         Ok(h) => h.0 as i64,
         Err(e) => e,
     }
@@ -386,4 +402,267 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
     }
 
     count as i64
+}
+
+// ---------------------------------------------------------------------------
+// Memory syscalls (nr=18-22)
+// ---------------------------------------------------------------------------
+
+/// MemoryMap (nr=18): x0=size, x1=flags.
+///
+/// Allocate private pages from Pool::User.
+fn sys_memory_map(tf: &TrapFrame) -> i64 {
+    let size = tf.x[0] as usize;
+    let flags_raw = tf.x[1] as u32;
+    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::memory_map(pid, size, flags) {
+        Ok(va) => va as i64,
+        Err(e) => e,
+    }
+}
+
+/// MemoryUnmap (nr=19): x0=va, x1=size.
+///
+/// Handles both private and shared memory unmap.
+fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
+    let va = tf.x[0] as usize;
+    let size = tf.x[1] as usize;
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::memory_unmap(pid, va, size) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+/// SharedMemoryCreate (nr=20): x0=size, x1=flags.
+///
+/// Create a new shared memory region.
+fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
+    let size = tf.x[0] as usize;
+    let flags_raw = tf.x[1] as u32;
+    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::shared_memory_create(pid, size, flags) {
+        Ok(id) => id.0 as i64,
+        Err(e) => e,
+    }
+}
+
+/// SharedMemoryMap (nr=21): x0=region_id, x1=flags.
+///
+/// Map a shared memory region into the caller's address space.
+fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
+    let region_id = shared::SharedMemoryId(tf.x[0] as u32);
+    let flags_raw = tf.x[1] as u32;
+    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::shared_memory_map(pid, region_id, flags) {
+        Ok(va) => va as i64,
+        Err(e) => e,
+    }
+}
+
+/// SharedMemoryShare (nr=22): x0=region_id, x1=target_pid.
+///
+/// Share a region with another process by granting capability.
+fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
+    let region_id = shared::SharedMemoryId(tf.x[0] as u32);
+    let target_pid = crate::task::process::ProcessId(tf.x[1] as u32);
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::shmem::shared_memory_share(pid, region_id, target_pid) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notification syscalls (nr=10-12)
+// ---------------------------------------------------------------------------
+
+/// NotificationCreate (nr=10): no args.
+///
+/// Create a new notification object owned by the caller's process.
+fn sys_notification_create(_tf: &TrapFrame) -> i64 {
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    match crate::ipc::notify::notification_create(pid) {
+        Ok(id) => id.0 as i64,
+        Err(e) => e,
+    }
+}
+
+/// NotificationSignal (nr=11): x0=notification_id, x1=bits.
+///
+/// Atomically OR bits into the notification word and wake matching waiters.
+fn sys_notification_signal(tf: &TrapFrame) -> i64 {
+    let id = shared::NotificationId(tf.x[0] as u32);
+    let bits = tf.x[1];
+
+    crate::ipc::notify::notification_signal(id, bits);
+    0
+}
+
+/// NotificationWait (nr=12): x0=notification_id, x1=mask, x2=timeout_ticks.
+///
+/// Wait for matching bits. Returns matched bits or error.
+fn sys_notification_wait(tf: &TrapFrame) -> i64 {
+    let id = shared::NotificationId(tf.x[0] as u32);
+    let mask = tf.x[1];
+    let timeout = tf.x[2];
+
+    match crate::ipc::notify::notification_wait(id, mask, timeout) {
+        Ok(bits) => bits as i64,
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IpcSelect (nr=5)
+// ---------------------------------------------------------------------------
+
+/// IpcSelect (nr=5): x0=entries_ptr, x1=entry_count, x2=timeout_ticks.
+///
+/// Wait on multiple channels/notifications. Returns ready index in x0,
+/// matched bits (for notifications) in x1.
+///
+/// For Phase 3 kernel threads, entries_ptr points to kernel memory.
+fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
+    use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
+
+    let entries_ptr = tf.x[0] as usize;
+    let entry_count = tf.x[1] as usize;
+    let timeout = tf.x[2];
+
+    if entry_count == 0 || entry_count > MAX_SELECT_ENTRIES || entries_ptr == 0 {
+        return IpcError::Einval as i64;
+    }
+
+    // For Phase 3, entries are in kernel memory — read directly.
+    // Each entry is a (u32 kind, u32 id, u64 mask) = 16 bytes.
+    let mut entries = [SelectEntry {
+        kind: SelectKind::Channel(shared::ChannelId(0)),
+    }; MAX_SELECT_ENTRIES];
+
+    for (i, entry) in entries.iter_mut().enumerate().take(entry_count) {
+        let base = entries_ptr + i * 16;
+        // SAFETY: entries_ptr is kernel memory for Phase 3 kernel threads.
+        let kind = unsafe { core::ptr::read_volatile(base as *const u32) };
+        let id = unsafe { core::ptr::read_volatile((base + 4) as *const u32) };
+        let mask = unsafe { core::ptr::read_volatile((base + 8) as *const u64) };
+
+        *entry = SelectEntry {
+            kind: match kind {
+                0 => SelectKind::Channel(shared::ChannelId(id)),
+                1 => SelectKind::Notification(shared::NotificationId(id), mask),
+                _ => return IpcError::Einval as i64,
+            },
+        };
+    }
+
+    match crate::ipc::select::ipc_select(&entries[..entry_count], timeout) {
+        Ok((idx, bits)) => {
+            // Store matched bits in x1 for the caller.
+            tf.x[1] = bits;
+            idx as i64
+        }
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Process syscalls (nr=23-25)
+// ---------------------------------------------------------------------------
+
+/// ProcessExit (nr=24): x0=exit_code.
+///
+/// Exit the current process. Cleans up all threads, channels, and
+/// notifies the service manager.
+fn sys_process_exit(tf: &TrapFrame) -> i64 {
+    let exit_code = tf.x[0] as i32;
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    crate::task::process::process_exit(pid, exit_code);
+    0
+}
+
+/// ProcessWait (nr=25): x0=child_pid.
+///
+/// Block until a child process exits, return its exit code.
+fn sys_process_wait(tf: &TrapFrame) -> i64 {
+    let child_pid = shared::ProcessId(tf.x[0] as u32);
+    let tid = match crate::ipc::current_thread_id() {
+        Some(t) => t,
+        None => return IpcError::Eperm as i64,
+    };
+    match crate::task::process::process_wait(tid, child_pid) {
+        Ok(code) => code as i64,
+        Err(e) => e,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AuditLog syscall (nr=29)
+// ---------------------------------------------------------------------------
+
+/// AuditLog (nr=29): x0=event_ptr, x1=event_len.
+///
+/// Append an audit event from user space.
+fn sys_audit_log(tf: &TrapFrame) -> i64 {
+    let ptr = tf.x[0] as usize;
+    let len = tf.x[1] as usize;
+
+    if len > 48 {
+        return IpcError::Enospc as i64;
+    }
+
+    if !validate_user_ptr(ptr, len) {
+        return IpcError::Eperm as i64;
+    }
+
+    let pid = match crate::cap::current_process_id() {
+        Some(p) => p,
+        None => return IpcError::Eperm as i64,
+    };
+
+    let mut buf = [0u8; 48];
+    // SAFETY: ptr validated in user VA range, bounded by len <= 48.
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr as *const u8, buf.as_mut_ptr(), len);
+    }
+
+    crate::service::audit_log(pid, &buf[..len]);
+    0
 }

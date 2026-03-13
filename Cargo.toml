@@ -6,3 +6,9 @@ default-members = ["kernel", "shared"]
 [workspace.package]
 edition = "2021"
 license = "BSD-2-Clause"
+
+# Kernel debug builds need opt-level >= 1 to enable NRVO and dead-store
+# elimination. Without this, constructing large structs (e.g. ProcessControl
+# with its 24 KiB CapabilityTable) creates stack-overflowing temporaries.
+[profile.dev]
+opt-level = 1

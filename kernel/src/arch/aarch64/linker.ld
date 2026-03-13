@@ -64,10 +64,13 @@ SECTIONS
     . = ALIGN(8);
     __bss_end = .;
 
-    /* Boot stack: 16 KiB, 16-byte aligned (ABI requirement) */
+    /* Boot stack: 128 KiB, 16-byte aligned (ABI requirement).
+       ipc::init() alone uses ~62 KiB (ProcessControl temporaries +
+       Thread construction) and nested calls (channel_create ~4.5 KiB)
+       push total past 64 KiB. 128 KiB gives ample headroom. */
     . = ALIGN(16);
     __stack_bottom = .;
-    . += 16384;
+    . += 131072;
     __stack_top = .;
 
     . = ALIGN(4096);

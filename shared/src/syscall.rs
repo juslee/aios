@@ -8,7 +8,6 @@
 /// Convention: x8 = syscall number, x0-x5 = args, return in x0.
 #[repr(u64)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Syscall {
     IpcCall = 0,
     IpcSend = 1,
@@ -52,7 +51,6 @@ pub const SYSCALL_COUNT: usize = 31;
 /// Per ipc.md §3.2.
 #[repr(i64)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum IpcError {
     Etimedout = -1,
     Epipe = -2,
@@ -64,10 +62,13 @@ pub enum IpcError {
     Eproto = -8,
     Enotsup = -9,
     EcapDormant = -10,
+    Eexist = -11,
+    Einval = -12,
+    Enomem = -13,
 }
 
 /// Number of defined IPC error codes.
-pub const IPC_ERROR_COUNT: usize = 10;
+pub const IPC_ERROR_COUNT: usize = 13;
 
 #[cfg(test)]
 mod tests {
@@ -161,6 +162,7 @@ mod tests {
         assert!((IpcError::Eproto as i64) < 0);
         assert!((IpcError::Enotsup as i64) < 0);
         assert!((IpcError::EcapDormant as i64) < 0);
+        assert!((IpcError::Eexist as i64) < 0);
     }
 
     #[test]
@@ -176,6 +178,7 @@ mod tests {
             IpcError::Eproto as i64,
             IpcError::Enotsup as i64,
             IpcError::EcapDormant as i64,
+            IpcError::Eexist as i64,
         ];
         for i in 0..values.len() {
             for j in (i + 1)..values.len() {
@@ -190,16 +193,16 @@ mod tests {
 
     #[test]
     fn ipc_error_range() {
-        // All errors in -1..-10 range.
+        // All errors in -1..-11 range.
         assert_eq!(IpcError::Etimedout as i64, -1);
-        assert_eq!(IpcError::EcapDormant as i64, -10);
+        assert_eq!(IpcError::Eexist as i64, -11);
     }
 
     #[test]
     fn ipc_error_count_matches() {
-        assert_eq!(IPC_ERROR_COUNT, 10);
-        // EcapDormant is the last at -10.
-        assert_eq!(-(IpcError::EcapDormant as i64) as usize, IPC_ERROR_COUNT);
+        assert_eq!(IPC_ERROR_COUNT, 13);
+        // Enomem is the last at -13.
+        assert_eq!(-(IpcError::Enomem as i64) as usize, IPC_ERROR_COUNT);
     }
 
     #[test]
