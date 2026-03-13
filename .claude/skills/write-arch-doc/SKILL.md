@@ -353,3 +353,29 @@ separator. This is easy to miss when writing "This means:\n- item". Add the blan
 the summary section (§13.7 → §13.10). Always check that existing cross-references from other docs
 use section numbers that didn't change — new sections should be inserted before summary/table sections,
 not in the middle of numbered content that other docs reference.
+
+### From `docs/kernel/scheduler.md` (2026-03-13)
+
+**Time slice consistency cascade.** Changing one time slice value (e.g., Interactive 4ms→10ms) requires
+updating 6+ locations across the doc: the class description, SchedulerConfig defaults, timer table,
+low-battery mode halved values, input boost duration, and WFQ example code/prose. Use grep for the
+old numeric value (e.g., `4_000_000`, `4ms`, `4 ms`) to find all instances before editing.
+
+**Timer register naming matters.** The doc originally used virtual timer registers (CNTV_*) but code
+uses physical timer (CNTP_*). This is a subtle factual error easily missed in Mermaid diagrams and
+prose. Always verify which timer the kernel actually uses by checking ThreadContext field names.
+
+**Doc splits create stale cross-references.** When memory.md was split into sub-documents
+(memory-physical.md, memory-reclamation.md, etc.), cross-references from other docs like
+scheduler.md still pointed to the old `memory.md §8`. The auditor caught this — always grep
+for `memory.md §` (or any recently-split doc) across all docs during audit.
+
+**Research parallelism works well.** Three parallel research agents (production OS survey, academic
+papers, AI-focused) found overlapping material (EEVDF, seL4 MCS, sched_ext, ghOSt appeared in
+multiple reports), which validates key themes. Unique finds came from the AI agent (LAKE, PWU,
+OS-R1, two-stage phase detection). The overlap provides confidence; the unique finds provide novelty.
+
+**Insert new subsections before cross-refs/references, not after.** When adding §16.7-16.8 to the
+AI-Driven Scheduling section, inserting before the Cross-References (§16.7→§16.9) and References
+(§16.8→§16.10) sections kept the renumbering contained to two utility sections that no external
+doc references by number.

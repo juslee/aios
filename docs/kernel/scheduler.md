@@ -46,7 +46,7 @@ The scheduler is not optimized for throughput. It is optimized for latency and r
 
 Four scheduling classes, in strict priority order. A runnable thread in a higher class always preempts a running thread in a lower class.
 
-```
+```text
 Priority    Class          Algorithm              Use Cases
 ────────    ─────          ─────────              ─────────
 Highest     Real-Time      Earliest Deadline      Compositor frame rendering,
@@ -64,7 +64,7 @@ Lowest      Idle           Simple FIFO            Indexing, garbage collection,
 
 **Real-Time (RT):** Hard deadlines. The compositor must finish its frame within 16.6ms. Audio mixing must finish within its buffer period. RT threads declare their period and worst-case execution time at creation. The scheduler runs them with EDF — the thread whose deadline is nearest runs first. RT threads have no time slice; they run until they complete their work, block, or hit their declared budget.
 
-**Interactive:** Soft deadlines. The foreground agent, conversation bar, and anything the user is directly interacting with. Priority round-robin with a 4ms time slice. When the user presses a key or clicks, the receiving thread gets an immediate priority boost — it moves to the front of the interactive queue for one slice. This makes input feel instantaneous.
+**Interactive:** Soft deadlines. The foreground agent, conversation bar, and anything the user is directly interacting with. Priority round-robin with a 10ms time slice. When the user presses a key or clicks, the receiving thread gets an immediate priority boost — it moves to the front of the interactive queue for one slice. This makes input feel instantaneous.
 
 **Normal:** No deadlines. Background agents, system services (Space Storage, Network Translation Module), and inference threads. Weighted Fair Queuing ensures proportional CPU sharing. Weights are derived from agent priority, CPU quota, and context multiplier.
 
@@ -235,10 +235,10 @@ pub struct SchedulerConfig {
     /// Timer tick frequency (default: 1000 Hz = 1ms tick)
     tick_hz: u32,
 
-    /// Interactive class time slice (default: 4ms)
+    /// Interactive class time slice (default: 10ms)
     interactive_slice: Duration,
 
-    /// Normal class time slice (default: 10ms)
+    /// Normal class time slice (default: 50ms)
     normal_slice: Duration,
 
     /// Idle class time slice (default: 50ms)
@@ -250,7 +250,7 @@ pub struct SchedulerConfig {
     /// RT utilization ceiling (default: 70%)
     rt_utilization_max: f32,
 
-    /// Input boost duration (default: 8ms — two interactive slices)
+    /// Input boost duration (default: 20ms — two interactive slices)
     input_boost_duration: Duration,
 
     /// Maximum CPU frequency in MHz (from device tree / firmware).
@@ -373,17 +373,21 @@ pub enum ThreadState {
     /// Currently executing on a CPU
     Running,
     /// Blocked waiting for IPC message
-    BlockedIpc { channel: ChannelId },
+    BlockedIpc { channel: u64 },
     /// Blocked waiting for timer
-    BlockedTimer { wake_at: Timestamp },
+    BlockedTimer { wake_at: u64 },
     /// Blocked waiting for I/O
     BlockedIo,
+    /// Blocked waiting for a notification signal
+    BlockedNotification { notification: u32 },
+    /// Blocked in IpcSelect (multi-wait on channels + notifications)
+    BlockedSelect,
+    /// Blocked waiting for a child process to exit
+    BlockedProcessWait { child_pid: u32 },
     /// Suspended by the kernel (memory limit, debugging)
     Suspended,
-    /// Waiting for GPU/NPU computation to complete (§6.5, future).
-    /// Not runnable — does not occupy a run queue position or count
-    /// toward PELT load. Wake-up triggered by accelerator interrupt.
-    BlockedAccelerator { device: AcceleratorId, job: JobId },  // see type aliases below
+    // --- Target design (not yet implemented) ---
+    // BlockedAccelerator { device: AcceleratorId, job: JobId },
     /// Thread has exited
     Dead,
 }
@@ -394,14 +398,15 @@ type JobId = u64;
 /// CPU affinity: a bitmask of allowed CPUs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuSet {
-    mask: u64, // bits 0..MAX_CPUS
+    pub bits: u64, // bits 0..MAX_CPUS
 }
 
 impl CpuSet {
-    pub fn all() -> Self { Self { mask: !0 } }
-    pub fn single(cpu: CpuId) -> Self { Self { mask: 1 << cpu.0 } }
-    pub fn from_mask(mask: u64) -> Self { Self { mask } }
-    pub fn contains(&self, cpu: CpuId) -> bool { self.mask & (1 << cpu.0) != 0 }
+    pub const fn all() -> Self { Self { bits: !0 } }
+    pub const fn single(cpu: usize) -> Self { Self { bits: 1 << cpu } }
+    pub const fn from_mask(mask: u64) -> Self { Self { bits: mask } }
+    pub const fn contains(&self, cpu: usize) -> bool { self.bits & (1 << cpu) != 0 }
+    pub const fn count(&self) -> u32 { self.bits.count_ones() }
 }
 
 /// Context hints from the Context Engine affect scheduling weights
@@ -449,8 +454,8 @@ flowchart TD
             AS2["ASID (encoded in TTBR0 upper bits)"]
         end
         subgraph tmr["Per-thread timer (16 bytes)"]
-            TM1["CNTV_CVAL_EL0 (virtual timer compare value)"]
-            TM2["CNTV_CTL_EL0 (virtual timer control)"]
+            TM1["CNTP_CVAL_EL0 (physical timer compare value)"]
+            TM2["CNTP_CTL_EL0 (physical timer control)"]
         end
         totals["Total without FP: ~296 bytes | Total with FP: ~808 bytes"]
         gp --- fp --- as --- tmr --- totals
@@ -473,9 +478,9 @@ pub struct ThreadContext {
     pstate: u64,
     /// User page table base register
     ttbr0: u64,
-    /// Virtual timer compare value
+    /// Physical timer compare value (CNTP_CVAL_EL0)
     timer_cval: u64,
-    /// Virtual timer control
+    /// Physical timer control (CNTP_CTL_EL0)
     timer_ctl: u64,
 }
 
@@ -492,18 +497,20 @@ pub struct FpContext {
 
 /// Full thread state managed by the scheduler
 pub struct Thread {
-    /// Thread identifier
-    id: ThreadId,
-    /// Scheduling metadata
-    sched: SchedEntity,
+    /// Scheduling metadata (includes thread_id)
+    pub sched: SchedEntity,
     /// Saved hardware context (on kernel stack when not running)
-    context: ThreadContext,
-    /// FP/NEON context (lazily saved)
-    fp_context: Option<FpContext>,
-    /// Whether this thread has used FP since last switch
-    fp_dirty: bool,
-    /// Kernel stack for this thread
-    kernel_stack: KernelStack,
+    pub context: ThreadContext,
+    /// FP/NEON context (lazily allocated and saved)
+    pub fp_context: Option<FpContext>,
+    /// Priority inheritance depth counter (bounded by MAX_INHERITANCE_DEPTH=8)
+    pub inheritance_depth: u8,
+    /// Owning process (None for kernel threads)
+    pub owner_pid: Option<ProcessId>,
+    /// Physical address of kernel stack allocation
+    pub stack_phys: usize,
+    /// Thread name (null-padded, 16 bytes)
+    pub name: [u8; 16],
 }
 ```
 
@@ -580,7 +587,7 @@ unsafe fn ipc_direct_switch(
 
 Breaking down the < 10 us target for a full context switch (the scheduler-mediated path, not the IPC direct switch):
 
-```
+```text
 Operation                              Cycles (est.)    Time @ 2 GHz
 ──────────────────────────────────     ─────────────    ────────────
 Save GP registers (x0-x30, SP, PC)         80            40 ns
@@ -629,6 +636,7 @@ gantt
 ```
 
 The compositor declares itself as an RT task with:
+
 - **Period:** 16.6ms (60 Hz)
 - **Worst-case execution time (WCET):** 4ms
 - **Deadline:** 16.6ms from start of each period
@@ -659,6 +667,7 @@ gantt
 ```
 
 The audio service declares:
+
 - **Period:** 5ms (200 Hz)
 - **WCET:** 0.5ms
 - **Deadline:** 5ms from start of each period
@@ -777,7 +786,7 @@ impl RtAdmissionController {
 
 **Example admission calculation on a single core:**
 
-```
+```text
 Compositor:  WCET = 4ms,   Period = 16.6ms  → U = 0.241
 Audio:       WCET = 0.5ms, Period = 5ms     → U = 0.100
 Timer svc:   WCET = 0.1ms, Period = 1ms     → U = 0.100
@@ -822,7 +831,7 @@ pub struct RtOverrunState {
 
 **Overrun handling sequence:**
 
-```
+```text
 1. RT task's WCET budget expires (timer interrupt fires)
 2. Scheduler checks: has the task completed its work?
    YES → normal completion, no action
@@ -860,7 +869,7 @@ pub struct RtOverrunState {
 
 LLM inference is unlike any traditional OS workload:
 
-```
+```text
 Traditional workload       LLM inference
 ────────────────────       ──────────────
 Short CPU bursts           Long CPU bursts (100ms+ per prompt eval)
@@ -1025,10 +1034,12 @@ Attn + FFN`"]
 > **PP** = Preemption Point. In prompt evaluation, PP occurs between transformer layers. In token generation, PP occurs after each token, with a yield to the scheduler after each chunk (default: 8 tokens).
 
 **Preemption point locations:**
+
 1. **Between transformer layers** during prompt evaluation. After each layer completes, the inference thread checks a preemption flag. If set, it saves the layer index and KV cache position, then yields.
 2. **After each token** during generation. The natural chunk boundary. After generating a token, the thread checks whether to yield (chunk complete) or continue.
 
 **What gets saved on preemption:**
+
 - KV cache is already in memory (managed by AIRS, not affected by preemption)
 - Current layer index (for resumption during prompt eval)
 - Token buffer position
@@ -1160,7 +1171,7 @@ impl CpuQuota {
 
 **Quota examples:**
 
-```
+```text
 Agent Category          Default Quota    Meaning
 ──────────────          ─────────────    ───────
 System agent            200ms / 100ms    Can use up to 2 full cores
@@ -1264,7 +1275,7 @@ fn compute_wakeup_vdeadline(entity: &SchedEntity, min_vruntime: u64) -> u64 {
     // Clamp to valid range (field is i8 but only -20..+19 is meaningful)
     let latency_nice = entity.latency_nice.clamp(-20, 19);
     // Base slice in vruntime units
-    let base_slice_ns = 10_000_000u64; // 10ms default slice
+    let base_slice_ns = 50_000_000u64; // 50ms default slice
     // Latency factor: latency_nice maps to a multiplier on virtual deadline.
     // -20 → 0.1x (very short deadline, scheduled almost immediately)
     //   0 → 1.0x (default)
@@ -1304,7 +1315,7 @@ static WEIGHT_TABLE: [u32; 256] = {
 
 **How WFQ works in practice:**
 
-```
+```text
 Three threads competing on one core, all Normal class:
 
 Thread A: weight 2048 (foreground agent, work context boost)
@@ -1324,13 +1335,13 @@ Over 100ms:
   C runs for ~14ms
 ```
 
-The scheduler picks the thread with the lowest vruntime from the Normal queue's red-black tree. After running for a time slice (10ms default), the thread's vruntime is updated and it is reinserted into the tree. Because thread A's weight is higher, its vruntime grows slower, so it stays at the front of the tree more often.
+The scheduler picks the thread with the lowest vruntime from the Normal queue's red-black tree. After running for a time slice (50ms default), the thread's vruntime is updated and it is reinserted into the tree. Because thread A's weight is higher, its vruntime grows slower, so it stays at the front of the tree more often.
 
 **Latency-nice:** Weight controls how much CPU a thread gets, but not how quickly it gets it. Two threads with the same weight get equal CPU share, but one might need fast wake-up response (a system service handling IPC) while the other tolerates jitter (batch inference). The `latency_nice` field provides this orthogonal control — inspired by Linux 6.x's EEVDF (Earliest Eligible Virtual Deadline First):
 
 The `latency_nice` field lives directly on `SchedEntity` (§3.3). When a thread wakes up, `compute_wakeup_vdeadline()` (§7.2) computes its virtual deadline as `min_vruntime + (base_slice * latency_factor)`. A thread with `latency_nice = -20` gets a tiny virtual deadline (scheduled almost immediately), while `latency_nice = +19` gets a large one (waits for current threads to finish their slices). The CPU share over time is unchanged — only the scheduling latency differs.
 
-```
+```text
 Latency-nice assignments:
   System services (IPC handlers):   latency_nice = -10  (fast wakeup)
   Interactive inference:             latency_nice = -5   (responsive tokens)
@@ -1347,7 +1358,7 @@ Latency-nice assignments:
 
 The Context Engine (part of AIRS) continuously infers the user's current activity context from signals: which agent is in the foreground, what spaces are open, time of day, input patterns, media state. It publishes a `ContextHint` to the scheduler via IPC.
 
-```
+```text
 Context Engine signals:
 
 Signal                    Context Inferred       Scheduler Effect
@@ -1397,8 +1408,8 @@ impl Scheduler {
             }
             _ => {
                 // Default slices
-                self.config.interactive_slice = Duration::from_millis(4);
-                self.config.normal_slice = Duration::from_millis(10);
+                self.config.interactive_slice = Duration::from_millis(10);
+                self.config.normal_slice = Duration::from_millis(50);
             }
         }
     }
@@ -1413,7 +1424,7 @@ impl Scheduler {
 
 ### 8.3 Memory Pressure Integration
 
-The memory subsystem (memory.md §8) defines four pressure levels: Normal, Low, Critical, and OOM. The scheduler must coordinate with the memory subsystem because memory pressure actions (agent suspension, OOM kill) directly affect run queue state:
+The memory subsystem (memory-reclamation.md §8) defines four pressure levels: Normal, Low, Critical, and OOM. The scheduler must coordinate with the memory subsystem because memory pressure actions (agent suspension, OOM kill) directly affect run queue state:
 
 ```rust
 /// Memory pressure callback — invoked by the memory subsystem
@@ -1504,7 +1515,7 @@ impl Scheduler {
 }
 ```
 
-**OOM victim selection coordination:** The OOM killer (memory.md) uses a score combining memory usage, priority, and age. The scheduler contributes the agent's current CPU quota usage and scheduling class — an agent in the Idle class with exhausted quota is a better OOM victim than an Interactive agent the user is actively using.
+**OOM victim selection coordination:** The OOM killer (memory-reclamation.md §8) uses a score combining memory usage, priority, and age. The scheduler contributes the agent's current CPU quota usage and scheduling class — an agent in the Idle class with exhausted quota is a better OOM victim than an Interactive agent the user is actively using.
 
 ### 8.4 Thermal Throttling
 
@@ -1625,7 +1636,7 @@ pub struct CpuLoad {
 
 3. **Pull migration (CPU idle).** When a CPU's run queue empties and it is about to enter the idle loop, it first attempts to pull a thread from the busiest CPU. This keeps all CPUs busy when there is work available.
 
-```
+```text
 Load balancing example (4-core system):
 
 Before balance:
@@ -1765,7 +1776,7 @@ pub enum ThreadRole {
 
 If AIOS runs on big.LITTLE or DynamIQ SoCs in the future (e.g., Cortex-A76 + Cortex-A55), the scheduler will be aware of core asymmetry:
 
-```
+```text
 Big cores (A76):           LITTLE cores (A55):
   - RT threads               - Idle threads
   - Interactive threads       - Low-priority background agents
@@ -1813,7 +1824,7 @@ pub struct OperatingPoint {
 
 **Placement decision:** When a thread wakes up, the load balancer evaluates the energy cost of placing it on each candidate core:
 
-```
+```text
 Energy cost = (dynamic_power at required OPP) × (estimated runtime at that OPP)
             + (static_power × idle time lost on that core)
 ```
@@ -1828,17 +1839,15 @@ On the initial Pi 4/5 target (homogeneous cores), EAS reduces to: "place the thr
 
 ### 10.1 ARM Generic Timer
 
-The aarch64 Generic Timer provides per-CPU timer hardware with nanosecond precision. AIOS uses it for the scheduler tick and per-thread virtual timers:
+The aarch64 Generic Timer provides per-CPU timer hardware with nanosecond precision. AIOS uses the EL1 physical timer for the scheduler tick and per-thread timers:
 
-```
+```text
 Timer registers used:
 
-CNTFRQ_EL0          Counter frequency (typically 54 MHz on Pi 4)
-CNTVCT_EL0          Virtual counter value (monotonic, read-only)
-CNTV_CVAL_EL0       Virtual timer compare value (per-thread)
-CNTV_CTL_EL0        Virtual timer control (enable, mask, status)
-CNTP_CVAL_EL0       Physical timer compare value (kernel tick)
-CNTP_CTL_EL0        Physical timer control (kernel tick)
+CNTFRQ_EL0          Counter frequency (62.5 MHz on QEMU, 54 MHz on Pi 4)
+CNTPCT_EL0          Physical counter value (monotonic, read-only)
+CNTP_CVAL_EL0       Physical timer compare value (per-thread, saved in ThreadContext)
+CNTP_CTL_EL0        Physical timer control (enable, mask, status)
 ```
 
 **Kernel tick:** The EL1 physical timer fires every 1ms (1000 Hz). This is the scheduler tick — the point where the scheduler checks whether to preempt the current thread, update accounting, and run the load balancer. 1000 Hz balances two concerns:
@@ -1853,11 +1862,11 @@ At 1000 Hz, the worst-case scheduling latency from the timer alone is 1ms. Combi
 ```rust
 /// Configure the kernel tick timer on this CPU
 fn setup_tick_timer(hz: u32) {
-    let freq = read_cntfrq(); // e.g., 54_000_000
+    let freq = read_cntfrq(); // 62_500_000 on QEMU, 54_000_000 on Pi 4
     let interval = freq / hz as u64; // ticks per period
 
     // Program the physical timer
-    write_cntp_cval(read_cntvct() + interval);
+    write_cntp_cval(read_cntpct() + interval);
     write_cntp_ctl(TIMER_ENABLE);
 }
 
@@ -1872,7 +1881,7 @@ fn enter_tickless_idle(next_event: Timestamp) {
     let sleep_duration = delta.min(max_idle);
     let ticks = (sleep_duration.as_nanos() as u64 * freq) / 1_000_000_000;
 
-    write_cntp_cval(read_cntvct() + ticks);
+    write_cntp_cval(read_cntpct() + ticks);
     write_cntp_ctl(TIMER_ENABLE);
 
     // Execute WFI (Wait For Interrupt) — CPU halts until interrupt
@@ -1884,17 +1893,17 @@ fn enter_tickless_idle(next_event: Timestamp) {
 
 Each scheduling class has a default time slice. The time slice is the maximum continuous CPU time a thread receives before the scheduler considers preempting it:
 
-```
+```text
 Class          Default Slice    Notes
 ─────          ─────────────    ─────
 Real-Time      No fixed slice   Runs to completion or budget exhaustion.
                                 Budget = WCET declared at admission.
 
-Interactive    4ms              Short slices for low-latency UI response.
+Interactive    10ms             Short slices for low-latency UI response.
                                 Input boost: thread gets immediate re-run
                                 (no queue wait) after processing user input.
 
-Normal         10ms             Longer slice for throughput. Inference
+Normal         50ms             Longer slice for throughput. Inference
                                 threads effectively get longer runs via
                                 chunked yielding (8 tokens ≈ 40ms).
 
@@ -1909,7 +1918,7 @@ Idle           50ms             Long slices reduce context switch overhead
 
 AIOS uses a fully preemptive kernel. User-space threads can be preempted at any instruction boundary (via timer interrupt). Kernel-mode code can be preempted at most points, with specific critical sections protected. This preempts CPU time (not locks or other resources in the Coffman sense), keeping non-preemptible regions short and reducing starvation and priority inversion — see [deadlock-prevention.md §9](./deadlock-prevention.md) for the full analysis:
 
-```
+```text
 Preemption-disabled regions (kernel code only):
 
 1. Interrupt handler top half
@@ -1944,7 +1953,7 @@ On battery-powered devices, the scheduler works with the power management subsys
 
 The Cortex-A72/A76 supports multiple operating points (frequency/voltage pairs). The scheduler influences frequency selection:
 
-```
+```text
 Operating points (Pi 5, Cortex-A76):
 
 OPP         Frequency    Voltage    Relative Power
@@ -1958,7 +1967,7 @@ Turbo       2400 MHz     1.00V     12x
 
 **Strategy: Race-to-idle for latency-sensitive work, sustained-low for batch work.** The optimal DVFS strategy depends on the workload type:
 
-```
+```text
 Race-to-idle vs. sustained (including idle leakage power):
 
 Assume: WFI idle leakage = 0.3x (ARM cores still draw ~30% of
@@ -1990,6 +1999,7 @@ Approach D (deep idle state, if available):
 **Race-to-idle wins when:** (a) the work is latency-sensitive (user-facing), AND (b) deep idle states are available that reduce leakage below WFI levels. On ARM with power-collapse (cluster power-off), approach D achieves the best latency with competitive energy. **Sustained-low wins when:** the work is throughput-oriented (batch inference, indexing) and latency doesn't matter.
 
 AIOS applies each strategy based on scheduling class:
+
 - **RT and Interactive:** race-to-idle at max frequency (latency is paramount)
 - **Normal (inference):** on-demand frequency scaling (balance throughput and power)
 - **Idle (batch):** sustained-low frequency (energy matters, latency doesn't)
@@ -2042,10 +2052,10 @@ When a CPU has no runnable threads:
 
 When the Context Engine signals `LowBattery`:
 
-```
+```text
 Normal mode:                    Low battery mode:
-  Interactive slice: 4ms          Interactive slice: 2ms
-  Normal slice: 10ms              Normal slice: 5ms
+  Interactive slice: 10ms         Interactive slice: 5ms
+  Normal slice: 50ms              Normal slice: 25ms
   Idle slice: 50ms                Idle slice: 20ms
   Balance interval: 4ms           Balance interval: 8ms
   Background inference: active    Background inference: paused
@@ -2109,7 +2119,7 @@ pub struct SystemSchedStats {
 
 The scheduler maintains a histogram of scheduling latency (time from a thread becoming runnable to actually running) per class:
 
-```
+```text
 Scheduling latency histogram (Interactive class, typical):
 
   < 10μs  ████████████████████████████████████  72%
@@ -2333,7 +2343,7 @@ The async executor is 10-100x cheaper than a context switch because it never sav
 
 The async executor and the scheduler run on the same CPU cores but at different levels:
 
-```
+```text
 Per-CPU execution loop:
 
 loop {
@@ -2370,7 +2380,7 @@ Scheduler tasks always preempt async tasks. If a thread becomes runnable (e.g., 
 
 Scheduler development spans multiple phases, building from simple to sophisticated:
 
-```
+```text
 Phase 1 — Boot and First Pixels:
   ├── Minimal cooperative scheduler (single run queue, round-robin)
   ├── Timer interrupt handler (ARM Generic Timer, EL1)
@@ -2492,7 +2502,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Problem.** Priority inheritance in AIOS currently applies only to IPC calls (ipc.md §9.2): when a high-priority thread calls a low-priority service, the service inherits the caller's priority. But in-kernel locks have no such mechanism — if a high-priority thread attempts to acquire a lock held by a low-priority thread, it must spin or wait without any priority boost for the holder.
 
-**AI solution.** AIRS monitors lock contention data (requires future lock instrumentation in the tracepoint and metrics infrastructure; see observability.md §3–4) to identify cases where high-priority threads are frequently delayed by low-priority lock holders. When a persistent pattern is detected, AIRS recommends extending priority inheritance to specific sleepable kernel mutexes involved in that contention. For very short (<1 μs) spinlock critical sections, the design continues to rely on bounded hold times (§12) rather than inheritance. The kernel applies the inheritance: when a high-priority thread would block on a flagged sleepable lock, the current holder receives a temporary priority boost for the duration of the critical section.
+**AI solution.** AIRS monitors lock contention data (requires future lock instrumentation in the tracepoint and metrics infrastructure; see observability.md §3–4) to identify cases where high-priority threads are frequently delayed by low-priority lock holders. When a persistent pattern is detected, AIRS recommends extending priority inheritance to specific sleepable kernel mutexes involved in that contention. For very short (<1 μs) spinlock critical sections, the design continues to rely on bounded hold times (deadlock-prevention.md §12) rather than inheritance. The kernel applies the inheritance: when a high-priority thread would block on a flagged sleepable lock, the current holder receives a temporary priority boost for the duration of the critical section.
 
 **Safety and fallback.** The priority boost is bounded (same depth limit as IPC priority inheritance: `MAX_INHERITANCE_DEPTH = 8`). Lock ordering invariants (deadlock-prevention.md §3) are unaffected — priority inheritance changes *when* a thread runs, not *which* locks it acquires. AIRS selects which locks receive inheritance based on observed contention data; the kernel mechanism itself is deterministic once activated. If AIRS is unavailable, standard IPC priority inheritance remains the only inheritance mechanism.
 
@@ -2544,7 +2554,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Safety and fallback.** Jitter avoidance is advisory — it adjusts timing within the existing EDF framework (§5). The worst case for a wrong prediction is no improvement (not degradation). If AIRS is unavailable, standard EDF scheduling applies (§5).
 
-**Research.** ADIOS [R9] applies learning-based deadline adaptation to I/O scheduling, demonstrating that learned timing adjustments improve deadline adherence. ASA [R5] demonstrates real-time workload classification for scheduling policy selection.
+**Research.** ADIOS [R8] applies learning-based deadline adaptation to I/O scheduling, demonstrating that learned timing adjustments improve deadline adherence. ASA [R5] demonstrates real-time workload classification for scheduling policy selection.
 
 **Target.** Phase 19+ (after power management stabilizes and compositor deadlines are established).
 
@@ -2566,4 +2576,4 @@ The AI-driven scheduling mechanisms form a feedback triangle with the other AI-e
 | R5 | "ASA: Adaptive Scheduling Agent via Mixture-of-Schedulers" | arXiv 2025 | https://arxiv.org/abs/2511.11628 |
 | R6 | "KernelAGI: Composable OS Kernel with Embedded ML Subsystem" | arXiv 2025 | https://arxiv.org/abs/2508.00604 |
 | R7 | "AI for Operating Systems: Survey and Roadmap" | arXiv 2024 | https://arxiv.org/abs/2407.14567 |
-| R9 | "ADIOS: Adaptive Deadline I/O Scheduler" | GitHub | https://github.com/firelzrd/adios |
+| R8 | "ADIOS: Adaptive Deadline I/O Scheduler" | GitHub | https://github.com/firelzrd/adios |
