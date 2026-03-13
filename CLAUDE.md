@@ -207,6 +207,8 @@ kernel/src/cap/                Capability system: per-process tables, enforcemen
 kernel/src/task/               Thread/process data structures for scheduler and IPC
 kernel/src/service/            Service manager: registry, echo service, process lifecycle, audit ring
 kernel/src/syscall/            Syscall dispatch and handlers (IPC 0-9, Notify 10-12, Stats 13, Cap 14-17, Mem 18-22, Proc 23-25, Time 26-28, Audit 29, Debug 30)
+kernel/src/drivers/            Device drivers (virtio_blk)
+kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable (Phase 4+)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs, bench.rs)
 shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
@@ -341,7 +343,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M12):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS
+Lock ordering (full M13):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
@@ -352,7 +354,23 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      242 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, syscall)
+Shared crate unit tests:      275 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
+VirtIO MMIO magic:            0x74726976 ("virt")
+VirtIO-blk device ID:         2
+VirtIO-blk transport:         MMIO legacy (spec §4.2), polled I/O (no IRQ), single virtqueue
+Data disk image:              data.img (256 MiB raw), created by `just create-data-disk`
+QEMU data disk flag:          -drive file=data.img,if=none,format=raw,id=disk0 -device virtio-blk-device,drive=disk0
+Superblock magic:             0x41494F53_50414345 ("AIOSPACE")
+Superblock location:          sectors 0–7 (4 KiB)
+WAL location:                 sectors 8–131079 (64 MiB)
+WAL entry size:               64 bytes (repr(C)), 8 entries per 512-byte sector
+Data region start:            sector 131080
+MemTable capacity:            65536 entries, sorted Vec with binary search, dedup via refcount
+ContentHash algorithm:        SHA-256 (sha2 crate, no_std)
+Block integrity:              CRC-32C on data, verified on read
+On-disk data format:          [crc32c:u32 | data_len:u32 | data | padding to sector boundary]
+Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
 ---
@@ -398,7 +416,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 3 M12 — Shared Memory, Service Manager & Gate 1):
+Current (post-Phase 4 M13 — VirtIO-blk Driver & Block Engine):
 
 ```
 aios/
@@ -420,7 +438,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin; features: kernel-metrics (default), kernel-tracing
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2; features: kernel-metrics (default), kernel-tracing
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
@@ -453,6 +471,14 @@ aios/
 │       │   ├── mod.rs    Thread, ThreadId, ThreadContext (296B), FpContext (528B), SchedEntity, ThreadState, SchedulerClass, CpuSet, THREAD_TABLE
 │       │   └── process.rs ProcessControl, ProcessId, KernelResourceLimits (trust-level defaults), PROCESS_TABLE
 │       ├── bench.rs      Gate 1 benchmarks: IPC round-trip, context switch, direct switch, cap overhead, shmem throughput
+│       ├── drivers/
+│       │   ├── mod.rs    Driver module re-exports
+│       │   └── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
+│       ├── storage/
+│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init entry point
+│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C integrity, SHA-256 content hash
+│       │   ├── wal.rs    Write-ahead log: 64-byte WalEntry (repr(C)), circular buffer, append/replay/trim
+│       │   └── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
 │       ├── syscall/
 │       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-9), Notify(10-12), Stats(13), Cap(14-17), Mem(18-22), Proc(23-25), Time(26-28), Audit(29), Debug(30)
 │       ├── platform/
@@ -502,6 +528,7 @@ aios/
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
+│       ├── storage.rs    Hash, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, VirtIO constants
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```
