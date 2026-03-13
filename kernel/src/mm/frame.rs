@@ -198,7 +198,6 @@ pub fn alloc_dma_page() -> Option<usize> {
 }
 
 /// Allocate `2^order` contiguous pages from the DMA pool.
-#[allow(dead_code)]
 pub fn alloc_dma_pages(order: usize) -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;

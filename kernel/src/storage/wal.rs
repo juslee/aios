@@ -38,7 +38,6 @@ pub struct WalEntry {
 
 const _: () = assert!(core::mem::size_of::<WalEntry>() == WAL_ENTRY_SIZE);
 
-#[allow(dead_code)]
 impl WalEntry {
     /// Compute CRC-32C over the first 56 bytes (everything except checksum + pad2).
     fn compute_checksum(&self) -> u32 {

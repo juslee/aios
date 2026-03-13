@@ -528,7 +528,7 @@ aios/
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
-│       ├── storage.rs    Hash, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, VirtIO constants
+│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, VirtIO constants
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```

@@ -464,15 +464,17 @@ pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
 
     if effective_size > PAGE_SIZE {
         // Large allocation: return pages to frame allocator (or legacy buddy).
+        // Convert virtual address back to physical — free_pages expects physical.
+        let phys_addr = super::buddy::virt_to_phys(ptr as usize);
         let pages = effective_size.div_ceil(PAGE_SIZE);
         let page_order = pages.next_power_of_two().trailing_zeros() as usize;
         // SAFETY: ptr was returned by alloc_pages with the same order.
         let mut guard = super::frame::FRAME_ALLOC.lock();
         if let Some(fa) = guard.as_mut() {
-            fa.free_pages(ptr as usize, page_order);
+            fa.free_pages(phys_addr, page_order);
         } else {
             let mut buddy = super::buddy::BUDDY.lock();
-            buddy.free_pages(ptr as usize, page_order);
+            buddy.free_pages(phys_addr, page_order);
         }
         return;
     }

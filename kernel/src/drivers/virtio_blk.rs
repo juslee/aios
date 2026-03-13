@@ -49,11 +49,20 @@ struct VirtioBlk {
 // MMIO helpers (same pattern as uart.rs)
 // ---------------------------------------------------------------------------
 
+/// Read a 32-bit MMIO register.
+///
+/// # Safety
+/// `addr` must be a valid MMIO register address mapped as device memory
+/// (e.g., via the TTBR1 MMIO map at `MMIO_BASE + phys`).
 #[inline(always)]
 unsafe fn mmio_read32(addr: usize) -> u32 {
     core::ptr::read_volatile(addr as *const u32)
 }
 
+/// Write a 32-bit MMIO register.
+///
+/// # Safety
+/// `addr` must be a valid MMIO register address mapped as device memory.
 #[inline(always)]
 unsafe fn mmio_write32(addr: usize, val: u32) {
     core::ptr::write_volatile(addr as *mut u32, val);

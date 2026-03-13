@@ -49,6 +49,17 @@ pub fn crc32c(data: &[u8]) -> u32 {
     !crc
 }
 
+/// Extend a previously computed CRC-32C with additional data.
+/// `prev_crc` is the finalized CRC from a prior `crc32c()` or `crc32c_extend()` call.
+fn crc32c_extend(prev_crc: u32, data: &[u8]) -> u32 {
+    // Un-finalize (XOR invert), continue table-driven computation, re-finalize.
+    let mut crc = !prev_crc;
+    for &byte in data {
+        crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    !crc
+}
+
 // ---------------------------------------------------------------------------
 // Superblock (4096 bytes, on-disk at sectors 0-7)
 // ---------------------------------------------------------------------------
@@ -83,9 +94,10 @@ const _: () = assert!(core::mem::size_of::<Superblock>() == BLOCK_SIZE);
 impl Superblock {
     /// Compute CRC-32C over the superblock fields (everything before checksum).
     fn compute_checksum(&self) -> u32 {
-        // Checksum covers bytes 0..84 (magic through lsm_l0_offset).
+        // Checksum covers bytes 0..88 (magic through lsm_l0_offset).
         let offset_of_checksum = 8 + 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8; // 88 bytes
-                                                                                // SAFETY: Superblock is repr(C). We read the first 88 bytes.
+                                                                                // SAFETY: Superblock is repr(C). We read the first 88 bytes as a contiguous
+                                                                                // byte slice for CRC-32C computation. No pointers or padding issues.
         let bytes = unsafe {
             core::slice::from_raw_parts(self as *const Self as *const u8, offset_of_checksum)
         };
@@ -366,6 +378,48 @@ impl BlockEngine {
         Ok(data_len)
     }
 
+    /// Verify a block's CRC without requiring a full-size output buffer.
+    /// Reads all sectors, accumulates data, and checks CRC-32C.
+    /// Returns Ok(()) if CRC matches, Err otherwise.
+    fn verify_block_crc(&self, loc: &BlockLocation) -> Result<(), StorageError> {
+        let start_sector = loc.offset / SECTOR_SIZE as u64;
+        let data_len = loc.size as usize;
+
+        let mut sector_buf = [0u8; SECTOR_SIZE];
+        virtio_blk::read_sector(start_sector, &mut sector_buf)?;
+
+        let stored_crc =
+            u32::from_le_bytes([sector_buf[0], sector_buf[1], sector_buf[2], sector_buf[3]]);
+        let stored_len =
+            u32::from_le_bytes([sector_buf[4], sector_buf[5], sector_buf[6], sector_buf[7]])
+                as usize;
+
+        if stored_len != data_len {
+            return Err(StorageError::ChecksumFailed);
+        }
+
+        // Compute CRC incrementally across all sectors.
+        let header_size = 8;
+        let first_chunk = data_len.min(SECTOR_SIZE - header_size);
+        let mut crc = crc32c(&sector_buf[8..8 + first_chunk]);
+
+        let mut remaining = data_len - first_chunk;
+        let mut sector_idx = 1u64;
+        while remaining > 0 {
+            virtio_blk::read_sector(start_sector + sector_idx, &mut sector_buf)?;
+            let chunk = remaining.min(SECTOR_SIZE);
+            // Extend CRC with this chunk's data.
+            crc = crc32c_extend(crc, &sector_buf[..chunk]);
+            remaining -= chunk;
+            sector_idx += 1;
+        }
+
+        if crc != stored_crc {
+            return Err(StorageError::ChecksumFailed);
+        }
+        Ok(())
+    }
+
     /// Read a data block by content hash (MemTable lookup → disk read).
     pub fn read_block_by_hash(
         &self,
@@ -411,51 +465,19 @@ impl BlockEngine {
                 let _ = self.memtable.insert(content_hash, location);
                 replayed += 1;
             } else {
-                // Uncommitted: check if data block was actually written.
-                let start_sector = entry.data_offset / SECTOR_SIZE as u64;
-                let mut sector_buf = [0u8; SECTOR_SIZE];
-                if virtio_blk::read_sector(start_sector, &mut sector_buf).is_ok() {
-                    let stored_crc = u32::from_le_bytes([
-                        sector_buf[0],
-                        sector_buf[1],
-                        sector_buf[2],
-                        sector_buf[3],
-                    ]);
-                    let stored_len = u32::from_le_bytes([
-                        sector_buf[4],
-                        sector_buf[5],
-                        sector_buf[6],
-                        sector_buf[7],
-                    ]) as usize;
-
-                    // Validate: stored_len matches WAL entry, CRC matches data.
-                    if stored_len == entry.data_size as usize && stored_len > 0 {
-                        let header_size = 8;
-                        let first_chunk = stored_len.min(SECTOR_SIZE - header_size);
-                        let data_crc = if stored_len <= first_chunk {
-                            crc32c(&sector_buf[8..8 + stored_len])
-                        } else {
-                            // Multi-sector: read full data to verify CRC.
-                            // For simplicity, trust single-sector CRC check on first chunk.
-                            // Full verification happens on read_block.
-                            crc32c(&sector_buf[8..8 + first_chunk])
-                        };
-
-                        // For single-sector blocks, full CRC check is exact.
-                        // For multi-sector, we do a partial check — full verify on read.
-                        if stored_len <= first_chunk && data_crc == stored_crc {
-                            // Salvage: data is on disk, insert into MemTable.
-                            let _ = self.memtable.insert(content_hash, location);
-                            // Mark committed in WAL (best-effort).
-                            let _ = self.wal.commit(entry.sequence_number);
-                            replayed += 1;
-                            crate::kinfo!(
-                                Storage,
-                                "WAL recovery: salvaged uncommitted entry seq={}",
-                                entry.sequence_number
-                            );
-                        }
-                    }
+                // Uncommitted: check if data block was actually written by
+                // verifying CRC across all sectors (works for any block size).
+                if entry.data_size > 0 && self.verify_block_crc(&location).is_ok() {
+                    // Salvage: data is on disk, insert into MemTable.
+                    let _ = self.memtable.insert(content_hash, location);
+                    // Mark committed in WAL (best-effort).
+                    let _ = self.wal.commit(entry.sequence_number);
+                    replayed += 1;
+                    crate::kinfo!(
+                        Storage,
+                        "WAL recovery: salvaged uncommitted entry seq={}",
+                        entry.sequence_number
+                    );
                 }
             }
 

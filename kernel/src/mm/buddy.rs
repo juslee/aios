@@ -52,6 +52,16 @@ pub fn phys_to_virt(phys: usize) -> usize {
     }
 }
 
+/// Convert a virtual address (direct-map region) back to physical.
+/// Identity when direct map is not yet active.
+pub fn virt_to_phys(virt: usize) -> usize {
+    if DIRECT_MAP_ACTIVE.load(Ordering::Relaxed) {
+        virt - crate::arch::aarch64::mmu::DIRECT_MAP_BASE
+    } else {
+        virt
+    }
+}
+
 /// Buddy allocator for physical page frames.
 ///
 /// Each instance manages a contiguous physical range `[base, end)`.
