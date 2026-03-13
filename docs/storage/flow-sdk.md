@@ -92,6 +92,22 @@ pub trait TransformHandler: Send + Sync {
     async fn transform(&self, input: ContentPayload) -> Result<ContentPayload, FlowError>;
 }
 
+/// Trait implemented by agents that handle action-type content
+/// (see SemanticType::Action in flow-data-model.md §3.4).
+/// Registered via FlowClient::register_action().
+/// The handler receives the action parameters and returns a result
+/// indicating whether the action was handled successfully.
+#[async_trait]
+pub trait ActionHandler: Send + Sync {
+    /// Handle an incoming action. The params map contains the action's
+    /// key-value parameters from SemanticType::Action { params }.
+    async fn handle_action(
+        &self,
+        action_id: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<(), FlowError>;
+}
+
 pub struct FlowOptions {
     /// Transfer intent
     pub intent: TransferIntent,

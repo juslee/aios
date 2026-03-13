@@ -420,6 +420,8 @@ pub struct ProgressiveTransfer {
     delivered_segments: u64,
     /// Whether the receiver is actively consuming (triggers priority promotion)
     receiver_active: bool,
+    /// Delivery mode: eager (push as available) or on-demand (pull next)
+    delivery: SegmentDelivery,
 }
 
 pub enum SegmentDelivery {

@@ -116,6 +116,9 @@ pub enum FlowError {
     InvalidOptions(String),
     /// Underlying I/O or IPC error.
     IoError(String),
+    /// Content sanitization failed and reject_unsanitizable is true
+    /// (see §15.6 in flow-extensions.md). The content was not staged.
+    SanitizationFailed(String),
 }
 
 /// Links a Flow transfer to the provenance chain in the Version Store
@@ -412,7 +415,7 @@ pub enum SemanticType {
     /// Pasting dispatches to a registered action handler rather than
     /// inserting content. Requires FlowActionHandle capability + user
     /// confirmation. Falls back to fallback_content if no handler.
-    Action { action_id: String },
+    Action { action_id: String, params: HashMap<String, String> },
 }
 
 pub struct ContentMetadata {
@@ -457,7 +460,7 @@ impl SemanticType {
 
 /// ContentMetadata, FlowFilter, and FlowQuery derive Default.
 /// ContentMetadata::default() sets content_hash to a zeroed Hash,
-/// all Option fields to None, and thumbnail to None.
+/// all Option fields to None, thumbnail to None, and sanitized to false.
 /// FlowFilter::default() and FlowQuery::default() set all filter
 /// fields to None / 0, matching all entries with no pagination offset.
 ```
