@@ -81,8 +81,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
 | Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 13+) |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
-| Security model | `docs/security/security.md` | All (all phases) |
-| Composable capability profiles | `docs/security/security.md` | §3.7 (Phase 28) |
+| Security model (hub) | `docs/security/security.md` | §1 Threat model, §12 Impl order, Document Map |
+| Security defense layers | `docs/security/security-layers.md` | §2 Eight security layers deep dive |
+| Capability system internals | `docs/security/security-capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
+| Composable capability profiles | `docs/security/security-capabilities.md` | §3.7 (Phase 28) |
+| Crypto, ARM HW security, testing | `docs/security/security-hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
+| Security operations & zero trust | `docs/security/security-operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
 | AIRS capability intelligence | `docs/intelligence/airs.md` | §5.9 (Phase 29) |
 | Fuzzing & input hardening | `docs/security/fuzzing-and-hardening.md` | All (all phases) |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
