@@ -268,6 +268,10 @@ These topics are documented in the architecture docs. Study them when you work o
 
 - **ASID management and TLB invalidation**: 16-bit ASIDs, generation tracking with full flush on wrap, per-page vs. per-ASID vs. global invalidation. See `mm/asid.rs` and `mm/tlb.rs`.
 
+- **VirtIO MMIO transport**: Legacy (v1) register layout, virtqueue descriptor chains, DMA page allocation, polled completion. See `drivers/virtio_blk.rs` and [spaces-block-engine.md §4.1](../storage/spaces-block-engine.md).
+
+- **Block Engine internals**: Content-addressed storage with CRC-32C integrity, SHA-256 hashing, write-ahead log, LSM-tree MemTable. See `storage/block_engine.rs`, `storage/wal.rs`, `storage/lsm.rs` and [spaces-block-engine.md](../storage/spaces-block-engine.md).
+
 ### Rust Concepts NOT Used in AIOS
 
 Understanding what AIOS does *not* use helps set expectations:
@@ -778,6 +782,222 @@ macro_rules! println {
 
 These mirror the standard library's `print!`/`println!` interface but route output through the PL011 UART driver. Available from anywhere in the kernel crate via `crate::println!()`.
 
+### 2.9 Unsafe Pattern: VirtIO MMIO Device Probe
+
+The VirtIO-blk driver (`drivers/virtio_blk.rs`) demonstrates a two-stage device discovery pattern used for MMIO-attached VirtIO devices on QEMU virt:
+
+**Stage 1 -- DTB-first probe** (preferred):
+
+```rust
+fn probe(dt: &DeviceTree) -> Option<usize> {
+    // Check DTB-provided VirtIO MMIO base addresses first.
+    for i in 0..dt.virtio_mmio_count {
+        let phys = dt.virtio_mmio_bases[i] as usize;
+        if probe_slot(phys) {
+            return Some(phys);
+        }
+    }
+    // Stage 2: brute-force scan if DTB is incomplete.
+    for slot in 0..VIRTIO_MMIO_SLOT_COUNT {
+        let phys = VIRTIO_MMIO_REGION_BASE as usize + slot * VIRTIO_MMIO_REGION_STRIDE as usize;
+        if probe_slot(phys) {
+            return Some(phys);
+        }
+    }
+    None
+}
+```
+
+**Stage 2 -- Slot validation** (three-check chain):
+
+```rust
+fn probe_slot(phys: usize) -> bool {
+    let virt = MMIO_BASE + phys;
+    // SAFETY: MMIO read from the VirtIO MMIO region, mapped as device memory.
+    let magic = unsafe { mmio_read32(virt + VIRTIO_MMIO_MAGIC_VALUE) };
+    if magic != VIRTIO_MMIO_MAGIC {          // 0x74726976 ("virt" in LE)
+        return false;
+    }
+    let version = unsafe { mmio_read32(virt + VIRTIO_MMIO_VERSION) };
+    if version != 1 { return false; }        // Legacy MMIO only
+    let device_id = unsafe { mmio_read32(virt + VIRTIO_MMIO_DEVICE_ID) };
+    device_id == VIRTIO_DEVICE_ID_BLK        // 2 = block device
+}
+```
+
+**Key design decisions:**
+
+- **DTB-first, brute-force fallback**: DTB is authoritative but may be incomplete on some platforms. The brute-force scan covers all `VIRTIO_MMIO_SLOT_COUNT` (32) MMIO slots at 512-byte stride starting at `0x0A00_0000`.
+- **MMIO via TTBR1 mapping**: All device registers are accessed through the kernel's MMIO virtual mapping (`MMIO_BASE + phys`), not via the identity map.
+- **VirtIO spec compliance**: The three-check chain (magic → version → device ID) follows VirtIO spec §3.1 initialization sequence exactly.
+
+**VirtIO initialization sequence** (after probe succeeds):
+
+```text
+1. Reset device          (write 0 to Status register)
+2. Set ACKNOWLEDGE        (Status |= 1)
+3. Set DRIVER             (Status |= 2)
+4. Negotiate features     (read DEVICE_FEATURES, write DRIVER_FEATURES)
+5. Set GUEST_PAGE_SIZE    (legacy v1 requirement: write 4096)
+6. Configure virtqueue    (set QUEUE_SEL, read QUEUE_NUM_MAX, set QUEUE_NUM, QUEUE_ALIGN)
+7. Allocate DMA pages     (buddy allocator, DMA pool)
+8. Set QUEUE_PFN          (physical page frame number of descriptor table)
+9. Set DRIVER_OK          (Status |= 4)
+```
+
+**DMA allocation pattern** (from `init_device`):
+
+```rust
+// Compute virtqueue memory layout using const helper functions.
+let total = virtqueue_size(queue_size as usize);
+let total_pages = total.div_ceil(4096);
+let order = order_for_pages(total_pages);  // local helper: smallest order where 2^order >= pages
+
+// Allocate from the DMA pool (ensures cache-coherent physical memory).
+let vq_phys = crate::mm::frame::alloc_dma_pages(order)?;
+let vq_virt = DIRECT_MAP_BASE + vq_phys;
+```
+
+### 2.10 Pattern: Content-Addressed Block I/O
+
+The Block Engine (`storage/block_engine.rs`) implements a content-addressed storage layer with crash-safe writes:
+
+**CRC-32C integrity verification** (inline, table-driven):
+
+```rust
+/// CRC-32C lookup table using Castagnoli polynomial 0x1EDC6F41.
+const CRC32C_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let poly: u32 = 0x82F6_3B78; // bit-reversed 0x1EDC6F41
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
+            if crc & 1 != 0 { crc = (crc >> 1) ^ poly; } else { crc >>= 1; }
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+pub fn crc32c(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in data {
+        crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    !crc
+}
+```
+
+This pattern uses a **const-evaluated lookup table** -- the 256-entry table is computed entirely at compile time. The `const` block with `while` loops (not `for` -- `for` is not allowed in `const` contexts) generates the same table that would be produced by a runtime initializer, with zero startup cost.
+
+**SHA-256 content hashing** (via `sha2` crate, `no_std`):
+
+```rust
+use sha2::{Digest, Sha256};
+
+fn compute_hash(data: &[u8]) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    ContentHash(result.into())
+}
+```
+
+**WAL append-then-commit pattern** (crash-safe write path):
+
+```text
+1. Compute SHA-256 hash of data
+2. Check MemTable for existing hash → deduplicate if found (bump refcount)
+3. CRC-32C the data, compute sectors needed
+4. WAL append (uncommitted entry) → returns (sequence, index) for O(1) commit
+5. Write data blocks to disk (header + data + padding per sector)
+6. WAL commit at stored index → toggles committed=1, recomputes entry CRC
+7. MemTable insert (new entry with refcount=1)
+```
+
+If the kernel crashes between steps 4 and 6, recovery replays only committed WAL entries. Uncommitted entries with valid data CRC-32C are salvaged; those with invalid CRC are discarded.
+
+**On-disk data layout per block:**
+
+```text
+First sector:   [crc32c:u32 | data_len:u32 | data[..min(504, len)] | padding]
+Remaining:      [data[rest...] | padding to sector boundary]
+```
+
+### 2.11 Pattern: Defensive Indexing
+
+A lesson from the Redox OS project: in kernel code, always prefer fallible access over panicking indexing.
+
+**Do:**
+
+```rust
+// Defensive: returns None on out-of-bounds, caller handles gracefully
+if let Some(entry) = table.get(index) {
+    process(entry);
+}
+```
+
+**Don't:**
+
+```rust
+// Panicking: kernel crash on out-of-bounds (unacceptable in a kernel)
+let entry = table[index];  // panics if index >= table.len()
+```
+
+AIOS uses direct indexing (`foo[n]`) only when the index is provably in-bounds (e.g., `core_id & 0x3` for a 4-element array, or iterating with `enumerate()`). For indices from external input (syscall arguments, device registers), always use `.get()` or explicit bounds checking.
+
+### 2.12 Unsafe Pattern: Read-Unaligned Struct Recovery
+
+The WAL (`storage/wal.rs`) reads on-disk structures from sector buffers where alignment is not guaranteed:
+
+```rust
+fn read_entry(&self, logical_index: u64) -> Result<WalEntry, StorageError> {
+    let sector_index = logical_index / WAL_ENTRIES_PER_SECTOR as u64;
+    let entry_offset = (logical_index % WAL_ENTRIES_PER_SECTOR as u64) as usize;
+    let byte_offset = entry_offset * WAL_ENTRY_SIZE;
+
+    let mut sector_buf = [0u8; SECTOR_SIZE];
+    virtio_blk::read_sector(absolute_sector, &mut sector_buf)?;
+
+    // SAFETY: WalEntry is repr(C) and 64 bytes. The sector buffer is valid for reads.
+    // read_unaligned handles any alignment mismatch between the buffer and the struct.
+    let entry = unsafe {
+        core::ptr::read_unaligned(
+            sector_buf[byte_offset..].as_ptr() as *const WalEntry
+        )
+    };
+    Ok(entry)
+}
+```
+
+**Why `read_unaligned`?** Sector buffers are `[u8; 512]` with alignment 1. `WalEntry` may have alignment requirements > 1. Using `core::ptr::read` on a misaligned pointer is undefined behavior. `read_unaligned` performs a byte-by-byte copy that is always safe regardless of the source pointer's alignment.
+
+**The inverse -- writing structs to buffers:**
+
+```rust
+// SAFETY: WalEntry is repr(C), 64 bytes. Copies struct bytes into the sector buffer.
+unsafe {
+    core::ptr::copy_nonoverlapping(
+        &entry as *const WalEntry as *const u8,
+        sector_buf[byte_offset..].as_mut_ptr(),
+        WAL_ENTRY_SIZE,
+    );
+}
+```
+
+**When to use which:**
+
+| Operation | Function | When |
+|---|---|---|
+| Read struct from byte buffer | `ptr::read_unaligned` | On-disk structs, network packets, DMA buffers |
+| Write struct to byte buffer | `ptr::copy_nonoverlapping` | Serializing structs to sector buffers |
+| Read struct from aligned memory | `ptr::read` | Stack/heap structs with known alignment |
+| Read hardware register | `ptr::read_volatile` | MMIO registers (prevents optimizer elimination) |
+
 ---
 
 ## 3. Code Style and Organization
@@ -788,10 +1008,10 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 | Range | Interpretation | Examples |
 |---|---|---|
-| < 100 lines | Small, focused utility | `bump.rs` (44), `heap.rs` (68) |
-| 100--300 lines | Typical module | `uart.rs` (157), `timer.rs` (211), `cap/mod.rs` (236), `smp.rs` (218) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (436), `slab.rs` (409), `service/mod.rs` (403) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (657), `syscall/mod.rs` (668), `shmem.rs` (642), `bench.rs` (545) |
+| < 100 lines | Small, focused utility | `bump.rs` (44), `heap.rs` (68), `boot_phase.rs` (68) |
+| 100--300 lines | Typical module | `uart.rs` (157), `timer.rs` (211), `cap/mod.rs` (236), `smp.rs` (218), `wal.rs` (248) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (436), `slab.rs` (493), `service/mod.rs` (403), `sched/scheduler.rs` (432), `virtio_blk.rs` (489) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (680), `syscall/mod.rs` (668), `shmem.rs` (642), `block_engine.rs` (614), `bench.rs` (549) |
 | > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
 
 **Guidelines:**
@@ -881,6 +1101,28 @@ macro_rules! trace_point {
 ```
 
 When `kernel-tracing` is disabled (the default), `trace_point!()` compiles to nothing -- zero runtime cost, zero binary size impact. Metrics (`kernel-metrics`) are enabled by default because they have low overhead and are needed for scheduler tuning.
+
+**Pattern 4: Driver module** -- for device drivers
+
+```text
+kernel/src/drivers/
+  mod.rs          (3)    # pub mod declarations only
+  virtio_blk.rs   (489)  # Full VirtIO-blk MMIO driver
+```
+
+Driver modules follow a flat structure: `mod.rs` contains only `pub mod` re-exports, and each driver is a standalone file. The driver file owns a global `Mutex<Option<Device>>` static and exposes a public API (`init()`, `read_sector()`, `write_sector()`). No trait abstraction yet -- that comes when a second driver is added.
+
+**Pattern 5: Storage subsystem** -- layered with clear dependency direction
+
+```text
+kernel/src/storage/
+  mod.rs            (204)  # init(), run_self_tests(), re-exports
+  block_engine.rs   (614)  # BlockEngine, Superblock, CRC-32C, SHA-256
+  wal.rs            (248)  # WalEntry, circular buffer, append/commit
+  lsm.rs            (114)  # MemTable, sorted Vec with binary search
+```
+
+Dependency direction is strictly downward: `mod.rs` → `block_engine.rs` → `wal.rs` + `lsm.rs`. The block engine calls into the VirtIO driver (`crate::drivers::virtio_blk`) for disk I/O. Shared types (`ContentHash`, `BlockLocation`, `StorageError`) live in `shared/src/storage.rs`.
 
 ### 3.3 Naming Conventions
 
@@ -1193,6 +1435,67 @@ bl some_function            // FAULT: misaligned stack
 
 **In practice:** Always push/pop registers in pairs using `stp`/`ldp`. If you need to save an odd number of registers, pair the last one with `xzr` (zero register) to maintain 16-byte alignment.
 
+### 4.8 DMA Memory Coherence
+
+**Symptom:** VirtIO operations succeed on QEMU but fail silently on real hardware (Raspberry Pi 4/5). Reads return stale data; writes appear to be lost.
+
+**Root cause:** QEMU's memory model is cache-coherent for DMA -- the virtual CPU and virtual devices share the same memory view. Real ARM hardware requires explicit cache maintenance for DMA buffers, or the buffers must be allocated from non-cacheable DMA memory.
+
+**Do:**
+
+```rust
+// Allocate from the DMA pool (guaranteed cache-coherent on all platforms)
+let frame = crate::mm::frame::alloc_dma_pages(order)?;
+
+// Use DSB SY before device notification (ensures writes are visible to device)
+core::arch::asm!("dsb sy");
+unsafe { mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, 0); }
+```
+
+**Don't:**
+
+```rust
+// WRONG on real hardware: kernel pool memory may be WB-cacheable
+let frame = crate::mm::frame::alloc_pages(Pool::Kernel, order)?;
+// Device sees stale cache lines, not the CPU's latest writes
+```
+
+**AIOS strategy:** The DMA pool (64 MB on QEMU 2G) is reserved for all device-facing buffers. The VirtIO driver allocates virtqueue descriptors and request buffers exclusively from DMA pages via `alloc_dma_pages()`. On QEMU this is functionally identical to kernel pool allocation, but the separation ensures correctness when porting to real hardware.
+
+**Cross-reference:** Linux kernel DMA API documentation emphasizes that "coherent DMA memory does not preclude the usage of proper memory barriers" -- even with DMA-coherent memory, CPU store reordering requires `dsb sy` (equivalent to Linux's `dma_wmb()`) before the device reads the data.
+
+### 4.9 VirtIO Ring Barrier Ordering
+
+**Symptom:** VirtIO device intermittently misses requests, returns stale descriptors, or reports I/O errors. Works most of the time but fails under load.
+
+**Root cause:** The CPU may reorder stores to the virtqueue available ring and the device doorbell (QUEUE_NOTIFY) register. If the device reads the available ring before the CPU's descriptor writes are visible, it processes stale or incomplete descriptors.
+
+**Do:**
+
+```rust
+// Update available ring index
+unsafe {
+    let avail_idx_ptr = (avail_virt + 2) as *mut u16;
+    core::ptr::write_volatile(avail_idx_ptr, new_idx);
+}
+
+// Memory barrier BEFORE doorbell notification (VirtIO spec §2.7.13.1)
+core::arch::asm!("dsb sy");
+
+// Notify device (doorbell write)
+unsafe { mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, 0); }
+```
+
+**Don't:**
+
+```rust
+// WRONG: no barrier between ring update and doorbell
+core::ptr::write_volatile(avail_idx_ptr, new_idx);
+mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, 0);  // Device may see old ring index
+```
+
+The VirtIO specification (§2.7.13.1) requires: "The driver MUST perform a suitable memory barrier before the idx update, to ensure the device sees the most up-to-date copy."
+
 ---
 
 ## 5. Build, Test, and Verification Workflow
@@ -1207,6 +1510,7 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just build-release` | Release kernel build (`cargo build --release`) |
 | `just build-stub` | Compile the UEFI stub (`cargo build -p uefi-stub --target aarch64-unknown-uefi`) |
 | `just disk` | Create the 64 MiB FAT32 ESP disk image with UEFI stub + kernel ELF |
+| `just create-data-disk` | Create 256 MiB raw data disk image for VirtIO-blk storage (if not exists) |
 | `just run` | Build everything and launch QEMU with edk2 UEFI firmware |
 | `just run-display` | Same as `run` but with a graphical window (for framebuffer testing) |
 | `just run-direct` | Phase 0 mode: direct `-kernel` boot, no UEFI (quick debugging) |
@@ -1221,6 +1525,8 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just miri` | Run Miri on the shared crate (detects undefined behavior in unsafe code) |
 | `just security-check` | `audit` + `deny` + `miri` |
 | `just clean` | Remove build artifacts and disk image |
+
+**Note:** `just run`, `just run-display`, and `just debug` depend on `create-data-disk` and include VirtIO data disk QEMU flags (`-drive file=data.img,if=none,format=raw,id=disk0 -device virtio-blk-device,drive=disk0`).
 
 **Daily workflow:**
 
@@ -1247,7 +1553,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 242+ host-side tests pass |
+| **Test** | `just test` | All 275+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1276,7 +1582,7 @@ After `just run`, QEMU boots with edk2 UEFI firmware and launches the kernel. Th
 
 **Matching acceptance criteria:** Phase docs specify exact UART strings to verify. Example acceptance criteria:
 
-```
+```text
 Acceptance: `just run` shows:
   AIOS kernel booting...
   BootInfo at 0x..., magic OK
@@ -1299,7 +1605,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
 ```
 
-Currently 242 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `syscall`.
+Currently 275 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1392,19 +1698,20 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std`, so tests cannot use `Vec`, `String`, or heap allocation. Use fixed-size arrays and stack-based data structures. The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (242 tests):**
+**Current test distribution (275 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
-| `cap` | 53 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `memory` | 40 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `ipc` | 38 | Channel IDs, message validation, select entries, service names, user VA checks |
-| `sched` | 34 | Thread state, scheduler class, CpuSet, resource limits, priority |
-| `collections` | 30 | FixedQueue, RingBuffer edge cases |
+| `cap` | 51 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
+| `ipc` | 48 | Channel IDs, message validation, select entries, service names, user VA checks |
+| `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
+| `storage` | 33 | Content types, block locations, VirtIO constants, struct sizes, WAL capacity |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 13 | Syscall numbering, IpcError codes |
-| `kaslr` | 7 | KASLR slide computation, alignment, bounds |
-| `observability` | 5 | Log level ordering, subsystem tags |
+| `collections` | 18 | FixedQueue, RingBuffer edge cases |
+| `observability` | 18 | Log level ordering, subsystem tags |
+| `sched` | 18 | Thread state, scheduler class, CpuSet, resource limits, priority |
+| `syscall` | 15 | Syscall numbering, IpcError codes |
+| `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
 ---
 
@@ -1423,7 +1730,7 @@ kdebug!(Sched, "Context switch: {} -> {}", from_tid, to_tid);
 
 **Output format:** `[timestamp] [core] LEVEL Subsystem message`
 
-```
+```text
 [   0.001234] [0] INFO  Boot  AIOS kernel booting...
 [   0.005678] [0] INFO  Mm    Buddy init: 508123 free pages across 4 pools
 [   0.010000] [2] INFO  Boot  Secondary core 2 online
@@ -1481,7 +1788,7 @@ cargo objdump --target aarch64-unknown-none -- -h
 
 Expected output (Phase 2+, with virtual linking):
 
-```
+```text
 Idx Name           Size     VMA              LMA              Type
   0 .text          ...      ffff000000080000 0000000040080000 TEXT
   1 .rodata        ...      ffff0000000xxxxx 00000000400xxxxx DATA
@@ -1539,11 +1846,24 @@ Idx Name           Size     VMA              LMA              Type
 4. Check capability enforcement -- does the calling thread's process have a `ChannelAccess` capability for this channel?
 5. Check lock ordering -- if both `PROCESS_TABLE` and `CHANNEL_TABLE` locks are needed, `PROCESS_TABLE` must be acquired first (see [deadlock-prevention.md](../kernel/deadlock-prevention.md)).
 
+**"VirtIO device not found" (storage init fails):**
+
+1. Does `data.img` exist? Run `just create-data-disk` to create the 256 MiB data disk.
+2. Check QEMU command line for the VirtIO data disk flags: `-drive if=none,id=data0,file=data.img,format=raw` and `-device virtio-blk-device,drive=data0`.
+3. Verify the VirtIO MMIO probe range: the driver scans `0x0A00_0000` to `0x0A00_3E00` at 512-byte stride. If the data disk is attached as `virtio-blk-pci` instead of `virtio-blk-device`, it will not appear in the MMIO scan range.
+4. Check the DTB for VirtIO MMIO slots: `dt.virtio_mmio_bases` should contain the device base address.
+
+**"Block Engine CRC mismatch on read":**
+
+1. The block was likely corrupted during a previous write. Check the WAL for the entry -- is it marked `committed=1`?
+2. If the entry is committed but data CRC fails, the disk image may be corrupted. Delete `data.img` and re-run to trigger a fresh format.
+3. On QEMU with `cache=none` or `cache=writeback`, I/O ordering guarantees differ. The default (`cache=none` on raw) should work correctly with the DSB SY barriers in the VirtIO driver.
+
 ### 6.5 Kernel Address Space Map
 
 Understanding the virtual address layout is essential for interpreting faulting addresses and page table entries:
 
-```
+```text
 Virtual Address Space (48-bit, T1SZ=16)
 ========================================
 
@@ -1619,6 +1939,7 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 | `spin::Mutex` on NC memory | Hang on first contended lock acquire | Replace with `load(Acquire)`/`store(Release)` protocol; see SS4.1 |
 | Infinite loop in exception handler | Core took exception but handler loops forever | Add UART putc calls at top of exception vector stubs |
 | PSCI CPU_ON with virtual entry address | Secondary core jumps to virtual address with MMU off | Convert `_secondary_entry` to physical before PSCI call (`smp.rs`) |
+| VirtIO polling timeout | Hang during storage init or block I/O | Device not responding; verify `data.img` exists and QEMU flags include `virtio-blk-device` |
 
 **Garbage UART output (random characters instead of text):**
 
@@ -1663,7 +1984,7 @@ This section describes the process for adding a new kernel subsystem, using the 
 
 Create a directory under `kernel/src/` for the subsystem:
 
-```
+```text
 kernel/src/mysubsys/
   mod.rs          # Public API, core data structures, module docs
 ```
@@ -1802,6 +2123,9 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **Observability** | [observability.md](../kernel/observability.md) | SS2-4 (logging, metrics, tracing) |
 | **Boot sequence** | [boot.md](../kernel/boot.md) | SS3.3 (step-by-step boot) |
 | **Boot lifecycle** | [boot-lifecycle.md](../kernel/boot-lifecycle.md) | All (18-phase boot progression) |
+| **Storage architecture** | [spaces.md](../storage/spaces.md) | SS1-2 (core insight, architecture) |
+| **Block Engine** | [spaces-block-engine.md](../storage/spaces-block-engine.md) | SS4.1-4.10 (on-disk layout, WAL, LSM) |
+| **Flow (unified clipboard)** | [flow.md](../storage/flow.md) | SS1-2 (overview, architecture) |
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
 | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
@@ -1821,6 +2145,7 @@ This guide is designed to grow alongside the kernel. The following areas are int
 | CI pipeline explanation | Phase 4+ | GitHub Actions workflow breakdown, what each job catches, how to read CI failures |
 | Integration test patterns | Phase 4+ (user-space) | How to write kernel integration tests, QEMU-based acceptance test harness |
 | `shared` crate test patterns | **Done (SS5.5)** | Extraction workflow, dependency injection, test helper patterns, no_std constraints, test distribution |
+| Storage debugging patterns | Phase 5+ | Block Engine diagnosis, WAL recovery analysis, CRC verification procedures |
 | Cross-compilation troubleshooting | Phase 7+ (multi-platform) | Common linker errors, target-specific build issues, conditional compilation patterns |
 
 ### Section 6: Debugging Techniques
@@ -1860,9 +2185,13 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 |---|---|
 | **ASID** | Address Space Identifier. 16-bit tag in TTBR0 that allows the TLB to cache translations for multiple address spaces simultaneously without flushing on every context switch. Managed by `mm/asid.rs`. |
 | **BootInfo** | Structure passed from the UEFI stub to the kernel at boot. Contains the memory map, DTB physical address, framebuffer info, RNG seed, and a magic value (`0x41494F53_424F4F54` = "AIOSBOOT"). Defined in `shared/src/boot.rs`. |
+| **Block Engine** | Content-addressed storage layer providing crash-safe writes via WAL + CRC-32C integrity + SHA-256 hashing. Manages superblock, data region, and MemTable index. Implemented in `storage/block_engine.rs`. |
 | **Buddy allocator** | Physical page allocator that manages free pages in power-of-two blocks (orders 0--10, covering 4 KiB to 4 MiB). Uses bitmap coalescing to merge adjacent free blocks. Implemented in `mm/buddy.rs`. |
+| **ContentHash** | SHA-256 hash of a data block, used as the primary identifier for content-addressed storage. Wrapper type `[u8; 32]` with custom `Ord` for sorted MemTable lookups. Defined in `shared/src/storage.rs`. |
+| **CRC-32C** | Castagnoli variant of CRC-32 using polynomial 0x1EDC6F41. Used for both superblock and data block integrity verification. Computed via a 256-entry const-initialized lookup table in `storage/block_engine.rs`. |
 | **Direct map** | A 1:1 virtual-to-physical mapping of all RAM at `DIRECT_MAP_BASE` (`0xFFFF_0001_0000_0000`). Allows the kernel to access any physical address via a fixed offset calculation. Built in `mm/kmap.rs`. |
 | **Direct switch** | IPC fast path that bypasses the scheduler. When thread A calls thread B and B is already waiting in `IpcRecv`, the kernel context-switches directly from A to B without touching the run queue. Approximately 0.2 microseconds. Implemented in `ipc/direct.rs`. |
+| **DMA pool** | Physical memory pool (64 MB on QEMU 2G) reserved for device-facing buffers. Required because DMA-capable devices need cache-coherent memory. VirtIO virtqueues and request buffers are allocated from this pool. |
 | **DSB** | Data Synchronization Barrier. ARM instruction that ensures all prior memory accesses are complete before subsequent instructions execute. Variants: `dsb sy` (full system), `dsb ish` (inner shareable), `dsb nsh` (non-shareable / local only). |
 | **EL** | Exception Level. ARM privilege levels: EL0 (user), EL1 (kernel), EL2 (hypervisor), EL3 (secure monitor). AIOS kernel runs at EL1. QEMU boots directly to EL1. |
 | **ESR** | Exception Syndrome Register (`ESR_EL1`). Contains the exception class (EC, bits [31:26]) and instruction-specific syndrome (ISS, bits [24:0]). Used by the trap handler to determine the cause of a synchronous exception. |
@@ -1870,16 +2199,21 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 | **GICv3** | Generic Interrupt Controller version 3. ARM's standard interrupt controller. Components: Distributor (SPI routing), Redistributor (per-core PPI/SGI), CPU Interface (acknowledge/complete). |
 | **ISB** | Instruction Synchronization Barrier. ARM instruction that flushes the processor pipeline, ensuring all subsequent instructions are fetched and decoded using the current system register state. |
 | **Magazine** | Per-CPU object cache in the slab allocator. Provides a two-chance fast path: check current magazine, then previous magazine, before falling back to the slab. 32 objects per magazine round. |
+| **MemTable** | In-memory sorted index mapping `ContentHash` → `BlockLocation` with refcount for deduplication. Uses `Vec::binary_search_by()` for O(log n) lookup. Capacity 65536 entries. Implemented in `storage/lsm.rs`. |
 | **MPIDR** | Multiprocessor Affinity Register (`MPIDR_EL1`). Each core has a unique value. AIOS uses bits [7:0] as the core ID (valid for up to 256 cores on QEMU virt). |
 | **NC memory** | Non-Cacheable Normal memory. Phase 1 identity map uses NC attributes (edk2 MAIR Attr1=0x44). Atomic RMW operations hang on NC memory because the exclusive monitor requires cacheability. See SS4.1. |
 | **Pool** | A partition of the physical memory managed by separate buddy allocator instances. AIOS defines four pools: `Kernel` (128 MB), `User` (remainder), `Model` (0 MB, reserved for future AI model memory), `DMA` (64 MB). |
 | **PSCI** | Power State Coordination Interface. ARM firmware standard for CPU power management. AIOS uses `CPU_ON` (function ID `0xC400_0003`) to bring secondary cores online. Invoked via HVC on QEMU, SMC on real hardware. |
 | **Slab allocator** | Kernel object allocator with 5 size classes (64, 128, 256, 512, 4096 bytes). Backed by the buddy allocator's kernel pool. Features magazine caching and red zone corruption detection. Implemented in `mm/slab.rs`. |
 | **SPSC** | Single-Producer Single-Consumer. Lock-free ring buffer pattern used for per-core logging. Only the owning core writes (producer); only the drain function reads (consumer). See SS2.3. |
+| **StorageError** | Enum covering all storage failure modes (11 variants): `BlockNotFound`, `ChecksumFailed`, `DecryptionFailed`, `IoError`, `QuotaExceeded`, `DeviceFull`, `WalFull`, `SuperblockCorrupt`, `DeviceNotFound`, `VirtioError`, `MemTableFull`. All variants are `Copy` (no `String` fields) for `no_std` compatibility. |
+| **Superblock** | On-disk metadata block (4096 bytes, sectors 0--7) containing storage layout parameters: WAL region location, data region start, append pointer, and CRC-32C checksum. Magic value `0x41494F53_50414345` ("AIOSPACE"). |
 | **TrapFrame** | 272-byte structure saved on exception entry from EL0. Contains all 31 general-purpose registers + SP_EL0 + ELR_EL1 + SPSR_EL1. `#[repr(C)]` layout matches assembly save/restore offsets in `exceptions.rs`. |
 | **ThreadContext** | 296-byte structure saved during voluntary context switch between kernel threads. Contains 31 GP regs + SP + PC + PSTATE + TTBR0 + timer state. Used by `save_context`/`restore_context` in `context_switch.S`. |
 | **TLBI** | TLB Invalidate instruction family. Variants include: `tlbi vmalle1` (local, all entries), `tlbi vmalle1is` (inner-shareable broadcast), `tlbi vae1is` (single virtual address, broadcast), `tlbi aside1is` (single ASID, broadcast). |
 | **Trust level** | Security classification for processes: 0=kernel, 1=system service, 2=privileged agent, 3=normal agent, 4=sandboxed. Determines default resource limits and the scope of capabilities that can be granted. |
 | **TTBR** | Translation Table Base Register. `TTBR0_EL1` holds the user-space page table root (bits [47:0] = physical address, bits [63:48] = ASID). `TTBR1_EL1` holds the kernel page table root. |
+| **VirtIO** | Virtual I/O specification for device emulation. AIOS uses VirtIO MMIO legacy (v1) transport with polled I/O for the block device driver. The driver probes MMIO slots at `0x0A00_0000` with 512-byte stride. |
 | **W^X** | Write XOR Execute policy. Every memory page is either writable or executable, never both. Enforced at the page table level via PXN (Privileged Execute-Never) and UXN (Unprivileged Execute-Never) bits. |
+| **WAL** | Write-Ahead Log. Circular buffer of 64-byte entries on disk (sectors 8--131079, 64 MiB) providing crash safety for the Block Engine. Entries are appended uncommitted, then committed after data is written. Recovery replays committed entries and salvages uncommitted entries with valid CRC. Implemented in `storage/wal.rs`. |
 | **WFE** | Wait For Event instruction. Puts the core in a low-power state until an event (from `sev` or an interrupt) occurs. Used for secondary core parking and the halt loop. Preferred over `wfi` because `sev` wakes all `wfe`-parked cores simultaneously. |
