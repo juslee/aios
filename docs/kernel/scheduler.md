@@ -501,8 +501,8 @@ pub struct Thread {
     pub sched: SchedEntity,
     /// Saved hardware context (on kernel stack when not running)
     pub context: ThreadContext,
-    /// FP/NEON context (lazily saved)
-    pub fp_context: FpContext,
+    /// FP/NEON context (lazily allocated and saved)
+    pub fp_context: Option<FpContext>,
     /// Priority inheritance depth counter (bounded by MAX_INHERITANCE_DEPTH=8)
     pub inheritance_depth: u8,
     /// Owning process (None for kernel threads)
@@ -1866,7 +1866,7 @@ fn setup_tick_timer(hz: u32) {
     let interval = freq / hz as u64; // ticks per period
 
     // Program the physical timer
-    write_cntp_cval(read_cntvct() + interval);
+    write_cntp_cval(read_cntpct() + interval);
     write_cntp_ctl(TIMER_ENABLE);
 }
 
@@ -1881,7 +1881,7 @@ fn enter_tickless_idle(next_event: Timestamp) {
     let sleep_duration = delta.min(max_idle);
     let ticks = (sleep_duration.as_nanos() as u64 * freq) / 1_000_000_000;
 
-    write_cntp_cval(read_cntvct() + ticks);
+    write_cntp_cval(read_cntpct() + ticks);
     write_cntp_ctl(TIMER_ENABLE);
 
     // Execute WFI (Wait For Interrupt) — CPU halts until interrupt
