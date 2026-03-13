@@ -69,8 +69,8 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **Tasks:**
 - [ ] Create `shared/src/storage.rs` with core types:
   - `Hash([u8; 32])` — SHA-256 content hash (newtype, not alias)
-  - `ObjectId([u8; 16])` — UUID v4 object identifier (newtype)
-  - `SpaceId([u8; 16])` — UUID v4 space identifier (newtype)
+  - `ObjectId([u8; 16])` — 128-bit unique object identifier (newtype; timer+pid entropy, not RFC 4122 UUID v4)
+  - `SpaceId([u8; 16])` — 128-bit unique space identifier (newtype; same generation scheme as ObjectId)
   - `Timestamp(pub u64)` — milliseconds since epoch
   - `BlockId` = `Hash` (content-addressed block identifier)
   - `ContentType` enum (Directory, Text, Code, Binary, etc.)
@@ -94,7 +94,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement VirtIO-blk device discovery via MMIO transport (QEMU virt machine), negotiate features, set up virtqueue, and perform a raw sector read/write.
 
 **Tasks:**
-- [ ] Implement VirtIO MMIO device probe: scan QEMU virt MMIO region (0x0A000000–0x0A003E00, 512-byte stride) for VirtIO block devices (device ID 2)
+- [ ] Implement VirtIO MMIO device probe: enumerate `virtio,mmio` nodes from DTB (per hal.md §6) to discover VirtIO block devices (device ID 2). Fallback: scan QEMU virt MMIO region (0x0A000000–0x0A003E00, 512-byte stride) if DTB enumeration is unavailable
 - [ ] Implement device initialization sequence per VirtIO spec §3.1: reset → acknowledge → driver → features → driver_ok
 - [ ] Negotiate feature bits: `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`, `VIRTIO_BLK_F_BLK_SIZE`
 - [ ] Set up a single virtqueue (queue 0): allocate descriptor table, available ring, used ring from kernel pool (page-aligned, DMA-safe)
@@ -141,7 +141,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement the LSM-tree's in-memory MemTable for the block index, the read path, and crash recovery via WAL replay. No on-disk SSTables yet — the MemTable is rebuilt from the WAL on boot.
 
 **Tasks:**
-- [ ] Implement `MemTable`: sorted map of `Hash → BlockLocation` using a fixed-size sorted array (no `BTreeMap` in `no_std`; use insertion sort on a bounded array, max 65536 entries)
+- [ ] Implement `MemTable`: sorted map of `Hash → BlockLocation` using a fixed-size sorted array (bounded memory, no dynamic allocation; use insertion sort on a bounded array, max 65536 entries). Note: `alloc::collections::BTreeMap` is available via the kernel's `extern crate alloc`, but a fixed-size array is preferred for predictable memory usage and no heap fragmentation
 - [ ] Implement `MemTable::insert(hash, location)`, `MemTable::get(hash) -> Option<BlockLocation>`, `MemTable::remove(hash)` (tombstone)
 - [ ] Implement Block Engine read path (per spaces.md §4.3):
   1. Look up content_hash in MemTable → get block location
@@ -156,7 +156,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 - [ ] Implement Block Engine `init()`: probe VirtIO-blk → read superblock (or format if uninitialized) → replay WAL → MemTable ready
 - [ ] Test: write 100 blocks, verify all readable, simulate crash (skip commit), verify WAL replay recovers consistent state
 
-**Note:** The MemTable-only approach is sufficient for Phase 4. On-disk SSTables and compaction are deferred to a later optimization step (Phase 14). The MemTable is bounded (65536 entries ≈ 256 MB of index for 4 KB blocks). For Phase 4 workloads on QEMU this is more than sufficient.
+**Note:** The MemTable-only approach is sufficient for Phase 4. On-disk SSTables and compaction are deferred to a later optimization step (Phase 14). The MemTable is bounded at 65536 entries, covering up to 256 MB of data when using 4 KB blocks (the index itself uses far less memory). For Phase 4 workloads on QEMU this is more than sufficient.
 
 **Key reference:** spaces.md §4.1 (LSM-tree), §4.3 Read Path, §4.4 Crash Recovery
 
@@ -183,7 +183,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   2. Store content via Block Engine (dedup check happens in Block Engine)
   3. Create CompactObject metadata
   4. Store metadata in object index MemTable
-  5. Return ObjectId (generated UUID v4 from CNTPCT_EL0 + pid entropy)
+  5. Return ObjectId (generated as a 128-bit unique ID from CNTPCT_EL0 + pid entropy — not RFC 4122 UUID v4; cryptographic uniqueness deferred to Phase 13)
 - [ ] Implement `object_read(id: ObjectId) -> Result<(CompactObject, Vec<u8>), StorageError>`:
   1. Look up ObjectId in object index → CompactObject
   2. Read content via Block Engine using content_hash
@@ -282,7 +282,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   - `user/home/` — Personal zone (default personal space)
   - `ephemeral/` — Ephemeral zone (auto-cleaned on shutdown, no version history)
 - [ ] Wire Space Storage initialization into `kernel/src/main.rs` boot sequence (after pool init, after service manager init)
-- [ ] Register Space Storage as a kernel service via service_register("space-storage", ...)
+- [ ] Register Space Storage as a kernel service via `service_register(b"space-storage", pid, channel_id)` (matches the existing `&[u8]` name + pid + channel signature from Phase 3)
 - [ ] Test: verify system spaces created at boot, create a user space, list all spaces
 
 **Note:** Per-space encryption (Personal, Collaborative zones) is Phase 13a. For Phase 4, all spaces use device-level encryption only (EncryptionState::DeviceOnly). The Collaborative security zone is defined but not implemented (no multi-identity support yet).
@@ -327,7 +327,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 - [ ] Wire POSIX file operations as IPC calls to the Space Storage service (dispatched via `IpcCall` to the space-storage channel, not as new syscall numbers — the 31 syscall table from Phase 3 is unchanged)
 - [ ] Test: create file via POSIX open+write, read back via POSIX open+read, mkdir, readdir, stat, unlink
 
-**Note:** For Phase 4, POSIX operations are synchronous and run in the kernel thread context (same as IPC). Phase 15 (POSIX Compatibility & BSD Userland) adds full POSIX process model with fork/exec.
+**Note:** For Phase 4, POSIX operations are dispatched via IPC to the Space Storage service. The syscall handler translates POSIX calls into `IpcCall` messages and blocks on the reply (synchronous from the caller's perspective), but the actual storage operations run in the Space Storage service thread, not in-kernel. Phase 15 (POSIX Compatibility & BSD Userland) adds the full POSIX process model with fork/exec.
 
 **Key reference:** spaces.md §9 POSIX Compatibility; §9.1 Path Mapping; §9.2 Translation Layer
 
