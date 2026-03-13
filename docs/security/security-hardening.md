@@ -24,12 +24,12 @@ Part of: [security.md](./security.md) — AIOS Security Model
 
 ### 4.2 Key Storage
 
-The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces.md §6](../storage/spaces.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces.md §4.10](../storage/spaces.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces.md §4.10 single-passphrase mode).
+The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces-encryption.md §6](../storage/spaces-encryption.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces-block-engine.md §4.10](../storage/spaces-block-engine.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces-block-engine.md §4.10 single-passphrase mode).
 
 ```mermaid
 flowchart TD
     subgraph KH["Key Hierarchy"]
-        DK["Device Key (spaces.md section 4.10)\n\nLocation: kernel memory (pinned, no-dump)\nDerived from: hardware TPM/TrustZone or\nArgon2id(boot_passphrase, device_salt)\nLifetime: boot to shutdown\nEncrypts: every block before storage drivers\nDestroyed: on shutdown / device removal"]
+        DK["Device Key (spaces-block-engine.md section 4.10)\n\nLocation: kernel memory (pinned, no-dump)\nDerived from: hardware TPM/TrustZone or\nArgon2id(boot_passphrase, device_salt)\nLifetime: boot to shutdown\nEncrypts: every block before storage drivers\nDestroyed: on shutdown / device removal"]
 
         MK["Master Key\n\nLocation: kernel keyring (kernel memory only)\nDerived from: Argon2id(password, identity_salt)\nLifetime: in memory while user is authenticated\nDestroyed: on lock screen / identity switch"]
 
