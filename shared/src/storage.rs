@@ -129,7 +129,7 @@ pub enum StorageTier {
 pub struct BlockLocation {
     /// Byte offset on the raw device partition.
     pub offset: u64,
-    /// Total block size in bytes (header + data + padding).
+    /// Data payload size in bytes (excludes on-disk header and padding).
     pub size: u32,
     /// Temperature tier.
     pub tier: StorageTier,

@@ -43,6 +43,8 @@ struct VirtioBlk {
     req_virt: usize,
     /// Last seen used ring index.
     last_used_idx: u16,
+    /// Negotiated virtqueue size (may be smaller than QUEUE_SIZE).
+    queue_size: u16,
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +177,11 @@ fn probe_slot(phys: usize) -> bool {
         if magic != VIRTIO_MMIO_MAGIC {
             return false;
         }
+        // Only support legacy MMIO v1 transport; reject modern v2 devices.
+        let version = mmio_read32(virt + VIRTIO_MMIO_VERSION);
+        if version != 1 {
+            return false;
+        }
         let device_id = mmio_read32(virt + VIRTIO_MMIO_DEVICE_ID);
         device_id == VIRTIO_DEVICE_ID_BLK
     }
@@ -283,8 +290,9 @@ fn init_device(base: usize) -> Result<VirtioBlk, StorageError> {
         let vq_phys = crate::mm::frame::alloc_dma_pages(order).ok_or(StorageError::IoError)?;
         let vq_virt = DIRECT_MAP_BASE + vq_phys;
 
-        // Zero the entire virtqueue allocation.
-        core::ptr::write_bytes(vq_virt as *mut u8, 0, total_pages * VIRT_PAGE_SIZE);
+        // Zero the entire DMA allocation (power-of-two pages, may exceed total_pages).
+        let alloc_pages = 1usize << order;
+        core::ptr::write_bytes(vq_virt as *mut u8, 0, alloc_pages * VIRT_PAGE_SIZE);
 
         // Compute sub-structure addresses.
         let desc_virt = vq_virt;
@@ -318,6 +326,7 @@ fn init_device(base: usize) -> Result<VirtioBlk, StorageError> {
             req_phys: req_page_phys,
             req_virt: req_page_virt,
             last_used_idx: 0,
+            queue_size,
         })
     }
 }
@@ -426,7 +435,7 @@ fn submit_request(
         // Available ring layout: [flags: u16, idx: u16, ring[N]: u16, used_event: u16]
         let avail_virt = blk.avail_virt;
         let avail_idx = core::ptr::read_volatile((avail_virt + 2) as *const u16);
-        let ring_offset = 4 + (avail_idx % QUEUE_SIZE) as usize * 2;
+        let ring_offset = 4 + (avail_idx % blk.queue_size) as usize * 2;
         core::ptr::write_volatile(
             (avail_virt + ring_offset) as *mut u16,
             0, // descriptor chain head = index 0

@@ -37,6 +37,29 @@ pub fn init() {
         mt_cap
     );
 
+    // Self-tests: only run during development, gated behind feature flag.
+    #[cfg(feature = "storage-tests")]
+    run_self_tests();
+
+    // Log final MemTable stats.
+    let final_count = block_engine::with_engine(|e| e.memtable().count()).unwrap_or(0);
+    crate::kinfo!(
+        Storage,
+        "MemTable: {} entries / {} capacity",
+        final_count,
+        MEMTABLE_MAX_ENTRIES
+    );
+
+    // Flush superblock to persist state.
+    if let Err(e) = block_engine::flush_superblock() {
+        crate::kerror!(Storage, "Superblock flush failed: {:?}", e);
+    }
+}
+
+/// Boot-time self-tests for the storage subsystem (write/read/dedup/100-block).
+/// Gated behind `storage-tests` feature to avoid mutating disk on every production boot.
+#[cfg(feature = "storage-tests")]
+fn run_self_tests() {
     // --- Test 1: Write + read round-trip ---
     let test_data = b"Hello, AIOS!";
     let (hash1, _loc1) = match block_engine::write_block(test_data) {
@@ -118,20 +141,6 @@ pub fn init() {
 
     // --- Test 4: 100-block write/read ---
     test_100_blocks();
-
-    // Log final MemTable stats.
-    let final_count = block_engine::with_engine(|e| e.memtable().count()).unwrap_or(0);
-    crate::kinfo!(
-        Storage,
-        "MemTable: {} entries / {} capacity",
-        final_count,
-        MEMTABLE_MAX_ENTRIES
-    );
-
-    // Flush superblock to persist state.
-    if let Err(e) = block_engine::flush_superblock() {
-        crate::kerror!(Storage, "Superblock flush failed: {:?}", e);
-    }
 }
 
 /// Write 100 unique blocks and verify all are readable.

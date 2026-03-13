@@ -114,13 +114,13 @@ impl Wal {
     /// Append a new WAL entry (uncommitted).
     ///
     /// Parameters are byte-level, matching WalEntry fields directly.
-    /// Returns the sequence number assigned to this entry.
+    /// Returns `(sequence_number, logical_index)` so commit() can update directly.
     pub fn append(
         &mut self,
         block_id: ContentHash,
         data_offset: u64,
         data_size: u32,
-    ) -> Result<u64, StorageError> {
+    ) -> Result<(u64, u64), StorageError> {
         // Check WAL capacity.
         if self.head - self.tail >= self.capacity_entries() {
             return Err(StorageError::WalFull);
@@ -139,16 +139,25 @@ impl Wal {
         };
         entry.checksum = entry.compute_checksum();
 
-        self.write_entry(self.head, &entry)?;
+        let index = self.head;
+        self.write_entry(index, &entry)?;
         self.head += 1;
         self.next_sequence += 1;
 
-        Ok(seq)
+        Ok((seq, index))
     }
 
-    /// Mark a WAL entry as committed by sequence number.
+    /// Mark a WAL entry as committed by logical index (O(1), no scan).
+    pub fn commit_at(&mut self, index: u64) -> Result<(), StorageError> {
+        let mut entry = self.read_entry(index)?;
+        entry.committed = 1;
+        entry.checksum = entry.compute_checksum();
+        self.write_entry(index, &entry)
+    }
+
+    /// Mark a WAL entry as committed by sequence number (O(n) scan fallback).
+    /// Used during recovery when only the sequence number is known.
     pub fn commit(&mut self, sequence_number: u64) -> Result<(), StorageError> {
-        // Find the entry by scanning from tail to head.
         for idx in self.tail..self.head {
             let entry = self.read_entry(idx)?;
             if entry.sequence_number == sequence_number {
@@ -176,7 +185,8 @@ impl Wal {
         let entry_bytes = &sector_buf[offset..offset + WAL_ENTRY_SIZE];
 
         // SAFETY: WalEntry is repr(C), 64 bytes, all fields are plain data (no pointers).
-        let entry = unsafe { core::ptr::read(entry_bytes.as_ptr() as *const WalEntry) };
+        // Use read_unaligned because entry_bytes is a &[u8] subslice with alignment 1.
+        let entry = unsafe { core::ptr::read_unaligned(entry_bytes.as_ptr() as *const WalEntry) };
         Ok(entry)
     }
 
@@ -207,6 +217,8 @@ impl Wal {
     }
 
     /// Advance tail past committed+replayed entries, freeing WAL space.
+    /// Not called in M13 (MemTable is in-memory only); deferred to M14+ when SSTables exist.
+    #[allow(dead_code)]
     pub fn trim_committed(&mut self) {
         // Advance tail while entries are committed (best-effort, ignore read errors).
         while self.tail < self.head {

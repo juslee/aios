@@ -217,7 +217,8 @@ impl BlockEngine {
         }
 
         // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, all fields are plain data.
-        let sb = unsafe { core::ptr::read(buf.as_ptr() as *const Superblock) };
+        // Use read_unaligned because buf is a [u8] with alignment 1.
+        let sb = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Superblock) };
         if sb.is_valid() {
             Ok(Some(sb))
         } else {
@@ -283,7 +284,7 @@ impl BlockEngine {
         let byte_size = data.len() as u32;
 
         // 6. WAL append (uncommitted).
-        let seq = self.wal.append(content_hash, byte_offset, byte_size)?;
+        let (_seq, wal_index) = self.wal.append(content_hash, byte_offset, byte_size)?;
 
         // 7. Write data sectors to disk.
         let mut sector_buf = [0u8; SECTOR_SIZE];
@@ -311,8 +312,8 @@ impl BlockEngine {
             sector_idx += 1;
         }
 
-        // 8. WAL commit.
-        self.wal.commit(seq)?;
+        // 8. WAL commit (O(1) using index from append).
+        self.wal.commit_at(wal_index)?;
 
         // 9. Advance append pointer.
         self.data_next_sector += sectors_needed;
@@ -324,7 +325,9 @@ impl BlockEngine {
         };
 
         // 10. Insert into MemTable index.
-        let _ = self.memtable.insert(content_hash, location);
+        self.memtable
+            .insert(content_hash, location)
+            .map_err(|_| StorageError::MemTableFull)?;
 
         Ok((content_hash, location))
     }
@@ -463,22 +466,38 @@ impl BlockEngine {
 
             if entry.committed == 1 {
                 // Committed entry: insert into MemTable.
-                let _ = self.memtable.insert(content_hash, location);
-                replayed += 1;
+                if self.memtable.insert(content_hash, location).is_ok() {
+                    replayed += 1;
+                } else {
+                    crate::kerror!(
+                        Storage,
+                        "WAL recovery: MemTable full, cannot replay seq={}",
+                        entry.sequence_number
+                    );
+                    break; // Stop recovery — no point continuing if MemTable is full.
+                }
             } else {
                 // Uncommitted: check if data block was actually written by
                 // verifying CRC across all sectors (works for any block size).
                 if entry.data_size > 0 && self.verify_block_crc(&location).is_ok() {
                     // Salvage: data is on disk, insert into MemTable.
-                    let _ = self.memtable.insert(content_hash, location);
-                    // Mark committed in WAL (best-effort).
-                    let _ = self.wal.commit(entry.sequence_number);
-                    replayed += 1;
-                    crate::kinfo!(
-                        Storage,
-                        "WAL recovery: salvaged uncommitted entry seq={}",
-                        entry.sequence_number
-                    );
+                    if self.memtable.insert(content_hash, location).is_ok() {
+                        // Mark committed in WAL (best-effort).
+                        let _ = self.wal.commit(entry.sequence_number);
+                        replayed += 1;
+                        crate::kinfo!(
+                            Storage,
+                            "WAL recovery: salvaged uncommitted entry seq={}",
+                            entry.sequence_number
+                        );
+                    } else {
+                        crate::kerror!(
+                            Storage,
+                            "WAL recovery: MemTable full, cannot salvage seq={}",
+                            entry.sequence_number
+                        );
+                        break;
+                    }
                 }
             }
 
@@ -495,8 +514,10 @@ impl BlockEngine {
             self.data_next_sector = max_data_sector;
         }
 
-        // Trim committed entries from WAL to free space.
-        self.wal.trim_committed();
+        // NOTE: Do NOT trim WAL entries here. The MemTable is in-memory only
+        // (no persistent SSTable yet). Trimming would lose the ability to rebuild
+        // the index on next reboot. WAL trimming is deferred until M14+ when
+        // SSTables provide durable index persistence.
 
         replayed
     }

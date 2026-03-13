@@ -56,6 +56,11 @@ pub fn phys_to_virt(phys: usize) -> usize {
 /// Identity when direct map is not yet active.
 pub fn virt_to_phys(virt: usize) -> usize {
     if DIRECT_MAP_ACTIVE.load(Ordering::Relaxed) {
+        debug_assert!(
+            virt >= crate::arch::aarch64::mmu::DIRECT_MAP_BASE,
+            "virt_to_phys: address {:#x} is not in the direct-map region",
+            virt
+        );
         virt - crate::arch::aarch64::mmu::DIRECT_MAP_BASE
     } else {
         virt
