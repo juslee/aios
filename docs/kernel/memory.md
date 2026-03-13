@@ -131,7 +131,7 @@ Quick lookup for commonly referenced sections across the memory sub-documents:
 | §3.3 KASLR | [memory-virtual.md](./memory-virtual.md) | Kernel base randomization |
 | §3.4 TLB/ASID | [memory-virtual.md](./memory-virtual.md) | ASID allocator, TLB invalidation |
 | §4.1 SlabAllocator | [memory-physical.md](./memory-physical.md) | 5 size classes, magazine layer |
-| §5.3 Memory limits | [memory-virtual.md](./memory-virtual.md) | Per-agent enforcement |
+| §5.3 Memory Limit Enforcement | [memory-virtual.md](./memory-virtual.md) | Per-agent enforcement |
 | §5.4 COW | [memory-virtual.md](./memory-virtual.md) | Copy-on-write fault handling |
 | §6.2 ModelMemoryRegion | [memory-ai.md](./memory-ai.md) | Pinned model weight regions |
 | §6.3 PagedAttention | [memory-ai.md](./memory-ai.md) | KV cache block tables |

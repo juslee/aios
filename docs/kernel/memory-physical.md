@@ -46,7 +46,7 @@ The kernel builds its initial free list from `Conventional` regions. `Loader Cod
 //   Vma                — alias for VmRegion ([§3.2](./memory-virtual.md))
 //   SharedMemoryId     — opaque handle for shared memory regions ([§7](./memory-virtual.md))
 //   MappedFile         — file-backed mapping descriptor
-//   PageType           — page classification for MGLRU reclaim ([§9](./memory-hardening.md))
+//   PageType           — page classification for MGLRU reclaim ([§10.2](./memory-reclamation.md))
 //   FrameRefCount      — per-frame atomic reference counter (§4.2)
 //   Process            — kernel process descriptor (see scheduler.md)
 //   Pool               — memory pool discriminant: Kernel/User/Model/Dma (§2.4)
