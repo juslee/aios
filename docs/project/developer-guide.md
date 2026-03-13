@@ -1008,10 +1008,10 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 | Range | Interpretation | Examples |
 |---|---|---|
-| < 100 lines | Small, focused utility | `bump.rs` (44), `heap.rs` (68), `boot_phase.rs` (68) |
-| 100--300 lines | Typical module | `uart.rs` (157), `timer.rs` (211), `cap/mod.rs` (236), `smp.rs` (218), `wal.rs` (248) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (436), `slab.rs` (493), `service/mod.rs` (403), `sched/scheduler.rs` (432), `virtio_blk.rs` (489) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (680), `syscall/mod.rs` (668), `shmem.rs` (642), `block_engine.rs` (614), `bench.rs` (549) |
+| < 100 lines | Small, focused utility | `bump.rs` (~44), `heap.rs` (~68), `boot_phase.rs` (~68) |
+| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~248) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~614), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
 
 **Guidelines:**
@@ -1106,20 +1106,20 @@ When `kernel-tracing` is disabled (the default), `trace_point!()` compiles to no
 
 ```text
 kernel/src/drivers/
-  mod.rs          (3)    # pub mod declarations only
-  virtio_blk.rs   (489)  # Full VirtIO-blk MMIO driver
+  mod.rs          (~3)   # Module doc comment + pub mod declarations
+  virtio_blk.rs   (~490) # Full VirtIO-blk MMIO driver
 ```
 
-Driver modules follow a flat structure: `mod.rs` contains only `pub mod` re-exports, and each driver is a standalone file. The driver file owns a global `Mutex<Option<Device>>` static and exposes a public API (`init()`, `read_sector()`, `write_sector()`). No trait abstraction yet -- that comes when a second driver is added.
+Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment and `pub mod` re-exports, and each driver is a standalone file. The driver file owns a global `Mutex<Option<Device>>` static and exposes a public API (`init()`, `read_sector()`, `write_sector()`). No trait abstraction yet -- that comes when a second driver is added.
 
 **Pattern 5: Storage subsystem** -- layered with clear dependency direction
 
 ```text
 kernel/src/storage/
-  mod.rs            (204)  # init(), run_self_tests(), re-exports
-  block_engine.rs   (614)  # BlockEngine, Superblock, CRC-32C, SHA-256
-  wal.rs            (248)  # WalEntry, circular buffer, append/commit
-  lsm.rs            (114)  # MemTable, sorted Vec with binary search
+  mod.rs            (~204) # init(), run_self_tests(), re-exports
+  block_engine.rs   (~614) # BlockEngine, Superblock, CRC-32C, SHA-256
+  wal.rs            (~248) # WalEntry, circular buffer, append/commit
+  lsm.rs            (~114) # MemTable, sorted Vec with binary search
 ```
 
 Dependency direction is strictly downward: `mod.rs` → `block_engine.rs` → `wal.rs` + `lsm.rs`. The block engine calls into the VirtIO driver (`crate::drivers::virtio_blk`) for disk I/O. Shared types (`ContentHash`, `BlockLocation`, `StorageError`) live in `shared/src/storage.rs`.
@@ -1444,7 +1444,7 @@ bl some_function            // FAULT: misaligned stack
 **Do:**
 
 ```rust
-// Allocate from the DMA pool (guaranteed cache-coherent on all platforms)
+// Allocate from the DMA pool (cache-coherent on QEMU; requires NC mapping on real hardware)
 let frame = crate::mm::frame::alloc_dma_pages(order)?;
 
 // Use DSB SY before device notification (ensures writes are visible to device)
@@ -1473,13 +1473,24 @@ let frame = crate::mm::frame::alloc_pages(Pool::Kernel, order)?;
 **Do:**
 
 ```rust
-// Update available ring index
+// Write descriptor chain into available ring
+unsafe {
+    let ring_ptr = (avail_virt + ring_offset) as *mut u16;
+    core::ptr::write_volatile(ring_ptr, 0); // descriptor chain head
+}
+
+// Barrier BEFORE updating avail idx (VirtIO spec §2.7.13.1:
+// "The driver MUST perform a suitable memory barrier before the idx update,
+// to ensure the device sees the most up-to-date copy.")
+core::arch::asm!("dsb sy");
+
+// Publish new available ring index
 unsafe {
     let avail_idx_ptr = (avail_virt + 2) as *mut u16;
     core::ptr::write_volatile(avail_idx_ptr, new_idx);
 }
 
-// Memory barrier BEFORE doorbell notification (VirtIO spec §2.7.13.1)
+// Barrier BEFORE doorbell write (ensures device sees updated avail idx)
 core::arch::asm!("dsb sy");
 
 // Notify device (doorbell write)
@@ -1526,7 +1537,7 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just security-check` | `audit` + `deny` + `miri` |
 | `just clean` | Remove build artifacts and disk image |
 
-**Note:** `just run`, `just run-display`, and `just debug` depend on `create-data-disk` and include VirtIO data disk QEMU flags (`-drive file=data.img,if=none,format=raw,id=disk0 -device virtio-blk-device,drive=disk0`).
+**Note:** `just run`, `just run-display`, and `just debug` depend on `create-data-disk` and include VirtIO data disk QEMU flags (`-drive if=none,id=data0,file=data.img,format=raw -device virtio-blk-device,drive=data0`).
 
 **Daily workflow:**
 
