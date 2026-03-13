@@ -58,7 +58,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Space Sync | `docs/storage/spaces-sync.md` | §8.1–§8.4 Merkle exchange, conflict resolution, sync security |
 | POSIX compatibility (storage) | `docs/storage/spaces-posix.md` | §9.1–§9.6 Path mapping, translation layer, fd lifecycle |
 | Storage budget & pressure | `docs/storage/spaces-budget.md` | §10.1–§10.9 Device profiles, quotas, pressure, AI-driven storage |
-| Flow (smart clipboard) | `docs/storage/flow.md` | All (Phase 11+) |
+| Flow (hub) | `docs/storage/flow.md` | §1 Overview, §2 Architecture, §13 Impl order, §14 Principles, Document Map |
+| Flow data model | `docs/storage/flow-data-model.md` | §3.0–§3.4 External types, FlowEntry, transfer lifecycle, TypedContent |
+| Flow transforms | `docs/storage/flow-transforms.md` | §4.1–§4.3 Transform engine, pipeline, registry, conversion graph |
+| Flow history & sync | `docs/storage/flow-history.md` | §5.1–§5.3 History storage/UI/retention, §9.1–§9.2 Multi-device sync |
+| Flow integration | `docs/storage/flow-integration.md` | §6 Compositor, §7 Subsystem channels, §8 Cross-agent, §10 POSIX bridge |
+| Flow security | `docs/storage/flow-security.md` | §11.1–§11.3 Capability enforcement, content screening, rate limiting |
+| Flow SDK | `docs/storage/flow-sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
+| Flow extensions | `docs/storage/flow-extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
