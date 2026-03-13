@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 5 weeks
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
-**Status:** Planned
+**Status:** In Progress (M13 complete)
 **Prerequisites:** Phase 3 (IPC & Capability System)
 **Unlocks:** Phase 5 (GPU & Display), Phase 13 (Security Hardening)
 
@@ -40,7 +40,7 @@ By the end of this phase, the kernel has a working block device driver (VirtIO-b
 | Subsystem framework (5-layer architecture) | [subsystem-framework.md](../platform/subsystem-framework.md) | §2 What Every Subsystem Shares; §3 The Five-Layer Subsystem Architecture |
 | IPC channels and service model | [ipc.md](../kernel/ipc.md) | §5.4 Multi-Client Service Model |
 | Capability system for access control | [security.md](../security/security.md) | §2.2 Capability Check; §3 Capability System Internals |
-| Memory management (page pools, user pool) | [memory.md](../kernel/memory.md) | §2.2 Buddy Allocator; §2.4 Page Pools |
+| Memory management (page pools, user pool) | [memory-physical.md](../kernel/memory-physical.md) | §2.2 Buddy Allocator; §2.4 Page Pools |
 | Security model and security zones | [security.md](../security/security.md) | §2 The Eight Security Layers (Deep Dive) |
 | System overview and architecture diagram | [architecture.md](../project/architecture.md) | §2.2 Space Storage System |
 
@@ -67,7 +67,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Define the core shared types used throughout the storage subsystem, and the VirtIO data structures needed for the block driver.
 
 **Tasks:**
-- [ ] Create `shared/src/storage.rs` with core types:
+- [x] Create `shared/src/storage.rs` with core types:
   - `Hash([u8; 32])` — SHA-256 content hash (newtype, not alias)
   - `ObjectId([u8; 16])` — 128-bit unique object identifier (newtype; timer+pid entropy, not RFC 4122 UUID v4)
   - `SpaceId([u8; 16])` — 128-bit unique space identifier (newtype; same generation scheme as ObjectId)
@@ -77,11 +77,11 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   - `SecurityZone` enum (Core, Personal, Ephemeral, Untrusted, Collaborative placeholder)
   - `StorageError` enum (BlockNotFound, ChecksumFailed, IoError, QuotaExceeded, etc.)
   - `StorageTier` enum (Hot, Warm, Cold)
-- [ ] Add `pub mod storage;` to `shared/src/lib.rs`, re-export key types
-- [ ] Add unit tests for Hash ordering, ObjectId/SpaceId Display, Timestamp arithmetic
-- [ ] Create `kernel/src/drivers/` directory with `mod.rs` and `virtio_blk.rs` stub
-- [ ] Define VirtIO MMIO constants: `MAGIC_VALUE = 0x74726976`, version, device ID (2 = block), feature bits
-- [ ] Define virtqueue descriptor, available ring, used ring structures (VirtIO spec §2.7)
+- [x] Add `pub mod storage;` to `shared/src/lib.rs`, re-export key types
+- [x] Add unit tests for Hash ordering, ObjectId/SpaceId Display, Timestamp arithmetic
+- [x] Create `kernel/src/drivers/` directory with `mod.rs` and `virtio_blk.rs` stub
+- [x] Define VirtIO MMIO constants: `MAGIC_VALUE = 0x74726976`, version, device ID (2 = block), feature bits
+- [x] Define virtqueue descriptor, available ring, used ring structures (VirtIO spec §2.7)
 
 **Note:** All shared storage types must be `no_std` compatible. Use fixed-size arrays, not `Vec` or `String`. For fields like `name` in the architecture doc that use `String`, use `[u8; N]` with length tracking (similar to `ServiceName` in Phase 3).
 
@@ -94,15 +94,15 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement VirtIO-blk device discovery via MMIO transport (QEMU virt machine), negotiate features, set up virtqueue, and perform a raw sector read/write.
 
 **Tasks:**
-- [ ] Implement VirtIO MMIO device probe: enumerate `virtio,mmio` nodes from DTB (per hal.md §6) to discover VirtIO block devices (device ID 2). Fallback: scan QEMU virt MMIO region (0x0A000000–0x0A003E00, 512-byte stride) if DTB enumeration is unavailable
-- [ ] Implement device initialization sequence per VirtIO spec §3.1: reset → acknowledge → driver → features → driver_ok
-- [ ] Negotiate feature bits: `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`, `VIRTIO_BLK_F_BLK_SIZE`
-- [ ] Set up a single virtqueue (queue 0): allocate descriptor table, available ring, used ring from kernel pool (page-aligned, DMA-safe)
-- [ ] Read device configuration: capacity (sectors), block size (usually 512)
-- [ ] Implement `read_sector(sector: u64, buf: &mut [u8; 512]) -> Result<(), StorageError>`
-- [ ] Implement `write_sector(sector: u64, buf: &[u8; 512]) -> Result<(), StorageError>`
-- [ ] Add `pub mod drivers;` to `kernel/src/main.rs`
-- [ ] Test: write a known pattern to sector 0, read it back, verify match
+- [x] Implement VirtIO MMIO device probe: enumerate `virtio,mmio` nodes from DTB (per hal.md §6) to discover VirtIO block devices (device ID 2). Fallback: scan QEMU virt MMIO region (0x0A000000–0x0A003E00, 512-byte stride) if DTB enumeration is unavailable
+- [x] Implement device initialization sequence per VirtIO spec §3.1: reset → acknowledge → driver → features → driver_ok
+- [x] Negotiate feature bits: `VIRTIO_BLK_F_SIZE_MAX`, `VIRTIO_BLK_F_SEG_MAX`, `VIRTIO_BLK_F_BLK_SIZE`
+- [x] Set up a single virtqueue (queue 0): allocate descriptor table, available ring, used ring from kernel pool (page-aligned, DMA-safe)
+- [x] Read device configuration: capacity (sectors), block size (usually 512)
+- [x] Implement `read_sector(sector: u64, buf: &mut [u8; 512]) -> Result<(), StorageError>`
+- [x] Implement `write_sector(sector: u64, buf: &[u8; 512]) -> Result<(), StorageError>`
+- [x] Add `pub mod drivers;` to `kernel/src/main.rs`
+- [x] Test: write a known pattern to sector 0, read it back, verify match
 
 **Note:** VirtIO MMIO on QEMU virt uses memory-mapped registers. The driver must use `read_volatile`/`write_volatile` for all MMIO access. Virtqueue memory must be physically contiguous and accessible via the direct map. Use `DSB SY` barriers between descriptor writes and doorbell notification.
 
@@ -115,20 +115,20 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Build the Block Engine's on-disk layout: superblock at sector 0, WAL circular buffer, and the crash-safe write path. Content is written through the WAL first, then committed.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/` directory with `mod.rs`, `block_engine.rs`, `wal.rs`, `lsm.rs`
-- [ ] Define `Superblock` struct: magic (`0x41494F53_50414345`, "AIOSPACE"), version, block_size, total_blocks, free_blocks, wal_offset, wal_size, index_offset, data_offset, checksum (CRC-32C)
-- [ ] Implement superblock read/write with integrity verification
-- [ ] Define `WalEntry` struct: sequence_number, block_id (Hash), data_offset, data_len, index_entry (Hash → location), committed flag, checksum
-- [ ] Implement WAL as circular buffer: `append(entry) -> Result<(), StorageError>`, `replay() -> Vec<WalEntry>`, `trim_committed()`
-- [ ] WAL size: 64 MB default (configurable in superblock)
-- [ ] Implement Block Engine write path (per spaces.md §4.2):
+- [x] Create `kernel/src/storage/` directory with `mod.rs`, `block_engine.rs`, `wal.rs`, `lsm.rs`
+- [x] Define `Superblock` struct: magic (`0x41494F53_50414345`, "AIOSPACE"), version, block_size, total_blocks, free_blocks, wal_offset, wal_size, index_offset, data_offset, checksum (CRC-32C)
+- [x] Implement superblock read/write with integrity verification
+- [x] Define `WalEntry` struct: sequence_number, block_id (Hash), data_offset, data_len, index_entry (Hash → location), committed flag, checksum
+- [x] Implement WAL as circular buffer: `append(entry) -> Result<(), StorageError>`, `replay() -> Vec<WalEntry>`, `trim_committed()`
+- [x] WAL size: 64 MB default (configurable in superblock)
+- [x] Implement Block Engine write path (per spaces.md §4.2):
   1. Compute SHA-256 content hash
   2. Check LSM-tree MemTable: if hash exists, increment refcount (deduplication)
   3. Write WAL entry (crash-safe point after fsync)
   4. Write data block to data region (append-only)
   5. Insert index entry into MemTable
   6. Mark WAL entry committed
-- [ ] Implement format/init: write superblock, initialize WAL region, create empty data region
+- [x] Implement format/init: write superblock, initialize WAL region, create empty data region
 
 **Note:** For Phase 4, use a single zone (no hot/warm/cold separation yet — that's Phase 4i). All data blocks are appended sequentially to the data region. CRC-32C checksums on every block and WAL entry.
 
@@ -141,20 +141,20 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement the LSM-tree's in-memory MemTable for the block index, the read path, and crash recovery via WAL replay. No on-disk SSTables yet — the MemTable is rebuilt from the WAL on boot.
 
 **Tasks:**
-- [ ] Implement `MemTable`: sorted map of `Hash → BlockLocation` using a fixed-size sorted array (bounded memory, no dynamic allocation; use insertion sort on a bounded array, max 65536 entries). Note: `alloc::collections::BTreeMap` is available via the kernel's `extern crate alloc`, but a fixed-size array is preferred for predictable memory usage and no heap fragmentation
-- [ ] Implement `MemTable::insert(hash, location)`, `MemTable::get(hash) -> Option<BlockLocation>`, `MemTable::remove(hash)` (tombstone)
-- [ ] Implement Block Engine read path (per spaces.md §4.3):
+- [x] Implement `MemTable`: sorted map of `Hash → BlockLocation` using a fixed-size sorted array (bounded memory, no dynamic allocation; use insertion sort on a bounded array, max 65536 entries). Note: `alloc::collections::BTreeMap` is available via the kernel's `extern crate alloc`, but a fixed-size array is preferred for predictable memory usage and no heap fragmentation
+- [x] Implement `MemTable::insert(hash, location)`, `MemTable::get(hash) -> Option<BlockLocation>`, `MemTable::remove(hash)` (tombstone)
+- [x] Implement Block Engine read path (per spaces.md §4.3):
   1. Look up content_hash in MemTable → get block location
   2. Read block from data region via VirtIO-blk
   3. Verify CRC-32C checksum
   4. Return content
-- [ ] Implement crash recovery (per spaces.md §4.4):
+- [x] Implement crash recovery (per spaces.md §4.4):
   1. Read superblock, verify integrity
   2. Scan WAL from oldest entry
   3. Replay uncommitted entries: re-insert index entries into MemTable, skip entries where data block wasn't written
   4. Rebuild MemTable from committed WAL entries
-- [ ] Implement Block Engine `init()`: probe VirtIO-blk → read superblock (or format if uninitialized) → replay WAL → MemTable ready
-- [ ] Test: write 100 blocks, verify all readable, simulate crash (skip commit), verify WAL replay recovers consistent state
+- [x] Implement Block Engine `init()`: probe VirtIO-blk → read superblock (or format if uninitialized) → replay WAL → MemTable ready
+- [x] Test: write 100 blocks, verify all readable, simulate crash (skip commit), verify WAL replay recovers consistent state
 
 **Note:** The MemTable-only approach is sufficient for Phase 4. On-disk SSTables and compaction are deferred to a later optimization step (Phase 14). The MemTable is bounded at 65536 entries, covering up to 256 MB of data when using 4 KB blocks (the index itself uses far less memory). For Phase 4 workloads on QEMU this is more than sufficient.
 
@@ -426,7 +426,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 
 ## Phase Completion Criteria
 
-- [ ] **M13 complete:** VirtIO-blk driver reads/writes sectors; Block Engine with WAL and MemTable index; superblock persists across boots
+- [x] **M13 complete:** VirtIO-blk driver reads/writes sectors; Block Engine with WAL and MemTable index; superblock persists across boots
 - [ ] **M14 complete:** Content-addressed objects with dedup; Merkle DAG version history; device-level AES-256-GCM encryption; system spaces at boot
 - [ ] **M15 complete:** POSIX bridge maps paths to spaces; LZ4 compression active; storage budget enforced; end-to-end create/read/update/rollback/dedup/encrypt verified
 - [ ] `just check` — zero warnings, zero errors

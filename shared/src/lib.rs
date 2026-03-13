@@ -8,6 +8,7 @@ pub mod kaslr;
 pub mod memory;
 pub mod observability;
 pub mod sched;
+pub mod storage;
 pub mod syscall;
 
 /// Physical address type alias.
@@ -41,5 +42,9 @@ pub use observability::{timestamp_to_secs_micros, LogEntry, LogLevel, Subsystem}
 pub use sched::{
     default_slice, CpuSet, KernelResourceLimits, ProcessId, SchedulerClass, ThreadId, ThreadState,
     IDLE_SLICE_NS, INTERACTIVE_SLICE_NS, NORMAL_SLICE_NS, RT_SLICE_NS,
+};
+pub use storage::{
+    BlockId, BlockLocation, ContentHash, ContentType, SecurityZone, SpaceId, StorageError,
+    StorageTier, Timestamp, BLOCK_SIZE, SECTOR_SIZE, SUPERBLOCK_MAGIC,
 };
 pub use syscall::{IpcError, Syscall, SYSCALL_COUNT};

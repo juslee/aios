@@ -24,6 +24,10 @@ pub struct DeviceTree {
     cpu_mpidrs: [u64; 8],
     /// PSCI method: true = hvc, false = smc.
     pub psci_hvc: bool,
+    /// VirtIO MMIO device base addresses found in DTB.
+    pub virtio_mmio_bases: [u64; 32],
+    /// Number of VirtIO MMIO bases found.
+    pub virtio_mmio_count: usize,
 }
 
 impl DeviceTree {
@@ -61,6 +65,8 @@ impl DeviceTree {
             cpu_count_val: 0,
             cpu_mpidrs: [0; 8],
             psci_hvc: true, // default: QEMU uses hvc
+            virtio_mmio_bases: [0; 32],
+            virtio_mmio_count: 0,
         };
 
         // Extract root compatible string from the root node (level 0).
@@ -151,6 +157,19 @@ impl DeviceTree {
             }
         }
 
+        // Extract VirtIO MMIO device bases: iterate all virtio,mmio compatible nodes.
+        for node in fdt.find_compatible(&["virtio,mmio"]).flatten() {
+            if dt.virtio_mmio_count >= 32 {
+                break;
+            }
+            if let Ok(mut regs) = node.reg() {
+                if let Some(reg) = regs.next() {
+                    dt.virtio_mmio_bases[dt.virtio_mmio_count] = reg.address;
+                    dt.virtio_mmio_count += 1;
+                }
+            }
+        }
+
         Some(dt)
     }
 
@@ -167,6 +186,8 @@ impl DeviceTree {
             cpu_count_val: 4,
             cpu_mpidrs: [0, 1, 2, 3, 0, 0, 0, 0],
             psci_hvc: true,
+            virtio_mmio_bases: [0; 32],
+            virtio_mmio_count: 0,
         };
         let compat = b"linux,dummy-virt";
         dt.root_compatible[..compat.len()].copy_from_slice(compat);
