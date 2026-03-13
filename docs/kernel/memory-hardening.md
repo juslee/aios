@@ -56,7 +56,7 @@ Invalid landing site:
     ...                         indirect branch here → fault
 ```
 
-**Toolchain support:** The Rust compiler and LLVM toolchain emit BTI instructions for all function entries when the target supports it. The kernel sets the BTI enforcement bit in page table entries for executable pages.
+**Toolchain support:** The Rust compiler and LLVM toolchain emit BTI instructions for all function entries when the target supports it. The target design sets the GP (Guarded Page) bit in page table entries for executable pages to enable hardware BTI enforcement.
 
 ### 9.4 MTE (Memory Tagging Extension)
 
@@ -105,7 +105,7 @@ pub enum MteMode {
 }
 ```
 
-**MTE is enabled for agent heap allocations starting in Phase 13 (Security Hardening).** Kernel heap allocations use MTE in synchronous mode for maximum safety. Agent heaps default to asynchronous mode for performance, with synchronous mode available for debugging.
+**MTE is enabled for agent heap allocations as part of the security hardening milestone.** Kernel heap allocations use MTE in synchronous mode for maximum safety. Agent heaps default to asynchronous mode for performance, with synchronous mode available for debugging.
 
 ### 9.5 Guard Pages
 
@@ -116,14 +116,15 @@ flowchart TD
     G1["`0x0000_0000_0000_0000
 GUARD (unmapped)
 NULL pointer dereference → fault`"]
-    T["`0x0000_0000_0010_0000
-Agent text`"]
-    G2["`0x0000_0000_0040_0000
-GUARD
+    T["`0x0000_0000_0040_0000
+Agent text (USER_TEXT_BASE)`"]
+    G2["`text end
+GUARD (4 KB, unmapped)
 text/data boundary`"]
-    D["`0x0000_0000_0040_1000
-Agent data
-Agent heap
+    D["`0x0000_0000_0100_0000
+Agent data (USER_DATA_BASE)
+→ 0x0000_0000_1000_0000
+Agent heap (USER_HEAP_BASE, grows up)
 ... Heap top`"]
     G3["`0x0000_xxxx_xxxx_xxxx
 GUARD
@@ -156,7 +157,7 @@ Stack overflow is the most common case. Without a guard page, a stack overflow s
 
 ### 9.6 Speculative Execution Mitigations
 
-The Cortex-A76 (Pi 5) is affected by Spectre variant 1 (bounds check bypass), variant 2 (branch target injection), and variant 4 (speculative store bypass). Model weights in the shared model pool are a high-value speculative side-channel target — a malicious agent could potentially leak model data through speculative execution. AIOS applies the following hardware and software mitigations:
+The Cortex-A76 (Pi 5) is affected by Spectre variant 1 (bounds check bypass), variant 2 (branch target injection), and variant 4 (speculative store bypass). Model weights in the shared model pool are a high-value speculative side-channel target — a malicious agent could potentially leak model data through speculative execution. The target design applies the following hardware and software mitigations:
 
 ```text
 Vulnerability     Mitigation                           Mechanism
@@ -186,11 +187,12 @@ Meltdown          Not applicable on Cortex-A76         ARM's Cortex-A76 and late
 ```
 
 **Model pool side-channel hardening:** The model pool is mapped read-only into the AIRS address space with separate ASID. Speculative reads from agent address spaces cannot reach model pool pages because:
+
 1. Agent PTEs do not contain model pool mappings (separate TTBR0 entries)
 2. ASID tagging prevents speculative TLB hits across address spaces
 3. CSV2 hardware prevents branch predictor poisoning across contexts
 
-**Syscall boundary barriers:** Every syscall entry point inserts a speculation barrier (`SB` instruction) after validating arguments. This prevents speculative execution from progressing past argument validation with attacker-controlled values.
+**Syscall boundary barriers (target):** The target design inserts a speculation barrier (`SB` instruction) at every syscall entry point after validating arguments. This prevents speculative execution from progressing past argument validation with attacker-controlled values.
 
 -----
 

@@ -42,16 +42,17 @@ Memory-mapped spaces`"]
             U4["`0x0000_0001_0000_0000
 Shared memory (IPC regions)`"]
             U5["`0x0000_0000_1000_0000
-Agent heap (grows up)
+Agent heap (grows up)`"]
+            U5b["`0x0000_0000_0100_0000
 Agent data (.data, .bss)`"]
             U6["`0x0000_0000_0040_1000
 Guard page (4 KB, unmapped)`"]
             U7["`0x0000_0000_0040_0000
 Agent text (.text, read-only)`"]
-            U8["`0x0000_0000_0010_0000
-Guard page (unmapped)`"]
-            U9["0x0000_0000_0000_0000"]
-            U1 --- U2 --- U3 --- U4 --- U5 --- U6 --- U7 --- U8 --- U9
+            U8["`0x0000_0000_0000_0000
+Guard page (unmapped, NULL deref)`"]
+            U9["Low addresses"]
+            U1 --- U2 --- U3 --- U4 --- U5 --- U5b --- U6 --- U7 --- U8 --- U9
         end
         ttbr1 --- HOLE --- ttbr0
     end
@@ -163,7 +164,8 @@ impl PageTableEntry {
 
     pub fn set_executable(&mut self) {
         self.0 |= Self::AP_RO;      // set read-only → not writable
-        self.0 &= !Self::UXN;       // clear execute-never → executable
+        self.0 &= !Self::UXN;       // clear UXN → executable at EL0
+        self.0 |= Self::PXN;        // set PXN → not executable at EL1 (user page)
     }
 
     /// Replace the physical frame address in this PTE.
@@ -294,9 +296,11 @@ impl AddressSpace {
     }
 
     /// Find the VmRegion (VMA) containing `addr`, if any.
-    /// VmRegions are stored in an interval tree sorted by base address.
+    /// VmRegions are stored in a BTreeMap sorted by base address;
+    /// lookup finds the highest base ≤ addr and checks if addr < base + size.
     pub fn find_vma(&self, addr: VirtualAddress) -> Option<&VmRegion> {
-        self.regions.find_containing(addr)
+        self.regions.range(..=addr).next_back()
+            .filter(|(_, vma)| addr.0 < vma.base.0 + vma.size)
     }
 
     /// Walk the page table and return the PTE (may be invalid/encoded).
@@ -321,7 +325,7 @@ impl AddressSpace {
 }
 ```
 
-**W^X enforcement** is built into the page table entry API. The `set_writable()` method automatically clears the executable bit. The `set_executable()` method automatically sets read-only. No page is ever both writable and executable. This is enforced at the lowest level — there is no API to create a writable+executable mapping.
+**W^X enforcement** is built into the page table entry constructors and mapping helpers. The `set_writable()` method automatically clears the executable bit. The `set_executable()` method automatically sets read-only. The `map_page()` method asserts that WRITE and EXECUTE are not both set. Raw PTE access via `from_raw()` remains an escape hatch for low-level code (e.g., trampoline pages), but all standard mapping paths enforce W^X.
 
 ### 3.3 KASLR
 
@@ -491,6 +495,7 @@ Refcount: 2`"]
 ```
 
 When the kernel creates an agent process, it:
+
 1. Allocates a PGD page from the kernel pool
 2. Copies the kernel portion (TTBR1 entries are the same for all processes)
 3. Creates the initial user-space mappings: text, data, heap, stack
@@ -545,6 +550,10 @@ pub struct AgentMemoryStats {
     pub page_faults: u64,
     /// Page faults (major — required disk I/O)
     pub major_faults: u64,
+    /// Major faults in the current 1-second sampling window
+    pub major_faults_in_window: u64,
+    /// Timestamp of the last sampling window start
+    pub last_sample_time: Timestamp,
     /// Memory limit for this agent
     pub limit: usize,
 }

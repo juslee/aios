@@ -1240,7 +1240,7 @@ impl DynamicModelPool {
 }
 ```
 
-**Phase 14 optimization:** The model pool grows when AIRS loads a model (stealing pages from the user pool) and shrinks when the model is evicted (returning pages to the user pool). This eliminates the waste of pinning 4 GB for a model that may not be used for hours. The minimum reservation (enough for the embedding model) ensures Space Indexer can always operate.
+**Dynamic pool resizing:** The model pool grows when AIRS loads a model (stealing pages from the user pool) and shrinks when the model is evicted (returning pages to the user pool). This eliminates the waste of pinning 4 GB for a model that may not be used for hours. The minimum reservation (enough for the embedding model) ensures Space Indexer can always operate.
 
 **Security floor invariant:** The `security_floor` is distinct from `minimum`. The `minimum` guarantees the embedding model fits (~100 MB) — enough for Space Indexer. The `security_floor` guarantees the primary model fits alongside the companion — enough for intent verification, behavioral analysis, and adversarial defense. When AIRS security services are active (which is always during normal operation), the kernel refuses to shrink the model pool below `security_floor`. This prevents a compromised AIRS resource orchestrator from starving its own security functions — the damage ceiling remains denial of service against non-security tasks, never against security itself. See [security.md §9.6](../security/security.md).
 

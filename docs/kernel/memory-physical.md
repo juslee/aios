@@ -40,14 +40,14 @@ The kernel builds its initial free list from `Conventional` regions. `Loader Cod
 //   BuddyAllocator     — physical page allocator, orders 0–10 (§2.2)
 //   MemoryRegion       — UEFI memory map entry (§2.1, below)
 //   SlabCache          — fixed-size object cache with per-CPU magazines (§4.1)
-//   FaultError         — error enum for page fault outcomes ([§10.5](./memory-reclamation.md))
-//   FaultType          — read / write / execute classification of a fault
-//   PteState           — decoded non-valid PTE state ([§10.5](./memory-reclamation.md))
+//   FaultError         — (target) error enum for page fault outcomes ([§10.5](./memory-reclamation.md))
+//   FaultType          — (target) read / write / execute classification of a fault
+//   PteState           — (target) decoded non-valid PTE state ([§10.5](./memory-reclamation.md))
 //   Vma                — alias for VmRegion ([§3.2](./memory-virtual.md))
 //   SharedMemoryId     — opaque handle for shared memory regions ([§7](./memory-virtual.md))
 //   MappedFile         — file-backed mapping descriptor
 //   PageType           — page classification for MGLRU reclaim ([§10.2](./memory-reclamation.md))
-//   FrameRefCount      — per-frame atomic reference counter (§4.2)
+//   FrameRefCount      — (target) per-frame atomic reference counter for COW/shared mappings (§4.2)
 //   Process            — kernel process descriptor (see scheduler.md)
 //   Pool               — memory pool discriminant: Kernel/User/Model/Dma (§2.4)
 
@@ -614,32 +614,35 @@ The kernel provides a typed allocation interface built on top of the slab and bu
 // Each is protected by a spin-lock or is inherently lock-free.
 
 /// Physical page allocator — partitioned into Kernel/User/Model/DMA pools (§2.4).
-/// FrameAllocator wraps PagePools and provides alloc_page/free_pages (§2.3).
-static FRAME_ALLOCATOR: FrameAllocator = /* initialized at boot from PagePools::init() */;
+/// Current implementation: `pub static FRAME_ALLOC: Mutex<Option<FrameAllocator>>`
+/// (wrapped in Mutex<Option<>> because it is initialized after memory map discovery).
+static FRAME_ALLOC: Mutex<Option<FrameAllocator>> = /* initialized at boot from PagePools::init() */;
 
-/// Per-frame reference counts for COW and shared mappings ([§5.4](./memory-virtual.md)).
+/// (target) Per-frame reference counts for COW and shared mappings ([§5.4](./memory-virtual.md)).
 static FRAME_REFCOUNT: FrameRefCount = /* initialized at boot, one atomic counter per PFN */;
 
 /// Slab allocator for small fixed-size kernel objects (§4.1).
-static SLAB_ALLOCATOR: SlabAllocator = /* initialized by SlabAllocator::init() at boot */;
+/// Current implementation: `pub static SLAB: spin::Mutex<SlabAllocator>`
+static SLAB: spin::Mutex<SlabAllocator> = /* initialized with 5 size-class caches */;
 
-/// Queue of frames awaiting asynchronous zeroing by the page-zero thread.
+/// (target) Queue of frames awaiting asynchronous zeroing by the page-zero thread.
 static ZERO_QUEUE: PageZeroQueue = /* initialized at boot */;
 
-/// Typed kernel allocation — uses slab cache if size matches, buddy otherwise
+/// Typed kernel allocation — delegates to slab allocator via Layout.
+/// Current API (mm/heap.rs): kalloc<T>() / kfree<T>()
+/// Current API (mm/slab.rs): slab::alloc(Layout) / slab::dealloc(ptr, Layout)
 pub fn kalloc<T>() -> *mut T {
-    let size = core::mem::size_of::<T>();
-    let align = core::mem::align_of::<T>();
-    let ptr = SLAB_ALLOCATOR.alloc(size, align);
+    let layout = core::alloc::Layout::new::<T>();
+    let ptr = slab::alloc(layout);
     if ptr.is_null() {
-        panic!("kernel allocation failed: OOM for {} bytes", size);
+        panic!("kernel allocation failed: OOM for {} bytes", layout.size());
     }
     ptr as *mut T
 }
 
 pub fn kfree<T>(ptr: *mut T) {
-    let size = core::mem::size_of::<T>();
-    SLAB_ALLOCATOR.free(ptr as *mut u8, size);
+    let layout = core::alloc::Layout::new::<T>();
+    slab::dealloc(ptr as *mut u8, layout);
 }
 
 /// Page-granularity allocation (delegates to buddy allocator)
