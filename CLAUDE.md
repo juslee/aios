@@ -49,7 +49,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Scheduler | `docs/kernel/scheduler.md` | All (Phase 3+) |
 | Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
 | Kernel observability | `docs/kernel/observability.md` | All (Phase 3+) |
-| Space Storage | `docs/storage/spaces.md` | All (Phase 4+) |
+| Space Storage (hub) | `docs/storage/spaces.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
+| Storage data structures | `docs/storage/spaces-data-structures.md` | §3.0–§3.4 Primitive types, Spaces, Objects, CompactObject, Relations |
+| Block Engine | `docs/storage/spaces-block-engine.md` | §4.1–§4.10 On-disk layout, LSM-tree, WAL, compression, encryption, WAF |
+| Version Store | `docs/storage/spaces-versioning.md` | §5.1–§5.5 Merkle DAG, snapshots, retention, branching |
+| Storage encryption | `docs/storage/spaces-encryption.md` | §6.1–§6.3 Key management, nonces, encryption zones |
+| Query Engine | `docs/storage/spaces-query-engine.md` | §7.1–§7.6 Query dispatch, full-text, embeddings, learned indexes |
+| Space Sync | `docs/storage/spaces-sync.md` | §8.1–§8.4 Merkle exchange, conflict resolution, sync security |
+| POSIX compatibility (storage) | `docs/storage/spaces-posix.md` | §9.1–§9.6 Path mapping, translation layer, fd lifecycle |
+| Storage budget & pressure | `docs/storage/spaces-budget.md` | §10.1–§10.9 Device profiles, quotas, pressure, AI-driven storage |
 | Flow (smart clipboard) | `docs/storage/flow.md` | All (Phase 11+) |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
