@@ -791,9 +791,7 @@ The seqlock pattern requires no atomic RMW on the reader side — just two `load
 
 ### 6.4 AuditRead Extension (Phase 13)
 
-When the Inspector and AIRS security infrastructure is implemented in Phase 13, the existing `AuditRead` syscall is extended with a `Scope::Operational` variant:
-
-The existing `Scope` enum used by `AuditRead` is extended with an `Operational` variant:
+The `Scope` enum used by `AuditRead` (see [ipc.md](./ipc.md)) gains an `Operational` variant for metrics access:
 
 ```rust
 /// Extended from the existing Scope enum in ipc.md.
