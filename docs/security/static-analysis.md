@@ -20,7 +20,7 @@ For fuzzing and runtime hardening, see [fuzzing-and-hardening.md](fuzzing-and-ha
 | **Dependency auditing** | Scanning dependency tree for vulnerabilities and policy violations | Supply chain attacks, license compliance |
 | **AI-assisted review** | LLM analysis of code semantics and intent | Data exfiltration patterns, capability misuse |
 
-**AIOS-specific context.** Two aspects make AIOS unique. First, the kernel is Rust — the borrow checker already eliminates ~65% of the CVE classes that plague C/C++ kernels (see [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §3.1). Static analysis builds on this foundation, focusing on `unsafe` blocks and higher-level invariants. Second, AIOS runs autonomous AI agents that must be statically analyzed before installation, because agents are opaque programs from untrusted developers. A compromised or buggy agent is functionally equivalent to a local attacker with syscall access.
+**AIOS-specific context.** Two aspects make AIOS unique. First, the kernel is Rust — the borrow checker already eliminates ~65% of the CVE classes that plague C/C++ kernels (see [fuzzing-hardening-strategies.md](fuzzing-hardening-strategies.md) §3.1). Static analysis builds on this foundation, focusing on `unsafe` blocks and higher-level invariants. Second, AIOS runs autonomous AI agents that must be statically analyzed before installation, because agents are opaque programs from untrusted developers. A compromised or buggy agent is functionally equivalent to a local attacker with syscall access.
 
 ---
 
