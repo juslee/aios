@@ -111,27 +111,62 @@ Before writing, research state-of-the-art approaches for this subsystem:
 - Identify strengths, gaps, and areas where the design could be improved
 - Note any deviations between current code and documented architecture
 
-### 5b. External Research
-Use WebSearch to find:
-- Recent OS research papers from OSDI, SOSP, USENIX ATC, EuroSys
-- Production OS approaches from seL4, Fuchsia, Zircon, Redox, Hubris, Theseus
+### 5b. External Research (Recursive)
+Use WebSearch to find relevant research. **Search recursively** — each round of results
+should inform follow-up queries until no new relevant material is found.
+
+**Round 1 — Broad survey:**
+- Recent OS research papers from OSDI, SOSP, USENIX ATC, EuroSys, NDSS
+- Production OS approaches from seL4, Fuchsia, Zircon, Redox, Hubris, Theseus, LionsOS
 - Industry best practices and novel techniques relevant to this subsystem
 
 Example searches:
 - `"<subsystem> operating system" site:usenix.org OR site:acm.org`
 - `"<subsystem>" seL4 OR Fuchsia OR Zircon design`
 - `"<subsystem>" microkernel capability-based`
+- `"<subsystem>" 2024 2025 OSDI SOSP research paper`
 
-### 5c. Improvement Proposals
+**Round 2 — Follow specific leads:**
+- Each paper/system found in Round 1 may reference related work — search for those
+- Search for the specific technique names discovered (e.g., "scheduling context donation",
+  "differentiated isolation", "control-plane data-plane separation")
+- Search for formal verification or correctness proofs of the subsystem's data structures
+
+**Round 3+ — Recursive depth:**
+- Continue until a round produces no new relevant material
+- Typical depth: 3-7 rounds depending on subsystem maturity
+- Track all sources for citation in the doc
+
+### 5c. AI-Focused Research
+Since AIOS is an AI-first OS, explicitly search for AI/ML improvements to this subsystem:
+
+- `AI machine learning <subsystem> optimization operating system 2024 2025`
+- `reinforcement learning <subsystem> kernel scheduling 2024 2025`
+- `graph neural network <subsystem> anomaly detection security`
+- `LLM agent operating system <subsystem> context management`
+- `"learned index" "learned data structure" <subsystem> optimization`
+- `AI prediction prefetch <subsystem> workload characterization`
+
+**Categorize AI findings as:**
+- **AIRS-dependent** — requires semantic understanding (belongs in §13-style "AI-Native" section)
+- **Kernel-internal ML** — purely statistical, can run as frozen decision tree in kernel (belongs in §14-style "Future Directions")
+
+**Lesson learned (ipc.md):** AI research often lives in different academic communities
+(ML systems, security/lateral-movement, database/learned-indexes) — search across domains,
+not just OS conferences. The most novel ideas come from cross-domain application.
+
+### 5d. Improvement Proposals
 Present findings to the user:
 - What ideas from research or other OSes could AIOS adopt?
 - Which improvements align with AIOS's AI-first vision?
 - Categorize as: "incorporate now" vs "future phase work"
+- Separately present AI-driven improvements with the AIRS-dependent vs kernel-internal split
 
-### 5d. User Decision
+### 5e. User Decision
 Use AskUserQuestion to let the user choose:
 - Which improvements to incorporate into the architecture doc
 - Which to defer as future work (note in a "Future Directions" section)
+- Whether AI improvements go into the main AI-native section or Future Directions
 - Document accepted improvements with citations/references
 
 ## Step 6: Write / Update (Interactive, section by section)
@@ -230,6 +265,35 @@ Run doc-auditor to validate the document:
 - **Double blank lines**: Left behind after removing sections — collapse to single blank line
 - **Stale cross-references**: Links to sections/docs that were renamed or restructured
 - **Cross-file section refs after split**: `§N.N` references must point to the correct sub-file
+- **Explicit padding fields**: If code uses implicit compiler padding (no `_padding` field),
+  the doc should NOT add an explicit `_padding` field — describe padding in a comment instead
+- **Aspirational enum variants in "as implemented" blocks**: If a code block says "as implemented in X"
+  but includes enum variants that don't exist in code, comment them out with `// --- Target design ---`
+- **Lock-free claims**: Verify whether data structures are actually lock-free. `MessageRing` under
+  a Mutex is NOT lock-free even if it's a ring buffer. Be precise about concurrency properties.
+- **Markdown lint: lists after paragraphs**: Lists must have a blank line before them when they
+  follow a paragraph. Common in "This means:" followed by bullet points.
+
+**Bare code fence detection (CRITICAL — run BEFORE audit agent):**
+Run this in the worktree directory to find bare opening fences:
+```bash
+python3 -c "
+fence = chr(96)*3
+lines = open('<file>').readlines()
+inside = False
+for i, line in enumerate(lines, 1):
+    stripped = line.strip()
+    if not inside:
+        if stripped.startswith(fence):
+            inside = True
+            if stripped == fence:
+                print(f'{i}: bare opening fence')
+    else:
+        if stripped == fence:
+            inside = False
+"
+```
+Fix all bare fences by adding `text`, `rust`, `asm`, or `mermaid` as appropriate.
 
 ## Step 9: Commit + PR
 
@@ -250,9 +314,42 @@ Create these todo items at the start:
 2. Scope discussion with user
 3. Create worktree and branch
 4. Present outline / change plan for approval
-5. Research state-of-the-art improvements
+5. Research state-of-the-art improvements (recursive + AI-focused)
 6. Write / update document (section by section)
 7. Update cross-references (CLAUDE.md, related docs)
 8. Run doc-auditor loop until clean
-9. Commit, push, and create PR
+9. Update this skill with lessons learned
+10. Commit, push, and create PR
 ```
+
+## Lessons Learned
+
+Accumulated from actual doc updates. Each entry includes the doc and the lesson.
+
+### From `docs/kernel/ipc.md` (2026-03-13)
+
+**Research depth matters.** 7 rounds of recursive web search across ~20 queries found material
+that a single round would have missed. Cross-domain searches (security/GNN, database/learned-indexes,
+ML-systems/RL-scheduling) produced the most novel ideas. Always search beyond the OS community.
+
+**AI improvements split into two categories.** AIRS-dependent features (need semantic understanding)
+go into the "AI-Native" section (§13). Kernel-internal ML features (purely statistical, frozen
+decision trees) go into "Future Directions" (§14). This split is architecturally important because
+kernel-internal ML has no AIRS dependency — it works even if AIRS is offline.
+
+**"As implemented" blocks must be exact.** When a code block says "as implemented in `shared/src/ipc.rs`",
+every field, type, and variant must match the actual code. Implicit compiler padding should NOT be
+shown as an explicit `_padding` field. Aspirational enum variants must be commented out with
+`// --- Target design ---` markers.
+
+**Bare code fence detection is fragile.** Python scripts that track open/close fence state can
+produce false positives if the working directory is wrong or line numbers shift after edits.
+Always run detection from the worktree directory with an absolute path, and verify the fix worked.
+
+**Markdown lint: blank lines before lists.** Every list that follows a paragraph needs a blank line
+separator. This is easy to miss when writing "This means:\n- item". Add the blank line proactively.
+
+**Section renumbering cascade.** Adding new subsections (e.g., §13.7-13.9) requires renumbering
+the summary section (§13.7 → §13.10). Always check that existing cross-references from other docs
+use section numbers that didn't change — new sections should be inserted before summary/table sections,
+not in the middle of numbered content that other docs reference.
