@@ -389,7 +389,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      275 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+Shared crate unit tests:      309 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -405,6 +405,19 @@ MemTable capacity:            65536 entries, sorted Vec with binary search, dedu
 ContentHash algorithm:        SHA-256 (sha2 crate, no_std)
 Block integrity:              CRC-32C on data, verified on read
 On-disk data format:          [crc32c:u32 | data_len:u32 | data | padding to sector boundary]
+Encrypted on-disk format:     [nonce(12B) | encrypted{crc32c|data_len|data|pad} | tag(16B)]
+ENCRYPTION_OVERHEAD:          28 bytes (12 nonce + 16 tag)
+AES-256-GCM nonce format:     [random_prefix(4B) | counter(8B)], counter persisted in superblock
+Nonce crash recovery:         nonce_counter advanced +1000 on init to prevent reuse after unclean shutdown
+Device key derivation:        SHA-256(passphrase + "aios-device-key-salt") → 32-byte AES key (Phase 4 placeholder)
+CompactObject size:           512 bytes (repr(C)), ObjectId + SpaceId + name[64] + hashes + timestamps + text_content[128]
+Version size:                 256 bytes (repr(C)), hash + parent + content_hash + object_id + timestamp + author[32] + message[64]
+ObjectIndex:                  Sorted Vec with binary search on ObjectId, max 16384 entries
+version_head storage:         Stores SHA-256(serialized_version_bytes) from write_block(), NOT compute_version_hash()
+MAX_SPACES:                   16 system-wide
+System spaces:                system/ (Core), user/home/ (Personal), ephemeral/ (Ephemeral) — created at boot
+Space-storage service:        Registered via service_register(b"space-storage", pid=0, ch=3)
+Shared crate unit tests:      309 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -473,7 +486,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2; features: kernel-metrics (default), kernel-tracing
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm; features: kernel-metrics (default), kernel-tracing
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
@@ -510,10 +523,14 @@ aios/
 │       │   ├── mod.rs    Driver module re-exports
 │       │   └── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
 │       ├── storage/
-│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init entry point
-│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C integrity, SHA-256 content hash
+│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space)
+│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, encryption integration, ObjectIndex, SpaceTable
 │       │   ├── wal.rs    Write-ahead log: 64-byte WalEntry (repr(C)), circular buffer, append/replay/trim
-│       │   └── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
+│       │   ├── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
+│       │   ├── object_store.rs ObjectIndex (sorted Vec + binary search on ObjectId), object_create/read/delete, generate_object_id
+│       │   ├── version_store.rs Version Store: Merkle DAG, version_create/list/rollback, object_update
+│       │   ├── crypto.rs  DeviceKeyManager: AES-256-GCM encrypt/decrypt, nonce counter, crash recovery
+│       │   └── space.rs   SpaceTable, space_create/list/get/delete, init_system_spaces, register_service
 │       ├── syscall/
 │       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-9), Notify(10-12), Stats(13), Cap(14-17), Mem(18-22), Proc(23-25), Time(26-28), Audit(29), Debug(30)
 │       ├── platform/
@@ -563,7 +580,7 @@ aios/
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
-│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, VirtIO constants
+│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```
