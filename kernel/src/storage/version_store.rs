@@ -58,6 +58,7 @@ pub fn version_create(
         version.author[..author_len].copy_from_slice(&author[..author_len]);
 
         // Store version node as a block in the Block Engine.
+        // The block's content hash (SHA-256 of serialized bytes) is the lookup key.
         // SAFETY: Version is repr(C), 256 bytes, plain data.
         let version_bytes = unsafe {
             core::slice::from_raw_parts(
@@ -65,16 +66,16 @@ pub fn version_create(
                 core::mem::size_of::<Version>(),
             )
         };
-        engine.write_block(version_bytes)?;
+        let (block_hash, _) = engine.write_block(version_bytes)?;
 
-        // Update object's version_head.
+        // Update object's version_head to the block's content hash (lookup key).
         let obj_mut = engine
             .object_index_mut()
             .get_mut(object_id)
             .ok_or(StorageError::ObjectNotFound)?;
-        obj_mut.version_head = version_hash;
+        obj_mut.version_head = block_hash;
 
-        Ok(version_hash)
+        Ok(block_hash)
     })?
 }
 
@@ -129,30 +130,54 @@ pub fn version_rollback(
     target_hash: &ContentHash,
 ) -> Result<(), StorageError> {
     block_engine::with_engine(|engine| {
-        // Verify target version exists and belongs to this object.
-        let mut buf = [0u8; 256];
-        let n = engine
-            .read_block_by_hash(target_hash, &mut buf)
-            .map_err(|_| StorageError::VersionNotFound)?;
-
-        if n != core::mem::size_of::<Version>() {
-            return Err(StorageError::VersionNotFound);
-        }
-
-        // SAFETY: Version is repr(C), 256 bytes.
-        let target_version = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
-
-        if target_version.object_id != *object_id {
-            return Err(StorageError::VersionNotFound);
-        }
-
-        // Get current head to use as parent of the rollback version.
+        // Walk the version chain to find the target version by its logical hash.
+        // We can't look up by target_hash directly because blocks are indexed
+        // by SHA-256(serialized_bytes), not the logical version hash.
         let obj = engine
             .object_index()
             .get(object_id)
             .ok_or(StorageError::ObjectNotFound)?;
-        let current_head = obj.version_head;
-        let old_content_hash = obj.content_hash;
+
+        let mut current = obj.version_head;
+        let mut buf = [0u8; 256];
+        let mut target_version: Option<Version> = None;
+        let max_depth = 1024;
+
+        for _ in 0..max_depth {
+            if current.is_zero() {
+                break;
+            }
+            let n = match engine.read_block_by_hash(&current, &mut buf) {
+                Ok(n) => n,
+                Err(StorageError::BlockNotFound) => break,
+                Err(e) => return Err(e),
+            };
+            if n != core::mem::size_of::<Version>() {
+                break;
+            }
+            // SAFETY: Version is repr(C), 256 bytes, plain data.
+            let ver = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+            if ver.hash == *target_hash && ver.object_id == *object_id {
+                target_version = Some(ver);
+                break;
+            }
+            current = ver.parent;
+        }
+
+        let target_version = target_version.ok_or(StorageError::VersionNotFound)?;
+
+        // Get current head to use as parent of the rollback version.
+        // Re-read object since we may have consumed the reference above.
+        let current_head = engine
+            .object_index()
+            .get(object_id)
+            .ok_or(StorageError::ObjectNotFound)?
+            .version_head;
+        let old_content_hash = engine
+            .object_index()
+            .get(object_id)
+            .ok_or(StorageError::ObjectNotFound)?
+            .content_hash;
 
         // Create new version with target's content.
         let tick = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
@@ -177,17 +202,17 @@ pub fn version_rollback(
                 core::mem::size_of::<Version>(),
             )
         };
-        engine.write_block(version_bytes)?;
+        let (block_hash, _) = engine.write_block(version_bytes)?;
 
         // Increment refcount on target content (now referenced by rollback version).
         engine.inc_ref(&target_version.content_hash)?;
 
-        // Update object metadata.
+        // Update object metadata (version_head = block content hash for lookup).
         let obj_mut = engine
             .object_index_mut()
             .get_mut(object_id)
             .ok_or(StorageError::ObjectNotFound)?;
-        obj_mut.version_head = version_hash;
+        obj_mut.version_head = block_hash;
         obj_mut.content_hash = target_version.content_hash;
         obj_mut.content_size = target_version.content_size;
         obj_mut.modified_at = now;
@@ -242,23 +267,23 @@ pub fn object_update(
         let author_len = author.len().min(MAX_AUTHOR_LEN);
         version.author[..author_len].copy_from_slice(&author[..author_len]);
 
-        // Store version node.
+        // Store version node (block content hash = lookup key).
         let version_bytes = unsafe {
             core::slice::from_raw_parts(
                 &version as *const Version as *const u8,
                 core::mem::size_of::<Version>(),
             )
         };
-        engine.write_block(version_bytes)?;
+        let (block_hash, _) = engine.write_block(version_bytes)?;
 
-        // Update object metadata.
+        // Update object metadata (version_head = block content hash for lookup).
         let obj_mut = engine
             .object_index_mut()
             .get_mut(object_id)
             .ok_or(StorageError::ObjectNotFound)?;
         obj_mut.content_hash = new_hash;
         obj_mut.content_size = new_content.len() as u32;
-        obj_mut.version_head = version_hash;
+        obj_mut.version_head = block_hash;
         obj_mut.modified_at = now;
 
         // Decrement refcount on old content.
