@@ -82,7 +82,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
-| POSIX compatibility | `docs/platform/posix.md` | All (Phase 15+) |
+| POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
