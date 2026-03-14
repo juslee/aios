@@ -79,6 +79,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Flow SDK | `docs/storage/flow/sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
 | Flow extensions | `docs/storage/flow/extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
+| Networking | `docs/platform/networking.md` | All (Phase 7+) |
+| Audio subsystem (hub) | `docs/platform/audio.md` | §1 Overview, §14 Impl Order, §15 Design Principles, §16 Future Directions, §17 AI-Native Audio, Document Map |
+| Audio subsystem & sessions | `docs/platform/audio/subsystem.md` | §2 Architecture, §3.1–§3.4 Sessions/capabilities/routing/conflict + AIRS integration hooks |
+| Audio mixing & capture | `docs/platform/audio/mixing.md` | §4.1–§4.6 Mixer/SRC/capture pipeline/DSP filter graph, §10.1–§10.2 Format types/negotiation |
+| Audio drivers | `docs/platform/audio/drivers.md` | §5.1–§5.7 VirtIO-Sound/I2S/PWM/HDMI/Apple/USB/privacy-first hardware |
+| Audio scheduling & sync | `docs/platform/audio/scheduling.md` | §6.1–§6.4 RT scheduling/latency/buffers + predictive hints, §7.1–§7.4 Timeline/sync |
+| Audio integration | `docs/platform/audio/integration.md` | §8 HDMI, §9 Power, §11 Audit + visual mic indicator, §12 POSIX, §13 Boot chime |
 | Networking (hub) | `docs/platform/networking.md` | §1 Core Insight, §2 Architecture, §7 Impl Order, §8 Tech Choices, §10 Design Principles, Document Map |
 | NTM components | `docs/platform/networking/components.md` | §3.1–§3.6 Space Resolver, Connection Manager, Shadow Engine, Resilience Engine, Capability Gate, Bandwidth Scheduler |
 | Network stack | `docs/platform/networking/stack.md` | §4.1–§4.7 smoltcp integration, VirtIO-Net driver, buffer management, zero-copy I/O, interrupt handling, DHCP/DNS, dual stack |
@@ -86,7 +93,6 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Network security | `docs/platform/networking/security.md` | §6.1–§6.5 Capability gate, packet filtering, per-agent isolation, credential vault, layered trust |
 | Networking examples | `docs/platform/networking/examples.md` | §9.1–§9.5 Web browsing, agent communication, POSIX compat, credential routing, data model |
 | Networking future | `docs/platform/networking/future.md` | §11.1–§11.8 AI-driven networking, learned congestion, predictive prefetch, anomaly detection |
-| Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
