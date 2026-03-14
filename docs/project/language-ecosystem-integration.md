@@ -66,7 +66,7 @@ CPython + Node.js available*`"]
 |---|---|---|---|---|
 | Runtime | None (native) | RustPython | QuickJS-ng | wasmtime (AOT) |
 | Startup | < 1 ms | ~50 ms | < 5 ms | < 1 ms (pre-compiled) |
-| Performance | Baseline | 10-50x slower | 10-50x slower | ~1.2-2x slower |
+| Performance | Baseline | 10-50x slower | 10-50x slower | ~1.2-3x slower |
 | Memory overhead | None | ~10 MB interpreter | < 1 MB engine | ~5 MB runtime |
 | Binary size | ~1-10 MB | ~20 MB (interpreter) | ~700 KB (engine) | ~15 MB (wasmtime) |
 | C extension support | Via FFI | No (RustPython) | No | No |

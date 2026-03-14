@@ -275,9 +275,9 @@ pub fn agent_main() {
 | Standard | Status | Key Feature | AIOS Relevance |
 |---|---|---|---|
 | WASI 0.2.0 | Stable (January 2024) | Component Model foundation | Phase 12 baseline |
-| WASI 0.3.0 | Preview (wasmtime 37+) | Async support via Component Model | Agent event loops |
+| WASI 0.3.0 | Preview (in development) | Async support via Component Model | Agent event loops |
 | WASI 1.0 | Expected ~late 2026 | Stable, production-grade | Long-term target |
-| Wasm 3.0 | W3C Standard (Sep 2025) | GC, tail calls, relaxed SIMD | Performance features |
+| WebAssembly 2.0+ | W3C ongoing | GC, tail calls, relaxed SIMD | Performance features |
 
 ### Two WASM Paths
 
