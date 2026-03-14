@@ -1,7 +1,7 @@
 # AIOS Language Ecosystem: Operations & Security
 
-Part of: [language-ecosystem.md](./language-ecosystem.md) — Language Ecosystem
-**Related:** [language-ecosystem-runtimes.md](./language-ecosystem-runtimes.md) — Runtime deep dives, [language-ecosystem-integration.md](./language-ecosystem-integration.md) — Integration & build plan, [language-ecosystem-ai.md](./language-ecosystem-ai.md) — AI-driven optimization
+Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosystem
+**Related:** [runtimes.md](./language-ecosystem/runtimes.md) — Runtime deep dives, [integration.md](./language-ecosystem/integration.md) — Integration & build plan, [ai.md](./language-ecosystem/ai.md) — AI-driven optimization
 
 ---
 
@@ -180,7 +180,7 @@ Each runtime provides profiling hooks through the SDK:
 | WASM | wasmtime fuel metering (instruction counting) | ~2-5% |
 
 Profiling data feeds into the kernel's TraceRing (4096 entries/core, 32 bytes each) and can
-be collected by AIRS for workload analysis (see [AI-driven optimization](./language-ecosystem-ai.md#13-ai-driven-runtime-optimization)).
+be collected by AIRS for workload analysis (see [AI-driven optimization](./language-ecosystem/ai.md#13-ai-driven-runtime-optimization)).
 
 ---
 
@@ -218,7 +218,7 @@ AIOS implements defense-in-depth for runtime dependencies:
 
 - The capability system enforces what an agent **can** do regardless of what its dependencies try to do
 - If a dependency attempts a syscall the agent's manifest doesn't declare, it fails with `CapabilityDenied`
-- AIRS monitors for behavioral anomalies: an agent's actual syscall patterns vs its declared capabilities (see [AI-driven optimization](./language-ecosystem-ai.md#135-behavioral-anomaly-detection) §13.5)
+- AIRS monitors for behavioral anomalies: an agent's actual syscall patterns vs its declared capabilities (see [AI-driven optimization](./language-ecosystem/ai.md#135-behavioral-anomaly-detection) §13.5)
 
 ### Per-Runtime Trust Levels
 
@@ -292,7 +292,7 @@ each runtime responds differently:
 The OOM killer prioritizes killing background agents before foreground agents, and interpreted
 runtimes (larger memory footprint per unit of work) before native runtimes. AIRS can override
 these defaults based on learned workload importance (see
-[AI-driven optimization](./language-ecosystem-ai.md#13-ai-driven-runtime-optimization) §13).
+[AI-driven optimization](./language-ecosystem/ai.md#13-ai-driven-runtime-optimization) §13).
 
 ### Fuel Metering Beyond WASM
 

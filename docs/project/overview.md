@@ -676,10 +676,10 @@ docs/
 │   ├── developer-guide.md                   Kernel development guide for Rust OS development
 │   ├── ai-agent-context.md                  Context-loading checklist for AI coding agents
 │   ├── language-ecosystem.md                Language runtime hub (Rust, Python, TS, WASM)
-│   │   ├── language-ecosystem-runtimes.md   Runtime deep dives per language
-│   │   ├── language-ecosystem-integration.md  Integration and build plan
-│   │   ├── language-ecosystem-operations.md   Operations, security, resource isolation
-│   │   └── language-ecosystem-ai.md         AI-driven runtime optimization strategies
+│   │   ├── runtimes.md   Runtime deep dives per language
+│   │   ├── integration.md  Integration and build plan
+│   │   ├── operations.md   Operations, security, resource isolation
+│   │   └── ai.md         AI-driven runtime optimization strategies
 │   │
 ├── kernel/
 │   ├── boot.md                              Boot sequence (QEMU direct and UEFI)

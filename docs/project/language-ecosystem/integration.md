@@ -1,7 +1,7 @@
 # AIOS Language Ecosystem: Integration & Build Plan
 
-Part of: [language-ecosystem.md](./language-ecosystem.md) — Language Ecosystem
-**Related:** [language-ecosystem-runtimes.md](./language-ecosystem-runtimes.md) — Runtime deep dives, [language-ecosystem-operations.md](./language-ecosystem-operations.md) — Operations & security, [language-ecosystem-ai.md](./language-ecosystem-ai.md) — AI-driven optimization
+Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosystem
+**Related:** [runtimes.md](./language-ecosystem/runtimes.md) — Runtime deep dives, [operations.md](./language-ecosystem/operations.md) — Operations & security, [ai.md](./language-ecosystem/ai.md) — AI-driven optimization
 
 ---
 

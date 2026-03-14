@@ -29,10 +29,10 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §5 Gates (incl. Gate 1 retro), §8 Phase table, §8.1 Actual progress |
 | Full architecture | `docs/project/architecture.md` | All |
 | Language ecosystem (hub) | `docs/project/language-ecosystem.md` | §1 Overview, Document Map, Impl Order |
-| Language runtimes | `docs/project/language-ecosystem-runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
-| Language integration & build plan | `docs/project/language-ecosystem-integration.md` | §6 Dependency chain, §7 Build plan, §8 Key decisions, RuntimeAdapter trait |
-| Language operations & security | `docs/project/language-ecosystem-operations.md` | §9 Interop (WIT/Component Model), §10 Observability, §11 Supply chain, §12 Resource isolation |
-| Language AI optimization | `docs/project/language-ecosystem-ai.md` | §13 AIRS Runtime Advisor/scheduling/allocation/GC/anomaly, §14 Future directions |
+| Language runtimes | `docs/project/language-ecosystem/runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
+| Language integration & build plan | `docs/project/language-ecosystem/integration.md` | §6 Dependency chain, §7 Build plan, §8 Key decisions, RuntimeAdapter trait |
+| Language operations & security | `docs/project/language-ecosystem/operations.md` | §9 Interop (WIT/Component Model), §10 Observability, §11 Supply chain, §12 Resource isolation |
+| Language AI optimization | `docs/project/language-ecosystem/ai.md` | §13 AIRS Runtime Advisor/scheduling/allocation/GC/anomaly, §14 Future directions |
 | Boot sequence (hub) | `docs/kernel/boot.md` | §1 Overview, Document Map, Future Directions |
 | Firmware handoff (BootInfo, ESP, EL model) | `docs/kernel/boot/firmware.md` | §2.1–§2.6 |
 | Kernel early boot (boot.S, kernel_main) | `docs/kernel/boot/kernel.md` | §3.1–§3.6 |
