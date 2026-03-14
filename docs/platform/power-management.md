@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-AIOS has power management logic scattered across five subsystems: the boot lifecycle handles suspend/resume and proactive wake (boot/suspend.md §15), the scheduler handles thermal throttling and DVFS (scheduler.md §8.4, §11), the Subsystem Framework handles per-device idle policies (subsystem-framework.md §9), the Context Engine signals battery state (context-engine.md §BatteryState), and AIRS predicts usage patterns for proactive wake (boot/suspend.md §15.5). Each subsystem makes correct local decisions, but no single component owns the system-wide power policy.
+AIOS has power management logic scattered across five subsystems: the boot lifecycle handles suspend/resume and proactive wake (boot/suspend.md §15), the scheduler handles thermal throttling and DVFS (scheduler.md §8.4, §11), the Subsystem Framework handles per-device idle policies (subsystem-framework.md §9), the Context Engine signals battery state (context-engine.md §3.1), and AIRS predicts usage patterns for proactive wake (boot/suspend.md §15.5). Each subsystem makes correct local decisions, but no single component owns the system-wide power policy.
 
 This document defines the **Power Management Policy Engine** — the unified component that observes all sensor inputs, evaluates policy rules, and drives the system through power state transitions. The Policy Engine is the single authority for questions like: "The user closed the lid. Should we enter S3, S4, or stay awake?" and "Battery is at 8%. Should we hibernate now or wait?" and "AIRS predicts the user arrives in 3 minutes. Should we proactive-wake?"
 
@@ -140,7 +140,7 @@ pub struct PowerPolicyService {
 
 AIOS defines five system-wide power states, following the ACPI naming convention adapted for ARM:
 
-```
+```text
 State    Name              CPU            DRAM            Devices      Resume Time
 ─────    ────              ───            ────            ───────      ───────────
 S0       Active            Running        Active          Active       (running)
@@ -530,7 +530,7 @@ pub struct PolicyRule {
 
 ### 5.2 Core Rules (Default Policy)
 
-```
+```text
 Priority  Rule ID                   Condition                         Action
 ────────  ───────                   ─────────                         ──────
    1      thermal-emergency         Any zone ≥ Critical trip          Immediate hibernate
@@ -687,7 +687,7 @@ flowchart LR
 
 ### 6.2 Per-Platform Thermal Zones
 
-```
+```text
 Platform          Zones                  Trip Points                    Sensor
 ────────          ─────                  ───────────                    ──────
 QEMU              cpu-thermal (virtual)  Passive: 80°C                 Emulated
@@ -1000,7 +1000,7 @@ impl PolicyEngine {
 
 AIRS learns which operations the user performs at different times and in different contexts. The Policy Engine uses this to pre-emptively adjust power budgets:
 
-```
+```text
 Pattern Observed                 Policy Adjustment
 ──────────────────               ─────────────────
 Morning: heavy inference         Pre-warm at higher frequency, accept
@@ -1043,7 +1043,7 @@ pub struct LearnedPowerProfile {
 
 Battery state-of-charge (SoC) estimation on embedded ARM platforms is challenging — there is no standardized fuel gauge. The Policy Engine supports two estimation methods:
 
-```
+```text
 Method           Accuracy    Platforms        How
 ──────           ────────    ─────────        ───
 Coulomb counting ±2-5%      Apple Silicon     Dedicated fuel gauge IC (SBS)
@@ -1135,7 +1135,7 @@ impl PolicyEngine {
 
 QEMU simulates power states for development and testing. No real battery, thermal sensors, or lid switch exist, so the Policy Engine accepts simulated inputs.
 
-```
+```text
 Component            QEMU Implementation                     Notes
 ─────────            ────────────────────                     ─────
 Battery              Simulated via QEMU monitor               Set SoC, charging
@@ -1153,7 +1153,7 @@ Hibernate            Writes to virtio-blk hibernate partition  Full flow works
 
 **Testing power policies in QEMU:** The QEMU monitor provides commands to inject power events, enabling full policy testing without hardware:
 
-```
+```text
 (qemu) power battery soc=5 charging=false     # trigger low battery rules
 (qemu) power thermal cpu=82000                 # trigger thermal warm rules
 (qemu) power lid close                         # trigger lid close → S3
@@ -1162,7 +1162,7 @@ Hibernate            Writes to virtio-blk hibernate partition  Full flow works
 
 ### 9.2 Raspberry Pi 4 (BCM2711)
 
-```
+```text
 Component            Pi 4 Implementation                      Notes
 ─────────            ───────────────────                       ─────
 Battery              External: PiJuice HAT or similar          I2C fuel gauge
@@ -1215,7 +1215,7 @@ impl RaspberryPi4Platform {
 
 ### 9.3 Raspberry Pi 5 (BCM2712)
 
-```
+```text
 Component            Pi 5 Implementation                      Notes
 ─────────            ───────────────────                       ─────
 Battery              External: same HAT ecosystem as Pi 4.     I2C fuel gauge
@@ -1240,7 +1240,7 @@ The Pi 5's built-in RTC is a significant advantage for proactive wake. No extern
 
 ### 9.4 Apple Silicon (M1-M4)
 
-```
+```text
 Component            Apple Silicon Implementation              Notes
 ─────────            ──────────────────────────                 ─────
 Battery              SMC fuel gauge (Apple SBS protocol).       Accurate coulomb
@@ -1297,7 +1297,7 @@ pub enum ClusterPowerState {
 
 **Policy Engine directives for Apple Silicon:**
 
-```
+```text
 Battery Level    P-cores                E-cores              Notes
 ─────────────    ───────                ───────              ─────
 > 50%            Active, any P-state    Active               Full performance
@@ -1356,14 +1356,14 @@ sequenceDiagram
 
 Each HAL device class has specific quiesce and restore requirements during suspend/resume:
 
-```
+```text
 Device               Suspend (quiesce)                    Resume (restore)
 ──────               ─────────────────                    ────────────────
 InterruptController  Save distributor + redistributor     Restore GIC state,
 (GIC)                per-core state. Disable all IRQs     re-enable IRQs,
                      except wake sources.                 restore affinity.
 
-Timer                Save CNTV_CTL_EL0, CNTV_CVAL_EL0.  Restore timer state,
+Timer                Save CNTP_CTL_EL0, CNTP_CVAL_EL0.  Restore timer state,
 (ARM Generic)        Disable timer interrupt.              re-arm scheduler tick.
 
 UART (PL011)         Save baud rate, control registers.   Restore registers.
@@ -1394,7 +1394,7 @@ The Policy Engine and the scheduler interact through three interfaces. The Polic
 
 ### 11.1 Interface Summary
 
-```
+```text
 Policy Engine → Scheduler         Purpose                     Reference
 ──────────────────────────         ───────                     ─────────
 DvfsDirective                      Cap maximum DVFS policy     scheduler.md §11.1
@@ -1447,7 +1447,7 @@ pub enum BatteryMode {
 
 The scheduler's tickless idle (scheduler.md §10.1) is the mechanism for entering S0ix from the CPU side. The Policy Engine does not directly control tickless idle — the scheduler enters it automatically when run queues are empty. The Policy Engine's role is to ensure that background work is suppressed (via BatteryMode or ThermalState) so that run queues *become* empty, allowing the scheduler to enter tickless idle naturally.
 
-```
+```text
 Policy Engine sets BatteryMode::Low
     → Scheduler pauses background inference (scheduler.md §11.3)
     → Scheduler reduces idle-class scheduling
@@ -1463,7 +1463,7 @@ Policy Engine sets BatteryMode::Low
 
 Power management spans multiple development phases, with each phase building on the previous. The core Policy Engine is Phase 19, but preparatory work begins earlier and refinements continue later.
 
-```
+```text
 Phase    Weeks       Deliverable                                    Depends On
 ─────    ─────       ───────────                                    ──────────
 Phase 1  5-8        Timer, GIC — foundation for idle/WFI           Phase 0
@@ -1504,7 +1504,7 @@ Phase 24 93-96      Secure boot — authenticated suspend/resume     Phase 19
 
 ### 12.1 Phase 19 Internal Milestones
 
-```
+```text
 Week 75: Sensor aggregator and policy rule engine
          - Battery, thermal, lid, AC, user activity inputs
          - Rule table with default policies
@@ -1553,3 +1553,73 @@ Week 78: AIRS integration and refinement
 9. **User preferences are respected.** The Policy Engine's default rules can be overridden by user preferences (set via the Preference Service, preferences.md). Users can disable proactive wake, change idle timeouts, or set "always on AC" mode. Preferences modify the rule table — they don't bypass the engine.
 
 10. **Fail toward safety.** When sensors disagree or readings are stale, the Policy Engine assumes the worst case. A stale thermal reading is treated as the last known temperature plus a margin. A missing battery reading triggers a precautionary hibernate. No data is better handled than bad data.
+
+-----
+
+## 14. Future Directions
+
+This section surveys innovations from production operating systems, academic research, and AI/ML techniques that could enhance AIOS power management in future phases. Items are categorized as kernel-internal (no AIRS dependency) or AIRS-dependent (requires the AI Runtime Service).
+
+### 14.1 Production OS Lessons
+
+**Fuchsia Power Broker — DAG-Based Power Topology.** Fuchsia's power framework (RFC-0250) introduces a centralized Power Broker that maintains a directed acyclic graph of power element dependencies. Components register power elements with the broker; the broker walks the DAG (topological sort) to enforce consistent state transitions. This prevents circular power constraints and enables system-wide power attribution (which component caused power consumption). AIOS's Policy Engine already centralizes decision-making (§2), but adopting a formal DAG for subsystem power dependencies would prevent deadlocks when multiple subsystems have mutual power requirements. The DAG would be validated at boot — any cycle is a configuration error.
+
+**Linux power_allocator — PID-Controlled Thermal Budget.** The Linux thermal framework's `power_allocator` governor uses a PID controller with separate proportional constants for overshoot (k_po) and undershoot (k_pu) plus an integral term (k_i) for long-term drift compensation. It allocates a total thermal power budget across cooling devices (frequency limiters, fans) weighted by their efficiency. This avoids the oscillation that simpler threshold-based governors exhibit near trip points. AIOS §6 currently uses threshold-based thermal state transitions; a PID governor would provide smoother frequency transitions and better thermal headroom utilization, particularly on Apple Silicon where the thermal margin is large (105°C critical vs. 85°C on Pi).
+
+**Linux PM QoS — Constraint Aggregation.** Linux's PM Quality of Service framework lets drivers and subsystems register latency, throughput, and bandwidth constraints. Aggregation uses minimum (most restrictive constraint wins), and per-device callback trees notify drivers when aggregated constraints change. Per-CPU support allows different latency budgets per core. AIOS's transition guards (§5.3) serve a similar purpose but are evaluated per-transition rather than maintained as persistent constraints. A PM QoS-like system would let subsystems declare "I need <10ms wake latency" persistently, preventing the Policy Engine from choosing deep idle states that violate the constraint without re-evaluating guards on every transition.
+
+**Linux TEO Idle Governor — Probabilistic Idle Prediction.** The Thermal/Energy Oriented (TEO) cpuidle governor replaced Linux's menu governor with a weighted probability matrix. TEO observes timer events (the most deterministic wakeup source) and builds an N×N probability matrix mapping predicted idle state to actual correct state. Each wakeup updates the matrix with 70% weight on the correct outcome and 30% distributed across alternatives. This achieves significantly better idle state selection than threshold-based approaches, particularly for bursty workloads where idle durations are bimodal. AIOS §3.3 currently uses fixed idle escalation timeouts; TEO-style prediction would adapt to per-agent workload patterns.
+
+**Linux Energy-Aware Scheduling (EAS).** EAS integrates an energy model into the scheduler's task placement decisions on heterogeneous architectures. During wake-up, EAS evaluates the total energy cost of placing a task on each CPU (considering that raising one domain's frequency affects all tasks on that domain) and chooses the placement that minimizes system-wide energy. EAS also detects "misfit tasks" — tasks whose compute needs exceed the capability of their assigned core — and migrates them to appropriate cores. AIOS references EAS indirectly via scheduler.md §9.4; future Apple Silicon support would benefit from explicit energy model integration.
+
+**Zephyr Dual-Mode Power Management.** Zephyr RTOS separates power management into two modes: application-controlled (the application directly manages device power states) and system-managed (the PM framework suspends/resumes devices in dependency order automatically). Device suspend follows initialization order (respecting the dependency DAG); resume follows reverse order. This dual-mode approach could benefit AIOS: system-managed for production use, application-controlled for development and testing where developers need direct power state control for debugging.
+
+### 14.2 Academic Innovations
+
+**Thermal Safe Power (TSP) Budgeting.** The Thermal Safe Power framework (ISCA 2014, refined through 2024) computes a dynamic power budget based on the number of active cores, preventing thermal violations proactively rather than reactively. The key insight is that the safe power budget per core decreases as more cores activate — a 4-core system cannot sustain 4× the single-core thermal budget due to thermal coupling. AIOS could compute the TSP budget at boot from a platform-specific thermal model (stored in device tree or platform descriptor) and have the scheduler respect it when deciding which cores to activate. This eliminates reactive thermal throttling (Dynamic Thermal Management) for most workloads, keeping performance smooth.
+
+**Yawn — ML-Based Idle Governor.** The Yawn idle governor (ISCA 2019) uses online machine learning to predict idle durations from recent history, I/O patterns, and interrupt rates. Features include last N idle durations, interrupt source classification, and device driver state. A shallow decision tree (depth 4-5) provides O(1) lookup with no per-invocation overhead. Yawn achieves 85% match-to-optimal idle state selection across diverse workloads, compared to 50% for the traditional Linux menu governor. For AIOS, a similar per-agent historical wake-time tracker could select idle states matching predicted durations, deployed as a frozen decision tree in the idle path.
+
+**UBAR — Battery Degradation-Aware Scheduling.** The User and Battery-Aware Resource Management framework (ACM TECS 2021) introduces depth-of-discharge (DoD) aware scheduling that avoids aggressive discharge cycles. The key insight is that battery calendar life depends not just on cycle count but on the depth of each discharge cycle — many shallow cycles degrade less than fewer deep cycles. By scheduling heavy workloads when SoC is higher (flattening the discharge curve), UBAR extends battery calendar life by 2-3×. AIOS §8.3 already adjusts thresholds based on degradation; UBAR's DoD-aware scheduling would add proactive workload shaping to the battery management strategy.
+
+**Connected Standby — Selective Suspend.** Windows Modern Standby and research into selective suspend demonstrate that S0ix with network and background tasks active provides 2× faster resume than full S3 while maintaining connectivity for notifications, sync, and updates. The system enters a software-defined low-power state where the CPU is in deep idle but the network interface remains active for wake-on-pattern matching. AIOS §3 defines S0ix with devices in "mixed" state; a more structured selective suspend model would explicitly define which subsystems remain active during each idle depth, enabling features like background sync and notification delivery during lid-closed idle.
+
+### 14.3 Kernel-Internal ML
+
+These techniques run as frozen models in kernel space with no AIRS dependency. They work even when AIRS is offline or not yet started.
+
+**Decision Tree Idle State Governor.** Replace the fixed timeout thresholds in §3.3 with a frozen decision tree (depth 4-5, trained offline on workload traces). Input features: time since last interrupt (from CNTP_CVAL_EL0 delta), run queue length, current scheduler class of next-to-run task, and time-of-day bucket. Output: optimal idle state (WFI, ClockGated, PowerGated). The tree is trained on QEMU workload traces during development, serialized as a compact lookup table (~1 KiB), and loaded at boot. Retraining happens offline — the kernel never modifies the tree. Expected improvement: 30-40% better idle state selection vs fixed timeouts, based on Yawn results on comparable workloads.
+
+**Q-Learning DVFS Lookup Table.** Train a Q-learning agent offline on historical task traces (task class, arrival rate, compute duration, thermal headroom). The converged Q-table maps (run_queue_depth × thermal_zone × battery_mode) → optimal frequency step. Deploy as a static lookup table in the DVFS governor path (~4 KiB for typical state space). The FiDRL approach (IEEE TC 2024) addresses invocation overhead by deciding when to invoke the RL agent vs. using a cheap heuristic — the agent is only queried when the heuristic's confidence is low. Expected energy savings: 3-10% vs. Linux ondemand governor, based on FiDRL and Q-Learning DVFS benchmarks on ARM platforms.
+
+**Lightweight Battery SoH Estimation.** Deploy a quantized (INT8) shallow LSTM for battery state-of-health estimation from voltage/current ADC samples and temperature history. Input: sliding window of last 100 voltage/current samples (sampled every 30 seconds). Output: estimated SoH percentage and remaining useful life (RUL) in cycles. The model is trained on public battery degradation datasets (NASA, CALCE) and quantized to run on the main CPU with <1ms inference time. This supplements the coulomb counting / voltage-based estimation in §8.1 with a learned degradation model that accounts for temperature-dependent aging and charge rate effects.
+
+### 14.4 AIRS-Dependent Intelligence
+
+These techniques require semantic understanding, user context, or complex ML inference provided by the AI Runtime Service (Phase 8+).
+
+**GNN Spatial Thermal Prediction.** Use a Graph Neural Network to model thermal coupling between neighboring cores, predicting per-core temperatures 1-5 minutes ahead (average error <1°C, based on RNN thermal prediction research). The graph structure captures heat recirculation patterns — a hot P-core cluster raises adjacent E-core temperatures even if E-cores are idle. AIRS trains the GNN offline on simulation data (QEMU + physics-based thermal model); the frozen graph runs in the AIRS Thermal Advisor process. This enables Model Predictive Control (MPC) for thermal management — reducing frequency on cores predicted to overheat before they actually reach the trip point, eliminating reactive throttle events that cause visible stutter.
+
+**Context-Aware Per-User Power Profiles.** Model power management as a Markov Decision Process where state = (time-of-day, active application class, location context, battery SoC), action = (frequency target, screen brightness, idle timeout), and reward = (battery life preserved × responsiveness maintained). AIRS learns per-user patterns: morning commute = high inference + communications (boost frequency, accept higher power draw), afternoon desk work = sustained low-intensity (aggressive idle timeouts, moderate frequency), evening media = GPU-biased power (reduce CPU, boost GPU). The learned policy replaces fixed idle escalation timeouts with user-adapted timing. Research (SmartAPM, Nature Scientific Reports 2025) shows 23-25% energy savings with context-aware policies compared to static profiles.
+
+**Token-Level LLM Inference Power Management.** AI inference has two distinct phases with different power profiles: prefill (prompt encoding, compute-bound, parallelizable) and decode (token generation, memory-bandwidth-bound, sequential). AIRS can apply phase-specific DVFS — high frequency during prefill, reduced frequency during decode where memory bandwidth is the bottleneck, not compute. The GreenLLM approach (arXiv 2024) adds prompt-length-aware queueing to batch similar-length requests for better GPU utilization. For AIOS, AIRS would maintain per-model power profiles and adjust frequency at phase boundaries, with a KV cache predictor (shallow LSTM trained on request history) that predicts cache reuse distance to free memory proactively, reducing the power-gated memory footprint.
+
+**Multi-Agent RL Power Budget Coordination.** When multiple agents run simultaneously (user conversation + background indexing + system update), their combined power draw may exceed the thermal or battery budget. A multi-agent RL system lets each agent's AIRS advisor bid for power budget based on its current task priority and deadline slack. A centralized allocator (the Policy Engine) optimizes global power allocation using the bids — high-priority interactive work gets full power budget, background tasks get residual budget. Safe RL constraints (Lagrangian optimization) ensure the total allocation never exceeds the TSP thermal budget or the battery discharge rate target. Curriculum learning starts with simple equal-allocation policies and gradually increases sophistication as the system observes real workload patterns.
+
+### 14.5 References
+
+- Fuchsia Power Topology: [RFC-0250](https://fuchsia.dev/fuchsia-src/contribute/governance/rfcs/0250_power_topology)
+- Linux power_allocator: [LWN.net](https://lwn.net/Articles/602517/), [kernel docs](https://docs.kernel.org/driver-api/thermal/power_allocator.html)
+- Linux PM QoS: [kernel docs](https://docs.kernel.org/power/pm_qos_interface.html)
+- Linux TEO governor: [LWN.net](https://lwn.net/Articles/820432/)
+- Linux EAS: [kernel docs](https://docs.kernel.org/scheduler/sched-energy.html)
+- Yawn idle governor: [Sharafzadeh et al., ISCA 2019](https://www.cs.jhu.edu/~erfan/files/yawn.pdf)
+- UBAR battery management: [ACM TECS 2021](https://dl.acm.org/doi/10.1145/3441644)
+- Thermal Safe Power: [IEEE Xplore 2015](https://ieeexplore.ieee.org/document/7466857/)
+- FiDRL DVFS: [IEEE TC 2024](https://dl.acm.org/doi/10.1109/TC.2024.3465933)
+- SmartAPM context-aware PM: [Nature Scientific Reports 2025](https://www.nature.com/articles/s41598-025-89709-3)
+- GreenLLM inference DVFS: [arXiv 2024](https://arxiv.org/html/2508.16449v1)
+- AgileWatts idle latency: [IEEE Micro 2022](https://dl.acm.org/doi/10.1109/MICRO56248.2022.00063)
+- µ-Serve model serving: [USENIX ATC 2024](https://haoran-qiu.com/pdf/atc24-preprint.pdf)
+- Battery SoH via LSTM: [Nature Scientific Reports 2025](https://www.nature.com/articles/s41598-025-93775-y)
+- Physics-informed battery degradation: [Nature Communications 2024](https://www.nature.com/articles/s41467-024-48779-z)
