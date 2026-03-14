@@ -28,7 +28,11 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | System overview & vision | `docs/project/overview.md` | §1 Vision, §2 Architecture |
 | Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §8 Phase table |
 | Full architecture | `docs/project/architecture.md` | All |
-| Language ecosystem & runtimes | `docs/project/language-ecosystem.md` | All (Phase 12-15+) |
+| Language ecosystem (hub) | `docs/project/language-ecosystem.md` | §1 Overview, Document Map, Impl Order |
+| Language runtimes | `docs/project/language-ecosystem-runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
+| Language integration & build plan | `docs/project/language-ecosystem-integration.md` | §6 Dependency chain, §7 Build plan, §8 Key decisions, RuntimeAdapter trait |
+| Language operations & security | `docs/project/language-ecosystem-operations.md` | §9 Interop (WIT/Component Model), §10 Observability, §11 Supply chain, §12 Resource isolation |
+| Language AI optimization | `docs/project/language-ecosystem-ai.md` | §13 AIRS Runtime Advisor/scheduling/allocation/GC/anomaly, §14 Future directions |
 | Boot sequence (Phase 0, QEMU `-kernel`) | `docs/kernel/boot.md` | §3.3 Steps 1-2 |
 | Boot sequence (Phase 1+, UEFI) | `docs/kernel/boot.md` | §2 full, §3.3 Steps 1-9 |
 | Boot lifecycle & phases | `docs/kernel/boot-lifecycle.md` | All |
