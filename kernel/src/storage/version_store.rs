@@ -59,7 +59,9 @@ pub fn version_create(
 
         // Store version node as a block in the Block Engine.
         // The block's content hash (SHA-256 of serialized bytes) is the lookup key.
-        // SAFETY: Version is repr(C), 256 bytes, plain data.
+        // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+        // Maintained by compile-time assertion: size_of::<Version>() == 256.
+        // If violated, from_raw_parts produces incorrect byte representation.
         let version_bytes = unsafe {
             core::slice::from_raw_parts(
                 &version as *const Version as *const u8,
@@ -110,8 +112,9 @@ pub fn version_list(object_id: &ObjectId) -> Result<Vec<Version>, StorageError> 
                 break;
             }
 
-            // SAFETY: Version is repr(C), 256 bytes, all plain data.
-            // read_unaligned handles potential alignment issues from buf.
+            // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+            // Maintained by compile-time assertion: size_of::<Version>() == 256.
+            // If violated, read_unaligned returns garbage bytes.
             let version = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
             current_hash = version.parent;
             versions.push(version);
@@ -155,7 +158,9 @@ pub fn version_rollback(
             if n != core::mem::size_of::<Version>() {
                 break;
             }
-            // SAFETY: Version is repr(C), 256 bytes, plain data.
+            // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+            // Maintained by compile-time assertion: size_of::<Version>() == 256.
+            // If violated, read_unaligned returns garbage bytes.
             let ver = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
             if ver.hash == *target_hash && ver.object_id == *object_id {
                 target_version = Some(ver);

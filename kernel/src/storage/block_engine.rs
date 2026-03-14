@@ -100,8 +100,9 @@ impl Superblock {
         // 8+4+4+8+8+8+8+8+8+8+8+8+8+8+4 = 104 bytes
         let offset_of_checksum = 104;
 
-        // SAFETY: Superblock is repr(C). We read the first 104 bytes as a contiguous
-        // byte slice for CRC-32C computation. No pointers or padding issues.
+        // SAFETY: Superblock is repr(C), plain data (no pointers or padding).
+        // Maintained by the fixed field layout and compile-time size_of check.
+        // If violated, CRC-32C is computed over incorrect bytes, causing checksum mismatch.
         let bytes = unsafe {
             core::slice::from_raw_parts(self as *const Self as *const u8, offset_of_checksum)
         };
@@ -258,8 +259,9 @@ impl BlockEngine {
             buf[offset..offset + SECTOR_SIZE].copy_from_slice(&sector_buf);
         }
 
-        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, all fields are plain data.
-        // Use read_unaligned because buf is a [u8] with alignment 1.
+        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, plain data (no pointers).
+        // Maintained by repr(C) layout and is_valid() check after deserialization.
+        // If violated, read_unaligned returns garbage; is_valid() rejects it.
         let sb = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Superblock) };
         if sb.is_valid() {
             Ok(Some(sb))
@@ -270,7 +272,9 @@ impl BlockEngine {
 
     /// Write the superblock to disk (sectors 0-7).
     fn write_superblock(sb: &Superblock) -> Result<(), StorageError> {
-        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes.
+        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, plain data (no pointers).
+        // Maintained by repr(C) layout and checksum field set before serialization.
+        // If violated, from_raw_parts produces incorrect bytes, corrupting the on-disk superblock.
         let bytes = unsafe {
             core::slice::from_raw_parts(sb as *const Superblock as *const u8, BLOCK_SIZE)
         };

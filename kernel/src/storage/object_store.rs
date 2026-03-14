@@ -219,8 +219,9 @@ pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
             if n != core::mem::size_of::<Version>() {
                 break;
             }
-            // SAFETY: Version is repr(C), 256 bytes, plain data.
+            // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
             // Maintained by compile-time assertion: size_of::<Version>() == 256.
+            // If violated (e.g., struct gains a pointer), read_unaligned returns garbage.
             let ver = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
             // Free the version's referenced content block (if different from current).
             if ver.content_hash != obj.content_hash {
