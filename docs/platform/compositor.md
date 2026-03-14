@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [subsystem-framework.md](./subsystem-framework.md) — Display subsystem framework, [ipc.md](../kernel/ipc.md) — IPC protocol, [experience.md](../experience/experience.md) — Five Surfaces model, [model.md](../security/model.md) — Security and capability model, [airs.md](../intelligence/airs.md) — AI Runtime Services
+**Related:** [gpu.md](./gpu.md) — GPU & Display architecture, [subsystem-framework.md](./subsystem-framework.md) — Display subsystem framework, [ipc.md](../kernel/ipc.md) — IPC protocol, [experience.md](../experience/experience.md) — Five Surfaces model, [model.md](../security/model.md) — Security and capability model, [airs.md](../intelligence/airs.md) — AI Runtime Services
 
 -----
 

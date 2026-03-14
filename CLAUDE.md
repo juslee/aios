@@ -85,6 +85,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Compositor GPU | `docs/platform/compositor/gpu.md` | §8.1–§8.5 wgpu, VirtIO-GPU, VC4/V3D, GPU memory, shaders; §9.1–§9.5 Wayland, XWayland, DRM/KMS, security context |
 | Compositor security | `docs/platform/compositor/security.md` | §10.1–§10.5 Capability-gated surfaces, GPU isolation, capture, clipboard, trust levels; §11.1–§11.5 Accessibility |
 | Compositor AI-native | `docs/platform/compositor/ai-native.md` | §12.1–§12.8 AIRS-dependent compositing; §13.1–§13.8 Kernel-internal ML; §14 Future directions |
+| GPU & Display (hub) | `docs/platform/gpu.md` | §1 Core Insight, §2 Architecture, §19 Impl Order, §20 Design Principles, Document Map |
+| GPU drivers | `docs/platform/gpu/drivers.md` | §3 VirtIO-GPU driver, §4 Platform-specific drivers (VC4/V3D, AGX), §5 Software renderer |
+| GPU display | `docs/platform/gpu/display.md` | §6 Display controller, §7 Framebuffer management, §8 Display pipeline |
+| GPU rendering | `docs/platform/gpu/rendering.md` | §9 wgpu integration, §10 Rendering pipeline, §11 Font rendering, §12 GPU memory management |
+| GPU security | `docs/platform/gpu/security.md` | §13 Capability-gated GPU access, §14 DMA protection, §15 GPU isolation |
+| GPU integration | `docs/platform/gpu/integration.md` | §16 POSIX compatibility, §17 AI-native display, §18 Future directions |
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
 | Audio subsystem (hub) | `docs/platform/audio.md` | §1 Overview, §14 Impl Order, §15 Design Principles, §16 Future Directions, §17 AI-Native Audio, Document Map |
 | Audio subsystem & sessions | `docs/platform/audio/subsystem.md` | §2 Architecture, §3.1–§3.4 Sessions/capabilities/routing/conflict + AIRS integration hooks |
