@@ -12,6 +12,7 @@ use spin::Mutex;
 use crate::drivers::virtio_blk;
 
 use super::lsm::MemTable;
+use super::object_store::ObjectIndex;
 use super::wal::Wal;
 
 // ---------------------------------------------------------------------------
@@ -140,11 +141,12 @@ impl Superblock {
 // Block Engine
 // ---------------------------------------------------------------------------
 
-/// Block Engine state: superblock + WAL + MemTable + data region append pointer.
+/// Block Engine state: superblock + WAL + MemTable + object index + data region append pointer.
 pub struct BlockEngine {
     superblock: Superblock,
     wal: Wal,
     memtable: MemTable,
+    object_index: ObjectIndex,
     /// Next free sector in the data region.
     data_next_sector: u64,
 }
@@ -178,6 +180,7 @@ impl BlockEngine {
                 superblock: sb,
                 wal,
                 memtable: MemTable::with_default_capacity(),
+                object_index: ObjectIndex::new(),
                 data_next_sector: data_next,
             };
 
@@ -201,6 +204,7 @@ impl BlockEngine {
                 superblock: sb,
                 wal,
                 memtable: MemTable::with_default_capacity(),
+                object_index: ObjectIndex::new(),
                 data_next_sector: data_next,
             })
         }
@@ -525,6 +529,40 @@ impl BlockEngine {
     /// Access the MemTable (read-only).
     pub fn memtable(&self) -> &MemTable {
         &self.memtable
+    }
+
+    /// Increment the reference count for a content hash.
+    ///
+    /// Used when a new object references the same content (dedup).
+    #[allow(dead_code)]
+    pub fn inc_ref(&mut self, hash: &ContentHash) -> Result<(), StorageError> {
+        let entry = self
+            .memtable
+            .get_mut(hash)
+            .ok_or(StorageError::BlockNotFound)?;
+        entry.refcount += 1;
+        Ok(())
+    }
+
+    /// Decrement the reference count for a content hash.
+    ///
+    /// If refcount reaches 0, the block is logically freed (entry removed from MemTable).
+    /// Returns `true` if the block was freed.
+    pub fn dec_ref(&mut self, hash: &ContentHash) -> Result<bool, StorageError> {
+        match self.memtable.dec_ref(hash) {
+            Some((_loc, freed)) => Ok(freed),
+            None => Err(StorageError::BlockNotFound),
+        }
+    }
+
+    /// Access the object index (read-only).
+    pub fn object_index(&self) -> &ObjectIndex {
+        &self.object_index
+    }
+
+    /// Access the object index (mutable).
+    pub fn object_index_mut(&mut self) -> &mut ObjectIndex {
+        &mut self.object_index
     }
 
     /// Flush the superblock to disk with current state.

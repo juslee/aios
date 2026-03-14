@@ -8,6 +8,7 @@
 
 pub mod block_engine;
 pub mod lsm;
+pub mod object_store;
 pub mod wal;
 
 use shared::storage::ContentHash;
@@ -141,6 +142,9 @@ fn run_self_tests() {
 
     // --- Test 4: 100-block write/read ---
     test_100_blocks();
+
+    // --- Test 5: Object Store CRUD + dedup ---
+    test_object_store();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -187,6 +191,116 @@ fn test_100_blocks() {
             fail_count
         );
     }
+}
+
+/// Object Store self-tests: create, read-back, dedup, delete.
+#[cfg(feature = "storage-tests")]
+fn test_object_store() {
+    use shared::storage::{ContentType, SpaceId};
+
+    let space = SpaceId([1u8; 16]);
+
+    // Create an object.
+    let content = b"Hello, Object Store!";
+    let (obj_id, hash1) = match object_store::object_create(
+        space,
+        b"hello.txt",
+        content,
+        ContentType::Text,
+    ) {
+        Ok(result) => {
+            crate::kinfo!(
+                Storage,
+                "ObjStore: created id={:?} hash={:?}",
+                result.0,
+                HashPrefix(&result.1)
+            );
+            result
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: create failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Read it back.
+    let mut buf = [0u8; 512];
+    match object_store::object_read(&obj_id, &mut buf) {
+        Ok((obj, n)) => {
+            if &buf[..n] == content {
+                crate::kinfo!(
+                    Storage,
+                    "ObjStore: read OK — name_len={} content_size={}",
+                    obj.name_len,
+                    obj.content_size
+                );
+            } else {
+                crate::kerror!(Storage, "ObjStore: read data mismatch!");
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: read failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Dedup: create another object with same content.
+    let (obj_id2, hash2) = match object_store::object_create(
+        space,
+        b"hello_copy.txt",
+        content,
+        ContentType::Text,
+    ) {
+        Ok(result) => result,
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: dedup create failed: {:?}", e);
+            return;
+        }
+    };
+
+    if hash1 == hash2 {
+        // Check refcount — should be 3 (original write + dedup in write_block + second object).
+        let rc = block_engine::with_engine(|e| {
+            e.memtable().get(&hash1).map(|entry| entry.refcount)
+        })
+        .unwrap_or(None);
+        crate::kinfo!(
+            Storage,
+            "ObjStore: dedup verified — same hash, refcount={}",
+            rc.unwrap_or(0)
+        );
+    } else {
+        crate::kerror!(Storage, "ObjStore: dedup failed — different hashes!");
+    }
+
+    // Delete first object — content block should still exist (refcount > 0).
+    match object_store::object_delete(&obj_id) {
+        Ok(()) => {
+            crate::kinfo!(Storage, "ObjStore: deleted first object");
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: delete failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Second object should still be readable.
+    match object_store::object_read(&obj_id2, &mut buf) {
+        Ok((_, n)) => {
+            if &buf[..n] == content {
+                crate::kinfo!(Storage, "ObjStore: second object still readable after delete");
+            } else {
+                crate::kerror!(Storage, "ObjStore: second object data mismatch after delete!");
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: read after delete failed: {:?}", e);
+        }
+    }
+
+    // Object count check.
+    let count = block_engine::with_engine(|e| e.object_index().count()).unwrap_or(0);
+    crate::kinfo!(Storage, "ObjStore: {} objects in index", count);
 }
 
 use shared::storage::MEMTABLE_MAX_ENTRIES;
