@@ -58,8 +58,9 @@ const PTE_UXN: u64 = 1 << 54; // unprivileged execute-never
 
 // MAIR attribute indices — matched to edk2's MAIR configuration:
 //   edk2 MAIR = 0xffbb4400: Attr0=0x00(Device), Attr1=0x44(NC), Attr2=0xbb(WT), Attr3=0xff(WB)
-// We use Attr0 for device memory and Attr1 for normal memory (non-cacheable
-// under edk2's MAIR, which is safe for Phase 1 boot).
+// We use Attr0 for device memory and Attr3 for normal memory (write-back
+// cacheable). Phase 1 originally used Attr1 (NC); upgraded to WB in Phase 2 M8
+// to prevent attribute aliasing and enable spin::Mutex on SMP.
 pub const MAIR_DEVICE_IDX: u64 = 0;
 #[allow(dead_code)]
 pub const MAIR_NORMAL_NC_IDX: u64 = 1;
