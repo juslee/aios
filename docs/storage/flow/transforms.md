@@ -1,7 +1,7 @@
 # AIOS Flow Transform Engine
 
 Part of: [flow.md](../flow.md) — Flow System
-**Related:** [data-model.md](./data-model.md) — TypedContent definitions, [integration.md](./integration.md) — Compositor type negotiation, [airs.md](../intelligence/airs.md) — AIRS-powered transforms
+**Related:** [data-model.md](./data-model.md) — TypedContent definitions, [integration.md](./integration.md) — Compositor type negotiation, [airs.md](../../intelligence/airs.md) — AIRS-powered transforms
 
 -----
 

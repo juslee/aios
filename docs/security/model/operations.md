@@ -495,7 +495,7 @@ AIOS integration opportunities:
 - **AIRS model isolation**: Run inference engines in Realm VMs, protecting model weights and KV caches from kernel-level attacks
 - **Agent sandboxing**: High-risk agents (untrusted Store agents, web-facing agents) execute in Realms with hardware-enforced memory encryption
 - **Attestation chain**: CCA attestation tokens extend AIOS's provenance chain to hardware root of trust
-- **Memory Encryption Engine**: Transparent encryption of Realm memory pages, complementing AIOS's software encryption zones ([encryption.md §6](../storage/spaces/encryption.md))
+- **Memory Encryption Engine**: Transparent encryption of Realm memory pages, complementing AIOS's software encryption zones ([encryption.md §6](../../storage/spaces/encryption.md))
 
 Requires: ARMv9.2+ silicon (Cortex-X4/A720 or later). QEMU CCA support is experimental.
 

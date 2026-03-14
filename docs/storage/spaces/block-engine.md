@@ -725,7 +725,7 @@ AIRS compression directive:
   2. Kernel validates:
      a. AIRS holds ReadSpace capability for the target space
      b. Compression CPU quota not exceeded (blast radius for AIRS)
-     c. Directive rate within AirsDirectiveMonitor baseline ([model.md §2.3.1](../security/model.md))
+     c. Directive rate within AirsDirectiveMonitor baseline ([model.md §2.3.1](../../security/model.md))
   3. Kernel forwards directive to Space Storage
   4. Space Storage executes compression through the NORMAL Block Engine path:
      a. Read block from disk
@@ -837,7 +837,7 @@ pub struct WafAlert {
 
 **Device write accounting:** Device-level bytes written are measured via kernel block layer hooks — the Block Engine instruments all I/O requests to the storage driver, counting bytes submitted to the device. This captures both application writes and internal overhead (WAL, compaction, index flushes). On devices with SMART support (NVMe, enterprise SSDs), the Block Engine cross-references its count against the device's internal write counter for validation.
 
-**Inspector integration:** WAF data is exposed in the Storage Dashboard ([Inspector](../project/architecture.md), §5.6) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
+**Inspector integration:** WAF data is exposed in the Storage Dashboard ([Inspector](../../project/architecture.md), §5.6) alongside per-zone write statistics, enabling users and developers to understand flash wear patterns.
 
 ### 4.9 Sub-Block Deduplication
 

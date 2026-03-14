@@ -1,13 +1,13 @@
 # AIOS Language Ecosystem: AI-Driven Optimization
 
 Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosystem
-**Related:** [runtimes.md](./language-ecosystem/runtimes.md) — Runtime deep dives, [integration.md](./language-ecosystem/integration.md) — Integration & build plan, [operations.md](./language-ecosystem/operations.md) — Operations & security
+**Related:** [runtimes.md](./runtimes.md) — Runtime deep dives, [integration.md](./integration.md) — Integration & build plan, [operations.md](./operations.md) — Operations & security
 
 ---
 
 ## 13. AI-Driven Runtime Optimization
 
-AIOS's AI Runtime Service (AIRS, see [airs.md](../intelligence/airs.md)) has unique visibility
+AIOS's AI Runtime Service (AIRS, see [airs.md](../../intelligence/airs.md)) has unique visibility
 into agent workload patterns across all four runtimes. This section describes how AIRS optimizes
 runtime behavior through a combination of kernel-internal frozen models and AIRS-dependent
 semantic analysis.
@@ -83,7 +83,7 @@ Recommendation: python (confirmed)
 ```
 
 This builds on AIRS's existing capability intelligence pipeline (Stage 1: Static Code Analysis,
-Stage 3: Behavioral Prediction — see [airs.md](../intelligence/airs.md) §5.9).
+Stage 3: Behavioral Prediction — see [airs.md](../../intelligence/airs.md) §5.9).
 
 ### 13.2 Learned Scheduling Weights
 
@@ -126,7 +126,7 @@ flowchart LR
 - "Agent Z is idle 95% of the time but critical when active → keep in Normal but with priority boost on wake"
 
 The kernel scheduler always has valid defaults. AIRS-pushed weights are an optimization, not
-a requirement. See [scheduler.md](../kernel/scheduler.md) for the base scheduling architecture.
+a requirement. See [scheduler.md](../../kernel/scheduler.md) for the base scheduling architecture.
 
 ### 13.3 Lifetime-Aware Allocation
 
@@ -188,7 +188,7 @@ collect. A sensible default policy runs without AIRS.
 
 **Category:** Kernel-internal ML (rate-based) / AIRS-dependent (semantic) — Phase 10
 
-AIRS's BehavioralMonitor (see [airs.md](../intelligence/airs.md) §5.5) maintains per-runtime
+AIRS's BehavioralMonitor (see [airs.md](../../intelligence/airs.md) §5.5) maintains per-runtime
 behavioral baselines. Each runtime type has fundamentally different "normal" behavior:
 
 | Signal | Python (normal) | TypeScript (normal) | WASM (normal) | Anomaly Indicator |
@@ -212,7 +212,7 @@ behavioral baselines. Each runtime type has fundamentally different "normal" beh
    sandbox escape attempt.
 
 Anomalies trigger capability review, rate limiting, or suspension depending on severity.
-See [model.md](../security/model.md) §1.2 for trust level enforcement.
+See [model.md](../../security/model.md) §1.2 for trust level enforcement.
 
 ### 13.6 Automatic Capability Minimization
 
@@ -246,7 +246,7 @@ Recommendation: Remove unused capabilities [network.fetch, spaces.write]
 4. **Profile suggestion** — generate a minimal `manifest.toml` capability section
 
 This extends AIRS's Stage 5 (Profile Suggestion) in the capability intelligence pipeline
-(see [airs.md](../intelligence/airs.md) §5.9).
+(see [airs.md](../../intelligence/airs.md) §5.9).
 
 ---
 
@@ -337,7 +337,7 @@ adapter's security properties would provide mathematical guarantees that:
 - Resource limits cannot be bypassed through adapter API misuse
 
 This extends AIOS's broader formal verification goals (see
-[static-analysis.md](../security/static-analysis.md)).
+[static-analysis.md](../../security/static-analysis.md)).
 
 ---
 

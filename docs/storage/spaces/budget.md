@@ -203,7 +203,7 @@ pub struct StorageQuota {
 
 ### 10.5 Storage Pressure Response
 
-Like memory pressure (see [memory.md §8](../kernel/memory.md)), storage has pressure levels with escalating responses:
+Like memory pressure (see [memory.md §8](../../kernel/memory.md)), storage has pressure levels with escalating responses:
 
 ```rust
 /// Analogous to MemoryPressure in memory.md — same thresholds, but worst

@@ -138,7 +138,7 @@ impl PosixSpaceBridge {
 
 BSD tools never know they're not on a traditional filesystem. `ls /spaces/research/` returns a directory listing. `grep` searches file content. `cat` reads objects. The translation is transparent.
 
-POSIX syscall translations are dispatched through IPC to the Space Storage service. See [ipc.md §12.2 Gap 6](../kernel/ipc.md) for the POSIX translation performance model (5 μs round-trip target) and the read-ahead, vnode cache, batched readdir, and write-coalescing optimizations that amortize IPC cost.
+POSIX syscall translations are dispatched through IPC to the Space Storage service. See [ipc.md §12.2 Gap 6](../../kernel/ipc.md) for the POSIX translation performance model (5 μs round-trip target) and the read-ahead, vnode cache, batched readdir, and write-coalescing optimizations that amortize IPC cost.
 
 ### 9.3 Write Path
 

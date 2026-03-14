@@ -1,7 +1,7 @@
 # AIOS Kernel Early Boot
 
 Part of: [boot.md](../boot.md) — Boot and Init Sequence
-**Related:** [firmware.md](./firmware.md) — Firmware handoff and BootInfo, [services.md](./services.md) — Service startup, [performance.md](./performance.md) — Boot timing, [hal.md](./hal.md) — Platform trait, [memory.md](./memory.md) — Memory management
+**Related:** [firmware.md](./firmware.md) — Firmware handoff and BootInfo, [services.md](./services.md) — Service startup, [performance.md](./performance.md) — Boot timing, [hal.md](../hal.md) — Platform trait, [memory.md](../memory.md) — Memory management
 
 -----
 

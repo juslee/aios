@@ -1,7 +1,7 @@
 # AIOS Suspend, Resume, and Semantic State
 
 Part of: [boot.md](../boot.md) — Boot and Init Sequence
-**Related:** [lifecycle.md](./lifecycle.md) — Shutdown, [intelligence.md](./intelligence.md) — Boot intelligence, [kernel.md](./kernel.md) — Kernel early boot, [power-management.md](../platform/power-management.md) — Power management
+**Related:** [lifecycle.md](./lifecycle.md) — Shutdown, [intelligence.md](./intelligence.md) — Boot intelligence, [kernel.md](./kernel.md) — Kernel early boot, [power-management.md](../../platform/power-management.md) — Power management
 
 -----
 

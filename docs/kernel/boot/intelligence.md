@@ -1,7 +1,7 @@
 # AIOS Boot Intelligence and On-Demand Services
 
 Part of: [boot.md](../boot.md) — Boot and Init Sequence
-**Related:** [suspend.md](./suspend.md) — Suspend/resume, [services.md](./services.md) — Service startup, [research.md](./research.md) — Research innovations, [airs.md](../intelligence/airs.md) — AI Runtime Service
+**Related:** [suspend.md](./suspend.md) — Suspend/resume, [services.md](./services.md) — Service startup, [research.md](./research.md) — Research innovations, [airs.md](../../intelligence/airs.md) — AI Runtime Service
 
 -----
 

@@ -1,7 +1,7 @@
 # AIOS Flow SDK API
 
 Part of: [flow.md](../flow.md) — Flow System
-**Related:** [data-model.md](./data-model.md) — TypedContent and FlowEntry types, [transforms.md](./transforms.md) — TransformHandler trait, [security.md](./security.md) — Capability requirements, [agents.md](../applications/agents.md) — Agent SDK
+**Related:** [data-model.md](./data-model.md) — TypedContent and FlowEntry types, [transforms.md](./transforms.md) — TransformHandler trait, [security.md](./security.md) — Capability requirements, [agents.md](../../applications/agents.md) — Agent SDK
 
 -----
 

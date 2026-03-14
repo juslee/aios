@@ -1,7 +1,7 @@
 # AIOS Flow Integration
 
 Part of: [flow.md](../flow.md) — Flow System
-**Related:** [data-model.md](./data-model.md) — TypedContent, [transforms.md](./transforms.md) — Type negotiation, [security.md](./security.md) — Capability enforcement, [compositor.md](../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../platform/subsystem-framework.md) — DataChannel trait
+**Related:** [data-model.md](./data-model.md) — TypedContent, [transforms.md](./transforms.md) — Type negotiation, [security.md](./security.md) — Capability enforcement, [compositor.md](../../platform/compositor.md) — Compositor protocol, [subsystem-framework.md](../../platform/subsystem-framework.md) — DataChannel trait
 
 -----
 
@@ -159,7 +159,7 @@ The drag preview is generated from `ContentMetadata.thumbnail` if available, or 
 
 ### 7.1 How Subsystems Connect to Flow
 
-Every subsystem's DataChannel (see [subsystem-framework.md](../platform/subsystem-framework.md)) has a `connect_flow()` method. This is the bridge between hardware data streams and the Flow system:
+Every subsystem's DataChannel (see [subsystem-framework.md](../../platform/subsystem-framework.md)) has a `connect_flow()` method. This is the bridge between hardware data streams and the Flow system:
 
 ```rust
 /// From the subsystem framework DataChannel trait

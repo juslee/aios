@@ -65,7 +65,7 @@ The watchdog timer (ARM Generic Timer) is set to 15 seconds at shutdown start. I
 
 ### 11.3 Agent State Persistence
 
-Agents that need to survive reboot set `persistent: true` in their manifest (see [agents.md](../applications/agents.md) §2.4 `AgentManifest` and §3 Agent Lifecycle). Their state is stored in their designated space:
+Agents that need to survive reboot set `persistent: true` in their manifest (see [agents.md](../../applications/agents.md) §2.4 `AgentManifest` and §3 Agent Lifecycle). Their state is stored in their designated space:
 
 ```text
 Agent receives: ShutdownSignal { deadline: Timestamp }
@@ -171,13 +171,13 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 4. **Context Engine boot behavior** — **RESOLVED.** context-engine.md §8.3 now documents boot-time signal availability, the `boot_context()` function, conservative defaults, and the transition from boot heuristics to AIRS inference.
 
-5. **Task Manager service** — **RESOLVED.** [task-manager.md](../intelligence/task-manager.md) now documents: intent decomposition, task lifecycle, agent orchestration, Phase 5 boot assignment, and the SDK API.
+5. **Task Manager service** — **RESOLVED.** [task-manager.md](../../intelligence/task-manager.md) now documents: intent decomposition, task lifecycle, agent orchestration, Phase 5 boot assignment, and the SDK API.
 
 6. **Recovery mode and safe mode operational procedures** — §9 describes recovery mode commands and safe mode service lists, but there is no standalone troubleshooting or operations guide documenting: how to connect a UART console on each platform, how to diagnose common boot failures, or how to restore from backup after a factory reset. This could be a future `docs/operations/recovery.md`.
 
 7. **USB host controller driver** — **RESOLVED.** hal.md §14 now documents: xHCI ring buffer architecture (command/transfer/event rings), DWC2 controller for Pi 4, USB device enumeration sequence, HID class driver with input latency analysis, and hub enumeration.
 
-8. **Audio subsystem architecture** — **RESOLVED.** [audio.md](../platform/audio.md) now documents: PCM mixing engine, per-platform device drivers (VirtIO-Sound, I2S/PWM, HDMI audio), RT scheduling integration, A/V sync with compositor, and latency requirements.
+8. **Audio subsystem architecture** — **RESOLVED.** [audio.md](../../platform/audio.md) now documents: PCM mixing engine, per-platform device drivers (VirtIO-Sound, I2S/PWM, HDMI audio), RT scheduling integration, A/V sync with compositor, and latency requirements.
 
 9. **Measured boot and attestation** — Implementation Order lists "Phase 24: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
 
@@ -191,7 +191,7 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 14. **Boot-time encryption unlock UX** — §18.3 describes the unlock flow, but the Argon2id tuning parameters per platform, hardware key (FIDO2) integration, and biometric reader support need documentation in `docs/security/encryption.md`.
 
-15. **Accessibility engine** — **RESOLVED.** [accessibility.md](../experience/accessibility.md) now documents: screen reader (eSpeak-NG), Braille display support, switch scanning, high contrast/magnification, voice control, boot-time accessibility, accessibility tree integration, and AIRS enhancement with no-AIRS fallback.
+15. **Accessibility engine** — **RESOLVED.** [accessibility.md](../../experience/accessibility.md) now documents: screen reader (eSpeak-NG), Braille display support, switch scanning, high contrast/magnification, voice control, boot-time accessibility, accessibility tree integration, and AIRS enhancement with no-AIRS fallback.
 
 16. **Single-address-space boot validation** — §22.2 describes running Phase 1 services as kernel modules. The dual-compilation build system, the state handoff mechanism from kernel-module mode to isolated-process mode, and the safety audit requirements for `#![forbid(unsafe_code)]` enforcement need documentation in the build system guide.
 
@@ -215,7 +215,7 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 26. **Service manifest schema and static verification** — §22.15 describes Fuchsia-style service manifests. The manifest file format (TOML? embedded in binary? stored in Space?), the static verification tool (run at build time or boot time?), and the capability routing resolution algorithm need documentation. A future `docs/project/service-manifests.md` should specify the full manifest schema, provide examples for each system service, and document the verification errors and how to resolve them.
 
-27. **Power management policy engine** — **RESOLVED.** [power-management.md](../platform/power-management.md) now documents: unified power state machine (S0/S0ix/S3/S4/S5), sensor inputs, policy rules, thermal management, AIRS integration for predictive power management, battery management, per-platform behavior, and scheduler integration.
+27. **Power management policy engine** — **RESOLVED.** [power-management.md](../../platform/power-management.md) now documents: unified power state machine (S0/S0ix/S3/S4/S5), sensor inputs, policy rules, thermal management, AIRS integration for predictive power management, battery management, per-platform behavior, and scheduler integration.
 
 28. **Thermal management during boot and inference** — **RESOLVED.** hal.md §17 now documents: thermal zone abstraction, per-platform thermal configuration (thresholds for QEMU/Pi 4/Pi 5/Apple Silicon), thermal-aware inference (ThrottleLevel states and AIRS pause behavior), and boot-time thermal monitoring during Phase 2-3.
 

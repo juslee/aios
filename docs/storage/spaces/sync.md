@@ -117,7 +117,7 @@ Sync introduces a network trust boundary. Before any data exchange:
 
 1. **Mutual identity verification.** Both devices perform an Ed25519 challenge-response using their device identity keys (§6.1). The remote device must present a key that the local device has previously authorized via a pairing ceremony — manual confirmation on both devices (e.g., scan QR code, enter matching PIN, or biometric). Each space maintains a sync ACL: a list of `(device_id, permissions)` tuples authorized to participate in sync.
 2. **Capability check.** Initiating sync requires `SyncSpace(space_id)` capability. Accepting sync requires that the remote identity is in the space's sync ACL.
-3. **Encrypted transport.** All sync traffic is encrypted end-to-end by the NTM ([networking.md](../platform/networking.md)). The Space Sync protocol never sees plaintext on the wire — it hands structured messages to the NTM, which handles TLS/Noise encryption.
+3. **Encrypted transport.** All sync traffic is encrypted end-to-end by the NTM ([networking.md](../../platform/networking.md)). The Space Sync protocol never sees plaintext on the wire — it hands structured messages to the NTM, which handles TLS/Noise encryption.
 4. **Content verification.** Every received version node and content block is verified against its content hash before being written to the local DAG. A malicious or corrupted remote cannot inject invalid data — the Merkle chain rejects it.
 
 ### 8.4 Transport Failure Handling
@@ -130,6 +130,6 @@ Network connections are unreliable. The sync protocol handles failures gracefull
 
 **Encryption for synced spaces:** Personal spaces use per-device space keys — each device derives its own key from the user's passphrase (same passphrase, same derivation, same key). Collaborative spaces use a shared key distributed during the pairing ceremony (encrypted with the receiving device's public key). Untrusted spaces (web storage) are not synced.
 
-**Sync uses the Network Translation Module (NTM).** The NTM ([networking.md](../platform/networking.md)) provides encrypted point-to-point channels between devices. Space Sync sends structured messages to the NTM, which handles TLS/Noise encryption, routing, and retry logic. Space Sync code never deals with plaintext on the wire. Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). Sync IPC messages will be defined in ipc.md (Phase 9c, not yet specified).
+**Sync uses the Network Translation Module (NTM).** The NTM ([networking.md](../../platform/networking.md)) provides encrypted point-to-point channels between devices. Space Sync sends structured messages to the NTM, which handles TLS/Noise encryption, routing, and retry logic. Space Sync code never deals with plaintext on the wire. Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). Sync IPC messages will be defined in ipc.md (Phase 9c, not yet specified).
 
 -----

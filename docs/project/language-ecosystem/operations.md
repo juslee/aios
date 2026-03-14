@@ -1,7 +1,7 @@
 # AIOS Language Ecosystem: Operations & Security
 
 Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosystem
-**Related:** [runtimes.md](./language-ecosystem/runtimes.md) — Runtime deep dives, [integration.md](./language-ecosystem/integration.md) — Integration & build plan, [ai.md](./language-ecosystem/ai.md) — AI-driven optimization
+**Related:** [runtimes.md](./runtimes.md) — Runtime deep dives, [integration.md](./integration.md) — Integration & build plan, [ai.md](./ai.md) — AI-driven optimization
 
 ---
 
@@ -11,7 +11,7 @@ Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosyste
 
 AIOS agents written in different languages need to communicate. A Python data-processing
 agent may feed results to a Rust inference agent, which forwards to a TypeScript UI agent.
-All cross-agent communication uses IPC (see [ipc.md](../kernel/ipc.md)), but the question
+All cross-agent communication uses IPC (see [ipc.md](../../kernel/ipc.md)), but the question
 is how data is serialized and how APIs are defined across language boundaries.
 
 ### WASM Component Model as the Interop Standard
@@ -112,7 +112,7 @@ generates the client-side SDK bindings, while WIT defines the wire-level IPC con
 ### Structured Logging Integration
 
 Each runtime redirects its native logging and output through the AIOS SDK to the kernel's
-structured logging system (see [observability.md](../kernel/observability.md)):
+structured logging system (see [observability.md](../../kernel/observability.md)):
 
 ```mermaid
 flowchart LR
@@ -180,7 +180,7 @@ Each runtime provides profiling hooks through the SDK:
 | WASM | wasmtime fuel metering (instruction counting) | ~2-5% |
 
 Profiling data feeds into the kernel's TraceRing (4096 entries/core, 32 bytes each) and can
-be collected by AIRS for workload analysis (see [AI-driven optimization](./language-ecosystem/ai.md#13-ai-driven-runtime-optimization)).
+be collected by AIRS for workload analysis (see [AI-driven optimization](./ai.md#13-ai-driven-runtime-optimization)).
 
 ---
 
@@ -218,7 +218,7 @@ AIOS implements defense-in-depth for runtime dependencies:
 
 - The capability system enforces what an agent **can** do regardless of what its dependencies try to do
 - If a dependency attempts a syscall the agent's manifest doesn't declare, it fails with `CapabilityDenied`
-- AIRS monitors for behavioral anomalies: an agent's actual syscall patterns vs its declared capabilities (see [AI-driven optimization](./language-ecosystem/ai.md#135-behavioral-anomaly-detection) §13.5)
+- AIRS monitors for behavioral anomalies: an agent's actual syscall patterns vs its declared capabilities (see [AI-driven optimization](./ai.md#135-behavioral-anomaly-detection) §13.5)
 
 ### Per-Runtime Trust Levels
 
@@ -234,7 +234,7 @@ in public repositories. AIOS accounts for this with per-runtime default trust le
 | Python | Semi-trusted | RustPython sandbox + capability enforcement; higher ecosystem vulnerability rate |
 
 Trust levels affect default capability restrictions — see
-[capabilities.md](../security/model/capabilities.md) §3.7 for how
+[capabilities.md](../../security/model/capabilities.md) §3.7 for how
 composable capability profiles (Layer 10) encode per-runtime security policies.
 
 ### Interpreter-in-WASM Hardening
@@ -271,7 +271,7 @@ system. This prevents a runaway interpreter from starving other agents or the ke
 
 | Resource | Enforcement Mechanism | Default Limits |
 |---|---|---|
-| CPU | Fuel metering (WASM) / preemptive scheduling (others) | Per-class time slices (see [scheduler.md](../kernel/scheduler.md)) |
+| CPU | Fuel metering (WASM) / preemptive scheduling (others) | Per-class time slices (see [scheduler.md](../../kernel/scheduler.md)) |
 | Memory | Heap ceiling per agent | 64 MB (Python/TS), 256 MB (Rust/WASM) |
 | IPC rate | Channel rate limiting | 1000 messages/second per channel |
 | File I/O | Space quota per agent | Declared in manifest |
@@ -279,7 +279,7 @@ system. This prevents a runaway interpreter from starving other agents or the ke
 
 ### Memory Pressure Response
 
-When the kernel signals memory pressure (see [reclamation.md](../kernel/memory/reclamation.md) §8),
+When the kernel signals memory pressure (see [reclamation.md](../../kernel/memory/reclamation.md) §8),
 each runtime responds differently:
 
 | Pressure Level | Rust (native) | Python (RustPython) | TypeScript (QuickJS-ng) | WASM (wasmtime) |
@@ -292,7 +292,7 @@ each runtime responds differently:
 The OOM killer prioritizes killing background agents before foreground agents, and interpreted
 runtimes (larger memory footprint per unit of work) before native runtimes. AIRS can override
 these defaults based on learned workload importance (see
-[AI-driven optimization](./language-ecosystem/ai.md#13-ai-driven-runtime-optimization) §13).
+[AI-driven optimization](./ai.md#13-ai-driven-runtime-optimization) §13).
 
 ### Fuel Metering Beyond WASM
 
@@ -301,8 +301,8 @@ For interpreted runtimes, AIOS implements equivalent accounting:
 
 - **Python**: RustPython's `sys.settrace()` equivalent counts bytecode operations
 - **TypeScript**: QuickJS-ng's interrupt callback fires every N opcodes
-- **Rust (native)**: Preemptive scheduling via timer tick (see [scheduler.md](../kernel/scheduler.md))
+- **Rust (native)**: Preemptive scheduling via timer tick (see [scheduler.md](../../kernel/scheduler.md))
 
 All runtimes report CPU consumption to the kernel's metrics system (see
-[observability.md](../kernel/observability.md)), enabling AIRS to detect runaway agents and
+[observability.md](../../kernel/observability.md)), enabling AIRS to detect runaway agents and
 adjust scheduling priorities.

@@ -13,20 +13,20 @@ Flow uses types defined in other documents. Canonical definitions:
 
 | Type | Defined In | Description |
 |---|---|---|
-| `AgentId` | [spaces.md §3.0](./spaces.md) | Agent identity (Ed25519 public key, 32 bytes) |
-| `ObjectId` | [spaces.md §3.0](./spaces.md) | Object identifier (UUID v4, 16 bytes) |
-| `SpaceId` | [spaces.md §3.0](./spaces.md) | Space identifier (UUID v4, 16 bytes) |
-| `Hash` | [spaces.md §3.0](./spaces.md) | SHA-256 hash (32 bytes) |
-| `Timestamp` | [spaces.md §3.0](./spaces.md) | Milliseconds since Unix epoch |
-| `Signature` | [spaces.md §3.0](./spaces.md) | Ed25519 signature (64 bytes) |
-| `ObjectRef` | [spaces.md §3.0](./spaces.md) | Reference to a space object (SpaceId + ObjectId + optional version Hash) |
-| `SharedMemoryId` | [memory.md §7](../kernel/memory.md) | Kernel-issued handle for a shared memory region |
-| `ChannelId` | [ipc.md §3.1](../kernel/ipc.md) | IPC channel identifier |
-| `SurfaceId` | [compositor.md §3](../platform/compositor.md) | Compositor surface identifier |
-| `DeviceId` | [subsystem-framework.md §4](../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
-| `IdentityId` | [spaces.md §3.0](./spaces.md) | Identity identifier (Ed25519 public key); shared across a user's devices |
-| `TrustLevel` | [identity.md §5](../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
-| `KeyId` | [spaces.md §3.0](./spaces.md) | Cryptographic key identifier (`u32`); used by §15.3 FlowEncryptionPolicy |
+| `AgentId` | [spaces.md §3.0](../spaces.md) | Agent identity (Ed25519 public key, 32 bytes) |
+| `ObjectId` | [spaces.md §3.0](../spaces.md) | Object identifier (UUID v4, 16 bytes) |
+| `SpaceId` | [spaces.md §3.0](../spaces.md) | Space identifier (UUID v4, 16 bytes) |
+| `Hash` | [spaces.md §3.0](../spaces.md) | SHA-256 hash (32 bytes) |
+| `Timestamp` | [spaces.md §3.0](../spaces.md) | Milliseconds since Unix epoch |
+| `Signature` | [spaces.md §3.0](../spaces.md) | Ed25519 signature (64 bytes) |
+| `ObjectRef` | [spaces.md §3.0](../spaces.md) | Reference to a space object (SpaceId + ObjectId + optional version Hash) |
+| `SharedMemoryId` | [memory.md §7](../../kernel/memory.md) | Kernel-issued handle for a shared memory region |
+| `ChannelId` | [ipc.md §3.1](../../kernel/ipc.md) | IPC channel identifier |
+| `SurfaceId` | [compositor.md §3](../../platform/compositor.md) | Compositor surface identifier |
+| `DeviceId` | [subsystem-framework.md §4](../../platform/subsystem-framework.md) | Device identifier within the subsystem framework |
+| `IdentityId` | [spaces.md §3.0](../spaces.md) | Identity identifier (Ed25519 public key); shared across a user's devices |
+| `TrustLevel` | [identity.md §5](../../experience/identity.md) | Trust classification for identities (Trusted/Verified/Known/Unknown) |
+| `KeyId` | [spaces.md §3.0](../spaces.md) | Cryptographic key identifier (`u32`); used by §15.3 FlowEncryptionPolicy |
 | `Duration` | Rust `core::time::Duration` | Time span; used for expiration, retention, and streaming durations |
 
 Types defined locally in this document: `FlowEntryId` (§3.1), `TransferId` (§3.1), `TransformId` (§3.1).

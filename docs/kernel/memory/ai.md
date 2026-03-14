@@ -1,7 +1,7 @@
 # AIOS Memory Management — Model Memory (AIRS)
 
 **Part of:** [memory.md](../memory.md) — Memory Management Hub
-**Related:** [physical.md](./physical.md) — Physical memory and pools, [reclamation.md](./reclamation.md) — MGLRU and DAMON, [airs.md](../intelligence/airs.md) — AI Runtime
+**Related:** [physical.md](./physical.md) — Physical memory and pools, [reclamation.md](./reclamation.md) — MGLRU and DAMON, [airs.md](../../intelligence/airs.md) — AI Runtime
 
 -----
 

@@ -1,7 +1,7 @@
 # AIOS Memory Management — Security, Performance & Future Directions
 
 **Part of:** [memory.md](../memory.md) — Memory Management Hub
-**Related:** [physical.md](./physical.md) — Buddy and slab allocators, [virtual.md](./virtual.md) — Page tables and W^X, [model.md](../security/model.md) — Security model
+**Related:** [physical.md](./physical.md) — Buddy and slab allocators, [virtual.md](./virtual.md) — Page tables and W^X, [model.md](../../security/model.md) — Security model
 
 -----
 

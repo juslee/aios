@@ -116,7 +116,7 @@ AIRS monitors anomaly flags from §7.2.1 and behavioral state from the context e
 
 The response is graduated — not binary. A slightly anomalous agent gets rate-limited; a clearly malicious agent gets terminated. The graduation threshold adapts based on the agent's trust level and behavioral history.
 
-Cross-reference: [security.md](model.md) §2 (eight security layers), [airs.md](../intelligence/airs.md) §5.9 (capability intelligence).
+Cross-reference: [security.md](model.md) §2 (eight security layers), [airs.md](../../intelligence/airs.md) §5.9 (capability intelligence).
 
 #### 7.3.3 LLM-Assisted Invariant Verification
 

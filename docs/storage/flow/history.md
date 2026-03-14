@@ -1,7 +1,7 @@
 # AIOS Flow History & Multi-Device Sync
 
 Part of: [flow.md](../flow.md) — Flow System
-**Related:** [data-model.md](./data-model.md) — FlowEntry structure, [security.md](./security.md) — Content screening, [spaces.md](./spaces.md) — History storage backend, [networking.md](../platform/networking.md) — Peer Protocol transport
+**Related:** [data-model.md](./data-model.md) — FlowEntry structure, [security.md](./security.md) — Content screening, [spaces.md](../spaces.md) — History storage backend, [networking.md](../../platform/networking.md) — Peer Protocol transport
 
 -----
 
@@ -30,7 +30,7 @@ AIRS indexes Flow history like any other space. Users can search semantically: "
 
 ### 5.2 History UI
 
-The Flow Tray (see [experience.md](../experience/experience.md)) provides the user-facing history interface:
+The Flow Tray (see [experience.md](../../experience/experience.md)) provides the user-facing history interface:
 
 ```mermaid
 flowchart TD
@@ -116,7 +116,7 @@ sequenceDiagram
     Note over B: User pastes<br/>Flow pull()<br/>content delivered
 ```
 
-**Transport:** Cross-device Flow uses the AIOS Peer Protocol (defined in [networking.md](../platform/networking.md)). Content is encrypted in transit using the shared identity's keys. The Peer Protocol handles device discovery, connection establishment, and reliable delivery.
+**Transport:** Cross-device Flow uses the AIOS Peer Protocol (defined in [networking.md](../../platform/networking.md)). Content is encrypted in transit using the shared identity's keys. The Peer Protocol handles device discovery, connection establishment, and reliable delivery.
 
 **What syncs:**
 - Active transfers (target: Any) are replicated to all devices

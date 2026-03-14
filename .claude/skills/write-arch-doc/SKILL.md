@@ -208,15 +208,14 @@ If the document has grown beyond ~2000 lines after updates, propose splitting it
 
 ### Hub + Sub-Document Pattern
 
-**Placement rule:** If hub name differs from parent directory → create a subfolder
+**Placement rule:** All hub sub-docs go in a subfolder named after the hub
 (e.g., `docs/kernel/boot.md` → sub-docs go in `docs/kernel/boot/`).
-If hub name matches parent directory → sub-docs stay flat with prefix stripped
-(e.g., a hypothetical `docs/foo/foo.md` → sub-docs would be `docs/foo/bar.md`, not `docs/foo/foo/bar.md`).
+If a hub name would match the parent directory, rename the hub to avoid redundancy
+(e.g., `docs/security/model.md` instead of `docs/security/security.md`).
 
 1. **Keep the original filename as a hub** — this preserves all existing external links
 2. **Hub contents**: §1 Overview, Document Map table, Implementation Order, Cross-Reference Index
-3. **Sub-document naming**: `{topic}/{subtopic}.md` in a subfolder (e.g., `memory/physical.md`, `boot/firmware.md`),
-   or `{subtopic}.md` flat if hub matches parent dir (e.g., a hypothetical `docs/foo/foo.md` → `docs/foo/bar.md`)
+3. **Sub-document naming**: `{topic}/{subtopic}.md` in a subfolder (e.g., `memory/physical.md`, `boot/firmware.md`)
 4. **Preserve original section numbers** across sub-files for cross-reference stability
 5. **Sub-document header format** (subfolder case — note `../` back-link to hub):
    ```markdown

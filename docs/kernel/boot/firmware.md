@@ -1,7 +1,7 @@
 # AIOS Firmware Handoff
 
 Part of: [boot.md](../boot.md) — Boot and Init Sequence
-**Related:** [kernel.md](./kernel.md) — Kernel early boot, [services.md](./services.md) — Service startup, [hal.md](./hal.md) — Platform trait
+**Related:** [kernel.md](./kernel.md) — Kernel early boot, [services.md](./services.md) — Service startup, [hal.md](../hal.md) — Platform trait
 
 -----
 
@@ -256,7 +256,7 @@ The kernel reads this during Step 4 (device tree parse) and stores it for SMP br
 
 **UEFI guarantees:** The UEFI firmware (edk2) always drops to EL1 before calling `ExitBootServices()`. By the time the kernel entry point runs, EL2 is either not present (bare metal Pi) or occupied by KVM/QEMU (transparent to the kernel). The kernel never touches EL2 registers.
 
-The kernel abstracts these differences behind a `Platform` trait initialized during early boot. The full HAL specification — device abstractions, MMIO primitives, VirtIO transport, DMA, and the guide for adding new platforms — is in [hal.md](./hal.md).
+The kernel abstracts these differences behind a `Platform` trait initialized during early boot. The full HAL specification — device abstractions, MMIO primitives, VirtIO transport, DMA, and the guide for adding new platforms — is in [hal.md](../hal.md).
 
 ```rust
 // Source: kernel/src/platform/mod.rs

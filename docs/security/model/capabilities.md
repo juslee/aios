@@ -394,7 +394,7 @@ impl TemporalCapability {
 
 ### 3.7 Composable Capability Profiles
 
-The flat `requested_capabilities` list in `AgentManifest` ([agents.md §2.4](../applications/agents.md)) works for simple agents but creates problems at scale: every Python agent duplicates the same interpreter capabilities, every network-capable agent copies the same access patterns, and each manifest must be audited individually even when the capability patterns are identical.
+The flat `requested_capabilities` list in `AgentManifest` ([agents.md §2.4](../../applications/agents.md)) works for simple agents but creates problems at scale: every Python agent duplicates the same interpreter capabilities, every network-capable agent copies the same access patterns, and each manifest must be audited individually even when the capability patterns are identical.
 
 **Capability profiles** are pre-audited, named, versioned bundles of capabilities that compose in numbered layers. An agent's effective capability set is the composition of multiple profiles, resolved at install time into a flat `ResolvedCapabilitySet` whose capabilities are then minted as kernel-enforced tokens in the `CapabilityTable` (§3.2).
 
@@ -543,7 +543,7 @@ pub enum ProfileAuthor {
 
 #### 3.7.3 Manifest Integration
 
-The `AgentManifest` gains a `profiles` field alongside the existing `requested_capabilities`. See [agents.md §2.4](../applications/agents.md) for the full manifest definition.
+The `AgentManifest` gains a `profiles` field alongside the existing `requested_capabilities`. See [agents.md §2.4](../../applications/agents.md) for the full manifest definition.
 
 ```rust
 pub struct ProfileReference {
@@ -746,7 +746,7 @@ This follows the attenuation semantics defined in §3.3 — attenuation is monot
 
 #### 3.7.6 Security Benefits
 
-1. **Reduced audit burden.** AIRS analyzes each profile once. Agents referencing `subsystem.network-client.v1` inherit that analysis. AIRS only audits the agent's Layer 50 additions (see [airs.md §5.9](../intelligence/airs.md) for the analysis pipeline).
+1. **Reduced audit burden.** AIRS analyzes each profile once. Agents referencing `subsystem.network-client.v1` inherit that analysis. AIRS only audits the agent's Layer 50 additions (see [airs.md §5.9](../../intelligence/airs.md) for the analysis pipeline).
 2. **Deny-always-wins prevents escalation.** A denial from ANY layer is absolute. No profile at any layer can override it. User denials (Layer 90) are final.
 3. **Progressive hardening.** OS updates can ship increasingly restrictive base profiles, tightening all agents simultaneously without per-agent manifest changes.
 4. **Full audit trail.** The `resolution_log` records exactly which profile contributed which capability, enabling post-incident forensic analysis via the provenance chain (Layer 7, [§2.7](./layers.md)).

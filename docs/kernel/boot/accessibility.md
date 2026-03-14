@@ -1,7 +1,7 @@
 # AIOS Boot Accessibility and First Boot Experience
 
 Part of: [boot.md](../boot.md) — Boot and Init Sequence
-**Related:** [services.md](./services.md) — Service startup, [intelligence.md](./intelligence.md) — Boot intelligence, [accessibility.md](../experience/accessibility.md) — Accessibility, [identity.md](../experience/identity.md) — Identity
+**Related:** [services.md](./services.md) — Service startup, [intelligence.md](./intelligence.md) — Boot intelligence, [accessibility.md](../../experience/accessibility.md) — Accessibility, [identity.md](../../experience/identity.md) — Identity
 
 -----
 

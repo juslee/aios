@@ -2,7 +2,7 @@
 
 Part of: [model.md](../model.md) — AIOS Security Model
 **Related:** [layers.md](./layers.md) — Layer 6 (cryptographic enforcement), [capabilities.md](./capabilities.md) — Capability system, [operations.md](./operations.md) — Event response, audit
-**See also:** [hardening.md](../kernel/memory/hardening.md) — W^X/PAC/BTI/MTE kernel implementation, [fuzzing.md](../fuzzing.md) — Fuzzing deep-dive, [static-analysis.md](../static-analysis.md) — Static analysis and formal verification deep-dive
+**See also:** [hardening.md](../../kernel/memory/hardening.md) — W^X/PAC/BTI/MTE kernel implementation, [fuzzing.md](../fuzzing.md) — Fuzzing deep-dive, [static-analysis.md](../static-analysis.md) — Static analysis and formal verification deep-dive
 
 -----
 
@@ -24,7 +24,7 @@ Part of: [model.md](../model.md) — AIOS Security Model
 
 ### 4.2 Key Storage
 
-The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces/encryption.md §6](../storage/spaces/encryption.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces/block-engine.md §4.10](../storage/spaces/block-engine.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces/block-engine.md §4.10 single-passphrase mode).
+The key hierarchy has two independent layers. **Space keys** protect cross-zone isolation within a running system (per-space encryption, [spaces/encryption.md §6](../../storage/spaces/encryption.md)). **The device key** encrypts every block before it reaches storage drivers, protecting against physical access to the storage medium ([spaces/block-engine.md §4.10](../../storage/spaces/block-engine.md)). These layers are independent — compromising the device key does not reveal space keys, and vice versa. On devices without a secure element, both keys can be derived from a single user passphrase using different Argon2id salts (spaces/block-engine.md §4.10 single-passphrase mode).
 
 ```mermaid
 flowchart TD

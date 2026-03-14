@@ -2,7 +2,7 @@
 
 This document provides a technical deep-dive into how AIOS uses static analysis, model checking, and formal verification to prevent bugs before they reach runtime — both in kernel development and in agent pre-installation auditing.
 
-For fuzzing and runtime hardening, see [fuzzing.md](fuzzing.md). For the security model overview and formal verification targets, see [security.md](model.md) §8.
+For fuzzing and runtime hardening, see [fuzzing.md](fuzzing.md). For the security model overview and formal verification targets, see [model.md](model.md) §8.
 
 ---
 
@@ -55,7 +55,7 @@ Every kernel subsystem has defect classes that static analysis can catch before 
 | Kernel numeric invariants | Compile-time value predicates (alignment, bounds) | Prusti / Flux | 13+ |
 | `unsafe` abstractions | Implementation-level formal proofs | Verus / RefinedRust | 24 |
 
-Cross-reference: [fuzzing.md](fuzzing.md) §2 maps the same subsystems to fuzzing targets; [security.md](model.md) §8.3 lists formal verification targets.
+Cross-reference: [fuzzing.md](fuzzing.md) §2 maps the same subsystems to fuzzing targets; [model.md](model.md) §8.3 lists formal verification targets.
 
 ---
 
@@ -71,7 +71,7 @@ The `aios agent audit` tool runs five static analysis passes on every agent befo
 | **Capability usage analysis** | Cross-reference declared capabilities against actual code — flag unused caps (over-provisioned) and caps used but not declared (under-declared) | Manifest dishonesty, over-provisioning |
 | **AIRS code review** | LLM-based semantic analysis for data exfiltration patterns, missing input validation, error handling that leaks sensitive info | Behavioral threats undetectable by pattern matching |
 
-For example output and developer UX, see [security.md](model.md) §8.1 and [agents.md](../applications/agents.md). For expanded AI-assisted analysis techniques, see §10.
+For example output and developer UX, see [model.md](model.md) §8.1 and [agents.md](../applications/agents.md). For expanded AI-assisted analysis techniques, see §10.
 
 ---
 
@@ -185,7 +185,7 @@ Five tools form a layered defense against dependency-related risks:
 
 ### 4.7 Formal Verification — Verus, TLA+, Coq, and RefinedRust
 
-Formal verification provides mathematical guarantees that static analysis tools cannot. Detailed verification targets are in [security.md](model.md) §8.3; this section describes the approach and tool selection.
+Formal verification provides mathematical guarantees that static analysis tools cannot. Detailed verification targets are in [model.md](model.md) §8.3; this section describes the approach and tool selection.
 
 **Verus (Phase 24 — primary recommendation).** Verus is an SMT-based verification framework that embeds proofs directly in Rust code. Pre/postconditions and invariants are written as Rust expressions, and Verus discharges proof obligations via the Z3 solver. Unlike Coq or Isabelle, proofs are mostly automated — the programmer writes specifications, not proof scripts.
 
@@ -303,7 +303,7 @@ AIRS performs an LLM-based semantic review that catches intent-level issues beyo
 
 For expanded AI-assisted analysis techniques including multi-model consensus, LLM-guided fuzzing, and GNN vulnerability detection, see §10.
 
-Cross-reference: [security.md](model.md) §8.1 (example output), [agents.md](../applications/agents.md) (agent audit developer UX).
+Cross-reference: [model.md](model.md) §8.1 (example output), [agents.md](../applications/agents.md) (agent audit developer UX).
 
 ---
 
@@ -391,7 +391,7 @@ Static analysis and fuzzing form complementary layers of a defense-in-depth stra
 
 Static analysis catches bugs that fuzzing cannot find (type errors, license violations, unsafe anti-patterns). Fuzzing catches bugs that static analysis cannot find (input-dependent crashes, race conditions under specific timing). Formal verification proves properties that neither can guarantee. AIOS employs all three.
 
-Cross-reference: [fuzzing.md](fuzzing.md) (companion deep-dive), [security.md](model.md) §8 (parent overview).
+Cross-reference: [fuzzing.md](fuzzing.md) (companion deep-dive), [model.md](model.md) §8 (parent overview).
 
 ---
 
@@ -490,9 +490,9 @@ AIOS can adapt their custom Clippy lint approach for AIOS-specific rules, comple
 | Topic | Document | Relevant Sections |
 |---|---|---|
 | Fuzzing deep dive | [fuzzing.md](fuzzing.md) | §2 attack surface, §4 fuzzing roadmap |
-| Security model overview | [security.md](model.md) | §8 verification, §8.1 agent audit, §8.3 formal targets |
+| Security model overview | [model.md](model.md) | §8 verification, §8.1 agent audit, §8.3 formal targets |
 | Agent framework | [agents.md](../applications/agents.md) | Agent audit developer UX |
 | AIRS architecture | [airs.md](../intelligence/airs.md) | AI-assisted analysis context |
-| Capability system | [security.md](model.md) | §§2-3 capability model |
+| Capability system | [model.md](model.md) | §§2-3 capability model |
 | Memory hardening | [fuzzing.md](fuzzing.md) | §3.3 W^X, guard pages, KASLR, PAC/BTI/MTE |
 | IPC security | [ipc.md](../kernel/ipc.md) | §13 AI-native IPC, §14 future directions |

@@ -203,7 +203,7 @@ AIOS does not implement key escrow or key recovery. There is no seed phrase, no 
 
 **Why no recovery mechanism:** Every recovery mechanism is an attack surface. A 24-word mnemonic can be stolen, photographed, or socially engineered. A recovery file can be exfiltrated. Key escrow requires either a trusted server (contradicts local-first) or offline material that creates the same custodial burden recovery is supposed to eliminate. For a single-device, local-first, offline-capable system, the added complexity and failure modes outweigh the benefit.
 
-**Prevention-based approach (see [identity.md §14](../experience/identity.md)):**
+**Prevention-based approach (see [identity.md §14](../../experience/identity.md)):**
 
 | Mechanism | Purpose |
 |---|---|

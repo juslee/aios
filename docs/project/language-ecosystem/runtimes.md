@@ -1,7 +1,7 @@
 # AIOS Language Ecosystem: Runtime Deep Dives
 
 Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosystem
-**Related:** [integration.md](./language-ecosystem/integration.md) — Integration & build plan, [operations.md](./language-ecosystem/operations.md) — Operations & security, [ai.md](./language-ecosystem/ai.md) — AI-driven optimization
+**Related:** [integration.md](./integration.md) — Integration & build plan, [operations.md](./operations.md) — Operations & security, [ai.md](./ai.md) — AI-driven optimization
 
 ---
 
@@ -232,7 +232,7 @@ QuickJS-ng the pragmatic choice for production agent workloads.
 
 **Boa as future alternative**: As Boa's performance improves, it becomes a strong candidate
 to replace QuickJS-ng — eliminating the C dependency entirely. See
-[Future Directions](./language-ecosystem/ai.md#141-boa-as-pure-rust-javascript-engine) §14.1.
+[Future Directions](./ai.md#141-boa-as-pure-rust-javascript-engine) §14.1.
 
 For compute-heavy JavaScript (browser workloads), SpiderMonkey arrives in Phase 21 via Servo.
 
@@ -320,7 +320,7 @@ Runtime) is a viable alternative:
 **AIOS chooses wasmtime as the default** because:
 
 1. **Pure Rust** — aligns with AIOS's "no C in kernel" principle (agents are userspace, but Rust consistency matters)
-2. **Best Component Model support** — critical for cross-language interop via WIT (see [Runtime Interoperability](./language-ecosystem/operations.md#9-runtime-interoperability))
+2. **Best Component Model support** — critical for cross-language interop via WIT (see [Runtime Interoperability](./operations.md#9-runtime-interoperability))
 3. **Reference WASI implementation** — first to support new WASI specs
 
 WAMR remains a candidate for future optimization if wasmtime's 15MB footprint becomes a concern

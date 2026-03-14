@@ -683,8 +683,18 @@ docs/
 │   └── ccc-integration-analysis.md          Claude C Compiler integration analysis
 │
 ├── kernel/
-│   ├── boot.md                              Boot sequence (QEMU direct and UEFI)
-│   ├── boot/                    Boot lifecycle stages and secondary core init
+│   ├── boot.md                              Boot sequence hub (QEMU direct and UEFI)
+│   │   ├── firmware.md                  Firmware handoff, BootInfo, ESP, EL model
+│   │   ├── kernel.md                    Kernel early boot (boot.S, kernel_main)
+│   │   ├── services.md                  Service Manager boot phases
+│   │   ├── performance.md               Boot performance and framebuffer
+│   │   ├── recovery.md                  Panic handler, recovery, initramfs
+│   │   ├── lifecycle.md                 Shutdown, implementation order, principles
+│   │   ├── testing.md                   Boot test strategy
+│   │   ├── suspend.md                   Suspend/resume, semantic state
+│   │   ├── intelligence.md              Boot intelligence, on-demand services
+│   │   ├── accessibility.md             Boot accessibility, first boot
+│   │   └── research.md                  Research kernel innovations
 │   ├── hal.md                               Hardware Abstraction Layer (UART, GIC, timer, MMU)
 │   ├── memory.md                            Memory management hub
 │   │   ├── physical.md               Buddy allocator, frame allocator, slab, heap

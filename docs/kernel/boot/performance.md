@@ -1,7 +1,7 @@
 # AIOS Boot Performance and Early Framebuffer
 
 Part of: [boot.md](../boot.md) — Boot and Init Sequence
-**Related:** [kernel.md](./kernel.md) — Kernel early boot, [services.md](./services.md) — Service startup phases, [compositor.md](../platform/compositor.md) — Display handoff
+**Related:** [kernel.md](./kernel.md) — Kernel early boot, [services.md](./services.md) — Service startup phases, [compositor.md](../../platform/compositor.md) — Display handoff
 
 -----
 
