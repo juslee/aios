@@ -380,6 +380,12 @@ impl BlockEngine {
             .insert(content_hash, location)
             .map_err(|_| StorageError::MemTableFull)?;
 
+        // 13. Persist nonce counter to superblock after encrypted writes.
+        // This ensures crash recovery never reuses a nonce (AES-GCM requires unique nonces).
+        if self.crypto.is_some() {
+            self.flush_superblock()?;
+        }
+
         Ok((content_hash, location))
     }
 

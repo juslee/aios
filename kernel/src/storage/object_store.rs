@@ -162,6 +162,12 @@ pub fn object_create(
         // Insert into object index.
         engine.object_index_mut().insert(obj)?;
 
+        // Increment space's object count for quota enforcement.
+        if let Some(space) = engine.space_table_mut().get_mut(&space_id) {
+            space.object_count += 1;
+            space.total_size += content.len() as u64;
+        }
+
         Ok((id, content_hash))
     })?
 }
@@ -184,8 +190,9 @@ pub fn object_read(id: &ObjectId, buf: &mut [u8]) -> Result<(CompactObject, usiz
 
 /// Delete an object by ObjectId.
 ///
-/// Decrements the content block's refcount. If refcount reaches 0, the block
-/// is logically freed.
+/// Decrements the content block's refcount, walks the version chain to free
+/// all version node blocks and their referenced content blocks, and updates
+/// the space's object count.
 pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
     block_engine::with_engine(|engine| {
         let obj = engine
@@ -193,8 +200,44 @@ pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
             .remove(id)
             .ok_or(StorageError::ObjectNotFound)?;
 
-        // Decrement content block refcount.
+        // Decrement current content block refcount.
         let _ = engine.dec_ref(&obj.content_hash);
+
+        // Walk version chain and free version node blocks + their content references.
+        let mut current_hash = obj.version_head;
+        let mut buf = [0u8; 256];
+        let max_depth = 1024;
+        for _ in 0..max_depth {
+            if current_hash.is_zero() {
+                break;
+            }
+            let n = match engine.read_block_by_hash(&current_hash, &mut buf) {
+                Ok(n) => n,
+                Err(StorageError::BlockNotFound) => break,
+                Err(_) => break,
+            };
+            if n != core::mem::size_of::<Version>() {
+                break;
+            }
+            // SAFETY: Version is repr(C), 256 bytes, plain data.
+            // Maintained by compile-time assertion: size_of::<Version>() == 256.
+            let ver = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+            // Free the version's referenced content block (if different from current).
+            if ver.content_hash != obj.content_hash {
+                let _ = engine.dec_ref(&ver.content_hash);
+            }
+            // Free the version node block itself.
+            let next = ver.parent;
+            let _ = engine.dec_ref(&current_hash);
+            current_hash = next;
+        }
+
+        // Decrement space's object count.
+        if let Some(space) = engine.space_table_mut().get_mut(&obj.space_id) {
+            space.object_count = space.object_count.saturating_sub(1);
+            space.total_size = space.total_size.saturating_sub(obj.content_size as u64);
+        }
+
         Ok(())
     })?
 }

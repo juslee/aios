@@ -196,6 +196,9 @@ pub fn version_rollback(
         version.set_message(b"rollback");
 
         // Store the rollback version node.
+        // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+        // Maintained by compile-time assertion: size_of::<Version>() == 256.
+        // If violated, from_raw_parts produces incorrect byte representation.
         let version_bytes = unsafe {
             core::slice::from_raw_parts(
                 &version as *const Version as *const u8,
@@ -268,6 +271,9 @@ pub fn object_update(
         version.author[..author_len].copy_from_slice(&author[..author_len]);
 
         // Store version node (block content hash = lookup key).
+        // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+        // Maintained by compile-time assertion: size_of::<Version>() == 256.
+        // If violated, from_raw_parts produces incorrect byte representation.
         let version_bytes = unsafe {
             core::slice::from_raw_parts(
                 &version as *const Version as *const u8,
