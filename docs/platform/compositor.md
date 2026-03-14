@@ -3,7 +3,23 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [subsystem-framework.md](./subsystem-framework.md) — Display subsystem, [ipc.md](../kernel/ipc.md) — IPC protocol
+**Related:** [subsystem-framework.md](./subsystem-framework.md) — Display subsystem framework, [ipc.md](../kernel/ipc.md) — IPC protocol, [experience.md](../experience/experience.md) — Five Surfaces model, [model.md](../security/model.md) — Security and capability model, [airs.md](../intelligence/airs.md) — AI Runtime Services
+
+-----
+
+## Document Map
+
+This document was split for navigability. Each sub-document preserves the original section numbers for cross-reference stability.
+
+| Document | Sections | Content |
+|---|---|---|
+| **This file** | §1, §2, §15, §16 | Overview, architecture, design principles, implementation order |
+| [protocol.md](./compositor/protocol.md) | §3, §4 | Compositor protocol (surface lifecycle, shared buffers, fences, damage), semantic hints |
+| [rendering.md](./compositor/rendering.md) | §5, §6 | Render pipeline (scene graph, composition, direct scanout, frame scheduling, animation), layout engine |
+| [input.md](./compositor/input.md) | §7 | Input routing (pipeline, focus, hotkeys, gestures, gamepad/touch, secure input) |
+| [gpu.md](./compositor/gpu.md) | §8, §9 | GPU abstraction (wgpu, VirtIO-GPU, VC4/V3D, shaders), Wayland and POSIX compatibility |
+| [security.md](./compositor/security.md) | §10, §11 | Security model (capabilities, GPU isolation, capture protection), accessibility |
+| [ai-native.md](./compositor/ai-native.md) | §12, §13, §14 | AI-native compositing (AIRS-dependent), kernel-internal ML, future directions |
 
 -----
 
@@ -13,7 +29,15 @@ Traditional window managers are dumb frame compositors. They know nothing about 
 
 AIOS's compositor is **semantically aware**. It receives hints from agents about what their windows contain, the user's context from the Context Engine, and attention state from the Attention Manager. It uses this to make intelligent layout, focus, and animation decisions — while still letting the user override everything manually.
 
-The compositor is also the **display subsystem** in the subsystem framework. It implements the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem.
+The compositor is also the **display subsystem** in the subsystem framework. It implements the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem (see [subsystem-framework.md](./subsystem-framework.md) §3–§4).
+
+**What makes AIOS different from Wayland compositors:**
+
+- **Semantic hints** — agents declare content type, urgency, and interaction state; the compositor uses this for intelligent layout ([§4](./compositor/protocol.md))
+- **AIRS integration** — the AI runtime scores window importance, predicts focus changes, and adapts refresh rates ([§12](./compositor/ai-native.md))
+- **Capability-gated everything** — surface creation, fullscreen, overlay, screen capture, input injection all require explicit capability tokens ([§10](./compositor/security.md))
+- **Scene graph, not framebuffers** — a Flatland-inspired 2D scene graph replaces the traditional damage-list compositor model ([§5.1](./compositor/rendering.md))
+- **Kernel-internal ML** — frozen decision trees predict frame costs, adapt GPU frequency, and detect attention patterns without AIRS ([§13](./compositor/ai-native.md))
 
 -----
 
@@ -29,548 +53,211 @@ flowchart TD
         Inspector
     end
 
-    Experience -->|"IPC: surface creation, damage, hints"| Compositor
+    Experience -->|"IPC: surface creation,\ndamage, hints"| Protocol
 
     subgraph Compositor["Compositor Service"]
-        subgraph CoreModules[" "]
-            direction LR
-            WM["`Window Manager
-z-order, focus,
-minimize, close`"]
-            LE["`Layout Engine
-tiling, floating,
-fullscreen, split`"]
-            SH["`Semantic Hints
-content type, urgency,
-interaction state`"]
+        subgraph Protocol["Protocol Layer §3–§4"]
+            SL["Surface Lifecycle\n§3.1"]
+            SBP["Shared Buffers\n§3.2–§3.3"]
+            SH["Semantic Hints\n§4"]
         end
-        subgraph PipelineModules[" "]
-            direction LR
-            RP["`Render Pipeline
-damage, composite,
-present`"]
-            AS["`Animation System
-transitions, easing,
-60fps`"]
-            IR["`Input Router
-focus to agent,
-global hotkeys,
-gesture recog`"]
+
+        subgraph Rendering["Render Pipeline §5"]
+            SG["Scene Graph\n§5.1"]
+            FC["Frame Composition\n§5.2"]
+            DS["Direct Scanout\n§5.3"]
+            FS["Frame Scheduler\n§5.4"]
+            AN["Animation System\n§5.5"]
         end
-        AL["`Accessibility Layer
-Accessibility tree | Screen reader | Keyboard nav`"]
+
+        subgraph WM["Window Management §6"]
+            LE["Layout Engine\n§6.1–§6.2"]
+            MM["Multi-Monitor\n§6.3"]
+            HDR["HDR / WCG\n§6.4"]
+        end
+
+        subgraph Input["Input Routing §7"]
+            IR["Input Pipeline\n§7.1"]
+            FM["Focus Manager\n§7.2"]
+            HK["Hotkeys / Gestures\n§7.3–§7.4"]
+            SI["Secure Input\n§7.6"]
+        end
+
+        subgraph Security["Security & Accessibility §10–§11"]
+            CG["Capability Gate\n§10.1"]
+            GI["GPU Isolation\n§10.2"]
+            AT["Accessibility Tree\n§11"]
+        end
+
+        subgraph AI["AI-Native §12–§13"]
+            IDC["Importance-Driven\nCompositing §12.1"]
+            PFS["Predictive Frame\nScheduling §13.1"]
+            VRR["Adaptive VRR\n§13.3"]
+        end
     end
 
-    Compositor --> GPU
+    Protocol --> Rendering
+    Protocol --> WM
+    Input --> FM
+    Rendering --> GPU
 
-    subgraph GPU["GPU Abstraction — wgpu"]
+    subgraph GPU["GPU Abstraction — wgpu §8"]
         direction LR
-        Vulkan["`Vulkan backend
-(primary, Pi 4/5)`"]
-        VirtIOGPU["`VirtIO-GPU backend
-(QEMU development)`"]
-        SoftwareRenderer["`Software renderer
-(fallback)`"]
-        RenderOps["`Render operations:
-Surface composition, Damage tracking,
-VSync, Multi-monitor`"]
+        Vulkan["Vulkan\n(Pi 4/5)"]
+        VirtIOGPU["VirtIO-GPU\n(QEMU)"]
+        SoftwareRenderer["Software\n(fallback)"]
     end
 
     GPU --> Drivers
 
     subgraph Drivers["Display Drivers"]
         VirtIO["VirtIO-GPU"]
-        VC4["VC4/V3D (Pi 4)"]
+        VC4["VC4/V3D"]
         HDMI
         DSI
         Framebuffer
     end
+
+    subgraph Compat["Compatibility §9"]
+        Wayland["Wayland\nTranslation"]
+        XWayland
+        DRM["DRM/KMS\nBridge"]
+    end
+
+    Compat -->|"translated\nprotocol"| Protocol
 ```
 
 -----
 
-## 3. Compositor Protocol
+## 15. Design Principles
 
-Agents communicate with the compositor via IPC. The protocol defines how surfaces are created, updated, and managed:
+1. **Semantic, not just spatial.** The compositor understands content types, not just rectangles. Layout, focus, and animation decisions are informed by agent hints and AIRS context.
 
-```rust
-/// Unique identifier for a compositor surface (window or layer).
-pub struct SurfaceId(u64);
+2. **60 fps or drop features.** Frame rate is sacred. If effects cannot maintain 60 fps, they are disabled automatically. The animation system degrades gracefully: spring physics → linear interpolation → instant transition.
 
-/// Messages from agent to compositor
-pub enum CompositorRequest {
-    /// Create a new surface (window)
-    CreateSurface {
-        width: u32,
-        height: u32,
-        title: String,
-        hints: SurfaceHints,
-    },
+3. **Zero-copy when possible.** Shared buffers, direct scanout, multiplane overlay, damage tracking — minimize GPU copies. The compositor never copies pixel data if a pointer swap suffices.
 
-    /// Attach a buffer to a surface (new frame)
-    AttachBuffer {
-        surface: SurfaceId,
-        buffer: SharedBufferId,         // shared memory region
-        damage: Vec<Rect>,             // regions that changed
-    },
+4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 23. Screen reader support shapes early architectural decisions. The accessibility tree exists from the first composited frame.
 
-    /// Update surface hints (content changed)
-    UpdateHints {
-        surface: SurfaceId,
-        hints: SurfaceHints,
-    },
+5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without a capability token. Keystroke injection is impossible without `SecureInput` capability.
 
-    /// Request resize
-    Resize {
-        surface: SurfaceId,
-        width: u32,
-        height: u32,
-    },
+6. **HiDPI is default.** Scaling is always active. 1x is just `scale=1.0`. Per-output scaling handles mixed-DPI setups (laptop + external monitor).
 
-    /// Destroy surface
-    DestroySurface {
-        surface: SurfaceId,
-    },
-}
+7. **Scene graph, not framebuffers.** The compositor maintains a 2D scene graph (Flatland-inspired), not a flat list of damage rectangles. This enables efficient occlusion culling, hierarchical transforms, and effect composition.
 
-/// Messages from compositor to agent
-pub enum CompositorEvent {
-    /// Surface configuration changed (resize, scale)
-    Configure {
-        surface: SurfaceId,
-        width: u32,
-        height: u32,
-        scale: f32,
-    },
+8. **Capability-gated operations.** Every compositor operation — surface creation, fullscreen, overlay, screen capture, input routing — is gated by capability tokens. Trust levels determine available operations.
 
-    /// Surface gained/lost focus
-    FocusChanged {
-        surface: SurfaceId,
-        focused: bool,
-    },
+9. **GPU isolation.** Each agent's GPU context is isolated. A malicious shader cannot read another agent's framebuffer. IOMMU enforcement prevents DMA attacks.
 
-    /// Surface should close (user clicked X)
-    CloseRequested {
-        surface: SurfaceId,
-    },
+10. **AI-aware rendering budget.** AIRS scores window importance; the compositor allocates rendering budget accordingly. Unattended windows receive lower frame rates and quality.
 
-    /// Input events routed to this surface
-    Input(InputEvent),
-}
-```
+11. **Wayland compatibility.** Linux GUI applications run via a Wayland translation layer. The compositor speaks AIOS native protocol internally but translates Wayland protocol at the boundary.
 
-### 3.1 Shared Buffer Protocol
-
-Agents render into shared memory buffers. The compositor reads from these buffers without copying:
-
-```rust
-pub struct SharedBuffer {
-    id: SharedBufferId,
-    /// Shared memory region (kernel-managed)
-    memory: SharedMemoryRegion,
-    width: u32,
-    height: u32,
-    stride: u32,                        // bytes per row
-    format: PixelFormat,
-}
-
-pub enum PixelFormat {
-    Argb8888,                           // 32-bit with alpha
-    Xrgb8888,                           // 32-bit without alpha
-    Rgb565,                             // 16-bit (low memory)
-}
-```
-
-**Double buffering:** Agents allocate two buffers and alternate between them. While the compositor reads from one, the agent renders to the other. Buffer swap is atomic (pointer swap via IPC).
+12. **Power-proportional.** GPU frequency scales with rendering load via DVFS. Static content reduces refresh rate. The compositor is the largest single consumer of GPU power and manages it actively.
 
 -----
 
-## 4. Semantic Hints
+## 16. Implementation Order
 
-The key differentiator. Agents can tell the compositor what their content is, enabling intelligent behavior:
+```text
+Phase 5 — GPU and Display:
+  ├── VirtIO-GPU driver (MMIO transport, 2D/3D commands)
+  ├── wgpu initialization (Vulkan backend on real hardware, VirtIO on QEMU)
+  ├── Font rendering (fontdue or ab_glyph, glyph atlas)
+  ├── Basic surface composition (scene graph, damage tracking)
+  └── Direct scanout for single fullscreen surface
 
-```rust
-pub struct SurfaceHints {
-    /// What kind of content this surface shows
-    content_type: SurfaceContentType,
+Phase 6 — Window Compositor and Shell:
+  ├── Compositor protocol (IPC-based surface lifecycle)
+  ├── Shared buffer protocol (double buffering, release fences)
+  ├── Window manager (floating + tiling layout modes)
+  ├── Input routing (keyboard/mouse focus, global hotkeys)
+  ├── Damage tracking + VSync (60 fps target)
+  ├── Desktop shell (taskbar, launcher, status strip)
+  ├── Semantic hints (content-aware layout)
+  ├── Animation system (window open/close/resize transitions)
+  └── Multi-monitor support (HiDPI, extended desktop)
 
-    /// How interactive this surface is right now
-    interaction_state: InteractionState,
+Phase 11 — Attention Management:
+  ├── AIRS importance scoring integration
+  ├── Attention-aware rendering priority
+  └── Context-aware notification suppression
 
-    /// Urgency of this surface's content
-    urgency: SurfaceUrgency,
+Phase 13 — Security Hardening:
+  ├── Capability-gated surface operations
+  ├── GPU process isolation (IOMMU enforcement)
+  ├── Screen capture protection
+  └── Secure input mode
 
-    /// Whether this surface should be treated as a panel/overlay
-    layer: SurfaceLayer,
+Phase 14 — Performance and Optimization:
+  ├── Kernel-internal ML: predictive frame scheduling
+  ├── GPU DVFS power management
+  ├── Activity-based variable refresh rate
+  ├── AOT shader compilation pipeline
+  └── Multiplane overlay (hardware planes bypass compositor)
 
-    /// Accessibility: what this surface represents
-    semantic_role: SemanticRole,
+Phase 20 — UI Toolkit:
+  └── iced backend targeting compositor surfaces
 
-    /// Preferred layout behavior
-    layout_preference: LayoutPreference,
-}
+Phase 23 — Accessibility:
+  ├── Accessibility tree (full WAI-ARIA role support)
+  ├── Screen reader integration
+  ├── Compositor-level magnification
+  ├── High contrast / reduced motion modes
+  └── Keyboard navigation (focus ring, spatial nav)
 
-pub enum SurfaceContentType {
-    Document,                           // text-heavy, benefits from width
-    Terminal,                           // monospace text, fixed aspect ratio
-    Media,                              // video/images, prefer aspect ratio preservation
-    Conversation,                       // chat interface, benefits from height
-    Browser,                            // web content, flexible
-    Game,                               // fullscreen preferred, low latency
-    Inspector,                          // diagnostic, sidebar-friendly
-    Settings,                           // form-like, moderate size
-    Notification,                       // small, temporary, overlay
-}
-
-pub enum InteractionState {
-    Active,                             // user is interacting
-    Passive,                            // showing content, no interaction
-    Background,                         // not visible but running
-    Urgent,                             // needs attention
-}
-
-pub enum SurfaceUrgency {
-    None,
-    Low,
-    Medium,
-    High,                               // visual indicator (subtle glow, badge)
-}
-
-pub enum SurfaceLayer {
-    Background,                         // wallpaper, desktop
-    Normal,                             // regular windows
-    TopLevel,                           // always-on-top (rare)
-    Overlay,                            // notifications, tooltips
-    Panel,                              // taskbar, status bar
-}
-
-pub enum LayoutPreference {
-    Flexible,                           // compositor decides
-    PreferWidth(u32),                   // minimum width for readable content
-    PreferHeight(u32),                  // minimum height
-    FixedAspect(f32),                   // maintain aspect ratio
-    Fullscreen,                         // prefers fullscreen
-}
-```
-
-**How the compositor uses hints:**
-- A `Game` surface with `Active` interaction → suppress notifications, disable idle timeout
-- A `Document` surface → auto-tile with generous width
-- A `Conversation` surface → sidebar layout, narrow width OK
-- A `Notification` with `High` urgency → overlay on top with animation
-- `Passive` surfaces → candidates for background, lower rendering priority
-
-**Graceful degradation:** On Linux/macOS (portable toolkit), hints are ignored. The app works normally without semantic layout. On AIOS, hints enhance the experience.
-
------
-
-## 5. Layout Engine
-
-### 5.1 Layout Modes
-
-```rust
-pub enum LayoutMode {
-    /// User manually positions and sizes windows
-    Floating,
-    /// Windows auto-tile in the available space
-    Tiling {
-        split: SplitDirection,
-        ratio: f32,
-    },
-    /// One window fullscreen, others hidden
-    Fullscreen,
-    /// Stacked tabs (like browser tabs but for windows)
-    Stacked,
-    /// Columns (like macOS full-screen split)
-    Columns(Vec<f32>),                  // width ratios
-}
-
-pub enum SplitDirection {
-    Horizontal,
-    Vertical,
-    Auto,                               // compositor decides based on content hints
-}
-```
-
-### 5.2 Context-Aware Layout
-
-The compositor adjusts layout based on Context Engine state:
-
-```
-Work context (high engagement):
-  - Tiling layout preferred
-  - Active document gets 60% width
-  - Terminal gets 40% width
-  - Conversation bar is prominent
-
-Leisure context (low engagement):
-  - Floating layout preferred
-  - Media player centered, large
-  - Browser floating over media
-  - Conversation bar is subtle
-
-Gaming context:
-  - Active game fullscreen
-  - No other windows visible
-  - Notifications suppressed
-  - Compositor minimizes overhead (direct scanout if possible)
+Phase 25 — Wayland Compatibility:
+  ├── Wayland translation layer (Smithay-based)
+  ├── Protocol mapping (wl_surface → SurfaceId)
+  ├── XWayland integration (X11 backward compatibility)
+  ├── DRM/KMS POSIX bridge
+  └── Security context mapping (wp_security_context → capabilities)
 ```
 
 -----
 
-## 6. Render Pipeline
+## Cross-Reference Index
 
-### 6.1 Frame Composition
+Quick lookup for commonly referenced sections across the compositor sub-documents:
 
-```
-Per-frame (target: 16.67ms for 60fps):
-
-1. Collect damage regions from all surfaces
-   - Agent A: damaged rect (100, 200, 400, 300)
-   - Agent B: no damage (skip)
-   - Agent C: full repaint
-
-2. Calculate visible regions (occlusion culling)
-   - Surface B fully occluded by A → skip entirely
-   - Surface C partially visible → clip to visible region
-
-3. Composite visible surfaces in z-order
-   - Background layer first
-   - Normal windows in z-order
-   - Overlay/panel layers last
-   - Alpha blending for transparent regions
-
-4. Apply effects (if any)
-   - Window shadows (pre-computed, cached)
-   - Rounded corners (shader)
-   - Blur for overlay backgrounds (if GPU supports)
-
-5. Present to display
-   - VSync swap
-   - Direct scanout for single fullscreen surface (zero-copy)
-```
-
-### 6.2 Damage Tracking
-
-Only changed regions are redrawn. The compositor maintains a damage list:
-
-```rust
-pub struct DamageTracker {
-    /// Regions damaged since last frame
-    current_frame: Vec<DamageRect>,
-    /// Previous frame's damage (for double-buffer coordination)
-    previous_frame: Vec<DamageRect>,
-}
-
-pub struct DamageRect {
-    surface: SurfaceId,
-    x: i32, y: i32,
-    width: u32, height: u32,
-}
-```
-
-A surface with no damage (common for static content like a document not being edited) contributes zero GPU work per frame.
-
-### 6.3 Direct Scanout
-
-When a single surface covers the entire display (fullscreen game, video), the compositor can bypass composition entirely. The surface's buffer is scanned out directly to the display hardware. This eliminates one GPU copy and reduces latency.
-
------
-
-## 7. Input Routing
-
-The compositor owns input routing. Keyboard, mouse, touch, and gamepad events flow through it:
-
-```rust
-pub struct InputRouter {
-    /// Currently focused surface
-    focus: Option<SurfaceId>,
-    /// Global hotkey bindings
-    hotkeys: Vec<HotkeyBinding>,
-    /// Gesture recognizer
-    gestures: GestureRecognizer,
-}
-
-pub struct HotkeyBinding {
-    keys: KeyCombo,
-    action: HotkeyAction,
-}
-
-pub enum HotkeyAction {
-    SwitchWindow,                       // Alt+Tab
-    ToggleConversationBar,              // system gesture
-    Screenshot,
-    LockScreen,
-    ToggleInspector,
-    Custom(AgentId, String),            // agent-registered hotkey
-}
-```
-
-**Routing rules:**
-1. Global hotkeys checked first (Alt+Tab, screenshot, etc.)
-2. System gestures checked (conversation bar toggle)
-3. Remaining input routed to focused surface's agent
-4. Mouse events routed based on pointer position (surface under cursor)
-
------
-
-## 8. Multi-Monitor Support
-
-```rust
-pub struct DisplayManager {
-    outputs: Vec<Output>,
-    layout: MonitorLayout,
-}
-
-pub struct Output {
-    id: OutputId,
-    name: String,                       // "HDMI-1", "DSI-1"
-    resolution: (u32, u32),
-    refresh_rate: f32,
-    scale: f32,                         // HiDPI scaling (1.0, 1.5, 2.0)
-    position: (i32, i32),               // position in virtual desktop
-    transform: Transform,              // rotation
-}
-
-pub enum MonitorLayout {
-    Mirror,                             // same content on all outputs
-    Extended,                           // continuous desktop across outputs
-    Independent,                        // separate workspaces per output
-}
-```
-
-Each output has its own render pipeline. Surfaces can span outputs (the compositor handles splitting the render). HiDPI scaling is per-output — a laptop screen at 2x next to an external monitor at 1x works correctly.
-
------
-
-## 9. Accessibility
-
-### 9.1 Accessibility Tree
-
-The compositor maintains an accessibility tree built from surface hints and agent-provided accessibility information:
-
-```rust
-pub struct AccessibilityTree {
-    root: AccessNode,
-}
-
-pub struct AccessNode {
-    role: AccessRole,
-    name: String,
-    description: Option<String>,
-    state: AccessState,
-    children: Vec<AccessNode>,
-    actions: Vec<AccessAction>,
-    bounds: Rect,
-}
-
-pub enum AccessRole {
-    Window, Button, TextInput, Label, List, ListItem, Menu, MenuItem,
-    ScrollArea, Slider, Checkbox, RadioButton, Tab, TabPanel,
-    Toolbar, StatusBar, Dialog, Alert, Image, Link, Table, Row, Cell,
-}
-
-pub enum AccessAction {
-    Click, Focus, Expand, Collapse, ScrollTo, SetValue(String),
-}
-```
-
-### 9.2 Screen Reader Integration
-
-The compositor sends accessibility events to the screen reader service:
-
-```rust
-pub enum AccessibilityEvent {
-    FocusChanged { node: AccessNodeId },
-    ValueChanged { node: AccessNodeId, value: String },
-    Alert { message: String },
-    WindowCreated { surface: SurfaceId },
-    WindowDestroyed { surface: SurfaceId },
-}
-```
-
-The screen reader service converts these to speech output via the audio subsystem. All standard Web Accessibility Initiative (WAI-ARIA) roles are supported.
-
------
-
-## 10. Subsystem Framework Integration
-
-The compositor is the Display subsystem:
-
-```rust
-impl Subsystem for DisplaySubsystem {
-    const ID: SubsystemId = "display";
-    type Capability = DisplayCapability;
-    type Device = DisplayOutput;
-    type Session = RenderSession;
-    type AuditEvent = DisplayAuditEvent;
-
-    fn open_session(
-        &self,
-        agent: AgentId,
-        cap: &DisplayCapability,
-        intent: &SessionIntent,
-    ) -> Result<RenderSession> {
-        gate_check(agent, Self::ID, cap, intent)?;
-
-        let surface = self.compositor.create_surface(
-            cap.max_width,
-            cap.max_height,
-            agent,
-        )?;
-
-        Ok(RenderSession {
-            surface,
-            agent,
-            capability: cap.clone(),
-            buffers: SharedBufferPool::new(cap.max_memory),
-        })
-    }
-}
-
-pub struct DisplayCapability {
-    /// Maximum surface size
-    max_width: u32,
-    max_height: u32,
-    /// Maximum GPU memory usage
-    max_memory: usize,
-    /// Can request fullscreen?
-    fullscreen: bool,
-    /// Can create overlay surfaces?
-    overlay: bool,
-    /// WebGL/WebGPU access? (for browser tabs)
-    gpu_compute: bool,
-}
-```
-
-**POSIX bridge:** The display subsystem exposes `/dev/fb0` (framebuffer) and DRM/KMS interfaces for legacy applications. The Wayland compatibility layer (Phase 25) will provide full Wayland protocol support for Linux GUI applications.
-
------
-
-## 11. Design Principles
-
-1. **Semantic, not just spatial.** The compositor understands content types, not just rectangles.
-2. **60 fps or drop features.** Frame rate is sacred. If effects can't maintain 60fps, they're disabled automatically.
-3. **Zero-copy when possible.** Shared buffers, direct scanout, damage tracking — minimize GPU copies.
-4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 23. Screen reader support shapes early architectural decisions.
-5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without capability.
-6. **HiDPI is default.** Scaling is always active. 1x is just scale=1.0.
-
------
-
-## 12. Implementation Order
-
-```
-Phase 5a:  VirtIO-GPU driver + wgpu init           → GPU rendering works
-Phase 5b:  Font rendering (fontdue or ab_glyph)     → text on screen
-Phase 5c:  Basic surface composition                → multiple surfaces composited
-Phase 6a:  Window manager (floating + tiling)        → windows are manageable
-Phase 6b:  Compositor protocol (IPC-based)           → agents create/update surfaces
-Phase 6c:  Input routing                             → keyboard/mouse to focused window
-Phase 6d:  Damage tracking + VSync                   → 60fps, efficient rendering
-Phase 6e:  Desktop shell (taskbar, launcher)          → boot to usable desktop
-Phase 6f:  Semantic hints                            → content-aware layout
-Phase 20:  Portable UI toolkit (iced) backend         → iced renders via compositor
-Phase 23a: Accessibility tree + screen reader         → accessibility support
-Phase 25:  Wayland compatibility layer                → Linux GUI apps
-```
+| Reference | Location | Topic |
+|---|---|---|
+| §3.1 Surface Lifecycle | [protocol.md](./compositor/protocol.md) | Surface states, creation, destruction |
+| §3.2 Shared Buffer Protocol | [protocol.md](./compositor/protocol.md) | Zero-copy buffer sharing, double buffering |
+| §3.3 Buffer Synchronization | [protocol.md](./compositor/protocol.md) | Acquire/release fences |
+| §3.4 Damage Reporting | [protocol.md](./compositor/protocol.md) | Per-surface damage regions |
+| §4.1 Content Types | [protocol.md](./compositor/protocol.md) | SurfaceContentType enum, layout preferences |
+| §4.2 Interaction State | [protocol.md](./compositor/protocol.md) | InteractionState, urgency, layers |
+| §4.3 Hint-Driven Behavior | [protocol.md](./compositor/protocol.md) | Content type × interaction state decision matrix |
+| §5.1 Scene Graph | [rendering.md](./compositor/rendering.md) | Flatland-inspired 2D scene graph |
+| §5.2 Frame Composition | [rendering.md](./compositor/rendering.md) | Damage collection, occlusion culling |
+| §5.3 Direct Scanout | [rendering.md](./compositor/rendering.md) | Zero-copy fullscreen bypass |
+| §5.4 Frame Scheduling | [rendering.md](./compositor/rendering.md) | VK_EXT_present_timing-style feedback |
+| §5.5 Animation System | [rendering.md](./compositor/rendering.md) | Easing, transitions, 60 fps guarantee |
+| §6.1 Layout Modes | [rendering.md](./compositor/rendering.md) | Floating, tiling, fullscreen, stacked |
+| §6.2 Context-Aware Layout | [rendering.md](./compositor/rendering.md) | Context Engine integration |
+| §6.3 Multi-Monitor | [rendering.md](./compositor/rendering.md) | HiDPI, extended desktop |
+| §6.4 HDR and Wide Color Gamut | [rendering.md](./compositor/rendering.md) | Color spaces, tone mapping |
+| §7.1 Input Pipeline | [input.md](./compositor/input.md) | Event flow from device to agent |
+| §7.2 Focus Management | [input.md](./compositor/input.md) | Keyboard/pointer focus, Alt+Tab |
+| §7.3 Global Hotkeys | [input.md](./compositor/input.md) | System-level key bindings |
+| §7.4 Gesture Recognition | [input.md](./compositor/input.md) | Multi-touch state machine |
+| §7.6 Secure Input | [input.md](./compositor/input.md) | Keystroke injection prevention |
+| §8.1 wgpu Integration | [gpu.md](./compositor/gpu.md) | Backend selection, device lifecycle |
+| §8.2 VirtIO-GPU | [gpu.md](./compositor/gpu.md) | QEMU development backend |
+| §8.5 Shader Pipeline | [gpu.md](./compositor/gpu.md) | AOT compilation, built-in shaders |
+| §9.1 Wayland Translation | [gpu.md](./compositor/gpu.md) | Smithay-based Wayland bridge |
+| §9.4 DRM/KMS Bridge | [gpu.md](./compositor/gpu.md) | POSIX display device emulation |
+| §9.5 Security Context | [gpu.md](./compositor/gpu.md) | wp_security_context → capabilities |
+| §10.1 Capability-Gated Surfaces | [security.md](./compositor/security.md) | DisplayCapability, trust levels |
+| §10.2 GPU Isolation | [security.md](./compositor/security.md) | Per-process GPU context, IOMMU |
+| §10.3 Screen Capture | [security.md](./compositor/security.md) | Capture capability, watermarking |
+| §11.1 Accessibility Tree | [security.md](./compositor/security.md) | AccessNode, WAI-ARIA roles |
+| §11.3 Magnification | [security.md](./compositor/security.md) | Compositor-level zoom |
+| §12.1 Importance-Driven Compositing | [ai-native.md](./compositor/ai-native.md) | AIRS semantic window scoring |
+| §12.3 Layout Prediction | [ai-native.md](./compositor/ai-native.md) | RL-based layout recommendation |
+| §12.5 Content-Aware VRR | [ai-native.md](./compositor/ai-native.md) | Semantic refresh rate adaptation |
+| §13.1 Predictive Frame Scheduling | [ai-native.md](./compositor/ai-native.md) | Decision tree frame cost prediction |
+| §13.2 GPU DVFS | [ai-native.md](./compositor/ai-native.md) | LithOS-inspired power management |
+| §13.5 Gaze Prediction | [ai-native.md](./compositor/ai-native.md) | Foveated compositing |
+| §14.1 GPU Preemptive Scheduling | [ai-native.md](./compositor/ai-native.md) | LithOS/XSched research |

@@ -78,7 +78,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Flow security | `docs/storage/flow/security.md` | §11.1–§11.3 Capability enforcement, content screening, rate limiting |
 | Flow SDK | `docs/storage/flow/sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
 | Flow extensions | `docs/storage/flow/extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
-| Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
+| Compositor (hub) | `docs/platform/compositor.md` | §1 Core Insight, §2 Architecture, §15 Design Principles, §16 Impl Order, Document Map |
+| Compositor protocol | `docs/platform/compositor/protocol.md` | §3.1–§3.4 Surface lifecycle, shared buffers, fences, damage; §4.1–§4.4 Semantic hints, content types, hint-driven behavior |
+| Compositor rendering | `docs/platform/compositor/rendering.md` | §5.1–§5.5 Scene graph, frame composition, direct scanout, frame scheduling, animation; §6.1–§6.4 Layout, multi-monitor, HDR |
+| Compositor input | `docs/platform/compositor/input.md` | §7.1–§7.6 Input pipeline, focus, hotkeys, gestures, gamepad/touch, secure input |
+| Compositor GPU | `docs/platform/compositor/gpu.md` | §8.1–§8.5 wgpu, VirtIO-GPU, VC4/V3D, GPU memory, shaders; §9.1–§9.5 Wayland, XWayland, DRM/KMS, security context |
+| Compositor security | `docs/platform/compositor/security.md` | §10.1–§10.5 Capability-gated surfaces, GPU isolation, capture, clipboard, trust levels; §11.1–§11.5 Accessibility |
+| Compositor AI-native | `docs/platform/compositor/ai-native.md` | §12.1–§12.8 AIRS-dependent compositing; §13.1–§13.8 Kernel-internal ML; §14 Future directions |
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
