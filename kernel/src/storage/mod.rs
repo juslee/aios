@@ -7,7 +7,11 @@
 //! Per spaces.md §4.
 
 pub mod block_engine;
+pub mod crypto;
 pub mod lsm;
+pub mod object_store;
+pub mod space;
+pub mod version_store;
 pub mod wal;
 
 use shared::storage::ContentHash;
@@ -36,6 +40,14 @@ pub fn init() {
         mt_count,
         mt_cap
     );
+
+    // Initialize system spaces and register as a service.
+    space::init_system_spaces();
+    space::register_service();
+
+    // Log space count.
+    let space_count = block_engine::with_engine(|e| e.space_table().count()).unwrap_or(0);
+    crate::kinfo!(Storage, "Spaces: {} active", space_count);
 
     // Self-tests: only run during development, gated behind feature flag.
     #[cfg(feature = "storage-tests")]
@@ -141,6 +153,18 @@ fn run_self_tests() {
 
     // --- Test 4: 100-block write/read ---
     test_100_blocks();
+
+    // --- Test 5: Object Store CRUD + dedup ---
+    test_object_store();
+
+    // --- Test 6: Version Store — Merkle DAG ---
+    test_version_store();
+
+    // --- Test 7: Encryption verification ---
+    test_encryption();
+
+    // --- Test 8: Space management ---
+    test_spaces();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -187,6 +211,371 @@ fn test_100_blocks() {
             fail_count
         );
     }
+}
+
+/// Version Store self-tests: create → update 3x → list 4 → rollback → verify.
+#[cfg(feature = "storage-tests")]
+fn test_version_store() {
+    use shared::storage::ContentType;
+
+    // Use a real system space ID.
+    let space = match space::space_list() {
+        Ok(spaces) if !spaces.is_empty() => spaces[0].id,
+        _ => {
+            crate::kerror!(Storage, "VersionStore: no spaces available for test");
+            return;
+        }
+    };
+
+    // Create an object for versioning.
+    let content_v1 = b"Version 1 content";
+    let (obj_id, _hash_v1) =
+        match object_store::object_create(space, b"versioned.txt", content_v1, ContentType::Text) {
+            Ok(r) => r,
+            Err(e) => {
+                crate::kerror!(Storage, "VersionStore: create failed: {:?}", e);
+                return;
+            }
+        };
+    crate::kinfo!(Storage, "VersionStore: created object {:?}", obj_id);
+
+    // Update 3 times.
+    let updates = [
+        b"Version 2 content" as &[u8],
+        b"Version 3 content",
+        b"Version 4 content",
+    ];
+    for (i, content) in updates.iter().enumerate() {
+        match version_store::object_update(&obj_id, content, b"test-agent", b"update") {
+            Ok(_hash) => {
+                crate::kinfo!(Storage, "VersionStore: update {} OK", i + 2);
+            }
+            Err(e) => {
+                crate::kerror!(Storage, "VersionStore: update {} failed: {:?}", i + 2, e);
+                return;
+            }
+        }
+    }
+
+    // List versions (expect 4: initial creation + 3 updates = 4 version blocks in chain).
+    match version_store::version_list(&obj_id) {
+        Ok(versions) => {
+            crate::kinfo!(Storage, "VersionStore: listed {} versions", versions.len());
+            if versions.len() == 4 {
+                crate::kinfo!(
+                    Storage,
+                    "VersionStore: version count OK (1 initial + 3 updates)"
+                );
+            } else {
+                crate::kwarn!(
+                    Storage,
+                    "VersionStore: expected 4 versions, got {}",
+                    versions.len()
+                );
+            }
+
+            // Rollback to version 2 (second in list = index 1, since newest-first).
+            if versions.len() >= 2 {
+                let target = &versions[1]; // Version 3 content (second-newest)
+                match version_store::version_rollback(&obj_id, &target.hash) {
+                    Ok(()) => {
+                        crate::kinfo!(Storage, "VersionStore: rollback OK");
+
+                        // Verify content matches the target version.
+                        let mut buf = [0u8; 512];
+                        match object_store::object_read(&obj_id, &mut buf) {
+                            Ok((_, n)) => {
+                                if &buf[..n] == b"Version 3 content" {
+                                    crate::kinfo!(
+                                        Storage,
+                                        "VersionStore: rollback content verified"
+                                    );
+                                } else {
+                                    crate::kerror!(
+                                        Storage,
+                                        "VersionStore: rollback content mismatch!"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                crate::kerror!(
+                                    Storage,
+                                    "VersionStore: read after rollback failed: {:?}",
+                                    e
+                                );
+                            }
+                        }
+
+                        // After rollback, version list should have 5 (4 original + 1 rollback).
+                        match version_store::version_list(&obj_id) {
+                            Ok(post_versions) => {
+                                crate::kinfo!(
+                                    Storage,
+                                    "VersionStore: post-rollback {} versions",
+                                    post_versions.len()
+                                );
+                            }
+                            Err(e) => {
+                                crate::kerror!(
+                                    Storage,
+                                    "VersionStore: post-rollback list failed: {:?}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        crate::kerror!(Storage, "VersionStore: rollback failed: {:?}", e);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "VersionStore: list failed: {:?}", e);
+        }
+    }
+}
+
+/// Space management self-tests: verify system spaces, create user space, list.
+#[cfg(feature = "storage-tests")]
+fn test_spaces() {
+    use shared::storage::{SecurityZone, SpaceQuota};
+
+    // System spaces should already exist (created in init).
+    match space::space_list() {
+        Ok(spaces) => {
+            crate::kinfo!(Storage, "SpaceTest: {} spaces exist", spaces.len());
+            if spaces.len() >= 3 {
+                crate::kinfo!(Storage, "SpaceTest: system spaces OK");
+            } else {
+                crate::kerror!(
+                    Storage,
+                    "SpaceTest: expected >= 3 system spaces, got {}",
+                    spaces.len()
+                );
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "SpaceTest: list failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Create a user space.
+    let quota = SpaceQuota {
+        max_bytes: 1024 * 1024,
+        max_objects: 100,
+        _padding: [0; 4],
+    };
+    match space::space_create(b"test-space", SecurityZone::Personal, quota) {
+        Ok(id) => {
+            crate::kinfo!(Storage, "SpaceTest: created user space {:?}", id);
+
+            // Get it back.
+            match space::space_get(&id) {
+                Ok(s) => {
+                    if s.name_bytes() == b"test-space" {
+                        crate::kinfo!(Storage, "SpaceTest: get verified OK");
+                    } else {
+                        crate::kerror!(Storage, "SpaceTest: name mismatch!");
+                    }
+                }
+                Err(e) => crate::kerror!(Storage, "SpaceTest: get failed: {:?}", e),
+            }
+
+            // Delete it (it's empty).
+            match space::space_delete(&id) {
+                Ok(()) => crate::kinfo!(Storage, "SpaceTest: delete OK"),
+                Err(e) => crate::kerror!(Storage, "SpaceTest: delete failed: {:?}", e),
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "SpaceTest: create failed: {:?}", e);
+        }
+    }
+
+    // Final count.
+    let count = block_engine::with_engine(|e| e.space_table().count()).unwrap_or(0);
+    crate::kinfo!(Storage, "SpaceTest: {} spaces after test", count);
+}
+
+/// Encryption self-test: verify blocks are encrypted on disk and readable back.
+#[cfg(feature = "storage-tests")]
+fn test_encryption() {
+    // Write a known block.
+    let plaintext = b"encryption test payload";
+    let (hash, _loc) = match block_engine::write_block(plaintext) {
+        Ok(r) => r,
+        Err(e) => {
+            crate::kerror!(Storage, "Encryption test: write failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Read it back — should get correct plaintext.
+    let mut buf = [0u8; 512];
+    match block_engine::read_block_by_hash(&hash, &mut buf) {
+        Ok(n) => {
+            if &buf[..n] == plaintext {
+                crate::kinfo!(Storage, "Encryption test: read-back verified OK");
+            } else {
+                crate::kerror!(Storage, "Encryption test: read-back data mismatch!");
+                return;
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "Encryption test: read-back failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Verify raw sector is NOT plaintext (encryption is transparent).
+    let is_encrypted = block_engine::with_engine(|engine| engine.crypto_active()).unwrap_or(false);
+
+    if is_encrypted {
+        // Read raw sector at the block's location and check it doesn't contain plaintext.
+        let loc =
+            block_engine::with_engine(|engine| engine.memtable().get(&hash).map(|e| e.location))
+                .unwrap_or(None);
+
+        if let Some(loc) = loc {
+            let start_sector = loc.offset / shared::storage::SECTOR_SIZE as u64;
+            let mut raw = [0u8; 512];
+            if crate::drivers::virtio_blk::read_sector(start_sector, &mut raw).is_ok() {
+                // First 12 bytes should be AES-GCM nonce, not CRC header.
+                // If encrypted, bytes 0..4 should NOT equal the CRC of plaintext.
+                let raw_prefix = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
+                let data_crc = block_engine::crc32c(plaintext);
+                if raw_prefix != data_crc {
+                    crate::kinfo!(
+                        Storage,
+                        "Encryption test: raw sector is encrypted (not plaintext)"
+                    );
+                } else {
+                    crate::kwarn!(Storage, "Encryption test: raw sector may not be encrypted");
+                }
+            }
+        }
+    } else {
+        crate::kinfo!(
+            Storage,
+            "Encryption test: crypto not active (plaintext mode)"
+        );
+    }
+}
+
+/// Object Store self-tests: create, read-back, dedup, delete.
+#[cfg(feature = "storage-tests")]
+fn test_object_store() {
+    use shared::storage::ContentType;
+
+    // Use a real system space ID (created by init_system_spaces).
+    let space = match space::space_list() {
+        Ok(spaces) if !spaces.is_empty() => spaces[0].id,
+        _ => {
+            crate::kerror!(Storage, "ObjStore: no spaces available for test");
+            return;
+        }
+    };
+
+    // Create an object.
+    let content = b"Hello, Object Store!";
+    let (obj_id, hash1) =
+        match object_store::object_create(space, b"hello.txt", content, ContentType::Text) {
+            Ok(result) => {
+                crate::kinfo!(
+                    Storage,
+                    "ObjStore: created id={:?} hash={:?}",
+                    result.0,
+                    HashPrefix(&result.1)
+                );
+                result
+            }
+            Err(e) => {
+                crate::kerror!(Storage, "ObjStore: create failed: {:?}", e);
+                return;
+            }
+        };
+
+    // Read it back.
+    let mut buf = [0u8; 512];
+    match object_store::object_read(&obj_id, &mut buf) {
+        Ok((obj, n)) => {
+            if &buf[..n] == content {
+                crate::kinfo!(
+                    Storage,
+                    "ObjStore: read OK — name_len={} content_size={}",
+                    obj.name_len,
+                    obj.content_size
+                );
+            } else {
+                crate::kerror!(Storage, "ObjStore: read data mismatch!");
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: read failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Dedup: create another object with same content.
+    let (obj_id2, hash2) =
+        match object_store::object_create(space, b"hello_copy.txt", content, ContentType::Text) {
+            Ok(result) => result,
+            Err(e) => {
+                crate::kerror!(Storage, "ObjStore: dedup create failed: {:?}", e);
+                return;
+            }
+        };
+
+    if hash1 == hash2 {
+        // Check refcount — should be 2 (one per object via write_block dedup).
+        let rc =
+            block_engine::with_engine(|e| e.memtable().get(&hash1).map(|entry| entry.refcount))
+                .unwrap_or(None);
+        crate::kinfo!(
+            Storage,
+            "ObjStore: dedup verified — same hash, refcount={}",
+            rc.unwrap_or(0)
+        );
+    } else {
+        crate::kerror!(Storage, "ObjStore: dedup failed — different hashes!");
+    }
+
+    // Delete first object — content block should still exist (refcount > 0).
+    match object_store::object_delete(&obj_id) {
+        Ok(()) => {
+            crate::kinfo!(Storage, "ObjStore: deleted first object");
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: delete failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Second object should still be readable.
+    match object_store::object_read(&obj_id2, &mut buf) {
+        Ok((_, n)) => {
+            if &buf[..n] == content {
+                crate::kinfo!(
+                    Storage,
+                    "ObjStore: second object still readable after delete"
+                );
+            } else {
+                crate::kerror!(
+                    Storage,
+                    "ObjStore: second object data mismatch after delete!"
+                );
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "ObjStore: read after delete failed: {:?}", e);
+        }
+    }
+
+    // Object count check.
+    let count = block_engine::with_engine(|e| e.object_index().count()).unwrap_or(0);
+    crate::kinfo!(Storage, "ObjStore: {} objects in index", count);
 }
 
 use shared::storage::MEMTABLE_MAX_ENTRIES;

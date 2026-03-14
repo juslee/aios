@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 5 weeks
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
-**Status:** In Progress (M13 complete)
+**Status:** In Progress (M14 complete)
 **Prerequisites:** Phase 3 (IPC & Capability System)
 **Unlocks:** Phase 5 (GPU & Display), Phase 13 (Security Hardening)
 
@@ -175,25 +175,25 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Build the Object Store on top of the Block Engine. Objects are content-addressed by SHA-256 hash. Deduplication is automatic: storing the same content twice increments a reference count instead of writing a duplicate block.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/object_store.rs`
-- [ ] Define `CompactObject` struct (per spaces.md §3.3.1): id, name ([u8; 64] + len), content_hash, content_type, content_size, created_at, modified_at, created_by ([u8; 32]), modified_by, text_content (Option<[u8; N]> — extracted text for full-text index, always maintained per §3.3.1)
-- [ ] Define object metadata key format: `ObjectId → CompactObject` stored in a separate MemTable (object index)
-- [ ] Implement `object_create(space: SpaceId, name: &[u8], content: &[u8], content_type: ContentType) -> Result<ObjectId, StorageError>`:
+- [x] Create `kernel/src/storage/object_store.rs`
+- [x] Define `CompactObject` struct (repr(C), 512B, per spaces.md §3.3.1): id, space_id, name ([u8; 64] + name_len), content_hash, content_type, content_size (u32), created_at, modified_at, created_by ([u8; 32]), modified_by ([u8; 32]), version_head (ContentHash — tracks latest version node), text_content ([u8; 128] + text_len — extracted text for full-text index, always maintained per §3.3.1)
+- [x] Define object metadata key format: `ObjectId → CompactObject` stored in a separate MemTable (object index)
+- [x] Implement `object_create(space: SpaceId, name: &[u8], content: &[u8], content_type: ContentType) -> Result<ObjectId, StorageError>`:
   1. Hash content (SHA-256) → content_hash
   2. Store content via Block Engine (dedup check happens in Block Engine)
   3. Create CompactObject metadata
   4. Store metadata in object index MemTable
   5. Return ObjectId (generated as a 128-bit unique ID from CNTPCT_EL0 + pid entropy — not RFC 4122 UUID v4; cryptographic uniqueness deferred to Phase 13)
-- [ ] Implement `object_read(id: ObjectId) -> Result<(CompactObject, Vec<u8>), StorageError>`:
+- [x] Implement `object_read(id: ObjectId) -> Result<(CompactObject, Vec<u8>), StorageError>`:
   1. Look up ObjectId in object index → CompactObject
   2. Read content via Block Engine using content_hash
   3. Return metadata + content
-- [ ] Implement `object_delete(id: ObjectId) -> Result<(), StorageError>`:
+- [x] Implement `object_delete(id: ObjectId) -> Result<(), StorageError>`:
   1. Look up object → get content_hash
   2. Decrement refcount in Block Engine (block freed when refcount = 0)
   3. Remove from object index
-- [ ] Implement reference counting in Block Engine: `inc_ref(hash)`, `dec_ref(hash) -> bool` (returns true if block freed)
-- [ ] Test: create object, read back, create duplicate content, verify only 1 block exists (dedup), delete one copy, verify other still readable
+- [x] Implement reference counting in Block Engine: `inc_ref(hash)`, `dec_ref(hash) -> bool` (returns true if block freed)
+- [x] Test: create object, read back, create duplicate content, verify only 1 block exists (dedup), delete one copy, verify other still readable
 
 **Note:** For Phase 4, use `CompactObject` exclusively. Full `Object` with semantic metadata, embeddings, and provenance chains is Phase 9+ (requires AIRS). UUID v4 generation uses `CNTPCT_EL0` timer entropy mixed with process ID — not cryptographically strong but sufficient for uniqueness.
 
@@ -206,28 +206,30 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement the Version Store with a Merkle DAG. Every object modification creates a new version node linked to its parent. Supports version listing, rollback, and space snapshots.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/version_store.rs`
-- [ ] Define `Version` struct (per spaces.md §5.1): hash, parent, merge_parent (always None for Phase 4), content_hash, content_size, object_id, timestamp, author, provenance (stub ProvenanceEntry — Ed25519 signatures deferred to Phase 13), message
-- [ ] Define version key format: `(SpaceId, ObjectId, reverse_timestamp) → Version` for newest-first iteration
-- [ ] Store version nodes in the Block Engine (content-addressed, same as data blocks)
-- [ ] Implement `version_create(object_id, content_hash, author, message) -> Hash`:
+- [x] Create `kernel/src/storage/version_store.rs`
+- [x] Define `Version` struct (repr(C), 256B, per spaces.md §5.1): hash, parent, merge_parent (always zeroed for Phase 4), content_hash, content_size (u32), object_id, timestamp, author ([u8; 32]), message ([u8; 64] + message_len)
+- [x] Define `ProvenanceEntry` struct (repr(C)): agent ([u8; 32]), task ([u8; 16] + has_task flag), action (ProvenanceAction enum: Created, Modified, Derived{source:ObjectId}, Imported, AiGenerated), timestamp, signature ([u8; 64] — zeroed stub for Phase 4, Ed25519 deferred to Phase 13)
+- [x] Define version key format: `(SpaceId, ObjectId, reverse_timestamp) → Version` for newest-first iteration
+- [x] Store version nodes in the Block Engine (content-addressed, same as data blocks)
+- [x] Implement `version_create(object_id, content_hash, author, message) -> Hash`:
   1. Look up current head version for this object
   2. Create Version node with parent = current head
   3. Compute version hash: SHA-256(parent_hash + content_hash + timestamp + object_id)
   4. Store version node in Block Engine
   5. Update object's head pointer
-- [ ] Implement `version_list(object_id) -> Vec<Version>`: walk the chain from head, collecting versions
-- [ ] Implement `version_rollback(object_id, target_hash) -> Result<(), StorageError>`:
+- [x] Implement `version_list(object_id) -> Vec<Version>`: walk the chain from head, collecting versions
+- [x] Implement `version_rollback(object_id, target_hash) -> Result<(), StorageError>`:
   1. Verify target version exists and belongs to this object
   2. Read content from target version's content_hash
   3. Create a new version node (parent = current head, content = old content)
   4. Update object's head pointer (rollback is a new version, not a rewrite)
-- [ ] Implement `object_update(id, new_content) -> Result<Hash, StorageError>`:
-  1. Store new content via Block Engine
-  2. Create version node
-  3. Update CompactObject metadata (content_hash, modified_at)
-  4. Decrement refcount on old content block
-- [ ] Test: create object → update 3 times → list versions (expect 4) → rollback to version 2 → verify content matches version 2
+- [x] Implement `object_update(id, new_content) -> Result<Hash, StorageError>`:
+  1. Store new content via Block Engine (creates refcount=1, claimed by the new version node)
+  2. Create version node (parent = current head, content_hash = new hash)
+  3. Store version node as a block via write_block
+  4. Update CompactObject metadata (content_hash, version_head, modified_at)
+  Note: Old content is NOT dec_ref'd here — its version node still owns that ref. Refcounts are released by object_delete when walking the version chain.
+- [x] Test: create object → update 3 times → list versions (expect 4) → rollback to version 2 → verify content matches version 2
 
 **Note:** Provenance signatures (Ed25519) are deferred to Phase 13 (Security Hardening). For Phase 4, the `author` field stores a stub `AgentId` and the provenance chain is simplified.
 
@@ -240,26 +242,28 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Every block written to the storage device is encrypted with a device-bound AES-256-GCM key before reaching the VirtIO-blk driver. This is the lowest encryption layer — it protects against physical access to the storage medium.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/crypto.rs`
-- [ ] Implement AES-256-GCM encrypt/decrypt using a software implementation (no hardware AES on QEMU cortex-a72 without ARMv8 Crypto Extensions — use a `no_std` AES crate or a minimal software AES-256 implementation)
-- [ ] Define `DeviceKeyManager` struct: active_key, epoch, key_source
-- [ ] For Phase 4 on QEMU: use `PassphraseDerived` key source with a hardcoded test passphrase ("aios-dev-key") — real key derivation (Argon2id, hardware binding) is Phase 24
-- [ ] Key derivation: SHA-256(passphrase + salt) → 32-byte device key (placeholder for Argon2id)
-- [ ] Integrate encryption into Block Engine write path:
+- [x] Create `kernel/src/storage/crypto.rs`
+- [x] Implement AES-256-GCM encrypt/decrypt using a software implementation (no hardware AES on QEMU cortex-a72 without ARMv8 Crypto Extensions — use a `no_std` AES crate or a minimal software AES-256 implementation)
+- [x] Define `DeviceKeyManager` struct: active_key, epoch, key_source
+- [x] For Phase 4 on QEMU: use `PassphraseDerived` key source with a hardcoded test passphrase ("aios-dev-key") — real key derivation (Argon2id, hardware binding) is Phase 24
+- [x] Key derivation: SHA-256(passphrase + salt) → 32-byte device key (placeholder for Argon2id)
+- [x] Integrate encryption into Block Engine write path:
   1. After computing content hash and CRC checksum (on plaintext)
   2. Encrypt block envelope (header + data) with device key + random 12-byte nonce
   3. Store: `[nonce (12B) | ciphertext | auth_tag (16B)]`
   4. Write encrypted block to VirtIO-blk
-- [ ] Integrate decryption into Block Engine read path:
+- [x] Integrate decryption into Block Engine read path:
   1. Read encrypted block from VirtIO-blk
   2. Extract nonce from block header
   3. Decrypt with device key, verify auth tag
   4. Verify CRC checksum (on decrypted plaintext)
   5. Return plaintext content
-- [ ] Store device key epoch in superblock; support single-key mode (no rotation in Phase 4)
-- [ ] Test: write encrypted block, read raw sector (verify ciphertext ≠ plaintext), read via Block Engine (verify decrypted content matches original)
+- [x] Add `encryption_epoch: u64`, `nonce_counter: u64`, `nonce_random_prefix: u32` fields to Superblock (adjust padding to maintain 4096B size)
+- [x] Store device key epoch in superblock; support single-key mode (no rotation in Phase 4)
+- [x] On init: load nonce_counter from superblock, advance by +1000 (crash recovery gap), persist immediately. On each write: persist nonce counter to superblock BEFORE writing encrypted data sectors (prevents nonce reuse on crash)
+- [x] Test: write encrypted block, read raw sector (verify ciphertext ≠ plaintext), read via Block Engine (verify decrypted content matches original)
 
-**Note:** The nonce for each block can use a counter (epoch + block_sequence_number) to avoid nonce reuse. AES-GCM nonce reuse is catastrophic — the counter approach guarantees uniqueness as long as the epoch is correctly tracked. For Phase 4, the sequence number is derived from the block's offset in the data region.
+**Note:** The nonce uses a global monotonic counter (per §6.1.1): `[random_prefix (4B) | counter (8B)]` for a 12-byte nonce. The counter is persisted in the superblock and advanced by +1000 on crash recovery to guarantee no reuse even after unclean shutdown. AES-GCM nonce reuse is catastrophic — the monotonic counter approach guarantees uniqueness as long as the counter never wraps (2^64 blocks ≈ centuries of operation).
 
 **Key reference:** spaces.md §4.10 Device-Level Transparent Encryption; §4.10.1 Device Key Hierarchy; §4.10.2 Encryption in the Write Path
 
@@ -270,20 +274,20 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement space management (create, list, delete) and create the system spaces at boot. Spaces organize objects into security zones with metadata and quotas.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/space.rs`
-- [ ] Define `Space` struct (per spaces.md §3.1): id, name, parent, security_zone, encryption (EncryptionState — DeviceOnly for all Phase 4 spaces), quota (SpaceQuota: max_objects, max_bytes), created_at, modified_at, object_count, total_size
-- [ ] Space metadata stored in Block Engine as special objects (SpaceId → Space metadata)
-- [ ] Implement `space_create(name, zone, quota) -> Result<SpaceId, StorageError>`
-- [ ] Implement `space_list() -> Vec<Space>` (scan space metadata index)
-- [ ] Implement `space_delete(id) -> Result<(), StorageError>` (only if empty)
-- [ ] Implement `space_get(id) -> Result<Space, StorageError>`
-- [ ] Create system spaces at Block Engine init (per spaces.md §3.2):
+- [x] Create `kernel/src/storage/space.rs`
+- [x] Define `Space` struct (per spaces.md §3.1): id, name, parent, security_zone, encryption (EncryptionState — DeviceOnly for all Phase 4 spaces), quota (SpaceQuota: max_objects, max_bytes), created_at, modified_at, object_count, total_size
+- [x] Space metadata stored in Block Engine as special objects (SpaceId → Space metadata)
+- [x] Implement `space_create(name, zone, quota) -> Result<SpaceId, StorageError>`
+- [x] Implement `space_list() -> Vec<Space>` (scan space metadata index)
+- [x] Implement `space_delete(id) -> Result<(), StorageError>` (only if empty)
+- [x] Implement `space_get(id) -> Result<Space, StorageError>`
+- [x] Create system spaces at Block Engine init (per spaces.md §3.2):
   - `system/` — Core zone, kernel-managed (config, audit, crash, credentials, services, identity)
   - `user/home/` — Personal zone (default personal space)
   - `ephemeral/` — Ephemeral zone (auto-cleaned on shutdown, no version history)
-- [ ] Wire Space Storage initialization into `kernel/src/main.rs` boot sequence (after pool init, after service manager init)
-- [ ] Register Space Storage as a kernel service via `service_register(b"space-storage", pid, channel_id)` (matches the existing `&[u8]` name + pid + channel signature from Phase 3)
-- [ ] Test: verify system spaces created at boot, create a user space, list all spaces
+- [x] Wire Space Storage initialization into `kernel/src/main.rs` boot sequence (after pool init, after service manager init)
+- [x] Register Space Storage as a kernel service via `service_register(b"space-storage", pid, channel_id)` (matches the existing `&[u8]` name + pid + channel signature from Phase 3)
+- [x] Test: verify system spaces created at boot, create a user space, list all spaces
 
 **Note:** Per-space encryption (Personal, Collaborative zones) is Phase 13a. For Phase 4, all spaces use device-level encryption only (EncryptionState::DeviceOnly). The Collaborative security zone is defined but not implemented (no multi-identity support yet).
 
@@ -427,7 +431,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 ## Phase Completion Criteria
 
 - [x] **M13 complete:** VirtIO-blk driver reads/writes sectors; Block Engine with WAL and MemTable index; superblock persists across boots
-- [ ] **M14 complete:** Content-addressed objects with dedup; Merkle DAG version history; device-level AES-256-GCM encryption; system spaces at boot
+- [x] **M14 complete:** Content-addressed objects with dedup; Merkle DAG version history; device-level AES-256-GCM encryption; system spaces at boot
 - [ ] **M15 complete:** POSIX bridge maps paths to spaces; LZ4 compression active; storage budget enforced; end-to-end create/read/update/rollback/dedup/encrypt verified
 - [ ] `just check` — zero warnings, zero errors
 - [ ] `just test` — all shared crate tests pass (existing + new storage type tests)

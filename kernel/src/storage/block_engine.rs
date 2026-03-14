@@ -11,7 +11,10 @@ use spin::Mutex;
 
 use crate::drivers::virtio_blk;
 
+use super::crypto::DeviceKeyManager;
 use super::lsm::MemTable;
+use super::object_store::ObjectIndex;
+use super::space::SpaceTable;
 use super::wal::Wal;
 
 // ---------------------------------------------------------------------------
@@ -49,17 +52,6 @@ pub fn crc32c(data: &[u8]) -> u32 {
     !crc
 }
 
-/// Extend a previously computed CRC-32C with additional data.
-/// `prev_crc` is the finalized CRC from a prior `crc32c()` or `crc32c_extend()` call.
-fn crc32c_extend(prev_crc: u32, data: &[u8]) -> u32 {
-    // Un-finalize (XOR invert), continue table-driven computation, re-finalize.
-    let mut crc = !prev_crc;
-    for &byte in data {
-        crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    !crc
-}
-
 // ---------------------------------------------------------------------------
 // Superblock (4096 bytes, on-disk at sectors 0-7)
 // ---------------------------------------------------------------------------
@@ -81,24 +73,36 @@ pub struct Superblock {
     pub free_data_sectors: u64,
     /// Reserved for LSM-tree L0 offset (0 for M13).
     pub lsm_l0_offset: u64,
+    /// Encryption key epoch (0 = unencrypted, 1+ = encrypted).
+    pub encryption_epoch: u64,
+    /// Global monotonic nonce counter for AES-GCM.
+    pub nonce_counter: u64,
+    /// Random prefix for nonce generation (first 4 bytes of 12-byte nonce).
+    pub nonce_random_prefix: u32,
     /// CRC-32C of all fields above.
     pub checksum: u32,
     _padding: [u8; SUPERBLOCK_PADDING],
 }
 
 /// Padding size to fill superblock to exactly BLOCK_SIZE (4096) bytes.
-const SUPERBLOCK_PADDING: usize = BLOCK_SIZE - (8 + 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 4);
+/// Fields: magic(8) + version(4) + block_size(4) + total_sectors(8) + wal_start(8)
+///       + wal_size(8) + data_start(8) + data_next(8) + wal_head(8) + wal_tail(8)
+///       + free_data(8) + lsm_l0(8) + enc_epoch(8) + nonce_counter(8) + nonce_prefix(4)
+///       + checksum(4) = 112
+const SUPERBLOCK_PADDING: usize = BLOCK_SIZE - 112;
 
 const _: () = assert!(core::mem::size_of::<Superblock>() == BLOCK_SIZE);
 
 impl Superblock {
     /// Compute CRC-32C over the superblock fields (everything before checksum).
     fn compute_checksum(&self) -> u32 {
-        // Checksum covers bytes 0..88 (magic through lsm_l0_offset).
-        let offset_of_checksum = 8 + 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8; // 88 bytes
+        // Checksum covers bytes 0..108 (magic through nonce_random_prefix).
+        // 8+4+4+8+8+8+8+8+8+8+8+8+8+8+4 = 108 bytes
+        let offset_of_checksum = 108;
 
-        // SAFETY: Superblock is repr(C). We read the first 88 bytes as a contiguous
-        // byte slice for CRC-32C computation. No pointers or padding issues.
+        // SAFETY: Superblock is repr(C), plain data (no pointers or padding).
+        // Maintained by the fixed field layout and compile-time size_of check.
+        // If violated, CRC-32C is computed over incorrect bytes, causing checksum mismatch.
         let bytes = unsafe {
             core::slice::from_raw_parts(self as *const Self as *const u8, offset_of_checksum)
         };
@@ -115,6 +119,12 @@ impl Superblock {
     /// Create a fresh superblock for a new disk.
     fn format(total_sectors: u64) -> Self {
         let data_sectors = total_sectors - DATA_START_SECTOR;
+
+        // Generate a random prefix from timer entropy.
+        let tick =
+            crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+        let random_prefix = (tick & 0xFFFF_FFFF) as u32;
+
         let mut sb = Superblock {
             magic: SUPERBLOCK_MAGIC,
             version: SUPERBLOCK_VERSION,
@@ -128,6 +138,9 @@ impl Superblock {
             wal_tail: 0,
             free_data_sectors: data_sectors,
             lsm_l0_offset: 0,
+            encryption_epoch: 1,
+            nonce_counter: 0,
+            nonce_random_prefix: random_prefix,
             checksum: 0,
             _padding: [0; SUPERBLOCK_PADDING],
         };
@@ -140,11 +153,15 @@ impl Superblock {
 // Block Engine
 // ---------------------------------------------------------------------------
 
-/// Block Engine state: superblock + WAL + MemTable + data region append pointer.
+/// Block Engine state: superblock + WAL + MemTable + object index + spaces + crypto + data region pointer.
 pub struct BlockEngine {
     superblock: Superblock,
     wal: Wal,
     memtable: MemTable,
+    object_index: ObjectIndex,
+    space_table: SpaceTable,
+    /// Device-level encryption manager (None = plaintext mode).
+    crypto: Option<DeviceKeyManager>,
     /// Next free sector in the data region.
     data_next_sector: u64,
 }
@@ -174,10 +191,24 @@ impl BlockEngine {
             let mut wal = Wal::new(sb.wal_start_sector, sb.wal_size_sectors);
             wal.set_positions(sb.wal_head, sb.wal_tail, sb.wal_head + 1);
             let data_next = sb.data_next_sector;
+            // Init encryption from superblock state.
+            let crypto = if sb.encryption_epoch > 0 {
+                Some(DeviceKeyManager::from_passphrase(
+                    b"aios-dev-key",
+                    sb.nonce_counter,
+                    sb.nonce_random_prefix,
+                ))
+            } else {
+                None
+            };
+
             let mut engine = Self {
                 superblock: sb,
                 wal,
                 memtable: MemTable::with_default_capacity(),
+                object_index: ObjectIndex::new(),
+                space_table: SpaceTable::new(),
+                crypto,
                 data_next_sector: data_next,
             };
 
@@ -197,10 +228,22 @@ impl BlockEngine {
             Self::write_superblock(&sb)?;
             let wal = Wal::new(sb.wal_start_sector, sb.wal_size_sectors);
             let data_next = sb.data_start_sector;
+            let crypto = if sb.encryption_epoch > 0 {
+                Some(DeviceKeyManager::from_passphrase(
+                    b"aios-dev-key",
+                    sb.nonce_counter,
+                    sb.nonce_random_prefix,
+                ))
+            } else {
+                None
+            };
             Ok(Self {
                 superblock: sb,
                 wal,
                 memtable: MemTable::with_default_capacity(),
+                object_index: ObjectIndex::new(),
+                space_table: SpaceTable::new(),
+                crypto,
                 data_next_sector: data_next,
             })
         }
@@ -216,8 +259,9 @@ impl BlockEngine {
             buf[offset..offset + SECTOR_SIZE].copy_from_slice(&sector_buf);
         }
 
-        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, all fields are plain data.
-        // Use read_unaligned because buf is a [u8] with alignment 1.
+        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, plain data (no pointers).
+        // Maintained by repr(C) layout and is_valid() check after deserialization.
+        // If violated, read_unaligned returns garbage; is_valid() rejects it.
         let sb = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Superblock) };
         if sb.is_valid() {
             Ok(Some(sb))
@@ -228,7 +272,9 @@ impl BlockEngine {
 
     /// Write the superblock to disk (sectors 0-7).
     fn write_superblock(sb: &Superblock) -> Result<(), StorageError> {
-        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes.
+        // SAFETY: Superblock is repr(C), BLOCK_SIZE bytes, plain data (no pointers).
+        // Maintained by repr(C) layout and checksum field set before serialization.
+        // If violated, from_raw_parts produces incorrect bytes, corrupting the on-disk superblock.
         let bytes = unsafe {
             core::slice::from_raw_parts(sb as *const Superblock as *const u8, BLOCK_SIZE)
         };
@@ -244,6 +290,8 @@ impl BlockEngine {
     /// Write a data block to disk with crash safety via WAL.
     ///
     /// Returns (content_hash, BlockLocation) on success.
+    /// When encryption is enabled, the on-disk format is:
+    ///   `[nonce(12B) | encrypted{crc32c|data_len|data|pad} | tag(16B)]`
     pub fn write_block(
         &mut self,
         data: &[u8],
@@ -267,8 +315,13 @@ impl BlockEngine {
 
         // 3. Compute on-disk layout: [crc32c: u32 | data_len: u32 | data | padding]
         let header_size = 8; // crc32c (4) + data_len (4)
-        let total_bytes = header_size + data.len();
-        let sectors_needed = total_bytes.div_ceil(SECTOR_SIZE) as u64;
+        let plaintext_envelope = header_size + data.len();
+        let on_disk_size = if self.crypto.is_some() {
+            plaintext_envelope + ENCRYPTION_OVERHEAD
+        } else {
+            plaintext_envelope
+        };
+        let sectors_needed = on_disk_size.div_ceil(SECTOR_SIZE) as u64;
 
         // Check space.
         let data_end = self.superblock.total_sectors;
@@ -280,42 +333,50 @@ impl BlockEngine {
         let data_crc = crc32c(data);
 
         // 5. Build the byte offset and size for BlockLocation.
+        if data.len() > u32::MAX as usize {
+            return Err(StorageError::IoError);
+        }
         let byte_offset = self.data_next_sector * SECTOR_SIZE as u64;
         let byte_size = data.len() as u32;
 
         // 6. WAL append (uncommitted).
         let (_seq, wal_index) = self.wal.append(content_hash, byte_offset, byte_size)?;
 
-        // 7. Write data sectors to disk.
-        let mut sector_buf = [0u8; SECTOR_SIZE];
+        // 7. Build plaintext envelope: [crc32c | data_len | data]
+        let mut envelope = alloc::vec![0u8; plaintext_envelope];
+        envelope[0..4].copy_from_slice(&data_crc.to_le_bytes());
+        envelope[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        envelope[8..].copy_from_slice(data);
 
-        // First sector: header + beginning of data.
-        sector_buf[0..4].copy_from_slice(&data_crc.to_le_bytes());
-        sector_buf[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
-        let first_data = data.len().min(SECTOR_SIZE - header_size);
-        sector_buf[8..8 + first_data].copy_from_slice(&data[..first_data]);
-        // Zero rest of first sector.
-        for b in sector_buf[8 + first_data..].iter_mut() {
-            *b = 0;
-        }
-        virtio_blk::write_sector(self.data_next_sector, &sector_buf)?;
+        // 8. Encrypt if enabled.
+        let write_data = if let Some(ref crypto) = self.crypto {
+            let mut encrypted = alloc::vec![0u8; on_disk_size];
+            crypto.encrypt(&envelope, &mut encrypted)?;
+            // Persist nonce counter BEFORE writing data sectors.
+            // If we crash after data write but before nonce flush, we'd reuse nonces.
+            // By flushing first, the persisted counter is always >= any nonce used on disk.
+            self.flush_superblock()?;
+            encrypted
+        } else {
+            envelope
+        };
 
-        // Remaining sectors (if data > 504 bytes).
-        let mut data_offset = first_data;
-        let mut sector_idx = 1u64;
-        while data_offset < data.len() {
-            sector_buf = [0u8; SECTOR_SIZE];
-            let chunk = (data.len() - data_offset).min(SECTOR_SIZE);
-            sector_buf[..chunk].copy_from_slice(&data[data_offset..data_offset + chunk]);
+        // 9. Write sectors to disk.
+        let mut write_offset = 0usize;
+        let mut sector_idx = 0u64;
+        while write_offset < write_data.len() {
+            let mut sector_buf = [0u8; SECTOR_SIZE];
+            let chunk = (write_data.len() - write_offset).min(SECTOR_SIZE);
+            sector_buf[..chunk].copy_from_slice(&write_data[write_offset..write_offset + chunk]);
             virtio_blk::write_sector(self.data_next_sector + sector_idx, &sector_buf)?;
-            data_offset += chunk;
+            write_offset += chunk;
             sector_idx += 1;
         }
 
-        // 8. WAL commit (O(1) using index from append).
+        // 10. WAL commit (O(1) using index from append).
         self.wal.commit_at(wal_index)?;
 
-        // 9. Advance append pointer.
+        // 11. Advance append pointer.
         self.data_next_sector += sectors_needed;
 
         let location = BlockLocation {
@@ -324,7 +385,7 @@ impl BlockEngine {
             tier: StorageTier::Hot,
         };
 
-        // 10. Insert into MemTable index.
+        // 12. Insert into MemTable index.
         self.memtable
             .insert(content_hash, location)
             .map_err(|_| StorageError::MemTableFull)?;
@@ -334,6 +395,7 @@ impl BlockEngine {
 
     /// Read a data block from disk by BlockLocation.
     ///
+    /// Handles transparent decryption when device encryption is enabled.
     /// Returns the number of bytes read into `buf`.
     pub fn read_block(&self, loc: &BlockLocation, buf: &mut [u8]) -> Result<usize, StorageError> {
         let start_sector = loc.offset / SECTOR_SIZE as u64;
@@ -343,84 +405,86 @@ impl BlockEngine {
             return Err(StorageError::IoError);
         }
 
-        // Read first sector: header + beginning of data.
-        let mut sector_buf = [0u8; SECTOR_SIZE];
-        virtio_blk::read_sector(start_sector, &mut sector_buf)?;
+        let header_size = 8usize; // crc32c(4) + data_len(4)
+        let plaintext_envelope = header_size + data_len;
 
-        let stored_crc =
-            u32::from_le_bytes([sector_buf[0], sector_buf[1], sector_buf[2], sector_buf[3]]);
-        let stored_len =
-            u32::from_le_bytes([sector_buf[4], sector_buf[5], sector_buf[6], sector_buf[7]])
-                as usize;
+        if let Some(ref crypto) = self.crypto {
+            // Encrypted path: read all sectors, decrypt, then parse envelope.
+            let on_disk_size = plaintext_envelope + ENCRYPTION_OVERHEAD;
+            let sectors = on_disk_size.div_ceil(SECTOR_SIZE) as u64;
+            let mut raw = alloc::vec![0u8; sectors as usize * SECTOR_SIZE];
 
-        if stored_len != data_len {
-            return Err(StorageError::ChecksumFailed);
+            let mut sector_buf = [0u8; SECTOR_SIZE];
+            for i in 0..sectors {
+                virtio_blk::read_sector(start_sector + i, &mut sector_buf)?;
+                let off = i as usize * SECTOR_SIZE;
+                raw[off..off + SECTOR_SIZE].copy_from_slice(&sector_buf);
+            }
+
+            // Decrypt: [nonce(12) | ciphertext | tag(16)] → plaintext at raw[12..12+pt_len].
+            let pt_len = crypto.decrypt(&mut raw[..on_disk_size])?;
+            let envelope = &raw[12..12 + pt_len];
+
+            let stored_crc =
+                u32::from_le_bytes([envelope[0], envelope[1], envelope[2], envelope[3]]);
+            let stored_len =
+                u32::from_le_bytes([envelope[4], envelope[5], envelope[6], envelope[7]]) as usize;
+
+            if stored_len != data_len {
+                return Err(StorageError::ChecksumFailed);
+            }
+
+            buf[..data_len].copy_from_slice(&envelope[8..8 + data_len]);
+
+            if crc32c(&buf[..data_len]) != stored_crc {
+                return Err(StorageError::ChecksumFailed);
+            }
+
+            Ok(data_len)
+        } else {
+            // Plaintext path: read sector-by-sector, parse header, verify CRC.
+            let mut sector_buf = [0u8; SECTOR_SIZE];
+            virtio_blk::read_sector(start_sector, &mut sector_buf)?;
+
+            let stored_crc =
+                u32::from_le_bytes([sector_buf[0], sector_buf[1], sector_buf[2], sector_buf[3]]);
+            let stored_len =
+                u32::from_le_bytes([sector_buf[4], sector_buf[5], sector_buf[6], sector_buf[7]])
+                    as usize;
+
+            if stored_len != data_len {
+                return Err(StorageError::ChecksumFailed);
+            }
+
+            let first_chunk = data_len.min(SECTOR_SIZE - header_size);
+            buf[..first_chunk].copy_from_slice(&sector_buf[8..8 + first_chunk]);
+
+            let mut buf_offset = first_chunk;
+            let mut sector_idx = 1u64;
+            while buf_offset < data_len {
+                virtio_blk::read_sector(start_sector + sector_idx, &mut sector_buf)?;
+                let chunk = (data_len - buf_offset).min(SECTOR_SIZE);
+                buf[buf_offset..buf_offset + chunk].copy_from_slice(&sector_buf[..chunk]);
+                buf_offset += chunk;
+                sector_idx += 1;
+            }
+
+            if crc32c(&buf[..data_len]) != stored_crc {
+                return Err(StorageError::ChecksumFailed);
+            }
+
+            Ok(data_len)
         }
-
-        // Copy data from first sector.
-        let header_size = 8;
-        let first_chunk = data_len.min(SECTOR_SIZE - header_size);
-        buf[..first_chunk].copy_from_slice(&sector_buf[8..8 + first_chunk]);
-
-        // Read remaining sectors.
-        let mut buf_offset = first_chunk;
-        let mut sector_idx = 1u64;
-        while buf_offset < data_len {
-            virtio_blk::read_sector(start_sector + sector_idx, &mut sector_buf)?;
-            let chunk = (data_len - buf_offset).min(SECTOR_SIZE);
-            buf[buf_offset..buf_offset + chunk].copy_from_slice(&sector_buf[..chunk]);
-            buf_offset += chunk;
-            sector_idx += 1;
-        }
-
-        // Verify CRC-32C.
-        let computed_crc = crc32c(&buf[..data_len]);
-        if computed_crc != stored_crc {
-            return Err(StorageError::ChecksumFailed);
-        }
-
-        Ok(data_len)
     }
 
-    /// Verify a block's CRC without requiring a full-size output buffer.
-    /// Reads all sectors, accumulates data, and checks CRC-32C.
-    /// Returns Ok(()) if CRC matches, Err otherwise.
+    /// Verify a block's CRC (and decrypt if encrypted).
+    ///
+    /// Delegates to `read_block()` which handles both plaintext and encrypted paths.
+    /// Used during WAL recovery to check if an uncommitted block was actually written.
     fn verify_block_crc(&self, loc: &BlockLocation) -> Result<(), StorageError> {
-        let start_sector = loc.offset / SECTOR_SIZE as u64;
         let data_len = loc.size as usize;
-
-        let mut sector_buf = [0u8; SECTOR_SIZE];
-        virtio_blk::read_sector(start_sector, &mut sector_buf)?;
-
-        let stored_crc =
-            u32::from_le_bytes([sector_buf[0], sector_buf[1], sector_buf[2], sector_buf[3]]);
-        let stored_len =
-            u32::from_le_bytes([sector_buf[4], sector_buf[5], sector_buf[6], sector_buf[7]])
-                as usize;
-
-        if stored_len != data_len {
-            return Err(StorageError::ChecksumFailed);
-        }
-
-        // Compute CRC incrementally across all sectors.
-        let header_size = 8;
-        let first_chunk = data_len.min(SECTOR_SIZE - header_size);
-        let mut crc = crc32c(&sector_buf[8..8 + first_chunk]);
-
-        let mut remaining = data_len - first_chunk;
-        let mut sector_idx = 1u64;
-        while remaining > 0 {
-            virtio_blk::read_sector(start_sector + sector_idx, &mut sector_buf)?;
-            let chunk = remaining.min(SECTOR_SIZE);
-            // Extend CRC with this chunk's data.
-            crc = crc32c_extend(crc, &sector_buf[..chunk]);
-            remaining -= chunk;
-            sector_idx += 1;
-        }
-
-        if crc != stored_crc {
-            return Err(StorageError::ChecksumFailed);
-        }
+        let mut buf = alloc::vec![0u8; data_len];
+        self.read_block(loc, &mut buf)?;
         Ok(())
     }
 
@@ -502,7 +566,13 @@ impl BlockEngine {
             }
 
             // Track highest data sector for append pointer recovery.
-            let entry_sectors = (entry.data_size as u64 + 8).div_ceil(SECTOR_SIZE as u64);
+            // On-disk size: header(8) + data + optional ENCRYPTION_OVERHEAD(28).
+            let on_disk_bytes = if self.crypto.is_some() {
+                entry.data_size as u64 + 8 + ENCRYPTION_OVERHEAD as u64
+            } else {
+                entry.data_size as u64 + 8
+            };
+            let entry_sectors = on_disk_bytes.div_ceil(SECTOR_SIZE as u64);
             let entry_end = entry.data_offset / SECTOR_SIZE as u64 + entry_sectors;
             if entry_end > max_data_sector {
                 max_data_sector = entry_end;
@@ -527,6 +597,54 @@ impl BlockEngine {
         &self.memtable
     }
 
+    /// Increment the reference count for a content hash.
+    ///
+    /// Used when a new object references the same content (dedup).
+    pub fn inc_ref(&mut self, hash: &ContentHash) -> Result<(), StorageError> {
+        let entry = self
+            .memtable
+            .get_mut(hash)
+            .ok_or(StorageError::BlockNotFound)?;
+        entry.refcount += 1;
+        Ok(())
+    }
+
+    /// Decrement the reference count for a content hash.
+    ///
+    /// If refcount reaches 0, the block is logically freed (entry removed from MemTable).
+    /// Returns `true` if the block was freed.
+    pub fn dec_ref(&mut self, hash: &ContentHash) -> Result<bool, StorageError> {
+        match self.memtable.dec_ref(hash) {
+            Some((_loc, freed)) => Ok(freed),
+            None => Err(StorageError::BlockNotFound),
+        }
+    }
+
+    /// Access the object index (read-only).
+    pub fn object_index(&self) -> &ObjectIndex {
+        &self.object_index
+    }
+
+    /// Access the object index (mutable).
+    pub fn object_index_mut(&mut self) -> &mut ObjectIndex {
+        &mut self.object_index
+    }
+
+    /// Access the space table (read-only).
+    pub fn space_table(&self) -> &SpaceTable {
+        &self.space_table
+    }
+
+    /// Access the space table (mutable).
+    pub fn space_table_mut(&mut self) -> &mut SpaceTable {
+        &mut self.space_table
+    }
+
+    /// Returns true if device-level encryption is active.
+    pub fn crypto_active(&self) -> bool {
+        self.crypto.is_some()
+    }
+
     /// Flush the superblock to disk with current state.
     pub fn flush_superblock(&mut self) -> Result<(), StorageError> {
         self.superblock.data_next_sector = self.data_next_sector;
@@ -534,6 +652,10 @@ impl BlockEngine {
         self.superblock.wal_tail = self.wal.tail();
         let data_end = self.superblock.total_sectors;
         self.superblock.free_data_sectors = data_end - self.data_next_sector;
+        // Persist encryption nonce counter for crash recovery.
+        if let Some(ref crypto) = self.crypto {
+            self.superblock.nonce_counter = crypto.nonce_counter();
+        }
         self.superblock.checksum = self.superblock.compute_checksum();
         Self::write_superblock(&self.superblock)
     }
