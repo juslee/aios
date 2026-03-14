@@ -21,9 +21,9 @@ By the end of this phase, booting QEMU with edk2 firmware and a VirtIO-Blk disk 
 
 | Topic | Document | Relevant Sections |
 |---|---|---|
-| UEFI stub and BootInfo | [boot.md](../kernel/boot.md) | §2 Firmware Handoff (full); §2.1 UEFI Boot on aarch64; §2.2 BootInfo struct; §2.4 ESP layout |
-| Kernel early boot steps 1–9 | [boot.md](../kernel/boot.md) | §3.3 Steps 1–9 (entry through heap); §3.1 EarlyBootPhase enum; §3.2 KernelState struct |
-| SMP secondary core bringup | [boot.md](../kernel/boot.md) | §3.5 SMP Boot |
+| UEFI stub and BootInfo | [boot-firmware.md](../kernel/boot-firmware.md) | §2 Firmware Handoff (full); §2.1 UEFI Boot on aarch64; §2.2 BootInfo struct; §2.4 ESP layout |
+| Kernel early boot steps 1–9 | [boot-kernel.md](../kernel/boot-kernel.md) | §3.3 Steps 1–9 (entry through heap); §3.1 EarlyBootPhase enum; §3.2 KernelState struct |
+| SMP secondary core bringup | [boot-kernel.md](../kernel/boot-kernel.md) | §3.5 SMP Boot |
 | Platform trait and detection | [hal.md](../kernel/hal.md) | §2 Platform Detection; §3 Platform Trait; §3.2 Initialization Order |
 | PL011 UART (full init) | [hal.md](../kernel/hal.md) | §4.3 Uart (PL011 register offsets and init sequence) |
 | GICv3 interrupt controller | [hal.md](../kernel/hal.md) | §4.1 InterruptController (GICv3 distributor, redistributor, CPU interface) |
@@ -31,8 +31,8 @@ By the end of this phase, booting QEMU with edk2 firmware and a VirtIO-Blk disk 
 | MMU and page tables | [memory.md](../kernel/memory.md) | §3 Virtual Memory Manager; §3.1 Address Space Layout; §3.2 Page Tables |
 | Buddy allocator | [memory.md](../kernel/memory.md) | §2 Physical Memory Manager; §2.2 Buddy Allocator |
 | Slab/heap | [memory.md](../kernel/memory.md) | §4 Kernel Heap; §4.1 Slab Allocator |
-| QEMU vs real hardware | [boot.md](../kernel/boot.md) | §2.5 QEMU Boot vs Real Hardware |
-| Exception level model | [boot.md](../kernel/boot.md) | §2.6 Exception Level Model |
+| QEMU vs real hardware | [boot-firmware.md](../kernel/boot-firmware.md) | §2.5 QEMU Boot vs Real Hardware |
+| Exception level model | [boot-firmware.md](../kernel/boot-firmware.md) | §2.6 Exception Level Model |
 
 -----
 
@@ -63,7 +63,7 @@ Milestones are numbered continuously across all phases. Phase 0 used M1–M3; Ph
 - [x] Add `uefi` crate dependency (provides `SystemTable`, `BootServices`, `RuntimeServices`, `MemoryMap` wrappers). Pin a specific version.
 - [x] Add `uefi-stub` to the workspace `Cargo.toml` members
 - [x] Implement the UEFI entry point (`efi_main`): open `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` and print a banner to confirm the stub is reached
-- [x] Implement ESP layout from boot.md §2.4: stub at `/EFI/AIOS/BOOTAA64.EFI`, kernel at `/EFI/AIOS/aios.elf`, config at `/EFI/AIOS/boot.cfg`
+- [x] Implement ESP layout from boot-firmware.md §2.4: stub at `/EFI/AIOS/BOOTAA64.EFI`, kernel at `/EFI/AIOS/aios.elf`, config at `/EFI/AIOS/boot.cfg`
 - [x] Add `just disk` recipe: creates a FAT32 disk image with the ESP, places stub and kernel ELF at the correct paths (requires `mformat` + `mcopy` from `mtools`, or equivalent)
 - [x] Update `just run` to use edk2 firmware: `-bios /path/to/edk2-aarch64-code.fd` (or distro-specific aarch64 firmware such as `QEMU_EFI.fd` or `AAVMF_CODE.fd`) and `-drive` instead of `-kernel`
 
@@ -89,11 +89,11 @@ qemu-system-aarch64 \
 
 ### Step 2: BootInfo Assembly and ExitBootServices
 
-**What:** Implement the full BootInfo assembly sequence from boot.md §2.1–2.2: parse the UEFI memory map, acquire GOP framebuffer, acquire DTB, exit Boot Services, and jump to the kernel.
+**What:** Implement the full BootInfo assembly sequence from boot-firmware.md §2.1–2.2: parse the UEFI memory map, acquire GOP framebuffer, acquire DTB, exit Boot Services, and jump to the kernel.
 
 **Tasks:**
-- [x] Implement memory map acquisition: call `BootServices.get_memory_map()`, iterate over `MemoryDescriptor` entries, build the `BootInfo.memory_map` (boot.md §2.2). Store in a region allocated with `BootServices.allocate_pool(MemoryType::BootServicesData, ...)` — this region must be included in the memory map as type `BootInfo` so the buddy allocator excludes it from the free pool (the kernel reads it before reclaiming)
-- [x] Implement GOP framebuffer acquisition: open `EFI_GRAPHICS_OUTPUT_PROTOCOL`, read `Mode.Info` for width/height/stride/format, fill `BootInfo.framebuffer` (boot.md §2.2 `FramebufferInfo`). `PixelFormat` mapping: `PixelRedGreenBlueReserved8BitPerColor` → `Rgb8`; `PixelBlueGreenRedReserved8BitPerColor` → `Bgr8`; `PixelBitMask` → `Bitmask { red, green, blue }` (read the per-channel bitmask fields from `EFI_PIXEL_BITMASK` and store them — fill_rect in Step 8 must decode them at draw time). Store framebuffer base as a `PhysicalAddress`.
+- [x] Implement memory map acquisition: call `BootServices.get_memory_map()`, iterate over `MemoryDescriptor` entries, build the `BootInfo.memory_map` (boot-firmware.md §2.2). Store in a region allocated with `BootServices.allocate_pool(MemoryType::BootServicesData, ...)` — this region must be included in the memory map as type `BootInfo` so the buddy allocator excludes it from the free pool (the kernel reads it before reclaiming)
+- [x] Implement GOP framebuffer acquisition: open `EFI_GRAPHICS_OUTPUT_PROTOCOL`, read `Mode.Info` for width/height/stride/format, fill `BootInfo.framebuffer` (boot-firmware.md §2.2 `FramebufferInfo`). `PixelFormat` mapping: `PixelRedGreenBlueReserved8BitPerColor` → `Rgb8`; `PixelBlueGreenRedReserved8BitPerColor` → `Bgr8`; `PixelBitMask` → `Bitmask { red, green, blue }` (read the per-channel bitmask fields from `EFI_PIXEL_BITMASK` and store them — fill_rect in Step 8 must decode them at draw time). Store framebuffer base as a `PhysicalAddress`.
 - [x] Implement DTB location: QEMU passes the DTB address via the UEFI `EFI_DTB_TABLE_GUID` configuration table entry. Retrieve with `SystemTable.config_table()`. Fill `BootInfo.device_tree` with base and size.
 - [x] Set `BootInfo.magic` = `0x41494F53_424F4F54` (`"AIOSBOOT"` as a u64)
 - [x] Fill `BootInfo.rng_seed` from `EFI_RNG_PROTOCOL` if available; zero-fill if not (kernel falls back to timer entropy)
@@ -195,7 +195,7 @@ qemu-system-aarch64 \
 
 **Page table setup (memory.md §3):**
 - [x] Allocate page table memory from the raw physical memory free list (before the buddy allocator exists — use a simple bump allocator backed by a statically-sized buffer, 128 KiB, for early boot allocations)
-- [x] Build TTBR1_EL1 kernel mappings per boot.md §3.3 Step 7. Phase 1 note: built TTBR0 identity map instead (3×1GB blocks); TTBR1 high-half deferred to Phase 2:
+- [x] Build TTBR1_EL1 kernel mappings per boot-kernel.md §3.3 Step 7. Phase 1 note: built TTBR0 identity map instead (3×1GB blocks); TTBR1 high-half deferred to Phase 2:
   - `0xFFFF_0000_0000_0000` — kernel text (PXN=0, UXN=1, AP=RO), rodata (PXN=1, UXN=1, AP=RO), data/bss (PXN=1, UXN=1, AP=RW)
   - `0xFFFF_0000_4000_0000` — kernel heap region (reserved, not yet mapped)
   - `0xFFFF_0001_0000_0000` — physical memory direct map (all RAM, device memory)
@@ -222,7 +222,7 @@ qemu-system-aarch64 \
 
 **W^X enforcement:** Every page mapped into TTBR1 must be either writable or executable, never both. Kernel text: executable, read-only. Kernel data/bss: writable, non-executable. This is enforced at mapping time and verified by objdump in the acceptance criteria.
 
-**Cache maintenance (boot.md §3.3 Step 7 note):** After enabling the new TTBR1 mapping: issue `IC IALLU; ISB` to invalidate the instruction cache and ensure no stale entries from the pre-MMU physical addresses survive.
+**Cache maintenance (boot-kernel.md §3.3 Step 7 note):** After enabling the new TTBR1 mapping: issue `IC IALLU; ISB` to invalidate the instruction cache and ensure no stale entries from the pre-MMU physical addresses survive.
 
 **Acceptance:** Boot log shows `[boot] MmuEnabled`, `[boot] PageAllocatorReady`, `[boot] HeapReady — Xms`. `Box::new(42u32)` succeeds (heap is live). No UART output interruption during the MMU transition. Phase 1 note: kernel remains linked at `0x4008_0000` and runs via TTBR0 identity map (VA=PA). High-half virtual address relinking (TTBR1, `0xFFFF_0000_...`) is Phase 2 work.
 

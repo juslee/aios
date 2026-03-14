@@ -33,10 +33,18 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Language integration & build plan | `docs/project/language-ecosystem-integration.md` | §6 Dependency chain, §7 Build plan, §8 Key decisions, RuntimeAdapter trait |
 | Language operations & security | `docs/project/language-ecosystem-operations.md` | §9 Interop (WIT/Component Model), §10 Observability, §11 Supply chain, §12 Resource isolation |
 | Language AI optimization | `docs/project/language-ecosystem-ai.md` | §13 AIRS Runtime Advisor/scheduling/allocation/GC/anomaly, §14 Future directions |
-| Boot sequence (Phase 0, QEMU `-kernel`) | `docs/kernel/boot.md` | §3.3 Steps 1-2 |
-| Boot sequence (Phase 1+, UEFI) | `docs/kernel/boot.md` | §2 full, §3.3 Steps 1-9 |
-| Boot lifecycle & phases | `docs/kernel/boot-lifecycle.md` | All |
-| BootInfo struct | `docs/kernel/boot.md` | §2.2 |
+| Boot sequence (hub) | `docs/kernel/boot.md` | §1 Overview, Document Map, §11 Future Directions |
+| Firmware handoff (BootInfo, ESP, EL model) | `docs/kernel/boot-firmware.md` | §2.1–§2.6 |
+| Kernel early boot (boot.S, kernel_main) | `docs/kernel/boot-kernel.md` | §3.1–§3.6 |
+| Service Manager boot phases | `docs/kernel/boot-services.md` | §4–§5 |
+| Boot performance & framebuffer | `docs/kernel/boot-performance.md` | §6–§7 |
+| Panic handler, recovery, initramfs | `docs/kernel/boot-recovery.md` | §8–§10 |
+| Shutdown, implementation order, principles | `docs/kernel/boot-lifecycle.md` | §11, §12, §23, §24 |
+| Boot test strategy | `docs/kernel/boot-testing.md` | §13–§14 |
+| Suspend/resume, semantic state | `docs/kernel/boot-suspend.md` | §15 |
+| Boot intelligence, on-demand services | `docs/kernel/boot-intelligence.md` | §16–§18 |
+| Boot accessibility, first boot | `docs/kernel/boot-accessibility.md` | §19–§21 |
+| Research kernel innovations | `docs/kernel/boot-research.md` | §22 |
 | HAL & Platform trait | `docs/kernel/hal.md` | §2-3 |
 | PL011 UART driver | `docs/kernel/hal.md` | §4.3 |
 | GICv3 interrupt controller | `docs/kernel/hal.md` | §4.1 |
