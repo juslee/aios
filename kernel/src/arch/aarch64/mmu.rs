@@ -58,8 +58,9 @@ const PTE_UXN: u64 = 1 << 54; // unprivileged execute-never
 
 // MAIR attribute indices — matched to edk2's MAIR configuration:
 //   edk2 MAIR = 0xffbb4400: Attr0=0x00(Device), Attr1=0x44(NC), Attr2=0xbb(WT), Attr3=0xff(WB)
-// We use Attr0 for device memory and Attr1 for normal memory (non-cacheable
-// under edk2's MAIR, which is safe for Phase 1 boot).
+// We use Attr0 for device memory and Attr3 for normal memory (write-back
+// cacheable). Phase 1 originally used Attr1 (NC); upgraded to WB in Phase 2 M8
+// to prevent attribute aliasing and enable spin::Mutex on SMP.
 pub const MAIR_DEVICE_IDX: u64 = 0;
 #[allow(dead_code)]
 pub const MAIR_NORMAL_NC_IDX: u64 = 1;
@@ -81,7 +82,7 @@ fn table_descriptor(next_table_phys: u64) -> u64 {
 /// Build a 1 GB block descriptor at L1.
 ///
 /// `phys_addr` must be 1 GB aligned. `mair_idx` selects device (0) or
-/// normal (1) memory attributes. If `executable` is false, PXN+UXN are set.
+/// normal WB (3) memory attributes. If `executable` is false, PXN+UXN are set.
 fn l1_block_descriptor(phys_addr: u64, mair_idx: u64, executable: bool) -> u64 {
     let mut desc = (phys_addr & 0x0000_FFFF_C000_0000) | PTE_VALID;
     // bit 1 = 0 → block descriptor (not table)
@@ -121,7 +122,8 @@ pub fn virt_to_phys(va: u64) -> u64 {
 /// these registers while MMU is on is CONSTRAINED UNPREDICTABLE (ARM ARM).
 /// Instead, we build page tables compatible with edk2's T0SZ=20 (44-bit VA,
 /// 4KB granule) and only swap TTBR0. Memory attributes use edk2's MAIR
-/// (Attr0=Device, Attr1=Non-cacheable Normal), which is correct for boot.
+/// (Attr0=Device, Attr3=Write-back Normal). RAM blocks use WB cacheable
+/// (upgraded from NC in Phase 2 M8 to prevent attribute aliasing).
 ///
 /// After this call, code continues executing at physical addresses via our
 /// identity map. The buddy/slab allocators use physical addresses directly.
