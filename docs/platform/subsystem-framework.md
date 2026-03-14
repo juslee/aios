@@ -57,7 +57,7 @@ flowchart TD
         H1["VirtIO, USB, PCI, platform-specific"]
     end
 
-    AgentAPI --> POSIX
+    AgentAPI --> Service
     POSIX --> Service
     Service --> Abstraction
     Abstraction --> Driver
@@ -1255,7 +1255,7 @@ Every subsystem exposes performance metrics through the kernel observability fra
 /// Standard metrics every subsystem reports
 pub trait SubsystemMetrics {
     /// How long it takes to open a session (gate check + device setup)
-    fn session_open_latency(&self) -> &Histogram;
+    fn session_open_latency(&self) -> &Histogram<8>;
 
     /// Data throughput through active channels
     fn channel_throughput_bytes(&self) -> &Counter;
@@ -1331,8 +1331,8 @@ When multiple drivers could handle a device, matching follows a priority order:
 
 Following the Asterinas framekernel pattern, the subsystem framework enforces a trust boundary:
 
-- **Framework core (privileged):** Capability gate, session lifecycle, audit logging, buffer pool management. This is the only code that uses `unsafe` for MMIO and DMA operations.
-- **Driver code (de-privileged):** All subsystem-specific logic — format negotiation, protocol handling, device quirks — runs in safe Rust. Drivers interact with hardware through the framework's transport abstraction, never directly.
+- **Framework core (privileged):** Capability gate, session lifecycle, audit logging, buffer pool management. The design goal is for this to be the only code that uses `unsafe` for MMIO and DMA operations — drivers should not need direct `unsafe` hardware access.
+- **Driver code (de-privileged):** All subsystem-specific logic — format negotiation, protocol handling, device quirks — targets safe Rust. Drivers interact with hardware through the framework's transport abstraction rather than direct MMIO. Early drivers (e.g., `virtio_blk`) predate the framework and still contain `unsafe` blocks; these will be migrated as the transport abstraction matures.
 
 Each driver runs in its own address space with capability-gated MMIO access. The driver holds a capability token granting access to specific MMIO regions and interrupt lines — nothing more.
 
@@ -1356,8 +1356,7 @@ pub trait SubsystemV2: Subsystem {
         capability: &Self::Capability,
         intent: &SessionIntent,
     ) -> Result<(Self::Session, Box<dyn ZeroCopyChannel>)> {
-        // Default: fall back to standard session
-        let session = self.open_session(agent, capability, intent)?;
+        // Default: zero-copy not supported, caller should use open_session() instead
         Err(SubsystemError::Policy(PolicyError::FormatNotSupported))
     }
 }
