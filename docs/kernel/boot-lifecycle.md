@@ -83,7 +83,7 @@ On next boot: agent is relaunched and reads state from space
 
 ## 12. Implementation Order
 
-The boot sequence maps to the earliest development phases. Week ranges below match the canonical durations in overview.md §10. These are *development plan* phases, not boot phases — see boot.md §4-5 for runtime boot phases.
+The boot sequence maps to the earliest development phases. Week ranges below match the canonical durations in overview.md §10. These are *development plan* phases, not boot phases — see boot-services.md §4-5 for runtime boot phases.
 
 ```text
 Phase 0: Foundation & Tooling (Weeks 1-2)

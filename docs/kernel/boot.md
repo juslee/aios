@@ -41,7 +41,7 @@ The kernel's job during early boot is narrow: enable the FPU, set up exception v
 | **Suspend, resume, semantic state** | [boot-suspend.md](./boot-suspend.md) | §15.1–§15.5 |
 | **Boot intelligence, on-demand, encryption** | [boot-intelligence.md](./boot-intelligence.md) | §16.1–§16.3, §17.1–§17.3, §18.1–§18.3 |
 | **Boot accessibility & first boot** | [boot-accessibility.md](./boot-accessibility.md) | §19.1–§19.3, §20.1–§20.3, §21.1–§21.3 |
-| **Research kernel innovations** | [boot-research.md](./boot-research.md) | §22.1–§22.15 |
+| **Research kernel innovations** | [boot-research.md](./boot-research.md) | §22.1–§22.19 |
 
 -----
 
@@ -71,28 +71,44 @@ The kernel's job during early boot is narrow: enable the FPU, set up exception v
 
 -----
 
-## 11. Future Directions
+## Future Directions
 
 This section captures ideas from OS research and production systems that could improve AIOS's boot sequence in future phases.
 
-### 11.1 Hubris-Style Deterministic Boot
+### Hubris-Style Deterministic Boot
 
 Oxide's Hubris OS builds the entire system image at compile time — task placements, memory regions, and IPC channels are all determined statically. This eliminates runtime allocation during boot and makes the boot sequence fully deterministic and formally verifiable. AIOS could adopt this pattern for the kernel early boot path (Phases A–B), where all allocations are currently from static arrays or the bump allocator. The benefit: formal verification of the boot sequence becomes tractable.
 
 **Reference:** Hubris (Oxide Computer, 2021) — build-time system description, no dynamic task creation.
 
-### 11.2 ZBI-Style Structured Boot Data
+### ZBI-Style Structured Boot Data
 
 Fuchsia's Zircon Boot Image (ZBI) packages the kernel, bootloader, and all boot items into a single structured container with typed headers. Each boot item has a type tag and length, allowing the kernel to iterate items without knowing the container format. AIOS's current `BootInfo` is a flat C struct — adding new fields requires recompilation of both stub and kernel. A ZBI-like approach would allow extensible boot data with forward/backward compatibility.
 
 **Reference:** Zircon Boot Image format (Fuchsia project).
 
-### 11.3 Boot Intelligence (Context-Aware Boot)
+### Boot Intelligence (Context-Aware Boot)
 
 The [boot-intelligence.md](./boot-intelligence.md) companion document describes boot intelligence — using past boot traces to predict optimal service startup order, prefetch frequently-accessed data pages, and adapt AIRS model selection based on usage patterns. This is a long-term goal that integrates the Context Engine (Phase 8+) with the boot sequence.
 
-### 11.4 Measured Boot and Attestation
+### Measured Boot and Attestation
 
 seL4's formally verified boot chain provides a foundation for measured boot: each boot stage hashes the next stage's binary and extends a TPM PCR (or equivalent). AIOS could integrate with ARM TrustZone and the platform TPM (or firmware TPM on QEMU) to provide attestation — proving to a remote verifier that the system booted an unmodified kernel and initramfs. This is critical for enterprise and IoT deployment scenarios.
 
 **Reference:** seL4 Verified Boot (NICTA/Data61), ARM Platform Security Architecture (PSA).
+
+### μEFI Firmware Isolation
+
+The μEFI paper (USENIX ATC 2025) demonstrates microkernel-style isolation for UEFI firmware components, limiting the blast radius of firmware vulnerabilities. AIOS's UEFI stub already follows the minimal-touch principle; μEFI validates treating BootInfo as untrusted input and hashing critical regions before kernel handoff. See [boot-research.md §22.16](./boot-research.md) for full analysis.
+
+### Firecracker-Style Device Minimalism
+
+AWS Firecracker achieves ≤125ms boot by reducing the virtual device model to the absolute minimum: VirtIO MMIO devices only, no PCI enumeration, no legacy emulation. AIOS's use of QEMU `-machine virt` with VirtIO MMIO aligns with this approach. Future device drivers should prefer VirtIO MMIO on QEMU and native MMIO on hardware, avoiding PCI overhead where possible. See [boot-research.md §22.17](./boot-research.md) for full analysis.
+
+### HongMeng IPC Frequency Optimization
+
+Huawei's HongMeng kernel (OSDI 2024) identifies IPC *frequency* — not per-invocation cost — as the dominant microkernel bottleneck. Batch IPC and shared-memory data transfer for boot-time service initialization could reduce AIOS's service startup latency. See [boot-research.md §22.18](./boot-research.md) for full analysis.
+
+### LionsOS Control-Plane / Data-Plane Separation
+
+The seL4 Device Driver Framework (sDDF) in LionsOS separates control-plane policy (capability-based IPC) from data-plane performance (lock-free shared-memory ring buffers). This achieves near-native I/O with full driver isolation — a model AIOS should adopt as drivers move from kernel space to user space in Phase 5+. See [boot-research.md §22.19](./boot-research.md) for full analysis.

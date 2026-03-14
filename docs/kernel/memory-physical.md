@@ -58,7 +58,7 @@ pub struct MemoryRegion {
     pub kind: MemoryType,
 }
 
-/// Classification of physical memory (canonical definition — see also boot.md §2).
+/// Classification of physical memory (canonical definition — see also boot-firmware.md §2).
 /// Names match UEFI memory descriptor types.
 pub enum MemoryType {
     /// Usable RAM — available for allocation

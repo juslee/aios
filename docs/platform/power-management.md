@@ -3,13 +3,13 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Full Stack Overview (Subsystem Framework → Power Manager)
-**Related:** [hal.md](../kernel/hal.md) — Platform trait and device abstractions, [scheduler.md](../kernel/scheduler.md) — Power-aware scheduling (§11), thermal throttling (§8.4), [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Suspend/resume (§15), proactive wake (§15.5), boot intent (§16), [airs.md](../intelligence/airs.md) — AI Runtime Service, [context-engine.md](../intelligence/context-engine.md) — Context Engine signals (BatteryState, resource priority), [subsystem-framework.md](./subsystem-framework.md) — Per-device power management (§9)
+**Related:** [hal.md](../kernel/hal.md) — Platform trait and device abstractions, [scheduler.md](../kernel/scheduler.md) — Power-aware scheduling (§11), thermal throttling (§8.4), [boot-suspend.md](../kernel/boot-suspend.md) — Suspend/resume (§15), proactive wake (§15.5), [boot-intelligence.md](../kernel/boot-intelligence.md) — boot intent (§16), [airs.md](../intelligence/airs.md) — AI Runtime Service, [context-engine.md](../intelligence/context-engine.md) — Context Engine signals (BatteryState, resource priority), [subsystem-framework.md](./subsystem-framework.md) — Per-device power management (§9)
 
 -----
 
 ## 1. Overview
 
-AIOS has power management logic scattered across five subsystems: the boot lifecycle handles suspend/resume and proactive wake (boot-lifecycle.md §15), the scheduler handles thermal throttling and DVFS (scheduler.md §8.4, §11), the Subsystem Framework handles per-device idle policies (subsystem-framework.md §9), the Context Engine signals battery state (context-engine.md §BatteryState), and AIRS predicts usage patterns for proactive wake (boot-lifecycle.md §15.5). Each subsystem makes correct local decisions, but no single component owns the system-wide power policy.
+AIOS has power management logic scattered across five subsystems: the boot lifecycle handles suspend/resume and proactive wake (boot-suspend.md §15), the scheduler handles thermal throttling and DVFS (scheduler.md §8.4, §11), the Subsystem Framework handles per-device idle policies (subsystem-framework.md §9), the Context Engine signals battery state (context-engine.md §BatteryState), and AIRS predicts usage patterns for proactive wake (boot-suspend.md §15.5). Each subsystem makes correct local decisions, but no single component owns the system-wide power policy.
 
 This document defines the **Power Management Policy Engine** — the unified component that observes all sensor inputs, evaluates policy rules, and drives the system through power state transitions. The Policy Engine is the single authority for questions like: "The user closed the lid. Should we enter S3, S4, or stay awake?" and "Battery is at 8%. Should we hibernate now or wait?" and "AIRS predicts the user arrives in 3 minutes. Should we proactive-wake?"
 
@@ -196,12 +196,12 @@ pub enum SystemPowerState {
 
     /// S3: Suspend-to-RAM. CPU cores off via PSCI, DRAM in self-refresh.
     /// All devices quiesced. System draws < 50 mW.
-    /// See boot-lifecycle.md §15.1.
+    /// See boot-suspend.md §15.1.
     Suspend,
 
     /// S4: Hibernate. Full system state written to block device, then
     /// power off. Survives complete power loss.
-    /// See boot-lifecycle.md §15.2.
+    /// See boot-suspend.md §15.2.
     Hibernate,
 
     /// S5: Off. No power draw. Requires cold boot to resume.
@@ -222,7 +222,7 @@ pub enum IdleDepth {
 
     /// CPU power gated (cluster off), L2 flushed, interconnect off.
     /// Wake latency: ~5ms. Used for idle periods > 30 seconds.
-    /// Corresponds to SuspendPowerState::LightSleep in boot-lifecycle.md §15.1.
+    /// Corresponds to SuspendPowerState::LightSleep in boot-suspend.md §15.1.
     PowerGated,
 }
 ```
@@ -270,7 +270,7 @@ pub struct IdleEscalationPolicy {
     /// Default: 300 seconds (AC), 120 seconds (battery).
     pub suspend_timeout: Duration,
 
-    /// Whether to write hibernate image during S3 (boot-lifecycle.md §15.2).
+    /// Whether to write hibernate image during S3 (boot-suspend.md §15.2).
     /// Default: true on battery, false on AC.
     pub hibernate_safety_net: bool,
 }
@@ -453,7 +453,7 @@ pub enum PreWarmAction {
 }
 ```
 
-AIRS predictions are only available after AIRS starts (Phase 3). Before that, the Policy Engine uses time-of-day heuristics from the 7x24 probability grid described in boot-lifecycle.md §15.5.
+AIRS predictions are only available after AIRS starts (Phase 3). Before that, the Policy Engine uses time-of-day heuristics from the 7x24 probability grid described in boot-suspend.md §15.5.
 
 ### 4.7 Context Engine State
 
@@ -595,7 +595,7 @@ pub enum TransitionGuard {
     BatteryAboveHibernateThreshold,
 
     /// Block proactive wake if on battery below 50% (configurable via
-    /// ProactiveWakePowerPolicy, boot-lifecycle.md §15.5).
+    /// ProactiveWakePowerPolicy, boot-suspend.md §15.5).
     ProactiveWakePowerSufficient,
 
     /// Block suspend if a service has requested a suspend inhibit lock.
@@ -895,7 +895,7 @@ AIRS provides two capabilities to the Policy Engine: proactive wake scheduling a
 
 ### 7.1 Proactive Wake Scheduling
 
-Proactive Wake is described in boot-lifecycle.md §15.5. The Policy Engine is responsible for the operational mechanics: programming the RTC alarm, handling the wake event, and deciding whether to re-suspend.
+Proactive Wake is described in boot-suspend.md §15.5. The Policy Engine is responsible for the operational mechanics: programming the RTC alarm, handling the wake event, and deciding whether to re-suspend.
 
 ```mermaid
 flowchart TD
@@ -1312,7 +1312,7 @@ Battery Level    P-cores                E-cores              Notes
 
 ## 10. Suspend/Resume Coordination with Device Drivers
 
-The Policy Engine orchestrates suspend/resume through a three-phase protocol coordinating with the Service Manager and the HAL. This builds on the flow described in boot-lifecycle.md §15.1.
+The Policy Engine orchestrates suspend/resume through a three-phase protocol coordinating with the Service Manager and the HAL. This builds on the flow described in boot-suspend.md §15.1.
 
 ### 10.1 Suspend Protocol
 

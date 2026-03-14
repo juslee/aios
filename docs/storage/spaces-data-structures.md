@@ -73,7 +73,7 @@ pub type CapabilityTokenId = u64;
 pub type Signature = [u8; 64];
 
 /// Reference to an object within a space. Used by Flow (flow.md §3.1),
-/// architecture.md §2.3, and boot-lifecycle.md §15 for cross-space
+/// architecture.md §2.3, and boot-suspend.md §15 for cross-space
 /// object references without copying the object itself.
 pub struct ObjectRef {
     pub space_id: SpaceId,

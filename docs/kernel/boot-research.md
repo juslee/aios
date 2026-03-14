@@ -517,7 +517,7 @@ Record-replay has been transformative for debugging. Mozilla used rr to find and
 
 Boot is the hardest thing to debug in an OS. It happens once, quickly, with limited diagnostic tools (no filesystem, no network, no debugger). A race condition during boot may appear once every 100 boots and vanish under debug instrumentation. Record-replay solves this:
 
-1. **Boot trace recording.** Every boot records a compact trace of non-deterministic events: timer interrupts, device responses, MMIO reads, scheduling decisions. The trace is stored in the panic dump partition (boot.md §8.2) — available before Space Storage starts.
+1. **Boot trace recording.** Every boot records a compact trace of non-deterministic events: timer interrupts, device responses, MMIO reads, scheduling decisions. The trace is stored in the panic dump partition (boot-recovery.md §8.2) — available before Space Storage starts.
 
 ```rust
 pub struct BootReplayTrace {
@@ -705,5 +705,71 @@ pub struct CapabilityRoute {
 3. **Component isolation profiles.** Each service's manifest generates a precise sandbox: only the declared capabilities are available, only the declared resources are allocated, only the declared IPC channels are created. A service that doesn't declare network access literally has no network syscalls available — they don't exist in its namespace.
 
 **Why this matters for AIOS:** The component model extends naturally to agents. Agent manifests (already described in agents.md) are a special case of service manifests. The unified manifest system means the same tooling, the same static verification, and the same capability routing work for both system services and user-installed agents.
+
+### 22.16 μEFI — Microkernel-Style Firmware Isolation (USENIX ATC 2025)
+
+**The idea:** Split UEFI firmware into isolated microkernel-style components rather than running all firmware modules in a single trust domain. This limits the blast radius of firmware vulnerabilities — a compromised network driver in the firmware cannot access DMA controllers or storage encryption keys.
+
+**History:** Traditional UEFI implementations (EDK2, AMI, Phoenix) run all DXE drivers in a single address space at ring 0 / EL2. A buffer overflow in any driver compromises the entire firmware, and by extension the platform's root of trust. The μEFI paper (USENIX ATC 2025) demonstrated that UEFI drivers can be decomposed into isolated components communicating via IPC, analogous to microkernel architecture. Boot time increases by ~15-30ms due to IPC overhead, but the security improvement is substantial: firmware vulnerabilities are contained to their component.
+
+**What AIOS takes from this:**
+
+AIOS's UEFI stub runs in Boot Services mode, where it has full access to all UEFI services. The μEFI approach suggests that AIOS could:
+
+1. **Minimal stub principle.** The UEFI stub should touch the minimum set of UEFI services: GOP for framebuffer, memory map, RSDP/DTB table lookup, and `ExitBootServices()`. Every additional UEFI call increases the attack surface. AIOS already follows this principle — the stub is ~200 lines of Rust.
+
+2. **Post-ExitBootServices verification.** After calling `ExitBootServices()`, the stub could hash critical memory regions (kernel image, BootInfo, page tables) and store measurements in a TPM PCR or BootInfo field. This provides a lightweight measured boot without requiring μEFI's full isolation.
+
+3. **Firmware-to-kernel trust boundary.** BootInfo should be treated as untrusted input from the firmware. The kernel should validate all BootInfo fields (magic, memory map bounds, framebuffer address) before using them — defensive programming against firmware bugs or attacks.
+
+**Reference:** "μEFI: Microkernel-Style Firmware Isolation," USENIX ATC 2025.
+
+### 22.17 Firecracker — Minimal Device Model for Sub-Second Boot (AWS)
+
+**The idea:** Boot time is dominated by device initialization, not kernel startup. By reducing the virtual device model to the absolute minimum — a single serial port, a single block device, a single network device — a microVM can boot a full Linux kernel in under 125ms.
+
+**History:** AWS Firecracker (2018, open source) was designed for serverless functions (Lambda) where each invocation starts a fresh VM. Traditional VM boots (QEMU with full device model) took 5-10 seconds. Firecracker achieved ≤125ms boot by: (a) custom minimal VMM in Rust replacing QEMU, (b) VirtIO MMIO devices only (no PCI enumeration), (c) no legacy device emulation (no i8259, i8042, CMOS RTC), (d) no UEFI firmware (Linux boot protocol direct), (e) no ACPI table parsing. The insight: every device the kernel probes adds latency, even devices that respond "not present."
+
+**What AIOS takes from this — boot device minimalism:**
+
+1. **QEMU development profile.** For development, AIOS uses QEMU `-machine virt` which already provides a minimal device model. Firecracker validates this choice: the `virt` machine's VirtIO MMIO devices (no PCI) and DTB-based discovery (no ACPI probe) are optimal for boot speed. AIOS should resist adding complex device models (USB, PCI passthrough) to the development profile.
+
+2. **Device probe budgeting.** Each device probe during boot has a time cost. The Service Manager should track per-device initialization time (§6.1 Critical Path Timeline) and flag devices that exceed their budget. Slow devices should be deferred to Phase 4/5 (non-critical services).
+
+3. **VirtIO-only transport.** AIOS already uses VirtIO MMIO for block devices (Phase 4). Firecracker demonstrates that VirtIO MMIO is sufficient for all device classes — block, network, entropy, vsock — without PCI overhead. Future device drivers should prefer VirtIO MMIO on QEMU and native MMIO on hardware (Pi 4/5), avoiding PCI enumeration entirely on platforms that don't require it.
+
+**Reference:** Firecracker, AWS (2018). "Firecracker: Lightweight Virtualization for Serverless Applications," NSDI 2020.
+
+### 22.18 HongMeng — Production Microkernel with Linux API Compatibility (OSDI 2024)
+
+**The idea:** A production microkernel can achieve Linux API/ABI compatibility while preserving microkernel virtues (isolation, formal verifiability). The key challenges are not in the kernel but in IPC frequency, state bookkeeping across services, and capability overhead.
+
+**History:** Huawei's HongMeng kernel (HM), presented at OSDI 2024, powers HarmonyOS on 900+ million devices. Unlike academic microkernels (seL4, Fiasco.OC), HM must support the full Linux driver ecosystem (~700 drivers reused) while maintaining microkernel isolation. The paper identifies three performance bottlenecks that prior microkernel literature underestimated: (a) per-invocation IPC cost is not the dominant factor — IPC *frequency* matters more, (b) state duplication across OS services creates cache pollution, (c) capability-based access control on every operation adds measurable overhead.
+
+**What AIOS takes from this:**
+
+1. **IPC frequency reduction.** HM batches multiple operations into single IPC calls where possible. AIOS's IPC system (§ ipc.md) should consider batch IPC for high-frequency service interactions during boot — e.g., batching multiple storage reads into a single IPC call to the Block Engine.
+
+2. **Shared-memory IPC for bulk data.** HM avoids copying large data across IPC boundaries by using shared-memory regions for bulk transfers. AIOS already has shared memory primitives (§ ipc.md shmem) — the boot sequence should prefer shared-memory IPC for service initialization data (DTB, memory map, BootInfo) rather than copying through message-based IPC.
+
+3. **Linux driver reuse strategy.** HM's approach to reusing 700+ Linux drivers is relevant for AIOS's future hardware support. Rather than writing native drivers for every device, AIOS could adopt a Linux driver compatibility layer (analogous to HM's approach) for non-critical devices, reserving native Rust drivers for the boot-critical path (UART, GIC, timer, block device).
+
+**Reference:** "Microkernel Goes General: Performance and Compatibility in the HongMeng Production Microkernel," OSDI 2024.
+
+### 22.19 LionsOS — seL4 Multiserver with Device Driver Framework
+
+**The idea:** A multiserver OS on seL4 where each device driver runs as an isolated user-space component with its own address space and capability set. The seL4 Device Driver Framework (sDDF) provides interface specifications and data-plane implementations that separate control-plane policy from data-plane performance.
+
+**History:** LionsOS (Trustworthy Systems Group, UNSW) builds on seL4's formally verified kernel to create a practical multiserver OS. The sDDF provides device class abstractions (serial, timer, Ethernet, storage) where each driver is an isolated component communicating through shared-memory data planes. The control plane uses seL4's capability-based IPC; the data plane uses lock-free ring buffers in shared memory for zero-copy I/O. This separation achieves near-native I/O performance despite full hardware isolation.
+
+**What AIOS takes from this — control-plane / data-plane separation:**
+
+1. **Driver isolation from boot.** AIOS's VirtIO-blk driver currently runs in kernel space (Phase 4). LionsOS demonstrates that even boot-critical drivers can run in isolated user-space components without unacceptable performance loss, *provided* the data plane uses shared-memory ring buffers rather than message-copying IPC. AIOS should plan the transition: kernel-space drivers during early boot (Phase 1-4), user-space drivers with sDDF-style data planes for production (Phase 5+).
+
+2. **Device class abstractions.** sDDF defines interface specifications per device class (e.g., all block devices implement the same ring buffer protocol). AIOS's `Platform` trait (§ hal.md) already defines per-device abstractions — sDDF validates extending this to user-space drivers with a consistent interface contract.
+
+3. **Formally verified driver isolation.** Because sDDF drivers are user-space components on seL4, they benefit from seL4's formal verification: a driver crash cannot corrupt the kernel or other drivers. AIOS's Rust type system provides similar (though not formal) guarantees for kernel-space drivers, but user-space isolation provides defense-in-depth.
+
+**Reference:** LionsOS / sDDF (Trustworthy Systems Group, UNSW, 2023-2025); seL4 Device Driver Framework.
 
 -----

@@ -3,7 +3,7 @@
 //! `init_memory()` walks the BootInfo memory map, computes pool sizes,
 //! initializes per-pool buddy allocators, and stores the global FrameAllocator.
 //!
-//! Per memory.md §2.1 (Bootstrap) and boot.md §2.2 (BootInfo).
+//! Per memory.md §2.1 (Bootstrap) and boot-firmware.md §2.2 (BootInfo).
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

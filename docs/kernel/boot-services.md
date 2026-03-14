@@ -219,7 +219,7 @@ Within each phase, the Service Manager starts services in dependency order but l
 ```text
 t=0ms:   Start device_registry (no dependencies within phase)
          (posix_compat and audio_subsystem are on-demand — not started here;
-          see boot-lifecycle.md §17 for activation modes)
+          see boot-intelligence.md §17 for activation modes)
 t=50ms:  device_registry reports healthy
          Start subsystem_framework (depends on device_registry)
 t=80ms:  subsystem_framework reports healthy
@@ -526,7 +526,7 @@ First Boot Setup Flow (compositor overlay):
 3. Wi-Fi Configuration (if network not already connected)
    - Scan for networks, select, enter password
    - Skippable — AIOS is fully functional offline
-   - If connected: time sync via NTP (see §6.5)
+   - If connected: time sync via NTP (see boot-performance.md §6.5)
 
 4. AIRS Model Selection (if not pre-loaded)
    - "AIOS includes a local AI assistant. Choose a model:"
