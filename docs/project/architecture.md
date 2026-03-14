@@ -513,7 +513,7 @@ pub struct AgentManifest {
 /// Set of capabilities held by a task or agent process. Capabilities are
 /// kernel-managed tokens — agents hold references, not the capabilities
 /// themselves. The kernel validates every token on every syscall.
-/// See ipc.md §4 for capability transfer and boot.md §3.3 Step 13 for
+/// See ipc.md §4 for capability transfer and boot.md §4.7 for
 /// the root capability from which all others derive.
 pub struct CapabilitySet {
     /// Active capability tokens, keyed by capability type for O(1) lookup
@@ -1749,7 +1749,7 @@ The laptop/PC target means storage pressure is low. A 256 GB SSD gives AIOS ~180
 
 ### 9.3 Future Device Classes
 
-AIOS is architectured for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [spaces-budget.md §10.1](../storage/spaces-budget.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
+AIOS is architected for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [spaces-budget.md §10.1](../storage/spaces-budget.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
 
 **Planned future targets (in rough priority order):**
 
