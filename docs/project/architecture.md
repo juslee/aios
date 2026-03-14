@@ -4,6 +4,7 @@
 
 **Related documents:**
 
+- [overview.md](./overview.md) — System overview and vision summary
 - [development-plan.md](./development-plan.md) — Phase plan, timeline, risks
 - [ipc.md](../kernel/ipc.md) — IPC and syscall interface deep dive
 - [scheduler.md](../kernel/scheduler.md) — Scheduler deep dive
@@ -12,6 +13,7 @@
 - [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Boot lifecycle, advanced topics, and design principles
 - [hal.md](../kernel/hal.md) — Hardware Abstraction Layer (Platform trait, device drivers, porting guide)
 - [observability.md](../kernel/observability.md) — Kernel observability (structured logging, metrics, tracing, health)
+- [deadlock-prevention.md](../kernel/deadlock-prevention.md) — Lock ordering and deadlock prevention
 - [spaces.md](../storage/spaces.md) — Space storage system deep dive
 - [compositor.md](../platform/compositor.md) — GPU compositor and window management
 - [networking.md](../platform/networking.md) — Network Translation Module deep dive
@@ -19,11 +21,14 @@
 - [airs.md](../intelligence/airs.md) — AI Runtime Service deep dive
 - [agents.md](../applications/agents.md) — Agent framework and SDK specification
 - [security.md](../security/security.md) — Eight-layer security model deep dive
+- [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) — Fuzzing strategy and input hardening
+- [static-analysis.md](../security/static-analysis.md) — Static analysis and formal verification roadmap
 - [flow.md](../storage/flow.md) — Flow system deep dive
 - [context-engine.md](../intelligence/context-engine.md) — Context Engine deep dive
 - [posix.md](../platform/posix.md) — POSIX compatibility layer deep dive
 - [experience.md](../experience/experience.md) — Experience layer and UI design
 - [browser.md](../applications/browser.md) — Decomposed web content runtime
+- [inspector.md](../applications/inspector.md) — Security dashboard and provenance viewer
 - [ui-toolkit.md](../applications/ui-toolkit.md) — Portable UI toolkit specification
 - [attention.md](../intelligence/attention.md) — Attention Manager and notification triage
 - [preferences.md](../intelligence/preferences.md) — Preference Service
@@ -33,6 +38,7 @@
 - [accessibility.md](../experience/accessibility.md) — Accessibility engine
 - [power-management.md](../platform/power-management.md) — Power management policy engine
 - [developer-guide.md](./developer-guide.md) — Kernel developer guide: Rust patterns, pitfalls, workflow
+- [language-ecosystem.md](./language-ecosystem.md) — Language runtimes and multi-language support
 - [ai-agent-context.md](./ai-agent-context.md) — AI agent onboarding: required reading, anti-patterns, verification
 
 -----
@@ -275,14 +281,20 @@ Automatic deduplication, integrity verification*`"]
 *Merkle DAG (like git) for full history
 Per-object and per-space versioning
 Provenance chain per version*`"]
+    WAL["`Write-Ahead Log
+*Crash-consistent journaling
+64-byte entries, circular buffer
+Replay on recovery*`"]
     BlockEng["`Block Engine
 *LSM-tree indexed blocks on raw device
 No intermediate filesystem layer
-Write-ahead log for crash recovery
+CRC-32C integrity, SHA-256 content hash
 Encryption at rest (per-space keys)*`"]
 
-    API --> SemIdx --> ObjStore --> VerStore --> BlockEng
+    API --> SemIdx --> ObjStore --> VerStore --> WAL --> BlockEng
 ```
+
+For deep-dive specifications, see the Space Storage sub-documents: [data structures](../storage/spaces-data-structures.md), [block engine](../storage/spaces-block-engine.md), [versioning](../storage/spaces-versioning.md), [encryption](../storage/spaces-encryption.md), [query engine](../storage/spaces-query-engine.md), [sync](../storage/spaces-sync.md), [POSIX compatibility](../storage/spaces-posix.md), and [storage budget](../storage/spaces-budget.md).
 
 **Core data model:**
 
@@ -621,6 +633,8 @@ pub enum TransferIntent {
     Copy, Move, Reference, Quote, Derive,
 }
 ```
+
+For deep-dive specifications, see the Flow sub-documents: [data model](../storage/flow-data-model.md), [transforms](../storage/flow-transforms.md), [history & sync](../storage/flow-history.md), [integration](../storage/flow-integration.md), [security](../storage/flow-security.md), [SDK](../storage/flow-sdk.md), and [extensions](../storage/flow-extensions.md).
 
 ### 2.5 Context Engine
 
@@ -1061,6 +1075,8 @@ Rollback window -- changes reversible for 72 hours.*`"]
     L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7 --> L8
 ```
 
+For deep-dive specifications, see the security sub-documents: [defense layers](../security/security-layers.md), [capability internals](../security/security-capabilities.md), [hardening](../security/security-hardening.md), [operations](../security/security-operations.md), [fuzzing & input hardening](../security/fuzzing-and-hardening.md), and [static analysis & formal verification](../security/static-analysis.md).
+
 ### 3.2 Capability System
 
 ```rust
@@ -1341,18 +1357,18 @@ flowchart TD
 Load kernel ELF from EFI System Partition`"]
     end
 
-    subgraph KBOOT["Kernel Early Boot (see boot.md &sect;3.3 for full 17 steps)"]
+    subgraph KBOOT["Kernel Early Boot (18 EarlyBootPhase stages, see boot.md &sect;3.3)"]
         direction LR
-        K1["1. Exception vectors + UART init"]
-        K2["2. Device tree parse + platform detection"]
-        K3["3. GIC v2/v3 + timer init"]
-        K4["4. MMU + page tables TTBR0/TTBR1, W^X"]
-        K5["5. Page allocator + heap init"]
-        K6["6. RNG + KASLR"]
-        K7["7. Capability manager init (root capability)"]
-        K8["8. IPC subsystem init"]
-        K9["9. Audit log init (kernel ring buffer)"]
-        K10["10. Process manager + provenance + scheduler init"]
+        K1["1. Exception vectors, DTB parse, UART init"]
+        K2["2. GIC v2/v3 + ARM Generic Timer"]
+        K3["3. MMU: TTBR1 build, page tables, W^X"]
+        K4["4. Page allocator, heap, log rings"]
+        K5["5. RNG + KASLR slide"]
+        K6["6. Capability manager (root cap)"]
+        K7["7. IPC, audit log, scheduler init"]
+        K8["8. Process manager + provenance"]
+        K9["9. SMP bringup (secondary cores)"]
+        K10["10. Storage + boot complete"]
         K1 --> K2 --> K3 --> K4 --> K5 --> K6 --> K7 --> K8 --> K9 --> K10
     end
 
