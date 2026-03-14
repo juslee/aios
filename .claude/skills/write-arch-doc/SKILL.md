@@ -258,14 +258,16 @@ If a hub name would match the parent directory, rename the hub to avoid redundan
 3. Ensure phase docs that reference this subsystem have correct pointers
 4. If `docs/project/developer-guide.md` exists, check its cross-reference index
 
-## Step 8: Audit Loop (Mandatory)
+## Step 8: Audit Loop (Mandatory — Recursive Until Zero Issues)
 
-Run doc-auditor to validate the document:
+Run doc-auditor to validate the document. The auditor MUST run recursively:
 
-1. Spawn the doc-auditor agent on all modified docs
-2. Fix all issues found (cross-reference errors, terminology, technical accuracy)
-3. Re-audit until clean (max 10 passes)
-4. Commit audit fixes
+1. Spawn the doc-auditor agent on all modified docs with explicit instruction:
+   **"Audit → fix all issues → re-audit the fixed file → repeat until zero issues found, max 10 passes"**
+2. The agent must confirm it ran multiple passes and state the pass number where zero issues were reached
+3. If the agent returns issues it didn't fix, resume it or spawn a new one to fix and re-audit
+4. Only proceed to Step 9 when a full audit pass returns zero issues
+5. Commit audit fixes
 
 **Common issues the auditor catches (from experience):**
 - **Naming mismatches**: Doc says `UART_BASE` but code says `UART_BASE_ADDR` — fix doc to match code
