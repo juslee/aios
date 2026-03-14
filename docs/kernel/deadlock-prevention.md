@@ -1,7 +1,7 @@
 # AIOS Deadlock Prevention Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [ipc.md](./ipc.md) — IPC timeouts (§3.1), synchronous call-reply (§4.2), priority inheritance (§9.2) | [scheduler.md](./scheduler.md) — Lock ordering (§9.1), preemption model (§10.3), async priority inheritance (§13.4) | [memory-physical.md](./memory-physical.md) — Slab allocator with per-cache magazines (§4.1), kernel allocation API (§4.2) | [security.md](../security/security.md) — Capability model
+**Related:** [ipc.md](./ipc.md) — IPC timeouts (§3.1), synchronous call-reply (§4.2), priority inheritance (§9.2) | [scheduler.md](./scheduler.md) — Lock ordering (§9.1), preemption model (§10.3), async priority inheritance (§13.4) | [physical.md](./memory/physical.md) — Slab allocator with per-cache magazines (§4.1), kernel allocation API (§4.2) | [security.md](../security/security.md) — Capability model
 
 -----
 
@@ -29,7 +29,7 @@ AIOS breaks one or more of these conditions at every level of the system, supple
 | Lock ordering (per-CPU + global hierarchy) | Circular wait | §3 | [scheduler.md §9.1](./scheduler.md) |
 | Mandatory IPC timeouts | Circular wait (bounded) | §4 | [ipc.md §3.1](./ipc.md) |
 | Priority inheritance† | *(liveness)* | §5 | [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md) |
-| Per-cache magazine fast path¶ | *(contention reduction)* | §6 | [memory-physical.md §4.1](./memory-physical.md) |
+| Per-cache magazine fast path¶ | *(contention reduction)* | §6 | [physical.md §4.1](./memory/physical.md) |
 | Capability-based resource model | Circular wait (graph constraint) | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
 | Synchronous IPC (no callback chains) | Circular wait | §8 | [ipc.md §4.2](./ipc.md) |
 | Preemptive kernel‡ | *(liveness)* | §9 | [scheduler.md §10.3](./scheduler.md) |
@@ -306,7 +306,7 @@ The fast path: lock `SLAB`, pop from the current magazine round. If empty, swap 
 
 **Important:** The magazine is per-cache (per size class), not per-CPU. There is a single global `spin::Mutex<SlabAllocator>` that protects all caches. The benefit is reduced hold time — most allocations complete with a simple pointer pop from the magazine — not lock elimination.
 
-*Source: [memory-physical.md §4.1 — Slab Allocator](./memory-physical.md) (per-cache magazine architecture)*
+*Source: [physical.md §4.1 — Slab Allocator](./memory/physical.md) (per-cache magazine architecture)*
 
 ### 6.3 Global Singletons
 
@@ -321,7 +321,7 @@ pub static BUDDY: Mutex<BuddyAllocator> = /* per-pool physical pages */;
 
 The `SLAB` lock is held for the shortest possible duration — a magazine pop or push. The `FRAME_ALLOC` and `BUDDY` locks are only acquired on the slow path (magazine refill or page allocation).
 
-*Source: [memory-physical.md §4.2 — Kernel Allocation API](./memory-physical.md) (global singleton declarations)*
+*Source: [physical.md §4.2 — Kernel Allocation API](./memory/physical.md) (global singleton declarations)*
 
 ### 6.4 Why This Works
 

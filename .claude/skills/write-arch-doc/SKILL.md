@@ -208,28 +208,41 @@ If the document has grown beyond ~2000 lines after updates, propose splitting it
 
 ### Hub + Sub-Document Pattern
 
+**Placement rule:** If hub name differs from parent directory → create a subfolder
+(e.g., `docs/kernel/boot.md` → sub-docs go in `docs/kernel/boot/`).
+If hub name matches parent directory → sub-docs stay flat with prefix stripped
+(e.g., `docs/security/security.md` → sub-docs are `docs/security/layers.md`, etc.).
+
 1. **Keep the original filename as a hub** — this preserves all existing external links
 2. **Hub contents**: §1 Overview, Document Map table, Implementation Order, Cross-Reference Index
-3. **Sub-document naming**: `{topic}-{subtopic}.md` (e.g., `memory-physical.md`, `memory-virtual.md`)
+3. **Sub-document naming**: `{topic}/{subtopic}.md` in a subfolder (e.g., `memory/physical.md`, `boot/firmware.md`),
+   or `{subtopic}.md` flat if hub matches parent dir (e.g., `docs/security/layers.md`)
 4. **Preserve original section numbers** across sub-files for cross-reference stability
-5. **Sub-document header format**:
+5. **Sub-document header format** (subfolder case — note `../` back-link to hub):
+   ```markdown
+   # AIOS <Title>
+
+   Part of: [<hub>.md](../<hub>.md) — <Hub Title>
+   **Related:** [sibling.md](./sibling.md) — description, [other.md](./other.md) — description
+   ```
+   **Sub-document header format** (flat case — same-dir `./` link to hub):
    ```markdown
    # AIOS <Title>
 
    Part of: [<hub>.md](./<hub>.md) — <Hub Title>
-   **Related:** [sibling-1.md](./sibling-1.md) — description, [sibling-2.md](./sibling-2.md) — description
+   **Related:** [sibling.md](./sibling.md) — description
    ```
-6. **Hub Document Map table**:
+6. **Hub Document Map table** (subfolder case):
    ```markdown
    | Document | Sections | Content |
    |---|---|---|
    | **This file** | §1, §N | Overview and ... |
-   | [sub-doc.md](./sub-doc.md) | §2, §4 | Description |
+   | [subtopic.md](./<hub>/subtopic.md) | §2, §4 | Description |
    ```
 7. **Hub Cross-Reference Index**: table mapping every `§N.N` to its sub-file location
 
 ### Execution
-- Create sub-documents in parallel (independent files — use background agents)
+- Create the subfolder (if needed) and sub-documents in parallel (independent files — use background agents)
 - Group related sections together (e.g., physical memory + heap, virtual memory + shared memory)
 - Update CLAUDE.md Architecture Document Map to point to specific sub-files
 - Run bare code fence check on all new files (agents often create bare ``` fences)
@@ -366,7 +379,7 @@ uses physical timer (CNTP_*). This is a subtle factual error easily missed in Me
 prose. Always verify which timer the kernel actually uses by checking ThreadContext field names.
 
 **Doc splits create stale cross-references.** When memory.md was split into sub-documents
-(memory-physical.md, memory-reclamation.md, etc.), cross-references from other docs like
+(memory/physical.md, memory/reclamation.md, etc.), cross-references from other docs like
 scheduler.md still pointed to the old `memory.md §8`. The auditor caught this — always grep
 for `memory.md §` (or any recently-split doc) across all docs during audit.
 

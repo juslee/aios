@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [agents.md](../applications/agents.md) — Agent framework and task agents, [airs.md](./airs.md) — AI Runtime Service (inference, intent verification), [context-engine.md](./context-engine.md) — Context-aware prioritization, [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Boot phases and service startup
+**Related:** [agents.md](../applications/agents.md) — Agent framework and task agents, [airs.md](./airs.md) — AI Runtime Service (inference, intent verification), [context-engine.md](./context-engine.md) — Context-aware prioritization, [lifecycle.md](../kernel/boot/lifecycle.md) — Boot phases and service startup
 
 -----
 

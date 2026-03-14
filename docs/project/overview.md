@@ -683,14 +683,14 @@ docs/
 │   │
 ├── kernel/
 │   ├── boot.md                              Boot sequence (QEMU direct and UEFI)
-│   ├── boot-lifecycle.md                    Boot lifecycle stages and secondary core init
+│   ├── boot/                    Boot lifecycle stages and secondary core init
 │   ├── hal.md                               Hardware Abstraction Layer (UART, GIC, timer, MMU)
 │   ├── memory.md                            Memory management hub
-│   │   ├── memory-physical.md               Buddy allocator, frame allocator, slab, heap
-│   │   ├── memory-virtual.md                Page tables, KASLR, per-agent address spaces, TLB
+│   │   ├── physical.md               Buddy allocator, frame allocator, slab, heap
+│   │   ├── virtual.md                Page tables, KASLR, per-agent address spaces, TLB
 │   │   ├── memory-ai.md                     AI model memory, PagedAttention, KV caches
-│   │   ├── memory-reclamation.md            Memory pressure, OOM, swap/zram, scaling
-│   │   └── memory-hardening.md              W^X, PAC, BTI, MTE, performance hardening
+│   │   ├── reclamation.md            Memory pressure, OOM, swap/zram, scaling
+│   │   └── hardening.md              W^X, PAC, BTI, MTE, performance hardening
 │   ├── ipc.md                               IPC channels, shared memory, notifications, select
 │   ├── scheduler.md                         Per-CPU run queues, 4-class FIFO, load balancing
 │   ├── deadlock-prevention.md               Lock ordering, priority inheritance, timeouts
@@ -705,22 +705,22 @@ docs/
 │
 ├── storage/
 │   ├── spaces.md                            Space Storage hub (object store, content-addressing)
-│   │   ├── spaces-data-structures.md        Primitive types, Objects, Relations
-│   │   ├── spaces-block-engine.md           On-disk layout, LSM-tree, WAL, compression
-│   │   ├── spaces-versioning.md             Merkle DAG, snapshots, branching, temporal queries
-│   │   ├── spaces-encryption.md             Per-space encryption, key management, nonces
-│   │   ├── spaces-query-engine.md           Full-text search, embeddings, learned indexes
-│   │   ├── spaces-sync.md                   Merkle exchange, conflict resolution, sync security
-│   │   ├── spaces-posix.md                  Path mapping, fd lifecycle, POSIX translation
-│   │   └── spaces-budget.md                 Device profiles, quotas, pressure, AI-driven policies
+│   │   ├── data-structures.md        Primitive types, Objects, Relations
+│   │   ├── block-engine.md           On-disk layout, LSM-tree, WAL, compression
+│   │   ├── versioning.md             Merkle DAG, snapshots, branching, temporal queries
+│   │   ├── encryption.md             Per-space encryption, key management, nonces
+│   │   ├── query-engine.md           Full-text search, embeddings, learned indexes
+│   │   ├── sync.md                   Merkle exchange, conflict resolution, sync security
+│   │   ├── posix.md                  Path mapping, fd lifecycle, POSIX translation
+│   │   └── budget.md                 Device profiles, quotas, pressure, AI-driven policies
 │   ├── flow.md                              Flow System hub (context-aware data transfer)
-│   │   ├── flow-data-model.md               External types, transfers, typed content
-│   │   ├── flow-transforms.md               Transform engine, format negotiation, AIRS transforms
-│   │   ├── flow-history.md                  History storage, retention, multi-device sync
-│   │   ├── flow-integration.md              Compositor, subsystem channels, cross-agent, POSIX
-│   │   ├── flow-security.md                 Capability enforcement, content screening, rate limiting
-│   │   ├── flow-sdk.md                      Rust/Python/TypeScript/PWA APIs
-│   │   └── flow-extensions.md               Near-term features and future directions
+│   │   ├── data-model.md               External types, transfers, typed content
+│   │   ├── transforms.md               Transform engine, format negotiation, AIRS transforms
+│   │   ├── history.md                  History storage, retention, multi-device sync
+│   │   ├── integration.md              Compositor, subsystem channels, cross-agent, POSIX
+│   │   ├── security.md                 Capability enforcement, content screening, rate limiting
+│   │   ├── sdk.md                      Rust/Python/TypeScript/PWA APIs
+│   │   └── extensions.md               Near-term features and future directions
 │
 ├── platform/
 │   ├── compositor.md                        GPU-native compositor, window management, rendering
@@ -743,15 +743,15 @@ docs/
 │
 ├── security/
 │   ├── security.md                          Security model hub (threat model, 8-layer overview)
-│   │   ├── security-layers.md               Eight defense layers deep dive
-│   │   ├── security-capabilities.md         Capability tokens, attenuation, delegation, profiles
-│   │   ├── security-hardening.md            Cryptography, ARM hardware security, testing
-│   │   └── security-operations.md           Events, audit, zero trust, AIRS integration
-│   ├── fuzzing-and-hardening.md             Fuzzing and input hardening hub
-│   │   ├── fuzzing-hardening-strategies.md  Language, syscall, memory, IPC, driver hardening
-│   │   ├── fuzzing-adoption-roadmap.md      Phased adoption (host-side through formal verification)
-│   │   ├── fuzzing-tooling.md               Tiered tooling and fuzz target catalog
-│   │   └── fuzzing-ai-native.md             AI-driven fuzzing (dev-time, kernel, AIRS)
+│   │   ├── layers.md               Eight defense layers deep dive
+│   │   ├── capabilities.md         Capability tokens, attenuation, delegation, profiles
+│   │   ├── hardening.md            Cryptography, ARM hardware security, testing
+│   │   └── operations.md           Events, audit, zero trust, AIRS integration
+│   ├── fuzzing.md             Fuzzing and input hardening hub
+│   │   ├── strategies.md  Language, syscall, memory, IPC, driver hardening
+│   │   ├── adoption-roadmap.md      Phased adoption (host-side through formal verification)
+│   │   ├── tooling.md               Tiered tooling and fuzz target catalog
+│   │   └── ai-native.md             AI-driven fuzzing (dev-time, kernel, AIRS)
 │   └── static-analysis.md                   Static analysis and formal verification
 │
 ├── research/
@@ -788,7 +788,7 @@ Deep-dive technical specifications organized by domain. Hub documents (bold) con
 | Document | Scope |
 |---|---|
 | [boot.md](../kernel/boot.md) | Boot sequence — QEMU direct boot, UEFI flow, BootInfo struct, kernel entry |
-| [boot-lifecycle.md](../kernel/boot-lifecycle.md) | Boot lifecycle stages, early boot phases, secondary core initialization |
+| [lifecycle.md](../kernel/boot/lifecycle.md) | Boot lifecycle stages, early boot phases, secondary core initialization |
 | [hal.md](../kernel/hal.md) | Hardware Abstraction Layer — Platform trait, PL011 UART, GICv3, ARM Generic Timer |
 | **[memory.md](../kernel/memory.md)** | Memory management — hub with 5 sub-docs (physical, virtual, AI, reclamation, hardening) |
 | [ipc.md](../kernel/ipc.md) | IPC — channel-based messaging, shared memory, notifications, select, syscall table |
@@ -846,7 +846,7 @@ Deep-dive technical specifications organized by domain. Hub documents (bold) con
 | Document | Scope |
 |---|---|
 | **[security.md](../security/security.md)** | Security model — hub with 4 sub-docs (layers, capabilities, hardening, operations) |
-| **[fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md)** | Fuzzing — hub with 4 sub-docs (strategies, adoption roadmap, tooling, AI-native) |
+| **[fuzzing.md](../security/fuzzing.md)** | Fuzzing — hub with 4 sub-docs (strategies, adoption roadmap, tooling, AI-native) |
 | [static-analysis.md](../security/static-analysis.md) | Static analysis and formal verification across all phases |
 
 ---
@@ -976,17 +976,17 @@ the full AIRS runtime:
 - **Learning-Based Page Replacement (2024)** — Replaces LRU/Clock with lightweight
   neural predictors trained on access traces. A frozen decision tree (≤1KB) can
   outperform LRU by 10-15% on mixed AI/interactive workloads. Applicable to AIOS's
-  memory reclamation subsystem (`memory-reclamation.md §8`). *(Kernel-internal)*
+  memory reclamation subsystem (`memory/reclamation.md §8`). *(Kernel-internal)*
 
 - **Deep Learning Prefetch (Google, 2024-2025)** — Uses LSTM/transformer models
   trained offline on I/O traces to predict future block accesses. The trained model
   is distilled to a compact predictor running in the block I/O path. Applicable to
-  AIOS's Block Engine (`spaces-block-engine.md §4`) for proactive data staging.
+  AIOS's Block Engine (`spaces/block-engine.md §4`) for proactive data staging.
   *(Kernel-internal)*
 
 - **Learned Indexes (2024)** — Replaces B-trees with regression models that predict
   key positions, offering O(1) expected lookup with smaller memory footprint.
-  Applicable to AIOS's Query Engine (`spaces-query-engine.md §7`) for content-hash
+  Applicable to AIOS's Query Engine (`spaces/query-engine.md §7`) for content-hash
   lookups and metadata indexing. *(Kernel-internal for frozen models; AIRS-dependent
   for online retraining)*
 
@@ -1003,10 +1003,10 @@ As AI agents become first-class OS citizens, new threat models emerge:
 
 - **Inter-Agent Tool Call Attacks (2025)** — Demonstrates that agents can manipulate
   other agents through crafted tool call results, bypassing traditional access
-  controls. AIOS's capability system (`security-capabilities.md §3`) provides
+  controls. AIOS's capability system (`capabilities.md §3`) provides
   structural defense: agents cannot invoke tools beyond their granted capabilities,
   and all cross-agent communication passes through audited IPC channels. The attack
-  surface is further reduced by content screening in Flow (`flow-security.md §11`).
+  surface is further reduced by content screening in Flow (`flow/security.md §11`).
   *(Kernel-internal for capability gates; AIRS-dependent for content analysis)*
 
 - **Prompt Injection Defense Pipelines (2024-2025)** — Multi-stage defense combining
@@ -1019,6 +1019,6 @@ As AI agents become first-class OS citizens, new threat models emerge:
 - **Microkernel Sandboxing for AI Agents (Firecracker/microVM model)** — Each agent
   runs in a hardware-isolated address space with a minimal capability set, analogous
   to how Firecracker provides per-function isolation for serverless workloads. AIOS's
-  per-agent address spaces (`memory-virtual.md §5`) and capability tables
-  (`security-capabilities.md §3`) already implement this model natively.
+  per-agent address spaces (`memory/virtual.md §5`) and capability tables
+  (`capabilities.md §3`) already implement this model natively.
   *(Kernel-internal)*

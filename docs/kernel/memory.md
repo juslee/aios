@@ -14,11 +14,11 @@ This document was split for navigability. Each sub-document preserves the origin
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §14 | Overview and implementation order |
-| [memory-physical.md](./memory-physical.md) | §2, §4 | Buddy allocator, page pools, frame allocator, slab allocator, kernel heap |
-| [memory-virtual.md](./memory-virtual.md) | §3, §5, §7 | Page tables, KASLR, TLB/ASID, per-agent address spaces, COW, shared memory |
-| [memory-ai.md](./memory-ai.md) | §6 | Model memory regions, PagedAttention KV caches, model loading/eviction |
-| [memory-reclamation.md](./memory-reclamation.md) | §8, §10, §12 | Memory pressure, OOM, MGLRU, zram, swap, DAMON, future scaling |
-| [memory-hardening.md](./memory-hardening.md) | §9, §11, §13 | W^X, PAC, BTI, MTE, guard pages, Spectre mitigations, performance, future directions |
+| [physical.md](./memory/physical.md) | §2, §4 | Buddy allocator, page pools, frame allocator, slab allocator, kernel heap |
+| [virtual.md](./memory/virtual.md) | §3, §5, §7 | Page tables, KASLR, TLB/ASID, per-agent address spaces, COW, shared memory |
+| [ai.md](./memory/ai.md) | §6 | Model memory regions, PagedAttention KV caches, model loading/eviction |
+| [reclamation.md](./memory/reclamation.md) | §8, §10, §12 | Memory pressure, OOM, MGLRU, zram, swap, DAMON, future scaling |
+| [hardening.md](./memory/hardening.md) | §9, §11, §13 | W^X, PAC, BTI, MTE, guard pages, Spectre mitigations, performance, future directions |
 
 -----
 
@@ -44,7 +44,7 @@ The target hardware is Raspberry Pi 4/5 (aarch64, 2–8 GB RAM). Every design de
 | 8 GB | **Recommended** | Full OS, browser, many agents | 8B Q4_K_M model + embedding model simultaneously | The target for the "AI-native OS" promise |
 | 16 GB+ | **Comfortable** | Everything with headroom | 8B Q5_K_M/Q6_K + multiple specialist models | Future Pi hardware or alternative SBCs |
 
-**8 GB is the recommended minimum** for users who want the advertised AI-native experience. The model pool gets 4 GB on an 8 GB device, which fits a quantized 8B model with room for KV caches and embedding stores. At 4 GB, the model pool is only 2 GB — enough for a 3B model but not the 8B models that deliver meaningfully better reasoning. At 2 GB, there is no model pool (0 MB — see [§2.4](./memory-physical.md)); AIOS falls back to cloud inference via the Network Translation Module.
+**8 GB is the recommended minimum** for users who want the advertised AI-native experience. The model pool gets 4 GB on an 8 GB device, which fits a quantized 8B model with room for KV caches and embedding stores. At 4 GB, the model pool is only 2 GB — enough for a 3B model but not the 8B models that deliver meaningfully better reasoning. At 2 GB, there is no model pool (0 MB — see [§2.4](./memory/physical.md)); AIOS falls back to cloud inference via the Network Translation Module.
 
 **Cloud inference fallback (2 GB devices):** When local inference is not viable, AIRS routes inference requests through the NTM to a configured cloud endpoint. The model pool is released to the user pool, giving agents and the browser more room. The system is fully functional — just slower (network latency) and dependent on connectivity. The user is informed at first boot: "This device has 2 GB RAM. AI features will use cloud processing. For local AI, 8 GB RAM is recommended."
 
@@ -124,28 +124,28 @@ Quick lookup for commonly referenced sections across the memory sub-documents:
 
 | Reference | Location | Topic |
 |---|---|---|
-| §2.2 BuddyAllocator | [memory-physical.md](./memory-physical.md) | Buddy allocator struct, orders 0-10 |
-| §2.3 FrameAllocator | [memory-physical.md](./memory-physical.md) | Frame allocator API, pool routing |
-| §2.4 PagePools | [memory-physical.md](./memory-physical.md) | Pool sizing by RAM tier |
-| §3.2 PageTableEntry | [memory-virtual.md](./memory-virtual.md) | PTE bits, W^X API, AddressSpace |
-| §3.3 KASLR | [memory-virtual.md](./memory-virtual.md) | Kernel base randomization |
-| §3.4 TLB/ASID | [memory-virtual.md](./memory-virtual.md) | ASID allocator, TLB invalidation |
-| §4.1 SlabAllocator | [memory-physical.md](./memory-physical.md) | 5 size classes, magazine layer |
-| §5.3 Memory Limit Enforcement | [memory-virtual.md](./memory-virtual.md) | Per-agent enforcement |
-| §5.4 COW | [memory-virtual.md](./memory-virtual.md) | Copy-on-write fault handling |
-| §6.2 ModelMemoryRegion | [memory-ai.md](./memory-ai.md) | Pinned model weight regions |
-| §6.3 PagedAttention | [memory-ai.md](./memory-ai.md) | KV cache block tables |
-| §6.4 userfaultfd loading | [memory-ai.md](./memory-ai.md) | Lazy model loading |
-| §7.1 SharedMemoryRegion | [memory-virtual.md](./memory-virtual.md) | Zero-copy IPC |
-| §8.1 MemoryPressure | [memory-reclamation.md](./memory-reclamation.md) | Pressure levels and PSI |
-| §8.2 OOM killer | [memory-reclamation.md](./memory-reclamation.md) | Priority-based victim selection |
-| §9.1 W^X | [memory-hardening.md](./memory-hardening.md) | Write XOR Execute enforcement |
-| §9.4 MTE | [memory-hardening.md](./memory-hardening.md) | Memory Tagging Extension |
-| §9.5 Guard pages | [memory-hardening.md](./memory-hardening.md) | Stack overflow protection |
-| §10.2 MGLRU | [memory-reclamation.md](./memory-reclamation.md) | 4-generation page aging |
-| §10.3 zram | [memory-reclamation.md](./memory-reclamation.md) | Compressed memory |
-| §10.5 Page faults | [memory-reclamation.md](./memory-reclamation.md) | Compressed/swapped page handling |
-| §10.9 DAMON | [memory-reclamation.md](./memory-reclamation.md) | Access pattern monitoring |
-| §11.1 TLB efficiency | [memory-hardening.md](./memory-hardening.md) | FEAT_CONTPTE, FEAT_TLBIRANGE |
-| §12.2 Dynamic model pool | [memory-reclamation.md](./memory-reclamation.md) | Runtime pool resizing |
-| §13 Future directions | [memory-hardening.md](./memory-hardening.md) | Research-informed improvements |
+| §2.2 BuddyAllocator | [physical.md](./memory/physical.md) | Buddy allocator struct, orders 0-10 |
+| §2.3 FrameAllocator | [physical.md](./memory/physical.md) | Frame allocator API, pool routing |
+| §2.4 PagePools | [physical.md](./memory/physical.md) | Pool sizing by RAM tier |
+| §3.2 PageTableEntry | [virtual.md](./memory/virtual.md) | PTE bits, W^X API, AddressSpace |
+| §3.3 KASLR | [virtual.md](./memory/virtual.md) | Kernel base randomization |
+| §3.4 TLB/ASID | [virtual.md](./memory/virtual.md) | ASID allocator, TLB invalidation |
+| §4.1 SlabAllocator | [physical.md](./memory/physical.md) | 5 size classes, magazine layer |
+| §5.3 Memory Limit Enforcement | [virtual.md](./memory/virtual.md) | Per-agent enforcement |
+| §5.4 COW | [virtual.md](./memory/virtual.md) | Copy-on-write fault handling |
+| §6.2 ModelMemoryRegion | [ai.md](./memory/ai.md) | Pinned model weight regions |
+| §6.3 PagedAttention | [ai.md](./memory/ai.md) | KV cache block tables |
+| §6.4 userfaultfd loading | [ai.md](./memory/ai.md) | Lazy model loading |
+| §7.1 SharedMemoryRegion | [virtual.md](./memory/virtual.md) | Zero-copy IPC |
+| §8.1 MemoryPressure | [reclamation.md](./memory/reclamation.md) | Pressure levels and PSI |
+| §8.2 OOM killer | [reclamation.md](./memory/reclamation.md) | Priority-based victim selection |
+| §9.1 W^X | [hardening.md](./memory/hardening.md) | Write XOR Execute enforcement |
+| §9.4 MTE | [hardening.md](./memory/hardening.md) | Memory Tagging Extension |
+| §9.5 Guard pages | [hardening.md](./memory/hardening.md) | Stack overflow protection |
+| §10.2 MGLRU | [reclamation.md](./memory/reclamation.md) | 4-generation page aging |
+| §10.3 zram | [reclamation.md](./memory/reclamation.md) | Compressed memory |
+| §10.5 Page faults | [reclamation.md](./memory/reclamation.md) | Compressed/swapped page handling |
+| §10.9 DAMON | [reclamation.md](./memory/reclamation.md) | Access pattern monitoring |
+| §11.1 TLB efficiency | [hardening.md](./memory/hardening.md) | FEAT_CONTPTE, FEAT_TLBIRANGE |
+| §12.2 Dynamic model pool | [reclamation.md](./memory/reclamation.md) | Runtime pool resizing |
+| §13 Future directions | [hardening.md](./memory/hardening.md) | Research-informed improvements |

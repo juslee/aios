@@ -234,7 +234,7 @@ in public repositories. AIOS accounts for this with per-runtime default trust le
 | Python | Semi-trusted | RustPython sandbox + capability enforcement; higher ecosystem vulnerability rate |
 
 Trust levels affect default capability restrictions — see
-[security-capabilities.md](../security/security-capabilities.md) §3.7 for how
+[capabilities.md](../security/capabilities.md) §3.7 for how
 composable capability profiles (Layer 10) encode per-runtime security policies.
 
 ### Interpreter-in-WASM Hardening
@@ -279,7 +279,7 @@ system. This prevents a runaway interpreter from starving other agents or the ke
 
 ### Memory Pressure Response
 
-When the kernel signals memory pressure (see [memory-reclamation.md](../kernel/memory-reclamation.md) §8),
+When the kernel signals memory pressure (see [reclamation.md](../kernel/memory/reclamation.md) §8),
 each runtime responds differently:
 
 | Pressure Level | Rust (native) | Python (RustPython) | TypeScript (QuickJS-ng) | WASM (wasmtime) |

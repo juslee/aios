@@ -39,7 +39,7 @@ By the end of this phase, two kernel threads perform IPC ping-pong with measured
 | Trace points | [observability.md](../kernel/observability.md) | §4 Trace Points; §4.2 Trace Events; §4.4 Per-Core Trace Ring |
 | Capability token lifecycle | [security.md](../security/security.md) | §2.2 Layer 2: Capability Check; §3 Capability System Internals; §3.1 Capability Token Lifecycle; §3.2 Kernel Capability Table; §3.3 Attenuation |
 | Agent address spaces and shared memory | [memory.md](../kernel/memory.md) | §5.1 Agent Address Spaces; §7 Shared Memory; §9.5 Guard Pages |
-| Memory hardening | [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) | §3.3 Memory Hardening |
+| Memory hardening | [fuzzing.md](../security/fuzzing.md) | §3.3 Memory Hardening |
 
 -----
 

@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [security.md](../security/security.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [memory-reclamation.md](./memory-reclamation.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
+**Related:** [security.md](../security/security.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [reclamation.md](./memory/reclamation.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
 
 -----
 
@@ -815,7 +815,7 @@ This allows Inspector to query both security provenance and operational metrics 
 
 ### 7.1 Problem
 
-The Block Engine specified in [spaces-block-engine.md](../storage/spaces-block-engine.md) §4 uses a Write-Ahead Log (WAL), LSM-tree with multi-level compaction, and in-memory MemTables. Write amplification — the ratio of bytes written to disk versus bytes written by the application — is a critical tuning metric (§4.8). But the Block Engine specification does not include any instrumentation for measuring these values.
+The Block Engine specified in [block-engine.md](../storage/spaces/block-engine.md) §4 uses a Write-Ahead Log (WAL), LSM-tree with multi-level compaction, and in-memory MemTables. Write amplification — the ratio of bytes written to disk versus bytes written by the application — is a critical tuning metric (§4.8). But the Block Engine specification does not include any instrumentation for measuring these values.
 
 Without metrics, it is impossible to answer: "Is the compaction strategy working?", "How full is the WAL?", "What is the cache hit rate?"
 
@@ -871,9 +871,9 @@ pub struct StorageMetrics {
 
 ### 7.3 Integration Points
 
-Storage metrics are emitted at these points in the Block Engine pipeline (referencing [spaces-block-engine.md](../storage/spaces-block-engine.md)):
+Storage metrics are emitted at these points in the Block Engine pipeline (referencing [block-engine.md](../storage/spaces/block-engine.md)):
 
-| Operation | Metrics Updated | spaces-block-engine.md Reference |
+| Operation | Metrics Updated | block-engine.md Reference |
 |---|---|---|
 | Application write → WAL | `wal_write_count`, `wal_write_bytes`, `wal_utilization` | §4.2 Write Path |
 | WAL sync to disk | `wal_sync_count`, `wal_sync_latency_ns` | §4.4 Crash Recovery |
@@ -1106,7 +1106,7 @@ AIRS determines the snapshot frequency and compression ratio based on available 
 
 ### 10.11 Workload Fingerprinting
 
-**Problem.** The kernel treats all workloads identically — the scheduler uses static time slices ([scheduler.md](./scheduler.md) §3.1), the memory allocator uses fixed pool ratios ([memory-physical.md](./memory-physical.md) §2.4), and the IPC system uses fixed timeout defaults. In practice, workloads have distinct fingerprints: an LLM inference task generates predictable memory access patterns (sequential KV cache reads) and CPU utilization curves (bursty compute interspersed with memory stalls), while a web browser generates unpredictable access patterns with frequent small allocations. Optimal kernel parameters differ significantly between these workload types.
+**Problem.** The kernel treats all workloads identically — the scheduler uses static time slices ([scheduler.md](./scheduler.md) §3.1), the memory allocator uses fixed pool ratios ([physical.md](./memory/physical.md) §2.4), and the IPC system uses fixed timeout defaults. In practice, workloads have distinct fingerprints: an LLM inference task generates predictable memory access patterns (sequential KV cache reads) and CPU utilization curves (bursty compute interspersed with memory stalls), while a web browser generates unpredictable access patterns with frequent small allocations. Optimal kernel parameters differ significantly between these workload types.
 
 **AI solution.** AIRS clusters observed telemetry patterns into workload fingerprints — compact statistical signatures derived from metric time series (§3), trace event sequences (§4), and hardware counter profiles (§10.9). Each fingerprint captures:
 

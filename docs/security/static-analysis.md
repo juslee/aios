@@ -2,7 +2,7 @@
 
 This document provides a technical deep-dive into how AIOS uses static analysis, model checking, and formal verification to prevent bugs before they reach runtime — both in kernel development and in agent pre-installation auditing.
 
-For fuzzing and runtime hardening, see [fuzzing-and-hardening.md](fuzzing-and-hardening.md). For the security model overview and formal verification targets, see [security.md](security.md) §8.
+For fuzzing and runtime hardening, see [fuzzing.md](fuzzing.md). For the security model overview and formal verification targets, see [security.md](security.md) §8.
 
 ---
 
@@ -23,7 +23,7 @@ For fuzzing and runtime hardening, see [fuzzing-and-hardening.md](fuzzing-and-ha
 | **Dependency auditing** | Scanning dependency tree for vulnerabilities and policy violations | Supply chain attacks, license compliance |
 | **AI-assisted review** | LLM analysis of code semantics and intent | Data exfiltration patterns, capability misuse |
 
-**AIOS-specific context.** Two aspects make AIOS unique. First, the kernel is Rust — the borrow checker already eliminates ~65% of the CVE classes that plague C/C++ kernels (see [fuzzing-hardening-strategies.md](fuzzing-hardening-strategies.md) §3.1). Static analysis builds on this foundation, focusing on `unsafe` blocks and higher-level invariants. Second, AIOS runs autonomous AI agents that must be statically analyzed before installation, because agents are opaque programs from untrusted developers. A compromised or buggy agent is functionally equivalent to a local attacker with syscall access.
+**AIOS-specific context.** Two aspects make AIOS unique. First, the kernel is Rust — the borrow checker already eliminates ~65% of the CVE classes that plague C/C++ kernels (see [strategies.md](fuzzing/strategies.md) §3.1). Static analysis builds on this foundation, focusing on `unsafe` blocks and higher-level invariants. Second, AIOS runs autonomous AI agents that must be statically analyzed before installation, because agents are opaque programs from untrusted developers. A compromised or buggy agent is functionally equivalent to a local attacker with syscall access.
 
 ---
 
@@ -55,7 +55,7 @@ Every kernel subsystem has defect classes that static analysis can catch before 
 | Kernel numeric invariants | Compile-time value predicates (alignment, bounds) | Prusti / Flux | 13+ |
 | `unsafe` abstractions | Implementation-level formal proofs | Verus / RefinedRust | 24 |
 
-Cross-reference: [fuzzing-and-hardening.md](fuzzing-and-hardening.md) §2 maps the same subsystems to fuzzing targets; [security.md](security.md) §8.3 lists formal verification targets.
+Cross-reference: [fuzzing.md](fuzzing.md) §2 maps the same subsystems to fuzzing targets; [security.md](security.md) §8.3 lists formal verification targets.
 
 ---
 
@@ -79,7 +79,7 @@ For example output and developer UX, see [security.md](security.md) §8.1 and [a
 
 ### 4.1 Rust Compiler — Borrow Checker and Type System
 
-The Rust compiler is AIOS's most powerful static analyzer. Ownership and borrowing eliminate buffer overflow (~35% of kernel CVEs), use-after-free (~20%), and uninitialized memory (~10%) at compile time. For the full breakdown, see [fuzzing-hardening-strategies.md](fuzzing-hardening-strategies.md) §3.1.
+The Rust compiler is AIOS's most powerful static analyzer. Ownership and borrowing eliminate buffer overflow (~35% of kernel CVEs), use-after-free (~20%), and uninitialized memory (~10%) at compile time. For the full breakdown, see [strategies.md](fuzzing/strategies.md) §3.1.
 
 What remains are `unsafe` blocks, which AIOS requires for MMIO register access, inline assembly, raw pointer manipulation (page table walks), and system register access. Every `unsafe` block follows the documentation standard defined in `CLAUDE.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary target for all tools below.
 
@@ -320,7 +320,7 @@ Static analysis is adopted incrementally, aligned with the phase at which each s
 | 13+ | TLA+ models, Rudra full scans, Kani CI enforcement, Prusti, Flux | Capability state machine, IPC protocol, all `unsafe` blocks, numeric invariants |
 | 24 | Verus proofs, RefinedRust / Coq / Creusot proofs | Capability no-forge/no-escalate, provenance chain, W^X, unsafe abstraction soundness |
 
-Cross-reference: [fuzzing-adoption-roadmap.md](fuzzing-adoption-roadmap.md) §4 for the parallel fuzzing adoption roadmap.
+Cross-reference: [adoption-roadmap.md](fuzzing/adoption-roadmap.md) §4 for the parallel fuzzing adoption roadmap.
 
 ---
 
@@ -391,7 +391,7 @@ Static analysis and fuzzing form complementary layers of a defense-in-depth stra
 
 Static analysis catches bugs that fuzzing cannot find (type errors, license violations, unsafe anti-patterns). Fuzzing catches bugs that static analysis cannot find (input-dependent crashes, race conditions under specific timing). Formal verification proves properties that neither can guarantee. AIOS employs all three.
 
-Cross-reference: [fuzzing-and-hardening.md](fuzzing-and-hardening.md) (companion deep-dive), [security.md](security.md) §8 (parent overview).
+Cross-reference: [fuzzing.md](fuzzing.md) (companion deep-dive), [security.md](security.md) §8 (parent overview).
 
 ---
 
@@ -429,7 +429,7 @@ Concrete applications for AIOS:
 
 These can be generated offline (by any LLM, not AIRS) and committed as starting points for expert refinement. The LLM does the scaffolding; the expert verifies correctness. AutoVerus demonstrates this is not speculative — automated proof generation is practical today, addressing the main barrier to formal verification adoption.
 
-Cross-reference: [fuzzing-ai-native.md](fuzzing-ai-native.md) §7.3 for related AI-assisted fuzzing harness generation.
+Cross-reference: [ai-native.md](fuzzing/ai-native.md) §7.3 for related AI-assisted fuzzing harness generation.
 
 ---
 
@@ -489,10 +489,10 @@ AIOS can adapt their custom Clippy lint approach for AIOS-specific rules, comple
 
 | Topic | Document | Relevant Sections |
 |---|---|---|
-| Fuzzing deep dive | [fuzzing-and-hardening.md](fuzzing-and-hardening.md) | §2 attack surface, §4 fuzzing roadmap |
+| Fuzzing deep dive | [fuzzing.md](fuzzing.md) | §2 attack surface, §4 fuzzing roadmap |
 | Security model overview | [security.md](security.md) | §8 verification, §8.1 agent audit, §8.3 formal targets |
 | Agent framework | [agents.md](../applications/agents.md) | Agent audit developer UX |
 | AIRS architecture | [airs.md](../intelligence/airs.md) | AI-assisted analysis context |
 | Capability system | [security.md](security.md) | §§2-3 capability model |
-| Memory hardening | [fuzzing-and-hardening.md](fuzzing-and-hardening.md) | §3.3 W^X, guard pages, KASLR, PAC/BTI/MTE |
+| Memory hardening | [fuzzing.md](fuzzing.md) | §3.3 W^X, guard pages, KASLR, PAC/BTI/MTE |
 | IPC security | [ipc.md](../kernel/ipc.md) | §13 AI-native IPC, §14 future directions |

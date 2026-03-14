@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [compositor.md](../platform/compositor.md) — Drag/drop integration, [subsystem-framework.md](../platform/subsystem-framework.md) — DataChannel/Flow pipes, [agents.md](../applications/agents.md) — SDK FlowClient, [spaces.md](./spaces.md) — History storage, [experience.md](../experience/experience.md) — Flow Tray UI, [flow-data-model.md](./flow-data-model.md) — Data model, [flow-transforms.md](./flow-transforms.md) — Transform engine, [flow-history.md](./flow-history.md) — History & sync, [flow-integration.md](./flow-integration.md) — Compositor & subsystem integration, [flow-security.md](./flow-security.md) — Security, [flow-sdk.md](./flow-sdk.md) — SDK APIs, [flow-extensions.md](./flow-extensions.md) — Extensions
+**Related:** [compositor.md](../platform/compositor.md) — Drag/drop integration, [subsystem-framework.md](../platform/subsystem-framework.md) — DataChannel/Flow pipes, [agents.md](../applications/agents.md) — SDK FlowClient, [spaces.md](./spaces.md) — History storage, [experience.md](../experience/experience.md) — Flow Tray UI, [data-model.md](./flow/data-model.md) — Data model, [transforms.md](./flow/transforms.md) — Transform engine, [history.md](./flow/history.md) — History & sync, [integration.md](./flow/integration.md) — Compositor & subsystem integration, [security.md](./flow/security.md) — Security, [sdk.md](./flow/sdk.md) — SDK APIs, [extensions.md](./flow/extensions.md) — Extensions
 
 -----
 
@@ -76,13 +76,13 @@ This document is the hub for the Flow system. Detailed content has been split in
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §2, §13, §14 | Overview, architecture, implementation order, design principles |
-| [flow-data-model.md](./flow-data-model.md) | §3.0–§3.4 | External types, FlowEntry, transfer lifecycle, TypedContent |
-| [flow-transforms.md](./flow-transforms.md) | §4.1–§4.3 | Transform engine, pipeline, registry, conversion graph |
-| [flow-history.md](./flow-history.md) | §5.1–§5.3, §9.1–§9.2 | History storage, UI, retention, multi-device sync |
-| [flow-integration.md](./flow-integration.md) | §6.1–§6.2, §7.1–§7.2, §8.1–§8.2, §10.1 | Compositor drag/drop, subsystem channels, cross-agent, POSIX bridge |
-| [flow-security.md](./flow-security.md) | §11.1–§11.3 | Capability enforcement, content screening, rate limiting |
-| [flow-sdk.md](./flow-sdk.md) | §12.1–§12.3 | Rust API, Python API, TypeScript API, PWA web API |
-| [flow-extensions.md](./flow-extensions.md) | §15.1–§15.8, §16.1–§16.11 | Near-term extensions, future directions |
+| [data-model.md](./flow/data-model.md) | §3.0–§3.4 | External types, FlowEntry, transfer lifecycle, TypedContent |
+| [transforms.md](./flow/transforms.md) | §4.1–§4.3 | Transform engine, pipeline, registry, conversion graph |
+| [history.md](./flow/history.md) | §5.1–§5.3, §9.1–§9.2 | History storage, UI, retention, multi-device sync |
+| [integration.md](./flow/integration.md) | §6.1–§6.2, §7.1–§7.2, §8.1–§8.2, §10.1 | Compositor drag/drop, subsystem channels, cross-agent, POSIX bridge |
+| [security.md](./flow/security.md) | §11.1–§11.3 | Capability enforcement, content screening, rate limiting |
+| [sdk.md](./flow/sdk.md) | §12.1–§12.3 | Rust API, Python API, TypeScript API, PWA web API |
+| [extensions.md](./flow/extensions.md) | §15.1–§15.8, §16.1–§16.11 | Near-term extensions, future directions |
 
 -----
 

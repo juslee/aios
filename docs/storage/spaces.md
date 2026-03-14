@@ -82,14 +82,14 @@ This document is the hub for the Space Storage system. Detailed content has been
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §2, §11, §12 | Overview, architecture, design principles, implementation order |
-| [spaces-data-structures.md](./spaces-data-structures.md) | §3.0–§3.4 | Primitive types, Spaces, Objects, CompactObject, Relations |
-| [spaces-block-engine.md](./spaces-block-engine.md) | §4.1–§4.10 | On-disk layout, LSM-tree, WAL, write/read paths, compression, zones, device encryption, WAF |
-| [spaces-versioning.md](./spaces-versioning.md) | §5.1–§5.5 | Merkle DAG, snapshots, DAG operations, retention, branching |
-| [spaces-encryption.md](./spaces-encryption.md) | §6.1–§6.3 | Key management, nonces, encryption zones, key recovery |
-| [spaces-query-engine.md](./spaces-query-engine.md) | §7.1–§7.6 | Query dispatch, full-text, embeddings, relationships, learned indexes |
-| [spaces-sync.md](./spaces-sync.md) | §8.1–§8.4 | Merkle exchange, conflict resolution, sync security |
-| [spaces-posix.md](./spaces-posix.md) | §9.1–§9.6 | Path mapping, translation layer, write path, fd lifecycle, change notification |
-| [spaces-budget.md](./spaces-budget.md) | §10.1–§10.9 | Device profiles, budgets, quotas, pressure, AI-driven storage |
+| [data-structures.md](./spaces/data-structures.md) | §3.0–§3.4 | Primitive types, Spaces, Objects, CompactObject, Relations |
+| [block-engine.md](./spaces/block-engine.md) | §4.1–§4.10 | On-disk layout, LSM-tree, WAL, write/read paths, compression, zones, device encryption, WAF |
+| [versioning.md](./spaces/versioning.md) | §5.1–§5.5 | Merkle DAG, snapshots, DAG operations, retention, branching |
+| [encryption.md](./spaces/encryption.md) | §6.1–§6.3 | Key management, nonces, encryption zones, key recovery |
+| [query-engine.md](./spaces/query-engine.md) | §7.1–§7.6 | Query dispatch, full-text, embeddings, relationships, learned indexes |
+| [sync.md](./spaces/sync.md) | §8.1–§8.4 | Merkle exchange, conflict resolution, sync security |
+| [posix.md](./spaces/posix.md) | §9.1–§9.6 | Path mapping, translation layer, write path, fd lifecycle, change notification |
+| [budget.md](./spaces/budget.md) | §10.1–§10.9 | Device profiles, budgets, quotas, pressure, AI-driven storage |
 
 -----
 
@@ -145,51 +145,51 @@ Phase 24a: Secure Boot integration + hardware key binding → TPM/TrustZone-seal
 
 | Section | Sub-Document | Topic |
 |---|---|---|
-| §3.0 | [spaces-data-structures.md](./spaces-data-structures.md) | Primitive types (Hash, ObjectId, SpaceId, etc.) |
-| §3.1 | [spaces-data-structures.md](./spaces-data-structures.md) | Spaces (Space struct, SecurityZone, SpaceQuota) |
-| §3.2 | [spaces-data-structures.md](./spaces-data-structures.md) | System Spaces (system/, user/, shared/, web-storage/) |
-| §3.3 | [spaces-data-structures.md](./spaces-data-structures.md) | Objects, CompactObject and promotion (§3.3.1) |
-| §3.4 | [spaces-data-structures.md](./spaces-data-structures.md) | Relations (RelationKind, confidence, provenance) |
-| §4.1 | [spaces-block-engine.md](./spaces-block-engine.md) | On-disk layout, LSM-tree index |
-| §4.2 | [spaces-block-engine.md](./spaces-block-engine.md) | Write path (flash-aware) |
-| §4.3 | [spaces-block-engine.md](./spaces-block-engine.md) | Read path |
-| §4.4 | [spaces-block-engine.md](./spaces-block-engine.md) | Crash recovery |
-| §4.5 | [spaces-block-engine.md](./spaces-block-engine.md) | Garbage collection |
-| §4.6 | [spaces-block-engine.md](./spaces-block-engine.md) | Block-level compression (LZ4/zstd) |
-| §4.7 | [spaces-block-engine.md](./spaces-block-engine.md) | Tiered storage |
-| §4.8 | [spaces-block-engine.md](./spaces-block-engine.md) | Write amplification tracking |
-| §4.9 | [spaces-block-engine.md](./spaces-block-engine.md) | Sub-block deduplication (Rabin) |
-| §4.10 | [spaces-block-engine.md](./spaces-block-engine.md) | Device-level encryption |
-| §5.1 | [spaces-versioning.md](./spaces-versioning.md) | Merkle DAG |
-| §5.2 | [spaces-versioning.md](./spaces-versioning.md) | Space snapshots |
-| §5.3 | [spaces-versioning.md](./spaces-versioning.md) | DAG operations (rollback, diff, merge) |
-| §5.4 | [spaces-versioning.md](./spaces-versioning.md) | Retention policies |
-| §5.5 | [spaces-versioning.md](./spaces-versioning.md) | Branching (fork/merge) |
-| §6.1 | [spaces-encryption.md](./spaces-encryption.md) | Key management (master key, per-space keys) |
-| §6.2 | [spaces-encryption.md](./spaces-encryption.md) | Encryption zones |
-| §6.3 | [spaces-encryption.md](./spaces-encryption.md) | Key recovery (prevention-based) |
-| §7.1 | [spaces-query-engine.md](./spaces-query-engine.md) | Query dispatch |
-| §7.2 | [spaces-query-engine.md](./spaces-query-engine.md) | Full-text index |
-| §7.3 | [spaces-query-engine.md](./spaces-query-engine.md) | Embedding index (HNSW) |
-| §7.4 | [spaces-query-engine.md](./spaces-query-engine.md) | Relationship graph |
-| §7.5 | [spaces-query-engine.md](./spaces-query-engine.md) | Query composition and latency |
-| §7.6 | [spaces-query-engine.md](./spaces-query-engine.md) | Future: Learned indexes |
-| §8.1 | [spaces-sync.md](./spaces-sync.md) | Merkle exchange protocol |
-| §8.2 | [spaces-sync.md](./spaces-sync.md) | Conflict resolution |
-| §8.3 | [spaces-sync.md](./spaces-sync.md) | Sync security |
-| §8.4 | [spaces-sync.md](./spaces-sync.md) | Transport failure handling |
-| §9.1 | [spaces-posix.md](./spaces-posix.md) | Path → Space mapping |
-| §9.2 | [spaces-posix.md](./spaces-posix.md) | POSIX translation layer |
-| §9.3 | [spaces-posix.md](./spaces-posix.md) | Write path |
-| §9.4 | [spaces-posix.md](./spaces-posix.md) | File descriptor lifecycle |
-| §9.5 | [spaces-posix.md](./spaces-posix.md) | Error mapping (errno) |
-| §9.6 | [spaces-posix.md](./spaces-posix.md) | Change notification |
-| §10.1 | [spaces-budget.md](./spaces-budget.md) | Device profiles |
-| §10.2 | [spaces-budget.md](./spaces-budget.md) | Storage budget — Laptop/PC |
-| §10.3 | [spaces-budget.md](./spaces-budget.md) | Storage budget — future devices |
-| §10.4 | [spaces-budget.md](./spaces-budget.md) | Storage quotas by category |
-| §10.5 | [spaces-budget.md](./spaces-budget.md) | Storage pressure response |
-| §10.6 | [spaces-budget.md](./spaces-budget.md) | Model storage strategy |
-| §10.7 | [spaces-budget.md](./spaces-budget.md) | Version history budget |
-| §10.8 | [spaces-budget.md](./spaces-budget.md) | Storage monitoring |
-| §10.9 | [spaces-budget.md](./spaces-budget.md) | Future: AI-driven storage management |
+| §3.0 | [data-structures.md](./spaces/data-structures.md) | Primitive types (Hash, ObjectId, SpaceId, etc.) |
+| §3.1 | [data-structures.md](./spaces/data-structures.md) | Spaces (Space struct, SecurityZone, SpaceQuota) |
+| §3.2 | [data-structures.md](./spaces/data-structures.md) | System Spaces (system/, user/, shared/, web-storage/) |
+| §3.3 | [data-structures.md](./spaces/data-structures.md) | Objects, CompactObject and promotion (§3.3.1) |
+| §3.4 | [data-structures.md](./spaces/data-structures.md) | Relations (RelationKind, confidence, provenance) |
+| §4.1 | [block-engine.md](./spaces/block-engine.md) | On-disk layout, LSM-tree index |
+| §4.2 | [block-engine.md](./spaces/block-engine.md) | Write path (flash-aware) |
+| §4.3 | [block-engine.md](./spaces/block-engine.md) | Read path |
+| §4.4 | [block-engine.md](./spaces/block-engine.md) | Crash recovery |
+| §4.5 | [block-engine.md](./spaces/block-engine.md) | Garbage collection |
+| §4.6 | [block-engine.md](./spaces/block-engine.md) | Block-level compression (LZ4/zstd) |
+| §4.7 | [block-engine.md](./spaces/block-engine.md) | Tiered storage |
+| §4.8 | [block-engine.md](./spaces/block-engine.md) | Write amplification tracking |
+| §4.9 | [block-engine.md](./spaces/block-engine.md) | Sub-block deduplication (Rabin) |
+| §4.10 | [block-engine.md](./spaces/block-engine.md) | Device-level encryption |
+| §5.1 | [versioning.md](./spaces/versioning.md) | Merkle DAG |
+| §5.2 | [versioning.md](./spaces/versioning.md) | Space snapshots |
+| §5.3 | [versioning.md](./spaces/versioning.md) | DAG operations (rollback, diff, merge) |
+| §5.4 | [versioning.md](./spaces/versioning.md) | Retention policies |
+| §5.5 | [versioning.md](./spaces/versioning.md) | Branching (fork/merge) |
+| §6.1 | [encryption.md](./spaces/encryption.md) | Key management (master key, per-space keys) |
+| §6.2 | [encryption.md](./spaces/encryption.md) | Encryption zones |
+| §6.3 | [encryption.md](./spaces/encryption.md) | Key recovery (prevention-based) |
+| §7.1 | [query-engine.md](./spaces/query-engine.md) | Query dispatch |
+| §7.2 | [query-engine.md](./spaces/query-engine.md) | Full-text index |
+| §7.3 | [query-engine.md](./spaces/query-engine.md) | Embedding index (HNSW) |
+| §7.4 | [query-engine.md](./spaces/query-engine.md) | Relationship graph |
+| §7.5 | [query-engine.md](./spaces/query-engine.md) | Query composition and latency |
+| §7.6 | [query-engine.md](./spaces/query-engine.md) | Future: Learned indexes |
+| §8.1 | [sync.md](./spaces/sync.md) | Merkle exchange protocol |
+| §8.2 | [sync.md](./spaces/sync.md) | Conflict resolution |
+| §8.3 | [sync.md](./spaces/sync.md) | Sync security |
+| §8.4 | [sync.md](./spaces/sync.md) | Transport failure handling |
+| §9.1 | [posix.md](./spaces/posix.md) | Path → Space mapping |
+| §9.2 | [posix.md](./spaces/posix.md) | POSIX translation layer |
+| §9.3 | [posix.md](./spaces/posix.md) | Write path |
+| §9.4 | [posix.md](./spaces/posix.md) | File descriptor lifecycle |
+| §9.5 | [posix.md](./spaces/posix.md) | Error mapping (errno) |
+| §9.6 | [posix.md](./spaces/posix.md) | Change notification |
+| §10.1 | [budget.md](./spaces/budget.md) | Device profiles |
+| §10.2 | [budget.md](./spaces/budget.md) | Storage budget — Laptop/PC |
+| §10.3 | [budget.md](./spaces/budget.md) | Storage budget — future devices |
+| §10.4 | [budget.md](./spaces/budget.md) | Storage quotas by category |
+| §10.5 | [budget.md](./spaces/budget.md) | Storage pressure response |
+| §10.6 | [budget.md](./spaces/budget.md) | Model storage strategy |
+| §10.7 | [budget.md](./spaces/budget.md) | Version history budget |
+| §10.8 | [budget.md](./spaces/budget.md) | Storage monitoring |
+| §10.9 | [budget.md](./spaces/budget.md) | Future: AI-driven storage management |
