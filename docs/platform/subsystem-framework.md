@@ -3,7 +3,7 @@
 ## Universal Hardware Abstraction Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [networking.md](./networking.md), [audio.md](./audio.md), [gpu.md](./gpu.md) — GPU & Display architecture, [power-management.md](./power-management.md), [posix.md](./posix.md)
+**Related:** [networking.md](./networking.md), [audio.md](./audio.md), [gpu.md](./gpu.md), [power-management.md](./power-management.md), [posix.md](./posix.md)
 
 -----
 

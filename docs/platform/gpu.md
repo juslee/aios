@@ -9,7 +9,7 @@
 
 Traditional OS graphics stacks are monolithic: a kernel-space GPU driver exposes an ioctl interface, and every application shares a single trust domain for GPU access. A crashing GPU driver takes down the entire system. Buffer sharing relies on file-descriptor passing with no fine-grained access control.
 
-AIOS takes a different approach. The GPU driver runs as a **privileged userspace service** with capability-gated access to GPU hardware. Every GPU buffer is a **capability-protected shared memory region** — agents can only access buffers they hold capabilities for. The compositor composes surfaces by binding capability handles to display planes, achieving a **zero-copy pipeline** from agent rendering to display scanout. GPU DMA is isolated per-agent via the ARM SMMU, with each agent's GPU context receiving its own SMMU stream ID.
+AIOS takes a different approach. The GPU driver runs as a **privileged userspace service** with capability-gated access to GPU hardware. Every GPU buffer is a **capability-protected shared memory region** — agents can only access buffers they hold capabilities for. The compositor composes surfaces by binding capability handles to display planes, achieving a **zero-copy pipeline** from agent rendering to display scanout. GPU DMA is isolated per-agent via the ARM SMMU, with each agent's GPU context receiving its own SMMU context descriptor under the GPU device's stream ID.
 
 This design is inspired by Fuchsia's Magma (userspace GPU drivers with VMO-based buffer sharing), seL4's capability-gated device frames, and Linux DRM/KMS's atomic modesetting — but adapted for AIOS's capability-based security model and AI-first architecture.
 

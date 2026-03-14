@@ -192,7 +192,10 @@ pub struct ParsedEdid {
 pub fn parse_edid(raw: &[u8; 128]) -> Result<ParsedEdid, EdidError> {
     // Verify header + checksum, extract manufacturer (5-bit ASCII),
     // parse detailed timing descriptors, standard timings, dimensions
-    todo!()
+    // Verify header + checksum, extract manufacturer (5-bit ASCII),
+    // parse detailed timing descriptors, standard timings, dimensions.
+    // Actual implementation uses the edid-rs crate (see below).
+    // ...
 }
 ```
 
@@ -294,7 +297,7 @@ bitflags::bitflags! {
 }
 ```
 
-Agents send `AllocateBuffer` IPC requests to the GPU Service, which allocates from the DMA page pool ([memory.md §2.4](../../kernel/memory/physical.md)), mints a capability token, and returns the handle. Stride alignment matches the GPU's preference: 64B (VirtIO-GPU), 128B (VC4/V3D), 256B (Apple AGX).
+Agents send `AllocateBuffer` IPC requests to the GPU Service, which allocates from the DMA page pool ([physical.md §2.4](../../kernel/memory/physical.md)), mints a capability token, and returns the handle. Stride alignment matches the GPU's preference: 64B (VirtIO-GPU), 128B (VC4/V3D), 256B (Apple AGX).
 
 -----
 
@@ -515,7 +518,7 @@ sequenceDiagram
 | §6.2 | Atomic modesetting | [compositor rendering.md §5.4](../compositor/rendering.md) -- Frame scheduling |
 | §6.4 | Multi-monitor layout | [compositor rendering.md §6](../compositor/rendering.md) -- Layout engine |
 | §6.5 | HiDPI scaling | [compositor protocol.md §4](../compositor/protocol.md) -- Semantic hints |
-| §7.1 | Buffer allocation | [memory.md §2.4](../../kernel/memory/physical.md) -- DMA page pool |
+| §7.1 | Buffer allocation | [physical.md §2.4](../../kernel/memory/physical.md) -- DMA page pool |
 | §7.1 | Capability buffers | [security.md](./security.md) -- GPU capability model |
 | §7.4 | Frame pacing | [compositor rendering.md §5.4](../compositor/rendering.md) -- VSync scheduling |
 | §7.4 | Scheduler boost | [scheduler.md §3.2](../../kernel/scheduler.md) -- RT priority |

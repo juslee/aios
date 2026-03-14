@@ -13,7 +13,7 @@ Every GPU operation passes through the AIOS capability system ([security/model/c
 
 ### 13.1 GPU Capability Hierarchy
 
-Three capability levels control GPU access, ordered from least to most privileged:
+Four capability levels control GPU access, ordered from least to most privileged:
 
 ```rust
 /// GPU-specific capability variants.
@@ -112,7 +112,7 @@ sequenceDiagram
 
 **Key lifecycle invariants:**
 
-- **Grant at spawn.** GPU capability is minted during agent installation based on the manifest's declared needs and the trust level ceiling. The user approves GPU access as part of the standard capability approval flow ([security/model/capabilities.md §3.4](../../security/model/capabilities.md)).
+- **Grant at spawn.** GPU capability is minted when the agent is spawned, based on the manifest's declared needs and the trust level ceiling. The user approves GPU access as part of the standard capability approval flow ([security/model/capabilities.md §3.4](../../security/model/capabilities.md)).
 - **Attenuate on delegation.** When an agent delegates GPU access to a sub-agent, the capability is attenuated: fewer buffers, less memory, no compute. Attenuation is monotonic — the child can never exceed the parent.
 - **Revoke on termination.** Agent termination triggers cascade revocation of all GPU capabilities. The GPU Service receives a revocation notification and destroys all associated GPU contexts, buffers, and command streams. No GPU resources leak across agent lifetimes.
 
