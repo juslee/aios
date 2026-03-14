@@ -87,6 +87,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Networking examples | `docs/platform/networking/examples.md` | §9.1–§9.5 Web browsing, agent communication, POSIX compat, credential routing, data model |
 | Networking future | `docs/platform/networking/future.md` | §11.1–§11.8 AI-driven networking, learned congestion, predictive prefetch, anomaly detection |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
+| Input subsystem (hub) | `docs/platform/input.md` | §1 Core Insight, §2 Architecture, §7 Impl Order, §8 Tech Choices, §9 Design Principles, Document Map |
+| Input devices & HID | `docs/platform/input/devices.md` | §3.1–§3.7 Device taxonomy, USB HID protocol, VirtIO-input, Bluetooth HID, accessibility devices, hotplug |
+| Input event model & dispatch | `docs/platform/input/events.md` | §4.1–§4.6 Event hierarchy, pipeline stages, queuing, focus routing, hotkeys, multi-seat |
+| Input gesture recognition | `docs/platform/input/gestures.md` | §5.1–§5.5 Keyboard processing, mouse/trackpad, touchscreen, gamepad, three-layer gesture architecture |
+| Input system integration | `docs/platform/input/integration.md` | §6.1–§6.6 Capability system, POSIX bridge, power management, audit, compositor, UI toolkit |
+| Input AI-native intelligence | `docs/platform/input/ai.md` | §10.1–§10.7 Predictive input, adaptive params, gesture learning, anomaly detection, shortcuts, accessibility ML |
+| Input future directions | `docs/platform/input/future.md` | §11.1–§11.6 Spatial input, voice, neural/BCI, haptics, cross-device, formal verification |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
