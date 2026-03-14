@@ -730,7 +730,7 @@ Agent A wants to share 1 MB with Agent B:
 
 Both agents access the same physical memory. The kernel enforces that the receiver's mapping flags are at most as permissive as what the sender granted. If the sender shares as read-only, the receiver cannot write.
 
-**Stability during pool boundary resizing:** Shared memory regions are allocated from the user pool. When AIRS resource orchestration resizes the model pool / user pool boundary (see [airs.md §10](../intelligence/airs.md), [security.md §9](../security/security.md)), shared memory physical frames are **never reclaimed or relocated**:
+**Stability during pool boundary resizing:** Shared memory regions are allocated from the user pool. When AIRS resource orchestration resizes the model pool / user pool boundary (see [airs.md §10](../intelligence/airs.md), [model.md §9](../security/model.md)), shared memory physical frames are **never reclaimed or relocated**:
 
 ```rust
 impl DynamicModelPool {

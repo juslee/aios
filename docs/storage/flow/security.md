@@ -1,7 +1,7 @@
 # AIOS Flow Security
 
 Part of: [flow.md](../flow.md) — Flow System
-**Related:** [data-model.md](./data-model.md) — Capability types, [integration.md](./integration.md) — Cross-agent flow, [security.md](../security/security.md) — System security model
+**Related:** [data-model.md](./data-model.md) — Capability types, [integration.md](./integration.md) — Cross-agent flow, [model.md](../security/model.md) — System security model
 
 -----
 

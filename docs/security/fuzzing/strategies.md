@@ -40,7 +40,7 @@ Every syscall validates all parameters at the kernel entry point before any kern
 4. **Length arguments**: reject `0` and values exceeding per-syscall maximums; reject `length > buffer_mapping_size`
 5. **Enum/flag arguments**: reject values outside the valid set; no "reserved for future use" bits accepted
 
-No syscall implementation trusts any user-supplied value without validation. This is enforced by code review (see [security.md](security.md) §8.1 agent audit tool) and by syscall fuzzing ([adoption-roadmap.md](adoption-roadmap.md) §4.2).
+No syscall implementation trusts any user-supplied value without validation. This is enforced by code review (see [security.md](model.md) §8.1 agent audit tool) and by syscall fuzzing ([adoption-roadmap.md](adoption-roadmap.md) §4.2).
 
 ### 3.3 Memory Hardening
 
@@ -69,7 +69,7 @@ IPC is the primary inter-process communication mechanism and a high-value fuzz t
 - **Capability transfer**: when a message carries a capability, the kernel validates that the sender actually holds the capability and that the transfer is permitted by the capability's attenuation rules.
 - **No raw pointers in messages**: IPC payloads are copied between address spaces. Pointers in message bodies have no meaning in the receiver's address space and are never interpreted as addresses.
 
-Cross-reference: [security.md](security.md) §§2–3 (IPC security architecture and capability system).
+Cross-reference: [security.md](model.md) §§2–3 (IPC security architecture and capability system).
 
 ### 3.5 Device Driver Hardening
 
@@ -89,7 +89,7 @@ Agent manifests are parsed during installation and define the agent's requested 
 - **Circular delegation detection**: the capability delegation graph is checked for cycles before approval. An agent cannot grant itself capabilities through a circular chain.
 - **Signature verification**: manifests must be signed by a certificate that chains to the AIOS Root CA. Invalid, expired, or revoked signatures are rejected before any capability is granted.
 
-Cross-reference: [security.md](security.md) §8.1 (agent audit tool).
+Cross-reference: [security.md](model.md) §8.1 (agent audit tool).
 
 ### 3.7 Concurrency Hardening
 

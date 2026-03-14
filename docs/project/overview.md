@@ -680,7 +680,8 @@ docs/
 │   │   ├── integration.md  Integration and build plan
 │   │   ├── operations.md   Operations, security, resource isolation
 │   │   └── ai.md         AI-driven runtime optimization strategies
-│   │
+│   └── ccc-integration-analysis.md          Claude C Compiler integration analysis
+│
 ├── kernel/
 │   ├── boot.md                              Boot sequence (QEMU direct and UEFI)
 │   ├── boot/                    Boot lifecycle stages and secondary core init
@@ -688,7 +689,7 @@ docs/
 │   ├── memory.md                            Memory management hub
 │   │   ├── physical.md               Buddy allocator, frame allocator, slab, heap
 │   │   ├── virtual.md                Page tables, KASLR, per-agent address spaces, TLB
-│   │   ├── memory-ai.md                     AI model memory, PagedAttention, KV caches
+│   │   ├── ai.md                        AI model memory, PagedAttention, KV caches
 │   │   ├── reclamation.md            Memory pressure, OOM, swap/zram, scaling
 │   │   └── hardening.md              W^X, PAC, BTI, MTE, performance hardening
 │   ├── ipc.md                               IPC channels, shared memory, notifications, select
@@ -742,20 +743,17 @@ docs/
 │   └── ui-toolkit.md                        Portable UI toolkit (AIOS/Linux/macOS/Web)
 │
 ├── security/
-│   ├── security.md                          Security model hub (threat model, 8-layer overview)
-│   │   ├── layers.md               Eight defense layers deep dive
-│   │   ├── capabilities.md         Capability tokens, attenuation, delegation, profiles
-│   │   ├── hardening.md            Cryptography, ARM hardware security, testing
-│   │   └── operations.md           Events, audit, zero trust, AIRS integration
-│   ├── fuzzing.md             Fuzzing and input hardening hub
-│   │   ├── strategies.md  Language, syscall, memory, IPC, driver hardening
-│   │   ├── adoption-roadmap.md      Phased adoption (host-side through formal verification)
-│   │   ├── tooling.md               Tiered tooling and fuzz target catalog
-│   │   └── ai-native.md             AI-driven fuzzing (dev-time, kernel, AIRS)
+│   ├── model.md                             Security model hub (threat model, 8-layer overview)
+│   │   ├── layers.md                    Eight defense layers deep dive
+│   │   ├── capabilities.md              Capability tokens, attenuation, delegation, profiles
+│   │   ├── hardening.md                 Cryptography, ARM hardware security, testing
+│   │   └── operations.md               Events, audit, zero trust, AIRS integration
+│   ├── fuzzing.md                           Fuzzing and input hardening hub
+│   │   ├── strategies.md               Language, syscall, memory, IPC, driver hardening
+│   │   ├── adoption-roadmap.md          Phased adoption (host-side through formal verification)
+│   │   ├── tooling.md                   Tiered tooling and fuzz target catalog
+│   │   └── ai-native.md                AI-driven fuzzing (dev-time, kernel, AIRS)
 │   └── static-analysis.md                   Static analysis and formal verification
-│
-├── research/
-│   └── ccc-integration-analysis.md          Claude C Compiler integration analysis
 │
 └── phases/                                  Implementation milestones per phase
     ├── 00-foundation-and-tooling.md         Phase 0: project scaffold, CI, build
@@ -845,7 +843,7 @@ Deep-dive technical specifications organized by domain. Hub documents (bold) con
 
 | Document | Scope |
 |---|---|
-| **[security.md](../security/security.md)** | Security model — hub with 4 sub-docs (layers, capabilities, hardening, operations) |
+| **[model.md](../security/model.md)** | Security model — hub with 4 sub-docs (model/layers, model/capabilities, model/hardening, model/operations) |
 | **[fuzzing.md](../security/fuzzing.md)** | Fuzzing — hub with 4 sub-docs (strategies, adoption roadmap, tooling, AI-native) |
 | [static-analysis.md](../security/static-analysis.md) | Static analysis and formal verification across all phases |
 
@@ -997,7 +995,7 @@ As AI agents become first-class OS citizens, new threat models emerge:
 - **OWASP Agentic AI Threats (2025)** — Identifies 15 threat categories specific to
   autonomous agents, including tool misuse, privilege escalation via prompt injection,
   inter-agent manipulation, and memory poisoning. AIOS's 8-layer security model
-  (`security.md §1`) addresses many of these at the kernel level, but the taxonomy
+  (`model.md §1`) addresses many of these at the kernel level, but the taxonomy
   highlights gaps in runtime behavioral monitoring. *(AIRS-dependent for behavioral
   analysis; kernel-internal for capability enforcement)*
 

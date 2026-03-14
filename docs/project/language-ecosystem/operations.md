@@ -234,7 +234,7 @@ in public repositories. AIOS accounts for this with per-runtime default trust le
 | Python | Semi-trusted | RustPython sandbox + capability enforcement; higher ecosystem vulnerability rate |
 
 Trust levels affect default capability restrictions — see
-[capabilities.md](../security/capabilities.md) §3.7 for how
+[capabilities.md](../security/model/capabilities.md) §3.7 for how
 composable capability profiles (Layer 10) encode per-runtime security policies.
 
 ### Interpreter-in-WASM Hardening

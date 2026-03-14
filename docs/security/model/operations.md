@@ -1,6 +1,6 @@
 # AIOS Security Operations
 
-Part of: [security.md](./security.md) — AIOS Security Model
+Part of: [model.md](../model.md) — AIOS Security Model
 **Related:** [layers.md](./layers.md) — Eight defense layers, [capabilities.md](./capabilities.md) — Capability system internals, [hardening.md](./hardening.md) — Crypto and ARM hardware
 
 -----

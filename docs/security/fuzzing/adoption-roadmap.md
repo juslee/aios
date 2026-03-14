@@ -134,4 +134,4 @@ Fuzzing finds bugs but cannot prove their absence. Formal verification provides 
 
 Fuzzing and formal verification are complementary: fuzzing catches implementation bugs in code that is too complex to verify formally, while verification proves that the design of critical subsystems is correct regardless of input.
 
-Cross-reference: [security.md](security.md) §8.3 (formal verification targets), [static-analysis.md](static-analysis.md) §4.5–4.7 (Kani, TLA+, Coq).
+Cross-reference: [security.md](model.md) §8.3 (formal verification targets), [static-analysis.md](static-analysis.md) §4.5–4.7 (Kani, TLA+, Coq).

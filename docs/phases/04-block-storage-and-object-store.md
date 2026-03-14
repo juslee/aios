@@ -39,9 +39,9 @@ By the end of this phase, the kernel has a working block device driver (VirtIO-b
 | Implementation order (sub-phases) | [spaces.md](../storage/spaces.md) | §12 Implementation Order |
 | Subsystem framework (5-layer architecture) | [subsystem-framework.md](../platform/subsystem-framework.md) | §2 What Every Subsystem Shares; §3 The Five-Layer Subsystem Architecture |
 | IPC channels and service model | [ipc.md](../kernel/ipc.md) | §5.4 Multi-Client Service Model |
-| Capability system for access control | [security.md](../security/security.md) | §2.2 Capability Check; §3 Capability System Internals |
+| Capability system for access control | [model.md](../security/model.md) | §2.2 Capability Check; §3 Capability System Internals |
 | Memory management (page pools, user pool) | [physical.md](../kernel/memory/physical.md) | §2.2 Buddy Allocator; §2.4 Page Pools |
-| Security model and security zones | [security.md](../security/security.md) | §2 The Eight Security Layers (Deep Dive) |
+| Security model and security zones | [model.md](../security/model.md) | §2 The Eight Security Layers (Deep Dive) |
 | System overview and architecture diagram | [architecture.md](../project/architecture.md) | §2.2 Space Storage System |
 
 -----

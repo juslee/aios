@@ -93,12 +93,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
 | Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 13+) |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
-| Security model (hub) | `docs/security/security.md` | §1 Threat model, §12 Impl order, Document Map |
-| Security defense layers | `docs/security/layers.md` | §2 Eight security layers deep dive |
-| Capability system internals | `docs/security/capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
-| Composable capability profiles | `docs/security/capabilities.md` | §3.7 (Phase 28) |
-| Crypto, ARM HW security, testing | `docs/security/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
-| Security operations & zero trust | `docs/security/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
+| Security model (hub) | `docs/security/model.md` | §1 Threat model, §12 Impl order, Document Map |
+| Security defense layers | `docs/security/model/layers.md` | §2 Eight security layers deep dive |
+| Capability system internals | `docs/security/model/capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
+| Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 28) |
+| Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
+| Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
 | AIRS capability intelligence | `docs/intelligence/airs.md` | §5.9 (Phase 29) |
 | Fuzzing & input hardening (hub) | `docs/security/fuzzing.md` | §1 Overview, §2 Attack surface, Document Map |
 | Fuzzing hardening strategies | `docs/security/fuzzing/strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |

@@ -20,7 +20,7 @@
 - [subsystem-framework.md](../platform/subsystem-framework.md) — Universal hardware abstraction architecture
 - [airs.md](../intelligence/airs.md) — AI Runtime Service deep dive
 - [agents.md](../applications/agents.md) — Agent framework and SDK specification
-- [security.md](../security/security.md) — Eight-layer security model deep dive
+- [model.md](../security/model.md) — Eight-layer security model deep dive
 - [fuzzing.md](../security/fuzzing.md) — Fuzzing strategy and input hardening
 - [static-analysis.md](../security/static-analysis.md) — Static analysis and formal verification roadmap
 - [flow.md](../storage/flow.md) — Flow system deep dive
@@ -1076,7 +1076,7 @@ Rollback window -- changes reversible for 72 hours.*`"]
     L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7 --> L8
 ```
 
-For deep-dive specifications, see the security sub-documents: [defense layers](../security/layers.md), [capability internals](../security/capabilities.md), [hardening](../security/hardening.md), [operations](../security/operations.md), [fuzzing & input hardening](../security/fuzzing.md), and [static analysis & formal verification](../security/static-analysis.md).
+For deep-dive specifications, see the security sub-documents: [defense layers](../security/model/layers.md), [capability internals](../security/model/capabilities.md), [hardening](../security/model/hardening.md), [operations](../security/model/operations.md), [fuzzing & input hardening](../security/fuzzing.md), and [static analysis & formal verification](../security/static-analysis.md).
 
 ### 3.2 Capability System
 
@@ -2074,13 +2074,13 @@ Systems like CheckFreq (FAST 2021) optimize model checkpoint storage with increm
 
 ### 10.4 Security Model Evolution
 
-AIOS's 8-layer security model (`docs/security/layers.md` §2) can incorporate several innovations from capability research, hardware security, and adversarial AI defense.
+AIOS's 8-layer security model (`docs/security/model/layers.md` §2) can incorporate several innovations from capability research, hardware security, and adversarial AI defense.
 
 #### Capability System Innovations
 
 - **Capsicum (FreeBSD)** demonstrates that capability systems work best when they *coexist* with POSIX abstractions rather than replacing them. Capsicum's `cap_enter()` switches a process into capability mode where all global namespaces (filesystem, PIDs, network) become inaccessible — only pre-opened file descriptor capabilities work. AIOS's POSIX compatibility layer (`docs/storage/spaces/posix.md`) should adopt this fd-as-capability model: each POSIX fd maps to an AIOS capability token, and `cap_enter()` equivalent restricts the process to its existing capability set.
 
-- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/capabilities.md` §3.7, Phase 28) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
+- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/model/capabilities.md` §3.7, Phase 28) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
 
 - **CHERI** (Capability Hardware Enhanced RISC Instructions) extends pointers to 128-bit bounded capabilities with hardware-enforced bounds, permissions, and sealing. While aarch64 doesn't have CHERI today, Arm's Morello prototype demonstrates the direction. AIOS's software capability tokens should be designed so they can be backed by hardware capabilities when CHERI-ARM ships — the `CapabilityToken` structure already stores bounds (rights mask) and permissions that map to CHERI fields. MTE (Memory Tagging Extension) on current aarch64 provides a subset of CHERI's spatial safety.
 
@@ -2224,5 +2224,5 @@ This strategy starts with tools that require minimal annotation (Kani, Miri), pr
 | §10.1 Microkernel Evolution | [ipc.md](../kernel/ipc.md) §13-14, [scheduler.md](../kernel/scheduler.md) §16, [subsystem-framework.md](../platform/subsystem-framework.md) |
 | §10.2 AI-Native Primitives | [memory-ai.md](../kernel/memory/ai.md) §6, [airs.md](../intelligence/airs.md) §4-5, [agents.md](../applications/agents.md) |
 | §10.3 Storage & Data | [block-engine.md](../storage/spaces/block-engine.md) §4, [query-engine.md](../storage/spaces/query-engine.md) §7, [sync.md](../storage/spaces/sync.md) §8 |
-| §10.4 Security Evolution | [capabilities.md](../security/capabilities.md) §3, [operations.md](../security/operations.md) §13, [ai-native.md](../security/fuzzing/ai-native.md) §7 |
+| §10.4 Security Evolution | [capabilities.md](../security/model/capabilities.md) §3, [operations.md](../security/model/operations.md) §13, [ai-native.md](../security/fuzzing/ai-native.md) §7 |
 | §10.5 Formal Verification | [static-analysis.md](../security/static-analysis.md), [developer-guide.md](./developer-guide.md) |

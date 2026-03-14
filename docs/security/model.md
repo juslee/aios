@@ -14,10 +14,10 @@ This document is the hub for the AIOS security architecture. The full model has 
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §12 | Threat model, attack scenarios, implementation order, cross-reference index |
-| [layers.md](./layers.md) | §2 | Eight defense layers deep dive |
-| [capabilities.md](./capabilities.md) | §3 | Token lifecycle, kernel table, attenuation, delegation, temporal caps, composable profiles |
-| [hardening.md](./hardening.md) | §4, §5, §8 | Cryptographic foundations, ARM hardware security, security testing |
-| [operations.md](./operations.md) | §6, §7, §9, §10, §11, §13 | Event response, audit, AIRS resource security, zero trust, comparisons, future directions |
+| [layers.md](./model/layers.md) | §2 | Eight defense layers deep dive |
+| [capabilities.md](./model/capabilities.md) | §3 | Token lifecycle, kernel table, attenuation, delegation, temporal caps, composable profiles |
+| [hardening.md](./model/hardening.md) | §4, §5, §8 | Cryptographic foundations, ARM hardware security, security testing |
+| [operations.md](./model/operations.md) | §6, §7, §9, §10, §11, §13 | Event response, audit, AIRS resource security, zero trust, comparisons, future directions |
 
 -----
 
@@ -330,33 +330,33 @@ The following table consolidates all documented attack scenarios from this docum
 | §1.3 | This file | What We Don't Defend Against |
 | §1.4 | This file | Attack Scenarios |
 | §1.5 | This file | Attack Scenario Summary |
-| §2 | [layers.md](./layers.md) | The Eight Security Layers (Deep Dive) |
-| §2.1 | [layers.md](./layers.md) | Layer 1: Intent Verification |
-| §2.2 | [layers.md](./layers.md) | Layer 2: Capability Check |
-| §2.3 | [layers.md](./layers.md) | Layer 3: Behavioral Boundary |
-| §2.4 | [layers.md](./layers.md) | Layer 4: Security Zone |
-| §2.5 | [layers.md](./layers.md) | Layer 5: Adversarial Defense |
-| §2.6 | [layers.md](./layers.md) | Layer 6: Cryptographic Enforcement |
-| §2.7 | [layers.md](./layers.md) | Layer 7: Provenance Recording |
-| §2.8 | [layers.md](./layers.md) | Layer 8: Blast Radius Containment |
-| §3 | [capabilities.md](./capabilities.md) | Capability System Internals |
-| §3.1 | [capabilities.md](./capabilities.md) | Capability Token Lifecycle |
-| §3.2 | [capabilities.md](./capabilities.md) | Kernel Capability Table |
-| §3.3 | [capabilities.md](./capabilities.md) | Attenuation |
-| §3.4 | [capabilities.md](./capabilities.md) | Capability Request and Approval Flow |
-| §3.5 | [capabilities.md](./capabilities.md) | Capability Delegation |
-| §3.6 | [capabilities.md](./capabilities.md) | Temporal Capabilities |
-| §3.7 | [capabilities.md](./capabilities.md) | Composable Capability Profiles |
-| §4 | [hardening.md](./hardening.md) | Cryptographic Foundations |
-| §5 | [hardening.md](./hardening.md) | ARM Hardware Security Integration |
-| §6 | [operations.md](./operations.md) | Security Event Response |
-| §7 | [operations.md](./operations.md) | Security Audit and Transparency |
-| §8 | [hardening.md](./hardening.md) | Security Testing |
-| §9 | [operations.md](./operations.md) | AIRS Resource Orchestration Security |
-| §10 | [operations.md](./operations.md) | Zero Trust as Foundational Kernel Principle |
-| §11 | [operations.md](./operations.md) | Comparison to Existing Security Models |
+| §2 | [layers.md](./model/layers.md) | The Eight Security Layers (Deep Dive) |
+| §2.1 | [layers.md](./model/layers.md) | Layer 1: Intent Verification |
+| §2.2 | [layers.md](./model/layers.md) | Layer 2: Capability Check |
+| §2.3 | [layers.md](./model/layers.md) | Layer 3: Behavioral Boundary |
+| §2.4 | [layers.md](./model/layers.md) | Layer 4: Security Zone |
+| §2.5 | [layers.md](./model/layers.md) | Layer 5: Adversarial Defense |
+| §2.6 | [layers.md](./model/layers.md) | Layer 6: Cryptographic Enforcement |
+| §2.7 | [layers.md](./model/layers.md) | Layer 7: Provenance Recording |
+| §2.8 | [layers.md](./model/layers.md) | Layer 8: Blast Radius Containment |
+| §3 | [capabilities.md](./model/capabilities.md) | Capability System Internals |
+| §3.1 | [capabilities.md](./model/capabilities.md) | Capability Token Lifecycle |
+| §3.2 | [capabilities.md](./model/capabilities.md) | Kernel Capability Table |
+| §3.3 | [capabilities.md](./model/capabilities.md) | Attenuation |
+| §3.4 | [capabilities.md](./model/capabilities.md) | Capability Request and Approval Flow |
+| §3.5 | [capabilities.md](./model/capabilities.md) | Capability Delegation |
+| §3.6 | [capabilities.md](./model/capabilities.md) | Temporal Capabilities |
+| §3.7 | [capabilities.md](./model/capabilities.md) | Composable Capability Profiles |
+| §4 | [hardening.md](./model/hardening.md) | Cryptographic Foundations |
+| §5 | [hardening.md](./model/hardening.md) | ARM Hardware Security Integration |
+| §6 | [operations.md](./model/operations.md) | Security Event Response |
+| §7 | [operations.md](./model/operations.md) | Security Audit and Transparency |
+| §8 | [hardening.md](./model/hardening.md) | Security Testing |
+| §9 | [operations.md](./model/operations.md) | AIRS Resource Orchestration Security |
+| §10 | [operations.md](./model/operations.md) | Zero Trust as Foundational Kernel Principle |
+| §11 | [operations.md](./model/operations.md) | Comparison to Existing Security Models |
 | §12 | This file | Implementation Order |
-| §13 | [operations.md](./operations.md) | Future Directions |
+| §13 | [operations.md](./model/operations.md) | Future Directions |
 
 -----
 

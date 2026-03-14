@@ -2129,7 +2129,7 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **Physical memory management** | [memory.md](../kernel/memory.md) | SS2.2 (buddy allocator, pools) |
 | **IPC protocol** | [ipc.md](../kernel/ipc.md) | SS3-4 (channel API, synchronous call/reply) |
 | **Scheduler classes** | [scheduler.md](../kernel/scheduler.md) | SS3.1 (RT/Interactive/Normal/Idle) |
-| **Security model** | [security.md](../security/security.md) | All (eight-layer model) |
+| **Security model** | [model.md](../security/model.md) | All (eight-layer model) |
 | **Capability system** | [ipc.md](../kernel/ipc.md) | SS8 (per-process tables, enforcement) |
 | **Observability** | [observability.md](../kernel/observability.md) | SS2-4 (logging, metrics, tracing) |
 | **Boot sequence** | [boot.md](../kernel/boot.md) | SS3.3 (step-by-step boot) |

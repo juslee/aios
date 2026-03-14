@@ -205,7 +205,7 @@ with the same capabilities can do — nothing more, nothing less. The runtime ca
 capabilities the manifest doesn't declare.
 
 Each runtime gets a pre-audited capability profile at Layer 10 of the composable capability
-system (see [capabilities.md](../security/capabilities.md) §3.7):
+system (see [capabilities.md](../security/model/capabilities.md) §3.7):
 `runtime.native.v1`, `runtime.python.v1`, `runtime.typescript.v1`, `runtime.wasm.v1`.
 These profiles grant the minimum capabilities each runtime needs to function (interpreter
 memory, temp space, IPC channels) without granting anything beyond what the agent manifest

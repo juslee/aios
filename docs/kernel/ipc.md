@@ -261,7 +261,7 @@ pub enum Syscall {
     /// resource_limits are mandatory — derived from the agent's trust level
     /// and blast radius policy. The kernel rejects ProcessCreate if limits
     /// are missing or exceed the parent's own limits (zero trust: no
-    /// implicit resource authority — see §12.2 Gap 5, security.md §10.3 Gap 4).
+    /// implicit resource authority — see §12.2 Gap 5, model.md §10.3 Gap 4).
     ProcessCreate {
         image: ContentHash,            // content-addressed executable
         capabilities: *const CapabilityTokenId,
@@ -535,7 +535,7 @@ sequenceDiagram
 - No context switch overhead (direct thread switch from sender to receiver)
 - Message copied once (sender buffer → receiver buffer) or zero-copy via shared memory
 - Capability validation cached per-channel (checked at creation, not per-message;
-  revocation propagates to channels — see security.md §10.3 Gap 1)
+  revocation propagates to channels — see model.md §10.3 Gap 1)
 
 ### 4.3 Message Format
 
@@ -740,7 +740,7 @@ pub enum SpaceReply {
 
 ### 5.2 AIRS Service Protocol
 
-**No shared memory for AIRS.** AIRS is a Trust Level 1 system service (security.md §9.3). Agents submit prompts — which are untrusted, potentially adversarial input (security.md §1.1, prompt injection). Mapping an agent's shared memory region directly into AIRS's address space creates a TOCTOU (time-of-check/time-of-use) attack surface: the agent can mutate the shared region while AIRS is reading it. All data crossing the agent→AIRS boundary is **kernel-copied** into AIRS's own memory. This adds ~50 cycles per KB (copy cost) but eliminates the attack vector entirely. AIRS's own security.md §9.3 confirms this principle: AIRS prefetches "use the NORMAL Space Storage read path" — AIRS never maps external data directly.
+**No shared memory for AIRS.** AIRS is a Trust Level 1 system service (model.md §9.3). Agents submit prompts — which are untrusted, potentially adversarial input (model.md §1.1, prompt injection). Mapping an agent's shared memory region directly into AIRS's address space creates a TOCTOU (time-of-check/time-of-use) attack surface: the agent can mutate the shared region while AIRS is reading it. All data crossing the agent→AIRS boundary is **kernel-copied** into AIRS's own memory. This adds ~50 cycles per KB (copy cost) but eliminates the attack vector entirely. AIRS's own model.md §9.3 confirms this principle: AIRS prefetches "use the NORMAL Space Storage read path" — AIRS never maps external data directly.
 
 ```rust
 pub enum AirsRequest {
@@ -992,7 +992,7 @@ Full message content is NOT logged by default (privacy). Content logging can be 
 
 ### 8.3 Capability Enforcement
 
-The IPC system enforces capabilities at five levels (zero trust enforcement stack — see security.md §10.4):
+The IPC system enforces capabilities at five levels (zero trust enforcement stack — see model.md §10.4):
 
 1. **Structural check (kernel):** Does this agent hold a valid, non-expired, non-revoked capability for this channel? Cached per-channel; revocation invalidates the channel.
 2. **Protocol check (kernel):** Does the `message_type` match the channel's registered protocol for this direction? Rejects malformed or misrouted messages before delivery.
@@ -1044,7 +1044,7 @@ At 5 μs, the POSIX compatibility layer is noticeably slower but usable — the 
 
 AIOS's ~0.2 μs kernel overhead is competitive with seL4 on ARM. The gap between kernel overhead and 5 μs round-trip is service processing time (Space Service lookup, encryption, etc.). Optimization focus should be on service fast paths, not kernel IPC.
 
-**Step 3: Behavioral gate.** The kernel maintains a per-process `behavioral_state` byte, written by AIRS via lightweight notification (see security.md §10.3 Gap 3). Values:
+**Step 3: Behavioral gate.** The kernel maintains a per-process `behavioral_state` byte, written by AIRS via lightweight notification (see model.md §10.3 Gap 3). Values:
 
 | State | Meaning | Kernel action |
 |---|---|---|
@@ -1053,7 +1053,7 @@ AIOS's ~0.2 μs kernel overhead is competitive with seL4 on ARM. The gap between
 | `0x02` RATE_LIMITED | Significant anomaly | IPC rate-limited (token bucket) |
 | `0x03` SUSPENDED | Critical anomaly | IPC rejected with `EACCES` |
 
-The check is a single byte comparison (~15 cycles). In the common case (NORMAL), it's a branch-not-taken. When AIRS is unavailable (fallback mode), all agents default to NORMAL — behavioral gating degrades gracefully to structural-only checks. This is consistent with the principle that AIRS is an optimization layer, not a security dependency (security.md §9.2).
+The check is a single byte comparison (~15 cycles). In the common case (NORMAL), it's a branch-not-taken. When AIRS is unavailable (fallback mode), all agents default to NORMAL — behavioral gating degrades gracefully to structural-only checks. This is consistent with the principle that AIRS is an optimization layer, not a security dependency (model.md §9.2).
 
 **Step 4: Protocol type check.** If the channel has a registered `ChannelProtocol`, the kernel checks that `message_type` is in the valid set for this direction. This is a linear scan of a small array (~10 cycles for typical protocol sizes of 5-15 types). Channels without a registered protocol (e.g., POSIX pipes) skip this step.
 
@@ -1160,7 +1160,7 @@ Phase 3f:  IPC performance optimization
 Phase 8:   AI-native IPC (requires AIRS)
            Context-adaptive IPC scheduling (§13.4)
            Inference-aware batching (§13.3)
-           Behavioral gating integration (security.md §10.3)
+           Behavioral gating integration (model.md §10.3)
            Provenance-carrying IPC (§13.5)
            → IPC that understands agents
 
@@ -1348,7 +1348,7 @@ Every IPC technique in §12 exists in at least one other kernel. This section de
 
 ### 13.0 Kernel Independence Guarantee
 
-**AIRS is advisory. The kernel is authoritative.** This is the inviolable architectural constraint for every feature in this section. It extends security.md §9.2 ("Resource Intelligence as Optimization, Not Security") to AI-native IPC:
+**AIRS is advisory. The kernel is authoritative.** This is the inviolable architectural constraint for every feature in this section. It extends model.md §9.2 ("Resource Intelligence as Optimization, Not Security") to AI-native IPC:
 
 ```mermaid
 flowchart TD
@@ -1447,7 +1447,7 @@ Agent: "find similar images in my photos"
 
 **Problem in every other kernel.** IPC channels are demand-driven — a channel is established when the agent first needs it. The first call to a cold service incurs setup latency: channel creation, capability transfer, TLB warm-up, service wake-up. On AIOS hardware (Raspberry Pi, SD-card storage), cold-start can add 10-50ms.
 
-**What AIOS can do.** AIRS has a behavioral model of every agent (security.md §2, Layer 3). It knows which services each agent typically calls and in what order. The Context Engine knows the user's current activity context. Combined, the kernel can predict future IPC needs:
+**What AIOS can do.** AIRS has a behavioral model of every agent (model.md §2, Layer 3). It knows which services each agent typically calls and in what order. The Context Engine knows the user's current activity context. Combined, the kernel can predict future IPC needs:
 
 ```text
 Context Engine: user is switching from browsing to coding
@@ -1603,9 +1603,9 @@ pub enum ProvenanceOrigin {
 }
 ```
 
-**Security application: taint tracking.** If data originates from a web page (Trust Level 4), the `max_trust_exposure` field is set to 4. Every subsequent IPC message carrying derivatives of this data inherits the taint. When this data reaches AIRS for intent verification, AIRS knows it originated from untrusted web content and applies stricter screening (security.md §2.5, Layer 5). This is automatic, kernel-enforced taint propagation — no agent cooperation required.
+**Security application: taint tracking.** If data originates from a web page (Trust Level 4), the `max_trust_exposure` field is set to 4. Every subsequent IPC message carrying derivatives of this data inherits the taint. When this data reaches AIRS for intent verification, AIRS knows it originated from untrusted web content and applies stricter screening (model.md §2.5, Layer 5). This is automatic, kernel-enforced taint propagation — no agent cooperation required.
 
-**Audit application.** The provenance chain hash creates a Merkle chain of all IPC hops. The audit system (security.md §7) can reconstruct exactly how data flowed through the system after the fact. "This file in Space B was created by Agent X, using data from Space A that was fetched from the network by Tab Agent Y" — the full chain is cryptographically verifiable.
+**Audit application.** The provenance chain hash creates a Merkle chain of all IPC hops. The audit system (model.md §7) can reconstruct exactly how data flowed through the system after the fact. "This file in Space B was created by Agent X, using data from Space A that was fetched from the network by Tab Agent Y" — the full chain is cryptographically verifiable.
 
 **Developer application.** Agent developers can inspect the provenance tag of received data to make trust decisions. An email agent receiving an attachment can check: did this come from a known space (trusted), or was it downloaded from a web page by a tab agent (untrusted)? The tag is available in the SDK as a first-class field on every received message.
 
@@ -1825,7 +1825,7 @@ Research-informed improvements for AIOS IPC, informed by the survey in §12.3. I
 
 **Source:** HongMeng (OSDI 2024) — instead of one-size-fits-all process isolation, HongMeng provides three isolation classes with different performance/security trade-offs: full address-space isolation, lightweight sandbox, and in-process compartment.
 
-**Opportunity for AIOS.** AIOS trust levels (security.md §2) already define a hierarchy. Differentiated isolation maps trust levels to isolation mechanisms:
+**Opportunity for AIOS.** AIOS trust levels (model.md §2) already define a hierarchy. Differentiated isolation maps trust levels to isolation mechanisms:
 
 - **Trust Level 0 (kernel):** No isolation (in-kernel IPC, current Phase 3 model)
 - **Trust Level 1 (AIRS):** Lightweight sandbox — shared address space with hardware memory tagging (MTE on aarch64) for spatial safety

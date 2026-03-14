@@ -185,7 +185,7 @@ pub struct AgentManifest {
     /// Capability profiles this agent references (not bundled — loaded from
     /// system/config/capability-profiles/ at install time).
     /// Profiles are pre-audited, named bundles of capabilities that compose
-    /// in numbered layers. See security.md §3.7 for the profile system.
+    /// in numbered layers. See model.md §3.7 for the profile system.
     /// Resolved at install time into a flat CapabilitySet for kernel enforcement.
     /// Optional: if omitted in the manifest, this defaults to an empty list
     /// during deserialization for backward compatibility with agents that

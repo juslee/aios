@@ -1,8 +1,8 @@
 # AIOS Security Model — Cryptography, Hardware Security & Testing
 
-Part of: [security.md](./security.md) — AIOS Security Model
+Part of: [model.md](../model.md) — AIOS Security Model
 **Related:** [layers.md](./layers.md) — Layer 6 (cryptographic enforcement), [capabilities.md](./capabilities.md) — Capability system, [operations.md](./operations.md) — Event response, audit
-**See also:** [hardening.md](../kernel/memory/hardening.md) — W^X/PAC/BTI/MTE kernel implementation, [fuzzing.md](./fuzzing.md) — Fuzzing deep-dive, [static-analysis.md](./static-analysis.md) — Static analysis and formal verification deep-dive
+**See also:** [hardening.md](../kernel/memory/hardening.md) — W^X/PAC/BTI/MTE kernel implementation, [fuzzing.md](../fuzzing.md) — Fuzzing deep-dive, [static-analysis.md](../static-analysis.md) — Static analysis and formal verification deep-dive
 
 -----
 

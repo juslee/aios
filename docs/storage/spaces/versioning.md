@@ -113,7 +113,7 @@ pub enum ScanDirection {
 fn current_agent() -> AgentId;
 
 /// Kernel Crypto Core operation: signs data with the identity's Ed25519 key.
-/// Used for provenance chain signatures. See security.md §4.
+/// Used for provenance chain signatures. See model.md §4.
 fn kernel_sign(data: &[u8]) -> Signature;
 
 /// Version DAG storage. Manages version history, branching, merging,

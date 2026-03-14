@@ -32,7 +32,7 @@ By the end of this phase, the kernel manages physical memory through a buddy all
 | Guard pages | [memory.md](../kernel/memory.md) | §9.5 Guard Pages |
 | Implementation order | [memory.md](../kernel/memory.md) | §13 Implementation Order |
 | BootInfo and memory map handoff | [firmware.md](../kernel/boot/firmware.md), [kernel.md](../kernel/boot/kernel.md) | §2.2 BootInfo struct; §3.3 Steps 3–9 |
-| Security model (W^X, PAC, BTI) | [security.md](../security/security.md) | Memory isolation sections |
+| Security model (W^X, PAC, BTI) | [model.md](../security/model.md) | Memory isolation sections |
 | Memory hardening (poisoning, double-free, red zones) | [fuzzing.md](../security/fuzzing.md) | §3.3 Memory Hardening |
 
 -----

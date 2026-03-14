@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [security.md](../security/security.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [reclamation.md](./memory/reclamation.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
+**Related:** [model.md](../security/model.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [reclamation.md](./memory/reclamation.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
 
 -----
 
@@ -11,7 +11,7 @@
 
 The kernel needs to answer two fundamentally different questions about itself. The first is a security question: "What did agent X do, and was it authorized?" The second is an operational question: "Why is the scheduler stalling on core 2, and how many pages did the buddy allocator split in the last second?"
 
-The security question is answered by the **provenance system** — a tamper-evident Merkle chain of agent actions, designed in [security.md](../security/security.md) §2.7 and consumed by the [Inspector](../applications/inspector.md). The operational question has no answer today. The kernel uses `println!()` to a PL011 UART with informal `[boot]` and `[mm]` prefixes. There are no log levels, no structured format, no metric counters, no trace points. Once the scheduler is running across four cores, interleaved `println!()` output is unreadable, and there is no way to measure IPC latency, context switch frequency, or memory pressure trends.
+The security question is answered by the **provenance system** — a tamper-evident Merkle chain of agent actions, designed in [model.md](../security/model.md) §2.7 and consumed by the [Inspector](../applications/inspector.md). The operational question has no answer today. The kernel uses `println!()` to a PL011 UART with informal `[boot]` and `[mm]` prefixes. There are no log levels, no structured format, no metric counters, no trace points. Once the scheduler is running across four cores, interleaved `println!()` output is unreadable, and there is no way to measure IPC latency, context switch frequency, or memory pressure trends.
 
 This document specifies the kernel's **operational observability** infrastructure — the producer side that generates structured telemetry for debugging, performance analysis, and health monitoring. It covers three pillars:
 
@@ -72,9 +72,9 @@ graph TD
 
 This document does **not** cover:
 
-- **Agent-action provenance** — The `ProvenanceRecord` Merkle chain that records "agent X read space Y" is specified in [security.md](../security/security.md) §2.7. That is a security audit system with cryptographic integrity guarantees. Operational logs do not go into the Merkle chain.
+- **Agent-action provenance** — The `ProvenanceRecord` Merkle chain that records "agent X read space Y" is specified in [model.md](../security/model.md) §2.7. That is a security audit system with cryptographic integrity guarantees. Operational logs do not go into the Merkle chain.
 - **Per-subsystem hardware audit events** — The `AuditRecord` trait and per-subsystem audit spaces (`system/audit/network/`, `system/audit/audio/`, etc.) are specified in [subsystem-framework.md](../platform/subsystem-framework.md) §7. Those record hardware access for user-facing transparency.
-- **Behavioral baselines and anomaly detection** — The `BehavioralBaseline` and `AnomalyType` system is specified in [security.md](../security/security.md) §2.3 (Layer 3). That system uses statistical analysis of agent behavior patterns.
+- **Behavioral baselines and anomaly detection** — The `BehavioralBaseline` and `AnomalyType` system is specified in [model.md](../security/model.md) §2.3 (Layer 3). That system uses statistical analysis of agent behavior patterns.
 - **Inspector UI/UX** — The Inspector dashboard layout, views, and refresh rates are specified in [inspector.md](../applications/inspector.md).
 
 This document specifies the **kernel-internal instrumentation primitives** that these higher-level systems may consume, but the two streams (security provenance and operational telemetry) remain architecturally separate.

@@ -212,7 +212,7 @@ behavioral baselines. Each runtime type has fundamentally different "normal" beh
    sandbox escape attempt.
 
 Anomalies trigger capability review, rate limiting, or suspension depending on severity.
-See [security.md](../security/security.md) §1.2 for trust level enforcement.
+See [model.md](../security/model.md) §1.2 for trust level enforcement.
 
 ### 13.6 Automatic Capability Minimization
 

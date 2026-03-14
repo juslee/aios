@@ -725,7 +725,7 @@ AIRS compression directive:
   2. Kernel validates:
      a. AIRS holds ReadSpace capability for the target space
      b. Compression CPU quota not exceeded (blast radius for AIRS)
-     c. Directive rate within AirsDirectiveMonitor baseline ([security.md §2.3.1](../security/security.md))
+     c. Directive rate within AirsDirectiveMonitor baseline ([model.md §2.3.1](../security/model.md))
   3. Kernel forwards directive to Space Storage
   4. Space Storage executes compression through the NORMAL Block Engine path:
      a. Read block from disk

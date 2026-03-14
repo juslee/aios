@@ -1,6 +1,6 @@
 # AIOS Security Model — Capability System Internals
 
-Part of: [security.md](./security.md) — AIOS Security Model
+Part of: [model.md](../model.md) — AIOS Security Model
 **Related:** [layers.md](./layers.md) — Defense layers (Layer 2 is capability check), [hardening.md](./hardening.md) — Formal verification targets, [operations.md](./operations.md) — Zero trust gap analysis
 
 -----
