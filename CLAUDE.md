@@ -243,7 +243,7 @@ kernel/src/task/               Thread/process data structures for scheduler and 
 kernel/src/service/            Service manager: registry, echo service, process lifecycle, audit ring
 kernel/src/syscall/            Syscall dispatch and handlers (IPC 0-9, Notify 10-12, Stats 13, Cap 14-17, Mem 18-22, Proc 23-25, Time 26-28, Audit 29, Debug 30)
 kernel/src/drivers/            Device drivers (virtio_blk)
-kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable (Phase 4+)
+kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable, Object Store, Version Store, crypto (AES-256-GCM), Space management (Phase 4+)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs, bench.rs)
 shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
@@ -378,7 +378,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M13):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
+Lock ordering (full M14):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
