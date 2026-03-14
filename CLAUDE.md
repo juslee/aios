@@ -78,7 +78,20 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Flow security | `docs/storage/flow/security.md` | §11.1–§11.3 Capability enforcement, content screening, rate limiting |
 | Flow SDK | `docs/storage/flow/sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
 | Flow extensions | `docs/storage/flow/extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
-| Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
+| Compositor (hub) | `docs/platform/compositor.md` | §1 Core Insight, §2 Architecture, §15 Design Principles, §16 Impl Order, Document Map |
+| Compositor protocol | `docs/platform/compositor/protocol.md` | §3.1–§3.4 Surface lifecycle, shared buffers, fences, damage; §4.1–§4.4 Semantic hints, content types, hint-driven behavior |
+| Compositor rendering | `docs/platform/compositor/rendering.md` | §5.1–§5.5 Scene graph, frame composition, direct scanout, frame scheduling, animation; §6.1–§6.4 Layout, multi-monitor, HDR |
+| Compositor input | `docs/platform/compositor/input.md` | §7.1–§7.6 Input pipeline, focus, hotkeys, gestures, gamepad/touch, secure input |
+| Compositor GPU | `docs/platform/compositor/gpu.md` | §8.1–§8.5 wgpu, VirtIO-GPU, VC4/V3D, GPU memory, shaders; §9.1–§9.5 Wayland, XWayland, DRM/KMS, security context |
+| Compositor security | `docs/platform/compositor/security.md` | §10.1–§10.5 Capability-gated surfaces, GPU isolation, capture, clipboard, trust levels; §11.1–§11.5 Accessibility |
+| Compositor AI-native | `docs/platform/compositor/ai-native.md` | §12.1–§12.8 AIRS-dependent compositing; §13.1–§13.8 Kernel-internal ML; §14 Future directions |
+| Networking | `docs/platform/networking.md` | All (Phase 7+) |
+| Audio subsystem (hub) | `docs/platform/audio.md` | §1 Overview, §14 Impl Order, §15 Design Principles, §16 Future Directions, §17 AI-Native Audio, Document Map |
+| Audio subsystem & sessions | `docs/platform/audio/subsystem.md` | §2 Architecture, §3.1–§3.4 Sessions/capabilities/routing/conflict + AIRS integration hooks |
+| Audio mixing & capture | `docs/platform/audio/mixing.md` | §4.1–§4.6 Mixer/SRC/capture pipeline/DSP filter graph, §10.1–§10.2 Format types/negotiation |
+| Audio drivers | `docs/platform/audio/drivers.md` | §5.1–§5.7 VirtIO-Sound/I2S/PWM/HDMI/Apple/USB/privacy-first hardware |
+| Audio scheduling & sync | `docs/platform/audio/scheduling.md` | §6.1–§6.4 RT scheduling/latency/buffers + predictive hints, §7.1–§7.4 Timeline/sync |
+| Audio integration | `docs/platform/audio/integration.md` | §8 HDMI, §9 Power, §11 Audit + visual mic indicator, §12 POSIX, §13 Boot chime |
 | Networking (hub) | `docs/platform/networking.md` | §1 Core Insight, §2 Architecture, §7 Impl Order, §8 Tech Choices, §10 Design Principles, Document Map |
 | NTM components | `docs/platform/networking/components.md` | §3.1–§3.6 Space Resolver, Connection Manager, Shadow Engine, Resilience Engine, Capability Gate, Bandwidth Scheduler |
 | Network stack | `docs/platform/networking/stack.md` | §4.1–§4.7 smoltcp integration, VirtIO-Net driver, buffer management, zero-copy I/O, interrupt handling, DHCP/DNS, dual stack |
@@ -86,7 +99,6 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Network security | `docs/platform/networking/security.md` | §6.1–§6.5 Capability gate, packet filtering, per-agent isolation, credential vault, layered trust |
 | Networking examples | `docs/platform/networking/examples.md` | §9.1–§9.5 Web browsing, agent communication, POSIX compat, credential routing, data model |
 | Networking future | `docs/platform/networking/future.md` | §11.1–§11.8 AI-driven networking, learned congestion, predictive prefetch, anomaly detection |
-| Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
 | Input subsystem (hub) | `docs/platform/input.md` | §1 Core Insight, §2 Architecture, §7 Impl Order, §8 Tech Choices, §9 Design Principles, Document Map |
 | Input devices & HID | `docs/platform/input/devices.md` | §3.1–§3.7 Device taxonomy, USB HID protocol, VirtIO-input, Bluetooth HID, accessibility devices, hotplug |
 | Input event model & dispatch | `docs/platform/input/events.md` | §4.1–§4.6 Event hierarchy, pipeline stages, queuing, focus routing, hotkeys, multi-seat |
@@ -256,7 +268,7 @@ kernel/src/task/               Thread/process data structures for scheduler and 
 kernel/src/service/            Service manager: registry, echo service, process lifecycle, audit ring
 kernel/src/syscall/            Syscall dispatch and handlers (IPC 0-9, Notify 10-12, Stats 13, Cap 14-17, Mem 18-22, Proc 23-25, Time 26-28, Audit 29, Debug 30)
 kernel/src/drivers/            Device drivers (virtio_blk)
-kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable (Phase 4+)
+kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable, Object Store, Version Store, crypto (AES-256-GCM), Space management (Phase 4+)
 kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs, bench.rs)
 shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 uefi-stub/src/                 UEFI stub code (Phase 1+)
@@ -391,7 +403,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M13):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
+Lock ordering (full M14):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
@@ -402,7 +414,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      275 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+Shared crate unit tests:      309 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -418,6 +430,18 @@ MemTable capacity:            65536 entries, sorted Vec with binary search, dedu
 ContentHash algorithm:        SHA-256 (sha2 crate, no_std)
 Block integrity:              CRC-32C on data, verified on read
 On-disk data format:          [crc32c:u32 | data_len:u32 | data | padding to sector boundary]
+Encrypted on-disk format:     [nonce(12B) | encrypted{crc32c|data_len|data|pad} | tag(16B)]
+ENCRYPTION_OVERHEAD:          28 bytes (12 nonce + 16 tag)
+AES-256-GCM nonce format:     [random_prefix(4B) | counter(8B)], counter persisted in superblock
+Nonce crash recovery:         nonce_counter advanced +1000 on init to prevent reuse after unclean shutdown
+Device key derivation:        SHA-256(passphrase + "aios-device-key-salt") → 32-byte AES key (Phase 4 placeholder)
+CompactObject size:           512 bytes (repr(C)), ObjectId + SpaceId + name[64] + hashes + timestamps + text_content[128]
+Version size:                 256 bytes (repr(C)), hash + parent + content_hash + object_id + timestamp + author[32] + message[64]
+ObjectIndex:                  Sorted Vec with binary search on ObjectId, max 16384 entries
+version_head storage:         Stores SHA-256(serialized_version_bytes) from write_block(), NOT compute_version_hash()
+MAX_SPACES:                   16 system-wide
+System spaces:                system/ (Core), user/home/ (Personal), ephemeral/ (Ephemeral) — created at boot
+Space-storage service:        Registered via service_register(b"space-storage", pid=0, ch=3)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -464,7 +488,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 4 M13 — VirtIO-blk Driver & Block Engine):
+Current (post-Phase 4 M14 — Object Store, Version Store & Encryption):
 
 ```
 aios/
@@ -486,7 +510,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2; features: kernel-metrics (default), kernel-tracing
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
@@ -523,10 +547,14 @@ aios/
 │       │   ├── mod.rs    Driver module re-exports
 │       │   └── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
 │       ├── storage/
-│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init entry point
-│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C integrity, SHA-256 content hash
+│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space)
+│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, encryption integration, ObjectIndex, SpaceTable
 │       │   ├── wal.rs    Write-ahead log: 64-byte WalEntry (repr(C)), circular buffer, append/replay/trim
-│       │   └── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
+│       │   ├── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
+│       │   ├── object_store.rs ObjectIndex (sorted Vec + binary search on ObjectId), object_create/read/delete, generate_object_id
+│       │   ├── version_store.rs Version Store: Merkle DAG, version_create/list/rollback, object_update
+│       │   ├── crypto.rs  DeviceKeyManager: AES-256-GCM encrypt/decrypt, nonce counter, crash recovery
+│       │   └── space.rs   SpaceTable, space_create/list/get/delete, init_system_spaces, register_service
 │       ├── syscall/
 │       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-9), Notify(10-12), Stats(13), Cap(14-17), Mem(18-22), Proc(23-25), Time(26-28), Audit(29), Debug(30)
 │       ├── platform/
@@ -576,7 +604,7 @@ aios/
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
-│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, VirtIO constants
+│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```

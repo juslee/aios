@@ -41,7 +41,9 @@ const _: () = assert!(core::mem::size_of::<WalEntry>() == WAL_ENTRY_SIZE);
 impl WalEntry {
     /// Compute CRC-32C over the first 56 bytes (everything except checksum + pad2).
     fn compute_checksum(&self) -> u32 {
-        // SAFETY: WalEntry is repr(C), 64 bytes. First 56 bytes are the checksummed payload.
+        // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
+        // Maintained by repr(C) attribute and compile-time size assertion.
+        // If violated, CRC is computed over wrong bytes, causing checksum mismatch on validation.
         let bytes = unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 56) };
         crc32c(bytes)
     }
@@ -184,8 +186,9 @@ impl Wal {
         let offset = entry_in_sector * WAL_ENTRY_SIZE;
         let entry_bytes = &sector_buf[offset..offset + WAL_ENTRY_SIZE];
 
-        // SAFETY: WalEntry is repr(C), 64 bytes, all fields are plain data (no pointers).
-        // Use read_unaligned because entry_bytes is a &[u8] subslice with alignment 1.
+        // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
+        // Maintained by repr(C) attribute, compile-time size assertion, and bounds check above.
+        // If violated, read_unaligned returns garbage; is_valid() rejects corrupt entries.
         let entry = unsafe { core::ptr::read_unaligned(entry_bytes.as_ptr() as *const WalEntry) };
         Ok(entry)
     }
@@ -203,7 +206,9 @@ impl Wal {
         virtio_blk::read_sector(disk_sector, array_ref_mut(&mut sector_buf))?;
 
         let offset = entry_in_sector * WAL_ENTRY_SIZE;
-        // SAFETY: WalEntry is repr(C), 64 bytes. Writing into a [u8; 512] at valid offset.
+        // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
+        // Maintained by modular arithmetic: offset + WAL_ENTRY_SIZE <= SECTOR_SIZE (512).
+        // If violated, copy_nonoverlapping writes past sector_buf, corrupting stack memory.
         unsafe {
             core::ptr::copy_nonoverlapping(
                 entry as *const WalEntry as *const u8,

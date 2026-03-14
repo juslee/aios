@@ -106,6 +106,23 @@ impl MemTable {
         Some(entry.location)
     }
 
+    /// Decrement refcount for a key. If refcount reaches 0, removes the entry.
+    ///
+    /// Returns `Some((location, freed))` where `freed` is true if the entry was removed.
+    /// Returns `None` if the key was not found.
+    pub fn dec_ref(&mut self, key: &ContentHash) -> Option<(BlockLocation, bool)> {
+        let idx = self.binary_search(key).ok()?;
+        let entry = &mut self.entries[idx];
+        let location = entry.location;
+        if entry.refcount <= 1 {
+            self.entries.remove(idx);
+            Some((location, true))
+        } else {
+            entry.refcount -= 1;
+            Some((location, false))
+        }
+    }
+
     /// Binary search for a key. Returns Ok(index) if found, Err(insert_pos) if not.
     fn binary_search(&self, key: &ContentHash) -> Result<usize, usize> {
         self.entries
