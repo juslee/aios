@@ -26,7 +26,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Topic | Document | Key Sections |
 |---|---|---|
 | System overview & vision | `docs/project/overview.md` | §1 Vision, §2 Architecture |
-| Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §8 Phase table |
+| Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §5 Gates (incl. Gate 1 retro), §8 Phase table, §8.1 Actual progress |
 | Full architecture | `docs/project/architecture.md` | All |
 | Language ecosystem (hub) | `docs/project/language-ecosystem.md` | §1 Overview, Document Map, Impl Order |
 | Language runtimes | `docs/project/language-ecosystem-runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
@@ -333,7 +333,7 @@ ASID width:                   16-bit; AsidAllocator tracks generation; full TLBI
 Slab cache sizes (M9):        5 classes: 64, 128, 256, 512, 4096 bytes; smaller rounds up to 64
 Slab magazine size:            32 objects per MagazineRound; current/prev swap for two-chance fast path
 Slab red zones:                8 bytes before/after each object (except 4096-byte cache); pattern 0xFEFE_FEFE_FEFE_FEFE
-User VA layout (memory.md §9.5): TEXT=0x400000, DATA=0x1000000, HEAP=0x10000000, STACK_TOP=0x7FFF_FFFF_F000
+User VA layout (memory-virtual.md §3.1): TEXT=0x400000, DATA=0x1000000, HEAP=0x10000000, STACK_TOP=0x7FFF_FFFF_F000
 TTBR0 format:                  bits[63:48]=ASID, bits[47:0]=PGD physical address
 TTBR0 switch barriers:         DSB SY → MSR TTBR0_EL1 → TLBI VMALLE1IS → DSB ISH → ISB
 Boot CPU SP:                   Converted from physical to virtual in boot.S (add VIRT_PHYS_OFFSET before br to kernel_main)
