@@ -340,7 +340,7 @@ pub struct SemanticMetadata {
     indexed_at: Option<Timestamp>,
 }
 
-/// Simplified content type enum; see spaces.md §3.3 for the full canonical definition
+/// Simplified content type enum; see spaces-data-structures.md §3.3 for the full canonical definition
 /// with additional variants (Directory, Text, Markdown, Json, Xml, Credential, etc.).
 pub enum ContentType {
     Document, Code, Image, Audio, Video, Data,
@@ -466,7 +466,7 @@ pub enum ResourcePriority {
 /// A named entity extracted from content by AIRS (person, place,
 /// organization, date, concept, etc.).
 /// Named entity extracted from content by AIRS.
-/// Simplified; see spaces.md §3.3 for the canonical definition
+/// Simplified; see spaces-data-structures.md §3.3 for the canonical definition
 /// (uses entity_type: EntityType with fewer variants, no span field).
 pub struct Entity {
     name: String,
@@ -482,7 +482,7 @@ pub enum EntityKind {
 }
 
 /// Who created a relation between objects.
-/// Simplified; see spaces.md §3.4 for the canonical definition
+/// Simplified; see spaces-data-structures.md §3.4 for the canonical definition
 /// (Explicit/AiInferred/SystemGenerated).
 pub enum RelationSource {
     /// Created by AIRS during indexing
@@ -512,7 +512,7 @@ pub struct AgentManifest {
 /// Set of capabilities held by a task or agent process. Capabilities are
 /// kernel-managed tokens — agents hold references, not the capabilities
 /// themselves. The kernel validates every token on every syscall.
-/// See ipc.md §4 for capability transfer and boot.md §3.3 Step 12 for
+/// See ipc.md §4 for capability transfer and boot.md §3.3 Step 13 for
 /// the root capability from which all others derive.
 pub struct CapabilitySet {
     /// Active capability tokens, keyed by capability type for O(1) lookup
@@ -568,7 +568,7 @@ pub enum ActivityAction {
 
 /// Append-only provenance chain for an object. Each entry links to the
 /// previous via hash, forming a Merkle chain. Stored in the Version Store
-/// (see spaces.md §5.1 for per-version ProvenanceEntry). The chain here
+/// (see spaces-versioning.md §5.1 for per-version ProvenanceEntry). The chain here
 /// is the object-level summary — it aggregates provenance across all
 /// versions for quick inspection without walking the full version DAG.
 pub struct ProvenanceChain {
@@ -603,8 +603,8 @@ pub struct Flow {
 }
 
 pub struct Transfer {
-    source: ObjectRef,      // see spaces.md §3.0 for ObjectRef definition
-    content: TypedContent,  // see flow.md §3.4 for TypedContent definition
+    source: ObjectRef,      // see spaces-data-structures.md §3.0 for ObjectRef definition
+    content: TypedContent,  // see flow-data-model.md §3.4 for TypedContent definition
     intent: TransferIntent,
     transformations: Vec<Transform>,
 }
@@ -957,7 +957,7 @@ Every hardware subsystem in AIOS (networking, audio, USB, display, cameras, Blue
 
 **Five-layer architecture (every subsystem):**
 
-```
+```text
 Agent API Layer        → What agents see: typed, semantic, capability-gated
 POSIX Translation      → What BSD tools see: /dev nodes, ioctl, read/write
 Subsystem Service      → Policy, multiplexing, routing, format negotiation
@@ -1131,7 +1131,7 @@ pub struct CapabilityToken {
     created_at: Timestamp,
     expires: Timestamp,
     delegatable: bool,
-    attenuations: Vec<AttenuationSpec>,  // see security.md §3 for AttenuationSpec
+    attenuations: Vec<AttenuationSpec>,  // see security-capabilities.md §3 for AttenuationSpec
     revoked: bool,
     parent_token: Option<CapabilityTokenId>,  // for delegation chains
     usage_count: u64,
@@ -1283,7 +1283,7 @@ async fn research_agent(ctx: AgentContext) -> Result<()> {
 
 ### 4.4 Developer Workflow
 
-```
+```text
 1. Write agent using SDK (on Mac/Linux using portable toolkit)
 2. Declare capabilities in manifest (including remote spaces)
 3. `aios agent dev` → live-reload in sandboxed test space (QEMU or host)
@@ -1424,7 +1424,7 @@ Agents are the primary execution model for user-facing work. Each agent runs as 
 ```rust
 /// Agent process — isolation-relevant fields shown here.
 /// Full struct also includes address_space, memory_stats, priority,
-/// and suspended flag (see memory.md §5.1 for memory-related fields).
+/// and suspended flag (see memory-virtual.md §5.1 for memory-related fields).
 pub struct AgentProcess {
     pid: ProcessId,
     agent_id: AgentId,
@@ -1470,7 +1470,7 @@ All language runtimes run within the agent process. The SDK abstracts the syscal
 
 When an agent is updated to a new version:
 
-```
+```text
 1. New manifest compared against old manifest
 2. If capabilities unchanged → hot-swap path: active sessions are drained
    gracefully (agent gets shutdown signal, 5s to clean up), then new code
@@ -1563,7 +1563,7 @@ pub enum SpaceQuery {
 **Filter and TextSearch** work without AIRS — they use LSM-tree indexes and a full-text index maintained by the Space Storage service. **Semantic** queries require AIRS to generate query embeddings and compute similarity against the embedding index. **Traverse** queries walk the relationship graph.
 
 The Conversation Bar translates natural language to `SpaceQuery` via AIRS:
-```
+```text
 User: "Find my notes about transformer architectures from last month"
   → SpaceQuery::Semantic {
       text: "transformer architectures",
@@ -1590,7 +1590,7 @@ pub struct Object {
 - **`content_hash`** is the SHA-256 hash of the object's content. It changes every time the content is modified. The Version Store records each `(ObjectId, content_hash, timestamp)` tuple.
 
 **How mutations work:**
-```
+```text
 1. Agent calls space.write(object_id, new_content)
 2. Space Storage hashes new_content → new_hash
 3. If new_hash == old_hash → no-op (content unchanged, deduplicated)
@@ -1606,7 +1606,7 @@ pub struct Object {
 ### 6.8 Error Recovery and System Resilience
 
 **Service crash recovery:** The Service Manager monitors all services. If a service crashes:
-```
+```text
 1. Service Manager detects process exit
 2. Active sessions on that service are terminated (clients get ServiceUnavailable)
 3. Service is restarted with exponential backoff (immediate, 1s, 2s, 4s, max 30s)
@@ -1744,11 +1744,11 @@ AIOS initially targets **laptops and PCs**. This is where the hardware is genero
 | GPU/NPU | Integrated or discrete | Future: GPU-accelerated inference, NPU offload for always-on tasks |
 | Network | WiFi 6/6E, Gigabit Ethernet | Fast model downloads, low-latency sync |
 
-The laptop/PC target means storage pressure is low. A 256 GB SSD gives AIOS ~180 GB after the host OS and user apps. A 512 GB SSD gives ~350 GB. Storage budgeting still matters (see [spaces.md §10](../storage/spaces.md)) but the constraints are comfortable — multiple models, generous version retention, full indexes.
+The laptop/PC target means storage pressure is low. A 256 GB SSD gives AIOS ~180 GB after the host OS and user apps. A 512 GB SSD gives ~350 GB. Storage budgeting still matters (see [spaces-budget.md §10](../storage/spaces-budget.md)) but the constraints are comfortable — multiple models, generous version retention, full indexes.
 
 ### 9.3 Future Device Classes
 
-AIOS is architectured for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [spaces.md §10.1](../storage/spaces.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
+AIOS is architectured for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [spaces-budget.md §10.1](../storage/spaces-budget.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
 
 **Planned future targets (in rough priority order):**
 
@@ -1771,7 +1771,7 @@ Consumer hardware capabilities have grown exponentially and this trend shows no 
 
 #### Storage Trajectory
 
-```
+```text
 Storage trends (mainstream consumer devices):
 
 Year    Phone (base)    Phone (practical)   Laptop (base)    Laptop (practical)
@@ -1797,7 +1797,7 @@ Year    Phone (base)    Phone (practical)   Laptop (base)    Laptop (practical)
 
 RAM is the more critical constraint for AI workloads. Unlike storage (which is about caching and history), RAM directly determines what models can run and how fast:
 
-```
+```text
 RAM trends (mainstream consumer devices):
 
 Year    Phone       Tablet      Laptop (base)    Laptop (power)
@@ -1831,7 +1831,7 @@ Year    Phone       Tablet      Laptop (base)    Laptop (power)
 
 #### Compute Trajectory (CPU, GPU, NPU)
 
-```
+```text
 Compute trends relevant to on-device AI:
 
 Capability            2024                   2028†                  2030†
@@ -1864,7 +1864,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 1. **Device profiles adapt automatically.** `DeviceProfile::detect()` examines actual hardware (RAM size, storage capacity, accelerator presence) rather than matching device labels. A phone from 2028 with 16 GB RAM and 512 GB storage will automatically get more generous quotas than a 2024 phone with 8 GB and 256 GB. No software update needed — the thresholds are capability-based.
 
-2. **The memory pool system scales.** The kernel's physical memory manager (see [memory.md](../kernel/memory.md) §2.4) doesn't hardcode pool sizes. The Kernel, User, Model, and DMA pools are sized as percentages of available RAM. 8 GB machine → 4 GB model pool. 16 GB machine → 8 GB model pool. Bigger models load automatically.
+2. **The memory pool system scales.** The kernel's physical memory manager (see [memory-physical.md](../kernel/memory-physical.md) §2.4) doesn't hardcode pool sizes. The Kernel, User, Model, and DMA pools are sized as percentages of available RAM. 8 GB machine → 4 GB model pool. 16 GB machine → 8 GB model pool. Bigger models load automatically.
 
 3. **Storage budgets are percentage-based.** Quotas like "20% for models" mean 48 GB on a 256 GB laptop and 400 GB on a 2 TB laptop. The architecture doesn't need to know the absolute size — it adapts.
 
@@ -1872,13 +1872,13 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q5_K_M model. On a 2028 laptop with 32 GB, it loads a 13B Q6_K — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
 
-6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)` (laptop profile override; base default is `KeepLast(20)` — see spaces.md §10.7). On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
+6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)` (laptop profile override; base default is `KeepLast(20)` — see spaces-budget.md §10.7). On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
 
 #### The Convergence Thesis
 
 By 2030, the hardware gap between device classes narrows dramatically:
 
-```
+```text
 2024:   Phone (8 GB / 256 GB)  ←——— huge gap ———→  Laptop (16 GB / 512 GB)
 2026:   Phone (12 GB / 256 GB) ←—— large gap ——→   Laptop (32 GB / 1 TB)
 2028:   Phone (16 GB / 512 GB) ←— moderate gap —→   Laptop (64 GB / 2 TB)
@@ -1892,3 +1892,336 @@ The phone of 2030 has the capabilities of a 2024 power-user laptop. This means:
 - **The multi-device experience becomes seamless.** When every device can run the same model at acceptable quality, the user experience is consistent everywhere. Space Sync handles data; AIRS handles intelligence; the device profile handles resource tuning. Same OS, same AI, same experience — just different screens.
 
 This is why AIOS invests in device profiles and adaptive systems now: the architecture built for 2024's hardware diversity gracefully handles 2030's hardware convergence. The code doesn't change — the profiles just get more generous.
+
+-----
+
+## 10. Future Directions
+
+This section surveys research and production innovations that inform AIOS's evolution. Each subsection identifies specific techniques, cites their origin, and explains how AIOS could adopt them. Improvements are categorized as **kernel-internal** (no AIRS dependency; works even if AIRS is offline) or **AIRS-dependent** (requires semantic understanding from the AI Runtime).
+
+### 10.1 Microkernel Architecture Evolution
+
+AIOS's microkernel draws from seL4, Fuchsia/Zircon, and L4 family designs. Several recent innovations from production and research microkernels suggest natural evolution paths.
+
+#### IPC Fastpath Optimization
+
+seL4's fastpath IPC achieves ~100-cycle call/reply for the common case by implementing the hot path in hand-written assembly, bypassing the general C entry/exit path entirely. The fastpath handles the case where: the message fits in registers, the receiver is already waiting, and no capability transfer is needed. For AIOS, this means the `ipc_call` → `ipc_recv` → `ipc_reply` hot loop (currently ~2000 cycles per round-trip on QEMU) could be reduced by 10-20x with an assembly fastpath in `kernel/src/arch/aarch64/`. The direct-switch optimization already in `ipc/direct.rs` provides the foundation — the fastpath would extend it to avoid TrapFrame save/restore entirely when the message fits in `x0`–`x5`.
+
+**Category:** Kernel-internal
+**Source:** seL4 Foundation; Klein et al., "Comprehensive Formal Verification of an OS Microkernel" (ACM TOCS 2014)
+
+#### Scheduling Context Donation (MCS)
+
+seL4's Mixed Criticality Systems (MCS) extension replaces the global round-robin timeslice with per-thread *scheduling contexts* — budgets that travel with IPC. When a client calls a server, the client's scheduling context is donated to the server, so the server runs on the client's time budget. This eliminates priority inversion without inheritance protocols and provides natural accounting: the client "pays" for server work.
+
+AIOS's current priority inheritance (`ipc/direct.rs`, bounded to `MAX_INHERITANCE_DEPTH=8`) could be replaced with MCS-style context donation. The `SchedEntity`'s `inherited_priority` / `inherited_class` fields would become a `SchedulingContext` pointer. This is a cleaner model: no transitive inheritance chains, no depth bounds, and the scheduler sees the true initiator's priority at all times.
+
+**Category:** Kernel-internal
+**Source:** Lyons et al., "Scheduling-Context Capabilities: A Principled, Light-Weight OS Mechanism for Managing Time" (EuroSys 2018)
+
+#### Component Isolation and Live Swapping
+
+Two complementary approaches to component management:
+
+- **Hubris (Oxide Computer)** isolates each driver/service in a separate protection domain with a *supervisor* that can restart failed components without rebooting the kernel. The supervisor detects faults via hardware exception forwarding and restarts the faulting task with fresh state. For AIOS, the service manager (`service/mod.rs`) could adopt supervised restart: when a service crashes (detected via process_exit error code), the service manager automatically restarts it with a fresh capability set while clients retry pending IPC calls.
+
+- **Theseus (Rice/Yale)** takes isolation further with *cell-based live swapping* — individual functions and data structures can be replaced at runtime without stopping the system. Each "cell" (roughly a Rust crate) has explicit dependencies tracked by the OS. For AIOS's subsystem framework (`docs/platform/subsystem-framework.md`), this suggests a path to hot-swapping device drivers and subsystem implementations without rebooting.
+
+**Category:** Kernel-internal
+**Sources:** Hubris: Oxide Computer, hubris.oxide.computer; Theseus: Boos et al., "Theseus: an Experiment in Operating System Structure and State Management" (OSDI 2020)
+
+#### Zero-Copy I/O and Framekernel Pattern
+
+- **LionsOS** (UNSW/seL4 Foundation) demonstrates zero-copy I/O on seL4 using shared memory ring buffers between driver and application protection domains. Data never crosses an IPC boundary — only notifications signal data availability. AIOS's shared memory regions (`ipc/shmem.rs`, `MAX_SHARED_REGIONS=64`) already provide the primitive; the pattern is to pair each shared memory region with a notification for doorbell signaling, creating a virtio-style virtqueue in userspace.
+
+- **Asterinas** (Ant Group) introduces the *framekernel* pattern: a trusted core kernel plus isolated "frames" (drivers, filesystems) in separate address spaces sharing the kernel's page tables read-only. This provides stronger isolation than a monolithic kernel with less IPC overhead than a pure microkernel. For AIOS, drivers loaded after boot could run in framekernel-style isolation — separate TTBR0 address spaces with read-only access to kernel data structures via the TTBR1 direct map.
+
+**Category:** Kernel-internal
+**Sources:** LionsOS: lionsOS.org; Asterinas: asterinas.github.io
+
+#### Extensible Scheduling
+
+- **sched_ext** (Linux 6.12+) allows scheduling policies to be loaded as eBPF programs, enabling per-workload scheduling without kernel recompilation. The kernel provides hooks; user-space scheduling logic runs in a sandbox.
+
+- **ghOSt** (Google, SOSP 2021) goes further: the scheduling decision runs entirely in user-space, communicating with the kernel via shared memory message queues. The kernel provides a "null scheduler" that defers all decisions to the user-space agent.
+
+For AIOS, the subsystem framework could expose a `SchedulerPolicy` trait that AIRS-driven scheduling optimizations implement without modifying `sched/scheduler.rs`. The kernel scheduler remains the fast path; the policy trait provides hints (thread affinity, batch grouping, preemption preferences) that the core scheduler respects.
+
+**Category:** Kernel-internal (policy framework); AIRS-dependent (learned policies)
+**Sources:** sched_ext: Humphries et al., LWN.net; ghOSt: Humphries et al., "ghOSt: Fast & Flexible User-Space Delegation of Linux Scheduling" (SOSP 2021)
+
+### 10.2 AI-Native OS Primitives
+
+AIOS's distinguishing feature is OS-level support for AI workloads. Research in ML systems (2023–2025) has produced techniques that map directly to kernel primitives.
+
+#### PagedAttention and KV Cache Management
+
+vLLM's PagedAttention (SOSP 2023) manages KV caches like virtual memory pages: logical KV blocks map to non-contiguous physical pages through a page table, enabling copy-on-write sharing across requests and near-zero memory waste. The key insight is that **KV cache management IS virtual memory management** — the same problems (fragmentation, sharing, reclamation) have the same solutions (paging, CoW, LRU eviction).
+
+AIOS can implement this natively: the buddy allocator (`mm/buddy.rs`) manages physical pages for KV blocks, the page table infrastructure (`mm/pgtable.rs`) provides virtual→physical mapping, and the model pool in PagePools provides the backing store. A `KvCacheManager` would sit alongside `UserAddressSpace` in `mm/uspace.rs`, managing per-inference KV page tables. When memory pressure rises, the reclamation system (`docs/kernel/memory-reclamation.md` §8) evicts cold KV pages to swap, just like regular pages.
+
+**RadixAttention** (SGLang) extends this with prefix sharing via a radix tree — common prompt prefixes share KV pages across requests, with CoW on divergence. This maps to AIOS's shared memory regions: the common prefix KV pages are a shared mapping, and per-request pages are private.
+
+**Category:** Kernel-internal
+**Sources:** Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention" (SOSP 2023); Zheng et al., "SGLang: Efficient Execution of Structured Language Model Programs" (2023)
+
+#### Inference Scheduling Primitives
+
+Modern inference serving has moved beyond simple FIFO queuing:
+
+- **Continuous batching** (Orca, Yu et al. 2022): Instead of waiting for an entire batch to complete, new requests join the batch at every iteration. The scheduler operates at *iteration granularity*, not request granularity. AIOS's scheduler classes could add an `Inference` class with iteration-level preemption — each decode step is a scheduling quantum, and the scheduler can add/remove requests from the active batch between steps.
+
+- **Prefill/decode disaggregation** (DistServe, Splitwise 2024): Prefill (prompt processing) and decode (token generation) have opposite compute profiles — prefill is compute-bound, decode is memory-bound. On multi-core systems, AIOS could pin prefill to high-performance cores and decode to efficiency cores (when available on Arm big.LITTLE). The scheduler's `CpuSet` affinity already supports this; the inference scheduler would set affinity based on the current phase.
+
+- **Speculative decoding co-scheduling**: Speculative decoding runs a small "draft" model and a large "verify" model in tandem. The OS should co-schedule draft and verify on separate cores with shared KV cache pages (read-only for verify, CoW from draft). This is a natural fit for AIOS's IPC shared memory + per-CPU scheduling.
+
+**Category:** Kernel-internal
+**Sources:** Yu et al., "Orca: A Distributed Serving System for Transformer-Based Generative Models" (OSDI 2022); Zhong et al., "DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving" (OSDI 2024)
+
+#### Accelerator Abstraction
+
+NPUs (Neural Processing Units) are becoming standard in mobile and laptop SoCs (Apple Neural Engine, Qualcomm Hexagon, Intel NPU). The right abstraction is a **command-buffer model** (like GPU compute), not a thread model:
+
+1. Application builds a command buffer (inference graph with weight references)
+2. Submits to the NPU subsystem via IPC
+3. NPU subsystem translates to hardware-specific commands
+4. Completion notification signals the application
+
+AIOS's subsystem framework (`docs/platform/subsystem-framework.md`) provides the structure. An NPU subsystem would register accelerator capabilities (supported operations, memory limits, quantization formats) and expose them through the standard subsystem IPC interface. The inference engine requests "accelerated matrix multiply" — the subsystem routes to CPU NEON, GPU compute, or NPU based on availability and estimated latency.
+
+**Category:** Kernel-internal
+**Source:** Industry practice; Apple Core ML, Android NNAPI, ONNX Runtime EP model
+
+#### Tiered Model Memory
+
+**FlexGen** (Stanford 2023) demonstrates that LLM inference can use tiered storage — model weights migrate between GPU VRAM, CPU RAM, and SSD based on access patterns. For AIOS, the model pool in PagePools and the Block Engine's data region form two tiers:
+
+- **Hot tier**: Model pool pages (physical RAM), managed by buddy allocator
+- **Cold tier**: Block Engine data region (VirtIO-blk), content-addressed by weight tensor hash
+
+The memory pressure system (`docs/kernel/memory-reclamation.md` §8) triggers eviction of inactive model weight pages to the Block Engine, with content-addressing providing natural deduplication when multiple agents load the same model. Reloading is a Block Engine read + page fault handler, transparent to the inference engine.
+
+**Category:** Kernel-internal
+**Source:** Sheng et al., "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU" (ICML 2023)
+
+#### Prompt Injection as W^X
+
+Just as W^X prevents code injection by separating writable and executable memory, AI agents need **control/data plane separation**: instructions (system prompt, tool definitions) live in a protected "control plane" that untrusted data (user input, web content, file contents) cannot modify. AIOS's capability system provides the enforcement mechanism: agents receive different capability sets during data processing (read-only, no tool invocation) vs. verified action phases (full capabilities). The transition between planes requires an explicit capability upgrade mediated by AIRS, analogous to `mprotect()` changing page permissions.
+
+**Category:** AIRS-dependent
+**Source:** Simon Willison's prompt injection research (2023–2025); OWASP LLM Top 10
+
+### 10.3 Storage and Data Architecture
+
+The Block Engine and Space Storage system can adopt several innovations from storage research.
+
+#### Key-Value Separation (WiscKey)
+
+WiscKey (FAST 2016) separates keys from values in LSM-trees: small keys stay in the sorted LSM structure, while large values go to an append-only value log (vLog). Compaction only moves keys (32-byte ContentHash entries), reducing write amplification by 10–100x for large values.
+
+AIOS's Block Engine is a natural fit: keys are 32-byte SHA-256 content hashes, values are variable-size data blocks (potentially multi-MB for AI model weight tensors). The existing WAL (`storage/wal.rs`) could evolve into the vLog, storing block data sequentially while the MemTable (`storage/lsm.rs`) indexes only the ContentHash→vLog-offset mapping. Compaction becomes nearly free — only the small index is compacted, never the block data.
+
+Follow-up work from Dostoevsky (SIGMOD 2018) shows that **lazy leveling** — a hybrid of leveled and tiered compaction — achieves optimal write amplification trade-offs for mixed read/write workloads. Combined with key-value separation, this addresses the WAF concerns documented in `docs/storage/spaces-block-engine.md` §4.8.
+
+**Category:** Kernel-internal
+**Sources:** Lu et al., "WiscKey: Separating Keys from Values in SSD-Conscious Storage" (FAST 2016); Dayan & Idreos, "Dostoevsky: Better Space-Time Trade-Offs for LSM-Tree Based Key-Value Stores" (SIGMOD 2018)
+
+#### Content Hashing: BLAKE3 and Verified Streaming
+
+BLAKE3 is 3–5x faster than SHA-256 on aarch64 (exploiting NEON SIMD) while providing equivalent cryptographic strength for content addressing. The `blake3` Rust crate is `no_std` compatible. Switching AIOS's `ContentHash` from SHA-256 to BLAKE3 would improve Block Engine write throughput proportionally.
+
+**Bao** (BLAKE3 verified streaming) extends BLAKE3's tree hashing mode to enable verified partial reads — any slice of a file can be verified against the root hash without reading the entire file. This is critical for multi-GB AI model weight files: the Block Engine could verify and load individual weight tensors without reading the full model, enabling demand-paged model loading via page faults.
+
+**Category:** Kernel-internal
+**Sources:** O'Connor et al., BLAKE3 specification (2020); github.com/oconnor663/bao
+
+#### Content-Defined Chunking and Deduplication
+
+**FastCDC** (USENIX ATC 2020) uses a gear-based rolling hash with normalized chunking, achieving 10x faster chunking than Rabin-based CDC while maintaining good deduplication ratios. For AIOS Spaces, FastCDC would be the chunking algorithm for the content-addressed object store: objects are split into content-defined chunks, each stored by ContentHash, enabling cross-Space deduplication. The gear hash lookup table is small (256 entries × 8 bytes = 2 KiB) and suitable for kernel-space.
+
+**Category:** Kernel-internal
+**Source:** Xia et al., "FastCDC: A Fast and Efficient Content-Defined Chunking Approach for Data Deduplication" (USENIX ATC 2020)
+
+#### Merkle Search Trees for Sync
+
+Merkle Search Trees (MSTs) are deterministic Merkle trees where the tree structure is determined by the data content (not insertion order), enabling efficient set reconciliation between peers. Two devices can determine exactly which objects differ in O(log n) round trips proportional to the symmetric difference — without exchanging full manifests. Proven in production by Bluesky's AT Protocol.
+
+AIOS Space Sync (`docs/storage/spaces-sync.md` §8.1 Merkle exchange) should adopt MSTs for the reconciliation protocol. The current design describes Merkle tree exchange; MSTs provide a concrete algorithm with proven O(log n) efficiency and deterministic tree structure that simplifies conflict detection.
+
+**Category:** Kernel-internal
+**Source:** Meyer, "Merkle Search Trees: Efficient State-Based CRDTs in Open Networks" (2019); used in Bluesky AT Protocol
+
+#### Learned Indexes for Storage
+
+Several learned data structure innovations apply to AIOS's storage layer:
+
+- **ALEX** (SIGMOD 2020): An adaptive learned index supporting inserts/updates/deletes via gapped arrays and adaptive node splitting. Could replace the MemTable's binary search (`storage/lsm.rs`) with learned prediction + local scan, reducing lookup time from O(log n) to O(1) expected with O(log n) worst case. Since ContentHash values are uniformly distributed (SHA-256 output), a simple piecewise linear model achieves near-perfect prediction.
+
+- **Learned Bloom filters** (NeurIPS 2018): Replace traditional Bloom filters with a learned binary classifier backed by a small traditional filter for bounded false positives. Achieves 30–70% space reduction. Applicable to SSTable point lookups in the Block Engine.
+
+- **DiskANN / Vamana** (Microsoft, NeurIPS 2019): Graph-based approximate nearest neighbor search that operates on SSD, not just RAM. For AIOS's embedding similarity search (`docs/storage/spaces-query-engine.md` §7.5), DiskANN is the most practical approach within kernel memory constraints — only the graph structure (bounded-degree, ~100 bytes per vector) stays in RAM; actual vectors live on disk.
+
+**Category:** Kernel-internal
+**Sources:** Ding et al., "ALEX: An Updatable Adaptive Learned Index" (SIGMOD 2020); Mitzenmacher, "A Model for Learned Bloom Filters" (NeurIPS 2018); Subramanya et al., "DiskANN" (NeurIPS 2019)
+
+#### AI Model Checkpoint Storage
+
+Systems like CheckFreq (FAST 2021) optimize model checkpoint storage with incremental checkpointing — only changed layers are written. AIOS's content-addressed Block Engine naturally supports this: each checkpoint stores weight tensors by ContentHash, and unchanged tensors share blocks with previous checkpoints via deduplication. The Version Store's Merkle DAG (`docs/storage/spaces-versioning.md` §5.1) tracks checkpoint lineage, enabling efficient rollback and branching of model fine-tuning experiments.
+
+**Category:** Kernel-internal
+**Source:** Mohan et al., "CheckFreq: Frequent, Fine-Grained DNN Checkpointing" (FAST 2021)
+
+### 10.4 Security Model Evolution
+
+AIOS's 8-layer security model (`docs/security/security-layers.md` §2) can incorporate several innovations from capability research, hardware security, and adversarial AI defense.
+
+#### Capability System Innovations
+
+- **Capsicum (FreeBSD)** demonstrates that capability systems work best when they *coexist* with POSIX abstractions rather than replacing them. Capsicum's `cap_enter()` switches a process into capability mode where all global namespaces (filesystem, PIDs, network) become inaccessible — only pre-opened file descriptor capabilities work. AIOS's POSIX compatibility layer (`docs/storage/spaces-posix.md`) should adopt this fd-as-capability model: each POSIX fd maps to an AIOS capability token, and `cap_enter()` equivalent restricts the process to its existing capability set.
+
+- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/security-capabilities.md` §3.7, Phase 28) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
+
+- **CHERI** (Capability Hardware Enhanced RISC Instructions) extends pointers to 128-bit bounded capabilities with hardware-enforced bounds, permissions, and sealing. While aarch64 doesn't have CHERI today, Arm's Morello prototype demonstrates the direction. AIOS's software capability tokens should be designed so they can be backed by hardware capabilities when CHERI-ARM ships — the `CapabilityToken` structure already stores bounds (rights mask) and permissions that map to CHERI fields. MTE (Memory Tagging Extension) on current aarch64 provides a subset of CHERI's spatial safety.
+
+**Category:** Kernel-internal
+**Sources:** Watson et al., "Capsicum: Practical Capabilities for UNIX" (USENIX Security 2010); seL4 CAmkES documentation; Watson et al., "CHERI: A Hybrid Capability-System Architecture" (IEEE S&P 2015)
+
+#### Temporal and Context-Aware Capabilities
+
+**Temporal capabilities** automatically revoke after a time bound, preventing stale access. AIOS should implement these using the kernel's `TICK_COUNT` (1 kHz) as the time source, with lazy revocation checked at capability exercise time — no background sweeper thread needed. The existing `expires: Timestamp` field in `CapabilityToken` provides the mechanism; the enforcement check in `cap/mod.rs` compares against `TICK_COUNT.load(Relaxed)` before granting access.
+
+**Context-aware capabilities** extend this further: capability exercise depends on runtime context (network state, threat level, time-of-day). A capability might grant full access during normal operation but restrict to read-only during elevated threat conditions. This requires AIRS to evaluate context predicates — the kernel provides the enforcement hook, AIRS provides the policy decision.
+
+**Category:** Temporal = kernel-internal; Context-aware = AIRS-dependent
+**Sources:** CHERI temporal safety research; XACML-inspired capability extensions
+
+#### Adversarial AI Defense
+
+- **GNN-based lateral movement detection**: Graph Neural Networks applied to IPC channel graphs and capability delegation chains can detect anomalous inter-process communication patterns indicating compromise. AIOS's IPC channel table (128 channels) and capability delegation trees form a natural graph. AIRS models normal communication patterns during a learning phase; deviations trigger security events via the audit ring.
+
+- **Randomized smoothing for robustness certification** (ICML 2019): Provides provable guarantees that ML classifier predictions won't change within a given perturbation radius. For AIOS, this certifies that security-critical ML decisions (anomaly detection thresholds, capability recommendations) resist adversarial evasion — critical when AIRS makes security-relevant decisions.
+
+- **Differential privacy for OS telemetry**: Local differential privacy applied to observability data (LogRing, TraceRing, audit ring) before it leaves the device. Apple's iOS/macOS deployment demonstrates practical DP for OS-level data. AIOS's audit ring (256 entries) is small enough for local DP mechanisms, protecting user behavior patterns even if sync data is intercepted.
+
+**Category:** GNN detection = AIRS-dependent; Robustness certification = AIRS-dependent; Differential privacy = kernel-internal
+**Sources:** Microsoft Defender graph-based detection research; Cohen et al., "Certified Adversarial Robustness via Randomized Smoothing" (ICML 2019); Apple differential privacy documentation
+
+#### Post-Quantum Cryptography
+
+NIST finalized ML-KEM (CRYSTALS-Kyber) for key encapsulation and ML-DSA (CRYSTALS-Dilithium) for digital signatures as post-quantum standards (FIPS 203/204, August 2024). Rust implementations are available (`pqcrypto` crate family). AIOS encryption zones (`docs/storage/spaces-encryption.md` §6.1–6.3) should plan PQC migration:
+
+- ML-KEM key sizes are larger (1568 bytes for ML-KEM-1024 vs 32 bytes for X25519), affecting key management storage in the Block Engine
+- Hybrid classical+PQC schemes (e.g., X25519 + ML-KEM-768) recommended during the transition period
+- Space Sync security (`docs/storage/spaces-sync.md` §8.3) should use ML-DSA for cross-device capability verification
+
+**Category:** Kernel-internal
+**Source:** NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), finalized August 2024
+
+#### Zero-Knowledge Capability Verification
+
+For cross-device capability verification during Space Sync, ZK-SNARKs/STARKs can prove capability possession without revealing the capability token itself. A device proves it has a capability with sufficient permissions without exposing the token over the network — preventing capability theft via network interception. Computationally expensive but relevant for cross-device trust establishment where devices may not fully trust each other's platform integrity.
+
+**Category:** Kernel-internal
+**Source:** Groth16, PLONK frameworks applied to access control research
+
+### 10.5 Formal Verification Roadmap
+
+Rust's type system prevents many classes of bugs, but `unsafe` blocks, concurrent data structures, and hardware interactions remain sources of potential unsoundness. A layered verification strategy combines multiple tools targeting different aspects of correctness.
+
+#### Bounded Model Checking: Kani
+
+**Kani** (AWS Labs) is a bounded model checker for Rust using the CBMC backend. It exhaustively verifies properties within bounded inputs, supporting `unsafe` code, raw pointers, and `no_std`. Integration is via `cargo kani`.
+
+Priority targets for AIOS:
+
+- **Buddy allocator coalescing** (`mm/buddy.rs`): Verify that `alloc` + `free` round-trips preserve allocator invariants, that coalescing produces correct buddy pairs, and that poison fill is applied on every free
+- **Capability attenuation** (`cap/mod.rs`): Verify that `attenuate()` only narrows permissions (never widens), that cascade revocation reaches all children, and that enforcement checks are monotonic
+- **Page table entry bit fields** (`mm/pgtable.rs`): Verify that `set_writable` + `set_executable` cannot coexist (W^X enforcement), that physical address extraction preserves alignment, and that permission bits are correctly masked
+- **Ring buffer bounds** (`shared/src/collections.rs`): Verify `FixedQueue` and `RingBuffer` never access out-of-bounds indices
+
+**Category:** Kernel-internal
+**Source:** github.com/model-checking/kani; AWS Labs
+
+#### Proof-Based Verification: Verus
+
+**Verus** (Microsoft Research, OOPSLA 2023) provides proof-based verification using Z3 with specifications written as Rust attributes. Critically, **Verus has been used to verify a production-grade page table implementation** — directly applicable to AIOS's `pgtable.rs` and `kmap.rs`.
+
+Verus verification targets for AIOS:
+
+- **Page table invariants**: W^X enforcement across all levels, correct physical address computation from PTE bits, ASID uniqueness
+- **Capability cascade revocation**: Prove that revoking a parent capability transitively revokes all descendants — the linear ghost types in Verus map naturally to capability linearity
+- **IPC channel safety**: Prove that `MessageRing` never loses or duplicates messages, that direct switch preserves thread state
+- **Lock ordering**: Prove that the M13 lock ordering protocol (PROCESS_TABLE > SHARED_REGION_TABLE > ... > VIRTIO_BLK) is respected in all code paths
+
+**Category:** Kernel-internal
+**Source:** Lattuada et al., "Verus: Verifying Rust Programs using Linear Ghost Types" (OOPSLA 2023)
+
+#### Deductive Verification: Prusti and Creusot
+
+Two complementary deductive verification frameworks:
+
+- **Prusti** (ETH Zurich, OOPSLA 2019): Based on the Viper intermediate verification language. Automatically derives loop invariants and natively supports Rust ownership. Best suited for AIOS's trait-based abstractions (Platform trait, allocator traits) and the `shared/` crate where types cross the kernel/stub boundary.
+
+- **Creusot** (Inria, ICFEM 2022): Generates Why3 proof obligations with access to multiple SMT solvers and interactive provers (Coq, Isabelle). For AIOS's most critical invariants — capability cascade revocation correctness, IPC deadlock freedom, scheduler fairness — Creusot's multi-prover approach provides higher confidence than single-solver tools.
+
+**Category:** Kernel-internal
+**Sources:** Astrauskas et al., "Leveraging Rust Types for Modular Specification and Verification" (OOPSLA 2019); Denis et al., "Creusot: A Foundry for the Deductive Verification of Rust Programs" (ICFEM 2022)
+
+#### Concurrency Verification: Loom and Shuttle
+
+- **Loom** (Tokio): Deterministic concurrency testing that exhaustively explores all possible thread interleavings. Essential for verifying AIOS's concurrent data structures: the lock ordering protocol across 7 global tables, `MessageRing` producer/consumer correctness, per-CPU run queue interactions during load balancing, and `AsidAllocator` generation wrap behavior under concurrent ASID allocation.
+
+- **Shuttle** (AWS): Randomized concurrency testing that scales better than Loom's exhaustive approach. Suitable for AIOS's larger concurrent subsystems where exhaustive exploration is infeasible: the scheduler's `try_load_balance` (4 CPUs × per-CPU queues × thread migration), IPC select with multiple waiters, and notification signal/wait races.
+
+**Category:** Kernel-internal
+**Sources:** github.com/tokio-rs/loom; github.com/awslabs/shuttle
+
+#### Runtime Safety: Miri and Safety-Critical Compilation
+
+- **Miri** (Rust Project): MIR interpreter detecting undefined behavior — out-of-bounds access, use-after-free, data races, invalid values. Already usable on AIOS's `shared/` crate (275 unit tests). Running `cargo +nightly miri test -p shared` would catch UB in `FixedQueue`, `RingBuffer`, `RawMessage` packing, and capability token operations. Cannot run `no_std` kernel code directly but covers all shared types.
+
+- **Ferrocene** (Ferrous Systems): ISO 26262 (ASIL D) and IEC 61508 (SIL 4) qualified Rust compiler for safety-critical systems. If AIOS targets safety-critical deployments (automotive infotainment, medical devices, industrial control), Ferrocene provides the qualified toolchain. AIOS's `no_std` kernel compiles with Ferrocene without code changes — the qualification covers the compiler, not the application.
+
+**Category:** Kernel-internal
+**Sources:** github.com/rust-lang/miri; ferrocene.dev
+
+#### Incremental Verification Strategy
+
+Formal verification should be adopted incrementally, targeting the highest-value code paths first:
+
+```text
+Phase 1 — Immediate (Kani + Miri):
+  ├── Kani harnesses for unsafe blocks in mm/, cap/, ipc/
+  ├── Miri on shared/ crate unit tests
+  └── Effort: ~1 week to add initial harnesses
+
+Phase 2 — Critical paths (Verus):
+  ├── Page table W^X invariants (pgtable.rs)
+  ├── Capability attenuation correctness (cap/mod.rs)
+  ├── ContentHash computation determinism (block_engine.rs)
+  └── Effort: ~2-4 weeks per module
+
+Phase 3 — Concurrency (Loom + Shuttle):
+  ├── Lock ordering protocol verification
+  ├── MessageRing concurrent access
+  ├── Buddy allocator concurrent alloc/free
+  └── Effort: ~1-2 weeks per data structure
+
+Phase 4 — Deep invariants (Creusot):
+  ├── Cascade revocation completeness
+  ├── IPC deadlock freedom
+  ├── Scheduler fairness bounds
+  └── Effort: ~4-8 weeks per proof
+```
+
+This strategy starts with tools that require minimal annotation (Kani, Miri), progresses to targeted proofs on critical paths (Verus), and culminates in deep invariant proofs (Creusot) for the highest-assurance requirements.
+
+### 10.6 Cross-References
+
+| Subsection | Related Architecture Documents |
+|---|---|
+| §10.1 Microkernel Evolution | [ipc.md](../kernel/ipc.md) §13-14, [scheduler.md](../kernel/scheduler.md) §16, [subsystem-framework.md](../platform/subsystem-framework.md) |
+| §10.2 AI-Native Primitives | [memory-ai.md](../kernel/memory-ai.md) §6, [airs.md](../intelligence/airs.md) §4-5, [agents.md](../applications/agents.md) |
+| §10.3 Storage & Data | [spaces-block-engine.md](../storage/spaces-block-engine.md) §4, [spaces-query-engine.md](../storage/spaces-query-engine.md) §7, [spaces-sync.md](../storage/spaces-sync.md) §8 |
+| §10.4 Security Evolution | [security-capabilities.md](../security/security-capabilities.md) §3, [security-operations.md](../security/security-operations.md) §13, [fuzzing-ai-native.md](../security/fuzzing-ai-native.md) §7 |
+| §10.5 Formal Verification | [static-analysis.md](../security/static-analysis.md), [developer-guide.md](./developer-guide.md) |

@@ -27,7 +27,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 |---|---|---|
 | System overview & vision | `docs/project/overview.md` | §1 Vision, §2 Architecture |
 | Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §8 Phase table |
-| Full architecture | `docs/project/architecture.md` | All |
+| Full architecture | `docs/project/architecture.md` | All (§10 Future Directions: research-informed evolution roadmap) |
 | Language ecosystem & runtimes | `docs/project/language-ecosystem.md` | All (Phase 12-15+) |
 | Boot sequence (Phase 0, QEMU `-kernel`) | `docs/kernel/boot.md` | §3.3 Steps 1-2 |
 | Boot sequence (Phase 1+, UEFI) | `docs/kernel/boot.md` | §2 full, §3.3 Steps 1-9 |
