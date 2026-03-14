@@ -513,7 +513,7 @@ pub struct AgentManifest {
 /// Set of capabilities held by a task or agent process. Capabilities are
 /// kernel-managed tokens — agents hold references, not the capabilities
 /// themselves. The kernel validates every token on every syscall.
-/// See ipc.md §4 for capability transfer and boot.md §4.7 for
+/// See ipc.md §4 for capability transfer and boot-services.md §4.7 for
 /// the root capability from which all others derive.
 pub struct CapabilitySet {
     /// Active capability tokens, keyed by capability type for O(1) lookup

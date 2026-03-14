@@ -1286,7 +1286,7 @@ Once set, accessibility configuration persists across reboots without requiring 
 ```rust
 /// Boot-time accessibility config.
 /// Stored unencrypted — must be readable before identity unlock.
-/// See boot-lifecycle.md §19.3 for the full struct.
+/// See boot-accessibility.md §19.3 for the full struct.
 pub struct BootAccessibilityConfig {
     screen_reader: bool,
     high_contrast: bool,

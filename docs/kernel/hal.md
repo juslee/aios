@@ -85,7 +85,7 @@ The HAL handles **boot-time hardware initialization and kernel-level device acce
 
 ## 2. Platform Detection
 
-Platform detection runs during kernel early boot (boot.md §3.3, Step 3) after the device tree is parsed. The kernel reads the root `compatible` string from the flattened device tree and selects the matching platform implementation:
+Platform detection runs during kernel early boot (boot-kernel.md §3.3, Step 3) after the device tree is parsed. The kernel reads the root `compatible` string from the flattened device tree and selects the matching platform implementation:
 
 ```rust
 /// Selected at boot time by reading the DTB compatible string.
@@ -860,7 +860,7 @@ pub unsafe fn mmio_set_bits32(base: *mut u8, offset: usize, bits: u32) {
 }
 ```
 
-MMIO regions are mapped with device memory attributes (nGnRnE — non-Gathering, non-Reordering, non-Early-write-acknowledgement) in the kernel page tables. This prevents the CPU from reordering or caching device register accesses. The mapping is set up in boot.md §3.3 Step 6b at virtual address `MMIO_BASE` (`0xFFFF_0010_0000_0000`).
+MMIO regions are mapped with device memory attributes (nGnRnE — non-Gathering, non-Reordering, non-Early-write-acknowledgement) in the kernel page tables. This prevents the CPU from reordering or caching device register accesses. The mapping is set up in boot-kernel.md §3.3 Step 6b at virtual address `MMIO_BASE` (`0xFFFF_0010_0000_0000`).
 
 -----
 
@@ -1034,7 +1034,7 @@ The timer is the simplest to port — only the frequency changes (all aarch64 pl
 
 The current implementation stores HAL-initialized devices in module-level globals and local variables within `kernel_main()` rather than a unified `KernelState` struct. For example, the platform reference is a local `&'static dyn Platform`, and the interrupt controller and timer are locals passed to subsequent init functions.
 
-The target design consolidates this into a `KernelState` struct (see boot.md §3.2 for the current per-subsystem global state approach):
+The target design consolidates this into a `KernelState` struct (see boot-kernel.md §3.2 for the current per-subsystem global state approach):
 
 ```rust
 /// Target design: unified kernel state.

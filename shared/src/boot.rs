@@ -142,7 +142,7 @@ impl MemoryDescriptor {
 }
 
 // ---------------------------------------------------------------------------
-// Early boot phases (boot.md §3.1)
+// Early boot phases (boot-kernel.md §3.1)
 // ---------------------------------------------------------------------------
 
 /// Boot phases from entry point through full initialization.
