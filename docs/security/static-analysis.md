@@ -49,7 +49,7 @@ Every kernel subsystem has defect classes that static analysis can catch before 
 | Scheduler, IPC, allocator concurrency | Exhaustive interleaving exploration | Loom | 3+ |
 | Scheduler, IPC, allocator concurrency | Randomized scheduling for large state spaces | Shuttle | 3+ |
 | All kernel code | AIOS-specific anti-patterns (MMIO without volatile, TTBR without barriers) | Semgrep (custom rules) | 3+ |
-| Capability system, allocators | Capability flow tracking, integer overflow | MIRAI | 3+ |
+| Capability system, allocators | Capability flow tracking, integer overflow | Kani contracts (§4.5) | 3+ |
 | Capability system, IPC | Design-level correctness proofs | TLA+ / Coq | 13+ / 24 |
 | Page table management | W^X enforcement proof | Kani / exhaustive path analysis | 13+ |
 | Kernel numeric invariants | Compile-time value predicates (alignment, bounds) | Prusti / Flux | 13+ |
@@ -87,7 +87,7 @@ The kernel targets enabling `#![forbid(unsafe_op_in_unsafe_fn)]` to require expl
 
 ### 4.2 Clippy — Lint-Based Analysis
 
-Clippy provides 750+ lints covering correctness, performance, and style. AIOS runs Clippy with `-D warnings` (deny all warnings), enforced in CI via `just check`.
+Clippy provides 800+ lints covering correctness, performance, and style. AIOS runs Clippy with `-D warnings` (deny all warnings), enforced in CI via `just check`.
 
 Kernel-specific lints targeted for explicit enablement beyond the defaults:
 
@@ -112,9 +112,11 @@ Miri interprets Rust's Mid-level Intermediate Representation (MIR) under strict 
 - Invalid enum discriminants
 - Dangling references
 
-**Aliasing model evolution.** Miri supports two aliasing models: the original Stacked Borrows and the newer Tree Borrows (`-Zmiri-tree-borrows`). Tree Borrows is more permissive for patterns common in OS `unsafe` code — notably, raw pointers derived from references that are then used alongside the original reference. AIOS targets running Miri with both models to catch the widest range of issues while avoiding false positives from Stacked Borrows' stricter rules.
+**Academic validation.** Miri was formally validated in the POPL 2026 paper "Miri: Practical Undefined Behavior Detection for Rust," establishing it as the first practical UB detector with zero false positives on executed code paths in deterministic Rust programs. Miri does not perform whole-program analysis — it detects UB only along paths actually exercised by tests or harnesses, so coverage depends on the quality of the test suite driving it. The evaluation covered 100,000+ Rust libraries, successfully running 70%+ of test suites — demonstrating practical scale for real-world codebases.
 
-**Weak memory emulation.** Miri supports weak memory model emulation (`-Zmiri-weak-memory-emulation`), detecting bugs that only manifest on ARM/RISC-V but not on x86. This is directly relevant to AIOS's aarch64 target, where weak memory ordering bugs are a real concern in the atomic operations used for inter-core synchronization.
+**Aliasing model evolution.** Miri supports two aliasing models: the original Stacked Borrows and the newer Tree Borrows (`-Zmiri-tree-borrows`). Tree Borrows now has a formal foundation (PLDI 2025) but remains experimental with no stabilization timeline. Tree Borrows is more permissive for patterns common in OS `unsafe` code — notably, raw pointers derived from references that are then used alongside the original reference. AIOS targets running Miri with both models to catch the widest range of issues while avoiding false positives from Stacked Borrows' stricter rules.
+
+**Weak memory emulation.** Miri supports weak memory model emulation (`-Zmiri-weak-memory-emulation`) using C++20 semantics, detecting bugs that only manifest on ARM/RISC-V but not on x86. This is directly relevant to AIOS's aarch64 target, where weak memory ordering bugs are a real concern in the atomic operations used for inter-core synchronization.
 
 **Limitation:** Miri cannot interpret inline assembly or MMIO operations. It targets the `shared/` crate and pure-Rust kernel logic extracted into host-testable functions. It cannot run the full `no_std` kernel binary. See §4.9 (cargo-careful) for a lightweight complement that handles code Miri cannot run.
 
@@ -132,7 +134,7 @@ Rudra is a research static analyzer from Georgia Tech (SOSP '21 Distinguished Ar
 
 Rudra found 264 memory safety bugs across crates.io (76 CVEs, 112 RustSec advisories). For AIOS, any type marked `Send` or `Sync` for cross-core sharing and any `unsafe` block accepting closures or trait objects is a Rudra target.
 
-**Maintenance status.** Rudra has seen minimal updates since the 2021 publication and is pinned to older Rust compiler internals. It may require effort to run on newer nightly versions. As a long-term mitigation, the three core analysis patterns (panic safety, Send/Sync variance, higher-order invariants) could be re-implemented as custom Clippy lints or Semgrep rules (§4.14) if Rudra becomes unmaintainable.
+**Maintenance status.** Rudra has seen minimal updates since the 2021 publication and is pinned to older Rust compiler internals. Running it on current nightly requires significant effort. Notably, the Send/Sync variance analysis is now partially covered by improved `rustc` diagnostics — the compiler's built-in checks for incorrect `Send`/`Sync` implementations have strengthened since 2021. The panic safety and higher-order invariant analyses remain unique to Rudra. As a long-term mitigation, these two patterns could be re-implemented as custom Clippy lints or Semgrep rules (§4.14) if Rudra becomes fully unmaintainable.
 
 **Integration:** Periodic manual scans via Docker. Rudra is research-quality and not suitable for blocking CI, but results are triaged as high-priority findings.
 
@@ -140,13 +142,16 @@ Rudra found 264 memory safety bugs across crates.io (76 CVEs, 112 RustSec adviso
 
 Kani translates Rust to CBMC and exhaustively explores all execution paths within bounded inputs. Unlike testing (which checks specific inputs) or fuzzing (which checks random inputs), Kani proves properties hold for **all** inputs up to a specified bound.
 
-**Proven in practice:** AWS uses Kani to verify Firecracker VMM security boundaries and s2n-tls. The Rust standard library verification initiative uses Kani for core data structures — this effort has driven improvements in Kani's handling of generic code, trait objects, and complex type hierarchies, validating Kani's maturity for production use.
+**Proven in practice:** AWS uses Kani to verify Firecracker VMM security boundaries and s2n-tls. The Rust standard library verification initiative uses Kani for core data structures — this effort synchronizes with recent nightly Rust in every Kani release, ensuring compatibility with the latest language features and validating Kani's maturity for production use.
 
 **Key capabilities:**
 
-- **Contract-based verification:** `#[kani::requires]` and `#[kani::ensures]` enable modular verification — each function's proof obligations are checked independently without full program analysis, making verification of large codebases practical.
+- **Contract-based verification:** `#[kani::requires]` and `#[kani::ensures]` enable modular verification — each function's proof obligations are checked independently without full program analysis, making verification of large codebases practical. Contract verification has matured significantly, with stub verification now requiring contract harnesses for rigor.
 - **Stub/mock support:** `#[kani::stub]` allows replacing complex functions with simpler models during verification, isolating the property under test from unrelated complexity.
 - **Concrete playback:** When Kani finds a counterexample, it generates a concrete test case that reproduces the bug, bridging model checking and unit testing.
+- **SMT solver flexibility:** Kani supports multiple SMT backends (Z3, Bitwuzla, CVC5), allowing solver selection based on the property being verified — different solvers excel at different proof patterns.
+- **Loop invariants:** Support for loop invariants including `while let` patterns, enabling verification of iterative algorithms common in kernel code (allocator free-list walks, page table traversals).
+- **Safety-focused mode:** `--prove-safety-only` enables targeted verification of memory safety properties without requiring full functional specifications, lowering the barrier for initial adoption.
 
 **AIOS targets:**
 
@@ -176,7 +181,7 @@ Five tools form a layered defense against dependency-related risks:
 
 **`cargo-geiger`** scans the dependency tree and counts `unsafe` usage in each crate. This quantifies the attack surface of the dependency graph — a crate with zero `unsafe` blocks is lower-risk than one with dozens. Combined with `cargo-vet`, this gives a complete picture of dependency risk: which dependencies use `unsafe` (geiger) and whether those `unsafe` blocks have been audited (vet).
 
-**`cargo-semver-checks`** lints crate APIs for semver violations — removed public items, changed function signatures, altered type bounds. For AIOS, the `shared/` crate is the API boundary between kernel and uefi-stub; breaking changes to `BootInfo`, `RawMessage`, `Syscall` enum, etc. could silently break the stub. Running cargo-semver-checks on `shared/` in CI catches these before they reach integration testing. Note: cargo-semver-checks is integrated into `cargo` itself as an experimental feature since Rust 1.74 (`cargo publish --check-semver`).
+**`cargo-semver-checks`** lints crate APIs for semver violations — removed public items, changed function signatures, altered type bounds. For AIOS, the `shared/` crate is the API boundary between kernel and uefi-stub; breaking changes to `BootInfo`, `RawMessage`, `Syscall` enum, etc. could silently break the stub. Running cargo-semver-checks on `shared/` in CI catches these before they reach integration testing. As of 2025, cargo-semver-checks has grown to 242+ lints (up from ~120 in 2024). Integration into `cargo publish` as a default check is an active Rust project goal but not yet merged.
 
 ### 4.7 Formal Verification — Verus, TLA+, Coq, and RefinedRust
 
@@ -186,19 +191,25 @@ Formal verification provides mathematical guarantees that static analysis tools 
 
 Verus has been validated on real systems code:
 
-- The Asterinas OS project uses Verus for verified page table management and introduced the "framekernel" pattern (§11.1).
+- The Asterinas OS project uses Verus for verified page table management and introduced the "framekernel" pattern (§11.1). The `vostd` project (formally verified OSTD framework) identified 14 high-priority verification targets, verified 11 of them, and found real bugs including a race condition in page table node freeing.
 - VeriSMo is a formally verified SMM monitor written in Rust and verified with Verus, demonstrating that Verus handles MMIO, page tables, and hardware register interactions — the same patterns AIOS uses.
+- **VerusSync** provides a permission-based (token-based) toolkit for concurrency verification, addressing a key gap in proving concurrent kernel data structures sound.
 - Verus's `tracked` and `ghost` types provide a natural way to express resource ownership proofs (e.g., "this page frame is owned by exactly one address space") with zero runtime cost.
+- **AutoVerus** (OOPSLA 2025, Microsoft Research + UIUC) demonstrates that LLM agent networks can automatically generate Verus proofs for 90%+ of non-trivial benchmarks, with over half completing in under 30 seconds. This directly validates the LLM-assisted proof strategy described in §10.2.
 
 **TLA+ (Phase 13).** Model the capability state machine and IPC message passing as TLA+ specifications. Verify liveness (no permanent capability starvation) and safety (no capability escalation, no cross-address-space memory leak). TLA+ catches design flaws before they become code. The Apalache model checker provides an alternative SMT-based backend to the standard TLC model checker, offering faster verification for certain spec patterns.
 
-**Coq / RefinedRust (Phase 24).** RefinedRust (PLDI 2024, MPI-SWS) extends the RustBelt/Iris separation logic framework with semi-automated verification of `unsafe` Rust code. It is the most rigorous approach to proving soundness of `unsafe` abstractions — MMIO wrappers, page table manipulation, context switch code. RefinedRust's automation is significantly more practical than manual Coq proofs while maintaining the same level of rigor.
+**Coq / RefinedRust (Phase 24).** RefinedRust (PLDI 2024, MPI-SWS) extends the RustBelt/Iris separation logic framework with semi-automated verification of `unsafe` Rust code. It is the most rigorous approach to proving soundness of `unsafe` abstractions — MMIO wrappers, page table manipulation, context switch code. RefinedRust's automation is significantly more practical than manual Coq proofs while maintaining the same level of rigor. RefinedProsa (PLDI 2025) extends the RefinedRust ecosystem to scheduler verification — directly relevant to AIOS's Phase 3 scheduler correctness goals.
 
 **Relationship to Kani:** Kani is bounded model checking (automated, finds bugs up to a bound). Verus/TLA+/Coq provide unbounded formal verification (proves correctness for all inputs). They are complementary — Kani is adopted earlier (Phase 3+) because it requires less expertise, while formal verification (Phase 13+/24) provides stronger guarantees for critical subsystems.
 
 ### 4.8 Converos — OS Concurrency Model Checking
 
 Converos (USENIX ATC 2025) is a practical model checker for verifying Rust OS concurrency patterns. Once the scheduler (Phase 3) and multi-core support are established, concurrency bugs become the dominant risk in kernel `unsafe` code.
+
+**Published results.** Applied to 12 critical concurrency modules in Asterinas, Converos found 20 bugs — data races, deadlocks, livelocks, and kernel panics — with a specification-to-code ratio of 0.3–2.3 and only four person-months of effort. These results validate the tool's practicality for kernel-scale verification.
+
+**Methodology.** Converos uses PlusCal specifications (a TLA+ derivative), enabling a multi-layered, multi-grained specification approach. Specifications are model-checked first, then confirmed at the implementation level. This means AIOS's TLA+ investment (§4.7) feeds directly into Converos workflows — TLA+ protocol specs can inform PlusCal concurrency specs.
 
 **AIOS targets:** Lock ordering in the scheduler, IPC channel synchronization, allocator concurrency paths, interrupt handler safety (timer tick handler re-entrancy), and per-CPU data access patterns (run queues, log rings, trace rings). Converos verifies these modules for deadlock freedom and race-condition absence.
 
@@ -230,7 +241,7 @@ Three research tools offer deductive verification approaches that complement Ver
 
 **Creusot** (Inria, ICFEM 2022) translates Rust to WhyML (Why3 framework) with strong support for Rust's ownership semantics via a prophecy-based approach to mutable borrows. The Why3 backend provides flexibility in proof strategy (SMT solvers or interactive provers). Currently a research tool with a smaller community; monitor for maturity.
 
-**Flux** (UC San Diego, 2023-2024) adds liquid/refinement types to Rust, allowing compile-time verification of value predicates (e.g., `i32{v: v > 0}`). Refinement types could express kernel invariants like "this address is page-aligned", "this capability permission set is a subset of parent", "this pool index is within bounds" — all checked at compile time with zero runtime cost. Currently an early research prototype; monitor for maturity.
+**Flux** (UC San Diego, 2023-2025) adds liquid/refinement types to Rust, allowing compile-time verification of value predicates (e.g., `i32{v: v > 0}`). Refinement types could express kernel invariants like "this address is page-aligned", "this capability permission set is a subset of parent", "this pool index is within bounds" — all checked at compile time with zero runtime cost. Flux has matured beyond its initial prototype: it was used to formally verify process isolation in Tock, a security-focused microcontroller OS deployed in Google Security Chip (GSC) and Microsoft Pluton. This demonstrates Flux's applicability to real security-critical embedded systems with invariants similar to AIOS's.
 
 **Integration:** Phase 13+ evaluation. Prusti is the most practical near-term; Flux has the highest potential payoff if it matures. All three are alternatives/complements to Verus for different verification needs.
 
@@ -240,9 +251,9 @@ MIRAI (Meta) is an abstract interpretation engine for Rust MIR that performs int
 
 MIRAI supports user-defined contracts via the `mirai_annotations` crate, enabling annotation of kernel invariants that are checked across function boundaries. Contract verification could annotate capability propagation rules at the type level.
 
-**Maintenance note:** MIRAI was developed at Meta for the Libra/Diem blockchain project. Maintenance has slowed since 2023. Evaluate current status before adoption; if unmaintained, the capability flow analysis use case could be addressed by Semgrep custom rules (§4.14) or Kani contracts (§4.5).
+**Maintenance status: deprioritized.** MIRAI was developed at Meta for the Libra/Diem blockchain project. Following Diem's disbandment, MIRAI is effectively orphaned — the repository receives occasional toolchain update commits but has no active team or roadmap. Kani's maturing contract system (`#[kani::requires]`/`#[kani::ensures]`, §4.5) now covers much of the capability flow analysis use case that MIRAI's tag analysis was intended for. AIOS deprioritizes MIRAI in favor of Kani contracts for capability flow verification and Semgrep custom rules (§4.14) for pattern-based checks.
 
-**Integration:** Phase 3+ evaluation, contingent on maintenance status. Target: capability system and allocator integer arithmetic.
+**Integration:** Monitor status only. If MIRAI is revived by a new maintainer, re-evaluate for integer overflow and information flow analysis. Otherwise, Kani contracts and Semgrep rules cover the key use cases.
 
 ### 4.13 Test Quality — cargo-mutants
 
@@ -304,7 +315,7 @@ Static analysis is adopted incrementally, aligned with the phase at which each s
 |---|---|---|
 | 0–2 | `rustc`, Clippy, `rustfmt`, cargo-audit, cargo-deny, Miri, cargo-careful, cargo-geiger, cargo-semver-checks | `shared/` crate, boot code, allocators (host-testable logic), dependency audit |
 | 2+ | cargo-vet, cargo-mutants, Rudra | Dependency provenance, test quality, `unsafe` patterns |
-| 3–5 | Kani, Converos, Loom, Shuttle, Semgrep, MIRAI | Syscall validation, capability operations, scheduler concurrency, kernel patterns |
+| 3–5 | Kani, Converos, Loom, Shuttle, Semgrep | Syscall validation, capability operations, scheduler concurrency, kernel patterns |
 | 10–12 | `aios agent audit`, AIRS code review, AI-assisted techniques (§10) | Third-party agent manifests and code bundles |
 | 13+ | TLA+ models, Rudra full scans, Kani CI enforcement, Prusti, Flux | Capability state machine, IPC protocol, all `unsafe` blocks, numeric invariants |
 | 24 | Verus proofs, RefinedRust / Coq / Creusot proofs | Capability no-forge/no-escalate, provenance chain, W^X, unsafe abstraction soundness |
@@ -355,7 +366,7 @@ Cross-reference: [fuzzing-adoption-roadmap.md](fuzzing-adoption-roadmap.md) §4 
 | Loom | Exhaustive thread interleaving exploration | Kernel | Concurrent data structures, lock ordering | 3+ |
 | Shuttle | Randomized concurrency testing | Kernel | Large-state-space concurrent modules | 3+ |
 | Semgrep | Custom kernel-specific lint rules | Kernel | All kernel code (AIOS-specific patterns) | 3+ |
-| MIRAI | Abstract interpretation, tag analysis | Kernel | Capability flow, integer arithmetic | 3+ |
+| MIRAI | Abstract interpretation, tag analysis | Kernel | Monitor only (deprioritized — see §4.12) | — |
 | Prusti | Deductive verification (pre/postconditions) | Kernel | Pure kernel logic, `shared/` crate | 13+ |
 | Flux | Refinement type checking | Kernel | Numeric invariants, alignment, bounds | 13+ |
 | TLA+ | Protocol-level specification and model checking | Kernel (design) | Capability state machine, IPC protocol | 13+ |
@@ -400,7 +411,7 @@ These techniques require semantic understanding provided by the AIRS system and 
 
 **LLM-guided fuzzing.** LLMs generate targeted fuzz inputs and harnesses based on code understanding. Rather than random mutation, the LLM reasons about code paths and generates inputs likely to trigger edge cases. Google's OSS-Fuzz integration with LLMs demonstrated 30%+ coverage improvement over traditional fuzzing. For AIOS, AIRS generates targeted fuzz harnesses for the syscall interface, IPC message parser, and agent manifest validator.
 
-**GNN vulnerability detection.** Graph neural networks trained on code property graphs (AST + CFG + DFG) detect vulnerability patterns learned from CVE databases. Research tools (Devign, LineVul, ReVeal) show promise but have high false-positive rates (30-60%). Not suitable for blocking CI but useful for periodic deep scans of `unsafe` blocks, where findings are triaged by AIRS with human oversight.
+**GNN vulnerability detection.** Graph neural networks trained on code property graphs (AST + CFG + DFG) detect vulnerability patterns learned from CVE databases. Hybrid GNN+Transformer approaches (heterogeneous attention GNN, cross-modal fine-grained features) now achieve 91-97% accuracy on benchmarks, a significant improvement over earlier tools (Devign, LineVul, ReVeal). However, false-positive rates in practice remain 30-60% on novel codebases outside the training distribution. Not suitable for blocking CI but useful for periodic deep scans of `unsafe` blocks, where findings are triaged by AIRS with human oversight.
 
 ### 10.2 Kernel-Internal ML (CI-Safe, No AIRS)
 
@@ -408,13 +419,17 @@ These techniques run without the AI runtime and can be integrated into CI pipeli
 
 **Custom Semgrep rules.** Described in §4.14. While not ML-based, Semgrep rules encode domain-specific patterns that capture the same class of bugs that simple ML classifiers target, without the false-positive overhead.
 
-**LLM-assisted proof and harness generation.** LLMs generate Kani proof harnesses, Verus pre/postconditions, and TLA+ spec drafts from code context. Even imperfect LLM-generated proofs reduce expert review burden:
+**LLM-assisted proof and harness generation.** LLMs generate Kani proof harnesses, Verus pre/postconditions, and TLA+ spec drafts from code context. This approach has been validated by **AutoVerus** (OOPSLA 2025, Microsoft Research + UIUC): a network of LLM agents that mimics human expert proof construction — generation, refinement via generic tips, and debugging via verification error feedback. AutoVerus achieved 90%+ success on 150 non-trivial Verus benchmarks, with over half completing in under 30 seconds.
+
+Concrete applications for AIOS:
 
 - Auto-generate Kani `#[kani::proof]` harnesses from function signatures and `// SAFETY:` comments.
 - Auto-suggest Verus `requires`/`ensures` clauses from code patterns and documentation.
 - Auto-generate TLA+ spec drafts from Rust module interfaces and IPC protocol definitions.
 
-These can be generated offline (by any LLM, not AIRS) and committed as starting points for expert refinement. The LLM does the scaffolding; the expert verifies correctness. This addresses the main barrier to formal verification adoption — the cost of writing proofs from scratch.
+These can be generated offline (by any LLM, not AIRS) and committed as starting points for expert refinement. The LLM does the scaffolding; the expert verifies correctness. AutoVerus demonstrates this is not speculative — automated proof generation is practical today, addressing the main barrier to formal verification adoption.
+
+Cross-reference: [fuzzing-ai-native.md](fuzzing-ai-native.md) §7.3 for related AI-assisted fuzzing harness generation.
 
 ---
 
@@ -424,7 +439,9 @@ Research and production OS projects have developed architectural patterns that s
 
 ### 11.1 Framekernel Pattern (Asterinas)
 
-The Asterinas OS project introduced the "framekernel" architecture: all `unsafe` code is isolated into a verified "frame" layer, while the rest of the OS uses only safe Rust. The frame layer provides safe abstractions over hardware (MMIO, page tables, system registers), and formal verification (via Verus) proves these abstractions are sound. The safe kernel code above the frame layer is then protected by Rust's type system — no further verification needed.
+The Asterinas OS project (USENIX ATC 2025) introduced the "framekernel" architecture: all `unsafe` code is isolated into a verified "frame" layer (OSTD — OS Standard Library, ~15,000 lines — 14% of the kernel), while the rest of the OS uses only safe Rust. The frame layer provides safe abstractions over hardware (MMIO, page tables, system registers), and formal verification (via Verus) proves these abstractions are sound. The safe kernel code above the frame layer is then protected by Rust's type system — no further verification needed. Asterinas supports 210+ Linux syscalls with performance on par with Linux (mean normalized score 1.08 on LMbench).
+
+The `vostd` project extends this with a formally verified version of OSTD using Verus. Of 14 high-priority verification targets, 11 have been verified — and the effort discovered real bugs (including a race condition in page table node freeing) that testing had not caught.
 
 **Relevance to AIOS:** AIOS already follows this pattern informally — `unsafe` blocks are concentrated in `kernel/src/arch/aarch64/` (MMIO, assembly, system registers) and `kernel/src/mm/` (page table manipulation). Formalizing this as an explicit framekernel boundary would make the verification scope clear: verify the frame layer (Phase 24), then the safe layer is guaranteed by construction.
 
@@ -440,21 +457,31 @@ For AIOS, the `unsafe` MMIO abstractions and page table code should pass both mo
 
 ### 11.3 Ferrocene — Safety-Critical Rust
 
-Ferrocene is a qualified Rust compiler toolchain for safety-critical systems (ISO 26262, IEC 61508), developed by Ferrous Systems. If AIOS ever targets safety-critical applications (automotive, medical, aerospace), Ferrocene provides the qualified compiler needed for certification. Ferrocene's formal specification of Rust semantics also informs AIOS's verification strategy — properties proven against Ferrocene's spec are guaranteed by a qualified compiler.
+Ferrocene is a qualified Rust compiler toolchain for safety-critical systems, developed by Ferrous Systems. As of early 2025, Ferrocene holds qualifications for automotive (ISO 26262 ASIL-D), industrial (IEC 61508 SIL4), and medical (IEC 62304 Class C) — with railway and aerospace qualifications planned. If AIOS ever targets safety-critical applications, Ferrocene provides the qualified compiler needed for certification. Ferrocene's formal specification of Rust semantics also informs AIOS's verification strategy — properties proven against Ferrocene's spec are guaranteed by a qualified compiler.
 
-### 11.4 seL4 Rust Rewrite
+### 11.4 seL4 Rust Ecosystem
 
-The seL4 team is working on a Rust rewrite of the seL4 microkernel, aiming to maintain the formal verification guarantees of the original C implementation while leveraging Rust's memory safety. Their experience with what can and cannot be verified in Rust kernels is directly applicable to AIOS's Phase 24 verification strategy. Key lessons: Rust's ownership model helps with some proofs (resource management) but complicates others (interior mutability, shared state).
+The seL4 ecosystem has developed significant Rust support. The `rust-sel4` 3.0.0 release provides userspace libraries and runtimes for building seL4 Microkit components in Rust. While a full kernel rewrite remains under discussion, the current focus is on Rust-based userspace — providing memory-safe system services atop seL4's formally verified C kernel. The HAMR framework extends this by generating Rust code for seL4 Microkit with Verus verification support, combining seL4's kernel proofs with Verus's Rust verification.
 
-### 11.5 Rust for Linux — Custom Clippy Practices
+**Relevance to AIOS:** The seL4 experience demonstrates that Rust's ownership model helps with some proofs (resource management) but complicates others (interior mutability, shared state). These lessons are directly applicable to AIOS's Phase 24 verification strategy.
 
-The Rust-for-Linux project (merged into mainline Linux 6.1+) has developed practices for static analysis of Rust kernel code:
+### 11.5 Rust for Linux — Production Deployment
+
+The Rust-for-Linux project (merged into mainline Linux 6.1+) is no longer experimental — the 2025 Kernel Maintainer Summit affirmed Rust as a first-class kernel language. Production deployment has begun: Android 16 devices ship with a Rust-based ashmem allocator on Linux 6.12.
+
+Static analysis practices developed by the project:
 
 - Custom Clippy lints for kernel-specific patterns
 - `#[vtable]` macro for safe C-Rust FFI boundaries
 - Kernel-specific safety abstractions validated by the compiler
 
 AIOS can adapt their custom Clippy lint approach for AIOS-specific rules, complementing the Semgrep rules in §4.14 with compiler-integrated checks.
+
+### 11.6 Other Rust OS Projects — Hubris and Theseus
+
+**Hubris** (Oxide Computer) is a production Rust RTOS for microcontrollers with ~2,000 lines of code and zero C. Hubris enforces memory isolation between separately compiled components with no dynamic allocation and driver fault isolation with automatic restart. Its static analysis story is strong by construction: the entire OS compiles as a single, statically verified image where component boundaries are enforced at compile time. Relevant to AIOS as an existence proof that a production Rust OS can achieve strong static guarantees without dynamic allocation or C dependencies.
+
+**Theseus OS** (Rice University, OSDI 2020) takes an "intralingual" approach, using Rust's type system as the OS isolation boundary. Theseus replaces traditional address-space isolation with "cell-based" isolation where cells (compiled crates) are the isolation unit and the compiler enforces safety across cell boundaries. This shifts OS state management into the compiler, reducing the kernel's trusted computing base. While AIOS uses capability-based isolation rather than intralingual isolation, Theseus demonstrates the upper bound of what Rust's type system can enforce without hardware memory protection.
 
 ---
 
