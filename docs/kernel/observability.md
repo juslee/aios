@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [security.md](../security/security.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [memory.md](./memory.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
+**Related:** [security.md](../security/security.md) — Provenance recording (§2.7), behavioral baselines (§2.3 Layer 3), [inspector.md](../applications/inspector.md) — Security dashboard (consumer), [subsystem-framework.md](../platform/subsystem-framework.md) — Per-subsystem audit spaces (§7), [memory-reclamation.md](./memory-reclamation.md) — MemoryPressure (§8.1), [ipc.md](./ipc.md) — AuditLog syscall, [scheduler.md](./scheduler.md) — Scheduling classes
 
 -----
 
@@ -200,7 +200,7 @@ pub struct LogRing {
 
 /// Global log rings, one per core. BSS-allocated (zero-initialized at boot).
 /// MAX_CORES (8) * 16 KiB = 128 KiB total — fits comfortably in the kernel BSS.
-static LOG_RINGS: [LogRing; MAX_CORES] = LogRing::INIT_ARRAY;
+static LOG_RINGS: [LogRing; MAX_CORES] = [const { LogRing::INIT }; MAX_CORES];
 ```
 
 When the ring is full (head catches tail), new entries **overwrite** the oldest entries. This is intentional — log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock).
@@ -239,7 +239,7 @@ macro_rules! ktrace { ($subsys:ident, $($arg:tt)*) => { klog!(Trace, $subsys, $(
 
 A drain function, called periodically from the timer tick handler or idle loop, reads all per-core rings and writes formatted entries to the UART:
 
-```
+```text
 [   0.003142] [0] INFO  Mm   Pool init: 32768 pages in Kernel
 [   0.003287] [0] INFO  Mm   Pool init: 458752 pages in User
 [   0.004501] [1] INFO  Smp  Core 1 online
@@ -397,9 +397,21 @@ pub struct KernelMetrics {
     pub ipc_send:            Counter,  // Messages sent
     pub ipc_recv:            Counter,  // Messages received
     pub ipc_call:            Counter,  // Synchronous call+reply pairs
+    pub ipc_direct_switch:   Counter,  // IPC direct switch (bypass scheduler)
     pub ipc_roundtrip_ns:    Histogram<8>,  // Call round-trip latency
     pub ipc_timeout:         Counter,  // IPC operations that timed out
     pub ipc_cap_denied:      Counter,  // IPC denied by capability check
+
+    // ── Shared Memory (Phase 3) ─────────────────────────────────────────
+    pub shm_create:          Counter,  // Shared memory regions created
+    pub shm_map:             Counter,  // Shared memory mappings established
+    pub shm_unmap:           Counter,  // Shared memory unmappings
+
+    // ── Notifications (Phase 3) ─────────────────────────────────────────
+    pub notify_create:       Counter,  // Notification objects created
+    pub notify_signal:       Counter,  // Notification signals sent
+    pub notify_wait:         Counter,  // Notification waits initiated
+    pub notify_wake:         Counter,  // Notification wakeups delivered
 
     // ── Interrupts ──────────────────────────────────────────────────────
     pub irq_total:           Counter,  // Total IRQs handled
@@ -458,7 +470,7 @@ Trace points are modeled after Linux ftrace: binary, compact, per-core ring buff
 /// the event. Binary format — no string formatting on the hot path.
 ///
 /// All fields use fixed-width integers for deterministic layout.
-/// The enum discriminant is u8 (max 256 event types, currently ~20).
+/// The enum discriminant is u8 (max 256 event types, currently 17).
 #[repr(u8)]
 pub enum TraceEvent {
     // ── Scheduler ───────────────────────────────────────────────────────
@@ -546,7 +558,7 @@ pub struct TraceRing {
     tail: AtomicU32,
 }
 
-static TRACE_RINGS: [TraceRing; MAX_CORES] = TraceRing::INIT_ARRAY;
+static TRACE_RINGS: [TraceRing; MAX_CORES] = [const { TraceRing::INIT }; MAX_CORES];
 ```
 
 ### 4.5 Trace Point Macro
@@ -588,7 +600,7 @@ Trace data is **not** exported to UART — the volume would overwhelm the serial
 
 ### 5.1 Problem
 
-The kernel has one health signal today: `MemoryPressure` in [shared/src/lib.rs](../../shared/src/lib.rs), a 4-level enum (`Normal`/`Low`/`Critical`/`Oom`) computed from the user pool's free page ratio. This works well for memory, but every subsystem needs its own health indicator — the scheduler needs to report runqueue depth pressure, the IPC system needs to report channel exhaustion, the storage engine needs to report WAL fullness.
+The kernel has one health signal today: `MemoryPressure` in [shared/src/memory.rs](../../shared/src/memory.rs), a 4-level enum (`Normal`/`Low`/`Critical`/`Oom`) computed from the user pool's free page ratio. This works well for memory, but every subsystem needs its own health indicator — the scheduler needs to report runqueue depth pressure, the IPC system needs to report channel exhaustion, the storage engine needs to report WAL fullness.
 
 There is no unified pattern for expressing "this subsystem is degraded" or "this subsystem has failed." Each subsystem would need to invent its own ad-hoc signaling, leading to inconsistent APIs and missed health events.
 
@@ -677,7 +689,7 @@ Each subsystem defines its own threshold mapping from quantitative metrics to `H
 
 ### 5.5 Relationship to MemoryPressure
 
-The existing `MemoryPressure` enum in `shared/src/lib.rs` remains unchanged — it is part of the shared crate's ABI and crosses the kernel/stub boundary. Inside the kernel, the memory manager updates both `MemoryPressure` (for the frame allocator API) and `HEALTH.update(Subsystem::Mm, ...)` (for the unified health registry). The two use the same thresholds and are always consistent. `MemoryPressure` is the public API; `HealthLevel` is the kernel-internal generalization.
+The existing `MemoryPressure` enum in `shared/src/memory.rs` remains unchanged — it is part of the shared crate's ABI and crosses the kernel/stub boundary. Inside the kernel, the memory manager updates both `MemoryPressure` (for the frame allocator API) and `HEALTH.update(Subsystem::Mm, ...)` (for the unified health registry). The two use the same thresholds and are always consistent. `MemoryPressure` is the public API; `HealthLevel` is the kernel-internal generalization.
 
 -----
 
@@ -779,9 +791,7 @@ The seqlock pattern requires no atomic RMW on the reader side — just two `load
 
 ### 6.4 AuditRead Extension (Phase 13)
 
-When the Inspector and AIRS security infrastructure is implemented in Phase 13, the existing `AuditRead` syscall is extended with a `Scope::Operational` variant:
-
-The existing `Scope` enum used by `AuditRead` is extended with an `Operational` variant:
+The `Scope` enum used by `AuditRead` (see [ipc.md](./ipc.md)) gains an `Operational` variant for metrics access:
 
 ```rust
 /// Extended from the existing Scope enum in ipc.md.
@@ -805,7 +815,7 @@ This allows Inspector to query both security provenance and operational metrics 
 
 ### 7.1 Problem
 
-The Block Engine specified in [spaces.md](../storage/spaces.md) §4 uses a Write-Ahead Log (WAL), LSM-tree with multi-level compaction, and in-memory MemTables. Write amplification — the ratio of bytes written to disk versus bytes written by the application — is a critical tuning metric (§4.8). But spaces.md does not specify any instrumentation for measuring these values.
+The Block Engine specified in [spaces-block-engine.md](../storage/spaces-block-engine.md) §4 uses a Write-Ahead Log (WAL), LSM-tree with multi-level compaction, and in-memory MemTables. Write amplification — the ratio of bytes written to disk versus bytes written by the application — is a critical tuning metric (§4.8). But the Block Engine specification does not include any instrumentation for measuring these values.
 
 Without metrics, it is impossible to answer: "Is the compaction strategy working?", "How full is the WAL?", "What is the cache hit rate?"
 
@@ -861,9 +871,9 @@ pub struct StorageMetrics {
 
 ### 7.3 Integration Points
 
-Storage metrics are emitted at these points in the Block Engine pipeline (referencing [spaces.md](../storage/spaces.md)):
+Storage metrics are emitted at these points in the Block Engine pipeline (referencing [spaces-block-engine.md](../storage/spaces-block-engine.md)):
 
-| Operation | Metrics Updated | spaces.md Reference |
+| Operation | Metrics Updated | spaces-block-engine.md Reference |
 |---|---|---|
 | Application write → WAL | `wal_write_count`, `wal_write_bytes`, `wal_utilization` | §4.2 Write Path |
 | WAL sync to disk | `wal_sync_count`, `wal_sync_latency_ns` | §4.4 Crash Recovery |
@@ -932,7 +942,7 @@ Sections 1–9 describe the kernel's observability infrastructure — structured
 
 The core architectural principle of AI-enhanced observability is the **closed-loop feedback cycle**:
 
-```
+```text
 Kernel emits metrics/traces
     → AIRS consumes via §6 export interfaces (AuditRead, KernelInfoPage, UART drain)
     → AIRS analyzes (ML models at Idle scheduler class)
@@ -1045,7 +1055,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 - **TOCTOU detection.** AIRS learns the expected timing between "check" and "use" operations on shared state (e.g., channel existence check → channel access). When the gap between check and use exceeds learned thresholds, or when a "destroy" event appears between check and use for the same resource, AIRS flags a potential TOCTOU race.
 - **Double-wake detection.** By correlating scheduler traces (scheduler.md §12) with IPC traces, AIRS detects when a thread is woken twice for the same event — a pattern indicating that a timeout and a reply raced on the same blocked thread.
-- **Use-after-free detection.** AIRS monitors memory allocator traces (§7) correlated with access traces. When a free event for a resource is followed by an access to the same address from a different thread, it flags a potential use-after-free.
+- **Use-after-free detection.** AIRS monitors memory allocator traces (§4, PageAlloc/PageFree/SlabAlloc/SlabFree events) correlated with access traces. When a free event for a resource is followed by an access to the same address from a different thread, it flags a potential use-after-free.
 - **Lock ordering violation detection.** Beyond static lock ordering (deadlock-prevention.md §3), AIRS detects *runtime* lock ordering violations — cases where the dynamic acquisition order diverges from the declared static hierarchy, indicating a potential deadlock or race not covered by the static analysis.
 
 **Effect.** Shifts race condition detection from "hope we find it in code review" to "the system detects it from runtime behavior." Particularly valuable for timing-dependent bugs that only manifest under specific scheduling interleavings.
@@ -1056,7 +1066,66 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Target.** Phase 14+ (requires stable trace infrastructure and sufficient historical data for pattern learning).
 
-### 10.9 Cross-References
+### 10.9 Hardware Performance Counter Integration
+
+**Problem.** ARM Cortex-A72 (and most ARMv8-A implementations) expose Performance Monitor Unit (PMU) counters — cycle count, cache misses (L1D, L1I, L2), branch mispredictions, TLB misses, memory access stalls. These hardware counters provide ground-truth performance data that software-only metrics (§3) cannot capture. However, the PMU has a limited number of counter registers (typically 6 configurable counters on Cortex-A72), so only a subset of events can be monitored simultaneously. Choosing which counters to enable requires expertise about the current workload.
+
+**AI solution.** AIRS manages PMU counter multiplexing: it rotates through different counter configurations on a configurable interval (e.g., every 100 ms), building a statistical profile of hardware-level behavior. Over time, AIRS learns which counter combinations are most informative for the current workload — an inference-heavy workload benefits from cache miss and memory bandwidth counters, while an IPC-heavy workload benefits from branch misprediction and pipeline stall counters.
+
+AIRS correlates hardware counters with software metrics (§3) and traces (§4) to produce actionable insights: "IPC latency spike at t=1.23s correlates with L2 cache miss rate of 15% (normal: 2%), caused by inference thread evicting IPC buffer cache lines."
+
+**Effect.** Bridges the gap between software observability (what happened) and hardware observability (why it happened at the microarchitectural level). Enables root cause analysis that would be impossible with software-only instrumentation.
+
+**Safety and fallback.** PMU access is privileged by default (the kernel keeps EL0 access disabled via `PMUSERENR_EL0`). Counter overflow interrupts are optional and not required for this design — AIRS reads counters on a polled basis during timer tick processing. If AIRS is unavailable, PMU counters remain disabled (zero overhead).
+
+**Research.** Linux perf subsystem [R12] demonstrates PMU multiplexing for profiling. ARM PMU architecture [R13] defines the counter configuration interface. The seL4 benchmarking framework [R14] provides a microkernel-specific approach to PMU integration with minimal kernel complexity.
+
+**Target.** Phase 14+.
+
+### 10.10 Flight Recorder (Black Box)
+
+**Problem.** When the kernel panics or encounters an unrecoverable fault, the per-core log and trace rings are lost — they exist only in volatile memory. The most valuable diagnostic data (the events leading up to a crash) is destroyed at the moment it's most needed.
+
+**AI solution.** AIRS maintains a persistent flight recorder — a circular buffer in a reserved memory region (or on the VirtIO-blk data disk) that continuously snapshots a compressed summary of recent kernel state. The flight recorder captures:
+
+- Last N log entries per core (compressed via semantic log compression, §10.6)
+- Last N trace events per core (sampled at AIRS-determined rates, §10.2)
+- Current metric values (snapshot of KernelMetrics and StorageMetrics)
+- Current health levels (snapshot of HealthRegistry)
+- Stack traces of all running threads at snapshot time
+
+AIRS determines the snapshot frequency and compression ratio based on available storage budget and current system stability. Under stable operation, snapshots are infrequent (every 10 seconds). When anomalies are detected (§10.3), snapshot frequency increases to every 100 ms.
+
+**Effect.** Post-crash diagnosis shifts from "reproduce the bug" to "read the flight recorder." The first reboot after a crash reads the flight recorder and presents a timeline of events leading to the failure.
+
+**Safety and fallback.** During normal operation, the kernel only writes to the flight recorder region — it never reads from it, preventing corrupted flight recorder data from affecting runtime behavior. The flight recorder is read only once: during the boot-time crash-recovery path on the first reboot after a crash. If AIRS is unavailable, a minimal flight recorder can operate with fixed-rate snapshots (no adaptive compression or frequency adjustment).
+
+**Research.** Linux pstore [R15] provides persistent storage across reboots for kernel logs and crash dumps. Windows Kernel Trace Log (KTL) maintains a similar circular flight recorder. Hubris (Oxide Computer) uses a dedicated flash region for post-mortem diagnostics.
+
+**Target.** Phase 14+ (requires stable VirtIO-blk driver and block engine from Phase 4).
+
+### 10.11 Workload Fingerprinting
+
+**Problem.** The kernel treats all workloads identically — the scheduler uses static time slices ([scheduler.md](./scheduler.md) §3.1), the memory allocator uses fixed pool ratios ([memory-physical.md](./memory-physical.md) §2.4), and the IPC system uses fixed timeout defaults. In practice, workloads have distinct fingerprints: an LLM inference task generates predictable memory access patterns (sequential KV cache reads) and CPU utilization curves (bursty compute interspersed with memory stalls), while a web browser generates unpredictable access patterns with frequent small allocations. Optimal kernel parameters differ significantly between these workload types.
+
+**AI solution.** AIRS clusters observed telemetry patterns into workload fingerprints — compact statistical signatures derived from metric time series (§3), trace event sequences (§4), and hardware counter profiles (§10.9). Each fingerprint captures:
+
+- CPU utilization distribution (bursty vs. sustained vs. idle-heavy)
+- Memory allocation pattern (large sequential vs. small random vs. mixed)
+- IPC pattern (synchronous call-heavy vs. async notification-heavy vs. shared-memory-heavy)
+- Cache behavior profile (working set size estimate, miss rate trend)
+
+When AIRS detects a workload transition (fingerprint change), it proactively adjusts kernel parameters — scheduler time slices, memory pool ratios, IPC timeout defaults, trace sampling rates — before performance degrades. This is the mechanism through which the feedback loop (§10.1) achieves workload-adaptive behavior.
+
+**Effect.** Shifts kernel tuning from "configure once, hope for the best" to "automatically adapt to workload changes." Particularly valuable for AIOS where a single system runs both AI inference and interactive applications simultaneously.
+
+**Safety and fallback.** All parameter adjustments are bounded by safety limits (§10.1 Key invariant 2). Fingerprint-driven changes use the same syscall interface and validation as any other AIRS adjustment. If AIRS is unavailable, static defaults apply (current behavior).
+
+**Research.** Alps [R3] demonstrates workload-aware scheduling through learned priority functions. Google's Borg [R16] uses workload classification for cluster-level resource allocation. The AI+OS survey [R7] identifies workload fingerprinting as a key enabler for self-tuning operating systems.
+
+**Target.** Phase 14+ (requires stable metrics infrastructure, hardware counters, and sufficient workload diversity for training).
+
+### 10.12 Cross-References
 
 The AI-enhanced observability system is the foundation for AI-driven improvements across the kernel:
 
@@ -1064,7 +1133,7 @@ The AI-enhanced observability system is the foundation for AI-driven improvement
 - **Deadlock prevention** (deadlock-prevention.md §13): Predictive deadlock detection (§13.1) consumes IPC call graph data from trace points (§4). Learned timeout calibration (§13.3) uses per-service latency metrics (§3). Adaptive lock management (§13.2) relies on lock contention metrics.
 - **The feedback triangle.** Observability emits data → AIRS analyzes → AIRS adjusts scheduler and deadlock-prevention parameters → kernel observes impact → loop. All three subsystems are connected through the AIRS intelligence layer, but the kernel treats each independently — no circular dependencies.
 
-### 10.10 References
+### 10.13 References
 
 | Ref | Paper/Project | Venue | URL |
 |-----|--------------|-------|-----|
@@ -1073,3 +1142,48 @@ The AI-enhanced observability system is the foundation for AI-driven improvement
 | R7 | "AI for Operating Systems: Survey and Roadmap" | arXiv 2024 | https://arxiv.org/abs/2407.14567 |
 | R10 | eBPF + AIOps — Industry ML-driven observability platforms | Datadog, Grafana | Industry reports |
 | R11 | Linux Lockdep — Runtime Lock Dependency Validator | kernel.org | https://docs.kernel.org/locking/lockdep-design.html |
+| R12 | Linux perf subsystem — PMU multiplexing and event scheduling | kernel.org | https://perf.wiki.kernel.org/index.php/Main_Page |
+| R13 | ARM Performance Monitor Unit (PMU) — ARMv8-A architecture | ARM | ARM Architecture Reference Manual, Chapter D11 |
+| R14 | seL4 Benchmarking Framework — microkernel PMU integration | seL4 Foundation | https://docs.sel4.systems/projects/sel4-tutorials/benchmarking.html |
+| R15 | Linux pstore — Persistent storage for kernel crash diagnostics | kernel.org | https://docs.kernel.org/admin-guide/ramoops.html |
+| R16 | Verma et al., "Large-scale cluster management at Google with Borg" | EuroSys'15 | https://research.google/pubs/pub43438/ |
+
+-----
+
+## 11. Future Directions
+
+Sections 1–10 describe the observability infrastructure and its AI-enhanced extensions via AIRS. This section collects kernel-internal techniques that do **not** require AIRS — they are purely statistical or structural improvements that can be implemented as frozen decision tables or compile-time transformations within the kernel itself.
+
+### 11.1 eBPF-Inspired In-Kernel Filters
+
+Linux's eBPF ecosystem demonstrates the power of programmable, safe in-kernel event filtering. While AIOS does not adopt eBPF's JIT-compiled bytecode model (the complexity is inappropriate for a microkernel), the core idea — allowing userspace to install filter predicates that the kernel evaluates at trace points — is valuable.
+
+**Approach.** Define a small, fixed set of filter predicates (e.g., "trace only events from thread T", "trace only events where latency > N ns", "trace only events on core C") that can be installed via a syscall. The kernel evaluates these predicates at each trace point call site. Predicates are represented as a compact bytecode (not JIT-compiled — interpreted with bounded execution time), limited to comparison and logical operations on trace event fields.
+
+**Benefit.** Enables targeted tracing without recompilation. A developer debugging IPC latency on channel 7 can install a filter that captures only `IpcSendBegin`/`IpcSendEnd` events for that channel, reducing trace ring pressure by 100× compared to capturing all trace events.
+
+**Relationship to AIRS.** This is a mechanism that AIRS can *use* (AIRS installs filters via the same syscall), but it works independently of AIRS availability. It is the kernel-internal counterpart to AIRS's adaptive trace sampling (§10.2).
+
+### 11.2 Learned Log Deduplication
+
+High-frequency log messages — "timer tick" at 1 kHz, "scheduler: no threads ready" during idle periods — fill the log ring with repetitive entries. A simple kernel-internal approach: maintain a small hash table (8–16 entries) of recently logged message hashes. If the same message appears within a configurable window (default: 100 ms), suppress it and increment a repetition counter. When a different message arrives or the window expires, emit a single summary entry: `"[repeated 47 times] Sched: no threads ready"`.
+
+**Benefit.** 5–10× more effective use of log ring capacity under repetitive workloads, without any AI/ML dependency. The hash table is O(1) per log entry (one hash computation + one table lookup).
+
+**Relationship to AIRS.** This is a simpler, kernel-internal version of semantic log compression (§10.6). AIRS extends this with pattern learning and anomaly awareness; the kernel-internal version provides baseline deduplication even without AIRS.
+
+### 11.3 Static Sampling Rate Tables
+
+Before AIRS is available (early boot, AIRS crash, constrained deployments), trace points can use static sampling rate tables — a fixed array mapping `TraceEvent` discriminant to a sampling denominator. For example: `SchedSwitch → 1` (always trace), `IrqEnter → 10` (trace 1 in 10), `PageAlloc → 100` (trace 1 in 100). The table is compile-time configurable and evaluated with a simple modular counter per event type.
+
+**Benefit.** Enables production tracing with controlled overhead (target: <1% CPU) without AIRS. The sampling rates are based on developer expertise about event frequencies.
+
+**Relationship to AIRS.** AIRS's adaptive trace sampling (§10.2) supersedes static tables when available. The static table serves as the fallback default.
+
+### 11.4 Structured Metric Export via Shared Memory
+
+The KernelInfoPage (§6.3) is designed as a seqlock-protected shared memory page that userspace can read without syscalls. This pattern can be extended to expose a structured binary metrics dump — a fixed-layout struct containing all KernelMetrics fields, updated atomically on every timer tick. Userspace monitoring tools (Inspector, diagnostic agents) poll this page at their own rate without any kernel involvement.
+
+**Benefit.** Zero-syscall metrics export. The seqlock pattern (proven in Linux vDSO for `gettimeofday`) ensures readers see a consistent snapshot even while the kernel is updating. Inspector can display live metrics at 60 Hz without generating 60 syscalls per second.
+
+**Relationship to AIRS.** AIRS uses this same shared memory interface to read kernel metrics. The design serves both AIRS and non-AIRS consumers identically.
