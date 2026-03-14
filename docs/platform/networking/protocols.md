@@ -405,8 +405,8 @@ pub struct TlsConfig {
     root_store: RootCertStore,
     /// Client certificate for mTLS (AIOS device identity)
     client_cert: Option<CertifiedKey>,
-    /// Session cache (TLS 1.3 tickets for 0-RTT)
-    session_cache: Arc<ServerSessionMemoryCache>,
+    /// Client session cache (TLS 1.3 tickets for 0-RTT resumption)
+    session_cache: Arc<ClientSessionMemoryCache>,
     /// Certificate pins for well-known spaces
     pins: BTreeMap<String, Vec<CertificatePin>>,
     /// Minimum TLS version (1.3 by default, 1.2 allowed for legacy)

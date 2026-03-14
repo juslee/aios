@@ -404,7 +404,7 @@ VirtIO requires physical addresses in descriptor rings. Buffer management must g
 
 - **Physical contiguity** — each buffer is within a single page (2048B < 4096B page)
 - **No deallocation while device owns buffer** — reference counting or ownership tracking
-- **Cache coherence** — DMA buffers mapped with appropriate cache attributes (Attr0 = Device for MMIO, Attr3 = WB for data with explicit cache maintenance)
+- **Cache coherence** — on QEMU virt, DMA is coherent with WB memory (Attr3), so no explicit cache maintenance is required. On real hardware (e.g., Pi 4/5), DMA buffers may require non-cacheable mappings (Attr1) or explicit cache clean/invalidate operations around DMA transfers
 - **Alignment** — VirtIO descriptors require buffer addresses aligned to device requirements (typically 1 byte, but AIOS aligns to 64 bytes for cache line efficiency)
 
 -----
@@ -449,7 +449,7 @@ RX: DMA buffer → smoltcp processes headers → payload region mapped read-only
 TX: Agent writes to pre-mapped DMA region → NTM triggers smoltcp to add headers → VirtIO sends from same buffer
 ```
 
-This eliminates the NTM-to-agent copy, achieving a true single-copy path. The mapping is read-only for RX (W^X enforced) and write-only for TX (agent cannot read other agents' pending transmissions).
+This eliminates the NTM-to-agent copy, achieving a true single-copy path. RX mappings are read-only + NX (no-execute) so agents cannot modify received data or execute it as code. TX buffers are owned by a single agent — per-agent address space isolation (TTBR0 per process) prevents other agents from reading pending transmissions.
 
 -----
 
