@@ -11,24 +11,26 @@ The boot sequence is the most critical code path in AIOS — if it breaks, nothi
 
 ### 13.1 CI Boot Smoke Test
 
-Every PR runs a QEMU boot smoke test:
+The target CI pipeline includes a QEMU boot smoke test (not yet implemented — current CI runs `just check` and `just test` only):
 
 ```text
-Boot smoke test (runs in CI on every PR):
+Boot smoke test (target design — to be added to CI):
 
 1. Build kernel + initramfs + UEFI stub
 2. Launch QEMU (aarch64, no KVM, 4 GB RAM, VirtIO devices)
 3. Capture UART output
-4. Assert: "[boot] Complete" appears within 500ms (kernel early boot)
-5. Assert: "Phase 1 complete" appears within 1000ms
-6. Assert: "Phase 2 complete" appears within 2000ms
-7. Assert: "Phase 5 complete — boot to desktop" appears within 5000ms
+4. Assert: boot completion marker appears within 500ms (kernel early boot)
+5. Assert: Phase 1 completion within 1000ms
+6. Assert: Phase 2 completion within 2000ms
+7. Assert: Phase 5 completion within 5000ms
 8. Assert: no "[PANIC]" in UART output
-9. Assert: "Services: N running, 0 failed, 0 degraded" (0 failures)
-10. Shutdown cleanly, verify "[shutdown] clean shutdown" in UART
+9. Assert: all services running with 0 failures
+10. Shutdown cleanly, verify clean shutdown marker in UART
 
 Total CI time: ~10 seconds per run (dominated by QEMU startup)
 ```
+
+The specific UART assertion strings will be defined as each phase is implemented. Current CI validates compilation (`just check`) and host-side unit tests (`just test`).
 
 ### 13.2 Platform Test Matrix
 

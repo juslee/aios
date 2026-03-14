@@ -211,7 +211,7 @@ pub struct OpenSpaceState {
 pub struct AgentSessionState {
     agent_id: AgentId,
     /// Conversation history (lightweight: just message IDs referencing Spaces)
-    conversation_ref: ObjectRef,  // see spaces.md §3.0 for ObjectRef
+    conversation_ref: ObjectRef,  // see spaces-data-structures.md §3.3 for ObjectRef
     /// Agent's declared resumable state (agent-specific, opaque to the kernel)
     agent_state: Vec<u8>,
     /// What the agent was doing when suspended

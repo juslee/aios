@@ -14,7 +14,7 @@ When the kernel encounters an unrecoverable error — double fault, assertion fa
 ```rust
 #[repr(C)]
 pub struct PanicDump {
-    magic: u64,                             // 0x41494F53_50414E43 ("AIOSPAN C")
+    magic: u64,                             // 0x41494F53_50414E43 ("AIOSPANC")
     boot_phase: EarlyBootPhase,             // how far boot got before panic
     timestamp: u64,                         // timer counter value
     panic_message: [u8; 512],               // truncated panic!() message
