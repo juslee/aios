@@ -79,7 +79,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Flow SDK | `docs/storage/flow/sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
 | Flow extensions | `docs/storage/flow/extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
-| Networking | `docs/platform/networking.md` | All (Phase 7+) |
+| Networking (hub) | `docs/platform/networking.md` | §1 Core Insight, §2 Architecture, §7 Impl Order, §8 Tech Choices, §10 Design Principles, Document Map |
+| NTM components | `docs/platform/networking/components.md` | §3.1–§3.6 Space Resolver, Connection Manager, Shadow Engine, Resilience Engine, Capability Gate, Bandwidth Scheduler |
+| Network stack | `docs/platform/networking/stack.md` | §4.1–§4.7 smoltcp integration, VirtIO-Net driver, buffer management, zero-copy I/O, interrupt handling, DHCP/DNS, dual stack |
+| Protocol engines | `docs/platform/networking/protocols.md` | §5.1–§5.5 AIOS Peer Protocol, HTTP/2, QUIC/HTTP/3, WebSocket/SSE, TLS/rustls |
+| Network security | `docs/platform/networking/security.md` | §6.1–§6.5 Capability gate, packet filtering, per-agent isolation, credential vault, layered trust |
+| Networking examples | `docs/platform/networking/examples.md` | §9.1–§9.5 Web browsing, agent communication, POSIX compat, credential routing, data model |
+| Networking future | `docs/platform/networking/future.md` | §11.1–§11.8 AI-driven networking, learned congestion, predictive prefetch, anomaly detection |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | All (Phase 15+) |
