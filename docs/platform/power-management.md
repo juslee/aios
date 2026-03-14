@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-AIOS has power management logic scattered across five subsystems: the boot lifecycle handles suspend/resume and proactive wake (boot/suspend.md §15), the scheduler handles thermal throttling and DVFS (scheduler.md §8.4, §11), the Subsystem Framework handles per-device idle policies (subsystem-framework.md §9), the Context Engine signals battery state (context-engine.md §3.1), and AIRS predicts usage patterns for proactive wake (boot/suspend.md §15.5). Each subsystem makes correct local decisions, but no single component owns the system-wide power policy.
+AIOS has power management logic scattered across five subsystems: the boot lifecycle handles suspend/resume and proactive wake (boot/suspend.md §15), the scheduler handles thermal throttling and DVFS (scheduler.md §8.4, §11), the Subsystem Framework handles per-device idle policies (subsystem-framework.md §9), the Context Engine publishes context state influenced by battery level (context-engine.md §3.1), and AIRS predicts usage patterns for proactive wake (boot/suspend.md §15.5). Each subsystem makes correct local decisions, but no single component owns the system-wide power policy.
 
 This document defines the **Power Management Policy Engine** — the unified component that observes all sensor inputs, evaluates policy rules, and drives the system through power state transitions. The Policy Engine is the single authority for questions like: "The user closed the lid. Should we enter S3, S4, or stay awake?" and "Battery is at 8%. Should we hibernate now or wait?" and "AIRS predicts the user arrives in 3 minutes. Should we proactive-wake?"
 
@@ -1588,7 +1588,7 @@ This section surveys innovations from production operating systems, academic res
 
 These techniques run as frozen models in kernel space with no AIRS dependency. They work even when AIRS is offline or not yet started.
 
-**Decision Tree Idle State Governor.** Replace the fixed timeout thresholds in §3.3 with a frozen decision tree (depth 4-5, trained offline on workload traces). Input features: time since last interrupt (from CNTP_CVAL_EL0 delta), run queue length, current scheduler class of next-to-run task, and time-of-day bucket. Output: optimal idle state (WFI, ClockGated, PowerGated). The tree is trained on QEMU workload traces during development, serialized as a compact lookup table (~1 KiB), and loaded at boot. Retraining happens offline — the kernel never modifies the tree. Expected improvement: 30-40% better idle state selection vs fixed timeouts, based on Yawn results on comparable workloads.
+**Decision Tree Idle State Governor.** Replace the fixed timeout thresholds in §3.3 with a frozen decision tree (depth 4-5, trained offline on workload traces). Input features: time since last interrupt (from CNTPCT_EL0 counter delta), run queue length, current scheduler class of next-to-run task, and time-of-day bucket. Output: optimal idle state (WFI, ClockGated, PowerGated). The tree is trained on QEMU workload traces during development, serialized as a compact lookup table (~1 KiB), and loaded at boot. Retraining happens offline — the kernel never modifies the tree. Expected improvement: 30-40% better idle state selection vs fixed timeouts, based on Yawn results on comparable workloads.
 
 **Q-Learning DVFS Lookup Table.** Train a Q-learning agent offline on historical task traces (task class, arrival rate, compute duration, thermal headroom). The converged Q-table maps (run_queue_depth × thermal_zone × battery_mode) → optimal frequency step. Deploy as a static lookup table in the DVFS governor path (~4 KiB for typical state space). The FiDRL approach (IEEE TC 2024) addresses invocation overhead by deciding when to invoke the RL agent vs. using a cheap heuristic — the agent is only queried when the heuristic's confidence is low. Expected energy savings: 3-10% vs. Linux ondemand governor, based on FiDRL and Q-Learning DVFS benchmarks on ARM platforms.
 
@@ -1618,7 +1618,7 @@ These techniques require semantic understanding, user context, or complex ML inf
 - Thermal Safe Power: [IEEE Xplore 2015](https://ieeexplore.ieee.org/document/7466857/)
 - FiDRL DVFS: [IEEE TC 2024](https://dl.acm.org/doi/10.1109/TC.2024.3465933)
 - SmartAPM context-aware PM: [Nature Scientific Reports 2025](https://www.nature.com/articles/s41598-025-89709-3)
-- GreenLLM inference DVFS: [arXiv 2024](https://arxiv.org/html/2508.16449v1)
+- GreenLLM inference DVFS: [arXiv 2025](https://arxiv.org/html/2508.16449v1)
 - AgileWatts idle latency: [IEEE Micro 2022](https://dl.acm.org/doi/10.1109/MICRO56248.2022.00063)
 - µ-Serve model serving: [USENIX ATC 2024](https://haoran-qiu.com/pdf/atc24-preprint.pdf)
 - Battery SoH via LSTM: [Nature Scientific Reports 2025](https://www.nature.com/articles/s41598-025-93775-y)
