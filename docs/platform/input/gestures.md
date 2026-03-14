@@ -240,7 +240,7 @@ The subsystem handles two scroll input modes: discrete (mouse wheel notches) and
 
 **Discrete scroll:** Mouse wheel notches produce `EV_REL` events with `REL_WHEEL` or `REL_HWHEEL` codes and integer delta values. Each notch maps to a configurable scroll distance in pixels (default: 3 lines × font size).
 
-**Smooth scroll:** Trackpad two-finger scroll and high-resolution wheels produce floating-point `EV_REL` events. The subsystem accumulates fractional scroll and delivers `MotionEvent.scroll_x/scroll_y` as continuous values.
+**Smooth scroll:** Trackpad two-finger scroll and high-resolution wheels produce high-resolution integer `EV_REL` events (`REL_WHEEL_HI_RES`, `REL_HWHEEL_HI_RES`). The subsystem accumulates these integer deltas and converts them to floating-point `MotionEvent.scroll_x/scroll_y` values for smooth, sub-notch scrolling.
 
 **Kinetic scrolling:** On trackpad finger lift, the subsystem injects synthetic scroll events that decelerate according to an exponential decay curve:
 

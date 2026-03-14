@@ -24,7 +24,7 @@ pub enum InputCapability {
     /// Raw device access — drivers only
     DeviceAccess { device_class: DeviceClass },
     /// Receive input events for own surfaces (all surface-owning agents)
-    Receive { seat_id: SeatId },
+    Receive { seat_id: SeatId, viewport: Option<Rect> },
     /// Inject synthetic input events (system agents, accessibility)
     Inject { scope: InjectScope },
     /// Observe input globally (screen readers — audited, user-authorized)
@@ -33,6 +33,8 @@ pub enum InputCapability {
     SecureSession,
     /// Configure input parameters (acceleration, layout, accessibility)
     Configure { device_id: DeviceId },
+    /// Receive gesture events (subset of Receive — restricted to gestures only)
+    GestureRecognize { seat_id: SeatId },
     /// Define custom gestures
     GestureDefine,
     /// Force feedback / haptics control
@@ -404,7 +406,7 @@ system/audit/input/
     └── <timestamp>-<device-id>-<reason>
 ```
 
-Audit records are written using the kernel `LogEntry` format (64 bytes per entry, one per cache line) and stored in the Block Engine under the `SecurityZone::System` classification. Access to `system/audit/input/` requires `Capability::AuditRead` with the `input` scope.
+Audit records are serialized as `InputAuditEvent` structs and written to the Block Engine under the `SecurityZone::System` classification. At the kernel level, high-frequency events (device connect/disconnect, capability changes) are first buffered in the per-core `LogRing` (64-byte `LogEntry` format) and flushed to persistent storage asynchronously. Access to `system/audit/input/` requires `Capability::AuditRead` with the `input` scope.
 
 #### 6.4.4 Keystroke Dynamics as Biometric Data
 

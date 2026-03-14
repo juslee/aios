@@ -239,7 +239,7 @@ VirtIO-input uses the same MMIO transport as AIOS's existing VirtIO-blk driver (
 pub struct VirtioInputEvent {
     pub event_type: u16,  // EV_KEY, EV_REL, EV_ABS, EV_SYN, etc.
     pub code: u16,        // keycode, axis code, etc.
-    pub value: u32,       // key state (0/1/2), axis value
+    pub value: i32,       // key state (0/1/2), axis value (signed for relative deltas)
 }
 ```
 
@@ -345,10 +345,10 @@ Switch devices produce simple binary events (press/release). They include:
 - **Sip-and-puff:** Pneumatic switches that detect inhale/exhale as two switch actions
 - **Proximity sensors:** IR or capacitive sensors that detect approach without contact
 
-The input subsystem maps all switch types to a unified `SwitchEvent`:
+The input subsystem maps all switch types to a unified `RawSwitchEvent` at the driver boundary, which is translated to `SwitchInputEvent` (see [events.md](./events.md) §4.1) at the application boundary:
 
 ```rust
-pub enum SwitchEvent {
+pub enum RawSwitchEvent {
     /// Primary switch activated (press, sip, approach)
     Primary(SwitchState),
     /// Secondary switch activated (release-triggered, puff, withdraw)

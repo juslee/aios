@@ -16,8 +16,9 @@ The input subsystem uses a **layered event model**: evdev-compatible raw events 
 At the driver layer, all input devices produce evdev-compatible events. This format is shared with VirtIO-input and USB HID, providing a universal hardware interface.
 
 ```rust
-/// Raw input event — evdev-compatible format used at the driver boundary.
-/// Matches Linux struct input_event and VirtIO-input event format.
+/// Raw input event — evdev-derived format used at the driver boundary.
+/// Uses the same type/code/value encoding as Linux evdev and VirtIO-input,
+/// but extends the layout with device_id and flags fields (not wire-compatible).
 #[repr(C)]
 pub struct RawInputEvent {
     /// Hardware timestamp: CNTPCT_EL0 ticks at IRQ time
@@ -82,6 +83,8 @@ pub enum InputEvent {
     Text(TextEvent),
     Switch(SwitchInputEvent),
     Gaze(GazeEvent),
+    /// Semantic command (from voice, AIRS shortcuts, or system)
+    Command(CommandEvent),
 }
 
 /// Keyboard / button event
@@ -231,6 +234,14 @@ pub struct SwitchInputEvent {
     pub device_id: DeviceId,
     pub switch: SwitchId,     // Primary or Secondary
     pub state: SwitchState,   // Activated or Released
+    pub flags: EventFlags,
+}
+
+/// Semantic command event (from voice input, AIRS shortcuts, or system)
+pub struct CommandEvent {
+    pub timestamp: u64,
+    pub action: CommandAction,  // Undo, Redo, Copy, Paste, custom, etc.
+    pub source: CommandSource,  // Voice, Shortcut, Agent, System
     pub flags: EventFlags,
 }
 ```
@@ -518,7 +529,7 @@ bitflags! {
 AIRS agents can be assigned their own **virtual seat** for synthetic input injection:
 
 - Virtual seats have no physical devices
-- Events are produced programmatically via `InputInject` capability
+- Events are produced programmatically via `InputCapability::Inject` capability
 - Virtual seat events are flagged as `INJECTED` and `SYNTHETIC`
 - Applications can query whether input came from a physical or virtual seat
 

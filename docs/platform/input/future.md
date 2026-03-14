@@ -49,7 +49,7 @@ Voice input bridges the audio and input subsystems:
 Audio Subsystem          Input Subsystem
 ──────────────           ───────────────
 Microphone capture       Voice-to-text pipeline:
-PCM stream ────────────► VAD (voice activity detect)
+PCM stream ────────────► VAD (voice activity detection)
                          → ASR (speech recognition)
                          → TextEvent { Commit }
 
