@@ -14,6 +14,7 @@ use crate::drivers::virtio_blk;
 use super::crypto::DeviceKeyManager;
 use super::lsm::MemTable;
 use super::object_store::ObjectIndex;
+use super::space::SpaceTable;
 use super::wal::Wal;
 
 // ---------------------------------------------------------------------------
@@ -151,12 +152,13 @@ impl Superblock {
 // Block Engine
 // ---------------------------------------------------------------------------
 
-/// Block Engine state: superblock + WAL + MemTable + object index + crypto + data region pointer.
+/// Block Engine state: superblock + WAL + MemTable + object index + spaces + crypto + data region pointer.
 pub struct BlockEngine {
     superblock: Superblock,
     wal: Wal,
     memtable: MemTable,
     object_index: ObjectIndex,
+    space_table: SpaceTable,
     /// Device-level encryption manager (None = plaintext mode).
     crypto: Option<DeviceKeyManager>,
     /// Next free sector in the data region.
@@ -204,6 +206,7 @@ impl BlockEngine {
                 wal,
                 memtable: MemTable::with_default_capacity(),
                 object_index: ObjectIndex::new(),
+                space_table: SpaceTable::new(),
                 crypto,
                 data_next_sector: data_next,
             };
@@ -238,6 +241,7 @@ impl BlockEngine {
                 wal,
                 memtable: MemTable::with_default_capacity(),
                 object_index: ObjectIndex::new(),
+                space_table: SpaceTable::new(),
                 crypto,
                 data_next_sector: data_next,
             })
@@ -614,6 +618,16 @@ impl BlockEngine {
     /// Access the object index (mutable).
     pub fn object_index_mut(&mut self) -> &mut ObjectIndex {
         &mut self.object_index
+    }
+
+    /// Access the space table (read-only).
+    pub fn space_table(&self) -> &SpaceTable {
+        &self.space_table
+    }
+
+    /// Access the space table (mutable).
+    pub fn space_table_mut(&mut self) -> &mut SpaceTable {
+        &mut self.space_table
     }
 
     /// Returns true if device-level encryption is active.

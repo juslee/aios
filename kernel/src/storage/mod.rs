@@ -10,6 +10,7 @@ pub mod block_engine;
 pub mod crypto;
 pub mod lsm;
 pub mod object_store;
+pub mod space;
 pub mod version_store;
 pub mod wal;
 
@@ -39,6 +40,14 @@ pub fn init() {
         mt_count,
         mt_cap
     );
+
+    // Initialize system spaces and register as a service.
+    space::init_system_spaces();
+    space::register_service();
+
+    // Log space count.
+    let space_count = block_engine::with_engine(|e| e.space_table().count()).unwrap_or(0);
+    crate::kinfo!(Storage, "Spaces: {} active", space_count);
 
     // Self-tests: only run during development, gated behind feature flag.
     #[cfg(feature = "storage-tests")]
@@ -153,6 +162,9 @@ fn run_self_tests() {
 
     // --- Test 7: Encryption verification ---
     test_encryption();
+
+    // --- Test 8: Space management ---
+    test_spaces();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -318,6 +330,69 @@ fn test_version_store() {
             crate::kerror!(Storage, "VersionStore: list failed: {:?}", e);
         }
     }
+}
+
+/// Space management self-tests: verify system spaces, create user space, list.
+#[cfg(feature = "storage-tests")]
+fn test_spaces() {
+    use shared::storage::{SecurityZone, SpaceQuota};
+
+    // System spaces should already exist (created in init).
+    match space::space_list() {
+        Ok(spaces) => {
+            crate::kinfo!(Storage, "SpaceTest: {} spaces exist", spaces.len());
+            if spaces.len() >= 3 {
+                crate::kinfo!(Storage, "SpaceTest: system spaces OK");
+            } else {
+                crate::kerror!(
+                    Storage,
+                    "SpaceTest: expected >= 3 system spaces, got {}",
+                    spaces.len()
+                );
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "SpaceTest: list failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Create a user space.
+    let quota = SpaceQuota {
+        max_bytes: 1024 * 1024,
+        max_objects: 100,
+        _padding: [0; 4],
+    };
+    match space::space_create(b"test-space", SecurityZone::Personal, quota) {
+        Ok(id) => {
+            crate::kinfo!(Storage, "SpaceTest: created user space {:?}", id);
+
+            // Get it back.
+            match space::space_get(&id) {
+                Ok(s) => {
+                    if s.name_bytes() == b"test-space" {
+                        crate::kinfo!(Storage, "SpaceTest: get verified OK");
+                    } else {
+                        crate::kerror!(Storage, "SpaceTest: name mismatch!");
+                    }
+                }
+                Err(e) => crate::kerror!(Storage, "SpaceTest: get failed: {:?}", e),
+            }
+
+            // Delete it (it's empty).
+            match space::space_delete(&id) {
+                Ok(()) => crate::kinfo!(Storage, "SpaceTest: delete OK"),
+                Err(e) => crate::kerror!(Storage, "SpaceTest: delete failed: {:?}", e),
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "SpaceTest: create failed: {:?}", e);
+        }
+    }
+
+    // Final count.
+    let count = block_engine::with_engine(|e| e.space_table().count()).unwrap_or(0);
+    crate::kinfo!(Storage, "SpaceTest: {} spaces after test", count);
 }
 
 /// Encryption self-test: verify blocks are encrypted on disk and readable back.
