@@ -47,9 +47,9 @@ block-beta
         end
     end
 
-    block:kernel["AIOS Kernel (31 syscalls)"]
+    block:kernel["AIOS Kernel (31 syscalls — see ipc.md §3.1)"]
         columns 1
-        syscalls["IpcCall · IpcSend · IpcRecv · IpcSelect · ChannelCreate\nCapabilityTransfer · CapabilityAttenuate · CapabilityRevoke\nMemoryMap · MemoryUnmap · SharedMemoryCreate · SharedMemoryMap\nProcessCreate · ProcessExit · ProcessWait\nTimeGet · TimeSleep · TimerSet · AuditLog"]
+        syscalls["IPC (0-9) · Notify (10-12) · Stats (13) · Cap (14-17)\nMem (18-22) · Proc (23-25) · Time (26-28) · Audit (29) · Debug (30)"]
     end
 
     userland --> libc --> translation --> kernel
@@ -870,21 +870,22 @@ fn translate_tls_init(thread_id: u32) {
     zero_tbss(tls_vaddr);
 
     // 3. Set TPIDR_EL0 to point to the TLS block.
-    //    The kernel saves/restores TPIDR_EL0 as part of thread context
-    //    switching, so each thread sees its own TLS pointer.
+    //    The kernel must save/restore TPIDR_EL0 during thread context
+    //    switching (add to ThreadContext alongside TTBR0 and timer fields)
+    //    so each thread sees its own TLS pointer.
     unsafe { core::arch::asm!("msr TPIDR_EL0, {}", in(reg) tls_vaddr); }
 }
 ```
 
-musl accesses TLS via `__get_tp()`, which reads `TPIDR_EL0` on aarch64. No translation needed — the AIOS kernel already saves/restores this register per thread.
+musl accesses TLS via `__get_tp()`, which reads `TPIDR_EL0` on aarch64. No translation needed — the AIOS kernel saves/restores this register per thread as part of `ThreadContext` (requires adding `tpidr_el0: u64` to the context struct and save/restore in `context_switch.S`).
 
 #### 7.6.6 POSIX Real-Time Scheduling
 
 POSIX defines scheduling policies via `pthread_setschedparam()`. These map directly to AIOS's four scheduler classes (see [scheduler.md](../kernel/scheduler.md)):
 
-| POSIX Policy | AIOS Scheduler Class | Time Slice | Behavior |
+| POSIX Policy | AIOS Scheduler Class | Quantum / Budget | Behavior |
 |---|---|---|---|
-| `SCHED_FIFO` | RT (RealTime) | 4 ms | Highest priority, run-to-completion within quantum |
+| `SCHED_FIFO` | RT (RealTime) | No time slice (EDF) | Earliest-deadline-first; runs until complete, blocked, or budget exhausted |
 | `SCHED_RR` | Interactive | 10 ms | Round-robin among equal-priority threads |
 | `SCHED_OTHER` | Normal | 50 ms | Default policy for most BSD tools |
 | *(idle)* | Idle | 50 ms | Lowest priority, runs when no other work |
@@ -1446,10 +1447,13 @@ setuid/setgid              No privilege escalation model         ENOSYS
 ptrace                     Security risk, not needed for tools   EPERM
 System V IPC (shmget, etc) Use AIOS IPC channels instead        ENOSYS
 POSIX semaphores           Use AIOS IPC synchronization          ENOSYS
-inotify/fanotify           Translated to Space event subscriptions (see spaces/posix.md §9.6)
 epoll                      Use IpcSelect (translated from poll)  ENOSYS (poll works)
-futex                      Use NotificationWait (§7.6.3 mutex slow path)  Translated
 ```
+
+**Translated to AIOS primitives** (not native, but fully functional):
+
+- **inotify/fanotify** — Translated to Space event subscriptions via the Version Store's change notification mechanism. See [spaces/posix.md](../storage/spaces/posix.md) §9.6.
+- **futex** — Translated to NotificationWait/NotificationSignal (§7.6.3 mutex slow path). The 3-state lock word provides the fast path in userspace; only the contended case reaches the kernel.
 
 ### 14.2 Intentional Divergences
 
