@@ -386,11 +386,11 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 2 (Memory Management) | 4 weeks | 5 days | 5.6x | M7–M9 | 2026-03-05 | 2026-03-10 |
 | 3 (IPC & Capability) | 6 weeks | 3 days | 14x | M10–M12 | 2026-03-10 | 2026-03-13 |
 | 4 (Block Storage) | 5 weeks | In progress | — | M13 done | 2026-03-13 | — |
-| **Phases 0–3 total** | **16 weeks** | **~12 days** | **~9.3x** | **12/12** | | |
+| **Phases 0–3 total** | **16 weeks** | **~11 days** | **~10.2x** | **12/12** | | |
 
 **Project inception:** 2026-02-19 (architecture docs began). **First code commit:** 2026-03-02. **Architecture docs before code:** 17 days, 58K lines across 70 documents.
 
-**Comparative context:** seL4 took ~3 years to its first verified kernel milestone with 10–15 researchers. Fuchsia took ~5 years to ship on a consumer device with 100–300 engineers. Redox OS reached self-hosting in ~1 year with 3–5 core developers. AIOS completed its kernel foundation (boot, memory, IPC, storage) in 12 days — unprecedented for a microkernel, enabled by the architecture-first + AI-assisted methodology.
+**Comparative context:** seL4 took ~3 years to its first verified kernel milestone with 10–15 researchers. Fuchsia took ~5 years to ship on a consumer device with 100–300 engineers. Redox OS reached self-hosting in ~1 year with 3–5 core developers. AIOS completed its kernel foundation (boot, memory, IPC, storage) in 11 days — unprecedented for a microkernel, enabled by the architecture-first + AI-assisted methodology.
 
 ### Development Methodology
 
@@ -453,7 +453,7 @@ The architecture-first, AI-assisted workflow that produced the observed velocity
 
 ### Tier 5 Complete (Week 27)
 
-- [ ] Full NTM: space resolver, shadow engine, capability gate
+- [ ] Full NTM: Space Resolver, shadow engine, capability gate
 - [ ] USB: xHCI, HID, mass storage, hotplug
 - [ ] WiFi (WPA2/WPA3) and Bluetooth (audio, HID)
 - [ ] Power management: sleep, hibernate, thermal throttling
