@@ -1068,7 +1068,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 ### 10.9 Hardware Performance Counter Integration
 
-**Problem.** ARM Cortex-A72 (and all ARMv8-A processors) expose Performance Monitor Unit (PMU) counters — cycle count, cache misses (L1D, L1I, L2), branch mispredictions, TLB misses, memory access stalls. These hardware counters provide ground-truth performance data that software-only metrics (§3) cannot capture. However, the PMU has a limited number of counter registers (typically 6 configurable counters on Cortex-A72), so only a subset of events can be monitored simultaneously. Choosing which counters to enable requires expertise about the current workload.
+**Problem.** ARM Cortex-A72 (and most ARMv8-A implementations) expose Performance Monitor Unit (PMU) counters — cycle count, cache misses (L1D, L1I, L2), branch mispredictions, TLB misses, memory access stalls. These hardware counters provide ground-truth performance data that software-only metrics (§3) cannot capture. However, the PMU has a limited number of counter registers (typically 6 configurable counters on Cortex-A72), so only a subset of events can be monitored simultaneously. Choosing which counters to enable requires expertise about the current workload.
 
 **AI solution.** AIRS manages PMU counter multiplexing: it rotates through different counter configurations on a configurable interval (e.g., every 100 ms), building a statistical profile of hardware-level behavior. Over time, AIRS learns which counter combinations are most informative for the current workload — an inference-heavy workload benefits from cache miss and memory bandwidth counters, while an IPC-heavy workload benefits from branch misprediction and pipeline stall counters.
 
@@ -1076,7 +1076,7 @@ AIRS correlates hardware counters with software metrics (§3) and traces (§4) t
 
 **Effect.** Bridges the gap between software observability (what happened) and hardware observability (why it happened at the microarchitectural level). Enables root cause analysis that would be impossible with software-only instrumentation.
 
-**Safety and fallback.** PMU access is EL1-only. Counter overflow interrupts are optional and not required for this design — AIRS reads counters on a polled basis during timer tick processing. If AIRS is unavailable, PMU counters remain disabled (zero overhead).
+**Safety and fallback.** PMU access is privileged by default (the kernel keeps EL0 access disabled via `PMUSERENR_EL0`). Counter overflow interrupts are optional and not required for this design — AIRS reads counters on a polled basis during timer tick processing. If AIRS is unavailable, PMU counters remain disabled (zero overhead).
 
 **Research.** Linux perf subsystem [R12] demonstrates PMU multiplexing for profiling. ARM PMU architecture [R13] defines the counter configuration interface. The seL4 benchmarking framework [R14] provides a microkernel-specific approach to PMU integration with minimal kernel complexity.
 
@@ -1098,7 +1098,7 @@ AIRS determines the snapshot frequency and compression ratio based on available 
 
 **Effect.** Post-crash diagnosis shifts from "reproduce the bug" to "read the flight recorder." The first reboot after a crash reads the flight recorder and presents a timeline of events leading to the failure.
 
-**Safety and fallback.** The flight recorder region is write-only from the kernel's perspective — it never reads from it during normal operation, preventing corrupted flight recorder data from affecting runtime behavior. If AIRS is unavailable, a minimal flight recorder can operate with fixed-rate snapshots (no adaptive compression or frequency adjustment).
+**Safety and fallback.** During normal operation, the kernel only writes to the flight recorder region — it never reads from it, preventing corrupted flight recorder data from affecting runtime behavior. The flight recorder is read only once: during the boot-time crash-recovery path on the first reboot after a crash. If AIRS is unavailable, a minimal flight recorder can operate with fixed-rate snapshots (no adaptive compression or frequency adjustment).
 
 **Research.** Linux pstore [R15] provides persistent storage across reboots for kernel logs and crash dumps. Windows Kernel Trace Log (KTL) maintains a similar circular flight recorder. Hubris (Oxide Computer) uses a dedicated flash region for post-mortem diagnostics.
 
