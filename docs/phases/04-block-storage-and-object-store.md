@@ -176,7 +176,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 
 **Tasks:**
 - [ ] Create `kernel/src/storage/object_store.rs`
-- [ ] Define `CompactObject` struct (per spaces.md §3.3.1): id, name ([u8; 64] + len), content_hash, content_type, content_size, created_at, modified_at, created_by ([u8; 32]), modified_by, text_content (Option<[u8; N]> — extracted text for full-text index, always maintained per §3.3.1)
+- [ ] Define `CompactObject` struct (repr(C), 512B, per spaces.md §3.3.1): id, space_id, name ([u8; 64] + name_len), content_hash, content_type, content_size (u32), created_at, modified_at, created_by ([u8; 32]), modified_by ([u8; 32]), version_head (ContentHash — tracks latest version node), text_content ([u8; 128] + text_len — extracted text for full-text index, always maintained per §3.3.1)
 - [ ] Define object metadata key format: `ObjectId → CompactObject` stored in a separate MemTable (object index)
 - [ ] Implement `object_create(space: SpaceId, name: &[u8], content: &[u8], content_type: ContentType) -> Result<ObjectId, StorageError>`:
   1. Hash content (SHA-256) → content_hash
@@ -207,7 +207,8 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 
 **Tasks:**
 - [ ] Create `kernel/src/storage/version_store.rs`
-- [ ] Define `Version` struct (per spaces.md §5.1): hash, parent, merge_parent (always None for Phase 4), content_hash, content_size, object_id, timestamp, author, provenance (stub ProvenanceEntry — Ed25519 signatures deferred to Phase 13), message
+- [ ] Define `Version` struct (repr(C), 256B, per spaces.md §5.1): hash, parent, merge_parent (always zeroed for Phase 4), content_hash, content_size (u32), object_id, timestamp, author ([u8; 32]), message ([u8; 64] + message_len)
+- [ ] Define `ProvenanceEntry` struct (repr(C)): agent ([u8; 32]), task ([u8; 16] + has_task flag), action (ProvenanceAction enum: Created, Modified, Derived{source:ObjectId}, Imported, AiGenerated), timestamp, signature ([u8; 64] — zeroed stub for Phase 4, Ed25519 deferred to Phase 13)
 - [ ] Define version key format: `(SpaceId, ObjectId, reverse_timestamp) → Version` for newest-first iteration
 - [ ] Store version nodes in the Block Engine (content-addressed, same as data blocks)
 - [ ] Implement `version_create(object_id, content_hash, author, message) -> Hash`:
@@ -256,10 +257,12 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   3. Decrypt with device key, verify auth tag
   4. Verify CRC checksum (on decrypted plaintext)
   5. Return plaintext content
+- [ ] Add `encryption_epoch: u64`, `nonce_counter: u64`, `nonce_random_prefix: u32` fields to Superblock (adjust padding to maintain 4096B size)
 - [ ] Store device key epoch in superblock; support single-key mode (no rotation in Phase 4)
+- [ ] On init: load nonce_counter from superblock, advance by +1000 (crash recovery gap), persist immediately
 - [ ] Test: write encrypted block, read raw sector (verify ciphertext ≠ plaintext), read via Block Engine (verify decrypted content matches original)
 
-**Note:** The nonce for each block can use a counter (epoch + block_sequence_number) to avoid nonce reuse. AES-GCM nonce reuse is catastrophic — the counter approach guarantees uniqueness as long as the epoch is correctly tracked. For Phase 4, the sequence number is derived from the block's offset in the data region.
+**Note:** The nonce uses a global monotonic counter (per §6.1.1): `[random_prefix (4B) | counter (8B)]` for a 12-byte nonce. The counter is persisted in the superblock and advanced by +1000 on crash recovery to guarantee no reuse even after unclean shutdown. AES-GCM nonce reuse is catastrophic — the monotonic counter approach guarantees uniqueness as long as the counter never wraps (2^64 blocks ≈ centuries of operation).
 
 **Key reference:** spaces.md §4.10 Device-Level Transparent Encryption; §4.10.1 Device Key Hierarchy; §4.10.2 Encryption in the Write Path
 
