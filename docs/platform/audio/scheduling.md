@@ -101,8 +101,10 @@ pub struct BufferHint {
 impl PcmMixer {
     /// Check AIRS buffer hint and adjust if appropriate.
     /// Called at the start of each mix callback (before mixing).
+    /// Requires `buffer_hint`, `min_buffer_frames`, and `max_buffer_frames`
+    /// fields on PcmMixer (see mixing.md §4.2 for the full struct).
     fn check_buffer_hint(&mut self) {
-        if let Some(hint) = self.buffer_hint.take() {
+        if let Some(hint) = self.pending_hint.take() {
             // Only act on high-confidence predictions
             if hint.confidence < 0.6 {
                 return;

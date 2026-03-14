@@ -506,7 +506,7 @@ The boot chime is a special audio path that operates before the audio subsystem 
 /// No audio subsystem, no mixer, no sessions — raw hardware access.
 pub fn play_boot_chime(hal_audio: &dyn PlatformAudio, event: BootChimeEvent) {
     let sample_rate = 48000u32;
-    let duration_ms = match event {
+    let duration_ms: u32 = match event {
         BootChimeEvent::Phase2Complete => 200,   // short tone: 440 Hz
         BootChimeEvent::Phase5Complete => 400,   // two ascending tones
         BootChimeEvent::Panic => 600,            // low descending tone

@@ -95,6 +95,9 @@ struct MixerStream {
 
     /// Priority (RT streams get preference if mixer must drop frames)
     priority: Priority,
+
+    /// Underrun counter (incremented when agent fails to supply samples)
+    underrun_count: u64,
 }
 ```
 
@@ -258,6 +261,8 @@ pub struct CaptureMux {
     pipeline: Vec<Box<dyn CaptureStage>>,
     /// Quality metrics exposed to AIRS
     metrics: CaptureQualityMetrics,
+    /// Pre-allocated scratch buffer (sized to max period frames × channels)
+    pre_allocated_buffer: Vec<f32>,
 }
 ```
 

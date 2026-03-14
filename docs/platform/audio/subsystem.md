@@ -129,7 +129,7 @@ impl Subsystem for AudioSubsystem {
         // On QEMU: VirtIO-Sound device
         // On Pi: HDMI audio, I2S (if DAC connected), PWM
         // On Apple Silicon: built-in codec
-        let devices = hal::platform().init_audio(&device_tree)?;
+        let devices = hal::platform().init_audio(registry.device_tree())?;
         for dev in devices {
             let id = registry.register(dev.descriptor())?;
             self.devices.push(dev);
@@ -154,7 +154,7 @@ impl Subsystem for AudioSubsystem {
         gate_check(agent, Self::ID, cap, intent)?;
 
         // 2. Select device
-        let device = match &cap.target {
+        let mut device = match cap.target() {
             AudioTarget::Default => self.routes.default_for(intent.direction)?,
             AudioTarget::Specific(id) => self.devices.get(id)?,
             AudioTarget::Role(role) => self.routes.device_for_role(role)?,
@@ -164,7 +164,7 @@ impl Subsystem for AudioSubsystem {
         // If the agent requested Default target and AIRS has a suggestion
         // with sufficient confidence, prefer the AIRS-suggested device.
         // Never overrides AudioTarget::Specific or explicit user choice.
-        if matches!(&cap.target, AudioTarget::Default) {
+        if matches!(cap.target(), AudioTarget::Default) {
             if let Some(advisor) = &self.airs_route_advisor {
                 if advisor.confidence > 0.7 {
                     if let Some(suggested) = advisor.suggested_output {
@@ -187,7 +187,7 @@ impl Subsystem for AudioSubsystem {
 
         // 4. Negotiate format
         let format = negotiate_audio_format(
-            &cap.preferred_format,
+            &intent.preferred_format,
             device.supported_formats(),
         )?;
 
@@ -216,6 +216,7 @@ impl Subsystem for AudioSubsystem {
             id: new_session_id(),
             agent,
             device_id: device.id(),
+            capability: cap.clone(),
             channel,
             format,
             intent: intent.clone(),

@@ -69,10 +69,11 @@ impl VirtioSoundDevice {
             stream_id,
             // buffer is appended as a separate descriptor in the chain
         };
+        let mut status_buf = VirtioSndPcmStatus::default();
         self.tx_vq.add_chain(&[
             VirtqDesc::readable(&desc),
             VirtqDesc::readable(buffer),
-            VirtqDesc::writable(&status_buf), // device writes status here
+            VirtqDesc::writable(&mut status_buf), // device writes status here
         ])?;
         self.tx_vq.notify();
         Ok(buffer.len())
