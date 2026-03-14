@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Full Stack Overview (Hardware Abstraction Layer)
-**Related:** [boot.md](./boot.md) — Boot sequence and platform detection, [gpu.md](../platform/gpu.md) — GPU & Display architecture (§4.4 GpuDevice consumers), [subsystem-framework.md](../platform/subsystem-framework.md) — Userspace device management, [scheduler.md](./scheduler.md) — Timer and GIC integration
+**Related:** [boot.md](./boot.md) — Boot sequence and platform detection, [device-model.md](./device-model.md) — Device model and driver framework, [gpu.md](../platform/gpu.md) — GPU & Display architecture (§4.4 GpuDevice consumers), [subsystem-framework.md](../platform/subsystem-framework.md) — Userspace device management, [scheduler.md](./scheduler.md) — Timer and GIC integration
 
 -----
 
