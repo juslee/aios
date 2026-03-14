@@ -89,33 +89,44 @@ pub enum PtySessionState {
 
 #### 5.1.3 Channel Message Types
 
-The PTY channels carry typed messages:
+The PTY channels carry typed messages. Each variant is serialized as a 1-byte tag followed by its fields, fitting within the 256-byte `RawMessage.data` field:
 
 ```rust
 /// Messages from terminal → shell (input channel).
+/// Wire format: [tag: u8 | payload...], total ≤ 256 bytes.
+#[repr(u8)]
 pub enum PtyInputMessage {
     /// Keyboard input bytes (UTF-8 or VT escape sequences).
-    Data { bytes: [u8; 248], len: u16 },
+    /// Wire: [0x01 | len: u16 | bytes: [u8; len]] — max 248 payload bytes.
+    Data { bytes: [u8; 248], len: u16 } = 0x01,
     /// Terminal window has been resized.
-    Resize { cols: u16, rows: u16 },
+    /// Wire: [0x02 | cols: u16 | rows: u16] — 5 bytes total.
+    Resize { cols: u16, rows: u16 } = 0x02,
     /// Terminal is requesting shell status.
-    StatusQuery,
+    /// Wire: [0x03] — 1 byte total.
+    StatusQuery = 0x03,
 }
 
 /// Messages from shell → terminal (output channel).
+/// Wire format: [tag: u8 | payload...], total ≤ 256 bytes.
+#[repr(u8)]
 pub enum PtyOutputMessage {
     /// Program output bytes.
-    Data { bytes: [u8; 248], len: u16 },
+    /// Wire: [0x01 | len: u16 | bytes: [u8; len]] — max 248 payload bytes.
+    Data { bytes: [u8; 248], len: u16 } = 0x01,
     /// Shell has changed working directory (for OSC 7).
-    WorkingDirectory { path: [u8; 240], len: u16 },
+    /// Wire: [0x02 | len: u16 | path: [u8; len]] — max 240 path bytes.
+    WorkingDirectory { path: [u8; 240], len: u16 } = 0x02,
     /// Shell has set the terminal title (for OSC 0/2).
-    Title { title: [u8; 240], len: u16 },
+    /// Wire: [0x03 | len: u16 | title: [u8; len]] — max 240 title bytes.
+    Title { title: [u8; 240], len: u16 } = 0x03,
     /// Shell has exited.
-    Exit { code: i32 },
+    /// Wire: [0x04 | code: i32] — 5 bytes total.
+    Exit { code: i32 } = 0x04,
 }
 ```
 
-All messages fit within the 256-byte `RawMessage` data field. For bulk transfers (large file pastes, scrollback dumps), the shared memory region is used instead.
+The largest variant (`Data` with 248-byte payload) uses 1 (tag) + 2 (len) + 248 (bytes) = 251 bytes, well within the 256-byte `RawMessage.data` limit. For bulk transfers (large file pastes, scrollback dumps), the shared memory region is used instead.
 
 -----
 

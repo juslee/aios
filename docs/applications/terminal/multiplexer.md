@@ -344,8 +344,12 @@ pub enum MuxControlMessage {
     },
     /// Focus a pane.
     FocusPane { pane_id: PaneId },
-    /// Session status response.
+    /// Response: session created successfully.
+    SessionCreated { session_id: SessionId },
+    /// Response: session status list.
     SessionList { sessions: [SessionInfo; 16] },
+    /// Response: operation failed.
+    Error { code: u16 },
 }
 
 pub enum SplitDirection {

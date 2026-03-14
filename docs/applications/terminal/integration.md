@@ -11,7 +11,7 @@ The terminal emulator integrates with AIOS's platform services through the unive
 
 ### 8.1 Subsystem Framework Conformance
 
-The terminal implements all six subsystem framework layers:
+The terminal implements all five subsystem framework layers, plus the two cross-cutting concerns (capability gate and audit) that span them:
 
 ```text
 ┌─────────────────────────────────────────────────────┐
