@@ -534,7 +534,6 @@ impl BlockEngine {
     /// Increment the reference count for a content hash.
     ///
     /// Used when a new object references the same content (dedup).
-    #[allow(dead_code)]
     pub fn inc_ref(&mut self, hash: &ContentHash) -> Result<(), StorageError> {
         let entry = self
             .memtable

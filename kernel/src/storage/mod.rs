@@ -9,6 +9,7 @@
 pub mod block_engine;
 pub mod lsm;
 pub mod object_store;
+pub mod version_store;
 pub mod wal;
 
 use shared::storage::ContentHash;
@@ -145,6 +146,9 @@ fn run_self_tests() {
 
     // --- Test 5: Object Store CRUD + dedup ---
     test_object_store();
+
+    // --- Test 6: Version Store — Merkle DAG ---
+    test_version_store();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -190,6 +194,126 @@ fn test_100_blocks() {
             ok_count,
             fail_count
         );
+    }
+}
+
+/// Version Store self-tests: create → update 3x → list 4 → rollback → verify.
+#[cfg(feature = "storage-tests")]
+fn test_version_store() {
+    use shared::storage::{ContentType, SpaceId};
+
+    let space = SpaceId([2u8; 16]);
+
+    // Create an object for versioning.
+    let content_v1 = b"Version 1 content";
+    let (obj_id, _hash_v1) = match object_store::object_create(
+        space,
+        b"versioned.txt",
+        content_v1,
+        ContentType::Text,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            crate::kerror!(Storage, "VersionStore: create failed: {:?}", e);
+            return;
+        }
+    };
+    crate::kinfo!(Storage, "VersionStore: created object {:?}", obj_id);
+
+    // Update 3 times.
+    let updates = [b"Version 2 content" as &[u8], b"Version 3 content", b"Version 4 content"];
+    for (i, content) in updates.iter().enumerate() {
+        match version_store::object_update(&obj_id, content, b"test-agent", b"update") {
+            Ok(_hash) => {
+                crate::kinfo!(Storage, "VersionStore: update {} OK", i + 2);
+            }
+            Err(e) => {
+                crate::kerror!(Storage, "VersionStore: update {} failed: {:?}", i + 2, e);
+                return;
+            }
+        }
+    }
+
+    // List versions (expect 4: initial creation + 3 updates = 4 version hashes in chain).
+    // Note: initial object_create computes a version_head hash but doesn't store a Version block.
+    // The first version_create happens on first object_update. So we have 3 version blocks
+    // in the chain. The initial version_head from object_create is not a stored Version block.
+    match version_store::version_list(&obj_id) {
+        Ok(versions) => {
+            crate::kinfo!(
+                Storage,
+                "VersionStore: listed {} versions",
+                versions.len()
+            );
+            if versions.len() == 3 {
+                crate::kinfo!(Storage, "VersionStore: version count OK (3 update versions)");
+            } else {
+                crate::kwarn!(
+                    Storage,
+                    "VersionStore: expected 3 versions, got {}",
+                    versions.len()
+                );
+            }
+
+            // Rollback to version 2 (second in list = index 1, since newest-first).
+            if versions.len() >= 2 {
+                let target = &versions[1]; // Version 3 content (second-newest)
+                match version_store::version_rollback(&obj_id, &target.hash) {
+                    Ok(()) => {
+                        crate::kinfo!(Storage, "VersionStore: rollback OK");
+
+                        // Verify content matches the target version.
+                        let mut buf = [0u8; 512];
+                        match object_store::object_read(&obj_id, &mut buf) {
+                            Ok((_, n)) => {
+                                if &buf[..n] == b"Version 3 content" {
+                                    crate::kinfo!(
+                                        Storage,
+                                        "VersionStore: rollback content verified"
+                                    );
+                                } else {
+                                    crate::kerror!(
+                                        Storage,
+                                        "VersionStore: rollback content mismatch!"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                crate::kerror!(
+                                    Storage,
+                                    "VersionStore: read after rollback failed: {:?}",
+                                    e
+                                );
+                            }
+                        }
+
+                        // After rollback, version list should have 4 (3 original + 1 rollback).
+                        match version_store::version_list(&obj_id) {
+                            Ok(post_versions) => {
+                                crate::kinfo!(
+                                    Storage,
+                                    "VersionStore: post-rollback {} versions",
+                                    post_versions.len()
+                                );
+                            }
+                            Err(e) => {
+                                crate::kerror!(
+                                    Storage,
+                                    "VersionStore: post-rollback list failed: {:?}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        crate::kerror!(Storage, "VersionStore: rollback failed: {:?}", e);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "VersionStore: list failed: {:?}", e);
+        }
     }
 }
 

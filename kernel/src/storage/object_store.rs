@@ -72,7 +72,6 @@ impl ObjectIndex {
     }
 
     /// Look up an object by ID (mutable).
-    #[allow(dead_code)]
     pub fn get_mut(&mut self, id: &ObjectId) -> Option<&mut CompactObject> {
         let idx = self.binary_search(id).ok()?;
         Some(&mut self.entries[idx].object)
