@@ -42,7 +42,7 @@ impl core::fmt::Debug for ContentHash {
 pub type BlockId = ContentHash;
 
 /// 128-bit object identifier.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[repr(transparent)]
 pub struct ObjectId(pub [u8; 16]);
 
@@ -51,7 +51,7 @@ impl ObjectId {
 }
 
 /// 128-bit space identifier.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[repr(transparent)]
 pub struct SpaceId(pub [u8; 16]);
 
@@ -152,6 +152,394 @@ pub enum StorageError {
     DeviceNotFound,
     VirtioError,
     MemTableFull,
+    ObjectNotFound,
+    SpaceNotFound,
+    SpaceNotEmpty,
+    VersionNotFound,
+}
+
+// ---------------------------------------------------------------------------
+// M14 types: CompactObject, Version, Space, Provenance, Encryption
+// ---------------------------------------------------------------------------
+
+/// Maximum length of an object name in bytes.
+pub const MAX_OBJECT_NAME_LEN: usize = 64;
+
+/// Maximum length of an author/agent identifier in bytes.
+pub const MAX_AUTHOR_LEN: usize = 32;
+
+/// Maximum number of spaces.
+pub const MAX_SPACES: usize = 16;
+
+/// Maximum length of a space name in bytes.
+pub const MAX_SPACE_NAME_LEN: usize = 32;
+
+/// Maximum length of a version message in bytes.
+pub const MAX_VERSION_MESSAGE_LEN: usize = 64;
+
+/// Maximum entries in the object index.
+pub const OBJECT_INDEX_MAX_ENTRIES: usize = 16_384;
+
+/// Maximum length of extracted text content in CompactObject.
+pub const MAX_TEXT_CONTENT_LEN: usize = 128;
+
+/// Encryption overhead: 12-byte nonce + 16-byte AES-GCM auth tag.
+pub const ENCRYPTION_OVERHEAD: usize = 28;
+
+/// Compact object metadata (512 bytes, repr(C)).
+///
+/// Per spaces.md §3.3.1. Fixed-size on-disk metadata record for each stored
+/// object. Fields ordered for alignment: byte arrays first, then u64, u32, u8.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct CompactObject {
+    pub id: ObjectId,
+    pub space_id: SpaceId,
+    pub name: [u8; MAX_OBJECT_NAME_LEN],
+    pub content_hash: ContentHash,
+    pub version_head: ContentHash,
+    pub created_by: [u8; MAX_AUTHOR_LEN],
+    pub modified_by: [u8; MAX_AUTHOR_LEN],
+    pub text_content: [u8; MAX_TEXT_CONTENT_LEN],
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
+    pub content_size: u32,
+    pub content_type: ContentType,
+    pub name_len: u8,
+    pub text_len: u8,
+    pub _padding: [u8; 137],
+}
+
+impl CompactObject {
+    /// All-zero sentinel (invalid object).
+    pub const ZERO: Self = Self {
+        id: ObjectId::ZERO,
+        space_id: SpaceId::ZERO,
+        name: [0u8; MAX_OBJECT_NAME_LEN],
+        content_hash: ContentHash::ZERO,
+        version_head: ContentHash::ZERO,
+        created_by: [0u8; MAX_AUTHOR_LEN],
+        modified_by: [0u8; MAX_AUTHOR_LEN],
+        text_content: [0u8; MAX_TEXT_CONTENT_LEN],
+        created_at: Timestamp::ZERO,
+        modified_at: Timestamp::ZERO,
+        content_size: 0,
+        content_type: ContentType::Binary,
+        name_len: 0,
+        text_len: 0,
+        _padding: [0u8; 137],
+    };
+
+    /// Get the object name as a byte slice.
+    pub fn name_bytes(&self) -> &[u8] {
+        &self.name[..self.name_len as usize]
+    }
+
+    /// Set the object name from a byte slice. Truncates to MAX_OBJECT_NAME_LEN.
+    pub fn set_name(&mut self, name: &[u8]) {
+        let len = name.len().min(MAX_OBJECT_NAME_LEN);
+        self.name[..len].copy_from_slice(&name[..len]);
+        self.name_len = len as u8;
+    }
+
+    /// Get extracted text content as a byte slice.
+    pub fn text_bytes(&self) -> &[u8] {
+        &self.text_content[..self.text_len as usize]
+    }
+
+    /// Set extracted text content. Truncates to MAX_TEXT_CONTENT_LEN.
+    pub fn set_text(&mut self, text: &[u8]) {
+        let len = text.len().min(MAX_TEXT_CONTENT_LEN);
+        self.text_content[..len].copy_from_slice(&text[..len]);
+        self.text_len = len as u8;
+    }
+
+    /// Check if this is the zero sentinel.
+    pub fn is_zero(&self) -> bool {
+        self.id == ObjectId::ZERO
+    }
+}
+
+impl core::fmt::Debug for CompactObject {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CompactObject")
+            .field("id", &self.id)
+            .field("space_id", &self.space_id)
+            .field("content_hash", &self.content_hash)
+            .field("content_size", &self.content_size)
+            .field("content_type", &self.content_type)
+            .finish()
+    }
+}
+
+/// Version node in the Merkle DAG (256 bytes, repr(C)).
+///
+/// Per spaces.md §5.1. Each object modification creates a new version
+/// linked to its parent by hash. The chain forms a Merkle DAG.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Version {
+    pub hash: ContentHash,
+    pub parent: ContentHash,
+    pub merge_parent: ContentHash,
+    pub content_hash: ContentHash,
+    pub object_id: ObjectId,
+    pub author: [u8; MAX_AUTHOR_LEN],
+    pub message: [u8; MAX_VERSION_MESSAGE_LEN],
+    pub timestamp: Timestamp,
+    pub content_size: u32,
+    pub message_len: u8,
+    pub _padding: [u8; 3],
+}
+
+impl Version {
+    /// All-zero sentinel (no version).
+    pub const ZERO: Self = Self {
+        hash: ContentHash::ZERO,
+        parent: ContentHash::ZERO,
+        merge_parent: ContentHash::ZERO,
+        content_hash: ContentHash::ZERO,
+        object_id: ObjectId::ZERO,
+        author: [0u8; MAX_AUTHOR_LEN],
+        message: [0u8; MAX_VERSION_MESSAGE_LEN],
+        timestamp: Timestamp::ZERO,
+        content_size: 0,
+        message_len: 0,
+        _padding: [0u8; 3],
+    };
+
+    /// Check if the parent is the zero hash (this is the first version).
+    pub fn is_root(&self) -> bool {
+        self.parent.is_zero()
+    }
+
+    /// Get the version message as a byte slice.
+    pub fn message_bytes(&self) -> &[u8] {
+        &self.message[..self.message_len as usize]
+    }
+
+    /// Set the version message. Truncates to MAX_VERSION_MESSAGE_LEN.
+    pub fn set_message(&mut self, msg: &[u8]) {
+        let len = msg.len().min(MAX_VERSION_MESSAGE_LEN);
+        self.message[..len].copy_from_slice(&msg[..len]);
+        self.message_len = len as u8;
+    }
+}
+
+impl core::fmt::Debug for Version {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Version")
+            .field("hash", &self.hash)
+            .field("parent", &self.parent)
+            .field("object_id", &self.object_id)
+            .field("content_size", &self.content_size)
+            .finish()
+    }
+}
+
+/// Provenance action type for tracking object lineage.
+///
+/// Per spaces.md §3.3. Tracks how an object was created or modified.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[repr(u8)]
+pub enum ProvenanceAction {
+    Created = 0,
+    Modified = 1,
+    Derived = 2,
+    Imported = 3,
+    AiGenerated = 4,
+}
+
+/// Provenance entry recording agent actions on objects (144 bytes, repr(C)).
+///
+/// Tracks who did what to an object, when, and optionally from which source.
+/// The signature field is zeroed in Phase 4 (Ed25519 deferred to Phase 13).
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct ProvenanceEntry {
+    pub agent: [u8; MAX_AUTHOR_LEN],
+    pub task: [u8; 16],
+    pub signature: [u8; 64],
+    pub source_object: ObjectId,
+    pub timestamp: Timestamp,
+    pub action: ProvenanceAction,
+    pub has_task: u8,
+    pub _padding: [u8; 6],
+}
+
+impl ProvenanceEntry {
+    /// All-zero sentinel.
+    pub const ZERO: Self = Self {
+        agent: [0u8; MAX_AUTHOR_LEN],
+        task: [0u8; 16],
+        signature: [0u8; 64],
+        source_object: ObjectId::ZERO,
+        timestamp: Timestamp::ZERO,
+        action: ProvenanceAction::Created,
+        has_task: 0,
+        _padding: [0u8; 6],
+    };
+}
+
+impl core::fmt::Debug for ProvenanceEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProvenanceEntry")
+            .field("action", &self.action)
+            .field("timestamp", &self.timestamp)
+            .field("has_task", &self.has_task)
+            .finish()
+    }
+}
+
+/// Space quota limits.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[repr(C)]
+pub struct SpaceQuota {
+    pub max_bytes: u64,
+    pub max_objects: u32,
+    pub _padding: [u8; 4],
+}
+
+impl SpaceQuota {
+    pub const UNLIMITED: Self = Self {
+        max_bytes: u64::MAX,
+        max_objects: u32::MAX,
+        _padding: [0u8; 4],
+    };
+}
+
+impl Default for SpaceQuota {
+    fn default() -> Self {
+        Self::UNLIMITED
+    }
+}
+
+/// Space metadata (128 bytes, repr(C)).
+///
+/// Per spaces.md §3.1. Spaces organize objects into security zones
+/// with quotas and hierarchical structure.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Space {
+    pub id: SpaceId,
+    pub name: [u8; MAX_SPACE_NAME_LEN],
+    pub parent: SpaceId,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
+    pub quota_max_bytes: u64,
+    pub total_size: u64,
+    pub object_count: u32,
+    pub quota_max_objects: u32,
+    pub security_zone: SecurityZone,
+    pub name_len: u8,
+    pub _padding: [u8; 22],
+}
+
+impl Space {
+    /// All-zero sentinel.
+    pub const ZERO: Self = Self {
+        id: SpaceId::ZERO,
+        name: [0u8; MAX_SPACE_NAME_LEN],
+        parent: SpaceId::ZERO,
+        created_at: Timestamp::ZERO,
+        modified_at: Timestamp::ZERO,
+        quota_max_bytes: 0,
+        total_size: 0,
+        object_count: 0,
+        quota_max_objects: 0,
+        security_zone: SecurityZone::Core,
+        name_len: 0,
+        _padding: [0u8; 22],
+    };
+
+    /// Get the space name as a byte slice.
+    pub fn name_bytes(&self) -> &[u8] {
+        &self.name[..self.name_len as usize]
+    }
+
+    /// Set the space name. Truncates to MAX_SPACE_NAME_LEN.
+    pub fn set_name(&mut self, name: &[u8]) {
+        let len = name.len().min(MAX_SPACE_NAME_LEN);
+        self.name[..len].copy_from_slice(&name[..len]);
+        self.name_len = len as u8;
+    }
+
+    /// Check if this is the zero sentinel.
+    pub fn is_zero(&self) -> bool {
+        self.id == SpaceId::ZERO
+    }
+
+    /// Apply a SpaceQuota to this space.
+    pub fn set_quota(&mut self, quota: SpaceQuota) {
+        self.quota_max_bytes = quota.max_bytes;
+        self.quota_max_objects = quota.max_objects;
+    }
+
+    /// Get quota as a SpaceQuota struct.
+    pub fn quota(&self) -> SpaceQuota {
+        SpaceQuota {
+            max_bytes: self.quota_max_bytes,
+            max_objects: self.quota_max_objects,
+            _padding: [0u8; 4],
+        }
+    }
+
+    /// Check if adding `bytes` would exceed the quota.
+    pub fn would_exceed_quota(&self, bytes: u64) -> bool {
+        self.object_count >= self.quota_max_objects
+            || self.total_size.saturating_add(bytes) > self.quota_max_bytes
+    }
+}
+
+impl core::fmt::Debug for Space {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Space")
+            .field("id", &self.id)
+            .field("security_zone", &self.security_zone)
+            .field("object_count", &self.object_count)
+            .field("total_size", &self.total_size)
+            .finish()
+    }
+}
+
+/// Encryption state for a space or device.
+///
+/// Per spaces.md §6.1. Phase 4 uses DeviceOnly for all spaces.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[repr(u8)]
+pub enum EncryptionState {
+    DeviceOnly = 0,
+    SpaceEncrypted = 1,
+}
+
+/// Object index entry: maps ObjectId to its metadata block location.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[repr(C)]
+pub struct ObjectIndexEntry {
+    pub key: ObjectId,
+    pub location: BlockLocation,
+}
+
+/// Compute a version hash from its components using SHA-256.
+///
+/// Per spaces.md §5.1: hash = SHA-256(parent || content_hash || timestamp || object_id).
+/// This creates the Merkle DAG linkage — each version's hash depends on its parent.
+pub fn compute_version_hash(
+    parent: &ContentHash,
+    content_hash: &ContentHash,
+    timestamp: Timestamp,
+    object_id: &ObjectId,
+) -> ContentHash {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(&parent.0);
+    hasher.update(&content_hash.0);
+    hasher.update(&timestamp.0.to_le_bytes());
+    hasher.update(&object_id.0);
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    ContentHash(hash)
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +699,12 @@ const _: () = assert!(core::mem::size_of::<VirtioBlkReqHeader>() == 16);
 const _: () = assert!(core::mem::size_of::<BlockLocation>() == 16);
 const _: () = assert!(WAL_ENTRIES_PER_SECTOR == 8);
 const _: () = assert!(DATA_START_SECTOR == 131_080);
+const _: () = assert!(core::mem::size_of::<CompactObject>() == 512);
+const _: () = assert!(core::mem::size_of::<Version>() == 256);
+const _: () = assert!(core::mem::size_of::<Space>() == 128);
+const _: () = assert!(core::mem::size_of::<ProvenanceEntry>() == 144);
+const _: () = assert!(core::mem::size_of::<ObjectIndexEntry>() == 32);
+const _: () = assert!(core::mem::size_of::<SpaceQuota>() == 16);
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -514,8 +908,12 @@ mod tests {
             StorageError::DeviceNotFound,
             StorageError::VirtioError,
             StorageError::MemTableFull,
+            StorageError::ObjectNotFound,
+            StorageError::SpaceNotFound,
+            StorageError::SpaceNotEmpty,
+            StorageError::VersionNotFound,
         ];
-        assert_eq!(errors.len(), 11);
+        assert_eq!(errors.len(), 15);
         // Verify Copy by assignment.
         let e = StorageError::IoError;
         let e2 = e;
@@ -619,5 +1017,339 @@ mod tests {
     fn virtq_desc_flags() {
         assert_eq!(VIRTQ_DESC_F_NEXT, 1);
         assert_eq!(VIRTQ_DESC_F_WRITE, 2);
+    }
+
+    // -- ObjectId ordering tests --
+
+    #[test]
+    fn object_id_ordering() {
+        let a = ObjectId([0u8; 16]);
+        let mut b = ObjectId([0u8; 16]);
+        b.0[0] = 1;
+        assert!(a < b);
+        assert!(b > a);
+    }
+
+    #[test]
+    fn space_id_ordering() {
+        let a = SpaceId([0u8; 16]);
+        let mut b = SpaceId([0u8; 16]);
+        b.0[15] = 1;
+        assert!(a < b);
+    }
+
+    // -- CompactObject tests --
+
+    #[test]
+    fn compact_object_size_is_512() {
+        assert_eq!(core::mem::size_of::<CompactObject>(), 512);
+    }
+
+    #[test]
+    fn compact_object_copy() {
+        let a = CompactObject::ZERO;
+        let b = a;
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.content_size, b.content_size);
+    }
+
+    #[test]
+    fn compact_object_zero_sentinel() {
+        let obj = CompactObject::ZERO;
+        assert!(obj.is_zero());
+        assert_eq!(obj.id, ObjectId::ZERO);
+        assert_eq!(obj.content_size, 0);
+        assert_eq!(obj.name_len, 0);
+        assert_eq!(obj.text_len, 0);
+    }
+
+    #[test]
+    fn compact_object_name_helpers() {
+        let mut obj = CompactObject::ZERO;
+        obj.set_name(b"hello.txt");
+        assert_eq!(obj.name_bytes(), b"hello.txt");
+        assert_eq!(obj.name_len, 9);
+    }
+
+    #[test]
+    fn compact_object_name_truncation() {
+        let mut obj = CompactObject::ZERO;
+        let long_name = [b'x'; 128];
+        obj.set_name(&long_name);
+        assert_eq!(obj.name_len as usize, MAX_OBJECT_NAME_LEN);
+        assert_eq!(obj.name_bytes().len(), MAX_OBJECT_NAME_LEN);
+    }
+
+    #[test]
+    fn compact_object_text_helpers() {
+        let mut obj = CompactObject::ZERO;
+        obj.set_text(b"some extracted text");
+        assert_eq!(obj.text_bytes(), b"some extracted text");
+        assert_eq!(obj.text_len, 19);
+    }
+
+    #[test]
+    fn compact_object_text_truncation() {
+        let mut obj = CompactObject::ZERO;
+        let long_text = [b'a'; 256];
+        obj.set_text(&long_text);
+        assert_eq!(obj.text_len as usize, MAX_TEXT_CONTENT_LEN);
+    }
+
+    // -- Version tests --
+
+    #[test]
+    fn version_size_is_256() {
+        assert_eq!(core::mem::size_of::<Version>(), 256);
+    }
+
+    #[test]
+    fn version_copy() {
+        let a = Version::ZERO;
+        let b = a;
+        assert_eq!(a.hash, b.hash);
+        assert_eq!(a.content_size, b.content_size);
+    }
+
+    #[test]
+    fn version_zero_parent_is_root() {
+        let v = Version::ZERO;
+        assert!(v.is_root());
+    }
+
+    #[test]
+    fn version_nonzero_parent_is_not_root() {
+        let mut v = Version::ZERO;
+        v.parent.0[0] = 1;
+        assert!(!v.is_root());
+    }
+
+    #[test]
+    fn version_message_helpers() {
+        let mut v = Version::ZERO;
+        v.set_message(b"initial commit");
+        assert_eq!(v.message_bytes(), b"initial commit");
+        assert_eq!(v.message_len, 14);
+    }
+
+    #[test]
+    fn version_message_truncation() {
+        let mut v = Version::ZERO;
+        let long = [b'm'; 128];
+        v.set_message(&long);
+        assert_eq!(v.message_len as usize, MAX_VERSION_MESSAGE_LEN);
+    }
+
+    // -- ProvenanceEntry tests --
+
+    #[test]
+    fn provenance_entry_size() {
+        assert_eq!(core::mem::size_of::<ProvenanceEntry>(), 144);
+    }
+
+    #[test]
+    fn provenance_entry_copy() {
+        let a = ProvenanceEntry::ZERO;
+        let b = a;
+        assert_eq!(a.action, b.action);
+        assert_eq!(a.has_task, b.has_task);
+    }
+
+    #[test]
+    fn provenance_action_all_variants() {
+        let actions = [
+            ProvenanceAction::Created,
+            ProvenanceAction::Modified,
+            ProvenanceAction::Derived,
+            ProvenanceAction::Imported,
+            ProvenanceAction::AiGenerated,
+        ];
+        assert_eq!(actions.len(), 5);
+        assert_eq!(ProvenanceAction::Created as u8, 0);
+        assert_eq!(ProvenanceAction::AiGenerated as u8, 4);
+    }
+
+    #[test]
+    fn provenance_entry_signature_zeroed() {
+        let p = ProvenanceEntry::ZERO;
+        assert_eq!(p.signature, [0u8; 64]);
+    }
+
+    // -- Space tests --
+
+    #[test]
+    fn space_size_is_128() {
+        assert_eq!(core::mem::size_of::<Space>(), 128);
+    }
+
+    #[test]
+    fn space_copy() {
+        let a = Space::ZERO;
+        let b = a;
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.object_count, b.object_count);
+    }
+
+    #[test]
+    fn space_zero_sentinel() {
+        let s = Space::ZERO;
+        assert!(s.is_zero());
+        assert_eq!(s.object_count, 0);
+        assert_eq!(s.total_size, 0);
+    }
+
+    #[test]
+    fn space_name_helpers() {
+        let mut s = Space::ZERO;
+        s.set_name(b"system");
+        assert_eq!(s.name_bytes(), b"system");
+        assert_eq!(s.name_len, 6);
+    }
+
+    #[test]
+    fn space_name_truncation() {
+        let mut s = Space::ZERO;
+        let long = [b'n'; 64];
+        s.set_name(&long);
+        assert_eq!(s.name_len as usize, MAX_SPACE_NAME_LEN);
+    }
+
+    #[test]
+    fn space_quota_set_and_get() {
+        let mut s = Space::ZERO;
+        let q = SpaceQuota {
+            max_bytes: 1024 * 1024,
+            max_objects: 100,
+            _padding: [0u8; 4],
+        };
+        s.set_quota(q);
+        let q2 = s.quota();
+        assert_eq!(q2.max_bytes, 1024 * 1024);
+        assert_eq!(q2.max_objects, 100);
+    }
+
+    #[test]
+    fn space_quota_enforcement() {
+        let mut s = Space::ZERO;
+        s.set_quota(SpaceQuota {
+            max_bytes: 1000,
+            max_objects: 10,
+            _padding: [0u8; 4],
+        });
+
+        // Under quota
+        s.object_count = 5;
+        s.total_size = 500;
+        assert!(!s.would_exceed_quota(100));
+
+        // Object count at limit
+        s.object_count = 10;
+        assert!(s.would_exceed_quota(1));
+
+        // Byte size would overflow
+        s.object_count = 5;
+        s.total_size = 950;
+        assert!(s.would_exceed_quota(51));
+        assert!(!s.would_exceed_quota(50));
+    }
+
+    // -- SpaceQuota tests --
+
+    #[test]
+    fn space_quota_size() {
+        assert_eq!(core::mem::size_of::<SpaceQuota>(), 16);
+    }
+
+    #[test]
+    fn space_quota_default_is_unlimited() {
+        let q = SpaceQuota::default();
+        assert_eq!(q.max_bytes, u64::MAX);
+        assert_eq!(q.max_objects, u32::MAX);
+    }
+
+    #[test]
+    fn space_quota_unlimited() {
+        let q = SpaceQuota::UNLIMITED;
+        assert_eq!(q.max_bytes, u64::MAX);
+        assert_eq!(q.max_objects, u32::MAX);
+    }
+
+    // -- EncryptionState tests --
+
+    #[test]
+    fn encryption_state_copy_and_repr() {
+        let a = EncryptionState::DeviceOnly;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(EncryptionState::DeviceOnly as u8, 0);
+        assert_eq!(EncryptionState::SpaceEncrypted as u8, 1);
+    }
+
+    // -- ObjectIndexEntry tests --
+
+    #[test]
+    fn object_index_entry_size() {
+        assert_eq!(core::mem::size_of::<ObjectIndexEntry>(), 32);
+    }
+
+    // -- compute_version_hash tests --
+
+    #[test]
+    fn compute_version_hash_deterministic() {
+        let parent = ContentHash([1u8; 32]);
+        let content = ContentHash([2u8; 32]);
+        let ts = Timestamp(12345);
+        let oid = ObjectId([3u8; 16]);
+
+        let h1 = compute_version_hash(&parent, &content, ts, &oid);
+        let h2 = compute_version_hash(&parent, &content, ts, &oid);
+        assert_eq!(h1, h2);
+        assert!(!h1.is_zero());
+    }
+
+    #[test]
+    fn compute_version_hash_different_inputs_different_hashes() {
+        let parent = ContentHash([1u8; 32]);
+        let content = ContentHash([2u8; 32]);
+        let ts = Timestamp(12345);
+        let oid = ObjectId([3u8; 16]);
+
+        let h1 = compute_version_hash(&parent, &content, ts, &oid);
+
+        // Different parent
+        let mut parent2 = parent;
+        parent2.0[0] = 99;
+        let h2 = compute_version_hash(&parent2, &content, ts, &oid);
+        assert_ne!(h1, h2);
+
+        // Different content
+        let mut content2 = content;
+        content2.0[0] = 99;
+        let h3 = compute_version_hash(&parent, &content2, ts, &oid);
+        assert_ne!(h1, h3);
+
+        // Different timestamp
+        let h4 = compute_version_hash(&parent, &content, Timestamp(99999), &oid);
+        assert_ne!(h1, h4);
+
+        // Different object id
+        let mut oid2 = oid;
+        oid2.0[0] = 99;
+        let h5 = compute_version_hash(&parent, &content, ts, &oid2);
+        assert_ne!(h1, h5);
+    }
+
+    // -- M14 constant tests --
+
+    #[test]
+    fn m14_constants() {
+        assert_eq!(MAX_OBJECT_NAME_LEN, 64);
+        assert_eq!(MAX_AUTHOR_LEN, 32);
+        assert_eq!(MAX_SPACES, 16);
+        assert_eq!(MAX_SPACE_NAME_LEN, 32);
+        assert_eq!(MAX_VERSION_MESSAGE_LEN, 64);
+        assert_eq!(OBJECT_INDEX_MAX_ENTRIES, 16_384);
+        assert_eq!(MAX_TEXT_CONTENT_LEN, 128);
+        assert_eq!(ENCRYPTION_OVERHEAD, 28);
     }
 }
