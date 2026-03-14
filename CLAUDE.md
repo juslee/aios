@@ -417,7 +417,6 @@ version_head storage:         Stores SHA-256(serialized_version_bytes) from writ
 MAX_SPACES:                   16 system-wide
 System spaces:                system/ (Core), user/home/ (Personal), ephemeral/ (Ephemeral) — created at boot
 Space-storage service:        Registered via service_register(b"space-storage", pid=0, ch=3)
-Shared crate unit tests:      309 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -464,7 +463,7 @@ Phase N:  M(3N+1) – M(3N+3)
 
 ## Workspace Layout
 
-Current (post-Phase 4 M13 — VirtIO-blk Driver & Block Engine):
+Current (post-Phase 4 M14 — Object Store, Version Store & Encryption):
 
 ```
 aios/
@@ -486,7 +485,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm; features: kernel-metrics (default), kernel-tracing
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
