@@ -838,6 +838,8 @@ sequenceDiagram
 
 ## 12. USB as a Meta-Subsystem
 
+**Full USB architecture:** [usb.md](./usb.md) — controller drivers (xHCI, DWC2), device class drivers, hotplug state machine, power management, security model, AI-native features. This section covers the subsystem framework routing pattern.
+
 USB is special because it's a bus, not a device class. A USB port can have a keyboard (input), a microphone (audio), a webcam (camera), a thumb drive (storage), or an Ethernet adapter (network) plugged into it. USB's role is to identify what's been connected and route it to the right subsystem:
 
 ```mermaid
