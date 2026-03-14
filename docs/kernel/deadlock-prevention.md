@@ -29,7 +29,7 @@ AIOS breaks one or more of these conditions at every level of the system, supple
 | Lock ordering (per-CPU + global hierarchy) | Circular wait | §3 | [scheduler.md §9.1](./scheduler.md) |
 | Mandatory IPC timeouts | Circular wait (bounded) | §4 | [ipc.md §3.1](./ipc.md) |
 | Priority inheritance† | *(liveness)* | §5 | [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md) |
-| Per-cache magazine fast path§ | *(contention reduction)* | §6 | [memory-physical.md §4.1](./memory-physical.md) |
+| Per-cache magazine fast path¶ | *(contention reduction)* | §6 | [memory-physical.md §4.1](./memory-physical.md) |
 | Capability-based resource model | Circular wait (graph constraint) | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
 | Synchronous IPC (no callback chains) | Circular wait | §8 | [ipc.md §4.2](./ipc.md) |
 | Preemptive kernel‡ | *(liveness)* | §9 | [scheduler.md §10.3](./scheduler.md) |
@@ -39,7 +39,7 @@ AIOS breaks one or more of these conditions at every level of the system, supple
 
 ‡A preemptive kernel does not break Coffman's *no preemption* condition for lock-based deadlocks. Preempting a thread reclaims CPU time but does not forcibly strip locks or other resources the thread holds. Preemption is a **liveness** mechanism: it bounds how long any thread can monopolize the CPU and — in combination with priority inheritance — helps ensure that lock holders (and thus their waiters) are scheduled promptly to release locks and unblock higher-priority work.
 
-§Per-cache magazines do not break a Coffman condition. They reduce contention duration — the magazine's two-chance swap shortens average critical section length, making lock-related hazards less likely. See §6 for details.
+¶Per-cache magazines do not break a Coffman condition. They reduce contention duration — the magazine's two-chance swap shortens average critical section length, making lock-related hazards less likely. See §6 for details.
 
 -----
 
@@ -72,9 +72,9 @@ let mut rq_second = match RUN_QUEUES[second].try_lock() { /* ... */ };
 
 ### 3.3 Global Subsystem Lock Hierarchy
 
-Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. Every global `Mutex` in the kernel has a defined position in this hierarchy. A thread that holds a lock at position N may only acquire locks at positions > N — never at position ≤ N.
+Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. Every production subsystem `Mutex` in the kernel has a defined position in this hierarchy. Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests.rs`) are excluded — they run in single-threaded test contexts and do not interact with production lock paths. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
 
-**Primary hierarchy** (acquire in this order; never acquire a higher lock while holding a lower one):
+**Primary hierarchy** (locks must be acquired in increasing position order; never acquire a lower-numbered lock while holding a higher-numbered one):
 
 | Pos | Lock | Location | Type | Notes |
 |---|---|---|---|---|
@@ -119,7 +119,7 @@ graph TD
 
     subgraph Memory Domain
         SL[SLAB] --> FA[FRAME_ALLOC]
-        FA --> BU[BUDDY]
+        SL -.->|early boot| BU[BUDDY]
     end
 ```
 
@@ -146,7 +146,7 @@ Memory allocator locks operate in a **separate domain** from the subsystem hiera
 | `FRAME_ALLOC` | `mm/frame.rs` | `Mutex<Option<FrameAllocator>>` | Pool-aware page allocator |
 | `BUDDY` | `mm/buddy.rs` | `Mutex<BuddyAllocator>` | Physical page allocator (legacy global; per-pool buddies live in `PagePools`) |
 
-Within the memory domain, the nesting order is: `SLAB` → `FRAME_ALLOC` → `BUDDY` (slab may grow by requesting frames, which may internally use the buddy allocator).
+Within the memory domain, nesting follows: `SLAB` → `FRAME_ALLOC` or `BUDDY` (not both simultaneously). On the slab slow path, the allocator calls `FRAME_ALLOC` to obtain pages; `FRAME_ALLOC` internally delegates to pool-specific buddy instances. The `BUDDY` global listed above is the legacy/early-boot allocator — per-pool buddies live inside `PagePools` and are accessed through `FRAME_ALLOC`. The key invariant is that `SLAB` is always acquired first when nesting occurs.
 
 **Critical rule:** Never hold a subsystem lock (positions 1–13) and then allocate memory in a path that might contend on `SLAB`. If allocation is needed while holding a higher lock, pre-allocate before acquiring the lock, or use the collect-then-act pattern (§3.5).
 
@@ -164,9 +164,9 @@ Examples in the codebase:
 
 - **`check_timeouts`** (`ipc/timeout.rs`): Collects expired entries under `TIMEOUT_QUEUE`, releases the lock, then wakes threads (which acquire `THREAD_TABLE` and scheduler locks).
 
-- **`shmem_cleanup`** (`ipc/shmem.rs`): Collects shared region IDs under `SHARED_REGION_TABLE`, releases the lock, then grants capabilities (which may acquire `PROCESS_TABLE`).
+- **`process_cleanup_shared_memory`** (`ipc/shmem.rs`): Collects shared region IDs under `SHARED_REGION_TABLE`, releases the lock, then cleans up mappings. Similarly, `shared_memory_share` drops `SHARED_REGION_TABLE` before calling `grant_to_process` (which may acquire `PROCESS_TABLE`).
 
-- **`cascade_revoke`** (`cap/mod.rs`): Collects revoked channel IDs under capability table iteration, then destroys channels outside the lock.
+- **`revoke_channels_for_cap`** (`cap/mod.rs`): Collects channel IDs associated with a revoked capability under `CHANNEL_TABLE`, then destroys them after releasing the lock.
 
 This pattern trades strict atomicity for deadlock freedom. The window between collecting and acting is microseconds — acceptable because the kernel is preemptive (§9) and operations are idempotent or guarded by generation counters.
 
