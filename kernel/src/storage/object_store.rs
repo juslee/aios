@@ -155,12 +155,8 @@ pub fn object_create(
         }
 
         // Create initial version hash (no parent for first version).
-        let version_hash = shared::storage::compute_version_hash(
-            &ContentHash::ZERO,
-            &content_hash,
-            now,
-            &id,
-        );
+        let version_hash =
+            shared::storage::compute_version_hash(&ContentHash::ZERO, &content_hash, now, &id);
         obj.version_head = version_hash;
 
         // Insert into object index.
@@ -173,10 +169,7 @@ pub fn object_create(
 /// Read an object's metadata and content by ObjectId.
 ///
 /// Returns (CompactObject, content_bytes_read) into the provided buffer.
-pub fn object_read(
-    id: &ObjectId,
-    buf: &mut [u8],
-) -> Result<(CompactObject, usize), StorageError> {
+pub fn object_read(id: &ObjectId, buf: &mut [u8]) -> Result<(CompactObject, usize), StorageError> {
     block_engine::with_engine(|engine| {
         let obj = engine
             .object_index()

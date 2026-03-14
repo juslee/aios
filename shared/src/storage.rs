@@ -532,10 +532,10 @@ pub fn compute_version_hash(
 ) -> ContentHash {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(&parent.0);
-    hasher.update(&content_hash.0);
-    hasher.update(&timestamp.0.to_le_bytes());
-    hasher.update(&object_id.0);
+    hasher.update(parent.0);
+    hasher.update(content_hash.0);
+    hasher.update(timestamp.0.to_le_bytes());
+    hasher.update(object_id.0);
     let result = hasher.finalize();
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&result);

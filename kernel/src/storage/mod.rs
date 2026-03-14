@@ -7,6 +7,7 @@
 //! Per spaces.md §4.
 
 pub mod block_engine;
+pub mod crypto;
 pub mod lsm;
 pub mod object_store;
 pub mod version_store;
@@ -149,6 +150,9 @@ fn run_self_tests() {
 
     // --- Test 6: Version Store — Merkle DAG ---
     test_version_store();
+
+    // --- Test 7: Encryption verification ---
+    test_encryption();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -206,22 +210,22 @@ fn test_version_store() {
 
     // Create an object for versioning.
     let content_v1 = b"Version 1 content";
-    let (obj_id, _hash_v1) = match object_store::object_create(
-        space,
-        b"versioned.txt",
-        content_v1,
-        ContentType::Text,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            crate::kerror!(Storage, "VersionStore: create failed: {:?}", e);
-            return;
-        }
-    };
+    let (obj_id, _hash_v1) =
+        match object_store::object_create(space, b"versioned.txt", content_v1, ContentType::Text) {
+            Ok(r) => r,
+            Err(e) => {
+                crate::kerror!(Storage, "VersionStore: create failed: {:?}", e);
+                return;
+            }
+        };
     crate::kinfo!(Storage, "VersionStore: created object {:?}", obj_id);
 
     // Update 3 times.
-    let updates = [b"Version 2 content" as &[u8], b"Version 3 content", b"Version 4 content"];
+    let updates = [
+        b"Version 2 content" as &[u8],
+        b"Version 3 content",
+        b"Version 4 content",
+    ];
     for (i, content) in updates.iter().enumerate() {
         match version_store::object_update(&obj_id, content, b"test-agent", b"update") {
             Ok(_hash) => {
@@ -240,13 +244,12 @@ fn test_version_store() {
     // in the chain. The initial version_head from object_create is not a stored Version block.
     match version_store::version_list(&obj_id) {
         Ok(versions) => {
-            crate::kinfo!(
-                Storage,
-                "VersionStore: listed {} versions",
-                versions.len()
-            );
+            crate::kinfo!(Storage, "VersionStore: listed {} versions", versions.len());
             if versions.len() == 3 {
-                crate::kinfo!(Storage, "VersionStore: version count OK (3 update versions)");
+                crate::kinfo!(
+                    Storage,
+                    "VersionStore: version count OK (3 update versions)"
+                );
             } else {
                 crate::kwarn!(
                     Storage,
@@ -317,6 +320,71 @@ fn test_version_store() {
     }
 }
 
+/// Encryption self-test: verify blocks are encrypted on disk and readable back.
+#[cfg(feature = "storage-tests")]
+fn test_encryption() {
+    // Write a known block.
+    let plaintext = b"encryption test payload";
+    let (hash, _loc) = match block_engine::write_block(plaintext) {
+        Ok(r) => r,
+        Err(e) => {
+            crate::kerror!(Storage, "Encryption test: write failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Read it back — should get correct plaintext.
+    let mut buf = [0u8; 512];
+    match block_engine::read_block_by_hash(&hash, &mut buf) {
+        Ok(n) => {
+            if &buf[..n] == plaintext {
+                crate::kinfo!(Storage, "Encryption test: read-back verified OK");
+            } else {
+                crate::kerror!(Storage, "Encryption test: read-back data mismatch!");
+                return;
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "Encryption test: read-back failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Verify raw sector is NOT plaintext (encryption is transparent).
+    let is_encrypted = block_engine::with_engine(|engine| engine.crypto_active()).unwrap_or(false);
+
+    if is_encrypted {
+        // Read raw sector at the block's location and check it doesn't contain plaintext.
+        let loc =
+            block_engine::with_engine(|engine| engine.memtable().get(&hash).map(|e| e.location))
+                .unwrap_or(None);
+
+        if let Some(loc) = loc {
+            let start_sector = loc.offset / shared::storage::SECTOR_SIZE as u64;
+            let mut raw = [0u8; 512];
+            if crate::drivers::virtio_blk::read_sector(start_sector, &mut raw).is_ok() {
+                // First 12 bytes should be AES-GCM nonce, not CRC header.
+                // If encrypted, bytes 0..4 should NOT equal the CRC of plaintext.
+                let raw_prefix = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
+                let data_crc = block_engine::crc32c(plaintext);
+                if raw_prefix != data_crc {
+                    crate::kinfo!(
+                        Storage,
+                        "Encryption test: raw sector is encrypted (not plaintext)"
+                    );
+                } else {
+                    crate::kwarn!(Storage, "Encryption test: raw sector may not be encrypted");
+                }
+            }
+        }
+    } else {
+        crate::kinfo!(
+            Storage,
+            "Encryption test: crypto not active (plaintext mode)"
+        );
+    }
+}
+
 /// Object Store self-tests: create, read-back, dedup, delete.
 #[cfg(feature = "storage-tests")]
 fn test_object_store() {
@@ -326,26 +394,22 @@ fn test_object_store() {
 
     // Create an object.
     let content = b"Hello, Object Store!";
-    let (obj_id, hash1) = match object_store::object_create(
-        space,
-        b"hello.txt",
-        content,
-        ContentType::Text,
-    ) {
-        Ok(result) => {
-            crate::kinfo!(
-                Storage,
-                "ObjStore: created id={:?} hash={:?}",
-                result.0,
-                HashPrefix(&result.1)
-            );
-            result
-        }
-        Err(e) => {
-            crate::kerror!(Storage, "ObjStore: create failed: {:?}", e);
-            return;
-        }
-    };
+    let (obj_id, hash1) =
+        match object_store::object_create(space, b"hello.txt", content, ContentType::Text) {
+            Ok(result) => {
+                crate::kinfo!(
+                    Storage,
+                    "ObjStore: created id={:?} hash={:?}",
+                    result.0,
+                    HashPrefix(&result.1)
+                );
+                result
+            }
+            Err(e) => {
+                crate::kerror!(Storage, "ObjStore: create failed: {:?}", e);
+                return;
+            }
+        };
 
     // Read it back.
     let mut buf = [0u8; 512];
@@ -369,25 +433,20 @@ fn test_object_store() {
     }
 
     // Dedup: create another object with same content.
-    let (obj_id2, hash2) = match object_store::object_create(
-        space,
-        b"hello_copy.txt",
-        content,
-        ContentType::Text,
-    ) {
-        Ok(result) => result,
-        Err(e) => {
-            crate::kerror!(Storage, "ObjStore: dedup create failed: {:?}", e);
-            return;
-        }
-    };
+    let (obj_id2, hash2) =
+        match object_store::object_create(space, b"hello_copy.txt", content, ContentType::Text) {
+            Ok(result) => result,
+            Err(e) => {
+                crate::kerror!(Storage, "ObjStore: dedup create failed: {:?}", e);
+                return;
+            }
+        };
 
     if hash1 == hash2 {
         // Check refcount — should be 3 (original write + dedup in write_block + second object).
-        let rc = block_engine::with_engine(|e| {
-            e.memtable().get(&hash1).map(|entry| entry.refcount)
-        })
-        .unwrap_or(None);
+        let rc =
+            block_engine::with_engine(|e| e.memtable().get(&hash1).map(|entry| entry.refcount))
+                .unwrap_or(None);
         crate::kinfo!(
             Storage,
             "ObjStore: dedup verified — same hash, refcount={}",
@@ -412,9 +471,15 @@ fn test_object_store() {
     match object_store::object_read(&obj_id2, &mut buf) {
         Ok((_, n)) => {
             if &buf[..n] == content {
-                crate::kinfo!(Storage, "ObjStore: second object still readable after delete");
+                crate::kinfo!(
+                    Storage,
+                    "ObjStore: second object still readable after delete"
+                );
             } else {
-                crate::kerror!(Storage, "ObjStore: second object data mismatch after delete!");
+                crate::kerror!(
+                    Storage,
+                    "ObjStore: second object data mismatch after delete!"
+                );
             }
         }
         Err(e) => {

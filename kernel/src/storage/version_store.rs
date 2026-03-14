@@ -111,8 +111,7 @@ pub fn version_list(object_id: &ObjectId) -> Result<Vec<Version>, StorageError> 
 
             // SAFETY: Version is repr(C), 256 bytes, all plain data.
             // read_unaligned handles potential alignment issues from buf.
-            let version =
-                unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+            let version = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
             current_hash = version.parent;
             versions.push(version);
         }
@@ -141,8 +140,7 @@ pub fn version_rollback(
         }
 
         // SAFETY: Version is repr(C), 256 bytes.
-        let target_version =
-            unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+        let target_version = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
 
         if target_version.object_id != *object_id {
             return Err(StorageError::VersionNotFound);
@@ -160,12 +158,8 @@ pub fn version_rollback(
         let tick = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
         let now = Timestamp(tick);
 
-        let version_hash = compute_version_hash(
-            &current_head,
-            &target_version.content_hash,
-            now,
-            object_id,
-        );
+        let version_hash =
+            compute_version_hash(&current_head, &target_version.content_hash, now, object_id);
 
         let mut version = Version::ZERO;
         version.hash = version_hash;
