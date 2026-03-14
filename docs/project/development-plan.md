@@ -144,7 +144,7 @@ The web browser (Phase 21) is the last item on the critical path before the OS c
 | Firmware blob licensing | Medium — WiFi/BT unusable | Low | Open | Most WiFi/BT chips need proprietary firmware. Mitigation: redistribute under manufacturer license (standard practice), document clearly |
 | Kernel memory safety despite unsafe Rust | High — security compromise | Low-Medium | Mitigated | 14.6K lines of kernel code with all `unsafe` blocks documented. 275 unit tests, zero memory corruption observed. Ongoing: minimize unsafe, fuzz all syscalls, formal verification for critical paths |
 | AI tooling dependency | Medium — velocity drops 3–5x | Low | Open | Development velocity depends on Claude Code. Mitigation: 58K lines of architecture docs serve as specification regardless of tooling; any developer can continue from current state |
-| QEMU version compatibility | Low — CI breaks | Low | Mitigated | QEMU 10.x changed edk2 MMIO mapping behavior post-ExitBootServices (discovered Phase 4 M13). Mitigation: pin QEMU version in CI, test against multiple versions |
+| QEMU version compatibility | Low — CI breaks | Low | Open | QEMU 10.x changed edk2 MMIO mapping behavior post-ExitBootServices (discovered Phase 4 M13). Mitigation: pin QEMU version in CI (pending), test against multiple versions |
 | Driver ecosystem time sink | High — hardware phases delayed | High | Open | Every comparable OS project (seL4, Fuchsia, Redox, Hubris) reports drivers as the single biggest time sink. Real hardware (Pi GPU, USB, WiFi) has undocumented quirks that resist AI acceleration. Mitigation: budget 2–3x estimated time for Phases 16–19 and 27; start with QEMU virtual devices before real hardware |
 
 ### 4.2 Schedule Risks
@@ -303,7 +303,7 @@ Estimated timeline with 3 AI-assisted developers: ~8–16 weeks.
 | Compiler | LLVM/clang | Apache-2.0 | — |
 | Certificates | webpki-roots | MPL-2.0 | — |
 
-All permissively licensed. No GPL dependencies in the core OS.
+Mostly permissively licensed (MIT, Apache-2.0, BSD-2-Clause) with some MPL-2.0 dependencies (Servo, webpki-roots). No GPL dependencies in the core OS.
 
 -----
 
