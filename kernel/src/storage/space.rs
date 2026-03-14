@@ -79,7 +79,7 @@ impl SpaceTable {
                 return Ok(());
             }
         }
-        Err(StorageError::SpaceNotFound) // Table full
+        Err(StorageError::QuotaExceeded) // Table full (MAX_SPACES reached)
     }
 
     /// Remove a space by ID. Returns the removed space.

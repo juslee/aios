@@ -216,9 +216,16 @@ fn test_100_blocks() {
 /// Version Store self-tests: create → update 3x → list 4 → rollback → verify.
 #[cfg(feature = "storage-tests")]
 fn test_version_store() {
-    use shared::storage::{ContentType, SpaceId};
+    use shared::storage::ContentType;
 
-    let space = SpaceId([2u8; 16]);
+    // Use a real system space ID.
+    let space = match space::space_list() {
+        Ok(spaces) if !spaces.is_empty() => spaces[0].id,
+        _ => {
+            crate::kerror!(Storage, "VersionStore: no spaces available for test");
+            return;
+        }
+    };
 
     // Create an object for versioning.
     let content_v1 = b"Version 1 content";
@@ -250,22 +257,19 @@ fn test_version_store() {
         }
     }
 
-    // List versions (expect 4: initial creation + 3 updates = 4 version hashes in chain).
-    // Note: initial object_create computes a version_head hash but doesn't store a Version block.
-    // The first version_create happens on first object_update. So we have 3 version blocks
-    // in the chain. The initial version_head from object_create is not a stored Version block.
+    // List versions (expect 4: initial creation + 3 updates = 4 version blocks in chain).
     match version_store::version_list(&obj_id) {
         Ok(versions) => {
             crate::kinfo!(Storage, "VersionStore: listed {} versions", versions.len());
-            if versions.len() == 3 {
+            if versions.len() == 4 {
                 crate::kinfo!(
                     Storage,
-                    "VersionStore: version count OK (3 update versions)"
+                    "VersionStore: version count OK (1 initial + 3 updates)"
                 );
             } else {
                 crate::kwarn!(
                     Storage,
-                    "VersionStore: expected 3 versions, got {}",
+                    "VersionStore: expected 4 versions, got {}",
                     versions.len()
                 );
             }
@@ -302,7 +306,7 @@ fn test_version_store() {
                             }
                         }
 
-                        // After rollback, version list should have 4 (3 original + 1 rollback).
+                        // After rollback, version list should have 5 (4 original + 1 rollback).
                         match version_store::version_list(&obj_id) {
                             Ok(post_versions) => {
                                 crate::kinfo!(
@@ -463,9 +467,16 @@ fn test_encryption() {
 /// Object Store self-tests: create, read-back, dedup, delete.
 #[cfg(feature = "storage-tests")]
 fn test_object_store() {
-    use shared::storage::{ContentType, SpaceId};
+    use shared::storage::ContentType;
 
-    let space = SpaceId([1u8; 16]);
+    // Use a real system space ID (created by init_system_spaces).
+    let space = match space::space_list() {
+        Ok(spaces) if !spaces.is_empty() => spaces[0].id,
+        _ => {
+            crate::kerror!(Storage, "ObjStore: no spaces available for test");
+            return;
+        }
+    };
 
     // Create an object.
     let content = b"Hello, Object Store!";
@@ -518,7 +529,7 @@ fn test_object_store() {
         };
 
     if hash1 == hash2 {
-        // Check refcount — should be 3 (original write + dedup in write_block + second object).
+        // Check refcount — should be 2 (one per object via write_block dedup).
         let rc =
             block_engine::with_engine(|e| e.memtable().get(&hash1).map(|entry| entry.refcount))
                 .unwrap_or(None);

@@ -230,9 +230,10 @@ impl CompactObject {
         _padding: [0u8; 137],
     };
 
-    /// Get the object name as a byte slice.
+    /// Get the object name as a byte slice. Clamps to array bounds for corruption safety.
     pub fn name_bytes(&self) -> &[u8] {
-        &self.name[..self.name_len as usize]
+        let len = (self.name_len as usize).min(MAX_OBJECT_NAME_LEN);
+        &self.name[..len]
     }
 
     /// Set the object name from a byte slice. Truncates to MAX_OBJECT_NAME_LEN.
@@ -313,9 +314,10 @@ impl Version {
         self.parent.is_zero()
     }
 
-    /// Get the version message as a byte slice.
+    /// Get the version message as a byte slice. Clamps to array bounds for corruption safety.
     pub fn message_bytes(&self) -> &[u8] {
-        &self.message[..self.message_len as usize]
+        let len = (self.message_len as usize).min(MAX_VERSION_MESSAGE_LEN);
+        &self.message[..len]
     }
 
     /// Set the version message. Truncates to MAX_VERSION_MESSAGE_LEN.
@@ -452,9 +454,10 @@ impl Space {
         _padding: [0u8; 22],
     };
 
-    /// Get the space name as a byte slice.
+    /// Get the space name as a byte slice. Clamps to array bounds for corruption safety.
     pub fn name_bytes(&self) -> &[u8] {
-        &self.name[..self.name_len as usize]
+        let len = (self.name_len as usize).min(MAX_SPACE_NAME_LEN);
+        &self.name[..len]
     }
 
     /// Set the space name. Truncates to MAX_SPACE_NAME_LEN.

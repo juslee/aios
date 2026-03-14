@@ -96,9 +96,9 @@ const _: () = assert!(core::mem::size_of::<Superblock>() == BLOCK_SIZE);
 impl Superblock {
     /// Compute CRC-32C over the superblock fields (everything before checksum).
     fn compute_checksum(&self) -> u32 {
-        // Checksum covers bytes 0..104 (magic through nonce_random_prefix).
-        // 8+4+4+8+8+8+8+8+8+8+8+8+8+8+4 = 104 bytes
-        let offset_of_checksum = 104;
+        // Checksum covers bytes 0..108 (magic through nonce_random_prefix).
+        // 8+4+4+8+8+8+8+8+8+8+8+8+8+8+4 = 108 bytes
+        let offset_of_checksum = 108;
 
         // SAFETY: Superblock is repr(C), plain data (no pointers or padding).
         // Maintained by the fixed field layout and compile-time size_of check.
@@ -343,7 +343,6 @@ impl BlockEngine {
         let (_seq, wal_index) = self.wal.append(content_hash, byte_offset, byte_size)?;
 
         // 7. Build plaintext envelope: [crc32c | data_len | data]
-        // Use a stack buffer for small blocks, heap-allocated Vec for larger.
         let mut envelope = alloc::vec![0u8; plaintext_envelope];
         envelope[0..4].copy_from_slice(&data_crc.to_le_bytes());
         envelope[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
@@ -353,6 +352,10 @@ impl BlockEngine {
         let write_data = if let Some(ref crypto) = self.crypto {
             let mut encrypted = alloc::vec![0u8; on_disk_size];
             crypto.encrypt(&envelope, &mut encrypted)?;
+            // Persist nonce counter BEFORE writing data sectors.
+            // If we crash after data write but before nonce flush, we'd reuse nonces.
+            // By flushing first, the persisted counter is always >= any nonce used on disk.
+            self.flush_superblock()?;
             encrypted
         } else {
             envelope
@@ -386,12 +389,6 @@ impl BlockEngine {
         self.memtable
             .insert(content_hash, location)
             .map_err(|_| StorageError::MemTableFull)?;
-
-        // 13. Persist nonce counter to superblock after encrypted writes.
-        // This ensures crash recovery never reuses a nonce (AES-GCM requires unique nonces).
-        if self.crypto.is_some() {
-            self.flush_superblock()?;
-        }
 
         Ok((content_hash, location))
     }

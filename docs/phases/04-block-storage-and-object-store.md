@@ -224,10 +224,11 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   3. Create a new version node (parent = current head, content = old content)
   4. Update object's head pointer (rollback is a new version, not a rewrite)
 - [x] Implement `object_update(id, new_content) -> Result<Hash, StorageError>`:
-  1. Store new content via Block Engine
-  2. Create version node
-  3. Update CompactObject metadata (content_hash, modified_at)
-  4. Decrement refcount on old content block
+  1. Store new content via Block Engine (creates refcount=1, claimed by the new version node)
+  2. Create version node (parent = current head, content_hash = new hash)
+  3. Store version node as a block via write_block
+  4. Update CompactObject metadata (content_hash, version_head, modified_at)
+  Note: Old content is NOT dec_ref'd here — its version node still owns that ref. Refcounts are released by object_delete when walking the version chain.
 - [x] Test: create object → update 3 times → list versions (expect 4) → rollback to version 2 → verify content matches version 2
 
 **Note:** Provenance signatures (Ed25519) are deferred to Phase 13 (Security Hardening). For Phase 4, the `author` field stores a stub `AgentId` and the provenance chain is simplified.
@@ -259,7 +260,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   5. Return plaintext content
 - [x] Add `encryption_epoch: u64`, `nonce_counter: u64`, `nonce_random_prefix: u32` fields to Superblock (adjust padding to maintain 4096B size)
 - [x] Store device key epoch in superblock; support single-key mode (no rotation in Phase 4)
-- [x] On init: load nonce_counter from superblock, advance by +1000 (crash recovery gap), persist immediately
+- [x] On init: load nonce_counter from superblock, advance by +1000 (crash recovery gap), persist immediately. On each write: persist nonce counter to superblock BEFORE writing encrypted data sectors (prevents nonce reuse on crash)
 - [x] Test: write encrypted block, read raw sector (verify ciphertext ≠ plaintext), read via Block Engine (verify decrypted content matches original)
 
 **Note:** The nonce uses a global monotonic counter (per §6.1.1): `[random_prefix (4B) | counter (8B)]` for a 12-byte nonce. The counter is persisted in the superblock and advanced by +1000 on crash recovery to guarantee no reuse even after unclean shutdown. AES-GCM nonce reuse is catastrophic — the monotonic counter approach guarantees uniqueness as long as the counter never wraps (2^64 blocks ≈ centuries of operation).

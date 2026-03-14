@@ -154,10 +154,40 @@ pub fn object_create(
             obj.set_text(content);
         }
 
-        // Create initial version hash (no parent for first version).
+        // Create initial version node and store as a block.
+        // Each version node owns a refcount on its content_hash.
+        // The initial write_block(content) above created refcount=1, which this
+        // version node claims. No separate inc_ref needed.
         let version_hash =
             shared::storage::compute_version_hash(&ContentHash::ZERO, &content_hash, now, &id);
-        obj.version_head = version_hash;
+        let mut version = Version::ZERO;
+        version.hash = version_hash;
+        version.parent = ContentHash::ZERO;
+        version.content_hash = content_hash;
+        version.content_size = content.len() as u32;
+        version.object_id = id;
+        version.timestamp = now;
+        version.set_message(b"created");
+
+        // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+        // Maintained by compile-time assertion: size_of::<Version>() == 256.
+        // If violated, from_raw_parts produces incorrect byte representation.
+        let version_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &version as *const Version as *const u8,
+                core::mem::size_of::<Version>(),
+            )
+        };
+        let (block_hash, _) = engine.write_block(version_bytes)?;
+        obj.version_head = block_hash;
+
+        // Validate space exists before inserting object.
+        if engine.space_table().get(&space_id).is_none() {
+            // Dec_ref the content and version blocks we just wrote.
+            let _ = engine.dec_ref(&content_hash);
+            let _ = engine.dec_ref(&block_hash);
+            return Err(StorageError::SpaceNotFound);
+        }
 
         // Insert into object index.
         engine.object_index_mut().insert(obj)?;
@@ -200,14 +230,10 @@ pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
             .remove(id)
             .ok_or(StorageError::ObjectNotFound)?;
 
-        // Decrement current content block refcount.
-        let _ = engine.dec_ref(&obj.content_hash);
-
-        // Walk version chain and free version node blocks.
-        // Note: version nodes do NOT hold refcounts on their content blocks.
-        // Content refcounts are managed by object_update/version_rollback at
-        // mutation time (old content is dec_ref'd immediately on update).
-        // Only the current object.content_hash holds a live refcount (dec'd above).
+        // Walk version chain: each version node owns a refcount on its content_hash.
+        // Release both the version node block and its content reference.
+        // obj.content_hash is NOT dec_ref'd separately — the latest version in
+        // the chain holds that ref (its content_hash == obj.content_hash).
         let mut current_hash = obj.version_head;
         let mut buf = [0u8; 256];
         let max_depth = 1024;
@@ -227,6 +253,8 @@ pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
             // Maintained by compile-time assertion: size_of::<Version>() == 256.
             // If violated (e.g., struct gains a pointer), read_unaligned returns garbage.
             let ver = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+            // Release the content block ref owned by this version node.
+            let _ = engine.dec_ref(&ver.content_hash);
             // Free the version node block itself.
             let next = ver.parent;
             let _ = engine.dec_ref(&current_hash);

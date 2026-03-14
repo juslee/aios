@@ -178,11 +178,6 @@ pub fn version_rollback(
             .get(object_id)
             .ok_or(StorageError::ObjectNotFound)?
             .version_head;
-        let old_content_hash = engine
-            .object_index()
-            .get(object_id)
-            .ok_or(StorageError::ObjectNotFound)?
-            .content_hash;
 
         // Create new version with target's content.
         let tick = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
@@ -212,7 +207,9 @@ pub fn version_rollback(
         };
         let (block_hash, _) = engine.write_block(version_bytes)?;
 
-        // Increment refcount on target content (now referenced by rollback version).
+        // Increment refcount on target content (rollback version node adds a new reference).
+        // Old content is NOT dec_ref'd — its version node still owns that ref.
+        // Refcounts are released by object_delete when walking the version chain.
         engine.inc_ref(&target_version.content_hash)?;
 
         // Update object metadata (version_head = block content hash for lookup).
@@ -225,11 +222,6 @@ pub fn version_rollback(
         obj_mut.content_size = target_version.content_size;
         obj_mut.modified_at = now;
 
-        // Decrement refcount on old content (the pre-rollback content).
-        if old_content_hash != target_version.content_hash {
-            let _ = engine.dec_ref(&old_content_hash);
-        }
-
         Ok(())
     })?
 }
@@ -239,7 +231,10 @@ pub fn version_rollback(
 /// 1. Write new content to Block Engine
 /// 2. Create version node (parent = current head)
 /// 3. Update CompactObject metadata
-/// 4. Decrement refcount on old content
+///
+/// Note: Old content is NOT dec_ref'd here. Each version node owns a refcount
+/// on its content_hash (from the original write_block). Refcounts are released
+/// by object_delete when walking the version chain.
 pub fn object_update(
     object_id: &ObjectId,
     new_content: &[u8],
@@ -252,7 +247,6 @@ pub fn object_update(
             .object_index()
             .get(object_id)
             .ok_or(StorageError::ObjectNotFound)?;
-        let old_content_hash = obj.content_hash;
         let current_head = obj.version_head;
 
         // Write new content to Block Engine.
@@ -296,11 +290,6 @@ pub fn object_update(
         obj_mut.content_size = new_content.len() as u32;
         obj_mut.version_head = block_hash;
         obj_mut.modified_at = now;
-
-        // Decrement refcount on old content.
-        if old_content_hash != new_hash {
-            let _ = engine.dec_ref(&old_content_hash);
-        }
 
         Ok(new_hash)
     })?
