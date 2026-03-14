@@ -145,6 +145,7 @@ The web browser (Phase 21) is the last item on the critical path before the OS c
 | Kernel memory safety despite unsafe Rust | High — security compromise | Low-Medium | Mitigated | 14.6K lines of kernel code with all `unsafe` blocks documented. 275 unit tests, zero memory corruption observed. Ongoing: minimize unsafe, fuzz all syscalls, formal verification for critical paths |
 | AI tooling dependency | Medium — velocity drops 3–5x | Low | Open | Development velocity depends on Claude Code. Mitigation: 58K lines of architecture docs serve as specification regardless of tooling; any developer can continue from current state |
 | QEMU version compatibility | Low — CI breaks | Low | Mitigated | QEMU 10.x changed edk2 MMIO mapping behavior post-ExitBootServices (discovered Phase 4 M13). Mitigation: pin QEMU version in CI, test against multiple versions |
+| Driver ecosystem time sink | High — hardware phases delayed | High | Open | Every comparable OS project (seL4, Fuchsia, Redox, Hubris) reports drivers as the single biggest time sink. Real hardware (Pi GPU, USB, WiFi) has undocumented quirks that resist AI acceleration. Mitigation: budget 2–3x estimated time for Phases 16–19 and 27; start with QEMU virtual devices before real hardware |
 
 ### 4.2 Schedule Risks
 
@@ -213,6 +214,8 @@ Major decisions that must be made during development:
 - Memory usage within budget (leaves >1 GB for OS + apps)
 
 **If NO:** Scale down AI features. Use smaller models (1-3B). Focus on embedding/classification rather than generation. Conversation bar becomes a search interface rather than a conversational one.
+
+**Industry context:** The emerging standard (Apple Intelligence, Copilot+ PCs) is hybrid on-device/cloud — small models (1–3B) run locally for low-latency tasks while larger models are accessed via cloud fallback. AIRS should plan for this hybrid architecture regardless of Gate 2 outcome. On-device-only inference remains the primary target for privacy and offline capability, with cloud as an opt-in enhancement.
 
 ### Gate 3: Daily Driver (after Phase 21)
 
@@ -386,6 +389,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | **Phases 0–3 total** | **16 weeks** | **~12 days** | **~9.3x** | **12/12** | | |
 
 **Project inception:** 2026-02-19 (architecture docs began). **First code commit:** 2026-03-02. **Architecture docs before code:** 17 days, 58K lines across 70 documents.
+
+**Comparative context:** seL4 took ~3 years to its first verified kernel milestone with 10–15 researchers. Fuchsia took ~5 years to ship on a consumer device with 100–300 engineers. Redox OS reached self-hosting in ~1 year with 3–5 core developers. AIOS completed its kernel foundation (boot, memory, IPC, storage) in 12 days — unprecedented for a microkernel, enabled by the architecture-first + AI-assisted methodology.
 
 ### Development Methodology
 
