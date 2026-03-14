@@ -40,6 +40,7 @@
 - [developer-guide.md](./developer-guide.md) — Kernel developer guide: Rust patterns, pitfalls, workflow
 - [language-ecosystem.md](./language-ecosystem.md) — Language runtimes and multi-language support
 - [ai-agent-context.md](./ai-agent-context.md) — AI agent onboarding: required reading, anti-patterns, verification
+- [language-ecosystem.md](./language-ecosystem.md) — Language ecosystem: Rust, Python, TypeScript, WASM runtimes and toolchains
 
 -----
 
