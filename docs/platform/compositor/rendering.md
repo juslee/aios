@@ -267,7 +267,7 @@ The `AnimationTimeline` manages all active animations and ticks them once per fr
 
 1. `Spring` and `CubicBezier` easings downgrade to `EaseInOut`
 2. `EaseInOut` / `EaseIn` / `EaseOut` downgrade to `Linear`
-3. `Linear` downgrades to `Instant` (jump to final value)
+3. `Linear` downgrades to instant (duration set to 0, jumping to final value)
 
 This ensures that animations always complete smoothly, even on constrained hardware. The user sees a less fluid transition rather than a stutter.
 

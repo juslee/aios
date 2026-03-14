@@ -464,8 +464,8 @@ pub struct ClientRestrictions {
 
 | Portal | AIOS equivalent | Capability check |
 |---|---|---|
-| Screenshot portal | `ScreenCapture` service | `DisplayCapability.screen_capture` |
-| Screencast portal | `ScreenRecord` service | `DisplayCapability.screen_record` |
+| Screenshot portal | `ScreenCapture` service | `DisplayCapability { screen_capture: true }` |
+| Screencast portal | `ScreenRecord` service | `DisplayCapability { screen_record: true }` |
 | File dialog portal | `FileAccess` service | `StorageCapability.file_picker` |
 | Print portal | `Print` service | `DeviceCapability.printer` |
 | Notification portal | `Notification` service | `DisplayCapability.overlay` |

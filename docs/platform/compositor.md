@@ -139,7 +139,7 @@ flowchart TD
 
 4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 23. Screen reader support shapes early architectural decisions. The accessibility tree exists from the first composited frame.
 
-5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without a capability token. Keystroke injection is impossible without `SecureInput` capability.
+5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without a capability token. Keystroke injection is impossible without `SyntheticInput` capability ([§7.6](./compositor/input.md)).
 
 6. **HiDPI is default.** Scaling is always active. 1x is just `scale=1.0`. Per-output scaling handles mixed-DPI setups (laptop + external monitor).
 

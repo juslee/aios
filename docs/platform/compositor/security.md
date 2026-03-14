@@ -33,8 +33,10 @@ pub struct DisplayCapability {
     overlay: bool,
     /// Can submit GPU compute shaders (WebGPU, GPGPU).
     gpu_compute: bool,
-    /// Can capture screen content (screenshots, recording).
-    capture: bool,
+    /// Can capture screen content (single-frame screenshots).
+    screen_capture: bool,
+    /// Can record screen content (continuous capture, screen sharing).
+    screen_record: bool,
     /// Can receive secure input events (password fields, biometric prompts).
     secure_input: bool,
     /// Can inject synthetic input events (accessibility tools, automation).
@@ -50,12 +52,13 @@ pub struct DisplayCapability {
 | Fullscreen | Request exclusive fullscreen mode | TL2 trusted agents |
 | Overlay | Create overlay/panel-layer surfaces | TL1 system services |
 | GPU compute | Submit compute shaders, allocate GPU memory | TL2 with manifest declaration |
-| Capture | Take screenshots, record screen regions | TL1 system services |
+| Screen capture | Take single-frame screenshots | TL1 system services |
+| Screen record | Continuous capture, screen sharing | TL1 system services |
 | Synthetic input | Inject keyboard/mouse/touch events | TL1 accessibility services |
 
 **Per-operation validation.** The compositor validates capabilities on every request, not just at session creation. If a capability is revoked mid-session (see [capabilities.md](../../security/model/capabilities.md) §3.1 for cascade revocation), subsequent requests using that capability are rejected immediately.
 
-**Sub-surface attenuation.** When an agent creates a sub-surface for embedded content (e.g., a browser tab embedding an iframe's rendering surface), the sub-surface receives an attenuated copy of the parent's capability. The attenuated copy removes `fullscreen`, `overlay`, `capture`, and `synthetic_input` permissions. The sub-surface inherits `max_memory` as a fraction of the parent's remaining GPU memory budget.
+**Sub-surface attenuation.** When an agent creates a sub-surface for embedded content (e.g., a browser tab embedding an iframe's rendering surface), the sub-surface receives an attenuated copy of the parent's capability. The attenuated copy removes `fullscreen`, `overlay`, `screen_capture`, `screen_record`, and `synthetic_input` permissions. The sub-surface inherits `max_memory` as a fraction of the parent's remaining GPU memory budget.
 
 **Subsystem integration.** The compositor implements the `Subsystem` trait from the subsystem framework (see [subsystem-framework.md](../subsystem-framework.md)):
 
@@ -127,7 +130,7 @@ Agents never submit GPU commands directly. All GPU work is mediated by the compo
 
 Screen capture is a privileged operation. By default, agents cannot read back any pixel data from the compositor's framebuffer or from other agents' surfaces.
 
-**Capture capability.** Only agents holding a `DisplayCapability` with `capture: true` can request screenshots or screen recordings. The capability is typically granted only to TL1 system services (e.g., the screenshot tool, the Inspector dashboard) and explicitly never to TL3 or TL4 agents.
+**Capture capability.** Only agents holding a `DisplayCapability` with `screen_capture: true` can request screenshots. The capability is typically granted only to TL1 system services (e.g., the screenshot tool, the Inspector dashboard) and explicitly never to TL3 or TL4 agents.
 
 **Per-surface capture policy.** Each surface declares a capture policy via its `SurfaceHints`:
 
@@ -147,7 +150,7 @@ Surfaces displaying sensitive content (password managers, banking agents, DRM-pr
 
 **Watermarking.** When a trusted agent captures a screen region, the compositor embeds an invisible watermark in the captured image. The watermark encodes: the capturing agent's `AgentId`, the timestamp (millisecond precision), and a HMAC signature using the system's device key. This creates an audit trail — if a captured image is leaked, the watermark identifies the source. Watermark embedding uses LSB steganography in the spatial domain, imperceptible to human vision.
 
-**Screen recording.** Continuous capture (screen recording, screen sharing) requires the `ScreenRecord` permission, which is a separate capability from single-frame `capture`. The compositor displays a persistent recording indicator (a colored dot in the status bar) whenever any agent is actively recording. Recording sessions are logged with start/stop timestamps, target region, and the recording agent's identity.
+**Screen recording.** Continuous capture (screen recording, screen sharing) requires `screen_record: true` in `DisplayCapability`, which is separate from single-frame `screen_capture`. The compositor displays a persistent recording indicator (a colored dot in the status bar) whenever any agent is actively recording. Recording sessions are logged with start/stop timestamps, target region, and the recording agent's identity.
 
 **Audit logging.** Every capture operation — single frame or recording start/stop — generates a `DisplayAuditEvent::ScreenCapture` entry containing: captor `AgentId`, list of captured `SurfaceId` values, capture dimensions, timestamp, and whether any surfaces were redacted due to `CapturePolicy::None`.
 
@@ -155,7 +158,7 @@ Surfaces displaying sensitive content (password managers, banking agents, DRM-pr
 
 ### 10.4 Secure Clipboard
 
-Clipboard operations in AIOS route through the Flow subsystem (see [flow.md](../../storage/flow.md) §6 for compositor integration). The compositor's role is to enforce security policy at the display boundary — the point where data crosses between agents via copy/paste or drag/drop.
+Clipboard operations in AIOS route through the Flow subsystem (see [integration.md](../../storage/flow/integration.md) §6 for compositor integration). The compositor's role is to enforce security policy at the display boundary — the point where data crosses between agents via copy/paste or drag/drop.
 
 **Content type validation.** When an agent places content on the clipboard via Flow, the compositor validates that the declared MIME type matches the actual content structure. A payload declared as `text/plain` that contains embedded HTML tags is rejected. This prevents content injection attacks where an agent disguises executable content as plain text to exploit a paste target's parser.
 
