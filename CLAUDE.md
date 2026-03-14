@@ -98,6 +98,11 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Audio drivers | `docs/platform/audio/drivers.md` | §5.1–§5.7 VirtIO-Sound/I2S/PWM/HDMI/Apple/USB/privacy-first hardware |
 | Audio scheduling & sync | `docs/platform/audio/scheduling.md` | §6.1–§6.4 RT scheduling/latency/buffers + predictive hints, §7.1–§7.4 Timeline/sync |
 | Audio integration | `docs/platform/audio/integration.md` | §8 HDMI, §9 Power, §11 Audit + visual mic indicator, §12 POSIX, §13 Boot chime |
+| USB subsystem (hub) | `docs/platform/usb.md` | §1 Overview, §12 Impl Order, §13 Design Principles, §14 Future Directions, Document Map |
+| USB controller architecture | `docs/platform/usb/controller.md` | §2.1–§2.7 UsbHostController trait, xHCI, DWC2, discovery, DMA, interrupts, performance |
+| USB device classes | `docs/platform/usb/device-classes.md` | §3.1–§3.3 Enumeration, §4.1–§4.7 HID/storage/audio/video/network/serial/accessibility, §5 Routing |
+| USB hotplug & power | `docs/platform/usb/hotplug.md` | §6.1–§6.3 Hub enumeration, §7.1–§7.4 Hotplug state machine, §8.1–§8.4 Power management |
+| USB security & AI | `docs/platform/usb/security.md` | §9.1–§9.5 Threat model/caps/IOMMU/fuzzing/allowlist, §10.1–§10.4 AI-native, §11.1–§11.3 Audit |
 | Networking (hub) | `docs/platform/networking.md` | §1 Core Insight, §2 Architecture, §7 Impl Order, §8 Tech Choices, §10 Design Principles, Document Map |
 | NTM components | `docs/platform/networking/components.md` | §3.1–§3.6 Space Resolver, Connection Manager, Shadow Engine, Resilience Engine, Capability Gate, Bandwidth Scheduler |
 | Network stack | `docs/platform/networking/stack.md` | §4.1–§4.7 smoltcp integration, VirtIO-Net driver, buffer management, zero-copy I/O, interrupt handling, DHCP/DNS, dual stack |
