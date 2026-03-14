@@ -343,9 +343,9 @@ In AIOS, access to any resource requires a capability token. Channels are create
 - Runtime channel creation requires explicit `ChannelCreate` capability and is subject to per-process limits
 - Capability transfer requires explicit kernel mediation
 
-For the common case — agent-to-service communication — the set of possible resource dependencies is **known at boot time** when the Service Manager creates channels (ipc.md §4.1). Processes with `ChannelCreate` capability can create channels at runtime, but the kernel enforces per-process channel limits (`max_channels` in `KernelResourceLimits`), and circular dependencies between services can be detected in the capability topology.
+For the common case — agent-to-service communication — the set of possible resource dependencies is **known at boot time** when the Service Manager creates channels ([ipc.md §4.1](./ipc.md)). Processes with `ChannelCreate` capability can create channels at runtime, but the kernel enforces per-process channel limits (`max_channels` in `KernelResourceLimits`), and circular dependencies between services can be detected in the capability topology.
 
-*Source: [ipc.md §4.1 — Channels](./ipc.md) (ChannelCapability struct), [ipc.md §4.6 — Capability Transfer](./ipc.md) (move semantics), [security.md](../security/security.md) (capability model overview)*
+*Source: [ipc.md §4.1 — Channels](./ipc.md) (Channel struct with capability-gated creation), [ipc.md §4.6 — Capability Transfer](./ipc.md) (move semantics), [security.md](../security/security.md) (capability model overview)*
 
 ### 7.3 Why This Works
 
@@ -524,7 +524,7 @@ All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler 
 
 **Problem.** Mandatory timeouts (§4) detect deadlocks only after they have formed, wasting up to 5 seconds of blocked time before recovery.
 
-**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data ([observability.md §3-4](./observability.md)) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it signals the service owning the youngest pending call to cancel via `IpcCancel` (ipc.md §3.1), or uses a privileged kernel cancellation interface, *before* all parties block.
+**AI solution.** AIRS trains a graph neural network (GNN) on the IPC call graph, using kernel trace data ([observability.md §3-4](./observability.md)) to learn normal call patterns. When the GNN detects an emerging cycle — two or more services forming a circular wait — it signals the service owning the youngest pending call to cancel via `IpcCancel` ([ipc.md §3.1](./ipc.md)), or uses a privileged kernel cancellation interface, *before* all parties block.
 
 **Advantage.** Breaks cycles in milliseconds rather than waiting for a 5-second timeout. Reduces wasted CPU time and improves tail latency for all services in the call chain.
 
@@ -564,7 +564,7 @@ Lock-aware priority inheritance for sleepable kernel mutexes ([scheduler.md §16
 
 **Problem.** Runtime deadlock detection catches cycles only after they cause blocking. Static lock ordering prevents kernel-level cycles but cannot prevent application-level IPC cycles between agents.
 
-**AI solution.** When a new agent is installed, AIRS analyzes its declared IPC channels against the existing capability topology (security.md §3). Using the capability graph and historical call patterns, it warns if the new agent creates a potential circular dependency *before it ever runs*. This shifts deadlock prevention from runtime (reactive) to deploy-time (proactive).
+**AI solution.** When a new agent is installed, AIRS analyzes its declared IPC channels against the existing capability topology ([security.md §3](../security/security.md)). Using the capability graph and historical call patterns, it warns if the new agent creates a potential circular dependency *before it ever runs*. This shifts deadlock prevention from runtime (reactive) to deploy-time (proactive).
 
 **Safety and fallback.** Deploy-time analysis is advisory — it warns but does not block installation. Runtime timeouts (§4) catch cycles that escape static analysis. False positives are acceptable because the warning is informational, not enforced.
 
