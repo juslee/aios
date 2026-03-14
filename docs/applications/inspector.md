@@ -3,7 +3,7 @@
 ## Security & Capability Management Dashboard
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [security.md §7.1](../security/security.md), [agents.md](agents.md), [compositor.md](../platform/compositor.md), [ui-toolkit.md](ui-toolkit.md)
+**Related:** [model.md §7.1](../security/model.md), [agents.md](agents.md), [compositor.md](../platform/compositor.md), [ui-toolkit.md](ui-toolkit.md)
 
 -----
 
@@ -23,7 +23,7 @@ The Inspector surfaces all of it. It is the single place where users see, unders
 
 **Comprehensible by default, powerful on demand.** The default view is a simple dashboard: which agents are running, what they recently did, are there any alerts. Drilling down reveals capability tokens, provenance chains, profile resolution traces, and AIRS analysis reports.
 
-**No special kernel backdoors.** The Inspector is a regular Trust Level 2 agent ([security.md §1.2](../security/security.md)). Its elevated visibility comes from having `AuditRead(Scope::All)` capability, granted because it is system-shipped and signed by the AIOS root key. It uses the same syscall interface as any agent.
+**No special kernel backdoors.** The Inspector is a regular Trust Level 2 agent ([model.md §1.2](../security/model.md)). Its elevated visibility comes from having `AuditRead(Scope::All)` capability, granted because it is system-shipped and signed by the AIOS root key. It uses the same syscall interface as any agent.
 
 **Non-blocking.** The Inspector never interferes with agent execution. It is a read-heavy, write-light application. The only writes are user-initiated actions: capability revocation, profile override edits, agent pause/resume.
 
@@ -36,7 +36,7 @@ pub const INSPECTOR_AGENT: AgentManifest = AgentManifest {
     bundle_id: "dev.aios.inspector",
     name: "Inspector",
     version: "1.0.0",
-    // Trust Level 2: Native experience agent (see security.md §1.2)
+    // Trust Level 2: Native experience agent (see model.md §1.2)
     runtime: RuntimeType::Native,
     profiles: vec![
         ProfileReference {
@@ -123,7 +123,7 @@ The Inspector reads from these kernel-managed data sources:
 | Capability table | `CapabilityQuery` | Active capability tokens per agent (type, scope, expiry, delegation chain) |
 | Agent registry | `AgentQuery` | Agent metadata, trust level, runtime, behavioral baseline, anomaly score |
 | Security events | `AuditRead(filter: security)` | Real-time feed of denials, anomalies, injection attempts, hardware violations |
-| Profile store | `ProfileRead` | Installed capability profiles, resolution logs ([security.md §3.7](../security/security.md)) |
+| Profile store | `ProfileRead` | Installed capability profiles, resolution logs ([model.md §3.7](../security/model.md)) |
 | AIRS analysis | `InferenceQuery` | SecurityAnalysis results for installed agents ([airs.md §5.9](../intelligence/airs.md)) |
 
 All reads are non-blocking. The provenance chain is append-only and immutable — the Inspector can never modify it.
@@ -276,7 +276,7 @@ Real-time feed of security-relevant events, filtered by severity.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Response levels**: Maps to the 4-level escalation policy defined in [security.md §6.3](../security/security.md). Critical events auto-open the Inspector (Level 4 response).
+**Response levels**: Maps to the 4-level escalation policy defined in [model.md §6.3](../security/model.md). Critical events auto-open the Inspector (Level 4 response).
 
 ### 5.5 Capability View
 
@@ -357,7 +357,7 @@ Capability profile management. Shows how profiles compose into resolved capabili
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Key interaction**: The user can add Layer 90 overrides (deny or attenuate) to any agent's resolved set. Overrides are stored in `user/preferences/capability-overrides/` ([security.md §3.7.7](../security/security.md)).
+**Key interaction**: The user can add Layer 90 overrides (deny or attenuate) to any agent's resolved set. Overrides are stored in `user/preferences/capability-overrides/` ([model.md §3.7.7](../security/model.md)).
 
 The Profile View implements the visual equivalent of `aios agent audit --show-resolution` — showing exactly how each layer contributes to the final capability set.
 
@@ -458,7 +458,7 @@ The Inspector is primarily a read-only dashboard, but it exposes controlled writ
 
 ## 7. Conversation Bar Integration
 
-The Inspector works in concert with AIRS and the Conversation Bar ([security.md §7.2](../security/security.md)). Natural language security queries route through AIRS, which queries the same data sources the Inspector uses. The Conversation Bar is the *conversational* interface; the Inspector is the *visual* interface. Both show the same data.
+The Inspector works in concert with AIRS and the Conversation Bar ([model.md §7.2](../security/model.md)). Natural language security queries route through AIRS, which queries the same data sources the Inspector uses. The Conversation Bar is the *conversational* interface; the Inspector is the *visual* interface. Both show the same data.
 
 ```
 User: "What has the Budget Tracker been doing?"
@@ -508,11 +508,11 @@ The Inspector is referenced throughout the security architecture but defined in 
 
 | Document | Section | Inspector Role |
 |---|---|---|
-| [security.md §1.2](../security/security.md) | Trust Boundaries | Listed as Trust Level 2 native experience agent |
-| [security.md §6.3](../security/security.md) | Escalation Policy | Level 4 auto-opens Inspector; user reviews in Inspector |
-| [security.md §7.1](../security/security.md) | Inspector (overview) | 5-view summary — **this doc supersedes with full architecture** |
-| [security.md §7.2](../security/security.md) | Conversation Bar | Inspector linked from AIRS natural language responses |
-| [security.md §3.7](../security/security.md) | Composable Profiles | Inspector Profile View shows resolution traces |
+| [model.md §1.2](../security/model.md) | Trust Boundaries | Listed as Trust Level 2 native experience agent |
+| [model.md §6.3](../security/model.md) | Escalation Policy | Level 4 auto-opens Inspector; user reviews in Inspector |
+| [model.md §7.1](../security/model.md) | Inspector (overview) | 5-view summary — **this doc supersedes with full architecture** |
+| [model.md §7.2](../security/model.md) | Conversation Bar | Inspector linked from AIRS natural language responses |
+| [model.md §3.7](../security/model.md) | Composable Profiles | Inspector Profile View shows resolution traces |
 | [airs.md §5.9](../intelligence/airs.md) | Capability Intelligence | Inspector AIRS View displays analysis pipeline results |
 | [agents.md §3.1](../applications/agents.md) | Installation Flow | Inspector opens after AIRS analysis of new agent |
 

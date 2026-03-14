@@ -1,7 +1,7 @@
 # AIOS Deadlock Prevention Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [ipc.md](./ipc.md) — IPC timeouts (§3.1), synchronous call-reply (§4.2), priority inheritance (§9.2) | [scheduler.md](./scheduler.md) — Lock ordering (§9.1), preemption model (§10.3), async priority inheritance (§13.4) | [memory-physical.md](./memory-physical.md) — Slab allocator with per-cache magazines (§4.1), kernel allocation API (§4.2) | [security.md](../security/security.md) — Capability model
+**Related:** [ipc.md](./ipc.md) — IPC timeouts (§3.1), synchronous call-reply (§4.2), priority inheritance (§9.2) | [scheduler.md](./scheduler.md) — Lock ordering (§9.1), preemption model (§10.3), async priority inheritance (§13.4) | [physical.md](./memory/physical.md) — Slab allocator with per-cache magazines (§4.1), kernel allocation API (§4.2) | [model.md](../security/model.md) — Capability model
 
 -----
 
@@ -29,8 +29,8 @@ AIOS breaks one or more of these conditions at every level of the system, supple
 | Lock ordering (per-CPU + global hierarchy) | Circular wait | §3 | [scheduler.md §9.1](./scheduler.md) |
 | Mandatory IPC timeouts | Circular wait (bounded) | §4 | [ipc.md §3.1](./ipc.md) |
 | Priority inheritance† | *(liveness)* | §5 | [ipc.md §9.2](./ipc.md), [scheduler.md §4.2](./scheduler.md) |
-| Per-cache magazine fast path¶ | *(contention reduction)* | §6 | [memory-physical.md §4.1](./memory-physical.md) |
-| Capability-based resource model | Circular wait (graph constraint) | §7 | [ipc.md §4.1](./ipc.md), [security.md](../security/security.md) |
+| Per-cache magazine fast path¶ | *(contention reduction)* | §6 | [physical.md §4.1](./memory/physical.md) |
+| Capability-based resource model | Circular wait (graph constraint) | §7 | [ipc.md §4.1](./ipc.md), [model.md](../security/model.md) |
 | Synchronous IPC (no callback chains) | Circular wait | §8 | [ipc.md §4.2](./ipc.md) |
 | Preemptive kernel‡ | *(liveness)* | §9 | [scheduler.md §10.3](./scheduler.md) |
 | Wait-Die / Wound-Wait | Circular wait | §10 | Future — resource arbitration layer |
@@ -306,7 +306,7 @@ The fast path: lock `SLAB`, pop from the current magazine round. If empty, swap 
 
 **Important:** The magazine is per-cache (per size class), not per-CPU. There is a single global `spin::Mutex<SlabAllocator>` that protects all caches. The benefit is reduced hold time — most allocations complete with a simple pointer pop from the magazine — not lock elimination.
 
-*Source: [memory-physical.md §4.1 — Slab Allocator](./memory-physical.md) (per-cache magazine architecture)*
+*Source: [physical.md §4.1 — Slab Allocator](./memory/physical.md) (per-cache magazine architecture)*
 
 ### 6.3 Global Singletons
 
@@ -321,7 +321,7 @@ pub static BUDDY: Mutex<BuddyAllocator> = /* per-pool physical pages */;
 
 The `SLAB` lock is held for the shortest possible duration — a magazine pop or push. The `FRAME_ALLOC` and `BUDDY` locks are only acquired on the slow path (magazine refill or page allocation).
 
-*Source: [memory-physical.md §4.2 — Kernel Allocation API](./memory-physical.md) (global singleton declarations)*
+*Source: [physical.md §4.2 — Kernel Allocation API](./memory/physical.md) (global singleton declarations)*
 
 ### 6.4 Why This Works
 
@@ -345,7 +345,7 @@ In AIOS, access to any resource requires a capability token. Channels are create
 
 For the common case — agent-to-service communication — the set of possible resource dependencies is **known at boot time** when the Service Manager creates channels ([ipc.md §4.1](./ipc.md)). Processes with `ChannelCreate` capability can create channels at runtime, but the kernel enforces per-process channel limits (`max_channels` in `KernelResourceLimits`), and circular dependencies between services can be detected in the capability topology.
 
-*Source: [ipc.md §4.1 — Channels](./ipc.md) (Channel struct with capability-gated creation), [ipc.md §4.6 — Capability Transfer](./ipc.md) (move semantics), [security.md](../security/security.md) (capability model overview)*
+*Source: [ipc.md §4.1 — Channels](./ipc.md) (Channel struct with capability-gated creation), [ipc.md §4.6 — Capability Transfer](./ipc.md) (move semantics), [model.md](../security/model.md) (capability model overview)*
 
 ### 7.3 Why This Works
 
@@ -564,7 +564,7 @@ Lock-aware priority inheritance for sleepable kernel mutexes ([scheduler.md §16
 
 **Problem.** Runtime deadlock detection catches cycles only after they cause blocking. Static lock ordering prevents kernel-level cycles but cannot prevent application-level IPC cycles between agents.
 
-**AI solution.** When a new agent is installed, AIRS analyzes its declared IPC channels against the existing capability topology ([security.md §3](../security/security.md)). Using the capability graph and historical call patterns, it warns if the new agent creates a potential circular dependency *before it ever runs*. This shifts deadlock prevention from runtime (reactive) to deploy-time (proactive).
+**AI solution.** When a new agent is installed, AIRS analyzes its declared IPC channels against the existing capability topology ([model.md §3](../security/model.md)). Using the capability graph and historical call patterns, it warns if the new agent creates a potential circular dependency *before it ever runs*. This shifts deadlock prevention from runtime (reactive) to deploy-time (proactive).
 
 **Safety and fallback.** Deploy-time analysis is advisory — it warns but does not block installation. Runtime timeouts (§4) catch cycles that escape static analysis. False positives are acceptable because the warning is informational, not enforced.
 

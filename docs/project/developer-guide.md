@@ -268,9 +268,9 @@ These topics are documented in the architecture docs. Study them when you work o
 
 - **ASID management and TLB invalidation**: 16-bit ASIDs, generation tracking with full flush on wrap, per-page vs. per-ASID vs. global invalidation. See `mm/asid.rs` and `mm/tlb.rs`.
 
-- **VirtIO MMIO transport**: Legacy (v1) register layout, virtqueue descriptor chains, DMA page allocation, polled completion. See `drivers/virtio_blk.rs` and [spaces-block-engine.md §4.1](../storage/spaces-block-engine.md).
+- **VirtIO MMIO transport**: Legacy (v1) register layout, virtqueue descriptor chains, DMA page allocation, polled completion. See `drivers/virtio_blk.rs` and [block-engine.md §4.1](../storage/spaces/block-engine.md).
 
-- **Block Engine internals**: Content-addressed storage with CRC-32C integrity, SHA-256 hashing, write-ahead log, LSM-tree MemTable. See `storage/block_engine.rs`, `storage/wal.rs`, `storage/lsm.rs` and [spaces-block-engine.md](../storage/spaces-block-engine.md).
+- **Block Engine internals**: Content-addressed storage with CRC-32C integrity, SHA-256 hashing, write-ahead log, LSM-tree MemTable. See `storage/block_engine.rs`, `storage/wal.rs`, `storage/lsm.rs` and [block-engine.md](../storage/spaces/block-engine.md).
 
 ### Rust Concepts NOT Used in AIOS
 
@@ -2129,13 +2129,13 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **Physical memory management** | [memory.md](../kernel/memory.md) | SS2.2 (buddy allocator, pools) |
 | **IPC protocol** | [ipc.md](../kernel/ipc.md) | SS3-4 (channel API, synchronous call/reply) |
 | **Scheduler classes** | [scheduler.md](../kernel/scheduler.md) | SS3.1 (RT/Interactive/Normal/Idle) |
-| **Security model** | [security.md](../security/security.md) | All (eight-layer model) |
+| **Security model** | [model.md](../security/model.md) | All (eight-layer model) |
 | **Capability system** | [ipc.md](../kernel/ipc.md) | SS8 (per-process tables, enforcement) |
 | **Observability** | [observability.md](../kernel/observability.md) | SS2-4 (logging, metrics, tracing) |
 | **Boot sequence** | [boot.md](../kernel/boot.md) | SS3.3 (step-by-step boot) |
-| **Boot lifecycle** | [boot-lifecycle.md](../kernel/boot-lifecycle.md) | All (18-phase boot progression) |
+| **Boot lifecycle** | [lifecycle.md](../kernel/boot/lifecycle.md) | All (18-phase boot progression) |
 | **Storage architecture** | [spaces.md](../storage/spaces.md) | SS1-2 (core insight, architecture) |
-| **Block Engine** | [spaces-block-engine.md](../storage/spaces-block-engine.md) | SS4.1-4.10 (on-disk layout, WAL, LSM) |
+| **Block Engine** | [block-engine.md](../storage/spaces/block-engine.md) | SS4.1-4.10 (on-disk layout, WAL, LSM) |
 | **Flow (unified clipboard)** | [flow.md](../storage/flow.md) | SS1-2 (overview, architecture) |
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |

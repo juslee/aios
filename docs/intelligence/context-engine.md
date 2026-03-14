@@ -1274,7 +1274,7 @@ The fallback works well for clear-cut situations: 9 AM on a Monday with an IDE o
 
 ### 8.3 Boot-Time Context Behavior
 
-During boot, the Context Engine faces a unique situation: it must publish a `ContextState` before any meaningful user signals exist. This section specifies exactly what happens between the Context Engine starting (Phase 3, after AIRS — see [boot-services.md §4.5](../kernel/boot-services.md) dependency graph) and the first real user activity.
+During boot, the Context Engine faces a unique situation: it must publish a `ContextState` before any meaningful user signals exist. This section specifies exactly what happens between the Context Engine starting (Phase 3, after AIRS — see [services.md §4.5](../kernel/boot/services.md) dependency graph) and the first real user activity.
 
 **Boot-time signal availability:**
 
@@ -1354,7 +1354,7 @@ Phase 5 + 5min: Steady state
   → Full confidence
 ```
 
-**Semantic Resume integration.** When the system restores a previous session via Semantic Resume (see [boot-suspend.md §15.3](../kernel/boot-suspend.md)), the Context Engine receives a hint about the user's pre-reboot context from the resume state. If the user was in deep work before a crash, the Context Engine initializes with a work-biased context rather than a neutral boot context. This reduces the jarring transition of "I was coding, the system crashed, and now it thinks I'm leisuring."
+**Semantic Resume integration.** When the system restores a previous session via Semantic Resume (see [suspend.md §15.3](../kernel/boot/suspend.md)), the Context Engine receives a hint about the user's pre-reboot context from the resume state. If the user was in deep work before a crash, the Context Engine initializes with a work-biased context rather than a neutral boot context. This reduces the jarring transition of "I was coding, the system crashed, and now it thinks I'm leisuring."
 
 ```rust
 pub enum BootContextHint {

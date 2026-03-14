@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 6.1 Boot Sequence
-**Related:** [hal.md](./hal.md) — Platform trait, device abstractions, porting guide, [ipc.md](./ipc.md) — IPC and syscalls, [scheduler.md](./scheduler.md) — Scheduling classes and context multipliers, [memory.md](./memory.md) — Memory management and pool sizing, [spaces.md](../storage/spaces.md) — Space Storage, [airs.md](../intelligence/airs.md) — AI Runtime Service, [compositor.md](../platform/compositor.md) — Display handoff and framebuffer, [security.md](../security/security.md) — Capability system and trust levels, [identity.md](../experience/identity.md) — Identity initialization, [agents.md](../applications/agents.md) — Agent lifecycle and state persistence, [attention.md](../intelligence/attention.md) — Attention Manager initialization, [context-engine.md](../intelligence/context-engine.md) — Context Engine startup, [preferences.md](../intelligence/preferences.md) — Preference Service startup, [development-plan.md](../project/development-plan.md) — Phase plan
+**Related:** [hal.md](./hal.md) — Platform trait, device abstractions, porting guide, [ipc.md](./ipc.md) — IPC and syscalls, [scheduler.md](./scheduler.md) — Scheduling classes and context multipliers, [memory.md](./memory.md) — Memory management and pool sizing, [spaces.md](../storage/spaces.md) — Space Storage, [airs.md](../intelligence/airs.md) — AI Runtime Service, [compositor.md](../platform/compositor.md) — Display handoff and framebuffer, [model.md](../security/model.md) — Capability system and trust levels, [identity.md](../experience/identity.md) — Identity initialization, [agents.md](../applications/agents.md) — Agent lifecycle and state persistence, [attention.md](../intelligence/attention.md) — Attention Manager initialization, [context-engine.md](../intelligence/context-engine.md) — Context Engine startup, [preferences.md](../intelligence/preferences.md) — Preference Service startup, [development-plan.md](../project/development-plan.md) — Phase plan
 
 -----
 
@@ -31,17 +31,17 @@ The kernel's job during early boot is narrow: enable the FPU, set up exception v
 
 | Topic | Document | Sections |
 |---|---|---|
-| **Firmware handoff** (UEFI, BootInfo, ESP, EL model, QEMU vs HW) | [boot-firmware.md](./boot-firmware.md) | §2.1–§2.6 |
-| **Kernel early boot** (boot.S, kernel_main steps, SMP, SMMU) | [boot-kernel.md](./boot-kernel.md) | §3.1–§3.6 |
-| **Service Manager & startup phases** | [boot-services.md](./boot-services.md) | §4.1–§4.8, §5 |
-| **Boot performance & early framebuffer** | [boot-performance.md](./boot-performance.md) | §6.1–§6.5, §7.1–§7.4 |
-| **Panic handler, recovery, initramfs** | [boot-recovery.md](./boot-recovery.md) | §8.1–§8.4, §9.1–§9.6, §10.1–§10.3 |
-| **Shutdown, implementation order, principles** | [boot-lifecycle.md](./boot-lifecycle.md) | §11, §12, §23, §24 |
-| **Boot test strategy & cross-doc deps** | [boot-testing.md](./boot-testing.md) | §13.1–§13.4, §14 |
-| **Suspend, resume, semantic state** | [boot-suspend.md](./boot-suspend.md) | §15.1–§15.5 |
-| **Boot intelligence, on-demand, encryption** | [boot-intelligence.md](./boot-intelligence.md) | §16.1–§16.3, §17.1–§17.3, §18.1–§18.3 |
-| **Boot accessibility & first boot** | [boot-accessibility.md](./boot-accessibility.md) | §19.1–§19.3, §20.1–§20.3, §21.1–§21.3 |
-| **Research kernel innovations** | [boot-research.md](./boot-research.md) | §22.1–§22.19 |
+| **Firmware handoff** (UEFI, BootInfo, ESP, EL model, QEMU vs HW) | [firmware.md](./boot/firmware.md) | §2.1–§2.6 |
+| **Kernel early boot** (boot.S, kernel_main steps, SMP, SMMU) | [kernel.md](./boot/kernel.md) | §3.1–§3.6 |
+| **Service Manager & startup phases** | [services.md](./boot/services.md) | §4.1–§4.8, §5 |
+| **Boot performance & early framebuffer** | [performance.md](./boot/performance.md) | §6.1–§6.5, §7.1–§7.4 |
+| **Panic handler, recovery, initramfs** | [recovery.md](./boot/recovery.md) | §8.1–§8.4, §9.1–§9.6, §10.1–§10.3 |
+| **Shutdown, implementation order, principles** | [lifecycle.md](./boot/lifecycle.md) | §11, §12, §23, §24 |
+| **Boot test strategy & cross-doc deps** | [testing.md](./boot/testing.md) | §13.1–§13.4, §14 |
+| **Suspend, resume, semantic state** | [suspend.md](./boot/suspend.md) | §15.1–§15.5 |
+| **Boot intelligence, on-demand, encryption** | [intelligence.md](./boot/intelligence.md) | §16.1–§16.3, §17.1–§17.3, §18.1–§18.3 |
+| **Boot accessibility & first boot** | [accessibility.md](./boot/accessibility.md) | §19.1–§19.3, §20.1–§20.3, §21.1–§21.3 |
+| **Research kernel innovations** | [research.md](./boot/research.md) | §22.1–§22.19 |
 
 -----
 
@@ -49,25 +49,25 @@ The kernel's job during early boot is narrow: enable the FPU, set up exception v
 
 | Section | Sub-file |
 |---|---|
-| §2.1 UEFI Boot on aarch64 | [boot-firmware.md](./boot-firmware.md) |
-| §2.2 What the Kernel Receives (BootInfo) | [boot-firmware.md](./boot-firmware.md) |
-| §3.1 Phase Tracking (EarlyBootPhase) | [boot-kernel.md](./boot-kernel.md) |
-| §3.3 Step-by-Step Early Boot | [boot-kernel.md](./boot-kernel.md) |
-| §3.5 SMP Boot | [boot-kernel.md](./boot-kernel.md) |
-| §4.1 Service Manager | [boot-services.md](./boot-services.md) |
-| §5 Service Startup Phases | [boot-services.md](./boot-services.md) |
-| §6.1 Critical Path Timeline | [boot-performance.md](./boot-performance.md) |
-| §7 Early Framebuffer | [boot-performance.md](./boot-performance.md) |
-| §8 Kernel Panic Handler | [boot-recovery.md](./boot-recovery.md) |
-| §9 Recovery Mode | [boot-recovery.md](./boot-recovery.md) |
-| §10 Initramfs | [boot-recovery.md](./boot-recovery.md) |
-| §11 Shutdown and Reboot | [boot-lifecycle.md](./boot-lifecycle.md) |
-| §12 Implementation Order | [boot-lifecycle.md](./boot-lifecycle.md) |
-| §13 Boot Test Strategy | [boot-testing.md](./boot-testing.md) |
-| §15 Suspend/Resume | [boot-suspend.md](./boot-suspend.md) |
-| §16 Boot Intelligence | [boot-intelligence.md](./boot-intelligence.md) |
-| §19 Boot Accessibility | [boot-accessibility.md](./boot-accessibility.md) |
-| §22 Research Innovations | [boot-research.md](./boot-research.md) |
+| §2.1 UEFI Boot on aarch64 | [firmware.md](./boot/firmware.md) |
+| §2.2 What the Kernel Receives (BootInfo) | [firmware.md](./boot/firmware.md) |
+| §3.1 Phase Tracking (EarlyBootPhase) | [kernel.md](./boot/kernel.md) |
+| §3.3 Step-by-Step Early Boot | [kernel.md](./boot/kernel.md) |
+| §3.5 SMP Boot | [kernel.md](./boot/kernel.md) |
+| §4.1 Service Manager | [services.md](./boot/services.md) |
+| §5 Service Startup Phases | [services.md](./boot/services.md) |
+| §6.1 Critical Path Timeline | [performance.md](./boot/performance.md) |
+| §7 Early Framebuffer | [performance.md](./boot/performance.md) |
+| §8 Kernel Panic Handler | [recovery.md](./boot/recovery.md) |
+| §9 Recovery Mode | [recovery.md](./boot/recovery.md) |
+| §10 Initramfs | [recovery.md](./boot/recovery.md) |
+| §11 Shutdown and Reboot | [lifecycle.md](./boot/lifecycle.md) |
+| §12 Implementation Order | [lifecycle.md](./boot/lifecycle.md) |
+| §13 Boot Test Strategy | [testing.md](./boot/testing.md) |
+| §15 Suspend/Resume | [suspend.md](./boot/suspend.md) |
+| §16 Boot Intelligence | [intelligence.md](./boot/intelligence.md) |
+| §19 Boot Accessibility | [accessibility.md](./boot/accessibility.md) |
+| §22 Research Innovations | [research.md](./boot/research.md) |
 
 -----
 
@@ -89,7 +89,7 @@ Fuchsia's Zircon Boot Image (ZBI) packages the kernel, bootloader, and all boot 
 
 ### Boot Intelligence (Context-Aware Boot)
 
-The [boot-intelligence.md](./boot-intelligence.md) companion document describes boot intelligence — using past boot traces to predict optimal service startup order, prefetch frequently-accessed data pages, and adapt AIRS model selection based on usage patterns. This is a long-term goal that integrates the Context Engine (Phase 8+) with the boot sequence.
+The [intelligence.md](./boot/intelligence.md) companion document describes boot intelligence — using past boot traces to predict optimal service startup order, prefetch frequently-accessed data pages, and adapt AIRS model selection based on usage patterns. This is a long-term goal that integrates the Context Engine (Phase 8+) with the boot sequence.
 
 ### Measured Boot and Attestation
 
@@ -99,16 +99,16 @@ seL4's formally verified boot chain provides a foundation for measured boot: eac
 
 ### μEFI Firmware Isolation
 
-The μEFI paper (USENIX ATC 2025) demonstrates microkernel-style isolation for UEFI firmware components, limiting the blast radius of firmware vulnerabilities. AIOS's UEFI stub already follows the minimal-touch principle; μEFI validates treating BootInfo as untrusted input and hashing critical regions before kernel handoff. See [boot-research.md §22.16](./boot-research.md) for full analysis.
+The μEFI paper (USENIX ATC 2025) demonstrates microkernel-style isolation for UEFI firmware components, limiting the blast radius of firmware vulnerabilities. AIOS's UEFI stub already follows the minimal-touch principle; μEFI validates treating BootInfo as untrusted input and hashing critical regions before kernel handoff. See [research.md §22.16](./boot/research.md) for full analysis.
 
 ### Firecracker-Style Device Minimalism
 
-AWS Firecracker achieves ≤125ms boot by reducing the virtual device model to the absolute minimum: VirtIO MMIO devices only, no PCI enumeration, no legacy emulation. AIOS's use of QEMU `-machine virt` with VirtIO MMIO aligns with this approach. Future device drivers should prefer VirtIO MMIO on QEMU and native MMIO on hardware, avoiding PCI overhead where possible. See [boot-research.md §22.17](./boot-research.md) for full analysis.
+AWS Firecracker achieves ≤125ms boot by reducing the virtual device model to the absolute minimum: VirtIO MMIO devices only, no PCI enumeration, no legacy emulation. AIOS's use of QEMU `-machine virt` with VirtIO MMIO aligns with this approach. Future device drivers should prefer VirtIO MMIO on QEMU and native MMIO on hardware, avoiding PCI overhead where possible. See [research.md §22.17](./boot/research.md) for full analysis.
 
 ### HongMeng IPC Frequency Optimization
 
-Huawei's HongMeng kernel (OSDI 2024) identifies IPC *frequency* — not per-invocation cost — as the dominant microkernel bottleneck. Batch IPC and shared-memory data transfer for boot-time service initialization could reduce AIOS's service startup latency. See [boot-research.md §22.18](./boot-research.md) for full analysis.
+Huawei's HongMeng kernel (OSDI 2024) identifies IPC *frequency* — not per-invocation cost — as the dominant microkernel bottleneck. Batch IPC and shared-memory data transfer for boot-time service initialization could reduce AIOS's service startup latency. See [research.md §22.18](./boot/research.md) for full analysis.
 
 ### LionsOS Control-Plane / Data-Plane Separation
 
-The seL4 Device Driver Framework (sDDF) in LionsOS separates control-plane policy (capability-based IPC) from data-plane performance (lock-free shared-memory ring buffers). This achieves near-native I/O with full driver isolation — a model AIOS should adopt as drivers move from kernel space to user space in Phase 5+. See [boot-research.md §22.19](./boot-research.md) for full analysis.
+The seL4 Device Driver Framework (sDDF) in LionsOS separates control-plane policy (capability-based IPC) from data-plane performance (lock-free shared-memory ring buffers). This achieves near-native I/O with full driver isolation — a model AIOS should adopt as drivers move from kernel space to user space in Phase 5+. See [research.md §22.19](./boot/research.md) for full analysis.

@@ -58,10 +58,10 @@ wasmtime AOT-compiled*`"]
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1 | Overview, language arrival timeline, document navigation |
-| [language-ecosystem-runtimes.md](./language-ecosystem-runtimes.md) | §2-§5 | Per-runtime deep dives: Rust (native), Python (RustPython), TypeScript (QuickJS-ng), WASM (wasmtime) |
-| [language-ecosystem-integration.md](./language-ecosystem-integration.md) | §6-§8 | Dependency chain, implementation work list, key architectural decisions, RuntimeAdapter trait |
-| [language-ecosystem-operations.md](./language-ecosystem-operations.md) | §9-§12 | Runtime interoperability (WIT/Component Model), observability & debugging, supply chain security, resource isolation |
-| [language-ecosystem-ai.md](./language-ecosystem-ai.md) | §13-§14 | AI-driven runtime optimization (AIRS Runtime Advisor, learned scheduling, lifetime allocation, GC tuning, anomaly detection), future directions |
+| [runtimes.md](./language-ecosystem/runtimes.md) | §2-§5 | Per-runtime deep dives: Rust (native), Python (RustPython), TypeScript (QuickJS-ng), WASM (wasmtime) |
+| [integration.md](./language-ecosystem/integration.md) | §6-§8 | Dependency chain, implementation work list, key architectural decisions, RuntimeAdapter trait |
+| [operations.md](./language-ecosystem/operations.md) | §9-§12 | Runtime interoperability (WIT/Component Model), observability & debugging, supply chain security, resource isolation |
+| [ai.md](./language-ecosystem/ai.md) | §13-§14 | AI-driven runtime optimization (AIRS Runtime Advisor, learned scheduling, lifetime allocation, GC tuning, anomaly detection), future directions |
 
 ---
 
@@ -83,16 +83,16 @@ wasmtime AOT-compiled*`"]
 | Section | Sub-file | Topic |
 |---|---|---|
 | §1 | This file | Overview and language timeline |
-| §2 | [runtimes](./language-ecosystem-runtimes.md#2-rust--native-performance-zero-overhead) | Rust — native ELF agents |
-| §3 | [runtimes](./language-ecosystem-runtimes.md#3-python--rustpython-embedded-interpreter) | Python — RustPython interpreter |
-| §4 | [runtimes](./language-ecosystem-runtimes.md#4-typescript--quickjs-ng-embedded-runtime) | TypeScript — QuickJS-ng engine |
-| §5 | [runtimes](./language-ecosystem-runtimes.md#5-webassembly--universal-sandbox) | WebAssembly — wasmtime + WAMR alternative |
-| §6 | [integration](./language-ecosystem-integration.md#6-how-it-all-fits-together) | Dependency chain and phase timeline |
-| §7 | [integration](./language-ecosystem-integration.md#7-what-needs-to-be-built) | Per-language implementation work |
-| §8 | [integration](./language-ecosystem-integration.md#8-key-architectural-decisions) | Language selection, embedded vs system runtimes, QuickJS-ng vs Boa |
-| §9 | [operations](./language-ecosystem-operations.md#9-runtime-interoperability) | WASM Component Model, WIT, cross-runtime communication |
-| §10 | [operations](./language-ecosystem-operations.md#10-runtime-observability--debugging) | Logging integration, source maps, profiling |
-| §11 | [operations](./language-ecosystem-operations.md#11-supply-chain-security) | Dependency integrity, curated registry, interpreter-in-WASM |
-| §12 | [operations](./language-ecosystem-operations.md#12-resource-isolation) | Per-runtime resource budgets, memory pressure response |
-| §13 | [ai](./language-ecosystem-ai.md#13-ai-driven-runtime-optimization) | AIRS Runtime Advisor, learned scheduling (ALPS), lifetime allocation (LLAMA), GC tuning, anomaly detection, capability minimization |
-| §14 | [ai](./language-ecosystem-ai.md#14-future-directions) | Boa, StarlingMonkey, WIT manifests, MSWasm, AI code migration, pipeline fusion |
+| §2 | [runtimes](./language-ecosystem/runtimes.md#2-rust--native-performance-zero-overhead) | Rust — native ELF agents |
+| §3 | [runtimes](./language-ecosystem/runtimes.md#3-python--rustpython-embedded-interpreter) | Python — RustPython interpreter |
+| §4 | [runtimes](./language-ecosystem/runtimes.md#4-typescript--quickjs-ng-embedded-runtime) | TypeScript — QuickJS-ng engine |
+| §5 | [runtimes](./language-ecosystem/runtimes.md#5-webassembly--universal-sandbox) | WebAssembly — wasmtime + WAMR alternative |
+| §6 | [integration](./language-ecosystem/integration.md#6-how-it-all-fits-together) | Dependency chain and phase timeline |
+| §7 | [integration](./language-ecosystem/integration.md#7-what-needs-to-be-built) | Per-language implementation work |
+| §8 | [integration](./language-ecosystem/integration.md#8-key-architectural-decisions) | Language selection, embedded vs system runtimes, QuickJS-ng vs Boa |
+| §9 | [operations](./language-ecosystem/operations.md#9-runtime-interoperability) | WASM Component Model, WIT, cross-runtime communication |
+| §10 | [operations](./language-ecosystem/operations.md#10-runtime-observability--debugging) | Logging integration, source maps, profiling |
+| §11 | [operations](./language-ecosystem/operations.md#11-supply-chain-security) | Dependency integrity, curated registry, interpreter-in-WASM |
+| §12 | [operations](./language-ecosystem/operations.md#12-resource-isolation) | Per-runtime resource budgets, memory pressure response |
+| §13 | [ai](./language-ecosystem/ai.md#13-ai-driven-runtime-optimization) | AIRS Runtime Advisor, learned scheduling (ALPS), lifetime allocation (LLAMA), GC tuning, anomaly detection, capability minimization |
+| §14 | [ai](./language-ecosystem/ai.md#14-future-directions) | Boa, StarlingMonkey, WIT manifests, MSWasm, AI code migration, pipeline fusion |

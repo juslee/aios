@@ -85,7 +85,7 @@ The HAL handles **boot-time hardware initialization and kernel-level device acce
 
 ## 2. Platform Detection
 
-Platform detection runs during kernel early boot (boot-kernel.md §3.3, Step 3) after the device tree is parsed. The kernel reads the root `compatible` string from the flattened device tree and selects the matching platform implementation:
+Platform detection runs during kernel early boot (boot/kernel.md §3.3, Step 3) after the device tree is parsed. The kernel reads the root `compatible` string from the flattened device tree and selects the matching platform implementation:
 
 ```rust
 /// Selected at boot time by reading the DTB compatible string.
@@ -860,7 +860,7 @@ pub unsafe fn mmio_set_bits32(base: *mut u8, offset: usize, bits: u32) {
 }
 ```
 
-MMIO regions are mapped with device memory attributes (nGnRnE — non-Gathering, non-Reordering, non-Early-write-acknowledgement) in the kernel page tables. This prevents the CPU from reordering or caching device register accesses. The mapping is set up in boot-kernel.md §3.3 Step 6b at virtual address `MMIO_BASE` (`0xFFFF_0010_0000_0000`).
+MMIO regions are mapped with device memory attributes (nGnRnE — non-Gathering, non-Reordering, non-Early-write-acknowledgement) in the kernel page tables. This prevents the CPU from reordering or caching device register accesses. The mapping is set up in boot/kernel.md §3.3 Step 6b at virtual address `MMIO_BASE` (`0xFFFF_0010_0000_0000`).
 
 -----
 
@@ -1034,7 +1034,7 @@ The timer is the simplest to port — only the frequency changes (all aarch64 pl
 
 The current implementation stores HAL-initialized devices in module-level globals and local variables within `kernel_main()` rather than a unified `KernelState` struct. For example, the platform reference is a local `&'static dyn Platform`, and the interrupt controller and timer are locals passed to subsequent init functions.
 
-The target design consolidates this into a `KernelState` struct (see boot-kernel.md §3.2 for the current per-subsystem global state approach):
+The target design consolidates this into a `KernelState` struct (see boot/kernel.md §3.2 for the current per-subsystem global state approach):
 
 ```rust
 /// Target design: unified kernel state.
@@ -1513,7 +1513,7 @@ impl WatchdogTimer {
 | Pi 4 | BCM2835 watchdog | Shared PM/watchdog block |
 | Pi 5 | BCM2835 watchdog | Same IP block |
 
-The kernel sets a 15-second watchdog at shutdown start (see [boot-lifecycle.md](./boot-lifecycle.md) §11). A watchdog provides last-resort recovery from kernel hangs in unattended deployments.
+The kernel sets a 15-second watchdog at shutdown start (see [lifecycle.md](./boot/lifecycle.md) §11). A watchdog provides last-resort recovery from kernel hangs in unattended deployments.
 
 **`PlatformGpio`** — General-purpose I/O pins.
 
@@ -1688,7 +1688,7 @@ impl CryptoAccelerator {
 | Pi 4 | ARMv8 CE (AESCE, SHA) | CPU instruction extensions, not a separate device |
 | Pi 5 | ARMv8 CE (AESCE, SHA) | Cortex-A76 crypto extensions |
 
-Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (security.md §4, Cryptographic Foundations) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
+Note: ARMv8 Cryptography Extensions (CE) are CPU instructions, not a separate MMIO device. They don't need a HAL extension trait — the Cryptographic Core (model.md §4, Cryptographic Foundations) uses them directly via inline assembly. This extension trait is for future platforms with dedicated crypto co-processors (separate DMA-capable engines like CryptoCell or CAAM).
 
 **`PlatformNpu`** — Neural Processing Unit / ML accelerator.
 
@@ -1923,7 +1923,7 @@ pub struct HardwareSecurityCaps {
 **Key observations:**
 
 - **PAC/BTI** require ARMv8.3+. Cortex-A72 (Pi 4) lacks them — the kernel must compile with `-mbranch-protection=none` for Pi 4 and `-mbranch-protection=pac-ret+bti` for Pi 5 and Apple Silicon. This is a compile-time decision per target platform.
-- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see security.md §5, ARM Hardware Security Integration).
+- **MTE** is the strongest memory safety feature in the ARM architecture. Currently only Apple M3/M4 support it among AIOS platforms. When available, the HAL enables MTE in sync mode for kernel code and async mode for userspace (see model.md §5, ARM Hardware Security Integration).
 - **Apple Secure Enclave Processor (SEP)** is a physically separate processor with its own encrypted memory. It stores cryptographic keys, biometric data, and performs attestation. The kernel communicates with SEP via a mailbox interface. SEP provides:
   - Hardware key storage (keys never leave the SEP)
   - Boot attestation (SEP verifies the boot chain before releasing disk encryption keys)
@@ -2574,7 +2574,7 @@ This provides a unified access control model — the same capability mechanism t
 
 **Potential approach for AIOS:**
 
-Extend the existing capability system (see [security.md §3](../security/security.md)) with device-specific capability types:
+Extend the existing capability system (see [model.md §3](../security/model.md)) with device-specific capability types:
 
 ```rust
 enum Capability {

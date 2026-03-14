@@ -37,9 +37,9 @@ By the end of this phase, two kernel threads perform IPC ping-pong with measured
 | Structured logging | [observability.md](../kernel/observability.md) | §2 Structured Logging; §2.4 Log Entry; §2.5 Per-Core Ring Buffer; §2.6 Logging Macros; §2.7 UART Drain |
 | Metric counters | [observability.md](../kernel/observability.md) | §3 Metric Counters; §3.2 Counter; §3.3 Gauge; §3.4 Histogram; §3.5 Kernel Metrics Registry |
 | Trace points | [observability.md](../kernel/observability.md) | §4 Trace Points; §4.2 Trace Events; §4.4 Per-Core Trace Ring |
-| Capability token lifecycle | [security.md](../security/security.md) | §2.2 Layer 2: Capability Check; §3 Capability System Internals; §3.1 Capability Token Lifecycle; §3.2 Kernel Capability Table; §3.3 Attenuation |
+| Capability token lifecycle | [model.md](../security/model.md) | §2.2 Layer 2: Capability Check; §3 Capability System Internals; §3.1 Capability Token Lifecycle; §3.2 Kernel Capability Table; §3.3 Attenuation |
 | Agent address spaces and shared memory | [memory.md](../kernel/memory.md) | §5.1 Agent Address Spaces; §7 Shared Memory; §9.5 Guard Pages |
-| Memory hardening | [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) | §3.3 Memory Hardening |
+| Memory hardening | [fuzzing.md](../security/fuzzing.md) | §3.3 Memory Hardening |
 
 -----
 
@@ -228,19 +228,19 @@ No remaining raw `println!()` calls in kernel source (except panic handler and m
 **What:** Implement `CapabilityToken`, `Capability` enum (Phase 3 subset), per-process `CapabilityTable`, and wire capability checks into every IPC channel operation. Implement `CapabilityTransfer`, `CapabilityAttenuate`, `CapabilityRevoke`, `CapabilityList` syscalls.
 
 **Tasks:**
-- [x] Create `kernel/src/cap/mod.rs` — `CapabilityToken`: `id` (CapabilityTokenId), `holder` (ProcessId), `capability` (Capability), `delegatable` (bool), `expiry` (Option<Timestamp>) (security.md §3.1). **Note:** security.md uses the field name `capability` with type `Capability`; this phase implements a Phase 3 subset of the full `Capability` enum.
-- [x] Define `Capability` enum (Phase 3 subset): `ChannelCreate`, `ChannelAccess(ChannelId)`, `SharedMemoryCreate`, `SharedMemoryAccess(SharedMemoryId)`, `SpawnAgent`, `DebugPrint`, plus future-reserved variants (`ReadSpace`, `WriteSpace`, `Network`, `Inference` — stubs for later phases) (security.md §2.2)
-- [x] Per-process `CapabilityTable`: fixed-size array `[Option<CapabilityToken>; 256]` per `ProcessControl` (security.md §3.2, `MAX_CAPS_PER_AGENT = 256`)
+- [x] Create `kernel/src/cap/mod.rs` — `CapabilityToken`: `id` (CapabilityTokenId), `holder` (ProcessId), `capability` (Capability), `delegatable` (bool), `expiry` (Option<Timestamp>) (model.md §3.1). **Note:** security.md uses the field name `capability` with type `Capability`; this phase implements a Phase 3 subset of the full `Capability` enum.
+- [x] Define `Capability` enum (Phase 3 subset): `ChannelCreate`, `ChannelAccess(ChannelId)`, `SharedMemoryCreate`, `SharedMemoryAccess(SharedMemoryId)`, `SpawnAgent`, `DebugPrint`, plus future-reserved variants (`ReadSpace`, `WriteSpace`, `Network`, `Inference` — stubs for later phases) (model.md §2.2)
+- [x] Per-process `CapabilityTable`: fixed-size array `[Option<CapabilityToken>; 256]` per `ProcessControl` (model.md §3.2, `MAX_CAPS_PER_AGENT = 256`)
 - [x] Wire capability enforcement into IPC syscalls: `ChannelCreate` requires `Capability::ChannelCreate`; `IpcCall`/`IpcSend`/`IpcRecv` require `Capability::ChannelAccess(channel_id)`; `IpcReply` does NOT require a channel capability (kernel tracks the caller per ipc.md §3.1); `ChannelDestroy` requires `ChannelAccess`. Return `EPERM` (-6) on missing capability (ipc.md §8.3)
 - [x] `Channel.creation_capability` field: on `CapabilityRevoke`, kernel walks `CHANNEL_TABLE` and destroys channels whose `creation_capability` was revoked (ipc.md §4.6)
-- [x] `CapabilityTransfer` syscall: verify caller holds cap, verify `delegatable`, move or clone to receiver via channel (ipc.md §4.6; security.md §3.5)
-- [x] `CapabilityAttenuate` syscall: create new cap with subset scope from existing cap (e.g., reduce permissions, add expiry) (security.md §3.3)
-- [x] `CapabilityRevoke` syscall: remove cap from target's table, cascade to derived caps and channels (security.md §3.1)
+- [x] `CapabilityTransfer` syscall: verify caller holds cap, verify `delegatable`, move or clone to receiver via channel (ipc.md §4.6; model.md §3.5)
+- [x] `CapabilityAttenuate` syscall: create new cap with subset scope from existing cap (e.g., reduce permissions, add expiry) (model.md §3.3)
+- [x] `CapabilityRevoke` syscall: remove cap from target's table, cascade to derived caps and channels (model.md §3.1)
 - [x] `CapabilityList` syscall: copy caller's capability table entries to user buffer
 - [x] Per-process resource limit enforcement: `ChannelCreate` checks `max_channels`, `SharedMemoryCreate` checks `max_shared_regions`, `IpcSend` checks `max_pending_messages` (ipc.md §3.3)
 - [x] Metric instrumentation: `KernelMetrics.ipc_cap_denied` counter
 
-**Key reference:** [security.md §2.2, §3.1–3.5](../security/security.md) — Capability Check, Token Lifecycle, Kernel Table, Attenuation, Delegation; [ipc.md §4.6, §8.3](../kernel/ipc.md) — Capability Transfer, Enforcement
+**Key reference:** [model.md §2.2, §3.1–3.5](../security/model.md) — Capability Check, Token Lifecycle, Kernel Table, Attenuation, Delegation; [ipc.md §4.6, §8.3](../kernel/ipc.md) — Capability Transfer, Enforcement
 
 **Acceptance:** `just run` with test: thread without `ChannelCreate` capability calls `ChannelCreate`, gets `EPERM`. Thread with `ChannelAccess` capability performs `IpcCall` successfully. `CapabilityRevoke` on a channel's creation cap destroys the channel; peer gets `EPIPE`. `just check` passes.
 
@@ -358,7 +358,7 @@ just run     → boot log shows: structured logging, scheduler running, IPC benc
 |---|---|---|---|
 | Run queue data structures | Step 5 | Sorted arrays vs intrusive red-black trees | Sorted arrays are simpler and sufficient for small thread counts; RB-trees scale better but add complexity. Can upgrade in Phase 14. |
 | IPC message inline size | Step 6 | 64 bytes (register-only) vs 256 bytes (buffer copy) | 64-byte register path is fastest; 256-byte inline avoids shared memory for medium messages. Both are needed. |
-| Capability table storage | Step 8 | Fixed array (256 slots per security.md §3.2) vs slab-backed growable | Fixed array is predictable (no heap allocation during cap operations); 256 matches security.md `MAX_CAPS_PER_AGENT`. |
+| Capability table storage | Step 8 | Fixed array (256 slots per model.md §3.2) vs slab-backed growable | Fixed array is predictable (no heap allocation during cap operations); 256 matches security.md `MAX_CAPS_PER_AGENT`. |
 | Shared memory page source | Step 9 | Pool::User vs Pool::Kernel | User pool is correct — shared memory is for agent data, not kernel structures. Kernel pool reserved for page tables and slab. |
 | Load balancer frequency | Step 11 | 4 ms (every 4 ticks) vs adaptive | Fixed 4 ms is simple and matches architecture spec. Adaptive adds complexity for marginal gain at low core counts. |
 | Gate 1 threshold | Step 12 | Strict (< 5 μs IPC) vs relaxed (< 10 μs) | Gate uses relaxed threshold (< 10 μs); target (< 5 μs) is for post-optimization in Phase 14. |

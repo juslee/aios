@@ -1637,7 +1637,7 @@ impl AudioSubsystem {
 
 ### 9.3 On-Demand Activation
 
-The audio subsystem supports on-demand activation (see [boot-lifecycle.md](../kernel/boot-lifecycle.md) §17). It is not started at boot unless the boot chime is enabled. The first audio event (notification sound, media playback, voice interaction) triggers subsystem initialization, adding approximately 100ms to the first audio output.
+The audio subsystem supports on-demand activation (see [lifecycle.md](../kernel/boot/lifecycle.md) §17). It is not started at boot unless the boot chime is enabled. The first audio event (notification sound, media playback, voice interaction) triggers subsystem initialization, adding approximately 100ms to the first audio output.
 
 ```
 Boot chime path (if enabled):
@@ -1935,7 +1935,7 @@ impl PosixBridge for AudioPosixBridge {
 
 ## 13. Boot Chime
 
-The boot chime is a special audio path that operates before the audio subsystem is started. It uses the HAL's raw audio output to generate a synthesized tone. See [boot-lifecycle.md](../kernel/boot-lifecycle.md) §20.3.
+The boot chime is a special audio path that operates before the audio subsystem is started. It uses the HAL's raw audio output to generate a synthesized tone. See [lifecycle.md](../kernel/boot/lifecycle.md) §20.3.
 
 ```rust
 /// Generate and play a boot chime directly via HAL.

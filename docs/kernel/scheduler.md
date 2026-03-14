@@ -1424,7 +1424,7 @@ impl Scheduler {
 
 ### 8.3 Memory Pressure Integration
 
-The memory subsystem (memory-reclamation.md §8) defines four pressure levels: Normal, Low, Critical, and OOM. The scheduler must coordinate with the memory subsystem because memory pressure actions (agent suspension, OOM kill) directly affect run queue state:
+The memory subsystem (memory/reclamation.md §8) defines four pressure levels: Normal, Low, Critical, and OOM. The scheduler must coordinate with the memory subsystem because memory pressure actions (agent suspension, OOM kill) directly affect run queue state:
 
 ```rust
 /// Memory pressure callback — invoked by the memory subsystem
@@ -1515,7 +1515,7 @@ impl Scheduler {
 }
 ```
 
-**OOM victim selection coordination:** The OOM killer (memory-reclamation.md §8) uses a score combining memory usage, priority, and age. The scheduler contributes the agent's current CPU quota usage and scheduling class — an agent in the Idle class with exhausted quota is a better OOM victim than an Interactive agent the user is actively using.
+**OOM victim selection coordination:** The OOM killer (memory/reclamation.md §8) uses a score combining memory usage, priority, and age. The scheduler contributes the agent's current CPU quota usage and scheduling class — an agent in the Idle class with exhausted quota is a better OOM victim than an Interactive agent the user is actively using.
 
 ### 8.4 Thermal Throttling
 

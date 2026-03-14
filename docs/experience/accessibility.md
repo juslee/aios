@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 7.6 Accessibility
-**Related:** [experience.md](./experience.md) — Experience layer surfaces, [compositor.md](../platform/compositor.md) — Compositor accessibility layer and rendering, [ui-toolkit.md](../applications/ui-toolkit.md) — Widget accessibility tree and keyboard navigation, [airs.md](../intelligence/airs.md) — AI-enhanced descriptions and voice control, [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Boot accessibility (§19)
+**Related:** [experience.md](./experience.md) — Experience layer surfaces, [compositor.md](../platform/compositor.md) — Compositor accessibility layer and rendering, [ui-toolkit.md](../applications/ui-toolkit.md) — Widget accessibility tree and keyboard navigation, [airs.md](../intelligence/airs.md) — AI-enhanced descriptions and voice control, [lifecycle.md](../kernel/boot/lifecycle.md) — Boot accessibility (§19)
 
 -----
 
@@ -1228,7 +1228,7 @@ flowchart TD
 
 ### 8.2 First-Boot Detection Mode
 
-On the very first boot, no accessibility configuration exists. The system must detect whether the user needs accessibility features without requiring them to navigate a settings menu. This is handled by the accessibility detection step described in [boot-lifecycle.md](../kernel/boot-lifecycle.md) §19.1:
+On the very first boot, no accessibility configuration exists. The system must detect whether the user needs accessibility features without requiring them to navigate a settings menu. This is handled by the accessibility detection step described in [lifecycle.md](../kernel/boot/lifecycle.md) §19.1:
 
 ```rust
 impl BootAccessibilityConfig {
@@ -1286,7 +1286,7 @@ Once set, accessibility configuration persists across reboots without requiring 
 ```rust
 /// Boot-time accessibility config.
 /// Stored unencrypted — must be readable before identity unlock.
-/// See boot-accessibility.md §19.3 for the full struct.
+/// See boot/accessibility.md §19.3 for the full struct.
 pub struct BootAccessibilityConfig {
     screen_reader: bool,
     high_contrast: bool,

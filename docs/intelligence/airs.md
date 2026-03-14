@@ -173,7 +173,7 @@ The split is not worth it at 8 GB because:
 - IPC overhead on every inference request — measurable on a Pi's SD-card-bound system
 - Single point of coordination is simpler — context engine feeds attention manager feeds conversation manager, all in-process with zero serialization
 
-**The monolith does not compromise security.** The kernel monitors AIRS externally (§10.3), enforces capabilities regardless of AIRS's internal structure (security.md §2.2), and can disable resource orchestration while keeping security active (§10.3 fallback mode). Whether AIRS is one process or three, the kernel's enforcement is identical — it sees processes making syscalls, validates capability tokens, and logs everything to the provenance chain.
+**The monolith does not compromise security.** The kernel monitors AIRS externally (§10.3), enforces capabilities regardless of AIRS's internal structure (model.md §2.2), and can disable resource orchestration while keeping security active (§10.3 fallback mode). Whether AIRS is one process or three, the kernel's enforcement is identical — it sees processes making syscalls, validates capability tokens, and logs everything to the provenance chain.
 
 ### 2.2 Relationship to the Microkernel
 
@@ -209,7 +209,7 @@ The microkernel does not care how many processes AIRS uses. It sees processes wi
 
 AIRS as a resource orchestrator reinforces the microkernel choice. In a monolithic kernel (Linux), resource management intelligence tends to migrate into the kernel itself — Linux's memory compaction heuristics, pressure stall information, and cgroup controllers grow ever more complex inside kernel space. In AIOS, that intelligence lives in userspace where it can crash, be monitored, and be disabled without affecting kernel stability. The kernel does plain LRU and fixed pools — simple, correct, boring. AIRS makes it smarter from userspace. If AIRS crashes, the kernel keeps working with static heuristics.
 
-This separation is why the damage ceiling for a compromised AIRS resource orchestrator is denial of service, not data breach (security.md §9.6). The kernel's enforcement mechanisms — page table isolation, capability validation, cryptographic key management — are independent of AIRS. They don't get smarter when AIRS works, and they don't get weaker when AIRS fails.
+This separation is why the damage ceiling for a compromised AIRS resource orchestrator is denial of service, not data breach (model.md §9.6). The kernel's enforcement mechanisms — page table isolation, capability validation, cryptographic key management — are independent of AIRS. They don't get smarter when AIRS works, and they don't get weaker when AIRS fails.
 
 -----
 
@@ -1329,7 +1329,7 @@ The corpus (`CapabilityAnalysisCorpus`) is stored locally in `system/airs/capabi
 
 #### Stage 5: Profile Suggestion
 
-Algorithmic (not LLM) — uses greedy set-cover to suggest minimal capability profiles ([security.md §3.7](../security/security.md)) that cover the agent's needs.
+Algorithmic (not LLM) — uses greedy set-cover to suggest minimal capability profiles ([model.md §3.7](../security/model.md)) that cover the agent's needs.
 
 ```rust
 pub struct ProfileSuggestion {
@@ -1605,7 +1605,7 @@ pub enum Role {
 
 ## 10. Resource Orchestration Security
 
-AIRS serves as the central resource orchestrator — directing memory pool boundaries, prefetching space objects, scheduling compression, and processing agent hints about anticipated needs. This responsibility is bounded by the security model. Full details in [security.md §9](../security/security.md).
+AIRS serves as the central resource orchestrator — directing memory pool boundaries, prefetching space objects, scheduling compression, and processing agent hints about anticipated needs. This responsibility is bounded by the security model. Full details in [model.md §9](../security/model.md).
 
 **Encryption boundary:** Prefetch and compression directives operate through the normal Space Storage read/write path ([spaces.md §4.3.1](../storage/spaces.md)). Space Storage handles both per-space decryption ([spaces.md §6](../storage/spaces.md)) and device-level decryption ([spaces.md §4.10](../storage/spaces.md)) transparently. AIRS never holds space keys or device keys, and never sees plaintext of encrypted spaces unless it has been granted `ReadSpace` capability for that space. This is a structural guarantee enforced by the IPC boundary — AIRS cannot bypass Space Storage to access raw blocks.
 
@@ -1737,11 +1737,11 @@ Recovery: AIRS exits fallback when directive rates return to within 2σ for 10 c
 
 ### 10.4 Resource Allocation Opacity
 
-Agents cannot observe AIRS resource decisions. Each agent sees only its own virtual address space (TTBR0 page table isolation). Pool boundary changes, prefetch activity for other agents, and AIRS directive rates are kernel-internal operations invisible to userspace. This prevents resource allocation side-channel attacks. See [security.md §9.4](../security/security.md) for full analysis.
+Agents cannot observe AIRS resource decisions. Each agent sees only its own virtual address space (TTBR0 page table isolation). Pool boundary changes, prefetch activity for other agents, and AIRS directive rates are kernel-internal operations invisible to userspace. This prevents resource allocation side-channel attacks. See [model.md §9.4](../security/model.md) for full analysis.
 
 ### 10.5 Provenance
 
-All AIRS resource directives are logged in the provenance chain (Merkle chain, kernel-signed, append-only). Directive types: `ResourcePrefetch`, `ResourcePoolResize`, `ResourceCompress`, `ResourceFallbackTransition`, `ResourceHintReceived`. These follow standard audit retention (7 days full, 90 days summarized, hash-only after). See [security.md §2.7.1](../security/security.md).
+All AIRS resource directives are logged in the provenance chain (Merkle chain, kernel-signed, append-only). Directive types: `ResourcePrefetch`, `ResourcePoolResize`, `ResourceCompress`, `ResourceFallbackTransition`, `ResourceHintReceived`. These follow standard audit retention (7 days full, 90 days summarized, hash-only after). See [model.md §2.7.1](../security/model.md).
 
 -----
 

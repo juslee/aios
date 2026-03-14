@@ -29,55 +29,55 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §5 Gates (incl. Gate 1 retro), §8 Phase table, §8.1 Actual progress |
 | Full architecture | `docs/project/architecture.md` | All |
 | Language ecosystem (hub) | `docs/project/language-ecosystem.md` | §1 Overview, Document Map, Impl Order |
-| Language runtimes | `docs/project/language-ecosystem-runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
-| Language integration & build plan | `docs/project/language-ecosystem-integration.md` | §6 Dependency chain, §7 Build plan, §8 Key decisions, RuntimeAdapter trait |
-| Language operations & security | `docs/project/language-ecosystem-operations.md` | §9 Interop (WIT/Component Model), §10 Observability, §11 Supply chain, §12 Resource isolation |
-| Language AI optimization | `docs/project/language-ecosystem-ai.md` | §13 AIRS Runtime Advisor/scheduling/allocation/GC/anomaly, §14 Future directions |
+| Language runtimes | `docs/project/language-ecosystem/runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
+| Language integration & build plan | `docs/project/language-ecosystem/integration.md` | §6 Dependency chain, §7 Build plan, §8 Key decisions, RuntimeAdapter trait |
+| Language operations & security | `docs/project/language-ecosystem/operations.md` | §9 Interop (WIT/Component Model), §10 Observability, §11 Supply chain, §12 Resource isolation |
+| Language AI optimization | `docs/project/language-ecosystem/ai.md` | §13 AIRS Runtime Advisor/scheduling/allocation/GC/anomaly, §14 Future directions |
 | Boot sequence (hub) | `docs/kernel/boot.md` | §1 Overview, Document Map, Future Directions |
-| Firmware handoff (BootInfo, ESP, EL model) | `docs/kernel/boot-firmware.md` | §2.1–§2.6 |
-| Kernel early boot (boot.S, kernel_main) | `docs/kernel/boot-kernel.md` | §3.1–§3.6 |
-| Service Manager boot phases | `docs/kernel/boot-services.md` | §4–§5 |
-| Boot performance & framebuffer | `docs/kernel/boot-performance.md` | §6–§7 |
-| Panic handler, recovery, initramfs | `docs/kernel/boot-recovery.md` | §8–§10 |
-| Shutdown, implementation order, principles | `docs/kernel/boot-lifecycle.md` | §11, §12, §23, §24 |
-| Boot test strategy | `docs/kernel/boot-testing.md` | §13–§14 |
-| Suspend/resume, semantic state | `docs/kernel/boot-suspend.md` | §15 |
-| Boot intelligence, on-demand services | `docs/kernel/boot-intelligence.md` | §16–§18 |
-| Boot accessibility, first boot | `docs/kernel/boot-accessibility.md` | §19–§21 |
-| Research kernel innovations | `docs/kernel/boot-research.md` | §22.1–§22.19 |
+| Firmware handoff (BootInfo, ESP, EL model) | `docs/kernel/boot/firmware.md` | §2.1–§2.6 |
+| Kernel early boot (boot.S, kernel_main) | `docs/kernel/boot/kernel.md` | §3.1–§3.6 |
+| Service Manager boot phases | `docs/kernel/boot/services.md` | §4–§5 |
+| Boot performance & framebuffer | `docs/kernel/boot/performance.md` | §6–§7 |
+| Panic handler, recovery, initramfs | `docs/kernel/boot/recovery.md` | §8–§10 |
+| Shutdown, implementation order, principles | `docs/kernel/boot/lifecycle.md` | §11, §12, §23, §24 |
+| Boot test strategy | `docs/kernel/boot/testing.md` | §13–§14 |
+| Suspend/resume, semantic state | `docs/kernel/boot/suspend.md` | §15 |
+| Boot intelligence, on-demand services | `docs/kernel/boot/intelligence.md` | §16–§18 |
+| Boot accessibility, first boot | `docs/kernel/boot/accessibility.md` | §19–§21 |
+| Research kernel innovations | `docs/kernel/boot/research.md` | §22.1–§22.19 |
 | HAL & Platform trait | `docs/kernel/hal.md` | §2-3 |
 | PL011 UART driver | `docs/kernel/hal.md` | §4.3 |
 | GICv3 interrupt controller | `docs/kernel/hal.md` | §4.1 |
 | ARM Generic Timer | `docs/kernel/hal.md` | §4.2 |
 | Memory management (hub) | `docs/kernel/memory.md` | §1 Overview, §14 Impl order, doc map |
-| Physical memory (buddy allocator) | `docs/kernel/memory-physical.md` | §2.2 BuddyAllocator, §2.3 FrameAllocator, §2.4 PagePools |
-| Slab allocator & heap | `docs/kernel/memory-physical.md` | §4.1 SlabAllocator, §4.2 Kernel Heap |
-| Virtual memory & page tables | `docs/kernel/memory-virtual.md` | §3.2 PageTableEntry, §3.3 KASLR, §3.4 TLB/ASID |
-| Per-agent address spaces | `docs/kernel/memory-virtual.md` | §5 Per-Agent Memory, §7 Shared Memory |
-| AI model memory | `docs/kernel/memory-ai.md` | §6 Model regions, PagedAttention, KV caches |
-| Memory pressure & reclamation | `docs/kernel/memory-reclamation.md` | §8 Pressure/OOM, §10 Swap/zram, §12 Scaling |
-| Memory hardening | `docs/kernel/memory-hardening.md` | §9 W^X/PAC/BTI/MTE, §11 Perf, §13 Future |
+| Physical memory (buddy allocator) | `docs/kernel/memory/physical.md` | §2.2 BuddyAllocator, §2.3 FrameAllocator, §2.4 PagePools |
+| Slab allocator & heap | `docs/kernel/memory/physical.md` | §4.1 SlabAllocator, §4.2 Kernel Heap |
+| Virtual memory & page tables | `docs/kernel/memory/virtual.md` | §3.2 PageTableEntry, §3.3 KASLR, §3.4 TLB/ASID |
+| Per-agent address spaces | `docs/kernel/memory/virtual.md` | §5 Per-Agent Memory, §7 Shared Memory |
+| AI model memory | `docs/kernel/memory/ai.md` | §6 Model regions, PagedAttention, KV caches |
+| Memory pressure & reclamation | `docs/kernel/memory/reclamation.md` | §8 Pressure/OOM, §10 Swap/zram, §12 Scaling |
+| Memory hardening | `docs/kernel/memory/hardening.md` | §9 W^X/PAC/BTI/MTE, §11 Perf, §13 Future |
 | IPC & syscalls | `docs/kernel/ipc.md` | All (Phase 3+) |
 | Scheduler | `docs/kernel/scheduler.md` | All (Phase 3+) |
 | Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
 | Kernel observability | `docs/kernel/observability.md` | All (Phase 3+) |
 | Space Storage (hub) | `docs/storage/spaces.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
-| Storage data structures | `docs/storage/spaces-data-structures.md` | §3.0–§3.4 Primitive types, Spaces, Objects, CompactObject, Relations |
-| Block Engine | `docs/storage/spaces-block-engine.md` | §4.1–§4.10 On-disk layout, LSM-tree, WAL, compression, encryption, WAF |
-| Version Store | `docs/storage/spaces-versioning.md` | §5.1–§5.5 Merkle DAG, snapshots, retention, branching |
-| Storage encryption | `docs/storage/spaces-encryption.md` | §6.1–§6.3 Key management, nonces, encryption zones |
-| Query Engine | `docs/storage/spaces-query-engine.md` | §7.1–§7.6 Query dispatch, full-text, embeddings, learned indexes |
-| Space Sync | `docs/storage/spaces-sync.md` | §8.1–§8.4 Merkle exchange, conflict resolution, sync security |
-| POSIX compatibility (storage) | `docs/storage/spaces-posix.md` | §9.1–§9.6 Path mapping, translation layer, fd lifecycle |
-| Storage budget & pressure | `docs/storage/spaces-budget.md` | §10.1–§10.9 Device profiles, quotas, pressure, AI-driven storage |
+| Storage data structures | `docs/storage/spaces/data-structures.md` | §3.0–§3.4 Primitive types, Spaces, Objects, CompactObject, Relations |
+| Block Engine | `docs/storage/spaces/block-engine.md` | §4.1–§4.10 On-disk layout, LSM-tree, WAL, compression, encryption, WAF |
+| Version Store | `docs/storage/spaces/versioning.md` | §5.1–§5.5 Merkle DAG, snapshots, retention, branching |
+| Storage encryption | `docs/storage/spaces/encryption.md` | §6.1–§6.3 Key management, nonces, encryption zones |
+| Query Engine | `docs/storage/spaces/query-engine.md` | §7.1–§7.6 Query dispatch, full-text, embeddings, learned indexes |
+| Space Sync | `docs/storage/spaces/sync.md` | §8.1–§8.4 Merkle exchange, conflict resolution, sync security |
+| POSIX compatibility (storage) | `docs/storage/spaces/posix.md` | §9.1–§9.6 Path mapping, translation layer, fd lifecycle |
+| Storage budget & pressure | `docs/storage/spaces/budget.md` | §10.1–§10.9 Device profiles, quotas, pressure, AI-driven storage |
 | Flow (hub) | `docs/storage/flow.md` | §1 Overview, §2 Architecture, §13 Impl order, §14 Principles, Document Map |
-| Flow data model | `docs/storage/flow-data-model.md` | §3.0–§3.4 External types, FlowEntry, transfer lifecycle, TypedContent |
-| Flow transforms | `docs/storage/flow-transforms.md` | §4.1–§4.3 Transform engine, pipeline, registry, conversion graph |
-| Flow history & sync | `docs/storage/flow-history.md` | §5.1–§5.3 History storage/UI/retention, §9.1–§9.2 Multi-device sync |
-| Flow integration | `docs/storage/flow-integration.md` | §6 Compositor, §7 Subsystem channels, §8 Cross-agent, §10 POSIX bridge |
-| Flow security | `docs/storage/flow-security.md` | §11.1–§11.3 Capability enforcement, content screening, rate limiting |
-| Flow SDK | `docs/storage/flow-sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
-| Flow extensions | `docs/storage/flow-extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
+| Flow data model | `docs/storage/flow/data-model.md` | §3.0–§3.4 External types, FlowEntry, transfer lifecycle, TypedContent |
+| Flow transforms | `docs/storage/flow/transforms.md` | §4.1–§4.3 Transform engine, pipeline, registry, conversion graph |
+| Flow history & sync | `docs/storage/flow/history.md` | §5.1–§5.3 History storage/UI/retention, §9.1–§9.2 Multi-device sync |
+| Flow integration | `docs/storage/flow/integration.md` | §6 Compositor, §7 Subsystem channels, §8 Cross-agent, §10 POSIX bridge |
+| Flow security | `docs/storage/flow/security.md` | §11.1–§11.3 Capability enforcement, content screening, rate limiting |
+| Flow SDK | `docs/storage/flow/sdk.md` | §12.1–§12.3 Rust/Python/TypeScript APIs, PWA web API |
+| Flow extensions | `docs/storage/flow/extensions.md` | §15.1–§15.8 Near-term, §16.1–§16.11 Future directions |
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
@@ -93,18 +93,18 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
 | Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 13+) |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
-| Security model (hub) | `docs/security/security.md` | §1 Threat model, §12 Impl order, Document Map |
-| Security defense layers | `docs/security/security-layers.md` | §2 Eight security layers deep dive |
-| Capability system internals | `docs/security/security-capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
-| Composable capability profiles | `docs/security/security-capabilities.md` | §3.7 (Phase 28) |
-| Crypto, ARM HW security, testing | `docs/security/security-hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
-| Security operations & zero trust | `docs/security/security-operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
+| Security model (hub) | `docs/security/model.md` | §1 Threat model, §12 Impl order, Document Map |
+| Security defense layers | `docs/security/model/layers.md` | §2 Eight security layers deep dive |
+| Capability system internals | `docs/security/model/capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
+| Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 28) |
+| Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
+| Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
 | AIRS capability intelligence | `docs/intelligence/airs.md` | §5.9 (Phase 29) |
-| Fuzzing & input hardening (hub) | `docs/security/fuzzing-and-hardening.md` | §1 Overview, §2 Attack surface, Document Map |
-| Fuzzing hardening strategies | `docs/security/fuzzing-hardening-strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
-| Fuzzing adoption roadmap | `docs/security/fuzzing-adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
-| Fuzzing tooling & catalog | `docs/security/fuzzing-tooling.md` | §5.1–5.4 Tiered tooling, §6 Fuzz target catalog |
-| Fuzzing AI-native strategies | `docs/security/fuzzing-ai-native.md` | §7.1–7.3 Dev-time AI, kernel-internal AI, AIRS-dependent |
+| Fuzzing & input hardening (hub) | `docs/security/fuzzing.md` | §1 Overview, §2 Attack surface, Document Map |
+| Fuzzing hardening strategies | `docs/security/fuzzing/strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
+| Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
+| Fuzzing tooling & catalog | `docs/security/fuzzing/tooling.md` | §5.1–5.4 Tiered tooling, §6 Fuzz target catalog |
+| Fuzzing AI-native strategies | `docs/security/fuzzing/ai-native.md` | §7.1–7.3 Dev-time AI, kernel-internal AI, AIRS-dependent |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
@@ -341,7 +341,7 @@ ASID width:                   16-bit; AsidAllocator tracks generation; full TLBI
 Slab cache sizes (M9):        5 classes: 64, 128, 256, 512, 4096 bytes; smaller rounds up to 64
 Slab magazine size:            32 objects per MagazineRound; current/prev swap for two-chance fast path
 Slab red zones:                8 bytes before/after each object (except 4096-byte cache); pattern 0xFEFE_FEFE_FEFE_FEFE
-User VA layout (memory-virtual.md §3.1): TEXT=0x400000, DATA=0x1000000, HEAP=0x10000000, STACK_TOP=0x7FFF_FFFF_F000
+User VA layout (memory/virtual.md §3.1): TEXT=0x400000, DATA=0x1000000, HEAP=0x10000000, STACK_TOP=0x7FFF_FFFF_F000
 TTBR0 format:                  bits[63:48]=ASID, bits[47:0]=PGD physical address
 TTBR0 switch barriers:         DSB SY → MSR TTBR0_EL1 → TLBI VMALLE1IS → DSB ISH → ISB
 Boot CPU SP:                   Converted from physical to virtual in boot.S (add VIRT_PHYS_OFFSET before br to kernel_main)

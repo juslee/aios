@@ -10,7 +10,7 @@
 - [scheduler.md](../kernel/scheduler.md) — Scheduler deep dive
 - [memory.md](../kernel/memory.md) — Memory management architecture
 - [boot.md](../kernel/boot.md) — Boot sequence and init system deep dive
-- [boot-lifecycle.md](../kernel/boot-lifecycle.md) — Boot lifecycle, advanced topics, and design principles
+- [lifecycle.md](../kernel/boot/lifecycle.md) — Boot lifecycle, advanced topics, and design principles
 - [hal.md](../kernel/hal.md) — Hardware Abstraction Layer (Platform trait, device drivers, porting guide)
 - [observability.md](../kernel/observability.md) — Kernel observability (structured logging, metrics, tracing, health)
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) — Lock ordering and deadlock prevention
@@ -20,8 +20,8 @@
 - [subsystem-framework.md](../platform/subsystem-framework.md) — Universal hardware abstraction architecture
 - [airs.md](../intelligence/airs.md) — AI Runtime Service deep dive
 - [agents.md](../applications/agents.md) — Agent framework and SDK specification
-- [security.md](../security/security.md) — Eight-layer security model deep dive
-- [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) — Fuzzing strategy and input hardening
+- [model.md](../security/model.md) — Eight-layer security model deep dive
+- [fuzzing.md](../security/fuzzing.md) — Fuzzing strategy and input hardening
 - [static-analysis.md](../security/static-analysis.md) — Static analysis and formal verification roadmap
 - [flow.md](../storage/flow.md) — Flow system deep dive
 - [context-engine.md](../intelligence/context-engine.md) — Context Engine deep dive
@@ -295,7 +295,7 @@ Encryption at rest (per-space keys)*`"]
     API --> SemIdx --> ObjStore --> VerStore --> WAL --> BlockEng
 ```
 
-For deep-dive specifications, see the Space Storage sub-documents: [data structures](../storage/spaces-data-structures.md), [block engine](../storage/spaces-block-engine.md), [versioning](../storage/spaces-versioning.md), [encryption](../storage/spaces-encryption.md), [query engine](../storage/spaces-query-engine.md), [sync](../storage/spaces-sync.md), [POSIX compatibility](../storage/spaces-posix.md), and [storage budget](../storage/spaces-budget.md).
+For deep-dive specifications, see the Space Storage sub-documents: [data structures](../storage/spaces/data-structures.md), [block engine](../storage/spaces/block-engine.md), [versioning](../storage/spaces/versioning.md), [encryption](../storage/spaces/encryption.md), [query engine](../storage/spaces/query-engine.md), [sync](../storage/spaces/sync.md), [POSIX compatibility](../storage/spaces/posix.md), and [storage budget](../storage/spaces/budget.md).
 
 **Core data model:**
 
@@ -341,7 +341,7 @@ pub struct SemanticMetadata {
     indexed_at: Option<Timestamp>,
 }
 
-/// Simplified content type enum; see spaces-data-structures.md §3.3 for the full canonical definition
+/// Simplified content type enum; see spaces/data-structures.md §3.3 for the full canonical definition
 /// with additional variants (Directory, Text, Markdown, Json, Xml, Credential, etc.).
 pub enum ContentType {
     Document, Code, Image, Audio, Video, Data,
@@ -467,7 +467,7 @@ pub enum ResourcePriority {
 /// A named entity extracted from content by AIRS (person, place,
 /// organization, date, concept, etc.).
 /// Named entity extracted from content by AIRS.
-/// Simplified; see spaces-data-structures.md §3.3 for the canonical definition
+/// Simplified; see spaces/data-structures.md §3.3 for the canonical definition
 /// (uses entity_type: EntityType with fewer variants, no span field).
 pub struct Entity {
     name: String,
@@ -483,7 +483,7 @@ pub enum EntityKind {
 }
 
 /// Who created a relation between objects.
-/// Simplified; see spaces-data-structures.md §3.4 for the canonical definition
+/// Simplified; see spaces/data-structures.md §3.4 for the canonical definition
 /// (Explicit/AiInferred/SystemGenerated).
 pub enum RelationSource {
     /// Created by AIRS during indexing
@@ -513,7 +513,7 @@ pub struct AgentManifest {
 /// Set of capabilities held by a task or agent process. Capabilities are
 /// kernel-managed tokens — agents hold references, not the capabilities
 /// themselves. The kernel validates every token on every syscall.
-/// See ipc.md §4 for capability transfer and boot-services.md §4.7 for
+/// See ipc.md §4 for capability transfer and boot/services.md §4.7 for
 /// the root capability from which all others derive.
 pub struct CapabilitySet {
     /// Active capability tokens, keyed by capability type for O(1) lookup
@@ -569,7 +569,7 @@ pub enum ActivityAction {
 
 /// Append-only provenance chain for an object. Each entry links to the
 /// previous via hash, forming a Merkle chain. Stored in the Version Store
-/// (see spaces-versioning.md §5.1 for per-version ProvenanceEntry). The chain here
+/// (see spaces/versioning.md §5.1 for per-version ProvenanceEntry). The chain here
 /// is the object-level summary — it aggregates provenance across all
 /// versions for quick inspection without walking the full version DAG.
 pub struct ProvenanceChain {
@@ -604,8 +604,8 @@ pub struct Flow {
 }
 
 pub struct Transfer {
-    source: ObjectRef,      // see spaces-data-structures.md §3.0 for ObjectRef definition
-    content: TypedContent,  // see flow-data-model.md §3.4 for TypedContent definition
+    source: ObjectRef,      // see spaces/data-structures.md §3.0 for ObjectRef definition
+    content: TypedContent,  // see flow/data-model.md §3.4 for TypedContent definition
     intent: TransferIntent,
     transformations: Vec<Transform>,
 }
@@ -635,7 +635,7 @@ pub enum TransferIntent {
 }
 ```
 
-For deep-dive specifications, see the Flow sub-documents: [data model](../storage/flow-data-model.md), [transforms](../storage/flow-transforms.md), [history & sync](../storage/flow-history.md), [integration](../storage/flow-integration.md), [security](../storage/flow-security.md), [SDK](../storage/flow-sdk.md), and [extensions](../storage/flow-extensions.md).
+For deep-dive specifications, see the Flow sub-documents: [data model](../storage/flow/data-model.md), [transforms](../storage/flow/transforms.md), [history & sync](../storage/flow/history.md), [integration](../storage/flow/integration.md), [security](../storage/flow/security.md), [SDK](../storage/flow/sdk.md), and [extensions](../storage/flow/extensions.md).
 
 ### 2.5 Context Engine
 
@@ -1076,7 +1076,7 @@ Rollback window -- changes reversible for 72 hours.*`"]
     L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7 --> L8
 ```
 
-For deep-dive specifications, see the security sub-documents: [defense layers](../security/security-layers.md), [capability internals](../security/security-capabilities.md), [hardening](../security/security-hardening.md), [operations](../security/security-operations.md), [fuzzing & input hardening](../security/fuzzing-and-hardening.md), and [static analysis & formal verification](../security/static-analysis.md).
+For deep-dive specifications, see the security sub-documents: [defense layers](../security/model/layers.md), [capability internals](../security/model/capabilities.md), [hardening](../security/model/hardening.md), [operations](../security/model/operations.md), [fuzzing & input hardening](../security/fuzzing.md), and [static analysis & formal verification](../security/static-analysis.md).
 
 ### 3.2 Capability System
 
@@ -1132,7 +1132,7 @@ pub struct CapabilityToken {
     created_at: Timestamp,
     expires: Timestamp,
     delegatable: bool,
-    attenuations: Vec<AttenuationSpec>,  // see security-capabilities.md §3 for AttenuationSpec
+    attenuations: Vec<AttenuationSpec>,  // see capabilities.md §3 for AttenuationSpec
     revoked: bool,
     parent_token: Option<CapabilityTokenId>,  // for delegation chains
     usage_count: u64,
@@ -1425,7 +1425,7 @@ Agents are the primary execution model for user-facing work. Each agent runs as 
 ```rust
 /// Agent process — isolation-relevant fields shown here.
 /// Full struct also includes address_space, memory_stats, priority,
-/// and suspended flag (see memory-virtual.md §5.1 for memory-related fields).
+/// and suspended flag (see memory/virtual.md §5.1 for memory-related fields).
 pub struct AgentProcess {
     pid: ProcessId,
     agent_id: AgentId,
@@ -1745,11 +1745,11 @@ AIOS initially targets **laptops and PCs**. This is where the hardware is genero
 | GPU/NPU | Integrated or discrete | Future: GPU-accelerated inference, NPU offload for always-on tasks |
 | Network | WiFi 6/6E, Gigabit Ethernet | Fast model downloads, low-latency sync |
 
-The laptop/PC target means storage pressure is low. A 256 GB SSD gives AIOS ~180 GB after the host OS and user apps. A 512 GB SSD gives ~350 GB. Storage budgeting still matters (see [spaces-budget.md §10](../storage/spaces-budget.md)) but the constraints are comfortable — multiple models, generous version retention, full indexes.
+The laptop/PC target means storage pressure is low. A 256 GB SSD gives AIOS ~180 GB after the host OS and user apps. A 512 GB SSD gives ~350 GB. Storage budgeting still matters (see [budget.md §10](../storage/spaces/budget.md)) but the constraints are comfortable — multiple models, generous version retention, full indexes.
 
 ### 9.3 Future Device Classes
 
-AIOS is architected for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [spaces-budget.md §10.1](../storage/spaces-budget.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
+AIOS is architected for multi-device support, even though only laptops/PCs are supported at launch. The device profile system (see [budget.md §10.1](../storage/spaces/budget.md)) and the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) are designed so that adding a new device class requires writing hardware drivers and tuning profiles, not rearchitecting the system.
 
 **Planned future targets (in rough priority order):**
 
@@ -1865,7 +1865,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 1. **Device profiles adapt automatically.** `DeviceProfile::detect()` examines actual hardware (RAM size, storage capacity, accelerator presence) rather than matching device labels. A phone from 2028 with 16 GB RAM and 512 GB storage will automatically get more generous quotas than a 2024 phone with 8 GB and 256 GB. No software update needed — the thresholds are capability-based.
 
-2. **The memory pool system scales.** The kernel's physical memory manager (see [memory-physical.md](../kernel/memory-physical.md) §2.4) doesn't hardcode pool sizes. The Kernel, User, Model, and DMA pools are sized as percentages of available RAM. 8 GB machine → 4 GB model pool. 16 GB machine → 8 GB model pool. Bigger models load automatically.
+2. **The memory pool system scales.** The kernel's physical memory manager (see [physical.md](../kernel/memory/physical.md) §2.4) doesn't hardcode pool sizes. The Kernel, User, Model, and DMA pools are sized as percentages of available RAM. 8 GB machine → 4 GB model pool. 16 GB machine → 8 GB model pool. Bigger models load automatically.
 
 3. **Storage budgets are percentage-based.** Quotas like "20% for models" mean 48 GB on a 256 GB laptop and 400 GB on a 2 TB laptop. The architecture doesn't need to know the absolute size — it adapts.
 
@@ -1873,7 +1873,7 @@ AIOS's architecture is designed to **scale with hardware** rather than target a 
 
 5. **Model quality improves with hardware.** On a 2024 laptop with 16 GB RAM, AIOS loads an 8B Q5_K_M model. On a 2028 laptop with 32 GB, it loads a 13B Q6_K — better quantization, more parameters, higher quality. The model profile system (see [airs.md §4.2](../intelligence/airs.md)) selects the best model that fits the current hardware. Users don't configure this — the system figures it out.
 
-6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)` (laptop profile override; base default is `KeepLast(20)` — see spaces-budget.md §10.7). On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
+6. **Version history retention grows with storage.** On a 256 GB laptop, the default is `KeepLast(50)` (laptop profile override; base default is `KeepLast(20)` — see spaces/budget.md §10.7). On a 2 TB laptop or a 2030 phone with 1 TB, the default can be `KeepAll`. The user never loses history if the hardware can afford it.
 
 #### The Convergence Thesis
 
@@ -1959,7 +1959,7 @@ AIOS's distinguishing feature is OS-level support for AI workloads. Research in 
 
 vLLM's PagedAttention (SOSP 2023) manages KV caches like virtual memory pages: logical KV blocks map to non-contiguous physical pages through a page table, enabling copy-on-write sharing across requests and near-zero memory waste. The key insight is that **KV cache management IS virtual memory management** — the same problems (fragmentation, sharing, reclamation) have the same solutions (paging, CoW, LRU eviction).
 
-AIOS can implement this natively: the buddy allocator (`mm/buddy.rs`) manages physical pages for KV blocks, the page table infrastructure (`mm/pgtable.rs`) provides virtual→physical mapping, and the model pool in PagePools provides the backing store. A `KvCacheManager` would sit alongside `UserAddressSpace` in `mm/uspace.rs`, managing per-inference KV page tables. When memory pressure rises, the reclamation system (`docs/kernel/memory-reclamation.md` §8) evicts cold KV pages to swap, just like regular pages.
+AIOS can implement this natively: the buddy allocator (`mm/buddy.rs`) manages physical pages for KV blocks, the page table infrastructure (`mm/pgtable.rs`) provides virtual→physical mapping, and the model pool in PagePools provides the backing store. A `KvCacheManager` would sit alongside `UserAddressSpace` in `mm/uspace.rs`, managing per-inference KV page tables. When memory pressure rises, the reclamation system (`docs/kernel/memory/reclamation.md` §8) evicts cold KV pages to swap, just like regular pages.
 
 **RadixAttention** (SGLang) extends this with prefix sharing via a radix tree — common prompt prefixes share KV pages across requests, with CoW on divergence. This maps to AIOS's shared memory regions: the common prefix KV pages are a shared mapping, and per-request pages are private.
 
@@ -2000,7 +2000,7 @@ AIOS's subsystem framework (`docs/platform/subsystem-framework.md`) provides the
 - **Hot tier**: Model pool pages (physical RAM), managed by buddy allocator
 - **Cold tier**: Block Engine data region (VirtIO-blk), content-addressed by weight tensor hash
 
-The memory pressure system (`docs/kernel/memory-reclamation.md` §8) triggers eviction of inactive model weight pages to the Block Engine, with content-addressing providing natural deduplication when multiple agents load the same model. Reloading is a Block Engine read + page fault handler, transparent to the inference engine.
+The memory pressure system (`docs/kernel/memory/reclamation.md` §8) triggers eviction of inactive model weight pages to the Block Engine, with content-addressing providing natural deduplication when multiple agents load the same model. Reloading is a Block Engine read + page fault handler, transparent to the inference engine.
 
 **Category:** Kernel-internal
 **Source:** Sheng et al., "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU" (ICML 2023)
@@ -2022,7 +2022,7 @@ WiscKey (FAST 2016) separates keys from values in LSM-trees: small keys stay in 
 
 AIOS's Block Engine is a natural fit: keys are 32-byte SHA-256 content hashes, values are variable-size data blocks (potentially multi-MB for AI model weight tensors). The existing WAL (`storage/wal.rs`) could evolve into the vLog, storing block data sequentially while the MemTable (`storage/lsm.rs`) indexes only the ContentHash→vLog-offset mapping. Compaction becomes nearly free — only the small index is compacted, never the block data.
 
-Follow-up work from Dostoevsky (SIGMOD 2018) shows that **lazy leveling** — a hybrid of leveled and tiered compaction — achieves optimal write amplification trade-offs for mixed read/write workloads. Combined with key-value separation, this addresses the WAF concerns documented in `docs/storage/spaces-block-engine.md` §4.8.
+Follow-up work from Dostoevsky (SIGMOD 2018) shows that **lazy leveling** — a hybrid of leveled and tiered compaction — achieves optimal write amplification trade-offs for mixed read/write workloads. Combined with key-value separation, this addresses the WAF concerns documented in `docs/storage/spaces/block-engine.md` §4.8.
 
 **Category:** Kernel-internal
 **Sources:** Lu et al., "WiscKey: Separating Keys from Values in SSD-Conscious Storage" (FAST 2016); Dayan & Idreos, "Dostoevsky: Better Space-Time Trade-Offs for LSM-Tree Based Key-Value Stores" (SIGMOD 2018)
@@ -2047,7 +2047,7 @@ BLAKE3 is 3–5x faster than SHA-256 on aarch64 (exploiting NEON SIMD) while pro
 
 Merkle Search Trees (MSTs) are deterministic Merkle trees where the tree structure is determined by the data content (not insertion order), enabling efficient set reconciliation between peers. Two devices can determine exactly which objects differ in O(log n) round trips proportional to the symmetric difference — without exchanging full manifests. Proven in production by Bluesky's AT Protocol.
 
-AIOS Space Sync (`docs/storage/spaces-sync.md` §8.1 Merkle exchange) should adopt MSTs for the reconciliation protocol. The current design describes Merkle tree exchange; MSTs provide a concrete algorithm with proven O(log n) efficiency and deterministic tree structure that simplifies conflict detection.
+AIOS Space Sync (`docs/storage/spaces/sync.md` §8.1 Merkle exchange) should adopt MSTs for the reconciliation protocol. The current design describes Merkle tree exchange; MSTs provide a concrete algorithm with proven O(log n) efficiency and deterministic tree structure that simplifies conflict detection.
 
 **Category:** Kernel-internal
 **Source:** Meyer, "Merkle Search Trees: Efficient State-Based CRDTs in Open Networks" (2019); used in Bluesky AT Protocol
@@ -2060,27 +2060,27 @@ Several learned data structure innovations apply to AIOS's storage layer:
 
 - **Learned Bloom filters** (NeurIPS 2018): Replace traditional Bloom filters with a learned binary classifier backed by a small traditional filter for bounded false positives. Achieves 30–70% space reduction. Applicable to SSTable point lookups in the Block Engine.
 
-- **DiskANN / Vamana** (Microsoft, NeurIPS 2019): Graph-based approximate nearest neighbor search that operates on SSD, not just RAM. For AIOS's embedding similarity search (`docs/storage/spaces-query-engine.md` §7.5), DiskANN is the most practical approach within kernel memory constraints — only the graph structure (bounded-degree, ~100 bytes per vector) stays in RAM; actual vectors live on disk.
+- **DiskANN / Vamana** (Microsoft, NeurIPS 2019): Graph-based approximate nearest neighbor search that operates on SSD, not just RAM. For AIOS's embedding similarity search (`docs/storage/spaces/query-engine.md` §7.5), DiskANN is the most practical approach within kernel memory constraints — only the graph structure (bounded-degree, ~100 bytes per vector) stays in RAM; actual vectors live on disk.
 
 **Category:** Kernel-internal
 **Sources:** Ding et al., "ALEX: An Updatable Adaptive Learned Index" (SIGMOD 2020); Mitzenmacher, "A Model for Learned Bloom Filters" (NeurIPS 2018); Subramanya et al., "DiskANN" (NeurIPS 2019)
 
 #### AI Model Checkpoint Storage
 
-Systems like CheckFreq (FAST 2021) optimize model checkpoint storage with incremental checkpointing — only changed layers are written. AIOS's content-addressed Block Engine naturally supports this: each checkpoint stores weight tensors by ContentHash, and unchanged tensors share blocks with previous checkpoints via deduplication. The Version Store's Merkle DAG (`docs/storage/spaces-versioning.md` §5.1) tracks checkpoint lineage, enabling efficient rollback and branching of model fine-tuning experiments.
+Systems like CheckFreq (FAST 2021) optimize model checkpoint storage with incremental checkpointing — only changed layers are written. AIOS's content-addressed Block Engine naturally supports this: each checkpoint stores weight tensors by ContentHash, and unchanged tensors share blocks with previous checkpoints via deduplication. The Version Store's Merkle DAG (`docs/storage/spaces/versioning.md` §5.1) tracks checkpoint lineage, enabling efficient rollback and branching of model fine-tuning experiments.
 
 **Category:** Kernel-internal
 **Source:** Mohan et al., "CheckFreq: Frequent, Fine-Grained DNN Checkpointing" (FAST 2021)
 
 ### 10.4 Security Model Evolution
 
-AIOS's 8-layer security model (`docs/security/security-layers.md` §2) can incorporate several innovations from capability research, hardware security, and adversarial AI defense.
+AIOS's 8-layer security model (`docs/security/model/layers.md` §2) can incorporate several innovations from capability research, hardware security, and adversarial AI defense.
 
 #### Capability System Innovations
 
-- **Capsicum (FreeBSD)** demonstrates that capability systems work best when they *coexist* with POSIX abstractions rather than replacing them. Capsicum's `cap_enter()` switches a process into capability mode where all global namespaces (filesystem, PIDs, network) become inaccessible — only pre-opened file descriptor capabilities work. AIOS's POSIX compatibility layer (`docs/storage/spaces-posix.md`) should adopt this fd-as-capability model: each POSIX fd maps to an AIOS capability token, and `cap_enter()` equivalent restricts the process to its existing capability set.
+- **Capsicum (FreeBSD)** demonstrates that capability systems work best when they *coexist* with POSIX abstractions rather than replacing them. Capsicum's `cap_enter()` switches a process into capability mode where all global namespaces (filesystem, PIDs, network) become inaccessible — only pre-opened file descriptor capabilities work. AIOS's POSIX compatibility layer (`docs/storage/spaces/posix.md`) should adopt this fd-as-capability model: each POSIX fd maps to an AIOS capability token, and `cap_enter()` equivalent restricts the process to its existing capability set.
 
-- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/security-capabilities.md` §3.7, Phase 28) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
+- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/model/capabilities.md` §3.7, Phase 28) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
 
 - **CHERI** (Capability Hardware Enhanced RISC Instructions) extends pointers to 128-bit bounded capabilities with hardware-enforced bounds, permissions, and sealing. While aarch64 doesn't have CHERI today, Arm's Morello prototype demonstrates the direction. AIOS's software capability tokens should be designed so they can be backed by hardware capabilities when CHERI-ARM ships — the `CapabilityToken` structure already stores bounds (rights mask) and permissions that map to CHERI fields. MTE (Memory Tagging Extension) on current aarch64 provides a subset of CHERI's spatial safety.
 
@@ -2109,11 +2109,11 @@ AIOS's 8-layer security model (`docs/security/security-layers.md` §2) can incor
 
 #### Post-Quantum Cryptography
 
-NIST finalized ML-KEM (CRYSTALS-Kyber) for key encapsulation and ML-DSA (CRYSTALS-Dilithium) for digital signatures as post-quantum standards (FIPS 203/204, August 2024). Rust implementations are available (`pqcrypto` crate family). AIOS encryption zones (`docs/storage/spaces-encryption.md` §6.1–6.3) should plan PQC migration:
+NIST finalized ML-KEM (CRYSTALS-Kyber) for key encapsulation and ML-DSA (CRYSTALS-Dilithium) for digital signatures as post-quantum standards (FIPS 203/204, August 2024). Rust implementations are available (`pqcrypto` crate family). AIOS encryption zones (`docs/storage/spaces/encryption.md` §6.1–6.3) should plan PQC migration:
 
 - ML-KEM key sizes are larger (1568 bytes for ML-KEM-1024 vs 32 bytes for X25519), affecting key management storage in the Block Engine
 - Hybrid classical+PQC schemes (e.g., X25519 + ML-KEM-768) recommended during the transition period
-- Space Sync security (`docs/storage/spaces-sync.md` §8.3) should use ML-DSA for cross-device capability verification
+- Space Sync security (`docs/storage/spaces/sync.md` §8.3) should use ML-DSA for cross-device capability verification
 
 **Category:** Kernel-internal
 **Source:** NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), finalized August 2024
@@ -2222,7 +2222,7 @@ This strategy starts with tools that require minimal annotation (Kani, Miri), pr
 | Subsection | Related Architecture Documents |
 |---|---|
 | §10.1 Microkernel Evolution | [ipc.md](../kernel/ipc.md) §13-14, [scheduler.md](../kernel/scheduler.md) §16, [subsystem-framework.md](../platform/subsystem-framework.md) |
-| §10.2 AI-Native Primitives | [memory-ai.md](../kernel/memory-ai.md) §6, [airs.md](../intelligence/airs.md) §4-5, [agents.md](../applications/agents.md) |
-| §10.3 Storage & Data | [spaces-block-engine.md](../storage/spaces-block-engine.md) §4, [spaces-query-engine.md](../storage/spaces-query-engine.md) §7, [spaces-sync.md](../storage/spaces-sync.md) §8 |
-| §10.4 Security Evolution | [security-capabilities.md](../security/security-capabilities.md) §3, [security-operations.md](../security/security-operations.md) §13, [fuzzing-ai-native.md](../security/fuzzing-ai-native.md) §7 |
+| §10.2 AI-Native Primitives | [memory-ai.md](../kernel/memory/ai.md) §6, [airs.md](../intelligence/airs.md) §4-5, [agents.md](../applications/agents.md) |
+| §10.3 Storage & Data | [block-engine.md](../storage/spaces/block-engine.md) §4, [query-engine.md](../storage/spaces/query-engine.md) §7, [sync.md](../storage/spaces/sync.md) §8 |
+| §10.4 Security Evolution | [capabilities.md](../security/model/capabilities.md) §3, [operations.md](../security/model/operations.md) §13, [ai-native.md](../security/fuzzing/ai-native.md) §7 |
 | §10.5 Formal Verification | [static-analysis.md](../security/static-analysis.md), [developer-guide.md](./developer-guide.md) |

@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [security.md](../security/security.md) — Capability system and trust boundaries, [spaces.md](../storage/spaces.md) — Space sharing and provenance, [networking.md](../platform/networking.md) — Peer protocol and credential isolation, [agents.md](../applications/agents.md) — Agent identity and delegation, [airs.md](../intelligence/airs.md) — Relationship-aware AI behavior
+**Related:** [model.md](../security/model.md) — Capability system and trust boundaries, [spaces.md](../storage/spaces.md) — Space sharing and provenance, [networking.md](../platform/networking.md) — Peer protocol and credential isolation, [agents.md](../applications/agents.md) — Agent identity and delegation, [airs.md](../intelligence/airs.md) — Relationship-aware AI behavior
 
 -----
 
@@ -727,7 +727,7 @@ Capability tokens are cryptographically bound to identity:
 
 ```rust
 /// Space-sharing capability token. Distinct from the kernel-level
-/// CapabilityToken (security.md §3) — this is a higher-level
+/// CapabilityToken (model.md §3) — this is a higher-level
 /// identity-bound access grant for cross-space sharing.
 pub struct SpaceCapabilityToken {
     /// What this token grants access to

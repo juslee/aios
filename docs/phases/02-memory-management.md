@@ -31,9 +31,9 @@ By the end of this phase, the kernel manages physical memory through a buddy all
 | W^X enforcement | [memory.md](../kernel/memory.md) | §9.1 W^X (Write XOR Execute) |
 | Guard pages | [memory.md](../kernel/memory.md) | §9.5 Guard Pages |
 | Implementation order | [memory.md](../kernel/memory.md) | §13 Implementation Order |
-| BootInfo and memory map handoff | [boot-firmware.md](../kernel/boot-firmware.md), [boot-kernel.md](../kernel/boot-kernel.md) | §2.2 BootInfo struct; §3.3 Steps 3–9 |
-| Security model (W^X, PAC, BTI) | [security.md](../security/security.md) | Memory isolation sections |
-| Memory hardening (poisoning, double-free, red zones) | [fuzzing-and-hardening.md](../security/fuzzing-and-hardening.md) | §3.3 Memory Hardening |
+| BootInfo and memory map handoff | [firmware.md](../kernel/boot/firmware.md), [kernel.md](../kernel/boot/kernel.md) | §2.2 BootInfo struct; §3.3 Steps 3–9 |
+| Security model (W^X, PAC, BTI) | [model.md](../security/model.md) | Memory isolation sections |
+| Memory hardening (poisoning, double-free, red zones) | [fuzzing.md](../security/fuzzing.md) | §3.3 Memory Hardening |
 
 -----
 
@@ -67,8 +67,8 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 - [x] Enhance `free(frame, order)` — add bitmap-based coalescing up to `MAX_ORDER`
 - [x] Add `buddy_of(frame, order)` — XOR-based buddy address computation
 - [x] Add buddy-pair XOR bitmap for coalescing state tracking
-- [x] **Security:** Double-free detection via bitmap check before free ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
-- [x] **Security:** Buddy allocator poisoning — fill freed pages with `0xDEAD_DEAD` ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [x] **Security:** Double-free detection via bitmap check before free ([fuzzing.md §3.3](../security/fuzzing.md))
+- [x] **Security:** Buddy allocator poisoning — fill freed pages with `0xDEAD_DEAD` ([fuzzing.md §3.3](../security/fuzzing.md))
 - [x] Add unit tests (in `shared/` crate, host target) for buddy_of XOR, pool sizing, pressure thresholds
 
 **Key reference:** [memory.md §2.2](../kernel/memory.md) — Buddy Allocator
@@ -108,7 +108,7 @@ Milestones are numbered continuously across all phases. Phase 1 used M4–M6; Ph
 
 **Note:** The `BootInfo` memory map is passed as three fields: `memory_map_addr` (physical address of the `MemoryDescriptor` array), `memory_map_count` (number of entries), and `memory_map_entry_size` (bytes per entry). These are populated by Phase 1's UEFI stub. Phase 2 walks this array to bootstrap the buddy allocator and page pools.
 
-**Key reference:** [memory.md §2.1](../kernel/memory.md) — Bootstrap; [boot-firmware.md §2.2](../kernel/boot-firmware.md) — BootInfo struct
+**Key reference:** [memory.md §2.1](../kernel/memory.md) — Bootstrap; [firmware.md §2.2](../kernel/boot/firmware.md) — BootInfo struct
 
 **Acceptance:** `just run` prints pool statistics to UART:
 ```
@@ -176,7 +176,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 
 **Note:** The direct map allows the kernel to access any physical address by adding `DIRECT_MAP_BASE`. This is how `PhysicalFrame::as_ptr()` works (memory.md §2.2). boot.S creates minimal TTBR1 for virtual kernel execution; full TTBR1 with KASLR/direct map built in kernel_main after pool init.
 
-**Key reference:** [memory.md §3.1](../kernel/memory.md) — Address Space Layout, [boot-kernel.md §3.3](../kernel/boot-kernel.md) — Step 7
+**Key reference:** [memory.md §3.1](../kernel/memory.md) — Address Space Layout, [kernel.md §3.3](../kernel/boot/kernel.md) — Step 7
 
 **Acceptance:** `just run` — kernel prints to UART after switching to new TTBR1 page tables. `cargo objdump -- -h` shows kernel text section is mapped at virtual address `0xFFFF_0000_*`.
 
@@ -239,7 +239,7 @@ Values are consistent with the QEMU `-m 2G` configuration.
 - [x] Add `Magazine` layer — `MagazineRound` with `MAGAZINE_SIZE = 32` object slots, current/prev swap
 - [x] Enhance `SlabCache::alloc()` — fast path: pop from magazine; slow path: refill from shared slab
 - [x] Enhance `SlabCache::free(ptr)` — fast path: push to magazine; overflow: flush to shared slab
-- [x] **Security:** Slab red zones — guard bytes around allocations to detect overflow ([fuzzing-and-hardening.md §3.3](../security/fuzzing-and-hardening.md))
+- [x] **Security:** Slab red zones — guard bytes around allocations to detect overflow ([fuzzing.md §3.3](../security/fuzzing.md))
 - [x] Consolidate standard caches to 64, 128, 256, 512, 4096 bytes (memory.md §4.1)
 
 **Key reference:** [memory.md §4.1](../kernel/memory.md) — Slab Allocator
