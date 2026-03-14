@@ -49,7 +49,7 @@ Every kernel subsystem has defect classes that static analysis can catch before 
 | Scheduler, IPC, allocator concurrency | Exhaustive interleaving exploration | Loom | 3+ |
 | Scheduler, IPC, allocator concurrency | Randomized scheduling for large state spaces | Shuttle | 3+ |
 | All kernel code | AIOS-specific anti-patterns (MMIO without volatile, TTBR without barriers) | Semgrep (custom rules) | 3+ |
-| Capability system, allocators | Capability flow tracking, integer overflow | MIRAI | 3+ |
+| Capability system, allocators | Capability flow tracking, integer overflow | Kani contracts (§4.5) | 3+ |
 | Capability system, IPC | Design-level correctness proofs | TLA+ / Coq | 13+ / 24 |
 | Page table management | W^X enforcement proof | Kani / exhaustive path analysis | 13+ |
 | Kernel numeric invariants | Compile-time value predicates (alignment, bounds) | Prusti / Flux | 13+ |
@@ -112,7 +112,7 @@ Miri interprets Rust's Mid-level Intermediate Representation (MIR) under strict 
 - Invalid enum discriminants
 - Dangling references
 
-**Academic validation.** Miri was formally validated in the POPL 2026 paper "Miri: Practical Undefined Behavior Detection for Rust," establishing it as the first tool capable of finding all de-facto UB in deterministic Rust programs. The evaluation covered 100,000+ Rust libraries, successfully running 70%+ of test suites — demonstrating practical scale for real-world codebases.
+**Academic validation.** Miri was formally validated in the POPL 2026 paper "Miri: Practical Undefined Behavior Detection for Rust," establishing it as the first practical UB detector with zero false positives on executed code paths in deterministic Rust programs. Miri does not perform whole-program analysis — it detects UB only along paths actually exercised by tests or harnesses, so coverage depends on the quality of the test suite driving it. The evaluation covered 100,000+ Rust libraries, successfully running 70%+ of test suites — demonstrating practical scale for real-world codebases.
 
 **Aliasing model evolution.** Miri supports two aliasing models: the original Stacked Borrows and the newer Tree Borrows (`-Zmiri-tree-borrows`). Tree Borrows now has a formal foundation (PLDI 2025) but remains experimental with no stabilization timeline. Tree Borrows is more permissive for patterns common in OS `unsafe` code — notably, raw pointers derived from references that are then used alongside the original reference. AIOS targets running Miri with both models to catch the widest range of issues while avoiding false positives from Stacked Borrows' stricter rules.
 
@@ -315,7 +315,7 @@ Static analysis is adopted incrementally, aligned with the phase at which each s
 |---|---|---|
 | 0–2 | `rustc`, Clippy, `rustfmt`, cargo-audit, cargo-deny, Miri, cargo-careful, cargo-geiger, cargo-semver-checks | `shared/` crate, boot code, allocators (host-testable logic), dependency audit |
 | 2+ | cargo-vet, cargo-mutants, Rudra | Dependency provenance, test quality, `unsafe` patterns |
-| 3–5 | Kani, Converos, Loom, Shuttle, Semgrep, MIRAI | Syscall validation, capability operations, scheduler concurrency, kernel patterns |
+| 3–5 | Kani, Converos, Loom, Shuttle, Semgrep | Syscall validation, capability operations, scheduler concurrency, kernel patterns |
 | 10–12 | `aios agent audit`, AIRS code review, AI-assisted techniques (§10) | Third-party agent manifests and code bundles |
 | 13+ | TLA+ models, Rudra full scans, Kani CI enforcement, Prusti, Flux | Capability state machine, IPC protocol, all `unsafe` blocks, numeric invariants |
 | 24 | Verus proofs, RefinedRust / Coq / Creusot proofs | Capability no-forge/no-escalate, provenance chain, W^X, unsafe abstraction soundness |
@@ -366,7 +366,7 @@ Cross-reference: [fuzzing-adoption-roadmap.md](fuzzing-adoption-roadmap.md) §4 
 | Loom | Exhaustive thread interleaving exploration | Kernel | Concurrent data structures, lock ordering | 3+ |
 | Shuttle | Randomized concurrency testing | Kernel | Large-state-space concurrent modules | 3+ |
 | Semgrep | Custom kernel-specific lint rules | Kernel | All kernel code (AIOS-specific patterns) | 3+ |
-| MIRAI | Abstract interpretation, tag analysis | Kernel | Capability flow, integer arithmetic | 3+ |
+| MIRAI | Abstract interpretation, tag analysis | Kernel | Monitor only (deprioritized — see §4.12) | — |
 | Prusti | Deductive verification (pre/postconditions) | Kernel | Pure kernel logic, `shared/` crate | 13+ |
 | Flux | Refinement type checking | Kernel | Numeric invariants, alignment, bounds | 13+ |
 | TLA+ | Protocol-level specification and model checking | Kernel (design) | Capability state machine, IPC protocol | 13+ |
@@ -439,7 +439,7 @@ Research and production OS projects have developed architectural patterns that s
 
 ### 11.1 Framekernel Pattern (Asterinas)
 
-The Asterinas OS project (USENIX ATC 2025) introduced the "framekernel" architecture: all `unsafe` code is isolated into a verified "frame" layer (OSTD, ~15,000 lines — 14% of the kernel), while the rest of the OS uses only safe Rust. The frame layer provides safe abstractions over hardware (MMIO, page tables, system registers), and formal verification (via Verus) proves these abstractions are sound. The safe kernel code above the frame layer is then protected by Rust's type system — no further verification needed. Asterinas supports 210+ Linux syscalls with performance on par with Linux (mean normalized score 1.08 on LMbench).
+The Asterinas OS project (USENIX ATC 2025) introduced the "framekernel" architecture: all `unsafe` code is isolated into a verified "frame" layer (OSTD — OS Standard Library, ~15,000 lines — 14% of the kernel), while the rest of the OS uses only safe Rust. The frame layer provides safe abstractions over hardware (MMIO, page tables, system registers), and formal verification (via Verus) proves these abstractions are sound. The safe kernel code above the frame layer is then protected by Rust's type system — no further verification needed. Asterinas supports 210+ Linux syscalls with performance on par with Linux (mean normalized score 1.08 on LMbench).
 
 The `vostd` project extends this with a formally verified version of OSTD using Verus. Of 14 high-priority verification targets, 11 have been verified — and the effort discovered real bugs (including a race condition in page table node freeing) that testing had not caught.
 
