@@ -3,7 +3,7 @@
 ## Universal Hardware Abstraction Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [networking.md](./networking.md), [audio.md](./audio.md), [power-management.md](./power-management.md), [posix.md](./posix.md)
+**Related:** [device-model.md](../kernel/device-model.md) — Device model and driver framework, [networking.md](./networking.md), [audio.md](./audio.md), [power-management.md](./power-management.md), [posix.md](./posix.md)
 
 -----
 

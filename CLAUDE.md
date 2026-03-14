@@ -45,6 +45,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Boot intelligence, on-demand services | `docs/kernel/boot/intelligence.md` | §16–§18 |
 | Boot accessibility, first boot | `docs/kernel/boot/accessibility.md` | §19–§21 |
 | Research kernel innovations | `docs/kernel/boot/research.md` | §22.1–§22.19 |
+| Device model & driver framework (hub) | `docs/kernel/device-model.md` | §1 Core Insight, §2 Architecture, §17 Impl Order, §18 Design Principles, Document Map |
+| Device representation & registry | `docs/kernel/device-model/representation.md` | §3 HardwareDescriptor/DeviceId/DeviceNode, §4 DeviceRegistry |
+| Bus abstraction & driver model | `docs/kernel/device-model/discovery.md` | §5 Bus trait (Platform/VirtIO/USB/PCI), §6 Driver trait/matching/binding |
+| Device lifecycle & driver isolation | `docs/kernel/device-model/lifecycle.md` | §7 State machine, §8 DriverGrant/interrupt forwarding/DMA sharing, §9 Crash recovery |
+| VirtIO MMIO transport | `docs/kernel/device-model/virtio.md` | §10 Virtqueue internals, descriptor tables, scatter-gather |
+| DMA engine & subsystem patterns | `docs/kernel/device-model/dma.md` | §11 Buffer lifecycle/IOMMU/cache coherency, §12 Per-subsystem patterns |
+| Device security & hot-swap | `docs/kernel/device-model/security.md` | §13 Capability-gated MMIO/IRQ/DMA, §14 Live driver update |
+| Device testing & AI intelligence | `docs/kernel/device-model/intelligence.md` | §15 Testing/verification, §16 AI-native intelligence, §19 Future directions |
 | HAL & Platform trait | `docs/kernel/hal.md` | §2-3 |
 | PL011 UART driver | `docs/kernel/hal.md` | §4.3 |
 | GICv3 interrupt controller | `docs/kernel/hal.md` | §4.1 |
