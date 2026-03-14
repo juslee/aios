@@ -3,7 +3,7 @@
 ## Universal Hardware Abstraction Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [networking.md](./networking.md), [browser.md](../applications/browser.md)
+**Related:** [networking.md](./networking.md), [audio.md](./audio.md), [power-management.md](./power-management.md), [posix.md](./posix.md)
 
 -----
 
@@ -34,28 +34,46 @@ Strip away domain-specific details from networking, USB, audio, display, storage
 
 Every subsystem in AIOS follows this layered structure:
 
-```
-┌─────────────────────────────────────────┐
-│            Agent API Layer              │  ← What agents see
-│  Typed, semantic, capability-gated      │
-├─────────────────────────────────────────┤
-│          POSIX Translation              │  ← What BSD tools see
-│  /dev nodes, ioctl, read/write          │
-├─────────────────────────────────────────┤
-│         Subsystem Service               │  ← Policy, multiplexing, routing
-│  Device registry, session management,   │
-│  format negotiation, conflict resolution│
-├─────────────────────────────────────────┤
-│          Device Abstraction             │  ← Uniform interface per class
-│  Trait that all devices of this class   │
-│  implement regardless of hardware       │
-├─────────────────────────────────────────┤
-│           Hardware Driver               │  ← Actual hardware communication
-│  VirtIO, USB, PCI, platform-specific    │
-└─────────────────────────────────────────┘
-        ↕               ↕
-   Capability Gate    Audit Space
-   (kernel-enforced)  (all access logged)
+```mermaid
+flowchart TD
+    subgraph AgentAPI["Agent API Layer"]
+        A1["Typed, semantic, capability-gated"]
+    end
+
+    subgraph POSIX["POSIX Translation"]
+        P1["/dev nodes, ioctl, read/write"]
+    end
+
+    subgraph Service["Subsystem Service"]
+        S1["Device registry, session management"]
+        S2["Format negotiation, conflict resolution"]
+    end
+
+    subgraph Abstraction["Device Abstraction"]
+        D1["Uniform trait per device class"]
+    end
+
+    subgraph Driver["Hardware Driver"]
+        H1["VirtIO, USB, PCI, platform-specific"]
+    end
+
+    AgentAPI --> POSIX
+    POSIX --> Service
+    Service --> Abstraction
+    Abstraction --> Driver
+
+    CapGate["🔒 Capability Gate\n(kernel-enforced)"]
+    AuditSpace["📋 Audit Space\n(all access logged)"]
+
+    CapGate -.- AgentAPI
+    CapGate -.- POSIX
+    CapGate -.- Service
+    AuditSpace -.- AgentAPI
+    AuditSpace -.- Service
+    AuditSpace -.- Abstraction
+
+    style CapGate fill:#f9e0e0,stroke:#c44
+    style AuditSpace fill:#e0e8f9,stroke:#44c
 ```
 
 The Capability Gate and Audit Space are cross-cutting concerns that span all layers. The gate is in the kernel. Everything else is userspace.
@@ -289,17 +307,17 @@ pub enum ConflictResolution {
 
 **Conflict policies by subsystem:**
 
-|Subsystem               |Default Conflict Policy|Rationale                                 |
-|------------------------|-----------------------|------------------------------------------|
-|Audio output            |Share (mixer)          |Multiple audio streams mix naturally      |
-|Audio input (microphone)|Prompt user            |Privacy-sensitive, user must consent      |
-|Display                 |Share (compositor)     |Compositor manages windows                |
-|Input (keyboard/mouse)  |Share (broadcast)      |Events go to focused agent                |
-|Camera                  |Prompt user            |Privacy-sensitive                         |
-|Network                 |Share (multiplex)      |Connections are independent               |
-|Printer                 |Queue (FIFO)           |Print jobs wait in line                   |
-|Storage                 |Share (filesystem)     |Concurrent access managed by storage layer|
-|Bluetooth audio         |Exclusive or Prompt    |Only one audio stream to BT headphones    |
+| Subsystem | Default Conflict Policy | Rationale |
+|---|---|---|
+| Audio output | Share (mixer) | Multiple audio streams mix naturally |
+| Audio input (microphone) | Prompt user | Privacy-sensitive, user must consent |
+| Display | Share (compositor) | Compositor manages windows |
+| Input (keyboard/mouse) | Share (broadcast) | Events go to focused agent |
+| Camera | Prompt user | Privacy-sensitive |
+| Network | Share (multiplex) | Connections are independent |
+| Printer | Queue (FIFO) | Print jobs wait in line |
+| Storage | Share (filesystem) | Concurrent access managed by storage layer |
+| Bluetooth audio | Exclusive or Prompt | Only one audio stream to BT headphones |
 
 -----
 
@@ -348,6 +366,40 @@ fn gate_check(
 
 This is identical for every subsystem. Audio, network, USB, camera, display — they all pass through the same gate. The only thing that varies is the capability type and what "permits" means for each subsystem.
 
+The gate check flow in detail:
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Subsystem
+    participant Kernel as Kernel Gate
+    participant CapStore as Capability Store
+    participant Audit as Audit Space
+
+    Agent->>Subsystem: open_session(intent)
+    Subsystem->>Kernel: gate_check(agent, cap, intent)
+    Kernel->>CapStore: find(agent, subsystem)
+    CapStore-->>Kernel: capability token
+
+    alt Token not found
+        Kernel->>Audit: log DENIED (no capability)
+        Kernel-->>Subsystem: Err(PermissionDenied)
+    else Token expired/revoked
+        Kernel->>Audit: log DENIED (expired)
+        Kernel-->>Subsystem: Err(CapabilityExpired)
+    else Intent not permitted
+        Kernel->>Audit: log DENIED (insufficient)
+        Kernel-->>Subsystem: Err(PermissionDenied)
+    else Budget exceeded
+        Kernel->>Audit: log DENIED (resource budget)
+        Kernel-->>Subsystem: Err(ResourceExhausted)
+    else All checks pass
+        Kernel->>Audit: log APPROVED
+        Kernel-->>Subsystem: Ok(GateApproval)
+        Subsystem-->>Agent: Ok(Session)
+    end
+```
+
 -----
 
 ## 6. Data Channels
@@ -379,7 +431,51 @@ pub trait DataChannel: Send + Sync {
 }
 ```
 
-### 6.2 Data Formats
+### 6.2 Zero-Copy Data Plane
+
+The synchronous `read`/`write` interface above handles the common case, but high-throughput subsystems (network, storage, video) benefit from zero-copy data transfer. The framework provides an optional zero-copy extension inspired by io_uring's submission/completion model (Linux), Fuchsia's VMO registration pattern, and Hubris's lease-based bulk I/O:
+
+```rust
+/// Zero-copy data channel extension for high-throughput subsystems.
+/// Implementations choose the transport that fits their performance needs.
+pub trait ZeroCopyChannel: DataChannel {
+    /// Register a buffer pool for zero-copy I/O.
+    /// Buffers are pinned once at registration time; subsequent I/O
+    /// references them by ID, avoiding per-operation page pinning.
+    fn register_buffers(&self, pool: &BufferPool) -> Result<BufferPoolId>;
+
+    /// Submit a zero-copy read: hardware DMAs directly into a registered buffer.
+    /// Returns a completion token; the caller polls or awaits completion.
+    fn submit_read(&self, buf_id: BufferId, offset: usize, len: usize) -> Result<CompletionToken>;
+
+    /// Submit a zero-copy write: hardware reads directly from a registered buffer.
+    fn submit_write(&self, buf_id: BufferId, offset: usize, len: usize) -> Result<CompletionToken>;
+
+    /// Poll for completed I/O operations (non-blocking).
+    fn poll_completions(&self, out: &mut [Completion]) -> usize;
+
+    /// Transfer buffer ownership between subsystems without copying.
+    /// The source loses access; the destination gains it. Kernel validates
+    /// capability for both sides.
+    fn transfer_buffer(&self, buf_id: BufferId, target: &dyn ZeroCopyChannel) -> Result<BufferId>;
+}
+
+/// Pre-registered buffer pool for zero-copy I/O
+pub struct BufferPool {
+    pub region: SharedMemoryId,     // capability-gated shared memory region
+    pub buffer_size: usize,         // size of each buffer slot
+    pub buffer_count: usize,        // number of slots
+}
+```
+
+**Design rationale:**
+
+- **Registered buffers** (from io_uring): pin memory once at registration, eliminating per-I/O page table walks. Linux 6.15's zero-copy receive achieves +41% throughput with this pattern.
+- **Buffer transfer** (from Fuchsia VMOs): `zx_vmo_transfer_data` moves physical pages between virtual memory objects without copying or zeroing. AIOS adapts this as `transfer_buffer()` for inter-subsystem pipelines.
+- **Lease-based access** (from Hubris): when sending a message, a task grants the recipient read or write access to its memory via a kernel-validated lease. This enables zero-copy bulk I/O between isolated address spaces.
+- **SPSC rings** (from LionsOS/sDDF on seL4): bounded single-producer, single-consumer shared-memory queues with cache-line-aligned entries. No locks needed when producer and consumer are in separate address spaces.
+
+### 6.3 Data Formats
 
 ```rust
 /// What kind of data flows through a channel
@@ -404,7 +500,7 @@ pub enum DataFormat {
 }
 ```
 
-### 6.3 Flow Integration
+### 6.4 Flow Integration
 
 The critical method is `connect_flow()`. This is where the subsystem framework meets AIOS's Flow system. Any data channel can be connected to a Flow pipe, enabling hardware-to-agent-to-hardware pipelines:
 
@@ -430,6 +526,8 @@ survey_agent.output_flow()?.connect_flow(storage_channel)?;
 ```
 
 Hardware, agents, and network are all connected through the same abstraction. Data flows from hardware through agents to other hardware or network as a continuous pipeline, not as disconnected read/write calls. This is a defining characteristic of AIOS.
+
+When both endpoints implement `ZeroCopyChannel`, Flow can establish a direct buffer-transfer pipeline — hardware DMAs into a registered buffer, the buffer's ownership transfers through the pipeline without any memory copies, and the final consumer reads directly from the original DMA target.
 
 -----
 
@@ -494,7 +592,7 @@ struct InputAuditEvent {
 
 ### 7.3 Audit Space Structure
 
-```
+```text
 system/audit/                    ← Top-level audit space
   network/                       ← Network subsystem audit
     connections/                  ← Individual connection records
@@ -528,7 +626,7 @@ AIRS can surface insights automatically: "Your backup agent has transferred 50GB
 
 ## 8. POSIX Bridge
 
-Every subsystem exposes a POSIX-compatible interface for BSD tools:
+Every subsystem exposes a POSIX-compatible interface for BSD tools. See [posix.md](./posix.md) for the full POSIX compatibility layer design.
 
 ```rust
 pub trait PosixBridge {
@@ -577,7 +675,7 @@ The tool thinks it's reading from a device file. The subsystem framework handles
 
 ## 9. Power Management
 
-Every device has power states. The framework makes this uniform:
+Every device has power states. The framework makes this uniform. See [power-management.md](./power-management.md) for the system-wide power management architecture.
 
 ```rust
 #[derive(Debug, Clone)]
@@ -702,11 +800,63 @@ fn init_subsystems(registry: &mut DeviceRegistry) {
 }
 ```
 
+The hotplug lifecycle in detail:
+
+```mermaid
+sequenceDiagram
+    participant HW as Hardware Bus
+    participant Kernel
+    participant Sub as Subsystem
+    participant Reg as Device Registry
+    participant Audit
+    participant User
+
+    Note over HW,User: Device Added
+    HW->>Kernel: interrupt (device detected)
+    Kernel->>Kernel: parse HardwareDescriptor
+    Kernel->>Sub: device_added(descriptor)
+    Sub->>Sub: probe & create device
+    Sub-->>Kernel: Ok(device)
+    Kernel->>Reg: register(device)
+    Kernel->>Audit: log "device_connected"
+    Kernel->>User: notify "New device: USB Headset"
+
+    Note over HW,User: Device Removed
+    HW->>Kernel: interrupt (device removed)
+    Kernel->>Reg: get(device_id)
+    Reg-->>Kernel: RegisteredDevice
+    loop For each active session
+        Kernel->>Sub: close_forced(session, DeviceRemoved)
+        Sub->>Audit: log "session_forced_close"
+    end
+    Kernel->>Sub: device_removed(device_id)
+    Kernel->>Reg: unregister(device_id)
+    Kernel->>Audit: log "device_disconnected"
+```
+
 -----
 
 ## 12. USB as a Meta-Subsystem
 
 USB is special because it's a bus, not a device class. A USB port can have a keyboard (input), a microphone (audio), a webcam (camera), a thumb drive (storage), or an Ethernet adapter (network) plugged into it. USB's role is to identify what's been connected and route it to the right subsystem:
+
+```mermaid
+flowchart TD
+    USB["USB Device Plugged In"] --> Parse["Parse USB Descriptor"]
+    Parse --> Class{"USB Device Class?"}
+
+    Class -->|Audio| AudioSub["Audio Subsystem"]
+    Class -->|HID| InputSub["Input Subsystem"]
+    Class -->|Mass Storage| StorageSub["Storage Subsystem"]
+    Class -->|Video| CameraSub["Camera Subsystem"]
+    Class -->|Network| NetSub["Network Subsystem"]
+    Class -->|Printer| PrintSub["Print Subsystem"]
+    Class -->|Composite| Split["Split into interfaces"]
+    Class -->|Unknown| Generic["Register as generic USB"]
+
+    Split -->|Interface 1| Class
+    Split -->|Interface 2| Class
+```
 
 ```rust
 impl Subsystem for UsbSubsystem {
@@ -868,17 +1018,17 @@ An agent that needs raw, exclusive audio access (a professional audio workstatio
 
 How each subsystem fills in the framework:
 
-|Subsystem    |Device Type          |Session Type           |Channel Format   |Conflict Policy                     |POSIX Nodes          |
-|-------------|---------------------|-----------------------|-----------------|------------------------------------|---------------------|
-|**Network**  |Interface (eth, wlan)|Connection             |ByteStream       |Share (multiplex)                   |socket API           |
-|**Audio**    |Output/Input device  |Playback/Capture stream|Audio samples    |Output: Share (mixer), Input: Prompt|/dev/audio*          |
-|**Display**  |Monitor/screen       |Render surface         |RenderSurface    |Share (compositor)                  |/dev/fb*, DRM        |
-|**Input**    |Keyboard/mouse/touch |Event listener         |Events           |Share (broadcast to focus)          |/dev/input/event*    |
-|**Camera**   |Camera device        |Capture stream         |Video frames     |Prompt user                         |/dev/video*          |
-|**Storage**  |Disk/partition       |Mount/read/write       |ByteStream       |Share (filesystem layer)            |/dev/sd*, block      |
-|**Bluetooth**|BT adapter           |Connection             |ByteStream/Events|Per-profile                         |/dev/bluetooth*      |
-|**Print**    |Printer              |Print job              |Frames (pages)   |Queue (FIFO)                        |/dev/lp*, CUPS bridge|
-|**GPS**      |GPS receiver         |Location stream        |Events (location)|Share (read-only)                   |—                    |
+| Subsystem | Device Type | Session Type | Channel Format | Conflict Policy | POSIX Nodes |
+|---|---|---|---|---|---|
+| **Network** | Interface (eth, wlan) | Connection | ByteStream | Share (multiplex) | socket API |
+| **Audio** | Output/Input device | Playback/Capture stream | Audio samples | Output: Share (mixer), Input: Prompt | /dev/audio* |
+| **Display** | Monitor/screen | Render surface | RenderSurface | Share (compositor) | /dev/fb*, DRM |
+| **Input** | Keyboard/mouse/touch | Event listener | Events | Share (broadcast to focus) | /dev/input/event* |
+| **Camera** | Camera device | Capture stream | Video frames | Prompt user | /dev/video* |
+| **Storage** | Disk/partition | Mount/read/write | ByteStream | Share (filesystem layer) | /dev/sd*, block |
+| **Bluetooth** | BT adapter | Connection | ByteStream/Events | Per-profile | /dev/bluetooth* |
+| **Print** | Printer | Print job | Frames (pages) | Queue (FIFO) | /dev/lp*, CUPS bridge |
+| **GPS** | GPS receiver | Location stream | Events (location) | Share (read-only) | — |
 
 Every row follows the same traits. The subsystem-specific code is the minimal amount needed to handle the domain. Everything else — capability gate, session lifecycle, audit, power management, POSIX bridge, device registry, hotplug — is the framework.
 
@@ -903,7 +1053,7 @@ No new kernel code, no new IPC protocols, no new security model. GPS plugs into 
 
 Because every subsystem's data channel connects to Flow, agents can build hardware pipelines:
 
-```
+```text
 Microphone → [speech recognition] → [translation] → Speaker
 Camera → [object detection] → [alert agent] → Network (push notification)
 GPS + Camera → [field survey] → Storage space (geotagged photos)
@@ -942,3 +1092,388 @@ Networking follows the framework with some domain-specific additions:
 - **The Space Mesh Protocol** is a networking subsystem service for device-to-device space synchronization.
 
 The same "mandatory kernel gate + optional userspace services" pattern applies to every subsystem.
+
+-----
+
+## 17. Error Handling and Recovery
+
+Every layer in the subsystem stack produces errors. The framework defines a uniform error taxonomy so agents receive typed, actionable errors regardless of which subsystem they interact with.
+
+### 17.1 Error Taxonomy
+
+```rust
+/// Errors originate at different layers and propagate upward,
+/// gaining context at each level.
+pub enum SubsystemError {
+    /// Hardware-level fault reported by the driver
+    Hardware(HardwareError),
+
+    /// Subsystem service policy violation
+    Policy(PolicyError),
+
+    /// Session-level error during active use
+    Session(SessionError),
+
+    /// Capability system rejection (from kernel gate)
+    Capability(CapabilityError),
+}
+
+pub enum HardwareError {
+    DeviceNotResponding,         // timeout on MMIO/DMA
+    TransferFailed(u32),         // bus-specific error code
+    DeviceReset,                 // device initiated reset
+    FirmwareError(String),       // device firmware reported error
+    PowerFault,                  // device failed to change power state
+}
+
+pub enum PolicyError {
+    FormatNotSupported,          // requested format unavailable
+    ConflictDenied,              // conflict policy rejected session
+    DeviceBusy,                  // exclusive session already active
+    RateLimited,                 // too many operations in time window
+}
+
+pub enum SessionError {
+    ChannelClosed,               // data channel unexpectedly closed
+    BufferOverrun,               // producer faster than consumer
+    BufferUnderrun,              // consumer faster than producer
+    Timeout,                     // operation timed out
+    DeviceRemoved,               // hardware unplugged during session
+}
+
+pub enum CapabilityError {
+    NotHeld,                     // agent lacks required capability
+    Expired,                     // capability token expired
+    Revoked,                     // capability was revoked
+    InsufficientRights,          // capability exists but doesn't permit this intent
+    BudgetExhausted,             // resource budget exceeded
+}
+```
+
+### 17.2 Error Propagation
+
+Errors propagate upward through the layers, gaining context at each level:
+
+```mermaid
+flowchart BT
+    HW["Hardware Driver\nHardwareError::TransferFailed(0x42)"]
+    DA["Device Abstraction\n+ device name, bus type"]
+    SS["Subsystem Service\n+ session context, intent"]
+    AA["Agent API\nSubsystemError with full context"]
+    AU["Audit Space\nStructured error record logged"]
+
+    HW --> DA
+    DA --> SS
+    SS --> AA
+    SS --> AU
+
+    style HW fill:#fdd,stroke:#c44
+    style AU fill:#e0e8f9,stroke:#44c
+```
+
+### 17.3 Recovery Strategies
+
+Each layer has recovery options before escalating:
+
+| Layer | Recovery Strategy |
+|---|---|
+| Hardware Driver | Retry with exponential backoff (max 3 attempts), device reset |
+| Device Abstraction | Fallback to alternative device if available |
+| Subsystem Service | Graceful degradation (e.g., lower sample rate on audio error) |
+| Agent API | Return typed error for agent to handle or display to user |
+
+All errors — including recovered ones — are logged to the subsystem's audit space with structured context (device ID, session ID, error code, recovery action taken).
+
+-----
+
+## 18. Testing Patterns
+
+Subsystem implementations must be testable without hardware. The framework provides patterns for testing at multiple levels.
+
+### 18.1 Mock Device Framework
+
+```rust
+/// Mock transport for host-side unit testing
+pub struct MockTransport {
+    responses: VecDeque<MockResponse>,
+    operations: Vec<MockOperation>,
+}
+
+impl MockTransport {
+    /// Configure a sequence of responses the mock will return
+    pub fn with_responses(responses: Vec<MockResponse>) -> Self { /* ... */ }
+
+    /// Inject an error at a specific operation index
+    pub fn with_error_at(index: usize, error: HardwareError) -> Self { /* ... */ }
+
+    /// Retrieve the log of operations performed against the mock
+    pub fn operations(&self) -> &[MockOperation] { /* ... */ }
+}
+```
+
+Every `DeviceClass` implementation should be testable with a `MockTransport` in place of real hardware. Tests run on the host (`cargo test`) without QEMU.
+
+### 18.2 Conformance Test Suite
+
+The framework provides a generic conformance test suite that every `Subsystem` implementation must pass:
+
+- **Session lifecycle:** open → use → close produces correct audit records
+- **Conflict resolution:** verify conflict policy returns correct resolution for all combinations
+- **Hotplug:** device_added → device_removed correctly cleans up all sessions
+- **Power transitions:** idle → suspended → active round-trip preserves device state
+- **Error recovery:** injected hardware errors propagate correctly and trigger recovery
+- **Capability enforcement:** sessions without valid capabilities are rejected
+
+### 18.3 Fuzz Targets
+
+Hardware descriptor parsing is a primary attack surface. Fuzz targets should cover:
+
+- `HardwareDescriptor` parsing from raw bus data (USB descriptors, PCI BARs, DTB nodes)
+- `SessionIntent` validation (malformed priority, invalid duration, conflicting flags)
+- `DataFormat` negotiation (incompatible format combinations, overflow in dimensions)
+- Feature negotiation (VirtIO feature bits, USB interface descriptors)
+
+The DNAFuzz approach (descriptor-aware fuzzing with field-level mutation guidance) is particularly effective — it found an 8-year Linux kernel USB bug that other fuzzers missed. See [fuzzing.md](../security/fuzzing.md) for the project-wide fuzzing strategy.
+
+### 18.4 Integration Testing Tiers
+
+| Tier | Environment | What It Tests | Speed |
+|---|---|---|---|
+| 1. Host unit tests | `cargo test` | Subsystem logic with MockTransport | Seconds |
+| 2. QEMU device tests | QTest framework | Driver ↔ virtual device interaction | Minutes |
+| 3. QEMU full boot | `just run` | End-to-end session lifecycle | Minutes |
+
+-----
+
+## 19. Performance Monitoring
+
+Every subsystem exposes performance metrics through the kernel observability framework (see [observability.md](../kernel/observability.md)).
+
+### 19.1 Per-Subsystem Metrics
+
+```rust
+/// Standard metrics every subsystem reports
+pub trait SubsystemMetrics {
+    /// How long it takes to open a session (gate check + device setup)
+    fn session_open_latency(&self) -> &Histogram;
+
+    /// Data throughput through active channels
+    fn channel_throughput_bytes(&self) -> &Counter;
+
+    /// Number of currently active sessions
+    fn active_sessions(&self) -> &Gauge;
+
+    /// Error rate (errors per second)
+    fn error_rate(&self) -> &Counter;
+
+    /// Backpressure: fraction of channels above 80% buffer utilization
+    fn high_pressure_channels(&self) -> &Gauge;
+}
+```
+
+These metrics integrate with the `KernelMetrics` registry, enabling system-wide dashboards through the Inspector application (see [inspector.md](../applications/inspector.md)).
+
+### 19.2 Per-Session Telemetry
+
+Each active session tracks:
+
+- **Latency histogram:** end-to-end latency from hardware event to agent delivery
+- **Buffer pressure over time:** rolling average of `DataChannel::pressure()`
+- **Format conversion overhead:** CPU time spent in format negotiation or transcoding
+- **Zero-copy efficiency:** fraction of transfers that avoided memory copies
+
+### 19.3 AIRS Dashboard Queries
+
+AIRS and Inspector can query subsystem health across the system:
+
+- "Which subsystem has the highest error rate?" → compare `error_rate()` across all subsystems
+- "Is any device under backpressure?" → check `high_pressure_channels()` system-wide
+- "What's the audio latency right now?" → query audio subsystem's `session_open_latency()`
+
+-----
+
+## 20. Driver Model Integration
+
+The subsystem framework sits above individual device drivers. This section defines how drivers integrate with the framework and how the HAL Platform trait (see [hal.md](../kernel/hal.md) §2-3) relates to subsystem-level abstractions.
+
+### 20.1 Driver Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered: bus scan / hotplug
+    Discovered --> Probed: match vendor/product/class
+    Probed --> Bound: driver claims device
+    Bound --> Active: subsystem.device_added()
+    Active --> Unbound: driver release
+    Active --> Unbound: hotplug remove
+    Unbound --> [*]: cleanup complete
+
+    Active --> Error: hardware fault
+    Error --> Active: successful recovery
+    Error --> Unbound: unrecoverable
+```
+
+- **Discovered:** Bus enumeration or hotplug event produces a `HardwareDescriptor`.
+- **Probed:** Driver matching checks vendor/product ID tables and device class against registered drivers.
+- **Bound:** The matching driver claims the device and initializes transport (MMIO mapping, interrupt setup, DMA allocation).
+- **Active:** The subsystem's `device_added()` is called, creating a `DeviceClass` instance. Sessions can now be opened.
+- **Unbound:** On hotplug removal or driver unload, all sessions are force-closed, the subsystem's `device_removed()` is called, and resources are released.
+
+### 20.2 Driver Matching
+
+When multiple drivers could handle a device, matching follows a priority order:
+
+1. **Exact match:** vendor ID + product ID (most specific)
+2. **Class match:** device class + subclass + protocol
+3. **Bus match:** bus-specific generic driver (fallback)
+
+### 20.3 Driver Isolation
+
+Following the Asterinas framekernel pattern, the subsystem framework enforces a trust boundary:
+
+- **Framework core (privileged):** Capability gate, session lifecycle, audit logging, buffer pool management. This is the only code that uses `unsafe` for MMIO and DMA operations.
+- **Driver code (de-privileged):** All subsystem-specific logic — format negotiation, protocol handling, device quirks — runs in safe Rust. Drivers interact with hardware through the framework's transport abstraction, never directly.
+
+Each driver runs in its own address space with capability-gated MMIO access. The driver holds a capability token granting access to specific MMIO regions and interrupt lines — nothing more.
+
+-----
+
+## 21. Versioning and Evolution
+
+The subsystem framework must evolve without breaking existing subsystem implementations.
+
+### 21.1 Extension Traits
+
+New framework capabilities are added as extension traits rather than modifying the base `Subsystem` trait:
+
+```rust
+/// Added after initial framework — zero-copy support
+pub trait SubsystemV2: Subsystem {
+    /// Open a session with zero-copy channel support
+    fn open_session_zc(
+        &self,
+        agent: AgentId,
+        capability: &Self::Capability,
+        intent: &SessionIntent,
+    ) -> Result<(Self::Session, Box<dyn ZeroCopyChannel>)> {
+        // Default: fall back to standard session
+        let session = self.open_session(agent, capability, intent)?;
+        Err(SubsystemError::Policy(PolicyError::FormatNotSupported))
+    }
+}
+```
+
+### 21.2 Subsystem Manifest
+
+Every subsystem declares its capabilities and framework version at registration:
+
+```rust
+pub struct SubsystemManifest {
+    pub id: SubsystemId,
+    pub framework_version: u32,      // which framework version this implements
+    pub extensions: Vec<ExtensionId>, // which extension traits are supported
+    pub required_capabilities: Vec<Capability>, // what kernel capabilities the subsystem needs
+    pub mmio_regions: Vec<MmioRegion>,          // declared MMIO needs (validated at registration)
+    pub irq_lines: Vec<u32>,                    // declared interrupt needs
+}
+```
+
+### 21.3 Deprecation Workflow
+
+1. Old methods marked `#[deprecated(since = "v2", note = "use open_session_zc instead")]`
+2. Framework continues to call deprecated methods for subsystems that haven't upgraded
+3. After N releases, deprecated methods are removed and subsystems must implement the replacement
+
+-----
+
+## 22. Future Directions
+
+Research-informed improvements organized by dependency and timeline. Techniques are categorized as either kernel-internal (no external runtime dependency, can run as lightweight statistical models) or AIRS-dependent (requires the AI Runtime Service for semantic understanding).
+
+### 22.1 Zero-Copy DataChannel Evolution
+
+**Timeline:** Phase 7-8 | **Dependency:** IPC shared memory (Phase 3), memory management (Phase 2)
+
+The current `DataChannel` trait uses synchronous `read`/`write` with buffer copies. The `ZeroCopyChannel` extension (§6.2) provides the API; these are the implementation techniques:
+
+- **io_uring-style SQ/CQ rings:** Shared-memory submission and completion queues between driver and agent. Lock-free, single-producer/single-consumer. Linux 6.15 achieves 116 Gbps (41% improvement) with registered buffers and zero-copy receive where hardware DMA writes directly into user pages.
+- **Page-move ownership transfer:** Fuchsia's `zx_vmo_transfer_data` moves physical pages between virtual memory objects — no copy, no page zeroing. AIOS adapts this for `transfer_buffer()` in the `ZeroCopyChannel` trait.
+- **Lease-based bulk I/O:** Hubris's lease system grants temporary read/write access to caller memory via kernel-validated references. Enables zero-copy between isolated address spaces without shared memory regions.
+- **DMA-direct paths:** For the highest throughput (network, storage), hardware DMA targets pre-registered user-space buffers. The kernel validates buffer registration at setup time and enforces IOMMU restrictions.
+
+### 22.2 Async Session Model
+
+**Timeline:** Phase 8-9 | **Dependency:** Scheduler (Phase 3), async runtime
+
+- **Completion-based session operations:** Non-blocking `open_session()` returns a future. Useful when device probe or format negotiation takes time (Bluetooth pairing, USB enumeration).
+- **Waker integration with IPC select:** Agents can wait on multiple device channels and IPC channels simultaneously using the existing `IpcSelect` mechanism (see [ipc.md](../kernel/ipc.md) §5.4).
+- **Cancellation tokens:** Long-running sessions (video recording, network transfers) support cooperative cancellation without forcing session abort.
+
+### 22.3 Formal Verification of Framework Invariants
+
+**Timeline:** Phase 12+ | **Dependency:** Stable framework API
+
+- **Verus proofs for session lifecycle:** The Atmosphere microkernel (SOSP 2025 Best Paper) demonstrated that Verus can verify a full Rust microkernel with a proof-to-code ratio of 7.5:1 (vs seL4's 19:1). Apply Verus to prove session invariants: no double-close, no use-after-close, capability always checked before session creation.
+- **Compile-time priority analysis (RTIC/SRP):** The Stack Resource Policy, used by RTIC for Rust embedded systems, provides deadlock-freedom by construction through compile-time priority ceiling analysis. Apply to conflict resolution to prove no starvation under Queue policy.
+- **TLA+ hotplug state machine:** Model the device lifecycle (Discovered → Probed → Bound → Active → Unbound) and verify that forced session cleanup on device removal never leaks resources or leaves dangling references.
+- **Safe/unsafe boundary (Asterinas framekernel):** Asterinas demonstrates that confining all `unsafe` to ~14% of OS code (the framework) while keeping drivers in safe Rust eliminates entire vulnerability classes. AIOS adopts this for the subsystem framework: transport abstractions in the framework use `unsafe`; driver code is pure safe Rust.
+
+### 22.4 AI-Driven Subsystem Intelligence (AIRS-Dependent)
+
+**Timeline:** Phase 8-11 | **Dependency:** AIRS runtime (Phase 8)
+
+These capabilities require AIRS for semantic understanding and live inference:
+
+- **Natural language device policies:** Users express policies in natural language — "never let background apps use the microphone" or "only allow video calls to use the camera." AIRS translates these to structured capability constraints using techniques from LACE and NIST's NL-to-ABAC research. The kernel enforces the translated policy; AIRS handles the translation.
+- **GNN cross-subsystem threat detection:** Model device access patterns as a heterogeneous graph (agents → sessions → devices). AIRS runs graph neural network inference to detect lateral movement — an agent that normally uses only network suddenly accessing the microphone. Inspired by Splunk's GNN-based security observability.
+- **Content-aware format selection:** Instead of static format negotiation, AIRS analyzes content semantics to select optimal codec and quality. Voice calls get low-latency narrow-band; music gets high-fidelity wide-band. Adapts dynamically based on content changes (speaker switches to music playback mid-call).
+- **Intent-driven device management:** Inspired by AIOS (COLM 2025) and Confucius (ASPLOS 2025), AIRS acts as a device management agent that reads subsystem telemetry and pushes optimal configurations. An AIRS agent observes that an agent always uses the same audio format and pre-configures the device to avoid negotiation latency.
+
+### 22.5 Kernel-Internal Statistical Models
+
+**Timeline:** Phase 5-8 | **Dependency:** Subsystem metrics (§19), no AIRS dependency
+
+These techniques use frozen decision trees, EMA thresholds, or histogram bucketing — lightweight enough to run in-kernel without AIRS:
+
+- **RL parameter tuning:** Subsystems expose named tunables via `register_tunables()` (buffer sizes, timeout values, prefetch depths). A kernel-internal Q-learning agent adjusts these based on workload feedback. Inspired by STUN and OS-R1 research.
+- **Statistical fault prediction:** Track per-device error counters with exponential moving average. When `health_score()` drops below a threshold, proactively notify the user before device failure. Ensemble models achieve >90% prediction accuracy for memory and storage devices.
+- **Adaptive power prediction:** Build per-device usage histograms (Markov chain on time-of-day buckets). `predict_next_use()` informs power state transitions — don't suspend the microphone at 9 AM if the user has a daily standup. Inspired by Android Adaptive Battery.
+- **I/O prefetch pattern detection:** Stride detection and sequential pattern matching on device access patterns. Classic kernel technique applied uniformly across all subsystems via `prefetch_hint()`.
+- **Thermal-aware device routing:** When thermal pressure rises, route workloads to cooler devices. MPC + ML frequency selection achieves 12.5°C reduction at 1% performance cost.
+
+### 22.6 Multi-Device Subsystem Federation
+
+**Timeline:** Phase 14+ | **Dependency:** Networking (Phase 7), Space Sync (Phase 9)
+
+- **Session handoff:** Continue a session across AIOS devices — audio playback transfers from phone to laptop, video call moves from desktop to tablet. Each session implements `Serialize + Deserialize` for state transfer. Encrypted via the Flow sync protocol. Inspired by Apple Handoff, Android 17 Handoff, and Microsoft Cross Device Resume.
+- **Capability delegation for device sharing:** Share a peripheral's capability with a peer device. Delegation uses the existing cascade revocation system (see [model/capabilities.md](../security/model/capabilities.md) §3.5) with attenuation — the delegated capability can be strictly less powerful than the original.
+- **Unified device registry:** Devices connected to any AIOS device in the user's identity group appear in a combined registry. "Play this on the living room speakers" works even though the speakers are connected to a different AIOS device.
+
+### 22.7 Summary
+
+| Direction | Timeline | Dependency | Impact |
+|---|---|---|---|
+| Zero-copy DataChannel | Phase 7-8 | Shared memory, MM | Eliminates copies for high-throughput subsystems |
+| Async sessions | Phase 8-9 | Scheduler, async | Non-blocking device access for all agents |
+| Formal verification | Phase 12+ | Stable API | Proven session safety invariants |
+| AI intelligence (AIRS) | Phase 8-11 | AIRS runtime | NL policies, threat detection, smart format selection |
+| Statistical models (kernel) | Phase 5-8 | Metrics only | Fault prediction, adaptive power, RL tuning |
+| Multi-device federation | Phase 14+ | Networking, sync | Cross-device sessions and device sharing |
+
+### 22.8 References
+
+- Atmosphere: A Verified Microkernel in Rust. SOSP 2025 Best Paper. [ACM DL](https://dl.acm.org/doi/10.1145/3731569.3764821)
+- LionsOS: A Verified-Secure Operating System Framework. arXiv:2501.06234, Jan 2025. [arXiv](https://arxiv.org/abs/2501.06234)
+- Asterinas: Framekernel Architecture. USENIX ATC 2025. [asterinas.github.io](https://asterinas.github.io/)
+- Fuchsia Driver Framework v2. [fuchsia.dev](https://fuchsia.dev/fuchsia-src/concepts/drivers/driver_framework)
+- Hubris: An Embedded OS for Oxide. [hubris.oxide.computer](https://hubris.oxide.computer/reference/)
+- Theseus: An Experiment in OS Structure and State Management. OSDI 2020. [USENIX](https://www.usenix.org/conference/osdi20/presentation/boos)
+- Tock OS Hardware Interface Layer. [tockos.org](https://book.tockos.org/development/hil)
+- RTIC: Real-Time Interrupt-driven Concurrency. [rtic.rs](https://rtic.rs/2/book/en/preface.html)
+- io_uring Zero-Copy Receive. Linux 6.15. [kernel.org](https://docs.kernel.org/networking/iou-zcrx.html)
+- Fuchsia VMO Transfer Data (RFC-0223). [fuchsia.dev](https://fuchsia.dev/fuchsia-src/contribute/governance/rfcs/0223_zx_vmo_transfer_data)
+- DNAFuzz: USB Descriptor-Aware Fuzzing. IEEE 2024. [IEEE Xplore](https://ieeexplore.ieee.org/document/11334375/)
+- AIOS: LLM Agent Operating System. COLM 2025. [arXiv](https://arxiv.org/abs/2403.16971)
+- STUN: RL-based OS Parameter Tuning. Applied Sciences 2022. [MDPI](https://www.mdpi.com/2076-3417/12/14/7072)
+- OS-R1: Reinforcement Learning for OS Optimization. arXiv 2025. [arXiv](https://arxiv.org/html/2508.12551v1)
+- LAKE: Learned Kernel Scheduling. UT Austin. [Paper](https://utns.cs.utexas.edu/assets/papers/lake_camera_ready.pdf)

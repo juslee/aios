@@ -81,7 +81,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Compositor | `docs/platform/compositor.md` | All (Phase 5-6+) |
 | Networking | `docs/platform/networking.md` | All (Phase 7+) |
 | Audio subsystem | `docs/platform/audio.md` | All (Phase 22+) |
-| Subsystem framework | `docs/platform/subsystem-framework.md` | All |
+| Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | All (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
