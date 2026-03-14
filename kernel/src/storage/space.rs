@@ -63,7 +63,6 @@ impl SpaceTable {
     }
 
     /// Find a space by ID (mutable, used for quota updates).
-    #[allow(dead_code)]
     pub fn get_mut(&mut self, id: &SpaceId) -> Option<&mut Space> {
         self.spaces
             .iter_mut()

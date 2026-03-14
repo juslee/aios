@@ -203,7 +203,11 @@ pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
         // Decrement current content block refcount.
         let _ = engine.dec_ref(&obj.content_hash);
 
-        // Walk version chain and free version node blocks + their content references.
+        // Walk version chain and free version node blocks.
+        // Note: version nodes do NOT hold refcounts on their content blocks.
+        // Content refcounts are managed by object_update/version_rollback at
+        // mutation time (old content is dec_ref'd immediately on update).
+        // Only the current object.content_hash holds a live refcount (dec'd above).
         let mut current_hash = obj.version_head;
         let mut buf = [0u8; 256];
         let max_depth = 1024;
@@ -223,10 +227,6 @@ pub fn object_delete(id: &ObjectId) -> Result<(), StorageError> {
             // Maintained by compile-time assertion: size_of::<Version>() == 256.
             // If violated (e.g., struct gains a pointer), read_unaligned returns garbage.
             let ver = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
-            // Free the version's referenced content block (if different from current).
-            if ver.content_hash != obj.content_hash {
-                let _ = engine.dec_ref(&ver.content_hash);
-            }
             // Free the version node block itself.
             let next = ver.parent;
             let _ = engine.dec_ref(&current_hash);

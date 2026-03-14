@@ -333,6 +333,9 @@ impl BlockEngine {
         let data_crc = crc32c(data);
 
         // 5. Build the byte offset and size for BlockLocation.
+        if data.len() > u32::MAX as usize {
+            return Err(StorageError::IoError);
+        }
         let byte_offset = self.data_next_sector * SECTOR_SIZE as u64;
         let byte_size = data.len() as u32;
 
