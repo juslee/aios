@@ -34,7 +34,7 @@ flowchart TD
     AgentC["Agent C"] --> IPC
 
     IPC["`IPC
-(PostAttention capability required)`"]
+(AttentionPost capability required)`"]
 
     subgraph ATM["Attention Manager (system service)"]
         IQ["`Intake Queue
@@ -72,7 +72,6 @@ Attention Panel
 Interrupt overlay
 Conversation Bar
 Toast (NextBreak)`"]
-```
 ```
 
 -----
@@ -169,15 +168,15 @@ pub enum Urgency {
 
 ### 3.2 How Items Differ from Notifications
 
-|Property|Traditional Notification|AIOS Attention Item|
-|--------|----------------------|-------------------|
-|Urgency|Set by sending app|Set by AI based on content + context|
-|Content|Free-form string|Typed, structured data|
-|Grouping|None (chronological list)|AI clusters related items|
-|Summarization|None|AI generates one-line summaries|
-|Actions|Dismiss / Open app|Context-specific (Reply, Accept, Snooze, etc.)|
-|Filtering|Per-app toggle|Per-context, per-relationship, AI-triaged|
-|History|Scrollback until cleared|Queryable audit log with analytics|
+| Property | Traditional Notification | AIOS Attention Item |
+| --- | --- | --- |
+| Urgency | Set by sending app | Set by AI based on content + context |
+| Content | Free-form string | Typed, structured data |
+| Grouping | None (chronological list) | AI clusters related items |
+| Summarization | None | AI generates one-line summaries |
+| Actions | Dismiss / Open app | Context-specific (Reply, Accept, Snooze, etc.) |
+| Filtering | Per-app toggle | Per-context, per-relationship, AI-triaged |
+| History | Scrollback until cleared | Queryable audit log with analytics |
 
 -----
 
@@ -379,7 +378,7 @@ impl AttentionManager {
 
 If agents controlled their own urgency, every agent would set `Interrupt`. This is exactly the problem with traditional notifications. In AIOS:
 
-- The agent's `PostAttention` IPC message has no urgency field.
+- The agent's `AttentionPost` IPC message has no urgency field.
 - The agent provides `AttentionContent` — a structured description of what happened.
 - AIRS assesses urgency based on content, sender, context, and history.
 - The agent never knows what urgency was assigned to its item.
@@ -634,12 +633,12 @@ impl AirsClient {
 
 Example summaries:
 
-|Items|Summary|
-|-----|-------|
-|5 Slack messages in #engineering|"5 messages in #engineering about deployment timing (none urgent)"|
-|3 CI builds|"3 builds completed: 2 passed, 1 failed (main branch)"|
-|8 emails|"8 emails: 1 from Alex about meeting, 5 newsletters, 2 automated"|
-|4 agent reports|"research-agent finished processing 4 papers, results in research/"|
+| Items | Summary |
+| --- | --- |
+| 5 Slack messages in #engineering | "5 messages in #engineering about deployment timing (none urgent)" |
+| 3 CI builds | "3 builds completed: 2 passed, 1 failed (main branch)" |
+| 8 emails | "8 emails: 1 from Alex about meeting, 5 newsletters, 2 automated" |
+| 4 agent reports | "research-agent finished processing 4 papers, results in research/" |
 
 -----
 
@@ -693,7 +692,7 @@ pub enum DigestTrigger {
 
 ### 7.3 Digest Rendering
 
-```
+```text
 ┌─ ATTENTION ──────────────────────────────────────────────┐
 │                                                           │
 │  ── Since 13:00 (2 hours ago) ──                         │
@@ -748,7 +747,7 @@ pub struct ProposedAction {
 pub enum ActionType {
     /// Reply to a message
     Reply { channel: IpcChannel, draft: Option<String> },
-    /// Open a URL or space object
+    /// Open a URL or Space object
     Open { target: OpenTarget },
     /// Accept/decline a calendar event
     CalendarResponse { event_id: String, response: CalendarRsvp },
@@ -798,13 +797,13 @@ impl AttentionManager {
 
 ### 8.3 Examples
 
-|Event|Proposed Actions|
-|-----|---------------|
-|"Alex asks: can you review PR #427?"|[Accept and open PR] [Decline] [Remind in 1hr]|
-|"Meeting moved to 16:00"|[Acknowledge] [Suggest different time] [Decline]|
-|"CI build failed on feature branch"|[View logs] [Rerun] [Dismiss]|
-|"backup-agent completed daily backup"|[View details] — auto-dismiss after 1 hour|
-|"System update available"|[Install at next reboot] [Remind tomorrow] [Details]|
+| Event | Proposed Actions |
+| --- | --- |
+| "Alex asks: can you review PR #427?" | [Accept and open PR] [Decline] [Remind in 1hr] |
+| "Meeting moved to 16:00" | [Acknowledge] [Suggest different time] [Decline] |
+| "CI build failed on feature branch" | [View logs] [Rerun] [Dismiss] |
+| "backup-agent completed daily backup" | [View details] — auto-dismiss after 1 hour |
+| "System update available" | [Install at next reboot] [Remind tomorrow] [Details] |
 
 -----
 
@@ -812,7 +811,7 @@ impl AttentionManager {
 
 ### 9.1 Posting Attention Items
 
-Agents post attention items via IPC. The agent needs the `PostAttention` capability in its manifest:
+Agents post attention items via IPC. The agent needs the `AttentionPost` capability in its manifest:
 
 ```toml
 # Agent manifest
@@ -957,7 +956,7 @@ impl PresentationRouter {
 
 For `Interrupt`-level items, a non-dismissible overlay appears:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                                                          │
 │  ⚠ Alex (Slack):                                        │
@@ -969,6 +968,7 @@ For `Interrupt`-level items, a non-dismissible overlay appears:
 ```
 
 The overlay is:
+
 - Positioned at the top of the screen, not fullscreen
 - Semi-transparent background so context isn't lost
 - Requires one action (reply, open, snooze, or dismiss)
@@ -1081,6 +1081,9 @@ pub struct AuditEntry {
     pub user_action: Option<UserAction>,
     pub response_time: Option<Duration>,
     pub timestamp: SystemTime,
+    /// SHA-256 hash of the previous entry, forming a tamper-evident chain.
+    /// Zero hash for the first entry in the log.
+    pub prev_hash: ContentHash,
 }
 
 pub enum UserAction {
@@ -1129,17 +1132,17 @@ If the user consistently ignores items from a particular agent, AIRS suggests re
 
 ### 14.1 Latency Targets
 
-|Operation|Target|
-|---------|------|
-|Intake (receive IPC message)|< 1ms|
-|AIRS urgency assessment|< 50ms for single item|
-|Context filter check|< 1ms|
-|Grouping (batch of 10)|< 10ms|
-|Summarization (AIRS)|< 200ms for group summary|
-|Presentation routing|< 1ms|
-|Total intake-to-presentation (Interrupt)|< 100ms|
-|Total intake-to-presentation (NextBreak)|< 500ms|
-|Digest generation|< 2 seconds|
+| Operation | Target |
+| --- | --- |
+| Intake (receive IPC message) | < 1ms |
+| AIRS urgency assessment | < 50ms for single item |
+| Context filter check | < 1ms |
+| Grouping (batch of 10) | < 10ms |
+| Summarization (AIRS) | < 200ms for group summary |
+| Presentation routing | < 1ms |
+| Total intake-to-presentation (Interrupt) | < 100ms |
+| Total intake-to-presentation (NextBreak) | < 500ms |
+| Digest generation | < 2 seconds |
 
 ### 14.2 Batch Processing
 
@@ -1198,11 +1201,11 @@ The Attention Manager is a system service that starts during boot Phase 4 (User 
 
 ### 15.1 Initialization Sequence
 
-```
+```text
 Boot Phase 4 — Attention Manager startup:
 
 1. Service Manager spawns Attention Manager process
-   Capabilities granted: PostAttention (receive), ContextRead,
+   Capabilities granted: AttentionPost (receive), ContextRead,
    CompositorNotify, AIRSInference (optional at this point)
 
 2. Load user preferences from user/preferences/attention/
@@ -1218,7 +1221,7 @@ Boot Phase 4 — Attention Manager startup:
    - Items arriving before AIRS is ready are queued, not dropped
 
 4. Initialize audit log writer
-   - Connect to system/audit/attention/ space
+   - Connect to system/audit/attention/ Space
    - All items logged regardless of AIRS availability
 
 5. Connect to Context Engine (if available)
@@ -1252,7 +1255,7 @@ pub struct RuleBasedTriage {
     /// Typically matched as simple case-insensitive substrings.
     urgent_keywords: Vec<&'static str>,
     /// Agent categories with default urgency levels
-    agent_urgency_defaults: HashMap<AgentCategory, UrgencyLevel>,
+    agent_urgency_defaults: HashMap<AgentCategory, Urgency>,
     /// Person priority from identity system (if available)
     relationship_boosts: HashMap<IdentityId, f32>,
 }
@@ -1261,8 +1264,9 @@ impl RuleBasedTriage {
     pub fn assess(&self, item: &AttentionItem) -> UrgencyAssessment {
         let mut score: f32 = 0.0;
 
-        // 1. Agent category baseline
-        score += match item.source_agent.category {
+        // 1. Agent category baseline (looked up from agent registry, not on AttentionItem)
+        let category = agent_registry.category(item.source);
+        score += match category {
             AgentCategory::System => 0.8,       // system alerts are usually important
             AgentCategory::Communication => 0.5, // messages vary
             AgentCategory::Productivity => 0.3,  // typically low urgency
@@ -1271,41 +1275,47 @@ impl RuleBasedTriage {
             _ => 0.3,
         };
 
-        // 2. Keyword scan (no AI, just pattern matching)
-        if self.urgent_keywords.iter().any(|kw| item.content.contains(kw)) {
+        // 2. Keyword scan — case-insensitive substring match (no AI)
+        let text_lower = item.content.to_text().to_lowercase();
+        if self.urgent_keywords.iter().any(|kw| text_lower.contains(kw)) {
             score += 0.3;
         }
 
         // 3. Relationship boost (if identity service is up)
-        if let Some(person) = &item.sender_identity {
-            if let Some(boost) = self.relationship_boosts.get(&person.id) {
+        if let AttentionContent::PersonMessage { sender, .. } = &item.content {
+            if let Some(boost) = self.relationship_boosts.get(sender) {
                 score += boost;  // e.g., +0.4 for family members
             }
         }
 
-        // 4. Declared urgency hint (agents can suggest, but this is just a hint)
-        score += match item.declared_urgency {
-            DeclaredUrgency::Critical => 0.2,
-            DeclaredUrgency::High => 0.1,
-            DeclaredUrgency::Normal => 0.0,
-            DeclaredUrgency::Low => -0.1,
+        // 4. Content type baseline (structural signal, not agent-declared)
+        score += match &item.content {
+            AttentionContent::SystemEvent { event_type, .. } => match event_type {
+                SystemEventType::Error | SystemEventType::SecurityAlert => 0.2,
+                _ => 0.0,
+            },
+            AttentionContent::Schedule { time, .. } => {
+                // Time-sensitive items get a boost based on proximity
+                let until = time.duration_since(SystemTime::now()).unwrap_or_default();
+                if until < Duration::from_secs(600) { 0.2 } else { 0.0 }
+            }
+            _ => 0.0,
         };
 
         score = score.clamp(0.0, 1.0);
 
         UrgencyAssessment {
-            score,
-            delivery: if score > 0.8 {
-                DeliveryMode::Interrupt
+            urgency: if score > 0.8 {
+                Urgency::Interrupt
             } else if score > 0.5 {
-                DeliveryMode::NextBreak
+                Urgency::NextBreak
             } else if score > 0.2 {
-                DeliveryMode::Digest
+                Urgency::Digest
             } else {
-                DeliveryMode::Silent
+                Urgency::Silent
             },
-            confidence: Confidence::Low, // rule-based is always low confidence
-            method: TriageMethod::RuleBased,
+            confidence: 0.3, // rule-based is always low confidence
+            signals: Vec::new(), // no AI signals available
         }
     }
 }
@@ -1328,13 +1338,13 @@ impl RuleBasedTriage {
 The Attention Manager is functional with zero configuration:
 
 | Dependency | Available at startup? | Fallback |
-|---|---|---|
+| --- | --- | --- |
 | AIRS | Maybe (loading model) | Rule-based triage (§15.2) |
 | Context Engine | Maybe (starting concurrently) | Assume ContextMode::Default — medium threshold |
 | Identity Service | Maybe (starting concurrently) | No relationship boosts; all senders treated equally |
 | Compositor | No (Phase 5) | Buffer presentation events; deliver when compositor connects |
-| User Preferences | Yes (loaded from space) | Built-in defaults if first boot |
-| Audit Log | Yes (space writer) | Always available after Phase 2 (storage) |
+| User Preferences | Yes (loaded from Space) | Built-in defaults if first boot |
+| Audit Log | Yes (Space writer) | Always available after Phase 2 (storage) |
 
 **First-boot behavior.** On first boot, no user preferences exist. The Attention Manager uses conservative defaults: only system agents can interrupt, everything else goes to the digest. The user configures preferences through the Conversation Bar ("make messages from Mom always interrupt") or the Settings agent. Preferences are stored in `user/preferences/attention/` and loaded on subsequent boots.
 
@@ -1352,7 +1362,7 @@ The connection uses a dedicated IPC channel with the `CompositorNotify` capabili
 ```rust
 pub enum PresentationCommand {
     /// Update the Status Strip badge count
-    UpdateBadge { unseen_count: u32, highest_urgency: UrgencyLevel },
+    UpdateBadge { unseen_count: u32, highest_urgency: Urgency },
     /// Show an interrupt overlay (urgent item)
     ShowInterrupt { item: PresentableItem, timeout: Duration },
     /// Show a toast notification (NextBreak item, user is at a break)
@@ -1368,7 +1378,7 @@ pub enum PresentationCommand {
 
 Development plan phases (see development-plan.md — not to be confused with boot phases):
 
-```
+```text
 Dev Phase 9a:   Attention Manager service          → intake queue, audit log
 Dev Phase 9b:   AIRS urgency assessment            → basic content analysis
 Dev Phase 9c:   Context filtering                  → context-aware thresholds
@@ -1409,3 +1419,411 @@ Dev Phase 24:   Attention analytics                → queryable history, trends
 7. **The user is always in control.** Override any decision. Suppress any agent. Boost any person. The AI's assessment is a default, not a mandate.
 
 8. **History is queryable.** Nothing is lost. Everything is in the audit log. "What did I miss?" has a real answer.
+
+-----
+
+## 18. Security
+
+The Attention Manager sits at a critical trust boundary: it receives structured data from every agent on the system and decides what reaches the user's screen. A compromised or malicious agent that can manipulate the attention pipeline can escalate its own importance, suppress other agents' items, or inject misleading content into the user's attention stream.
+
+### 18.1 Threat Model
+
+| Threat | Attack vector | Impact |
+| --- | --- | --- |
+| Urgency inflation | Agent crafts AttentionContent with false urgency markers ("CRITICAL", "server down") to trick AIRS into assigning Interrupt | User interrupted unnecessarily; trust in attention system erodes |
+| Attention flooding | Agent posts thousands of items per second to overwhelm intake queue | Legitimate items delayed or dropped; denial of service |
+| Content injection | Agent embeds misleading text in `summary` or `preview` fields to impersonate another agent or person | User takes action based on false information |
+| Suppression attack | Compromised agent fills the intake queue with low-priority items, pushing legitimate urgent items out of buffer | Urgent items missed |
+| Audit log tampering | Agent attempts to modify or delete its own audit entries | Accountability broken; malicious activity hidden |
+| Side-channel leak | Agent infers user context (Focus mode, activity, relationships) from delivery timing or rate-limit feedback | Privacy violation |
+
+### 18.2 Capability Enforcement
+
+The Attention Manager enforces capabilities at every boundary. No agent can interact with the attention pipeline without the appropriate token (see [capabilities.md](../security/model/capabilities.md) §3).
+
+The attention subsystem defines its capabilities as variants of the global `Capability` enum (see [capabilities.md](../security/model/capabilities.md) §3). This follows the same pattern as other subsystems — attention-specific capabilities are integrated into the unified capability model, not a separate enum:
+
+```rust
+// Attention-specific variants within the global Capability enum
+Capability::AttentionPost(max_urgency: Urgency),  // post items; max_urgency caps the highest urgency AIRS can assign
+Capability::AttentionRead(scope: AttentionScope),  // read items posted by other agents
+Capability::AttentionConfigure,                     // modify preferences or filtering rules
+Capability::AttentionAudit(scope: AuditScope),      // query the audit log
+Capability::CompositorNotify,                       // receive presentation commands (badge, overlay, toast)
+Capability::AIRSInference,                          // invoke AIRS for urgency assessment
+Capability::AuditAppend,                            // append entries to attention audit log (write-only)
+
+pub enum AuditScope {
+    /// Agent can only see its own items
+    OwnItems,
+    /// Full audit access (Inspector only)
+    AllItems,
+}
+```
+
+**Capability attenuation:** An `AttentionPost` token can be attenuated to restrict the content types an agent may post. For example, a media agent might be restricted to `AttentionContent::AgentReport` only — it cannot post `PersonMessage` content, which would be a content injection vector.
+
+### 18.3 Damage Ceiling Guarantees
+
+Even with a valid `AttentionPost` capability, an agent's ability to harm the user is bounded:
+
+| Control | Mechanism | Ceiling |
+| --- | --- | --- |
+| Rate limiting | Per-agent token bucket (§9.2) | 10 items/min, 100 items/hr |
+| Urgency cap | AIRS assessment (not agent-declared) | Agent cannot force Interrupt |
+| Queue depth | Bounded intake queue (1000 items); on overflow, lowest-urgency item evicted | High-urgency items cannot be displaced by low-priority floods |
+| Demotion cascade | Repeated rate-limit violations → items auto-demoted to Silent | Flooding has zero user impact |
+| Behavioral flag | 3+ rate-limit violations in 1 hour → anomaly flag in AIRS | Inspector notifies user |
+| Capability revocation | User revokes AttentionPost via Inspector or Conversation Bar | Agent permanently silenced until reinstalled |
+
+### 18.4 Audit Log Integrity
+
+The audit log in `system/audit/attention/` is append-only and tamper-evident:
+
+- **Write-only for agents:** No agent — including the Attention Manager itself — can modify or delete audit entries. The audit log writer has a one-way capability: `AuditAppend`, which permits only sequential writes.
+- **Hash chain:** Each audit entry includes a SHA-256 hash of the previous entry, forming a tamper-evident chain. The Inspector validates chain integrity on startup and periodically during operation.
+- **Separate storage zone:** The audit Space resides in the `system/` security zone (see [spaces.md](../storage/spaces.md) §3.2), which has a higher trust level than user or ephemeral zones. Only kernel-level and system services can write to it.
+
+### 18.5 Content Screening
+
+Before urgency assessment, the Attention Manager screens incoming content for policy violations:
+
+```rust
+pub struct ContentScreener {
+    /// Reject items containing executable payloads or markup injection
+    sanitizer: InputSanitizer,
+    /// Detect impersonation (agent claiming to be a different source)
+    impersonation_detector: ImpersonationDetector,
+    /// Check content against trust-level restrictions
+    trust_policy: TrustLevelPolicy,
+}
+
+impl ContentScreener {
+    pub fn screen(&self, item: &AttentionItem) -> ScreeningResult {
+        // 1. Sanitize: strip or reject executable content, markup, control chars
+        if let Err(violation) = self.sanitizer.check(&item.content) {
+            return ScreeningResult::Rejected(violation);
+        }
+
+        // 2. Impersonation check: PersonMessage must match agent's declared
+        //    identity bindings. A weather agent cannot post as "Alex (Slack)".
+        if let AttentionContent::PersonMessage { sender, service, .. } = &item.content {
+            if !self.impersonation_detector.verify(item.source, sender, service) {
+                return ScreeningResult::Rejected(
+                    ScreeningViolation::Impersonation,
+                );
+            }
+        }
+
+        // 3. Trust-level policy: third-party agents (Level 3) cannot post
+        //    SystemEvent::SecurityAlert — only system agents (Level 1) can.
+        if let AttentionContent::SystemEvent { event_type, .. } = &item.content {
+            if !self.trust_policy.allows(item.source, event_type) {
+                return ScreeningResult::Rejected(
+                    ScreeningViolation::TrustLevelViolation,
+                );
+            }
+        }
+
+        ScreeningResult::Passed
+    }
+}
+```
+
+### 18.6 Side-Channel Mitigation
+
+To prevent agents from inferring user context through delivery timing:
+
+- **Constant-time rate limiting:** Rate-limit responses return after a fixed delay regardless of whether the item was accepted or throttled. The agent cannot distinguish "accepted" from "queued" from "demoted."
+- **No delivery receipt:** Agents do not receive confirmation that their item was presented to the user. They post and forget. This prevents an agent from timing user responses to infer activity patterns.
+- **Audit queries are scoped:** An agent with `AttentionAudit(scope: OwnItems)` can see its own items' delivery status, but not other agents' items or the user's response times to other agents.
+
+-----
+
+## 19. AI-Native Intelligence
+
+The Attention Manager is AIOS's most AI-dependent system service. While §4 describes the basic AIRS urgency assessment pipeline, this section covers advanced AI capabilities that make AIOS's attention management qualitatively different from traditional notification systems.
+
+### 19.1 AIRS-Dependent Capabilities
+
+These features require the full AIRS runtime with LLM inference and are unavailable during pre-AIRS boot (§15.2).
+
+#### 19.1.1 Learned Urgency Calibration
+
+AIRS tunes its urgency model per-user based on engagement feedback. ML-based notification preference predictors that combine content features with contextual sensing data (location, time, activity, device state) can achieve high accuracy, particularly when personalized to individual users over time.
+
+```rust
+pub struct UrgencyCalibrator {
+    /// Per-user signal weights, updated from engagement history
+    user_weights: HashMap<UrgencySignalKind, f32>,
+    /// Bayesian prior from population-level engagement data
+    population_prior: HashMap<UrgencySignalKind, f32>,
+    /// Learning rate for weight updates
+    alpha: f32,
+    /// Minimum observations before overriding population prior
+    min_observations: u32,
+}
+
+impl UrgencyCalibrator {
+    /// Update weights based on user response to an item.
+    /// Fast response (< 60s) = positive signal for current urgency level.
+    /// Ignored item = negative signal. Snoozed = mild negative.
+    pub fn update(&mut self, item: &AttentionItem, action: &UserAction) {
+        let reward = match action {
+            UserAction::Acted(_) => 1.0,
+            UserAction::Seen => 0.3,
+            UserAction::Snoozed(_) => -0.2,
+            UserAction::Dismissed => -0.5,
+            UserAction::Never => -1.0,
+        };
+
+        for signal in &item.triage.signals {
+            let kind = signal.kind();
+            let current = self.user_weights.entry(kind).or_insert(
+                *self.population_prior.get(&kind).unwrap_or(&0.5),
+            );
+            *current += self.alpha * reward;
+            *current = current.clamp(0.0, 1.0);
+        }
+    }
+}
+```
+
+Over time, AIRS learns that this specific user always responds quickly to Slack messages from colleagues (boost `HistoricalEngagement` weight) but ignores newsletters (reduce `AgentTrustLevel` weight for the newsletter agent). The population prior prevents cold-start problems for new users.
+
+#### 19.1.2 Adversarial Content Detection
+
+AIRS monitors for agents that craft content designed to game urgency assessment — the attention equivalent of SEO spam:
+
+- **Urgency marker stuffing:** Agent includes "URGENT CRITICAL ASAP" in every item. AIRS detects the pattern by comparing the agent's content urgency markers against the user's actual response rate. If the user consistently ignores "urgent" items from an agent, AIRS dampens that agent's urgency marker signals.
+- **Impersonation via content:** An agent posts `PersonMessage` with a preview that mimics a message from a known contact. Content screening (§18.5) catches direct impersonation, but AIRS also applies semantic similarity detection to flag items whose language style closely matches known contacts.
+- **Context manipulation:** An agent posts time-sensitive items with fake deadlines. AIRS cross-references claimed deadlines against the user's calendar and known schedules to validate `TimeSensitivity` signals.
+
+#### 19.1.3 Personalized Summarization
+
+Different users prefer different summary styles. AIRS adapts digest summaries based on engagement patterns:
+
+- **Brevity preference:** Some users act on one-line summaries; others expand every group. AIRS adjusts summary length accordingly.
+- **Detail focus:** Some users care about sender names; others care about topic keywords. AIRS weights summary content based on which elements correlate with user engagement.
+- **Temporal framing:** "5 messages in the last hour" vs "5 messages since your last check" — AIRS learns which temporal framing the user prefers.
+
+#### 19.1.4 Cross-Item Correlation
+
+AIRS detects relationships between items from different agents that no single agent can see:
+
+- **Cascading events:** A CI failure notification from the build agent + a Slack message mentioning "broken build" from a colleague → AIRS groups them and boosts urgency because they're about the same incident.
+- **Duplicate detection:** A calendar reminder from the scheduling agent + an email reminder from the email agent about the same meeting → AIRS merges them into a single attention item.
+- **Contradiction detection:** One agent reports "deploy successful," another reports "deploy failed" → AIRS flags the contradiction and presents both with elevated urgency.
+
+#### 19.1.5 Predictive Attention
+
+AIRS anticipates what the user will care about based on temporal and behavioral patterns:
+
+- **Proactive digest:** If the user typically checks the attention panel at 9am, AIRS pre-generates the morning digest at 8:55am so it's ready instantly.
+- **Anticipated queries:** If the user always asks "any messages from Alex?" after a focus session, AIRS pre-computes the answer and surfaces it when the focus session ends.
+- **Attention budget:** AIRS estimates the user's attention capacity based on current cognitive load (inferred from Context Engine) and throttles non-urgent items when the user is under high load.
+
+### 19.2 Kernel-Internal ML
+
+These lightweight models run without AIRS and provide attention management even when the full AI runtime is unavailable (boot, AIRS crash, low-power mode).
+
+#### 19.2.1 Fast-Path Urgency Heuristic
+
+A decision tree trained offline on population engagement data, compiled to a fixed lookup table in the kernel. Runs in < 1ms with zero memory allocation:
+
+```text
+Decision tree for pre-AIRS urgency classification:
+
+1. Is content type SystemEvent with SecurityAlert or Error?
+   → YES: Interrupt (confidence: 0.95)
+2. Is sender in user's top-5 contacts (by response frequency)?
+   → YES: NextBreak (confidence: 0.80)
+3. Is agent category System or Communication?
+   → YES and content contains urgency keywords? → NextBreak (0.70)
+   → YES and no urgency keywords? → Digest (0.60)
+4. Is item time-sensitive (< 10 minutes to deadline)?
+   → YES: NextBreak (confidence: 0.75)
+5. Default: Digest (confidence: 0.50)
+```
+
+This decision tree augments the rule-based triage in §15.2. On first boot (no engagement data), the rule-based triage from §15.2 is used. Once sufficient engagement data accumulates, this decision tree is trained offline and deployed as a static lookup table, replacing the rule-based heuristics. It is retrained weekly from updated engagement data.
+
+#### 19.2.2 Posting Rate Anomaly Detector
+
+An exponentially weighted moving average (EWMA) tracker per agent detects abnormal posting patterns without AIRS:
+
+```rust
+pub struct PostingRateMonitor {
+    /// Per-agent EWMA of posting rate (items/minute)
+    rates: HashMap<AgentId, f64>,
+    /// Smoothing factor (0.1 = slow adaptation, 0.5 = fast)
+    alpha: f64,
+    /// Threshold multiplier for anomaly detection
+    anomaly_multiplier: f64,  // default: 3.0 (3σ equivalent)
+}
+
+impl PostingRateMonitor {
+    pub fn record_post(&mut self, agent: AgentId) -> AnomalyResult {
+        let rate = self.rates.entry(agent).or_insert(1.0);
+        let current_rate = self.measure_current_rate(agent);
+
+        if current_rate > *rate * self.anomaly_multiplier {
+            return AnomalyResult::Anomalous {
+                expected: *rate,
+                observed: current_rate,
+            };
+        }
+
+        // Update EWMA
+        *rate = self.alpha * current_rate + (1.0 - self.alpha) * *rate;
+        AnomalyResult::Normal
+    }
+}
+```
+
+When an anomaly is detected, the agent's items are auto-demoted to Silent and a behavioral flag is logged in the audit trail. When AIRS becomes available, it performs deeper analysis of the flagged agent's posting history.
+
+#### 19.2.3 Engagement Pattern Classifier
+
+A per-user lookup table mapping (agent, content_type) pairs to historical engagement rates. Updated daily from audit log data:
+
+```rust
+pub struct EngagementClassifier {
+    /// (agent, content_type) → historical action rate (0.0 - 1.0)
+    action_rates: HashMap<(AgentId, ContentTypeHash), f32>,
+    /// Minimum samples before the classifier is used
+    min_samples: u32,
+}
+
+impl EngagementClassifier {
+    /// Returns an engagement prediction that can boost or dampen urgency.
+    pub fn predict(&self, agent: AgentId, content_type: ContentTypeHash) -> Option<f32> {
+        self.action_rates.get(&(agent, content_type)).copied()
+    }
+}
+```
+
+If the user acts on 90% of build failure notifications but only 5% of newsletter digests, this classifier provides a strong prior for urgency adjustment even without AIRS inference.
+
+-----
+
+## 20. Testing Strategy
+
+### 20.1 Unit Tests
+
+| Component | Test category | Key assertions |
+| --- | --- | --- |
+| `UrgencyAssessment` | Signal scoring | InherentUrgency always → Interrupt; family + urgency markers → Interrupt; default → Digest |
+| `ContextFilter` | Threshold logic | Focus mode blocks NextBreak; Work mode passes NextBreak; suppress_all blocks Interrupt |
+| `AttentionGroup` | Grouping keys | Same channel → one group; same agent → one group; mixed → separate groups |
+| `RateLimiter` | Token bucket | At limit → Throttled; after window reset → Allowed; burst within window → partial accept |
+| `ContentScreener` | Sanitization | Markup stripped; impersonation rejected; trust-level violations caught |
+| `UrgencyCalibrator` | Weight update | Acted → positive shift; Never → negative shift; weights clamped [0, 1] |
+| `PostingRateMonitor` | EWMA tracking | Normal rate → Normal; 3× rate spike → Anomalous; EWMA converges after spike |
+| `BreakDetector` | Idle detection | 30s idle → break; continuous input → no break; input resets timer |
+| `AuditEntry` | Hash chain | Each entry's prev_hash matches previous entry's hash; empty chain starts with zero hash |
+
+### 20.2 Integration Tests
+
+| Scenario | Setup | Expected outcome |
+| --- | --- | --- |
+| Multi-agent posting | 5 agents post items concurrently | All items triaged, grouped, and routed without data races |
+| Digest rendering | 20 items accumulated over 2 hours | Digest groups items by source, shows summaries, correct urgency ordering |
+| Context transition | User transitions Work → Leisure | Queued items re-evaluated; NextBreak items released as digest |
+| Rate limit enforcement | Agent posts 15 items in 1 minute | First 10 accepted, last 5 throttled, audit log records throttle events |
+| AIRS failover | Kill AIRS mid-operation | Attention Manager falls back to rule-based/decision-tree triage within 1 tick |
+| Compositor connection | Start Attention Manager before Compositor | Buffered interrupts delivered in order when Compositor connects |
+| Capability revocation | Revoke agent's AttentionPost token | Subsequent posts rejected with CapabilityDenied error |
+| Cross-item correlation | Two agents report same incident | AIRS groups them; user sees single attention item with both sources |
+
+### 20.3 Performance Tests
+
+| Benchmark | Target | Method |
+| --- | --- | --- |
+| Intake throughput | > 1000 items/sec | Synthetic posting from 50 agents, measure queue drain rate |
+| Triage latency (rule-based) | < 1ms per item | Single-item triage without AIRS, wall-clock timing |
+| Triage latency (AIRS) | < 50ms per item | Single-item AIRS inference, end-to-end |
+| Batch assessment | < 500ms for 50 items | Batch AIRS call, amortized latency |
+| Digest generation | < 2s for 100 items | Full grouping + summarization |
+| Audit log write | < 100μs per entry | Append-only write with hash chain |
+| Context filter check | < 1ms | Threshold lookup + override check |
+| Memory footprint | < 4 MiB for 1000 queued items | Measure RSS of Attention Manager process |
+
+### 20.4 Fuzzing Targets
+
+The Attention Manager's input boundaries are fuzz targets. For fuzzing methodology, tooling tiers, and adoption roadmap, see [fuzzing.md](../security/fuzzing.md). The targets below should also be added to the fuzz target catalog in [tooling.md](../security/fuzzing/tooling.md) §6.
+
+| Target | Input surface | Invariant |
+| --- | --- | --- |
+| `AttentionContent` deserialization | IPC message payload | Malformed content → graceful rejection, never panic |
+| `AttentionItem` field bounds | Urgency, relevance, expiry fields | Out-of-range values clamped or rejected; no UB |
+| `ProposedAction` validation | Action type + capability requirements | Invalid capability references → action stripped, item still triaged |
+| Rate limiter overflow | Rapid-fire posting (> 10K items/sec) | Queue bounded; lowest-urgency items evicted first; no OOM |
+| Content screening bypass | Markup injection, control characters, impersonation | All sanitization rules enforced; no escape from screening |
+| Audit log hash chain | Concurrent appends from multiple items | Chain integrity maintained; no hash collision or skip |
+| Group key collisions | Items designed to hash to same group key | Grouping still produces correct categories; no mis-grouping |
+
+### 20.5 Property-Based Tests
+
+| Property | Invariant |
+| --- | --- |
+| Urgency monotonicity | Adding an urgency-boosting signal to an item never decreases its urgency level |
+| Grouping stability | Grouping the same set of items twice produces identical groups |
+| Rate limit fairness | Two agents with the same token bucket parameters get the same throughput |
+| Audit completeness | Every item that enters the intake queue has exactly one audit entry |
+| Context filter idempotency | Filtering the same item twice with the same context produces the same decision |
+| Capability enforcement totality | Every code path that accesses the intake queue checks AttentionPost capability |
+| Digest coverage | Every non-Silent item appears in exactly one digest group |
+
+-----
+
+## 21. Future Directions
+
+### 21.1 Cross-Device Attention Sync
+
+When AIOS runs on multiple devices (phone, laptop, desktop), attention state must synchronize via Space Mesh (see [multi-device.md](../platform/multi-device.md) §4). Design considerations:
+
+- **Delivery deduplication:** An item delivered as a toast on the laptop should not also interrupt on the phone. The Attention Manager tracks per-item delivery state in a CRDT-based attention record replicated via Space Mesh.
+- **Device-appropriate presentation:** The same item might appear as a toast on the laptop but a vibration on the phone. Each device's Attention Manager evaluates local context independently but shares triage metadata.
+- **Latency budget:** Sync must complete within the triage window (< 100ms for Interrupt items). The sync protocol uses optimistic delivery: present on the active device immediately, send a "delivered" marker to other devices that suppresses duplicate presentation.
+
+### 21.2 Scaling to 100+ Agents
+
+As the agent ecosystem grows, the current flat intake queue may not scale. Planned mitigations:
+
+- **Hierarchical intake:** Agents grouped into tiers (system, communication, productivity, media, third-party). Each tier has a dedicated intake sub-queue with independent rate limits and priority weights.
+- **Agent reputation score:** Agents that consistently post items the user engages with earn higher reputation. High-reputation agents get higher rate limits and faster triage. Low-reputation agents are throttled more aggressively.
+- **Delegated triage:** For agent clusters (e.g., 10 email-related agents), a coordinator agent pre-triages within its cluster and posts a single consolidated item to the Attention Manager, reducing intake load.
+
+### 21.3 Hardware-Accelerated Urgency Inference
+
+On devices with NPUs (Neural Processing Units), urgency assessment can move from AIRS LLM inference to a dedicated on-device model:
+
+- **Quantized urgency classifier:** A small transformer (< 10M parameters) quantized to INT8, running on the NPU. Achieves AIRS-comparable accuracy for common content types with 10× lower latency and no AIRS dependency.
+- **Content embedding cache:** Pre-compute embeddings for common senders, agents, and content patterns. Urgency classification reduces to a vector similarity lookup — sub-millisecond latency.
+- **Hybrid inference:** NPU handles common cases (> 80% of items); AIRS handles novel or ambiguous content. This reduces AIRS inference load by 80% while maintaining quality.
+
+### 21.4 Task Manager Integration
+
+The Attention Manager and Task Manager (see [task-manager.md](./task-manager.md)) can exchange signals to improve both systems:
+
+- **Attention-informed task priority:** If the user acts on an attention item related to a pending task, the Task Manager boosts that task's priority. If the user ignores attention items about a task, the Task Manager infers the task is not urgent.
+- **Task-driven attention suppression:** When the user is actively working on a task (as tracked by the Task Manager), attention items unrelated to that task are demoted. This provides a task-context Focus mode without explicit user configuration.
+- **Completion awareness:** When a task completes, the Task Manager posts a consolidated result as a single attention item rather than individual status updates during execution.
+
+### 21.5 Temporal Priority Decay
+
+Urgency should decay over time for items that remain unacted:
+
+- **Exponential decay:** An Interrupt-level item that has been visible for 10 minutes without user action decays to NextBreak. After 1 hour, it decays to Digest. This prevents stale urgent items from permanently occupying attention space.
+- **Deadline-aware decay:** Items with explicit deadlines decay faster after the deadline passes. A meeting reminder that was urgent 5 minutes before the meeting becomes Digest 5 minutes after.
+- **Re-escalation on update:** If the source agent posts an update to an existing item (e.g., "server still down"), the decay resets and urgency is re-assessed with fresh context.
+
+### 21.6 Learned Do-Not-Disturb
+
+Instead of requiring users to manually activate Focus modes, AIRS can learn to detect focus sessions automatically:
+
+- **Input pattern analysis:** Sustained keyboard activity with no mouse movement → likely coding. Fast mouse movement with clicks → likely browsing. Extended idle → likely away. These patterns can trigger automatic Focus mode transitions.
+- **Application context signals:** If the user has a full-screen IDE open with a single file for 30+ minutes, infer deep work. If the user has 15 browser tabs and is switching rapidly, infer exploratory work (higher interruptibility).
+- **Learned quiet hours:** AIRS observes that the user never engages with non-urgent items between 11pm and 7am and learns to auto-enable Digest-only mode during those hours without explicit configuration.
+- **Confidence-gated activation:** Automatic Focus mode only activates when AIRS confidence exceeds a threshold (e.g., 0.85). Below that, the system continues with normal context-based filtering to avoid false positives.
