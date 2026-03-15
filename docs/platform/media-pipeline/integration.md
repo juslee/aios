@@ -99,7 +99,7 @@ Cross-reference: [gpu/rendering.md](../gpu/rendering.md) §9 (wgpu integration),
 
 `FileSource` is a pipeline source element that reads content from Space objects in the AIOS storage subsystem.
 
-**Media cache**: streaming segments downloaded from the network are written into an ephemeral space alongside a manifest of segment URLs and byte ranges. On seek or rewind within the already-buffered window, `FileSource` serves the segment from cache without issuing a new network request. The cache is bounded by a configurable quota (default 512 MiB) and evicts the least-recently-used segments when the quota is reached. Cross-reference: [storage/spaces.md](../../storage/spaces.md) §3.2 (Spaces).
+**Media cache**: streaming segments downloaded from the network are written into an ephemeral space alongside a manifest of segment URLs and byte ranges. On seek or rewind within the already-buffered window, `FileSource` serves the segment from cache without issuing a new network request. The cache is bounded by a configurable quota (default 512 MiB) and evicts the least-recently-used segments when the quota is reached. Cross-reference: [storage/spaces/data-structures.md](../../storage/spaces/data-structures.md) §3.1 (Spaces).
 
 **Offline playback**: pre-downloaded content is stored as Space objects with media-specific metadata fields: duration, codec parameters, chapter marks, and embedded thumbnail. `FileSource` reads these objects directly. DRM-protected offline content is encrypted in the space using the license server's offline key; the pipeline's DRM element decrypts using the stored license. Cross-reference: [storage/spaces.md](../../storage/spaces.md) §3.3 (Objects).
 
@@ -432,6 +432,25 @@ pub enum MediaAuditEvent {
         duration: Duration,
         quality_score: f64,
     },
+    ContentBlocked {
+        agent_pid: u32,
+        declared_rating: String,
+        policy_limit: String,
+    },
+    ContentMismatch {
+        session_id: MediaSessionId,
+        declared_rating: String,
+        detected_rating: String,
+    },
+    DrmSessionCreated {
+        system: DrmSystemId,
+        session_type: DrmSessionType,
+    },
+    DrmSessionClosed {
+        session_id: u64,
+        duration: Duration,
+        decrypt_count: u64,
+    },
 }
 ```
 
@@ -445,9 +464,9 @@ On-device content classification allows parents, organizations, and individual u
 
 **Agent-declared content rating**: content providers embed a content rating in the container metadata (MPAA rating in MP4, BBFC rating in DASH manifest extension). The pipeline reads this rating during demux and compares it against the current agent's configured rating policy. If the content's declared rating exceeds the policy limit, the pipeline session is refused with `MediaError::ContentRatingExceeded` before any frames are decoded.
 
-**AI-inferred content classification (AIRS-dependent, Phase 29+)**: AIRS classifies decoded frames and audio for nudity, graphic violence, and explicit language. Classification runs asynchronously — content that passes the declared rating check begins playback immediately. If the AI classifier subsequently detects a mismatch between the declared rating and the actual content, it generates an `AuditEvent::ContentMismatch` and may pause playback pending user confirmation.
+**AI-inferred content classification (AIRS-dependent, Phase 29+)**: AIRS classifies decoded frames and audio for nudity, graphic violence, and explicit language. Classification runs asynchronously — content that passes the declared rating check begins playback immediately. If the AI classifier subsequently detects a mismatch between the declared rating and the actual content, it generates a `MediaAuditEvent::ContentMismatch` event and may pause playback pending user confirmation.
 
-**Blocking policy**: when a content rating policy is enforced, the pipeline records a `MediaAuditEvent::SessionCreated` event with a `blocked: true` field. The blocked event is surfaced to the Inspector application so that a parent or administrator can review what content was attempted.
+**Blocking policy**: when a content rating policy is enforced, the pipeline records a `MediaAuditEvent::ContentBlocked` event containing the agent PID, declared rating, policy limit, and timestamp. The blocked event is surfaced to the Inspector application so that a parent or administrator can review what content was attempted.
 
 **Capability override**: a parent agent that holds an elevated `MediaPlayback` capability can grant a temporary capability token to a child agent with an elevated content rating limit. The token carries an expiry timestamp and is subject to cascade revocation when the parent session ends.
 

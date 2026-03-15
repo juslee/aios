@@ -127,7 +127,7 @@ graph TD
 
 **Period structure:** Each Period represents a contiguous time range of the presentation. Period boundaries align with ad insertion points for server-side ad insertion (SSAI): ad periods are inserted by the CDN transparently, and the DASH client plays them as seamless content transitions. Period boundaries also allow codec or language track changes.
 
-**Segment addressing:** DASH supports three addressing modes:
+**Segment addressing:** DASH supports four addressing modes:
 
 - `SegmentTemplate` with `$Number$`: segments named `seg-001.m4s`, `seg-002.m4s` — simple and widely deployed.
 - `SegmentTemplate` with `$Time$`: segments addressed by presentation timestamp — required for live streams with variable-duration segments.
@@ -380,7 +380,7 @@ Streaming pipelines must degrade gracefully under network degradation rather tha
 
 **Cross-reference:** [networking.md](../networking.md) §5.3 — QUIC connection migration mechanics.
 
-**Offline mode:** When network is unavailable, the pipeline falls back to pre-downloaded content stored in Space objects. Offline-capable agents download content via `SpaceSink` elements (see [integration.md](./integration.md) §13.6). During playback, a `SpaceSource` element reads from the cached content. Version Store snapshots ([storage/spaces.md](../../storage/spaces.md) §5) enable caching multiple quality levels for offline ABR simulation.
+**Offline mode:** When network is unavailable, the pipeline falls back to pre-downloaded content stored in Space objects. Offline-capable agents download content via `FileSink` elements (see [integration.md](./integration.md) §13.6). During playback, a `FileSource` element reads from the cached content. Version Store snapshots ([storage/spaces/versioning.md](../../storage/spaces/versioning.md) §5.2) enable caching multiple quality levels for offline ABR simulation.
 
 **Prefetch cancellation:** When the agent issues a seek, the pipeline immediately cancels all in-flight segment downloads. This frees the NTM connection bandwidth for the new segment requests at the seek position. Cancelled downloads do not consume connection quota.
 

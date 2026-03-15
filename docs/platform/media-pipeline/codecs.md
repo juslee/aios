@@ -490,7 +490,7 @@ sequenceDiagram
 | AIFF | Built-in | PCM | Yes | No | Apple uncompressed audio |
 | FLAC | `symphonia` (Apache-2) | FLAC | Seektable | No | Lossless; native FLAC container |
 
-**MP4/ISO BMFF details:** The `mp4parse-rust` library (used in Firefox, Apache-2/MIT dual-licensed) parses the `moov` box for track metadata and `mdat` for media data. Fragmented MP4 (`ftyp: iso5` with `moof`+`mdat` segments) is handled identically to regular MP4 from the demuxer trait's perspective — the `MediaSource` abstraction hides whether segments arrive over HTTP or from a local file. CENC-encrypted MP4 boxes (`schm`, `schi`, `tenc`, `saiz`, `saio`) are parsed and forwarded to the DRM manager (see [drm.md](./drm.md) §11) rather than passed to the codec directly.
+**MP4/ISO BMFF details:** The `mp4parse-rust` library (used in Firefox, MPL-2.0 licensed) parses the `moov` box for track metadata and `mdat` for media data. Fragmented MP4 (`ftyp: iso5` with `moof`+`mdat` segments) is handled identically to regular MP4 from the demuxer trait's perspective — the `MediaSource` abstraction hides whether segments arrive over HTTP or from a local file. CENC-encrypted MP4 boxes (`schm`, `schi`, `tenc`, `saiz`, `saio`) are parsed and forwarded to the DRM manager (see [drm.md](./drm.md) §11) rather than passed to the codec directly.
 
 **MPEG-TS details:** Used as the container for HLS segments and live broadcast feeds. The custom MPEG-TS parser handles PAT/PMT table parsing for program discovery, PES packet reassembly, and PCR-based clock recovery. Discontinuity handling (DTS/PTS resets across segments) is managed by the demuxer, which remaps timestamps to a continuous timeline before emitting `MediaPacket` instances.
 
@@ -550,9 +550,9 @@ pub trait MediaMuxer: Send {
 
 **Primary use cases:**
 
-- **Camera recording:** `CameraSource → ISP → H264Encoder → MP4Muxer → SpaceSink`. The recording pipeline uses `MuxerConfig::fragment_duration = Some(1s)` to write fragmented MP4, enabling partial recovery if the recording is interrupted. See [camera/sessions.md](../camera/sessions.md) §6.
-- **Screen capture:** `CompositorSource → VP9Encoder → WebMMuxer → SpaceSink` or `MP4Muxer` depending on agent preference. Capture is subject to the compositor's capture permission system ([compositor/security.md](../compositor/security.md) §10.3).
-- **Podcast/audio recording:** `AudioCapture → OpusEncoder → OGGMuxer → SpaceSink`. The OGG muxer encapsulates one Opus stream per Ogg logical bitstream.
+- **Camera recording:** `CameraSource → ISP → H264Encoder → MP4Muxer → FileSink`. The recording pipeline uses `MuxerConfig::fragment_duration = Some(1s)` to write fragmented MP4, enabling partial recovery if the recording is interrupted. See [camera/sessions.md](../camera/sessions.md) §6.
+- **Screen capture:** `CompositorSource → VP9Encoder → WebMMuxer → FileSink` or `MP4Muxer` depending on agent preference. Capture is subject to the compositor's capture permission system ([compositor/security.md](../compositor/security.md) §10.3).
+- **Podcast/audio recording:** `AudioCapture → OpusEncoder → OGGMuxer → FileSink`. The OGG muxer encapsulates one Opus stream per Ogg logical bitstream.
 - **Transcode:** `FileSource → AnyDemuxer → [decoders] → [encoders] → AnyMuxer → FileSink`. The pipeline graph model handles arbitrary codec combinations without special-casing.
 
 **MP4 faststart:** The `faststart` flag in `MuxerConfig` causes the MP4 muxer to operate in two passes. In the first pass, `mdat` is written sequentially. When `finalize()` is called, the muxer computes the final `moov` atom size, seeks back to the beginning of the file, writes the `moov` atom, and shifts the `mdat` data. This enables HTTP progressive download without requiring the entire file before playback can begin. For streaming use cases where seek is unavailable (e.g., writing to a pipe), faststart is disabled and `moov` is written at the end.

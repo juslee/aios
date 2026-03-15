@@ -2,7 +2,7 @@
 
 Part of: [media-pipeline.md](../media-pipeline.md) — Media Pipeline
 
-**Related:** [codecs.md](./codecs.md) — Codec framework (shared encoders/decoders), [playback.md](./playback.md) — Pipeline graph model (shared element abstraction), [streaming.md](./streaming.md) — Jitter buffer and bandwidth estimation (shared components), [drm.md](./drm.md) — DTLS-SRTP media encryption
+**Related:** [codecs.md](./codecs.md) — Codec framework (shared encoders/decoders), [playback.md](./playback.md) — Pipeline graph model (shared element abstraction), [streaming.md](./streaming.md) — Jitter buffer and bandwidth estimation (shared components), [drm.md](./drm.md) — DRM/CENC content protection
 
 -----
 

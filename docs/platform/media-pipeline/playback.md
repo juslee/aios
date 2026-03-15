@@ -134,7 +134,7 @@ Agents build pipelines through a typed `PipelineBuilder` API. The builder valida
 
 ```rust
 let pipeline = PipelineBuilder::new()
-    .source(HttpSource::new(url))
+    .source(NetworkSource::new(url))
     .demuxer(AutoDemuxer::new())
     .video_decoder(AutoDecoder::new())
     .video_filter(ColorConverter::new(PixelFormat::Rgba8))
@@ -279,7 +279,7 @@ Cross-reference: [audio.md](../audio.md) §4.4 (sample rate conversion engine th
 |---|---|
 | Above high watermark (8 seconds) | Pause demuxer to reduce memory pressure |
 | Between low (2s) and high (8s) watermarks | Normal operation |
-| Below low watermark (2 seconds) | Signal streaming layer to increase quality (see [streaming.md](./streaming.md) §7.4 buffer-based ABR) |
+| Below low watermark (2 seconds) | Signal streaming layer to reduce quality / select lower bitrate tier (see [streaming.md](./streaming.md) §7.4 buffer-based ABR) |
 | Empty (underrun) | Pause clock, emit `RebufferEvent` to session, display rebuffer indicator |
 
 **Rebuffer detection:** When the decoded video buffer empties and the demuxer cannot produce data fast enough to fill it, the pipeline clock pauses and the `MediaSession` receives a `RebufferEvent`. The session surfaces this to the agent (which may display a spinner in the UI) and logs the event as `rebuffer_count`/`rebuffer_duration` in `SessionMetrics` (§6.4).

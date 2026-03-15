@@ -173,14 +173,17 @@ pub enum CencScheme {
     Cbcs,
 }
 
-/// Decrypted output. For L1 CDMs, the data pointer references secure memory
-/// that the normal world cannot read — only the GPU/compositor DMA path can.
+/// Decrypted output. Modeled as an enum to enforce the security boundary:
+/// L3 produces plaintext bytes in normal memory; L1 produces an opaque handle
+/// to TEE secure memory that only the GPU/compositor DMA path can consume.
 #[derive(Debug)]
-pub struct DecryptedBlock {
-    pub data: Vec<u8>,
-    /// True when data resides in TEE secure memory (L1 path).
-    /// The compositor must use a hardware-protected DMA path to consume it.
-    pub secure_memory: bool,
+pub enum DecryptedBlock {
+    /// L3 (software) path: plaintext bytes in normal-world memory.
+    Plaintext { data: Vec<u8> },
+    /// L1 (hardware TEE) path: opaque handle to secure memory.
+    /// Normal-world code cannot read this data — only the compositor's
+    /// hardware-protected DMA path can consume it for display.
+    SecureHandle { handle: u64, size: usize },
 }
 
 /// The pluggable CDM interface. All DRM backends implement this trait.
@@ -425,11 +428,11 @@ Cross-reference: [security/model/capabilities.md](../../security/model/capabilit
 
 | Event | Fields logged |
 |---|---|
-| `DrmSessionCreate` | agent PID, DRM system UUID, session type, timestamp |
-| `DrmLicenseRequest` | session ID, init data hash (not content), license server URL |
-| `DrmLicenseInstall` | session ID, key IDs granted, expiry time |
-| `DrmDecrypt` | session ID, key ID used, byte count (not content) |
-| `DrmSessionClose` | session ID, duration, decrypt count |
+| `DrmSessionCreated` | agent PID, DRM system UUID, session type, timestamp |
+| `DrmLicenseRequested` | session ID, init data hash (not content), license server URL |
+| `DrmLicenseGranted` | session ID, key IDs granted, expiry time |
+| `DrmLicenseDenied` | session ID, reason, license server URL |
+| `DrmSessionClosed` | session ID, duration, decrypt count |
 
 Cross-reference: [security/model/operations.md](../../security/model/operations.md) §7 (audit infrastructure and event routing).
 
