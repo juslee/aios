@@ -75,7 +75,7 @@ pub struct DriverGrantEnvelope {
 
 ### 13.2 Driver Trust Levels
 
-Each driver is assigned a trust level at load time based on its provenance. The trust level determines which device capabilities the kernel will grant:
+Each driver is assigned a *baseline* trust level at load time based on its provenance. The baseline determines the initial device capabilities the kernel will grant. At runtime, the kernel may adjust the effective trust level up or down within policy bounds based on reliability metrics (see [lifecycle.md](./lifecycle.md) §9.5 for the upgrade/downgrade triggers). The baseline is the floor — runtime adjustments never drop below `Untrusted` or rise above the provenance-justified level:
 
 ```rust
 pub enum DriverTrustLevel {
@@ -297,10 +297,10 @@ If step 6 or 7 fails, the kernel rolls back to the old driver (§14.5).
 
 ### 14.3 State Migration
 
-Drivers that support live update implement the `MigrateableDriver` trait:
+Drivers that support live update implement the `MigratableDriver` trait:
 
 ```rust
-pub trait MigrateableDriver: Driver {
+pub trait MigratableDriver: Driver {
     /// Serialize the driver's internal state for migration.
     /// Called after quiesce, before detach.
     fn serialize_state(&self) -> Result<DriverState, DriverError>;

@@ -20,10 +20,11 @@ The `HardwareDescriptor` is created by bus scan (Platform, VirtIO) or hotplug ev
 ```rust
 /// Bus type — how the device is connected to the system.
 ///
-/// Matches subsystem-framework.md §4.2 Bus enum but includes
+/// Named `BusType` (not `Bus`) to avoid collision with the `Bus` trait
+/// in discovery.md §5.1. Matches subsystem-framework.md §4.2 but includes
 /// kernel-internal variants not exposed to subsystems.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Bus {
+pub enum BusType {
     Platform,     // SoC-integrated (UART, GIC, timer, GPU)
     VirtIO,       // VirtIO MMIO transport (QEMU development target)
     USB,          // USB host controller tree
@@ -70,7 +71,7 @@ pub struct HardwareDescriptor {
     // --- Subsystem-visible fields (per subsystem-framework.md §4.2) ---
 
     /// Bus type through which this device was discovered.
-    pub bus: Bus,
+    pub bus: BusType,
 
     /// Vendor identifier (USB VID, PCI vendor, VirtIO subsystem vendor).
     pub vendor_id: u32,
@@ -250,6 +251,10 @@ pub enum PropertyValue {
     String(String),
     Bytes(Vec<u8>),
     Bool(bool),
+    /// Array of u32 values (e.g., sample rates, refresh rates).
+    U32Array(Vec<u32>),
+    /// Array of strings (e.g., supported formats, resolutions).
+    StringArray(Vec<String>),
 }
 
 /// A typed collection of device properties.
@@ -263,9 +268,9 @@ Properties are domain-specific. Each subsystem defines well-known property keys 
 
 | Subsystem | Property Keys | Value Types |
 |---|---|---|
-| Audio | `sample_rates`, `channels`, `formats` | `Vec<U32>`, `U32`, `Vec<String>` |
+| Audio | `sample_rates`, `channels`, `formats` | `U32Array`, `U32`, `StringArray` |
 | Network | `link_speed`, `mac_address`, `mtu` | `U64`, `Bytes(6)`, `U32` |
-| Display | `resolutions`, `refresh_rates`, `color_depth` | `Vec<String>`, `Vec<U32>`, `U32` |
+| Display | `resolutions`, `refresh_rates`, `color_depth` | `StringArray`, `U32Array`, `U32` |
 | Input | `key_count`, `axes`, `has_touchpad` | `U32`, `U32`, `Bool` |
 | Storage | `capacity_bytes`, `sector_size`, `rotational` | `U64`, `U32`, `Bool` |
 
@@ -326,12 +331,13 @@ The subsystem framework ([subsystem-framework.md](../../platform/subsystem-frame
 /// - Full DeviceNode storage (not just RegisteredDevice summaries)
 pub struct DeviceRegistry {
     /// All known devices, indexed by DeviceId slot index.
-    /// Slot reuse is tracked by generation (§3.2).
+    /// Slot reuse is tracked by per-slot generation counters (§3.2).
     devices: HashMap<u64, DeviceNode>,
 
-    /// Monotonically increasing generation counter.
-    /// Incremented each time a slot is reused after device removal.
-    generation: u16,
+    /// Per-slot generation counters. Incremented each time a specific
+    /// slot is reused after device removal. Matches the generation
+    /// field embedded in the DeviceId (bits[63:48]).
+    slot_generations: HashMap<u64, u16>,
 
     /// Next available slot index for new device registration.
     next_index: u64,
@@ -452,7 +458,7 @@ pub trait DeviceQuery {
 
     /// All devices discovered on a specific bus.
     ///
-    /// Example: the USB subsystem queries Bus::USB to enumerate
+    /// Example: the USB subsystem queries BusType::USB to enumerate
     /// all USB devices for hub topology display.
     fn by_bus(&self, bus: Bus) -> Vec<&DeviceNode>;
 

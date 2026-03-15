@@ -85,7 +85,7 @@ The Platform Bus discovers devices described in the Flattened Device Tree (DTB) 
 1. Parse the DTB using `fdt-parser` (already used in `kernel/src/dtb.rs`)
 2. Walk all nodes that contain a `compatible` string property
 3. For each node, extract: compatible strings, `reg` (MMIO base + size), `interrupts` (IRQ numbers), `status` (must be "okay" or absent)
-4. Construct a `HardwareDescriptor` with `bus: Bus::Platform` and the extracted properties
+4. Construct a `HardwareDescriptor` with `bus: BusType::Platform` and the extracted properties
 5. Return the full list — Platform Bus enumeration is a one-shot operation at boot
 
 **Key characteristics:**
@@ -163,7 +163,7 @@ flowchart TD
 
 Each discovered VirtIO device produces a `HardwareDescriptor` with:
 
-- `bus`: `Bus::VirtIO`
+- `bus`: `BusType::VirtIO`
 - `vendor_id`: read from VendorID register (QEMU = `0x554D4551`)
 - `device_class`: mapped from the DeviceID register
 - `mmio_regions`: one region (base address, 512 bytes)
@@ -192,7 +192,7 @@ The USB Bus discovers devices by enumerating the xHCI (USB 3.x) host controller'
 ```rust
 // A USB interface produces a HardwareDescriptor with:
 HardwareDescriptor {
-    bus: Bus::USB,
+    bus: BusType::USB,
     vendor_id: usb_device_descriptor.idVendor as u32,
     product_id: usb_device_descriptor.idProduct as u32,
     device_class: DeviceClassId(usb_interface_descriptor.bInterfaceClass as u32),
@@ -376,7 +376,7 @@ pub struct MatchEntry {
     pub device_subclass: Option<u32>,
 
     /// Bus type constraint (e.g., only match on VirtIO bus).
-    pub bus: Option<Bus>,
+    pub bus: Option<BusType>,
 
     /// Compatible string match (for platform/DTB devices).
     pub compatible: Option<&'static str>,
