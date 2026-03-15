@@ -142,6 +142,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Camera AI-native | `docs/platform/camera/ai-native.md` | §11.1–§11.5 Scene understanding, smart framing, computational photography, gesture recognition, anomaly detection; §12.1–§12.3 Kernel-internal ML; §13.1–§13.6 Future AI directions |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
+| Linux binary & Wayland compat (hub) | `docs/platform/linux-compat.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, §16 Future Directions, Document Map |
+| Linux ELF loader & glibc shim | `docs/platform/linux-compat/elf-loader.md` | §3 ELF format/segments/ASLR/dynamic linker/VDSO/auxv, §4 glibc ABI shim/signals/threads |
+| Linux syscall translation | `docs/platform/linux-compat/syscall-translation.md` | §5 ~200 syscall table by category, §6 Deep dives: epoll/futex/io_uring/eventfd/signalfd/timerfd |
+| Linux Wayland bridge | `docs/platform/linux-compat/wayland-bridge.md` | §7 Integration architecture/buffer pipeline/frame scheduling, §8 XWayland/X11 extensions/clipboard/DnD |
+| Linux sandbox & security | `docs/platform/linux-compat/sandbox.md` | §9 Threat model/capability mapping/sandbox profiles/portals/audit, §10 Comparison: Starnix/Linuxulator/WSL/gVisor |
+| Linux virtual filesystems | `docs/platform/linux-compat/virtual-filesystems.md` | §11 /proc/sys/dev emulation, §12 Namespace/cgroup equivalents |
+| Linux compat intelligence | `docs/platform/linux-compat/intelligence.md` | §13 AI-native improvements (syscall prediction, anomaly detection), testing/validation strategy |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
 | Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
 | Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |
@@ -158,6 +165,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | BSP driver mapping | `docs/platform/bsp/drivers.md` | §9 Driver mapping matrix, §10 Device tree bindings |
 | BSP testing | `docs/platform/bsp/testing.md` | §11 Testing strategy, §12 Validation checklist |
 | BSP intelligence | `docs/platform/bsp/intelligence.md` | §13 AI-native BSP, future ISA directions |
+| Multi-device & enterprise (hub) | `docs/platform/multi-device.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
+| Device pairing & trust | `docs/platform/multi-device/pairing.md` | §3.1–§3.5 Discovery, personal pairing (SPAKE2+), org enrollment, attestation, revocation |
+| Multi-device experience | `docs/platform/multi-device/experience.md` | §4.1–§4.5 Handoff, unified clipboard, Space Mesh, intelligence continuity, display/input |
+| Mobile device management | `docs/platform/multi-device/mdm.md` | §5.1–§5.5 Declarative DDM, capability-gated MDM, enrollment profiles, remote wipe, config channels |
+| Fleet management | `docs/platform/multi-device/fleet.md` | §6.1–§6.5 Inventory, health monitoring, staged updates, grouping, compliance dashboard |
+| Policy engine | `docs/platform/multi-device/policy.md` | §7.1–§7.6 Declarative policies, conditional access, geo-fencing, NL policies, time-based, audit trail |
+| Enterprise identity | `docs/platform/multi-device/enterprise-identity.md` | §8.1–§8.4 SSO/SAML, SCIM provisioning, directory integration, multi-tenant |
+| Data protection & compliance | `docs/platform/multi-device/data-protection.md` | §9.1–§9.4 DLP, content classification, provenance, encryption zones; §10.1–§10.4 SIEM, compliance frameworks, reporting, data residency |
+| Multi-device intelligence | `docs/platform/multi-device/intelligence.md` | §13.1–§13.3 Kernel-internal ML (sync, anomaly, handoff); §14.1–§14.5 AIRS (GNN fleet, RL self-healing, federated learning, AI DLP, NL policy); §15 Future |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
@@ -186,6 +202,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
 | Fuzzing tooling & catalog | `docs/security/fuzzing/tooling.md` | §5.1–5.4 Tiered tooling, §6 Fuzz target catalog |
 | Fuzzing AI-native strategies | `docs/security/fuzzing/ai-native.md` | §7.1–7.3 Dev-time AI, kernel-internal AI, AIRS-dependent |
+| Secure boot & updates (hub) | `docs/security/secure-boot.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| Secure boot threat model & trust chain | `docs/security/secure-boot/trust-chain.md` | §2 Threat model, §3 Six-link chain of trust, §3.7 Measured boot, §3.8 Remote attestation |
+| UEFI Secure Boot & TrustZone | `docs/security/secure-boot/uefi.md` | §4 UEFI integration/signing/verification, §5 TrustZone key migration/sealing/counters/OP-TEE path |
+| A/B updates & rollback | `docs/security/secure-boot/updates.md` | §6 A/B scheme, §7 Delta updates, §8 Update channels (system/agent/model), §9 Rollback protection |
+| Update security operations | `docs/security/secure-boot/operations.md` | §10 Capabilities/verification/audit/incident/revocation, §11 POSIX compatibility |
+| Secure boot AI intelligence | `docs/security/secure-boot/intelligence.md` | §12 AI-native (model integrity/scheduling/anomaly), §13 Kernel-internal ML, §16 Future directions |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
