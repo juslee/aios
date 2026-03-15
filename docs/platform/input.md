@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [compositor.md](./compositor.md) — Focus management and input routing to surfaces, [posix.md](./posix.md) — `/dev/input/event*` device file emulation, [accessibility.md](../experience/accessibility.md) — Screen reader, Braille, switch scanning, [audio.md](./audio.md) — Companion subsystem implementation
+**Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [compositor.md](./compositor.md) — Focus management and input routing to surfaces, [posix.md](./posix.md) — `/dev/input/event*` device file emulation, [accessibility.md](../experience/accessibility.md) — Screen reader, Braille, switch scanning, [audio.md](./audio.md) — Companion subsystem implementation, [wireless.md](./wireless.md) — Bluetooth HID (HOGP) input integration (§7.4)
 
 **Note:** The input subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the input-specific design decisions and architecture.
 

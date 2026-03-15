@@ -1769,7 +1769,7 @@ pub trait PlatformBluetooth: Platform {
 | `PlatformWifi` | None | External dongles via USB on all current platforms |
 | `PlatformBluetooth` | None | External dongles via USB on all current platforms |
 
-WiFi and Bluetooth are currently external USB devices on all supported platforms, so they're discovered through the USB subsystem → Subsystem Framework path rather than through a platform extension trait. The extension traits exist for future platforms with built-in WiFi/BT hardware (e.g., boards with on-SoC wireless like the ESP32 or future Broadcom SoCs with integrated WLAN).
+WiFi and Bluetooth are currently external USB devices on all supported platforms, so they're discovered through the USB subsystem → Subsystem Framework path rather than through a platform extension trait. The extension traits exist for future platforms with built-in WiFi/BT hardware (e.g., boards with on-SoC wireless like the ESP32 or future Broadcom SoCs with integrated WLAN). See [wireless.md](../platform/wireless.md) for the full wireless architecture (WiFi stack, Bluetooth stack, firmware loading, security, AI-native intelligence).
 
 -----
 

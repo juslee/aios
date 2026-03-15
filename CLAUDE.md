@@ -125,6 +125,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Input system integration | `docs/platform/input/integration.md` | §6.1–§6.6 Capability system, POSIX bridge, power management, audit, compositor, UI toolkit |
 | Input AI-native intelligence | `docs/platform/input/ai.md` | §10.1–§10.7 Predictive input, adaptive params, gesture learning, anomaly detection, shortcuts, accessibility ML |
 | Input future directions | `docs/platform/input/future.md` | §11.1–§11.6 Spatial input, voice, neural/BCI, haptics, cross-device, formal verification |
+| Wireless (hub) | `docs/platform/wireless.md` | §1 Core Insight, §2 Architecture, §11 Impl Order, §12 Tech Choices, §13 Design Principles, Document Map |
+| WiFi stack | `docs/platform/wireless/wifi.md` | §3.1–§3.6 Stack layers, station management, WPA2/WPA3, frame processing, WiFi Direct, WiFi 6/6E/7 |
+| Bluetooth stack | `docs/platform/wireless/bluetooth.md` | §4.1–§4.6 HCI transport, L2CAP, classic profiles (A2DP/HFP/HID), BLE GATT/HOGP, Mesh, LE Audio |
+| Wireless firmware | `docs/platform/wireless/firmware.md` | §5.1–§5.5 Firmware blob strategy, loading mechanism, versioning, open firmware, regulatory domain |
+| Wireless security | `docs/platform/wireless/security.md` | §6.1–§6.5 WiFi security (WPA3-SAE), Bluetooth security, capability-gated access, rogue AP detection, attack surface |
+| Wireless integration | `docs/platform/wireless/integration.md` | §7.1–§7.8 Subsystem framework, USB transport, audio/input/networking integration, power, POSIX, coexistence |
+| Wireless AI-native | `docs/platform/wireless/ai-native.md` | §8–§10 AIRS-dependent intelligence (18 capabilities), kernel-internal ML (14 models), future directions |
 | Camera subsystem (hub) | `docs/platform/camera.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, §16 Future Directions, Document Map |
 | Camera devices & discovery | `docs/platform/camera/devices.md` | §3.1–§3.4 Device taxonomy (USB/UVC, CSI/MIPI, VirtIO-Camera, depth/ToF), discovery, multi-camera topology, capabilities descriptor |
 | Camera capture & ISP pipeline | `docs/platform/camera/pipeline.md` | §4.1–§4.5 Format negotiation, frame delivery, buffer management, zero-copy paths, frame timing; §5.1–§5.6 ISP stages, 3A algorithms, hardware/software ISP, still capture, RAW |
