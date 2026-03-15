@@ -184,7 +184,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
-| Task manager | `docs/intelligence/task-manager.md` | All (Phase 11+) |
+| Task manager | `docs/intelligence/task-manager.md` | §1-§13 Core (Phase 11+), §14 Security, §15 Observability, §16 Multi-device, §17 Power/thermal, §18 AI-native AIRS, §19 Kernel-internal ML, §20 Future, §21 Cross-refs |
 | Preferences | `docs/intelligence/preferences.md` | All (Phase 8+) |
 | Agents | `docs/applications/agents.md` | All (Phase 10+) |
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
