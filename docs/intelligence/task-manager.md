@@ -1630,7 +1630,7 @@ The Task Manager follows the structured observability patterns established in [o
 
 ### 15.1 Structured Logging
 
-Task Manager events are logged with `Subsystem::TaskManager` (to be added to the `Subsystem` enum in [shared/src/observability.rs](../../shared/src/observability.rs)).
+Task Manager events use a `Subsystem::TaskManager` tag, following the same enum pattern as other subsystem tags in [observability.md](../kernel/observability.md) §2.
 
 ```rust
 /// Task lifecycle log events
@@ -1685,13 +1685,15 @@ The Task Manager exports the following metrics through the `KernelMetrics` regis
 | `task_manager.agent_memory_bytes` | Histogram | Memory usage per task agent |
 | `task_manager.capability_denials` | Counter | Capability requests denied by ceiling |
 | `task_manager.security_anomalies` | Counter | Behavioral verification anomalies detected |
+| `task_manager.slo_violations` | Counter | SLO threshold breaches (§15.4) |
+| `task_manager.predicted_tasks` | Counter | Proactively predicted tasks (§18.4) |
 
 ### 15.3 Trace Points
 
 Task lifecycle events emit trace points via the `trace_point!` macro for fine-grained performance analysis. These are feature-gated behind `kernel-tracing`.
 
 ```rust
-/// TraceEvent variants for task lifecycle (to be added to kernel/src/observability/trace.rs)
+/// TraceEvent variants for task lifecycle
 pub enum TaskTraceEvent {
     TaskCreated(TaskId),
     DecompositionStart(TaskId),
@@ -1737,8 +1739,9 @@ pub struct TaskHandoffPayload {
     task_state: PersistedTaskState,
     /// References to completed subtask outputs (stored in Space Storage)
     completed_outputs: Vec<(TaskId, ObjectId)>,
-    /// Active agent states (best-effort — volatile state may be lost)
-    agent_snapshots: Vec<AgentSnapshot>,
+    /// Subtask input snapshots for resumption (NOT agent execution state —
+    /// agents are ephemeral per §8.2 and restarted from persisted inputs)
+    subtask_inputs: Vec<(TaskId, SubtaskInput)>,
     /// Provenance chain (for audit continuity)
     provenance: Vec<TaskProvenanceEntry>,
     /// Device capabilities required to resume (inference, GPU, network)
@@ -2095,7 +2098,7 @@ pub struct PredictedTask {
 }
 ```
 
-If the user does not confirm the predicted task within 5 minutes, the pre-warmed agents are released and the predicted graph is discarded. The user is never shown the prediction — they are never aware the system was preparing. If the prediction is wrong, no resources are wasted beyond the short pre-warm period.
+If the user does not confirm the predicted task within 5 minutes, the pre-warmed agents are released and the predicted graph is discarded. Predicted tasks are visible in the Inspector under a "Predicted" category (per §13, principle 6 — Transparency) and resource usage from pre-warming is tracked via the `task_manager.predicted_tasks` metric. Users can disable predictive preparation in Preferences.
 
 **Fallback:** Without AIRS, no intent prediction. Tasks always require explicit user initiation.
 
@@ -2163,7 +2166,7 @@ When a subtask completes and its output reaches a conditional edge:
 
 AIRS can also dynamically insert new subtasks at runtime by returning an `InsertSubtask` directive. The Task Manager validates that the new subtask's capabilities are within the task's ceiling before inserting it.
 
-**Fallback:** Without AIRS, only local conditions (`SizeExceeds`, `BooleanValue`, `UserChoice`) are evaluated. Semantic conditions default to true (edge is taken).
+**Fallback:** Without AIRS, only local conditions (`SizeExceeds`, `BooleanValue`, `UserChoice`) are evaluated. Semantic conditions block the edge until AIRS becomes available; if a timeout expires, the Task Manager requests user confirmation to choose a branch.
 
 **Research basis:** LangGraph (LangChain, 2024); AutoGen conversation patterns (Microsoft Research, 2023).
 
