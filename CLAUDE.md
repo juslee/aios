@@ -158,6 +158,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Thermal integration | `docs/platform/thermal/integration.md` | §9 GPU/audio/storage/network/boot coordination, §10 POSIX/agent headroom API |
 | Thermal security | `docs/platform/thermal/security.md` | §11 Capability gate/audit/safety invariants/formal verification/DoS prevention |
 | Thermal intelligence | `docs/platform/thermal/intelligence.md` | §12 Kernel-internal ML (decision tree/NN/MPC/fingerprinting), §13 AIRS (DRL/GNN/multi-agent RL/anomaly) |
+| BSP architecture (hub) | `docs/platform/bsp.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| BSP model & porting | `docs/platform/bsp/model.md` | §2 BSP model (Platform struct, detection, DTB contract, quirks), §3 Porting checklist |
+| BSP platforms | `docs/platform/bsp/platforms.md` | §4 QEMU virt, §5 Pi 4 BCM2711, §6 Pi 5 BCM2712, §7 Apple Silicon |
+| BSP firmware handoff | `docs/platform/bsp/firmware.md` | §8 UEFI/U-Boot/m1n1 comparison, BootInfo adaptation |
+| BSP driver mapping | `docs/platform/bsp/drivers.md` | §9 Driver mapping matrix, §10 Device tree bindings |
+| BSP testing | `docs/platform/bsp/testing.md` | §11 Testing strategy, §12 Validation checklist |
+| BSP intelligence | `docs/platform/bsp/intelligence.md` | §13 AI-native BSP, future ISA directions |
 | Multi-device & enterprise (hub) | `docs/platform/multi-device.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
 | Device pairing & trust | `docs/platform/multi-device/pairing.md` | §3.1–§3.5 Discovery, personal pairing (SPAKE2+), org enrollment, attestation, revocation |
 | Multi-device experience | `docs/platform/multi-device/experience.md` | §4.1–§4.5 Handoff, unified clipboard, Space Mesh, intelligence continuity, display/input |
