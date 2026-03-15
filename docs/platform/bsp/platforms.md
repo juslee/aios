@@ -504,7 +504,7 @@ This table contrasts the key IP block choices:
 ### §7.2 Device Parameters (M1 / T8103)
 
 Addresses below are for the M1 (T8103 SoC). Other M-series variants use different base
-addresses; all come from the device tree provided by m1n1 (firmware.md §8.5).
+addresses; all come from the device tree provided by m1n1 (firmware.md §8.3).
 
 | Device | MMIO Base (M1) | IRQ Source | Driver | Notes |
 |---|---|---|---|---|
@@ -755,12 +755,12 @@ DTB compatible string during `detect_platform()` and stored in `AppleSiliconPlat
 | §4.3 | Emulation gaps | device-model/virtio.md §10 |
 | §5 | Raspberry Pi 4 / BCM2711 | thermal/platform-drivers.md §8.2 |
 | §5.2 | BCM2711 device addresses | hal.md §4.1 (GICv2), hal.md §4.3 (PL011) |
-| §5.3 | Mailbox property interface | boot/firmware.md §8.2 |
+| §5.3 | Mailbox property interface | firmware.md §8.2 (U-Boot) |
 | §6 | Raspberry Pi 5 / BCM2712 | thermal/platform-drivers.md §8.3 |
 | §6.3 | RP1 south-bridge | usb/controller.md §2 (xHCI) |
 | §7 | Apple Silicon | thermal/platform-drivers.md §8.4 |
 | §7.3 | AIC | hal.md §4.1 |
 | §7.3 | DART IOMMU | device-model/dma.md §11 |
 | §7.3 | SMC keys | thermal/platform-drivers.md §8.4 |
-| §7.4 | m1n1 boot chain | firmware.md §8.5 |
+| §7.4 | m1n1 boot chain | firmware.md §8.3 |
 | §7.5 | SoC variants | model.md §2.2 (platform detection) |

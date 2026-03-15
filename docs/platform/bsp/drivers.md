@@ -34,7 +34,7 @@ Key differences between GICv2 and GICv3:
 
 - **GICv2** — the CPU interface is memory-mapped (`GICC_IAR`, `GICC_EOIR`). IRQs are targeted to CPUs by a bitmask written to `GICD_ITARGETSR`. There are no redistributors. The Pi 4 uses a GIC-400 which implements GICv2.
 - **GICv3** — the CPU interface is accessed via system registers (`ICC_IAR1_EL1`, `ICC_EOIR1_EL1`). Each CPU has a per-core redistributor block spaced 128 KiB apart (QEMU: `0x080A_0000`, stride `0x20000`). IRQ targeting uses affinity routing (`GICD_IROUTER`). QEMU virt and Pi 5 both use GICv3.
-- **AIC v2** — Apple's proprietary interrupt controller found on M1/M2/M3 SoCs. Events are numbered from a flat space rather than SPI/PPI. FIQ is used for timer interrupts and IPIs rather than IRQ. The `aic.rs` driver translates the AIC event model to AIOS's abstract `InterruptController` trait.
+- **AIC** — Apple's proprietary interrupt controller found on all Apple Silicon SoCs. AIC v1 (M1 family) and AIC v2 (M2 and later) share the same event-driven model. Events are numbered from a flat space rather than SPI/PPI. FIQ is used for timer interrupts and IPIs rather than IRQ. The `aic.rs` driver translates the AIC event model to AIOS's abstract `InterruptController` trait.
 
 ### §9.2 Serial / UART
 
@@ -261,44 +261,44 @@ Pi 5 adds RP1 — a custom Raspberry Pi I/O chip connected via PCIe. Most periph
     └── reg                     ...
 ```
 
-**Apple Silicon (M1/M2/M3):**
+**Apple Silicon (M1 / T8103):**
 
-Apple Silicon DTBs are produced by m1n1. The top-level `arm-io` node contains all SoC peripherals. Each device that performs DMA has a sibling `dart@` node that describes its IOMMU.
+Apple Silicon DTBs are produced by m1n1. The top-level `arm-io` node contains all SoC peripherals. Each device that performs DMA has a sibling `dart@` node that describes its IOMMU. Addresses below are for M1 (T8103); other variants differ (see platforms.md §7.2).
 
 ```text
 /arm-io/
-├── aic@23b100000/              Apple Interrupt Controller v2
-│   ├── compatible              "apple,aic2"
+├── aic@23b100000/              Apple Interrupt Controller v1
+│   ├── compatible              "apple,aic"
 │   ├── #interrupt-cells        1
 │   └── reg                     0x23b100000 size 0xc000
 │
-├── uart0@235200000/            S5L UART (primary console)
+├── uart0@235100000/            S5L UART (primary console)
 │   ├── compatible              "apple,s5l-uart"
-│   └── reg                     0x235200000 size 0x1000
+│   └── reg                     0x235100000 size 0x1000
 │
-├── ans@277400000/              ANS NVMe storage controller
+├── ans@27bcc0000/              ANS NVMe storage controller
 │   ├── compatible              "apple,ans3"
-│   └── reg                     0x277400000 size 0x100000
+│   └── reg                     0x27bcc0000 size 0x100000
 │
-├── dart-ans@277800000/         DART IOMMU for ANS
+├── dart-ans@27bcc4000/         DART IOMMU for ANS
 │   ├── compatible              "apple,t8103-dart"
-│   └── reg                     0x277800000 size 0x4000
+│   └── reg                     0x27bcc4000 size 0x4000
 │
-├── agx@206400000/              Apple GPU
-│   ├── compatible              "apple,agx-g13g"  (M1 Pro; varies by die)
-│   └── reg                     0x206400000 size 0x1000000
+├── agx@20e100000/              Apple GPU
+│   ├── compatible              "apple,agx-g13g"  (M1; varies by die)
+│   └── reg                     0x20e100000 size 0x1000000
 │
-├── dart-agx@204010000/         DART IOMMU for AGX
+├── dart-agx@20e104000/         DART IOMMU for AGX
 │   ├── compatible              "apple,t8103-dart"
-│   └── reg                     0x204010000 size 0x4000
+│   └── reg                     0x20e104000 size 0x4000
 │
-├── dcp@228200000/              Display Coprocessor
+├── dcp@289020000/              Display Coprocessor
 │   ├── compatible              "apple,dcp"
-│   └── reg                     0x228200000 size 0x4000
+│   └── reg                     0x289020000 size 0x4000
 │
-└── smc@23e400000/              System Management Controller
+└── smc@23d200000/              System Management Controller
     ├── compatible              "apple,smc"
-    └── reg                     0x23e400000 size 0x4000
+    └── reg                     0x23d200000 size 0x4000
 ```
 
 The SMC provides battery status, thermal sensors, keyboard backlight control, and the hardware power button. It communicates via a mailbox-style register protocol. The `smc.rs` driver is needed for thermal management (thermal.md §8) and power management (power-management.md).

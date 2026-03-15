@@ -38,8 +38,9 @@ pub enum AppleSoc {
     T8103,  // M1
     T6000,  // M1 Pro/Max
     T6020,  // M2
-    T6031,  // M3
-    T6040,  // M4
+    T6031,  // M2 Max
+    T6040,  // M3
+    T8112,  // M4
 }
 ```
 
@@ -155,8 +156,9 @@ pub fn detect_platform(dt: &DeviceTree) -> &'static dyn Platform {
 | Apple M1 | `apple,t8103` | T8103 | m1n1 + U-Boot |
 | Apple M1 Pro/Max | `apple,t6000` | T6000 | m1n1 + U-Boot |
 | Apple M2 | `apple,t6020` | T6020 | m1n1 + U-Boot |
-| Apple M3 | `apple,t6031` | T6031 | m1n1 + U-Boot |
-| Apple M4 | `apple,t6040` | T6040 | m1n1 + U-Boot |
+| Apple M2 Max | `apple,t6031` | T6031 | m1n1 + U-Boot |
+| Apple M3 | `apple,t6040` | T6040 | m1n1 + U-Boot |
+| Apple M4 | `apple,t8112` | T8112 | m1n1 + U-Boot |
 
 Note the Pi 5 check is placed before the Pi 4 check. Both boards are Broadcom but have different `compatible` strings; `brcm,bcm2712` must be tested before `brcm,bcm2711` in case a future board ever lists both in its `compatible` array.
 
