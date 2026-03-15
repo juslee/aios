@@ -70,7 +70,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
 | Kernel observability | `docs/kernel/observability.md` | All (Phase 3+) |
 | Heterogeneous compute (hub) | `docs/kernel/compute.md` | §1 Core Insight, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
-| Compute classification | `docs/kernel/compute/classification.md` | §3 ComputeDevice trait, §4 ComputeClass/ComputeDeviceId/ComputeCapabilityDescriptor |
+| Compute classification | `docs/kernel/compute/classification.md` | §3 ComputeDevice trait/ComputeClass/ComputeDeviceId, §4 ComputeCapabilityDescriptor |
 | Compute registry | `docs/kernel/compute/registry.md` | §5 ComputeRegistry, §6 ComputeTopology |
 | Compute budget | `docs/kernel/compute/budget.md` | §7 ComputeBudget, §8 ComputeQuota |
 | Compute memory model | `docs/kernel/compute/memory.md` | §9 ComputeMemoryModel, §10 Zero-Copy Buffer Exchange |
