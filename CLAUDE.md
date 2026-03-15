@@ -181,10 +181,23 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Enterprise identity | `docs/platform/multi-device/enterprise-identity.md` | §8.1–§8.4 SSO/SAML, SCIM provisioning, directory integration, multi-tenant |
 | Data protection & compliance | `docs/platform/multi-device/data-protection.md` | §9.1–§9.4 DLP, content classification, provenance, encryption zones; §10.1–§10.4 SIEM, compliance frameworks, reporting, data residency |
 | Multi-device intelligence | `docs/platform/multi-device/intelligence.md` | §13.1–§13.3 Kernel-internal ML (sync, anomaly, handoff); §14.1–§14.5 AIRS (GNN fleet, RL self-healing, federated learning, AI DLP, NL policy); §15 Future |
-| AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
-| Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
-| Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
-| Task manager | `docs/intelligence/task-manager.md` | All (Phase 11+) |
+| AI Runtime AIRS (hub) | `docs/intelligence/airs.md` | §1 Core Insight, §2 Architecture, §9 Design Principles, §12 Impl Order, Document Map |
+| AIRS inference engine | `docs/intelligence/airs/inference.md` | §3.1–§3.4 GGML runtime, compute scheduler, KV cache, streaming output |
+| AIRS model registry | `docs/intelligence/airs/model-registry.md` | §4.1–§4.6 Storage, profiles, quantization, LRU eviction, boot selection |
+| AIRS intelligence services | `docs/intelligence/airs/intelligence-services.md` | §5.1–§5.9 Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
+| AIRS lifecycle & data | `docs/intelligence/airs/lifecycle-and-data.md` | §6 Agent Lifecycle, §7 Data Model, §8 Key Technology Choices |
+| AIRS security | `docs/intelligence/airs/security.md` | §10.1–§10.5 Security path isolation, crash containment, agent hints, kernel oversight, provenance |
+| AIRS hardware scaling | `docs/intelligence/airs/scaling.md` | §11.1–§11.4 Model capability trajectory, multi-model architecture, context windows, NPU integration |
+| AIRS AI-native intelligence | `docs/intelligence/airs/ai-native.md` | §13.1–§13.7 Kernel-internal ML, §14.1–§14.11 AIRS-dependent intelligence, §15 Future directions |
+| Context engine (hub) | `docs/intelligence/context-engine.md` | §1 Overview, §2 Architecture, §11 Impl Order, §12 Design Principles, Document Map |
+| Context signals | `docs/intelligence/context-engine/signals.md` | §3 Signal sources, weights, collection frequency |
+| Context inference | `docs/intelligence/context-engine/inference.md` | §4 Feature extraction, classifier, hysteresis, transitions |
+| Context overrides | `docs/intelligence/context-engine/overrides.md` | §5 Override types, rules, API |
+| Context consumers | `docs/intelligence/context-engine/consumers.md` | §6 Scheduler, attention manager, compositor, preference service |
+| Context learning & AI | `docs/intelligence/context-engine/learning.md` | §7 Learning, §8 Fallback, §13 AI-native context intelligence, §14 Future directions |
+| Context SDK & diagnostics | `docs/intelligence/context-engine/sdk.md` | §9 SDK API, §10 Diagnostics & Inspector |
+| Attention management | `docs/intelligence/attention.md` | §1–§17 Core design (Phase 11+), §18 Security, §19 AI-Native Intelligence, §20 Testing Strategy, §21 Future Directions |
+| Task manager | `docs/intelligence/task-manager.md` | §1-§13 Core (Phase 11+), §14 Security, §15 Observability, §16 Multi-device, §17 Power/thermal, §18 AI-native AIRS, §19 Kernel-internal ML, §20 Future, §21 Cross-refs |
 | Preferences (hub) | `docs/intelligence/preferences.md` | §1 Overview, §2 Architecture, §19 Impl Order, §20 Design Principles, Document Map |
 | Preference data model | `docs/intelligence/preferences/data-model.md` | §3.1–§3.5 Preference types, values, sources (Enterprise/Context-driven), metadata, schema registry |
 | Preference resolution | `docs/intelligence/preferences/resolution.md` | §4.1–§4.4 7-tier source precedence, §5.1–§5.2 NLU pipeline, §10.1–§10.3 Conflict detection/resolution |
@@ -211,7 +224,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 28) |
 | Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
 | Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
-| AIRS capability intelligence | `docs/intelligence/airs.md` | §5.9 (Phase 29) |
+| AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 29) |
 | Fuzzing & input hardening (hub) | `docs/security/fuzzing.md` | §1 Overview, §2 Attack surface, Document Map |
 | Fuzzing hardening strategies | `docs/security/fuzzing/strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
 | Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
