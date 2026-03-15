@@ -128,6 +128,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
+| Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |
+| Thermal cooling & governors | `docs/platform/thermal/cooling.md` | §4 CoolingDevice trait/DVFS/fan/gating, §5 Governors (step-wise/PID/bang-bang) |
+| Thermal-aware scheduling | `docs/platform/thermal/scheduling.md` | §6 ThermalState/WCET/inference/pressure, §7 Load balancing/dark silicon/core-idling |
+| Thermal platform drivers | `docs/platform/thermal/platform-drivers.md` | §8 QEMU/Pi 4/Pi 5/Apple Silicon/ARM SCMI |
+| Thermal integration | `docs/platform/thermal/integration.md` | §9 GPU/audio/storage/network/boot coordination, §10 POSIX/agent headroom API |
+| Thermal security | `docs/platform/thermal/security.md` | §11 Capability gate/audit/safety invariants/formal verification/DoS prevention |
+| Thermal intelligence | `docs/platform/thermal/intelligence.md` | §12 Kernel-internal ML (decision tree/NN/MPC/fingerprinting), §13 AIRS (DRL/GNN/multi-agent RL/anomaly) |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
