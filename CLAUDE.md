@@ -182,7 +182,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Data protection & compliance | `docs/platform/multi-device/data-protection.md` | §9.1–§9.4 DLP, content classification, provenance, encryption zones; §10.1–§10.4 SIEM, compliance frameworks, reporting, data residency |
 | Multi-device intelligence | `docs/platform/multi-device/intelligence.md` | §13.1–§13.3 Kernel-internal ML (sync, anomaly, handoff); §14.1–§14.5 AIRS (GNN fleet, RL self-healing, federated learning, AI DLP, NL policy); §15 Future |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
-| Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
+| Context engine (hub) | `docs/intelligence/context-engine.md` | §1 Overview, §2 Architecture, §11 Impl Order, §12 Design Principles, Document Map |
+| Context signals | `docs/intelligence/context-engine/signals.md` | §3 Signal sources, weights, collection frequency |
+| Context inference | `docs/intelligence/context-engine/inference.md` | §4 Feature extraction, classifier, hysteresis, transitions |
+| Context overrides | `docs/intelligence/context-engine/overrides.md` | §5 Override types, rules, API |
+| Context consumers | `docs/intelligence/context-engine/consumers.md` | §6 Scheduler, attention manager, compositor, preferences, agent runtime |
+| Context learning & AI | `docs/intelligence/context-engine/learning.md` | §7 Learning, §8 Fallback, §13 AI-native context intelligence, §14 Future directions |
+| Context SDK & diagnostics | `docs/intelligence/context-engine/sdk.md` | §9 SDK API, §10 Diagnostics & Inspector |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
 | Task manager | `docs/intelligence/task-manager.md` | All (Phase 11+) |
 | Preferences | `docs/intelligence/preferences.md` | All (Phase 8+) |
