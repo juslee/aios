@@ -56,6 +56,7 @@ impl SubsystemRunner {
     /// Run a subsystem task within a panic boundary.
     /// On panic: log, increment counter, restart subsystem.
     /// On repeated panic (3x in 60s): disable subsystem, notify user.
+    /// Panics more than 60s apart reset the consecutive counter.
     pub fn run<F, R>(&mut self, f: F) -> Option<R>
     where F: FnOnce() -> R + std::panic::UnwindSafe
     {
@@ -63,11 +64,18 @@ impl SubsystemRunner {
             Ok(result) => Some(result),
             Err(panic_info) => {
                 log_panic(self.name, &panic_info);
+                let current = now();
+                // Reset counter if last panic was more than 60s ago
+                if let Some(last) = self.last_panic {
+                    if current.saturating_sub(last) > Duration::from_secs(60) {
+                        self.consecutive_panics = 0;
+                    }
+                }
                 self.consecutive_panics += 1;
-                self.last_panic = Some(now());
+                self.last_panic = Some(current);
                 if self.consecutive_panics >= 3 {
                     self.state = SubsystemState::Disabled {
-                        reason: format!("{} panicked {} times", self.name, self.consecutive_panics),
+                        reason: format!("{} panicked {} times in 60s", self.name, self.consecutive_panics),
                     };
                     notify_user(self.name);
                 } else {

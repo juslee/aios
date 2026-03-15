@@ -249,7 +249,7 @@ impl AgentTokenStats {
 
 When `anomaly` is true, the token budget enforcer can throttle the agent (queue further requests) or alert the behavioral monitor. This catches agents that suddenly consume 10-100x more tokens than their baseline — a potential sign of compromised agent behavior, prompt injection loops, or runaway generation.
 
-**State overhead:** ~1.3 KB total (64 agents × ~20 bytes each).
+**State overhead:** ~2.3 KB total (64 agents × ~36 bytes each — `AgentTokenStats` contains two `f64`, one `u64`, one `bool`, and one `AgentId`).
 
 ### 13.6 Embedding Index Compaction Scheduling
 
@@ -309,7 +309,7 @@ Compaction is scheduled as a `Batch`-priority background task, yielding to inter
 | KV cache scoring | Composite EWMA | 64 B/session | O(1) | Per eviction check |
 | Model loading | Throughput EWMA + bitmap | 450 B | O(1) | Per page fault batch |
 | Thermal prediction | dT/dt EWMA | 100 B | O(1) | Every 1-5 s |
-| Token anomaly | Welford's + z-score | 1.3 KB | O(1) | Hourly |
+| Token anomaly | Welford's + z-score | 2.3 KB | O(1) | Hourly |
 | HNSW health | Tombstone ratio + probe recall | 50 KB | O(k) probes | Every 5 min |
 
 Total overhead: **< 55 KB**. No neural networks. No heap allocation beyond initialization. All techniques are deterministic and auditable.

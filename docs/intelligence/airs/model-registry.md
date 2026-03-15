@@ -123,7 +123,9 @@ impl QuantizationSelector {
     pub fn select_best(&self) -> ModelSelection {
         let embedding_overhead = 100 * MB;  // embedding model
         let kv_budget = self.model_pool_size / 4;  // 25% for KV caches
-        let model_budget = self.model_pool_size - embedding_overhead - kv_budget;
+        let model_budget = self.model_pool_size
+            .saturating_sub(embedding_overhead)
+            .saturating_sub(kv_budget);
 
         match model_budget {
             0 => ModelSelection::CloudOnly,

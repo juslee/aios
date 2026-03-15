@@ -51,9 +51,10 @@ impl ModelEnsemble {
     pub fn route(&self, task: TaskType) -> ModelId {
         // Return the best loaded model for this task type
         // Falls back through the chain if preferred model is busy
-        self.routing[&task].iter()
-            .find(|id| self.is_available(id))
-            .copied()
+        self.routing.get(&task)
+            .and_then(|chain| chain.iter()
+                .find(|id| self.is_available(id))
+                .copied())
             .unwrap_or(self.primary())
     }
 }
