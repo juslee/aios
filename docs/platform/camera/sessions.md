@@ -32,7 +32,7 @@ stateDiagram-v2
 
 #### Request Phase
 
-The agent calls `open_session()` with a `CameraCapability` token and a `SessionIntent`:
+The agent calls `open_session()` with a `CameraCapability` token and a `CameraSessionIntent` (the camera-specific extension of the framework's generic `SessionIntent` — see [subsystem-framework.md](../subsystem-framework.md) §4.5):
 
 ```rust
 /// Open a camera session.
@@ -73,7 +73,7 @@ The prompt is a compositor-rendered dialog at the highest z-order. No agent can 
 - **Camera device** — which camera will be used
 - **Purpose** — from the `SessionIntent` (video call, photo, AR, etc.)
 - **Parameters** — resolution, frame rate, duration
-- **Live preview** — a small viewfinder thumbnail showing what the camera sees (captured via a temporary low-resolution session before granting full access)
+- **Live preview** — a small viewfinder thumbnail showing what the camera sees. This uses a system-owned internal capture session (not agent-accessible) at low resolution. The system session is subject to the same indicator and anti-silent-capture rules — the hardware LED activates during the preview. No frame data from this preview session is delivered to the requesting agent; it exists solely for user context in the prompt dialog.
 
 The prompt has no timeout — the user must actively respond. If the user closes the prompt without responding, it is treated as "Deny."
 

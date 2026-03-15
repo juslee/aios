@@ -15,7 +15,7 @@ This document was split for navigability. Each sub-document preserves the origin
 
 | Document | Sections | Content |
 |---|---|---|
-| **This file** | §1, §14–§16 | Core insight, implementation order, design principles, future directions |
+| **This file** | §1–§2, §14–§16 | Core insight, architecture overview, implementation order, design principles, future directions |
 | [devices.md](./camera/devices.md) | §3 | Device taxonomy (USB/UVC, CSI/MIPI, VirtIO-Camera, depth/ToF), discovery, hotplug, multi-camera enumeration |
 | [pipeline.md](./camera/pipeline.md) | §4, §5 | Capture pipeline (format negotiation, frame delivery, zero-copy DMA, buffer management), ISP pipeline (3A algorithms, format conversion, still capture, RAW) |
 | [sessions.md](./camera/sessions.md) | §6 | Session lifecycle, multi-app conflict (Prompt policy), SessionIntent, viewfinder indicators, session priority |

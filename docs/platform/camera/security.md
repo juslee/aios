@@ -391,9 +391,9 @@ Some devices (Chromebook-style) have a physical shutter that covers the camera l
 
 Some devices have an electrical kill switch that disconnects the camera at the hardware level (no power, no data):
 
-- **Detection**: the device disappears from the USB bus or CSI interface
+- **Detection**: the device disappears from the USB bus or CSI interface (the switch itself has no queryable state — the OS infers it from device absence)
 - **Behavior**: identical to hotplug removal (see [drivers.md](./drivers.md) §7.1)
-- **No override**: the kill switch is not detectable or overridable by software
+- **No override**: the kill switch state cannot be queried or overridden by software — it is a hardware-level power disconnect
 
 -----
 

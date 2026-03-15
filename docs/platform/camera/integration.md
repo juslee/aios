@@ -29,7 +29,7 @@ pub enum CameraContentHint {
 }
 ```
 
-The compositor uses `ContentType::CameraPreview` (see [compositor/protocol.md](../compositor/protocol.md) §4) for viewfinder surfaces:
+The compositor uses `CameraContentHint::LivePreview` (defined above) to identify viewfinder surfaces. This maps to the compositor's `SurfaceContentType` system (see [compositor/protocol.md](../compositor/protocol.md) §4) — the camera subsystem sets this hint when creating viewfinder surfaces, and the compositor applies camera-specific rendering optimizations:
 
 - **Low-latency rendering** — camera preview surfaces skip the standard frame scheduling pipeline and are composited with minimal delay. Target: <16ms from frame capture to display.
 - **Direct scanout** — when the camera preview is full-screen, the compositor can bypass compositing entirely and scan the camera DMA buffer directly to the display controller (zero-copy end-to-end).
@@ -57,7 +57,7 @@ Camera frames integrate with the Flow data system (see [flow.md](../../storage/f
 
 #### Video Frames as FlowEntries
 
-Captured frames and images are represented as `FlowEntry` items with `TypedContent::VideoFrame`:
+Captured frames and images are represented as `FlowEntry` items. The camera subsystem maps its content to Flow's `TypedContent` struct (see [flow/data-model.md](../../storage/flow/data-model.md) §3.3) using appropriate MIME types and `SemanticType` variants (`SemanticType::Image` for stills, `SemanticType::Video` for recordings). The camera-specific content structures below define the payload stored in the `FlowEntry`:
 
 ```rust
 /// Camera-specific Flow content types.
@@ -270,7 +270,7 @@ flowchart LR
 This bridge is AIRS-dependent and operates only when:
 
 1. The user has explicitly enabled camera-based gesture input in system settings
-2. A valid `CameraCapability` with purpose `Accessibility` or `MlInference` is held
+2. The **system** holds an internal `CameraCapability` (purpose: `Accessibility`) for the gesture camera session — individual agents receiving gesture events do not need their own `CameraCapability`, as they receive abstract input events through the input subsystem, not raw camera frames
 3. The AIRS service is running and has loaded a gesture recognition model
 
 Supported gesture types (see [input/gestures.md](../input/gestures.md) §5 and [input/ai.md](../input/ai.md) §10):

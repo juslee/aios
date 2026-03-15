@@ -42,7 +42,7 @@ flowchart LR
 | Document | Bias -0.5 EV | Neutral | Off | High | Macro |
 | Action | Min exposure time | Auto | Low | Medium | Continuous |
 
-The ISP tuner applies parameter changes smoothly over 5–10 frames to avoid abrupt visual transitions. The agent can override scene detection by specifying a preferred scene mode in the `SessionIntent`.
+The ISP tuner applies parameter changes smoothly over 5–10 frames to avoid abrupt visual transitions. The agent can override scene detection by calling `CameraSession::set_control(CameraControl::SceneMode, ControlValue::SceneType(..))` to lock the ISP to a specific scene type.
 
 ### §11.2 Smart Framing
 
@@ -212,7 +212,7 @@ pub enum HandGestureType {
 
 - Gesture recognition runs entirely on-device (AIRS local inference)
 - Only gesture events (landmarks, gesture type) are delivered to agents — never raw camera frames
-- The agent does not need `CameraCapability` to receive gesture events; the system holds the camera session internally
+- The **system** holds the camera session internally with a `CameraCapability` (purpose: `Accessibility`). Individual agents receiving gesture events do not need their own `CameraCapability` — they receive abstract input events through the input subsystem, not raw camera frames
 - The user must explicitly enable camera-based gesture input in system settings
 - An active privacy indicator shows "Gesture input active" while the camera is used for gestures
 
@@ -331,7 +331,7 @@ Real-time pixel-level segmentation of camera frames:
 - **Object segmentation**: identify objects in the scene for AR anchoring
 - **Sky segmentation**: separate sky from ground for HDR tone mapping
 
-Segmentation masks are delivered alongside video frames as an optional alpha channel. Agents request segmentation via `SessionIntent.needs_segmentation = true`.
+Segmentation masks are delivered alongside video frames as an optional alpha channel. Agents request segmentation by setting `CameraPurpose::AugmentedReality` or `CameraPurpose::VideoCall` in their `CameraSessionIntent`, which enables the segmentation pipeline automatically. Alternatively, agents can request segmentation explicitly via `CameraSession::set_control(CameraControl::Segmentation, ControlValue::Bool(true))`.
 
 ### §13.4 Privacy-Preserving Facial Analysis
 
