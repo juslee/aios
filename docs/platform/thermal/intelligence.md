@@ -19,7 +19,7 @@ A frozen decision tree selects the optimal governor for each thermal zone based 
 
 **Input Features:**
 
-- Zone type (CPU / GPU / NPU / battery / skin)
+- Zone type (CPU / GPU / NPU / SoC / Storage / Custom)
 - Number of active cooling devices
 - Energy model availability (yes / no)
 - Current load pattern (steady / bursty / idle)

@@ -216,10 +216,10 @@ power proportional to each device's weight. A CPU core cluster with higher weigh
 more power headroom than a GPU cluster with lower weight, reflecting the default preference
 for CPU performance in interactive workloads.
 
-Registration requires the `Capability::ThermalCoolingRegister` capability, ensuring that
-only kernel drivers and trusted platform services can add thermal actuators. Unprivileged
-agents may observe cooling state through the thermal observability interface but cannot
-register or directly control cooling devices.
+Registration requires the `ThermalCapability::ThermalCoolingRegister` capability (see
+security.md §11.1), ensuring that only kernel drivers and trusted platform services can
+add thermal actuators. Unprivileged agents may observe cooling state through the thermal
+observability interface but cannot register or directly control cooling devices.
 
 ---
 
@@ -298,8 +298,8 @@ the zone's trip points and adjusting cooling states by one increment per polling
 **Hysteresis** is applied exclusively on the cooling reduction side. This asymmetry is
 deliberate: the governor responds immediately to temperature increases (no hysteresis on
 the way up) but requires the temperature to fall a configurable margin below a trip point
-before relaxing cooling. The default hysteresis is 2,000 millidegrees C (2°C), matching
-the sensor resolution on most embedded platforms.
+before relaxing cooling. The default hysteresis is 5,000 millidegrees C (5°C), matching
+the trip-point hysteresis defined in zones.md §3.3.
 
 Pseudocode for one governor invocation:
 
@@ -452,7 +452,7 @@ This logic ensures that platforms with rich energy models benefit from PID contr
 automatically, without requiring per-platform governor configuration.
 
 Runtime governor switching is permitted for privileged agents holding
-`Capability::ThermalGovernorSelect`. Switching resets the new governor's internal state
+`ThermalCapability::ThermalGovernorOverride` (see security.md §11.1). Switching resets the new governor's internal state
 by calling `reset()` before the first `throttle()` invocation. The current cooling states
 of bound devices are preserved across the switch; the new governor begins from the current
 hardware state rather than driving to zero.

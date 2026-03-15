@@ -111,7 +111,7 @@ pub struct ThermalAuditEntry {
     pub timestamp: u64,
     /// Event classification.
     pub event: ThermalAuditEvent,
-    /// Null-terminated zone name (e.g., "cpu-thermal\0").
+    /// Zone identifier (UTF-8 string, e.g., "cpu-thermal").
     pub zone: &'static str,
     /// PID of the agent that triggered the event (0 = kernel).
     pub pid: u32,
@@ -143,9 +143,9 @@ not configuration — they are code-level guarantees.
 
 **Invariant 1: Critical Trip Point is Immutable**
 
-No API call can raise or remove a Critical trip point. The `set_trip_point()` function rejects
-any modification attempt targeting a Critical-type trip, regardless of the caller's capability
-level:
+No API call can modify a Critical trip point — it cannot be raised, lowered, or removed. The
+`set_trip_point()` function rejects any modification attempt targeting a Critical-type trip,
+regardless of the caller's capability level:
 
 ```rust
 pub fn set_trip_point(

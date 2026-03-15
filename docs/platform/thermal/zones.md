@@ -43,9 +43,16 @@ The `sensor_address` field is interpreted by the per-platform sensor driver. For
 MMIO sensors it is the register base address; for SMC sensors on Apple Silicon
 it is the four-byte SMC key packed into a `u64`.
 
-**References:** `hal.md §17` defines the `PlatformThermal` trait that sensor
-drivers implement; `power-management.md §4.2` defines the `ThermalZoneReading`
-type returned by sensor reads.
+**Note on existing types:** The `ThermalZone` defined here extends the existing
+HAL abstraction (`hal.md §17`) which contains only `name`, `sensor_address`, and
+`zone_type`. The additional fields (`polling_interval`, `trip_points`, `coupling`)
+are new to the thermal management subsystem and are not part of the HAL's
+`PlatformThermal` trait. Similarly, `power-management.md §4.2` defines
+`ThermalZoneReading` and `ThermalTripPoint` for sensor output — the trip point
+struct here adds a `hysteresis_mdegc` field not present in the power-management
+definition. These thermal-core types supersede the simpler HAL types for the
+thermal management subsystem while maintaining backward compatibility with the
+HAL sensor interface.
 
 ### §2.2 Temperature Representation
 

@@ -169,8 +169,8 @@ AIOS exposes thermal zones through a sysfs-compatible virtual filesystem to supp
 
 **Access Control:**
 
-- Read access to `temp` and `trip_point_*_temp` files: requires `Capability::ThermalRead`
-- Write access to trip points and `policy`: requires `Capability::ThermalConfigure`
+- Read access to `temp` and `trip_point_*_temp` files: requires `ThermalCapability::ThermalRead`
+- Write access to trip points and `policy`: requires `ThermalCapability::ThermalConfigure`
 - `cur_state` on cooling devices is read-only for all agents; only the Policy Engine may change cooling device state
 
 The `temp` file is updated on each read (not cached) to ensure monitoring tools receive fresh readings. The POSIX filesystem layer translates the internal `i32` millidegrees Celsius representation to a decimal string, matching Linux sysfs convention.

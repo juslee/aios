@@ -93,8 +93,8 @@ pub struct PerCpuScheduler {
     // ... existing fields (run queues, idle thread, etc.) ...
 
     /// False when thermal state is Warm or Critical.
-    /// When false, the idle thread is ineligible for de-scheduling;
-    /// the CPU is forced to idle to shed heat.
+    /// When false, Idle-class background tasks are suppressed — the
+    /// scheduler skips the Idle run queue, reducing heat generation.
     idle_enabled: AtomicBool,
 
     /// Token budget per inference chunk.

@@ -352,10 +352,10 @@ impl PlatformThermal for Pi5Platform {
                 zone_type: ThermalZoneType::Gpu,
                 polling_interval: Duration::from_secs(2),
                 trip_points: &PI5_GPU_TRIPS,
-                coupling: Some(ThermalCoupling {
-                    target: "cpu-thermal",
-                    coefficient: 200, // 0.20 in milliunit
-                }),
+                coupling: Some(&[ThermalCoupling {
+                    source_zone: "gpu-thermal",
+                    coefficient: 0.20,
+                }]),
                 ..Default::default()
             },
         ]
