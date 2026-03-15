@@ -243,7 +243,13 @@ Phase 23:  Accessibility preferences
 | §11.2 | [history.md](./preferences/history.md) | Cross-device conflict resolution |
 | §12.1–12.6 | [history.md](./preferences/history.md) | Preference categories and defaults |
 | §13 | [history.md](./preferences/history.md) | Settings UI |
-| §14 | [temporal.md](./preferences/temporal.md) | Temporal and contextual preferences |
+| §14.1 | [temporal.md](./preferences/temporal.md) | Context Rule Engine |
+| §14.2 | [temporal.md](./preferences/temporal.md) | Time-of-day scheduling |
+| §14.3 | [temporal.md](./preferences/temporal.md) | Location-aware preferences |
+| §14.4 | [temporal.md](./preferences/temporal.md) | Activity-aware preferences |
+| §14.5 | [temporal.md](./preferences/temporal.md) | Device-presence triggers |
+| §14.6 | [temporal.md](./preferences/temporal.md) | Rule composition and interaction |
+| §14.7 | [temporal.md](./preferences/temporal.md) | Conversational rule creation |
 | §15.1 | [security.md](./preferences/security.md) | Capability-gated access |
 | §15.2 | [security.md](./preferences/security.md) | Capability attenuation |
 | §15.3 | [security.md](./preferences/security.md) | Agent permission model |
@@ -251,6 +257,18 @@ Phase 23:  Accessibility preferences
 | §15.5 | [security.md](./preferences/security.md) | Enterprise policy security |
 | §15.6 | [security.md](./preferences/security.md) | Agent suggestion rate-limiting |
 | §15.7 | [security.md](./preferences/security.md) | Privacy protection |
-| §16 | [intelligence.md](./preferences/intelligence.md) | AIRS-dependent intelligence |
-| §17 | [intelligence.md](./preferences/intelligence.md) | Kernel-internal ML |
-| §18 | [testing.md](./preferences/testing.md) | Testing strategy |
+| §16.1 | [intelligence.md](./preferences/intelligence.md) | Contextual bandits for preference learning |
+| §16.2 | [intelligence.md](./preferences/intelligence.md) | Semantic NLU enhancement |
+| §16.3 | [intelligence.md](./preferences/intelligence.md) | Cross-preference dependency analysis |
+| §16.4 | [intelligence.md](./preferences/intelligence.md) | Preference anomaly detection |
+| §16.5 | [intelligence.md](./preferences/intelligence.md) | Personalization profile learning |
+| §17.1 | [intelligence.md](./preferences/intelligence.md) | Time-series pattern detection |
+| §17.2 | [intelligence.md](./preferences/intelligence.md) | Confidence scoring |
+| §17.3 | [intelligence.md](./preferences/intelligence.md) | Conflict prediction |
+| §17.4 | [intelligence.md](./preferences/intelligence.md) | Feature importance |
+| §17.5 | [intelligence.md](./preferences/intelligence.md) | Kernel-internal model budget |
+| §18.1 | [testing.md](./preferences/testing.md) | Unit tests |
+| §18.2 | [testing.md](./preferences/testing.md) | Integration tests |
+| §18.3 | [testing.md](./preferences/testing.md) | Property-based tests |
+| §18.4 | [testing.md](./preferences/testing.md) | Fuzz tests |
+| §18.5 | [testing.md](./preferences/testing.md) | QEMU validation |

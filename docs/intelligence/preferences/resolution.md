@@ -304,7 +304,7 @@ impl PreferenceService {
 | "Make the text bigger" | display.font_scale, increase | 1.0 → 1.1 |
 | "Dark mode" | display.theme, set to dark | light → dark |
 | "I don't like the blue" | display.accent_color, change | #4A90D9 → (prompt for new color) |
-| "Stop notifications at night" | attention.schedule.night_suppress, enable | false → true, 22:00-07:00 |
+| "Stop notifications at night" | attention.night_suppress, enable | false → true, 22:00-07:00 |
 | "Turn off the click sounds" | audio.ui_sounds, disable | true → false |
 | "Make the mouse faster" | input.mouse_speed, increase | 0.5 → 0.7 |
 | "I'm heads down for 2 hours" | context.override, focus mode | 2h temporary override |

@@ -3,15 +3,15 @@
 Part of: [preferences.md](../preferences.md) — Preference System
 **Related:** [data-model.md](./data-model.md) — Core types under test, [resolution.md](./resolution.md) — Conflict resolution logic, [security.md](./security.md) — Capability enforcement tests, [temporal.md](./temporal.md) — Context rule evaluation tests
 
--------
+-----
 
-## §18 Testing Strategy
+## 18. Testing Strategy
 
 The preference system is tested across four layers: pure logic unit tests, cross-component integration tests, property-based invariant verification, and fuzz tests for robustness. QEMU-level validation covers persistence and propagation under realistic boot conditions.
 
 -----
 
-### §18.1 Unit Tests
+### 18.1 Unit Tests
 
 Unit tests cover each pure-logic component in isolation with no I/O or kernel state.
 
@@ -35,7 +35,7 @@ fn test_preference_value_string_rejects_exceeds_max_length() { ... }
 
 ```rust
 // Authority: EnterpriseLocked > UserExplicit > EnterpriseRecommended >
-//            ContextDriven > BehaviorInferred > AgentSuggested > SystemDefault
+//            ContextDriven > UserBehaviorInferred > AgentSuggested > SystemDefault
 #[test]
 fn test_source_precedence_enterprise_locked_beats_all() { ... }
 
@@ -125,7 +125,7 @@ fn test_attenuated_write_capability_cannot_read() { ... }
 
 -----
 
-### §18.2 Integration Tests
+### 18.2 Integration Tests
 
 Integration tests verify correct behavior across component boundaries with a running kernel and preference service.
 
@@ -201,7 +201,7 @@ fn test_explain_returns_current_source_and_value_after_undo() { ... }
 
 -----
 
-### §18.3 Property-Based Tests
+### 18.3 Property-Based Tests
 
 Property-based tests use randomized inputs to verify system-wide invariants. All properties hold for any valid sequence of operations.
 
@@ -257,7 +257,7 @@ forall agent, key, n > m:
 
 -----
 
-### §18.4 Fuzz Tests
+### 18.4 Fuzz Tests
 
 Fuzz tests drive the preference system with malformed, random, or adversarial inputs to confirm no panics, memory unsafety, or logic violations occur.
 
@@ -307,7 +307,7 @@ fuzz_target!(|data: &[u8]| {
 
 -----
 
-### §18.5 QEMU Validation
+### 18.5 QEMU Validation
 
 System-level tests run inside QEMU to validate preference behavior across the full boot sequence and in realistic runtime conditions.
 

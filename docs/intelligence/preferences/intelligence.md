@@ -48,7 +48,7 @@ Preference Intelligence Architecture
 
 ### 16.1 Contextual Bandits for Preference Learning
 
-When AIRS is online, it employs a contextual bandit framework to learn which preference suggestions the user accepts. Rather than proposing changes based solely on frequency thresholds (as in the kernel-internal behavioral observer — see [preferences.md](../preferences.md) §6), the bandit model explores a space of possible suggestions and learns from accept/reject signals.
+When AIRS is online, it employs a contextual bandit framework to learn which preference suggestions the user accepts. Rather than proposing changes based solely on frequency thresholds (as in the kernel-internal behavioral observer — see [inference.md](./inference.md) §6), the bandit model explores a space of possible suggestions and learns from accept/reject signals.
 
 **Algorithm options:**
 
@@ -94,7 +94,7 @@ The bandit model runs inside AIRS and requires the `PreferenceLearning` capabili
 
 ### 16.2 Semantic NLU Enhancement
 
-The Preference Service includes a keyword-based NLU pipeline described in [preferences.md](../preferences.md) §5.1 that handles common requests like "make text bigger" or "dark mode". When AIRS is online, a second-tier transformer model handles ambiguous and multi-preference utterances that the keyword pipeline cannot resolve.
+The Preference Service includes a keyword-based NLU pipeline described in [resolution.md](./resolution.md) §5.1 that handles common requests like "make text bigger" or "dark mode". When AIRS is online, a second-tier transformer model handles ambiguous and multi-preference utterances that the keyword pipeline cannot resolve.
 
 **Tier 2 NLU model:**
 
@@ -133,7 +133,7 @@ Response: "Did you mean display brightness and colors, or something about
            sounds, or input feel? I can adjust any of these."
 ```
 
-The clarification flow is handled via the Conversation Bar interface described in [preferences.md](../preferences.md) §5.1. The NLU model receives the follow-up response and re-resolves with the additional context, typically reaching confidence > 0.9.
+The clarification flow is handled via the Conversation Bar interface described in [resolution.md](./resolution.md) §5.1. The NLU model receives the follow-up response and re-resolves with the additional context, typically reaching confidence > 0.9.
 
 -----
 
@@ -259,7 +259,7 @@ The federated model is a complement to per-user personalization — it improves 
 
 ### 17.1 Time-Series Pattern Detection
 
-The Behavioral Observer described in [preferences.md](../preferences.md) §6 collects observations and forms hypotheses. The kernel-internal pattern detector determines whether a hypothesis has sufficient statistical support to be proposed to the user — without any AIRS dependency.
+The Behavioral Observer described in [inference.md](./inference.md) §6 collects observations and forms hypotheses. The kernel-internal pattern detector determines whether a hypothesis has sufficient statistical support to be proposed to the user — without any AIRS dependency.
 
 **Circadian pattern detection:**
 
@@ -297,7 +297,7 @@ Older observations are weighted less than recent ones. The effective window is t
 
 ### 17.2 Confidence Scoring
 
-Before the Behavioral Observer proposes a preference hypothesis (see [preferences.md](../preferences.md) §6.2), the confidence model determines whether the statistical evidence is sufficient. The kernel-internal confidence models are frozen statistical estimators — no neural inference, no AIRS dependency.
+Before the Behavioral Observer proposes a preference hypothesis (see [inference.md](./inference.md) §6.2), the confidence model determines whether the statistical evidence is sufficient. The kernel-internal confidence models are frozen statistical estimators — no neural inference, no AIRS dependency.
 
 **Binary preferences (Beta distribution):**
 
@@ -334,7 +334,7 @@ impl BinaryConfidenceModel {
 }
 ```
 
-Default thresholds: `min_observations = 5`, `min_ci_lower = 0.75`. This matches the threshold described in [preferences.md](../preferences.md) §6.1 (`observation_count >= threshold && confidence >= 0.85`).
+Default thresholds: `min_observations = 5`, `min_ci_lower = 0.75`. This matches the threshold described in [inference.md](./inference.md) §6.1 (`observation_count >= threshold && confidence >= 0.85`).
 
 **Continuous preferences (Bayesian credible interval):**
 
@@ -403,13 +403,13 @@ at 8pm manually. Would you like to make that automatic instead?
 [Yes, automate it] [Keep doing it manually] [Change the time]"
 ```
 
-The notification incorporates the reason for the predicted conflict, sourced from the preference history (see [preferences.md](../preferences.md) §9).
+The notification incorporates the reason for the predicted conflict, sourced from the preference history (see [history.md](./history.md) §9).
 
 -----
 
 ### 17.4 Feature Importance
 
-The kernel-internal feature importance model answers the question: "which context features most strongly correlate with this preference changing?" This enables two downstream capabilities — targeted context rule suggestions (see [temporal.md](./temporal.md)) and preference change explainability (see [preferences.md](../preferences.md) §9.1).
+The kernel-internal feature importance model answers the question: "which context features most strongly correlate with this preference changing?" This enables two downstream capabilities — targeted context rule suggestions (see [temporal.md](./temporal.md)) and preference change explainability (see [history.md](./history.md) §9.1).
 
 **Shapley value approximation:**
 
@@ -445,7 +445,7 @@ This connects the inference pipeline to the context rules system described in [t
 
 **Explainability output:**
 
-When the user asks "why did this change?" (see [preferences.md](../preferences.md) §9.1), the Preference Service includes the feature importance vector in the explanation:
+When the user asks "why did this change?" (see [history.md](./history.md) §9.1), the Preference Service includes the feature importance vector in the explanation:
 
 ```text
 "I suggested enabling dark mode automatically because you've switched to
@@ -477,10 +477,10 @@ All models are loaded once at Preference Service startup. Per-user adaptive stat
 
 These capabilities are under research consideration for later development phases:
 
-**Differential privacy for behavioral inference:** The behavioral observer (see [preferences.md](../preferences.md) §6) could apply DP-SGD (differentially private stochastic gradient descent) to the AIRS bandit model training, providing formal privacy guarantees on the learned preference patterns. The main challenge is calibrating the privacy budget (ε) against utility loss — early experiments suggest ε=2.0 preserves >90% of suggestion accuracy while providing meaningful privacy guarantees.
+**Differential privacy for behavioral inference:** The behavioral observer (see [inference.md](./inference.md) §6) could apply DP-SGD (differentially private stochastic gradient descent) to the AIRS bandit model training, providing formal privacy guarantees on the learned preference patterns. The main challenge is calibrating the privacy budget (ε) against utility loss — early experiments suggest ε=2.0 preserves >90% of suggestion accuracy while providing meaningful privacy guarantees.
 
 **Federated preference learning across devices:** The opt-in federated transfer described in §16.5 currently covers new-device bootstrap. A deeper version would allow the population model to improve continuously across devices without centralizing raw data, using secure aggregation and the AIOS Peer Protocol mesh. This requires solving the heterogeneous-device federated learning problem (different device capabilities, intermittent connectivity, varying update frequencies).
 
 **Safe RLHF for preference optimization:** The contextual bandit framework (§16.1) could be extended to reinforcement learning from human feedback (RLHF), where the reward model is trained on accept/reject signals and the policy is optimized subject to a safety constraint that prevents suggestions that reverse privacy settings or reduce accessibility features. The key design challenge is decoupling helpfulness optimization from safety — ensuring the RL objective cannot find adversarial suggestion strategies that technically maximize reward while violating user trust.
 
-**Formal verification of conflict resolution with timed automata:** The conflict detection pipeline (§17.3) uses a heuristic classifier. A longer-term direction is to express the preference schema and conflict rules as a timed automaton and use model checking (e.g., UPPAAL) to verify that the conflict resolution algorithm always terminates and produces a deterministic outcome given the authority ranking defined in [preferences.md](../preferences.md) §4.1. This would provide formal correctness guarantees for the most security-sensitive preference operations.
+**Formal verification of conflict resolution with timed automata:** The conflict detection pipeline (§17.3) uses a heuristic classifier. A longer-term direction is to express the preference schema and conflict rules as a timed automaton and use model checking (e.g., UPPAAL) to verify that the conflict resolution algorithm always terminates and produces a deterministic outcome given the authority ranking defined in [resolution.md](./resolution.md) §4.1. This would provide formal correctness guarantees for the most security-sensitive preference operations.

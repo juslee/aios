@@ -192,7 +192,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Preference history | `docs/intelligence/preferences/history.md` | §9.1–§9.2 Explainability/undo, §11.1–§11.2 Cross-device sync, §12.1–§12.6 Categories/defaults, §13 Settings UI |
 | Preference temporal rules | `docs/intelligence/preferences/temporal.md` | §14.1–§14.7 Context-driven rules: time-of-day, location, activity, device-presence triggers |
 | Preference security | `docs/intelligence/preferences/security.md` | §15.1–§15.7 Capability-gated access, trust levels, enterprise policy, rate limiting, audit, privacy |
-| Preference intelligence | `docs/intelligence/preferences/intelligence.md` | §16.1–§16.5 AIRS-dependent (contextual bandits, NLU, anomaly), §17.1–§17.4 Kernel-internal ML |
+| Preference intelligence | `docs/intelligence/preferences/intelligence.md` | §16.1–§16.5 AIRS-dependent (contextual bandits, NLU, anomaly), §17.1–§17.5 Kernel-internal ML (pattern detection, confidence, conflict prediction, feature importance, model budget) |
 | Preference testing | `docs/intelligence/preferences/testing.md` | §18.1–§18.5 Unit, integration, property-based, fuzz, QEMU validation |
 | Agents | `docs/applications/agents.md` | All (Phase 10+) |
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |

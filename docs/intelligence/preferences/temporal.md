@@ -11,7 +11,7 @@ Context rules let users declare preferences that activate automatically when con
 
 -----
 
-### §14.1 Context Rule Engine
+### 14.1 Context Rule Engine
 
 The rule engine is the component that translates incoming context change events into active preference overrides. It sits between the Context Engine (which detects and publishes context signals) and the Preference Service (which holds the canonical preference state).
 
@@ -51,7 +51,7 @@ Creating, modifying, or deleting context rules requires the `PreferenceRuleManag
 
 -----
 
-### §14.2 Time-of-Day Scheduling
+### 14.2 Time-of-Day Scheduling
 
 Time-of-day rules are the most common context rule variant. They map to `ContextCondition::TimeOfDay` and `ContextCondition::SolarEvent` (defined in [data-model.md §3.4](./data-model.md)).
 
@@ -97,7 +97,7 @@ Every day:        days=[] (empty = all days active)
 
 -----
 
-### §14.3 Location-Aware Preferences
+### 14.3 Location-Aware Preferences
 
 Location rules activate when the device enters or dwells within a named geofence. They map to `ContextCondition::Location` (defined in [data-model.md §3.4](./data-model.md)).
 
@@ -133,7 +133,7 @@ User control: the Preferences UI shows a map visualization of all active geofenc
 
 -----
 
-### §14.4 Activity-Aware Preferences
+### 14.4 Activity-Aware Preferences
 
 Activity rules activate when the AIRS Context Engine classifies the user's current activity with sufficient confidence. They map to `ContextCondition::Activity` (defined in [data-model.md §3.4](./data-model.md)).
 
@@ -165,7 +165,7 @@ Users can adjust these thresholds per-activity from Settings. The Context Engine
 
 -----
 
-### §14.5 Device-Presence Triggers
+### 14.5 Device-Presence Triggers
 
 Device-presence rules activate when a specific class of hardware is connected or disconnected. They map to `ContextCondition::DevicePresent` (defined in [data-model.md §3.4](./data-model.md)).
 
@@ -186,7 +186,7 @@ Device-presence rules activate immediately on connection (no dwell time) and dea
 
 -----
 
-### §14.6 Rule Composition and Interaction
+### 14.6 Rule Composition and Interaction
 
 #### AND Conditions Within a Rule
 
@@ -220,7 +220,7 @@ This prevents the frustrating pattern of a user manually adjusting a preference 
 
 -----
 
-### §14.7 Conversational Rule Creation
+### 14.7 Conversational Rule Creation
 
 Users create context rules by describing them in natural language via the Conversation Bar. The NLU pipeline described in [resolution.md §5](./resolution.md) parses the intent and constructs a `ContextRule` for user confirmation before saving.
 
