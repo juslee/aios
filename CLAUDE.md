@@ -132,9 +132,25 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Wireless security | `docs/platform/wireless/security.md` | §6.1–§6.5 WiFi security (WPA3-SAE), Bluetooth security, capability-gated access, rogue AP detection, attack surface |
 | Wireless integration | `docs/platform/wireless/integration.md` | §7.1–§7.8 Subsystem framework, USB transport, audio/input/networking integration, power, POSIX, coexistence |
 | Wireless AI-native | `docs/platform/wireless/ai-native.md` | §8–§10 AIRS-dependent intelligence (18 capabilities), kernel-internal ML (14 models), future directions |
+| Camera subsystem (hub) | `docs/platform/camera.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, §16 Future Directions, Document Map |
+| Camera devices & discovery | `docs/platform/camera/devices.md` | §3.1–§3.4 Device taxonomy (USB/UVC, CSI/MIPI, VirtIO-Camera, depth/ToF), discovery, multi-camera topology, capabilities descriptor |
+| Camera capture & ISP pipeline | `docs/platform/camera/pipeline.md` | §4.1–§4.5 Format negotiation, frame delivery, buffer management, zero-copy paths, frame timing; §5.1–§5.6 ISP stages, 3A algorithms, hardware/software ISP, still capture, RAW |
+| Camera sessions | `docs/platform/camera/sessions.md` | §6.1–§6.4 Session lifecycle, SessionIntent, conflict resolution (Prompt policy), viewfinder indicator |
+| Camera drivers | `docs/platform/camera/drivers.md` | §7.1–§7.5 UVC driver, CSI/MIPI driver, VirtIO-Camera, platform drivers (Pi Camera), CameraDevice trait |
+| Camera privacy & security | `docs/platform/camera/security.md` | §8.1–§8.7 Hardware LED enforcement, anti-silent-capture, CameraCapability, recording consent, content screening, audit trail, physical privacy; §9.1–§9.3 Privacy indicators |
+| Camera integration | `docs/platform/camera/integration.md` | §10.1–§10.6 Compositor viewfinder, Flow integration, POSIX bridge (/dev/video*, V4L2), audio sync, accessibility, input gesture bridge |
+| Camera AI-native | `docs/platform/camera/ai-native.md` | §11.1–§11.5 Scene understanding, smart framing, computational photography, gesture recognition, anomaly detection; §12.1–§12.3 Kernel-internal ML; §13.1–§13.6 Future AI directions |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
+| Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |
+| Thermal cooling & governors | `docs/platform/thermal/cooling.md` | §4 CoolingDevice trait/DVFS/fan/gating, §5 Governors (step-wise/PID/bang-bang) |
+| Thermal-aware scheduling | `docs/platform/thermal/scheduling.md` | §6 ThermalState/WCET/inference/pressure, §7 Load balancing/dark silicon/core-idling |
+| Thermal platform drivers | `docs/platform/thermal/platform-drivers.md` | §8 QEMU/Pi 4/Pi 5/Apple Silicon/ARM SCMI |
+| Thermal integration | `docs/platform/thermal/integration.md` | §9 GPU/audio/storage/network/boot coordination, §10 POSIX/agent headroom API |
+| Thermal security | `docs/platform/thermal/security.md` | §11 Capability gate/audit/safety invariants/formal verification/DoS prevention |
+| Thermal intelligence | `docs/platform/thermal/intelligence.md` | §12 Kernel-internal ML (decision tree/NN/MPC/fingerprinting), §13 AIRS (DRL/GNN/multi-agent RL/anomaly) |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
