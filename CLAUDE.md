@@ -195,6 +195,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
 | Fuzzing tooling & catalog | `docs/security/fuzzing/tooling.md` | §5.1–5.4 Tiered tooling, §6 Fuzz target catalog |
 | Fuzzing AI-native strategies | `docs/security/fuzzing/ai-native.md` | §7.1–7.3 Dev-time AI, kernel-internal AI, AIRS-dependent |
+| Secure boot & updates (hub) | `docs/security/secure-boot.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| Secure boot threat model & trust chain | `docs/security/secure-boot/trust-chain.md` | §2 Threat model, §3 Six-link chain of trust, §3.7 Measured boot, §3.8 Remote attestation |
+| UEFI Secure Boot & TrustZone | `docs/security/secure-boot/uefi.md` | §4 UEFI integration/signing/verification, §5 TrustZone key migration/sealing/counters/OP-TEE path |
+| A/B updates & rollback | `docs/security/secure-boot/updates.md` | §6 A/B scheme, §7 Delta updates, §8 Update channels (system/agent/model), §9 Rollback protection |
+| Update security operations | `docs/security/secure-boot/operations.md` | §10 Capabilities/verification/audit/incident/revocation, §11 POSIX compatibility |
+| Secure boot AI intelligence | `docs/security/secure-boot/intelligence.md` | §12 AI-native (model integrity/scheduling/anomaly), §13 Kernel-internal ML, §16 Future directions |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
