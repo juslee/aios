@@ -201,7 +201,7 @@ pub struct InferenceStats {
     time_to_first_token: Duration,
     total_time: Duration,
     model_used: ModelId,
-    compute_device: ComputeDevice,
+    compute_device: ComputeDeviceId,
 }
 ```
 

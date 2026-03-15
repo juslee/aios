@@ -39,8 +39,8 @@ impl CacheOps {
     /// by Virtual Address to Point of Coherency).
     pub fn flush_for_device(vaddr: VirtAddr, size: usize) {
         let cache_line_size = 64; // ARM Cortex-A76 cache line
-        let start = vaddr.0 & !(cache_line_size - 1);
-        let end = (vaddr.0 + size + cache_line_size - 1)
+        let start = vaddr & !(cache_line_size - 1);
+        let end = (vaddr + size + cache_line_size - 1)
             & !(cache_line_size - 1);
 
         for addr in (start..end).step_by(cache_line_size) {
@@ -68,8 +68,8 @@ impl CacheOps {
     /// Address to Point of Coherency).
     pub fn invalidate_for_host(vaddr: VirtAddr, size: usize) {
         let cache_line_size = 64;
-        let start = vaddr.0 & !(cache_line_size - 1);
-        let end = (vaddr.0 + size + cache_line_size - 1)
+        let start = vaddr & !(cache_line_size - 1);
+        let end = (vaddr + size + cache_line_size - 1)
             & !(cache_line_size - 1);
 
         for addr in (start..end).step_by(cache_line_size) {

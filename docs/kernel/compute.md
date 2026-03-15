@@ -70,8 +70,8 @@ The compute abstraction is **not** a scheduler. The kernel CPU scheduler ([sched
 | `ComputeTopology` | Graph of compute devices with interconnect/latency metadata | [registry.md](./compute/registry.md) §6 |
 | `ComputeBudget` | Per-agent compute time and power budget enforcement | [budget.md](./compute/budget.md) §7 |
 | `ComputeQuota` | Kernel-enforced limits on accelerator usage | [budget.md](./compute/budget.md) §8 |
-| `AcceleratorMemoryRegion` | Device-local or unified memory region descriptor | [memory.md](./compute/memory.md) §9 |
-| `ComputeBufferExchange` | Zero-copy buffer sharing between CPU and accelerators | [memory.md](./compute/memory.md) §10 |
+| `ComputeMemoryModel` | Device memory model: Unified, Discrete, or Scratchpad | [memory.md](./compute/memory.md) §9 |
+| `ComputeBuffer` / `BufferOwnership` | Zero-copy buffer sharing and ownership protocol | [memory.md](./compute/memory.md) §10 |
 | `ComputeAccess` | Capability token for compute device access | [security.md](./compute/security.md) §11 |
 | `ComputeGrant` | Capability granting command submission rights to a specific device | [security.md](./compute/security.md) §12 |
 

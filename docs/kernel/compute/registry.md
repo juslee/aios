@@ -224,7 +224,7 @@ All devices in one coherency domain (no SMMU, no IOMMU)
 ```text
 Cortex-A76 ←→ VideoCore VII    latency: ~500 ns (shared L3/DRAM)
 Both share LPDDR4X bandwidth (~18 GB/s aggregate)
-Hardware coherent via ARM CCI
+Software-managed coherency (explicit cache maintenance)
 ```
 
 **Apple M-series (unified SoC with heterogeneous engines):**
@@ -233,7 +233,7 @@ Hardware coherent via ARM CCI
 P-cores ←→ E-cores      latency: ~50 ns (shared L2)
 CPU ←→ GPU              latency: ~200 ns (shared unified memory)
 CPU ←→ ANE              latency: ~500 ns (DMA-based, not coherent)
-GPU and ANE: different coherency domains (ANE requires explicit cache ops)
+CPU ←→ GPU: hardware coherent (ARM ACE); ANE: separate DMA domain (scratchpad, explicit cache ops)
 ```
 
 ### 6.3 Topology Discovery

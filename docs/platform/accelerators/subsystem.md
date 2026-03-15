@@ -1,7 +1,7 @@
 # AIOS Compute Subsystem
 
 Part of: [accelerators.md](../accelerators.md) — Platform Accelerator Drivers
-**Related:** [drivers.md](./drivers.md) — AcceleratorDriver trait, [../../platform/subsystem-framework.md](../subsystem-framework.md) — Subsystem framework, [../../kernel/compute/security.md](../../kernel/compute/security.md) — ComputeAccess capability
+**Related:** [drivers.md](./drivers.md) — AcceleratorDriver trait, [subsystem-framework.md](../subsystem-framework.md) — Subsystem framework, [compute/security.md](../../kernel/compute/security.md) — ComputeAccess capability
 
 -----
 

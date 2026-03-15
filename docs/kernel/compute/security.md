@@ -14,7 +14,7 @@ Access to compute devices follows the same capability model as all other AIOS re
 ```rust
 /// Compute-specific capability variants.
 ///
-/// Added to the Capability enum in shared/src/cap.rs.
+/// Extends the Capability enum (shared/src/cap.rs) — target design.
 /// Follows the same pattern as ChannelAccess(ChannelId).
 pub enum Capability {
     // ... existing variants (ReadSpace, WriteSpace, ChannelCreate,

@@ -243,7 +243,7 @@ The current design assumes compute shaders (GPU) are compiled offline or by the 
 
 Compute devices with dedicated crypto engines (Apple Secure Enclave, ARM CryptoCell) could be exposed through the `AcceleratorDriver` trait:
 
-- `ComputeClass::Crypto` for dedicated crypto accelerators
+- `ComputeClass::Asic` for dedicated crypto accelerators (fixed-function ASIC class)
 - `compile_program()` validates crypto operation descriptors
 - `submit()` executes encrypt/decrypt/hash operations
 - Integration with the storage encryption layer ([storage/spaces/encryption.md](../../storage/spaces/encryption.md) §6)
