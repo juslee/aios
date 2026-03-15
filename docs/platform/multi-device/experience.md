@@ -396,7 +396,7 @@ pub enum ScreenEdge {
 }
 ```
 
-The input subsystem (see [input.md](../input.md) §4.6 for multi-seat support) treats remote devices as virtual input sources. Input events are serialized with sub-millisecond timestamps to preserve ordering across the network boundary.
+The input subsystem (see [input/events.md](../input/events.md) §4.6 for multi-seat support) treats remote devices as virtual input sources. Input events are serialized with sub-millisecond timestamps to preserve ordering across the network boundary.
 
 ### Display & Input Topology
 

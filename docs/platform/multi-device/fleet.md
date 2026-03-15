@@ -259,7 +259,7 @@ Anomaly detection triggers an alert to fleet administrators when a device deviat
 | Thermal throttle duration | 2x longer than 30-day average | Hardware degradation |
 | Sync lag | Exceeds 4 hours (baseline: < 30 min) | Network or policy misconfiguration |
 
-Baseline anomaly detection uses simple statistical thresholds (z-score against rolling averages). For more sophisticated pattern detection across the fleet — including cross-device correlation and predictive failure analysis — see [intelligence.md](./intelligence.md) §13.2.
+Baseline anomaly detection uses simple statistical thresholds (z-score against rolling averages). For more sophisticated pattern detection across the fleet — including cross-device correlation and predictive failure analysis — see [intelligence.md](./intelligence.md) §14.1.
 
 ```mermaid
 flowchart LR

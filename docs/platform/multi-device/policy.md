@@ -294,7 +294,7 @@ PolicyRule {
 }
 ```
 
-The condition evaluation engine runs entirely on-device. When AIRS is available, the `risk_score` field incorporates behavioral analysis and anomaly detection (see [intelligence.md](./intelligence.md) §14.3). Without AIRS, the system falls back to a deterministic rule-based score derived from the boolean posture fields.
+The condition evaluation engine runs entirely on-device. When AIRS is available, the `risk_score` field incorporates behavioral analysis and anomaly detection (see [intelligence.md](./intelligence.md) §14.1). Without AIRS, the system falls back to a deterministic rule-based score derived from the boolean posture fields.
 
 Cross-references: [operations.md](../../security/model/operations.md) §10 (zero trust, continuous verification), [capabilities.md](../../security/model/capabilities.md) §3 (capability token lifecycle)
 
