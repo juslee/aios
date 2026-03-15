@@ -17,26 +17,28 @@ QEMU is the primary testing platform. All CI runs on `virt` machine because it i
 
 ```text
 qemu-system-aarch64 \
-  -machine virt \
+  -machine virt,gic-version=3 \
   -cpu cortex-a72 \
   -smp 4 \
   -m 2G \
   -nographic \
-  -bios edk2-aarch64-code.fd \
-  -drive file=aios.img,format=raw \
-  -drive file=data.img,if=none,format=raw,id=disk0 \
-  -device virtio-blk-device,drive=disk0
+  -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+  -drive if=none,id=disk0,file=aios.img,format=raw \
+  -device virtio-blk-pci,drive=disk0 \
+  -drive if=none,id=data0,file=data.img,format=raw \
+  -device virtio-blk-device,drive=data0 \
+  -device ramfb
 ```
 
 **CI pipeline** (`.github/workflows/ci.yml`), triggered on every push:
 
 | Job | Command | Pass condition |
 |---|---|---|
-| Format check | `just check` (fmt-check) | Zero diff from `rustfmt` |
-| Clippy | `just check` (clippy) | Zero warnings |
-| Build | `cargo build --target aarch64-unknown-none` | Zero warnings |
-| Host tests | `just test` | All unit tests pass |
-| QEMU boot | `just run` with expect script | UART output matches acceptance strings |
+| Check (fmt + clippy + build) | `just check` | Zero diff from `rustfmt`, zero clippy warnings, zero build warnings |
+| Build (release) | `just build-release` | Zero warnings |
+| Test (host) | `just test` | All unit tests pass |
+| Security (audit + deny) | `just audit` + `just deny` | No known vulnerabilities, license compliance |
+| Miri (unsafe UB detection) | `just miri` | No undefined behavior detected |
 
 **Boot test timeout budget:**
 
@@ -73,7 +75,7 @@ QEMU cannot faithfully emulate Pi 4, Pi 5, or Apple Silicon hardware. `qemu-syst
 
 **DTB overlay testing approach:**
 
-A Pi 4-like DTB is hand-crafted with GICv2 base addresses (`0x40041000` for GICD, `0x40042000` for GICC) but run against the `virt` machine for the CPU and timer. The kernel's `detect_platform()` function reads compatible strings from the DTB — it will see `"raspberrypi,4-model-b"` and select `Pi4Platform`. The MMIO accesses will fault (addresses do not exist on `virt`), but the test validates that:
+A Pi 4-like DTB is hand-crafted with GICv2 base addresses (`0xFF84_1000` for GICD, `0xFF84_2000` for GICC — matching platforms.md §5.2) but run against the `virt` machine for the CPU and timer. The kernel's `detect_platform()` function reads compatible strings from the DTB — it will see `"raspberrypi,4-model-b"` and select `Pi4Platform`. The MMIO accesses will fault (addresses do not exist on `virt`), but the test validates that:
 
 1. The correct platform struct is selected.
 2. The DTB parser extracts the right peripheral addresses.

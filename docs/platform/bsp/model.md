@@ -261,7 +261,7 @@ pub enum QuirkAction {
 | BCM2712 (Pi 5) | `rp1-fw-required` | RP1 south bridge peripherals (USB, Ethernet, GPIO) are managed by the RP1 firmware. The kernel driver must request firmware activation before accessing RP1 MMIO. |
 | Apple M1 | `aic-fiq-mask-format` | Apple AIC uses a non-standard FIQ mask format. Masking a FIQ requires writing to a different register offset than masking an IRQ, unlike GIC where the same ISENABLER register covers both. |
 | Apple Silicon | `dart-required` | All DMA-capable devices on Apple Silicon are behind the DART IOMMU. No DMA is possible without first mapping the buffer through DART. Drivers must query the DART handle before issuing any DMA. |
-| QEMU | `no-cache-maintenance` | QEMU emulates a fully coherent memory model. Cache maintenance instructions (DC CIVAC, DC CVAC, etc.) are legal but have no effect. Driver code may skip cache maintenance on QEMU to simplify testing. |
+| QEMU | `coherent-dma` | QEMU emulates a fully coherent memory model where cache maintenance instructions (DC CIVAC, DC CVAC, etc.) are legal NOPs. Drivers must still issue correct barriers and cache maintenance for real hardware correctness — this quirk is informational only, indicating that DMA coherency failures on QEMU do not imply correct behavior on real platforms. |
 
 Quirks are consulted at driver initialization time. A driver calls `quirk_table.get("pcie-needs-fw-init")` before initializing the PCIe controller; if the quirk is active for the current platform, it triggers the firmware-first path.
 
@@ -424,7 +424,7 @@ Goal: hardware entropy source available before KASLR slide computation.
 | Platform | RNG hardware | Implementation approach |
 |---|---|---|
 | QEMU | VirtIO-RNG | Virtqueue-based; requires heap (called post-heap-init) |
-| Pi 4/5 | bcm2835-rng | MMIO register at `0x7e104000` (Pi physical address space) |
+| Pi 4/5 | bcm2835-rng | MMIO register at `0xFE10_4000` (ARM physical); legacy bus address `0x7E10_4000` in DTB — use DTB `reg` property translated through `ranges` |
 | Apple Silicon | Apple TRNG | MMIO register; custom protocol, consult m1n1 source |
 
 Acceptance: `init_rng()` returns a `RngDevice` that produces non-repeating 32-byte entropy blocks. Log the first block via UART to confirm non-zero output.

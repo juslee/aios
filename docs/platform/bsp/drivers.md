@@ -22,7 +22,7 @@ The interrupt controller is the first peripheral the kernel programs after enter
 | Function | QEMU virt | Pi 4 (BCM2711) | Pi 5 (BCM2712) | Apple Silicon |
 |---|---|---|---|---|
 | Interrupt controller | GICv3 | GICv2 (GIC-400) | GICv3 | AIC (v1 on M1, v2 on M2+) |
-| Driver file | `arch/aarch64/gic.rs` | `arch/aarch64/gicv2.rs` | `arch/aarch64/gic.rs` | `arch/aarch64/aic.rs` |
+| Driver file | `arch/aarch64/gic.rs` | `arch/aarch64/gic_v2.rs` *(planned)* | `arch/aarch64/gic.rs` | `arch/aarch64/aic.rs` *(planned)* |
 | DTB compatible | `arm,gic-v3` | `arm,gic-400` | `arm,gic-v3` | `apple,aic` / `apple,aic2` |
 | IRQ model | SPI / PPI / LPI | SPI / PPI | SPI / PPI / LPI | HW events |
 | IPI mechanism | `ICC_SGI1R_EL1` | `GICD_SGIR` | `ICC_SGI1R_EL1` | `AIC_IPI_SEND` |
@@ -201,15 +201,16 @@ Mapping of mandatory nodes to `DeviceTree` struct fields in `kernel/src/dtb.rs`:
 
 | DTB node / property | `DeviceTree` field | Notes |
 |---|---|---|
-| `/memory@*/reg` | `memory_regions: &[MemoryRegion]` | All usable RAM ranges |
-| `/cpus/cpu@N/reg` | `cpu_mpidrs: &[u64]` | One entry per CPU node |
-| `/psci/method` | `psci_method: PsciMethod` | `Hvc` or `Smc` |
-| `/interrupt-controller@*/compatible` | `intc_compatible: &str` | Selects GICv2/v3/AIC driver |
-| `/interrupt-controller@*/reg` | `intc_base: u64` (GICD/AIC) | Primary MMIO base |
-| `/interrupt-controller@*/reg` (GICv3 only) | `gicr_base: u64` | Redistributor base |
-| `/timer/interrupts[2]` | `timer_irq: u32` | EL1 physical PPI (usually 30) |
-| `/chosen/stdout-path` | resolved to `uart_base: u64` | UART MMIO base for early log |
-| `/chosen/rng-seed` | `rng_seed: Option<[u8; 64]>` | Boot entropy for KASLR |
+| `/cpus/cpu@N/reg` | `cpu_mpidrs: [u64; 8]` | One entry per CPU node; `cpu_count_val` tracks count |
+| `/psci/method` | `psci_hvc: bool` | `true` = HVC, `false` = SMC |
+| `/interrupt-controller@*/reg` | `gicd_base: Option<u64>` | GICD MMIO base (GICv2 or GICv3) |
+| `/interrupt-controller@*/reg` (GICv3 only) | `gicr_base: Option<u64>` | Redistributor base |
+| `/timer/interrupts[2]` | `timer_ppi: u32` | EL1 physical PPI (typically 30) |
+| `/chosen/stdout-path` or UART node | `uart_base: Option<u64>` | UART MMIO base for early log |
+| VirtIO MMIO nodes | `virtio_mmio_bases: [u64; 32]` | Up to 32 VirtIO MMIO device bases |
+| `/memory@*/reg` | *(target design)* | RAM ranges — currently sourced from UEFI memory map |
+| `/interrupt-controller@*/compatible` | *(target design)* | Selects GICv2/v3/AIC driver — currently inferred from `root_compatible` |
+| `/chosen/rng-seed` | *(target design)* | Boot entropy for KASLR — currently uses `CNTPCT_EL0` |
 
 ### §10.2 Platform-Specific Nodes
 
@@ -321,7 +322,7 @@ The kernel performs a sequence of consistency checks immediately after parsing t
 | CPU `enable-method` is `psci` for non-boot CPUs | Warning | SMP bringup skips CPUs without PSCI; logged at `kwarn!` |
 | GICv3 GICR covers all CPU MPIDR values | Warning | Missing redistributors cause secondary core init failure at SMP bring-up |
 
-The validation logic lives in `kernel/src/dtb.rs` function `DeviceTree::validate()`. It runs synchronously in `kernel_main` after `parse()` and before `detect_platform()` (hal.md §3). Any fatal error fires before memory initialization, so error output goes directly to the UART via `putc()` rather than through the log ring.
+The validation logic will live in `kernel/src/dtb.rs` as a `DeviceTree::validate()` method (target design — not yet implemented; currently `parse()` returns `None` on malformed DTBs without detailed diagnostics). It runs synchronously in `kernel_main` after `parse()` and before `detect_platform()` (hal.md §3). Any fatal error fires before memory initialization, so error output goes directly to the UART via `putc()` rather than through the log ring.
 
 Platform detection uses the root `compatible` property to pick the `Platform` implementation:
 

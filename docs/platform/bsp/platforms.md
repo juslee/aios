@@ -35,14 +35,18 @@ characteristics relevant to AIOS:
 Standard QEMU invocation for AIOS:
 
 ```text
-qemu-system-aarch64                   \
-  -machine virt                       \
-  -cpu cortex-a72                     \
-  -smp 4                              \
-  -m 2G                               \
-  -bios /path/to/edk2-aarch64-code.fd \
-  -drive file=aios.img,format=raw     \
-  -nographic
+qemu-system-aarch64                                        \
+  -machine virt,gic-version=3                              \
+  -cpu cortex-a72                                          \
+  -smp 4                                                   \
+  -m 2G                                                    \
+  -nographic                                               \
+  -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd     \
+  -drive if=none,id=disk0,file=aios.img,format=raw        \
+  -device virtio-blk-pci,drive=disk0                       \
+  -drive if=none,id=data0,file=data.img,format=raw         \
+  -device virtio-blk-device,drive=data0                    \
+  -device ramfb
 ```
 
 The `-nographic` flag redirects serial output to the terminal and suppresses the QEMU
@@ -273,8 +277,8 @@ on QEMU. Key differences:
 - No redistributor; CPU interface registers are at a single banked MMIO region (`0xFF84_2000`)
   shared across all CPUs (per-CPU views accessed via the banked register scheme)
 - Affinity routing is not supported; SGIs and PPIs are targeted by CPU mask
-- This requires a separate GICv2 driver (`kernel/src/arch/aarch64/gic_v2.rs`); the GICv3
-  driver used on QEMU is not compatible
+- This requires a separate GICv2 driver (target path: `kernel/src/arch/aarch64/gic_v2.rs`,
+  not yet implemented); the existing GICv3 driver (`gic.rs`) is not compatible
 
 **ARM Timer frequency:** 54 MHz on BCM2711, not 62.5 MHz as on QEMU. Drivers must read
 `CNTFRQ_EL0` at runtime and derive all timer intervals from the hardware-reported value.
