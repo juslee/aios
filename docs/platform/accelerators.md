@@ -13,7 +13,7 @@ Each platform has radically different accelerator programming models. VideoCore 
 
 **The key constraint:** the `AcceleratorDriver` trait is a *refinement*, not a replacement. An accelerator driver is still a device driver — it goes through the same probe/bind/lifecycle as any other driver ([device-model/discovery.md](../kernel/device-model/discovery.md) §6). The accelerator-specific operations are layered on top.
 
-**Development strategy:** QEMU first. VirtIO-GPU 3D compute (or a VirtIO-Compute device) is the primary development target. Real hardware drivers (VideoCore VII, Apple ANE) follow in Phase 27 when the platform BSP ([bsp.md](./bsp.md)) provides the necessary MMIO access and interrupt routing.
+**Development strategy:** QEMU first. VirtIO-GPU 3D compute (or a VirtIO-Compute device) is the primary development target. Real hardware drivers (VideoCore VII, Apple ANE) follow in Phase 39 when the platform BSP ([bsp.md](./bsp.md)) provides the necessary MMIO access and interrupt routing.
 
 -----
 
@@ -134,7 +134,7 @@ Phase 39 (Real Hardware)   → Platform-specific drivers
 
 2. **Subsystem framework compliance.** The compute subsystem follows the same session/capability/audit/POSIX pattern as audio, networking, and display ([subsystem-framework.md](./subsystem-framework.md)). Adding compute to a platform is formulaic, not architectural.
 
-3. **QEMU-first development.** VirtIO-GPU 3D compute is the primary development target through Phase 22. Real hardware drivers are added in Phase 27 when BSP support is ready. The VirtIO driver validates the entire stack (capability grants, budget enforcement, memory management) before real hardware introduces platform-specific complexity.
+3. **QEMU-first development.** VirtIO-GPU 3D compute is the primary development target through Phase 20. Real hardware drivers are added in Phase 39 when BSP support is ready. The VirtIO driver validates the entire stack (capability grants, budget enforcement, memory management) before real hardware introduces platform-specific complexity.
 
 4. **Unified memory is the fast path.** ARM SoCs share system RAM between CPU and accelerators. The driver stack optimizes for cache operations (flush/invalidate), not DMA transfers. Discrete memory support (DMA copies) is layered on top for hypothetical future hardware.
 

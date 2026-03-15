@@ -155,7 +155,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Media content protection | `docs/platform/media-pipeline/drm.md` | §11.1–§11.6 DRM (CDM trait, Widevine/PlayReady/FairPlay, CENC, secure decode); §12.1–§12.3 Output protection (HDCP) |
 | Media integration | `docs/platform/media-pipeline/integration.md` | §13 Cross-subsystem coordination, §14 POSIX bridge (GStreamer/FFmpeg/V4L2), §15 Security/audit, §16 AI-native intelligence, §17 Thermal |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
-| POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
+| POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 22+) |
 | Linux binary & Wayland compat (hub) | `docs/platform/linux-compat.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, §16 Future Directions, Document Map |
 | Linux ELF loader & glibc shim | `docs/platform/linux-compat/elf-loader.md` | §3 ELF format/segments/ASLR/dynamic linker/VDSO/auxv, §4 glibc ABI shim/signals/threads |
 | Linux syscall translation | `docs/platform/linux-compat/syscall-translation.md` | §5 ~200 syscall table by category, §6 Deep dives: epoll/futex/io_uring/eventfd/signalfd/timerfd |
@@ -169,7 +169,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Accelerator memory | `docs/platform/accelerators/memory.md` | §8 Platform memory management, §9 Zero-copy CPU-accelerator paths |
 | Compute subsystem | `docs/platform/accelerators/subsystem.md` | §10 Compute subsystem (Subsystem trait), §11 POSIX bridge (/dev/compute/*) |
 | Accelerator intelligence | `docs/platform/accelerators/intelligence.md` | §12 AIRS integration, §15 Future directions |
-| Power management | `docs/platform/power-management.md` | All (Phase 19+) |
+| Power management | `docs/platform/power-management.md` | All (Phase 27+) |
 | Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
 | Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |
 | Thermal cooling & governors | `docs/platform/thermal/cooling.md` | §4 CoolingDevice trait/DVFS/fan/gating, §5 Governors (step-wise/PID/bang-bang) |
@@ -209,8 +209,8 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Context consumers | `docs/intelligence/context-engine/consumers.md` | §6 Scheduler, attention manager, compositor, preference service |
 | Context learning & AI | `docs/intelligence/context-engine/learning.md` | §7 Learning, §8 Fallback, §13 AI-native context intelligence, §14 Future directions |
 | Context SDK & diagnostics | `docs/intelligence/context-engine/sdk.md` | §9 SDK API, §10 Diagnostics & Inspector |
-| Attention management | `docs/intelligence/attention.md` | §1–§17 Core design (Phase 11+), §18 Security, §19 AI-Native Intelligence, §20 Testing Strategy, §21 Future Directions |
-| Task manager | `docs/intelligence/task-manager.md` | §1-§13 Core (Phase 11+), §14 Security, §15 Observability, §16 Multi-device, §17 Power/thermal, §18 AI-native AIRS, §19 Kernel-internal ML, §20 Future, §21 Cross-refs |
+| Attention management | `docs/intelligence/attention.md` | §1–§17 Core design (Phase 14+), §18 Security, §19 AI-Native Intelligence, §20 Testing Strategy, §21 Future Directions |
+| Task manager | `docs/intelligence/task-manager.md` | §1-§13 Core (Phase 14+), §14 Security, §15 Observability, §16 Multi-device, §17 Power/thermal, §18 AI-native AIRS, §19 Kernel-internal ML, §20 Future, §21 Cross-refs |
 | Preferences (hub) | `docs/intelligence/preferences.md` | §1 Overview, §2 Architecture, §19 Impl Order, §20 Design Principles, Document Map |
 | Preference data model | `docs/intelligence/preferences/data-model.md` | §3.1–§3.5 Preference types, values, sources (Enterprise/Context-driven), metadata, schema registry |
 | Preference resolution | `docs/intelligence/preferences/resolution.md` | §4.1–§4.4 7-tier source precedence, §5.1–§5.2 NLU pipeline, §10.1–§10.3 Conflict detection/resolution |
@@ -220,9 +220,9 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Preference security | `docs/intelligence/preferences/security.md` | §15.1–§15.7 Capability-gated access, trust levels, enterprise policy, rate limiting, audit, privacy |
 | Preference intelligence | `docs/intelligence/preferences/intelligence.md` | §16.1–§16.5 AIRS-dependent (contextual bandits, NLU, anomaly), §17.1–§17.5 Kernel-internal ML (pattern detection, confidence, conflict prediction, feature importance, model budget) |
 | Preference testing | `docs/intelligence/preferences/testing.md` | §18.1–§18.5 Unit, integration, property-based, fuzz, QEMU validation |
-| Agents | `docs/applications/agents.md` | All (Phase 10+) |
-| Browser | `docs/applications/browser.md` | All (Phase 21+) |
-| Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 13+) |
+| Agents | `docs/applications/agents.md` | All (Phase 13+) |
+| Browser | `docs/applications/browser.md` | All (Phase 30+) |
+| Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 17+) |
 | Terminal emulator (hub) | `docs/applications/terminal.md` | §1 Core Insight, §2 Architecture, §9–§12 Design/Impl/Future/AI-Native, Document Map |
 | Terminal VT emulation | `docs/applications/terminal/emulation.md` | §3.1–§3.7 State machine, escape sequences, modes, charset, grid, colors, reference |
 | Terminal rendering | `docs/applications/terminal/rendering.md` | §4.1–§4.6 Font engine, glyph atlas, GPU rendering, damage tracking, scrollback, compositor |
@@ -230,14 +230,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Terminal input | `docs/applications/terminal/input.md` | §6.1–§6.6 Keyboard flow, VT translation, mouse reporting, selection, secure input, IME |
 | Terminal multiplexer | `docs/applications/terminal/multiplexer.md` | §7.1–§7.6 Session broker, pane splitting, detach/reattach, SSH forwarding, reconnection |
 | Terminal integration | `docs/applications/terminal/integration.md` | §8.1–§8.7 Subsystem framework, capability gate, spaces, Flow, accessibility, audit |
-| UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 20+) |
+| UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 29+) |
 | Security model (hub) | `docs/security/model.md` | §1 Threat model, §12 Impl order, Document Map |
 | Security defense layers | `docs/security/model/layers.md` | §2 Eight security layers deep dive |
 | Capability system internals | `docs/security/model/capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
-| Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 28) |
+| Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 40) |
 | Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
 | Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
-| AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 29) |
+| AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 41) |
 | Fuzzing & input hardening (hub) | `docs/security/fuzzing.md` | §1 Overview, §2 Attack surface, Document Map |
 | Fuzzing hardening strategies | `docs/security/fuzzing/strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
 | Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
@@ -251,7 +251,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Secure boot AI intelligence | `docs/security/secure-boot/intelligence.md` | §12 AI-native (model integrity/scheduling/anomaly), §13 Kernel-internal ML, §16 Future directions |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
-| Accessibility | `docs/experience/accessibility.md` | All (Phase 23+) |
+| Accessibility | `docs/experience/accessibility.md` | All (Phase 33+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
 | AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
