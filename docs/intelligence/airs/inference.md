@@ -94,17 +94,23 @@ pub enum BudgetPolicy {
 
 ### 3.2 Compute Scheduler
 
-Multiple services need inference simultaneously. The Compute Scheduler allocates compute resources:
+Multiple services need inference simultaneously. The Compute Scheduler allocates compute resources. Rather than maintaining its own device list, the scheduler queries the kernel's ComputeRegistry ([compute/registry.md](../../kernel/compute/registry.md) §5) for available devices and their capabilities:
 
 ```rust
 pub struct ComputeScheduler {
-    devices: Vec<ComputeDevice>,
+    /// Reference to the kernel's centralized compute device registry.
+    /// AIRS queries this for device capabilities, utilization, and
+    /// thermal state — it does not maintain a separate device list.
+    /// See compute/classification.md §3 for ComputeDevice trait.
+    registry: ComputeRegistryHandle,
     queue: PriorityQueue<InferenceRequest>,
     active: Vec<ActiveInference>,
     policy: SchedulingPolicy,
 }
 
-pub enum ComputeDevice {
+/// Compute device classes that the scheduler can target.
+/// Maps to kernel ComputeClass (compute/classification.md §3.2).
+pub enum ComputeDeviceClass {
     Cpu {
         cores: u32,
         neon: bool,           // NEON SIMD available (always true on aarch64)
@@ -118,6 +124,9 @@ pub enum ComputeDevice {
     Npu {
         tops: f32,            // tera-operations per second
         supported_formats: Vec<QuantFormat>,
+    },
+    Dsp {
+        macs_per_cycle: u32,  // multiply-accumulate ops per cycle
     },
 }
 

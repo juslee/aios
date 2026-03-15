@@ -25,7 +25,7 @@ tokens/second ≈ memory_bandwidth_GB/s / model_size_GB
 
 On a Cortex-A76 (Pi 5) with ~18 GB/s sustained LPDDR4X bandwidth, a 7B Q4_K_M model (~3.5 GB effective) yields ~5 tok/s. This simple formula is within 20% of measured llama.cpp performance.
 
-AIRS maintains a runtime-calibrated predictor that corrects the roofline estimate using an EWMA (exponentially weighted moving average) of observed inference latency:
+AIRS maintains a runtime-calibrated predictor that corrects the roofline estimate using an EWMA (exponentially weighted moving average) of observed inference latency. The `roofline_tps` value is initially populated from the device's `ComputeCapabilityDescriptor` ([compute/classification.md](../../kernel/compute/classification.md) §4), which includes theoretical peak throughput, memory bandwidth, and supported precision formats. For multi-accelerator scenarios, the platform's `DeviceCostModel` ([accelerators/intelligence.md](../../platform/accelerators/intelligence.md) §12.3) provides per-device cost estimates that feed into placement decisions:
 
 ```rust
 pub struct InferencePredictor {

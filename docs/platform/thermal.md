@@ -33,7 +33,7 @@ Unlike traditional OSes that treat thermal management as a driver-level concern,
 | [cooling.md](./thermal/cooling.md) | §4–§5 | Cooling device trait, DVFS, fans, governors (step-wise, PID, bang-bang) |
 | [scheduling.md](./thermal/scheduling.md) | §6–§7 | Scheduler integration, WCET scaling, dark silicon budgeting, core-idling |
 | [platform-drivers.md](./thermal/platform-drivers.md) | §8 | Per-platform drivers: QEMU, Pi 4, Pi 5, Apple Silicon, ARM SCMI |
-| [integration.md](./thermal/integration.md) | §9–§10 | Subsystem coordination (GPU, audio, storage, network), POSIX bridge, agent API |
+| [integration.md](./thermal/integration.md) | §9–§10 | Subsystem coordination (GPU, audio, storage, network, **compute accelerators**), POSIX bridge, agent API |
 | [security.md](./thermal/security.md) | §11 | Capability-gated access, audit trail, safety invariants, formal verification |
 | [intelligence.md](./thermal/intelligence.md) | §12–§13 | Kernel-internal ML, AIRS thermal advisor, anomaly detection, future directions |
 
