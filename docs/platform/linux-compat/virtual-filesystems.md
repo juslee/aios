@@ -383,7 +383,7 @@ Each sandbox has its own filesystem view, assembled from AIOS space objects and 
 /proc              → procfs handler (filtered by PID namespace, §11.1)
 /sys               → sysfs handler (filtered by device capabilities, §11.2)
 /dev               → devtmpfs handler (filtered by device capabilities, §11.3)
-/var/tmp           → per-sandbox persistent temp (backed by ephemeral space)
+/var/tmp           → per-sandbox persistent temp (backed by user's home space, quota'd to 256 MiB)
 ```
 
 **Filesystem view construction:**

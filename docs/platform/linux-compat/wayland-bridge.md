@@ -300,7 +300,7 @@ sequenceDiagram
     WT->>WT: XWayland not running — spawn
     WT->>XW: fork + exec (rootless mode)
     XW->>WT: Connect as Wayland client
-    WT->>WT: Register XWayland as special client (TL3)
+    WT->>WT: Register XWayland as Wayland client (TL3, tagged as X11 bridge)
     XW->>XW: Listen on X11 socket
     XW-->>Posix: X11 socket ready
     Posix-->>App: connect() succeeds
@@ -500,11 +500,11 @@ The additional hop through XWayland adds approximately 1–2ms of input latency.
 | XWayland | Protocol translation | 2 (receive from app, send to translator) |
 | WaylandTranslator | AIOS bridge | 2 (receive from XWayland, send to compositor) |
 
-Total: approximately 5 context switches per frame for an X11 application, compared to approximately 3 for a native Wayland client. On AIOS's scheduler with direct-switch optimization ([ipc.md](../../kernel/ipc.md)), these context switches cost approximately 1--2 microseconds each, contributing negligible overhead relative to frame rendering time.
+Total: approximately 5 context switches per frame for an X11 application, compared to approximately 3 for a native Wayland client. On AIOS's scheduler with direct-switch optimization ([ipc.md](../../kernel/ipc.md)), these context switches cost approximately 1-2 microseconds each, contributing negligible overhead relative to frame rendering time.
 
 **Optimization: XWayland fast path.** The `WaylandTranslator` identifies XWayland as a special client (by PID and process name) and applies optimizations:
 
-- **Reduced validation.** XWayland is a trusted system component. Protocol messages from XWayland skip redundant validation that is applied to untrusted clients.
+- **Streamlined validation.** XWayland operates at TL3 (same trust level as other sandboxed Linux binaries). All security-critical validations remain active: capability checks, resource limit enforcement, object lifetime/state validation, and bounds checks on buffer dimensions. Only stateless format parsing (e.g., re-validating well-known Wayland opcodes that XWayland always emits correctly) is elided, saving approximately 100ns per message without weakening the security boundary.
 - **Batched surface updates.** When XWayland submits multiple surface updates in rapid succession (common during window resize), the translator batches them into a single compositor IPC message.
 - **Priority scheduling.** Buffer operations for XWayland clients are prioritized in the worker pool, reducing import latency for DRI3 buffers.
 

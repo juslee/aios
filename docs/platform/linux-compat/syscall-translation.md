@@ -33,7 +33,7 @@ pub fn linux_syscall_dispatch(num: u32, args: &[u64; 6]) -> i64 {
         // Linux-specific — handled by compat layer directly
         20  => linux::translate_epoll_create1(args),
         21  => linux::translate_epoll_ctl(args),
-        22  => linux::translate_epoll_wait(args),
+        22  => linux::translate_epoll_pwait(args),
         98  => linux::translate_futex(args),
         425 => linux::translate_io_uring_setup(args),
         // ...
