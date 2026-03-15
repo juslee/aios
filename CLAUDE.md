@@ -151,6 +151,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Thermal integration | `docs/platform/thermal/integration.md` | §9 GPU/audio/storage/network/boot coordination, §10 POSIX/agent headroom API |
 | Thermal security | `docs/platform/thermal/security.md` | §11 Capability gate/audit/safety invariants/formal verification/DoS prevention |
 | Thermal intelligence | `docs/platform/thermal/intelligence.md` | §12 Kernel-internal ML (decision tree/NN/MPC/fingerprinting), §13 AIRS (DRL/GNN/multi-agent RL/anomaly) |
+| Multi-device & enterprise (hub) | `docs/platform/multi-device.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
+| Device pairing & trust | `docs/platform/multi-device/pairing.md` | §3.1–§3.5 Discovery, personal pairing (SPAKE2+), org enrollment, attestation, revocation |
+| Multi-device experience | `docs/platform/multi-device/experience.md` | §4.1–§4.5 Handoff, unified clipboard, Space Mesh, intelligence continuity, display/input |
+| Mobile device management | `docs/platform/multi-device/mdm.md` | §5.1–§5.5 Declarative DDM, capability-gated MDM, enrollment profiles, remote wipe, config channels |
+| Fleet management | `docs/platform/multi-device/fleet.md` | §6.1–§6.5 Inventory, health monitoring, staged updates, grouping, compliance dashboard |
+| Policy engine | `docs/platform/multi-device/policy.md` | §7.1–§7.6 Declarative policies, conditional access, geo-fencing, NL policies, time-based, audit trail |
+| Enterprise identity | `docs/platform/multi-device/enterprise-identity.md` | §8.1–§8.4 SSO/SAML, SCIM provisioning, directory integration, multi-tenant |
+| Data protection & compliance | `docs/platform/multi-device/data-protection.md` | §9.1–§9.4 DLP, content classification, provenance, encryption zones; §10.1–§10.4 SIEM, compliance frameworks, reporting, data residency |
+| Multi-device intelligence | `docs/platform/multi-device/intelligence.md` | §13.1–§13.3 Kernel-internal ML (sync, anomaly, handoff); §14.1–§14.5 AIRS (GNN fleet, RL self-healing, federated learning, AI DLP, NL policy); §15 Future |
 | AI Runtime (AIRS) | `docs/intelligence/airs.md` | All (Phase 8+) |
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
