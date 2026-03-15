@@ -34,7 +34,7 @@ flowchart TD
     AgentC["Agent C"] --> IPC
 
     IPC["`IPC
-(PostAttention capability required)`"]
+(AttentionPost capability required)`"]
 
     subgraph ATM["Attention Manager (system service)"]
         IQ["`Intake Queue
@@ -378,7 +378,7 @@ impl AttentionManager {
 
 If agents controlled their own urgency, every agent would set `Interrupt`. This is exactly the problem with traditional notifications. In AIOS:
 
-- The agent's `PostAttention` IPC message has no urgency field.
+- The agent's `AttentionPost` IPC message has no urgency field.
 - The agent provides `AttentionContent` — a structured description of what happened.
 - AIRS assesses urgency based on content, sender, context, and history.
 - The agent never knows what urgency was assigned to its item.
@@ -811,7 +811,7 @@ impl AttentionManager {
 
 ### 9.1 Posting Attention Items
 
-Agents post attention items via IPC. The agent needs the `PostAttention` capability in its manifest:
+Agents post attention items via IPC. The agent needs the `AttentionPost` capability in its manifest:
 
 ```toml
 # Agent manifest
@@ -1205,7 +1205,7 @@ The Attention Manager is a system service that starts during boot Phase 4 (User 
 Boot Phase 4 — Attention Manager startup:
 
 1. Service Manager spawns Attention Manager process
-   Capabilities granted: PostAttention (receive), ContextRead,
+   Capabilities granted: AttentionPost (receive), ContextRead,
    CompositorNotify, AIRSInference (optional at this point)
 
 2. Load user preferences from user/preferences/attention/
@@ -1264,8 +1264,9 @@ impl RuleBasedTriage {
     pub fn assess(&self, item: &AttentionItem) -> UrgencyAssessment {
         let mut score: f32 = 0.0;
 
-        // 1. Agent category baseline
-        score += match item.source.category {
+        // 1. Agent category baseline (looked up from agent registry, not on AttentionItem)
+        let category = agent_registry.category(item.source);
+        score += match category {
             AgentCategory::System => 0.8,       // system alerts are usually important
             AgentCategory::Communication => 0.5, // messages vary
             AgentCategory::Productivity => 0.3,  // typically low urgency
@@ -1274,8 +1275,9 @@ impl RuleBasedTriage {
             _ => 0.3,
         };
 
-        // 2. Keyword scan (no AI, just pattern matching)
-        if self.urgent_keywords.iter().any(|kw| item.content.to_text().contains(kw)) {
+        // 2. Keyword scan — case-insensitive substring match (no AI)
+        let text_lower = item.content.to_text().to_lowercase();
+        if self.urgent_keywords.iter().any(|kw| text_lower.contains(kw)) {
             score += 0.3;
         }
 
@@ -1439,38 +1441,17 @@ The Attention Manager sits at a critical trust boundary: it receives structured 
 
 The Attention Manager enforces capabilities at every boundary. No agent can interact with the attention pipeline without the appropriate token (see [capabilities.md](../security/model/capabilities.md) §3).
 
+The attention subsystem defines its capabilities as variants of the global `Capability` enum (see [capabilities.md](../security/model/capabilities.md) §3). This follows the same pattern as other subsystems — attention-specific capabilities are integrated into the unified capability model, not a separate enum:
+
 ```rust
-pub enum AttentionCapability {
-    /// Post attention items to the intake queue.
-    /// Granted to most agents. Rate-limited per §9.2.
-    PostAttention,
-
-    /// Read attention items posted by OTHER agents.
-    /// Restricted: only Inspector and analytics agents.
-    ReadAttention,
-
-    /// Modify attention preferences or filtering rules.
-    /// Restricted: only Settings agent and Conversation Bar.
-    ConfigureAttention,
-
-    /// Query the audit log for attention history.
-    /// Granted per-agent: each agent can query its own items.
-    /// Full audit access: only Inspector.
-    QueryAuditLog { scope: AuditScope },
-
-    /// Receive presentation commands (badge, overlay, toast).
-    /// Restricted: only Compositor.
-    CompositorNotify,
-
-    /// Invoke AIRS inference for urgency assessment.
-    /// Restricted: only Attention Manager (system service).
-    AIRSInference,
-
-    /// Append entries to the attention audit log.
-    /// Write-only: permits sequential appends, no reads or deletes.
-    /// Restricted: only Attention Manager (system service).
-    AuditAppend,
-}
+// Attention-specific variants within the global Capability enum
+Capability::AttentionPost(max_urgency: Urgency),  // post items; max_urgency caps the highest urgency AIRS can assign
+Capability::AttentionRead(scope: AttentionScope),  // read items posted by other agents
+Capability::AttentionConfigure,                     // modify preferences or filtering rules
+Capability::AttentionAudit(scope: AuditScope),      // query the audit log
+Capability::CompositorNotify,                       // receive presentation commands (badge, overlay, toast)
+Capability::AIRSInference,                          // invoke AIRS for urgency assessment
+Capability::AuditAppend,                            // append entries to attention audit log (write-only)
 
 pub enum AuditScope {
     /// Agent can only see its own items
@@ -1480,11 +1461,11 @@ pub enum AuditScope {
 }
 ```
 
-**Capability attenuation:** A `PostAttention` token can be attenuated to restrict the content types an agent may post. For example, a media agent might be restricted to `AttentionContent::AgentReport` only — it cannot post `PersonMessage` content, which would be a content injection vector.
+**Capability attenuation:** An `AttentionPost` token can be attenuated to restrict the content types an agent may post. For example, a media agent might be restricted to `AttentionContent::AgentReport` only — it cannot post `PersonMessage` content, which would be a content injection vector.
 
 ### 18.3 Damage Ceiling Guarantees
 
-Even with a valid `PostAttention` capability, an agent's ability to harm the user is bounded:
+Even with a valid `AttentionPost` capability, an agent's ability to harm the user is bounded:
 
 | Control | Mechanism | Ceiling |
 | --- | --- | --- |
@@ -1493,7 +1474,7 @@ Even with a valid `PostAttention` capability, an agent's ability to harm the use
 | Queue depth | Bounded intake queue (1000 items); on overflow, lowest-urgency item evicted | High-urgency items cannot be displaced by low-priority floods |
 | Demotion cascade | Repeated rate-limit violations → items auto-demoted to Silent | Flooding has zero user impact |
 | Behavioral flag | 3+ rate-limit violations in 1 hour → anomaly flag in AIRS | Inspector notifies user |
-| Capability revocation | User revokes PostAttention via Inspector or Conversation Bar | Agent permanently silenced until reinstalled |
+| Capability revocation | User revokes AttentionPost via Inspector or Conversation Bar | Agent permanently silenced until reinstalled |
 
 ### 18.4 Audit Log Integrity
 
@@ -1555,7 +1536,7 @@ To prevent agents from inferring user context through delivery timing:
 
 - **Constant-time rate limiting:** Rate-limit responses return after a fixed delay regardless of whether the item was accepted or throttled. The agent cannot distinguish "accepted" from "queued" from "demoted."
 - **No delivery receipt:** Agents do not receive confirmation that their item was presented to the user. They post and forget. This prevents an agent from timing user responses to infer activity patterns.
-- **Audit queries are scoped:** An agent with `QueryAuditLog { scope: OwnItems }` can see its own items' delivery status, but not other agents' items or the user's response times to other agents.
+- **Audit queries are scoped:** An agent with `AttentionAudit(scope: OwnItems)` can see its own items' delivery status, but not other agents' items or the user's response times to other agents.
 
 -----
 
@@ -1752,7 +1733,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 | Rate limit enforcement | Agent posts 15 items in 1 minute | First 10 accepted, last 5 throttled, audit log records throttle events |
 | AIRS failover | Kill AIRS mid-operation | Attention Manager falls back to rule-based/decision-tree triage within 1 tick |
 | Compositor connection | Start Attention Manager before Compositor | Buffered interrupts delivered in order when Compositor connects |
-| Capability revocation | Revoke agent's PostAttention token | Subsequent posts rejected with CapabilityDenied error |
+| Capability revocation | Revoke agent's AttentionPost token | Subsequent posts rejected with CapabilityDenied error |
 | Cross-item correlation | Two agents report same incident | AIRS groups them; user sees single attention item with both sources |
 
 ### 20.3 Performance Tests
@@ -1791,7 +1772,7 @@ The Attention Manager's input boundaries are fuzz targets. For fuzzing methodolo
 | Rate limit fairness | Two agents with the same token bucket parameters get the same throughput |
 | Audit completeness | Every item that enters the intake queue has exactly one audit entry |
 | Context filter idempotency | Filtering the same item twice with the same context produces the same decision |
-| Capability enforcement totality | Every code path that accesses the intake queue checks PostAttention capability |
+| Capability enforcement totality | Every code path that accesses the intake queue checks AttentionPost capability |
 | Digest coverage | Every non-Silent item appears in exactly one digest group |
 
 -----
