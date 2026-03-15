@@ -185,7 +185,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Context engine | `docs/intelligence/context-engine.md` | All (Phase 8+) |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
 | Task manager | `docs/intelligence/task-manager.md` | All (Phase 11+) |
-| Preferences | `docs/intelligence/preferences.md` | All (Phase 8+) |
+| Preferences (hub) | `docs/intelligence/preferences.md` | §1 Overview, §2 Architecture, §19 Impl Order, §20 Design Principles, Document Map |
+| Preference data model | `docs/intelligence/preferences/data-model.md` | §3.1–§3.5 Preference types, values, sources (Enterprise/Context-driven), metadata, schema registry |
+| Preference resolution | `docs/intelligence/preferences/resolution.md` | §4.1–§4.4 7-tier source precedence, §5.1–§5.2 NLU pipeline, §10.1–§10.3 Conflict detection/resolution |
+| Preference inference | `docs/intelligence/preferences/inference.md` | §6.1–§6.3 Behavioral observer, §7.1–§7.2 Change propagation, §8.1–§8.3 Agent preferences/SDK |
+| Preference history | `docs/intelligence/preferences/history.md` | §9.1–§9.2 Explainability/undo, §11.1–§11.2 Cross-device sync, §12.1–§12.6 Categories/defaults, §13 Settings UI |
+| Preference temporal rules | `docs/intelligence/preferences/temporal.md` | §14.1–§14.7 Context-driven rules: time-of-day, location, activity, device-presence triggers |
+| Preference security | `docs/intelligence/preferences/security.md` | §15.1–§15.7 Capability-gated access, trust levels, enterprise policy, rate limiting, audit, privacy |
+| Preference intelligence | `docs/intelligence/preferences/intelligence.md` | §16.1–§16.5 AIRS-dependent (contextual bandits, NLU, anomaly), §17.1–§17.4 Kernel-internal ML |
+| Preference testing | `docs/intelligence/preferences/testing.md` | §18.1–§18.5 Unit, integration, property-based, fuzz, QEMU validation |
 | Agents | `docs/applications/agents.md` | All (Phase 10+) |
 | Browser | `docs/applications/browser.md` | All (Phase 21+) |
 | Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 13+) |
