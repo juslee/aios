@@ -63,7 +63,7 @@ Users can revert any preference change:
 
 ```rust
 impl PreferenceService {
-    pub fn undo_last_change(&mut self, id: &PreferenceId) -> Result<(), PreferenceError> {
+    pub async fn undo_last_change(&mut self, id: &PreferenceId) -> Result<(), PreferenceError> {
         let pref = self.store.get_mut(id);
 
         // Cannot undo enterprise-locked preferences
@@ -86,7 +86,7 @@ impl PreferenceService {
                     timestamp: SystemTime::now(),
                 },
                 "Reverted previous change",
-            );
+            ).await;
 
             Ok(())
         } else {
@@ -165,7 +165,7 @@ pub enum SyncConflictResolution {
 
 Cross-device sync integrates with the multi-device experience layer (see [multi-device/experience.md](../../platform/multi-device/experience.md) §4) for intelligence continuity — when a user moves between devices, their preference context follows them.
 
-**Context rule sync:** Context rules (§14) sync their *definitions* across devices, but activation state is local. A "work hours" rule defined on a laptop also appears on a phone, but the phone's context engine independently evaluates whether the rule's conditions are met based on its own sensors.
+**Context rule sync:** Context rules (§14) sync their *definitions* (name, structure, preference overrides) across devices, but activation state is local. A "work hours" rule defined on a laptop also appears on a phone, but the phone's context engine independently evaluates whether the rule's conditions are met based on its own sensors. For location-based rules, geofence *metadata* (name and rule structure) syncs, but GPS coordinates remain device-local — each device re-creates the geofence from its own location services (see [temporal.md §14.3](./temporal.md) for privacy details).
 
 -----
 

@@ -13,7 +13,7 @@ Context rules let users declare preferences that activate automatically when con
 
 ### 14.1 Context Rule Engine
 
-The rule engine is the component that translates incoming context change events into active preference overrides. It sits between the Context Engine (which detects and publishes context signals) and the Preference Service (which holds the canonical preference state).
+The rule engine is a sub-component of the Preference Service that translates incoming context change events into active preference overrides. It receives context signals from the Context Engine (which detects and publishes them) and applies overrides through the Preference Service's internal API. Methods like `resolve_value()` and `explain()` query the rule engine directly via `self.context_engine` — this refers to the rule engine's context evaluation interface, not the standalone Context Engine service.
 
 #### Evaluation Pipeline
 
@@ -33,7 +33,7 @@ Each step in the pipeline:
 
 1. **Context snapshot** — The Context Engine emits a `ContextChangeEvent` whenever a tracked signal changes (time crossing a threshold, location fix update, device plug/unplug, activity classifier output). The Rule Engine receives the full context snapshot, not a diff.
 
-2. **Rule matching** — For each enabled `ContextRule`, the engine evaluates all `conditions` in `Vec<ContextCondition>`. All conditions in a single rule must be satisfied simultaneously (AND semantics). Rules with `approved: false` are skipped.
+2. **Rule matching** — For each `ContextRule`, the engine first checks `enabled` (user toggle) and `approved` (one-time confirmation). Rules with `enabled: false` or `approved: false` are skipped. For the remaining rules, the engine evaluates all `conditions` in `Vec<ContextCondition>`. All conditions in a single rule must be satisfied simultaneously (AND semantics). Enterprise-sourced rules have `approved` set to `true` automatically at delivery (§14.7).
 
 3. **Priority resolution** — When multiple matching rules specify an override for the same `preference_id`, the rule with the highest `priority` field wins. If two rules share the same priority and conflict, the rule with the most recently activated timestamp wins. This deterministic tie-breaking prevents non-reproducible state.
 
@@ -125,11 +125,11 @@ Entry triggers fire after the dwell period expires — the device must remain in
 Location data for preference rules is processed entirely on-device:
 
 - Raw GPS coordinates are never written to a Space or transmitted over the network.
-- Geofence definitions (name + center + radius) are stored in the local Preference Store only, encrypted at rest using the device key. They are excluded from cross-device sync.
+- Geofence definitions (name + center + radius) are stored in the local Preference Store, encrypted at rest using the device key. Geofence *metadata* (name and rule structure, but not coordinates) syncs across devices so users see consistent rule names; the actual GPS coordinates remain local and each device re-creates the geofence from its own location services.
 - The rule engine receives location fixes from the Context Engine at city-level granularity (±1 km) for geofences with `radius_meters > 500`. Finer-grained fixes are used only for smaller radii.
 - Location anonymization details are in [security.md §15.7](./security.md).
 
-User control: the Preferences UI shows a map visualization of all active geofences. Individual fences can be disabled or deleted at any time. Disabling a geofence does not delete its associated `ContextRule` — it sets `approved: false` on the rule.
+User control: the Preferences UI shows a map visualization of all active geofences. Individual fences can be disabled or deleted at any time. Disabling a geofence sets `enabled: false` on the rule (preserving its `approved` status so it can be re-enabled without re-confirmation). Deleting removes the rule entirely.
 
 -----
 

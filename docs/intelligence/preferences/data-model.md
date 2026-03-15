@@ -245,8 +245,13 @@ pub struct ContextRule {
     pub overrides: Vec<ContextOverride>,
     /// Priority when multiple rules conflict (higher wins)
     pub priority: u32,
-    /// Whether the user approved this rule
+    /// Whether the user has approved this rule (one-time confirmation gate).
+    /// Enterprise rules are auto-approved at delivery; user-created rules
+    /// are approved at creation via the confirmation dialog (§14.7).
     pub approved: bool,
+    /// Whether the rule is currently enabled (user can toggle on/off).
+    /// Distinct from `approved`: a rule can be approved but disabled.
+    pub enabled: bool,
     /// Source: user-created, AIRS-suggested, or enterprise-defined
     pub source: ContextRuleSource,
 }

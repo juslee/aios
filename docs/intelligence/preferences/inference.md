@@ -19,6 +19,12 @@ pub struct BehavioralObserver {
     hypotheses: Vec<PreferenceHypothesis>,
     /// AIRS inference client
     airs: AirsClient,
+    /// Rate limiter for suggestions (§15.6)
+    rate_limiter: SuggestionRateLimiter,
+    /// Preference Service for applying accepted hypotheses
+    preference_service: PreferenceServiceHandle,
+    /// Hypotheses rejected by the user (suppressed until rejection cooldown expires)
+    rejected_hypotheses: HashSet<PreferenceId>,
 }
 
 pub struct Observation {
@@ -111,6 +117,10 @@ impl BehavioralObserver {
     }
 
     pub fn on_user_response(&mut self, hypothesis_id: &str, accepted: bool) {
+        let hypothesis = self.hypotheses.iter()
+            .find(|h| h.preference.as_str() == hypothesis_id)
+            .expect("hypothesis not found");
+
         if accepted {
             // Apply the inferred preference
             self.preference_service.set_preference(

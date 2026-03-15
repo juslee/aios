@@ -327,7 +327,7 @@ Preferences can contain personally identifiable information (PII) — location r
 
 **Privacy controls:**
 
-- **Encryption at rest:** Preference values classified as `CategoryRestricted { Privacy }` or `SystemOnly` are stored encrypted in the `user/preferences/` space using the per-space encryption described in `storage/spaces/encryption.md §6`.
+- **Encryption at rest:** Preference values classified as `SecurityClassification::CategoryRestricted { category: PreferenceCategory::Privacy }` or `SecurityClassification::SystemOnly` are stored encrypted in the `user/preferences/` space using the per-space encryption described in `storage/spaces/encryption.md §6`.
 - **Minimal behavioral logging:** The Behavioral Observer (§6) records observation *summaries*, not raw interaction data. "User enabled dark mode at 8pm" is stored; "User was browsing news articles about climate change at 8pm" is not.
 - **Location anonymization:** Context rules (§14) store geofence *names* ("office") and center points, but never continuous location tracks. Location data is processed on-device and never synced.
 - **Data retention:** Preference history older than 90 days is automatically compacted: individual change records are replaced with monthly summaries unless the user explicitly enables full history retention.
