@@ -142,6 +142,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Camera AI-native | `docs/platform/camera/ai-native.md` | §11.1–§11.5 Scene understanding, smart framing, computational photography, gesture recognition, anomaly detection; §12.1–§12.3 Kernel-internal ML; §13.1–§13.6 Future AI directions |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
+| Linux binary & Wayland compat (hub) | `docs/platform/linux-compat.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, §16 Future Directions, Document Map |
+| Linux ELF loader & glibc shim | `docs/platform/linux-compat/elf-loader.md` | §3 ELF format/segments/ASLR/dynamic linker/VDSO/auxv, §4 glibc ABI shim/signals/threads |
+| Linux syscall translation | `docs/platform/linux-compat/syscall-translation.md` | §5 ~200 syscall table by category, §6 Deep dives: epoll/futex/io_uring/eventfd/signalfd/timerfd |
+| Linux Wayland bridge | `docs/platform/linux-compat/wayland-bridge.md` | §7 Integration architecture/buffer pipeline/frame scheduling, §8 XWayland/X11 extensions/clipboard/DnD |
+| Linux sandbox & security | `docs/platform/linux-compat/sandbox.md` | §9 Threat model/capability mapping/sandbox profiles/portals/audit, §10 Comparison: Starnix/Linuxulator/WSL/gVisor |
+| Linux virtual filesystems | `docs/platform/linux-compat/virtual-filesystems.md` | §11 /proc/sys/dev emulation, §12 Namespace/cgroup equivalents |
+| Linux compat intelligence | `docs/platform/linux-compat/intelligence.md` | §13 AI-native improvements (syscall prediction, anomaly detection), testing/validation strategy |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
 | Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
 | Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |
