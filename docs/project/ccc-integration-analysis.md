@@ -245,7 +245,7 @@ CCC was written by Claude. AIOS's AI Runtime (AIRS, Phase 9+) could leverage thi
 - **AI-guided optimization:** AIRS could analyze program behavior and request specific CCC optimization passes, or train new passes. CCC's pass pipeline is simple and modifiable (15 passes in individual .rs files vs LLVM's 100+ interleaved C++ passes).
 - **Context-aware compilation:** The AIOS Context Engine (Phase 9+) could feed program intent to CCC — "this is a latency-sensitive loop" → more aggressive LICM and unrolling.
 - **Live recompilation:** CCC's small size and fast compilation make it viable for JIT-like workflows where agents recompile code as requirements change.
-- **Compiler-as-agent:** An AIOS agent (Phase 17+) wrapping CCC could accept natural language build instructions and map them to compiler flags and optimization strategies.
+- **Compiler-as-agent:** An AIOS agent (Phase 13+) wrapping CCC could accept natural language build instructions and map them to compiler flags and optimization strategies.
 
 #### Role 4: Security-Hardened Compilation
 
@@ -346,7 +346,7 @@ BsdProcessCapabilities {
 
 **Self-hosting milestone:** "AIOS can compile C programs natively" is achievable much earlier with CCC than with LLVM. This could be a Phase 22a deliverable rather than waiting for Phase 22f.
 
-**Compiler-as-library for agents:** AIOS agents (Phase 17+) that generate and compile C code can use CCC as a Rust library call, avoiding process spawn overhead. This enables:
+**Compiler-as-library for agents:** AIOS agents (Phase 13+) that generate and compile C code can use CCC as a Rust library call, avoiding process spawn overhead. This enables:
 - Code generation agents that compile and test in-process
 - Live patching workflows where AIRS recompiles individual functions
 - Exploratory optimization where AIRS tries multiple optimization strategies in parallel

@@ -258,10 +258,10 @@ Phase 24b — Bluetooth HID:
   └── Pairing + reconnection management
 ```
 
-### Phase 24 — Extended USB Devices
+### Phase 24 — Extended USB Devices (cont.)
 
 ```text
-Phase 24a — USB HID Extended:
+Phase 24c — USB HID Extended:
   ├── USB Braille display driver (HID usage page 0x41)
   ├── USB switch device support
   └── USB gamepad with force feedback (HID FF usage page)

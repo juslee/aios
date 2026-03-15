@@ -86,7 +86,7 @@ Phase 9 — AIRS Inference Engine:
   ├── KV prefix caching (cross-session sharing, COW)
   └── KV cache eviction policy
 
-Phase 18 — Security Testing:
+Phase 17 — Security Architecture:
   ├── PAC (pointer authentication) enabled for kernel + agents
   ├── BTI (branch target identification) enforcement
   ├── MTE (memory tagging) for agent heap allocations

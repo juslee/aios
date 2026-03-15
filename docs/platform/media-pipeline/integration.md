@@ -606,8 +606,8 @@ Thermal coordination is implemented incrementally alongside the thermal subsyste
 | Phase 5 | `ThermalState::Hot` decode resolution reduction | Thermal notification IPC |
 | Phase 5 | `ThermalState::Critical` audio-only fallback | Audio subsystem integration (§13.1) |
 | Phase 7 (Networking) | RTC video SSRC suspend on `Critical` | NTM RTP transport, RTCP support |
-| Phase 9 (AIRS) | Predictive power management | AIRS context engine |
 | Phase 4 (Storage) | Recording suspend at keyframe boundary | FileSink element, WAL integration |
+| Phase 9 (AIRS) | Predictive power management | AIRS context engine |
 | Phase 27 (Power Mgmt) | Display refresh rate adaptation | Power management subsystem |
 | Phase 27 | Battery-level-aware codec preference | Battery API from power subsystem |
 
