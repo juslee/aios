@@ -75,7 +75,7 @@ sequenceDiagram
 
     UA->>UA: 1. Download update package
     UA->>UA: 2. Verify package signature (Ed25519)
-    UA->>UA: 3. Verify min_rollback_index > current counter
+    UA->>UA: 3. Verify min_rollback_index ≥ current counter
 
     Note over UA,ESP: Stage ESP components (atomic rename sequence)
     UA->>ESP: 4. Write new aios.elf.new
@@ -83,7 +83,7 @@ sequenceDiagram
     UA->>ESP: 6. Write new boot.manifest.new
     UA->>ESP: 7. fsync all new files
 
-    Note over UA,ESP: Atomic swap (rename is atomic on FAT32)
+    Note over UA,ESP: Swap sequence (see durability note below)
     UA->>ESP: 8. rename(aios.elf → aios.elf.prev)
     UA->>ESP: 9. rename(aios.elf.new → aios.elf)
     UA->>ESP: 10. rename(initramfs.cpio → initramfs.cpio.prev)
@@ -108,6 +108,8 @@ sequenceDiagram
 | Steps 9-13 | Mix of old and new components | Boot manifest `.prev` still valid; recovery shell can restore |
 | Steps 14-16 | ESP updated, services partially staged | Boot new kernel + old services (compatible by design) |
 | Step 17 | Fully staged, reboot pending | Normal boot with new components |
+
+**FAT32 durability note:** FAT32 lacks journaling, so individual rename operations are not guaranteed to be atomic across power loss — a crash mid-rename could leave a directory entry in an inconsistent state. To mitigate this, the update agent performs `fsync` on the directory after each rename pair, and the crash safety analysis above assumes that each rename + fsync pair completes atomically. If a directory entry is found corrupt at boot, the recovery shell falls back to `.prev` files (which are only renamed away in a later step). The A/B scheme's primary safety property is that the `.prev` files remain untouched until the final cleanup (after boot success confirmation), providing a reliable rollback target regardless of FAT32 limitations.
 
 **Compatibility guarantee:** New kernels are backward-compatible with old service binaries for at least one version. This allows the system to boot with a new kernel + old services if service staging is interrupted.
 

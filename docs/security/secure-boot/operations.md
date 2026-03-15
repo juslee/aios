@@ -20,10 +20,11 @@ Update operations are among the most security-sensitive actions in the system �
 
 The update agent is a system agent running at Trust Level 1 (system services) with a carefully scoped set of capabilities. It has more privilege than any third-party agent but less than the kernel.
 
-**Required capabilities:**
+**Required capabilities** (pseudocode — actual capability types defined in [model/capabilities.md §3](../model/capabilities.md); this listing shows the logical permissions, not the exact enum variants):
 
 ```rust
-/// Capabilities granted to the system update agent
+/// Logical capabilities granted to the system update agent
+/// (illustrative — see model/capabilities.md §3 for actual Capability enum)
 pub const UPDATE_AGENT_CAPS: &[Capability] = &[
     /// Read/write the ESP (FAT32 boot partition)
     /// Most sensitive: allows modifying boot components

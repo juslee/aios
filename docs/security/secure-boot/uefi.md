@@ -77,8 +77,8 @@ flowchart LR
     HASH --> MANIFEST["Generate\nboot.manifest"]
     INITRAMFS["Build initramfs"] --> HASH2["SHA-256\n(initramfs.cpio)"]
     HASH2 --> MANIFEST
-    CMDLINE["boot.cfg"] --> HMAC["HMAC-SHA256\n(cmdline, manifest key)"]
-    HMAC --> MANIFEST
+    CMDLINE["boot.cfg"] --> CFGHASH["SHA-256(boot.cfg)"]
+    CFGHASH --> MANIFEST
     MANIFEST --> SIGN["Ed25519 sign\n(offline HSM)"]
     SIGN --> MANIFEST_SIGNED["boot.manifest\n(signed)"]
 
@@ -107,33 +107,50 @@ The boot manifest is the central trust anchor for the stub-to-kernel verificatio
 
 ```rust
 /// 256 bytes, fixed-size, repr(C) for cross-platform compatibility
+/// Field layout (offsets in bytes):
+///   [0..8)     magic
+///   [8..12)    format_version
+///   [12..16)   flags
+///   [16..24)   min_rollback_index
+///   [24..56)   kernel_hash
+///   [56..88)   initramfs_hash
+///   [88..120)  cmdline_hash
+///   [120..128) build_timestamp
+///   [128..132) target_platform
+///   [132..136) os_version
+///   [136..192) _reserved (56 bytes)
+///   [192..256) signature (64 bytes)
 #[repr(C)]
 pub struct BootManifest {
     /// Magic: "AIOSMNFT" (0x41494F53_4D4E4654)
-    magic: u64,
+    magic: u64,                     // offset 0, 8 bytes
     /// Format version (currently 1)
-    format_version: u32,
+    format_version: u32,            // offset 8, 4 bytes
     /// Manifest flags
-    flags: ManifestFlags,
+    flags: ManifestFlags,           // offset 12, 4 bytes (u32)
     /// Minimum anti-rollback counter value for this release
-    min_rollback_index: u64,
+    min_rollback_index: u64,        // offset 16, 8 bytes
     /// SHA-256 hash of kernel ELF binary
-    kernel_hash: [u8; 32],
+    kernel_hash: [u8; 32],          // offset 24, 32 bytes
     /// SHA-256 hash of initramfs archive
-    initramfs_hash: [u8; 32],
-    /// HMAC-SHA256 of boot command line (boot.cfg contents)
-    cmdline_hmac: [u8; 32],
+    initramfs_hash: [u8; 32],       // offset 56, 32 bytes
+    /// SHA-256 hash of boot command line (boot.cfg contents)
+    /// Stored in the signed manifest; verified by comparing against
+    /// SHA-256(boot.cfg) at boot. No secret key needed — the manifest
+    /// signature protects the hash's integrity.
+    cmdline_hash: [u8; 32],         // offset 88, 32 bytes
     /// Build timestamp (Unix epoch seconds)
-    build_timestamp: u64,
+    build_timestamp: u64,           // offset 120, 8 bytes
     /// Target platform identifier
-    target_platform: u32,
+    target_platform: u32,           // offset 128, 4 bytes
     /// OS version (major.minor.patch packed as u32)
-    os_version: u32,
+    os_version: u32,                // offset 132, 4 bytes
     /// Reserved for future fields
-    _reserved: [u8; 36],
+    _reserved: [u8; 56],            // offset 136, 56 bytes
     /// Ed25519 signature over bytes [0..192) (everything before signature)
-    signature: [u8; 64],
+    signature: [u8; 64],            // offset 192, 64 bytes
 }
+// Total: 256 bytes (compile-time assert: size_of::<BootManifest>() == 256)
 
 bitflags! {
     pub struct ManifestFlags: u32 {
@@ -141,7 +158,7 @@ bitflags! {
         const DEV_BUILD = 1 << 0;
         /// Initramfs is optional (boot without if missing)
         const INITRAMFS_OPTIONAL = 1 << 1;
-        /// Command line is unsigned (skip HMAC check)
+        /// Command line is unsigned (skip hash check)
         const CMDLINE_UNSIGNED = 1 << 2;
         /// Contains supplementary DTB
         const HAS_DTB = 1 << 3;
@@ -172,10 +189,11 @@ fn verify_boot_manifest(manifest: &BootManifest) -> Result<(), BootError> {
         return Err(BootError::RollbackDetected);
     }
 
-    // 4. Update counter if manifest is newer
-    if manifest.min_rollback_index > device_counter {
-        write_rollback_counter(manifest.min_rollback_index)?;
-    }
+    // NOTE: The anti-rollback counter is NOT advanced here.
+    // Counter advancement happens only after the new version
+    // confirms boot success (§9.1 in updates.md). This ensures
+    // the previous version remains bootable if the new version
+    // fails to reach the health confirmation stage.
 
     Ok(())
 }
@@ -211,8 +229,8 @@ flowchart TD
     CMP_I --> |"Mismatch"| RECOVERY4["INITRAMFS INTEGRITY FAILED\nOffer: Recovery / Boot without"]
     CMP_I --> |"Match"| LOAD_CFG["Load boot.cfg"]
 
-    LOAD_CFG --> HMAC_C["HMAC-SHA256(cmdline)"]
-    HMAC_C --> CMP_C{"hmac == manifest\n.cmdline_hmac?"}
+    LOAD_CFG --> HASH_CFG["SHA-256(boot.cfg)"]
+    HASH_CFG --> CMP_C{"hash == manifest\n.cmdline_hash?"}
     CMP_C --> |"Mismatch"| DEFAULT_CFG["Use default command line\nLog warning"]
     CMP_C --> |"Match"| MEASURE["Extend measurements\n(PCR 8-11)"]
     DEFAULT_CFG --> MEASURE
@@ -225,7 +243,7 @@ flowchart TD
 **Verification status in BootInfo:**
 
 ```rust
-/// Added to BootInfo (shared/src/boot.rs) in Phase 24
+/// Proposed addition to BootInfo (shared/src/boot.rs) — implemented in Phase 24
 pub struct VerificationStatus {
     /// Was Secure Boot enabled in firmware?
     secure_boot_enabled: bool,
@@ -237,7 +255,7 @@ pub struct VerificationStatus {
     kernel_integrity_valid: bool,
     /// Did initramfs hash match manifest?
     initramfs_integrity_valid: bool,
-    /// Did command line HMAC match?
+    /// Did command line hash match?
     cmdline_integrity_valid: bool,
     /// Anti-rollback counter value after update
     rollback_counter: u64,
@@ -265,7 +283,7 @@ When verification fails at any stage, the system follows a graduated response po
 | Rollback detected | Critical | Display error, halt (no bypass — downgrade is never acceptable) |
 | Kernel hash mismatch | Critical | Display error, offer: rollback to .prev, recovery shell, halt |
 | Initramfs hash mismatch | High | Display error, offer: boot without initramfs (degraded), rollback, recovery |
-| Command line HMAC mismatch | Medium | Use default command line, log warning, continue boot |
+| Command line hash mismatch | Medium | Use default command line, log warning, continue boot |
 
 **Developer mode override:** When the boot manifest has `DEV_BUILD` flag set:
 - Hash mismatches produce warnings instead of halting

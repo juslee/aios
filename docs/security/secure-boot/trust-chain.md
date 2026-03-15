@@ -23,7 +23,7 @@ The boot and update threat model extends the system-wide threat model (model.md 
 
 **Firmware tampering.** An adversary modifies UEFI firmware (edk2 or platform firmware) to bypass Secure Boot checks, inject rootkit code that persists across OS reinstalls, or modify the BootInfo structure passed to the kernel. This is the most severe boot-time threat because firmware runs before any OS security measures.
 
-**ESP modification via OS compromise.** A compromised agent or service with unexpected filesystem access modifies ESP contents. Unlike the Evil Maid scenario, this attack vector comes from within the running system. Mitigation: `EspWriteAccess` capability gates all ESP modifications ([model/capabilities.md §3](../model/capabilities.md)).
+**ESP modification via OS compromise.** A compromised agent or service with unexpected filesystem access modifies ESP contents. Unlike the Evil Maid scenario, this attack vector comes from within the running system. Mitigation: `EspWriteAccess` capability gates all ESP modifications ([operations.md §10.1](./operations.md)); only the update agent holds this capability, enforced by the kernel capability system ([model/capabilities.md §3](../model/capabilities.md)).
 
 **Boot configuration manipulation.** The `boot.cfg` file on the ESP controls boot parameters (kernel command line, boot options). An attacker modifying this file could disable security features, change memory layout, or redirect boot to a malicious kernel. Current state: `boot.cfg` is unsigned.
 
@@ -37,7 +37,7 @@ The boot and update threat model extends the system-wide threat model (model.md 
 
 **Rollback / downgrade attack.** An attacker forces the device to install an older, vulnerable version of the kernel, services, or models. This is particularly dangerous because the old version may have known exploits. Mitigation: monotonic anti-rollback counter in TrustZone/TPM (§9.1).
 
-**Supply chain compromise.** An attacker compromises the build system, CI/CD pipeline, or developer signing key to inject malicious code into a legitimate update. The update appears validly signed. Mitigation: reproducible builds, multi-party signing, certificate transparency (§16.5).
+**Supply chain compromise.** An attacker compromises the build system, CI/CD pipeline, or developer signing key to inject malicious code into a legitimate update. The update appears validly signed. Mitigation: reproducible builds, multi-party signing, certificate transparency ([intelligence.md §16.5](./intelligence.md)).
 
 **Partial update / interrupted update.** Power loss or crash during update leaves the system in an inconsistent state — new kernel with old services, or half-written files. Mitigation: atomic A/B scheme (§6), content-addressed storage for services.
 
@@ -158,9 +158,9 @@ pub struct BootManifest {
     kernel_hash: [u8; 32],
     /// SHA-256 hash of the initramfs archive
     initramfs_hash: [u8; 32],
-    /// HMAC-SHA256 of the boot command line
-    /// Prevents command-line manipulation
-    cmdline_hmac: [u8; 32],
+    /// SHA-256 hash of the boot command line
+    /// Integrity protected by the manifest's Ed25519 signature
+    cmdline_hash: [u8; 32],
     /// Build timestamp (for audit trail)
     build_timestamp: u64,
     /// Target hardware platform (for cross-flash detection)
@@ -176,15 +176,15 @@ pub struct BootManifest {
 flowchart TD
     A["Load boot.manifest from ESP"] --> B{"Verify manifest signature\n(Ed25519, compiled-in public key)"}
     B --> |"Invalid"| FAIL1["Display: SIGNATURE VERIFICATION FAILED\nHalt boot"]
-    B --> |"Valid"| C{"Check min_rollback_index\n≤ device counter?"}
-    C --> |"Rollback detected"| FAIL2["Display: ROLLBACK ATTACK DETECTED\nHalt boot"]
+    B --> |"Valid"| C{"Check min_rollback_index\n< device counter?"}
+    C --> |"Yes: rollback"| FAIL2["Display: ROLLBACK ATTACK DETECTED\nHalt boot"]
     C --> |"OK"| D["Load kernel ELF from ESP"]
     D --> E{"SHA-256(kernel) == manifest.kernel_hash?"}
     E --> |"Mismatch"| FAIL3["Display: KERNEL INTEGRITY FAILED\nOffer recovery"]
     E --> |"Match"| F["Load initramfs from ESP"]
     F --> G{"SHA-256(initramfs) == manifest.initramfs_hash?"}
     G --> |"Mismatch"| FAIL4["Display: INITRAMFS INTEGRITY FAILED\nOffer recovery"]
-    G --> |"Match"| H["Load boot.cfg, verify HMAC"]
+    G --> |"Match"| H["Load boot.cfg, verify hash"]
     H --> I["Populate BootInfo, ExitBootServices"]
     I --> J["Jump to kernel entry point"]
 ```
