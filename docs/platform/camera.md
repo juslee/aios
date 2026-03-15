@@ -195,63 +195,63 @@ sequenceDiagram
 The camera subsystem is implemented across multiple development phases, building complexity incrementally.
 
 ```text
-Phase 17 (USB):  UVC driver basics
+Phase 24 (USB):  UVC driver basics
                  ├── UVC device discovery via USB subsystem routing (class 0x0E)
                  ├── UVC probe/commit format negotiation
                  ├── Isochronous transfer setup for frame streaming
                  ├── Basic frame assembly (UVC payload headers)
                  └── Test: capture test frame from USB webcam in QEMU
 
-Phase 22 (Media):  Full camera subsystem
-                   ├── CameraSubsystem registration with framework
-                   ├── CameraCapability type and capability gate integration
-                   ├── CameraSession lifecycle (open/configure/stream/close)
-                   ├── ConflictPolicy::Prompt implementation
-                   ├── Privacy indicator enforcement (compositor + kernel LED)
-                   ├── Anti-silent-capture validation in frame delivery
-                   ├── ISP pipeline (software ISP: demosaic, AWB, AEC, gamma)
-                   ├── Buffer management with DMA-BUF pool
-                   ├── Format negotiation (MJPEG, NV12, YUY2)
-                   ├── Still image capture path
-                   ├── VirtIO-Camera virtual driver for QEMU
-                   ├── POSIX bridge: /dev/video* with V4L2 ioctl translation
-                   ├── Audit logging (session + frame-level)
-                   ├── Compositor integration (CameraPreview content type)
-                   ├── Flow integration (VideoFrame entries)
-                   └── Test: capture and display camera preview in compositor
+Phase 32 (Camera):  Full camera subsystem
+                    ├── CameraSubsystem registration with framework
+                    ├── CameraCapability type and capability gate integration
+                    ├── CameraSession lifecycle (open/configure/stream/close)
+                    ├── ConflictPolicy::Prompt implementation
+                    ├── Privacy indicator enforcement (compositor + kernel LED)
+                    ├── Anti-silent-capture validation in frame delivery
+                    ├── ISP pipeline (software ISP: demosaic, AWB, AEC, gamma)
+                    ├── Buffer management with DMA-BUF pool
+                    ├── Format negotiation (MJPEG, NV12, YUY2)
+                    ├── Still image capture path
+                    ├── VirtIO-Camera virtual driver for QEMU
+                    ├── POSIX bridge: /dev/video* with V4L2 ioctl translation
+                    ├── Audit logging (session + frame-level)
+                    ├── Compositor integration (CameraPreview content type)
+                    ├── Flow integration (VideoFrame entries)
+                    └── Test: capture and display camera preview in compositor
 
-Phase 22+ (Media):  Raspberry Pi camera support
-                    ├── CSI/MIPI driver (bcm2835-unicam equivalent)
-                    ├── Pi Camera Module v2/v3 sensor support
-                    ├── Hardware ISP integration (Pi 5 ISP)
-                    ├── Device tree camera discovery
-                    ├── Dual CSI port support (Pi 5)
-                    └── Test: live camera preview from Pi Camera Module
+Phase 39 (Hardware):  Raspberry Pi camera support
+                      ├── CSI/MIPI driver (bcm2835-unicam equivalent)
+                      ├── Pi Camera Module v2/v3 sensor support
+                      ├── Hardware ISP integration (Pi 5 ISP)
+                      ├── Device tree camera discovery
+                      ├── Dual CSI port support (Pi 5)
+                      └── Test: live camera preview from Pi Camera Module
 
-Phase 22+ (Media):  Multi-camera and depth
-                    ├── Multi-camera enumeration and synchronized capture
-                    ├── Depth/ToF sensor driver
-                    ├── Depth map delivery (DepthDevice trait)
-                    ├── Stereo depth estimation (software)
-                    ├── Multi-camera session management
-                    └── Test: stereo capture from dual CSI cameras
+Phase 39 (Hardware):  Multi-camera and depth
+                      ├── Multi-camera enumeration and synchronized capture
+                      ├── Depth/ToF sensor driver
+                      ├── Depth map delivery (DepthDevice trait)
+                      ├── Stereo depth estimation (software)
+                      ├── Multi-camera session management
+                      └── Test: stereo capture from dual CSI cameras
 
-Phase 25 (Compat):  Advanced POSIX and compatibility
-                    ├── V4L2 media controller topology exposure
-                    ├── V4L2 sub-device interface
-                    ├── mmap buffer sharing for V4L2 clients
-                    ├── Video4Linux2 ioctl coverage (VIDIOC_* set)
-                    └── Test: standard V4L2 app captures frames via /dev/video0
+Phase 36 (Wayland):  Advanced POSIX and compatibility
+                     ├── V4L2 media controller topology exposure
+                     ├── V4L2 sub-device interface
+                     ├── mmap buffer sharing for V4L2 clients
+                     ├── Video4Linux2 ioctl coverage (VIDIOC_* set)
+                     └── Test: standard V4L2 app captures frames via /dev/video0
 
-Phase 29+ (AIRS):  AI-native camera features
-                   ├── Neural ISP (learned 3A: AEC, AWB, AF)
-                   ├── Scene classification → ISP parameter tuning
-                   ├── Smart framing (auto-crop/pan, Center Stage equivalent)
-                   ├── Computational photography services (HDR, night mode, portrait)
-                   ├── Gesture recognition → input subsystem bridge
-                   ├── Anomaly detection (purpose-behavior mismatch)
-                   ├── GPU-accelerated software ISP
-                   └── Test: AIRS-driven scene-adaptive ISP in video call
+Phase 41 (AIRS):  AI-native camera features
+                  ├── Neural ISP (learned 3A: AEC, AWB, AF)
+                  ├── Scene classification → ISP parameter tuning
+                  ├── Smart framing (auto-crop/pan, Center Stage equivalent)
+                  ├── Computational photography services (HDR, night mode, portrait)
+                  ├── Gesture recognition → input subsystem bridge
+                  ├── Anomaly detection (purpose-behavior mismatch)
+                  ├── GPU-accelerated software ISP
+                  └── Test: AIRS-driven scene-adaptive ISP in video call
 ```
 
 -----

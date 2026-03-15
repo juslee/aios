@@ -2184,7 +2184,7 @@ This guide is designed to grow alongside the kernel. The following areas are int
 | Performance Profiling | Phase 5+ | Measurement methodology, timer-based profiling, IPC latency benchmarks |
 | Security Review Checklist | Phase 4+ | Expanding beyond W^X: capability audit patterns, trust level verification, syscall boundary checks |
 | Multi-Platform Porting | Phase 7+ (RISC-V) | Platform abstraction patterns, arch-conditional compilation, HAL trait implementation guide |
-| Application Developer Guide | Phase 12+ | `std`-based development, runtime APIs, agent SDK, IPC from user-space |
+| Application Developer Guide | Phase 16+ | `std`-based development, runtime APIs, agent SDK, IPC from user-space |
 
 ---
 

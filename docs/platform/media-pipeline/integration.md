@@ -464,7 +464,7 @@ On-device content classification allows parents, organizations, and individual u
 
 **Agent-declared content rating**: content providers embed a content rating in the container metadata (MPAA rating in MP4, BBFC rating in DASH manifest extension). The pipeline reads this rating during demux and compares it against the current agent's configured rating policy. If the content's declared rating exceeds the policy limit, the pipeline session is refused with `MediaError::ContentRatingExceeded` before any frames are decoded.
 
-**AI-inferred content classification (AIRS-dependent, Phase 29+)**: AIRS classifies decoded frames and audio for nudity, graphic violence, and explicit language. Classification runs asynchronously — content that passes the declared rating check begins playback immediately. If the AI classifier subsequently detects a mismatch between the declared rating and the actual content, it generates a `MediaAuditEvent::ContentMismatch` event and may pause playback pending user confirmation.
+**AI-inferred content classification (AIRS-dependent, Phase 41+)**: AIRS classifies decoded frames and audio for nudity, graphic violence, and explicit language. Classification runs asynchronously — content that passes the declared rating check begins playback immediately. If the AI classifier subsequently detects a mismatch between the declared rating and the actual content, it generates a `MediaAuditEvent::ContentMismatch` event and may pause playback pending user confirmation.
 
 **Blocking policy**: when a content rating policy is enforced, the pipeline records a `MediaAuditEvent::ContentBlocked` event containing the agent PID, declared rating, policy limit, and timestamp. The blocked event is surfaced to the Inspector application so that a parent or administrator can review what content was attempted.
 
@@ -476,7 +476,7 @@ On-device content classification allows parents, organizations, and individual u
 
 ## §16 AI-Native Media Intelligence
 
-AI integration in the media pipeline spans two tiers: kernel-internal models that run without AIRS and provide always-on lightweight intelligence, and AIRS-dependent features that unlock when the AI runtime is initialized (Phase 8+).
+AI integration in the media pipeline spans two tiers: kernel-internal models that run without AIRS and provide always-on lightweight intelligence, and AIRS-dependent features that unlock when the AI runtime is initialized (Phase 9+).
 
 ### §16.1 AIRS-Dependent Features
 
@@ -581,7 +581,7 @@ Cross-reference: [thermal.md](../thermal.md) §6 (ThermalState, WCET), §7 (sche
 
 **Predictive power management**: AIRS estimates the remaining playback duration from the container's total duration minus the current playback position. When the estimated remaining duration exceeds the current battery's projected charge duration, AIRS signals the media pipeline to reduce average power consumption by 15% — achieved by reducing encode bitrate for recording sessions, disabling neural SR, and slightly increasing the video decode thread's CPU budget at the expense of background tasks.
 
-**Background playback optimization**: when the media agent is moved to the background (another agent takes foreground focus), the pipeline's video surface is hidden by the compositor. If the content has a video track, the pipeline automatically suspends the video decode chain. Only the audio chain continues. This is not the same as pausing: seek position advances, A/V sync is maintained in the audio chain alone, and video decode resumes immediately when the agent returns to the foreground. Cross-reference: [power-management.md](../power-management.md) (Phase 19+, general power management).
+**Background playback optimization**: when the media agent is moved to the background (another agent takes foreground focus), the pipeline's video surface is hidden by the compositor. If the content has a video track, the pipeline automatically suspends the video decode chain. Only the audio chain continues. This is not the same as pausing: seek position advances, A/V sync is maintained in the audio chain alone, and video decode resumes immediately when the agent returns to the foreground. Cross-reference: [power-management.md](../power-management.md) (Phase 27+, general power management).
 
 The following table estimates the power saving available from each strategy on a representative mobile SoC (ARM Cortex-A72 class, 2W idle baseline):
 
@@ -606,11 +606,11 @@ Thermal coordination is implemented incrementally alongside the thermal subsyste
 | Phase 5 | `ThermalState::Hot` decode resolution reduction | Thermal notification IPC |
 | Phase 5 | `ThermalState::Critical` audio-only fallback | Audio subsystem integration (§13.1) |
 | Phase 7 (Networking) | RTC video SSRC suspend on `Critical` | NTM RTP transport, RTCP support |
-| Phase 8 (AIRS) | Predictive power management | AIRS context engine |
-| Phase 9 (Storage) | Recording suspend at keyframe boundary | FileSink element, WAL integration |
-| Phase 19 (Power Mgmt) | Display refresh rate adaptation | Power management subsystem |
-| Phase 19 | Battery-level-aware codec preference | Battery API from power subsystem |
+| Phase 9 (AIRS) | Predictive power management | AIRS context engine |
+| Phase 4 (Storage) | Recording suspend at keyframe boundary | FileSink element, WAL integration |
+| Phase 27 (Power Mgmt) | Display refresh rate adaptation | Power management subsystem |
+| Phase 27 | Battery-level-aware codec preference | Battery API from power subsystem |
 
-The first four items are implemented as part of Phase 5 because they depend only on the thermal notification IPC, which is available from the thermal subsystem's initial implementation. AIRS-dependent features (predictive power management, content-type-aware transcoding) are deferred to Phase 8 when the AI runtime is initialized. Display refresh adaptation depends on the power management subsystem added in Phase 19.
+The first four items are implemented as part of Phase 5 because they depend only on the thermal notification IPC, which is available from the thermal subsystem's initial implementation. AIRS-dependent features (predictive power management, content-type-aware transcoding) are deferred to Phase 9 when the AI runtime is initialized. Display refresh adaptation depends on the power management subsystem added in Phase 27.
 
 Cross-reference: [thermal.md](../thermal.md) §14 (implementation order), [media-pipeline.md](../media-pipeline.md) (hub document, implementation phases).

@@ -6,7 +6,7 @@
 **Target:** aarch64 (ARM64)
 **Language:** Rust (kernel + userspace)
 **License:** BSD-2-Clause (kernel, tools, SDK)
-**Timeline:** 30 phases across ~138 weeks (~2.7 years)
+**Timeline:** 42 phases across ~45–65 weeks (AI-assisted) / ~200 weeks unassisted
 
 ---
 
@@ -566,7 +566,9 @@ The SDK provides inference, storage, security, networking, and context as system
 
 ## 10. Phase Plan Overview
 
-### Tier 1: Hardware Foundation — Phases 0–3 (Weeks 1–16)
+42 phases across 8 tiers. AI-assisted timeline: ~45–65 weeks. Unassisted baseline: ~200 weeks (~3.8 years). See [development-plan.md](./development-plan.md) for full details, dependency graph, and velocity data.
+
+### Tier 1: Hardware Foundation — Phases 0–3 (Weeks 1–2) ✅
 
 Boot, memory, IPC. Pure OS fundamentals that don't change regardless of what's built on top.
 
@@ -577,88 +579,106 @@ Boot, memory, IPC. Pure OS fundamentals that don't change regardless of what's b
 | 2 | Memory Management | 4 weeks | Virtual memory, heap, W^X, KASLR |
 | 3 | IPC & Capability System | 6 weeks | Process isolation, capabilities, service manager |
 
-### Tier 2: Core System Services — Phases 4–7 (Weeks 17–34)
+### Tier 2: Core System Services — Phases 4–8 (Weeks 3–9)
 
 Storage, GPU, compositor, input, networking. The plumbing everything above depends on.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 4 | Block Storage & Object Store | 5 weeks | Persistent spaces, content-addressing, versioning |
-| 5 | GPU & Display | 4 weeks | GPU-accelerated rendering, font rendering |
-| 6 | Window Compositor & Shell | 5 weeks | Boot to GUI desktop with window management |
-| 7 | Input, Terminal & Basic Networking | 4 weeks | Keyboard/mouse, terminal emulator, TCP/IP |
+| 5 | GPU & Display | 6 weeks | GPU-accelerated rendering, font rendering |
+| 6 | Window Compositor & Shell | 7 weeks | Boot to GUI desktop with window management |
+| 7 | Input & Terminal | 4 weeks | Keyboard/mouse, terminal emulator |
+| 8 | Basic Networking & Agent Model | 4 weeks | TCP/IP networking, agent model foundation |
 
-### Tier 3: AI & Intelligence — Phases 8–11 (Weeks 35–54)
+### Tier 3: AI & Intelligence — Phases 9–15 (Weeks 10–19)
 
 This is where AIOS becomes what no other OS is.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 8 | AIRS Core (Inference Engine) | 5 weeks | Local LLM inference with streaming responses |
-| 9 | Space Intelligence & Conversation | 5 weeks | Semantic search, Conversation Bar, conversational config |
-| 10 | Agent Framework | 5 weeks | Capability-gated agents with intent verification |
-| 11 | Tasks, Flow & Attention | 5 weeks | Task decomposition, smart clipboard, triaged notifications |
+| 9 | AIRS Inference Engine | 4 weeks | Local LLM inference with GGML, streaming responses |
+| 10 | AIRS Intelligence Services | 4 weeks | Space Indexer, Intent Verifier, 9 intelligence services |
+| 11 | Context Engine | 4 weeks | Context signals, inference, consumer integration |
+| 12 | Preference System | 4 weeks | 7-tier resolution, behavioral inference, sync |
+| 13 | Agent Framework | 5 weeks | Capability-gated agents with intent verification |
+| 14 | Task Manager & Attention | 4 weeks | Task decomposition, triaged notifications |
+| 15 | Flow Service | 5 weeks | Smart clipboard with transform pipeline |
 
-### Tier 4: Platform Maturity — Phases 12–15 (Weeks 55–74)
+### Tier 4: Platform Maturity — Phases 16–22 (Weeks 20–29)
 
-Developer ecosystem, security hardening, performance, POSIX compatibility. Includes 3 weeks buffer for integration testing across phases.
-
-| Phase | Name | Duration | Deliverable |
-|---|---|---|---|
-| 12 | Developer Experience & SDK | 5 weeks | Multi-language SDK, CLI toolchain, documentation |
-| 13 | Security Hardening | 4 weeks | Fuzzing, ARM PAC/BTI/MTE, encrypted spaces |
-| 14 | Performance & Optimization | 3 weeks | Boot <3s, 60fps compositor, <500ms inference |
-| 15 | POSIX Compatibility & BSD Userland | 5 weeks | FreeBSD tools, musl libc, self-hosting capability |
-
-### Tier 5: Hardware & Connectivity — Phases 16–19 (Weeks 75–92)
-
-Full networking, USB, wireless, power management. Required for real hardware.
+Developer ecosystem, security, compute abstraction, performance, POSIX compatibility.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 16 | Network Translation Module | 5 weeks | Full NTM: space resolver, shadow engine, protocols |
-| 17 | USB Stack & Hotplug | 4 weeks | xHCI, HID, mass storage, device hotplug |
-| 18 | WiFi, Bluetooth & Wireless | 5 weeks | WPA2/WPA3, BT audio/HID, firmware loading |
-| 19 | Power Management & Thermal | 4 weeks | DVFS, sleep/hibernate, thermal throttling |
+| 16 | Developer Experience & SDK | 5 weeks | Multi-language SDK, CLI toolchain, documentation |
+| 17 | Security Architecture | 4 weeks | PAC/BTI/MTE, per-space encryption, security model |
+| 18 | Security Testing & Verification | 4 weeks | Fuzzing, behavioral monitoring, formal verification |
+| 19 | Kernel Compute Abstraction | 5 weeks | ComputeDevice trait, ComputeRegistry, CPU-as-compute |
+| 20 | GPU Compute & Accelerator Drivers | 5 weeks | VirtIO-GPU 3D compute, AcceleratorDriver trait |
+| 21 | Performance & Optimization | 4 weeks | Boot <3s, 60fps compositor, <500ms inference |
+| 22 | POSIX Compatibility & BSD Userland | 5 weeks | FreeBSD tools, musl libc, self-hosting capability |
 
-### Tier 6: Rich Experience — Phases 20–23 (Weeks 93–112)
+### Tier 5: Hardware & Connectivity — Phases 23–28 (Weeks 30–39)
 
-Portable UI toolkit, web browser, media, accessibility.
+Full networking, USB, wireless, power, thermal management. Required for real hardware.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 20 | Portable UI Toolkit | 5 weeks | Cross-platform toolkit (AIOS/Linux/macOS/Web) |
-| 21 | Web Browser (Servo) | 5 weeks | Decomposed browser with tab-per-agent isolation |
-| 22 | Media, Audio & Camera Subsystems | 5 weeks | Audio mixing, media player, camera subsystem |
-| 23 | Accessibility & Internationalization | 5 weeks | Screen reader, keyboard nav, Unicode, i18n |
+| 23 | Network Translation Module | 5 weeks | Full NTM: space resolver, shadow engine, protocols |
+| 24 | USB Stack & Hotplug | 5 weeks | xHCI, HID, mass storage, device hotplug |
+| 25 | WiFi Stack | 4 weeks | 802.11, WPA2/WPA3-SAE, station management |
+| 26 | Bluetooth & Wireless Integration | 4 weeks | HCI, L2CAP, A2DP, BLE GATT, coexistence |
+| 27 | Power Management | 3 weeks | DVFS, sleep/hibernate, power states |
+| 28 | Thermal Management | 5 weeks | Thermal zones, governors, compute budget coupling |
 
-### Tier 7: Production OS — Phases 24–27 (Weeks 113–130)
+### Tier 6: Rich Experience — Phases 29–33 (Weeks 40–51)
+
+Portable UI toolkit, web browser, media, camera, accessibility.
+
+| Phase | Name | Duration | Deliverable |
+|---|---|---|---|
+| 29 | Portable UI Toolkit | 5 weeks | Cross-platform toolkit (AIOS/Linux/macOS/Web) |
+| 30 | Web Browser | 7 weeks | Servo-based browser with tab-per-agent isolation |
+| 31 | Media Pipeline & Codecs | 4 weeks | MediaCodec framework, container engine, playback |
+| 32 | Streaming, RTC & Camera | 5 weeks | HLS/DASH, WebRTC, camera subsystem |
+| 33 | Accessibility & Internationalization | 5 weeks | Screen reader, keyboard nav, Unicode, i18n |
+
+### Tier 7: Production OS — Phases 34–39 (Weeks 52–63)
 
 Secure boot, Linux compatibility, enterprise features, hardware certification, launch.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 24 | Secure Boot & Update System | 5 weeks | Verified boot chain, A/B updates, rollback |
-| 25 | Linux Binary & Wayland Compatibility | 5 weeks | Run unmodified Linux apps and GUI programs |
-| 26 | Enterprise & Multi-Device | 4 weeks | MDM, fleet management, cross-device sync |
-| 27 | Real Hardware, Certification & Launch | 4 weeks | Pi 4/5, Pine64, VM images, documentation site |
+| 34 | Secure Boot & Update System | 5 weeks | Verified boot chain, A/B updates, rollback |
+| 35 | Linux Binary Loader | 4 weeks | ELF loader, syscall translation, glibc shim |
+| 36 | Wayland Bridge & Sandbox | 4 weeks | Run Linux GUI apps, security sandbox |
+| 37 | Multi-Device Sync & Pairing | 4 weeks | SPAKE2+ pairing, Space Mesh, handoff |
+| 38 | Enterprise Management | 5 weeks | MDM, fleet management, policy engine |
+| 39 | Real Hardware, Certification & Launch | 6 weeks | Pi 4/5, Pine64, VM images, documentation |
 
-### Tier 8: Security Intelligence — Phases 28–29 (Weeks 131–138)
+### Tier 8: Security Intelligence — Phases 40–41 (Weeks 64–67)
 
 Composable capability profiles, AIRS-powered agent capability analysis.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 28 | Composable Capability Profiles | 4 weeks | 5-layer profile system, resolution algorithm, profile storage |
-| 29 | AIRS Capability Intelligence | 4 weeks | 5-stage analysis pipeline, profile suggestions, security audit |
+| 40 | Composable Capability Profiles | 4 weeks | 5-layer profile system, resolution algorithm |
+| 41 | AIRS Capability Intelligence | 4 weeks | 5-stage analysis pipeline, profile suggestions |
 
 ### Timeline Summary
 
 ```text
-Year 1 (Weeks 1–54):     Tiers 1–3 — Functioning AI-first OS on QEMU
-Year 2 (Weeks 55–92):    Tiers 4–5 — Developer platform with real hardware support
-Year 2.5 (Weeks 93–130): Tiers 6–7 — Production OS ready for daily use
-Year 2.7 (Weeks 131–138): Tier 8 — Security intelligence and capability profiles
+AI-assisted (~45–65 weeks):
+  Weeks 1–9:    Tiers 1–2 — Boot to graphical desktop with networking
+  Weeks 10–19:  Tier 3    — AI-enhanced OS with agents and Flow
+  Weeks 20–29:  Tier 4    — Developer platform with compute abstraction
+  Weeks 30–39:  Tier 5    — Hardware-ready with WiFi/BT/USB
+  Weeks 40–51:  Tier 6    — Daily-driver with browser and media
+  Weeks 52–63:  Tier 7    — Production OS on real hardware
+  Weeks 64–67:  Tier 8    — Security intelligence
+
+Unassisted baseline: ~200 weeks (~3.8 years)
 ```
 
 ---
@@ -666,6 +686,8 @@ Year 2.7 (Weeks 131–138): Tier 8 — Security intelligence and capability prof
 ## 11. Document Index
 
 ### Architecture Documents
+
+28 hub documents with 130+ sub-documents organized by domain:
 
 ```text
 docs/
@@ -676,14 +698,14 @@ docs/
 │   ├── developer-guide.md                   Kernel development guide for Rust OS development
 │   ├── ai-agent-context.md                  Context-loading checklist for AI coding agents
 │   ├── language-ecosystem.md                Language runtime hub (Rust, Python, TS, WASM)
-│   │   ├── runtimes.md   Runtime deep dives per language
-│   │   ├── integration.md  Integration and build plan
-│   │   ├── operations.md   Operations, security, resource isolation
-│   │   └── ai.md         AI-driven runtime optimization strategies
-│   └── ccc-integration-analysis.md          Claude C Compiler integration analysis
+│   │   ├── runtimes.md                  Runtime deep dives per language
+│   │   ├── integration.md               Integration and build plan
+│   │   ├── operations.md                Operations, security, resource isolation
+│   │   └── ai.md                        AI-driven runtime optimization strategies
+│   └── ccc-integration-analysis.md          Claude C Compiler integration analysis (research)
 │
 ├── kernel/
-│   ├── boot.md                              Boot sequence hub (QEMU direct and UEFI)
+│   ├── boot.md                              Boot sequence hub (11 sub-docs)
 │   │   ├── firmware.md                  Firmware handoff, BootInfo, ESP, EL model
 │   │   ├── kernel.md                    Kernel early boot (boot.S, kernel_main)
 │   │   ├── services.md                  Service Manager boot phases
@@ -696,166 +718,326 @@ docs/
 │   │   ├── accessibility.md             Boot accessibility, first boot
 │   │   └── research.md                  Research kernel innovations
 │   ├── hal.md                               Hardware Abstraction Layer (UART, GIC, timer, MMU)
-│   ├── memory.md                            Memory management hub
-│   │   ├── physical.md               Buddy allocator, frame allocator, slab, heap
-│   │   ├── virtual.md                Page tables, KASLR, per-agent address spaces, TLB
+│   ├── memory.md                            Memory management hub (5 sub-docs)
+│   │   ├── physical.md                  Buddy allocator, frame allocator, slab, heap
+│   │   ├── virtual.md                   Page tables, KASLR, per-agent address spaces, TLB
 │   │   ├── ai.md                        AI model memory, PagedAttention, KV caches
-│   │   ├── reclamation.md            Memory pressure, OOM, swap/zram, scaling
-│   │   └── hardening.md              W^X, PAC, BTI, MTE, performance hardening
+│   │   ├── reclamation.md               Memory pressure, OOM, swap/zram, scaling
+│   │   └── hardening.md                 W^X, PAC, BTI, MTE, performance hardening
+│   ├── device-model.md                      Device model & driver framework hub (7 sub-docs)
+│   │   ├── representation.md            HardwareDescriptor, DeviceId, DeviceRegistry
+│   │   ├── discovery.md                 Bus trait, Driver trait, matching, binding
+│   │   ├── lifecycle.md                 State machine, DriverGrant, crash recovery
+│   │   ├── virtio.md                    VirtIO MMIO transport, virtqueues
+│   │   ├── dma.md                       DMA engine, buffer lifecycle, IOMMU
+│   │   ├── security.md                  Capability-gated MMIO/IRQ/DMA, live update
+│   │   └── intelligence.md              Testing, AI-native intelligence
+│   ├── compute.md                           Kernel compute abstraction hub (6 sub-docs)
+│   │   ├── classification.md            ComputeDevice trait, ComputeClass, capabilities
+│   │   ├── registry.md                  ComputeRegistry, topology graph
+│   │   ├── budget.md                    Per-agent compute budgets, time-slice accounting
+│   │   ├── memory.md                    Accelerator memory model, zero-copy buffers
+│   │   ├── security.md                  ComputeAccess capability, command isolation
+│   │   └── intelligence.md              Thermal coupling, kernel-internal ML
 │   ├── ipc.md                               IPC channels, shared memory, notifications, select
 │   ├── scheduler.md                         Per-CPU run queues, 4-class FIFO, load balancing
 │   ├── deadlock-prevention.md               Lock ordering, priority inheritance, timeouts
 │   └── observability.md                     Structured logging, metrics, tracing, ring buffers
 │
 ├── intelligence/
-│   ├── airs.md                              AI Runtime Service (inference, context, optimization)
+│   ├── airs.md                              AI Runtime Service hub (7 sub-docs)
+│   │   ├── inference.md                 GGML runtime, compute scheduler, KV cache
+│   │   ├── model-registry.md            Model storage, profiles, quantization, eviction
+│   │   ├── intelligence-services.md     9 services (Space Indexer, Intent Verifier, etc.)
+│   │   ├── lifecycle-and-data.md        Agent lifecycle, data model, tech choices
+│   │   ├── security.md                  Security path isolation, crash containment
+│   │   ├── scaling.md                   Model trajectory, multi-model, NPU integration
+│   │   └── ai-native.md                 Kernel-internal ML, AIRS-dependent intelligence
+│   ├── context-engine.md                    Context engine hub (6 sub-docs)
+│   │   ├── signals.md                   Signal sources, weights, collection frequency
+│   │   ├── inference.md                 Feature extraction, classifier, hysteresis
+│   │   ├── overrides.md                 Override types, rules, API
+│   │   ├── consumers.md                 Scheduler, attention, compositor, preferences
+│   │   ├── learning.md                  Learning, fallback, AI-native intelligence
+│   │   └── sdk.md                       SDK API, diagnostics, Inspector
+│   ├── preferences.md                       Preference system hub (8 sub-docs)
+│   │   ├── data-model.md                Types, values, sources, schema registry
+│   │   ├── resolution.md                7-tier precedence, NLU pipeline, conflicts
+│   │   ├── inference.md                 Behavioral observer, change propagation
+│   │   ├── history.md                   Explainability, undo, sync, categories
+│   │   ├── temporal.md                  Context-driven temporal rules
+│   │   ├── security.md                  Capability-gated access, audit, privacy
+│   │   ├── intelligence.md              AIRS + kernel-internal ML
+│   │   └── testing.md                   Unit, integration, property, fuzz testing
 │   ├── attention.md                         Attention management and notification triage
-│   ├── context-engine.md                    Context inference and state integration
-│   ├── preferences.md                       Conversational configuration and preference learning
 │   └── task-manager.md                      Task decomposition and agent orchestration
 │
 ├── storage/
-│   ├── spaces.md                            Space Storage hub (object store, content-addressing)
-│   │   ├── data-structures.md        Primitive types, Objects, Relations
-│   │   ├── block-engine.md           On-disk layout, LSM-tree, WAL, compression
-│   │   ├── versioning.md             Merkle DAG, snapshots, branching, temporal queries
-│   │   ├── encryption.md             Per-space encryption, key management, nonces
-│   │   ├── query-engine.md           Full-text search, embeddings, learned indexes
-│   │   ├── sync.md                   Merkle exchange, conflict resolution, sync security
-│   │   ├── posix.md                  Path mapping, fd lifecycle, POSIX translation
-│   │   └── budget.md                 Device profiles, quotas, pressure, AI-driven policies
-│   ├── flow.md                              Flow System hub (context-aware data transfer)
-│   │   ├── data-model.md               External types, transfers, typed content
-│   │   ├── transforms.md               Transform engine, format negotiation, AIRS transforms
-│   │   ├── history.md                  History storage, retention, multi-device sync
-│   │   ├── integration.md              Compositor, subsystem channels, cross-agent, POSIX
-│   │   ├── security.md                 Capability enforcement, content screening, rate limiting
-│   │   ├── sdk.md                      Rust/Python/TypeScript/PWA APIs
-│   │   └── extensions.md               Near-term features and future directions
+│   ├── spaces.md                            Space Storage hub (8 sub-docs)
+│   │   ├── data-structures.md           Primitive types, Objects, Relations
+│   │   ├── block-engine.md              On-disk layout, LSM-tree, WAL, compression
+│   │   ├── versioning.md                Merkle DAG, snapshots, branching
+│   │   ├── encryption.md                Per-space encryption, key management, nonces
+│   │   ├── query-engine.md              Full-text search, embeddings, learned indexes
+│   │   ├── sync.md                      Merkle exchange, conflict resolution
+│   │   ├── posix.md                     Path mapping, fd lifecycle, POSIX translation
+│   │   └── budget.md                    Device profiles, quotas, pressure policies
+│   └── flow.md                              Flow System hub (7 sub-docs)
+│       ├── data-model.md                External types, transfers, typed content
+│       ├── transforms.md                Transform engine, format negotiation
+│       ├── history.md                   History storage, retention, multi-device sync
+│       ├── integration.md               Compositor, subsystem channels, POSIX
+│       ├── security.md                  Capability enforcement, content screening
+│       ├── sdk.md                       Rust/Python/TypeScript/PWA APIs
+│       └── extensions.md                Near-term features, future directions
 │
 ├── platform/
-│   ├── compositor.md                        GPU-native compositor, window management, rendering
+│   ├── gpu.md                               GPU & display hub (5 sub-docs)
+│   │   ├── drivers.md                   VirtIO-GPU, VC4/V3D, AGX, software renderer
+│   │   ├── display.md                   Display controller, framebuffer, pipeline
+│   │   ├── rendering.md                 wgpu, rendering pipeline, font, GPU memory
+│   │   ├── security.md                  Capability-gated GPU, DMA protection
+│   │   └── integration.md              POSIX compat, AI-native display
+│   ├── compositor.md                        Compositor hub (6 sub-docs)
+│   │   ├── protocol.md                  Surface lifecycle, shared buffers, semantic hints
+│   │   ├── rendering.md                 Scene graph, frame composition, animation
+│   │   ├── input.md                     Input pipeline, focus, hotkeys, gestures
+│   │   ├── gpu.md                       wgpu, VirtIO-GPU, Wayland, DRM/KMS
+│   │   ├── security.md                  Capability-gated surfaces, trust levels
+│   │   └── ai-native.md                AIRS compositing, kernel-internal ML
+│   ├── accelerators.md                      Accelerator drivers hub (5 sub-docs)
+│   │   ├── drivers.md                   AcceleratorDriver trait, VirtIO-GPU 3D, VC VII
+│   │   ├── ane.md                       Apple Neural Engine architecture
+│   │   ├── memory.md                    Accelerator memory, zero-copy paths
+│   │   ├── subsystem.md                 Compute subsystem, sessions, POSIX bridge
+│   │   └── intelligence.md              AI-native management, AIRS integration
+│   ├── input.md                             Input subsystem hub (6 sub-docs)
+│   │   ├── devices.md                   Device taxonomy, USB HID, VirtIO-input
+│   │   ├── events.md                    Event model, pipeline, focus routing
+│   │   ├── gestures.md                  Keyboard, mouse, touch, gamepad processing
+│   │   ├── integration.md               Capability system, POSIX bridge, power
+│   │   ├── ai.md                        Predictive input, adaptive params
+│   │   └── future.md                    Spatial, voice, neural, haptics
+│   ├── networking.md                        Networking hub (6 sub-docs)
+│   │   ├── components.md                Space Resolver, Shadow Engine, Bandwidth Scheduler
+│   │   ├── stack.md                     smoltcp, VirtIO-Net, buffer management
+│   │   ├── protocols.md                 HTTP/2, QUIC, WebSocket, TLS
+│   │   ├── security.md                  Capability gate, packet filtering
+│   │   ├── examples.md                  Usage scenarios and data model
+│   │   └── future.md                    AI-driven networking
+│   ├── audio.md                             Audio subsystem hub (5 sub-docs)
+│   │   ├── subsystem.md                 Sessions, capabilities, routing
+│   │   ├── mixing.md                    Mixer, SRC, capture, DSP graph
+│   │   ├── drivers.md                   VirtIO-Sound, I2S, PWM, HDMI, USB
+│   │   ├── scheduling.md               RT scheduling, latency, sync
+│   │   └── integration.md              HDMI, power, audit, POSIX, boot chime
+│   ├── usb.md                               USB subsystem hub (4 sub-docs)
+│   │   ├── controller.md               UsbHostController trait, xHCI, DWC2
+│   │   ├── device-classes.md            HID, storage, audio, video, network
+│   │   ├── hotplug.md                   Hub enumeration, state machine, power
+│   │   └── security.md                 Threat model, caps, IOMMU, AI-native
+│   ├── wireless.md                          Wireless hub (6 sub-docs)
+│   │   ├── wifi.md                      802.11, WPA2/WPA3-SAE, WiFi Direct
+│   │   ├── bluetooth.md                 HCI, L2CAP, A2DP, BLE GATT, Mesh
+│   │   ├── firmware.md                  Firmware blob strategy, loading, versioning
+│   │   ├── security.md                  WiFi/BT security, rogue AP detection
+│   │   ├── integration.md              USB transport, audio, power, coexistence
+│   │   └── ai-native.md                AIRS wireless intelligence
+│   ├── camera.md                            Camera subsystem hub (7 sub-docs)
+│   │   ├── devices.md                   USB/UVC, CSI/MIPI, VirtIO-Camera, depth
+│   │   ├── pipeline.md                  Format negotiation, ISP, 3A algorithms
+│   │   ├── sessions.md                  Session lifecycle, conflict resolution
+│   │   ├── drivers.md                   UVC, CSI, VirtIO-Camera, CameraDevice trait
+│   │   ├── security.md                 LED enforcement, privacy, audit
+│   │   ├── integration.md              Compositor, Flow, POSIX, accessibility
+│   │   └── ai-native.md                Scene understanding, smart framing
+│   ├── media-pipeline.md                    Media pipeline hub (6 sub-docs)
+│   │   ├── codecs.md                    MediaCodec trait, container engine
+│   │   ├── playback.md                  Pipeline graph, A/V sync, sessions
+│   │   ├── streaming.md                 HLS/DASH/MoQ, ABR, network transport
+│   │   ├── rtc.md                       WebRTC stack, simulcast, SVC
+│   │   ├── drm.md                       CDM trait, CENC, output protection
+│   │   └── integration.md              Cross-subsystem, POSIX, security, thermal
+│   ├── thermal.md                           Thermal management hub (7 sub-docs)
+│   │   ├── zones.md                     ThermalZone, sensors, trip points
+│   │   ├── cooling.md                   CoolingDevice trait, DVFS, fan, governors
+│   │   ├── scheduling.md               Thermal-aware scheduling, load balancing
+│   │   ├── platform-drivers.md          QEMU, Pi 4/5, Apple Silicon, SCMI
+│   │   ├── integration.md              GPU, audio, storage, boot coordination
+│   │   ├── security.md                 Capability gate, audit, DoS prevention
+│   │   └── intelligence.md              Kernel-internal ML, AIRS DRL/GNN
+│   ├── bsp.md                               BSP architecture hub (6 sub-docs)
+│   │   ├── model.md                     Platform struct, detection, DTB, quirks
+│   │   ├── platforms.md                 QEMU virt, Pi 4/5, Apple Silicon
+│   │   ├── firmware.md                  UEFI/U-Boot/m1n1, BootInfo adaptation
+│   │   ├── drivers.md                   Driver mapping matrix, device tree bindings
+│   │   ├── testing.md                   Testing strategy, validation checklist
+│   │   └── intelligence.md              AI-native BSP, future ISA directions
+│   ├── multi-device.md                      Multi-device & enterprise hub (8 sub-docs)
+│   │   ├── pairing.md                   Discovery, SPAKE2+, org enrollment
+│   │   ├── experience.md               Handoff, clipboard, Space Mesh
+│   │   ├── mdm.md                       Declarative DDM, enrollment profiles
+│   │   ├── fleet.md                     Inventory, health, staged updates
+│   │   ├── policy.md                    Declarative policies, conditional access
+│   │   ├── enterprise-identity.md       SSO/SAML, SCIM, directory integration
+│   │   ├── data-protection.md           DLP, classification, compliance
+│   │   └── intelligence.md              Kernel ML, AIRS fleet intelligence
+│   ├── linux-compat.md                      Linux compatibility hub (6 sub-docs)
+│   │   ├── elf-loader.md                ELF format, ASLR, dynamic linker, VDSO
+│   │   ├── syscall-translation.md       ~200 syscall table, deep dives
+│   │   ├── wayland-bridge.md            Buffer pipeline, XWayland, clipboard
+│   │   ├── sandbox.md                   Threat model, capability mapping, portals
+│   │   ├── virtual-filesystems.md       /proc, /sys, /dev emulation
+│   │   └── intelligence.md              Syscall prediction, anomaly detection
 │   ├── subsystem-framework.md               Universal hardware abstraction framework
-│   ├── networking.md                        Network Translation Module (Space Resolver, Shadow Engine)
-│   ├── audio.md                             Audio mixing, routing, decode, output
 │   ├── posix.md                             POSIX compatibility (BSD userland, musl libc)
-│   └── power-management.md                  DVFS, sleep/hibernate, thermal throttling
+│   └── power-management.md                  DVFS, sleep/hibernate, power states
 │
 ├── experience/
 │   ├── experience.md                        GUI experience layer (5 surfaces, design language)
-│   ├── identity.md                          Cryptographic identity, graduated trust, relationships
-│   └── accessibility.md                     Screen reader, keyboard nav, assistive technology
+│   ├── identity.md                          Cryptographic identity, graduated trust
+│   └── accessibility.md                     Screen reader, keyboard nav, assistive tech
 │
 ├── applications/
 │   ├── agents.md                            Agent framework, SDK, lifecycle management
-│   ├── browser.md                           Decomposed browser (Servo, tab-per-agent isolation)
+│   ├── browser.md                           Decomposed browser (Servo, tab-per-agent)
 │   ├── inspector.md                         Security and capability management dashboard
+│   ├── terminal.md                          Terminal emulator hub (6 sub-docs)
+│   │   ├── emulation.md                 VT state machine, escape sequences
+│   │   ├── rendering.md                 Font engine, GPU rendering, scrollback
+│   │   ├── sessions.md                  IPC-based PTY, shell spawning, persistence
+│   │   ├── input.md                     Keyboard flow, mouse reporting, IME
+│   │   ├── multiplexer.md               Session broker, pane splitting, SSH
+│   │   └── integration.md              Subsystem framework, capabilities, spaces
 │   └── ui-toolkit.md                        Portable UI toolkit (AIOS/Linux/macOS/Web)
 │
 ├── security/
-│   ├── model.md                             Security model hub (threat model, 8-layer overview)
+│   ├── model.md                             Security model hub (4 sub-docs)
 │   │   ├── layers.md                    Eight defense layers deep dive
-│   │   ├── capabilities.md              Capability tokens, attenuation, delegation, profiles
-│   │   ├── hardening.md                 Cryptography, ARM hardware security, testing
-│   │   └── operations.md               Events, audit, zero trust, AIRS integration
-│   ├── fuzzing.md                           Fuzzing and input hardening hub
-│   │   ├── strategies.md               Language, syscall, memory, IPC, driver hardening
-│   │   ├── adoption-roadmap.md          Phased adoption (host-side through formal verification)
-│   │   ├── tooling.md                   Tiered tooling and fuzz target catalog
-│   │   └── ai-native.md                AI-driven fuzzing (dev-time, kernel, AIRS)
+│   │   ├── capabilities.md              Capability tokens, attenuation, profiles
+│   │   ├── hardening.md                 Cryptography, ARM hardware security
+│   │   └── operations.md               Events, audit, zero trust, AIRS
+│   ├── fuzzing.md                           Fuzzing hub (4 sub-docs)
+│   │   ├── strategies.md               Language, syscall, memory, driver hardening
+│   │   ├── adoption-roadmap.md          Phased adoption through formal verification
+│   │   ├── tooling.md                   Tiered tooling, fuzz target catalog
+│   │   └── ai-native.md                AI-driven fuzzing
+│   ├── secure-boot.md                       Secure boot & updates hub (5 sub-docs)
+│   │   ├── trust-chain.md               6-link chain, measured boot, attestation
+│   │   ├── uefi.md                      UEFI integration, TrustZone, OP-TEE
+│   │   ├── updates.md                   A/B scheme, delta updates, channels
+│   │   ├── operations.md               Verification, audit, revocation
+│   │   └── intelligence.md              AI-native secure boot
 │   └── static-analysis.md                   Static analysis and formal verification
 │
-└── phases/                                  Implementation milestones per phase
-    ├── 00-foundation-and-tooling.md         Phase 0: project scaffold, CI, build
-    ├── 01-boot-and-first-pixels.md          Phase 1: boot flow and first pixels
-    └── ...                                  (30 phases total, created as work begins)
+└── phases/                                  Implementation docs (42 phases, created as work begins)
+    ├── 00-foundation-and-tooling.md         Phase 0
+    ├── 01-boot-and-first-pixels.md          Phase 1
+    ├── 02-memory-management.md              Phase 2
+    ├── 03-ipc-and-capability-system.md      Phase 3
+    ├── 04-block-storage-and-object-store.md Phase 4
+    └── ...
 ```
 
 ### Phase Implementation Documents
 
-Each phase has a single implementation doc in `docs/phases/` with milestone steps, acceptance criteria, and references to architecture docs. Architecture lives in the domain directories above; phase docs define the build sequence. See [development-plan.md](./development-plan.md) §8 for the full list.
+Each phase has a single implementation doc in `docs/phases/` with milestone steps, acceptance criteria, and references to architecture docs. Architecture lives in the domain directories above; phase docs define the build sequence. See [development-plan.md](./development-plan.md) §8 for the full 42-phase list.
 
 ---
 
 ## 12. Related Architecture Documents
 
-Deep-dive technical specifications organized by domain. Hub documents (bold) contain sub-document maps for their subsystem.
+Deep-dive technical specifications organized by domain. **Bold** documents are hubs with sub-document maps. Numbers in parentheses indicate sub-doc count.
 
 ### Project
 
 | Document | Scope |
 |---|---|
-| [architecture.md](./architecture.md) | Full system architecture — data models, boot sequence, agent sandbox, graceful degradation, performance targets |
-| [development-plan.md](./development-plan.md) | Timeline, tier milestones, dependency graph, risk register, decision gates, staffing model |
-| [developer-guide.md](./developer-guide.md) | Kernel development guide — build workflow, code patterns, testing, debugging |
-| [ai-agent-context.md](./ai-agent-context.md) | Context-loading checklist for AI coding agents before writing kernel code |
-| **[language-ecosystem.md](./language-ecosystem.md)** | Language runtimes (Rust, Python, TypeScript, WASM) — hub with 4 sub-docs |
+| [architecture.md](./architecture.md) | Full system architecture — data models, boot sequence, agent sandbox, performance targets |
+| [development-plan.md](./development-plan.md) | 42-phase plan, dependency graph, risk register, decision gates, staffing |
+| [developer-guide.md](./developer-guide.md) | Kernel development guide — build workflow, code patterns, testing |
+| [ai-agent-context.md](./ai-agent-context.md) | Context-loading checklist for AI coding agents |
+| **[language-ecosystem.md](./language-ecosystem.md)** | Language runtimes hub (4) — Rust, Python, TypeScript, WASM |
 
 ### Kernel
 
 | Document | Scope |
 |---|---|
-| [boot.md](../kernel/boot.md) | Boot sequence — QEMU direct boot, UEFI flow, BootInfo struct, kernel entry |
-| [lifecycle.md](../kernel/boot/lifecycle.md) | Boot lifecycle stages, early boot phases, secondary core initialization |
-| [hal.md](../kernel/hal.md) | Hardware Abstraction Layer — Platform trait, PL011 UART, GICv3, ARM Generic Timer |
-| **[memory.md](../kernel/memory.md)** | Memory management — hub with 5 sub-docs (physical, virtual, AI, reclamation, hardening) |
-| [ipc.md](../kernel/ipc.md) | IPC — channel-based messaging, shared memory, notifications, select, syscall table |
-| [scheduler.md](../kernel/scheduler.md) | Scheduler — per-CPU run queues, 4-class FIFO, load balancing, context switching |
-| [deadlock-prevention.md](../kernel/deadlock-prevention.md) | Lock ordering, priority inheritance, timeout mechanisms |
-| [observability.md](../kernel/observability.md) | Structured logging, metrics, tracing, diagnostic ring buffers |
+| **[boot.md](../kernel/boot.md)** | Boot sequence hub (11) — firmware, kernel entry, services, recovery, suspend |
+| [hal.md](../kernel/hal.md) | Hardware Abstraction Layer — Platform trait, PL011, GICv3, Generic Timer |
+| **[memory.md](../kernel/memory.md)** | Memory management hub (5) — physical, virtual, AI, reclamation, hardening |
+| **[device-model.md](../kernel/device-model.md)** | Device model hub (7) — representation, discovery, lifecycle, VirtIO, DMA, security |
+| **[compute.md](../kernel/compute.md)** | Kernel compute abstraction hub (6) — classification, registry, budget, memory, security |
+| [ipc.md](../kernel/ipc.md) | IPC — channels, shared memory, notifications, select, syscall table |
+| [scheduler.md](../kernel/scheduler.md) | Scheduler — per-CPU run queues, 4-class FIFO, load balancing |
+| [deadlock-prevention.md](../kernel/deadlock-prevention.md) | Lock ordering, priority inheritance, timeouts |
+| [observability.md](../kernel/observability.md) | Structured logging, metrics, tracing, ring buffers |
 
 ### Intelligence
 
 | Document | Scope |
 |---|---|
-| [airs.md](../intelligence/airs.md) | AI Runtime Service — inference engine, model registry, Space Indexer, Context Engine, intent verification |
-| [context-engine.md](../intelligence/context-engine.md) | Context inference — work/play detection, signal fusion, state integration |
+| **[airs.md](../intelligence/airs.md)** | AI Runtime Service hub (7) — inference, model registry, services, security, scaling |
+| **[context-engine.md](../intelligence/context-engine.md)** | Context engine hub (6) — signals, inference, overrides, consumers, learning |
+| **[preferences.md](../intelligence/preferences.md)** | Preference system hub (8) — data model, resolution, inference, temporal, security |
 | [attention.md](../intelligence/attention.md) | Attention management — notification triage, context-aware filtering |
-| [task-manager.md](../intelligence/task-manager.md) | Task decomposition, intent-to-subtask orchestration, agent coordination |
-| [preferences.md](../intelligence/preferences.md) | Conversational configuration, preference learning, AI-mediated settings |
+| [task-manager.md](../intelligence/task-manager.md) | Task decomposition, agent orchestration |
 
 ### Storage
 
 | Document | Scope |
 |---|---|
-| **[spaces.md](../storage/spaces.md)** | Space Storage — hub with 8 sub-docs (data structures, block engine, versioning, encryption, queries, sync, POSIX, budget) |
-| **[flow.md](../storage/flow.md)** | Flow System — hub with 7 sub-docs (data model, transforms, history, integration, security, SDK, extensions) |
+| **[spaces.md](../storage/spaces.md)** | Space Storage hub (8) — data structures, block engine, versioning, encryption, queries, sync |
+| **[flow.md](../storage/flow.md)** | Flow System hub (7) — data model, transforms, history, integration, security, SDK |
 
 ### Platform
 
 | Document | Scope |
 |---|---|
-| [compositor.md](../platform/compositor.md) | Compositor — GPU-native rendering, semantic hints, layout engine, input routing, multi-monitor |
-| [subsystem-framework.md](../platform/subsystem-framework.md) | Universal hardware abstraction — traits, types, patterns for every subsystem |
-| [networking.md](../platform/networking.md) | Network Translation Module — Space Resolver, Shadow Engine, Bandwidth Scheduler, AIOS Peer Protocol |
-| [audio.md](../platform/audio.md) | Audio subsystem — mixing, routing, decode, spatial audio, output |
-| [posix.md](../platform/posix.md) | POSIX compatibility — BSD userland, musl libc, syscall translation |
-| [power-management.md](../platform/power-management.md) | Power management — DVFS, sleep/hibernate, thermal throttling, battery policy |
+| **[gpu.md](../platform/gpu.md)** | GPU & display hub (5) — drivers, display, rendering, security, integration |
+| **[compositor.md](../platform/compositor.md)** | Compositor hub (6) — protocol, rendering, input, GPU, security, AI-native |
+| **[accelerators.md](../platform/accelerators.md)** | Accelerator drivers hub (5) — VirtIO-GPU 3D, VideoCore VII, Apple ANE |
+| **[input.md](../platform/input.md)** | Input subsystem hub (6) — devices, events, gestures, integration, AI |
+| **[networking.md](../platform/networking.md)** | Networking hub (6) — components, stack, protocols, security, examples |
+| **[audio.md](../platform/audio.md)** | Audio subsystem hub (5) — sessions, mixing, drivers, scheduling, integration |
+| **[usb.md](../platform/usb.md)** | USB subsystem hub (4) — controller, device classes, hotplug, security |
+| **[wireless.md](../platform/wireless.md)** | Wireless hub (6) — WiFi, Bluetooth, firmware, security, integration |
+| **[camera.md](../platform/camera.md)** | Camera subsystem hub (7) — devices, pipeline, sessions, drivers, security |
+| **[media-pipeline.md](../platform/media-pipeline.md)** | Media pipeline hub (6) — codecs, playback, streaming, RTC, DRM |
+| **[thermal.md](../platform/thermal.md)** | Thermal management hub (7) — zones, cooling, scheduling, platform drivers |
+| **[bsp.md](../platform/bsp.md)** | BSP architecture hub (6) — model, platforms, firmware, drivers, testing |
+| **[multi-device.md](../platform/multi-device.md)** | Multi-device & enterprise hub (8) — pairing, MDM, fleet, policy, DLP |
+| **[linux-compat.md](../platform/linux-compat.md)** | Linux compatibility hub (6) — ELF loader, syscalls, Wayland, sandbox |
+| [subsystem-framework.md](../platform/subsystem-framework.md) | Universal hardware abstraction framework |
+| [posix.md](../platform/posix.md) | POSIX compatibility — BSD userland, musl libc |
+| [power-management.md](../platform/power-management.md) | Power management — DVFS, sleep/hibernate, power states |
 
 ### Experience
 
 | Document | Scope |
 |---|---|
-| [experience.md](../experience/experience.md) | Experience Layer — 5 surfaces (Workspace, Activity Windows, Conversation Bar, Flow Tray, Status Strip), design language |
-| [identity.md](../experience/identity.md) | Identity — cryptographic keys, graduated trust, relationship-aware sharing |
-| [accessibility.md](../experience/accessibility.md) | Accessibility — screen reader, keyboard navigation, WCAG compliance |
+| [experience.md](../experience/experience.md) | Experience Layer — 5 surfaces, design language |
+| [identity.md](../experience/identity.md) | Identity — cryptographic keys, graduated trust |
+| [accessibility.md](../experience/accessibility.md) | Accessibility — screen reader, keyboard nav, WCAG |
 
 ### Applications
 
 | Document | Scope |
 |---|---|
-| [agents.md](../applications/agents.md) | Agent framework — SDK, runtime, lifecycle management, capability-gated installation |
-| [browser.md](../applications/browser.md) | Decomposed browser — Servo integration, tab-per-agent, Web API bridging, web storage as spaces |
-| [inspector.md](../applications/inspector.md) | Inspector — security dashboard, capability visibility, provenance inspection |
-| [ui-toolkit.md](../applications/ui-toolkit.md) | Portable UI toolkit — cross-platform (AIOS/Linux/macOS/Web) |
+| [agents.md](../applications/agents.md) | Agent framework — SDK, runtime, lifecycle, capabilities |
+| [browser.md](../applications/browser.md) | Decomposed browser — Servo, tab-per-agent isolation |
+| [inspector.md](../applications/inspector.md) | Inspector — security dashboard, capability visibility |
+| **[terminal.md](../applications/terminal.md)** | Terminal emulator hub (6) — emulation, rendering, sessions, input, multiplexer |
+| [ui-toolkit.md](../applications/ui-toolkit.md) | Portable UI toolkit — AIOS/Linux/macOS/Web |
 
 ### Security
 
 | Document | Scope |
 |---|---|
-| **[model.md](../security/model.md)** | Security model — hub with 4 sub-docs (model/layers, model/capabilities, model/hardening, model/operations) |
-| **[fuzzing.md](../security/fuzzing.md)** | Fuzzing — hub with 4 sub-docs (strategies, adoption roadmap, tooling, AI-native) |
-| [static-analysis.md](../security/static-analysis.md) | Static analysis and formal verification across all phases |
+| **[model.md](../security/model.md)** | Security model hub (4) — layers, capabilities, hardening, operations |
+| **[fuzzing.md](../security/fuzzing.md)** | Fuzzing hub (4) — strategies, adoption roadmap, tooling, AI-native |
+| **[secure-boot.md](../security/secure-boot.md)** | Secure boot hub (5) — trust chain, UEFI, updates, operations |
+| [static-analysis.md](../security/static-analysis.md) | Static analysis and formal verification |
 
 ---
 

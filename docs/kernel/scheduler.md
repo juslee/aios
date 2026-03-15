@@ -2415,20 +2415,20 @@ Phase 6 — Window Compositor and Shell:
   └── Input boost for interactive threads
        Deliverable: 60fps compositor with guaranteed frame budget
 
-Phase 8 — AIRS Core:
+Phase 9 — AIRS Inference Engine:
   ├── Inference thread pinning (CPU affinity)
   ├── Chunked token generation with voluntary yields
   ├── InferenceTask and InferencePriority integration
   └── Preemption points in inference engine
        Deliverable: inference runs without starving UI
 
-Phase 10 — Agent Framework:
+Phase 13 — Agent Framework:
   ├── Per-agent CPU quotas (from agent manifest)
   ├── Quota enforcement and deprioritization
   └── Agent scheduling class assignment
        Deliverable: agents cannot monopolize CPU
 
-Phase 14 — Performance and Optimization:
+Phase 21 — Performance and Optimization:
   ├── Weighted Fair Queuing (replace basic round-robin in Normal)
   ├── Context-aware weight adjustment (Context Engine integration)
   ├── Multi-core load balancer (push/pull migration)
@@ -2438,7 +2438,7 @@ Phase 14 — Performance and Optimization:
        Deliverable: full scheduler with all four classes,
        WFQ, context hints, multi-core balancing
 
-Phase 19 — Power Management and Thermal:
+Phase 27 — Power Management and Thermal:
   ├── DVFS governor integration
   ├── Tickless idle (dynamic timer)
   ├── Race-to-idle policy
@@ -2449,7 +2449,7 @@ Phase 19 — Power Management and Thermal:
        Deliverable: energy-efficient scheduling on battery
 ```
 
-Each phase builds on the previous. The Phase 1 scheduler is trivial — just enough to boot. By Phase 14, the scheduler handles all four classes, fair-share, context awareness, and multi-core balancing. Phase 19 adds power management, the last piece needed for a production-quality scheduler on real hardware.
+Each phase builds on the previous. The Phase 1 scheduler is trivial — just enough to boot. By Phase 21, the scheduler handles all four classes, fair-share, context awareness, and multi-core balancing. Phase 27 adds power management, the last piece needed for a production-quality scheduler on real hardware.
 
 -----
 
@@ -2503,7 +2503,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Research.** STUN [R2] directly validates this approach — Q-learning optimizes 5 Linux scheduler parameters (timeslice, migration cost, cache hot time, etc.) and achieves measurable throughput gains on a running system. Alps [R3] (USENIX ATC'24) uses online learning for priority and timeslice adaptation with bounded exploration, demonstrating convergence within minutes.
 
-**Target.** Phase 14+ (requires stable observability metrics as optimization objective — see observability.md §10).
+**Target.** Phase 21+ (requires stable observability metrics as optimization objective — see observability.md §10).
 
 ### 16.2 Lock-Aware Scheduler Priority
 
@@ -2515,7 +2515,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Research.** KernelAGI [R6] proposes kernel-embedded ML for resource arbitration including lock-aware scheduling. The AI+OS survey [R7] identifies lock-scheduler co-optimization as an open research area in AI-driven OS design.
 
-**Target.** Phase 11+.
+**Target.** Phase 14+.
 
 ### 16.3 Workload Phase Detection
 
@@ -2527,7 +2527,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Research.** ASA [R5] (Mixture-of-Schedulers) detects workload patterns and dynamically switches between scheduling policies via Linux's sched_ext framework — directly validating this concept. ghOSt [R4] enables policy hot-swapping at Google scale. KernelOracle [R1] demonstrates that ML can predict scheduler decisions from trace features with high accuracy.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 16.4 Predictive Thread Wakeup
 
@@ -2539,7 +2539,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Research.** Alps [R3] uses learning to predict thread behavior and pre-adapt scheduling decisions. The AI+OS survey [R7] identifies predictive resource pre-allocation as a defining capability of Stage 3 ("AI-driven") operating systems.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 16.5 Thread Affinity Learning
 
@@ -2551,7 +2551,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Research.** STUN [R2] includes CPU affinity as one of its tunable parameters, validating that affinity can be optimized online. ghOSt [R4] demonstrates per-thread placement decisions at production scale at Google. KernelOracle [R1] shows that trace-based features (including cache metrics) can predict optimal scheduling outcomes.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 16.6 Jitter-Aware Real-Time Scheduling
 
@@ -2563,7 +2563,7 @@ All AI-driven scheduling mechanisms run as AIRS services in user space. They con
 
 **Research.** ADIOS [R8] applies learning-based deadline adaptation to I/O scheduling, demonstrating that learned timing adjustments improve deadline adherence. ASA [R5] demonstrates real-time workload classification for scheduling policy selection.
 
-**Target.** Phase 19+ (after power management stabilizes and compositor deadlines are established).
+**Target.** Phase 27+ (after power management stabilizes and compositor deadlines are established).
 
 ### 16.7 Cross-References
 

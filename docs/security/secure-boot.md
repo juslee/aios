@@ -1,7 +1,7 @@
 # AIOS Secure Boot & Update System
 
 **Audience:** Kernel developers, platform engineers, application developers
-**Phase:** 24 (Secure Boot & Update System) — depends on Phase 19 (Power Management)
+**Phase:** 34 (Secure Boot & Update System) — depends on Phase 27 (Power Management)
 **Related:** [model.md](./model.md) — Security model and capability system,
 [model/hardening.md](./model/hardening.md) — Cryptographic foundations and key hierarchy,
 [boot.md](../kernel/boot.md) — Boot sequence and firmware handoff,
@@ -97,26 +97,26 @@ flowchart LR
 | 3 | Capability system; Ed25519 signing in security model | IPC, scheduler |
 | 4 | AES-256-GCM block encryption; content-addressed storage | Storage layer |
 | 9 | A/B ESP rollback; boot failure counter; recovery shell | Boot sequence |
-| 10 | Agent manifest signing; AIRS model integrity (SHA-256) | Agent framework, AIRS |
-| 13 | Formal verification of capability system | Security model |
+| 13 | Agent manifest signing; AIRS model integrity (SHA-256) | Agent framework, AIRS |
+| 17 | Formal verification of capability system | Security model |
 
-### Phase 24: Secure Boot & Update System (Weeks 93–96)
+### Phase 34: Secure Boot & Update System (Weeks 93–96)
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
-| M73 | Chain of trust + UEFI Secure Boot | Week 93–94 | Kernel ELF signature verified by UEFI stub; boot fails on tampered image |
-| M74 | TrustZone + A/B updates + rollback protection | Week 94–95 | Keys sealed in secure world; monotonic counter prevents rollback; delta updates work |
-| M75 | Update channels + AI-native intelligence | Week 95–96 | Separate kernel/agent/model update channels; AIRS-aware scheduling; boot anomaly detection |
+| M103 | Chain of trust + UEFI Secure Boot | Week 93–94 | Kernel ELF signature verified by UEFI stub; boot fails on tampered image |
+| M104 | TrustZone + A/B updates + rollback protection | Week 94–95 | Keys sealed in secure world; monotonic counter prevents rollback; delta updates work |
+| M105 | Update channels + AI-native intelligence | Week 95–96 | Separate kernel/agent/model update channels; AIRS-aware scheduling; boot anomaly detection |
 
-### Post-Phase 24
+### Post-Phase 34
 
 | Phase | Enhancement |
 |---|---|
-| 25 | Linux binary compatibility layer with dm-verity bridge |
-| 26 | Enterprise fleet attestation; MDM integration |
-| 27 | Hardware certification; real TPM 2.0 testing |
-| 28 | Composable security profiles for update agents |
-| 29 | AIRS-driven adaptive update policy; GNN anomaly detection |
+| 35 | Linux binary compatibility layer with dm-verity bridge |
+| 38 | Enterprise fleet attestation; MDM integration |
+| 39 | Hardware certification; real TPM 2.0 testing |
+| 40 | Composable security profiles for update agents |
+| 41 | AIRS-driven adaptive update policy; GNN anomaly detection |
 
 ---
 

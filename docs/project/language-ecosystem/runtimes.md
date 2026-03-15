@@ -31,10 +31,10 @@ async fn my_agent(ctx: AgentContext) -> Result<()> {
 
 | Component | Source | Phase |
 |---|---|---|
-| `aios-sdk` crate | Built with AIOS | Phase 10 |
-| `#[agent]` proc macro | Generates entry point + manifest parsing | Phase 10 |
+| `aios-sdk` crate | Built with AIOS | Phase 13 |
+| `#[agent]` proc macro | Generates entry point + manifest parsing | Phase 13 |
 | Rust compiler (cross) | rustc on host, target aarch64-unknown-none | Phase 0+ |
-| Rust compiler (native) | rustc running ON AIOS | Phase 15+ |
+| Rust compiler (native) | rustc running ON AIOS | Phase 22+ |
 
 ### Self-Hosting: When Can You Write Rust ON AIOS?
 
@@ -42,16 +42,16 @@ This is the hardest self-hosting problem because `rustc` depends on LLVM (C++):
 
 ```mermaid
 flowchart LR
-    A["`Phase 15a
+    A["`Phase 22a
 *musl libc compiled on AIOS
 C library available*`"]
-    B["`Phase 15f
+    B["`Phase 22f
 *LLVM/clang compiled on AIOS
 C++ compiler available*`"]
-    C["`Phase 15+
+    C["`Phase 22+
 *Cross-compile rustc for AIOS
 Ship as pre-built binary*`"]
-    D["`Phase 16+
+    D["`Phase 23+
 *Native rustc compiles rustc
 Full Rust self-hosting*`"]
 
@@ -59,11 +59,11 @@ Full Rust self-hosting*`"]
 ```
 
 **The blocker isn't Rust — it's LLVM.** Rust's compiler uses LLVM as its code generation backend.
-Until LLVM runs natively on AIOS (Phase 15f), `rustc` can't run natively either. The practical
+Until LLVM runs natively on AIOS (Phase 22f), `rustc` can't run natively either. The practical
 path: cross-compile `rustc` on the host and ship it as a pre-built AIOS binary, then later
 achieve true self-hosting.
 
-### Development Workflow (Phase 12+)
+### Development Workflow (Phase 16+)
 
 ```bash
 # On host (Mac/Linux) — primary development path
@@ -72,7 +72,7 @@ aios agent dev                    # Hot-reload, < 2s incremental builds
 aios agent test                   # Run tests against mock AIOS services
 aios agent publish                # Package and deploy to AIOS
 
-# On AIOS (Phase 15f+) — once rustc is available natively
+# On AIOS (Phase 22f+) — once rustc is available natively
 cargo build --release             # Compile directly on AIOS
 aios agent install ./target/      # Install from local build
 ```
@@ -102,10 +102,10 @@ async def my_agent(ctx):
 
 | Component | Source | License | Phase |
 |---|---|---|---|
-| RustPython interpreter | github.com/RustPython/RustPython | MIT | Phase 12 |
-| RustPython embedding API | github.com/RustPython/RustPython | MIT | Phase 12 |
-| `aios-sdk` pip package | Built with AIOS | BSD-2-Clause | Phase 12 |
-| Agent-local `site-packages/` | Declared in manifest, installed at install time | — | Phase 12 |
+| RustPython interpreter | github.com/RustPython/RustPython | MIT | Phase 16 |
+| RustPython embedding API | github.com/RustPython/RustPython | MIT | Phase 16 |
+| `aios-sdk` pip package | Built with AIOS | BSD-2-Clause | Phase 16 |
+| Agent-local `site-packages/` | Declared in manifest, installed at install time | — | Phase 16 |
 
 ### Security: Restricted Standard Library
 
@@ -133,8 +133,8 @@ Python's stdlib is powerful and dangerous. AIOS surgically restricts it:
 |---|---|---|
 | Language | Pure Rust | C |
 | Dependencies | Zero C deps | Needs libc, libm, pthreads |
-| Sandbox integration | Compiles into agent binary | Requires POSIX layer (Phase 15) |
-| Available at | Phase 12 | Phase 15 (needs POSIX) |
+| Sandbox integration | Compiles into agent binary | Requires POSIX layer (Phase 22) |
+| Available at | Phase 16 | Phase 22 (needs POSIX) |
 | Performance | Slower (~2-10x vs CPython) | Baseline |
 | Compatibility | ~95% of pure Python | 100% |
 | C extensions | No | Yes |
@@ -144,23 +144,23 @@ Python's stdlib is powerful and dangerous. AIOS surgically restricts it:
 RustPython is available **3 phases earlier** than CPython because it doesn't need the POSIX layer.
 For agents (which use the AIOS SDK, not C extensions), this tradeoff is worth it.
 
-After Phase 15, CPython becomes available through the POSIX layer for workloads that need C
+After Phase 22, CPython becomes available through the POSIX layer for workloads that need C
 extension compatibility (numpy, etc.).
 
 ### Self-Hosting: When Can You Write Python ON AIOS?
 
-**Phase 12.** RustPython ships with the OS. You can write and run Python agents directly on AIOS
-from Phase 12 onward. No cross-compilation needed — Python is interpreted.
+**Phase 16.** RustPython ships with the OS. You can write and run Python agents directly on AIOS
+from Phase 16 onward. No cross-compilation needed — Python is interpreted.
 
 ```bash
-# On AIOS (Phase 12+)
+# On AIOS (Phase 16+)
 aios agent new my-agent --lang python
 # Edit .py files directly on AIOS
 aios agent dev                    # Runs immediately via RustPython
 ```
 
 This makes Python the **first self-hosting development language** on AIOS (alongside TypeScript),
-arriving 3 phases before C/C++ (Phase 15) and ~4 phases before Rust (Phase 16+).
+arriving 3 phases before C/C++ (Phase 22) and ~4 phases before Rust (Phase 23+).
 
 ---
 
@@ -190,10 +190,10 @@ export default agent(async (ctx: AgentContext) => {
 
 | Component | Source | License | Phase |
 |---|---|---|---|
-| QuickJS-ng engine | github.com/quickjs-ng/quickjs | MIT | Phase 12 |
-| napi-like bridge | Custom, built with AIOS | BSD-2-Clause | Phase 12 |
-| `@aios/sdk` npm package | Built with AIOS | BSD-2-Clause | Phase 12 |
-| TypeScript transpiler | Bundled (runs at install time) | Apache-2.0 | Phase 12 |
+| QuickJS-ng engine | github.com/quickjs-ng/quickjs | MIT | Phase 16 |
+| napi-like bridge | Custom, built with AIOS | BSD-2-Clause | Phase 16 |
+| `@aios/sdk` npm package | Built with AIOS | BSD-2-Clause | Phase 16 |
+| TypeScript transpiler | Bundled (runs at install time) | Apache-2.0 | Phase 16 |
 
 ### Security: No Node.js Standard Library
 
@@ -223,9 +223,9 @@ capability gates on which domains the agent can contact.
 | Dependencies | Minimal C | Zero (pure Rust) | Large C++ codebase |
 | AIOS integration | Embeds easily | Embeds easily (Rust-native) | Requires POSIX layer |
 | Maintenance status | Active (v0.9.0, March 2025) | Active | Active |
-| Available at | Phase 12 | Phase 12 (alternative) | Phase 15 (via Node.js on POSIX) |
+| Available at | Phase 16 | Phase 16 (alternative) | Phase 22 (via Node.js on POSIX) |
 
-**QuickJS-ng** is chosen over Boa for Phase 12 because of its superior runtime performance
+**QuickJS-ng** is chosen over Boa for Phase 16 because of its superior runtime performance
 (~3-5x faster) and smaller memory footprint. Boa's pure-Rust nature is compelling for a
 Rust-native OS and its ECMAScript conformance is excellent, but the performance gap makes
 QuickJS-ng the pragmatic choice for production agent workloads.
@@ -234,12 +234,12 @@ QuickJS-ng the pragmatic choice for production agent workloads.
 to replace QuickJS-ng — eliminating the C dependency entirely. See
 [Future Directions](./ai.md#141-boa-as-pure-rust-javascript-engine) §14.1.
 
-For compute-heavy JavaScript (browser workloads), SpiderMonkey arrives in Phase 21 via Servo.
+For compute-heavy JavaScript (browser workloads), SpiderMonkey arrives in Phase 30 via Servo.
 
 ### Self-Hosting: When Can You Write TypeScript ON AIOS?
 
-**Phase 12.** QuickJS-ng ships with the OS. TypeScript transpilation happens at install time.
-You can write and run TypeScript agents directly on AIOS from Phase 12 onward.
+**Phase 16.** QuickJS-ng ships with the OS. TypeScript transpilation happens at install time.
+You can write and run TypeScript agents directly on AIOS from Phase 16 onward.
 
 ---
 
@@ -266,22 +266,22 @@ pub fn agent_main() {
 
 | Component | Source | License | Phase |
 |---|---|---|---|
-| wasmtime runtime | github.com/bytecodealliance/wasmtime | Apache-2.0/MIT | Phase 12 |
-| WASI-to-AIOS bridge | Custom — maps WASI imports to AIOS IPC | BSD-2-Clause | Phase 12 |
-| AOT compiler | wasmtime's Cranelift (compiles .wasm → native at install) | Apache-2.0 | Phase 12 |
+| wasmtime runtime | github.com/bytecodealliance/wasmtime | Apache-2.0/MIT | Phase 16 |
+| WASI-to-AIOS bridge | Custom — maps WASI imports to AIOS IPC | BSD-2-Clause | Phase 16 |
+| AOT compiler | wasmtime's Cranelift (compiles .wasm → native at install) | Apache-2.0 | Phase 16 |
 
 ### WASI Standards Timeline
 
 | Standard | Status | Key Feature | AIOS Relevance |
 |---|---|---|---|
-| WASI 0.2.0 | Stable (January 2024) | Component Model foundation | Phase 12 baseline |
+| WASI 0.2.0 | Stable (January 2024) | Component Model foundation | Phase 16 baseline |
 | WASI 0.3.0 | Preview (in development) | Async support via Component Model | Agent event loops |
 | WASI 1.0 | Expected ~late 2026 | Stable, production-grade | Long-term target |
 | WebAssembly 2.0+ | W3C ongoing | GC, tail calls, relaxed SIMD | Performance features |
 
 ### Two WASM Paths
 
-**Agent WASM (Phase 12):** WASM modules run in wasmtime inside the agent sandbox. Double-sandboxed:
+**Agent WASM (Phase 16):** WASM modules run in wasmtime inside the agent sandbox. Double-sandboxed:
 WASM's linear memory sandbox inside AIOS's capability sandbox.
 
 ```mermaid
@@ -296,7 +296,7 @@ flowchart TD
     end
 ```
 
-**Browser WASM (Phase 21):** WASM runs inside SpiderMonkey (via Servo) within Tab Agents.
+**Browser WASM (Phase 30):** WASM runs inside SpiderMonkey (via Servo) within Tab Agents.
 Web API imports are capability-checked at the OS level — more secure than traditional browser
 WASM because enforcement is hardware-backed (MMU), not just browser-logic.
 
@@ -346,6 +346,6 @@ WASM modules are compiled on the host and deployed as `.wasm` files. The AOT com
 
 To compile WASM **on** AIOS, you'd need a compiler targeting WASM running natively:
 
-- **Rust → WASM**: Needs `rustc` with `wasm32-wasi` target (Phase 16+)
-- **C → WASM**: Needs clang with `wasm32-wasi` target (Phase 15f)
-- **AssemblyScript → WASM**: Needs Node.js or QuickJS-ng-compatible tooling (Phase 12+)
+- **Rust → WASM**: Needs `rustc` with `wasm32-wasi` target (Phase 23+)
+- **C → WASM**: Needs clang with `wasm32-wasi` target (Phase 22f)
+- **AssemblyScript → WASM**: Needs Node.js or QuickJS-ng-compatible tooling (Phase 16+)

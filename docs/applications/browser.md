@@ -500,15 +500,15 @@ Every hardware access from web content goes through the same subsystem framework
 
 ## 11. Implementation Plan
 
-Integrates with the existing phase plan at Phase 21 (Web Browser, 5 weeks total). Sub-phases overlap — 21A/21B run concurrently, as do 21C/21D:
+Integrates with the existing phase plan at Phase 30 (Web Browser, 5 weeks total). Sub-phases overlap — 30A/30B run concurrently, as do 30C/30D:
 
-### Phase 21A: Servo Integration (2 weeks)
+### Phase 30A: Servo Integration (2 weeks)
 
 - Build Servo's layout engine, CSS engine, SpiderMonkey for aarch64-aios target
 - Strip Servo's networking and storage layers
 - Create Tab Agent scaffold that hosts Servo's rendering
 
-### Phase 21B: Web API Bridge (2 weeks, concurrent with 21A)
+### Phase 30B: Web API Bridge (2 weeks, concurrent with 30A)
 
 - `fetch()` → OS HTTP service via network subsystem
 - `localStorage` / `IndexedDB` → web-storage space
@@ -516,7 +516,7 @@ Integrates with the existing phase plan at Phase 21 (Web Browser, 5 weeks total)
 - Permissions API → OS capability requests via subsystem framework
 - Service Worker → persistent Tab Agent with constrained capabilities
 
-### Phase 21C: Browser Shell (1 week)
+### Phase 30C: Browser Shell (1 week)
 
 - Tab management UI (portable toolkit / iced)
 - URL bar, navigation, bookmarks (stored in bookmarks space)
@@ -524,7 +524,7 @@ Integrates with the existing phase plan at Phase 21 (Web Browser, 5 weeks total)
 - Origin capability derivation from URL
 - Cross-origin capability grants (CORS → capability)
 
-### Phase 21D: Integration (1 week, concurrent with 21C)
+### Phase 30D: Integration (1 week, concurrent with 30C)
 
 - Tab Agent spawning and lifecycle management
 - Multi-tab compositor integration
@@ -532,7 +532,7 @@ Integrates with the existing phase plan at Phase 21 (Web Browser, 5 weeks total)
 - Ad/tracker blocking at capability level
 - Resource accounting per Tab Agent
 
-### Phase 21E: AIOS Web API Extensions (1 week)
+### Phase 30E: AIOS Web API Extensions (1 week)
 
 - `aios.space()` API for PWA space access
 - `aios.flow()` API for PWA ↔ native agent communication

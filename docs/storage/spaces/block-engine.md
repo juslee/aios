@@ -708,7 +708,7 @@ pub struct TierStats {
 
 **Recompression is lazy.** The recompressor runs at lowest I/O priority and yields to any foreground read or write. On a Pi with an SD card, recompression is throttled to avoid wearing the card. Tier transitions are batched — the recompressor processes blocks in groups during idle periods.
 
-> **Future optimization (ML-based tiering):** Recent research in AI-driven storage tiering uses streaming machine learning models to predict access patterns and automatically classify blocks as hot/warm/cold. AIOS's AIRS subsystem could drive tiering decisions using learned access pattern models, replacing static heuristics with adaptive prediction (Phase 14a+).
+> **Future optimization (ML-based tiering):** Recent research in AI-driven storage tiering uses streaming machine learning models to predict access patterns and automatically classify blocks as hot/warm/cold. AIOS's AIRS subsystem could drive tiering decisions using learned access pattern models, replacing static heuristics with adaptive prediction (Phase 21a+).
 
 #### 4.7.1 AIRS-Directed Compression Scheduling
 
@@ -742,7 +742,7 @@ AIRS compression directive:
 
 **Why no shortcut:** As with prefetch (§4.3.1), there is no bypass path. AIRS compression directives are advisory — "compress this block at zstd level 9" — not operational. Space Storage does the work through its existing, checksum-verified, WAL-protected write path.
 
-**Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 14 optimization — single-device tiering via compression is the Phase 4 implementation.
+**Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 21 optimization — single-device tiering via compression is the Phase 4 implementation.
 
 ### 4.8 Write Amplification Tracking
 
@@ -841,7 +841,7 @@ pub struct WafAlert {
 
 ### 4.9 Sub-Block Deduplication
 
-> **Implementation status:** Phase 14e. This section describes the design for sub-block deduplication. Phase 4 uses whole-block SHA-256 deduplication only. Near-duplicate content (e.g., edited documents) is stored in full until Phase 14e adds Rabin rolling hash chunk-level savings.
+> **Implementation status:** Phase 21e. This section describes the design for sub-block deduplication. Phase 4 uses whole-block SHA-256 deduplication only. Near-duplicate content (e.g., edited documents) is stored in full until Phase 21e adds Rabin rolling hash chunk-level savings.
 
 Standard content-addressed deduplication (§4.2) identifies identical blocks via SHA-256 hash comparison. This works perfectly when two objects contain the same content — the block is stored once and referenced by both objects. But it fails for **near-duplicate content**: if a user edits one paragraph in a 100 KB document, the entire block is stored again because the SHA-256 hash changed, even though 99% of the content is identical.
 

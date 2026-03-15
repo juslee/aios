@@ -112,9 +112,9 @@ Phase 5c:  wgpu GPU Service + surface composition   → multiple surfaces compos
 Phase 5d:  Software renderer fallback               → CPU-only path for all platforms
 Phase 5e:  Display mode setting + multi-monitor      → EDID parsing, resolution control
 Phase 6+:  Compositor integration (see compositor.md §12)
-Phase 15+: Bare-metal GPU drivers (VC4/V3D, AGX)
-Phase 20+: VirtIO-GPU 3D (virgl), Vulkan (Venus)
-Phase 25:  Wayland compatibility layer
+Phase 39+: Bare-metal GPU drivers (VC4/V3D, AGX)
+Phase 29+: VirtIO-GPU 3D (virgl), Vulkan (Venus)
+Phase 36:  Wayland compatibility layer
 ```
 
 **QEMU-first development strategy:**
@@ -130,7 +130,7 @@ Phase 25:  Wayland compatibility layer
 Phase 3 (IPC + Capabilities) → GPU Service process (needs IPC channels + capability tokens)
 Phase 3 (Shared Memory)      → Buffer sharing (needs shmem with capability-gated access)
 Phase 4 (VirtIO-blk)         → VirtIO transport reuse (virtqueue setup, MMIO probe)
-Phase 5 (This doc)           → Phase 6 (Compositor) → Phase 7 (Input) → Phase 20 (UI Toolkit)
+Phase 5 (This doc)           → Phase 6 (Compositor) → Phase 7 (Input) → Phase 29 (UI Toolkit)
 ```
 
 -----

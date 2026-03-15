@@ -146,34 +146,34 @@ Phase 5:   Preference System (basic)
            ├── Capability gate (PreferenceRead, PreferenceSystemWrite, PreferenceAgentWrite)
            └── Audit logging (Changed, AccessDenied events)
 
-Phase 9:   Conversational preferences
+Phase 12:  Conversational preferences
            ├── NLU resolver (Conversation Bar → preference changes)
            ├── Preference history (change records, explain(), undo)
            ├── Conflict resolution (source precedence, tradeoff dialogs)
            ├── Enterprise policy (EnterpriseLocked/Recommended, signature verification)
            └── Agent suggestion flow (suggest → approve/reject → apply)
 
-Phase 13:  Behavioral intelligence
+Phase 17:  Behavioral intelligence
            ├── Behavioral observer (pattern detection, hypothesis generation)
            ├── Kernel-internal ML models (time-series, confidence scoring)
            ├── Behavioral proposals (AIRS-driven preference suggestions)
            ├── Agent preferences (manifest declaration, scoped storage)
            └── Rate limiting and anomaly detection
 
-Phase 16:  Context and Settings UI
+Phase 23:  Context and Settings UI
            ├── Context Rule Engine (time-of-day, location, activity, device-presence)
            ├── Conversational rule creation ("dark mode after sunset")
            ├── Settings UI (visual preference browser, enterprise indicators)
            ├── Cross-device sync (universal vs per-device, Space Mesh integration)
            └── Preference analytics (usage patterns, recommendation engine)
 
-Phase 20:  Full NLU coverage
+Phase 29:  Full NLU coverage
            ├── Multi-preference changes from single utterance
            ├── Ambiguous request handling with follow-up questions
            ├── Cross-preference dependency suggestions (AIRS §16.3)
            └── Contextual bandits for preference learning (§16.1)
 
-Phase 23:  Accessibility preferences
+Phase 33:  Accessibility preferences
            ├── Screen reader integration
            ├── High contrast mode
            ├── Reduced motion

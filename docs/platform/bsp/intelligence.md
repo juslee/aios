@@ -16,7 +16,7 @@ AI features in this document are classified by dependency tier:
 | Category | AIRS required? | Runs without AIRS? | Notes |
 | --- | --- | --- | --- |
 | Kernel-internal ML | No | Yes | Frozen models shipped in kernel binary |
-| AIRS-dependent | Yes | No | Requires Phase 8+ AIRS runtime |
+| AIRS-dependent | Yes | No | Requires Phase 9+ AIRS runtime |
 | Hybrid | Partially | Degraded mode | Falls back to kernel-internal ML when AIRS is unavailable |
 
 ---

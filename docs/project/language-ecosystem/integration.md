@@ -11,12 +11,12 @@ Part of: [language-ecosystem.md](../language-ecosystem.md) — Language Ecosyste
 
 | Language | Introduced | Tooling Complete | Self-Hosting on AIOS |
 |---|---|---|---|
-| Rust | Phase 0 (kernel) | Phase 12 (SDK) | Phase 15+ (needs rustc + LLVM) |
-| Python | Phase 12 | Phase 12 | Phase 12 (RustPython ships with OS) |
-| TypeScript | Phase 12 | Phase 12 | Phase 12 (QuickJS-ng ships with OS) |
-| WASM | Phase 12 (agents) | Phase 12 + 21 (browser) | N/A (compile on host, deploy .wasm) |
-| C/C++ | Phase 15 | Phase 15f | Phase 15f (clang builds on AIOS) |
-| Linux binaries | Phase 25 | Phase 25 | Whatever runs on Linux |
+| Rust | Phase 0 (kernel) | Phase 16 (SDK) | Phase 22+ (needs rustc + LLVM) |
+| Python | Phase 16 | Phase 16 | Phase 16 (RustPython ships with OS) |
+| TypeScript | Phase 16 | Phase 16 | Phase 16 (QuickJS-ng ships with OS) |
+| WASM | Phase 16 (agents) | Phase 16 + 30 (browser) | N/A (compile on host, deploy .wasm) |
+| C/C++ | Phase 22 | Phase 22f | Phase 22f (clang builds on AIOS) |
+| Linux binaries | Phase 35 | Phase 35 | Whatever runs on Linux |
 
 ### The Dependency Chain
 
@@ -26,39 +26,39 @@ flowchart TD
 *Rust kernel code compiles on HOST, runs on AIOS*`"]
     P47["`Phases 4-7: Storage, GPU, networking
 *Foundation for all language runtimes*`"]
-    P811["`Phases 8-11: AIRS, agents framework
+    P813["`Phases 8-13: AIRS, agents framework
 *AI inference available to all languages*`"]
-    P12["`Phase 12: SDK + Developer Experience
+    P16["`Phase 16: SDK + Developer Experience
 *Python RustPython, TypeScript QuickJS-ng, WASM wasmtime ON AIOS
 Rust SDK published -- develop on HOST*`"]
-    P14["`Phase 14: Performance optimization
+    P21["`Phase 21: Performance optimization
 *All runtimes tuned for production*`"]
-    P15["`Phase 15: POSIX + BSD Userland
+    P22["`Phase 22: POSIX + BSD Userland
 *C/C++ clang ON AIOS -- FIRST COMPILED LANGUAGE
 CPython + Node.js available*`"]
-    P15P["`Phase 15+: Cross-compile rustc
+    P22P["`Phase 22+: Cross-compile rustc
 *Rust development ON AIOS -- RUST SELF-HOSTING*`"]
-    P16P["`Phase 16+: Native rustc compiles rustc
+    P23P["`Phase 23+: Native rustc compiles rustc
 *Full self-hosting -- AIOS COMPILES ITSELF*`"]
-    P25["`Phase 25: Linux binary compatibility
+    P35["`Phase 35: Linux binary compatibility
 *ANY Linux program runs -- UNIVERSAL COMPATIBILITY*`"]
 
-    P03 --> P47 --> P811 --> P12
-    P12 --> P14 --> P15 --> P15P --> P16P
-    P16P --> P25
+    P03 --> P47 --> P813 --> P16
+    P16 --> P21 --> P22 --> P22P --> P23P
+    P23P --> P35
 ```
 
 ### What Each Phase Unlocks for Developers
 
 | Phase | What You Can Do | Where You Do It |
 |---|---|---|
-| 12 | Write Python/TS/WASM agents for AIOS | On host OR on AIOS |
-| 12 | Write Rust agents for AIOS | On host only (cross-compile) |
-| 15 | Write C programs on AIOS | On AIOS natively |
-| 15 | Use CPython with C extensions on AIOS | On AIOS natively |
-| 15+ | Write Rust programs on AIOS | On AIOS natively |
-| 16+ | Compile AIOS kernel on AIOS | On AIOS natively |
-| 25 | Run any Linux binary on AIOS | On AIOS natively |
+| 16 | Write Python/TS/WASM agents for AIOS | On host OR on AIOS |
+| 16 | Write Rust agents for AIOS | On host only (cross-compile) |
+| 22 | Write C programs on AIOS | On AIOS natively |
+| 22 | Use CPython with C extensions on AIOS | On AIOS natively |
+| 22+ | Write Rust programs on AIOS | On AIOS natively |
+| 23+ | Compile AIOS kernel on AIOS | On AIOS natively |
+| 35 | Run any Linux binary on AIOS | On AIOS natively |
 
 ### Runtime Comparison
 
@@ -71,8 +71,8 @@ CPython + Node.js available*`"]
 | Binary size | ~1-10 MB | ~20 MB (interpreter) | ~700 KB (engine) | ~15 MB (wasmtime) |
 | C extension support | Via FFI | No (RustPython) | No | No |
 | Trust level | Trusted | Semi-trusted | Semi-trusted | Untrusted OK |
-| Available on AIOS | Phase 12 (SDK) | Phase 12 | Phase 12 | Phase 12 |
-| Self-hosting on AIOS | Phase 15+ | Phase 12 | Phase 12 | Host-compiled |
+| Available on AIOS | Phase 16 (SDK) | Phase 16 | Phase 16 | Phase 16 |
+| Self-hosting on AIOS | Phase 22+ | Phase 16 | Phase 16 | Host-compiled |
 
 ---
 
@@ -80,7 +80,7 @@ CPython + Node.js available*`"]
 
 ### Per-Language Implementation Work
 
-**Rust SDK (Phase 10-12):**
+**Rust SDK (Phase 13-16):**
 
 - [ ] `aios-sdk` crate with `AgentContext` trait
 - [ ] `#[agent]` proc macro for entry point generation
@@ -89,7 +89,7 @@ CPython + Node.js available*`"]
 - [ ] Hot-reload support (< 2s incremental builds)
 - [ ] `aios agent new/dev/test/publish` CLI workflow
 
-**Python Runtime (Phase 12):**
+**Python Runtime (Phase 16):**
 
 - [ ] Embed RustPython into agent process
 - [ ] RustPython embedding bindings for `AgentContext`
@@ -99,7 +99,7 @@ CPython + Node.js available*`"]
 - [ ] Dependency resolution and hash-pinning at install time (no pip at runtime)
 - [ ] Async support (`asyncio` event loop integration)
 
-**TypeScript Runtime (Phase 12):**
+**TypeScript Runtime (Phase 16):**
 
 - [ ] Embed QuickJS-ng into agent process
 - [ ] napi-like bridge for `AgentContext`
@@ -108,7 +108,7 @@ CPython + Node.js available*`"]
 - [ ] `fetch()` redirection through Network Translation Module
 - [ ] Promise/async integration with AIOS IPC
 
-**WASM Runtime (Phase 12):**
+**WASM Runtime (Phase 16):**
 
 - [ ] Integrate wasmtime into agent process
 - [ ] WASI-to-AIOS syscall bridge (WASI 0.2.0 baseline)
@@ -117,14 +117,14 @@ CPython + Node.js available*`"]
 - [ ] WASI Component Model support for capability passing
 - [ ] WIT interface definitions for AIOS agent APIs
 
-**C/C++ Toolchain (Phase 15):**
+**C/C++ Toolchain (Phase 22):**
 
 - [ ] musl libc port (syscall dispatch → AIOS IPC)
 - [ ] POSIX translation layer (FD table, path resolver, process lifecycle)
 - [ ] LLVM/clang cross-compiled for AIOS
 - [ ] Self-hosting: clang compiles clang on AIOS
 
-**Rust Self-Hosting (Phase 15+):**
+**Rust Self-Hosting (Phase 22+):**
 
 - [ ] Cross-compile rustc + cargo for AIOS aarch64
 - [ ] Verify rustc works through POSIX layer
@@ -148,8 +148,8 @@ These four cover ~90% of the developer population that would build AIOS agents.
 
 ### Why Embedded Interpreters Instead of System Runtimes?
 
-The key insight: embedded interpreters (RustPython, QuickJS-ng) are available at **Phase 12**,
-while system runtimes (CPython, Node.js) require the POSIX layer at **Phase 15**. By embedding
+The key insight: embedded interpreters (RustPython, QuickJS-ng) are available at **Phase 16**,
+while system runtimes (CPython, Node.js) require the POSIX layer at **Phase 22**. By embedding
 the interpreters directly into the agent process, AIOS gets multi-language support 3 phases
 earlier — before the POSIX layer even exists.
 
@@ -168,7 +168,7 @@ Both QuickJS-ng and Boa are viable JavaScript engines for AIOS. The decision fac
 | ECMAScript conformance | ~85% test262 | >90% test262 |
 | AIOS alignment | Good (embeds easily) | Excellent (Rust-native) |
 
-QuickJS-ng is chosen for Phase 12 because agent workloads need adequate performance now.
+QuickJS-ng is chosen for Phase 16 because agent workloads need adequate performance now.
 Boa's pure-Rust nature makes it the preferred long-term choice once its performance reaches
 parity — eliminating the only C dependency in the agent runtime stack.
 

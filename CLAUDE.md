@@ -596,11 +596,14 @@ When generating a phase doc for Phase N:
 
 ## Milestone Numbering
 
+42 phases × 3 milestones = 126 milestones total.
+
 ```
 Phase 0:  M1–M3
 Phase 1:  M4–M6
 Phase 2:  M7–M9
 Phase N:  M(3N+1) – M(3N+3)
+Phase 41: M124–M126
 ```
 
 ---

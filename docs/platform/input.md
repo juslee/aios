@@ -242,49 +242,49 @@ Phase 7c — Sessions + POSIX Bridge:
   └── Power management integration (idle detection, wake-on-key)
 ```
 
-### Phase 16 — USB Stack
+### Phase 24 — USB Stack
 
 ```text
-Phase 16a — USB HID Core:
+Phase 24a — USB HID Core:
   ├── USB HID report descriptor parser (no_std Rust)
   ├── HID report → evdev event translation
   ├── Boot protocol support (keyboard, mouse)
   ├── BadUSB defense pipeline (descriptor classifier + timing entropy + traffic CNN)
   └── USB keyboard, mouse, gamepad drivers
 
-Phase 16b — Bluetooth HID:
+Phase 24b — Bluetooth HID:
   ├── Bluetooth HID profile
   ├── Wireless keyboard, mouse, gamepad support
   └── Pairing + reconnection management
 ```
 
-### Phase 17 — Extended USB Devices
+### Phase 24 — Extended USB Devices
 
 ```text
-Phase 17a — USB HID Extended:
+Phase 24a — USB HID Extended:
   ├── USB Braille display driver (HID usage page 0x41)
   ├── USB switch device support
   └── USB gamepad with force feedback (HID FF usage page)
 ```
 
-### Phase 20+ — Advanced Input
+### Phase 29+ — Advanced Input
 
 ```text
-Phase 20a — Touch + Gesture Recognition:
+Phase 29a — Touch + Gesture Recognition:
   ├── Multi-touch protocol (tracking IDs, contact tracking)
   ├── Palm rejection CNN (frozen, ~200KB)
   ├── Gesture recognition (three-layer: $P+ geometric → TCN backbone → AIRS interpretation)
   ├── Gesture grammar engine (applications register gesture grammars)
   └── Touchscreen gestures (tap, swipe, pinch, rotate)
 
-Phase 20b — Adaptive + ML:
+Phase 29b — Adaptive + ML:
   ├── Adaptive pointer acceleration (online Bayesian update)
   ├── Adaptive key debounce HMM
   ├── Tremor Kalman filter (auto-detected, progressive enhancement)
   ├── Touch trajectory prediction (latency reduction)
   └── Kernel-internal anomaly detection (keystroke/mouse dynamics SVM)
 
-Phase 20c — AIRS Integration:
+Phase 29c — AIRS Integration:
   ├── Transformer keyboard prediction via AIRS
   ├── Context-aware autocorrect (neural reranker)
   ├── Context-aware gesture interpretation
@@ -292,10 +292,10 @@ Phase 20c — AIRS Integration:
   └── Shortcut prediction via Context Engine
 ```
 
-### Phase 23 — Accessibility
+### Phase 33 — Accessibility
 
 ```text
-Phase 23a — Accessibility Input:
+Phase 33a — Accessibility Input:
   ├── Switch scanning engine (linear, row-column, group, Huffman)
   ├── Adaptive scanning (frequency-based reordering + AIRS context prediction)
   ├── StickyKeys, FilterKeys, BounceKeys transforms
@@ -303,7 +303,7 @@ Phase 23a — Accessibility Input:
   ├── Fitts' Law adaptive target sizing
   └── Eye tracking device interface + gaze-to-selection engine
 
-Phase 23b — Braille + AAC:
+Phase 33b — Braille + AAC:
   ├── Braille display bidirectional channel (text out, button input in)
   ├── AIRS-assisted sentence completion for AAC
   └── Full keyboard navigation from first frame

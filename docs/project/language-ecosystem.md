@@ -44,12 +44,12 @@ wasmtime AOT-compiled*`"]
 
 | Language | Introduced | Tooling Complete | Self-Hosting on AIOS |
 |---|---|---|---|
-| Rust | Phase 0 (kernel) | Phase 12 (SDK) | Phase 15+ (needs rustc + LLVM) |
-| Python | Phase 12 | Phase 12 | Phase 12 (RustPython ships with OS) |
-| TypeScript | Phase 12 | Phase 12 | Phase 12 (QuickJS-ng ships with OS) |
-| WASM | Phase 12 (agents) | Phase 12 + 21 (browser) | N/A (compile on host, deploy .wasm) |
-| C/C++ | Phase 15 | Phase 15f | Phase 15f (clang builds on AIOS) |
-| Linux binaries | Phase 25 | Phase 25 | Whatever runs on Linux |
+| Rust | Phase 0 (kernel) | Phase 16 (SDK) | Phase 22+ (needs rustc + LLVM) |
+| Python | Phase 16 | Phase 16 | Phase 16 (RustPython ships with OS) |
+| TypeScript | Phase 16 | Phase 16 | Phase 16 (QuickJS-ng ships with OS) |
+| WASM | Phase 16 (agents) | Phase 16 + 30 (browser) | N/A (compile on host, deploy .wasm) |
+| C/C++ | Phase 22 | Phase 22f | Phase 22f (clang builds on AIOS) |
+| Linux binaries | Phase 35 | Phase 35 | Whatever runs on Linux |
 
 ---
 
@@ -69,12 +69,12 @@ wasmtime AOT-compiled*`"]
 
 | Phase | Deliverable | Languages Affected |
 |---|---|---|
-| 10 | Agent framework + Rust SDK | Rust |
-| 12 | Multi-language SDK + developer experience | Rust, Python, TypeScript, WASM |
-| 14 | Performance optimization + AI-driven tuning | All runtimes |
-| 15 | POSIX + BSD userland + C/C++ toolchain | C/C++, CPython, Node.js, Rust (self-hosting) |
-| 21 | Browser (Servo + SpiderMonkey) | WASM (browser path), JavaScript |
-| 25 | Linux binary compatibility | All Linux-compatible languages |
+| 13 | Agent framework + Rust SDK | Rust |
+| 16 | Multi-language SDK + developer experience | Rust, Python, TypeScript, WASM |
+| 21 | Performance optimization + AI-driven tuning | All runtimes |
+| 22 | POSIX + BSD userland + C/C++ toolchain | C/C++, CPython, Node.js, Rust (self-hosting) |
+| 30 | Browser (Servo + SpiderMonkey) | WASM (browser path), JavaScript |
+| 35 | Linux binary compatibility | All Linux-compatible languages |
 
 ---
 

@@ -356,12 +356,12 @@ just run     → boot log shows: structured logging, scheduler running, IPC benc
 
 | Decision | When | Options | Impact |
 |---|---|---|---|
-| Run queue data structures | Step 5 | Sorted arrays vs intrusive red-black trees | Sorted arrays are simpler and sufficient for small thread counts; RB-trees scale better but add complexity. Can upgrade in Phase 14. |
+| Run queue data structures | Step 5 | Sorted arrays vs intrusive red-black trees | Sorted arrays are simpler and sufficient for small thread counts; RB-trees scale better but add complexity. Can upgrade in Phase 21. |
 | IPC message inline size | Step 6 | 64 bytes (register-only) vs 256 bytes (buffer copy) | 64-byte register path is fastest; 256-byte inline avoids shared memory for medium messages. Both are needed. |
 | Capability table storage | Step 8 | Fixed array (256 slots per model.md §3.2) vs slab-backed growable | Fixed array is predictable (no heap allocation during cap operations); 256 matches security.md `MAX_CAPS_PER_AGENT`. |
 | Shared memory page source | Step 9 | Pool::User vs Pool::Kernel | User pool is correct — shared memory is for agent data, not kernel structures. Kernel pool reserved for page tables and slab. |
 | Load balancer frequency | Step 11 | 4 ms (every 4 ticks) vs adaptive | Fixed 4 ms is simple and matches architecture spec. Adaptive adds complexity for marginal gain at low core counts. |
-| Gate 1 threshold | Step 12 | Strict (< 5 μs IPC) vs relaxed (< 10 μs) | Gate uses relaxed threshold (< 10 μs); target (< 5 μs) is for post-optimization in Phase 14. |
+| Gate 1 threshold | Step 12 | Strict (< 5 μs IPC) vs relaxed (< 10 μs) | Gate uses relaxed threshold (< 10 μs); target (< 5 μs) is for post-optimization in Phase 21. |
 
 -----
 

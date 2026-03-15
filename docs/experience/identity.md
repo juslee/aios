@@ -236,7 +236,7 @@ Signed by primary key (certificate)
 Used for: local signing, peer authentication`"]
     NRK["`(No recovery key -- see section 14)
 Recovery is prevention-based, not key-based
-Multi-device escrow available in Phase 9c+`"]
+Multi-device escrow available in Phase 12c+`"]
 
     PIK --> DKA
     PIK --> DKB
@@ -1364,7 +1364,7 @@ You can change your passphrase at any time while logged in.
 
 The user must acknowledge this warning before identity creation proceeds.
 
-**4. Multi-device escrow (Phase 9c+).** When multi-device support lands, device-to-device key escrow becomes the natural recovery mechanism: Device A holds an encrypted shard of Device B's master key, and vice versa. This requires no seed phrases, no paper, no third-party infrastructure — just a second AIOS device. This is the real recovery story, deferred to the phase where it becomes architecturally possible.
+**4. Multi-device escrow (Phase 12c+).** When multi-device support lands, device-to-device key escrow becomes the natural recovery mechanism: Device A holds an encrypted shard of Device B's master key, and vice versa. This requires no seed phrases, no paper, no third-party infrastructure — just a second AIOS device. This is the real recovery story, deferred to the phase where it becomes architecturally possible.
 
 ### 14.3 Key Compromise
 
@@ -1421,23 +1421,23 @@ Phase 4a:   Kernel Crypto Core                 → Ed25519 key generation, signi
 Phase 4b:   Identity creation at first boot    → primary key, device key, no-recovery warning
 Phase 4c:   Identity storage in system space   → identity persisted
 
-Phase 8a:   Relationship data model            → relationship CRUD
-Phase 8b:   QR-based relationship exchange     → in-person identity verification
-Phase 8c:   Trust model computation            → graduated trust scores
+Phase 9a:   Relationship data model            → relationship CRUD
+Phase 9b:   QR-based relationship exchange     → in-person identity verification
+Phase 9c:   Trust model computation            → graduated trust scores
 
-Phase 12a:  Credential vault                   → encrypted credential storage
-Phase 12b:  Credential isolation               → agents use, never possess
-Phase 12c:  Service identity modeling          → external services as identities
+Phase 16a:  Credential vault                   → encrypted credential storage
+Phase 16b:  Credential isolation               → agents use, never possess
+Phase 16c:  Service identity modeling          → external services as identities
 
-Phase 15a:  Cross-device identity              → device addition, revocation
-Phase 15b:  Space Mesh sync                    → space sync across devices
-Phase 15c:  Peer Protocol authentication       → mutual device authentication
-Phase 15d:  Multi-device key escrow            → device-to-device recovery (with Space Sync)
+Phase 22a:  Cross-device identity              → device addition, revocation
+Phase 22b:  Space Mesh sync                    → space sync across devices
+Phase 22c:  Peer Protocol authentication       → mutual device authentication
+Phase 22d:  Multi-device key escrow            → device-to-device recovery (with Space Sync)
 
-Phase 18a:  Mutual introduction                → relationship via intermediary
-Phase 18b:  Privacy controls                   → disclosure settings, anonymous mode
-Phase 18c:  Key rotation                       → scheduled and emergency re-keying
-Phase 25:   Agent delegation chains            → provenance with agent identity
+Phase 25a:  Mutual introduction                → relationship via intermediary
+Phase 25b:  Privacy controls                   → disclosure settings, anonymous mode
+Phase 25c:  Key rotation                       → scheduled and emergency re-keying
+Phase 35:   Agent delegation chains            → provenance with agent identity
 ```
 
 -----
@@ -1454,7 +1454,7 @@ Phase 25:   Agent delegation chains            → provenance with agent identit
 
 5. **Keys never leave the kernel.** Private keys are stored in the kernel Crypto Core. Userspace can request signatures but cannot read key material. A compromised userspace process cannot steal keys.
 
-6. **Prevention over recovery.** AIOS does not implement key recovery. Instead, it prevents lockout through aggressive session persistence, low-friction passphrase changes, and (in Phase 9c+) device-to-device escrow. No seed phrase, no recovery file, no custodial burden. If the user forgets their passphrase and the device is off, data is gone — the same model as full-disk encryption.
+6. **Prevention over recovery.** AIOS does not implement key recovery. Instead, it prevents lockout through aggressive session persistence, low-friction passphrase changes, and (in Phase 12c+) device-to-device escrow. No seed phrase, no recovery file, no custodial burden. If the user forgets their passphrase and the device is off, data is gone — the same model as full-disk encryption.
 
 7. **Provenance is identity-linked.** Every object in every space records who created it, how, and when. The provenance chain is signed and Merkle-linked. You can always answer "who did this?" and "did I write this or did the AI?"
 

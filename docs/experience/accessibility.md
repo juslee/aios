@@ -1668,7 +1668,7 @@ The key invariant: **no accessibility feature becomes unavailable when AIRS disc
 
 ## 12. Implementation Order
 
-Accessibility is not a single phase. It is woven through the development plan from Phase 6 (compositor) through Phase 23 (polish). The principle is: build the infrastructure early, add features incrementally, polish last.
+Accessibility is not a single phase. It is woven through the development plan from Phase 6 (compositor) through Phase 33 (polish). The principle is: build the infrastructure early, add features incrementally, polish last.
 
 ```mermaid
 flowchart TD
@@ -1681,59 +1681,59 @@ flowchart TD
     P6f["Keyboard focus management (Tab, Enter, Escape, Arrows)"]
     P6 --> P6a & P6b & P6c & P6d & P6e & P6f
 
-    P8["Phase 8: AIRS Integration"]
-    P8a["Image description API (for later use by accessibility)"]
-    P8 --> P8a
+    P9["Phase 9: AIRS Integration"]
+    P9a["Image description API (for later use by accessibility)"]
+    P9 --> P9a
 
-    P9["Phase 9: Experience Layer"]
-    P9a["Accessibility options in first-boot flow"]
-    P9b["BootAccessibilityConfig persistence"]
-    P9c["Conversation Bar: 'turn on screen reader' works"]
-    P9 --> P9a & P9b & P9c
+    P12["Phase 12: Experience Layer"]
+    P12a["Accessibility options in first-boot flow"]
+    P12b["BootAccessibilityConfig persistence"]
+    P12c["Conversation Bar: 'turn on screen reader' works"]
+    P12 --> P12a & P12b & P12c
 
-    P17["Phase 17: USB Stack"]
-    P17a["USB HID Braille display detection and driver"]
-    P17b["USB HID switch device detection"]
-    P17 --> P17a & P17b
+    P24["Phase 24: USB Stack"]
+    P24a["USB HID Braille display detection and driver"]
+    P24b["USB HID switch device detection"]
+    P24 --> P24a & P24b
 
-    P20["Phase 20: UI Toolkit Accessibility / Portable UI Toolkit (iced)"]
-    P20a["All widgets emit AccessNode automatically"]
-    P20b["AccessRole for every standard widget"]
-    P20c["Accessible label / description API for developers"]
-    P20d["Agent audit: warn on missing labels"]
-    P20e["Keyboard navigation: Tab order, arrow key nav"]
-    P20f["Accessibility tree generation from iced widget hierarchy"]
-    P20g["Cross-platform a11y: AT-SPI2 (Linux), NSAccessibility (macOS)"]
-    P20h["Focus management in iced backend"]
-    P20 --> P20a & P20b & P20c & P20d & P20e & P20f & P20g & P20h
+    P29["Phase 29: UI Toolkit Accessibility / Portable UI Toolkit (iced)"]
+    P29a["All widgets emit AccessNode automatically"]
+    P29b["AccessRole for every standard widget"]
+    P29c["Accessible label / description API for developers"]
+    P29d["Agent audit: warn on missing labels"]
+    P29e["Keyboard navigation: Tab order, arrow key nav"]
+    P29f["Accessibility tree generation from iced widget hierarchy"]
+    P29g["Cross-platform a11y: AT-SPI2 (Linux), NSAccessibility (macOS)"]
+    P29h["Focus management in iced backend"]
+    P29 --> P29a & P29b & P29c & P29d & P29e & P29f & P29g & P29h
 
-    P22["Phase 22: Audio Subsystem"]
-    P22a["eSpeak-NG integration (IPC to GPL process)"]
-    P22b["TTS audio output pipeline (priority mixing)"]
-    P22c["Earcon playback"]
-    P22d["Voice activity detection for voice control"]
-    P22 --> P22a & P22b & P22c & P22d
+    P31["Phase 31: Audio Subsystem"]
+    P31a["eSpeak-NG integration (IPC to GPL process)"]
+    P31b["TTS audio output pipeline (priority mixing)"]
+    P31c["Earcon playback"]
+    P31d["Voice activity detection for voice control"]
+    P31 --> P31a & P31b & P31c & P31d
 
-    P23["Phase 23: Accessibility Polish"]
-    P23a["Full screen reader with text extraction"]
-    P23b["Braille display: Grade 1, Grade 2, Computer Braille"]
-    P23c["Switch scanning: single-switch, two-switch, row-column"]
-    P23d["Magnification: full-screen, lens, split-screen"]
-    P23e["Voice control: keyword spotter (no AIRS)"]
-    P23f["Voice control: full NLU (with AIRS)"]
-    P23g["Neural TTS integration (with AIRS)"]
-    P23h["AI image description (with AIRS)"]
-    P23i["Context-aware UI adaptation (with AIRS)"]
-    P23j["Grid overlay for voice mouse control"]
-    P23k["WCAG AA compliance audit"]
-    P23l["SDK accessibility linter"]
-    P23m["Accessibility testing suite"]
-    P23 --> P23a & P23b & P23c & P23d & P23e & P23f & P23g & P23h & P23i & P23j & P23k & P23l & P23m
+    P33["Phase 33: Accessibility Polish"]
+    P33a["Full screen reader with text extraction"]
+    P33b["Braille display: Grade 1, Grade 2, Computer Braille"]
+    P33c["Switch scanning: single-switch, two-switch, row-column"]
+    P33d["Magnification: full-screen, lens, split-screen"]
+    P33e["Voice control: keyword spotter (no AIRS)"]
+    P33f["Voice control: full NLU (with AIRS)"]
+    P33g["Neural TTS integration (with AIRS)"]
+    P33h["AI image description (with AIRS)"]
+    P33i["Context-aware UI adaptation (with AIRS)"]
+    P33j["Grid overlay for voice mouse control"]
+    P33k["WCAG AA compliance audit"]
+    P33l["SDK accessibility linter"]
+    P33m["Accessibility testing suite"]
+    P33 --> P33a & P33b & P33c & P33d & P33e & P33f & P33g & P33h & P33i & P33j & P33k & P33l & P33m
 
-    P6 --> P8 --> P9 --> P17 --> P20 --> P22 --> P23
+    P6 --> P9 --> P12 --> P24 --> P29 --> P31 --> P33
 ```
 
-**Why accessibility infrastructure starts in Phase 6:** Retrofitting accessibility into a finished compositor is much harder than building it in from the start. The accessibility tree, focus management, and keyboard navigation are structural — they must be designed into the widget hierarchy and compositor protocol, not bolted on afterward. By Phase 23, the infrastructure exists; the work is features, polish, and compliance testing.
+**Why accessibility infrastructure starts in Phase 6:** Retrofitting accessibility into a finished compositor is much harder than building it in from the start. The accessibility tree, focus management, and keyboard navigation are structural — they must be designed into the widget hierarchy and compositor protocol, not bolted on afterward. By Phase 33, the infrastructure exists; the work is features, polish, and compliance testing.
 
 -----
 

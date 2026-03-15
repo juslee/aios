@@ -144,24 +144,24 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 Development plan phases (see development-plan.md — not to be confused with boot phases):
 
 ```text
-Dev Phase 8a:  GGML integration + model loading          → inference works
-Dev Phase 8b:  Compute scheduler + KV cache management   → concurrent sessions
-Dev Phase 8c:  Streaming output + conversation manager   → conversation bar works
-Dev Phase 8d:  Model registry + LRU eviction             → multiple models supported
-Dev Phase 8e:  Quantization selector + hardware tier      → auto-select best model for device
-Dev Phase 9a:  Space Indexer + selective embedding         → semantic search (promoted objects)
-Dev Phase 9b:  Context Engine + Attention Manager         → context-aware behavior
-Dev Phase 9c:  Conversation bar UI integration            → user-facing AI ready
-Dev Phase 10a: Intent Verifier + Behavioral Monitor       → security layers 1 + 3
-Dev Phase 10b: Adversarial Defense + hint screening        → security layer 5 + hint input vector
-Dev Phase 10c: Tool Manager + Agent Lifecycle             → full agent framework
-Dev Phase 14a: Model residency policy + switching opt     → minimize model swap latency
-Dev Phase 14b: Dynamic model pool (grow/shrink on demand) → efficient RAM use
-Dev Phase 14b+: Resource orchestration security            → kernel AIRS monitor, fallback mode,
+Dev Phase 9a:  GGML integration + model loading          → inference works
+Dev Phase 9b:  Compute scheduler + KV cache management   → concurrent sessions
+Dev Phase 9c:  Streaming output + conversation manager   → conversation bar works
+Dev Phase 9d:  Model registry + LRU eviction             → multiple models supported
+Dev Phase 9e:  Quantization selector + hardware tier      → auto-select best model for device
+Dev Phase 10a: Space Indexer + selective embedding         → semantic search (promoted objects)
+Dev Phase 10b: Context Engine + Attention Manager         → context-aware behavior
+Dev Phase 10c: Conversation bar UI integration            → user-facing AI ready
+Dev Phase 13a: Intent Verifier + Behavioral Monitor       → security layers 1 + 3
+Dev Phase 13b: Adversarial Defense + hint screening        → security layer 5 + hint input vector
+Dev Phase 13c: Tool Manager + Agent Lifecycle             → full agent framework
+Dev Phase 21a: Model residency policy + switching opt     → minimize model swap latency
+Dev Phase 21b: Dynamic model pool (grow/shrink on demand) → efficient RAM use
+Dev Phase 21b+: Resource orchestration security            → kernel AIRS monitor, fallback mode,
                 (security/resource path isolation,            resource directive provenance,
                  agent hint screening, allocation opacity)    damage ceiling: DoS only, not breach
-Dev Phase 14c: Multi-model ensemble routing               → specialist routing (16+ GB)
-Dev Phase 14d: NPU integration via subsystem framework    → hardware-accelerated inference
+Dev Phase 21c: Multi-model ensemble routing               → specialist routing (16+ GB)
+Dev Phase 21d: NPU integration via subsystem framework    → hardware-accelerated inference
 ```
 
 -----

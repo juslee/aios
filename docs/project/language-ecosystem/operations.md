@@ -156,16 +156,16 @@ for meaningful error reporting:
 Embedded interpreters do not support traditional step-debugging (GDB, lldb) because:
 
 - The interpreter runs inside the agent process sandbox with no POSIX debugger interface
-- No ptrace equivalent exists until Phase 15 (POSIX layer)
-- No debug wire protocol (Chrome DevTools Protocol, DAP) until Phase 12+ SDK tooling
+- No ptrace equivalent exists until Phase 22 (POSIX layer)
+- No debug wire protocol (Chrome DevTools Protocol, DAP) until Phase 16+ SDK tooling
 
-**Practical debugging workflow (Phase 12):**
+**Practical debugging workflow (Phase 16):**
 
 1. **On host**: Use standard debuggers (VS Code, PyCharm, Chrome DevTools) against mock AIOS services
 2. **On AIOS**: Use structured logging with `aios agent logs --follow` to tail real-time output
 3. **Post-mortem**: Crash dumps include interpreter state (Python traceback, JS stack trace)
 
-**Full debugging (Phase 15+):** Once the POSIX layer is available, GDB server support enables
+**Full debugging (Phase 22+):** Once the POSIX layer is available, GDB server support enables
 remote debugging of agent processes from the host.
 
 ### Profiling

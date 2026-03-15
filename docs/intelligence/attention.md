@@ -1379,25 +1379,25 @@ pub enum PresentationCommand {
 Development plan phases (see development-plan.md — not to be confused with boot phases):
 
 ```text
-Dev Phase 9a:   Attention Manager service          → intake queue, audit log
-Dev Phase 9b:   AIRS urgency assessment            → basic content analysis
-Dev Phase 9c:   Context filtering                  → context-aware thresholds
-Dev Phase 9d:   Status Strip badge                 → unseen count visible
+Dev Phase 11a:  Attention Manager service          → intake queue, audit log
+Dev Phase 11b:  AIRS urgency assessment            → basic content analysis
+Dev Phase 11c:  Context filtering                  → context-aware thresholds
+Dev Phase 11d:  Status Strip badge                 → unseen count visible
 
-Dev Phase 11a:  Attention Panel UI                 → digest view with grouping
-Dev Phase 11b:  Interrupt overlay                  → urgent items break through
-Dev Phase 11c:  Toast notifications                → NextBreak delivery
-Dev Phase 11d:  Grouping and summarization         → AI-generated summaries
+Dev Phase 15a:  Attention Panel UI                 → digest view with grouping
+Dev Phase 15b:  Interrupt overlay                  → urgent items break through
+Dev Phase 15c:  Toast notifications                → NextBreak delivery
+Dev Phase 15d:  Grouping and summarization         → AI-generated summaries
 
-Dev Phase 14a:  Auto-actionable items              → one-click actions
-Dev Phase 14b:  Relationship-aware priority        → identity integration
-Dev Phase 14c:  User controls                      → per-agent, per-person settings
-Dev Phase 14d:  Conversational configuration       → Conversation Bar integration
+Dev Phase 21a:  Auto-actionable items              → one-click actions
+Dev Phase 21b:  Relationship-aware priority        → identity integration
+Dev Phase 21c:  User controls                      → per-agent, per-person settings
+Dev Phase 21d:  Conversational configuration       → Conversation Bar integration
 
-Dev Phase 17:   Break detection                    → idle-based NextBreak delivery
-Dev Phase 19:   Pattern analysis                   → AIRS learns from engagement
-Dev Phase 21:   Cross-device attention sync        → Space Mesh attention state
-Dev Phase 24:   Attention analytics                → queryable history, trends
+Dev Phase 24:   Break detection                    → idle-based NextBreak delivery
+Dev Phase 27:   Pattern analysis                   → AIRS learns from engagement
+Dev Phase 30:   Cross-device attention sync        → Space Mesh attention state
+Dev Phase 34:   Attention analytics                → queryable history, trends
 ```
 
 -----

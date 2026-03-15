@@ -162,7 +162,7 @@ Kani translates Rust to CBMC and exhaustively explores all execution paths withi
 | Page table flags | No PTE ever has both write and execute bits set (W^X) | 1+ |
 | Address space isolation | `mapped_pages(p1) ∩ mapped_pages(p2) = ∅` absent explicit sharing | 3+ |
 
-**Integration:** `#[kani::proof]` harnesses alongside unit tests. A `just kani` target runs `cargo kani` on annotated modules. Initially nightly CI; blocking for PRs touching security-critical code in Phase 13+.
+**Integration:** `#[kani::proof]` harnesses alongside unit tests. A `just kani` target runs `cargo kani` on annotated modules. Initially nightly CI; blocking for PRs touching security-critical code in Phase 17+.
 
 ### 4.6 Supply Chain Security
 
@@ -187,7 +187,7 @@ Five tools form a layered defense against dependency-related risks:
 
 Formal verification provides mathematical guarantees that static analysis tools cannot. Detailed verification targets are in [model.md](model.md) §8.3; this section describes the approach and tool selection.
 
-**Verus (Phase 24 — primary recommendation).** Verus is an SMT-based verification framework that embeds proofs directly in Rust code. Pre/postconditions and invariants are written as Rust expressions, and Verus discharges proof obligations via the Z3 solver. Unlike Coq or Isabelle, proofs are mostly automated — the programmer writes specifications, not proof scripts.
+**Verus (Phase 34 — primary recommendation).** Verus is an SMT-based verification framework that embeds proofs directly in Rust code. Pre/postconditions and invariants are written as Rust expressions, and Verus discharges proof obligations via the Z3 solver. Unlike Coq or Isabelle, proofs are mostly automated — the programmer writes specifications, not proof scripts.
 
 Verus has been validated on real systems code:
 
@@ -197,11 +197,11 @@ Verus has been validated on real systems code:
 - Verus's `tracked` and `ghost` types provide a natural way to express resource ownership proofs (e.g., "this page frame is owned by exactly one address space") with zero runtime cost.
 - **AutoVerus** (OOPSLA 2025, Microsoft Research + UIUC) demonstrates that LLM agent networks can automatically generate Verus proofs for 90%+ of non-trivial benchmarks, with over half completing in under 30 seconds. This directly validates the LLM-assisted proof strategy described in §10.2.
 
-**TLA+ (Phase 13).** Model the capability state machine and IPC message passing as TLA+ specifications. Verify liveness (no permanent capability starvation) and safety (no capability escalation, no cross-address-space memory leak). TLA+ catches design flaws before they become code. The Apalache model checker provides an alternative SMT-based backend to the standard TLC model checker, offering faster verification for certain spec patterns.
+**TLA+ (Phase 17).** Model the capability state machine and IPC message passing as TLA+ specifications. Verify liveness (no permanent capability starvation) and safety (no capability escalation, no cross-address-space memory leak). TLA+ catches design flaws before they become code. The Apalache model checker provides an alternative SMT-based backend to the standard TLC model checker, offering faster verification for certain spec patterns.
 
-**Coq / RefinedRust (Phase 24).** RefinedRust (PLDI 2024, MPI-SWS) extends the RustBelt/Iris separation logic framework with semi-automated verification of `unsafe` Rust code. It is the most rigorous approach to proving soundness of `unsafe` abstractions — MMIO wrappers, page table manipulation, context switch code. RefinedRust's automation is significantly more practical than manual Coq proofs while maintaining the same level of rigor. RefinedProsa (PLDI 2025) extends the RefinedRust ecosystem to scheduler verification — directly relevant to AIOS's Phase 3 scheduler correctness goals.
+**Coq / RefinedRust (Phase 34).** RefinedRust (PLDI 2024, MPI-SWS) extends the RustBelt/Iris separation logic framework with semi-automated verification of `unsafe` Rust code. It is the most rigorous approach to proving soundness of `unsafe` abstractions — MMIO wrappers, page table manipulation, context switch code. RefinedRust's automation is significantly more practical than manual Coq proofs while maintaining the same level of rigor. RefinedProsa (PLDI 2025) extends the RefinedRust ecosystem to scheduler verification — directly relevant to AIOS's Phase 3 scheduler correctness goals.
 
-**Relationship to Kani:** Kani is bounded model checking (automated, finds bugs up to a bound). Verus/TLA+/Coq provide unbounded formal verification (proves correctness for all inputs). They are complementary — Kani is adopted earlier (Phase 3+) because it requires less expertise, while formal verification (Phase 13+/24) provides stronger guarantees for critical subsystems.
+**Relationship to Kani:** Kani is bounded model checking (automated, finds bugs up to a bound). Verus/TLA+/Coq provide unbounded formal verification (proves correctness for all inputs). They are complementary — Kani is adopted earlier (Phase 3+) because it requires less expertise, while formal verification (Phase 17+/34) provides stronger guarantees for critical subsystems.
 
 ### 4.8 Converos — OS Concurrency Model Checking
 
@@ -243,7 +243,7 @@ Three research tools offer deductive verification approaches that complement Ver
 
 **Flux** (UC San Diego, 2023-2025) adds liquid/refinement types to Rust, allowing compile-time verification of value predicates (e.g., `i32{v: v > 0}`). Refinement types could express kernel invariants like "this address is page-aligned", "this capability permission set is a subset of parent", "this pool index is within bounds" — all checked at compile time with zero runtime cost. Flux has matured beyond its initial prototype: it was used to formally verify process isolation in Tock, a security-focused microcontroller OS deployed in Google Security Chip (GSC) and Microsoft Pluton. This demonstrates Flux's applicability to real security-critical embedded systems with invariants similar to AIOS's.
 
-**Integration:** Phase 13+ evaluation. Prusti is the most practical near-term; Flux has the highest potential payoff if it matures. All three are alternatives/complements to Verus for different verification needs.
+**Integration:** Phase 17+ evaluation. Prusti is the most practical near-term; Flux has the highest potential payoff if it matures. All three are alternatives/complements to Verus for different verification needs.
 
 ### 4.12 Abstract Interpretation — MIRAI
 
@@ -335,7 +335,7 @@ Cross-reference: [adoption-roadmap.md](fuzzing/adoption-roadmap.md) §4 for the 
 | `just careful` (planned) | Every PR (Phase 0+) | cargo-careful on `shared/` | No (findings triaged) |
 | `just semver` (planned) | Every PR (Phase 0+) | cargo-semver-checks on `shared/` | Yes |
 | `just geiger` (planned) | Weekly (Phase 0+) | cargo-geiger dependency scan | No (report only) |
-| `just kani` (planned) | Nightly (Phase 3+) | Kani proof harnesses | Yes for security modules (Phase 13+) |
+| `just kani` (planned) | Nightly (Phase 3+) | Kani proof harnesses | Yes for security modules (Phase 17+) |
 | `just semgrep` (planned) | Every PR (Phase 3+) | Semgrep custom kernel rules | Yes |
 | `just loom` (planned) | Nightly (Phase 3+) | Loom concurrency tests | No (findings triaged) |
 | `just mutants` (planned) | Weekly (Phase 2+) | cargo-mutants on `shared/` | No (findings triaged) |
@@ -397,9 +397,9 @@ Cross-reference: [fuzzing.md](fuzzing.md) (companion deep-dive), [model.md](mode
 
 ## 10. AI-Assisted Analysis
 
-AI techniques augment traditional static analysis in two categories: AIRS-dependent techniques that require the full AI runtime (Phase 10+), and kernel-internal techniques that run in CI without AIRS.
+AI techniques augment traditional static analysis in two categories: AIRS-dependent techniques that require the full AI runtime (Phase 13+), and kernel-internal techniques that run in CI without AIRS.
 
-### 10.1 AIRS-Dependent Techniques (Phase 10+)
+### 10.1 AIRS-Dependent Techniques (Phase 13+)
 
 These techniques require semantic understanding provided by the AIRS system and are primarily used for agent auditing.
 
@@ -443,7 +443,7 @@ The Asterinas OS project (USENIX ATC 2025) introduced the "framekernel" architec
 
 The `vostd` project extends this with a formally verified version of OSTD using Verus. Of 14 high-priority verification targets, 11 have been verified — and the effort discovered real bugs (including a race condition in page table node freeing) that testing had not caught.
 
-**Relevance to AIOS:** AIOS already follows this pattern informally — `unsafe` blocks are concentrated in `kernel/src/arch/aarch64/` (MMIO, assembly, system registers) and `kernel/src/mm/` (page table manipulation). Formalizing this as an explicit framekernel boundary would make the verification scope clear: verify the frame layer (Phase 24), then the safe layer is guaranteed by construction.
+**Relevance to AIOS:** AIOS already follows this pattern informally — `unsafe` blocks are concentrated in `kernel/src/arch/aarch64/` (MMIO, assembly, system registers) and `kernel/src/mm/` (page table manipulation). Formalizing this as an explicit framekernel boundary would make the verification scope clear: verify the frame layer (Phase 34), then the safe layer is guaranteed by construction.
 
 ### 11.2 Dual Aliasing Model Testing
 
@@ -463,7 +463,7 @@ Ferrocene is a qualified Rust compiler toolchain for safety-critical systems, de
 
 The seL4 ecosystem has developed significant Rust support. The `rust-sel4` 3.0.0 release provides userspace libraries and runtimes for building seL4 Microkit components in Rust. While a full kernel rewrite remains under discussion, the current focus is on Rust-based userspace — providing memory-safe system services atop seL4's formally verified C kernel. The HAMR framework extends this by generating Rust code for seL4 Microkit with Verus verification support, combining seL4's kernel proofs with Verus's Rust verification.
 
-**Relevance to AIOS:** The seL4 experience demonstrates that Rust's ownership model helps with some proofs (resource management) but complicates others (interior mutability, shared state). These lessons are directly applicable to AIOS's Phase 24 verification strategy.
+**Relevance to AIOS:** The seL4 experience demonstrates that Rust's ownership model helps with some proofs (resource management) but complicates others (interior mutability, shared state). These lessons are directly applicable to AIOS's Phase 34 verification strategy.
 
 ### 11.5 Rust for Linux — Production Deployment
 

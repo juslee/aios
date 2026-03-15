@@ -440,7 +440,7 @@ flowchart TD
 | Mutual auth | mTLS (both sides present certs) | Channel endpoints established by trusted Service Manager |
 | Logging | SIEM, centralized log analysis | Provenance chain (Merkle-chain, tamper-evident, on-device) |
 
-**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (31 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, with formal verification beginning in Phase 13 (TLA+ models) and Coq proofs in Phase 24, and fuzz-tested.
+**AIOS's advantage.** Network zero trust is a software overlay on hardware that doesn't enforce it — packets can still be spoofed, firewalls can be misconfigured, proxies can be bypassed. AIOS zero trust is enforced by hardware (page tables, ARM PAC/BTI/MTE) and a minimal kernel (31 syscalls). There is no way to bypass it without compromising the kernel itself — and the kernel is Rust, with formal verification beginning in Phase 17 (TLA+ models) and Coq proofs in Phase 34, and fuzz-tested.
 
 **AIOS's unique contribution.** No existing kernel implements behavioral gating — the idea that a structurally valid capability can be modulated by behavioral context. This is the intersection of zero trust and AI-native security. Traditional kernels check "do you have permission?" AIOS checks "do you have permission AND is this consistent with how you normally behave?" The second check is only possible because AIRS has a behavioral model of every agent.
 
@@ -451,10 +451,10 @@ Zero trust is not a separate phase — it emerges from capabilities, IPC mediati
 ```text
 Phase 3:   Capability revocation propagates to channels (Gap 1)
 Phase 3:   Per-process kernel resource limits (Gap 4)
-Phase 8:   Mandatory capability expiry per trust level (Gap 2)
-Phase 8:   Behavioral gating integration: AIRS → kernel rate limiting (Gap 3)
-Phase 13:  Formal verification that revocation fully propagates
-Phase 13:  Formal verification that resource limits bound kernel heap
+Phase 10:  Mandatory capability expiry per trust level (Gap 2)
+Phase 10:  Behavioral gating integration: AIRS → kernel rate limiting (Gap 3)
+Phase 17:  Formal verification that revocation fully propagates
+Phase 17:  Formal verification that resource limits bound kernel heap
 ```
 
 -----
@@ -554,11 +554,11 @@ LionsOS (seL4-based, arxiv 2501.06234) demonstrates that a statically-configured
 
 | Direction | Timeline | Dependency | Impact |
 |---|---|---|---|
-| Post-quantum crypto | Phase 16+ | ML-DSA library (no_std) | Token signature size, peer protocol |
-| ARM CCA integration | Phase 20+ | ARMv9.2+ hardware | Model/agent hardware isolation |
-| Formal verification (Verus/Kani) | Phase 12+ | Toolchain maturity | Provable security properties |
-| CHERI hardware caps | Phase 25+ | CHERI AArch64 silicon | Hardware-enforced capabilities |
-| AI-driven security (AIRS) | Phase 10+ | AIRS runtime | Adaptive threat detection |
-| AI-driven security (kernel) | Phase 8+ | Offline training pipeline | Syscall anomaly detection |
+| Post-quantum crypto | Phase 23+ | ML-DSA library (no_std) | Token signature size, peer protocol |
+| ARM CCA integration | Phase 29+ | ARMv9.2+ hardware | Model/agent hardware isolation |
+| Formal verification (Verus/Kani) | Phase 16+ | Toolchain maturity | Provable security properties |
+| CHERI hardware caps | Phase 35+ | CHERI AArch64 silicon | Hardware-enforced capabilities |
+| AI-driven security (AIRS) | Phase 13+ | AIRS runtime | Adaptive threat detection |
+| AI-driven security (kernel) | Phase 9+ | Offline training pipeline | Syscall anomaly detection |
 | Spectre-BHB mitigations | Phase 6+ | ARMv9.4+ | Side channel defense |
-| Static verification (LionsOS) | Phase 14+ | Build tooling | Compile-time security proofs |
+| Static verification (LionsOS) | Phase 21+ | Build tooling | Compile-time security proofs |

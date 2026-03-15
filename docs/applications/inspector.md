@@ -61,12 +61,12 @@ pub const INSPECTOR_AGENT: AgentManifest = AgentManifest {
         CapabilityRequest { capability: Capability::AgentQuery(Scope::All), justification: "Read agent metadata and behavioral baselines", required: true },
         // Pause/resume agents on user's behalf
         CapabilityRequest { capability: Capability::AgentControl(Scope::All), justification: "Pause/resume agents on user's behalf", required: true },
-        // Profile management (Phase 28)
+        // Profile management (Phase 40)
         CapabilityRequest { capability: Capability::ProfileRead(Scope::All), justification: "Read capability profiles and resolution logs", required: false },
         CapabilityRequest { capability: Capability::ProfileWrite(Scope::User), justification: "Manage user override profiles (Layer 90)", required: false },
         // Compositor surface for its own window
         CapabilityRequest { capability: Capability::Compositor(SurfaceType::Window), justification: "Compositor surface for Inspector window", required: true },
-        // Read AIRS analysis results (Phase 29)
+        // Read AIRS analysis results (Phase 41)
         CapabilityRequest { capability: Capability::InferenceQuery(Scope::SecurityAnalysis), justification: "Read AIRS security analysis results", required: false },
     ],
 };
@@ -315,7 +315,7 @@ System-wide view of all active capability tokens across all agents.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.6 Profile View (Phase 28+)
+### 5.6 Profile View (Phase 40+)
 
 Capability profile management. Shows how profiles compose into resolved capability sets.
 
@@ -361,7 +361,7 @@ Capability profile management. Shows how profiles compose into resolved capabili
 
 The Profile View implements the visual equivalent of `aios agent audit --show-resolution` — showing exactly how each layer contributes to the final capability set.
 
-### 5.7 AIRS Analysis View (Phase 29+)
+### 5.7 AIRS Analysis View (Phase 41+)
 
 Displays AIRS capability intelligence results for installed agents.
 
@@ -524,11 +524,11 @@ The Inspector is built incrementally across multiple phases:
 
 | Phase | Capabilities Added | Views Available |
 |---|---|---|
-| Phase 13 (Security Hardening) | Core Inspector: AuditRead, CapabilityQuery, AgentQuery, CapabilityRevoke, AgentControl | Dashboard, Agent, Provenance, Security Events, Capability, Hardware |
-| Phase 28 (Composable Profiles) | ProfileRead, ProfileWrite(User) | + Profile View with resolution trace and user overrides |
-| Phase 29 (AIRS Intelligence) | InferenceQuery(SecurityAnalysis) | + AIRS Analysis View with recommendations and "Apply" actions |
+| Phase 17 (Security Architecture) | Core Inspector: AuditRead, CapabilityQuery, AgentQuery, CapabilityRevoke, AgentControl | Dashboard, Agent, Provenance, Security Events, Capability, Hardware |
+| Phase 40 (Composable Profiles) | ProfileRead, ProfileWrite(User) | + Profile View with resolution trace and user overrides |
+| Phase 41 (AIRS Intelligence) | InferenceQuery(SecurityAnalysis) | + AIRS Analysis View with recommendations and "Apply" actions |
 
-The Phase 13 Inspector is fully functional for security monitoring and management. Phases 28 and 29 add profile management and AI-assisted analysis as progressive enhancements — they do not change the core architecture.
+The Phase 17 Inspector is fully functional for security monitoring and management. Phases 40 and 41 add profile management and AI-assisted analysis as progressive enhancements — they do not change the core architecture.
 
 -----
 

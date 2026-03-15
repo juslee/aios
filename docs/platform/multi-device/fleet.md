@@ -419,7 +419,7 @@ sequenceDiagram
 
 On reboot, the bootloader attempts to boot from the newly written partition. If boot succeeds and the system reaches a healthy state (kernel boots, services start, health report sends successfully), the partition is marked as verified. If boot fails — kernel panic, timeout, or health check failure — the bootloader falls back to the previous partition automatically. This provides atomic OS updates: the device always runs either the old version or the new version, never a partial state.
 
-**Cross-reference:** The A/B partition scheme integrates with the secure boot chain described in Phase 24 (Secure Boot & Update System). Each partition carries a signed boot measurement that the bootloader verifies before execution.
+**Cross-reference:** The A/B partition scheme integrates with the secure boot chain described in Phase 34 (Secure Boot & Update System). Each partition carries a signed boot measurement that the bootloader verifies before execution.
 
 ---
 

@@ -593,7 +593,7 @@ When GPU memory usage approaches pool limits, the GPU Service implements a multi
 
 Evicted buffers are moved to system RAM (User pool). The GPU Service retains metadata and remaps the buffer into GPU-accessible memory when it becomes visible again. Agents are not notified of eviction — the migration is transparent.
 
-**AIRS integration (Phase 11+).** AIRS provides predictive hints about which surfaces the user will interact with next. The GPU Service pre-allocates buffers for predicted surfaces and avoids evicting high-importance surfaces, reducing visible impact of memory pressure.
+**AIRS integration (Phase 14+).** AIRS provides predictive hints about which surfaces the user will interact with next. The GPU Service pre-allocates buffers for predicted surfaces and avoids evicting high-importance surfaces, reducing visible impact of memory pressure.
 
 -----
 

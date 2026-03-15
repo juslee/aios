@@ -88,23 +88,23 @@ This document is the hub for the Flow system. Detailed content has been split in
 
 ## 13. Implementation Order
 
-Phases reference the canonical project-wide phase numbers from [development-plan.md](../project/development-plan.md). The dependency chain for Flow is: Phase 6 (compositor scaffolds drag/drop protocol) → Phase 8 (AIRS scaffolds transform engine) → Phase 11 (Flow service lands, connects to compositor and AIRS) → later phases extend.
+Phases reference the canonical project-wide phase numbers from [development-plan.md](../project/development-plan.md). The dependency chain for Flow is: Phase 6 (compositor scaffolds drag/drop protocol) → Phase 9 (AIRS scaffolds transform engine) → Phase 15 (Flow service lands, connects to compositor and AIRS) → later phases extend.
 
 ```text
 Phase 6:   Compositor drag/drop protocol scaffold
              DragFlowRequest/DragFlowResponse message types defined
              Drag preview generation and visual feedback framework
              Drop target type query API (stubbed — real Flow negotiation
-             connects in Phase 11 when the Flow Service exists)
+             connects in Phase 15 when the Flow Service exists)
 
-Phase 8:   AIRS transform scaffold
+Phase 9:   AIRS transform scaffold
              Transform Engine data structures and ConversionGraph
              AIRS-powered transforms registered: summarize, transcribe,
              translate, embed
              TransformRegistry with system + AIRS providers
              Conversion graph shortest-path selection algorithm
 
-Phase 11:  Flow Service (core phase — most Flow work lands here)
+Phase 15:  Flow Service (core phase — most Flow work lands here)
              Flow Service process, sys.flow IPC channel, boot Phase 4
              FlowWrite/FlowRead capability enforcement
              Push/pull with full TypedContent and type negotiation
@@ -124,18 +124,18 @@ Phase 11:  Flow Service (core phase — most Flow work lands here)
              Content screening for sensitive data (§11.2)
              Rate limiting and per-agent transfer quotas (§11.3)
 
-Phase 15:  POSIX clipboard bridge
+Phase 22:  POSIX clipboard bridge
              pbcopy/pbpaste equivalents
              X11 selection protocol translation
              Wayland clipboard protocol translation
              POSIX tools see a standard clipboard, Flow sees typed transfers
 
-Phase 21:  Browser Flow integration
+Phase 30:  Browser Flow integration
              aios.flow() Web API for PWAs
              Browser tab ↔ native agent transfers
              Cross-tab Flow (tab agents share clipboard through Flow)
 
-Phase 26:  Multi-device sync
+Phase 37:  Multi-device sync
              Cross-device transfer via AIOS Peer Protocol
              History merge (CRDT-style, grow-only set)
              Conflict resolution (latest-write-wins for active transfers)

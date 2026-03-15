@@ -79,20 +79,20 @@ Phase 3 — IPC and Capability System:
   ├── Memory-mapped IPC (zero-copy transfers)
   └── Shared memory capability enforcement
 
-Phase 8 — AIRS Core:
+Phase 9 — AIRS Inference Engine:
   ├── Model memory pool (huge pages, pinned)
   ├── Model loading via userfaultfd lazy loader (§6.4)
   ├── PagedAttention KV cache with block tables (§6.3)
   ├── KV prefix caching (cross-session sharing, COW)
   └── KV cache eviction policy
 
-Phase 13 — Security Hardening:
+Phase 18 — Security Testing:
   ├── PAC (pointer authentication) enabled for kernel + agents
   ├── BTI (branch target identification) enforcement
   ├── MTE (memory tagging) for agent heap allocations
   └── MTE for kernel heap allocations (synchronous mode)
 
-Phase 14 — Performance and Optimization:
+Phase 21 — Performance and Optimization:
   ├── Background page zeroing thread
   ├── Cache coloring in buddy allocator
   ├── NEON-accelerated memory operations (memcpy, memset, zeroing)
@@ -109,7 +109,7 @@ Phase 14 — Performance and Optimization:
   ├── Memory pressure monitoring
   └── OOM killer
 
-Phase 15 — POSIX Compatibility:
+Phase 22 — POSIX Compatibility:
   ├── mmap() / munmap() translation to AIOS syscalls
   ├── fork() with COW semantics
   ├── brk() / sbrk() for musl libc heap

@@ -135,20 +135,20 @@ Phase 7: Input, Terminal, Networking (Weeks 31-34)
   - Terminal emulator
   - Phase 2 fully operational
 
-Phase 8: AIRS Core (Weeks 35-39)
+Phase 9: AIRS Inference Engine (Weeks 35-39)
   - GGML integration, model loading
   - Phase 3 boot sequence operational
 
-(Phases 9-13 and 15-23 are defined in development-plan.md)
+(Phases 10-20 and 22-33 are defined in development-plan.md)
 
-Phase 14: Performance & Optimization (Weeks 64-66)
+Phase 21: Performance & Optimization (Weeks 64-66)
   - Boot time profiling and optimization
   - Achieve < 3 second boot target
   - Recovery mode implementation
   - Safe mode
   - Rollback mechanism
 
-Phase 24: Secure Boot (Weeks 113-116)
+Phase 34: Secure Boot (Weeks 113-116)
   - Verified boot chain
   - A/B partition scheme
   - Boot counter in UEFI variables
@@ -179,7 +179,7 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 8. **Audio subsystem architecture** — **RESOLVED.** [audio.md](../../platform/audio.md) now documents: PCM mixing engine, per-platform device drivers (VirtIO-Sound, I2S/PWM, HDMI audio), RT scheduling integration, A/V sync with compositor, and latency requirements.
 
-9. **Measured boot and attestation** — Implementation Order lists "Phase 24: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
+9. **Measured boot and attestation** — Implementation Order lists "Phase 34: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
 
 10. **SMMU driver internals** — **RESOLVED.** hal.md §15 now documents: SMMUv3 stream table architecture, command/event queues, per-device TLB invalidation, and BCM2712 platform-specific quirks.
 

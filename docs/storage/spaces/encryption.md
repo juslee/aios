@@ -7,9 +7,9 @@ Part of: [spaces.md](../spaces.md) — Space Storage System
 
 ## 6. Encryption
 
-> **Implementation status:** Phase 13a (not active in Phase 4a-4l). This section documents the design for per-space encryption. Phase 4 uses device-level encryption only (§4.10). Per-space encryption for Personal/Collaborative/Untrusted zones will be added in Phase 13a, providing cross-zone isolation within the running system.
+> **Implementation status:** Phase 17a (not active in Phase 4a-4l). This section documents the design for per-space encryption. Phase 4 uses device-level encryption only (§4.10). Per-space encryption for Personal/Collaborative/Untrusted zones will be added in Phase 17a, providing cross-zone isolation within the running system.
 >
-> **Security note for Phases 4-12:** During Phases 4-12, all spaces rely solely on device-level encryption (§4.10). This means an attacker who obtains the device key (e.g., via physical access after boot, when the TPM/TrustZone-sealed key is loaded into memory) can read plaintext from ALL spaces — Personal, Collaborative, and Untrusted zones are not individually encrypted. The 8-layer security model's Layer 6 (Cryptographic Enforcement) operates at device granularity only until Phase 13a adds per-space keys. The other 7 layers (capability checks, intent verification, behavioral monitoring, etc.) still provide defense-in-depth during this period.
+> **Security note for Phases 4-16:** During Phases 4-16, all spaces rely solely on device-level encryption (§4.10). This means an attacker who obtains the device key (e.g., via physical access after boot, when the TPM/TrustZone-sealed key is loaded into memory) can read plaintext from ALL spaces — Personal, Collaborative, and Untrusted zones are not individually encrypted. The 8-layer security model's Layer 6 (Cryptographic Enforcement) operates at device granularity only until Phase 17a adds per-space keys. The other 7 layers (capability checks, intent verification, behavioral monitoring, etc.) still provide defense-in-depth during this period.
 
 ### 6.1 Key Management
 
@@ -210,12 +210,12 @@ AIOS does not implement key escrow or key recovery. There is no seed phrase, no 
 | Aggressive session persistence | Master key sealed to TPM/Secure Enclave across sleep/wake. User re-enters passphrase only after cold reboot. Minimizes forgetting. |
 | Passphrase change while authenticated | While the session is live, the user can change their passphrase at any time. The "recovery" happens before the user forgets, not after. |
 | Clear warning at setup | "If you forget your passphrase and your device is powered off, your data cannot be recovered. This is by design." |
-| Multi-device key backup (Phase 9c+) | When multi-device support lands, Device A can hold an encrypted shard of Device B's master key. No seed phrases, no paper — just a second AIOS device. |
+| Multi-device key backup (Phase 12c+) | When multi-device support lands, Device A can hold an encrypted shard of Device B's master key. No seed phrases, no paper — just a second AIOS device. |
 
 **Security properties:**
 - No recovery key → no recovery key attack surface (theft, social engineering, phishing)
 - No recovery key material on-device → no offline extraction target beyond the passphrase-derived master key
 - No external infrastructure dependency → works fully offline, single-device, from day one
-- Multi-device key backup (Phase 9c+) adds recovery without custodial burden — leverages Space Sync infrastructure already being built
+- Multi-device key backup (Phase 12c+) adds recovery without custodial burden — leverages Space Sync infrastructure already being built
 
 -----
