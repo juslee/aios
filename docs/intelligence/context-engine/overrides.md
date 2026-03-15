@@ -45,7 +45,7 @@ The Override Manager enforces this:
 
 ```rust
 pub struct OverrideManager {
-    /// Active override stack (most recent first)
+    /// Active override stack (most recent last; top-of-stack = last element)
     stack: Vec<Override>,
     /// Maximum override duration (configurable, default: 12 hours)
     max_duration: Duration,

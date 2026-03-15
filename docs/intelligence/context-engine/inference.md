@@ -320,8 +320,13 @@ pub struct ContextState {
 }
 
 impl ContextState {
-    /// Derive the discrete ContextMode from continuous work_engagement.
-    pub fn mode(&self) -> ContextMode {
+    /// Derive the discrete ContextMode from continuous signals.
+    /// Gaming is detected separately via active game process or gamepad input
+    /// (from the InputPattern and ActiveSpace signals), not from work_engagement alone.
+    pub fn mode(&self, input: &InputActivity, space_category: SpaceCategory) -> ContextMode {
+        if space_category == SpaceCategory::Gaming || input.dominant_input == InputType::Gamepad {
+            return ContextMode::Gaming;
+        }
         match self.work_engagement {
             x if x < 0.3 => ContextMode::Leisure,
             x if x > 0.7 => ContextMode::Work,

@@ -125,7 +125,7 @@ Dev Phase 14: Learning and Personalization
   ├── Privacy controls (inspect, delete, disable)
   └── Pattern export for Inspector
 
-Dev Phase 14: AI-Native Context Intelligence (§13)
+Dev Phase 14a: AI-Native Context Intelligence (§13)
   ├── TCN/TinyHAR learned classifiers (<500KB, ARM NEON)
   ├── Dempster-Shafer evidential signal fusion
   ├── Kalman filter context state smoothing
@@ -135,7 +135,7 @@ Dev Phase 14: AI-Native Context Intelligence (§13)
   ├── Cross-device context sync (BLE + CRDTs)
   └── LLM-powered context narration
 
-Dev Phase 14+: Future Directions (§14)
+Dev Phase 14b: Future Directions (§14)
   ├── Kernel-internal frozen decision trees
   ├── Federated context learning (FedAvg/FedPer)
   ├── Differential privacy (Apple LDP model)

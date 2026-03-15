@@ -196,8 +196,8 @@ impl AttentionManager {
         match self.context.notification_threshold {
             Urgency::Interrupt => item.urgency == Urgency::Interrupt,
             Urgency::NextBreak => matches!(item.urgency, Urgency::Interrupt | Urgency::NextBreak),
-            Urgency::Digest => true,
-            Urgency::Silent => true,
+            Urgency::Digest => item.urgency != Urgency::Silent,
+            Urgency::Silent => false, // Silent items are logged only, never displayed
         }
     }
 }

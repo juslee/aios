@@ -50,12 +50,12 @@ if context.work_engagement > 0.8 {
 
 ### 9.2 Posting Attention Items
 
-Agents post attention items through the Attention Manager. The agent declares the content and a suggested urgency. AIRS re-assesses the urgency based on the actual content and current context.
+Agents post attention items through the Attention Manager. The agent declares the content and an initial urgency hint. AIRS always determines the final urgency — the agent's hint is advisory only and may be overridden based on actual content analysis and current context (see [attention.md](../attention.md) for the authoritative urgency assignment model).
 
 ```rust
 ctx.attention().post(AttentionItem {
     content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
-    urgency: Urgency::NextBreak,
+    urgency: Urgency::NextBreak,  // hint only; AIRS determines final urgency
     relevance: 0.8,
     auto_actionable: Some(ProposedAction::OpenCalendar),
     group: Some(GroupId::from("calendar-reminders")),

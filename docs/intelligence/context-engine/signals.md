@@ -16,7 +16,7 @@ pub enum ContextSignal {
     ActiveSpace(SpaceId),
     RunningAgents(Vec<AgentId>),
     InputPattern(InputActivity),
-    TimeOfDay(Time),
+    TimeOfDay(TimeSignal),
     CalendarState(CalendarContext),
     MediaPlayback(MediaState),
     UserHistory(Pattern),

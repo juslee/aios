@@ -186,7 +186,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Context signals | `docs/intelligence/context-engine/signals.md` | §3 Signal sources, weights, collection frequency |
 | Context inference | `docs/intelligence/context-engine/inference.md` | §4 Feature extraction, classifier, hysteresis, transitions |
 | Context overrides | `docs/intelligence/context-engine/overrides.md` | §5 Override types, rules, API |
-| Context consumers | `docs/intelligence/context-engine/consumers.md` | §6 Scheduler, attention manager, compositor, preferences, agent runtime |
+| Context consumers | `docs/intelligence/context-engine/consumers.md` | §6 Scheduler, attention manager, compositor, preference service |
 | Context learning & AI | `docs/intelligence/context-engine/learning.md` | §7 Learning, §8 Fallback, §13 AI-native context intelligence, §14 Future directions |
 | Context SDK & diagnostics | `docs/intelligence/context-engine/sdk.md` | §9 SDK API, §10 Diagnostics & Inspector |
 | Attention management | `docs/intelligence/attention.md` | All (Phase 11+) |
