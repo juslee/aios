@@ -69,6 +69,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Scheduler | `docs/kernel/scheduler.md` | All (Phase 3+) |
 | Deadlock prevention | `docs/kernel/deadlock-prevention.md` | All (Phase 3+) |
 | Kernel observability | `docs/kernel/observability.md` | All (Phase 3+) |
+| Heterogeneous compute (hub) | `docs/kernel/compute.md` | §1 Core Insight, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
+| Compute classification | `docs/kernel/compute/classification.md` | §3 ComputeDevice trait/ComputeClass/ComputeDeviceId, §4 ComputeCapabilityDescriptor |
+| Compute registry | `docs/kernel/compute/registry.md` | §5 ComputeRegistry, §6 ComputeTopology |
+| Compute budget | `docs/kernel/compute/budget.md` | §7 ComputeBudget, §8 ComputeQuota |
+| Compute memory model | `docs/kernel/compute/memory.md` | §9 ComputeMemoryModel, §10 Zero-Copy Buffer Exchange |
+| Compute security | `docs/kernel/compute/security.md` | §11 ComputeAccess capability, §12 Command Stream Isolation |
+| Compute intelligence | `docs/kernel/compute/intelligence.md` | §13 Cross-Device Thermal Coupling, §14 Kernel-Internal ML, §17 Future Directions |
 | Space Storage (hub) | `docs/storage/spaces.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
 | Storage data structures | `docs/storage/spaces/data-structures.md` | §3.0–§3.4 Primitive types, Spaces, Objects, CompactObject, Relations |
 | Block Engine | `docs/storage/spaces/block-engine.md` | §4.1–§4.10 On-disk layout, LSM-tree, WAL, compression, encryption, WAF |
@@ -156,6 +163,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Linux sandbox & security | `docs/platform/linux-compat/sandbox.md` | §9 Threat model/capability mapping/sandbox profiles/portals/audit, §10 Comparison: Starnix/Linuxulator/WSL/gVisor |
 | Linux virtual filesystems | `docs/platform/linux-compat/virtual-filesystems.md` | §11 /proc/sys/dev emulation, §12 Namespace/cgroup equivalents |
 | Linux compat intelligence | `docs/platform/linux-compat/intelligence.md` | §13 AI-native improvements (syscall prediction, anomaly detection), testing/validation strategy |
+| Accelerator drivers (hub) | `docs/platform/accelerators.md` | §1 Core Insight, §2 Architecture, §13 Impl Order, §14 Design Principles, Document Map |
+| Accelerator driver traits | `docs/platform/accelerators/drivers.md` | §3 AcceleratorDriver trait, §4 VirtIO-GPU 3D compute, §5 VideoCore VII compute |
+| Apple Neural Engine | `docs/platform/accelerators/ane.md` | §6 ANE architecture, §7 ANE driver model |
+| Accelerator memory | `docs/platform/accelerators/memory.md` | §8 Platform memory management, §9 Zero-copy CPU-accelerator paths |
+| Compute subsystem | `docs/platform/accelerators/subsystem.md` | §10 Compute subsystem (Subsystem trait), §11 POSIX bridge (/dev/compute/*) |
+| Accelerator intelligence | `docs/platform/accelerators/intelligence.md` | §12 AIRS integration, §15 Future directions |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
 | Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
 | Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |

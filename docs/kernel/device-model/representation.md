@@ -59,6 +59,15 @@ impl DeviceClassId {
     pub const PRINTER: Self = Self(0x08);
     pub const BLUETOOTH_HCI: Self = Self(0x09);
     pub const WIRELESS: Self = Self(0x0A);
+    /// GPU used for general-purpose compute (GPGPU).
+    /// See [compute/classification.md](../compute/classification.md) §3.
+    pub const GPU_COMPUTE: Self = Self(0x0B);
+    /// Neural Processing Unit (fixed-function inference accelerator).
+    pub const NPU: Self = Self(0x0C);
+    /// Digital Signal Processor.
+    pub const DSP: Self = Self(0x0D);
+    /// Domain-specific accelerator (tensor, crypto, etc.).
+    pub const ACCELERATOR: Self = Self(0x0E);
 }
 
 /// Identity of a discovered device.
@@ -107,6 +116,12 @@ pub struct HardwareDescriptor {
     /// Whether this device can perform DMA. Determines whether the
     /// kernel allocates from Pool::Dma (memory/physical.md §2.4).
     pub dma_capable: bool,
+
+    /// Whether this device supports compute workloads (inference,
+    /// shader dispatch, signal processing). When true, the device
+    /// is registered in the ComputeRegistry ([compute/registry.md](../compute/registry.md) §5)
+    /// and AIRS can route workloads to it.
+    pub compute_capable: bool,
 
     /// The bus device that discovered this device. For a USB device,
     /// this is the USB hub's DeviceId. For a Platform device, this

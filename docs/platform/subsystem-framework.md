@@ -1031,6 +1031,7 @@ How each subsystem fills in the framework:
 | **Bluetooth** | BT adapter | Connection | ByteStream/Events | Per-profile | /dev/bluetooth* |
 | **Print** | Printer | Print job | Frames (pages) | Queue (FIFO) | /dev/lp*, CUPS bridge |
 | **GPS** | GPS receiver | Location stream | Events (location) | Share (read-only) | — |
+| **Compute** | GPU/NPU/DSP | Inference session | ByteStream (tensors) | Queue (priority-ordered) | /dev/compute/* |
 
 Every row follows the same traits. The subsystem-specific code is the minimal amount needed to handle the domain. Everything else — capability gate, session lifecycle, audit, power management, POSIX bridge, device registry, hotplug — is the framework.
 

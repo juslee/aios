@@ -83,4 +83,6 @@ Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s
 Future:               CPU + NPU + GPU compute — 40-100+ tok/s
 ```
 
-The `ComputeDevice` enum (§3.2 in [inference.md](./inference.md)) already includes NPU as a variant. When NPU drivers are available through the subsystem framework, the compute scheduler routes small models and embedding generation to the NPU (where fixed-point arithmetic excels) and keeps large model inference on CPU/GPU.
+The `ComputeDeviceClass` enum (§3.2 in [inference.md](./inference.md)) includes NPU and DSP as variants. When NPU drivers are available through the subsystem framework, the compute scheduler routes small models and embedding generation to the NPU (where fixed-point arithmetic excels) and keeps large model inference on CPU/GPU.
+
+The kernel's ComputeRegistry ([compute/registry.md](../../kernel/compute/registry.md) §5) provides the authoritative device list with per-device capability descriptors ([compute/classification.md](../../kernel/compute/classification.md) §4), including supported data types, memory bandwidth, and thermal state. Platform-specific accelerator drivers ([accelerators.md](../../platform/accelerators.md)) implement the hardware interface that AIRS uses for intelligent placement — see [accelerators/intelligence.md](../../platform/accelerators/intelligence.md) §12 for the AIRS-accelerator integration model and cost model calibration.

@@ -312,6 +312,13 @@ pub struct SchedEntity {
     /// Homogeneous on Pi 4/5; used for scheduling on asymmetric SoCs
     core_preference: CoreType,
 
+    /// Compute device affinity — when set, the compute subsystem
+    /// preferentially routes this thread's compute workloads to
+    /// the specified accelerator (GPU, NPU, DSP). None means AIRS
+    /// chooses the optimal device automatically.
+    /// See [compute/registry.md](./compute/registry.md) §6.
+    compute_affinity: Option<ComputeDeviceId>,
+
     /// Priority inheritance state (set during IPC direct switch when a
     /// high-priority thread blocks on a low-priority server — see ipc.md §9.2).
     /// These fields temporarily elevate the receiver's effective priority.
