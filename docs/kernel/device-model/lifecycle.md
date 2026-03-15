@@ -56,7 +56,7 @@ Each transition has preconditions that **must** hold and postconditions that the
 
 #### Probed --> Bound
 
-- **Precondition:** `driver.probe(&descriptor)` returned `Ok(DriverState)`. The driver has validated that it can operate this specific device (checked vendor/product IDs, firmware version, feature bits).
+- **Precondition:** `driver.probe(&descriptor)` returned `Ok(())`. The driver has validated that it can operate this specific device (checked vendor/product IDs, firmware version, feature bits).
 - **Postcondition:** A `DriverGrant` has been allocated (see [section 8.2](#82-drivergrant-capability)) but not yet activated. The driver is logically associated with the device.
 - **Invariant:** No sessions exist. No interrupts are routed. DMA is not configured.
 

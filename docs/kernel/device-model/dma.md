@@ -58,7 +58,7 @@ stateDiagram-v2
 |---|---|---|---|
 | Allocated | Write (zero-fill) | None | Physical pages reserved, no IOVA assigned |
 | MappedKernel | Read/Write | None | Virtual address mapped, cache lines owned by CPU |
-| MappedDevice | Write only (fill data) | None yet | IOVA mapped, device can see the region |
+| MappedDevice | Write only (fill data) | Read (IOVA active) | IOVA mapped; device can DMA-read from this point. CPU fills data, then transitions to InFlight |
 | InFlight | **Forbidden** | Read and/or Write | Device owns the buffer; CPU access is a data race |
 | Completed | Read | None | Device done; CPU reclaims ownership after cache invalidate |
 | Unmapped | None | None | IOVA revoked, IOTLB invalidated |
