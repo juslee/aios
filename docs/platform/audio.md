@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [scheduler.md](../kernel/scheduler.md) — RT scheduling class and audio deadline (§5.2), [hal.md](../kernel/hal.md) — `PlatformAudio` and `PlatformPwm` extension traits (§12), [compositor.md](./compositor.md) — Render pipeline and presentation timing, [networking.md](./networking.md) — Companion subsystem implementation
+**Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [scheduler.md](../kernel/scheduler.md) — RT scheduling class and audio deadline (§5.2), [hal.md](../kernel/hal.md) — `PlatformAudio` and `PlatformPwm` extension traits (§12), [compositor.md](./compositor.md) — Render pipeline and presentation timing, [networking.md](./networking.md) — Companion subsystem implementation, [wireless.md](./wireless.md) — Bluetooth audio integration (A2DP, HFP, LE Audio) (§7.3)
 
 **Note:** The audio subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the audio-specific design decisions and architecture.
 

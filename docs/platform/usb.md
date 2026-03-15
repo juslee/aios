@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [hal.md](../kernel/hal.md) — `PlatformUsb` extension trait (§12) and controller HAL (§14), [audio/drivers.md](./audio/drivers.md) — USB Audio Class driver (§5.6), [accessibility.md](../experience/accessibility.md) — USB HID Braille/switch devices (§4-5), [security/model.md](../security/model.md) — USB physical attack surface (§1)
+**Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [hal.md](../kernel/hal.md) — `PlatformUsb` extension trait (§12) and controller HAL (§14), [audio/drivers.md](./audio/drivers.md) — USB Audio Class driver (§5.6), [accessibility.md](../experience/accessibility.md) — USB HID Braille/switch devices (§4-5), [security/model.md](../security/model.md) — USB physical attack surface (§1), [wireless.md](./wireless.md) — USB WiFi/BT dongle discovery and routing (§7.2)
 
 **Note:** The USB subsystem is a **meta-subsystem** — it is a bus, not a device class. USB identifies what's connected and routes each device to the subsystem that handles its class. A USB keyboard goes to the input subsystem; a USB microphone goes to the audio subsystem; a USB thumb drive goes to the storage subsystem. USB itself manages controllers, enumeration, hotplug, power, and security — the class-specific behavior lives in each destination subsystem.
 

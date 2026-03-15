@@ -1661,7 +1661,7 @@ xHCI host controller, USB hub support, mass storage, HID (keyboard, mouse, contr
 
 ### 7.3 WiFi & Bluetooth (Phase 18)
 
-WiFi: firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth: HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware.
+WiFi: firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth: HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware. See [wireless.md](../platform/wireless.md) for the full architecture.
 
 ### 7.4 Secure Boot & Updates (Phase 24)
 

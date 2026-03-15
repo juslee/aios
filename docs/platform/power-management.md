@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Full Stack Overview (Subsystem Framework → Power Manager)
-**Related:** [hal.md](../kernel/hal.md) — Platform trait and device abstractions, [scheduler.md](../kernel/scheduler.md) — Power-aware scheduling (§11), thermal throttling (§8.4), [suspend.md](../kernel/boot/suspend.md) — Suspend/resume (§15), proactive wake (§15.5), [intelligence.md](../kernel/boot/intelligence.md) — boot intent (§16), [airs.md](../intelligence/airs.md) — AI Runtime Service, [context-engine.md](../intelligence/context-engine.md) — Context Engine signals (BatteryState, resource priority), [subsystem-framework.md](./subsystem-framework.md) — Per-device power management (§9)
+**Related:** [hal.md](../kernel/hal.md) — Platform trait and device abstractions, [scheduler.md](../kernel/scheduler.md) — Power-aware scheduling (§11), thermal throttling (§8.4), [suspend.md](../kernel/boot/suspend.md) — Suspend/resume (§15), proactive wake (§15.5), [intelligence.md](../kernel/boot/intelligence.md) — boot intent (§16), [airs.md](../intelligence/airs.md) — AI Runtime Service, [context-engine.md](../intelligence/context-engine.md) — Context Engine signals (BatteryState, resource priority), [subsystem-framework.md](./subsystem-framework.md) — Per-device power management (§9), [wireless.md](./wireless.md) — WiFi/BT power states and cross-radio coordination (§7.6)
 
 -----
 

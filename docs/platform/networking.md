@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [development-plan.md](../project/development-plan.md) — Phase 7 (basic networking), Phase 16 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction
+**Related:** [development-plan.md](../project/development-plan.md) — Phase 7 (basic networking), Phase 16 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction, [wireless.md](./wireless.md) — WiFi as NTM transport (§7.5)
 
 **Note:** The networking subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the network-specific design decisions and architecture.
 

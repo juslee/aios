@@ -125,6 +125,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Input system integration | `docs/platform/input/integration.md` | §6.1–§6.6 Capability system, POSIX bridge, power management, audit, compositor, UI toolkit |
 | Input AI-native intelligence | `docs/platform/input/ai.md` | §10.1–§10.7 Predictive input, adaptive params, gesture learning, anomaly detection, shortcuts, accessibility ML |
 | Input future directions | `docs/platform/input/future.md` | §11.1–§11.6 Spatial input, voice, neural/BCI, haptics, cross-device, formal verification |
+| Wireless (hub) | `docs/platform/wireless.md` | §1 Core Insight, §2 Architecture, §11 Impl Order, §12 Tech Choices, §13 Design Principles, Document Map |
+| WiFi stack | `docs/platform/wireless/wifi.md` | §3.1–§3.6 Stack layers, station management, WPA2/WPA3, frame processing, WiFi Direct, WiFi 6/6E/7 |
+| Bluetooth stack | `docs/platform/wireless/bluetooth.md` | §4.1–§4.6 HCI transport, L2CAP, classic profiles (A2DP/HFP/HID), BLE GATT/HOGP, Mesh, LE Audio |
+| Wireless firmware | `docs/platform/wireless/firmware.md` | §5.1–§5.5 Firmware blob strategy, loading mechanism, versioning, open firmware, regulatory domain |
+| Wireless security | `docs/platform/wireless/security.md` | §6.1–§6.5 WiFi security (WPA3-SAE), Bluetooth security, capability-gated access, rogue AP detection, attack surface |
+| Wireless integration | `docs/platform/wireless/integration.md` | §7.1–§7.8 Subsystem framework, USB transport, audio/input/networking integration, power, POSIX, coexistence |
+| Wireless AI-native | `docs/platform/wireless/ai-native.md` | §8–§10 AIRS-dependent intelligence (18 capabilities), kernel-internal ML (14 models), future directions |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
 | POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 15+) |
 | Power management | `docs/platform/power-management.md` | All (Phase 19+) |
