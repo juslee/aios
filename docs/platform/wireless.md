@@ -139,7 +139,7 @@ Phase 18 M2:  Bluetooth Foundation
               ├── LE Secure Connections pairing (P-256 ECDH)
               ├── GATT client/server + HOGP → input subsystem
               ├── A2DP → audio subsystem (SBC codec minimum)
-              └── Bluetooth capability gate (BtScan, BtPair, BtAudio, BtHid)
+              └── Bluetooth capability gate (BtDiscovery, BtPair, BtAudio, BtHid)
 
 Phase 18 M3:  Integration & Intelligence
               ├── Firmware loading (capability-gated, signature-verified)

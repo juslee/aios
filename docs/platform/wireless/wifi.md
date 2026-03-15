@@ -321,8 +321,8 @@ If an AP does not support PMF (802.11w Capable=0 in RSN IE), the connection proc
 All cryptographic operations use constant-time Rust implementations to prevent timing side-channel attacks:
 
 - **ECDH (SAE)** — `p256` crate for NIST P-256 elliptic curve operations. Hash-to-curve via `p256::hash2curve`.
-- **CCMP-256 / GCMP-256** — `aes-gcm` crate for frame encryption. CCMP-128 supported for WPA2 backward compatibility.
-- **Key derivation** — `sha2` crate for HMAC-SHA-256 in the PRF+ key derivation function.
+- **CCMP-256** — `aes` crate with CCM mode (`ccm` crate) for frame encryption. GCMP-256 uses `aes-gcm`. CCMP-128 supported for WPA2 backward compatibility.
+- **Key derivation** — `hmac` crate (with `sha2` as the underlying hash) for HMAC-SHA-256 in the PRF+ key derivation function.
 - **Constant-time comparison** — `subtle` crate for comparing MACs, confirms, and MICs without timing leaks.
 
 **Key hierarchy:**

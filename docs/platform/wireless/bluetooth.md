@@ -37,7 +37,7 @@ Agent Layer
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The entire host stack runs as a userspace agent, not kernel code. The kernel provides DMA buffer allocation (from the DMA pool), IRQ forwarding via notifications, and IOMMU enforcement. A controller firmware crash triggers driver restart, not kernel panic — matching the isolation model described in the wireless design principles ([wireless.md](../wireless.md) §13).
+The entire host stack runs as a set of cooperating userspace agents (manager + profile-specific agents), not kernel code. The kernel provides DMA buffer allocation (from the DMA pool), IRQ forwarding via notifications, and IOMMU enforcement. A controller firmware crash triggers driver restart, not kernel panic — matching the isolation model described in the wireless design principles ([wireless.md](../wireless.md) §13).
 
 -----
 
@@ -203,7 +203,7 @@ Each L2CAP channel has an associated security level, enforced before the channel
 | 0 — None | No security | SDP service discovery |
 | 1 — Unauthenticated | Encryption without MITM protection | Low-risk data transfer |
 | 2 — Authenticated | Encryption with MITM protection (numeric comparison, passkey) | HID, file transfer |
-| 3 — Authenticated + Secure Connections | P-256 ECDH + AES-CCM (BLE) or AES-CTR (Classic) | Financial, health data |
+| 3 — Authenticated + Secure Connections | P-256 ECDH + AES-CCM (BLE) or controller-provided BR/EDR link encryption (Classic) | Financial, health data |
 
 The SMP (Security Manager Protocol) handles the pairing and key exchange that satisfies these requirements. Security enforcement details are in [security.md](./security.md) §6.2.
 

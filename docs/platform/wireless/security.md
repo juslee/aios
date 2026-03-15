@@ -117,11 +117,11 @@ fn verify_commit(
     peer_commit: &SaeCommit,
 ) -> Result<SaeConfirm, SaeError> {
     // Constant-time comparison prevents timing oracle
-    let scalar_valid = peer_commit.scalar.ct_eq(&p256::Scalar::ZERO);
-    let element_valid = peer_commit.element.ct_eq(&p256::AffinePoint::IDENTITY);
+    let scalar_is_zero = peer_commit.scalar.ct_eq(&p256::Scalar::ZERO);
+    let element_is_identity = peer_commit.element.ct_eq(&p256::AffinePoint::IDENTITY);
 
     // Reject invalid commits without revealing which check failed
-    if bool::from(scalar_valid | element_valid) {
+    if bool::from(scalar_is_zero | element_is_identity) {
         return Err(SaeError::InvalidCommit);
     }
 
