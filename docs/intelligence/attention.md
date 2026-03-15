@@ -168,15 +168,15 @@ pub enum Urgency {
 
 ### 3.2 How Items Differ from Notifications
 
-|Property|Traditional Notification|AIOS Attention Item|
-|--------|----------------------|-------------------|
-|Urgency|Set by sending app|Set by AI based on content + context|
-|Content|Free-form string|Typed, structured data|
-|Grouping|None (chronological list)|AI clusters related items|
-|Summarization|None|AI generates one-line summaries|
-|Actions|Dismiss / Open app|Context-specific (Reply, Accept, Snooze, etc.)|
-|Filtering|Per-app toggle|Per-context, per-relationship, AI-triaged|
-|History|Scrollback until cleared|Queryable audit log with analytics|
+| Property | Traditional Notification | AIOS Attention Item |
+| --- | --- | --- |
+| Urgency | Set by sending app | Set by AI based on content + context |
+| Content | Free-form string | Typed, structured data |
+| Grouping | None (chronological list) | AI clusters related items |
+| Summarization | None | AI generates one-line summaries |
+| Actions | Dismiss / Open app | Context-specific (Reply, Accept, Snooze, etc.) |
+| Filtering | Per-app toggle | Per-context, per-relationship, AI-triaged |
+| History | Scrollback until cleared | Queryable audit log with analytics |
 
 -----
 
@@ -633,12 +633,12 @@ impl AirsClient {
 
 Example summaries:
 
-|Items|Summary|
-|-----|-------|
-|5 Slack messages in #engineering|"5 messages in #engineering about deployment timing (none urgent)"|
-|3 CI builds|"3 builds completed: 2 passed, 1 failed (main branch)"|
-|8 emails|"8 emails: 1 from Alex about meeting, 5 newsletters, 2 automated"|
-|4 agent reports|"research-agent finished processing 4 papers, results in research/"|
+| Items | Summary |
+| --- | --- |
+| 5 Slack messages in #engineering | "5 messages in #engineering about deployment timing (none urgent)" |
+| 3 CI builds | "3 builds completed: 2 passed, 1 failed (main branch)" |
+| 8 emails | "8 emails: 1 from Alex about meeting, 5 newsletters, 2 automated" |
+| 4 agent reports | "research-agent finished processing 4 papers, results in research/" |
 
 -----
 
@@ -797,13 +797,13 @@ impl AttentionManager {
 
 ### 8.3 Examples
 
-|Event|Proposed Actions|
-|-----|---------------|
-|"Alex asks: can you review PR #427?"|[Accept and open PR] [Decline] [Remind in 1hr]|
-|"Meeting moved to 16:00"|[Acknowledge] [Suggest different time] [Decline]|
-|"CI build failed on feature branch"|[View logs] [Rerun] [Dismiss]|
-|"backup-agent completed daily backup"|[View details] — auto-dismiss after 1 hour|
-|"System update available"|[Install at next reboot] [Remind tomorrow] [Details]|
+| Event | Proposed Actions |
+| --- | --- |
+| "Alex asks: can you review PR #427?" | [Accept and open PR] [Decline] [Remind in 1hr] |
+| "Meeting moved to 16:00" | [Acknowledge] [Suggest different time] [Decline] |
+| "CI build failed on feature branch" | [View logs] [Rerun] [Dismiss] |
+| "backup-agent completed daily backup" | [View details] — auto-dismiss after 1 hour |
+| "System update available" | [Install at next reboot] [Remind tomorrow] [Details] |
 
 -----
 
@@ -968,6 +968,7 @@ For `Interrupt`-level items, a non-dismissible overlay appears:
 ```
 
 The overlay is:
+
 - Positioned at the top of the screen, not fullscreen
 - Semi-transparent background so context isn't lost
 - Requires one action (reply, open, snooze, or dismiss)
@@ -1080,6 +1081,9 @@ pub struct AuditEntry {
     pub user_action: Option<UserAction>,
     pub response_time: Option<Duration>,
     pub timestamp: SystemTime,
+    /// SHA-256 hash of the previous entry, forming a tamper-evident chain.
+    /// Zero hash for the first entry in the log.
+    pub prev_hash: ContentHash,
 }
 
 pub enum UserAction {
@@ -1128,17 +1132,17 @@ If the user consistently ignores items from a particular agent, AIRS suggests re
 
 ### 14.1 Latency Targets
 
-|Operation|Target|
-|---------|------|
-|Intake (receive IPC message)|< 1ms|
-|AIRS urgency assessment|< 50ms for single item|
-|Context filter check|< 1ms|
-|Grouping (batch of 10)|< 10ms|
-|Summarization (AIRS)|< 200ms for group summary|
-|Presentation routing|< 1ms|
-|Total intake-to-presentation (Interrupt)|< 100ms|
-|Total intake-to-presentation (NextBreak)|< 500ms|
-|Digest generation|< 2 seconds|
+| Operation | Target |
+| --- | --- |
+| Intake (receive IPC message) | < 1ms |
+| AIRS urgency assessment | < 50ms for single item |
+| Context filter check | < 1ms |
+| Grouping (batch of 10) | < 10ms |
+| Summarization (AIRS) | < 200ms for group summary |
+| Presentation routing | < 1ms |
+| Total intake-to-presentation (Interrupt) | < 100ms |
+| Total intake-to-presentation (NextBreak) | < 500ms |
+| Digest generation | < 2 seconds |
 
 ### 14.2 Batch Processing
 
@@ -1332,7 +1336,7 @@ impl RuleBasedTriage {
 The Attention Manager is functional with zero configuration:
 
 | Dependency | Available at startup? | Fallback |
-|---|---|---|
+| --- | --- | --- |
 | AIRS | Maybe (loading model) | Rule-based triage (§15.2) |
 | Context Engine | Maybe (starting concurrently) | Assume ContextMode::Default — medium threshold |
 | Identity Service | Maybe (starting concurrently) | No relationship boosts; all senders treated equally |
@@ -1423,7 +1427,7 @@ The Attention Manager sits at a critical trust boundary: it receives structured 
 ### 18.1 Threat Model
 
 | Threat | Attack vector | Impact |
-|---|---|---|
+| --- | --- | --- |
 | Urgency inflation | Agent crafts AttentionContent with false urgency markers ("CRITICAL", "server down") to trick AIRS into assigning Interrupt | User interrupted unnecessarily; trust in attention system erodes |
 | Attention flooding | Agent posts thousands of items per second to overwhelm intake queue | Legitimate items delayed or dropped; denial of service |
 | Content injection | Agent embeds misleading text in `summary` or `preview` fields to impersonate another agent or person | User takes action based on false information |
@@ -1461,6 +1465,11 @@ pub enum AttentionCapability {
     /// Invoke AIRS inference for urgency assessment.
     /// Restricted: only Attention Manager (system service).
     AIRSInference,
+
+    /// Append entries to the attention audit log.
+    /// Write-only: permits sequential appends, no reads or deletes.
+    /// Restricted: only Attention Manager (system service).
+    AuditAppend,
 }
 
 pub enum AuditScope {
@@ -1478,10 +1487,10 @@ pub enum AuditScope {
 Even with a valid `PostAttention` capability, an agent's ability to harm the user is bounded:
 
 | Control | Mechanism | Ceiling |
-|---|---|---|
+| --- | --- | --- |
 | Rate limiting | Per-agent token bucket (§9.2) | 10 items/min, 100 items/hr |
 | Urgency cap | AIRS assessment (not agent-declared) | Agent cannot force Interrupt |
-| Queue depth | Bounded intake queue (1000 items) | Old items evicted, not new |
+| Queue depth | Bounded intake queue (1000 items); on overflow, lowest-urgency item evicted | High-urgency items cannot be displaced by low-priority floods |
 | Demotion cascade | Repeated rate-limit violations → items auto-demoted to Silent | Flooding has zero user impact |
 | Behavioral flag | 3+ rate-limit violations in 1 hour → anomaly flag in AIRS | Inspector notifies user |
 | Capability revocation | User revokes PostAttention via Inspector or Conversation Bar | Agent permanently silenced until reinstalled |
@@ -1560,7 +1569,7 @@ These features require the full AIRS runtime with LLM inference and are unavaila
 
 #### 19.1.1 Learned Urgency Calibration
 
-AIRS tunes its urgency model per-user based on engagement feedback. Research demonstrates that ML-based notification preference predictors can achieve over 91% accuracy when combining content features with contextual sensing data (location, time, activity, device state).
+AIRS tunes its urgency model per-user based on engagement feedback. ML-based notification preference predictors that combine content features with contextual sensing data (location, time, activity, device state) can achieve high accuracy, particularly when personalized to individual users over time.
 
 ```rust
 pub struct UrgencyCalibrator {
@@ -1656,7 +1665,7 @@ Decision tree for pre-AIRS urgency classification:
 5. Default: Digest (confidence: 0.50)
 ```
 
-This decision tree replaces the rule-based triage in §15.2 and provides better accuracy with the same zero-dependency constraint. It is retrained weekly from the user's engagement data and deployed as a static lookup table.
+This decision tree augments the rule-based triage in §15.2. On first boot (no engagement data), the rule-based triage from §15.2 is used. Once sufficient engagement data accumulates, this decision tree is trained offline and deployed as a static lookup table, replacing the rule-based heuristics. It is retrained weekly from updated engagement data.
 
 #### 19.2.2 Posting Rate Anomaly Detector
 
@@ -1722,7 +1731,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 ### 20.1 Unit Tests
 
 | Component | Test category | Key assertions |
-|---|---|---|
+| --- | --- | --- |
 | `UrgencyAssessment` | Signal scoring | InherentUrgency always → Interrupt; family + urgency markers → Interrupt; default → Digest |
 | `ContextFilter` | Threshold logic | Focus mode blocks NextBreak; Work mode passes NextBreak; suppress_all blocks Interrupt |
 | `AttentionGroup` | Grouping keys | Same channel → one group; same agent → one group; mixed → separate groups |
@@ -1736,7 +1745,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 ### 20.2 Integration Tests
 
 | Scenario | Setup | Expected outcome |
-|---|---|---|
+| --- | --- | --- |
 | Multi-agent posting | 5 agents post items concurrently | All items triaged, grouped, and routed without data races |
 | Digest rendering | 20 items accumulated over 2 hours | Digest groups items by source, shows summaries, correct urgency ordering |
 | Context transition | User transitions Work → Leisure | Queued items re-evaluated; NextBreak items released as digest |
@@ -1749,7 +1758,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 ### 20.3 Performance Tests
 
 | Benchmark | Target | Method |
-|---|---|---|
+| --- | --- | --- |
 | Intake throughput | > 1000 items/sec | Synthetic posting from 50 agents, measure queue drain rate |
 | Triage latency (rule-based) | < 1ms per item | Single-item triage without AIRS, wall-clock timing |
 | Triage latency (AIRS) | < 50ms per item | Single-item AIRS inference, end-to-end |
@@ -1764,11 +1773,11 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 The Attention Manager's input boundaries are fuzz targets. For fuzzing methodology, tooling tiers, and adoption roadmap, see [fuzzing.md](../security/fuzzing.md). The targets below should also be added to the fuzz target catalog in [tooling.md](../security/fuzzing/tooling.md) §6.
 
 | Target | Input surface | Invariant |
-|---|---|---|
+| --- | --- | --- |
 | `AttentionContent` deserialization | IPC message payload | Malformed content → graceful rejection, never panic |
 | `AttentionItem` field bounds | Urgency, relevance, expiry fields | Out-of-range values clamped or rejected; no UB |
 | `ProposedAction` validation | Action type + capability requirements | Invalid capability references → action stripped, item still triaged |
-| Rate limiter overflow | Rapid-fire posting (> 10K items/sec) | Queue bounded; old items evicted; no OOM |
+| Rate limiter overflow | Rapid-fire posting (> 10K items/sec) | Queue bounded; lowest-urgency items evicted first; no OOM |
 | Content screening bypass | Markup injection, control characters, impersonation | All sanitization rules enforced; no escape from screening |
 | Audit log hash chain | Concurrent appends from multiple items | Chain integrity maintained; no hash collision or skip |
 | Group key collisions | Items designed to hash to same group key | Grouping still produces correct categories; no mis-grouping |
@@ -1776,7 +1785,7 @@ The Attention Manager's input boundaries are fuzz targets. For fuzzing methodolo
 ### 20.5 Property-Based Tests
 
 | Property | Invariant |
-|---|---|
+| --- | --- |
 | Urgency monotonicity | Adding an urgency-boosting signal to an item never decreases its urgency level |
 | Grouping stability | Grouping the same set of items twice produces identical groups |
 | Rate limit fairness | Two agents with the same token bucket parameters get the same throughput |
