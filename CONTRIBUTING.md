@@ -34,6 +34,19 @@ Architecture docs (`docs/kernel/`, `docs/platform/`, etc.) are immutable during 
 - QEMU integration tests for boot path
 - Never disable, comment out, or skip a failing test
 
+## Knowledge Hive
+
+The `docs/` directory is an Obsidian vault with shared knowledge in `docs/knowledge/`:
+
+- **decisions/** — Architecture Decision Records (why we chose X over Y)
+- **lessons/** — Hard-won lessons (bugs, gotchas, platform quirks)
+- **research/** — Deep-dive research notes
+- **plans/** — Ephemeral working docs (deleted after distilling)
+
+Naming: `YYYY-MM-DD-initials-short-description.md`. See [docs/knowledge/README.md](docs/knowledge/README.md) for full conventions.
+
+To browse visually (optional): install [Obsidian](https://obsidian.md), open `docs/` as a vault. The `.obsidian/` config folder is gitignored.
+
 ## License
 
 All contributions must be BSD-2-Clause compatible. No GPL dependencies in kernel/ or shared/.
