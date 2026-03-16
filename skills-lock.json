@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "obsidian": {
+      "source": "bitbonsai/mcpvault",
+      "sourceType": "github",
+      "computedHash": "bc068b5834279ee210f36f0c689d7271072857f37c10ac50e05e22ee58f570f9"
+    }
+  }
+}

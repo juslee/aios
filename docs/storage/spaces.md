@@ -1,3 +1,8 @@
+---
+tags: [storage]
+type: architecture
+---
+
 # AIOS Space Storage System
 
 ## Deep Technical Architecture

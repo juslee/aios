@@ -802,6 +802,53 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 ---
 
+## Knowledge Hive
+
+The `docs/` directory is an Obsidian vault. The MCP server is configured in `.mcp.json`
+(project-scoped) and available to all developers automatically.
+
+### Searching docs
+
+Use Obsidian MCP tools to search architecture docs:
+- `search_notes("query")` — find docs by content or frontmatter
+- `read_note("path")` — read any doc in the vault
+- `manage_tags` — find docs by domain tags
+
+### Writing knowledge
+
+After significant sessions, write insights to `docs/knowledge/`:
+- `docs/knowledge/decisions/` — Architecture Decision Records (why we chose X over Y)
+- `docs/knowledge/research/` — Research notes on explored topics
+- `docs/knowledge/lessons/` — Hard-won lessons (bugs, gotchas, platform quirks)
+
+### Discussions (discussions/)
+
+For architecture brainstorming, design explorations, and Claude Code session notes:
+
+- `docs/knowledge/discussions/` — semi-permanent, kept until graduated or irrelevant
+- Revisit across sessions, add new insights as they come up
+- When design settles: graduate content to architecture docs, set `status: graduated`
+
+### Implementation plans (plans/)
+
+When implementing a phase/milestone, create a working doc in `docs/knowledge/plans/`:
+- Track approach, decisions, issues encountered as you work
+- At completion: distill lessons → `lessons/`, decisions → `decisions/`
+- Delete the plan doc after distilling (ephemeral — permanent notes survive)
+
+**Architecture docs are for finalized design only.** Do not put in-progress discussion or
+brainstorming into `docs/kernel/`, `docs/platform/`, etc. Use `docs/knowledge/discussions/`
+for design exploration and `docs/knowledge/plans/` for implementation planning — graduate
+to architecture docs only when the design is settled.
+
+### Conventions
+
+Naming: `YYYY-MM-DD-initials-short-description.md`
+Required frontmatter: author, date, tags, status (draft/in-progress/final)
+Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media
+
+---
+
 ## CLAUDE.md Self-Maintenance
 
 Team-lead updates this file after every milestone:

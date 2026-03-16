@@ -1,3 +1,8 @@
+---
+tags: [kernel, drivers]
+type: architecture
+---
+
 # AIOS Device Model and Driver Framework
 
 ## Deep Technical Architecture

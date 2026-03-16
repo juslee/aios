@@ -1,3 +1,8 @@
+---
+tags: [kernel, memory, mmu]
+type: architecture
+---
+
 # AIOS Memory Management
 
 ## Deep Technical Architecture

@@ -1,3 +1,8 @@
+---
+tags: [platform, audio]
+type: architecture
+---
+
 # AIOS Audio Subsystem
 
 ## Deep Technical Architecture

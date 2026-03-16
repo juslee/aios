@@ -1,3 +1,8 @@
+---
+tags: [intelligence]
+type: architecture
+---
+
 # AIOS Context Engine
 
 ## Deep Technical Architecture

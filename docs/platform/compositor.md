@@ -1,3 +1,8 @@
+---
+tags: [platform, compositor, gpu]
+type: architecture
+---
+
 # AIOS Compositor and Display Architecture
 
 ## Deep Technical Architecture

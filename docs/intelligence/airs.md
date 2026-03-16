@@ -1,3 +1,8 @@
+---
+tags: [intelligence, security]
+type: architecture
+---
+
 # AIOS AI Runtime Service (AIRS)
 
 ## Deep Technical Architecture

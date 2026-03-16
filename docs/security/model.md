@@ -1,3 +1,8 @@
+---
+tags: [security, kernel]
+type: architecture
+---
+
 # AIOS Security Model
 
 ## Deep Technical Architecture

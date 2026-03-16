@@ -1,3 +1,8 @@
+---
+tags: [kernel, boot]
+type: architecture
+---
+
 # AIOS Boot and Init Sequence
 
 ## Deep Technical Architecture

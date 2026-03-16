@@ -1,3 +1,8 @@
+---
+tags: [platform, gpu]
+type: architecture
+---
+
 # AIOS GPU & Display Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Full Stack Overview

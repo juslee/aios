@@ -13,6 +13,14 @@ Interactive, human-guided workflow for creating new architecture docs or updatin
 existing ones. Includes research for state-of-the-art improvements from OS research
 and production systems.
 
+## Step 0: Search Knowledge Hive
+
+Before creating or updating, search the knowledge hive for relevant context:
+- Use Obsidian MCP search_notes with subsystem keywords from $ARGUMENTS
+- Review docs/knowledge/research/ for prior research on the topic
+- Review docs/knowledge/decisions/ for related architectural choices
+- Factor findings into the document content
+
 ## ⚠️ Critical Principle: Architecture Docs ≠ Implementation Docs
 
 Architecture documents describe the **target design** (the vision/future state).

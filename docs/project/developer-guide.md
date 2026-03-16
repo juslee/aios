@@ -2144,6 +2144,24 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 
 ---
 
+## 8b. Obsidian Desktop Setup (Optional)
+
+The AIOS knowledge hive is accessible via Claude Code automatically (MCP configured in `.mcp.json`). For visual exploration with graph view and backlinks, you can optionally install the Obsidian desktop app:
+
+1. Download Obsidian from https://obsidian.md
+2. Open `docs/` as a vault (File → Open folder as vault → select `docs/`)
+3. The `.obsidian/` config folder is gitignored — your personal settings stay local
+
+This gives you:
+- **Graph view**: See how 80+ architecture docs connect to each other
+- **Backlinks**: See which docs reference the current doc
+- **Tag search**: Filter by domain (kernel, platform, security, etc.)
+- **Quick switcher**: Cmd+O to jump to any doc by name
+
+This is purely optional — all docs are plain markdown readable in any editor or on GitHub.
+
+---
+
 ## 9. Planned Expansions
 
 This guide is designed to grow alongside the kernel. The following areas are intentionally left as stubs or brief overviews, with expansion planned as the corresponding phases land.

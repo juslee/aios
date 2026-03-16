@@ -118,6 +118,10 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 
 ---
 
+## Knowledge Hive
+
+The `docs/` directory doubles as an [Obsidian](https://obsidian.md) vault with a shared knowledge base in `docs/knowledge/`. Claude Code instances automatically connect via the Obsidian MCP server (configured in `.mcp.json`). See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions.
+
 ## License
 
 BSD-2-Clause. See [LICENSE](LICENSE).

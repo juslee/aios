@@ -1,3 +1,8 @@
+---
+tags: [platform, input]
+type: architecture
+---
+
 # AIOS Input Subsystem
 
 ## Deep Technical Architecture

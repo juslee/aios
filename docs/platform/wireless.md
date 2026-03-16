@@ -1,3 +1,8 @@
+---
+tags: [platform, wireless, networking]
+type: architecture
+---
+
 # AIOS Wireless: WiFi & Bluetooth
 
 ## Deep Technical Architecture
