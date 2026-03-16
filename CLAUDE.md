@@ -828,6 +828,10 @@ When implementing a phase/milestone, create a working doc in `docs/knowledge/pla
 - At completion: distill lessons → `lessons/`, decisions → `decisions/`
 - Delete the plan doc after distilling (ephemeral — permanent notes survive)
 
+**Architecture docs are for finalized design only.** Do not put in-progress discussion or
+brainstorming into `docs/kernel/`, `docs/platform/`, etc. Use `docs/knowledge/plans/` for
+working documents — graduate to architecture docs only when the design is settled.
+
 ### Conventions
 
 Naming: `YYYY-MM-DD-initials-short-description.md`

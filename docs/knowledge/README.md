@@ -51,6 +51,12 @@ Use these tags for consistent search across the hive:
 
 Prefer creating new notes over editing existing ones. This minimizes merge conflicts in the multi-developer setup.
 
+### Architecture docs are for finalized design only
+
+Architecture docs (`docs/kernel/`, `docs/platform/`, `docs/intelligence/`, etc.) describe the **target design** — the settled vision. Do not use them for in-progress discussion, brainstorming, or planning.
+
+Use `docs/knowledge/plans/` for working documents during exploration. Graduate content to architecture docs only when the design is settled.
+
 ## Working Document Pattern (plans/)
 
 When implementing a phase or milestone:
