@@ -1539,20 +1539,20 @@ Phase 6b:   AIOS platform backend (basic)      → surfaces rendered via composi
 Phase 6c:   Input routing                      → keyboard/mouse events reach widgets
 Phase 6d:   Core widgets (text, button, input) → basic interactive UI works
 
-Phase 9a:   Theme system                       → context-aware theming on AIOS
-Phase 9b:   Full widget set                    → all standard widgets available
-Phase 9c:   Text rendering pipeline            → shaping, bidi, font fallback
+Phase 12a:  Theme system                       → context-aware theming on AIOS
+Phase 12b:  Full widget set                    → all standard widgets available
+Phase 12c:  Text rendering pipeline            → shaping, bidi, font fallback
 
-Phase 11a:  Flow integration                   → drag/drop through Flow system
-Phase 11b:  Space-backed persistence           → agent state saved to spaces
-Phase 11c:  Capability-aware UI                → widgets respond to capability set
-Phase 11d:  Semantic window hints              → compositor understands content
+Phase 15a:  Flow integration                   → drag/drop through Flow system
+Phase 15b:  Space-backed persistence           → agent state saved to spaces
+Phase 15c:  Capability-aware UI                → widgets respond to capability set
+Phase 15d:  Semantic window hints              → compositor understands content
 
-Phase 15:   Accessibility tree                 → screen reader support
-Phase 16:   Performance optimization           → damage tracking, texture atlas, profiling
-Phase 18:   Web backend                        → WASM target works
-Phase 20:   Agent SDK packaging                → aios-toolkit crate published
-Phase 23:   Accessibility polish               → WCAG AA compliance
+Phase 22:   Accessibility tree                 → screen reader support
+Phase 23:   Performance optimization           → damage tracking, texture atlas, profiling
+Phase 25:   Web backend                        → WASM target works
+Phase 29:   Agent SDK packaging                → aios-toolkit crate published
+Phase 33:   Accessibility polish               → WCAG AA compliance
 ```
 
 -----

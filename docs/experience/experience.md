@@ -562,14 +562,14 @@ Phase 6a:  Compositor + window management        → surfaces composited
 Phase 6b:  Status Strip (basic)                  → system status visible
 Phase 6c:  Workspace (static, no context)        → home view with spaces + tasks
 Phase 6d:  Input routing + focus management      → keyboard/mouse works
-Phase 9a:  Conversation Bar (search only)        → semantic space search
-Phase 9b:  Conversation Bar (full)               → task creation, system control, agent interaction
-Phase 9c:  Space Navigator                       → visual space exploration
-Phase 11a: Flow Tray                             → visible data transfer
-Phase 11b: Attention Panel                       → AI-triaged notifications
-Phase 11c: Context transitions                   → visual context shifts
-Phase 11d: Workspace (contextual)                → context-adaptive home view
-Phase 12:  Agent Cards + presence                → agent visibility
-Phase 20:  Iced integration                      → full toolkit with cross-platform
-Phase 23:  Accessibility throughout              → screen reader, keyboard nav
+Phase 12a: Conversation Bar (search only)        → semantic space search
+Phase 12b: Conversation Bar (full)               → task creation, system control, agent interaction
+Phase 12c: Space Navigator                       → visual space exploration
+Phase 15a: Flow Tray                             → visible data transfer
+Phase 15b: Attention Panel                       → AI-triaged notifications
+Phase 15c: Context transitions                   → visual context shifts
+Phase 15d: Workspace (contextual)                → context-adaptive home view
+Phase 16:  Agent Cards + presence                → agent visibility
+Phase 29:  Iced integration                      → full toolkit with cross-platform
+Phase 33:  Accessibility throughout              → screen reader, keyboard nav
 ```

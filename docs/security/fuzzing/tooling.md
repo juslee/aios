@@ -43,7 +43,7 @@ Tools that require moderate infrastructure (modified QEMU builds, hardware featu
 
 **FourFuzz** (EASE 2025) selectively instruments only functions containing or reaching `unsafe` code, reducing instrumentation overhead to ~20% of functions while focusing coverage feedback on the most critical paths. This is ideal for AIOS, where ~90% of kernel code is safe Rust and the critical bugs live in the ~10% of `unsafe` blocks handling MMIO, page tables, and context switching.
 
-### 5.3 Tier 3: Phase 10+ Custom Infrastructure
+### 5.3 Tier 3: Phase 13+ Custom Infrastructure
 
 Tools that require significant custom development or specialized hardware.
 

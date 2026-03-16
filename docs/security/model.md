@@ -103,13 +103,13 @@ Every boundary in this diagram is enforced by the kernel. Trust Level N cannot a
 
 ### 1.3 What We Don't Defend Against
 
-**Compromised kernel.** If the kernel itself is compromised (bug in the 31 syscalls, hardware exploit that corrupts kernel memory), all security guarantees are void. Mitigation: Rust memory safety for most kernel code, `unsafe` blocks minimized and audited, syscall fuzzing, formal verification of capability system (Phase 13).
+**Compromised kernel.** If the kernel itself is compromised (bug in the 31 syscalls, hardware exploit that corrupts kernel memory), all security guarantees are void. Mitigation: Rust memory safety for most kernel code, `unsafe` blocks minimized and audited, syscall fuzzing, formal verification of capability system (Phase 17).
 
-**Compromised hardware or firmware.** A malicious SoC, compromised UEFI firmware, or backdoored GPU firmware can read all memory and bypass all software protections. Mitigation: verified boot chain (Phase 24), TrustZone attestation, but ultimately hardware trust is assumed.
+**Compromised hardware or firmware.** A malicious SoC, compromised UEFI firmware, or backdoored GPU firmware can read all memory and bypass all software protections. Mitigation: verified boot chain (Phase 34), TrustZone attestation, but ultimately hardware trust is assumed.
 
 **User intentionally disabling security.** If the user explicitly removes all capability restrictions from an agent, that agent has full access. AIOS warns aggressively but does not prevent the user from making this choice. The user owns the device.
 
-**Side-channel attacks from co-resident agents.** Cache timing attacks, speculative execution attacks (Spectre-class), and electromagnetic emanation are not addressed in the initial security model. Mitigation: MTE (Phase 13) reduces some timing side channels; full mitigation is future work.
+**Side-channel attacks from co-resident agents.** Cache timing attacks, speculative execution attacks (Spectre-class), and electromagnetic emanation are not addressed in the initial security model. Mitigation: MTE (Phase 17) reduces some timing side channels; full mitigation is future work.
 
 ### 1.4 Attack Scenarios
 
@@ -384,7 +384,7 @@ Phase 4: Storage Security
   ├── Security zones defined for system spaces
   └── Content-addressed integrity (SHA-256 verification)
 
-Phase 8: AI Security Layers (requires AIRS)
+Phase 10: AI Security Layers (requires AIRS)
   ├── Intent verification (Layer 1) — AIRS compares actions to tasks
   ├── Behavioral monitoring (Layer 3) — baseline building begins
   ├── Input screening (Layer 5) — injection pattern detection
@@ -393,20 +393,20 @@ Phase 8: AI Security Layers (requires AIRS)
   ├── Security/resource path priority fence in AIRS
   └── Agent hint screening (Layer 5 extension)
 
-Phase 10: Agent Security
+Phase 13: Agent Security
   ├── Agent manifest verification (developer signature check)
   ├── Capability approval UI flow
   ├── Agent audit tool (static analysis)
   └── Delegation chain tracking
 
-Phase 14: Resource Orchestration Security (requires AIRS resource orchestrator)
+Phase 21: Resource Orchestration Security (requires AIRS resource orchestrator)
   ├── Kernel AIRS directive monitor — baseline building, anomaly detection
   ├── Kernel fallback mode — static heuristics when AIRS anomalous
   ├── Resource directive provenance — directives logged in Merkle chain
   ├── Resource allocation opacity — agents cannot observe pool state
   └── Hint screening integration with behavioral monitoring (Layer 3)
 
-Phase 13: Security Hardening (full security milestone)
+Phase 17: Security Hardening (full security milestone)
   ├── PAC enabled for all code (kernel + userspace)
   ├── BTI enabled for all code
   ├── MTE enabled (sync for kernel, async for agents)
@@ -417,7 +417,7 @@ Phase 13: Security Hardening (full security milestone)
   ├── Syscall fuzzing campaign
   └── Provenance chain integrity checking (periodic, automated)
 
-Phase 24: Hardware-Backed Security
+Phase 34: Hardware-Backed Security
   ├── TrustZone integration — keys move to secure world
   ├── Secure boot chain — UEFI → kernel → services verified
   ├── Attestation — prove boot integrity to remote parties
@@ -425,6 +425,6 @@ Phase 24: Hardware-Backed Security
   └── Coq proofs for capability system and provenance chain
 ```
 
-Each phase delivers security improvements that are immediately useful. Phase 2 gives address space isolation and W^X — basic memory safety. Phase 3 adds IPC mediation — no uncontrolled communication. Phase 8 adds the AI security layers. Phase 13 is the full hardening milestone where all eight layers are active and hardware security features are enabled. Phase 24 moves key material to TrustZone, completing the defense-in-depth model.
+Each phase delivers security improvements that are immediately useful. Phase 2 gives address space isolation and W^X — basic memory safety. Phase 3 adds IPC mediation — no uncontrolled communication. Phase 10 adds the AI security layers. Phase 17 is the full hardening milestone where all eight layers are active and hardware security features are enabled. Phase 34 moves key material to TrustZone, completing the defense-in-depth model.
 
-The critical invariant throughout: **every layer that exists works independently.** Phase 8 doesn't weaken Phase 2. Phase 13 doesn't depend on Phase 8 being perfect. Each layer is additive defense, and the system's security improves monotonically as layers are added.
+The critical invariant throughout: **every layer that exists works independently.** Phase 10 doesn't weaken Phase 2. Phase 17 doesn't depend on Phase 10 being perfect. Each layer is additive defense, and the system's security improves monotonically as layers are added.

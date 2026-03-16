@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [development-plan.md](../project/development-plan.md) — Phase 7 (basic networking), Phase 16 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction, [wireless.md](./wireless.md) — WiFi as NTM transport (§7.5)
+**Related:** [development-plan.md](../project/development-plan.md) — Phase 7 (basic networking), Phase 23 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction, [wireless.md](./wireless.md) — WiFi as NTM transport (§7.5)
 
 **Note:** The networking subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the network-specific design decisions and architecture.
 
@@ -145,7 +145,7 @@ The architecture is a pipeline of increasingly specific layers. Each layer trans
 
 ## 7. Implementation Order
 
-Each sub-phase delivers usable functionality independently. Basic networking is part of Phase 7 (Input, Terminal & Basic Networking). The full Network Translation Module is Phase 16.
+Each sub-phase delivers usable functionality independently. Basic networking is part of Phase 7 (Input, Terminal & Basic Networking). The full Network Translation Module is Phase 23.
 
 ```text
 Phase 7 — Basic Networking:
@@ -153,15 +153,15 @@ Phase 7 — Basic Networking:
   ├── 7b: rustls + DNS/DHCP                   → TLS and name resolution work
   └── 7c: POSIX socket emulation              → BSD tools with networking (curl, ssh)
 
-Phase 16 — Full Network Translation Module:
-  ├── 16a: Connection Manager + Protocol      → HTTP/2, WebSocket work
-  ├── 16b: Space Resolver + Capability Gate   → space operations over network
-  ├── 16c: Shadow Engine                      → offline support
-  ├── 16d: Resilience + Bandwidth Scheduler   → production-grade
-  └── 16e: AIOS Peer Protocol                 → AIOS-to-AIOS communication
+Phase 23 — Full Network Translation Module:
+  ├── 23a: Connection Manager + Protocol      → HTTP/2, WebSocket work
+  ├── 23b: Space Resolver + Capability Gate   → space operations over network
+  ├── 23c: Shadow Engine                      → offline support
+  ├── 23d: Resilience + Bandwidth Scheduler   → production-grade
+  └── 23e: AIOS Peer Protocol                 → AIOS-to-AIOS communication
 ```
 
-After Phase 7c, a developer can `curl` from the AIOS shell. After Phase 16b, agents can reach remote spaces. After 16c, the system works offline. Each layer is testable independently.
+After Phase 7c, a developer can `curl` from the AIOS shell. After Phase 23b, agents can reach remote spaces. After 23c, the system works offline. Each layer is testable independently.
 
 -----
 

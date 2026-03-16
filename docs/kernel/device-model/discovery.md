@@ -159,7 +159,7 @@ flowchart TD
 | 4 | Random | `virtio-rng` | Phase 7 |
 | 16 | GPU | `virtio-gpu` | Phase 5 |
 | 18 | Input | `virtio-input` | Phase 7 |
-| 25 | Sound | `virtio-sound` | Phase 22 |
+| 25 | Sound | `virtio-sound` | Phase 31 |
 
 Each discovered VirtIO device produces a `HardwareDescriptor` with:
 

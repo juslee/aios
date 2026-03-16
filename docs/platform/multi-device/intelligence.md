@@ -9,7 +9,7 @@ This document covers AI/ML enhancements to multi-device and enterprise features,
 
 - **Kernel-internal ML (§13):** Lightweight statistical models that run in kernel context or as system services without AIRS dependency. These work even if AIRS is offline or unavailable. Implementations use frozen decision trees, lookup tables, or small neural networks with fixed weights.
 
-- **AIRS-dependent intelligence (§14):** Features requiring semantic understanding, LLM reasoning, or continuous learning. These require the AIRS runtime (Phase 8+) and degrade gracefully if AIRS is unavailable.
+- **AIRS-dependent intelligence (§14):** Features requiring semantic understanding, LLM reasoning, or continuous learning. These require the AIRS runtime (Phase 9+) and degrade gracefully if AIRS is unavailable.
 
 ---
 
@@ -163,7 +163,7 @@ This reduces perceived handoff latency from seconds (full sync on demand) to nea
 
 ## §14 AIRS-Dependent Intelligence
 
-All features in this section require the AIRS runtime ([airs.md](../../intelligence/airs.md), Phase 8+). When AIRS is unavailable, each feature degrades to its kernel-internal ML fallback (§13) or to deterministic rule-based behavior. No feature in this section is required for correct multi-device operation — they enhance quality of experience and fleet security.
+All features in this section require the AIRS runtime ([airs.md](../../intelligence/airs.md), Phase 9+). When AIRS is unavailable, each feature degrades to its kernel-internal ML fallback (§13) or to deterministic rule-based behavior. No feature in this section is required for correct multi-device operation — they enhance quality of experience and fleet security.
 
 ### §14.1 Fleet Anomaly Detection (GNN)
 

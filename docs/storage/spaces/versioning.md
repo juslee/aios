@@ -15,11 +15,11 @@ Every object modification creates a new version node in a Merkle DAG (like git):
 pub struct Version {
     hash: Hash,                         // SHA-256 of (parent_hash + content_hash + metadata)
     parent: Option<Hash>,               // previous version
-    /// Second parent for merge commits (Phase 9c — Space Sync conflict resolution).
+    /// Second parent for merge commits (Phase 12c — Space Sync conflict resolution).
     /// Always None in single-device operation (Phases 4-8). When Space Sync detects
     /// a fork (two devices edited the same object independently), the merge version
     /// sets this field to the remote branch's head hash.
-    /// NOTE: Added to the struct now (as None) to avoid schema migration in Phase 9c.
+    /// NOTE: Added to the struct now (as None) to avoid schema migration in Phase 12c.
     merge_parent: Option<Hash>,
     content_hash: Hash,                 // content at this version
     content_size: u64,                  // size of content in bytes (for diff, quota tracking)
@@ -282,8 +282,8 @@ The Merkle DAG structure naturally supports branching: two version nodes can sha
         F         ← merge version (conflict resolved)
 ```
 
-Branch creation is implicit — it happens whenever Space Sync (§8) discovers that both the local and remote DAGs have advanced past a common ancestor. The `SyncConflict` struct (§8) represents a detected fork, and resolution produces a merge version node with two parents. The `Version` struct (§5.1) already includes a `merge_parent: Option<Hash>` field (added early to avoid schema migration in Phase 9c) — a second parent, only set for merge commits. Single-device operation always produces a linear chain (every version has at most one parent; `merge_parent` is `None`).
+Branch creation is implicit — it happens whenever Space Sync (§8) discovers that both the local and remote DAGs have advanced past a common ancestor. The `SyncConflict` struct (§8) represents a detected fork, and resolution produces a merge version node with two parents. The `Version` struct (§5.1) already includes a `merge_parent: Option<Hash>` field (added early to avoid schema migration in Phase 12c) — a second parent, only set for merge commits. Single-device operation always produces a linear chain (every version has at most one parent; `merge_parent` is `None`).
 
-Conflict resolution strategies are defined in §8. Branching semantics are Phase 9c work — single-device operation (Phase 4a-4l) always produces a linear chain.
+Conflict resolution strategies are defined in §8. Branching semantics are Phase 12c work — single-device operation (Phase 4a-4l) always produces a linear chain.
 
 -----

@@ -92,7 +92,7 @@ The engine runs as a subservice of AIRS, sharing AIRS's privileged access to sys
 The Context Engine is built incrementally. Each development phase (numbered per the project development plan in [development-plan.md](../project/development-plan.md), not to be confused with boot phases) delivers testable functionality. Later phases add intelligence.
 
 ```text
-Dev Phase 8: Basic Context Engine
+Dev Phase 11: Basic Context Engine
   ├── ContextState struct and IPC publishing
   ├── Signal Collector (ActiveSpace, RunningAgents, TimeOfDay)
   ├── Rule-based inference (weighted average, no AIRS)
@@ -102,14 +102,14 @@ Dev Phase 8: Basic Context Engine
   ├── Scheduler integration (context multipliers)
   └── Inspector diagnostics (current state, signal values)
 
-Dev Phase 8: AIRS Classifier Integration
+Dev Phase 11: AIRS Classifier Integration
   ├── Feature extractor (signals → fixed-length vector)
   ├── Context classifier model (small GGUF, ~2 MB)
   ├── AIRS inference integration (~1ms per inference)
   ├── Fallback detection (AIRS unavailable → rule-based)
   └── Classifier training pipeline (offline, ship with OS)
 
-Dev Phase 8: Attention Manager Integration
+Dev Phase 11: Attention Manager Integration
   ├── AttentionItem processing pipeline
   ├── AIRS urgency re-assessment
   ├── Notification threshold filtering
@@ -117,7 +117,7 @@ Dev Phase 8: Attention Manager Integration
   ├── Compositor notification routing
   └── Auto-action support
 
-Dev Phase 14: Learning and Personalization
+Dev Phase 21: Learning and Personalization
   ├── Observation recording (context transitions, stability)
   ├── Pattern extraction (work hours, space associations)
   ├── Override correction learning
@@ -125,7 +125,7 @@ Dev Phase 14: Learning and Personalization
   ├── Privacy controls (inspect, delete, disable)
   └── Pattern export for Inspector
 
-Dev Phase 14a: AI-Native Context Intelligence (§13)
+Dev Phase 21a: AI-Native Context Intelligence (§13)
   ├── TCN/TinyHAR learned classifiers (<500KB, ARM NEON)
   ├── Dempster-Shafer evidential signal fusion
   ├── Kalman filter context state smoothing
@@ -135,7 +135,7 @@ Dev Phase 14a: AI-Native Context Intelligence (§13)
   ├── Cross-device context sync (BLE + CRDTs)
   └── LLM-powered context narration
 
-Dev Phase 14b: Future Directions (§14)
+Dev Phase 21b: Future Directions (§14)
   ├── Kernel-internal frozen decision trees
   ├── Federated context learning (FedAvg/FedPer)
   ├── Differential privacy (Apple LDP model)
@@ -144,7 +144,7 @@ Dev Phase 14b: Future Directions (§14)
   ├── Multimodal & ambient context (wearables)
   └── Formal verification (seL4 IFC model)
 
-Dev Phase 19: Power-Aware Context
+Dev Phase 27: Power-Aware Context
   ├── Battery level as signal (low battery → resource conservation)
   ├── Thermal state as signal (throttled → reduce background work)
   ├── Power source as signal (plugged in → less conservative)
@@ -156,12 +156,12 @@ Dev Phase 19: Power-Aware Context
 - Context Engine requires IPC (dev phase 3) — all signal collection and state publishing is IPC-based.
 - Context Engine requires Compositor (dev phase 6) — ActiveSpace and InputPattern signals come from the compositor.
 - Context Engine requires Agent Runtime (dev phase 7) — RunningAgents signal comes from the Agent Runtime.
-- AIRS classifier requires AIRS inference engine (dev phase 8) — the classifier runs on AIRS.
-- Attention Manager requires AIRS (dev phase 8) — urgency re-assessment needs inference.
+- AIRS classifier requires AIRS inference engine (dev phase 9) — the classifier runs on AIRS.
+- Attention Manager requires AIRS (dev phase 9) — urgency re-assessment needs inference.
 - Learning requires History Store in spaces (dev phase 4) — patterns stored in `system/context/` space.
-- AI-Native Context Intelligence (§13) requires AIRS Core (dev phase 8) — learned classifiers, evidential fusion, and prediction models run on AIRS.
-- Cross-device context sync (§13.5) requires Networking (dev phase 7) and Multi-device pairing (dev phase 22).
-- Federated learning (§14.2) requires Multi-device fleet management (dev phase 22).
+- AI-Native Context Intelligence (§13) requires AIRS Core (dev phase 9) — learned classifiers, evidential fusion, and prediction models run on AIRS.
+- Cross-device context sync (§13.5) requires Networking (dev phase 8) and Multi-device pairing (dev phase 37).
+- Federated learning (§14.2) requires Multi-device fleet management (dev phase 37).
 
 **Testing strategy.** The rule-based fallback is tested first and serves as the reference implementation. The AIRS classifier must match or exceed the fallback's accuracy on a labeled test set before it replaces the fallback as the primary inference path. Both paths are always available — the system can switch between them at runtime.
 

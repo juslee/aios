@@ -5,7 +5,7 @@
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
 **Status:** In Progress (M14 complete)
 **Prerequisites:** Phase 3 (IPC & Capability System)
-**Unlocks:** Phase 5 (GPU & Display), Phase 13 (Security Hardening)
+**Unlocks:** Phase 5 (GPU & Display), Phase 17 (Security Architecture)
 
 -----
 
@@ -156,7 +156,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 - [x] Implement Block Engine `init()`: probe VirtIO-blk → read superblock (or format if uninitialized) → replay WAL → MemTable ready
 - [x] Test: write 100 blocks, verify all readable, simulate crash (skip commit), verify WAL replay recovers consistent state
 
-**Note:** The MemTable-only approach is sufficient for Phase 4. On-disk SSTables and compaction are deferred to a later optimization step (Phase 14). The MemTable is bounded at 65536 entries, covering up to 256 MB of data when using 4 KB blocks (the index itself uses far less memory). For Phase 4 workloads on QEMU this is more than sufficient.
+**Note:** The MemTable-only approach is sufficient for Phase 4. On-disk SSTables and compaction are deferred to a later optimization step (Phase 21). The MemTable is bounded at 65536 entries, covering up to 256 MB of data when using 4 KB blocks (the index itself uses far less memory). For Phase 4 workloads on QEMU this is more than sufficient.
 
 **Key reference:** spaces.md §4.1 (LSM-tree), §4.3 Read Path, §4.4 Crash Recovery
 
@@ -183,7 +183,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   2. Store content via Block Engine (dedup check happens in Block Engine)
   3. Create CompactObject metadata
   4. Store metadata in object index MemTable
-  5. Return ObjectId (generated as a 128-bit unique ID from CNTPCT_EL0 + pid entropy — not RFC 4122 UUID v4; cryptographic uniqueness deferred to Phase 13)
+  5. Return ObjectId (generated as a 128-bit unique ID from CNTPCT_EL0 + pid entropy — not RFC 4122 UUID v4; cryptographic uniqueness deferred to Phase 17)
 - [x] Implement `object_read(id: ObjectId) -> Result<(CompactObject, Vec<u8>), StorageError>`:
   1. Look up ObjectId in object index → CompactObject
   2. Read content via Block Engine using content_hash
@@ -195,7 +195,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 - [x] Implement reference counting in Block Engine: `inc_ref(hash)`, `dec_ref(hash) -> bool` (returns true if block freed)
 - [x] Test: create object, read back, create duplicate content, verify only 1 block exists (dedup), delete one copy, verify other still readable
 
-**Note:** For Phase 4, use `CompactObject` exclusively. Full `Object` with semantic metadata, embeddings, and provenance chains is Phase 9+ (requires AIRS). UUID v4 generation uses `CNTPCT_EL0` timer entropy mixed with process ID — not cryptographically strong but sufficient for uniqueness.
+**Note:** For Phase 4, use `CompactObject` exclusively. Full `Object` with semantic metadata, embeddings, and provenance chains is Phase 11+ (requires AIRS). UUID v4 generation uses `CNTPCT_EL0` timer entropy mixed with process ID — not cryptographically strong but sufficient for uniqueness. Cryptographic uniqueness deferred to Phase 17.
 
 **Key reference:** spaces.md §3.3 Objects; §3.3.1 Compact vs Full Objects; §4.2 Write Path (dedup at step 2)
 
@@ -208,7 +208,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **Tasks:**
 - [x] Create `kernel/src/storage/version_store.rs`
 - [x] Define `Version` struct (repr(C), 256B, per spaces.md §5.1): hash, parent, merge_parent (always zeroed for Phase 4), content_hash, content_size (u32), object_id, timestamp, author ([u8; 32]), message ([u8; 64] + message_len)
-- [x] Define `ProvenanceEntry` struct (repr(C)): agent ([u8; 32]), task ([u8; 16] + has_task flag), action (ProvenanceAction enum: Created, Modified, Derived{source:ObjectId}, Imported, AiGenerated), timestamp, signature ([u8; 64] — zeroed stub for Phase 4, Ed25519 deferred to Phase 13)
+- [x] Define `ProvenanceEntry` struct (repr(C)): agent ([u8; 32]), task ([u8; 16] + has_task flag), action (ProvenanceAction enum: Created, Modified, Derived{source:ObjectId}, Imported, AiGenerated), timestamp, signature ([u8; 64] — zeroed stub for Phase 4, Ed25519 deferred to Phase 17)
 - [x] Define version key format: `(SpaceId, ObjectId, reverse_timestamp) → Version` for newest-first iteration
 - [x] Store version nodes in the Block Engine (content-addressed, same as data blocks)
 - [x] Implement `version_create(object_id, content_hash, author, message) -> Hash`:
@@ -231,7 +231,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   Note: Old content is NOT dec_ref'd here — its version node still owns that ref. Refcounts are released by object_delete when walking the version chain.
 - [x] Test: create object → update 3 times → list versions (expect 4) → rollback to version 2 → verify content matches version 2
 
-**Note:** Provenance signatures (Ed25519) are deferred to Phase 13 (Security Hardening). For Phase 4, the `author` field stores a stub `AgentId` and the provenance chain is simplified.
+**Note:** Provenance signatures (Ed25519) are deferred to Phase 17 (Security Architecture). For Phase 4, the `author` field stores a stub `AgentId` and the provenance chain is simplified.
 
 **Key reference:** spaces.md §5.1 Merkle DAG; §5.2 Space Snapshots; §5.3 DAG Operations
 
@@ -245,7 +245,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 - [x] Create `kernel/src/storage/crypto.rs`
 - [x] Implement AES-256-GCM encrypt/decrypt using a software implementation (no hardware AES on QEMU cortex-a72 without ARMv8 Crypto Extensions — use a `no_std` AES crate or a minimal software AES-256 implementation)
 - [x] Define `DeviceKeyManager` struct: active_key, epoch, key_source
-- [x] For Phase 4 on QEMU: use `PassphraseDerived` key source with a hardcoded test passphrase ("aios-dev-key") — real key derivation (Argon2id, hardware binding) is Phase 24
+- [x] For Phase 4 on QEMU: use `PassphraseDerived` key source with a hardcoded test passphrase ("aios-dev-key") — real key derivation (Argon2id, hardware binding) is Phase 34
 - [x] Key derivation: SHA-256(passphrase + salt) → 32-byte device key (placeholder for Argon2id)
 - [x] Integrate encryption into Block Engine write path:
   1. After computing content hash and CRC checksum (on plaintext)
@@ -289,7 +289,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 - [x] Register Space Storage as a kernel service via `service_register(b"space-storage", pid, channel_id)` (matches the existing `&[u8]` name + pid + channel signature from Phase 3)
 - [x] Test: verify system spaces created at boot, create a user space, list all spaces
 
-**Note:** Per-space encryption (Personal, Collaborative zones) is Phase 13a. For Phase 4, all spaces use device-level encryption only (EncryptionState::DeviceOnly). The Collaborative security zone is defined but not implemented (no multi-identity support yet).
+**Note:** Per-space encryption (Personal, Collaborative zones) is Phase 17. For Phase 4, all spaces use device-level encryption only (EncryptionState::DeviceOnly). The Collaborative security zone is defined but not implemented (no multi-identity support yet).
 
 **Key reference:** spaces.md §3.1 Spaces; §3.2 System Spaces; §12 Implementation Order
 
@@ -425,6 +425,27 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 | Block size for VirtIO | M13 Step 2 | 512B (standard) vs 4 KB (optimal for flash) | Use 512B sectors, accumulate into 4 KB blocks internally; matches QEMU default |
 | Compression library | M15 Step 10 | `lz4_flex` (pure Rust, fast) vs `miniz_oxide` (zlib, better ratio) | LZ4 for Phase 4 (speed over ratio); zstd deferred to optimization phase |
 | UUID generation quality | M14 Step 5 | Timer-based (Phase 4) vs crypto-random (Phase 13+) | Timer entropy is sufficient for uniqueness but not unguessability; upgrade in Phase 13 |
+
+-----
+
+## Deferred Sub-phases
+
+The following sub-phases from [spaces.md §12](../storage/spaces.md) are intentionally deferred beyond Phase 4. They are documented here for traceability — Phase 4 focuses on the foundational storage stack (4a–4c, 4e, 4f, 4h, 4j); optimization and advanced features land in later phases.
+
+| Sub-phase | What | Covered in Phase 4? | Deferred To | Notes |
+|---|---|---|---|---|
+| 4a | Block engine + WAL + LSM-tree | Yes (M13) | — | Complete |
+| 4b | Device-level encryption | Yes (M14) | — | Complete |
+| 4c | Object store + content addressing | Yes (M14) | — | Complete |
+| 4d | Space API + basic queries (Filter) | Partial (M14 Step 8) | Phase 11 | SpaceQuery dispatch (Filter variant) deferred alongside full-text index |
+| 4e | Version store + Merkle DAG | Yes (M14) | — | Complete |
+| 4f | POSIX bridge + path mapping | Yes (M15) | — | — |
+| 4g | CompactObject + promotion policy | Struct exists (M14) | Phase 11+ | Promotion logic requires AIRS for semantic metadata enrichment |
+| 4h | Block-level compression (LZ4/zstd) | Yes (M15) | — | LZ4 in Phase 4; zstd in optimization phase |
+| 4i | Flash-aware zone allocation (hot/warm/cold) | No | Phase 21 | Tiered storage with background TierManager daemon |
+| 4j | Storage budget + quotas + pressure | Yes (M15) | — | Basic enforcement; AI-driven management deferred |
+| 4k | Adaptive version retention | No | Phase 21 | Pressure-responsive history pruning |
+| 4l | Write amplification tracking | No | Phase 21 | Continuous WAF monitoring + alerts |
 
 -----
 

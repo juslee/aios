@@ -306,7 +306,7 @@ all DRAM regions regardless of whether they fall above 4 GB.
 
 ## §6 Raspberry Pi 5 (BCM2712)
 
-The Raspberry Pi 5 is the preferred real hardware target for Phase 27 bring-up because it
+The Raspberry Pi 5 is the preferred real hardware target for Phase 39 bring-up because it
 uses GICv3 — the same interrupt controller as QEMU virt. This means the GIC driver requires
 no changes; only base addresses differ, which come from the DTB. Less new code means fewer
 bugs.
@@ -698,7 +698,7 @@ quantity of novel reverse-engineering required for each peripheral.
 | M4 Pro (T6034) | `apple,t6034` | 10–14 Coll | 4 Donan | 20 G16 | 24–64 GB | 3 nm | |
 | M4 Max (T6038) | `apple,t6038` | 12–14 Coll | 4 Donan | 32–40 G16 | 36–128 GB | 3 nm | |
 
-The primary bring-up target for AIOS Phase 27 is M1 (T8103). Later variants are
+The primary bring-up target for AIOS Phase 39 is M1 (T8103). Later variants are
 progressively validated; the DTB-first architecture means adding a new SoC variant
 primarily requires adding its compatible string to `detect_platform()` and verifying that
 the FDT from m1n1 maps correctly to the existing driver set.

@@ -24,13 +24,13 @@ This document specifies the kernel's **operational observability** infrastructur
 ```mermaid
 graph TD
     subgraph Consumers
-        Inspector["Inspector<br/>(Phase 13)"]
-        AIRS["AIRS<br/>(Phase 8)"]
+        Inspector["Inspector<br/>(Phase 17)"]
+        AIRS["AIRS<br/>(Phase 9)"]
         UART["UART Console<br/>(Phase 3)"]
     end
 
     subgraph Access["Access Layer"]
-        AuditRead["AuditRead(Scope::All)<br/>AuditRead(Scope::Operational) — Phase 13"]
+        AuditRead["AuditRead(Scope::All)<br/>AuditRead(Scope::Operational) — Phase 17"]
         InfoPage["KernelInfoPage (shared memory) — Phase 3"]
         Drain["UART drain"]
     end
@@ -590,7 +590,7 @@ The `record()` function reads `CNTVCT_EL0` for the timestamp, gets the current c
 Trace data is consumed through two paths:
 
 1. **GDB scripting** — A GDB Python script reads the `TRACE_RINGS` symbol from a connected QEMU instance and renders the trace as a timeline. This is the primary debugging workflow during development.
-2. **KernelInfoPage extension (Phase 13)** — A snapshot of recent trace events can be exported through the shared memory page for Inspector visualization.
+2. **KernelInfoPage extension (Phase 17)** — A snapshot of recent trace events can be exported through the shared memory page for Inspector visualization.
 
 Trace data is **not** exported to UART — the volume would overwhelm the serial link. The ring buffer is designed for post-mortem analysis: when something goes wrong, attach GDB and read the last N events.
 
@@ -702,7 +702,7 @@ Operational observability data follows a different path than security audit data
 - **Security provenance** (ProvenanceRecord) goes into a Merkle chain, is cryptographically signed, and is append-only. It records agent-visible actions. High integrity, moderate volume.
 - **Operational telemetry** (LogEntry, Counter, Gauge, TraceRecord) goes into per-core ring buffers and a metrics struct. It records kernel-internal events. High volume, no cryptographic requirements.
 
-These two streams share the same **access interface** (`AuditRead` syscall, capability-gated) starting in Phase 13, but they are stored separately. Merging operational logs into the Merkle chain would bloat it by 100× and add no security value — kernel log entries are not agent actions.
+These two streams share the same **access interface** (`AuditRead` syscall, capability-gated) starting in Phase 17, but they are stored separately. Merging operational logs into the Merkle chain would bloat it by 100× and add no security value — kernel log entries are not agent actions.
 
 ### 6.2 UART Drain (Phase 3)
 
@@ -789,7 +789,7 @@ pub struct KernelInfoPage {
 
 The seqlock pattern requires no atomic RMW on the reader side — just two `load(Acquire)` calls bracketing the data read. The writer (kernel timer tick) increments the sequence counter before and after the update. This is the same pattern used in the Linux `vDSO` for `clock_gettime()`.
 
-### 6.4 AuditRead Extension (Phase 13)
+### 6.4 AuditRead Extension (Phase 17)
 
 The `Scope` enum used by `AuditRead` (see [ipc.md](./ipc.md)) gains an `Operational` variant for metrics access:
 
@@ -913,7 +913,7 @@ fn update_storage_health(metrics: &StorageMetrics) {
 | **Phase 3** | Scheduler + IPC metrics | Added alongside scheduler and IPC implementation. |
 | **Phase 4** (Storage) | `StorageMetrics` | WAL, LSM, MemTable, cache instrumentation. |
 | **Phase 4** | `Histogram`, `TraceEvent`, `TraceRecord`, `TraceRing`, `trace_point!()` | Tracing infrastructure. Backfill scheduler/IPC/mm trace points. |
-| **Phase 13** (Security) | `AuditScope::Operational`, log-to-provenance bridge | Operational data accessible through `AuditRead` capability system. |
+| **Phase 17** (Security) | `AuditScope::Operational`, log-to-provenance bridge | Operational data accessible through `AuditRead` capability system. |
 
 Phase 3 is the natural landing point for most infrastructure because the scheduler and IPC are the first subsystems that **require** observability to debug effectively. Tracing is deferred to Phase 4 because the scheduler will be functional (if hard to debug) without it, and the storage engine's compaction adds the most trace-worthy complexity.
 
@@ -973,7 +973,7 @@ This feedback loop is the foundation for all mechanisms in §10.2–10.8 and pow
 
 **Research.** The eBPF ecosystem [R10] enables low-overhead dynamic tracing in production Linux systems. Industry AIOps platforms (Datadog, Grafana) achieve adaptive sampling via ML classifiers on event streams, reducing trace volume while preserving diagnostic value.
 
-**Target.** Phase 11+.
+**Target.** Phase 14+.
 
 ### 10.3 Anomaly-Triggered Trace Escalation
 
@@ -989,7 +989,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Research.** Industry AIOps platforms [R10] — Datadog and Grafana implement anomaly-triggered deep dives that auto-escalate collection granularity. The AI+OS survey [R7] identifies adaptive instrumentation as a key capability of AI-powered operating systems.
 
-**Target.** Phase 11+.
+**Target.** Phase 14+.
 
 ### 10.4 Automatic Causal Correlation
 
@@ -1003,7 +1003,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Research.** Industry AIOps platforms [R10] demonstrate 50% MTTR reduction through ML-based causal correlation across metrics in production systems. KernelAGI [R6] proposes neurosymbolic reasoning over kernel telemetry for automated root cause analysis.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 10.5 Predictive Metric Alerting
 
@@ -1017,7 +1017,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Research.** Industry AIOps platforms [R10] demonstrate that ML-based anomaly detection achieves 30% fewer false positives vs. fixed thresholds in production monitoring. The AI+OS survey [R7] identifies learned baselines as a defining feature of AI-powered observability.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 10.6 Semantic Log Compression
 
@@ -1031,7 +1031,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Research.** KernelAGI [R6] proposes pattern-aware kernel logging as part of its ML subsystem. eBPF [R10] enables in-kernel log filtering and aggregation, which AIOS extends with learned pattern recognition.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 10.7 Intelligent Ring Management
 
@@ -1045,7 +1045,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Research.** Alps [R3] demonstrates adaptive resource allocation based on learned workload characteristics. The AI+OS survey [R7] identifies dynamic telemetry buffer management as a low-hanging-fruit improvement for AI-powered kernels.
 
-**Target.** Phase 11+.
+**Target.** Phase 14+.
 
 ### 10.8 Concurrency Anomaly Detection
 
@@ -1064,7 +1064,7 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 **Research.** Linux Lockdep [R11] performs runtime lock dependency analysis to detect potential deadlocks at lock acquisition time — AIOS extends this to runtime race detection via trace analysis. KernelAGI [R6] proposes neurosymbolic reasoning over kernel telemetry for automated anomaly classification. ThreadSanitizer (TSan) and similar tools detect data races at compile/run time; AIOS applies similar principles using production trace data rather than instrumented builds.
 
-**Target.** Phase 14+ (requires stable trace infrastructure and sufficient historical data for pattern learning).
+**Target.** Phase 21+ (requires stable trace infrastructure and sufficient historical data for pattern learning).
 
 ### 10.9 Hardware Performance Counter Integration
 
@@ -1080,7 +1080,7 @@ AIRS correlates hardware counters with software metrics (§3) and traces (§4) t
 
 **Research.** Linux perf subsystem [R12] demonstrates PMU multiplexing for profiling. ARM PMU architecture [R13] defines the counter configuration interface. The seL4 benchmarking framework [R14] provides a microkernel-specific approach to PMU integration with minimal kernel complexity.
 
-**Target.** Phase 14+.
+**Target.** Phase 21+.
 
 ### 10.10 Flight Recorder (Black Box)
 
@@ -1102,7 +1102,7 @@ AIRS determines the snapshot frequency and compression ratio based on available 
 
 **Research.** Linux pstore [R15] provides persistent storage across reboots for kernel logs and crash dumps. Windows Kernel Trace Log (KTL) maintains a similar circular flight recorder. Hubris (Oxide Computer) uses a dedicated flash region for post-mortem diagnostics.
 
-**Target.** Phase 14+ (requires stable VirtIO-blk driver and block engine from Phase 4).
+**Target.** Phase 21+ (requires stable VirtIO-blk driver and block engine from Phase 4).
 
 ### 10.11 Workload Fingerprinting
 
@@ -1123,7 +1123,7 @@ When AIRS detects a workload transition (fingerprint change), it proactively adj
 
 **Research.** Alps [R3] demonstrates workload-aware scheduling through learned priority functions. Google's Borg [R16] uses workload classification for cluster-level resource allocation. The AI+OS survey [R7] identifies workload fingerprinting as a key enabler for self-tuning operating systems.
 
-**Target.** Phase 14+ (requires stable metrics infrastructure, hardware counters, and sufficient workload diversity for training).
+**Target.** Phase 21+ (requires stable metrics infrastructure, hardware counters, and sufficient workload diversity for training).
 
 ### 10.12 Cross-References
 

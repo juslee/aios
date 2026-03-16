@@ -208,27 +208,27 @@ Phase 8:   Terminal emulator (enhanced)
            ├── Selection and clipboard (Flow integration)
            └── Terminal profile (colors, font, shell preference)
 
-Phase 10:  Session multiplexer
+Phase 13:  Session multiplexer
            ├── Multi-tab sessions (multiple PTYs per terminal window)
            ├── Pane splitting (horizontal/vertical within a surface)
            ├── Session detach/reattach
            ├── Session persistence across compositor restarts
            └── Audit logging (session lifecycle events)
 
-Phase 15:  POSIX compatibility
+Phase 22:  POSIX compatibility
            ├── /dev/tty and /dev/pts/* mapping via POSIX bridge
            ├── termios translation to VT mode state
            ├── SIGWINCH delivery on resize
            ├── Job control signal translation (SIGINT, SIGTSTP, SIGCONT)
            └── Process group semantics
 
-Phase 18:  Remote terminals
+Phase 25:  Remote terminals
            ├── SSH PTY forwarding (networking subsystem integration)
            ├── Remote session reconnection (Mosh-style)
            ├── Session migration between devices
            └── Encrypted session state transfer
 
-Phase 22:  AI-native features
+Phase 31:  AI-native features
            ├── AIRS context-aware command suggestions
            ├── Semantic scrollback search
            ├── Anomaly detection for suspicious commands

@@ -38,9 +38,23 @@
 - [accessibility.md](../experience/accessibility.md) — Accessibility engine
 - [power-management.md](../platform/power-management.md) — Power management policy engine
 - [developer-guide.md](./developer-guide.md) — Kernel developer guide: Rust patterns, pitfalls, workflow
-- [language-ecosystem.md](./language-ecosystem.md) — Language runtimes and multi-language support
-- [ai-agent-context.md](./ai-agent-context.md) — AI agent onboarding: required reading, anti-patterns, verification
 - [language-ecosystem.md](./language-ecosystem.md) — Language ecosystem: Rust, Python, TypeScript, WASM runtimes and toolchains
+- [ai-agent-context.md](./ai-agent-context.md) — AI agent onboarding: required reading, anti-patterns, verification
+- [device-model.md](../kernel/device-model.md) — Device model and driver framework (hub + 7 sub-docs)
+- [compute.md](../kernel/compute.md) — Kernel compute abstraction (hub + 6 sub-docs)
+- [gpu.md](../platform/gpu.md) — GPU and display subsystem (hub + 5 sub-docs)
+- [accelerators.md](../platform/accelerators.md) — Accelerator drivers: VirtIO-GPU 3D, VideoCore VII, ANE (hub + 5 sub-docs)
+- [input.md](../platform/input.md) — Input subsystem (hub + 6 sub-docs)
+- [terminal.md](../applications/terminal.md) — Terminal emulator (hub + 6 sub-docs)
+- [usb.md](../platform/usb.md) — USB subsystem (hub + 4 sub-docs)
+- [wireless.md](../platform/wireless.md) — WiFi and Bluetooth (hub + 6 sub-docs)
+- [camera.md](../platform/camera.md) — Camera subsystem (hub + 7 sub-docs)
+- [media-pipeline.md](../platform/media-pipeline.md) — Media pipeline (hub + 6 sub-docs)
+- [thermal.md](../platform/thermal.md) — Thermal management (hub + 7 sub-docs)
+- [bsp.md](../platform/bsp.md) — Board Support Package (hub + 6 sub-docs)
+- [multi-device.md](../platform/multi-device.md) — Multi-device and enterprise (hub + 8 sub-docs)
+- [linux-compat.md](../platform/linux-compat.md) — Linux binary and Wayland compatibility (hub + 6 sub-docs)
+- [secure-boot.md](../security/secure-boot.md) — Secure boot and update system (hub + 5 sub-docs)
 
 -----
 
@@ -1206,10 +1220,10 @@ pub struct PatternDetector {
 
 |Feature                           |Use                                  |Phase                               |
 |----------------------------------|-------------------------------------|------------------------------------|
-|PAC (Pointer Authentication)      |Sign return addresses, mitigate ROP  |Phase 2 (kernel), Phase 13 (enforce)|
-|BTI (Branch Target Identification)|Mitigate JOP attacks                 |Phase 2 (kernel), Phase 13 (enforce)|
-|MTE (Memory Tagging Extension)    |Hardware use-after-free detection    |Phase 13                            |
-|TrustZone (EL3)                   |Isolated secure world for key storage|Phase 24 (Secure Boot)              |
+|PAC (Pointer Authentication)      |Sign return addresses, mitigate ROP  |Phase 2 (kernel), Phase 17 (enforce)|
+|BTI (Branch Target Identification)|Mitigate JOP attacks                 |Phase 2 (kernel), Phase 17 (enforce)|
+|MTE (Memory Tagging Extension)    |Hardware use-after-free detection    |Phase 17                            |
+|TrustZone (EL3)                   |Isolated secure world for key storage|Phase 34 (Secure Boot)              |
 |TTBR0/TTBR1 separation            |User/kernel address space isolation  |Phase 2                             |
 |W^X enforcement                   |Prevent code injection               |Phase 2                             |
 |KASLR                             |Randomize kernel base address        |Phase 2                             |
@@ -1651,45 +1665,45 @@ pub struct Object {
 
 Beyond the MVP, a production OS requires these additional subsystems. Each implements the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) — the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem. See [development-plan.md](./development-plan.md) for implementation phases.
 
-### 7.1 Power Management (Phase 19)
+### 7.1 Power Management (Phase 27)
 
-CPU frequency scaling (DVFS), display power management, device suspend, sleep/hibernate, thermal management. Without this, AIOS is tethered to a power outlet.
+CPU frequency scaling (DVFS), display power management, device suspend, sleep/hibernate. Without this, AIOS is tethered to a power outlet. See [power-management.md](../platform/power-management.md).
 
-### 7.2 USB Stack (Phase 17)
+### 7.2 USB Stack (Phase 24)
 
-xHCI host controller, USB hub support, mass storage, HID (keyboard, mouse, controllers), audio, video (webcams), serial, device hotplug. Real hardware uses USB for nearly everything.
+xHCI host controller, USB hub support, mass storage, HID (keyboard, mouse, controllers), audio, video (webcams), serial, device hotplug. Real hardware uses USB for nearly everything. See [usb.md](../platform/usb.md).
 
-### 7.3 WiFi & Bluetooth (Phase 18)
+### 7.3 WiFi & Bluetooth (Phases 25–26)
 
-WiFi: firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth: HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware. See [wireless.md](../platform/wireless.md) for the full architecture.
+WiFi (Phase 25): firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth (Phase 26): HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware. See [wireless.md](../platform/wireless.md) for the full architecture.
 
-### 7.4 Secure Boot & Updates (Phase 24)
+### 7.4 Secure Boot & Updates (Phase 34)
 
-Verified boot chain (firmware → bootloader → kernel → AIRS → services). A/B partition scheme for atomic updates. Delta updates. Automatic rollback on failure. Separate model and agent update channels.
+Verified boot chain (firmware → bootloader → kernel → AIRS → services). A/B partition scheme for atomic updates. Delta updates. Automatic rollback on failure. Separate model and agent update channels. See [secure-boot.md](../security/secure-boot.md).
 
-### 7.5 Display Protocol Compatibility (Phase 25)
+### 7.5 Display Protocol Compatibility (Phase 36)
 
-Wayland compatibility layer for existing Linux GUI applications. XWayland for X11 apps. This gives access to thousands of existing applications.
+Wayland compatibility layer for existing Linux GUI applications. XWayland for X11 apps. This gives access to thousands of existing applications. See [linux-compat.md](../platform/linux-compat.md).
 
-### 7.6 Accessibility (Phase 23)
+### 7.6 Accessibility (Phase 33)
 
 Screen reader support with semantic accessibility tree. Full keyboard navigation. High contrast / large text modes. Voice control. Switch access. Must be designed into compositor and toolkit from Phase 6, not retrofitted.
 
-### 7.7 Internationalization (Phase 23)
+### 7.7 Internationalization (Phase 33)
 
 Full Unicode everywhere. Input methods for CJK and complex scripts. Locale support (date, number, currency formats). UI string externalization for translation. Right-to-left layout support.
 
-### 7.8 Printing & Peripherals (Phase 22)
+### 7.8 Printing & Peripherals (Phase 32)
 
-CUPS port for printer support. Scanner support. Camera support. All require working network stack and USB stack.
+CUPS port for printer support. Scanner support. Camera support. All require working network stack and USB stack. See [camera.md](../platform/camera.md).
 
-### 7.9 Linux Binary Compatibility (Phase 25)
+### 7.9 Linux Binary Compatibility (Phase 35)
 
-Compatibility layer for running unmodified Linux ELF binaries. Translates Linux syscalls to AIOS syscalls. Eliminates the app gap entirely. Long-term goal.
+Compatibility layer for running unmodified Linux ELF binaries. Translates Linux syscalls to AIOS syscalls. Eliminates the app gap entirely. See [linux-compat.md](../platform/linux-compat.md).
 
-### 7.10 Enterprise Features (Phase 26)
+### 7.10 Enterprise Features (Phases 37–38)
 
-MDM (Mobile Device Management), fleet management, remote wipe, compliance reporting, centralized policy enforcement. Required for organizational adoption.
+Multi-device sync and pairing (Phase 37), MDM, fleet management, remote wipe, compliance reporting, centralized policy enforcement (Phase 38). Required for organizational adoption. See [multi-device.md](../platform/multi-device.md).
 
 -----
 
@@ -1723,11 +1737,11 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 ### 9.1 Development Roadmap
 
-**Stage 1: QEMU aarch64 (development target, dev Phases 0-15).** All development and testing. HVF acceleration on macOS for near-native speed.
+**Stage 1: QEMU aarch64 (development target, dev Phases 0–22).** All development and testing. HVF acceleration on macOS for near-native speed.
 
-**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 16+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §9 for the phase-aligned hardware timeline.
+**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 23+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §10 for the phase-aligned hardware timeline.
 
-**Stage 3: VM images (adoption path, dev Phase 24+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
+**Stage 3: VM images (adoption path, dev Phase 34+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
 
 **Stage 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
 

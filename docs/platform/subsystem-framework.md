@@ -1405,7 +1405,7 @@ The current `DataChannel` trait uses synchronous `read`/`write` with buffer copi
 
 ### 22.2 Async Session Model
 
-**Timeline:** Phase 8-9 | **Dependency:** Scheduler (Phase 3), async runtime
+**Timeline:** Phase 9-11 | **Dependency:** Scheduler (Phase 3), async runtime
 
 - **Completion-based session operations:** Non-blocking `open_session()` returns a future. Useful when device probe or format negotiation takes time (Bluetooth pairing, USB enumeration).
 - **Waker integration with IPC select:** Agents can wait on multiple device channels and IPC channels simultaneously using the existing `IpcSelect` mechanism (see [ipc.md](../kernel/ipc.md) §5.4).
@@ -1413,7 +1413,7 @@ The current `DataChannel` trait uses synchronous `read`/`write` with buffer copi
 
 ### 22.3 Formal Verification of Framework Invariants
 
-**Timeline:** Phase 12+ | **Dependency:** Stable framework API
+**Timeline:** Phase 16+ | **Dependency:** Stable framework API
 
 - **Verus proofs for session lifecycle:** The Atmosphere microkernel (SOSP 2025 Best Paper) demonstrated that Verus can verify a full Rust microkernel with a proof-to-code ratio of 7.5:1 (vs seL4's 19:1). Apply Verus to prove session invariants: no double-close, no use-after-close, capability always checked before session creation.
 - **Compile-time priority analysis (RTIC/SRP):** The Stack Resource Policy, used by RTIC for Rust embedded systems, provides deadlock-freedom by construction through compile-time priority ceiling analysis. Apply to conflict resolution to prove no starvation under Queue policy.
@@ -1422,7 +1422,7 @@ The current `DataChannel` trait uses synchronous `read`/`write` with buffer copi
 
 ### 22.4 AI-Driven Subsystem Intelligence (AIRS-Dependent)
 
-**Timeline:** Phase 8-11 | **Dependency:** AIRS runtime (Phase 8)
+**Timeline:** Phase 9-14 | **Dependency:** AIRS runtime (Phase 9)
 
 These capabilities require AIRS for semantic understanding and live inference:
 
@@ -1445,7 +1445,7 @@ These techniques use frozen decision trees, EMA thresholds, or histogram bucketi
 
 ### 22.6 Multi-Device Subsystem Federation
 
-**Timeline:** Phase 14+ | **Dependency:** Networking (Phase 7), Space Sync (Phase 9)
+**Timeline:** Phase 21+ | **Dependency:** Networking (Phase 7), Space Sync (Phase 11)
 
 - **Session handoff:** Continue a session across AIOS devices — audio playback transfers from phone to laptop, video call moves from desktop to tablet. Each session implements `Serialize + Deserialize` for state transfer. Encrypted via the Flow sync protocol. Inspired by Apple Handoff, Android 17 Handoff, and Microsoft Cross Device Resume.
 - **Capability delegation for device sharing:** Share a peripheral's capability with a peer device. Delegation uses the existing cascade revocation system (see [model/capabilities.md](../security/model/capabilities.md) §3.5) with attenuation — the delegated capability can be strictly less powerful than the original.
@@ -1456,11 +1456,11 @@ These techniques use frozen decision trees, EMA thresholds, or histogram bucketi
 | Direction | Timeline | Dependency | Impact |
 |---|---|---|---|
 | Zero-copy DataChannel | Phase 7-8 | Shared memory, MM | Eliminates copies for high-throughput subsystems |
-| Async sessions | Phase 8-9 | Scheduler, async | Non-blocking device access for all agents |
-| Formal verification | Phase 12+ | Stable API | Proven session safety invariants |
-| AI intelligence (AIRS) | Phase 8-11 | AIRS runtime | NL policies, threat detection, smart format selection |
+| Async sessions | Phase 9-11 | Scheduler, async | Non-blocking device access for all agents |
+| Formal verification | Phase 16+ | Stable API | Proven session safety invariants |
+| AI intelligence (AIRS) | Phase 9-14 | AIRS runtime | NL policies, threat detection, smart format selection |
 | Statistical models (kernel) | Phase 5-8 | Metrics only | Fault prediction, adaptive power, RL tuning |
-| Multi-device federation | Phase 14+ | Networking, sync | Cross-device sessions and device sharing |
+| Multi-device federation | Phase 21+ | Networking, sync | Cross-device sessions and device sharing |
 
 ### 22.8 References
 

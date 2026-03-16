@@ -3,9 +3,9 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [posix.md](./posix.md) — POSIX translation layer (Phase 15 foundation), [compositor/gpu.md](./compositor/gpu.md) §9 — Wayland translation layer, [model.md](../security/model.md) — Capability system, [subsystem-framework.md](./subsystem-framework.md) — PosixBridge trait, [development-plan.md](../project/development-plan.md) — Phase 25
+**Related:** [posix.md](./posix.md) — POSIX translation layer (Phase 22 foundation), [compositor/gpu.md](./compositor/gpu.md) §9 — Wayland translation layer, [model.md](../security/model.md) — Capability system, [subsystem-framework.md](./subsystem-framework.md) — PosixBridge trait, [development-plan.md](../project/development-plan.md) — Phase 35
 
-**Note:** Linux binary compatibility builds on top of the Phase 15 POSIX translation layer. This document covers the Linux-specific extensions: ELF loading, ~200 Linux syscalls, /proc+/sys emulation, glibc shim, Wayland application integration, and sandboxing. The POSIX foundation (musl libc, FD table, path resolver, BSD tools) is documented in [posix.md](./posix.md).
+**Note:** Linux binary compatibility builds on top of the Phase 22 POSIX translation layer. This document covers the Linux-specific extensions: ELF loading, ~200 Linux syscalls, /proc+/sys emulation, glibc shim, Wayland application integration, and sandboxing. The POSIX foundation (musl libc, FD table, path resolver, BSD tools) is documented in [posix.md](./posix.md).
 
 -----
 
@@ -29,7 +29,7 @@ This document was split for navigability. Each sub-document preserves the origin
 
 The single biggest barrier to adopting any new operating system is the application gap. Users need their existing applications — web browsers, office suites, creative tools, development environments — and they need them on day one. History shows that technical excellence alone does not drive adoption: BeOS, OS/2, and Plan 9 all failed to displace incumbents despite compelling architectures, because users could not run their existing software.
 
-AIOS solves this through a layered compatibility strategy. Phase 15 provides POSIX compatibility via musl libc and a translation layer that maps ~60 POSIX syscalls to AIOS's 31 native syscalls (see [posix.md](./posix.md) §1–§4). This gets BSD command-line tools running. Phase 25 extends this to full Linux binary compatibility — loading unmodified Linux aarch64 ELF binaries, translating ~200 Linux syscalls, emulating /proc and /sys, and bridging Wayland protocol for GUI applications. The combination means Firefox, GIMP, LibreOffice, VS Code, Blender, and thousands of other Linux applications run on AIOS without modification.
+AIOS solves this through a layered compatibility strategy. Phase 22 provides POSIX compatibility via musl libc and a translation layer that maps ~60 POSIX syscalls to AIOS's 31 native syscalls (see [posix.md](./posix.md) §1–§4). This gets BSD command-line tools running. Phase 35 extends this to full Linux binary compatibility — loading unmodified Linux aarch64 ELF binaries, translating ~200 Linux syscalls, emulating /proc and /sys, and bridging Wayland protocol for GUI applications. The combination means Firefox, GIMP, LibreOffice, VS Code, Blender, and thousands of other Linux applications run on AIOS without modification.
 
 The compatibility layer is a **bridge, not a destination**. Native AIOS agents — capability-gated, semantically aware, integrated with the AI runtime — are the future of the platform. Linux compatibility eliminates the cold-start adoption barrier. As the AIOS-native ecosystem grows, developers can incrementally migrate their applications from the compatibility layer to native agents, gaining access to AIOS's semantic compositing, AI runtime integration, and fine-grained capability model.
 
@@ -39,7 +39,7 @@ Linux binary compatibility means running **unmodified** Linux aarch64 ELF binari
 
 ### §1.2 Scope
 
-Phase 25 targets **desktop Linux applications**, not server workloads or container runtimes:
+Phase 35 targets **desktop Linux applications**, not server workloads or container runtimes:
 
 - **In scope:** GUI applications (GTK, Qt, Electron), CLI tools beyond the BSD set, development tools (rustc, node, python), media applications, games (via Wayland + Vulkan)
 - **In scope:** Wayland clients, X11 applications via XWayland, DRM/KMS-aware applications
@@ -122,12 +122,12 @@ The Linux compatibility layer is built as a series of translation stages, each n
 Linux binaries reach the compatibility layer through two paths, depending on how they were built:
 
 **Path A — Library-level interception (musl-linked binaries):**
-Binaries linked against musl (or statically linked against AIOS's musl port) call into the POSIX translation layer directly via modified `__syscall_dispatch()` in musl. This is the same path used by Phase 15 BSD tools. The Linux compatibility layer extends the dispatch table from ~60 POSIX syscalls to ~200 Linux syscalls.
+Binaries linked against musl (or statically linked against AIOS's musl port) call into the POSIX translation layer directly via modified `__syscall_dispatch()` in musl. This is the same path used by Phase 22 BSD tools. The Linux compatibility layer extends the dispatch table from ~60 POSIX syscalls to ~200 Linux syscalls.
 
 **Path B — Trap-level interception (pre-compiled Linux binaries):**
 Unmodified Linux binaries issue `SVC #0` with Linux syscall numbers in registers. The kernel's EL0 sync exception handler detects these as Linux syscalls (distinct ABI from AIOS native SVC) and routes them to a userspace translation handler via upcall. This path has slightly higher overhead (~100–200ns per syscall) but requires no binary modification.
 
-The trap-level path is the primary path for Phase 25 — the whole point is running unmodified binaries. The library-level path is available for applications recompiled against AIOS's musl.
+The trap-level path is the primary path for Phase 35 — the whole point is running unmodified binaries. The library-level path is available for applications recompiled against AIOS's musl.
 
 ### §2.4 Comparison with Other Compatibility Approaches
 
@@ -146,36 +146,36 @@ AIOS's approach is closest to Fuchsia Starnix: userspace translation with minima
 
 ## §14 Implementation Order
 
-Phase 25 builds on Phase 15 (POSIX compatibility) and Phase 20 (Portable UI Toolkit / Compositor). Implementation proceeds in six sub-phases:
+Phase 35 builds on Phase 22 (POSIX compatibility) and Phase 29 (Portable UI Toolkit / Compositor). Implementation proceeds in six sub-phases:
 
 ```text
-Phase 25a: ELF Loader and Trap Interception
-           Depends on: Phase 15f (full POSIX), Phase 3 (process management)
+Phase 35a: ELF Loader and Trap Interception
+           Depends on: Phase 22f (full POSIX), Phase 3 (process management)
            Deliverable: Static Linux ELF "Hello World" runs via trap path
            Key components: ELF loader (§3.1–§3.4), SVC trap routing
 
-Phase 25b: Extended Syscall Translation
-           Depends on: Phase 25a
+Phase 35b: Extended Syscall Translation
+           Depends on: Phase 35a
            Deliverable: Linux CLI tools (coreutils) pass basic tests
            Key components: ~200 syscall table (§5.2), glibc shim (§4)
 
-Phase 25c: Virtual Filesystem Emulation
-           Depends on: Phase 25b
+Phase 35c: Virtual Filesystem Emulation
+           Depends on: Phase 35b
            Deliverable: /proc/self/maps, /proc/cpuinfo, /sys/class/* work
            Key components: procfs (§11.1), sysfs (§11.2), devtmpfs (§11.3)
 
-Phase 25d: Sandbox and Security
-           Depends on: Phase 25b, Phase 3 (capability system)
+Phase 35d: Sandbox and Security
+           Depends on: Phase 35b, Phase 3 (capability system)
            Deliverable: Linux binaries run sandboxed with capability enforcement
            Key components: Threat model (§9.1), sandbox profiles (§9.3), portals (§9.5)
 
-Phase 25e: Wayland Bridge
-           Depends on: Phase 25b, Phase 20 (compositor operational)
+Phase 35e: Wayland Bridge
+           Depends on: Phase 35b, Phase 29 (compositor operational)
            Deliverable: GTK/Qt Wayland applications display and accept input
            Key components: Wayland translator (§7), XWayland (§8), DRM bridge
 
-Phase 25f: Namespace Isolation and Polish
-           Depends on: Phase 25c, Phase 25d, Phase 25e
+Phase 35f: Namespace Isolation and Polish
+           Depends on: Phase 35c, Phase 35d, Phase 35e
            Deliverable: Full Linux app compatibility with namespace isolation
            Key components: Namespaces (§12), cgroup mapping (§12.4),
                           io_uring (§6.3), performance optimization
@@ -185,16 +185,16 @@ Phase 25f: Namespace Isolation and Polish
 
 ```mermaid
 flowchart LR
-    P15["Phase 15f\nPOSIX/BSD"] --> P25a["Phase 25a\nELF Loader"]
-    P3["Phase 3\nIPC + Caps"] --> P25a
-    P25a --> P25b["Phase 25b\nSyscall Translation"]
-    P25b --> P25c["Phase 25c\nVirtual Filesystems"]
-    P25b --> P25d["Phase 25d\nSandbox"]
-    P20["Phase 20\nCompositor"] --> P25e["Phase 25e\nWayland Bridge"]
-    P25b --> P25e
-    P25c --> P25f["Phase 25f\nNamespaces + Polish"]
-    P25d --> P25f
-    P25e --> P25f
+    P22["Phase 22f\nPOSIX/BSD"] --> P35a["Phase 35a\nELF Loader"]
+    P3["Phase 3\nIPC + Caps"] --> P35a
+    P35a --> P35b["Phase 35b\nSyscall Translation"]
+    P35b --> P35c["Phase 35c\nVirtual Filesystems"]
+    P35b --> P35d["Phase 35d\nSandbox"]
+    P29["Phase 29\nCompositor"] --> P35e["Phase 35e\nWayland Bridge"]
+    P35b --> P35e
+    P35c --> P35f["Phase 35f\nNamespaces + Polish"]
+    P35d --> P35f
+    P35e --> P35f
 ```
 
 -----
@@ -211,7 +211,7 @@ flowchart LR
 
 5. **Bridge, not destination.** Linux compatibility exists to eliminate the adoption barrier. Native AIOS agents are the future. The translation layer is a migration path. Design decisions should favor simplicity of the bridge over perfection of the emulation.
 
-6. **Translate the subset that matters.** Linux has ~400+ syscalls. Desktop applications use ~150–200. Server workloads, container runtimes, and BPF programs use the rest. Phase 25 targets desktop applications — implement what Firefox, GIMP, and VS Code need.
+6. **Translate the subset that matters.** Linux has ~400+ syscalls. Desktop applications use ~150–200. Server workloads, container runtimes, and BPF programs use the rest. Phase 35 targets desktop applications — implement what Firefox, GIMP, and VS Code need.
 
 7. **Fail loudly on unsupported operations.** When a Linux binary calls an unsupported syscall, return `-ENOSYS` and log an audit event. Do not silently succeed with incorrect behavior. Users and developers need clear signals about what works and what does not.
 
@@ -225,7 +225,7 @@ flowchart LR
 
 ## §16 Future Directions
 
-- **x86_64 binary translation** — QEMU user-mode or Rosetta-style JIT for running x86_64 Linux binaries on aarch64 (post-Phase 25)
+- **x86_64 binary translation** — QEMU user-mode or Rosetta-style JIT for running x86_64 Linux binaries on aarch64 (post-Phase 35)
 - **Android application support** — ART runtime + Android framework on top of Linux compat layer, similar to Chrome OS's ARC++ or Waydroid
 - **Container runtime support** — Minimal OCI runtime for Docker/Podman images, using AIOS namespace equivalents
 - **Flatpak runtime hosting** — Run Flatpak applications with AIOS providing the sandbox and portal services natively

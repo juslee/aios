@@ -14,7 +14,7 @@ This document was split for navigability. Each sub-document preserves the origin
 |---|---|---|
 | **This file** | §1, §2 | Overview and attack surface map |
 | [strategies.md](fuzzing/strategies.md) | §3 | Hardening strategies: language safety, syscall validation, memory, IPC, drivers, manifests, concurrency |
-| [adoption-roadmap.md](fuzzing/adoption-roadmap.md) | §4 | Phased fuzzing adoption from host-side (Phase 0) through formal verification (Phase 24) |
+| [adoption-roadmap.md](fuzzing/adoption-roadmap.md) | §4 | Phased fuzzing adoption from host-side (Phase 0) through formal verification (Phase 34) |
 | [tooling.md](fuzzing/tooling.md) | §5, §6 | Tiered tooling strategy (3 tiers) and fuzz target catalog |
 | [ai-native.md](fuzzing/ai-native.md) | §7 | AI-native fuzzing: development-time tools, kernel-internal models, AIRS-dependent defense |
 

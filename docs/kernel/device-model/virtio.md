@@ -357,7 +357,7 @@ AIOS uses the following VirtIO device types across its implementation phases:
 | Entropy | 4 | 1 | requests | Hardware RNG source; fills buffers with random bytes | Phase 1+ |
 | GPU | 16 | 2 | controlq, cursorq | 2D/3D display adapter; framebuffer and cursor management | Phase 5 |
 | Input | 18 | 2 | events, status | Keyboard, mouse, tablet; HID event delivery | Phase 7 |
-| Sound | 25 | 4 | controlq, eventq, txq, rxq | Audio adapter; PCM stream playback and capture | Phase 22 |
+| Sound | 25 | 4 | controlq, eventq, txq, rxq | Audio adapter; PCM stream playback and capture | Phase 31 |
 
 #### Per-Device Queue Usage Patterns
 
@@ -439,5 +439,5 @@ The VirtIO transport trait in the driver model (device-model.md §6, hal.md §6)
 | Existing VirtIO-blk driver | `kernel/src/drivers/virtio_blk.rs` | Legacy MMIO transport, polled I/O, 3-descriptor chain pattern |
 | VirtIO constants | `shared/src/storage.rs` | MMIO register offsets, status bits, feature flags, descriptor flags |
 | VirtIO-Net driver design | [networking/stack.md](../../platform/networking/stack.md) | §4.2 — VirtIO-Net multi-queue driver (Phase 7) |
-| VirtIO-Sound driver design | [audio/drivers.md](../../platform/audio/drivers.md) | §5.1 — VirtIO-Sound 4-queue driver (Phase 22) |
+| VirtIO-Sound driver design | [audio/drivers.md](../../platform/audio/drivers.md) | §5.1 — VirtIO-Sound 4-queue driver (Phase 31) |
 | VirtIO-GPU driver design | [compositor/gpu.md](../../platform/compositor/gpu.md) | §8.2 — VirtIO-GPU control/cursor queues (Phase 5) |

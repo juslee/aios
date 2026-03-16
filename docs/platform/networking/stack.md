@@ -165,7 +165,7 @@ Interrupt-driven (Phase 7+):
     → Handler signals network service thread
     → Service thread calls NetworkStack::poll()
 
-Adaptive polling (Phase 16+):
+Adaptive polling (Phase 23+):
     High traffic: switch to polling mode (check every 100μs)
     Low traffic: switch to interrupt mode (wake on packet)
     Threshold: >1000 packets/sec sustained → polling mode
@@ -421,14 +421,14 @@ Receive path (NIC → application):
     AIOS target:     NIC → DMA buffer → application mapping (1 copy)
 
     Phase 7:   NIC → DMA → smoltcp → NTM → agent (2 copies)
-    Phase 16+: NIC → DMA → mapped to agent address space (1 copy)
+    Phase 23+: NIC → DMA → mapped to agent address space (1 copy)
 
 Transmit path (application → NIC):
     Traditional OS:  user buffer → socket buffer → kernel buffer → NIC (3 copies)
     AIOS target:     application mapping → DMA buffer → NIC (1 copy)
 
     Phase 7:   agent → NTM → smoltcp → DMA → NIC (2 copies)
-    Phase 16+: agent buffer → DMA mapping → NIC (1 copy)
+    Phase 23+: agent buffer → DMA mapping → NIC (1 copy)
 ```
 
 #### 4.4.2 Phase 7 Data Path
@@ -557,7 +557,7 @@ Level 1: smoltcp DNS stub (Phase 7)
     - Response caching with TTL
     - Sufficient for POSIX compat (curl, ssh)
 
-Level 2: hickory-dns client (Phase 16)
+Level 2: hickory-dns client (Phase 23)
     - DNS-over-HTTPS (DoH) and DNS-over-TLS (DoT)
     - DNSSEC validation
     - Encrypted queries (privacy)

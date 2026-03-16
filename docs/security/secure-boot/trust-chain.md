@@ -247,7 +247,7 @@ The AIRS runtime loads AI models from `system/models/` space. Model integrity ve
 - SHA-256 hash of model file compared against hash stored in `ModelEntry` space object
 - Corrupted models are skipped; degraded mode if all models fail
 
-**Phase 24 enhancement — signed model manifests:**
+**Phase 34 enhancement — signed model manifests:**
 
 ```rust
 /// Stored alongside each model in system/models/

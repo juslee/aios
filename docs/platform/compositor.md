@@ -137,7 +137,7 @@ flowchart TD
 
 3. **Zero-copy when possible.** Shared buffers, direct scanout, multiplane overlay, damage tracking — minimize GPU copies. The compositor never copies pixel data if a pointer swap suffices.
 
-4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 23. Screen reader support shapes early architectural decisions. The accessibility tree exists from the first composited frame.
+4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 33. Screen reader support shapes early architectural decisions. The accessibility tree exists from the first composited frame.
 
 5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without a capability token. Keystroke injection is impossible without `SyntheticInput` capability ([§7.6](./compositor/input.md)).
 
@@ -178,35 +178,35 @@ Phase 6 — Window Compositor and Shell:
   ├── Animation system (window open/close/resize transitions)
   └── Multi-monitor support (HiDPI, extended desktop)
 
-Phase 11 — Attention Management:
+Phase 14 — Attention Management:
   ├── AIRS importance scoring integration
   ├── Attention-aware rendering priority
   └── Context-aware notification suppression
 
-Phase 13 — Security Hardening:
+Phase 17 — Security Hardening:
   ├── Capability-gated surface operations
   ├── GPU process isolation (IOMMU enforcement)
   ├── Screen capture protection
   └── Secure input mode
 
-Phase 14 — Performance and Optimization:
+Phase 21 — Performance and Optimization:
   ├── Kernel-internal ML: predictive frame scheduling
   ├── GPU DVFS power management
   ├── Activity-based variable refresh rate
   ├── AOT shader compilation pipeline
   └── Multiplane overlay (hardware planes bypass compositor)
 
-Phase 20 — UI Toolkit:
+Phase 29 — UI Toolkit:
   └── iced backend targeting compositor surfaces
 
-Phase 23 — Accessibility:
+Phase 33 — Accessibility:
   ├── Accessibility tree (full WAI-ARIA role support)
   ├── Screen reader integration
   ├── Compositor-level magnification
   ├── High contrast / reduced motion modes
   └── Keyboard navigation (focus ring, spatial nav)
 
-Phase 25 — Wayland Compatibility:
+Phase 36 — Wayland Compatibility:
   ├── Wayland translation layer (Smithay-based)
   ├── Protocol mapping (wl_surface → SurfaceId)
   ├── XWayland integration (X11 backward compatibility)

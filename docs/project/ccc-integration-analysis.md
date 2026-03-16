@@ -175,7 +175,7 @@ Shared infrastructure in `backend/elf/` (11 files) and `backend/linker_common/` 
 
 ### 3.1 Current AIOS Toolchain Plan
 
-AIOS Phase 15 (POSIX Compatibility & BSD Userland) plans to use **LLVM/clang** as the C/C++ compiler. The architecture is:
+AIOS Phase 22 (POSIX Compatibility & BSD Userland) plans to use **LLVM/clang** as the C/C++ compiler. The architecture is:
 
 ```mermaid
 flowchart TD
@@ -212,13 +212,13 @@ Key constraints:
 
 CCC is not a replacement for LLVM/clang — it doesn't do C++. But it fills several roles that LLVM cannot:
 
-#### Role 1: Bootstrap C Compiler (Phase 15a-b)
+#### Role 1: Bootstrap C Compiler (Phase 22a-b)
 
 The LLVM bootstrap problem: to compile clang on AIOS, you need a C++ compiler. To get a C++ compiler, you need... a C++ compiler. CCC breaks this cycle:
 
 ```mermaid
 flowchart TD
-    Start["Phase 15a: Port musl libc<br>needs C compiler"]
+    Start["Phase 22a: Port musl libc<br>needs C compiler"]
     Start --> A["Option A: Cross-compile<br>everything from host<br>(current plan)"]
     Start --> B["Option B: Ship CCC as<br>native AIOS binary"]
     B --> C[Compile musl natively]
@@ -240,19 +240,19 @@ Think of it as AIOS's equivalent of Plan 9's compiler suite — a small, fast, n
 
 #### Role 3: AI-Native Compiler Platform
 
-CCC was written by Claude. AIOS's AI Runtime (AIRS, Phase 8+) could leverage this:
+CCC was written by Claude. AIOS's AI Runtime (AIRS, Phase 9+) could leverage this:
 
 - **AI-guided optimization:** AIRS could analyze program behavior and request specific CCC optimization passes, or train new passes. CCC's pass pipeline is simple and modifiable (15 passes in individual .rs files vs LLVM's 100+ interleaved C++ passes).
-- **Context-aware compilation:** The AIOS Context Engine (Phase 8+) could feed program intent to CCC — "this is a latency-sensitive loop" → more aggressive LICM and unrolling.
+- **Context-aware compilation:** The AIOS Context Engine (Phase 9+) could feed program intent to CCC — "this is a latency-sensitive loop" → more aggressive LICM and unrolling.
 - **Live recompilation:** CCC's small size and fast compilation make it viable for JIT-like workflows where agents recompile code as requirements change.
-- **Compiler-as-agent:** An AIOS agent (Phase 10+) wrapping CCC could accept natural language build instructions and map them to compiler flags and optimization strategies.
+- **Compiler-as-agent:** An AIOS agent (Phase 13+) wrapping CCC could accept natural language build instructions and map them to compiler flags and optimization strategies.
 
 #### Role 4: Security-Hardened Compilation
 
 AIOS's security model requires:
 - **PAC** (Pointer Authentication): `-mbranch-protection=pac-ret`
 - **BTI** (Branch Target Identification): `-mbranch-protection=bti`
-- **MTE** (Memory Tagging Extension): Phase 13
+- **MTE** (Memory Tagging Extension): Phase 17
 - **W^X enforcement**: kernel-level, no JIT exceptions
 
 CCC's AArch64 backend would need these features added. But because CCC is Rust, the implementation is memory-safe by construction — the compiler itself can't be exploited via buffer overflows in the way a C++ compiler can. This matters when the compiler runs as a capability-scoped process inside AIOS.
@@ -263,15 +263,15 @@ CCC's AArch64 backend would need these features added. But because CCC is Rust, 
 flowchart TD
     US[AIOS Userspace]
 
-    US --> CCC["/usr/bin/ccc<br>CCC native AIOS binary, Phase 15a"]
+    US --> CCC["/usr/bin/ccc<br>CCC native AIOS binary, Phase 22a"]
     CCC --> CCC_R["Reads from: source Spaces<br>(capability-scoped)"]
     CCC --> CCC_W["Writes to: build output Spaces<br>(capability-scoped)"]
     CCC --> CCC_P["Runs as: BSD process via<br>POSIX translation layer"]
 
-    US --> CLANG["/usr/bin/clang<br>LLVM/clang, Phase 15f<br>bootstrapped via CCC"]
+    US --> CLANG["/usr/bin/clang<br>LLVM/clang, Phase 22f<br>bootstrapped via CCC"]
     CLANG --> CLANG_D["Full C/C++ when needed"]
 
-    US --> AIRS["AIRS Integration<br>(Phase 8+)"]
+    US --> AIRS["AIRS Integration<br>(Phase 9+)"]
     AIRS --> LIB["CCC as library:<br>Link CCC as Rust crate into AIRS"]
     LIB --> API["API: parse, lower,<br>optimize, codegen"]
     AIRS --> PASS["Pass control:<br>AIRS selects/configures<br>optimization passes"]
@@ -336,7 +336,7 @@ BsdProcessCapabilities {
 3. Generate program-specific pass schedules
 4. Feed back into CCC's pass pipeline
 
-**MTE-aware compilation:** When AIOS enables MTE (Phase 13), CCC could generate MTE-tagged memory operations. Since CCC controls the full pipeline (codegen → assembler → linker), it can insert tagging instructions at allocation sites without relying on a separate runtime — a tighter integration than clang+compiler-rt.
+**MTE-aware compilation:** When AIOS enables MTE (Phase 17), CCC could generate MTE-tagged memory operations. Since CCC controls the full pipeline (codegen → assembler → linker), it can insert tagging instructions at allocation sites without relying on a separate runtime — a tighter integration than clang+compiler-rt.
 
 ### 4.2 CCC Makes AIOS Better
 
@@ -344,9 +344,9 @@ BsdProcessCapabilities {
 
 **Smaller OS image:** CCC is a single ~10-20 MB binary vs LLVM's ~100+ MB. For embedded AIOS deployments or minimal images, CCC provides C compilation without the LLVM footprint.
 
-**Self-hosting milestone:** "AIOS can compile C programs natively" is achievable much earlier with CCC than with LLVM. This could be a Phase 15a deliverable rather than waiting for Phase 15f.
+**Self-hosting milestone:** "AIOS can compile C programs natively" is achievable much earlier with CCC than with LLVM. This could be a Phase 22a deliverable rather than waiting for Phase 22f.
 
-**Compiler-as-library for agents:** AIOS agents (Phase 10+) that generate and compile C code can use CCC as a Rust library call, avoiding process spawn overhead. This enables:
+**Compiler-as-library for agents:** AIOS agents (Phase 13+) that generate and compile C code can use CCC as a Rust library call, avoiding process spawn overhead. This enables:
 - Code generation agents that compile and test in-process
 - Live patching workflows where AIRS recompiles individual functions
 - Exploratory optimization where AIRS tries multiple optimization strategies in parallel
@@ -368,18 +368,18 @@ BsdProcessCapabilities {
 
 ## 6. Recommended Integration Path
 
-### Phase 15a (musl port): Ship CCC as cross-compiled binary
+### Phase 22a (musl port): Ship CCC as cross-compiled binary
 - Cross-compile CCC for AIOS AArch64 from host
 - Use CCC to compile musl libc natively on AIOS
 - Validates POSIX translation layer with a real workload
 
-### Phase 15f (self-hosting): Bootstrap clang via CCC
+### Phase 22f (self-hosting): Bootstrap clang via CCC
 - Use CCC + musl to compile LLVM/clang C sources
 - Use compiled clang to compile LLVM C++ sources
 - Full self-hosting achieved
 
-### Post-Phase 15 (AI integration): CCC as AIRS library
-- Link CCC crate into AIRS (available since Phase 8) for in-process compilation
+### Post-Phase 22 (AI integration): CCC as AIRS library
+- Link CCC crate into AIRS (available since Phase 9) for in-process compilation
 - Implement AI-guided pass ordering
 - Add PAC/BTI/MTE codegen to AArch64 backend
 
@@ -443,7 +443,7 @@ Cargo.toml declares **zero external crate dependencies** — everything from ELF
 | `_Atomic` correctness | **Partial** | Parsed but not type-system-tracked |
 
 **The gap is narrow.** CCC already compiles musl libc, which means the POSIX translation layer
-can be validated with CCC-compiled C programs at Phase 15a — far earlier than waiting for LLVM.
+can be validated with CCC-compiled C programs at Phase 22a — far earlier than waiting for LLVM.
 
 ### 8.2 Does CCC Enable "Rust Compiles Rust on AIOS"?
 
@@ -486,10 +486,10 @@ flowchart TD
 ```
 
 **Timeline estimate:**
-- Steps 1-2: Phase 15a (musl port)
-- Steps 3-5: Phase 15f (self-hosting with clang)
-- Steps 6-7: Post-Phase 15 (Rust self-hosting)
-- Step 8: Post-Phase 15 (full OS self-hosting)
+- Steps 1-2: Phase 22a (musl port)
+- Steps 3-5: Phase 22f (self-hosting with clang)
+- Steps 6-7: Post-Phase 22 (Rust self-hosting)
+- Step 8: Post-Phase 22 (full OS self-hosting)
 
 ### 8.3 Alternative: Skip CCC, Cross-Compile Everything
 
@@ -498,7 +498,7 @@ host and ship them as pre-built AIOS binaries. This works but:
 
 | Approach | CCC Bootstrap | Cross-Compile Everything |
 |---|---|---|
-| Native compilation | Phase 15a (early) | Phase 15f (late) |
+| Native compilation | Phase 22a (early) | Phase 22f (late) |
 | Self-hosting proof | Incremental (C first, then C++, then Rust) | All-or-nothing |
 | Validates POSIX layer | Real workload at each step | Only validated at the end |
 | Binary size shipped | ~20 MB (CCC) | ~500+ MB (clang + rustc + tools) |
@@ -524,4 +524,4 @@ This causes excessive spilling under register pressure. For AIOS, improvements s
 3. **BTI codegen**: Add `BTI` landing pads at all indirect branch targets.
 4. **Full NEON**: Complete `arm_neon.h` intrinsic coverage for multimedia and crypto workloads.
 5. **MTE integration**: Memory tagging instructions at allocation/deallocation sites for
-   Phase 13 hardware use-after-free detection.
+   Phase 17 hardware use-after-free detection.

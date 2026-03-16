@@ -35,7 +35,7 @@ flowchart TD
 
         SK["Space Keys (derived from master via HKDF)\n\nLocation: kernel keyring (cached after derivation)\nDerived on demand: first access to encrypted space\nEvicted: LRU eviction when keyring is full\nDestroyed: on lock screen / identity switch"]
 
-        KSK["Kernel Signing Key (Ed25519)\n\nLocation: kernel memory (Phase 1-23)\nor TrustZone secure world (Phase 24+)\nGenerated: first boot\nUsed for: provenance chain signatures\nNever leaves kernel / secure world"]
+        KSK["Kernel Signing Key (Ed25519)\n\nLocation: kernel memory (Phase 1-33)\nor TrustZone secure world (Phase 34+)\nGenerated: first boot\nUsed for: provenance chain signatures\nNever leaves kernel / secure world"]
 
         ADK["Agent Developer Keys (Ed25519)\n\nLocation: developer's machine\nUsed for: signing agent manifests\nPublic key registered in Agent Store"]
 
@@ -60,7 +60,7 @@ flowchart TD
 
 ### 4.4 Cryptographic Operations API
 
-Agents never hold raw key material. All cryptographic operations happen in the kernel (or TrustZone in Phase 24+). The kernel exposes a small set of crypto syscalls:
+Agents never hold raw key material. All cryptographic operations happen in the kernel (or TrustZone in Phase 34+). The kernel exposes a small set of crypto syscalls:
 
 ```rust
 pub enum CryptoSyscall {
@@ -204,11 +204,11 @@ pub enum MteMode {
 
 **What MTE catches:** Use-after-free (freed memory gets new tag, dangling pointer has old tag → mismatch). Buffer overflow (adjacent allocation has different tag → mismatch). Type confusion (reinterpreted pointer may have wrong tag). These are the three most common classes of memory safety vulnerabilities in C/C++ — relevant for GGML, Servo components, and any `unsafe` Rust code.
 
-### 5.4 TrustZone Integration (Phase 24)
+### 5.4 TrustZone Integration (Phase 34)
 
 ARM TrustZone provides a hardware-isolated "secure world" that the normal world (where the OS runs) cannot access.
 
-**Phase 24 plan:**
+**Phase 34 plan:**
 - **Secure world services:** Key storage, cryptographic operations, attestation
 - **Master key storage:** The master key (derived from user password) moves from kernel memory to TrustZone secure world. Normal-world kernel can request crypto operations but cannot read the key itself.
 - **Attestation:** The secure world can attest to the boot chain integrity — proving to a remote party that the device is running genuine AIOS with a valid kernel.
@@ -359,6 +359,6 @@ Formal verification provides mathematical guarantees about security properties. 
 - Property: No page table entry ever has both write and execute permissions simultaneously.
 - Approach: Exhaustive analysis of all `MemoryMap` code paths to verify PTE flag setting.
 
-**Timeline:** TLA+ models begin in Phase 13 (Security Hardening). Coq proofs for capability system and provenance chain target Phase 24. Full formal verification of W^X and IPC also targeting Phase 24.
+**Timeline:** TLA+ models begin in Phase 17 (Security Architecture). Coq proofs for capability system and provenance chain target Phase 34. Full formal verification of W^X and IPC also targeting Phase 34.
 
 -----

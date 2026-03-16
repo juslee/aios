@@ -41,15 +41,15 @@ Unlike traditional OSes that treat thermal management as a driver-level concern,
 
 ## §14 Implementation Order
 
-### Preparatory Work (Phases 14–18)
+### Preparatory Work (Phases 21–25)
 
 | Phase | Thermal Preparatory | Dependency |
 |---|---|---|
-| 14 | Scheduler thermal throttling hooks (`ThermalState` enum, WCET scaling) | Scheduler complete |
-| 16 | Subsystem framework `PowerManaged` trait with thermal coordination points | Subsystem framework |
-| 18 | Wireless power management with thermal sensor polling infrastructure | Device model |
+| 21 | Scheduler thermal throttling hooks (`ThermalState` enum, WCET scaling) | Scheduler complete |
+| 23 | Subsystem framework `PowerManaged` trait with thermal coordination points | Subsystem framework |
+| 25 | Wireless power management with thermal sensor polling infrastructure | Device model |
 
-### Phase 19: Thermal Management (Weeks 75–78)
+### Phase 28: Thermal Management (Weeks 75–78)
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -57,13 +57,13 @@ Unlike traditional OSes that treat thermal management as a driver-level concern,
 | M59 | Cooling devices + governors | Week 76–77 | PID governor smoothly controls frequency; fan PWM on Pi 5 |
 | M60 | Integration + security + AI | Week 77–78 | Agent thermal headroom API; audit trail; thermal prediction |
 
-### Post-Phase 19
+### Post-Phase 28
 
 | Phase | Enhancement |
 |---|---|
-| 25 | GPU co-scheduling with thermal-aware placement |
-| 27 | Formal verification of thermal state machine safety properties |
-| 29 | AIRS thermal advisor: GNN prediction, multi-agent RL budget coordination |
+| 35 | GPU co-scheduling with thermal-aware placement |
+| 39 | Formal verification of thermal state machine safety properties |
+| 41 | AIRS thermal advisor: GNN prediction, multi-agent RL budget coordination |
 
 ---
 

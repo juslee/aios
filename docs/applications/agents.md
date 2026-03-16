@@ -180,7 +180,7 @@ pub struct AgentManifest {
     /// Dependencies (other agent bundles this agent requires)
     dependencies: Vec<Dependency>,
 
-    // === Capability Profiles (Phase 28) ===
+    // === Capability Profiles (Phase 40) ===
 
     /// Capability profiles this agent references (not bundled — loaded from
     /// system/config/capability-profiles/ at install time).
@@ -2108,12 +2108,12 @@ Phase 7: Basic Agent Model
   ├── Manifest parsing (minimal: name, code, capabilities)
   └── Capability grant/revoke at agent level
 
-Phase 8: AIRS Integration
+Phase 9: AIRS Integration
   ├── AIRS security analysis of agent code
   ├── Intent verification (Layer 1) — basic behavioral comparison
   └── SecurityAnalysis attached to manifests
 
-Phase 10: Full Agent Framework
+Phase 13: Full Agent Framework
   ├── Complete AgentManifest (all fields)
   ├── Agent states (Active, Paused, Suspended, Background, etc.)
   ├── Agent SDK — AgentContext trait, #[agent] macro
@@ -2123,12 +2123,12 @@ Phase 10: Full Agent Framework
   ├── Agent-to-agent IPC mediation
   └── Resource accounting (ResourceStats)
 
-Phase 11: Tasks, Flow & Attention
+Phase 14-15: Tasks, Flow & Attention
   ├── Task agents — ephemeral agents for user intents
   ├── Flow integration — FlowPush/FlowPull syscalls
   └── Attention posting from agents
 
-Phase 12: Developer Experience & SDK
+Phase 16: Developer Experience & SDK
   ├── `aios agent dev` — development mode with hot-reload
   ├── `aios agent test` — testing framework with mocks
   ├── `aios agent audit` — static analysis and AIRS review
@@ -2137,18 +2137,18 @@ Phase 12: Developer Experience & SDK
   ├── TypeScript runtime (QuickJS + bridge)
   └── WASM runtime (wasmtime)
 
-Phase 13: Security Hardening
+Phase 17: Security Hardening
   ├── Behavioral baseline and anomaly detection (Layer 3)
   ├── Adversarial defense for agent inference (Layer 5)
   ├── Blast radius containment (Layer 8)
   └── Full 8-layer security integration
 
-Phase 21: Browser (Tab Agents)
+Phase 30: Browser (Tab Agents)
   ├── Tab agents — per-origin browser tab isolation
   ├── Service worker agents — persistent background web agents
   └── Web API capability mapping
 
-Phase 26: Agent Store
+Phase 37: Agent Store
   ├── .aios-agent package format
   ├── Store submission and review pipeline
   ├── Automated AIRS analysis at scale
@@ -2159,9 +2159,9 @@ Phase 26: Agent Store
 **Critical dependencies:**
 - Agents require IPC (Phase 3) — agents cannot do anything without IPC.
 - Agent SDK requires Space Storage (Phase 4) — `ctx.spaces()` needs a backend.
-- Agent analysis requires AIRS (Phase 8) — `SecurityAnalysis` needs inference.
-- Tab agents require browser shell (Phase 21) — tab agent lifecycle is browser-managed.
-- Agent Store requires network (Phase 16) — distribution needs connectivity.
+- Agent analysis requires AIRS (Phase 9) — `SecurityAnalysis` needs inference.
+- Tab agents require browser shell (Phase 30) — tab agent lifecycle is browser-managed.
+- Agent Store requires network (Phase 23) — distribution needs connectivity.
 
 -----
 

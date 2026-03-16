@@ -764,6 +764,6 @@ This follows the attenuation semantics defined in §3.3 — attenuation is monot
 
 User Override profiles are not individually signed with a separate cryptographic key; their authenticity and integrity are enforced by the local OS user account boundary and the secure storage semantics of the user profile store.
 
-Profiles are space objects — content-addressed, versioned, and distributed through the same update channel as OS updates (Phase 24). Runtime and subsystem profiles can be updated independently of the OS version.
+Profiles are space objects — content-addressed, versioned, and distributed through the same update channel as OS updates (Phase 34). Runtime and subsystem profiles can be updated independently of the OS version.
 
 -----

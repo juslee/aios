@@ -1464,20 +1464,20 @@ epoll                      Use IpcSelect (translated from poll)  ENOSYS (poll wo
 
 -----
 
-## 15. Linux Binary Compatibility (Phase 25)
+## 15. Linux Binary Compatibility (Phase 35)
 
-Phase 15 delivers BSD tool compatibility via the POSIX translation layer. Phase 25 extends this to full Linux ELF binary compatibility:
+Phase 22 delivers BSD tool compatibility via the POSIX translation layer. Phase 35 extends this to full Linux ELF binary compatibility:
 
 ```text
-Phase 15 (POSIX/BSD):
+Phase 22 (POSIX/BSD):
   BSD tools → musl → POSIX Translation Layer → AIOS syscalls
   Scope: ~60 translated syscalls, BSD userland works
 
-Phase 25 (Linux compat):
+Phase 35 (Linux compat):
   Linux ELF → glibc shim or musl → Linux Syscall Translation → AIOS syscalls
   Scope: ~200 translated syscalls, Linux GUI apps work (Wayland)
 
-  Additional for Phase 25:
+  Additional for Phase 35:
   - ELF loader for Linux binaries (different ABI than AIOS native)
   - glibc compatibility shim (translate glibc-specific calls to musl)
   - Linux-specific syscalls: epoll → IpcSelect, futex → AIOS sync,
@@ -1493,32 +1493,32 @@ Linux binary compatibility is a separate effort built on top of the POSIX layer.
 ## 16. Implementation Order
 
 ```text
-Phase 15a: musl libc port — redirect syscall dispatch to POSIX translation
+Phase 22a: musl libc port — redirect syscall dispatch to POSIX translation
            Depends on: Phase 3 (IPC), Phase 4 (Space Service)
            Deliverable: "Hello World" C program compiles and runs on AIOS
 
-Phase 15b: Path resolver and FD table — /spaces/* mapping, file operations
-           Depends on: Phase 15a, Phase 4 (Space Service operational)
+Phase 22b: Path resolver and FD table — /spaces/* mapping, file operations
+           Depends on: Phase 22a, Phase 4 (Space Service operational)
            Deliverable: cat, ls, cp, mv work on space objects
 
-Phase 15c: Process lifecycle — fork, exec, pipe, signal translation
-           Depends on: Phase 15b
+Phase 22c: Process lifecycle — fork, exec, pipe, signal translation
+           Depends on: Phase 22b
            Deliverable: shell pipelines work (ls | grep | sort)
 
-Phase 15d: Device translation — virtual /dev/* nodes
-           Depends on: Phase 15c
+Phase 22d: Device translation — virtual /dev/* nodes
+           Depends on: Phase 22c
            Deliverable: BSD tools can access /dev/null, /dev/urandom, /dev/tty
 
-Phase 15e: Socket translation — network operations via Network Service
-           Depends on: Phase 15c, Phase 7 (Network Subsystem)
+Phase 22e: Socket translation — network operations via Network Service
+           Depends on: Phase 22c, Phase 7 (Network Subsystem)
            Deliverable: curl and ssh work
 
-Phase 15f: Full FreeBSD userland — all included tools compiled and tested
-           Depends on: Phase 15e
+Phase 22f: Full FreeBSD userland — all included tools compiled and tested
+           Depends on: Phase 22e
            Deliverable: complete BSD environment, self-hosting (clang builds on AIOS)
 
-Phase 25:  Linux binary compatibility (separate phase)
-           Depends on: Phase 15f, Phase 20 (compositor/Wayland)
+Phase 35:  Linux binary compatibility (separate phase)
+           Depends on: Phase 22f, Phase 29 (compositor/Wayland)
            Deliverable: Linux ELF binaries run, Wayland apps display through compositor
 ```
 
@@ -1529,7 +1529,7 @@ Phase 25:  Linux binary compatibility (separate phase)
 1. **POSIX is a library, not a kernel feature.** The translation layer is userspace code. The kernel knows only AIOS syscalls. This keeps the kernel clean and the translation layer replaceable.
 2. **BSD userland, not GNU.** Permissive licensing, smaller codebase, proven portability. No GPL anywhere in the core OS.
 3. **musl, not glibc.** MIT-licensed, 15x smaller, designed for portability and static linking. The right libc for a non-Linux OS.
-4. **Translate the subset that matters.** ~60 POSIX syscalls cover everything BSD tools need. Don't implement the other 390 Linux syscalls until Phase 25 requires them.
+4. **Translate the subset that matters.** ~60 POSIX syscalls cover everything BSD tools need. Don't implement the other 390 Linux syscalls until Phase 35 requires them.
 5. **Capability-check at the translation boundary.** Every POSIX operation is checked against AIOS capabilities before being dispatched. BSD tools inherit the security model transparently.
 6. **Zero-copy where possible.** Shared memory for file content. FD table in userspace. Cached path resolution. The translation layer adds microseconds, not milliseconds.
 7. **Self-hosting is a milestone.** When AIOS can compile clang with clang on AIOS, the POSIX layer is complete. This is the acceptance test.
@@ -1640,4 +1640,4 @@ These require AIRS's context engine and model inference capabilities:
 
 **Zero-copy pipe optimization.** Currently, pipe data flows through IPC messages (256-byte inline payload). For high-throughput pipelines (e.g., `cat large_file | gzip`), the translation layer could use shared memory regions as pipe buffers, reducing the per-transfer overhead from IPC message copy to a single pointer exchange.
 
-**Wayland protocol bridge (Phase 25).** Linux GUI applications use Wayland for display. The POSIX layer (Phase 25) will include a Wayland protocol translator that converts Wayland surface operations into AIOS compositor commands. This extends compatibility from CLI tools to graphical applications.
+**Wayland protocol bridge (Phase 35).** Linux GUI applications use Wayland for display. The POSIX layer (Phase 35) will include a Wayland protocol translator that converts Wayland surface operations into AIOS compositor commands. This extends compatibility from CLI tools to graphical applications.

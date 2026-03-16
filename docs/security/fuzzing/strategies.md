@@ -56,7 +56,7 @@ No syscall implementation trusts any user-supplied value without validation. Thi
 | **BTI** (Branch Target Identification) | JOP (Jump-Oriented Programming) attacks | 13+ |
 | **MTE** (Memory Tagging Extension) | Spatial and temporal memory errors in `unsafe` blocks | 13+ |
 
-PAC, BTI, and MTE are aarch64 hardware features enabled in Phase 13 (Security Hardening). MTE is particularly valuable for fuzzing: when enabled, the hardware tags every 16-byte granule and checks tags on every access, catching use-after-free and out-of-bounds access at the exact instruction — not just when a crash eventually occurs.
+PAC, BTI, and MTE are aarch64 hardware features enabled in Phase 17 (Security Architecture). MTE is particularly valuable for fuzzing: when enabled, the hardware tags every 16-byte granule and checks tags on every access, catching use-after-free and out-of-bounds access at the exact instruction — not just when a crash eventually occurs.
 
 **MTE caveat.** TIKTAG research (2024) demonstrated that MTE tags can be leaked via speculative execution side channels. This affects MTE's security guarantees against sophisticated attackers but does not diminish its value as a fuzzing accelerator — during testing, the attacker model is the fuzzer itself, not a speculative side channel.
 

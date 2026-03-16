@@ -57,7 +57,7 @@ and AIRS periodically updates them based on observed workload patterns.
 
 ### 13.1 AIRS Runtime Advisor
 
-**Category:** AIRS-dependent (Phase 12)
+**Category:** AIRS-dependent (Phase 16)
 
 When a developer runs `aios agent audit`, AIRS analyzes the agent's manifest and source code
 to recommend the optimal runtime:
@@ -87,7 +87,7 @@ Stage 3: Behavioral Prediction — see [airs.md](../../intelligence/airs.md) §5
 
 ### 13.2 Learned Scheduling Weights
 
-**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 14
+**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 21
 
 AIOS's scheduler assigns agents to four scheduling classes (RT, Interactive, Normal, Idle)
 based on manifest declarations. AIRS can learn **per-agent scheduling weights** from observed
@@ -130,7 +130,7 @@ a requirement. See [scheduler.md](../../kernel/scheduler.md) for the base schedu
 
 ### 13.3 Lifetime-Aware Allocation
 
-**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 14
+**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 21
 
 **Inspired by LLAMA (Google, ASPLOS'20, CACM'24 Research Highlight):** LLAMA uses neural networks
 trained on symbolized stack traces to predict object lifetime classes. Objects are allocated into
@@ -156,7 +156,7 @@ lifetime) from running agents. The model maps (runtime_type, allocation_site, ca
 
 ### 13.4 Garbage Collection Scheduling
 
-**Category:** AIRS-dependent (Phase 14)
+**Category:** AIRS-dependent (Phase 21)
 
 RustPython uses reference counting with a cycle collector. QuickJS-ng also uses reference
 counting with cycle collection. The timing of cycle collection affects both latency (collection
@@ -186,7 +186,7 @@ collect. A sensible default policy runs without AIRS.
 
 ### 13.5 Behavioral Anomaly Detection
 
-**Category:** Kernel-internal ML (rate-based) / AIRS-dependent (semantic) — Phase 10
+**Category:** Kernel-internal ML (rate-based) / AIRS-dependent (semantic) — Phase 13
 
 AIRS's BehavioralMonitor (see [airs.md](../../intelligence/airs.md) §5.5) maintains per-runtime
 behavioral baselines. Each runtime type has fundamentally different "normal" behavior:
@@ -216,7 +216,7 @@ See [model.md](../../security/model.md) §1.2 for trust level enforcement.
 
 ### 13.6 Automatic Capability Minimization
 
-**Category:** AIRS-dependent (Phase 10)
+**Category:** AIRS-dependent (Phase 13)
 
 **Inspired by MiniScope (2024) and Progent (2025):** Automatically generate minimal permission
 sets from task descriptions and code analysis.
@@ -273,7 +273,7 @@ ComponentizeJS compiles JavaScript to a WASM component via StarlingMonkey. This 
 "JS-as-WASM-component" path where TypeScript agents are compiled to WASM components at install
 time, gaining WASM's sandboxing benefits with SpiderMonkey's performance.
 
-**Relevance:** Phase 21 browser integration (Servo uses SpiderMonkey). Agent TypeScript could
+**Relevance:** Phase 30 browser integration (Servo uses SpiderMonkey). Agent TypeScript could
 optionally compile to WASM components for stronger isolation.
 
 ### 14.3 WIT-Based Agent Manifests

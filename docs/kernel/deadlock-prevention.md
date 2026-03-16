@@ -532,7 +532,7 @@ All AI-driven mechanisms run as AIRS services in user space at `Idle` scheduler 
 
 **Research.** KernelOracle [R1] demonstrates that deep learning can predict Linux CFS scheduler decisions from kernel traces with high accuracy — the same trace-based learning approach applied to IPC call graphs. KernelAGI [R6] proposes an embedded ML subsystem for kernel-level prediction, validating the architectural pattern of AI consuming kernel telemetry.
 
-**Target.** Phase 11+ (after AIRS and observability trace infrastructure are stable).
+**Target.** Phase 14+ (after AIRS and observability trace infrastructure are stable).
 
 ### 13.2 Adaptive Lock Management
 
@@ -546,7 +546,7 @@ Lock-aware priority inheritance for sleepable kernel mutexes ([scheduler.md §16
 
 **Research.** LOFT [R8] (EuroSys'25) demonstrates ML-guided lock-free index structures that dynamically adapt to contention patterns. The AI+OS survey [R7] identifies lock contention prediction as a key capability of "AI-refactored" operating systems.
 
-**Target.** Phase 11+.
+**Target.** Phase 14+.
 
 ### 13.3 Learned Timeout Calibration
 
@@ -558,7 +558,7 @@ Lock-aware priority inheritance for sleepable kernel mutexes ([scheduler.md §16
 
 **Research.** STUN [R2] validates that Q-learning can optimize OS timing parameters online, achieving measurable throughput gains by tuning scheduler parameters on a running system. ADIOS [R9] applies learning-based deadline calibration to I/O scheduling — the same principle applied to IPC timeouts.
 
-**Target.** Phase 14+ (requires stable per-service latency telemetry).
+**Target.** Phase 21+ (requires stable per-service latency telemetry).
 
 ### 13.4 Deploy-Time Cycle Detection
 
@@ -570,7 +570,7 @@ Lock-aware priority inheritance for sleepable kernel mutexes ([scheduler.md §16
 
 **Research.** Linux Lockdep [R11] performs runtime lock dependency graph analysis to detect potential deadlocks at lock acquisition time. AIOS extends this concept to static deploy-time analysis using AI over the capability topology. The AI+OS survey [R7] identifies proactive resource management as a hallmark of Stage 2 ("AI-refactored") operating systems.
 
-**Target.** Phase 11+ (after capability system is stable).
+**Target.** Phase 14+ (after capability system is stable).
 
 ### 13.5 Automatic Lock Elision
 
@@ -582,7 +582,7 @@ Lock-aware priority inheritance for sleepable kernel mutexes ([scheduler.md §16
 
 **Research.** LOFT [R8] (EuroSys'25) demonstrates ML-guided transitions between locked and lock-free data structures based on observed contention, achieving significant throughput improvements. ghOSt [R4] shows that runtime policy switching is production-viable at Google scale.
 
-**Target.** Phase 14+ (requires stable contention metrics and lock-free alternatives for target locks).
+**Target.** Phase 21+ (requires stable contention metrics and lock-free alternatives for target locks).
 
 ### 13.6 References
 
