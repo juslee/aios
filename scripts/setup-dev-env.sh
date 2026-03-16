@@ -113,7 +113,7 @@ if command -v node &> /dev/null; then
     echo "[setup] Node.js found — Obsidian MCP will auto-configure via .mcp.json"
     if command -v npx &> /dev/null; then
         echo "[setup] Installing mcpvault skill..."
-        npx -y skills add -y bitbonsai/mcpvault 2>/dev/null || true
+        npx -y skills add -y bitbonsai/mcpvault 2>/dev/null || echo "[setup] Warning: mcpvault skill install failed (non-critical)"
     fi
 else
     echo "[setup] Optional: Install Node.js for Obsidian MCP docs search"

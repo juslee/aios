@@ -845,7 +845,7 @@ to architecture docs only when the design is settled.
 
 Naming: `YYYY-MM-DD-initials-short-description.md`
 Required frontmatter: author, date, tags, status (draft/in-progress/final)
-Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers
+Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media
 
 ---
 
