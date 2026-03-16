@@ -14,6 +14,7 @@ Shared knowledge base for the AIOS project. Every developer's Claude Code instan
 | `decisions/` | Architecture Decision Records — why we chose X over Y | Permanent |
 | `research/` | Deep-dive research notes on explored topics | Permanent |
 | `lessons/` | Hard-won lessons — bugs, gotchas, platform quirks | Permanent |
+| `discussions/` | Architecture brainstorming, design explorations, Claude Code session notes | Semi-permanent — keep until graduated or irrelevant |
 | `plans/` | Working docs for active phase/milestone implementation | Ephemeral — deleted after distilling |
 
 ## Conventions
@@ -55,7 +56,22 @@ Prefer creating new notes over editing existing ones. This minimizes merge confl
 
 Architecture docs (`docs/kernel/`, `docs/platform/`, `docs/intelligence/`, etc.) describe the **target design** — the settled vision. Do not use them for in-progress discussion, brainstorming, or planning.
 
-Use `docs/knowledge/plans/` for working documents during exploration. Graduate content to architecture docs only when the design is settled.
+Use `docs/knowledge/discussions/` for brainstorming and design exploration, and `docs/knowledge/plans/` for implementation planning. Graduate content to architecture docs only when the design is settled.
+
+## Discussions (discussions/)
+
+For architecture deep dives, design brainstorming, and session notes that aren't tied to a specific phase implementation:
+
+1. **Create** a discussion doc: `discussions/YYYY-MM-DD-initials-topic.md`
+   - Capture ideas, open questions, trade-offs explored
+   - Set `status: draft` or `active`
+2. **Revisit** across sessions — add new insights as they come up
+3. **Graduate** when ready:
+   - Settled designs → architecture docs (`docs/kernel/`, `docs/platform/`, etc.)
+   - Key decisions → `decisions/` (permanent)
+   - Set `status: graduated` and note where content landed
+
+Unlike `plans/`, discussion docs are **not deleted** — they serve as a trail of how thinking evolved.
 
 ## Working Document Pattern (plans/)
 

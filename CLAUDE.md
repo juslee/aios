@@ -821,7 +821,15 @@ After significant sessions, write insights to `docs/knowledge/`:
 - `docs/knowledge/research/` — Research notes on explored topics
 - `docs/knowledge/lessons/` — Hard-won lessons (bugs, gotchas, platform quirks)
 
-### Working documents (plans/)
+### Discussions (discussions/)
+
+For architecture brainstorming, design explorations, and Claude Code session notes:
+
+- `docs/knowledge/discussions/` — semi-permanent, kept until graduated or irrelevant
+- Revisit across sessions, add new insights as they come up
+- When design settles: graduate content to architecture docs, set `status: graduated`
+
+### Implementation plans (plans/)
 
 When implementing a phase/milestone, create a working doc in `docs/knowledge/plans/`:
 - Track approach, decisions, issues encountered as you work
@@ -829,8 +837,9 @@ When implementing a phase/milestone, create a working doc in `docs/knowledge/pla
 - Delete the plan doc after distilling (ephemeral — permanent notes survive)
 
 **Architecture docs are for finalized design only.** Do not put in-progress discussion or
-brainstorming into `docs/kernel/`, `docs/platform/`, etc. Use `docs/knowledge/plans/` for
-working documents — graduate to architecture docs only when the design is settled.
+brainstorming into `docs/kernel/`, `docs/platform/`, etc. Use `docs/knowledge/discussions/`
+for design exploration and `docs/knowledge/plans/` for implementation planning — graduate
+to architecture docs only when the design is settled.
 
 ### Conventions
 
