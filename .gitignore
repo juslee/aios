@@ -26,6 +26,9 @@ esp/
 *.log
 core.*
 
+# Obsidian local config (each dev's personal theme/plugins/workspace)
+docs/.obsidian/
+
 # Claude Code worktrees and agent memory
 .claude/worktrees/**/*
 .claude/agent-memory/**/*
