@@ -1,3 +1,8 @@
+---
+tags: [platform, camera]
+type: architecture
+---
+
 # AIOS Camera Subsystem
 
 ## Deep Technical Architecture

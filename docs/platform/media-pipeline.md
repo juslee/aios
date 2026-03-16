@@ -1,3 +1,8 @@
+---
+tags: [platform, media]
+type: architecture
+---
+
 # AIOS Media Pipeline
 
 ## Deep Technical Architecture

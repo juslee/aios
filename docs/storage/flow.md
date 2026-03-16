@@ -1,3 +1,8 @@
+---
+tags: [storage, ipc]
+type: architecture
+---
+
 # AIOS Flow System
 
 ## Deep Technical Architecture

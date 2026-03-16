@@ -1,3 +1,8 @@
+---
+tags: [platform, networking]
+type: architecture
+---
+
 # AIOS Networking: Network Translation Module
 
 ## Deep Technical Architecture

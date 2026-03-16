@@ -1,3 +1,8 @@
+---
+tags: [kernel, gpu]
+type: architecture
+---
+
 # AIOS Kernel Compute Abstraction
 
 ## Deep Technical Architecture

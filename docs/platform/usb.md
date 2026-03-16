@@ -1,3 +1,8 @@
+---
+tags: [platform, usb, drivers]
+type: architecture
+---
+
 # AIOS USB Subsystem
 
 ## Deep Technical Architecture
