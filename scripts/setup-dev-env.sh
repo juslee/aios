@@ -107,6 +107,18 @@ if [ ! -f "$EDK2_FW" ]; then
     fi
 fi
 
+# ─── Tier 5: Obsidian MCP + Skill (for Claude Code docs integration) ───
+
+if command -v node &> /dev/null; then
+    echo "[setup] Node.js found — Obsidian MCP will auto-configure via .mcp.json"
+    if command -v npx &> /dev/null; then
+        echo "[setup] Installing mcpvault skill..."
+        npx -y skills add -y bitbonsai/mcpvault 2>/dev/null || true
+    fi
+else
+    echo "[setup] Optional: Install Node.js for Obsidian MCP docs search"
+fi
+
 # ─── Verify Rust toolchain ───
 
 echo "[setup] Verifying Rust toolchain..."

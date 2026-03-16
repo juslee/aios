@@ -802,6 +802,40 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 ---
 
+## Knowledge Hive
+
+The `docs/` directory is an Obsidian vault. The MCP server is configured in `.mcp.json`
+(project-scoped) and available to all developers automatically.
+
+### Searching docs
+
+Use Obsidian MCP tools to search architecture docs:
+- `search_notes("query")` — find docs by content or frontmatter
+- `read_note("path")` — read any doc in the vault
+- `manage_tags` — find docs by domain tags
+
+### Writing knowledge
+
+After significant sessions, write insights to `docs/knowledge/`:
+- `docs/knowledge/decisions/` — Architecture Decision Records (why we chose X over Y)
+- `docs/knowledge/research/` — Research notes on explored topics
+- `docs/knowledge/lessons/` — Hard-won lessons (bugs, gotchas, platform quirks)
+
+### Working documents (plans/)
+
+When implementing a phase/milestone, create a working doc in `docs/knowledge/plans/`:
+- Track approach, decisions, issues encountered as you work
+- At completion: distill lessons → `lessons/`, decisions → `decisions/`
+- Delete the plan doc after distilling (ephemeral — permanent notes survive)
+
+### Conventions
+
+Naming: `YYYY-MM-DD-initials-short-description.md`
+Required frontmatter: author, date, tags, status (draft/in-progress/final)
+Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers
+
+---
+
 ## CLAUDE.md Self-Maintenance
 
 Team-lead updates this file after every milestone:
