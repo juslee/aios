@@ -1,6 +1,6 @@
 ---
 author: Justin Lee
-date: 2025-01-01
+date: 2026-03-09
 tags: [kernel, memory]
 status: final
 ---
