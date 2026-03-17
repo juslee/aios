@@ -9,6 +9,8 @@ Part of: [model.md](../model.md) — AIOS Security Model
 
 ### 2.1 Layer 1: Intent Verification
 
+> **Deep dive:** [intent-verifier.md](../../intelligence/intent-verifier.md) — full architecture covering verification pipeline, structured intent specs, IPC taint labels, adversarial resistance, and AI-native intelligence.
+
 Intent verification answers: "Is this action consistent with what the agent is supposed to be doing?" This is the AI-powered layer — it uses AIRS to compare observed actions against the agent's declared task.
 
 **Why this layer exists:** Capabilities alone are insufficient. An agent with `ReadSpace("email/")` and `Network(smtp.gmail.com)` has legitimate capabilities for an email agent. But if the user asked "summarize my unread emails" and the agent starts deleting emails and forwarding them to an external address, the capabilities permit it but the intent doesn't. Layer 1 catches this.

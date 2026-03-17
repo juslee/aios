@@ -238,6 +238,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
 | Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
 | AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 41) |
+| Intent verifier (hub) | `docs/intelligence/intent-verifier.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| Intent verifier pipeline | `docs/intelligence/intent-verifier/pipeline.md` | §2 Architecture, §4 Verification Pipeline, §10 Performance Model |
+| Intent specification | `docs/intelligence/intent-verifier/specification.md` | §3 DeclaredIntent + StructuredIntent |
+| Information flow verification | `docs/intelligence/intent-verifier/information-flow.md` | §5 IPC Taint Labels (DIFC), Data Flow Graph, Exfiltration Detection |
+| Behavioral integration | `docs/intelligence/intent-verifier/behavioral.md` | §6 Layer 1+3 Coordination, §9 Temporal Logic Monitor (MTL) |
+| Intent verifier security | `docs/intelligence/intent-verifier/security.md` | §7 Capability Integration, §8 Adversarial Resistance, §11 Graceful Degradation |
+| Intent verifier intelligence | `docs/intelligence/intent-verifier/intelligence.md` | §12 Testing, §13 AI-Native Intelligence, §16 Future Directions, §17 References |
 | Fuzzing & input hardening (hub) | `docs/security/fuzzing.md` | §1 Overview, §2 Attack surface, Document Map |
 | Fuzzing hardening strategies | `docs/security/fuzzing/strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
 | Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
