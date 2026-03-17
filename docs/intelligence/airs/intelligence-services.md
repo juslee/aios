@@ -9,6 +9,8 @@ Part of: [airs.md](../airs.md) — AI Runtime Service
 
 ### 5.1 Space Indexer
 
+> **Full architecture:** [space-indexer.md](../space-indexer.md) — standalone document covering the complete Space Indexer design (pipeline, indexing policy, HNSW embedding index, full-text index, relationship graph, search integration, security, performance budgets, AI-native intelligence). The summary below provides an overview; see the standalone doc for implementation-level detail.
+
 The Space Indexer runs continuously in the background, generating semantic metadata for all objects in all spaces:
 
 ```rust
@@ -27,6 +29,7 @@ pub struct IndexJob {
 pub enum IndexTrigger {
     Created,                        // new object
     Modified,                       // content changed
+    Promoted,                       // CompactObject → full Object
     Scheduled,                      // periodic re-index
     Requested,                      // agent or user requested
 }

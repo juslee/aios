@@ -202,6 +202,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | AIRS security | `docs/intelligence/airs/security.md` | §10.1–§10.5 Security path isolation, crash containment, agent hints, kernel oversight, provenance |
 | AIRS hardware scaling | `docs/intelligence/airs/scaling.md` | §11.1–§11.4 Model capability trajectory, multi-model architecture, context windows, NPU integration |
 | AIRS AI-native intelligence | `docs/intelligence/airs/ai-native.md` | §13.1–§13.7 Kernel-internal ML, §14.1–§14.11 AIRS-dependent intelligence, §15 Future directions |
+| Space Indexer (hub) | `docs/intelligence/space-indexer.md` | §1 Core Insight, §2 Architecture, §13 Impl Order, §14 Design Principles, §15 Future Directions, Document Map |
+| Space Indexer pipeline | `docs/intelligence/space-indexer/pipeline.md` | §3.1–§3.6 Index queue, content extraction, embedding generation, entity extraction, summaries, SemanticMetadata |
+| Space Indexer indexing policy | `docs/intelligence/space-indexer/indexing-policy.md` | §4.1–§4.4 Full-text vs embedding split, promotion criteria, on-demand embedding, batch re-indexing |
+| Space Indexer embedding index | `docs/intelligence/space-indexer/embedding-index.md` | §5.1–§5.6 HNSW graph, quantization (SQ8/PQ/RaBitQ), persistence, eviction, filtered search |
+| Space Indexer full-text index | `docs/intelligence/space-indexer/fulltext-index.md` | §6.1–§6.6 Inverted index, BM25 scoring, tokenization (CJK bigrams), maintenance, phrase queries |
+| Space Indexer relationship graph | `docs/intelligence/space-indexer/relationship-graph.md` | §7.1–§7.7 Relationship types, graph storage, traversal, PersonalRank, cross-object discovery, edge aging |
+| Space Indexer search integration | `docs/intelligence/space-indexer/search-integration.md` | §8.1–§8.3 Semantic interface, RRF/learned score fusion, graceful degradation; §9.1–§9.5 Cross-service integration |
+| Space Indexer security | `docs/intelligence/space-indexer/security.md` | §10.1–§10.4 Resource path separation, crash containment, capability-gated access, embedding privacy; §11.1–§11.4 Compute/memory/storage/latency budgets |
+| Space Indexer intelligence | `docs/intelligence/space-indexer/intelligence.md` | §12.1–§12.2 AIRS-dependent (adaptive priority, clustering, query optimization), kernel-internal ML (pattern prediction, eviction, Bloom filters) |
 | Runtime Advisor (hub) | `docs/intelligence/runtime-advisor.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
 | Runtime Advisor scheduling | `docs/intelligence/runtime-advisor/scheduling.md` | §3 AIRS learning frontend, §4 Kernel scheduler backend |
 | Runtime Advisor allocation | `docs/intelligence/runtime-advisor/allocation.md` | §5 AIRS lifetime prediction, §6 Kernel slab integration |
