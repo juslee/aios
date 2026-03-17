@@ -311,39 +311,20 @@ Tools are the interop mechanism. A PDF parser agent registers a `parse_pdf` tool
 
 ### 5.8 Conversation Manager
 
-Manages conversation history for the conversation bar and agent interactions:
+The Conversation Manager is the AIRS intelligence service responsible for multi-turn conversation sessions, context window management, tool use orchestration, streaming token delivery, and the Conversation Bar UI.
 
-```rust
-pub struct ConversationManager {
-    sessions: HashMap<ConversationId, Conversation>,
-}
+**Full architecture:** [conversation-manager.md](../conversation-manager.md) (hub + 6 sub-documents) is the authoritative reference. Key sub-documents:
 
-pub struct Conversation {
-    id: ConversationId,
-    messages: Vec<Message>,
-    context: ConversationContext,
-    space: SpaceId,                 // conversation stored as space object
-    active_model: ModelId,
-}
+| Sub-Document | Content |
+|---|---|
+| [sessions.md](../conversation-manager/sessions.md) | Session lifecycle, persistence, forking, search |
+| [context-windows.md](../conversation-manager/context-windows.md) | Context assembly pipeline, token budget, RAG, compression |
+| [tool-orchestration.md](../conversation-manager/tool-orchestration.md) | Tool discovery, invocation flow, built-in tools |
+| [conversation-bar.md](../conversation-manager/conversation-bar.md) | Bar design, structured output, compositor integration |
+| [streaming.md](../conversation-manager/streaming.md) | Token delivery, backpressure, cancellation, quality metrics |
+| [security.md](../conversation-manager/security.md) | Injection defense, capabilities, privacy, audit |
 
-pub struct ConversationContext {
-    /// Spaces the user has been working in (for context)
-    recent_spaces: Vec<SpaceId>,
-    /// Active tasks (for context)
-    active_tasks: Vec<TaskId>,
-    /// Relevant objects (retrieved by semantic search)
-    retrieved_context: Vec<ObjectId>,
-    /// Total token count (for context window management)
-    token_count: u32,
-}
-```
-
-**Context window management:** When a conversation grows beyond the model's context window, the Conversation Manager compresses older messages:
-
-1. Summarize oldest messages into a condensed context block
-2. Keep recent messages verbatim
-3. Always include system prompt and capability declarations
-4. Retrieved context (from spaces) is injected per-turn, not persisted
+**Core types:** `ConversationSession`, `Conversation`, `ConversationContext`, `SessionConfig`, `StoredMessage` — defined in the hub document §2.
 
 ### 5.9 Agent Capability Intelligence
 
