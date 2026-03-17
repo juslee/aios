@@ -204,7 +204,7 @@ Security Layer 1. Compares an agent's observed actions against its declared inte
 - **IPC taint labels** (DIFC) track data provenance across agent boundaries, preventing cross-agent exfiltration even when individual actions are capability-permitted
 - **Graceful degradation** — configurable fallback policies (Skip/ReadOnly/BlockAll) per trust level when AIRS is unavailable; Layers 2–8 remain active
 
-**Without AIRS:** Intent verification degrades to algorithmic pre-checks only. Layers 2-8 remain active. The capability check (Layer 2) catches any action the agent doesn't have a token for. Behavioral boundaries (Layer 3) catch rate anomalies via static rules.
+**Without AIRS:** When the AIRS service is unavailable, both LLM semantic verification and algorithmic pre-checks are offline (pre-checks run within the AIRS process). Kernel-enforced fallback policies take effect per trust level: `Skip` (rely on Layers 2–8), `ReadOnly` (allow reads, block writes), or `BlockAll` (block all non-allowlisted actions). Layers 2–8 remain active regardless. See [security.md §11](../intent-verifier/security.md) for the full graceful degradation design.
 
 ### 5.5 Behavioral Monitor
 

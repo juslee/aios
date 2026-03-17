@@ -32,7 +32,7 @@ pub struct LabeledMessage {
 
 /// Compact security label set attached to data flows.
 ///
-/// Fits in 40 bytes: zone(1) + source_count(1) + sources(4*16=64)
+/// Size: zone(1) + source_count(1) + sources(4×16=64)
 /// + declassified(1) + integrity(1) = 68 bytes total.
 /// Designed for inline storage alongside RawMessage without
 /// requiring heap allocation.
@@ -56,12 +56,14 @@ pub struct LabelSet {
 ///
 /// The sensitivity ordering is:
 ///   Core (highest) > Personal > Collaborative > Ephemeral > Untrusted (lowest)
+/// Matches shared/src/storage.rs definition.
+#[repr(u8)]
 pub enum SecurityZone {
-    Core,          // Kernel data, system configuration
-    Personal,      // User's private data (emails, photos, credentials)
-    Collaborative, // Data shared between agents with explicit grants
-    Untrusted,     // External/unverified data
-    Ephemeral,     // Temporary data with automatic expiry
+    Core = 0,          // Kernel data, system configuration
+    Personal = 1,      // User's private data (emails, photos, credentials)
+    Collaborative = 2, // Data shared between agents with explicit grants
+    Untrusted = 3,     // External/unverified data
+    Ephemeral = 4,     // Temporary data with automatic expiry
 }
 ```
 

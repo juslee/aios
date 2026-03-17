@@ -64,28 +64,31 @@ pub enum CombinedAction {
 }
 ```
 
-The combination logic follows a conservative merge rule: the most restrictive verdict wins. If Layer 1 returns `Aligned` but Layer 3 returns `Anomalous`, the action is allowed but logged. If Layer 1 returns `Misaligned`, the action is blocked regardless of Layer 3's assessment. The `Suspend` action is reserved for the case where both layers independently flag the action as problematic — this dual-trigger requirement prevents false positives from either layer alone from suspending an agent.
+The combination logic follows a conservative merge rule: the most restrictive verdict wins. If Layer 1 returns `Aligned` but Layer 3 returns `Anomalous`, the action is allowed but logged. If Layer 1 returns `Violation`, the action is blocked regardless of Layer 3's assessment. The `Suspend` action is reserved for the case where both layers independently flag the action as problematic — this dual-trigger requirement prevents false positives from either layer alone from suspending an agent.
 
 ```rust
 pub fn combine_verdicts(
     intent: &VerificationResult,
     behavior: &BehaviorAssessment,
 ) -> CombinedAction {
-    match (intent.alignment, behavior) {
-        (Alignment::Aligned, BehaviorAssessment::Normal) => CombinedAction::Allow,
-        (Alignment::Aligned, BehaviorAssessment::Elevated { .. }) => CombinedAction::Allow,
-        (Alignment::Aligned, BehaviorAssessment::Anomalous { .. }) => {
+    match (intent, behavior) {
+        (VerificationResult::Aligned, BehaviorAssessment::Normal) => CombinedAction::Allow,
+        (VerificationResult::Aligned, BehaviorAssessment::Elevated { .. }) => CombinedAction::Allow,
+        (VerificationResult::Aligned, BehaviorAssessment::Anomalous { .. }) => {
             CombinedAction::AllowWithLog
         }
-        (Alignment::Misaligned, BehaviorAssessment::Normal) => CombinedAction::Block {
-            reason: format!("semantic misalignment: {}", intent.explanation),
-        },
-        (Alignment::Misaligned, BehaviorAssessment::Elevated { .. }) => {
+        (VerificationResult::Violation { explanation }, BehaviorAssessment::Normal) => {
+            CombinedAction::Block {
+                reason: format!("semantic misalignment: {}", explanation),
+            }
+        }
+        (VerificationResult::Suspicious { .. } | VerificationResult::Violation { .. },
+         BehaviorAssessment::Elevated { .. }) => {
             CombinedAction::Block {
                 reason: format!("semantic misalignment with elevated behavior"),
             }
         }
-        (Alignment::Misaligned, BehaviorAssessment::Anomalous { conditions, .. }) => {
+        (VerificationResult::Violation { .. }, BehaviorAssessment::Anomalous { conditions, .. }) => {
             CombinedAction::Suspend {
                 reason: format!(
                     "dual-layer threat: intent misaligned + {} anomalous conditions",
@@ -158,9 +161,9 @@ pub struct VolumeAlert {
 
 The multi-window approach catches three distinct attack patterns:
 
-- **Slow exfiltration**: 1 read/hour sustained over 24 hours produces 24 reads — individually invisible but detectable by the daily window once the 5000-read threshold accounts for cumulative behavior over the agent's declared task scope.
-- **Burst-then-pause**: 500 reads in a single hour, then silence — caught by the hourly window even if the daily and weekly totals remain below threshold.
-- **Gradual accumulation**: 100 reads/day over 7 days produces 700 reads/week — caught by the weekly window even though no single day exceeds the daily threshold.
+- **Slow exfiltration**: 1 read/hour sustained over 24 hours produces 24 reads — individually invisible per hour, but the daily window detects it if the agent's `ResourceBounds` declares `max_reads: 10` for a task expected to read a few files. The thresholds are agent-specific, not absolute.
+- **Burst-then-pause**: 50 reads in a single hour from an agent with `max_reads: 20` per hour — caught by the hourly window even if the daily and weekly totals remain below threshold.
+- **Gradual accumulation**: 30 reads/day over 7 days produces 210 reads/week — caught by the weekly window when the agent's declared weekly budget is 100, even though no single day exceeds its daily threshold.
 
 Each `VolumeTracker` is per-agent and per-operation-class (reads, writes, network sends, inference requests). Thresholds are derived from the agent's `ResourceBounds` in its `StructuredIntent` specification, not from hardcoded constants. An agent declaring `max_reads: 50` gets tighter windows than one declaring `max_reads: 10000`.
 

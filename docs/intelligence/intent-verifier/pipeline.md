@@ -17,8 +17,10 @@ This placement reflects a fundamental design constraint: LLM inference requires 
 pub struct IntentVerifier {
     /// AIRS inference model for semantic verification
     model: ModelHandle,
-    /// Active task intents, keyed by TaskId
-    active_tasks: HashMap<TaskId, DeclaredIntent>,
+    /// Active task intents, keyed by TaskId.
+    /// Stores StructuredIntent when available (wraps DeclaredIntent as `base` field),
+    /// falls back to DeclaredIntent-only when StructuredIntent cannot be constructed.
+    active_tasks: HashMap<TaskId, StructuredIntent>,
     /// Verification result cache (LRU, keyed by ActionSignature)
     cache: LruCache<ActionSignature, VerificationResult>,
     /// Policy configuration
@@ -201,19 +203,19 @@ impl StructuredIntentChecker {
         intent: &StructuredIntent,
     ) -> PreCheckResult {
         // 1. Purpose match
-        let purpose = self.check_purpose(&observation.action, &intent.purpose);
+        let purpose = self.check_purpose(&observation.action, &intent.purposes);
         if purpose == CheckOutcome::ClearViolation {
             return PreCheckResult::Violation("Action type not permitted by declared purpose");
         }
 
         // 2. Temporal formula evaluation
-        let temporal = self.check_temporal(&observation, &intent.temporal_spec);
+        let temporal = self.check_temporal(&observation, &intent.expected_behavior);
         if temporal == CheckOutcome::ClearViolation {
             return PreCheckResult::Violation("Action violates temporal constraints");
         }
 
         // 3. Data flow validation
-        let flow = self.check_data_flow(&observation, &intent.data_flow_specs);
+        let flow = self.check_data_flow(&observation, &intent.allowed_flows);
         if flow == CheckOutcome::ClearViolation {
             return PreCheckResult::Violation("Data flow violates declared spec");
         }
@@ -304,7 +306,7 @@ Confidence scoring follows a calibrated scale:
 - **0.9-1.0:** High confidence the action is suspicious or violating. Recommended for immediate blocking.
 - **0.7-0.9:** Moderate confidence. Recommended for logging + user notification.
 - **0.5-0.7:** Low confidence. Recommended for logging only.
-- **Below 0.5:** The model is uncertain. Treated as `Aligned` with a log entry.
+- **Below 0.5:** The model is uncertain. Treated as `Suspicious` with low confidence, triggering a log entry and optional user notification. This follows the conservative stance: uncertainty defaults to restriction, not permission.
 
 The IntentVerifier does not blindly trust the model's verdict. If the model returns `Aligned` but the algorithmic pre-check had a `ClearViolation` on any dimension, the pre-check result takes precedence. The LLM is consulted for ambiguous cases, not to override deterministic checks.
 

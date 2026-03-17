@@ -94,7 +94,7 @@ Phase 3 (IPC + Caps) ──→ Phase 9 (AIRS) ──→ Phase 13a (Core Verifier
 
 2. **Algorithmic where possible, LLM where necessary.** Structured intent specifications (`IntentPurpose`, `TemporalSpec`, `DataFlowSpec`) enable machine-checkable pre-filters that operate in <0.01ms with no AIRS dependency. The LLM is consulted only for actions that fail or are ambiguous under algorithmic checking — approximately 20% of all verifications.
 
-3. **Conservative fallback.** When AIRS is unavailable, the system does not silently permit all actions. Fallback policies are configurable per trust level: `Skip` (rely on Layers 2–8), `ReadOnly` (allow reads, block writes), or `BlockAll` (block all non-allowlisted actions). Higher trust levels default to more restrictive fallbacks.
+3. **Conservative fallback.** When AIRS is unavailable, the system does not silently permit all actions. Fallback policies are configurable per trust level: `Skip` (rely on Layers 2–8), `ReadOnly` (allow reads, block writes), or `BlockAll` (block all non-allowlisted actions). Lower trust levels default to more restrictive fallbacks — untrusted/sandboxed agents default to `BlockAll`, while system/verified agents default to `Skip` since they have the strongest Layer 2 capability constraints.
 
 4. **Defense in depth.** Intent verification is necessary but not sufficient. It operates alongside capability enforcement (algorithmic, always-on), behavioral monitoring (statistical, always-on), resource limits, injection defense, audit trails, and cryptographic integrity. Each layer catches threats the others miss.
 
