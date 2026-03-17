@@ -159,7 +159,7 @@ flowchart TD
     subgraph ENF["Enforcement"]
         BSB["`**Behavioral State Byte**
         kernel per-process flag
-        §3.5`"]
+        §3.6`"]
         RL["`**Rate Limiter**
         IPC gate slow-down
         §6.2`"]
@@ -216,7 +216,7 @@ The Behavioral Monitor spans multiple development phases, reflecting its depende
 |---|---|---|
 | **10** (AIRS Intelligence Services) | M30–M32 | Core Behavioral Monitor: `BehavioralMonitor` struct, `BehavioralBaseline`, `BehavioralPolicy`, hard limits, z-score detection, basic escalation, audit logging. Tier 1 fully operational. |
 | **13** (Agent Framework) | M39–M41 | Agent profiling pipeline: observation collection, predicted vs. observed comparison (§8), cold start via Agent Capability Intelligence priors. |
-| **17** (Security Architecture) | M51–M53 | Security integration: behavioral state byte in IPC fast path (§3.5, §6.4), zero trust behavioral gate, AIRS self-monitoring (§10), provenance chain integration (§7). |
+| **17** (Security Architecture) | M51–M53 | Security integration: behavioral state byte in IPC fast path (§3.6, §6.4), zero trust behavioral gate, AIRS self-monitoring (§10), provenance chain integration (§7). |
 | **34** (Secure Boot & Updates) | — | Formal verification of hard limit invariants ("hard limits are always enforced", "escalation terminates"). |
 | **41** (AIRS Capability Intelligence) | M124–M126 | AIRS-dependent intelligence: semantic sequence analysis (§13.1), RAG behavioral lookup (§13.2), LoRA fine-tuning (§13.3), cross-agent correlation (§13.4). Full Tier 2 operational. |
 
