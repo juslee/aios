@@ -9,6 +9,8 @@ Part of: [model.md](../model.md) — AIOS Security Model
 
 ### 2.1 Layer 1: Intent Verification
 
+> **Deep dive:** [intent-verifier.md](../../intelligence/intent-verifier.md) — full architecture covering verification pipeline, structured intent specs, IPC taint labels, adversarial resistance, and AI-native intelligence.
+
 Intent verification answers: "Is this action consistent with what the agent is supposed to be doing?" This is the AI-powered layer — it uses AIRS to compare observed actions against the agent's declared task.
 
 **Why this layer exists:** Capabilities alone are insufficient. An agent with `ReadSpace("email/")` and `Network(smtp.gmail.com)` has legitimate capabilities for an email agent. But if the user asked "summarize my unread emails" and the agent starts deleting emails and forwarding them to an external address, the capabilities permit it but the intent doesn't. Layer 1 catches this.
@@ -501,6 +503,8 @@ Audit: metadata`"]
 **Promotion:** Moving data from Untrusted to Personal requires user action. A downloaded file starts in `downloads/` (Untrusted). When the user says "save this to my documents," the OS copies the object to `user/documents/` (Personal) — a zone promotion. AIRS can scan the content first (virus/malware check, content classification).
 
 ### 2.5 Layer 5: Adversarial Defense
+
+> **Full architecture:** [adversarial-defense.md](../adversarial-defense.md) — comprehensive adversarial defense architecture (threat model, control/data separation, screening pipeline, detection/response, intelligence, testing)
 
 The core principle: **agent instructions come from the kernel, never from data.** This is the control/data plane separation that prevents prompt injection from escalating to system compromise.
 

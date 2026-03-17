@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [ipc.md](./ipc.md) — IPC fast path and direct switch, [compositor.md](../platform/compositor.md) — Compositor frame deadlines, [airs.md](../intelligence/airs.md) — Inference scheduling, [memory.md](./memory.md) — Per-agent memory, [agents.md](../applications/agents.md) — Agent CPU quotas, [deadlock-prevention.md](./deadlock-prevention.md) — Deadlock prevention architecture (lock ordering §3, preemptive kernel §9, priority inheritance §5)
+**Related:** [ipc.md](./ipc.md) — IPC fast path and direct switch, [compositor.md](../platform/compositor.md) — Compositor frame deadlines, [airs.md](../intelligence/airs.md) — Inference scheduling, [memory.md](./memory.md) — Per-agent memory, [agents.md](../applications/agents.md) — Agent CPU quotas, [deadlock-prevention.md](./deadlock-prevention.md) — Deadlock prevention architecture (lock ordering §3, preemptive kernel §9, priority inheritance §5), [runtime-advisor/scheduling.md](../intelligence/runtime-advisor/scheduling.md) — AIRS learned scheduling weights
 
 -----
 
