@@ -253,6 +253,8 @@ pub enum BehaviorAction {
 
 ### 5.6 Adversarial Defense
 
+> **Full architecture:** [../../security/adversarial-defense.md](../../security/adversarial-defense.md) — comprehensive adversarial defense architecture (threat model, control/data separation, screening pipeline, detection/response, intelligence, testing)
+
 Security Layer 5. Detects prompt injection attempts:
 
 ```rust

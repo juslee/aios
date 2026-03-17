@@ -49,7 +49,7 @@ flowchart TD
 | Capability violation (EPERM) | High | Block action, log | Next-break notification | None needed — action was prevented |
 | Behavioral anomaly (z > 3σ) | Medium | Rate limit → pause if persists | Digest summary | User reviews in Inspector, approves or revokes |
 | Intent mismatch (AIRS) | High | Block action, pause agent | Next-break with explanation | User reviews agent's recent actions |
-| Injection detected | High | Quarantine input, notify | Next-break with source info | User reviews quarantined content |
+| Injection detected | High | Quarantine input, notify | Next-break with source info | User reviews quarantined content — see [adversarial-defense/response.md](../adversarial-defense/response.md) §8 |
 | Chain integrity violation | Critical | Alert, begin audit | Immediate interrupt | Full chain verification, identify tampered range |
 | Resource exhaustion (blast radius) | Medium | Throttle → pause → kill | Next-break with usage stats | Rollback if data affected |
 | PAC/BTI violation | Critical | Terminate process | Immediate interrupt | Investigate — indicates code corruption or exploit |
