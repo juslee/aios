@@ -175,7 +175,7 @@ flowchart LR
 
 1. **Build** (Rust): Construct the graph from the model architecture. Each transformer layer adds attention, feed-forward, and normalization nodes. The graph is rebuilt for each forward pass (GGML graphs are ephemeral).
 
-2. **Plan** (GGML): Allocate scratch memory for intermediate tensors. GGML uses a memory pool (not `malloc`) — the pool is pre-allocated from `Pool::Model` at session creation. Schedule operations across available threads.
+2. **Plan** (GGML): Allocate scratch memory for intermediate tensors. GGML uses a memory pool (not `malloc`) — the pool is pre-allocated from `Pool::Kernel` at graph build time. Schedule operations across available threads.
 
 3. **Execute** (GGML + NEON): Run the graph. Matrix multiplications use NEON SIMD kernels (§3.1.4). KV cache is read for past context and written with new key-value pairs. The thermal yield point (§3.1.5) is checked between layers.
 
@@ -384,8 +384,9 @@ pub struct ScoreComponents {
     /// Does this device support the model's quantization format?
     /// 0.0 = unsupported (disqualified), 1.0 = native support.
     pub format_support: f32,
-    /// Current utilization (0.0 = idle = best, 1.0 = fully loaded = worst).
-    pub utilization: f32,
+    /// Available capacity (0.0 = fully loaded = worst, 1.0 = idle = best).
+    /// Computed as `1.0 - device.utilization()`.
+    pub availability: f32,
     /// Thermal headroom (0.0 = critical = worst, 1.0 = cool = best).
     pub thermal: f32,
     /// Memory fit — can the model + KV cache fit on this device?
@@ -412,7 +413,7 @@ impl ComputeScheduler {
             0.0  // Hard disqualification
         };
 
-        let utilization = 1.0 - device.utilization();
+        let availability = 1.0 - device.utilization();
         let thermal = device.thermal_headroom();
         let memory_fit = self.compute_memory_fit(device, request);
         let throughput = self.estimate_throughput(device, request);
@@ -750,9 +751,9 @@ flowchart LR
 ```rust
 pub trait TokenCallback: Send {
     /// Called for each generated token.
-    /// The token string may be a partial UTF-8 character (especially for
-    /// non-Latin scripts). Consumers must buffer until they have complete
-    /// characters.
+    /// The token string is valid UTF-8 but may not align to user-perceived
+    /// grapheme clusters (especially for non-Latin scripts or emoji).
+    /// Consumers must buffer until they have complete grapheme boundaries.
     fn on_token(&mut self, token: &str) -> TokenAction;
 
     /// Called when generation is complete (stop sequence, max tokens, or EOS).
@@ -1007,6 +1008,8 @@ pub struct InferenceMeter {
     agent_budgets: HashMap<AgentId, Option<TokenBudget>>,
     /// GCRA rate limiter: prevents burst inference that starves other agents.
     rate_limiter: GcraRateLimiter,
+    /// Completion length predictor for budget estimation (§3.5.4).
+    predictor: CompletionPredictor,
     /// Usage history for trend analysis (rolling 24-hour window).
     history: UsageHistory,
 }
@@ -1254,7 +1257,8 @@ impl InferenceEngine {
         self.meter.check_rate(agent)?;
 
         // 2. Check token budget (predictive — estimate completion length)
-        let (est_tokens, _) = self.meter.predictor.predict_from_config(&config);
+        let request = InferenceRequest::from_config(&config, agent);
+        let (est_tokens, _) = self.meter.predictor.predict(&request);
         self.meter.check_budget(agent, est_tokens)?;
 
         // 3. Check kernel compute budget
@@ -1632,8 +1636,8 @@ impl InferenceRuntime for CandleBackend { /* ... */ }
 
 **Migration strategy:**
 
-1. **Phase 9**: GGML backend — proven, well-tested, matches architecture docs.
-2. **Post-Phase 9**: Add candle backend behind the `InferenceRuntime` trait. Run both in parallel (A/B testing) to validate correctness and measure performance delta.
+1. **Initial backend**: GGML — proven, well-tested, mature quantization support.
+2. **Second backend**: Add candle behind the `InferenceRuntime` trait. Run both in parallel (A/B testing) to validate correctness and measure performance delta.
 3. **When candle NEON performance reaches parity**: Switch default to candle. Keep GGML as fallback.
 4. **Long-term**: Remove GGML backend when candle is proven stable. Eliminates all C code from AIRS.
 

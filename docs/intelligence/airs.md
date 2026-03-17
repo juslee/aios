@@ -18,7 +18,7 @@ Traditional operating systems treat AI as an application — a program the user 
 
 AIOS inverts this. The AI Runtime Service (AIRS) is a **privileged system service** — the first non-kernel component loaded at boot, with direct access to spaces, the capability system, and hardware compute resources. AIRS is to intelligence what the kernel is to resource management: invisible infrastructure that makes everything else work better.
 
-**AIRS is not a chatbot.** It's the engine behind semantic search, intent verification, behavioral monitoring, context inference, attention management, adversarial defense, Space indexing, and agent lifecycle. The conversation bar is just one small interface to AIRS. Most of its work happens without any user interaction.
+**AIRS is not a chatbot.** It's the engine behind semantic search, intent verification, behavioral monitoring, context inference, attention management, adversarial defense, the Space Indexer, and agent lifecycle. The conversation bar is just one small interface to AIRS. Most of its work happens without any user interaction.
 
 -----
 
