@@ -21,7 +21,7 @@ stateDiagram-v2
     Streaming --> Active: inference complete
     Active --> ToolExecuting: tool call detected
     ToolExecuting --> Streaming: tool result injected
-    ToolExecuting --> Active: tool call cancelled
+    ToolExecuting --> Active: tool completed or user skipped result
     Active --> Suspended: inactivity timeout / Bar dismissed
     Suspended --> Active: session resumed
     Suspended --> Evicted: memory pressure / LRU eviction

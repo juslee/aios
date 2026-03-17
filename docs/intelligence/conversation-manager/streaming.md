@@ -194,7 +194,7 @@ The model embeds tool calls as structured JSON in its token output. The Stream M
 Here is what I found in your notes about IPC:
 
 <tool_call>
-{"name": "search_spaces", "arguments": {"query": "IPC design", "limit": 5}}
+{"name": "search_spaces", "arguments": {"query": "IPC design", "filters": {"limit": 5}}}
 </tool_call>
 
 Based on the search results...
@@ -229,7 +229,7 @@ pub enum ToolParseState {
 
 1. **Opening detection** — when the token stream contains `<tool_call>`, the parser transitions from `Text` to `InsideToolCall`. Partial matches (`<tool` at the end of a batch) are buffered in `OpeningTag` until the next batch confirms or denies the match.
 
-2. **JSON accumulation** — inside a tool call, tokens are accumulated into `json_buffer` rather than delivered to subscribers. The parser tracks brace depth to handle nested JSON objects.
+2. **JSON accumulation** — inside a tool call, tokens are accumulated into `json_buffer` rather than delivered to subscribers. The parser tracks brace depth to handle nested JSON objects. Braces inside JSON string literals are excluded from depth tracking — the parser maintains a `in_string` flag and handles escape sequences (`\"`) to avoid false depth changes.
 
 3. **Closing detection** — when `</tool_call>` is detected, the parser validates the accumulated JSON against the tool schema, then emits a `ToolCallStart` event to subscribers.
 

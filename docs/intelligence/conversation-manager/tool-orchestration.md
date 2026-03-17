@@ -130,11 +130,13 @@ The model can invoke multiple tools across multiple turns to accomplish complex 
 
 ```text
 User: "Summarize the IPC design notes and email them to Alex"
-Turn 1: Model calls search_spaces("IPC design notes") → returns 3 objects
-Turn 2: Model calls read_object(obj_id) → returns full content
+Turn 1: Model calls search_spaces(query: "IPC design notes") → returns 3 objects
+Turn 2: Model calls read_object(object_id: obj_1) → returns full content
 Turn 3: Model generates summary
-Turn 4: Model calls flow_send(summary, "alex/inbox") → confirms delivery
+Turn 4: Model calls flow_send(content: summary, destination: "alex/inbox") → confirms delivery
 ```
+
+*Note: Tool call examples use shorthand notation. Actual wire format is `{"name": "<tool>", "arguments": {…}}` as described in [streaming.md §12.4](./streaming.md).*
 
 **Parallel invocations** — the model requests multiple independent tools simultaneously. The Tool Dispatcher detects multiple tool calls in the same response and executes them concurrently.
 
@@ -157,10 +159,10 @@ Turn 3: Model presents refined results to user
 
 ```text
 User: "Organize my research notes into categories"
-Turn 1: Model calls list_space("research/") → sees all objects
-Turn 2: Model calls read_object(obj_1) → determines category
-Turn 3: Model calls create_space("research/ml-papers/") → creates category
-Turn 4: Model calls move_object(obj_1, "research/ml-papers/") → moves object
+Turn 1: Model calls list_space(space: "research/") → sees all objects
+Turn 2: Model calls read_object(object_id: obj_1) → determines category
+Turn 3: Model calls create_space(parent: "research/", name: "ml-papers") → creates category
+Turn 4: Model calls move_object(object_id: obj_1, destination: "research/ml-papers/") → moves object
 ... (continues for each object)
 ```
 
@@ -208,7 +210,7 @@ pub enum ToolResultContent {
 }
 ```
 
-See [conversation-bar.md §10](./conversation-bar.md) for how these content types are rendered in the UI.
+`ToolResultContent` covers the common return types from built-in tools. The Conversation Bar's `ContentType` registry ([conversation-bar.md §10.1](./conversation-bar.md)) extends this with additional UI-specific types (`TaskCard`, `AgentStatus`, `Chart`, etc.) that are rendered by the ComponentRegistry but not returned directly from tool execution. Tool results are mapped to the appropriate `ContentType` at the rendering layer.
 
 -----
 

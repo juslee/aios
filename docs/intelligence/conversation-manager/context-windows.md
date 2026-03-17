@@ -24,7 +24,7 @@ flowchart LR
         _budget: 512 tokens_`"]
         CD["`**2. Capability Declarations**
         available tool schemas
-        _budget: 2048 tokens_`"]
+        _budget: 1024 tokens_`"]
         RC["`**3. Retrieved Context**
         space objects, tasks, signals
         _budget: proportional_`"]
@@ -33,7 +33,7 @@ flowchart LR
         _budget: remainder_`"]
         UM["`**5. Current Message**
         user's input
-        _budget: reserved 1024_`"]
+        _budget: reserved 512_`"]
     end
 
     SP --> CD --> RC --> CH --> UM
