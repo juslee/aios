@@ -72,11 +72,13 @@ The Behavioral Monitor is Layer 3 in the eight-layer defense model:
 | 8 | User Override | Can the user always intervene? | 0 (always available) |
 
 Layer 3 catches threats that Layers 1 and 2 cannot:
+
 - **Layer 1 misses:** Intent verification is per-action and synchronous — it doesn't see aggregate patterns across hundreds of actions
 - **Layer 2 misses:** Capabilities are static permissions — they don't encode "this agent normally reads 10 emails, not 10,000"
 - **Layer 3 catches:** Statistical anomalies across time, volume, targets, and sequences — even when every individual action is permitted and intent-aligned
 
 Conversely, Layer 3 has blind spots that other layers cover:
+
 - A single perfectly-timed malicious action within normal behavioral parameters → Layer 1 (intent) catches this
 - An agent accessing a space outside its capability set → Layer 2 (capabilities) catches this
 - A prompt injection that changes behavior within normal statistical bounds → Layer 5 (adversarial defense) catches this
@@ -206,7 +208,7 @@ flowchart TD
 
 -----
 
-## §14. Implementation Order
+## 14. Implementation Order
 
 The Behavioral Monitor spans multiple development phases, reflecting its dependency on the AIRS inference engine and security architecture.
 
@@ -235,7 +237,7 @@ Phase 9 + Phase 41 ──► Tier 2 intelligence
 
 -----
 
-## §15. Design Principles
+## 15. Design Principles
 
 ### 15.1 Hard Limits Always, Baselines When Available
 
