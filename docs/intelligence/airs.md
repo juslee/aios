@@ -125,6 +125,7 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 | [intelligence-services.md](./airs/intelligence-services.md) | §5 | Space Indexer, Context Engine, Attention Manager, Intent Verifier (summary), Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
 | [space-indexer.md](./space-indexer.md) | §1–§15 | **Standalone doc:** Full Space Indexer architecture — indexing pipeline, selective policy, HNSW embedding index, full-text index, relationship graph, search integration, security, performance budgets, AI-native intelligence |
 | [intent-verifier.md](./intent-verifier.md) | §1–§17 | Intent Verifier deep dive: verification pipeline, structured intent specs, IPC taint labels, behavioral integration, adversarial resistance, AI-native intelligence |
+| [behavioral-monitor.md](./behavioral-monitor.md) | — | **Standalone:** Full behavioral monitor architecture (hub + 7 sub-docs). Detection, profiling, evasion resistance, AI intelligence |
 | [lifecycle-and-data.md](./airs/lifecycle-and-data.md) | §6, §7, §8 | Agent lifecycle, data model, key technology choices |
 | [security.md](./airs/security.md) | §10 | Security path isolation, crash containment, agent hint processing, kernel oversight, provenance |
 | [scaling.md](./airs/scaling.md) | §11 | Hardware scaling trajectory, multi-model architecture, context windows, NPU integration |

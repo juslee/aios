@@ -323,7 +323,7 @@ pub enum EscalationAction {
 
 #### 2.3.1 AIRS Self-Monitoring (Who Watches the Watcher)
 
-AIRS issues resource orchestration directives (memory pool resizing, prefetch requests, compression scheduling). These directives are themselves actions that can be anomalous — a compromised or confused AIRS could issue pathological directives that degrade system performance. The behavioral monitoring of AIRS itself is handled by the **kernel**, not by AIRS:
+AIRS issues resource orchestration directives (memory pool resizing, prefetch requests, compression scheduling). These directives are themselves actions that can be anomalous — a compromised or confused AIRS could issue pathological directives that degrade system performance. The behavioral monitoring of AIRS itself is handled by the **kernel**, not by AIRS (see [security.md](../../intelligence/behavioral-monitor/security.md) §10 for the full AirsDirectiveMonitor architecture):
 
 ```rust
 /// Kernel-side monitor for AIRS resource directive behavior.

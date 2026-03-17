@@ -214,8 +214,12 @@ Security Layer 1. Compares an agent's observed actions against its declared inte
 > **Deep architecture:** The full anomaly detection architecture (three detection layers, frozen
 > artifact formats, response pipeline) is documented in
 > [runtime-advisor/anomaly-detection.md](../runtime-advisor/anomaly-detection.md).
+> The full standalone behavioral monitor architecture (detection algorithms, evasion resistance,
+> agent profiling, AI-powered enhancements) is in [behavioral-monitor.md](../behavioral-monitor.md).
 
-Security Layer 3. Detects anomalous behavior patterns:
+Security Layer 3. Detects anomalous behavior patterns.
+
+Summary of the core data model:
 
 ```rust
 pub struct BehavioralMonitor {

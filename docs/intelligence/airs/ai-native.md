@@ -247,7 +247,7 @@ impl AgentTokenStats {
 }
 ```
 
-When `anomaly` is true, the token budget enforcer can throttle the agent (queue further requests) or alert the behavioral monitor. This catches agents that suddenly consume 10-100x more tokens than their baseline — a potential sign of compromised agent behavior, prompt injection loops, or runaway generation.
+When `anomaly` is true, the token budget enforcer can throttle the agent (queue further requests) or alert the behavioral monitor (see [behavioral-monitor.md](../behavioral-monitor.md) for the full standalone architecture). This catches agents that suddenly consume 10-100x more tokens than their baseline — a potential sign of compromised agent behavior, prompt injection loops, or runaway generation.
 
 **State overhead:** ~2.3 KB total (64 agents × ~36 bytes each — `AgentTokenStats` contains two `f64`, one `u64`, one `bool`, and one `AgentId`).
 
