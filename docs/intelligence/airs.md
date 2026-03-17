@@ -127,6 +127,7 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 | [security.md](./airs/security.md) | §10 | Security path isolation, crash containment, agent hint processing, kernel oversight, provenance |
 | [scaling.md](./airs/scaling.md) | §11 | Hardware scaling trajectory, multi-model architecture, context windows, NPU integration |
 | [ai-native.md](./airs/ai-native.md) | §13, §14, §15 | Kernel-internal ML, AIRS-dependent intelligence, future directions |
+| [runtime-advisor.md](./runtime-advisor.md) | — | Runtime Advisor: learned scheduling, lifetime allocation, GC optimization, anomaly detection |
 
 -----
 

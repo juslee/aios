@@ -55,197 +55,76 @@ flowchart TD
 The kernel never depends on AIRS for correctness — frozen models provide sensible defaults,
 and AIRS periodically updates them based on observed workload patterns.
 
+> **Full architecture:** The AIRS Runtime Advisor is fully documented in
+> [runtime-advisor.md](../../intelligence/runtime-advisor.md) — hub document with four deep
+> sub-documents covering Rust trait definitions, `repr(C)` frozen artifact formats, state machines,
+> and research-informed designs. The summaries below provide the language-ecosystem perspective.
+
 ### 13.1 AIRS Runtime Advisor
 
 **Category:** AIRS-dependent (Phase 16)
 
 When a developer runs `aios agent audit`, AIRS analyzes the agent's manifest and source code
-to recommend the optimal runtime:
-
-**Analysis pipeline:**
-
-1. **Static code analysis** — identify compute patterns (numerical loops → Rust/WASM, I/O-bound → Python/TS OK)
-2. **Dependency analysis** — check if dependencies require C extensions (→ suggest Rust/WASM instead of Python)
-3. **Capability requirements** — match declared capabilities against runtime trust levels
-4. **Historical workload data** — if similar agents have been profiled, use performance baselines
-
-**Output example:**
-
-```text
-$ aios agent audit my-agent/
-Runtime: python (declared)
-Recommendation: python (confirmed)
-  ✓ I/O-bound workload (87% time waiting on AIRS/Space queries)
-  ✓ No C extension dependencies
-  ✓ Capabilities within semi-trusted bounds
-  ⚠ Function data_transform() is compute-heavy (13% CPU)
-    Consider: extract to Rust/WASM module for ~30x speedup
-```
-
-This builds on AIRS's existing capability intelligence pipeline (Stage 1: Static Code Analysis,
-Stage 3: Behavioral Prediction — see [airs.md](../../intelligence/airs.md) §5.9).
+to recommend the optimal runtime — matching compute patterns, dependencies, and capability
+requirements against runtime characteristics. This builds on AIRS's capability intelligence
+pipeline (see [airs.md](../../intelligence/airs.md) §5.9).
 
 ### 13.2 Learned Scheduling Weights
 
 **Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 21
 
-AIOS's scheduler assigns agents to four scheduling classes (RT, Interactive, Normal, Idle)
-based on manifest declarations. AIRS can learn **per-agent scheduling weights** from observed
-behavior and push updated weights as frozen lookup tables to the kernel.
+AIRS learns per-agent scheduling weights from observed workload patterns and pushes frozen
+weight tables to the kernel scheduler. Inspired by ALPS (USENIX ATC'24), which achieved 57.2%
+latency reduction with a decoupled frontend/backend learned scheduler. The kernel always has
+valid defaults; AIRS-pushed weights are an optimization.
 
-**Inspired by ALPS (USENIX ATC'24):** ALPS uses a decoupled frontend/backend architecture
-where a user-space frontend learns scheduling policies from workload patterns, and an eBPF
-backend enforces them in the kernel. ALPS achieved 57.2% reduction in average function
-execution duration vs Linux CFS on serverless workloads.
-
-**AIOS adaptation:**
-
-```mermaid
-flowchart LR
-    subgraph AIRS_Frontend["AIRS Learning Frontend"]
-        Profile["Per-Agent Workload Profiles"]
-        SRPT["SRPT Simulation on Recent Workloads"]
-        Weights["Generate Scheduling Weight Table"]
-    end
-
-    subgraph Kernel_Backend["Kernel Scheduler Backend"]
-        FWT["Frozen Weight Table
-*Updated every ~60s by AIRS*"]
-        Pick["pick_next_thread()
-*Consults weight table*"]
-    end
-
-    Profile --> SRPT --> Weights -->|push| FWT
-    FWT --> Pick
-```
-
-**Examples of learned adjustments:**
-
-- "Agent X is declared Normal but consistently produces interactive-latency work → promote to Interactive"
-- "Agent Y's Python interpreter has bursty CPU usage → pre-allocate a 50ms burst budget"
-- "Agent Z is idle 95% of the time but critical when active → keep in Normal but with priority boost on wake"
-
-The kernel scheduler always has valid defaults. AIRS-pushed weights are an optimization, not
-a requirement. See [scheduler.md](../../kernel/scheduler.md) for the base scheduling architecture.
+Full architecture: [scheduling.md](../../intelligence/runtime-advisor/scheduling.md) — AIRS
+learning frontend (§3), kernel scheduler backend (§4).
 
 ### 13.3 Lifetime-Aware Allocation
 
 **Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 21
 
-**Inspired by LLAMA (Google, ASPLOS'20, CACM'24 Research Highlight):** LLAMA uses neural networks
-trained on symbolized stack traces to predict object lifetime classes. Objects are allocated into
-lifetime-segregated pages, reducing fragmentation by up to 78%.
+AIRS trains per-runtime lifetime predictors from allocation traces (stack trace + size + observed
+lifetime) and pushes frozen decision trees to the kernel's slab allocator. Inspired by LLAMA
+(Google, ASPLOS'20), which reduced fragmentation by 78%. Allocations are classified into four
+lifetime classes (Ephemeral/Short/Medium/Long) and co-located on same-lifetime pages.
 
-**AIOS adaptation:** Each runtime has characteristic allocation patterns. AIRS trains lifetime
-predictors per-runtime and feeds hints to the kernel's slab allocator:
-
-| Lifetime Class | Duration | Typical Allocations | Slab Strategy |
-|---|---|---|---|
-| Ephemeral | < 10 ms | IPC message buffers, temp strings | Magazine fast path, aggressive reclaim |
-| Short | 10 ms - 1 s | Request processing, query results | Standard slab, normal GC |
-| Medium | 1 s - 60 s | Cached data, interpreter state | Separate pages, deferred reclaim |
-| Long | > 60 s | Agent heap, loaded modules | Dedicated pool, compact on pressure |
-
-The slab allocator's 5 size classes (64, 128, 256, 512, 4096 bytes) are augmented with lifetime
-class hints. Allocations from the same lifetime class are co-located on the same pages, improving
-compaction and reducing fragmentation.
-
-**Training data:** AIRS collects allocation traces (stack trace + allocation size + observed
-lifetime) from running agents. The model maps (runtime_type, allocation_site, call_stack_hash)
-→ lifetime_class. A frozen decision tree (~1KB) is pushed to the kernel for each runtime type.
+Full architecture: [allocation.md](../../intelligence/runtime-advisor/allocation.md) — AIRS
+lifetime prediction (§5), kernel slab integration (§6).
 
 ### 13.4 Garbage Collection Scheduling
 
 **Category:** AIRS-dependent (Phase 21)
 
-RustPython uses reference counting with a cycle collector. QuickJS-ng also uses reference
-counting with cycle collection. The timing of cycle collection affects both latency (collection
-pauses) and memory usage (deferred collection accumulates garbage).
+AIRS uses reinforcement learning to determine optimal GC timing and aggressiveness for
+RustPython and QuickJS-ng cycle collectors. Per-agent GC policies are pushed as state machines
+that the interpreter's GC hook consults at O(1) cost. Inspired by Learned GC (MAPL'20) and
+iGC (Knowledge-Based Systems 2025).
 
-**Inspired by Learned GC (MAPL'20) and iGC (2025):** Reinforcement learning determines both
-the timing and aggressiveness of garbage collection based on workload state.
-
-**AIOS adaptation:** AIRS observes per-agent interpreter behavior and learns optimal GC timing:
-
-- "This Python agent creates many cyclic structures during query processing → trigger cycle collection after each query completes, not on a fixed interval"
-- "This TypeScript agent's heap stays stable during idle periods → defer GC during idle, collect on next activation"
-- "This agent is latency-sensitive → prefer frequent small collections over infrequent large ones"
-
-**Implementation:** AIRS pushes a per-agent GC policy as a simple state machine:
-
-```text
-GC Policy for agent-X (Python):
-  ON heap_usage > 80%: collect(aggressive=false)
-  ON query_complete: collect(aggressive=true, cycles_only=true)
-  ON memory_pressure >= Medium: collect(aggressive=true, full=true)
-  ON idle > 5s: defer_gc()
-```
-
-The interpreter's GC hook checks this policy table (O(1) lookup) before deciding whether to
-collect. A sensible default policy runs without AIRS.
+Full architecture: [gc-scheduling.md](../../intelligence/runtime-advisor/gc-scheduling.md) —
+AIRS RL-based policy learning (§7), runtime GC hook integration (§8).
 
 ### 13.5 Behavioral Anomaly Detection
 
 **Category:** Kernel-internal ML (rate-based) / AIRS-dependent (semantic) — Phase 13
 
-AIRS's BehavioralMonitor (see [airs.md](../../intelligence/airs.md) §5.5) maintains per-runtime
-behavioral baselines. Each runtime type has fundamentally different "normal" behavior:
+Three detection layers protect against anomalous agent behavior: rate-based statistics in the
+kernel (no AIRS dependency), LSTM sequence models in AIRS for sophisticated attack detection,
+and cross-agent semantic correlation for sandbox escape attempts. ML detection is always backed
+by hard capability enforcement — adversarial evasion of ML models cannot bypass the capability
+system. See [model.md](../../security/model.md) §1.2 for trust level enforcement.
 
-| Signal | Python (normal) | TypeScript (normal) | WASM (normal) | Anomaly Indicator |
-|---|---|---|---|---|
-| Syscall rate | 50-200/s | 100-500/s | 10-50/s | >10x baseline |
-| Memory growth | Gradual (interpreter heap) | Stable (small engine) | Bounded (linear memory) | Sudden spike |
-| IPC pattern | Burst on query | Event-driven | Batch processing | Unexpected pattern |
-| CPU utilization | Low (I/O-bound) | Low (I/O-bound) | Moderate (compute) | Sustained 100% |
-
-**Detection layers:**
-
-1. **Rate-based (kernel-internal):** Simple statistics — if syscall rate exceeds 10x the 24-hour
-   rolling average for this runtime type, flag the agent. No AIRS needed.
-
-2. **Sequence-based (AIRS-dependent):** LSTM model over syscall traces — flag sequences never
-   seen in training data. Detects sophisticated attacks that stay within rate limits but use
-   unusual syscall orderings.
-
-3. **Semantic (AIRS-dependent):** Cross-agent correlation — if Agent A (Python) suddenly starts
-   making raw memory operations that should be impossible for an interpreter, flag a potential
-   sandbox escape attempt.
-
-Anomalies trigger capability review, rate limiting, or suspension depending on severity.
-See [model.md](../../security/model.md) §1.2 for trust level enforcement.
+Full architecture: [anomaly-detection.md](../../intelligence/runtime-advisor/anomaly-detection.md)
+— detection layers (§9), response pipeline (§10).
 
 ### 13.6 Automatic Capability Minimization
 
 **Category:** AIRS-dependent (Phase 13)
 
-**Inspired by MiniScope (2024) and Progent (2025):** Automatically generate minimal permission
-sets from task descriptions and code analysis.
-
-When a developer runs `aios agent audit`, AIRS compares the agent's declared capabilities
-against what the code actually uses:
-
-```text
-$ aios agent audit my-agent/ --capabilities
-Declared capabilities:
-  ✓ spaces.read     — used in main.py:12, utils.py:45
-  ✓ ai.complete     — used in main.py:18
-  ✗ network.fetch   — NOT USED in any source file
-  ✗ spaces.write    — NOT USED in any source file
-
-Recommendation: Remove unused capabilities [network.fetch, spaces.write]
-  This reduces the agent's attack surface by 2 capability classes.
-  Auto-fix: aios agent manifest minimize
-```
-
-**Analysis pipeline:**
-
-1. **Static analysis** — identify SDK API calls in source code → map to capability requirements
-2. **Dynamic analysis** — profile the agent against test workloads → record actual capability usage
-3. **LLM reasoning** — for complex control flow, use AIRS inference to determine if a capability
-   is reachable but untriggered vs truly dead code
-4. **Profile suggestion** — generate a minimal `manifest.toml` capability section
-
-This extends AIRS's Stage 5 (Profile Suggestion) in the capability intelligence pipeline
+AIRS compares an agent's declared capabilities against actual code usage via static analysis,
+dynamic profiling, and LLM reasoning to suggest minimal permission sets. Inspired by MiniScope
+(2024) and Progent (2025). This extends AIRS's capability intelligence pipeline
 (see [airs.md](../../intelligence/airs.md) §5.9).
 
 ---

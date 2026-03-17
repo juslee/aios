@@ -1,7 +1,7 @@
 # AIOS Memory Management — Physical Memory & Kernel Heap
 
 **Part of:** [memory.md](../memory.md) — Memory Management Hub
-**Related:** [virtual.md](./virtual.md) — Virtual memory, [ai.md](./ai.md) — Model memory, [reclamation.md](./reclamation.md) — Reclamation and swap
+**Related:** [virtual.md](./virtual.md) — Virtual memory, [ai.md](./ai.md) — Model memory, [reclamation.md](./reclamation.md) — Reclamation and swap, [runtime-advisor/allocation.md](../../intelligence/runtime-advisor/allocation.md) — AIRS lifetime-aware allocation
 
 -----
 

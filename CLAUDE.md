@@ -202,6 +202,11 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | AIRS security | `docs/intelligence/airs/security.md` | §10.1–§10.5 Security path isolation, crash containment, agent hints, kernel oversight, provenance |
 | AIRS hardware scaling | `docs/intelligence/airs/scaling.md` | §11.1–§11.4 Model capability trajectory, multi-model architecture, context windows, NPU integration |
 | AIRS AI-native intelligence | `docs/intelligence/airs/ai-native.md` | §13.1–§13.7 Kernel-internal ML, §14.1–§14.11 AIRS-dependent intelligence, §15 Future directions |
+| Runtime Advisor (hub) | `docs/intelligence/runtime-advisor.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
+| Runtime Advisor scheduling | `docs/intelligence/runtime-advisor/scheduling.md` | §3 AIRS learning frontend, §4 Kernel scheduler backend |
+| Runtime Advisor allocation | `docs/intelligence/runtime-advisor/allocation.md` | §5 AIRS lifetime prediction, §6 Kernel slab integration |
+| Runtime Advisor GC scheduling | `docs/intelligence/runtime-advisor/gc-scheduling.md` | §7 AIRS RL-based GC policy, §8 Runtime GC hook integration |
+| Runtime Advisor anomaly detection | `docs/intelligence/runtime-advisor/anomaly-detection.md` | §9 Three detection layers, §10 Response pipeline |
 | Context engine (hub) | `docs/intelligence/context-engine.md` | §1 Overview, §2 Architecture, §11 Impl Order, §12 Design Principles, Document Map |
 | Context signals | `docs/intelligence/context-engine/signals.md` | §3 Signal sources, weights, collection frequency |
 | Context inference | `docs/intelligence/context-engine/inference.md` | §4 Feature extraction, classifier, hysteresis, transitions |
