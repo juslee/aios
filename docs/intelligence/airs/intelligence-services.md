@@ -192,61 +192,19 @@ impl AttentionManager {
 
 ### 5.4 Intent Verifier
 
-Security Layer 1. Compares an agent's observed actions against its declared intent:
+Security Layer 1. Compares an agent's observed actions against its declared intent using LLM inference through AIRS. The Intent Verifier catches semantic misalignment that capability checks (Layer 2) permit — an agent with legitimate capabilities acting contrary to the user's request.
 
-```rust
-pub struct IntentVerifier {
-    model: ModelHandle,
-    active_tasks: HashMap<TaskId, DeclaredIntent>,
-}
+**Full architecture:** [intent-verifier.md](../intent-verifier.md) — covers the complete verification pipeline (algorithmic pre-check + LLM semantic verification), structured intent specifications, IPC taint labels (DIFC), behavioral monitor coordination, adversarial resistance, temporal logic monitoring, and graceful degradation.
 
-pub struct DeclaredIntent {
-    task: TaskId,
-    agent: AgentId,
-    description: String,            // "Research papers about transformers"
-    expected_spaces: Vec<SpaceId>,
-    expected_capabilities: Vec<Capability>,
-}
+**Key concepts:**
 
-pub struct ActionObservation {
-    agent: AgentId,
-    action: Action,
-    target: ActionTarget,
-    timestamp: Timestamp,
-}
+- **Algorithmic pre-check** handles ~80% of verifications without LLM inference using machine-checkable StructuredIntent specifications (IntentPurpose enum, TemporalSpec formulas, DataFlowSpec, ResourceBounds)
+- **LLM semantic verification** via AIRS security path (<10ms SLA) for ambiguous cases requiring semantic understanding
+- **Multi-round adversarial self-testing** for high-risk actions (destructive writes, large data transfers)
+- **IPC taint labels** (DIFC) track data provenance across agent boundaries, preventing cross-agent exfiltration even when individual actions are capability-permitted
+- **Graceful degradation** — configurable fallback policies (Skip/ReadOnly/BlockAll) per trust level when AIRS is unavailable; Layers 2–8 remain active
 
-pub enum VerificationResult {
-    /// Action aligns with declared intent
-    Aligned,
-    /// Action is questionable but not clearly wrong
-    Suspicious { confidence: f32, explanation: String },
-    /// Action clearly violates declared intent
-    Violation { explanation: String },
-}
-```
-
-**How it works:**
-
-```text
-Agent declares: "I will search arxiv for papers about transformers"
-Agent capabilities: ReadSpace("arxiv/papers"), WriteSpace("research/notes")
-
-Action observed: agent reads from "arxiv/papers"
-  → Aligned (expected behavior)
-
-Action observed: agent writes to "research/notes"
-  → Aligned (expected behavior)
-
-Action observed: agent reads from "user/personal/contacts"
-  → Violation: agent has no capability for this space
-  → (This is caught by Layer 2 capability check regardless)
-
-Action observed: agent writes 500 objects to "research/notes" in 2 seconds
-  → Suspicious: volume and rate don't match "search papers" intent
-  → Layer 3 behavioral boundary also flags this
-```
-
-**Without AIRS:** Intent verification is skipped. Layers 2-8 remain active. The capability check (Layer 2) catches any action the agent doesn't have a token for. Behavioral boundaries (Layer 3) catch rate anomalies via static rules.
+**Without AIRS:** When the AIRS service is unavailable, both LLM semantic verification and algorithmic pre-checks are offline (pre-checks run within the AIRS process). Kernel-enforced fallback policies take effect per trust level: `Skip` (rely on Layers 2–8), `ReadOnly` (allow reads, block writes), or `BlockAll` (block all non-allowlisted actions). Layers 2–8 remain active regardless. See [security.md §11](../intent-verifier/security.md) for the full graceful degradation design.
 
 ### 5.5 Behavioral Monitor
 
