@@ -141,18 +141,19 @@ pub struct FrozenDecisionTree {
     pub nodes: [DecisionNode; MAX_TREE_NODES],
 }
 
-/// Single node in a frozen decision tree.
+/// Single node in a frozen decision tree (16 bytes, no padding holes).
 /// Leaf nodes have left_child == right_child == 0xFFFF.
+/// Fields ordered for natural alignment: u64 first, then u16s, then u8s.
 #[repr(C)]
 pub struct DecisionNode {
-    /// Index into the feature vector (see §5.3 feature table)
-    pub feature_index: u8,
     /// Split threshold; interpretation depends on feature type
     pub threshold: u64,
     /// Index of left child (feature < threshold), or 0xFFFF for leaf
     pub left_child: u16,
     /// Index of right child (feature ≥ threshold), or 0xFFFF for leaf
     pub right_child: u16,
+    /// Index into the feature vector (see §5.3 feature table)
+    pub feature_index: u8,
     /// Predicted LifetimeClass; valid only when this is a leaf node
     pub leaf_class: LifetimeClass,
     pub _padding: [u8; 2],

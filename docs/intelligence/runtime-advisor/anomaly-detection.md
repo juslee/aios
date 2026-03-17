@@ -143,7 +143,9 @@ Per-syscall evaluation is a single array lookup and an addition to the running s
 
 Layer 2 applies an LSTM model to full syscall sequences. Unlike the PSSM, which scores short windows using a fixed matrix, the LSTM maintains hidden state across the agent's session and can detect attacks that spread their anomalous behavior over hundreds of syscalls to stay within any fixed-window scoring approach.
 
-AIRS collects syscall traces via the kernel audit ring. Every agent's syscall events are drained by AIRS periodically (every 100ms), batched into sequence tensors, and fed to the LSTM. The model produces a per-sequence anomaly score; scores above a trained threshold generate `AnomalyEvent` records with `detection_layer = 3` (Layer 2).
+AIRS collects syscall traces via the kernel audit ring. Every agent's syscall events are drained by AIRS periodically (every 100ms), batched into sequence tensors, and fed to the LSTM. The model produces a per-sequence anomaly score; scores above a trained threshold generate `AnomalyEvent` records with `detection_layer = 3` (LSTM sequence layer).
+
+> **Detection layer numbering:** 1 = rate-based (kernel), 2 = PSSM scoring (kernel), 3 = LSTM sequence (AIRS), 4 = semantic cross-agent (AIRS). Layers 1–2 are kernel-internal; layers 3–4 require AIRS.
 
 The input representation for each syscall in the sequence is:
 

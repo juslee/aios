@@ -236,7 +236,7 @@ Size breakdown:
 | `entries` (64 × 16 bytes) | 1024 bytes |
 | **Total** | **1064 bytes** |
 
-The table fits within two 512-byte IPC message payloads or one 4096-byte page allocation from the slab allocator.
+At 1064 bytes, the table requires three 512-byte IPC message payloads (fragmented by the IPC layer) or one 4096-byte page allocation from the slab allocator. The three-message transfer completes atomically from the kernel's perspective — the scheduler reads only after the final fragment arrives and the atomic pointer swap occurs.
 
 ### 4.2 Integration with pick_next_thread()
 
