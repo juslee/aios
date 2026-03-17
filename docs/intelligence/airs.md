@@ -18,7 +18,7 @@ Traditional operating systems treat AI as an application — a program the user 
 
 AIOS inverts this. The AI Runtime Service (AIRS) is a **privileged system service** — the first non-kernel component loaded at boot, with direct access to spaces, the capability system, and hardware compute resources. AIRS is to intelligence what the kernel is to resource management: invisible infrastructure that makes everything else work better.
 
-**AIRS is not a chatbot.** It's the engine behind semantic search, intent verification, behavioral monitoring, context inference, attention management, adversarial defense, space indexing, and agent lifecycle. The conversation bar is just one small interface to AIRS. Most of its work happens without any user interaction.
+**AIRS is not a chatbot.** It's the engine behind semantic search, intent verification, behavioral monitoring, context inference, attention management, adversarial defense, Space indexing, and agent lifecycle. The conversation bar is just one small interface to AIRS. Most of its work happens without any user interaction.
 
 -----
 
@@ -120,7 +120,7 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §2, §9, §12 | Overview, architecture, design principles, implementation order |
-| [inference.md](./airs/inference.md) | §3 | GGML runtime, compute scheduler, KV cache, streaming output |
+| [inference.md](./airs/inference.md) | §3 | GGML runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence |
 | [model-registry.md](./airs/model-registry.md) | §4 | Model storage, profiles, quantization, LRU eviction, boot selection |
 | [intelligence-services.md](./airs/intelligence-services.md) | §5 | Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
 | [lifecycle-and-data.md](./airs/lifecycle-and-data.md) | §6, §7, §8 | Agent lifecycle, data model, key technology choices |
@@ -179,7 +179,7 @@ External docs reference AIRS sections by number. This index maps each §N.N to i
 |---|---|---|
 | §1 | Core Insight | This file |
 | §2, §2.1, §2.2 | Architecture | This file |
-| §3, §3.1–§3.4 | Inference Engine | [inference.md](./airs/inference.md) |
+| §3, §3.1–§3.11 | Inference Engine | [inference.md](./airs/inference.md) |
 | §4, §4.1–§4.6 | Model Registry | [model-registry.md](./airs/model-registry.md) |
 | §5, §5.1–§5.9 | Intelligence Services | [intelligence-services.md](./airs/intelligence-services.md) |
 | §6 | Agent Lifecycle | [lifecycle-and-data.md](./airs/lifecycle-and-data.md) |

@@ -195,7 +195,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Data protection & compliance | `docs/platform/multi-device/data-protection.md` | §9.1–§9.4 DLP, content classification, provenance, encryption zones; §10.1–§10.4 SIEM, compliance frameworks, reporting, data residency |
 | Multi-device intelligence | `docs/platform/multi-device/intelligence.md` | §13.1–§13.3 Kernel-internal ML (sync, anomaly, handoff); §14.1–§14.5 AIRS (GNN fleet, RL self-healing, federated learning, AI DLP, NL policy); §15 Future |
 | AI Runtime AIRS (hub) | `docs/intelligence/airs.md` | §1 Core Insight, §2 Architecture, §9 Design Principles, §12 Impl Order, Document Map |
-| AIRS inference engine | `docs/intelligence/airs/inference.md` | §3.1–§3.4 GGML runtime, compute scheduler, KV cache, streaming output |
+| AIRS inference engine | `docs/intelligence/airs/inference.md` | §3.1–§3.11 GGML runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence, cross-references |
 | AIRS model registry | `docs/intelligence/airs/model-registry.md` | §4.1–§4.6 Storage, profiles, quantization, LRU eviction, boot selection |
 | AIRS intelligence services | `docs/intelligence/airs/intelligence-services.md` | §5.1–§5.9 Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
 | AIRS lifecycle & data | `docs/intelligence/airs/lifecycle-and-data.md` | §6 Agent Lifecycle, §7 Data Model, §8 Key Technology Choices |
