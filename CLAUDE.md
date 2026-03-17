@@ -202,6 +202,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | AIRS security | `docs/intelligence/airs/security.md` | §10.1–§10.5 Security path isolation, crash containment, agent hints, kernel oversight, provenance |
 | AIRS hardware scaling | `docs/intelligence/airs/scaling.md` | §11.1–§11.4 Model capability trajectory, multi-model architecture, context windows, NPU integration |
 | AIRS AI-native intelligence | `docs/intelligence/airs/ai-native.md` | §13.1–§13.7 Kernel-internal ML, §14.1–§14.11 AIRS-dependent intelligence, §15 Future directions |
+| Conversation Manager (hub) | `docs/intelligence/conversation-manager.md` | §1 Overview, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
+| Conversation sessions & persistence | `docs/intelligence/conversation-manager/sessions.md` | §3 Session lifecycle/pool/routing, §4 Storage/search/forking/retention |
+| Context windows & compression | `docs/intelligence/conversation-manager/context-windows.md` | §5 Assembly pipeline/token budget/RAG, §6 Compression tiers/multi-model transfer |
+| Tool orchestration | `docs/intelligence/conversation-manager/tool-orchestration.md` | §7 Tool discovery/invocation/chains, §8 Built-in tools (space/system/Flow) |
+| Conversation Bar | `docs/intelligence/conversation-manager/conversation-bar.md` | §9 Bar design/invocation/accessibility, §10 Structured output, §11 Compositor/context/multi-conversation |
+| Streaming token delivery | `docs/intelligence/conversation-manager/streaming.md` | §12 Streaming architecture/backpressure/cancellation/tool detection, §13 AI-native streaming intelligence |
+| Conversation security | `docs/intelligence/conversation-manager/security.md` | §14 Injection defense/capabilities/privacy/audit/content safety |
 | Context engine (hub) | `docs/intelligence/context-engine.md` | §1 Overview, §2 Architecture, §11 Impl Order, §12 Design Principles, Document Map |
 | Context signals | `docs/intelligence/context-engine/signals.md` | §3 Signal sources, weights, collection frequency |
 | Context inference | `docs/intelligence/context-engine/inference.md` | §4 Feature extraction, classifier, hysteresis, transitions |
