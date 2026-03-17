@@ -220,7 +220,7 @@ pub struct InferredRelationship {
 **Cross-object relationship discovery:** When a new object is indexed, the Space Indexer checks for relationships with existing objects:
 
 1. **Embedding similarity:** Compute cosine similarity between the new embedding and all embeddings in the HNSW index. Objects above 0.85 similarity threshold get a `RelatedTo` edge.
-2. **Entity co-occurrence:** If two objects mention the same canonical entity (e.g., same person name), create a `References` edge.
+2. **Entity co-occurrence:** If two objects mention the same canonical entity (e.g., same person name), create a `SharesEntity` edge (see [relationship-graph.md §7.1](./relationship-graph.md)).
 3. **Explicit references:** If the content contains links, file paths, or `@mentions` pointing to other objects, create `References` or `DependsOn` edges with confidence 1.0.
 
 ### 3.5 Summary & Tag Generation

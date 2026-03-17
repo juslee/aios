@@ -144,7 +144,7 @@ Edges are deleted when:
 
 - Either source or target object is deleted (cascade)
 - User explicitly removes a relationship
-- AI-inferred edge drops below confidence threshold on re-evaluation (edge aging, §7.5)
+- AI-inferred edge drops below confidence threshold on re-evaluation (edge aging, §7.6)
 - Edge compaction removes duplicates
 
 **Update:**

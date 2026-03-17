@@ -189,10 +189,12 @@ At each stage, search quality degrades slightly, but the system remains function
 | Query Type | Target | Breakdown |
 |---|---|---|
 | Full-text only | < 50 ms | Tokenize (1ms) + BM25 lookup (10ms) + rank (5ms) + fetch metadata (30ms) |
-| Semantic only | < 100 ms | Embed query (5ms) + HNSW search (10ms) + fetch metadata (30ms) |
+| Semantic only (unfiltered) | < 100 ms | Embed query (5ms) + HNSW search (10ms, default ef_search=50) + fetch metadata (30ms) |
+| Semantic with filter (>50% selectivity) | < 150 ms | Embed query (5ms) + filtered HNSW (30ms, moderate ef_search expansion) + fetch metadata (30ms) |
+| Semantic with filter (<10% selectivity) | < 300 ms | Embed query (5ms) + filtered HNSW (100-200ms, ef_search up to 1000 per §5.6) + fetch metadata (30ms) |
 | Hybrid (BM25 + semantic) | < 150 ms | Both in parallel + score fusion (5ms) + fetch metadata (30ms) |
 | With on-demand embedding | < 500 ms | Full-text (50ms) + embed candidates (200ms) + re-rank (10ms) |
 | Graph traversal (depth 3) | < 30 ms | BFS traversal (10ms/hop × 3) |
 | PersonalRank | < 100 ms | 20 iterations of random walk over graph |
 
-These latencies assume warm caches (indexes resident in memory). Cold-start latency after boot or index reload is higher (1-2 seconds for index deserialization) but occurs only once per session.
+These latencies assume warm caches (indexes resident in memory). Cold-start latency after boot or index reload is higher (1-2 seconds for index deserialization) but occurs only once per session. The "Semantic only" row assumes unfiltered search at the default ef_search=50; filtered queries with low selectivity adaptively increase ef_search (see [embedding-index.md §5.6](./embedding-index.md)), which proportionally increases traversal time.

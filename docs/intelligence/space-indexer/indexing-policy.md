@@ -16,7 +16,7 @@ The fundamental split:
 | Index Tier | Scope | Update Mode | AIRS Required | Storage Cost |
 |---|---|---|---|---|
 | Full-text | All objects (CompactObject + Object) | Synchronous on write | No | ~10-30% of text size |
-| Embedding | Promoted objects only (full Object) | Asynchronous via queue | Yes | ~1.5 KB raw / ~48 B quantized per object |
+| Embedding | Promoted objects (SemanticMetadata) + on-demand cache (indexer-side, CompactObjects) | Asynchronous via queue; on-demand for cache | Yes | ~1.5 KB raw / ~48 B quantized per object |
 | Relationship graph | Explicit: all objects. Inferred: promoted only | Mixed | Inferred edges: Yes | ~100 B per edge |
 | Summary + tags | Promoted objects only | Asynchronous via queue | Yes | ~500 B per object |
 
@@ -102,9 +102,9 @@ pub struct OnDemandPolicy {
 }
 ```
 
-**On-demand embeddings are cached:** After generating an on-demand embedding, it is stored in the HNSW index and on the object's SemanticMetadata. Future semantic searches find it directly. This means on-demand embedding is a one-time cost per object — subsequent searches are fast.
+**On-demand embeddings are cached in the indexer, not on the object.** After generating an on-demand embedding, it is inserted into the HNSW index and stored in an indexer-side embedding cache keyed by ObjectId. It is **not** written to the object's SemanticMetadata, because CompactObjects have no AI metadata fields (see [data-structures.md §3.3](../../storage/spaces/data-structures.md)). Future semantic searches find the cached embedding directly in the HNSW index. This means on-demand embedding is a one-time cost per object — subsequent searches are fast.
 
-**On-demand does NOT promote the object.** The embedding is generated and cached, but the object remains a CompactObject with a partial SemanticMetadata (embedding only, no entities or summary). Full promotion requires a trigger from PromotionPolicy. This avoids a feedback loop where searching for something promotes everything in the results.
+**On-demand does NOT promote the object.** The embedding is generated and cached in the indexer's embedding cache, but the object remains a CompactObject. Full promotion requires a trigger from PromotionPolicy. Only upon promotion does the embedding migrate from the indexer cache to the object's SemanticMetadata on a full Object. This avoids a feedback loop where searching for something promotes everything in the results.
 
 ### 4.4 Batch Re-Indexing
 
