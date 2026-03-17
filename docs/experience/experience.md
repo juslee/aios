@@ -167,6 +167,8 @@ The Workspace is a **live view over system state**, not a static page. It update
 
 ## 4. The Conversation Bar
 
+> **Authoritative reference:** [conversation-manager/conversation-bar.md](../intelligence/conversation-manager/conversation-bar.md) contains the full technical architecture for the Conversation Bar, including compositor integration, structured output rendering, accessibility, and multi-conversation management. This section provides the high-level overview.
+
 ### 4.1 Design Philosophy
 
 The Conversation Bar is the single most important GUI element in AIOS. It's not a search bar (like Spotlight or Krunner) and it's not a chatbot widget. It's a **natural language command interface** that can do anything the OS can do.

@@ -192,61 +192,19 @@ impl AttentionManager {
 
 ### 5.4 Intent Verifier
 
-Security Layer 1. Compares an agent's observed actions against its declared intent:
+Security Layer 1. Compares an agent's observed actions against its declared intent using LLM inference through AIRS. The Intent Verifier catches semantic misalignment that capability checks (Layer 2) permit — an agent with legitimate capabilities acting contrary to the user's request.
 
-```rust
-pub struct IntentVerifier {
-    model: ModelHandle,
-    active_tasks: HashMap<TaskId, DeclaredIntent>,
-}
+**Full architecture:** [intent-verifier.md](../intent-verifier.md) — covers the complete verification pipeline (algorithmic pre-check + LLM semantic verification), structured intent specifications, IPC taint labels (DIFC), behavioral monitor coordination, adversarial resistance, temporal logic monitoring, and graceful degradation.
 
-pub struct DeclaredIntent {
-    task: TaskId,
-    agent: AgentId,
-    description: String,            // "Research papers about transformers"
-    expected_spaces: Vec<SpaceId>,
-    expected_capabilities: Vec<Capability>,
-}
+**Key concepts:**
 
-pub struct ActionObservation {
-    agent: AgentId,
-    action: Action,
-    target: ActionTarget,
-    timestamp: Timestamp,
-}
+- **Algorithmic pre-check** handles ~80% of verifications without LLM inference using machine-checkable StructuredIntent specifications (IntentPurpose enum, TemporalSpec formulas, DataFlowSpec, ResourceBounds)
+- **LLM semantic verification** via AIRS security path (<10ms SLA) for ambiguous cases requiring semantic understanding
+- **Multi-round adversarial self-testing** for high-risk actions (destructive writes, large data transfers)
+- **IPC taint labels** (DIFC) track data provenance across agent boundaries, preventing cross-agent exfiltration even when individual actions are capability-permitted
+- **Graceful degradation** — configurable fallback policies (Skip/ReadOnly/BlockAll) per trust level when AIRS is unavailable; Layers 2–8 remain active
 
-pub enum VerificationResult {
-    /// Action aligns with declared intent
-    Aligned,
-    /// Action is questionable but not clearly wrong
-    Suspicious { confidence: f32, explanation: String },
-    /// Action clearly violates declared intent
-    Violation { explanation: String },
-}
-```
-
-**How it works:**
-
-```text
-Agent declares: "I will search arxiv for papers about transformers"
-Agent capabilities: ReadSpace("arxiv/papers"), WriteSpace("research/notes")
-
-Action observed: agent reads from "arxiv/papers"
-  → Aligned (expected behavior)
-
-Action observed: agent writes to "research/notes"
-  → Aligned (expected behavior)
-
-Action observed: agent reads from "user/personal/contacts"
-  → Violation: agent has no capability for this space
-  → (This is caught by Layer 2 capability check regardless)
-
-Action observed: agent writes 500 objects to "research/notes" in 2 seconds
-  → Suspicious: volume and rate don't match "search papers" intent
-  → Layer 3 behavioral boundary also flags this
-```
-
-**Without AIRS:** Intent verification is skipped. Layers 2-8 remain active. The capability check (Layer 2) catches any action the agent doesn't have a token for. Behavioral boundaries (Layer 3) catch rate anomalies via static rules.
+**Without AIRS:** When the AIRS service is unavailable, both LLM semantic verification and algorithmic pre-checks are offline (pre-checks run within the AIRS process). Kernel-enforced fallback policies take effect per trust level: `Skip` (rely on Layers 2–8), `ReadOnly` (allow reads, block writes), or `BlockAll` (block all non-allowlisted actions). Layers 2–8 remain active regardless. See [security.md §11](../intent-verifier/security.md) for the full graceful degradation design.
 
 ### 5.5 Behavioral Monitor
 
@@ -298,6 +256,8 @@ pub enum BehaviorAction {
 **Baseline learning:** For the first 24 hours of an agent's operation, the monitor observes and builds a baseline. After that, deviations from baseline trigger alerts. Baselines are stored in `system/audit/behavioral/` and updated incrementally.
 
 ### 5.6 Adversarial Defense
+
+> **Full architecture:** [../../security/adversarial-defense.md](../../security/adversarial-defense.md) — comprehensive adversarial defense architecture (threat model, control/data separation, screening pipeline, detection/response, intelligence, testing)
 
 Security Layer 5. Detects prompt injection attempts:
 
@@ -355,39 +315,20 @@ Tools are the interop mechanism. A PDF parser agent registers a `parse_pdf` tool
 
 ### 5.8 Conversation Manager
 
-Manages conversation history for the conversation bar and agent interactions:
+The Conversation Manager is the AIRS intelligence service responsible for multi-turn conversation sessions, context window management, tool use orchestration, streaming token delivery, and the Conversation Bar UI.
 
-```rust
-pub struct ConversationManager {
-    sessions: HashMap<ConversationId, Conversation>,
-}
+**Full architecture:** [conversation-manager.md](../conversation-manager.md) (hub + 6 sub-documents) is the authoritative reference. Key sub-documents:
 
-pub struct Conversation {
-    id: ConversationId,
-    messages: Vec<Message>,
-    context: ConversationContext,
-    space: SpaceId,                 // conversation stored as space object
-    active_model: ModelId,
-}
+| Sub-Document | Content |
+|---|---|
+| [sessions.md](../conversation-manager/sessions.md) | Session lifecycle, persistence, forking, search |
+| [context-windows.md](../conversation-manager/context-windows.md) | Context assembly pipeline, token budget, RAG, compression |
+| [tool-orchestration.md](../conversation-manager/tool-orchestration.md) | Tool discovery, invocation flow, built-in tools |
+| [conversation-bar.md](../conversation-manager/conversation-bar.md) | Bar design, structured output, compositor integration |
+| [streaming.md](../conversation-manager/streaming.md) | Token delivery, backpressure, cancellation, quality metrics |
+| [security.md](../conversation-manager/security.md) | Injection defense, capabilities, privacy, audit |
 
-pub struct ConversationContext {
-    /// Spaces the user has been working in (for context)
-    recent_spaces: Vec<SpaceId>,
-    /// Active tasks (for context)
-    active_tasks: Vec<TaskId>,
-    /// Relevant objects (retrieved by semantic search)
-    retrieved_context: Vec<ObjectId>,
-    /// Total token count (for context window management)
-    token_count: u32,
-}
-```
-
-**Context window management:** When a conversation grows beyond the model's context window, the Conversation Manager compresses older messages:
-
-1. Summarize oldest messages into a condensed context block
-2. Keep recent messages verbatim
-3. Always include system prompt and capability declarations
-4. Retrieved context (from spaces) is injected per-turn, not persisted
+**Core types:** `ConversationSession`, `Conversation`, `ConversationContext`, `SessionConfig`, `StoredMessage` — defined in the hub document §2.
 
 ### 5.9 Agent Capability Intelligence
 

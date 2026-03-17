@@ -122,7 +122,8 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 | **This file** | §1, §2, §9, §12 | Overview, architecture, design principles, implementation order |
 | [inference.md](./airs/inference.md) | §3 | GGML runtime, compute scheduler, KV cache, streaming output |
 | [model-registry.md](./airs/model-registry.md) | §4 | Model storage, profiles, quantization, LRU eviction, boot selection |
-| [intelligence-services.md](./airs/intelligence-services.md) | §5 | Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
+| [intelligence-services.md](./airs/intelligence-services.md) | §5 | Space Indexer, Context Engine, Attention Manager, Intent Verifier (summary), Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
+| [intent-verifier.md](./intent-verifier.md) | §1–§17 | Intent Verifier deep dive: verification pipeline, structured intent specs, IPC taint labels, behavioral integration, adversarial resistance, AI-native intelligence |
 | [lifecycle-and-data.md](./airs/lifecycle-and-data.md) | §6, §7, §8 | Agent lifecycle, data model, key technology choices |
 | [security.md](./airs/security.md) | §10 | Security path isolation, crash containment, agent hint processing, kernel oversight, provenance |
 | [scaling.md](./airs/scaling.md) | §11 | Hardware scaling trajectory, multi-model architecture, context windows, NPU integration |

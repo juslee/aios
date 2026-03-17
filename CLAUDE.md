@@ -207,6 +207,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Runtime Advisor allocation | `docs/intelligence/runtime-advisor/allocation.md` | §5 AIRS lifetime prediction, §6 Kernel slab integration |
 | Runtime Advisor GC scheduling | `docs/intelligence/runtime-advisor/gc-scheduling.md` | §7 AIRS RL-based GC policy, §8 Runtime GC hook integration |
 | Runtime Advisor anomaly detection | `docs/intelligence/runtime-advisor/anomaly-detection.md` | §9 Three detection layers, §10 Response pipeline |
+| Conversation Manager (hub) | `docs/intelligence/conversation-manager.md` | §1 Overview, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
+| Conversation sessions & persistence | `docs/intelligence/conversation-manager/sessions.md` | §3 Session lifecycle/pool/routing, §4 Storage/search/forking/retention |
+| Context windows & compression | `docs/intelligence/conversation-manager/context-windows.md` | §5 Assembly pipeline/token budget/RAG, §6 Compression tiers/multi-model transfer |
+| Tool orchestration | `docs/intelligence/conversation-manager/tool-orchestration.md` | §7 Tool discovery/invocation/chains, §8 Built-in tools (space/system/Flow) |
+| Conversation Bar | `docs/intelligence/conversation-manager/conversation-bar.md` | §9 Bar design/invocation/accessibility, §10 Structured output, §11 Compositor/context/multi-conversation |
+| Streaming token delivery | `docs/intelligence/conversation-manager/streaming.md` | §12 Streaming architecture/backpressure/cancellation/tool detection, §13 AI-native streaming intelligence |
+| Conversation security | `docs/intelligence/conversation-manager/security.md` | §14 Injection defense/capabilities/privacy/audit/content safety |
 | Context engine (hub) | `docs/intelligence/context-engine.md` | §1 Overview, §2 Architecture, §11 Impl Order, §12 Design Principles, Document Map |
 | Context signals | `docs/intelligence/context-engine/signals.md` | §3 Signal sources, weights, collection frequency |
 | Context inference | `docs/intelligence/context-engine/inference.md` | §4 Feature extraction, classifier, hysteresis, transitions |
@@ -243,6 +250,20 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
 | Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
 | AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 41) |
+| Intent verifier (hub) | `docs/intelligence/intent-verifier.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
+| Intent verifier pipeline | `docs/intelligence/intent-verifier/pipeline.md` | §2 Architecture, §4 Verification Pipeline, §10 Performance Model |
+| Intent specification | `docs/intelligence/intent-verifier/specification.md` | §3 DeclaredIntent + StructuredIntent |
+| Information flow verification | `docs/intelligence/intent-verifier/information-flow.md` | §5 IPC Taint Labels (DIFC), Data Flow Graph, Exfiltration Detection |
+| Behavioral integration | `docs/intelligence/intent-verifier/behavioral.md` | §6 Layer 1+3 Coordination, §9 Temporal Logic Monitor (MTL) |
+| Intent verifier security | `docs/intelligence/intent-verifier/security.md` | §7 Capability Integration, §8 Adversarial Resistance, §11 Graceful Degradation |
+| Intent verifier intelligence | `docs/intelligence/intent-verifier/intelligence.md` | §12 Testing, §13 AI-Native Intelligence, §16 Future Directions, §17 References |
+| Adversarial defense (hub) | `docs/security/adversarial-defense.md` | §1 Core Insight, §16 Impl Order, §17 Design Principles, Document Map |
+| Adversarial threat model | `docs/security/adversarial-defense/threat-model.md` | §2 Threat taxonomy (direct/indirect injection, jailbreak, multi-agent, ML evasion, supply chain), §3 Attack surface map |
+| Control/data plane separation | `docs/security/adversarial-defense/control-data-separation.md` | §4 Instruction sources, data labeling, enforcement points, label integrity, limitations |
+| Adversarial screening pipeline | `docs/security/adversarial-defense/screening.md` | §5 Input screening (pattern + ML), §6 Output validation, §7 Hint screening |
+| Adversarial detection & response | `docs/security/adversarial-defense/response.md` | §8 Detection/response pipeline, §9 Forensics & incident reconstruction |
+| Adversarial defense intelligence | `docs/security/adversarial-defense/intelligence.md` | §10 Kernel-internal ML, §11 AIRS-dependent intelligence, §12 Future directions |
+| Adversarial defense testing | `docs/security/adversarial-defense/testing.md` | §13 Testing/verification, §14 POSIX compatibility, §15 Cross-reference index |
 | Fuzzing & input hardening (hub) | `docs/security/fuzzing.md` | §1 Overview, §2 Attack surface, Document Map |
 | Fuzzing hardening strategies | `docs/security/fuzzing/strategies.md` | §3.1–3.7 Language, syscall, memory, IPC, driver, manifest, concurrency |
 | Fuzzing adoption roadmap | `docs/security/fuzzing/adoption-roadmap.md` | §4.1–4.7 Phased adoption (host-side through formal verification) |
