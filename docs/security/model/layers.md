@@ -504,6 +504,8 @@ Audit: metadata`"]
 
 ### 2.5 Layer 5: Adversarial Defense
 
+> **Full architecture:** [adversarial-defense.md](../adversarial-defense.md) — comprehensive adversarial defense architecture (threat model, control/data separation, screening pipeline, detection/response, intelligence, testing)
+
 The core principle: **agent instructions come from the kernel, never from data.** This is the control/data plane separation that prevents prompt injection from escalating to system compromise.
 
 ```rust

@@ -23,6 +23,7 @@ This document is the hub for the AIOS security architecture. The full model has 
 | [capabilities.md](./model/capabilities.md) | §3 | Token lifecycle, kernel table, attenuation, delegation, temporal caps, composable profiles |
 | [hardening.md](./model/hardening.md) | §4, §5, §8 | Cryptographic foundations, ARM hardware security, security testing |
 | [operations.md](./model/operations.md) | §6, §7, §9, §10, §11, §13 | Event response, audit, AIRS resource security, zero trust, comparisons, future directions |
+| [adversarial-defense.md](./adversarial-defense.md) | §1–§17 | Adversarial defense architecture (hub + 6 sub-docs): threat model, control/data separation, screening, response, intelligence, testing |
 
 -----
 
