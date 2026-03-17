@@ -207,6 +207,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Runtime Advisor allocation | `docs/intelligence/runtime-advisor/allocation.md` | §5 AIRS lifetime prediction, §6 Kernel slab integration |
 | Runtime Advisor GC scheduling | `docs/intelligence/runtime-advisor/gc-scheduling.md` | §7 AIRS RL-based GC policy, §8 Runtime GC hook integration |
 | Runtime Advisor anomaly detection | `docs/intelligence/runtime-advisor/anomaly-detection.md` | §9 Three detection layers, §10 Response pipeline |
+| Behavioral monitor (hub) | `docs/intelligence/behavioral-monitor.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, Document Map |
+| Behavioral data model | `docs/intelligence/behavioral-monitor/data-model.md` | §3.1–§3.7 BehavioralMonitor, baselines, policies, hard limits, anomaly types, state byte, storage |
+| Behavioral detection | `docs/intelligence/behavioral-monitor/detection.md` | §4.1–§4.5 Statistical detection (Welford/z-score), §5.1–§5.4 Baseline learning |
+| Behavioral response | `docs/intelligence/behavioral-monitor/response.md` | §6.1–§6.5 Escalation/enforcement, §7.1–§7.3 Provenance/audit |
+| Behavioral profiling | `docs/intelligence/behavioral-monitor/profiling.md` | §8.1–§8.5 Agent behavior profiling pipeline |
+| Behavioral security | `docs/intelligence/behavioral-monitor/security.md` | §9.1–§9.5 Layer integration, §10.1–§10.3 AIRS self-monitoring |
+| Behavioral evasion | `docs/intelligence/behavioral-monitor/evasion.md` | §11.1–§11.6 Evasion resistance, adversarial robustness |
+| Behavioral intelligence | `docs/intelligence/behavioral-monitor/intelligence.md` | §12.1–§12.4 Kernel-internal ML, §13.1–§13.5 AIRS-dependent, §16 Future directions |
 | Conversation Manager (hub) | `docs/intelligence/conversation-manager.md` | §1 Overview, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
 | Conversation sessions & persistence | `docs/intelligence/conversation-manager/sessions.md` | §3 Session lifecycle/pool/routing, §4 Storage/search/forking/retention |
 | Context windows & compression | `docs/intelligence/conversation-manager/context-windows.md` | §5 Assembly pipeline/token budget/RAG, §6 Compression tiers/multi-model transfer |
