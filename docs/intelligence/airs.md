@@ -120,7 +120,7 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §2, §9, §12 | Overview, architecture, design principles, implementation order |
-| [inference.md](./airs/inference.md) | §3 | GGML runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence |
+| [inference.md](./airs/inference.md) | §3, §3.1–§3.11 | GGML runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence, cross-references |
 | [model-registry.md](./airs/model-registry.md) | §4 | Model storage, profiles, quantization, LRU eviction, boot selection |
 | [intelligence-services.md](./airs/intelligence-services.md) | §5 | Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
 | [lifecycle-and-data.md](./airs/lifecycle-and-data.md) | §6, §7, §8 | Agent lifecycle, data model, key technology choices |
