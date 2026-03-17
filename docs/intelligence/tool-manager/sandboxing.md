@@ -69,7 +69,7 @@ pub struct KernelResourceLimits {
 }
 ```
 
-Cross-reference: [process.rs](../../kernel/task/process.rs) for `KernelResourceLimits` and trust-level defaults.
+Cross-reference: [process.rs](../../../kernel/src/task/process.rs) for `KernelResourceLimits` and trust-level defaults.
 
 **Per-tool-call resource accounting** is not enforced at the kernel level — the kernel tracks resources per-process, not per-tool-call. However, the provider SDK can implement cooperative resource accounting:
 
@@ -159,16 +159,18 @@ impl ToolManager {
             .unwrap_or_default();
 
         for tool_id in &tool_ids {
+            // Capture tags before removing the tool entry
+            let tags = self.registry.tools.get(tool_id)
+                .map(|t| t.tags.clone())
+                .unwrap_or_default();
+
             self.registry.tools.remove(tool_id);
             // Remove from secondary indexes
             if let Some(providers) = self.registry.by_name.get_mut(&tool_id.name) {
                 providers.retain(|id| *id != agent_id);
             }
             // Remove from tag indexes
-            for tag in &self.registry.tools.get(tool_id)
-                .map(|t| t.tags.clone())
-                .unwrap_or_default()
-            {
+            for tag in &tags {
                 if let Some(ids) = self.registry.by_tag.get_mut(tag) {
                     ids.retain(|id| id != tool_id);
                 }

@@ -31,7 +31,7 @@ pub fn ipc_send(
 }
 ```
 
-Cross-reference: [cap/mod.rs](../../kernel/cap/mod.rs) for `CapabilityToken` and `CapabilityTable`.
+Cross-reference: [cap/mod.rs](../../../kernel/src/cap/mod.rs) for `CapabilityToken` and `CapabilityTable`.
 
 **Level 2 — Intent verification (AIRS-powered, fallback-safe):**
 
@@ -145,7 +145,7 @@ pub struct RateCounter {
 }
 ```
 
-**Rate limit enforcement point:** Rate limiting is checked in the Tool Manager (Stage 2.5, between registry lookup and capability validation). This ensures rate-limited calls don't waste capability check resources.
+**Rate limit enforcement point:** Rate limiting is checked in the Tool Manager between Stage 2 (registry lookup) and Stage 3 (capability validation). This ensures rate-limited calls don't waste capability check resources.
 
 **Provider-declared rate limits:** A provider can declare a per-tool rate limit in the tool metadata (e.g., "this tool can handle 10 calls/second"). The Tool Manager respects these limits and returns `RateLimited` errors when exceeded.
 
@@ -194,7 +194,7 @@ pub enum AuditOutcome {
 }
 ```
 
-Cross-reference: [service/mod.rs](../../kernel/service/mod.rs) for the kernel audit ring pattern. Tool call audit entries share the same ring buffer infrastructure.
+Cross-reference: [service/mod.rs](../../../kernel/src/service/mod.rs) for the kernel audit ring pattern. Tool call audit entries share the same ring buffer infrastructure.
 
 **Privacy considerations:**
 
@@ -228,7 +228,7 @@ pub struct ToolMetrics {
 }
 ```
 
-Cross-reference: [metrics.rs](../../kernel/observability/metrics.rs) for `Counter`, `Gauge`, `Histogram<N>`.
+Cross-reference: [metrics.rs](../../../kernel/src/observability/metrics.rs) for `Counter`, `Gauge`, `Histogram<N>`.
 
 **Key dashboards:**
 
@@ -266,7 +266,7 @@ pub struct TraceStage {
 
 **Trace propagation:** When Agent A calls Agent B's tool, and Agent B internally calls Agent C's tool, the same `trace_id` propagates through the entire chain. This creates a complete call tree visible in the Inspector.
 
-Cross-reference: [trace.rs](../../kernel/observability/trace.rs) for `TraceEvent` and `TraceRing`.
+Cross-reference: [trace.rs](../../../kernel/src/observability/trace.rs) for `TraceEvent` and `TraceRing`.
 
 ### 12.4 Inspector Integration
 

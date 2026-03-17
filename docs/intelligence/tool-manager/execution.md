@@ -85,7 +85,7 @@ sequenceDiagram
     TM->>Tool: Level 3: Does caller hold tool's capability_required?
     Tool-->>TM: Has capability / Missing capability
 
-    Note over TM: All three levels must pass
+    Note over TM: Levels 1 and 3 are mandatory; Level 2 is best-effort (skipped when AIRS unavailable)
 ```
 
 **Level 1 — Kernel capability check:**
@@ -180,7 +180,7 @@ pub trait ToolHandler: Send + Sync {
 
 - The handler runs in the provider's process and address space
 - It has access to the provider's capabilities, not the caller's
-- Resource usage is bounded by the provider's `KernelResourceLimits` ([process.rs](../../kernel/task/process.rs))
+- Resource usage is bounded by the provider's `KernelResourceLimits` ([process.rs](../../../kernel/src/task/process.rs))
 - If the handler panics, the provider process is terminated (see [sandboxing.md](./sandboxing.md) §8.1)
 
 Cross-reference: [agents.md](../../applications/agents.md) §5.3 for `ToolHandler` and SDK integration.

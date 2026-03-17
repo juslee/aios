@@ -68,7 +68,7 @@ pub struct ToolScore {
 }
 
 impl ToolScore {
-    pub fn compute(weights: &SelectionWeights) -> f32 {
+    pub fn compute(&self, weights: &SelectionWeights) -> f32 {
         weights.semantic * self.semantic_match
             + weights.trust * self.trust_weight
             + weights.reliability * self.success_rate
