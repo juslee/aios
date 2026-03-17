@@ -211,6 +211,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Space Indexer search integration | `docs/intelligence/space-indexer/search-integration.md` | §8.1–§8.3 Semantic interface, RRF/learned score fusion, graceful degradation; §9.1–§9.5 Cross-service integration |
 | Space Indexer security | `docs/intelligence/space-indexer/security.md` | §10.1–§10.4 Resource path separation, crash containment, capability-gated access, embedding privacy; §11.1–§11.4 Compute/memory/storage/latency budgets |
 | Space Indexer intelligence | `docs/intelligence/space-indexer/intelligence.md` | §12.1–§12.2 AIRS-dependent (adaptive priority, clustering, query optimization), kernel-internal ML (pattern prediction, eviction, Bloom filters) |
+| Tool Manager (hub) | `docs/intelligence/tool-manager.md` | §1 Core Insight, §2 Architecture, §13 Impl Order, §14 Design Principles, Document Map |
+| Tool registry & schema | `docs/intelligence/tool-manager/registry.md` | §3.1–§3.4 ToolId, RegisteredTool, ToolRegistry, §4.1–§4.4 Schema system, discovery, versioning |
+| Tool execution pipeline | `docs/intelligence/tool-manager/execution.md` | §5.1–§5.7 Seven-stage pipeline, 3-level capability validation, §6.1–§6.4 Timeout, cancellation, errors |
+| Tool sandboxing | `docs/intelligence/tool-manager/sandboxing.md` | §7.1–§7.3 Process isolation, resource limits, capability attenuation, §8.1–§8.3 Crash containment |
+| Tool interop & MCP | `docs/intelligence/tool-manager/interop.md` | §9.1–§9.7 Multi-runtime bridging (Rust/Python/TS/WASM), §10.1–§10.5 MCP alignment, bridge, portability |
+| Tool security & audit | `docs/intelligence/tool-manager/security.md` | §11.1–§11.4 Capability enforcement, trust levels, rate limiting, §12.1–§12.4 Audit, metrics, tracing |
+| Tool AI intelligence | `docs/intelligence/tool-manager/intelligence.md` | §15.1–§15.4 AI-native tool selection, §16.1–§16.3 Kernel-internal ML, §17.1–§17.7 Future directions |
 | Runtime Advisor (hub) | `docs/intelligence/runtime-advisor.md` | §1 Core Insight, §2 Architecture, §11 Design Principles, §12 Impl Order, Document Map |
 | Runtime Advisor scheduling | `docs/intelligence/runtime-advisor/scheduling.md` | §3 AIRS learning frontend, §4 Kernel scheduler backend |
 | Runtime Advisor allocation | `docs/intelligence/runtime-advisor/allocation.md` | §5 AIRS lifetime prediction, §6 Kernel slab integration |
