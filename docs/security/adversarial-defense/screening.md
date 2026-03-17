@@ -67,9 +67,10 @@ kernel-internal compute budget.
 
 **Stage 5 — Tier 2 ML classification.** Invoked asynchronously when Tier 1 returns
 `Suspicious` or when the message originates from an External trust-level source. AIRS
-provides semantic injection analysis with context awareness (§5.3). For non-destructive data
-reads, Tier 2 can complete after provisional delivery; for writes and network-bound outputs,
-delivery is held until Tier 2 completes.
+provides semantic injection analysis with context awareness (§5.3). For non-destructive
+inbound data (reads, tool outputs), Tier 2 can complete after provisional delivery to the
+agent. For agent-initiated writes and network-bound sends, the OutputValidator (§6) handles
+gating independently — Stage 5 applies only to data flowing into the agent.
 
 **Stage 6 — Response.** The response policy (§5.4) selects a `ScreeningResponse` based on
 the highest severity signal from any stage and the agent's declared policy.
@@ -278,11 +279,12 @@ throughput. All budget numbers are measured on Cortex-A72 at 1.5GHz (QEMU virt t
 | Tier 2 ML | Async (can defer) | <10ms | AIRS IPC round-trip |
 | **Total (critical path)** | **Synchronous** | **<2ms** | **Pattern + Tier 1 only** |
 
-**Throughput target.** The screener must sustain 10,000 messages per second per core. At
-2ms per message on the synchronous path, a single core can process 500 messages per second
-at full latency. Meeting the 10,000/second target requires the fast path (no pattern match,
-Tier 1 returns Safe) to complete in under 0.1ms. The fast path bypasses the full
-Aho-Corasick scan and uses a hash-based pre-filter before engaging the full pattern engine.
+**Throughput target.** The screener must sustain 10,000 messages per second per core.
+The <2ms total is a p99 worst case (full pattern scan + Tier 1 ML). Typical fast-path
+latency (hash pre-filter returns clean, no full scan needed) is <0.1ms (p50), enabling
+the 10k/s target. Expected latency distribution: p50 <0.1ms, p95 <0.5ms, p99 <2ms.
+The fast path bypasses the full Aho-Corasick scan and uses a hash-based pre-filter
+before engaging the full pattern engine.
 
 The Tier 2 async path does not contribute to the synchronous latency budget. It runs on a
 dedicated kernel worker thread and delivers results via a completion channel.

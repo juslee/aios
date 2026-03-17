@@ -56,9 +56,10 @@ graph TD
 ```
 
 **InputScreener** operates at two tiers. Tier 1 uses deterministic pattern matching
-(structural injection fingerprints, known prompt injection signatures) and runs with no
-AIRS dependency. Tier 2 applies a kernel-internal ML classifier for semantic anomaly
-detection; if AIRS is unavailable it degrades to Tier 1 only.
+and a frozen kernel-internal ML classifier (structural injection fingerprints, known prompt
+injection signatures, binary embedding classifier) with no AIRS dependency. Tier 2 invokes
+AIRS for semantic injection analysis with full context awareness; if AIRS is unavailable
+the screener degrades to Tier 1 only.
 
 **OutputValidator** inspects agent outputs before they reach the Flow subsystem or any
 external channel. It checks schema conformance, detects potential exfiltration payloads
@@ -81,9 +82,9 @@ warning.
 attempting an unauthorized syscall is forwarded to the router as a Low or Medium event,
 depending on the capability type attempted.
 
-**HintScreener** monitors agent-to-agent hint traffic for patterns that suggest one agent
-is attempting to manipulate another (probing for allowed actions, injecting fabricated
-context, or amplifying permissions).
+**HintScreener** monitors agent-to-AIRS hint traffic for patterns that suggest an agent
+is attempting to abuse the AIRS resource-orchestration channel (probing for allowed actions,
+injecting fabricated context, or using hints to influence AIRS scheduling decisions).
 
 ### §8.2 Severity Classification
 
