@@ -129,21 +129,25 @@ Once set, accessibility configuration persists across reboots without requiring 
 ```rust
 /// Boot-time accessibility config.
 /// Stored unencrypted — must be readable before identity unlock.
-/// See kernel/boot/accessibility.md §19.3 for the full struct.
+/// This is the extended post-boot config used by the Accessibility Manager.
+/// The minimal boot-time version is defined in kernel/boot/accessibility.md §19.3.
 pub struct BootAccessibilityConfig {
+    // --- Core flags (match boot/accessibility.md §19.3) ---
     screen_reader: bool,
     high_contrast: bool,
     large_text: bool,
     reduced_motion: bool,
     braille_display: bool,
     switch_access: bool,
+    tts_voice: TtsVoice,           // eSpeak variant
+    tts_rate: f32,                 // speech rate multiplier
+    preferred_language: String,     // for TTS
+
+    // --- Extended fields (Accessibility Manager additions) ---
     magnification: bool,
     magnification_level: f32,
-    tts_voice: TtsVoice,           // eSpeak variant
-    tts_rate: f32,                 // speech rate multiplier (0.5 - 3.0)
     tts_pitch: f32,                // pitch multiplier (0.5 - 2.0)
     tts_volume: f32,               // volume (0.0 - 1.0)
-    preferred_language: String,     // for TTS
     contrast_scheme: ContrastScheme,
     scan_mode: Option<ScanMode>,
     scan_interval_ms: u32,         // auto-scan timing

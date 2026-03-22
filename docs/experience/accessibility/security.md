@@ -271,7 +271,8 @@ pub enum AccessibilityDataClass {
     TtsAudioOutput,
 
     /// Focus prediction model weights (kernel-internal ML).
-    /// Not encrypted (no user content), but per-user (not shared).
+    /// Encrypted: trained from user navigation transitions (behavioral data).
+    /// Per-user, never shared across users.
     FocusPredictionModel,
 }
 
@@ -283,6 +284,7 @@ impl AccessibilityDataClass {
             Self::VoiceCommands
                 | Self::SwitchTimingProfile
                 | Self::LearnedAdaptation
+                | Self::FocusPredictionModel
         )
     }
 
@@ -466,9 +468,9 @@ Every accessibility section references and is referenced by other architecture d
 | §13 Design Principles | `platform/posix.md` §9, `platform/linux-compat/syscall-translation.md` §5 |
 | §14 Kernel-Internal ML | `intelligence/behavioral-monitor/detection.md` §4, `kernel/scheduler.md` §16 |
 | §15 AIRS-Dependent Intelligence | `intelligence/airs/intelligence-services.md` §5, `intelligence/context-engine.md` §4 |
-| §16 Testing Strategy | `security/fuzzing.md` §6, `security/static-analysis.md` |
+| §16 Testing Strategy | `security/fuzzing/tooling.md` §6, `security/static-analysis.md` |
 | §17 Future Directions | `platform/input/future.md` §11, `platform/wireless/bluetooth.md` §4.6 |
-| §18 Security and Privacy | `security/model.md` §3, `security/privacy.md` §5, `security/adversarial-defense.md` §2 |
+| §18 Security and Privacy | `security/model.md` §3, `security/privacy.md` §5, `security/adversarial-defense/threat-model.md` §2 |
 | §19 Cross-Reference Index | All documents listed in this table |
 
 **Bidirectional references:** The following architecture documents reference the accessibility engine and should be updated when accessibility design changes:

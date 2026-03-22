@@ -58,14 +58,14 @@ mod tts_tests {
     #[test]
     fn speech_queue_priority_ordering() {
         let mut queue = SpeechQueue::new();
-        queue.enqueue("normal text", SpeechPriority::Normal);
-        queue.enqueue("alert!", SpeechPriority::Alert);
-        queue.enqueue("status update", SpeechPriority::Status);
+        queue.enqueue("immediate alert", SpeechPriority::Interrupt);
+        queue.enqueue("next message", SpeechPriority::Next);
+        queue.enqueue("queued status update", SpeechPriority::Queued);
 
-        // Alerts always dequeue first, then normal, then status
-        assert_eq!(queue.dequeue().unwrap().priority, SpeechPriority::Alert);
-        assert_eq!(queue.dequeue().unwrap().priority, SpeechPriority::Normal);
-        assert_eq!(queue.dequeue().unwrap().priority, SpeechPriority::Status);
+        // Interrupts always dequeue first, then next, then queued
+        assert_eq!(queue.dequeue().unwrap().priority, SpeechPriority::Interrupt);
+        assert_eq!(queue.dequeue().unwrap().priority, SpeechPriority::Next);
+        assert_eq!(queue.dequeue().unwrap().priority, SpeechPriority::Queued);
     }
 }
 

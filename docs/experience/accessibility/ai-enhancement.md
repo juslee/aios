@@ -63,10 +63,11 @@ impl ScreenReaderEngine {
     /// Fallback remains available if neural TTS fails.
     pub fn upgrade_to_neural_tts(&mut self) {
         if let Some(ref airs_layer) = self.neural_engine {
-            // Neural TTS becomes primary, eSpeak-NG becomes fallback
-            // If neural TTS latency exceeds 200ms, fall back to eSpeak
-            self.primary_engine = TtsEngine::Neural;
-            self.fallback_engine = TtsEngine::EspeakNg;
+            // Neural TTS becomes primary, eSpeak-NG becomes fallback.
+            // If neural TTS latency exceeds 200ms, automatically
+            // fall back to eSpeak-NG without interrupting the
+            // current speech queue.
+            self.tts_backend = TtsBackend::Neural { fallback: TtsBackend::EspeakNg };
         }
     }
 }

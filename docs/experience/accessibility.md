@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 7.6 Accessibility
-**Related:** [experience.md](./experience.md) — Experience layer surfaces, [compositor.md](../platform/compositor.md) — Compositor accessibility layer and rendering, [ui-toolkit.md](../applications/ui-toolkit.md) — Widget accessibility tree and keyboard navigation, [airs.md](../intelligence/airs.md) — AI-enhanced descriptions and voice control, [lifecycle.md](../kernel/boot/lifecycle.md) — Boot accessibility (§19), [airs/intelligence-services.md](../intelligence/airs/intelligence-services.md) — Intelligence services, [compositor/security.md](../platform/compositor/security.md) — Compositor accessibility (§11), [privacy.md](../security/privacy.md) — Privacy architecture, [input/ai.md](../platform/input/ai.md) — Input AI-native intelligence
+**Related:** [experience.md](./experience.md) — Experience layer surfaces, [compositor.md](../platform/compositor.md) — Compositor accessibility layer and rendering, [ui-toolkit.md](../applications/ui-toolkit.md) — Widget accessibility tree and keyboard navigation, [airs.md](../intelligence/airs.md) — AI-enhanced descriptions and voice control, [accessibility.md](../kernel/boot/accessibility.md) — Boot accessibility (§19), [airs/intelligence-services.md](../intelligence/airs/intelligence-services.md) — Intelligence services, [compositor/security.md](../platform/compositor/security.md) — Compositor accessibility (§11), [privacy.md](../security/privacy.md) — Privacy architecture, [input/ai.md](../platform/input/ai.md) — Input AI-native intelligence
 
 -----
 
@@ -193,6 +193,30 @@ flowchart TD
 ```
 
 The boot config is intentionally minimal — booleans and a few numeric values. It stores no personal information and is unencrypted so the compositor can read it before identity unlock. The full user preferences are encrypted with everything else and loaded after authentication.
+
+-----
+
+## Relocated Sections
+
+The following sections have moved to sub-documents. These stubs preserve cross-references from external docs.
+
+### 3. Core Assistive Technologies — [assistive-technology.md](./accessibility/assistive-technology.md)
+
+### 4. Screen Reader — [assistive-technology.md §4](./accessibility/assistive-technology.md)
+
+### 5. Braille Display — [assistive-technology.md §5](./accessibility/assistive-technology.md)
+
+### 6. Switch Scanning — [assistive-technology.md §6](./accessibility/assistive-technology.md)
+
+### 7. High Contrast, Magnification, Voice Control — [assistive-technology.md §7](./accessibility/assistive-technology.md)
+
+### 8. Boot-Time Accessibility — [system-integration.md §8](./accessibility/system-integration.md)
+
+### 9. Accessibility Tree — [system-integration.md §9](./accessibility/system-integration.md)
+
+### 10. AIRS Enhancement Matrix — [ai-enhancement.md §10](./accessibility/ai-enhancement.md)
+
+### 11. No-AIRS Fallback — [ai-enhancement.md §11](./accessibility/ai-enhancement.md)
 
 -----
 
