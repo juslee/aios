@@ -308,7 +308,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | AI privacy | `docs/security/privacy/ai-privacy.md` | §9.1–§9.4 Inference/provenance/ML/embeddings, §10.1–§10.2 Prompt injection/screening |
 | Privacy intelligence | `docs/security/privacy/intelligence.md` | §11.1–§11.3 Anomaly/prediction/PII detection, §12.1–§12.4 AIRS adaptation/scoring/queries/future |
 | Privacy testing & verification | `docs/security/privacy/testing.md` | §13.1–§13.3 Property/regression/red-team testing, §14.1–§14.2 POSIX bridge/cross-reference |
-| Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
+| Experience layer | `docs/experience/experience.md` | §1 Core Insight, §2 Five Surfaces, §3-§11 Surface details, §12 First Boot, §13 Settings, §14 Multi-Device, §15 Security UX, §16 Developer, §17 Design Language, §18 What Users Never See, §19 AI-Native, §20 Future, §21 Impl Order (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 33+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
