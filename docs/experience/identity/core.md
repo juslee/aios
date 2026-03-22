@@ -112,7 +112,9 @@ At first boot, AIOS creates a single identity:
 impl IdentityService {
     pub fn create_identity(display_name: &str) -> Identity {
         // 1. Generate root key (Level 0) in kernel Crypto Core
-        //    SLH-DSA-128s: conservative PQC, hash-based security
+        //    Target design: SLH-DSA-128s (conservative PQC, hash-based security)
+        //    Phase A (current): Ed25519 root — see §4.7 PQC Migration Timeline
+        //    Phase B: upgrades to SLH-DSA-128s root
         let root_key = crypto_core::generate_key(Algorithm::SlhDsa128s);
         // Root private key stays in kernel, encrypted at rest
 

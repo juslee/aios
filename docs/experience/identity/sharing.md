@@ -57,7 +57,7 @@ impl IdentityService {
         }
 
         // 2. Verify the target identity exists in our relationships
-        let relationship = self.get_relationship(with)
+        let _relationship = self.get_relationship(with)
             .ok_or(Error::UnknownIdentity)?;
 
         // 3. Create capability token bound to their identity
@@ -138,13 +138,13 @@ pub struct SpaceCapabilityToken {
     /// When this token was issued
     pub issued: SystemTime,
     /// Signed by the space owner's identity key
-    pub owner_signature: Signature,
+    pub owner_signature: VersionedSignature,
     /// Token ID for revocation
     pub token_id: TokenId,
 }
 
 impl SpaceCapabilityToken {
-    pub fn verify(&self, owner_public_key: &Ed25519PublicKey) -> bool {
+    pub fn verify(&self, owner_public_key: &PublicKeyBundle) -> bool {
         let data = self.signable_bytes();
         crypto_core::verify(owner_public_key, &data, &self.owner_signature)
     }

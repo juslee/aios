@@ -25,20 +25,20 @@ sequenceDiagram
     B->>A: BLE: signed challenge response
     A->>A: 4. Verify response,<br/>sign device cert for device B
     A->>B: BLE: signed cert + identity data + space sync bootstrap
-    B->>B: 6. Store identity + device cert,<br/>begin space sync
+    B->>B: 5. Store identity + device cert,<br/>begin space sync
 ```
 
 ```rust
 impl IdentityService {
     pub fn add_device(&mut self, new_device_pubkey: &Ed25519PublicKey,
-                      device_name: &str) -> Result<DeviceCertificate, Error> {
+                      device_name: &str) -> Result<SignedDeviceCertificate, Error> {
         // 1. Sign device certificate with primary key
         let cert = DeviceCertificate {
             identity_id: self.identity.id,
             device_public_key: *new_device_pubkey,
             device_name: device_name.to_string(),
             issued: SystemTime::now(),
-            issuer: self.identity.public_key,
+            issuer: self.identity.public_key_bundle.clone(),
         };
 
         let signature = crypto_core::sign(self.primary_key_id, &cert.to_bytes());
@@ -87,7 +87,7 @@ impl IdentityService {
 
         // 4. Notify all relationships (so they reject the revoked device)
         for rel in &self.identity.relationships {
-            if let Some(peer) = self.network.find_peer(&rel.with) {
+            if let Some(peer) = self.network.find_peer(&rel.peer_did) {
                 peer.send(PeerMessage::DeviceRevoked {
                     certificate: signed.clone(),
                 });
@@ -147,7 +147,7 @@ impl PeerProtocol {
         -> Result<PeerIdentity, Error>
     {
         // 1. Exchange identity proofs
-        let our_proof = IdentityProof {
+        let our_proof = PeerIdentityProof {
             identity_id: self.identity.id,
             device_public_key: self.device_key.public,
             device_certificate: self.device_cert.clone(),
@@ -160,7 +160,7 @@ impl PeerProtocol {
         };
 
         connection.send(&our_proof).await?;
-        let their_proof: IdentityProof = connection.recv().await?;
+        let their_proof: PeerIdentityProof = connection.recv().await?;
 
         // 2. Verify their proof
         // a. Device certificate is signed by their identity key

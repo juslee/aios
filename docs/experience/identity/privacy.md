@@ -63,7 +63,7 @@ impl IdentityService {
             // No link to primary identity — separate did:peer
             ephemeral_did: DidPeer::from_key(&ephemeral.public),
             linked_identity: None,
-            expires: SystemTime::now() + Duration::from_hours(24),
+            expires: SystemTime::now() + Duration::from_secs(24 * 3600),
         }
     }
 }
@@ -583,10 +583,12 @@ impl DeadManSwitch {
 
     /// Periodic check (called by kernel timer, e.g., daily)
     pub fn check(&mut self) -> SwitchAction {
-        let elapsed = SystemTime::now().duration_since(self.last_heartbeat);
+        let elapsed = SystemTime::now()
+            .duration_since(self.last_heartbeat)
+            .unwrap_or(Duration::from_secs(0));
 
         match &self.state {
-            SwitchState::Active if elapsed > self.timeout - Duration::from_days(7) => {
+            SwitchState::Active if elapsed > self.timeout - Duration::from_secs(7 * 24 * 3600) => {
                 self.state = SwitchState::Warning {
                     missed_since: self.last_heartbeat,
                 };
@@ -764,7 +766,7 @@ impl IdentityService {
         // New shareholders combine received sub-shares
         // The secret is never reconstructed in any single location
 
-        let new_shares = Vec::with_capacity(new_config.total as usize);
+        let mut new_shares = Vec::with_capacity(new_config.total as usize);
 
         for new_idx in 1..=new_config.total {
             let mut combined = Scalar::ZERO;

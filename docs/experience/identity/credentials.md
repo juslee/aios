@@ -36,16 +36,16 @@ impl IdentityService {
 
         // 3. Apply credential to the request (agent never sees the credential)
         let response = match &request {
-            CredentialUseRequest::HttpHeader { header_name } => {
-                CredentialUseResponse::HttpHeader {
-                    name: header_name.clone(),
-                    value: credential.to_header_value(),
-                }
-            }
-            CredentialUseRequest::OAuthToken => {
-                CredentialUseResponse::OAuthToken {
-                    access_token: credential.access_token(),
-                    expires: credential.expires(),
+            CredentialUseRequest::HttpRequest { method, url, headers } => {
+                // Identity Service performs the HTTP request internally,
+                // injecting the credential. Agent receives only the response.
+                let authed_response = self.http_client.execute_with_credential(
+                    &credential, method, url, headers,
+                )?;
+                CredentialUseResponse::HttpResponse {
+                    status: authed_response.status,
+                    headers: authed_response.headers,
+                    body: authed_response.body,
                 }
             }
             CredentialUseRequest::Sign { data } => {
@@ -227,11 +227,11 @@ pub enum HidTransport {
 When a relying party requests authentication, the platform authenticator negotiates the best algorithm:
 
 ```text
-Preference order:
-1. EdDSA (Ed25519)    — native to AIOS, fastest, smallest signatures
-2. ES256 (P-256)      — required by many RPs, WebAuthn mandatory-to-implement
-3. RS256 (RSA-2048)   — legacy fallback only
-4. ML-DSA-44 hybrid   — post-quantum (future, requires RP support)
+Preference order (COSE algorithm identifiers):
+1. EdDSA (Ed25519)         — COSE alg: -8, native to AIOS, fastest, smallest signatures
+2. ES256 (ECDSA P-256)     — COSE alg: -7, required by many RPs, WebAuthn mandatory-to-implement
+3. RS256 (RSASSA-PKCS1-v1_5 RSA-2048) — COSE alg: -257, legacy fallback only
+4. ML-DSA-44 hybrid        — COSE alg: TBD, post-quantum (future, requires RP support)
 ```
 
 Most relying parties support ES256 at minimum. AIOS prefers Ed25519 when the RP supports it (e.g., via the `public-key` credential type with EdDSA). For RPs that only support P-256, AIOS generates and manages P-256 keys through the same Crypto Core infrastructure.
