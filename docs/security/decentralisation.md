@@ -10,7 +10,7 @@
 
 Every mainstream operating system depends on servers you don't control. Your identity is an Apple ID, a Google Account, a Microsoft Account — a row in someone else's database. Your files live in iCloud, Google Drive, OneDrive — on someone else's disks. Your device syncs through someone else's infrastructure. If that infrastructure goes down, changes policy, or gets compromised, your digital life is held hostage.
 
-AIOS eliminates this dependency. Not by being offline-only or anti-cloud, but by making **cryptographic proof** the foundation of trust instead of **institutional authority**. Your identity is an Ed25519 key pair that you generate, on your device, with no server involved. Your data is content-addressed and Merkle-verified — two devices can prove they have identical data without trusting each other or any third party. Your devices find and authenticate each other directly, using mutual TLS with self-signed certificates anchored to your identity keys.
+AIOS eliminates this dependency. Not by being offline-only or anti-cloud, but by making **cryptographic proof** the foundation of trust instead of **institutional authority**. Your identity is an Ed25519 key pair that you generate, on your device, with no server involved. Your data is content-addressed and Merkle-verified — two devices can prove they have identical data without trusting each other or any third party. Your devices find and authenticate each other directly, using mutual TLS with device certificates issued by your identity key (no external CA).
 
 The result: everything works without a server. Everything works offline. Everything works if a company goes bankrupt, changes its terms of service, or gets acquired. And when you do want cloud services — a hosted LLM, a web API, a collaborative workspace — AIOS connects to them as a peer with explicit, revocable capability tokens, not as a dependent with implicit trust.
 
@@ -110,7 +110,7 @@ The pillars have a dependency order: Identity (1) must exist before capabilities
 
 Turn on a new AIOS device. There is no "create account" screen. There is no email address field. There is no password. The device generates a cryptographic identity automatically during first boot.
 
-To add a second device: open Settings on both devices, scan a QR code, confirm a 4-digit code matches on both screens. Done. Both devices now share the same identity. Files sync. Preferences sync. Conversations continue where you left off.
+To add a second device: open Settings on both devices, scan a QR code, confirm a 6-digit code matches on both screens. Done. Both devices now share the same identity. Files sync. Preferences sync. Conversations continue where you left off.
 
 To share a space with a friend: they hold their device near yours. Both confirm the pairing. You select which spaces to share and what access level (view, edit, or full). The friend's device now syncs those spaces directly with yours — no server mediates the relationship.
 
@@ -242,7 +242,7 @@ When two AIOS devices communicate, they speak the **AIOS Peer Protocol** — a n
 **Connection establishment:**
 
 1. **Discovery**: mDNS for local network, BLE for proximity, stored peer addresses for WAN. No central directory service.
-2. **Mutual TLS**: Both devices present their device certificates (signed by their primary identity key). Both verify the other's certificate chain. No certificate authority — the trust anchor is the identity key exchanged during initial pairing.
+2. **Mutual TLS**: Both devices present their device certificates (signed by their primary identity key). Both verify the other's certificate chain against the AIOS CA bundle built into the OS image. This "AIOS CA" is not a third-party or vendor CA; it is a set of trust anchors derived from the identity keys established during initial pairing (and subsequent device enrolment) for that user/mesh.
 3. **Capability exchange**: After TLS handshake, devices exchange their sync capability sets — which spaces they're authorized to sync, what operations are permitted.
 4. **Space operations**: Sync proceeds via the Merkle exchange protocol (§5). Application-level space operations (`space::read()`, `space::write()`) are transparently routed to the peer when the target space is remote.
 
@@ -290,7 +290,7 @@ flowchart TB
     end
 
     subgraph L4["Layer 4: Secure Transport"]
-        ST["Can I trust this connection?\n\nMutual TLS with identity certificates\nNo CA — trust anchored to pairing\nSession keys ephemeral, forward secret"]
+        ST["Can I trust this connection?\n\nMutual TLS with identity certificates\nNo CA — trust anchored to pairing\nSession keys ephemeral, forward secrecy"]
     end
 
     subgraph L3["Layer 3: Data Integrity"]
@@ -316,7 +316,7 @@ flowchart TB
 When a brand-new device joins the mesh:
 
 1. **Identity generation**: Device generates its own Ed25519 key pair.
-2. **Pairing ceremony**: User physically scans QR code on existing device. Both devices perform SPAKE2+ key agreement and verify via Short Authentication String (4-digit code displayed on both screens).
+2. **Pairing ceremony**: User physically scans QR code on existing device. Both devices perform SPAKE2+ key agreement and verify via Short Authentication String (6-digit code displayed on both screens).
 3. **Certificate issuance**: Primary device signs the new device's public key with the primary identity key, creating a device certificate.
 4. **Space catalog exchange**: New device receives the list of spaces and their sync policies.
 5. **Initial sync**: Merkle exchange brings the new device up to date.
@@ -347,7 +347,7 @@ Revocation cascades through all layers:
 
 ## §9 Threat Model for Decentralised Systems
 
-Decentralised systems face a distinct threat landscape compared to centralized ones. The absence of a central authority eliminates single points of failure but introduces new attack vectors.
+Decentralised systems face a distinct threat landscape compared to centralised ones. The absence of a central authority eliminates single points of failure but introduces new attack vectors.
 
 | Threat | Description | AIOS Mitigation | Pillar |
 |---|---|---|---|
@@ -516,11 +516,11 @@ Extend the personal device mesh to trusted contacts. Two users who have establis
 
 ### Decentralised agent distribution
 
-Agents are currently installed from an Agent Store (centralized). A future model distributes agents via peer protocol: agents are signed by their developer's Ed25519 identity, content-addressed by their hash, and discovered via the Space Resolver. Any device in the mesh can serve as a distribution point. The Agent Store becomes an optional convenience, not a requirement.
+Agents are currently installed from an Agent Store (centralised). A future model distributes agents via peer protocol: agents are signed by their developer's Ed25519 identity, content-addressed by their hash, and discovered via the Space Resolver. Any device in the mesh can serve as a distribution point. The Agent Store becomes an optional convenience, not a requirement.
 
 ### Space Resolver as DNS alternative
 
-The NTM's Space Resolver already maps semantic names to endpoints. Extending it with a distributed hash table (DHT) could replace DNS for AIOS-to-AIOS communication — no centralized DNS servers, no domain registrars, no DNS poisoning attacks. Human-readable space names would resolve via the DHT, with cryptographic verification of the binding.
+The NTM's Space Resolver already maps semantic names to endpoints. Extending it with a distributed hash table (DHT) could replace DNS for AIOS-to-AIOS communication — no centralised DNS servers, no domain registrars, no DNS poisoning attacks. Human-readable space names would resolve via the DHT, with cryptographic verification of the binding.
 
 ### Decentralised attestation
 
