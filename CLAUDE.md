@@ -310,7 +310,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Privacy testing & verification | `docs/security/privacy/testing.md` | §13.1–§13.3 Property/regression/red-team testing, §14.1–§14.2 POSIX bridge/cross-reference |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 33+) |
-| Identity | `docs/experience/identity.md` | All (Phase 3+) |
+| Identity (hub) | `docs/experience/identity.md` | §1 Overview, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
+| Identity core & keys | `docs/experience/identity/core.md` | §3 Identity data model, §4 PQC key hierarchy, CryptoBackend, HSM, SLIP-0010 |
+| Identity relationships & trust | `docs/experience/identity/relationships.md` | §5 TrustRelation, did:peer, §6 EigenTrust, SD-JWT, TOFU, key transparency |
+| Identity sharing | `docs/experience/identity/sharing.md` | §7 Space sharing config, share/revoke flows |
+| Identity cross-device | `docs/experience/identity/cross-device.md` | §8 Device addition/revocation, §9 Space Mesh sync, peer auth |
+| Identity agents | `docs/experience/identity/agents.md` | §10 Manifest signing, supply chain, delegation chains, AI provenance |
+| Identity credentials | `docs/experience/identity/credentials.md` | §11 Credential isolation, §12 WebAuthn platform authenticator, §12.6 Service identities, §12.7 OAuth |
+| Identity privacy & recovery | `docs/experience/identity/privacy.md` | §13 Selective disclosure (ZKP), §14 Graduated 3-tier recovery (Feldman VSS) |
+| Identity intelligence | `docs/experience/identity/intelligence.md` | §17 Kernel-internal ML, AIRS-dependent, comparative analysis |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
 | AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
 
