@@ -309,7 +309,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Privacy intelligence | `docs/security/privacy/intelligence.md` | §11.1–§11.3 Anomaly/prediction/PII detection, §12.1–§12.4 AIRS adaptation/scoring/queries/future |
 | Privacy testing & verification | `docs/security/privacy/testing.md` | §13.1–§13.3 Property/regression/red-team testing, §14.1–§14.2 POSIX bridge/cross-reference |
 | Experience layer | `docs/experience/experience.md` | §1 Core Insight, §2 Five Surfaces, §3-§11 Surface details, §12 First Boot, §13 Settings, §14 Multi-Device, §15 Security UX, §16 Developer, §17 Design Language, §18 What Users Never See, §19 AI-Native, §20 Future, §21 Impl Order (Phase 6+) |
-| Accessibility | `docs/experience/accessibility.md` | All (Phase 33+) |
+| Accessibility (hub) | `docs/experience/accessibility.md` | §1 Overview, §2 Architecture, §12 Impl Order, §13 Design Principles, Document Map |
+| Assistive technology | `docs/experience/accessibility/assistive-technology.md` | §3 Screen reader (eSpeak-NG), §4 Braille display, §5 Switch scanning, §6 High contrast/magnification, §7 Voice control |
+| Accessibility system integration | `docs/experience/accessibility/system-integration.md` | §8 Boot-time accessibility, §9 Accessibility tree |
+| Accessibility AI enhancement | `docs/experience/accessibility/ai-enhancement.md` | §10 AIRS enhancement matrix, §11 No-AIRS fallback specifications |
+| Accessibility intelligence | `docs/experience/accessibility/intelligence.md` | §14 Kernel-internal ML, §15 AIRS-dependent intelligence, §17 Future directions |
+| Accessibility testing | `docs/experience/accessibility/testing.md` | §16 Testing strategy, WCAG validation, adversarial testing |
+| Accessibility security | `docs/experience/accessibility/security.md` | §18 Security and privacy, §19 Cross-reference index |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
 | AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
