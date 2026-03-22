@@ -300,6 +300,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Update security operations | `docs/security/secure-boot/operations.md` | §10 Capabilities/verification/audit/incident/revocation, §11 POSIX compatibility |
 | Secure boot AI intelligence | `docs/security/secure-boot/intelligence.md` | §12 AI-native (model integrity/scheduling/anomaly), §13 Kernel-internal ML, §16 Future directions |
 | Static analysis & formal verification | `docs/security/static-analysis.md` | All (all phases) |
+| Privacy architecture (hub) | `docs/security/privacy.md` | §1 Core Insight, §2 Architecture, §15 Impl Order, §16 Design Principles, Document Map |
+| Agent privacy model | `docs/security/privacy/agent-privacy.md` | §3.1–§3.3 Privacy manifests/budgets/taint, §4.1–§4.3 Collusion detection/budget aggregation |
+| Sensor & hardware privacy | `docs/security/privacy/sensor-privacy.md` | §5.1–§5.4 Sensor coordinator/camera/audio/location, §6.1–§6.3 Kill switches/consent/revocation |
+| Data lifecycle privacy | `docs/security/privacy/data-lifecycle.md` | §7.1–§7.4 Classification/retention/scrubbing/erasure, §8.1–§8.3 Encryption/DLP/cross-zone |
+| AI privacy | `docs/security/privacy/ai-privacy.md` | §9.1–§9.4 Inference/provenance/ML/embeddings, §10.1–§10.2 Prompt injection/screening |
+| Privacy intelligence | `docs/security/privacy/intelligence.md` | §11.1–§11.3 Anomaly/prediction/PII detection, §12.1–§12.4 AIRS adaptation/scoring/queries/future |
+| Privacy testing & verification | `docs/security/privacy/testing.md` | §13.1–§13.3 Property/regression/red-team testing, §14.1–§14.2 POSIX bridge/cross-reference |
 | Experience layer | `docs/experience/experience.md` | All (Phase 6+) |
 | Accessibility | `docs/experience/accessibility.md` | All (Phase 33+) |
 | Identity | `docs/experience/identity.md` | All (Phase 3+) |
