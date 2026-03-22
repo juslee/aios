@@ -94,7 +94,7 @@ flowchart TB
 
 | Pillar | What users experience | What the OS does | Authoritative docs |
 |---|---|---|---|
-| Cryptographic Identity | No accounts, no passwords. Scan QR to add a device. | Ed25519 key hierarchy, device certificates, peer CRL | [identity.md §3-5](../experience/identity.md) |
+| Cryptographic Identity | No accounts, no passwords. Scan QR to add a device. | Ed25519 key hierarchy, device certificates, peer CRL | [core.md §3-4](../experience/identity/core.md), [relationships.md §5](../experience/identity/relationships.md) |
 | Capability-Gated Trust | Apps ask for what they need. Revoke anytime. | Unforgeable tokens, attenuation, cross-device delegation | [capabilities.md §3](./model/capabilities.md) |
 | Content-Addressed Storage | Files sync across devices automatically. No conflicts lost. | SHA-256 hashes, Merkle DAG, three-round exchange | [sync.md §8](../storage/spaces/sync.md) |
 | Peer-to-Peer Communication | Devices find each other. No cloud account needed. | QUIC + mutual TLS, mDNS/BLE discovery, Shadow Engine | [protocols.md §5.1](../platform/networking/protocols.md) |
@@ -135,10 +135,10 @@ flowchart TD
     CRL -.->|"propagated via\npeer protocol"| DK3
 ```
 
-- **Primary key**: Generated once, stored in TPM/Secure Enclave where available. Signs device keys. Recovery via threshold secret sharing across trusted devices (see [identity.md §4.3](../experience/identity.md)).
+- **Primary key**: Generated once, stored in TPM/Secure Enclave where available. Signs device keys. Recovery via threshold secret sharing across trusted devices (see [privacy.md §14](../experience/identity/privacy.md)).
 - **Device keys**: One per device, signed by the primary key. Used for mutual TLS in peer connections. Can be revoked individually without affecting other devices.
 - **Session keys**: Ephemeral, derived per-connection. Compromise of a session key does not compromise the device key.
-- **Graduated trust**: Relationships aren't binary. Trust is a spectrum: Family → Friend → Colleague → Acquaintance → Service → Unknown. Trust level affects sync defaults, capability delegation limits, and attention priority (see [identity.md §5](../experience/identity.md)).
+- **Graduated trust**: Relationships aren't binary. Trust is a spectrum: Family → Friend → Colleague → Acquaintance → Service → Unknown. Trust level affects sync defaults, capability delegation limits, and attention priority (see [relationships.md §5](../experience/identity/relationships.md)).
 
 **Why Ed25519:** Small keys (32 bytes), fast verification (~70μs), no patents, deterministic signatures (no random number generator dependency — critical for reproducibility in a kernel context), strong security (128-bit equivalent). See [hardening.md §4](./model/hardening.md) for the full cryptographic foundations.
 
@@ -562,9 +562,9 @@ These principles govern all decentralisation-related design decisions across AIO
 
 | Topic | This doc | Authoritative document(s) |
 |---|---|---|
-| Ed25519 identity, key hierarchy | §3 | [identity.md §3-5](../experience/identity.md) |
+| Ed25519 identity, key hierarchy | §3 | [core.md §3-4](../experience/identity/core.md), [relationships.md §5](../experience/identity/relationships.md) |
 | Device pairing (SPAKE2+, SAS) | §3, §8 | [pairing.md §3.2](../platform/multi-device/pairing.md) |
-| Graduated trust model | §3 | [identity.md §5](../experience/identity.md) |
+| Graduated trust model | §3 | [relationships.md §5](../experience/identity/relationships.md) |
 | Capability token lifecycle | §4 | [capabilities.md §3.1-3.6](./model/capabilities.md) |
 | Capability delegation | §4, §8 | [capabilities.md §3.5](./model/capabilities.md) |
 | Eight defense layers | §4 | [layers.md §2](./model/layers.md) |
