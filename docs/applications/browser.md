@@ -1,9 +1,10 @@
-# AIOS Browser Architecture
+# AIOS Browser Kit
 
-## Decomposed Web Content Runtime
+## Platform SDK for Web Browsers
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [subsystem-framework.md](../platform/subsystem-framework.md), [networking.md](../platform/networking.md)
+**Kit overview:** [Browser Kit](../kits/application/browser.md) — AIOS-native platform SDK for web browsers. See [ADR: Kit Architecture](../knowledge/decisions/2026-03-22-jl-kit-architecture.md).
+**Related:** [subsystem-framework.md](../platform/subsystem-framework.md), [networking.md](../platform/networking.md), [Interface Kit](./ui-toolkit.md)
 
 -----
 
@@ -14,6 +15,8 @@ Every browser today is a miniature operating system running inside your actual o
 Browsers became mini-OSes because the actual OS underneath provided nothing useful for web security. The OS gives files and sockets. The browser needs origin isolation, content security policies, sandboxed execution. So the browser rebuilt everything from scratch, on top of an OS that actively gets in its way.
 
 AIOS doesn't have this problem. AIOS already has capabilities, isolation, audited networking, spaces, and Flow. The browser doesn't need to rebuild all of that. It needs to use what the OS provides and focus on the one thing only a browser can do: **execute web content.**
+
+**Browser Kit is the AIOS-native platform SDK** — it defines the Rust traits (Tab Agent lifecycle, Web API bridge, origin-to-capability mapping, web storage integration) that any browser engine plugs into. Browser engines sit **above** Browser Kit as bridges: **Servo** (Rust-native, lightweight reference bridge), **Gecko/Firefox** and **Blink/Chrome** (production bridges via Linux compatibility layer). AIOS doesn't build a browser engine — it builds the platform that makes any engine a first-class citizen.
 
 -----
 
@@ -44,7 +47,7 @@ DOM manipulation                   ←  STAYS in browser (web-specific)
 Web API surface                    ←  STAYS in browser (thin shims to OS)
 ```
 
-The browser shrinks from a mini-OS to a **web content runtime** — a rendering engine and a language runtime, with thin shims that bridge Web APIs to OS services.
+The browser shrinks from a mini-OS to a **web content runtime** — a rendering engine and a language runtime, with thin shims that bridge Web APIs to OS services. The "STAYS in browser" responsibilities are handled by whichever engine bridge is active (Servo, Gecko, or Blink). Browser Kit defines the interface; the engine implements it.
 
 -----
 
@@ -56,7 +59,7 @@ Instead of one monolithic browser process, the AIOS browser is a set of cooperat
 ┌─────────────────────────────────────────────────────────┐
 │                    Browser Shell Agent                    │
 │  Tab management, URL bar, bookmarks, history, settings   │
-│  Built with portable UI toolkit (iced)                   │
+│  Built with Interface Kit (iced bridge)                   │
 │  Capabilities: compositor, space(bookmarks),             │
 │                space(history), space(web-storage)         │
 └──────────┬──────────────────────────────┬───────────────┘
@@ -283,24 +286,26 @@ This is cleaner than the traditional model because the service worker's persiste
 
 The runtime is the one part that doesn't decompose. JavaScript and WebAssembly must execute within the Tab Agent. But the execution environment is fundamentally different because of what surrounds it.
 
-### 8.1 Engine Choice
+### 8.1 Engine Bridge Architecture
 
-**SpiderMonkey through Servo.** Servo is a Rust-based browser engine that embeds SpiderMonkey (Mozilla's JS engine). Rather than embedding a JS engine from scratch, AIOS uses Servo's rendering engine and JS runtime as the core of the Tab Agent, with networking and storage layers replaced by AIOS service bridges.
+Browser Kit defines the `BrowserEngine` trait — any engine that implements it becomes a first-class browser on AIOS. **Servo is the default bridge** (Rust-native, lightweight, modular by design). Firefox and Chrome can run as production bridges via the Linux compatibility layer.
+
+**Servo bridge** — embeds SpiderMonkey (Mozilla's JS engine) through Servo's Rust-native modules:
 
 ```
-Servo Components Used                AIOS Replacement
+Servo Components Used                AIOS Replacement (via Browser Kit)
 ──────────────────────────           ────────────────────────────────────────
 SpiderMonkey (JS engine)          →  KEEP (no alternative)
 style (CSS engine)                →  KEEP
 layout (box/flex/grid)            →  KEEP
-WebRender (GPU rendering)         →  ADAPT to AIOS compositor
+WebRender (GPU rendering)         →  ADAPT to Compute Kit Tier 1
                                      (WebRender already uses wgpu)
-net (network stack)               →  REPLACE with OS service channels
-storage (cookies, localStorage)   →  REPLACE with web-storage space
-fetch (HTTP client)               →  REPLACE with OS HTTP service bridge
+net (network stack)               →  REPLACE with Browser Kit network bridge
+storage (cookies, localStorage)   →  REPLACE with Browser Kit storage bridge
+fetch (HTTP client)               →  REPLACE with Browser Kit HTTP bridge
 ```
 
-Servo is the right choice because it's modular by design. The layout engine, CSS engine, and JS runtime are separable from the networking and storage layers.
+Servo is the right default bridge because it's modular by design — the layout engine, CSS engine, and JS runtime are separable from the networking and storage layers. Firefox and Chrome run unmodified via Linux compat, with AIOS capabilities applied at the sandbox boundary.
 
 ### 8.2 The Web API Bridge
 
@@ -502,11 +507,12 @@ Every hardware access from web content goes through the same subsystem framework
 
 Integrates with the existing phase plan at Phase 30 (Web Browser, 5 weeks total). Sub-phases overlap — 30A/30B run concurrently, as do 30C/30D:
 
-### Phase 30A: Servo Integration (2 weeks)
+### Phase 30A: Browser Kit Traits + Servo Bridge (2 weeks)
 
-- Build Servo's layout engine, CSS engine, SpiderMonkey for aarch64-aios target
-- Strip Servo's networking and storage layers
-- Create Tab Agent scaffold that hosts Servo's rendering
+- Define Browser Kit traits (`BrowserEngine`, `TabAgent`, `WebApiBridge`, origin-to-capability mapping)
+- Build Servo bridge: layout engine, CSS engine, SpiderMonkey for aarch64-aios target
+- Strip Servo's networking and storage layers, wire to Browser Kit bridges
+- Create Tab Agent scaffold that hosts Servo's rendering via Browser Kit
 
 ### Phase 30B: Web API Bridge (2 weeks, concurrent with 30A)
 
@@ -518,7 +524,7 @@ Integrates with the existing phase plan at Phase 30 (Web Browser, 5 weeks total)
 
 ### Phase 30C: Browser Shell (1 week)
 
-- Tab management UI (portable toolkit / iced)
+- Tab management UI (Interface Kit, iced bridge)
 - URL bar, navigation, bookmarks (stored in bookmarks space)
 - History (stored in history space)
 - Origin capability derivation from URL
