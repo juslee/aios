@@ -21,7 +21,7 @@ This design is inspired by Fuchsia's Magma (userspace GPU drivers with VMO-based
 
 The key constraint: **software rendering must always work**. Every AIOS platform can fall back to CPU-based rendering when GPU hardware is unavailable or untrusted. GPU acceleration is an optimization, not a requirement.
 
-**Layering: GPU driver → Compute Kit → wgpu bridge.** The GPU drivers described in this document are low-level hardware backends. Compute Kit ([compute.md](../kernel/compute.md)) provides the AIOS-native abstraction above: Tier 1 (`DisplaySurface` trait) for framebuffer/scanout, Tier 2 (`RenderPipeline` trait) for shader submission. wgpu and Vulkan are optional **bridges above Compute Kit** — they translate standard graphics APIs to Kit primitives, giving ported apps (via Linux compat or cross-platform toolkits) access to GPU features through familiar interfaces. AIOS-native apps use Compute Kit directly.
+**Layering: GPU driver → Compute Kit → wgpu bridge.** The GPU drivers described in this document are low-level hardware backends. Compute Kit ([compute.md](../kernel/compute.md)) provides the AIOS-native abstraction above: Tier 1 (`GpuSurface` trait) for framebuffer/scanout, Tier 2 (`GpuRender` trait) for shader submission. wgpu and Vulkan are optional **bridges above Compute Kit** — they translate standard graphics APIs to Kit primitives, giving ported apps (via Linux compat or cross-platform toolkits) access to GPU features through familiar interfaces. AIOS-native apps use Compute Kit directly.
 
 -----
 
@@ -84,9 +84,9 @@ flowchart TD
 | --- | --- | --- |
 | **Agents** | EL0 userspace | Render content into capability-protected GPU buffers |
 | **Compositor** | EL0 privileged | Manage surfaces, layout, damage; submit composition commands |
-| **GPU Service** | EL0 privileged (std) | wgpu runtime, buffer allocation, command encoding, format conversion |
-| **Kernel HAL** | EL1 kernel | MMIO access, IRQ routing, SMMU programming, power domain control — implements Compute Kit Tier 1 (`DisplaySurface`) and Tier 2 (`RenderPipeline`) |
-| **wgpu bridge** | Above Compute Kit | Optional bridge translating WebGPU/Vulkan APIs to Compute Kit Tiers 1–2 for ported apps |
+| **GPU Service** | EL0 privileged (std) | Buffer allocation, command encoding, format conversion — hosts the optional wgpu bridge for ported apps |
+| **Kernel HAL** | EL1 kernel | MMIO access, IRQ routing, SMMU programming, power domain control — implements Compute Kit Tier 1 (`GpuSurface`) and Tier 2 (`GpuRender`) |
+| **wgpu bridge** (in GPU Service) | Above Compute Kit | Optional bridge translating WebGPU/Vulkan APIs to Compute Kit Tiers 1–2 for ported apps; runs inside the GPU Service process |
 | **Hardware** | Physical | GPU execution units, display controller, HDMI/DSI output |
 
 **Data flow (zero-copy):**

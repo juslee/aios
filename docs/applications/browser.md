@@ -288,7 +288,7 @@ The runtime is the one part that doesn't decompose. JavaScript and WebAssembly m
 
 ### 8.1 Engine Bridge Architecture
 
-Browser Kit defines the `BrowserEngine` trait — any engine that implements it becomes a first-class browser on AIOS. **Servo is the default bridge** (Rust-native, lightweight, modular by design). Firefox and Chrome can run as production bridges via the Linux compatibility layer.
+Browser Kit exposes core browser integration APIs — `BrowserSurface` (compositor surface contract for browser content rendering), `WebContentProcess` (isolated process sandbox with capability-gated IPC), and related capability bridges — that any engine plugs into to become a first-class browser on AIOS. **Servo is the default bridge** (Rust-native, lightweight, modular by design). Firefox and Chrome can run as production bridges via the Linux compatibility layer.
 
 **Servo bridge** — embeds SpiderMonkey (Mozilla's JS engine) through Servo's Rust-native modules:
 

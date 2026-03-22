@@ -30,7 +30,7 @@
 - [browser.md](../applications/browser.md) — Browser Kit: platform SDK for web browsers
 - [inspector.md](../applications/inspector.md) — Security dashboard and provenance viewer
 - [ui-toolkit.md](../applications/ui-toolkit.md) — Interface Kit: AIOS-native UI toolkit
-- [kits/README.md](../kits/README.md) — Kit architecture overview (30 Kits across 4 layers)
+- [kits/README.md](../kits/README.md) — Kit architecture overview (29 Kits across 4 layers)
 - [attention.md](../intelligence/attention.md) — Attention Manager and notification triage
 - [preferences.md](../intelligence/preferences.md) — Preference Service
 - [identity.md](../experience/identity.md) — Identity and trust model
@@ -282,14 +282,14 @@ flowchart TD
 
 Every AIOS subsystem exposes a **Kit** — a Rust-trait-based SDK inspired by BeOS naming (also used by Apple: UIKit, AVKit, etc.). Kits are the AIOS-native foundation; open-source projects (iced, wgpu, Servo, candle, Flutter, Qt, GTK, etc.) are **bridges above Kits**, translating their external APIs to Kit primitives. A bridge gives ported or cross-platform apps access to AIOS features through familiar interfaces, but Kits define the source of truth.
 
-**30 Kits across 4 layers:**
+**29 Kits across 4 layers:**
 
 | Layer | Kits |
 |---|---|
 | **Kernel (4)** | Memory, IPC, Capability, Compute |
 | **Platform (11)** | Network, Storage, Audio, Media, Input, USB, Camera, Wireless, Power, Thermal, Translation |
 | **Intelligence (7)** | AIRS, Context, Attention, Search, Flow, Intent, Preference |
-| **Application (8)** | App, Interface, Browser, Conversation, Identity, Notification, Security |
+| **Application (7)** | App, Interface, Browser, Conversation, Identity, Notification, Security |
 
 **System Services** (Compositor, Service Manager, Scheduler) are internal consumers of Kits — not Kits themselves. Apps never call compositor API directly; they interact via Compute Kit, Input Kit, and Flow Kit.
 

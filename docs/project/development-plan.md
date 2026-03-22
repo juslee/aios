@@ -318,10 +318,10 @@ Estimated timeline with 3 AI-assisted developers: ~15–25 weeks.
 | QUIC | quinn | Apache-2.0/MIT | — |
 | DNS | hickory-dns | Apache-2.0/MIT | — |
 | GPU | wgpu | Apache-2.0/MIT | — |
-| UI toolkit | Interface Kit (bridge: iced) | MIT | — |
+| UI toolkit | Interface Kit (iced bridge) | MIT (iced) | — |
 | Font rendering | fontdue or ab_glyph | MIT | — |
-| Browser engine | Browser Kit (bridge: Servo layout + SpiderMonkey) | MPL-2.0 | — |
-| AI inference | Compute Kit Tier 3 (bridge: candle) | MIT/Apache-2.0 | — |
+| Browser engine | Browser Kit (Servo bridge) | MPL-2.0 (Servo) | — |
+| AI inference | Compute Kit Tier 3 (candle bridge) | MIT/Apache-2.0 (candle) | — |
 | Model format | GGUF | MIT | — |
 | C library | musl | MIT | — |
 | Userland tools | FreeBSD | BSD-2-Clause | — |

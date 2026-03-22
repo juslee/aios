@@ -82,8 +82,8 @@ The compute abstraction is **not** a scheduler. The kernel CPU scheduler ([sched
 | `ComputeBuffer` / `BufferOwnership` | Zero-copy buffer sharing and ownership protocol | [memory.md](./compute/memory.md) §10 |
 | `ComputeAccess` | Capability token for compute device access | [security.md](./compute/security.md) §11 |
 | `ComputeGrant` | Capability granting command submission rights to a specific device | [security.md](./compute/security.md) §12 |
-| `DisplaySurface` (Kit Tier 1) | App-facing trait for framebuffer/scanout access | [Compute Kit](../kits/kernel/compute.md) |
-| `RenderPipeline` (Kit Tier 2) | App-facing trait for GPU shader submission | [Compute Kit](../kits/kernel/compute.md) |
+| `GpuSurface` (Kit Tier 1) | App-facing trait for framebuffer/scanout access | [Compute Kit](../kits/kernel/compute.md) |
+| `GpuRender` (Kit Tier 2) | App-facing trait for GPU shader submission | [Compute Kit](../kits/kernel/compute.md) |
 | `InferencePipeline` (Kit Tier 3) | App-facing trait for NPU→GPU→CPU inference fallback | [Compute Kit](../kits/kernel/compute.md) |
 
 ### 2.3 Data Flow: Workload Submission
@@ -157,7 +157,7 @@ flowchart LR
 | 39 | VideoCore VII compute driver (Pi 5), Apple Neural Engine driver | Phase 20 (GPU compute) |
 | 41 | AIRS intelligent placement using full compute registry, learned cost models | Phase 39 (real hardware) |
 
-**Compute Kit tiers are the app-facing API surface** — the `DisplaySurface`, `RenderPipeline`, and `InferencePipeline` traits are extracted organically as each tier's kernel implementation stabilizes. Phase 5 establishes Tier 1 (display), Phase 20 establishes Tier 2 (GPU compute), and Phase 9 establishes Tier 3 (inference). The Kit trait definitions live in `docs/kits/kernel/compute.md`.
+**Compute Kit tiers are the app-facing API surface** — the `GpuSurface`, `GpuRender`, and `InferencePipeline` traits are extracted organically as each tier's kernel implementation stabilizes. Phase 5 establishes Tier 1 (display), Phase 20 establishes Tier 2 (GPU compute), and Phase 9 establishes Tier 3 (inference). The Kit trait definitions live in `docs/kits/kernel/compute.md`.
 
 **Phase 19 is the pivotal phase.** Before Phase 19, AIRS manages its own `Vec<ComputeDevice>` without kernel involvement ([inference.md](../intelligence/airs/inference.md) §3.2). Phase 19 introduces the kernel compute registry and AIRS transitions from standalone device tracking to querying the kernel's canonical registry. This is a refactor of AIRS internals, not a breaking change — the `ComputeDevice` variants (Cpu, Gpu, Npu) gain a `kernel_device_id: ComputeDeviceId` field linking to the kernel's registry.
 
