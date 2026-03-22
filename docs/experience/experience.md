@@ -473,7 +473,7 @@ Every object in AIOS has a provenance chain. The GUI makes this visible:
 **On hover/long-press:** A small provenance badge shows where this object came from.
 
 ```text
-Created by: research-agent · from arxiv.org/abs/2026.12345
+Created by: research-agent · from arxiv.org/abs/1706.03762
 Modified by: you · 2 hours ago
 Derived from: "Attention Is All You Need" summary
 ```
