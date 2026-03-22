@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**System service, NOT a Kit:** The compositor is an internal system service — apps never call compositor APIs directly. Apps interact with display through [Compute Kit](../kits/kernel/compute.md) Tier 1 (`GpuSurface`), input through [Input Kit](../kits/platform/input.md), and data transfer through [Flow Kit](../kits/intelligence/flow.md). See [ADR: Kit Architecture](../knowledge/decisions/2026-03-22-jl-kit-architecture.md).
 **Related:** [gpu.md](./gpu.md) — GPU & Display architecture, [subsystem-framework.md](./subsystem-framework.md) — Display subsystem framework, [ipc.md](../kernel/ipc.md) — IPC protocol, [experience.md](../experience/experience.md) — Five Surfaces model, [model.md](../security/model.md) — Security and capability model, [airs.md](../intelligence/airs.md) — AI Runtime Services
 
 -----
@@ -36,6 +37,8 @@ AIOS's compositor is **semantically aware**. It receives hints from agents about
 
 The compositor is also the **display subsystem** in the subsystem framework. It implements the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem (see [subsystem-framework.md](./subsystem-framework.md) §3–§4).
 
+**The compositor is a system service, not a Kit.** Apps never import compositor APIs directly — they interact with display through Compute Kit Tier 1 (`GpuSurface` trait), receive input through Input Kit, and exchange content through Flow Kit. The compositor consumes these Kit primitives internally to compose surfaces, route input, and manage layout. This keeps the app-facing API stable even as compositor internals evolve.
+
 **What makes AIOS different from Wayland compositors:**
 
 - **Semantic hints** — agents declare content type, urgency, and interaction state; the compositor uses this for intelligent layout ([§4](./compositor/protocol.md))
@@ -50,7 +53,7 @@ The compositor is also the **display subsystem** in the subsystem framework. It 
 
 ```mermaid
 flowchart TD
-    subgraph Experience["Experience Layer"]
+    subgraph Experience["Experience Layer (via Kits)"]
         Workspace
         Browser
         MediaPlayer["Media Player"]
@@ -58,7 +61,7 @@ flowchart TD
         Inspector
     end
 
-    Experience -->|"IPC: surface creation,\ndamage, hints"| Protocol
+    Experience -->|"Compute Kit Tier 1\n(GpuSurface)\n+ Input Kit + Flow Kit"| Protocol
 
     subgraph Compositor["Compositor Service"]
         subgraph Protocol["Protocol Layer §3–§4"]
@@ -160,6 +163,8 @@ flowchart TD
 
 12. **Power-proportional.** GPU frequency scales with rendering load via DVFS. Static content reduces refresh rate. The compositor is the largest single consumer of GPU power and manages it actively.
 
+13. **Apps never call compositor directly.** The compositor is a system service, not a Kit. Apps interact with display through Compute Kit Tier 1 (`GpuSurface`), input through Input Kit, and data transfer through Flow Kit. The compositor consumes these Kit primitives internally — its protocol is not part of the public API surface.
+
 -----
 
 ## 16. Implementation Order
@@ -201,8 +206,8 @@ Phase 21 — Performance and Optimization:
   ├── AOT shader compilation pipeline
   └── Multiplane overlay (hardware planes bypass compositor)
 
-Phase 29 — UI Toolkit:
-  └── iced backend targeting compositor surfaces
+Phase 29 — Interface Kit:
+  └── Interface Kit (AIOS-native UI foundation; iced/Flutter/Qt are bridges above)
 
 Phase 33 — Accessibility:
   ├── Accessibility tree (full WAI-ARIA role support)

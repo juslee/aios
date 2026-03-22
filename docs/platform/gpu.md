@@ -6,7 +6,8 @@ type: architecture
 # AIOS GPU & Display Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 2.1 Full Stack Overview
-**Related:** [compositor.md](./compositor.md) — Window compositor and semantic layout, [hal.md](../kernel/hal.md) — GpuDevice trait (§4.4), [subsystem-framework.md](./subsystem-framework.md) — Display subsystem (§14), [power-management.md](./power-management.md) — GPU power states
+**Kit overview:** [Compute Kit](../kits/kernel/compute.md) — This doc covers GPU hardware drivers implementing Compute Kit Tiers 1 (Display Surface) and 2 (Render Pipeline). wgpu/Vulkan are bridges above Compute Kit for apps wanting standard graphics APIs.
+**Related:** [compositor.md](./compositor.md) — Window compositor and semantic layout (system service, NOT a Kit), [compute.md](../kernel/compute.md) — Kernel compute abstraction (Compute Kit 3-tier model), [hal.md](../kernel/hal.md) — GpuDevice trait (§4.4), [subsystem-framework.md](./subsystem-framework.md) — Display subsystem (§14), [power-management.md](./power-management.md) — GPU power states
 
 -----
 
@@ -19,6 +20,8 @@ AIOS takes a different approach. The GPU driver runs as a **privileged userspace
 This design is inspired by Fuchsia's Magma (userspace GPU drivers with VMO-based buffer sharing), seL4's capability-gated device frames, and Linux DRM/KMS's atomic modesetting — but adapted for AIOS's capability-based security model and AI-first architecture.
 
 The key constraint: **software rendering must always work**. Every AIOS platform can fall back to CPU-based rendering when GPU hardware is unavailable or untrusted. GPU acceleration is an optimization, not a requirement.
+
+**Layering: GPU driver → Compute Kit → wgpu bridge.** The GPU drivers described in this document are low-level hardware backends. Compute Kit ([compute.md](../kernel/compute.md)) provides the AIOS-native abstraction above: Tier 1 (`GpuSurface` trait) for framebuffer/scanout, Tier 2 (`GpuRender` trait) for shader submission. wgpu and Vulkan are optional **bridges above Compute Kit** — they translate standard graphics APIs to Kit primitives, giving ported apps (via Linux compat or cross-platform toolkits) access to GPU features through familiar interfaces. AIOS-native apps use Compute Kit directly.
 
 -----
 
@@ -81,8 +84,9 @@ flowchart TD
 | --- | --- | --- |
 | **Agents** | EL0 userspace | Render content into capability-protected GPU buffers |
 | **Compositor** | EL0 privileged | Manage surfaces, layout, damage; submit composition commands |
-| **GPU Service** | EL0 privileged (std) | wgpu runtime, buffer allocation, command encoding, format conversion |
-| **Kernel HAL** | EL1 kernel | MMIO access, IRQ routing, SMMU programming, power domain control |
+| **GPU Service** | EL0 privileged (std) | Buffer allocation, command encoding, format conversion — hosts the optional wgpu bridge for ported apps |
+| **Kernel HAL** | EL1 kernel | MMIO access, IRQ routing, SMMU programming, power domain control — implements Compute Kit Tier 1 (`GpuSurface`) and Tier 2 (`GpuRender`) |
+| **wgpu bridge** (in GPU Service) | Above Compute Kit | Optional bridge translating WebGPU/Vulkan APIs to Compute Kit Tiers 1–2 for ported apps; runs inside the GPU Service process |
 | **Hardware** | Physical | GPU execution units, display controller, HDMI/DSI output |
 
 **Data flow (zero-copy):**

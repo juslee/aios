@@ -1,9 +1,10 @@
-# AIOS Portable UI Toolkit
+# AIOS Interface Kit
 
-## Deep Technical Architecture
+## AIOS-Native UI Toolkit
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol, [experience.md](../experience/experience.md) — Experience layer surfaces, [agents.md](./agents.md) — Agent SDK, [flow.md](../storage/flow.md) — Flow drag/drop integration, [context-engine.md](../intelligence/context-engine.md) — Context-aware adaptation
+**Kit overview:** [Interface Kit](../kits/application/interface.md) — AIOS-native UI foundation (Rust traits for widgets, layout, events, theming). See [ADR: Kit Architecture](../knowledge/decisions/2026-03-22-jl-kit-architecture.md).
+**Related:** [compositor.md](../platform/compositor.md) — Compositor protocol (system service, not a Kit), [experience.md](../experience/experience.md) — Experience layer surfaces, [agents.md](./agents.md) — Agent SDK, [flow.md](../storage/flow.md) — Flow drag/drop integration, [context-engine.md](../intelligence/context-engine.md) — Context-aware adaptation
 
 -----
 
@@ -11,16 +12,16 @@
 
 A new operating system with no applications is dead on arrival. Developers won't invest in building for a platform with zero users, and users won't adopt a platform with no software. This is the cold-start problem that has killed every desktop OS challenger since Windows and macOS locked in their positions.
 
-AIOS breaks this deadlock with a portable UI toolkit. The same application code runs on Linux, macOS, Web, and AIOS. Developers build and test on their current platform — macOS with Xcode, Linux with their favorite editor — and deploy to AIOS without modification. The toolkit abstracts the platform away. When running on AIOS, applications gain capabilities that don't exist elsewhere (semantic window hints, Flow integration, space-backed persistence, capability-aware UI). On other platforms, these features gracefully degrade to standard behavior.
+AIOS breaks this deadlock with **Interface Kit** — the AIOS-native UI foundation. Interface Kit defines Rust traits for widgets, layout, events, and theming. These traits are the source of truth for AIOS's UI system. The same application code runs on Linux, macOS, Web, and AIOS. Developers build and test on their current platform — macOS with Xcode, Linux with their favorite editor — and deploy to AIOS without modification. When running on AIOS, applications gain capabilities that don't exist elsewhere (semantic window hints, Flow integration, space-backed persistence, capability-aware UI). On other platforms, these features gracefully degrade to standard behavior.
 
 **Why this matters:**
 
 1. **Developer adoption.** Build and test on a familiar platform. No AIOS boot required for development. The edit-compile-test loop stays fast.
 2. **Ecosystem bootstrapping.** Developers invest knowing their work isn't trapped on a zero-user platform. An AIOS agent is also a Linux application and a macOS application.
-3. **Proving abstractions.** Multi-platform support proves the toolkit design isn't accidentally coupled to kernel internals. If it works on Linux and macOS, the abstractions are clean.
+3. **Proving abstractions.** Multi-platform support proves the Kit design isn't accidentally coupled to kernel internals. If it works on Linux and macOS, the abstractions are clean.
 4. **Fast iteration.** Edit on Mac, test in QEMU, deploy to hardware. No context switching between toolchains.
 
-**Toolkit choice: iced.** Elm-inspired, pure Rust, MIT-licensed, GPU-rendered via wgpu. Already works on Linux/macOS/Windows/Web. The architecture naturally separates platform from toolkit. Adding an AIOS backend is a defined engineering task, not research. The Elm Architecture (Model-View-Update) maps cleanly to the agent model: each agent is an iced `Application` with its own state, message loop, and view function.
+**Bridge architecture:** Open-source UI toolkits sit **above** Interface Kit as bridges, translating their widget/rendering model to Kit primitives. The **default bridge is iced** — Elm-inspired, pure Rust, MIT-licensed, GPU-rendered via wgpu. Already works on Linux/macOS/Windows/Web. Other bridges (Flutter, Qt, GTK, Electron) can be added to give ported apps access to AIOS features through familiar interfaces. AIOS-native apps use Interface Kit traits directly. The Elm Architecture (Model-View-Update) maps cleanly to the agent model: each agent is an `Application` with its own state, message loop, and view function.
 
 -----
 
@@ -39,7 +40,7 @@ AIOS breaks this deadlock with a portable UI toolkit. The same application code 
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   UI Toolkit — Portable Core                     │
+│               Interface Kit — AIOS-Native Foundation              │
 │                                                                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐ │
 │  │ Widget Library│  │ Layout Engine │  │ Theme System          │ │
@@ -57,21 +58,21 @@ AIOS breaks this deadlock with a portable UI toolkit. The same application code 
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   Platform Backend (one per target)               │
+│           Platform Backend + Bridge Layer (one per target)        │
 │                                                                  │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────┐ │
-│  │ AIOS             │  │ Linux             │  │ macOS          │ │
-│  │ Compositor proto  │  │ wgpu + winit      │  │ wgpu + winit   │ │
-│  │ + GPU direct      │  │ (Wayland/X11)     │  │ (Metal)        │ │
-│  │ + semantic hints  │  │                   │  │                │ │
-│  │ + Flow integration│  │                   │  │                │ │
+│  │ AIOS (native)    │  │ Linux (iced       │  │ macOS (iced    │ │
+│  │ Compute Kit T1   │  │   bridge)         │  │   bridge)      │ │
+│  │ + Compositor IPC  │  │ wgpu + winit      │  │ wgpu + winit   │ │
+│  │ + semantic hints  │  │ (Wayland/X11)     │  │ (Metal)        │ │
+│  │ + Flow Kit        │  │                   │  │                │ │
 │  └─────────────────┘  └──────────────────┘  └────────────────┘ │
 │                                                                  │
-│  ┌─────────────────┐                                            │
-│  │ Web              │                                            │
-│  │ Canvas + DOM     │                                            │
-│  │ (WASM target)    │                                            │
-│  └─────────────────┘                                            │
+│  ┌─────────────────┐  ┌──────────────────────────────────────┐ │
+│  │ Web (iced bridge)│  │ Other bridges: Flutter, Qt, GTK,     │ │
+│  │ Canvas + DOM     │  │ Electron — translate their APIs to   │ │
+│  │ (WASM target)    │  │ Interface Kit primitives              │ │
+│  └─────────────────┘  └──────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -123,9 +124,9 @@ pub struct PlatformCapabilities {
 
 -----
 
-## 3. The Elm Architecture in AIOS
+## 3. Application Model
 
-Iced follows the Elm Architecture: **Model → View → Update**. This maps naturally to AIOS agents because each agent is an isolated process with its own state. There is no shared mutable state between agents — exactly what Elm prescribes.
+Interface Kit follows the **Model → View → Update** pattern (inspired by Elm Architecture): each agent is an isolated process with its own state — no shared mutable state between agents. The default iced bridge preserves this pattern naturally, but any bridge that implements Interface Kit's `Application` trait inherits the same guarantees.
 
 ### 3.1 The Pattern
 
@@ -1037,7 +1038,7 @@ impl PlatformBackend for AiosBackend {
 
 ### 9.2 Linux Backend
 
-Standard iced behavior — wgpu + winit on Wayland or X11:
+Standard iced bridge behavior — wgpu + winit on Wayland or X11:
 
 ```rust
 pub struct LinuxBackend {
@@ -1534,8 +1535,8 @@ fn view(&self) -> Element<Message> {
 ## 15. Implementation Order
 
 ```
-Phase 6a:   iced integration scaffolding       → toolkit compiles for AIOS target
-Phase 6b:   AIOS platform backend (basic)      → surfaces rendered via compositor IPC
+Phase 6a:   Interface Kit traits + iced bridge   → Kit compiles for AIOS target
+Phase 6b:   AIOS platform backend (basic)      → surfaces rendered via Compute Kit Tier 1 + compositor IPC
 Phase 6c:   Input routing                      → keyboard/mouse events reach widgets
 Phase 6d:   Core widgets (text, button, input) → basic interactive UI works
 
@@ -1573,4 +1574,4 @@ Phase 33:   Accessibility polish               → WCAG AA compliance
 
 7. **Agents own their UI, the system owns the chrome.** Window decorations, context transitions, focus indicators, and system overlays are compositor responsibilities. Agents control content. No agent can fake system UI.
 
-8. **Same toolkit, native feel.** Because both system experience surfaces and third-party agents use iced, there's one visual language. Agent UIs don't feel like foreign widgets — they're native.
+8. **Same toolkit, native feel.** Because both system experience surfaces and third-party agents use Interface Kit (via the iced bridge or directly), there's one visual language. Agent UIs don't feel like foreign widgets — they're native.

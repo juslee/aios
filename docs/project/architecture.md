@@ -27,9 +27,10 @@
 - [context-engine.md](../intelligence/context-engine.md) — Context Engine deep dive
 - [posix.md](../platform/posix.md) — POSIX compatibility layer deep dive
 - [experience.md](../experience/experience.md) — Experience layer and UI design
-- [browser.md](../applications/browser.md) — Decomposed web content runtime
+- [browser.md](../applications/browser.md) — Browser Kit: platform SDK for web browsers
 - [inspector.md](../applications/inspector.md) — Security dashboard and provenance viewer
-- [ui-toolkit.md](../applications/ui-toolkit.md) — Portable UI toolkit specification
+- [ui-toolkit.md](../applications/ui-toolkit.md) — Interface Kit: AIOS-native UI toolkit
+- [kits/README.md](../kits/README.md) — Kit architecture overview (29 Kits across 4 layers)
 - [attention.md](../intelligence/attention.md) — Attention Manager and notification triage
 - [preferences.md](../intelligence/preferences.md) — Preference Service
 - [identity.md](../experience/identity.md) — Identity and trust model
@@ -115,7 +116,7 @@ flowchart TD
         MediaPlayer["`Media Player
 *music, video, podcasts, streaming*`"]
         WebBrowser["`Web Browser
-*Servo-based, semantic indexing*`"]
+*Browser Kit (Servo/Gecko/Blink bridges)*`"]
         GameLauncher["`Game Launcher
 *library, saves as space objects*`"]
         Inspector["`Inspector
@@ -131,7 +132,7 @@ flowchart TD
         subgraph AIRS["AI Runtime Service — hot-swappable privileged service"]
             direction LR
             InfEngine["`Inference Engine
-*GGML, NEON SIMD*`"]
+*candle bridge, NEON SIMD*`"]
             ModelReg["`Model Registry
 *GGUF, LRU*`"]
             AgentLife["`Agent Lifecycle
@@ -248,8 +249,8 @@ flowchart TD
 *ARM Generic Timer*`"]
             Uart["`Uart
 *PL011 UART*`"]
-            GpuDev["`GpuDevice
-*VirtIO-GPU / VideoCore VI / VII*`"]
+            GpuDev["`Compute Kit
+*3-tier: Display Surface / Render Pipeline / Inference Pipeline*`"]
             NetDev["`NetworkDevice
 *VirtIO-Net / Broadcom Genet*`"]
             StorDev["`StorageDevice
@@ -276,6 +277,25 @@ flowchart TD
     SVC --> KERN
     KERN --> HW
 ```
+
+### 2.1a Kit Architecture
+
+Every AIOS subsystem exposes a **Kit** — a Rust-trait-based SDK inspired by BeOS naming (also used by Apple: UIKit, AVKit, etc.). Kits are the AIOS-native foundation; open-source projects (iced, wgpu, Servo, candle, Flutter, Qt, GTK, etc.) are **bridges above Kits**, translating their external APIs to Kit primitives. A bridge gives ported or cross-platform apps access to AIOS features through familiar interfaces, but Kits define the source of truth.
+
+**29 Kits across 4 layers:**
+
+| Layer | Kits |
+|---|---|
+| **Kernel (4)** | Memory, IPC, Capability, Compute |
+| **Platform (11)** | Network, Storage, Audio, Media, Input, USB, Camera, Wireless, Power, Thermal, Translation |
+| **Intelligence (7)** | AIRS, Context, Attention, Search, Flow, Intent, Preference |
+| **Application (7)** | App, Interface, Browser, Conversation, Identity, Notification, Security |
+
+**System Services** (Compositor, Service Manager, Scheduler) are internal consumers of Kits — not Kits themselves. Apps never call compositor API directly; they interact via Compute Kit, Input Kit, and Flow Kit.
+
+Lower layers never depend on higher ones. No backwards compatibility until 1.0; post-1.0 Apple-style deprecation. Kit registration: static linking (kernel/platform) + service registration (intelligence/application).
+
+For the full Kit overview, see [kits/README.md](../kits/README.md). Key ADRs: [Kit Architecture](../knowledge/decisions/2026-03-22-jl-kit-architecture.md), [Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md), [Interface Kit](../knowledge/decisions/2026-03-22-jl-interface-kit.md), [Browser Kit](../knowledge/decisions/2026-03-22-jl-browser-kit.md).
 
 ### 2.2 Space Storage System
 
@@ -884,9 +904,11 @@ mmap()                 → shared memory object
 
 Tools never know they're not on a traditional filesystem. Self-hosting capability via clang/lld means AIOS can compile software for itself.
 
-### 2.11 Portable UI Toolkit
+### 2.11 Interface Kit
 
-The UI toolkit runs on Linux, macOS, and AIOS. Developers build on familiar platforms, deploy to AIOS.
+**Full design in [ui-toolkit.md](../applications/ui-toolkit.md). Kit overview: [Interface Kit](../kits/application/interface.md). ADR: [Interface Kit decision](../knowledge/decisions/2026-03-22-jl-interface-kit.md).**
+
+Interface Kit is the AIOS-native UI foundation — Rust traits defining widgets, layout, events, and theming. Open-source toolkits (iced, Flutter, Qt, GTK, Electron) are **bridges above Interface Kit**, translating their widget/rendering model to Interface Kit primitives. This gives ported apps access to AIOS features through familiar interfaces while keeping Interface Kit as the source of truth.
 
 **Why portability matters:**
 
@@ -902,9 +924,9 @@ flowchart TD
     AppUI["`Application UI Code
 *identical across platforms*`"]
 
-    subgraph Core["UI Toolkit - Portable Core"]
+    subgraph Core["Interface Kit — AIOS-Native Foundation"]
         direction LR
-        Widgets["`Widget library
+        Widgets["`Widget traits
 *button, label, input, list, scroll...*`"]
         Layout["`Layout engine
 *flexbox-like*`"]
@@ -917,10 +939,20 @@ flowchart TD
 *shaping, line breaking, bidi*`"]
     end
 
+    subgraph Bridges["Open-Source Bridges (above Interface Kit)"]
+        direction LR
+        IcedBridge["`iced bridge
+*Elm-inspired, pure Rust*`"]
+        FlutterBridge["`Flutter bridge
+*Dart runtime*`"]
+        QtBridge["`Qt/GTK bridge
+*via Linux compat*`"]
+    end
+
     subgraph Backend["Platform Backend (one per target)"]
         direction LR
         AIOS["`AIOS
-*Compositor protocol + GPU direct*`"]
+*Compute Kit Tier 1 + Input Kit*`"]
         Linux["`Linux
 *wgpu + winit Wayland/X11*`"]
         macOS["`macOS
@@ -930,11 +962,12 @@ flowchart TD
     end
 
     AppUI --> Core --> Backend
+    AppUI --> Bridges --> Core
 ```
 
-**Toolkit choice: iced (Elm-inspired, pure Rust)** — Already works on Linux/macOS/Windows/Web. MIT-licensed. GPU-rendered via wgpu. Architecture naturally separates platform from toolkit. Adding AIOS backend is a defined task, not research.
+**Cold-start strategy: iced as the first bridge** — iced (Elm-inspired, pure Rust, MIT-licensed, GPU-rendered via wgpu) provides the initial bridge above Interface Kit, giving AIOS a working UI toolkit from day one. Additional bridges (Flutter, Qt, GTK) follow as the Linux compatibility layer matures.
 
-**AIOS backend unique capabilities (gracefully degrade on other platforms):**
+**AIOS-native capabilities via Interface Kit (gracefully degrade on other platforms):**
 
 - Semantic window hints → compositor understands content (ignored on Linux/macOS)
 - Flow integration → context-aware drag/drop (falls back to standard D&D)
@@ -1015,16 +1048,18 @@ Hardware Driver        → VirtIO, USB, PCI, platform-specific
 |USB      |Varies by class  |Varies by class                     |/dev/usb*        |
 |Power    |Control commands |Exclusive (kernel)                  |/sys/power/*     |
 
-### 2.13 Browser Architecture
+### 2.13 Browser Kit
 
-**Full design in [browser.md](../applications/browser.md).**
+**Full design in [browser.md](../applications/browser.md). Kit overview: [Browser Kit](../kits/application/browser.md). ADR: [Browser Kit decision](../knowledge/decisions/2026-03-22-jl-browser-kit.md).**
+
+Browser Kit is the AIOS-native platform SDK for web browsers. Browser engines (Servo, Gecko/Firefox, Blink/Chrome) are **bridges above Browser Kit** — they plug into AIOS subsystems via the Kit's API. AIOS doesn't build a browser engine; it builds the platform that makes any engine a first-class citizen.
 
 Traditional browsers are mini-operating systems because the actual OS provides nothing for web security. AIOS already has capabilities, isolation, audited networking, spaces, and Flow. The browser doesn't rebuild all of that — it uses what the OS provides and focuses on the one thing only a browser can do: **execute web content.**
 
 **Decomposition:** The browser becomes a constellation of agents:
 
-- **Browser Shell Agent** — tab management, URL bar, bookmarks (stored in spaces), history (stored in spaces), built with portable UI toolkit
-- **Tab Agents** — one per site, each a literal AIOS agent with capabilities derived from the URL origin. Contains Servo rendering engine and SpiderMonkey JS runtime
+- **Browser Shell Agent** — tab management, URL bar, bookmarks (stored in spaces), history (stored in spaces), built with Interface Kit
+- **Tab Agents** — one per site, each a literal AIOS agent with capabilities derived from the URL origin. Contains whichever engine bridge is active (Servo as lightweight Rust-native bridge; Firefox/Chrome via Linux compat)
 - **Service Worker Agents** — persistent Tab Agents with constrained capabilities for background operation
 
 **Same-origin policy becomes kernel-enforced capability isolation.** A Tab Agent for `weather.com` physically cannot read memory belonging to a Tab Agent for `bank.com`. Not a browser policy — a hardware-enforced capability boundary.
@@ -1335,7 +1370,7 @@ Does NOT: Pop up uninvited. Suggest things unprompted. Interrupt activities. Req
 
 **Full architecture in [browser.md](../applications/browser.md).**
 
-Decomposed web content runtime based on Servo (Rust-based, embeddable). Each tab is a literal AIOS agent with capabilities derived from the URL origin. The Browser Shell manages tabs, bookmarks, history — all stored in spaces. Looks and feels like a normal browser to users.
+Browser Kit provides the AIOS-native platform SDK for web browsers. Browser engines (Servo, Gecko/Firefox, Blink/Chrome) are bridges above Browser Kit. Each tab is a literal AIOS agent with capabilities derived from the URL origin. The Browser Shell manages tabs, bookmarks, history — all stored in spaces. Looks and feels like a normal browser to users.
 
 Standard features: address bar, tabs, back/forward, bookmarks, downloads. All Web APIs work through thin shims that bridge to OS subsystems via the subsystem framework.
 
@@ -1715,7 +1750,7 @@ Developers can work immediately. Compilers, editors, shell scripts — all funct
 
 ### Tier 2: Web Applications
 
-Through Servo/browser, users can access Gmail, Google Docs, Slack, YouTube, Netflix, Spotify, and thousands of other web apps. The web IS the app ecosystem.
+Through Browser Kit (with engine bridges like Servo, Firefox, or Chrome), users can access Gmail, Google Docs, Slack, YouTube, Netflix, Spotify, and thousands of other web apps. The web IS the app ecosystem.
 
 ### Tier 3: Native AIOS Agents
 

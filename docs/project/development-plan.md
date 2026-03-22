@@ -48,7 +48,7 @@ flowchart LR
     style T1 fill:#228B22,color:white
 ```
 
-> **Note:** Week ranges assume continued AI-assisted development. Multiply by 3–5x for unassisted solo development. Later tiers have wider ranges because external dependency integration (Servo, GGML, hardware drivers) has lower AI leverage than kernel-internal work.
+> **Note:** Week ranges assume continued AI-assisted development. Multiply by 3–5x for unassisted solo development. Later tiers have wider ranges because external bridge integration (Servo bridge, candle bridge, hardware drivers) has lower AI leverage than kernel-internal work.
 
 -----
 
@@ -111,8 +111,8 @@ flowchart TD
     P27 --> P28["Phase 28: Thermal Management"]
     P19 --> P28
 
-    P16 --> P29["Phase 29: Portable UI Toolkit"]
-    P29 --> P30["Phase 30: Web Browser"]
+    P16 --> P29["Phase 29: Interface Kit"]
+    P29 --> P30["Phase 30: Browser Kit"]
     P20 --> P31["Phase 31: Media Pipeline & Codecs"]
     P9 --> P31
     P31 --> P32["Phase 32: Streaming, RTC & Camera"]
@@ -141,9 +141,9 @@ flowchart TD
     style P4 fill:#FFA500,color:white
 ```
 
-**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 13 → 16 → 29 → 30. The web browser (Phase 30) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
+**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 13 → 16 → 29 → 30. Browser Kit (Phase 30) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
 
-Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 30) depends on the browser and UI toolkit chain (16 → 29 → 30), not POSIX tools. Phase 22 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
+Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 30) depends on the Interface Kit + Browser Kit chain (16 → 29 → 30), not POSIX tools. Phase 22 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
 
 **Parallel workstreams:** Several phase chains can proceed concurrently once their dependencies are met:
 - **Compute chain:** 19 → 20 → 31 (kernel compute abstraction → GPU compute → media pipeline)
@@ -160,8 +160,8 @@ Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Dail
 | Risk | Impact | Likelihood | Status | Mitigation |
 |---|---|---|---|---|
 | IPC performance < 5μs target | High — microkernel viability | Medium | **Resolved** — avg=4μs, p99=8μs (Gate 1 passed) | Prototype IPC in Phase 3, benchmark before proceeding. Fallback: hybrid kernel with in-kernel filesystem |
-| GGML/llama.cpp aarch64 performance insufficient | High — AI features unusable | Low | Open | GGML is proven on aarch64 (runs on phones). Mitigation: quantization, smaller models, NPU offload |
-| Servo build complexity | High — browser delayed | Medium | Open | Servo is modular but massive (1.5M+ LoC). Mitigation: start integration early (Phase 21 prep in Phase 16), maintain Servo fork |
+| Inference bridge performance (candle default, GGML alternative) | High — AI features unusable | Low | Open | candle is pure Rust on aarch64; GGML alternative bridge available via FFI if hand-tuned NEON required. Mitigation: quantization, smaller models, NPU offload |
+| Engine bridge complexity (Servo default, Gecko/Blink via Linux compat) | High — browser delayed | Medium | Open | Servo is modular but massive (1.5M+ LoC). Firefox/Chrome available via Linux compat layer as alternative. Mitigation: start integration early (Phase 21 prep in Phase 16), maintain Servo fork |
 | smoltcp limitations | Medium — networking incomplete | Low | Open | smoltcp handles TCP/UDP well. Missing: advanced congestion control, some edge cases. Mitigation: contribute upstream, fork if needed |
 | GPU driver complexity (real hardware) | High — no display on Pi | Medium | Open | VirtIO-GPU works in QEMU. Pi GPU (VC4/V3D) has open-source driver but is complex. Mitigation: start with framebuffer fallback |
 | Memory pressure on 2GB devices | Medium — degraded experience | Medium | Open | Models need 4+ GB RAM. Mitigation: aggressive quantization, model eviction, swap space, 4GB minimum recommended |
@@ -176,8 +176,8 @@ Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Dail
 | Risk | Impact | Status | Mitigation |
 |---|---|---|---|
 | Phase 3 (IPC) takes longer than 6 weeks | Delays everything downstream | **Resolved** — completed in 3 days | IPC was flagged as the hardest kernel component. Architecture-first approach eliminated design uncertainty. |
-| Phase 8 (AIRS) underestimated | AI features delayed | Open | GGML integration is well-understood. Context management and indexing are the unknowns. |
-| Phase 21 (Browser) underestimated | Daily-driver delayed | Open | Servo integration is the highest-risk single phase. External codebase integration has the lowest AI leverage. Budget extra slack. |
+| Phase 8 (AIRS) underestimated | AI features delayed | Open | candle bridge integration is well-understood (pure Rust). Context management and indexing are the unknowns. |
+| Phase 21 (Browser) underestimated | Daily-driver delayed | Open | Servo bridge integration is the highest-risk single phase. External codebase integration has the lowest AI leverage. Budget extra slack. |
 | External dependency integration ceiling | Later phases slow down | Open | Kernel-internal phases (0–3) benefit most from AI assistance (10–45x speedup). External library integration phases (5, 7, 15, 21) involve coordination costs that resist acceleration. Expect 2–4x speedup at best. |
 | Scope creep in any phase | Timeline extends | Open | Each phase has a strict deliverable. Feature requests go to future phases. |
 
@@ -280,8 +280,8 @@ All 42 phases are being implemented by a single developer using AI-assisted deve
 | AI Leverage | Tiers | Speedup | Reason |
 |---|---|---|---|
 | High | 1–2 (Phases 0–8) | 10–20x | Pure kernel code, well-specified by architecture docs |
-| Medium | 3–4 (Phases 9–22) | 3–8x | External library integration (GGML, smoltcp), compute abstraction. AI helps with glue code and testing. |
-| Lower | 5–7 (Phases 23–39) | 2–4x | Hardware drivers, Servo browser, certification. External constraints dominate. |
+| Medium | 3–4 (Phases 9–22) | 3–8x | External library integration (candle bridge, smoltcp), compute abstraction. AI helps with glue code and testing. |
+| Lower | 5–7 (Phases 23–39) | 2–4x | Hardware drivers, engine bridges (Servo), certification. External constraints dominate. |
 
 ### Solo Developer (Unassisted Baseline)
 
@@ -318,10 +318,10 @@ Estimated timeline with 3 AI-assisted developers: ~15–25 weeks.
 | QUIC | quinn | Apache-2.0/MIT | — |
 | DNS | hickory-dns | Apache-2.0/MIT | — |
 | GPU | wgpu | Apache-2.0/MIT | — |
-| UI toolkit | iced | MIT | — |
+| UI toolkit | Interface Kit (iced bridge) | MIT (iced) | — |
 | Font rendering | fontdue or ab_glyph | MIT | — |
-| Browser engine | Servo (Servo's layout + SpiderMonkey) | MPL-2.0 | — |
-| AI inference | GGML / llama.cpp | MIT | — |
+| Browser engine | Browser Kit (Servo bridge) | MPL-2.0 (Servo) | — |
+| AI inference | Compute Kit Tier 3 (candle bridge) | MIT/Apache-2.0 (candle) | — |
 | Model format | GGUF | MIT | — |
 | C library | musl | MIT | — |
 | Userland tools | FreeBSD | BSD-2-Clause | — |
@@ -329,7 +329,7 @@ Estimated timeline with 3 AI-assisted developers: ~15–25 weeks.
 | Compiler | LLVM/clang | Apache-2.0 | — |
 | Certificates | webpki-roots | MPL-2.0 | — |
 
-Mostly permissively licensed (MIT, Apache-2.0, BSD-2-Clause) with some MPL-2.0 dependencies (Servo, webpki-roots). No GPL dependencies in the core OS.
+Mostly permissively licensed (MIT, Apache-2.0, BSD-2-Clause) with some MPL-2.0 dependencies (Servo bridge, webpki-roots). No GPL dependencies in the core OS.
 
 -----
 
@@ -397,8 +397,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 26 | Bluetooth & Wireless Integration | wireless/bluetooth.md, integration.md, ai-native.md | `26-bluetooth-and-wireless-integration.md` | Planned | 4w | — |
 | 27 | Power Management | power-management.md | `27-power-management.md` | Planned | 3w | — |
 | 28 | Thermal Management | thermal.md (7) | `28-thermal-management.md` | Planned | 5w | — |
-| 29 | Portable UI Toolkit | ui-toolkit.md | `29-portable-ui-toolkit.md` | Planned | 5w | — |
-| 30 | Web Browser | browser.md | `30-web-browser.md` | Planned | 7w | — |
+| 29 | Interface Kit | ui-toolkit.md | `29-interface-kit.md` | Planned | 5w | — |
+| 30 | Browser Kit | browser.md | `30-browser-kit.md` | Planned | 7w | — |
 | 31 | Media Pipeline & Codecs | media-pipeline.md (6) | `31-media-pipeline-and-codecs.md` | Planned | 4w | — |
 | 32 | Streaming, RTC & Camera | camera.md (7) | `32-streaming-rtc-and-camera.md` | Planned | 5w | — |
 | 33 | Accessibility & Internationalization | accessibility.md | `33-accessibility-and-internationalization.md` | Planned | 5w | — |
@@ -448,7 +448,7 @@ The architecture-first, AI-assisted workflow that produced the observed velocity
 
 3. **QEMU version drift breaks assumptions.** QEMU 10.x changed edk2 post-ExitBootServices behavior — MMIO mappings were no longer preserved in TTBR0. This required moving `init_mmu()` before GIC initialization in Phase 4 M13. Pin QEMU versions in CI and test against multiple versions.
 
-4. **Self-contained phases are fastest.** Phase 2 (memory management) had the highest per-day throughput because it is entirely self-contained — no I/O, no external dependencies, and the architecture doc specified every data structure precisely. Phases with external integration (GGML, Servo) will be slower.
+4. **Self-contained phases are fastest.** Phase 2 (memory management) had the highest per-day throughput because it is entirely self-contained — no I/O, no external dependencies, and the architecture doc specified every data structure precisely. Phases with external bridge integration (candle, Servo) will be slower.
 
 5. **Gate 1 passed with margin.** IPC performance (avg 4μs) already meets the *optimized* target (< 5μs), not just the gate threshold (< 10μs). This eliminates the hybrid kernel fallback and validates the microkernel architecture with high confidence.
 
@@ -516,8 +516,8 @@ These subsystems do not have their own phases — their work is distributed acro
 
 ### Tier 6 Complete (Week 51)
 
-- [ ] Cross-platform UI toolkit (iced on AIOS/Linux/macOS)
-- [ ] Servo-based browser with tab-per-agent isolation
+- [ ] Interface Kit with iced bridge (AIOS/Linux/macOS)
+- [ ] Browser Kit with Servo bridge, tab-per-agent isolation
 - [ ] Media player, audio subsystem, camera subsystem
 - [ ] Screen reader, keyboard navigation, Unicode/i18n
 

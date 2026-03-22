@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Compute Kit](../kits/kernel/compute.md) — 3-tier app-facing API (Display Surface, Render Pipeline, Inference Pipeline)
 **Related:** [device-model.md](./device-model.md) — Device representation and driver framework, [scheduler.md](./scheduler.md) — CPU scheduling and compute affinity, [memory.md](./memory.md) — Physical/virtual memory and DMA pools, [hal.md](./hal.md) — Platform trait and hardware access
 
 -----
@@ -21,6 +22,8 @@ Traditional operating systems treat this heterogeneity as a driver concern: each
 AIOS introduces a **kernel compute abstraction** that sits between the device model (which knows about hardware) and AIRS (which knows about workloads). The kernel classifies compute devices, enforces capability-gated access, tracks per-agent compute budgets, and manages accelerator memory. AIRS queries the kernel's compute registry to make intelligent placement decisions — but the kernel enforces the constraints. A misbehaving AIRS or a compromised agent cannot monopolize an accelerator, bypass thermal limits, or access another agent's compute buffers, because the kernel mediates every operation.
 
 **The fundamental design split:** The kernel classifies; AIRS decides. The kernel knows what devices exist and what they can do. AIRS decides which device should run a given workload. The boundary is enforcement (kernel) versus intelligence (AIRS).
+
+**Compute Kit 3-tier model:** The kernel compute abstraction surfaces to applications through Compute Kit ([Compute Kit overview](../kits/kernel/compute.md)), which defines three tiers of app-facing API: **Tier 1 (Display Surface)** for framebuffer/scanout access, **Tier 2 (Render Pipeline)** for GPU shader submission, and **Tier 3 (Inference Pipeline)** for NPU→GPU→CPU inference fallback. wgpu and Vulkan are bridges above Compute Kit Tiers 1–2 (for apps wanting standard graphics APIs). candle is a bridge above Tier 3 (for inference workloads). See [ADR: Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md).
 
 -----
 
@@ -79,6 +82,9 @@ The compute abstraction is **not** a scheduler. The kernel CPU scheduler ([sched
 | `ComputeBuffer` / `BufferOwnership` | Zero-copy buffer sharing and ownership protocol | [memory.md](./compute/memory.md) §10 |
 | `ComputeAccess` | Capability token for compute device access | [security.md](./compute/security.md) §11 |
 | `ComputeGrant` | Capability granting command submission rights to a specific device | [security.md](./compute/security.md) §12 |
+| `GpuSurface` (Kit Tier 1) | App-facing trait for framebuffer/scanout access | [Compute Kit](../kits/kernel/compute.md) |
+| `GpuRender` (Kit Tier 2) | App-facing trait for GPU shader submission | [Compute Kit](../kits/kernel/compute.md) |
+| `InferencePipeline` (Kit Tier 3) | App-facing trait for NPU→GPU→CPU inference fallback | [Compute Kit](../kits/kernel/compute.md) |
 
 ### 2.3 Data Flow: Workload Submission
 
@@ -150,6 +156,8 @@ flowchart LR
 | 20 | GPU compute path via VirtIO-GPU 3D on QEMU, MediaCodec acceleration | Phase 19 (compute abstraction) |
 | 39 | VideoCore VII compute driver (Pi 5), Apple Neural Engine driver | Phase 20 (GPU compute) |
 | 41 | AIRS intelligent placement using full compute registry, learned cost models | Phase 39 (real hardware) |
+
+**Compute Kit tiers are the app-facing API surface** — the `GpuSurface`, `GpuRender`, and `InferencePipeline` traits are extracted organically as each tier's kernel implementation stabilizes. Phase 5 establishes Tier 1 (display), Phase 20 establishes Tier 2 (GPU compute), and Phase 9 establishes Tier 3 (inference). The Kit trait definitions live in `docs/kits/kernel/compute.md`.
 
 **Phase 19 is the pivotal phase.** Before Phase 19, AIRS manages its own `Vec<ComputeDevice>` without kernel involvement ([inference.md](../intelligence/airs/inference.md) §3.2). Phase 19 introduces the kernel compute registry and AIRS transitions from standalone device tracking to querying the kernel's canonical registry. This is a refactor of AIRS internals, not a breaking change — the `ComputeDevice` variants (Cpu, Gpu, Npu) gain a `kernel_device_id: ComputeDeviceId` field linking to the kernel's registry.
 
