@@ -131,19 +131,25 @@ Structured adversarial testing targeting privacy specifically. Red-team scenario
 
 ### §14.1 POSIX Privacy Bridge
 
-Traditional POSIX applications do not have privacy manifests and are not designed for capability-based privacy enforcement. The POSIX compatibility layer ([posix.md](../../platform/posix.md) §11) bridges this gap by assigning a default restrictive privacy profile to unmodified applications.
+Traditional POSIX applications do not have privacy manifests and are not designed for capability-based privacy enforcement. The POSIX compatibility layer ([posix.md](../../platform/posix.md)) bridges this gap by assigning a default restrictive privacy profile to unmodified applications.
 
 **Default POSIX privacy profile:**
 
 ```rust
 /// Default privacy manifest for POSIX applications
 /// that have not opted into the AIOS privacy system.
-pub const POSIX_DEFAULT_MANIFEST: PrivacyManifest = PrivacyManifest {
-    data_access: &[],           // No declared sensitive data access
-    max_retention: RetentionTier::Ephemeral,  // Session-only retention
-    flow_destinations: &[FlowDestination::LocalOnly],  // No network
-    // ... other fields at minimum values
-};
+/// Pseudocode — field names align with PrivacyManifest (§3.1).
+fn posix_default_manifest(app_id: &str) -> PrivacyManifest {
+    PrivacyManifest {
+        agent_id: app_id.into(),
+        manifest_version: 1,
+        signature: None,               // Unsigned (legacy app)
+        data_access: Vec::new(),        // No declared sensitive data access
+        max_retention: RetentionTier::Ephemeral,  // Session-only retention
+        flow_destinations: vec![FlowDestination::LocalOnly],
+        // ... other fields set to their most restrictive values
+    }
+}
 ```
 
 **Implications for POSIX applications:**
@@ -152,11 +158,11 @@ pub const POSIX_DEFAULT_MANIFEST: PrivacyManifest = PrivacyManifest {
 |---|---|---|
 | Data access | No sensitive data access by default | Provide `PrivacyManifest` via agent manifest |
 | Sensor access | All sensors denied by default | Request capabilities through POSIX bridge |
-| Network access | Allowed (but taint labels still apply) | N/A (standard POSIX networking) |
+| Network access | Standard POSIX networking allowed (taint labels still apply to data from Spaces) | N/A |
 | Retention | Ephemeral (session-only) | Declare retention in manifest |
 | Budget | Minimal (TL4 equivalent) | Agent manifest with trust level declaration |
 
-**POSIX applications with network access:** POSIX applications retain standard network access (they expect `socket()`, `connect()`, etc. to work). However, IPC taint labels still apply — if a POSIX application reads data from a tainted source (via file descriptor from a Space), the taint propagates to its network sends. This provides privacy protection even for unmodified applications.
+**POSIX applications and network access:** The default manifest declares `FlowDestination::LocalOnly`, meaning the privacy system does not grant the POSIX application privacy-budget-funded access to send sensitive data off-device. However, POSIX applications retain standard socket-level network access (`socket()`, `connect()`, etc.) because they expect these APIs to work. The distinction: `LocalOnly` restricts *privacy-manifest-governed data flows*, not raw TCP/IP. If a POSIX application reads data from a tainted source (via file descriptor from a Space), taint labels propagate to its network sends, and the taint system blocks transmission of tainted data to off-device destinations. This provides privacy protection even for unmodified applications.
 
 **Linux binary compatibility:** For Linux binaries running under the Linux compatibility layer ([linux-compat.md](../../platform/linux-compat.md)), the sandbox profile ([linux-compat/sandbox.md](../../platform/linux-compat/sandbox.md) §9) provides the privacy boundary. The default sandbox profile restricts access to Personal spaces and requires capability grants for sensor access.
 
@@ -184,10 +190,10 @@ Complete mapping of privacy mechanisms to their primary implementation location 
 | Secure boot attestation | `kernel/src/security/` | [secure-boot/trust-chain.md](../secure-boot/trust-chain.md) §3 | Phase 34 |
 | Enterprise policies | `kernel/src/intelligence/` | [multi-device/policy.md](../../platform/multi-device/policy.md) §7 | Phase 38 |
 | POSIX sandbox | `kernel/src/platform/posix/` | [linux-compat/sandbox.md](../../platform/linux-compat/sandbox.md) §9 | Phase 22 |
-| Privacy manifests | `shared/src/privacy.rs` | **This document** §3.1 | Phase 13 |
-| Privacy budgets | `kernel/src/cap/` | **This document** §3.2 | Phase 13 |
-| Privacy coordinator | `kernel/src/security/` | **This document** §2.2 | Phase 13 |
-| Consent flow | `kernel/src/security/` | **This document** §6.2 | Phase 12 |
-| Scrubbing pipeline | `kernel/src/storage/` | **This document** §7.3 | Phase 17 |
-| Privacy anomaly detection | `kernel/src/intelligence/` | **This document** §11.1 | Phase 14 |
-| Agent privacy scoring | `kernel/src/intelligence/` | **This document** §12.2 | Phase 14 |
+| Privacy manifests | `shared/src/privacy.rs` | [agent-privacy.md](./agent-privacy.md) §3.1 | Phase 13 |
+| Privacy budgets | `kernel/src/cap/` | [agent-privacy.md](./agent-privacy.md) §3.2 | Phase 13 |
+| Privacy coordinator | `kernel/src/security/` | [privacy.md](../privacy.md) §2.2 | Phase 13 |
+| Consent flow | `kernel/src/security/` | [sensor-privacy.md](./sensor-privacy.md) §6.2 | Phase 12 |
+| Scrubbing pipeline | `kernel/src/storage/` | [data-lifecycle.md](./data-lifecycle.md) §7.3 | Phase 17 |
+| Privacy anomaly detection | `kernel/src/intelligence/` | [intelligence.md](./intelligence.md) §11.1 | Phase 14 |
+| Agent privacy scoring | `kernel/src/intelligence/` | [intelligence.md](./intelligence.md) §12.2 | Phase 14 |
