@@ -58,11 +58,16 @@ Affected subsystems: App Kit, AIRS (Tool Manager), Conversation Manager, Service
 - **Verb set:** BeOS's 6 verbs (GET/SET/CREATE/DELETE/COUNT/EXECUTE) map cleanly to CRUD + introspection. Consider adding `SUBSCRIBE` (for reactive queries, see Lesson 2) and `DESCRIBE` (return suite schema).
 - **Addressing:** BeOS used hierarchical specifiers (`Entry 0 of Poses of Window /boot/home`). AIOS should use capability-scoped paths — you can only address objects you have capabilities for.
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. Should the Scriptable trait be mandatory for all agents, or opt-in?
-2. How does capability attenuation work with hierarchical property access?
-3. Does AIRS use the scriptable protocol for ALL agent interaction, or only for discovery/composition?
+1. **Should the Scriptable trait be mandatory for all agents, or opt-in?**
+   **Recommendation: Mandatory**, with a default implementation. The whole point of BeOS scripting was universality — `hey` could talk to *any* app. If Scriptable is opt-in, AIRS can't rely on it for discovery/composition, which kills the value proposition. Provide a derive macro or default impl that exposes basic lifecycle properties (Name, State, Version, Capabilities) automatically. Agents extend with domain-specific suites. This mirrors how every `BHandler` in BeOS got basic scripting for free.
+
+2. **How does capability attenuation work with hierarchical property access?**
+   **Recommendation: Each specifier step attenuates capabilities.** Traversing `Account "admin" → Password` checks capabilities at each level. The `PropertyInfo` struct already has `capability: Option<Capability>` — the runtime evaluates the *conjunction* of all capabilities along the path. Example: `GET Password of Account "admin" of Agent "identity"` requires (1) `ChannelAccess` to the identity agent, (2) `PropertyAccess(Account)` to enumerate accounts, (3) `PropertyAccess(Account.Password)` to read the field. This naturally maps to AIOS's existing capability attenuation model — derived capabilities are always a subset of the parent.
+
+3. **Does AIRS use the scriptable protocol for ALL agent interaction, or only for discovery/composition?**
+   **Recommendation: Discovery + composition, not execution.** AIRS uses Scriptable for (a) `DESCRIBE` verb to introspect what agents can do, (b) building multi-agent workflows by chaining verbs. For actual execution of complex operations, AIRS goes through Tool Manager (which wraps Scriptable with safety levels, timeouts, and the 7-stage pipeline). Scriptable is the *plumbing*; Tool Manager is the *safe API*. Exception: simple property reads (`GET Name`, `GET State`) go directly through Scriptable — they're introspection, not execution.
 
 ---
 
@@ -99,11 +104,16 @@ Affected subsystems: Space Indexer, Context Engine, AIRS, Attention Manager, Flo
 - **Capability scoping:** A reactive query only receives notifications for objects the subscriber has capability to access. Predicate evaluation must check capabilities.
 - **Lifetime:** Queries die with the subscribing agent (like BeOS). Persistent queries could be stored as Space metadata for system-level feeds.
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. Should reactive queries operate at the Space Indexer level (semantic) or Block Engine level (structural)?
-2. How do reactive queries interact with the Version Store? (notify on version creation?)
-3. Maximum concurrent reactive queries per agent? System-wide?
+1. **Should reactive queries operate at the Space Indexer level (semantic) or Block Engine level (structural)?**
+   **Recommendation: Space Indexer level.** The Block Engine is a storage primitive — it shouldn't know about query predicates. The Block Engine emits low-level mutation events (object created/updated/deleted) that the Space Indexer consumes. The Space Indexer evaluates registered predicates against these events. This preserves layer separation: Block Engine → mutation stream → Space Indexer → predicate evaluation → subscriber notifications.
+
+2. **How do reactive queries interact with the Version Store?**
+   **Recommendation: Notify on version creation as a separate subscription type.** Version creation is a Space Indexer event like any other. A reactive query like `SpaceQuery::Filter { criteria: [ObjectId(X), EventType::VersionCreated] }` notifies subscribers when new versions appear. Use case: AIRS subscribes to version events on a document → detects rapid version creation → infers "user is actively editing" → adjusts attention priority. Version events should be opt-in per subscription (`include_version_events: bool` in `SubscriptionMode`).
+
+3. **Maximum concurrent reactive queries per agent? System-wide?**
+   **Recommendation: Per-agent 32, system-wide 1024.** Each reactive query costs predicate storage + evaluation on every mutation. 32 per agent prevents flooding. 1024 system-wide is generous but bounded. Both are capability-gated — an agent needs `QuerySubscription` capability, and the system can reject under pressure. For comparison: Haiku's `BQuery` had no documented limit, but practical use rarely exceeded a dozen per app. AIOS agents are more autonomous, so higher limits make sense.
 
 ---
 
@@ -144,11 +154,16 @@ Affected subsystems: Secure Boot, Agent lifecycle, Storage (Spaces), Service Man
 - **State snapshot storage:** How many snapshots to retain? Configurable retention policy (last N states, or time-based).
 - **Development mode:** Developers need writable agent filesystems. A dev-mode flag that mounts from a directory instead of a sealed package.
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. Does this replace or complement the POSIX compatibility layer's approach to package management?
-2. How do agent data files (user-generated content within an agent's Space) interact with package rollback?
-3. Should the package format be a new Block Engine object type?
+1. **Does this replace or complement the POSIX compatibility layer's approach to package management?**
+   **Recommendation: Complement.** POSIX compat handles the *bridge* — making Linux/BSD packages installable (`apt install firefox` → unpacks into POSIX-mapped paths). Package-as-FS handles *native* AIOS agent packaging (sealed, content-addressed, capability-constrained). The POSIX bridge translates POSIX package paths into Space Storage queries. Native packages bypass POSIX entirely. Both coexist — different audiences, same underlying storage.
+
+2. **How do agent data files interact with package rollback?**
+   **Recommendation: Agent data is NEVER rolled back.** Agent code (in the sealed package) rolls back on version revert. Agent data (in the user's Space, under `/spaces/user/agents/{agent}/data/`) persists across all agent versions. Agent config has two tiers: version-specific config in the package, user overrides in the data Space. This matches mobile OS behavior. AIOS defaults to preserving data, with explicit `data_migration` hooks in the agent manifest for schema changes between versions.
+
+3. **Should the package format be a new Block Engine object type?**
+   **Recommendation: No — use existing Space objects.** Agent packages are content-addressed objects stored in Spaces (the deep dive proposes `AgentPackage` with an `ObjectId`). A package is just a large object with `ContentType::AgentPackage` and a signed manifest. The Version Store tracks package versions via the existing Merkle DAG. Adding a new Block Engine type would break the "everything is a Space object" invariant.
 
 ---
 
@@ -186,11 +201,16 @@ Affected subsystems: Service Manager, Space Indexer, App Kit, AIRS (Preference s
 - **Dynamic vs. static:** BeOS was static (register at install). AIOS should support dynamic registration (agents can add/remove handled types at runtime, with capability checks).
 - **Translation Kit interaction:** Content Type Registry knows what types exist. Translation Kit knows how to convert between types. Together: "convert this .docx to .pdf" → Translation Kit provides the converter, Content Type Registry resolves the output handler.
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. Should content type registration be part of the App Kit (agent lifecycle) or a separate registry service?
-2. How does this interact with the Scriptable Protocol (Lesson 1)? Does `GET SupportedTypes of Agent "code-editor"` work?
-3. Should the registry support wildcard patterns (e.g., `text/*`, `application/vnd.aios.*`)?
+1. **Should content type registration be part of App Kit or a separate registry service?**
+   **Recommendation: Service Manager extension.** The registry is a system-level concern — it persists across agent lifecycles and is queried by multiple subsystems (AIRS, Flow, compositor). App Kit manages individual agent lifecycle (launch/quit/suspend/resume). The registry belongs with Service Manager because it already tracks registered services, content type → handler mapping is a routing table like service lookup, and multiple consumers need it. App Kit's role is to *declare* handled types in the manifest; Service Manager's role is to *store and resolve* the registry.
+
+2. **How does this interact with the Scriptable Protocol (Lesson 1)?**
+   **Recommendation: Yes — the registry itself implements `Scriptable`.** `GET PreferredHandler of ContentType "application/pdf"` → returns agent ID. `GET SupportedTypes of Agent "code-editor"` → returns MIME type list. `SET PreferredHandler of ContentType "text/plain" to "my-editor"` → user override. `COUNT Handler of ContentType "image/*"` → how many agents can open images. This is one of the strongest Lesson 1 + Lesson 4 synergies — the registry becomes introspectable by AIRS through standard verbs.
+
+3. **Should the registry support wildcard patterns?**
+   **Recommendation: Yes — supertypes only (`text/*`, `audio/*`), not arbitrary globs.** BeOS supported supertype handlers and it was useful — a "text viewer" that handles all `text/*` types. But arbitrary patterns like `application/vnd.aios.*` create ambiguity in resolution order. Rule: exact type > wildcard supertype. `text/markdown` preferred handler wins over `text/*` supertype handler. This is the same resolution chain BeOS used.
 
 ---
 
@@ -229,11 +249,16 @@ Affected subsystems: Compositor, Interface Kit, Accessibility, Preference servic
 - **Accessibility-first:** Swappable ControlLook is a natural home for accessibility adaptations — screen reader hints, increased contrast, motion reduction, target size enlargement.
 - **Performance:** Pluggable rendering must not add indirection cost. Trait-based dispatch in Rust (static dispatch via generics where possible, dynamic dispatch only at the theme-swap boundary).
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. How many visual layers does AIOS need? BeOS/Haiku had 2 (Decorator + ControlLook). Should AIOS add a third for animation/transition behavior?
-2. Should ControlLook be per-agent (agents can customize widget appearance) or system-wide only?
-3. How does this interact with the three interaction layers (Classic Desktop → Smart Desktop → Intelligence Surface)?
+1. **How many visual layers does AIOS need?**
+   **Recommendation: Three (Chrome + Rendering + Behavior), with animation as a renderer property, not a fourth layer.** Haiku's ControlLook controlled both static painting and transitions. AIOS's `WidgetRenderer` should include animation parameters (transition duration, easing, motion reduction flag) as part of its rendering contract. A separate animation layer would over-engineer this — the renderer already knows "draw button in pressed state" and should also know "animate from unpressed to pressed over 150ms" as part of the same concern.
+
+2. **Should ControlLook be per-agent or system-wide only?**
+   **Recommendation: System-wide default, per-agent override with restrictions.** System-wide ControlLook ensures visual consistency (critical for accessibility). But specific agents should be able to override for legitimate reasons: games → custom rendering, media players → custom chrome, accessibility tools → enhanced rendering. Override requires a `CustomRendering` capability, and the compositor enforces that overridden rendering still meets accessibility minimums (contrast ratio, target sizes). Trust level affects this: TL1 (fully trusted) gets full override, TL3 (sandboxed) gets system-only.
+
+3. **How does this interact with the three interaction layers?**
+   **Recommendation: Each layer gets a different WidgetRenderer/WindowChrome pair.** Classic Desktop → traditional window chrome, standard widget rendering. Smart Desktop → simplified chrome (fewer buttons, more gesture-driven), card-based widgets. Intelligence Surface → minimal/no chrome, conversational widgets, AI-driven layout. The Context Engine signals which interaction mode is active → compositor swaps the active Chrome + Renderer pair. This is exactly the kind of runtime swapping Haiku's Decorator/ControlLook system was designed for.
 
 ---
 
@@ -275,11 +300,16 @@ Affected subsystems: Media Kit, Audio Kit, Compositor (frame scheduling), AIRS (
 - **AIRS inference integration:** The inference pipeline is conceptually a media node graph: prompt → tokenize → inference → detokenize → stream. Latency budgets matter here too. Could the Compute Kit expose inference as a media node?
 - **Dynamic graph modification:** BeOS required stopping connections to change format. AIOS should support live renegotiation (e.g., video resolution change during a call).
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. Should the Media Kit node graph be a general-purpose dataflow framework (usable by other subsystems) or media-specific?
-2. How does format negotiation interact with the Translation Kit? (Auto-insert converter nodes when formats don't match?)
-3. Should inference latency budgets use the same time source as media playback?
+1. **Should the Media Kit node graph be a general-purpose dataflow framework or media-specific?**
+   **Recommendation: Media-specific, with a shared latency primitive.** A fully general dataflow framework is a massive abstraction — Rust's type system makes generic node graphs complex (trait object lifetime challenges, buffer ownership). Keep `MediaElement` media-specific. But extract latency budget propagation into a shared `LatencyAware` trait that both Media Kit and Compute Kit (AIRS inference) implement: `reported_latency()`, `set_latency_budget()`, `late_notice()`. The scheduling logic is shared; the domain-specific processing is not.
+
+2. **How does format negotiation interact with the Translation Kit?**
+   **Recommendation: Yes — auto-insert converter nodes.** This is the killer synergy. When format negotiation fails between two connected nodes, the pipeline queries the Translation Kit's conversion graph for a path. If one exists, auto-insert converter nodes. This is exactly how BeOS worked — the Media Kit would insert `BMediaCodec` nodes when formats didn't match. Implementation: `Pipeline::connect(source, sink)` → try `source.propose_format()` → `sink.accept_format()` → if rejected, query `TranslationKit::find_path(source_format, sink_format)` → insert intermediate nodes.
+
+3. **Should inference latency budgets use the same time source as media playback?**
+   **Recommendation: Same time source, different latency classes.** Both use the system-wide monotonic clock (ARM `CNTPCT_EL0`). But their budgets differ by orders of magnitude: audio 5-20ms (real-time), video 16-33ms (frame deadline), inference 100ms-2s (time-to-first-token). Using the same `LatencyAware` trait with the same clock lets the scheduler make cross-domain tradeoffs: "inference is using GPU bandwidth that audio needs → inference gets `late_notice()` → drops to smaller model."
 
 ---
 
@@ -324,11 +354,16 @@ Affected subsystems: POSIX compatibility, IPC Kit, Service Manager, all services
 - **Discoverability:** `ls scheme:` could list all registered schemes — useful for debugging and AIRS introspection.
 - **Performance:** Scheme lookup adds one IPC hop. For hot paths (frequent file operations), cache scheme→provider mappings.
 
-### Open Questions
+### Open Questions → Recommendations
 
-1. Should schemes be a POSIX compatibility feature only, or a first-class AIOS concept?
-2. How do schemes interact with Space paths? Is `space:` a scheme, or do Spaces have their own path namespace?
-3. Should scheme providers support `select()`/`poll()` for async I/O?
+1. **Should schemes be POSIX-only or a first-class AIOS concept?**
+   **Recommendation: First-class AIOS concept.** Scheme URLs provide a universal addressing model for both native agents and POSIX apps. Native agents use `open_resource("space:workspace/report.pdf")` → IPC to Space service. POSIX apps use `/scheme/space/workspace/report.pdf` → bridge translates → same IPC. Making schemes first-class means every AIOS resource has a canonical URL. This enables: AIRS can reference any resource by URL, Flow can carry scheme URLs as content references, Scriptable properties can contain scheme URLs as values.
+
+2. **How do schemes interact with Space paths? Is `space:` a scheme?**
+   **Recommendation: Yes — `space:` is the primary scheme.** Spaces are the canonical storage abstraction. `space:system/agents/installed/myagent` and `space:user/home/documents/report.pdf` are natural. Other schemes (`flow:`, `device:`, `airs:`, `surface:`) route to other services but share the same resolution mechanism. Bare paths (no scheme prefix) should default to `space:` — like how browsers assume `http://`. So `open_resource("workspace/report.pdf")` implicitly means `space:workspace/report.pdf`.
+
+3. **Should scheme providers support `select()`/`poll()` for async I/O?**
+   **Recommendation: Yes, via the existing IPC select mechanism.** AIOS Phase 3 already implemented `IpcSelect` — multi-wait on channels + notifications. Scheme-backed file descriptors participate in select by mapping to the underlying IPC channel to the scheme provider. The scheme provider sends a notification when data is available → POSIX bridge converts to `POLLIN` on the fd → `select()`/`poll()`/`epoll()` returns. This reuses existing infrastructure without adding a new mechanism.
 
 ---
 
