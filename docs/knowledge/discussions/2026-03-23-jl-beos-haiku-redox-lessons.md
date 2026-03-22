@@ -398,6 +398,401 @@ These confirm AIOS's existing design choices:
 
 ---
 
+## Deep Dive: Integration with AIOS Architecture
+
+After grounding each lesson in the actual AIOS architecture docs, here are concrete integration designs.
+
+### Deep Dive 1: Scriptable Agent Protocol → Tool Manager Integration
+
+**Existing substrate (from `tool-manager/registry.md` and `tool-manager/interop.md`):**
+
+The Tool Manager already provides most of the infrastructure:
+
+- `ToolId(provider: AgentId, name: ToolName)` — unique tool identifier
+- `RegisteredTool` — full record with `ToolSchema` (JSON Schema), `capability_required`, `version` (SemVer), `latency_class`, `idempotent` flag
+- `ToolRegistry` — central store with secondary indexes: `by_name`, `by_tag`, `by_provider`
+- 7-stage execution pipeline: Call Initiation → Registry Lookup → Capability Validation (3 levels) → Schema Validation → IPC Dispatch → Provider Execution → Result Delivery
+- Multi-runtime bridging: Rust, Python (RustPython), TypeScript (QuickJS-ng), WASM (wasmtime)
+- MCP alignment: `name + description + inputSchema` is identical to MCP tool definitions
+
+**Proposed layering — Scriptable as the primitive under Tool Manager:**
+
+```
+┌─────────────────────────────────────────────┐
+│  MCP Bridge (external tool ecosystem)       │  ← Inbound/outbound MCP
+├─────────────────────────────────────────────┤
+│  Tool Manager (AI-optimized tool layer)     │  ← Descriptions, safety, timeouts
+├─────────────────────────────────────────────┤
+│  Scriptable Protocol (universal verbs)      │  ← GET/SET/CREATE/DELETE/COUNT/EXECUTE
+├─────────────────────────────────────────────┤
+│  IPC Kit (capability-gated channels)        │  ← <5µs round-trip
+└─────────────────────────────────────────────┘
+```
+
+**Proposed `Scriptable` trait:**
+
+```rust
+pub trait Scriptable {
+    /// Return the suite of properties this object exposes
+    fn describe(&self) -> Suite;
+
+    /// Execute a standard verb on a property
+    fn execute_verb(&mut self, verb: Verb, specifier: &Specifier) -> Result<Value, ScriptError>;
+}
+
+pub enum Verb {
+    Get,                       // Read property value
+    Set(Value),                // Write property value
+    Create(Value),             // Add new entity
+    Delete,                    // Remove entity
+    Count,                     // Count entities in collection
+    Execute,                   // Invoke action
+    Subscribe(ChannelId),      // Reactive query (Lesson 2 synergy)
+    Describe,                  // Return suite schema
+}
+
+pub struct Suite {
+    pub name: &'static str,
+    pub properties: &'static [PropertyInfo],
+}
+
+pub struct PropertyInfo {
+    pub name: &'static str,
+    pub verbs: &'static [Verb],       // Which verbs are valid
+    pub value_type: ValueType,         // Expected type
+    pub capability: Option<Capability>, // Required capability
+}
+```
+
+**Key architectural decision:** The Scriptable trait is the *lower-level primitive*. Tool Manager wraps it with AI-friendly metadata (descriptions for LLM consumption, safety levels, timeout policies). MCP bridge wraps Tool Manager for external ecosystem compatibility. This means:
+
+- Every tool is scriptable (GET/SET/CREATE/DELETE on its properties)
+- Not every scriptable object is a "tool" (tools have extra metadata for AI)
+- External MCP tools are bridged in through both layers
+
+**Capability integration:** Hierarchical property access respects capabilities. `GET Password of Account "admin"` requires both `ChannelAccess` to the agent AND the specific `PropertyAccess(Account.Password)` capability. Capabilities attenuate as you traverse deeper into the hierarchy.
+
+### Deep Dive 2: Reactive Queries → Space Indexer Extension
+
+**Existing substrate (from `space-indexer/search-integration.md` and `context-engine/consumers.md`):**
+
+The Space Indexer currently provides:
+
+- `SpaceQuery` enum: `TextSearch`, `Semantic`, `Traverse`, `Filter`, `Composed`
+- `SearchResponse` with results, source metadata, and latency
+- Score fusion via RRF (Reciprocal Rank Fusion)
+- Graceful degradation (full-text always works; semantic degrades if AIRS unavailable)
+
+The Context Engine already implements pub/sub:
+
+- `StatePublisher` holds subscriber channel list
+- Publishes `ContextUpdate` to all subscribers on state change
+- 500ms coalescing window prevents rapid re-publication
+
+**Proposed `QuerySubscription` extension to `QueryEngine`:**
+
+```rust
+pub trait QueryEngine {
+    // Existing
+    fn execute_query(&self, query: &SpaceQuery) -> Result<SearchResponse>;
+
+    // NEW: Reactive query subscription
+    fn subscribe(
+        &self,
+        query: &SpaceQuery,
+        subscriber: ChannelId,
+        mode: SubscriptionMode,
+    ) -> Result<SubscriptionId>;
+
+    fn unsubscribe(&self, sub_id: SubscriptionId) -> Result<()>;
+}
+
+pub enum SubscriptionMode {
+    Immediate,                 // Push on every matching mutation
+    Debounced(Duration),       // Coalesce within window (like Context Engine's 500ms)
+    Digest(Duration),          // Batch and send every N seconds
+}
+
+pub enum QueryUpdate {
+    Delta {
+        added: Vec<SearchResult>,
+        removed: Vec<ObjectId>,
+        changed: Vec<(ObjectId, SearchResult)>,
+    },
+    Full(Vec<SearchResult>),   // On major index rebuild
+    Invalidated { reason: String },  // Embedding model updated, etc.
+}
+```
+
+**Predicate indexing for performance:** Naive O(predicates × mutations) is unacceptable. Group subscriptions by:
+
+1. **Space** — most mutations are space-scoped; skip predicates for other spaces
+2. **Content type** — if predicate filters on `ContentType::Document`, skip non-document mutations
+3. **Attribute name** — if predicate filters on `modified_after`, only trigger on timestamp changes
+
+**Integration with Context Engine:** The Context Engine subscribes to Space Indexer events via reactive queries (not polling). Example: `subscribe(SpaceQuery::Filter { criteria: [ContentType::Conversation, ModifiedAfter(5min)] }, context_channel, Debounced(500ms))` — Context Engine learns "user is actively conversing" from object mutation patterns.
+
+**Integration with Attention Manager:** Reactive queries feed the attention system: "notify when any object in workspace/ has urgency > High" → Attention Manager receives `QueryUpdate::Delta` → creates `AttentionItem`.
+
+### Deep Dive 3: Package-as-Filesystem → Storage + Secure Boot Integration
+
+**Existing substrate (from `secure-boot/updates.md` and `spaces/versioning.md`):**
+
+The A/B update scheme:
+- ESP (FAT32) with `.prev` files for known-good rollback
+- Atomic staging: write `.new` → validate signature → rename
+- Anti-rollback via monotonic counters
+- Three update channels: system (kernel/platform), agent (individual agents), model (AI models)
+
+The Version Store:
+- Merkle DAG with `Version` nodes: `id, parent, content_hash, object_id, timestamp, author, message`
+- Rollback = revert to parent version (pointer update, no data copy)
+- Content-addressed: identical content shares storage
+
+**Proposed package model — packages as versioned Space objects:**
+
+```rust
+pub struct AgentPackage {
+    pub object_id: ObjectId,           // Content-addressed in Space
+    pub manifest: AgentManifest,       // Signed declaration
+    pub content_hash: ContentHash,     // SHA-256 of package contents
+    pub version: Version,              // Merkle DAG node
+    pub activation_state: ActivationState,
+}
+
+pub enum ActivationState {
+    Available,       // Downloaded, not mounted
+    Active,          // Mounted read-only, agent running
+    Suspended,       // Mounted but agent not running
+    Deactivated,     // Unmounted, retained for rollback
+}
+```
+
+**How it works with A/B updates:**
+- **System packages** (kernel, platform services) use A/B partitions — atomic swap at boot
+- **Agent packages** use individual activation — mount/unmount without reboot
+- **Model packages** use the model update channel — AIRS manages model lifecycle independently
+- Each activation state change creates a Version Store snapshot → rollback = activate previous version
+
+**POSIX path mapping (from `posix.md §6`):**
+
+The POSIX bridge already translates `/spaces/system/agents/installed/{bundle_id}/` into Space Service queries. Package-as-Filesystem adds:
+- `/spaces/system/agents/installed/myagent@1.0.0/manifest.json` → read-only from sealed package
+- `/spaces/user/agents/myagent/data/` → writable overlay for agent's user data
+- Agent data is **NOT rolled back** when agent code is rolled back — user data persists across agent versions
+
+### Deep Dive 4: Content Type Registry → Service Manager + Tool Manager
+
+**Existing substrate (from `tool-manager/registry.md` and Flow's `TypedContent`):**
+
+- Tools already declare `inputSchema` (JSON Schema) — but not content types they handle
+- Flow has `TypedContent` abstraction mapping MIME types to transforms
+- Space objects have implicit `content_type` in `CompactObject` metadata
+- Agent manifests declare `requested_capabilities` — but not handled content types
+
+**Proposed `ContentTypeRegistry` as Service Manager extension:**
+
+```rust
+pub struct ContentTypeRegistry {
+    /// MIME type → ordered handler list
+    handlers: BTreeMap<MimeType, Vec<HandlerEntry>>,
+    /// Extension → MIME type mapping
+    extensions: HashMap<String, MimeType>,
+    /// Sniffing rules for type identification
+    sniffers: Vec<SniffRule>,
+}
+
+pub struct HandlerEntry {
+    pub agent_id: AgentId,
+    pub role: HandlerRole,             // Preferred, Supporting, Supertype
+    pub capability_required: Capability,
+    pub registered_at: Timestamp,
+}
+
+pub enum HandlerRole {
+    Preferred,    // Default handler (only one per type)
+    Supporting,   // "Open with" alternative
+    Supertype,    // Handles all audio/*, text/*, etc.
+}
+```
+
+**Registration flow:**
+1. Agent package activates (Lesson 3) → Service Manager reads manifest
+2. Manifest declares `handled_content_types: Vec<(MimeType, HandlerRole)>`
+3. Service Manager registers entries in `ContentTypeRegistry`
+4. On deactivation → entries removed atomically
+
+**Resolution chain:** User preference (Preference service) > Preferred handler > Supporting handler > Supertype handler > AIRS suggestion > Translation Kit auto-conversion.
+
+**Scriptable integration (Lesson 1 synergy):** `GET SupportedTypes of Agent "code-editor"` returns the agent's registered content types. `GET PreferredHandler of ContentType "application/pdf"` returns the preferred agent. Both are standard verbs on the registry's Scriptable interface.
+
+### Deep Dive 5: Decorator + ControlLook → Compositor Scene Graph
+
+**Existing substrate (from `compositor/rendering.md` and `compositor/security.md`):**
+
+The compositor already separates these concerns, though not as explicitly as Haiku:
+
+- **Scene graph** uses `SceneNode` enum: `Surface`, `Group`, `Effect`, `Clip`
+- `Effect` nodes (Shadow, RoundedCorners, Blur, ColorTransform) wrap surfaces — this IS the Decorator pattern
+- `SurfaceContentType` (Document, Terminal, Conversation, Game, etc.) provides semantic hints
+- `InteractionState` tracks urgency, focus, fullscreen — drives chrome behavior
+- Trust levels affect chrome: TL3 agents get simplified chrome, TL1 gets full control
+
+**Proposed formalization — three explicit trait layers:**
+
+```rust
+/// Layer 1: Window chrome (= Haiku Decorator)
+pub trait WindowChrome: Send {
+    fn render_frame(&self, surface: &Surface, state: &InteractionState) -> Vec<SceneNode>;
+    fn hit_test(&self, point: Point) -> ChromeHitResult;  // Close, minimize, resize, etc.
+    fn attention_response(&self, urgency: Urgency) -> ChromeAnimation;
+}
+
+/// Layer 2: Widget rendering (= Haiku BControlLook)
+pub trait WidgetRenderer: Send {
+    fn draw_button(&self, state: &ButtonState, bounds: Rect) -> DisplayList;
+    fn draw_scrollbar(&self, state: &ScrollState, bounds: Rect) -> DisplayList;
+    fn draw_text_field(&self, state: &TextFieldState, bounds: Rect) -> DisplayList;
+    // ... one method per widget type
+    fn accessibility_adjustments(&self) -> AccessibilityProfile;
+}
+
+/// Layer 3: Widget behavior (= Haiku BButton/BScrollBar)
+pub trait Widget: Send {
+    fn handle_input(&mut self, event: InputEvent) -> WidgetResponse;
+    fn state(&self) -> &dyn WidgetState;
+    fn accessibility_node(&self) -> AccessNode;
+    // Behavior is INDEPENDENT of rendering
+}
+```
+
+**Context-adaptive rendering:** The compositor selects `WidgetRenderer` based on Context Engine state:
+- Night mode → high-contrast renderer with warmer colors
+- Tablet form factor → larger touch targets, simplified controls
+- Focus mode → minimal chrome, reduced animation
+- Accessibility → screen-reader-optimized renderer with enhanced contrast
+
+**Attention-aware chrome:** `WindowChrome::attention_response()` receives urgency level and returns an animation:
+- `Urgency::Low` → subtle pulse on window border
+- `Urgency::High` → chrome highlight + badge
+- `Urgency::Critical` → full chrome animation + sound
+
+### Deep Dive 6: Media Node Graph → Pipeline + Inference Latency
+
+**Existing substrate (from `media-pipeline/playback.md` and `audio/subsystem.md`):**
+
+The media pipeline already has:
+- `MediaElement` trait with `process() → ProcessResult` (NeedInput, HaveOutput, Eos, Error)
+- Element graph: Source → Demuxer → Decoder → Filter → Sink
+- `MediaClock` with audio-master timing model
+- Pull-based scheduling (sink-driven, natural backpressure)
+
+**Missing:** No latency measurement, no latency propagation, no late-notice handling.
+
+**Proposed extension — add latency awareness to `MediaElement`:**
+
+```rust
+pub trait MediaElement: Send {
+    fn process(&mut self) -> Result<ProcessResult, MediaError>;
+
+    // NEW: Latency reporting
+    fn reported_latency(&self) -> Duration;
+    fn set_latency_budget(&mut self, budget: Duration);
+    fn late_notice(&mut self, how_late: Duration);
+
+    // NEW: Format negotiation (BeOS-style)
+    fn propose_format(&self, pad: PadId) -> Vec<MediaFormat>;
+    fn accept_format(&mut self, pad: PadId, format: &MediaFormat) -> FormatResult;
+}
+
+pub struct ProcessResult {
+    pub status: ProcessStatus,
+    pub processing_time: Duration,     // NEW: measured time
+    pub queue_depth: u16,              // NEW: input queue fullness
+}
+
+pub enum FormatResult {
+    Accepted,
+    CounterProposal(MediaFormat),
+    Rejected { reason: String },
+}
+```
+
+**Latency budget propagation through the graph:**
+1. Sink knows its deadline (next frame PTS from `MediaClock`)
+2. Sink asks upstream filter: "you have 8ms to process"
+3. Filter subtracts its own latency (2ms) → asks upstream decoder: "you have 6ms"
+4. Decoder subtracts its latency (4ms) → asks upstream demuxer: "you have 2ms"
+5. If any element can't meet budget → `late_notice()` propagates downstream → quality adaptation
+
+**AIRS inference as a media node graph:** The inference pipeline maps naturally:
+```
+PromptSource → Tokenizer → InferenceEngine → Detokenizer → StreamSink
+                              ↑
+                    (latency budget from StreamSink:
+                     "time-to-first-token < 200ms")
+```
+The Compute Kit's inference pipeline could implement `MediaElement`, sharing the latency propagation model. AIRS sets the latency budget ("respond within 200ms for interactive, 2s for batch").
+
+**Translation Kit auto-insertion (Lesson 4 synergy):** When format negotiation fails (producer offers H.264, consumer needs VP9), the pipeline auto-inserts a Translation Kit converter node: `H264Decoder → TranscodeFilter(H264→VP9) → VP9Encoder`. The Translation Kit's conversion graph finds the shortest path.
+
+### Deep Dive 7: URL Schemes → POSIX Bridge + Service Manager
+
+**Existing substrate (from `posix.md` and Space Storage):**
+
+The POSIX bridge already implements path → Space routing:
+- `FdKind` enum: `SpaceObject`, `Directory`, `Pipe`, `Socket`, `Device`, `Terminal`, `ProcSelf`
+- Path resolution: `/spaces/{space_name}/{object_path}` → Space Service IPC
+- Device access: `/dev/{subsystem}/{device}` → Subsystem IPC
+- Capability-gated: every `open()` checks caller's capabilities
+
+**Proposed scheme registry — extend Service Manager:**
+
+```rust
+pub struct SchemeRegistry {
+    schemes: BTreeMap<String, SchemeProvider>,
+}
+
+pub struct SchemeProvider {
+    pub name: String,                   // "space", "flow", "device", etc.
+    pub service_channel: ChannelId,     // IPC endpoint
+    pub capabilities_required: Vec<Capability>,
+    pub description: String,
+}
+
+// Scheme URL format: {scheme}:{path}
+// Examples:
+//   space:workspace/documents/report.pdf
+//   flow:clipboard/current
+//   device:display/hdmi-1
+//   airs:conversation/current
+//   version:myobject/v3
+```
+
+**Resolution flow for `open("space:workspace/report.pdf")`:**
+1. POSIX bridge parses scheme prefix `space:`
+2. Looks up `space` in `SchemeRegistry` → finds Space Storage service channel
+3. Checks caller has required capabilities for Space access
+4. Forwards `open` request via IPC to Space Storage service
+5. Space Storage returns shared memory handle → POSIX bridge creates `FdEntry::SpaceObject`
+
+**First-class vs. POSIX-only:** Recommended: **first-class AIOS concept**, not just POSIX compat. Native AIOS agents use scheme URLs directly in IPC messages (not through POSIX `open()`). POSIX apps use `/scheme/{scheme_name}/{path}` paths which the bridge translates. Both routes converge on the same Service Manager lookup.
+
+**Coherent namespace (all AIOS resources addressable):**
+```
+space:system/agents/installed/myagent@1.0.0     → agent package
+space:user/home/documents/report.pdf            → user document
+flow:clipboard/current                           → current clipboard
+device:display/hdmi-1                            → display output
+device:compute/gpu-0                             → GPU accelerator
+airs:conversation/current                        → active conversation
+version:report.pdf/v3                            → specific version
+surface:12345                                    → compositor surface
+input:keyboard/0                                 → input device
+```
+
+---
+
 ## Graduation Candidates
 
 When ready to extract ADRs from this discussion:
