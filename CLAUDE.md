@@ -281,6 +281,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Behavioral integration | `docs/intelligence/intent-verifier/behavioral.md` | §6 Layer 1+3 Coordination, §9 Temporal Logic Monitor (MTL) |
 | Intent verifier security | `docs/intelligence/intent-verifier/security.md` | §7 Capability Integration, §8 Adversarial Resistance, §11 Graceful Degradation |
 | Intent verifier intelligence | `docs/intelligence/intent-verifier/intelligence.md` | §12 Testing, §13 AI-Native Intelligence, §16 Future Directions, §17 References |
+| Decentralisation (cross-cutting) | `docs/security/decentralisation.md` | §1 Core Insight, §2 Architecture, §3-§7 Five Pillars, §8 Trust Model, §9 Threat Model, §10 Inspector, §11 Offline-First, §12 Comparisons, §13 Roadmap, §15 Principles |
 | Adversarial defense (hub) | `docs/security/adversarial-defense.md` | §1 Core Insight, §16 Impl Order, §17 Design Principles, Document Map |
 | Adversarial threat model | `docs/security/adversarial-defense/threat-model.md` | §2 Threat taxonomy (direct/indirect injection, jailbreak, multi-agent, ML evasion, supply chain), §3 Attack surface map |
 | Control/data plane separation | `docs/security/adversarial-defense/control-data-separation.md` | §4 Instruction sources, data labeling, enforcement points, label integrity, limitations |
