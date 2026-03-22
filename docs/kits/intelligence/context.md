@@ -1,6 +1,6 @@
 # Context Kit
 
-**Layer:** Intelligence | **Architecture:** `docs/intelligence/context-engine.md` + 5 sub-docs
+**Layer:** Intelligence | **Architecture:** `docs/intelligence/context-engine.md` + 6 sub-docs
 
 ## Purpose
 

@@ -1,6 +1,6 @@
 # Intent Kit
 
-**Layer:** Intelligence | **Architecture:** `docs/intelligence/intent-verifier.md` + 5 sub-docs
+**Layer:** Intelligence | **Architecture:** `docs/intelligence/intent-verifier.md` + 6 sub-docs
 
 ## Purpose
 

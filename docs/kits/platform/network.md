@@ -1,6 +1,6 @@
 # Network Kit
 
-**Layer:** Platform | **Architecture:** `docs/platform/networking.md` + 5 sub-docs
+**Layer:** Platform | **Architecture:** `docs/platform/networking.md` + 6 sub-docs
 
 ## Purpose
 

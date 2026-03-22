@@ -1,6 +1,6 @@
 # Compute Kit
 
-**Layer:** Kernel | **Architecture:** `docs/kernel/compute.md` + 5 sub-docs, `docs/platform/gpu.md` + 5 sub-docs
+**Layer:** Kernel | **Architecture:** `docs/kernel/compute.md` + 6 sub-docs, `docs/platform/gpu.md` + 5 sub-docs
 
 ## Purpose
 

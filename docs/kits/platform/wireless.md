@@ -1,6 +1,6 @@
 # Wireless Kit
 
-**Layer:** Platform | **Architecture:** `docs/platform/wireless.md` + 5 sub-docs
+**Layer:** Platform | **Architecture:** `docs/platform/wireless.md` + 6 sub-docs
 
 ## Purpose
 

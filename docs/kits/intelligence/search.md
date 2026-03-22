@@ -1,6 +1,6 @@
 # Search Kit
 
-**Layer:** Intelligence | **Architecture:** `docs/intelligence/space-indexer.md` + 7 sub-docs
+**Layer:** Intelligence | **Architecture:** `docs/intelligence/space-indexer.md` + 8 sub-docs
 
 ## Purpose
 

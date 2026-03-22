@@ -1,6 +1,6 @@
 # Input Kit
 
-**Layer:** Platform | **Architecture:** `docs/platform/input.md` + 5 sub-docs
+**Layer:** Platform | **Architecture:** `docs/platform/input.md` + 6 sub-docs
 
 ## Purpose
 

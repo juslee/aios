@@ -1,6 +1,6 @@
 # AIRS Kit
 
-**Layer:** Intelligence | **Architecture:** `docs/intelligence/airs.md` + 6 sub-docs
+**Layer:** Intelligence | **Architecture:** `docs/intelligence/airs.md` + 7 sub-docs
 
 ## Purpose
 

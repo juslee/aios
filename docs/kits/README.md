@@ -266,36 +266,36 @@ Each Kit links to its architecture doc (detailed internal design) and its Kit do
 |---|---|---|---|
 | [Memory Kit](kernel/memory.md) | `docs/kernel/memory.md` + 5 sub-docs | [memory.md](kernel/memory.md) | Overview |
 | [IPC Kit](kernel/ipc.md) | `docs/kernel/ipc.md` | [ipc.md](kernel/ipc.md) | Overview |
-| [Capability Kit](kernel/capability.md) | `docs/security/model.md` + `capabilities.md` | [capability.md](kernel/capability.md) | Overview |
-| [Compute Kit](kernel/compute.md) | `docs/kernel/compute.md` + `docs/platform/gpu.md` | [compute.md](kernel/compute.md) | Overview |
+| [Capability Kit](kernel/capability.md) | `docs/security/model.md` + `docs/security/model/capabilities.md` | [capability.md](kernel/capability.md) | Overview |
+| [Compute Kit](kernel/compute.md) | `docs/kernel/compute.md` + 6 sub-docs, `docs/platform/gpu.md` + 5 sub-docs | [compute.md](kernel/compute.md) | Overview |
 
 ### Platform Kits
 
 | Kit | Architecture Doc | Kit Doc | Status |
 |---|---|---|---|
-| [Network Kit](platform/network.md) | `docs/platform/networking.md` + 5 sub-docs | [network.md](platform/network.md) | Overview |
+| [Network Kit](platform/network.md) | `docs/platform/networking.md` + 6 sub-docs | [network.md](platform/network.md) | Overview |
 | [Storage Kit](platform/storage.md) | `docs/storage/spaces.md` + 8 sub-docs | [storage.md](platform/storage.md) | Overview |
 | [Audio Kit](platform/audio.md) | `docs/platform/audio.md` + 5 sub-docs | [audio.md](platform/audio.md) | Overview |
 | [Media Kit](platform/media.md) | `docs/platform/media-pipeline.md` + 6 sub-docs | [media.md](platform/media.md) | Overview |
-| [Input Kit](platform/input.md) | `docs/platform/input.md` + 5 sub-docs | [input.md](platform/input.md) | Overview |
+| [Input Kit](platform/input.md) | `docs/platform/input.md` + 6 sub-docs | [input.md](platform/input.md) | Overview |
 | [USB Kit](platform/usb.md) | `docs/platform/usb.md` + 4 sub-docs | [usb.md](platform/usb.md) | Overview |
-| [Camera Kit](platform/camera.md) | `docs/platform/camera.md` + 6 sub-docs | [camera.md](platform/camera.md) | Overview |
-| [Wireless Kit](platform/wireless.md) | `docs/platform/wireless.md` + 5 sub-docs | [wireless.md](platform/wireless.md) | Overview |
+| [Camera Kit](platform/camera.md) | `docs/platform/camera.md` + 7 sub-docs | [camera.md](platform/camera.md) | Overview |
+| [Wireless Kit](platform/wireless.md) | `docs/platform/wireless.md` + 6 sub-docs | [wireless.md](platform/wireless.md) | Overview |
 | [Power Kit](platform/power.md) | `docs/platform/power-management.md` | [power.md](platform/power.md) | Overview |
-| [Thermal Kit](platform/thermal.md) | `docs/platform/thermal.md` + 5 sub-docs | [thermal.md](platform/thermal.md) | Overview |
-| [Translation Kit](platform/translation.md) | *(needs creation)* | [translation.md](platform/translation.md) | Overview |
+| [Thermal Kit](platform/thermal.md) | `docs/platform/thermal.md` + 7 sub-docs | [thermal.md](platform/thermal.md) | Overview |
+| [Translation Kit](platform/translation.md) | `docs/storage/flow/transforms.md` *(standalone doc needs creation)* | [translation.md](platform/translation.md) | Overview |
 
 ### Intelligence Kits
 
 | Kit | Architecture Doc | Kit Doc | Status |
 |---|---|---|---|
-| [AIRS Kit](intelligence/airs.md) | `docs/intelligence/airs.md` + 6 sub-docs | [airs.md](intelligence/airs.md) | Overview |
-| [Context Kit](intelligence/context.md) | `docs/intelligence/context-engine.md` + 5 sub-docs | [context.md](intelligence/context.md) | Overview |
+| [AIRS Kit](intelligence/airs.md) | `docs/intelligence/airs.md` + 7 sub-docs | [airs.md](intelligence/airs.md) | Overview |
+| [Context Kit](intelligence/context.md) | `docs/intelligence/context-engine.md` + 6 sub-docs | [context.md](intelligence/context.md) | Overview |
 | [Attention Kit](intelligence/attention.md) | `docs/intelligence/attention.md` | [attention.md](intelligence/attention.md) | Overview |
-| [Search Kit](intelligence/search.md) | `docs/intelligence/space-indexer.md` + 7 sub-docs | [search.md](intelligence/search.md) | Overview |
-| [Flow Kit](intelligence/flow.md) | `docs/storage/flow.md` + 6 sub-docs | [flow.md](intelligence/flow.md) | Overview |
-| [Intent Kit](intelligence/intent.md) | `docs/intelligence/intent-verifier.md` + 5 sub-docs | [intent.md](intelligence/intent.md) | Overview |
-| [Preference Kit](intelligence/preference.md) | `docs/intelligence/preferences.md` + 6 sub-docs | [preference.md](intelligence/preference.md) | Overview |
+| [Search Kit](intelligence/search.md) | `docs/intelligence/space-indexer.md` + 8 sub-docs | [search.md](intelligence/search.md) | Overview |
+| [Flow Kit](intelligence/flow.md) | `docs/storage/flow.md` + 7 sub-docs | [flow.md](intelligence/flow.md) | Overview |
+| [Intent Kit](intelligence/intent.md) | `docs/intelligence/intent-verifier.md` + 6 sub-docs | [intent.md](intelligence/intent.md) | Overview |
+| [Preference Kit](intelligence/preference.md) | `docs/intelligence/preferences.md` + 8 sub-docs | [preference.md](intelligence/preference.md) | Overview |
 
 ### Application Kits
 
@@ -304,7 +304,7 @@ Each Kit links to its architecture doc (detailed internal design) and its Kit do
 | [App Kit](application/app.md) | *(needs creation)* | [app.md](application/app.md) | Overview |
 | [Interface Kit](application/interface.md) | `docs/applications/ui-toolkit.md` *(needs rewrite)* | [interface.md](application/interface.md) | Overview |
 | [Browser Kit](application/browser.md) | `docs/applications/browser.md` *(needs rewrite)* | [browser.md](application/browser.md) | Overview |
-| [Conversation Kit](application/conversation.md) | `docs/intelligence/conversation-manager.md` + 5 sub-docs | [conversation.md](application/conversation.md) | Overview |
+| [Conversation Kit](application/conversation.md) | `docs/intelligence/conversation-manager.md` + 6 sub-docs | [conversation.md](application/conversation.md) | Overview |
 | [Identity Kit](application/identity.md) | `docs/experience/identity.md` | [identity.md](application/identity.md) | Overview |
 | [Notification Kit](application/notification.md) | *(partially in attention.md)* | [notification.md](application/notification.md) | Overview |
-| [Security Kit](application/security.md) | `docs/security/model.md` + sub-docs | [security.md](application/security.md) | Overview |
+| [Security Kit](application/security.md) | `docs/security/model.md` + 4 sub-docs | [security.md](application/security.md) | Overview |

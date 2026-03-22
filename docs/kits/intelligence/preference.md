@@ -1,6 +1,6 @@
 # Preference Kit
 
-**Layer:** Intelligence | **Architecture:** `docs/intelligence/preferences.md` + 6 sub-docs
+**Layer:** Intelligence | **Architecture:** `docs/intelligence/preferences.md` + 8 sub-docs
 
 ## Purpose
 

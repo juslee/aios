@@ -221,7 +221,7 @@ Layer 3 reimagines the screen as an information surface rather than a window man
 
 ---
 
-## Complete Kit Inventory (30 Kits)
+## Complete Kit Inventory (29 Kits)
 
 ### Kernel Kits (4)
 
@@ -260,7 +260,7 @@ Layer 3 reimagines the screen as an information surface rather than a window man
 | **Intent Kit** | Intent Verifier, behavioral monitor | Declare intents, verify actions, detect anomalies |
 | **Preference Kit** | Preference resolution, NLU, inference, history | Read/write preferences, context-driven rules, explainability |
 
-### Application Kits (8)
+### Application Kits (7)
 
 | Kit | Composes | What It Exposes |
 |---|---|---|
@@ -271,7 +271,6 @@ Layer 3 reimagines the screen as an information surface rather than a window man
 | **Identity Kit** | Capability, Network (TLS), Storage (credential vault) | Authentication, credential delegation, OS-level identity, WebAuthn |
 | **Notification Kit** | Attention, Context, Preference, Flow | Priority-aware delivery, context-sensitive suppression |
 | **Security Kit** | Capability, Intent, behavioral monitor | Audit trail, capability management UI, trust levels, privacy controls |
-| **Translation Kit** | *(Platform-level)* | *(Listed in Platform Kits above)* |
 
 ---
 
@@ -315,16 +314,17 @@ Layer 3 reimagines the screen as an information surface rather than a window man
 **Status: graduated (ADRs extracted 2026-03-22).**
 
 Extracted ADRs:
-- `decisions/2026-03-16-jl-custom-core-principle.md` — "Custom Core, Open-Source Bridges" philosophy
-- `decisions/2026-03-22-jl-kit-architecture.md` — 30 Kits across 4 layers, BeOS heritage, Rust traits
-- `decisions/2026-03-22-jl-compute-kit.md` — Compute Kit (GPU+NPU+CPU), 3 tiers, replaces GpuDevice
-- `decisions/2026-03-22-jl-browser-kit.md` — Browser Kit replaces progressive browser
-- `decisions/2026-03-22-jl-interface-kit.md` — Interface Kit (renamed from UI Toolkit), cross-platform bridges on top
-- `decisions/2026-03-22-jl-compositor-system-service.md` — Compositor is a system service, not a Kit
-- `decisions/2026-03-22-jl-app-kit.md` — App Kit for high-level app lifecycle
-- `decisions/2026-03-22-jl-translation-kit.md` — Translation Kit for format conversion
-- `decisions/2026-03-16-jl-candle-inference-runtime.md` — candle replaces GGML
-- `decisions/2026-03-16-jl-three-interaction-layers.md` — Classic → Smart → Intelligence Surface
+
+- `docs/knowledge/decisions/2026-03-16-jl-custom-core-principle.md` — "Custom Core, Open-Source Bridges" philosophy
+- `docs/knowledge/decisions/2026-03-22-jl-kit-architecture.md` — 29 Kits across 4 layers, BeOS heritage, Rust traits
+- `docs/knowledge/decisions/2026-03-22-jl-compute-kit.md` — Compute Kit (GPU+NPU+CPU), 3 tiers, replaces GpuDevice
+- `docs/knowledge/decisions/2026-03-22-jl-browser-kit.md` — Browser Kit replaces progressive browser
+- `docs/knowledge/decisions/2026-03-22-jl-interface-kit.md` — Interface Kit (renamed from UI Toolkit), cross-platform bridges on top
+- `docs/knowledge/decisions/2026-03-22-jl-compositor-system-service.md` — Compositor is a system service, not a Kit
+- `docs/knowledge/decisions/2026-03-22-jl-app-kit.md` — App Kit for high-level app lifecycle
+- `docs/knowledge/decisions/2026-03-22-jl-translation-kit.md` — Translation Kit for format conversion
+- `docs/knowledge/decisions/2026-03-16-jl-candle-inference-runtime.md` — candle replaces GGML
+- `docs/knowledge/decisions/2026-03-16-jl-three-interaction-layers.md` — Classic → Smart → Intelligence Surface
 
 Architecture docs to update after graduation:
 - `docs/project/architecture.md` — Add "Custom Core" design principle, Kit architecture overview

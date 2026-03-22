@@ -1,6 +1,6 @@
 # Camera Kit
 
-**Layer:** Platform | **Architecture:** `docs/platform/camera.md` + 6 sub-docs
+**Layer:** Platform | **Architecture:** `docs/platform/camera.md` + 7 sub-docs
 
 ## Purpose
 

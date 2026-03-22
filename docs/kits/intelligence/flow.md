@@ -1,6 +1,6 @@
 # Flow Kit
 
-**Layer:** Intelligence | **Architecture:** `docs/storage/flow.md` + 6 sub-docs
+**Layer:** Intelligence | **Architecture:** `docs/storage/flow.md` + 7 sub-docs
 
 ## Purpose
 

@@ -1,6 +1,6 @@
 # Thermal Kit
 
-**Layer:** Platform | **Architecture:** `docs/platform/thermal.md` + 5 sub-docs
+**Layer:** Platform | **Architecture:** `docs/platform/thermal.md` + 7 sub-docs
 
 ## Purpose
 

@@ -23,16 +23,16 @@ BeOS (1996) pioneered per-domain "Kit" naming (Application Kit, Interface Kit, M
 ### Option B: Kit architecture with 4-layer hierarchy
 
 - Pros: BeOS heritage (proven), clear dependency rules (lower never depends on higher), Application Kits are compositions not new primitives, organic extraction (define as each subsystem ships)
-- Cons: 30 Kits is a lot to name and document, some boundary decisions are judgment calls
+- Cons: 29 Kits is a lot to name and document, some boundary decisions are judgment calls
 
 ## Decision
 
-Kit architecture with 4-layer hierarchy (Option B). 30 Kits across 4 layers:
+Kit architecture with 4-layer hierarchy (Option B). 29 Kits across 4 layers:
 
 - **Kernel Kits (4):** Memory, IPC, Capability, Compute
 - **Platform Kits (11):** Network, Storage, Audio, Media, Input, USB, Camera, Wireless, Power, Thermal, Translation
 - **Intelligence Kits (7):** AIRS, Context, Attention, Search, Flow, Intent, Preference
-- **Application Kits (8):** App, Interface, Browser, Conversation, Identity, Notification, Security
+- **Application Kits (7):** App, Interface, Browser, Conversation, Identity, Notification, Security
 
 Key properties:
 - **Rust traits as source of truth** — C bindings auto-generated via cbindgen for ported apps
