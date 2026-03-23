@@ -941,7 +941,7 @@ docs/
 
 ### Phase Implementation Documents
 
-Each phase has a single implementation doc in `docs/phases/` with milestone steps, acceptance criteria, and references to architecture docs. Architecture lives in the domain directories above; phase docs define the build sequence. See [development-plan.md](./development-plan.md) §8 for the full 42-phase list.
+Each phase has a single implementation doc in `docs/phases/` with milestone steps, acceptance criteria, and references to architecture docs. Architecture lives in the domain directories above; phase docs define the build sequence. See [development-plan.md](./development-plan.md) §8 for the full 47-phase list.
 
 ---
 
@@ -954,7 +954,7 @@ Deep-dive technical specifications organized by domain. **Bold** documents are h
 | Document | Scope |
 |---|---|
 | [architecture.md](./architecture.md) | Full system architecture — data models, boot sequence, agent sandbox, performance targets |
-| [development-plan.md](./development-plan.md) | 42-phase plan, dependency graph, risk register, decision gates, staffing |
+| [development-plan.md](./development-plan.md) | 47-phase plan, dependency graph, risk register, decision gates, staffing |
 | [developer-guide.md](./developer-guide.md) | Kernel development guide — build workflow, code patterns, testing |
 | [ai-agent-context.md](./ai-agent-context.md) | Context-loading checklist for AI coding agents |
 | **[language-ecosystem.md](./language-ecosystem.md)** | Language runtimes hub (4) — Rust, Python, TypeScript, WASM |

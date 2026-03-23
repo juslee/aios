@@ -13,7 +13,7 @@ You generate AIOS phase docs. Follow CLAUDE.md "Phase Doc Generation Workflow" e
 
 1. Read `docs/project/development-plan.md` §8 for phase name, duration, deliverable
 2. Read architecture docs for the phase's subsystems (use Architecture Document Map in CLAUDE.md)
-3. Read previous phase doc for milestone numbering: Phase N uses M(3N+1)–M(3N+3)
+3. Read previous phase doc for milestone numbering continuity (variable milestones per phase; see CLAUDE.md Milestone Numbering)
 4. Generate `docs/phases/NN-name.md` matching the Phase 0/1 template structure exactly
 
 ## Template Structure
