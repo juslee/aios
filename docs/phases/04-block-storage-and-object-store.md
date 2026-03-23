@@ -431,7 +431,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 
 **Key reference:** This is a refactoring step — no architecture doc section. Follows the existing pattern of shared types in `shared/src/storage.rs`.
 
-**Acceptance:** `just check` passes. `just test` passes with ~60 new unit tests (target: ~370+ total, up from 309). `just run` QEMU output unchanged (pure refactoring).
+**Acceptance:** `just check` passes. `just test` passes with 55 new unit tests (364 total, up from 309). `just run` QEMU output unchanged (pure refactoring).
 
 -----
 
@@ -472,9 +472,9 @@ The following sub-phases from [spaces.md §12](../storage/spaces.md) are intenti
 
 - [x] **M13 complete:** VirtIO-blk driver reads/writes sectors; Block Engine with WAL and MemTable index; superblock persists across boots
 - [x] **M14 complete:** Content-addressed objects with dedup; Merkle DAG version history; device-level AES-256-GCM encryption; system spaces at boot
-- [ ] **M15 complete:** POSIX bridge maps paths to spaces; LZ4 compression active; storage budget enforced; end-to-end create/read/update/rollback/dedup/encrypt verified
-- [ ] `just check` — zero warnings, zero errors
-- [ ] `just test` — all shared crate tests pass (existing + new storage type tests)
-- [ ] `just run` — UART shows complete storage lifecycle through all layers
-- [ ] All code reviewed (convention compliance, unsafe documentation, W^X)
-- [ ] All docs updated (CLAUDE.md, phase doc, developer-guide.md)
+- [x] **M15 complete:** POSIX bridge maps paths to spaces; LZ4 compression active; storage budget enforced; end-to-end create/read/update/rollback/dedup/encrypt verified
+- [x] `just check` — zero warnings, zero errors
+- [x] `just test` — all shared crate tests pass (existing + new storage type tests)
+- [x] `just run` — UART shows complete storage lifecycle through all layers
+- [x] All code reviewed (convention compliance, unsafe documentation, W^X)
+- [x] All docs updated (CLAUDE.md, phase doc, developer-guide.md)

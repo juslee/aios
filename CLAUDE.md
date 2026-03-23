@@ -720,7 +720,7 @@ Phase 5+: Sequential from M16 onward (variable count per phase)
 
 ## Workspace Layout
 
-Current (post-Phase 4 M14 — Object Store, Version Store & Encryption):
+Current (post-Phase 4 M15 — POSIX Bridge, Compression & Budget):
 
 ```
 aios/
@@ -742,7 +742,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm, lz4_flex; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
