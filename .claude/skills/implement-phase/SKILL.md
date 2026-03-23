@@ -64,11 +64,12 @@ Follow the Phase Implementation Workflow from CLAUDE.md:
 
 ## Phase 5: Verify & Audit
 
-11. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
-12. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
+11. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
+12. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
+13. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
 
 ## Phase 6: PR, Review & Merge
 
-13. Create PR to main
-14. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
-15. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
+14. Create PR to main
+15. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
+16. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
