@@ -38,20 +38,14 @@ Follow the Phase Implementation Workflow from CLAUDE.md:
 7. Create worktree via `git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-*` from main; work inside the worktree
 8. Create TodoWrite with one item per step, grouped by milestone
 9. For each milestone:
-   For each step within the milestone:
+   For each step within the milestone (including the shared crate refactoring step baked into the phase doc):
    a. Implement the step
    b. Run acceptance criteria for the step
    c. If any gate fails: fix before proceeding
    d. Commit and push: `Phase $ARGUMENTS MN: Step X — <step description>`
    After all steps in milestone complete:
-   e. Review code written in `kernel/` during this milestone:
-      - Identify types, constants, and logic that should live in `shared/` (cross-crate types, test-friendly logic)
-      - Move applicable code from `kernel/src/` to `shared/src/`
-      - Update imports in `kernel/` to use `shared::` paths
-   f. Run `just test` — all host-side unit tests must pass after the move
-   g. Commit and push: `Phase $ARGUMENTS MN: move shared types + unit tests`
-   h. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
-   i. Commit and push: `Phase $ARGUMENTS MN: update docs`
+   e. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
+   f. Commit and push: `Phase $ARGUMENTS MN: update docs`
 
 ## Phase 4: Verify & Audit
 

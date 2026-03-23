@@ -20,7 +20,12 @@ Follow the Phase Doc Generation Workflow from CLAUDE.md:
 5. Create branch `claude/phase-$ARGUMENTS-docs` from main
 6. Generate `docs/phases/` with the correct `NN-name.md` filename
 7. Follow the Phase 0/1 template structure exactly (see CLAUDE.md)
-8. Milestone numbers: M(3*$ARGUMENTS+1) through M(3*$ARGUMENTS+3)
-9. Commit and push the generated phase doc
-10. Run `/audit-loop` — auto-detects docs-only mode, loops until 0 issues
-11. Create PR for review
+8. For each milestone, include a shared crate refactoring step at the end:
+    - Review code written in `kernel/` during the milestone
+    - Move pure data structures (no hardware deps) to `shared/src/`
+    - Write host-side unit tests for moved code
+    - Acceptance: `just check` + `just test` pass
+9. Milestone numbers: M(3*$ARGUMENTS+1) through M(3*$ARGUMENTS+3)
+10. Commit and push the generated phase doc
+11. Run `/audit-loop` — auto-detects docs-only mode, loops until 0 issues
+12. Create PR for review
