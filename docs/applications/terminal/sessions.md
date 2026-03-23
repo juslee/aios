@@ -510,3 +510,88 @@ No shell state lost. No commands interrupted. No scrollback lost.
 ```
 
 This is possible because the terminal's data model (cell grid, VT engine state, PTY channels) is entirely independent of the compositor surface. The surface is just a rendering target — losing it loses nothing except the pixels on screen, which are regenerated from the grid.
+
+-----
+
+### 5.11 Error Handling & Recovery
+
+The session layer handles failures at multiple levels — from transient channel errors to catastrophic shell crashes — with the goal of preserving user state and providing clear feedback.
+
+#### 5.11.1 Channel Failures
+
+When a PTY IPC channel closes unexpectedly (kernel-initiated cleanup, resource exhaustion, or bug):
+
+```text
+Detection:
+  - ipc_recv returns ChannelClosed error
+  - ipc_send returns ChannelClosed error
+  - Select wakes with channel-closed event
+
+Response:
+  1. Session enters "disconnected" state
+  2. Grid preserved (scrollback intact, cursor frozen)
+  3. Status indicator shows "[session disconnected]" in prompt area
+  4. User can:
+     a. Close the session (destroy)
+     b. Wait for reconnection (if transient)
+     c. Start a new session in the same pane
+```
+
+#### 5.11.2 Shell Process Exit
+
+When the shell process exits (normal exit, signal, crash):
+
+| Exit Type | Terminal Behavior |
+|---|---|
+| Normal exit (code 0) | Show "[process exited]", preserve scrollback, offer new session |
+| Non-zero exit code | Show "[process exited: code N]", preserve scrollback |
+| Signal (SIGSEGV, SIGBUS) | Show "[process killed: signal N]", log to audit, preserve scrollback |
+| SIGHUP (hangup) | Clean session teardown, no error message |
+
+The terminal never destroys scrollback on shell exit — the user may need to review output to understand what happened.
+
+#### 5.11.3 Resource Exhaustion
+
+```text
+SharedMemory allocation failure:
+  - Fall back to inline IPC messages (slower but functional)
+  - Log warning: "PTY shared memory unavailable, using inline IPC"
+  - Performance degrades but functionality is preserved
+
+Channel creation failure:
+  - Session creation fails with clear error message
+  - Existing sessions unaffected
+  - User prompted to close unused sessions to free resources
+
+Scrollback memory pressure:
+  - Accelerate spill to space tier
+  - If space tier unavailable: cap scrollback at current size
+  - Oldest lines beyond cap are permanently lost (logged as warning)
+```
+
+#### 5.11.4 VT Parser Errors
+
+Malformed escape sequences from the shell are handled entirely within the VT parser (see [emulation.md](./emulation.md) §3.1.6). From the session layer's perspective:
+
+- Parser errors are invisible — the parser silently discards malformed sequences
+- No session-level error state is set
+- Debug-level logging captures discarded sequences for diagnostics
+- The session never disconnects or restarts due to parser errors
+
+#### 5.11.5 Channel Backpressure
+
+When the PTY output channel fills (shell producing output faster than the terminal can consume):
+
+```text
+Flow control sequence:
+  1. Output channel ring buffer reaches capacity (16 messages)
+  2. Terminal applies XOFF flow control to the shell (if supported)
+  3. Shell blocks on write until terminal drains the buffer
+  4. Terminal processes buffered output, renders, drains ring
+  5. Terminal sends XON to resume shell output
+
+Fallback (if shell ignores XOFF):
+  - Terminal continues reading at maximum rate
+  - Frame skipping ensures rendering doesn't fall behind (§4.7.4)
+  - No data is lost — channel ring absorbs bursts
+```
