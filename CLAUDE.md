@@ -552,7 +552,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 4 M15 — POSIX Bridge, Compression & Budget):
+Current (post-Phase 5 M16 — Kit Foundation, Memory Kit & Capability Kit):
 
 ```
 aios/
@@ -670,7 +670,7 @@ aios/
 │       ├── kaslr.rs      KaslrConfig, compute_slide_from_entropy()
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
-│       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
+│       ├── sched.rs      ProcessId, ThreadId, SchedulerClass, ThreadState, CpuSet, KernelResourceLimits shared types
 │       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants, MemTable, ObjectIndex, SpaceTable, WalEntry, crc32c, PosixStat, DirEntry, CompressionType, StorageBudget, PressureLevel
 │       ├── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 │       └── kits/

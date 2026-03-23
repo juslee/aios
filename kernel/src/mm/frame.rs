@@ -223,9 +223,9 @@ impl memory_kit::FrameAllocator for KernelFrameAllocator {
         let mut guard = FRAME_ALLOC.lock();
         let fa = guard.as_mut().ok_or(MemoryError::OutOfMemory)?;
         // SAFETY: Identity/direct map is active after Phase 1 boot completes.
-        // The buddy allocator writes intrusive free-list pointers into freed
-        // pages via the identity map. If the identity map is not active,
-        // the allocator would fault on page metadata writes.
+        // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+        // If the identity map were not active, the buddy allocator would
+        // fault on page metadata writes via intrusive free-list pointers.
         let addr = unsafe { fa.alloc_page(pool) }.ok_or(MemoryError::OutOfMemory)?;
         Ok(PhysFrame {
             addr: addr as u64,
@@ -238,8 +238,9 @@ impl memory_kit::FrameAllocator for KernelFrameAllocator {
         let fa = guard.as_mut().ok_or(MemoryError::OutOfMemory)?;
         // SAFETY: The PhysFrame was obtained from alloc_frame, so the address
         // is valid and was previously allocated as a single page (order 0).
-        // The identity/direct map is active, making the buddy's intrusive
-        // free-list pointer writes safe.
+        // The caller maintains this invariant. The identity/direct map is
+        // active (maintained by kmap.rs). Passing an invalid address would
+        // corrupt the buddy free-list or fault on an unmapped page.
         unsafe { fa.free_pages(frame.addr as usize, 0) };
         Ok(())
     }

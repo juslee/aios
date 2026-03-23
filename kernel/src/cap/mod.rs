@@ -211,7 +211,6 @@ pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) {
 // Capability Kit trait implementation
 // ---------------------------------------------------------------------------
 
-extern crate alloc;
 use alloc::vec::Vec;
 
 use shared::kits::capability::{self as capability_kit, CapabilityError};

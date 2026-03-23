@@ -2,8 +2,6 @@
 //!
 //! Architecture reference: `docs/kits/kernel/capability.md`
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 use crate::cap::{Capability, CapabilityHandle, CapabilityToken, CapabilityTokenId};

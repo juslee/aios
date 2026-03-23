@@ -35,10 +35,10 @@ These existing documents define the technical design. This phase doc focuses on 
 | Memory management architecture | [kernel/memory.md](../kernel/memory.md) | §1 Overview; §14 Implementation Order |
 | Physical memory (buddy, pools, frames) | [kernel/memory/physical.md](../kernel/memory/physical.md) | §2.2 BuddyAllocator; §2.3 FrameAllocator; §2.4 PagePools |
 | Virtual memory (page tables, ASID) | [kernel/memory/virtual.md](../kernel/memory/virtual.md) | §3.2 PageTableEntry; §3.4 TLB/ASID; §5 Per-Agent Memory |
-| IPC channels and syscalls | [kernel/ipc.md](../kernel/ipc.md) | §2 Channel Model; §3 Notifications; §4 Select; §5 Shared Memory |
+| IPC channels and syscalls | [kernel/ipc.md](../kernel/ipc.md) | §4 IPC Design (Channels, Shared Memory); §6 Notifications |
 | Capability system internals | [security/model/capabilities.md](../security/model/capabilities.md) | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation |
-| Security model overview | [security/model.md](../security/model.md) | §2.2 Capability Check; §3 Capability System Internals |
-| Space Storage overview | [storage/spaces.md](../storage/spaces.md) | §1 Core Insight; §2 Architecture; §3 Data Structures; §12 Implementation Order |
+| Security model overview | [security/model.md](../security/model.md) | §1 Threat Model; §12 Implementation Order; Document Map |
+| Space Storage overview | [storage/spaces.md](../storage/spaces.md) | §1 Core Insight; §2 Architecture; §12 Implementation Order |
 | Block Engine and WAL | [storage/spaces/block-engine.md](../storage/spaces/block-engine.md) | §4.1–§4.10 On-disk layout, LSM-tree, WAL, compression, encryption |
 | Version Store (Merkle DAG) | [storage/spaces/versioning.md](../storage/spaces/versioning.md) | §5.1–§5.5 Merkle DAG, snapshots, retention |
 | Subsystem framework | [platform/subsystem-framework.md](../platform/subsystem-framework.md) | §2 What Every Subsystem Shares; §3 Five-Layer Architecture |
@@ -83,10 +83,10 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Define `MemoryError` and the supporting types that Memory Kit traits reference: `PhysFrame`, `PagePermissions` (with W^X enforcement), `Mapping`.
 
 **Tasks:**
-- [x] Define `MemoryError` enum in `shared/src/kits/memory.rs` with variants: `OutOfMemory { pool: Pool, requested: usize, available: usize }`, `WxViolation`, `InvalidRegion`, `CapabilityDenied`, `AlreadyMapped { vaddr: VirtAddr }`, `NotMapped { vaddr: VirtAddr }`, `BudgetExceeded`, `TooManyRegions`
+- [x] Define `MemoryError` enum in `shared/src/kits/memory.rs` with variants: `OutOfMemory`, `WxViolation`, `InvalidRegion`, `CapabilityDenied`, `AlreadyMapped`, `NotMapped`, `BudgetExceeded`, `TooManyRegions`
 - [x] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `MemoryError`
 - [x] Define `PhysFrame` struct: `pub addr: PhysAddr`, `pub pool: Pool` — wraps a physical page address with its originating pool
-- [x] Define `PagePermissions` struct with fields: `read: bool`, `write: bool`, `execute: bool`, `user_accessible: bool` — constructor `new()` that enforces W^X invariant (returns `Err(MemoryError::WxViolation)` if both `write` and `execute` are true)
+- [x] Define `PagePermissions` struct with fields: `read: bool`, `write: bool`, `execute: bool`, `user: bool` — constructor `new()` that enforces W^X invariant (returns `Err(MemoryError::WxViolation)` if both `write` and `execute` are true)
 - [x] Define `Mapping` struct: `pub vaddr: VirtAddr`, `pub size: usize`, `pub perms: PagePermissions`, `pub pool: Pool`
 - [x] Write host-side tests: `MemoryError` Debug formatting, `PagePermissions::new()` W^X enforcement (valid cases pass, W+X rejected), `PhysFrame` construction
 
@@ -110,9 +110,9 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
   - `fn pool_stats(&self, pool: Pool) -> PoolStats` — free/total counts for a pool
 - [x] Define `PoolStats` struct: `pub free_frames: usize`, `pub total_frames: usize`
 - [x] Define `AddressSpace` trait:
-  - `fn map(&mut self, vaddr: VirtAddr, frames: &[PhysFrame], perms: PagePermissions) -> Result<(), MemoryError>` — map contiguous virtual pages to physical frames
-  - `fn unmap(&mut self, vaddr: VirtAddr, pages: usize) -> Result<(), MemoryError>` — unmap pages, return frames to pool
-  - `fn protect(&mut self, vaddr: VirtAddr, pages: usize, perms: PagePermissions) -> Result<(), MemoryError>` — change permissions on existing mapping
+  - `fn map(&mut self, vaddr: VirtAddr, size: usize, perms: PagePermissions, pool: Pool) -> Result<(), MemoryError>` — create a virtual mapping backed by frames from the specified pool
+  - `fn unmap(&mut self, vaddr: VirtAddr, size: usize) -> Result<(), MemoryError>` — remove a virtual mapping
+  - `fn protect(&mut self, vaddr: VirtAddr, size: usize, perms: PagePermissions) -> Result<(), MemoryError>` — change permissions on existing mapping
   - `fn query(&self, vaddr: VirtAddr) -> Option<Mapping>` — look up mapping at a virtual address
 - [x] Define `MemoryPressureMonitor` trait:
   - `fn current_level(&self) -> MemoryPressure` — aggregate pressure across all pools
