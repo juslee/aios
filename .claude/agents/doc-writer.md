@@ -32,5 +32,5 @@ You generate AIOS phase docs. Follow CLAUDE.md "Phase Doc Generation Workflow" e
 
 - Never duplicate architecture content — reference it
 - Acceptance criteria must be mechanical (command → expected output)
-- Each phase has exactly 3 milestones
+- Each phase has 3+ milestones (variable, based on complexity)
 - Duration must match development-plan.md

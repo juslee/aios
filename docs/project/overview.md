@@ -6,7 +6,7 @@
 **Target:** aarch64 (ARM64)
 **Language:** Rust (kernel + userspace)
 **License:** BSD-2-Clause (kernel, tools, SDK)
-**Timeline:** 42 phases across ~45–65 weeks (AI-assisted) / ~200 weeks unassisted
+**Timeline:** 47 phases across ~45–65 weeks (AI-assisted) / ~200 weeks unassisted
 
 ---
 
@@ -566,7 +566,7 @@ The SDK provides inference, storage, security, networking, and context as system
 
 ## 10. Phase Plan Overview
 
-42 phases across 8 tiers. AI-assisted timeline: ~45–65 weeks. Unassisted baseline: ~200 weeks (~3.8 years). See [development-plan.md](./development-plan.md) for full details, dependency graph, and velocity data.
+47 phases across 8 tiers. AI-assisted timeline: ~45–65 weeks. Unassisted baseline: ~200 weeks (~3.8 years). See [development-plan.md](./development-plan.md) for full details, dependency graph, and velocity data.
 
 ### Tier 1: Hardware Foundation — Phases 0–3 (Weeks 1–2) ✅
 
@@ -930,7 +930,7 @@ docs/
 │   │   └── intelligence.md              AI-native secure boot
 │   └── static-analysis.md                   Static analysis and formal verification
 │
-└── phases/                                  Implementation docs (42 phases, created as work begins)
+└── phases/                                  Implementation docs (47 phases, created as work begins)
     ├── 00-foundation-and-tooling.md         Phase 0
     ├── 01-boot-and-first-pixels.md          Phase 1
     ├── 02-memory-management.md              Phase 2

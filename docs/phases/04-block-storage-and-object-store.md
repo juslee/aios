@@ -5,7 +5,7 @@
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
 **Status:** In Progress (M14 complete)
 **Prerequisites:** Phase 3 (IPC & Capability System)
-**Unlocks:** Phase 5 (GPU & Display), Phase 17 (Security Architecture)
+**Unlocks:** Phase 5 (Kit Foundation), Phase 6 (GPU & Display), Phase 21 (Security Architecture)
 
 -----
 
@@ -231,7 +231,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   Note: Old content is NOT dec_ref'd here — its version node still owns that ref. Refcounts are released by object_delete when walking the version chain.
 - [x] Test: create object → update 3 times → list versions (expect 4) → rollback to version 2 → verify content matches version 2
 
-**Note:** Provenance signatures (Ed25519) are deferred to Phase 17 (Security Architecture). For Phase 4, the `author` field stores a stub `AgentId` and the provenance chain is simplified.
+**Note:** Provenance signatures (Ed25519) are deferred to Phase 21 (Security Architecture). For Phase 4, the `author` field stores a stub `AgentId` and the provenance chain is simplified.
 
 **Key reference:** spaces.md §5.1 Merkle DAG; §5.2 Space Snapshots; §5.3 DAG Operations
 

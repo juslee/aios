@@ -682,7 +682,7 @@ When generating a phase doc for Phase N:
 3. **CONVENTIONS**:
    - Never duplicate architecture content — reference it
    - Acceptance criteria must be mechanical (run command → see output)
-   - Each phase has exactly 3 milestones
+   - Each phase has 3+ milestones (variable, based on complexity)
    - Duration must match `development-plan.md`
 
 ---
