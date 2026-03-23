@@ -346,6 +346,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Identity credentials | `docs/experience/identity/credentials.md` | §11 Credential isolation, §12 WebAuthn platform authenticator, §12.6 Service identities, §12.7 OAuth |
 | Identity privacy & recovery | `docs/experience/identity/privacy.md` | §13 Selective disclosure (ZKP), §14 Graduated 3-tier recovery (Feldman VSS) |
 | Identity intelligence | `docs/experience/identity/intelligence.md` | §17 Kernel-internal ML, AIRS-dependent, comparative analysis |
+| Kit architecture (hub) | `docs/kits/README.md` | 30 Kits across 4 layers (Kernel, Platform, Intelligence, Application) |
+| Kit docs — Kernel layer | `docs/kits/kernel/{memory,ipc,capability,compute}.md` | Kit API traits, Phase 5 retroactive extraction |
+| Kit docs — Platform layer | `docs/kits/platform/{storage,network,input,audio,media,usb,camera,wireless,power,thermal,translation}.md` | Kit API traits extracted inline per phase |
+| Kit docs — Intelligence layer | `docs/kits/intelligence/{airs,context,preference,search,flow,intent,attention}.md` | Kit API traits extracted inline per phase |
+| Kit docs — Application layer | `docs/kits/application/{app,interface,browser,conversation,identity,notification,security}.md` | Kit API traits extracted inline per phase |
+| Kit cookbook | `docs/kits/cookbook.md` | SDK examples, Phase 26 |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
 | AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
 
