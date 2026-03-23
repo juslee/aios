@@ -13,8 +13,8 @@
 
 | Estimate Model | Total Duration | Assumption |
 |---|---|---|
-| AI-assisted (current) | ~45–65 weeks | Solo developer with Claude Code, architecture-first workflow |
-| Unassisted baseline | ~200 weeks (~3.8 years) | Solo experienced systems programmer, no AI tooling |
+| AI-assisted (current) | ~55–75 weeks | Solo developer with Claude Code, architecture-first workflow |
+| Unassisted baseline | ~220 weeks (~4.2 years) | Solo experienced systems programmer, no AI tooling |
 
 ```mermaid
 flowchart LR
