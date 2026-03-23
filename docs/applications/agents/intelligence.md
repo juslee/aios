@@ -10,7 +10,7 @@ Part of: [agents.md](../agents.md) — Agent Framework
 
 -----
 
-Agent intelligence operates at two tiers. **Tier 1** (§17) uses kernel-internal statistical models that run without AIRS dependency — fixed-size state, O(1) per observation, always available. **Tier 2** (§18) uses AIRS-dependent semantic analysis — LLM inference, code analysis, and cross-agent behavioral correlation. §19 describes future directions informed by research in dynamic agent collections, graph-based orchestration, hardware-backed isolation, and behavioral constitutions.
+Agent intelligence operates at two tiers. **Tier 1** (section 17) uses kernel-internal statistical models that run without AIRS dependency — fixed-size state, O(1) per observation, always available. **Tier 2** (section 18) uses AIRS-dependent semantic analysis — LLM inference, code analysis, and cross-agent behavioral correlation. Section 19 describes future directions informed by research in dynamic agent collections, graph-based orchestration, hardware-backed isolation, and behavioral constitutions.
 
 ```mermaid
 flowchart TD
@@ -35,11 +35,11 @@ flowchart TD
 
 -----
 
-## §17. Kernel-Internal ML
+## 17. Kernel-Internal ML
 
 These models are compiled into the kernel as fixed-size statistical algorithms. They require no LLM inference, no model loading, and no AIRS availability. If AIRS crashes or is not yet booted, Tier 1 continues operating unchanged.
 
-### §17.1 Agent Scheduling Prediction
+### 17.1 Agent Scheduling Prediction
 
 A frozen decision tree predicts each agent's CPU and memory requirements based on historical behavior, enabling the scheduler to select the appropriate scheduling class before the agent's time slice begins.
 
@@ -69,7 +69,7 @@ pub struct AgentBehaviorSummary {
 
 **State overhead:** ~64 bytes per agent. For 64 agents: ~4 KB.
 
-### §17.2 Per-Capability Behavioral Baselines
+### 17.2 Per-Capability Behavioral Baselines
 
 Traditional behavioral detection builds one baseline per agent. This misses capability-specific anomalies: an agent that reads spaces at a normal rate but accesses the network at an unusual rate would not trigger a single aggregate baseline.
 
@@ -101,7 +101,7 @@ pub struct AgentCapabilityProfile {
 
 **State overhead:** ~80 bytes per baseline. For 64 agents with 8 average capabilities: ~40 KB.
 
-### §17.3 Resource Pressure Prediction
+### 17.3 Resource Pressure Prediction
 
 An EWMA-based predictor estimates each agent's near-future resource consumption, enabling proactive throttling before hard limits are reached. The predictor operates on three resource dimensions: memory, CPU, and IPC message rate.
 
@@ -141,7 +141,7 @@ impl AgentResourceTrend {
 
 **State overhead:** ~48 bytes per agent. For 64 agents: ~3 KB.
 
-### §17.4 CUSUM Change-Point Detection
+### 17.4 CUSUM Change-Point Detection
 
 EWMA smooths over sudden shifts — by design, it adapts gradually. CUSUM (Cumulative Sum) complements EWMA by detecting abrupt mean shifts that EWMA would take several observations to register.
 
@@ -184,7 +184,7 @@ impl CusumDetector {
 
 **State overhead:** ~56 bytes per detector instance. For 64 agents x 3 dimensions: ~10.5 KB.
 
-### §17.5 Kernel-Internal ML Summary
+### 17.5 Kernel-Internal ML Summary
 
 | Component | What It Detects | State Per Agent | Update Cost |
 |---|---|---|---|
@@ -195,15 +195,15 @@ impl CusumDetector {
 
 **Total Tier 1 state for 64 agents:** ~4 KB + 40 KB + 3 KB + 10.5 KB = **~57.5 KB**
 
-All models run in kernel context with no dependency on AIRS availability. They provide the statistical foundation that AIRS-dependent intelligence (§18) builds upon.
+All models run in kernel context with no dependency on AIRS availability. They provide the statistical foundation that AIRS-dependent intelligence (section 18) builds upon.
 
 -----
 
-## §18. AIRS-Dependent Intelligence
+## 18. AIRS-Dependent Intelligence
 
 These capabilities require the AIRS inference engine and a loaded language model. They provide semantic understanding that purely statistical methods cannot achieve. All are optional — the system remains safe without them, using Tier 1 detection.
 
-### §18.1 Agent Code Analysis
+### 18.1 Agent Code Analysis
 
 AIRS analyzes agent source code or WASM bytecode before installation. The analysis produces a `SecurityAnalysis` struct that is attached to the agent's manifest and persists across agent versions.
 
@@ -253,7 +253,7 @@ flowchart LR
 
 **Relationship to manifest trust levels:** Code analysis results influence the trust level assigned to the agent (see [sandbox.md](./sandbox.md) §6.2). An agent with `risk_score > 0.7` is automatically downgraded from Tier 2 to Tier 3 isolation, regardless of its declared trust level.
 
-### §18.2 Behavioral Anomaly Detection
+### 18.2 Behavioral Anomaly Detection
 
 Layer 3 of the eight-layer security model (see [model.md](../../security/model.md)). AIRS compares agent runtime behavior against both declared intent (from the manifest) and historical baselines (from Tier 1 detectors), providing semantic interpretation that statistical models cannot.
 
@@ -289,7 +289,7 @@ flowchart TD
 
 **Cross-reference:** The behavioral monitor maintains per-agent baselines and escalation policies ([behavioral-monitor.md](../../intelligence/behavioral-monitor.md)). AIRS behavioral anomaly detection extends this with semantic understanding — the behavioral monitor asks "is this statistically unusual?" while AIRS asks "is this semantically inconsistent with what the agent is supposed to do?"
 
-### §18.3 Multi-Agent Collusion Detection
+### 18.3 Multi-Agent Collusion Detection
 
 A novel OS-level contribution. Traditional security models analyze agents independently. AIOS recognizes that sophisticated attacks may involve multiple cooperating agents, each individually benign, whose combined behavior achieves a malicious goal.
 
@@ -323,7 +323,7 @@ graph TD
 
 **Computational cost:** Pairwise correlation for N agents is O(N^2). For 64 agents, 2016 pairs are computed every 5 minutes using 1-minute resolution time series. Total cost: ~10ms per evaluation cycle. Capability union analysis runs only on correlated pairs, adding negligible overhead.
 
-### §18.4 Intent Verification
+### 18.4 Intent Verification
 
 Layer 1 of the eight-layer security model. AIRS verifies that agent actions align with the declared intent in the agent's manifest. Intent verification operates continuously, not just at installation time.
 
@@ -345,9 +345,9 @@ AIRS verdict: VIOLATION
 
 -----
 
-## §19. Future Directions
+## 19. Future Directions
 
-### §19.1 Dynamic Collections (Phase 22+)
+### 19.1 Dynamic Collections (Phase 22+)
 
 Inspired by Fuchsia's component framework, dynamic collections enable runtime creation of agent instances from parameterized templates. A template defines the agent's code, default capabilities, and configuration schema. The Agent Runtime instantiates agents on demand with per-instance parameters.
 
@@ -359,7 +359,7 @@ Use cases:
 
 Dynamic collections interact with the capability system through template-level capability ceilings — no instance can exceed the template's declared maximum capabilities. Each instance receives independent address spaces (TTBR0), capability tables, and behavioral baselines.
 
-### §19.2 Graph-Based Workflow Orchestration (Phase 30+)
+### 19.2 Graph-Based Workflow Orchestration (Phase 30+)
 
 Inspired by LangGraph and similar agent orchestration frameworks, graph-based workflows define multi-agent computations as directed acyclic graphs (DAGs). Nodes are agents, edges are typed data dependencies.
 
@@ -387,7 +387,7 @@ The Agent Runtime serves as the DAG executor. It tracks node completion, manages
 
 **Capability composition safety:** The workflow engine validates that the combined capability set of all agents in the workflow does not create a collusion risk (reusing the capability union analysis from §18.3). If the workflow requires a dangerous capability combination, the user is prompted for explicit approval.
 
-### §19.3 Behavioral Constitutions (Phase 25+)
+### 19.3 Behavioral Constitutions (Phase 25+)
 
 Declarative safety rules that agents self-check before executing actions. A constitution is a set of invariants that an agent commits to maintaining, expressed as predicate functions over the agent's state and proposed actions.
 
@@ -420,7 +420,7 @@ Constitutions complement external enforcement (Tier 1/Tier 2 detection) with int
 - **Category rules** apply per trust level: "Third-party agents must not access Spaces outside their declared scope."
 - **Agent-specific rules** are declared in the manifest: "This email agent should not send messages after 10 PM."
 
-### §19.4 ARM CCA Realms (Phase 30+)
+### 19.4 ARM CCA Realms (Phase 30+)
 
 ARM Confidential Compute Architecture (CCA) provides hardware-backed isolation through Realms — encrypted memory regions that are opaque even to the hypervisor and OS kernel. AIOS maps each agent to a CCA Realm:
 
@@ -432,7 +432,7 @@ CCA Realms extend the graduated isolation model (see [sandbox.md](./sandbox.md) 
 
 **Platform dependencies:** ARM CCA requires ARMv9-A or later. Apple Silicon uses a different mechanism (Secure Enclave + IOMMU) — AIOS abstracts both behind a common `ConfidentialRuntime` trait. Trade-offs include ~5-10% overhead for memory encryption, ~50us per realm entry/exit transition, and mandatory data copy for cross-realm IPC (no zero-copy).
 
-### §19.5 WASI Multi-Threading (Phase 22+)
+### 19.5 WASI Multi-Threading (Phase 22+)
 
 The current WASM agent model uses single-threaded execution with cooperative concurrency via `async`/`await`. When the WASI threads proposal stabilizes, AIOS adopts a shared-nothing threading model:
 
@@ -450,7 +450,7 @@ This model preserves WASM's safety guarantees (no data races on unshared memory)
 |---|---|---|
 | §17.1 | Scheduling prediction | [scheduler.md](../../kernel/scheduler.md) — scheduling classes |
 | §17.2 | Capability baselines | [behavioral-monitor/detection.md](../../intelligence/behavioral-monitor/detection.md) — statistical detection |
-| §17.3 | Resource pressure | [resources.md](./resources.md) §14.4 — OOM enforcement |
+| §17.3 | Resource pressure | [resources.md](./resources.md) §14.2.3 — OOM enforcement, §14.5.2 — pressure response |
 | §17.4 | CUSUM detection | [behavioral-monitor/detection.md](../../intelligence/behavioral-monitor/detection.md) §4 — z-score complement |
 | §18.1 | Code analysis | [airs/intelligence-services.md](../../intelligence/airs/intelligence-services.md) §5.9 — capability intelligence |
 | §18.2 | Behavioral anomaly | [behavioral-monitor.md](../../intelligence/behavioral-monitor.md) — full behavioral detection architecture |

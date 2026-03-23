@@ -140,11 +140,11 @@ The kernel enforces memory limits at two levels:
 
 1. **Page allocation.** When an agent's `memory_allocated` would exceed `memory_limit`, the frame allocator returns an error. The agent receives an out-of-memory error from its `alloc` implementation. Well-written agents handle this gracefully; agents that panic are restarted by the Agent Runtime.
 
-2. **Address space size.** The kernel caps the number of pages mapped into an agent's TTBR0 address space (see [memory.md](../../kernel/memory.md) §5). This prevents an agent from mapping shared memory regions to circumvent its allocation limit.
+2. **Address space size.** The kernel caps the number of pages mapped into an agent's TTBR0 address space (see [memory/virtual.md](../../kernel/memory/virtual.md) §5). This prevents an agent from mapping shared memory regions to circumvent its allocation limit.
 
 #### 14.2.3 OOM Handling
 
-When system-wide memory pressure reaches critical levels, the kernel's memory reclamation system (see [memory.md](../../kernel/memory.md) §8) selects agents for memory reduction using the following priority order:
+When system-wide memory pressure reaches critical levels, the kernel's memory reclamation system (see [memory/reclamation.md](../../kernel/memory/reclamation.md) §8) selects agents for memory reduction using the following priority order:
 
 1. **Tab agents** with no visible surface — evict first (can be recreated on demand).
 2. **Background agents** with `Suspended` state — reclaim pages, preserve minimal state.
