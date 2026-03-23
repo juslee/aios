@@ -253,7 +253,7 @@ if verification.is_valid() && verification.trust_level() >= TrustLevel::Verified
         Capability::StorageWrite { space: "finances".into() },
         GrantOptions {
             delegated_by: identity.did().clone(),
-            expires: Duration::from_hours(1),
+            expires: Duration::from_secs(60 * 60),
             ..Default::default()
         },
     )?;

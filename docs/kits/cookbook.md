@@ -331,6 +331,7 @@ enum DisplayMode {
 #[derive(Clone, Debug)]
 enum Msg {
     Refresh,
+    LocationResolved(String),
     WeatherLoaded(Result<WeatherData, WeatherError>),
     ForecastLoaded(Result<Vec<ForecastDay>, WeatherError>),
 
@@ -388,7 +389,7 @@ fn update(model: &mut WeatherModel, msg: Msg) -> Vec<Command<Msg>> {
             if model.location_granted {
                 vec![Command::perform(
                     aios_context::get_location_city(),
-                    |city| Msg::Refresh,
+                    |city| Msg::LocationResolved(city),
                 )]
             } else {
                 // Show location picker instead
@@ -405,6 +406,11 @@ fn update(model: &mut WeatherModel, msg: Msg) -> Vec<Command<Msg>> {
                 _ => DisplayMode::Full,
             };
             vec![]
+        }
+
+        Msg::LocationResolved(city) => {
+            model.location = Some(city);
+            vec![Command::message(Msg::Refresh)]
         }
 
         Msg::Refresh => {

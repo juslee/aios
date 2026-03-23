@@ -251,7 +251,7 @@ let id = NotificationKit::builder()
     .body("Your team's weekly metrics are available")
     .channel(&ChannelId::new("com.example.app.updates"))
     .urgency(Urgency::Low)
-    .expires_after(Duration::from_hours(24))
+    .expires_after(Duration::from_secs(24 * 60 * 60))
     .post()?;
 ```
 

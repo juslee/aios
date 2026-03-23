@@ -137,47 +137,11 @@ The trait that makes every AIOS application introspectable and controllable by A
 The `Scriptable` trait is **mandatory** for all native AIOS applications. A default derive macro provides basic lifecycle properties automatically; applications extend with domain-specific suites.
 
 ```rust
-use aios_cap::CapabilityHandle;
-use aios_app::{AppError, PropertyValue, ScriptVerb, Specifier, Suite};
-
-/// Standard scripting verbs (inspired by BeOS hey protocol).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScriptVerb {
-    Get,        // Read a property value
-    Set,        // Write a property value
-    Create,     // Add a new entity
-    Delete,     // Remove an entity
-    Count,      // Count entities matching a specifier
-    Execute,    // Invoke a named action
-    Subscribe,  // Subscribe to property change notifications
-    Describe,   // Return the full suite schema (self-description)
-}
-
-/// Addresses a property or object within the app's hierarchy.
-/// Capability checks are evaluated at each traversal step.
-#[derive(Clone, Debug)]
-pub enum Specifier {
-    Name(String),           // by name: `Entry "readme.md"`
-    Index(usize),           // by index: `Window 0`
-    ReverseIndex(usize),    // from end: `Entry -1` (last)
-    Range(usize, usize),    // range: `Entry 0 to 5`
-    Direct,                 // direct child: `Title of Window 0`
-}
-
-/// A property declaration in a suite schema.
-pub struct PropertyInfo {
-    pub name: &'static str,                    // e.g., "Title", "State"
-    pub verbs: &'static [ScriptVerb],          // supported verbs
-    pub value_type: ValueType,                 // type descriptor
-    pub description: &'static str,             // for AIRS tool discovery
-    pub capability: Option<CapabilityKind>,     // None = unrestricted
-}
-
-/// A named suite grouping related properties and actions.
-pub struct Suite {
-    pub name: &'static str,                    // e.g., "aios:app:lifecycle"
-    pub properties: &'static [PropertyInfo],
-}
+use aios_capability::CapabilityHandle;
+use aios_app::{
+    AppError, CapabilityKind, PropertyInfo, PropertyValue,
+    ScriptVerb, Specifier, Suite, ValueType,
+};
 
 /// Mandatory for all native AIOS applications. The base derive macro provides
 /// "aios:app:lifecycle" (Name, State, Version, Capabilities) automatically.

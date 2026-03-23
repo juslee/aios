@@ -284,64 +284,71 @@ name = "counter-agent"
 version = "0.1.0"
 author = "you@example.com"
 
-[capabilities]
-storage = ["space:read", "space:write"]
-interface = ["surface:create"]
+[capabilities.required]
+storage_read = { spaces = ["user/counter/"] }
+storage_write = { spaces = ["user/counter/"] }
+
+[capabilities.optional]
+flow_clipboard = true
 
 [ui]
-surface = "window"
-min_size = { width = 300, height = 200 }
+requires_compositor = true
+min_surface_size = { width = 300, height = 200 }
 ```
 
 ### 3. App Kit Lifecycle
 
-The [App Kit](application/app.md) manages your agent's process lifecycle. You implement `Application` to receive lifecycle events and `AppDelegate` to handle system messages. The `MessageLoop` drives the Elm Architecture cycle: incoming events become `Message` values, which feed `update()`, which produces a new `Model`, which feeds `view()`.
+The [App Kit](application/app.md) manages your agent's process lifecycle (`Application`, `AppDelegate`). The [Interface Kit](application/interface.md) provides the Elm Architecture UI model — `Widget<M>` with `update()` and `view()`. Together they form the standard AIOS application pattern:
 
 ```rust
-use aios_app::{Application, AppDelegate, MessageLoop, AppEvent};
-use aios_interface::{View, Button, Label, Column};
+use aios_app::{Application, AppDelegate, LaunchContext, AppError};
+use aios_interface::prelude::*;
 use aios_storage::{Space, Object};
 
-fn main() {
-    aios_app::run::<CounterApp>();
+// App Kit: process lifecycle
+struct CounterApp {
+    delegate: CounterDelegate,
 }
 
-struct CounterApp;
-
 impl Application for CounterApp {
+    fn run(&mut self) -> Result<(), AppError> {
+        // App Kit launches the message loop; Interface Kit renders the UI
+        aios_interface::run_widget::<CounterWidget>()
+    }
+    fn quit(&mut self) -> Result<(), AppError> { Ok(()) }
+}
+
+struct CounterDelegate;
+impl AppDelegate for CounterDelegate {
+    fn launched(&mut self, _ctx: &LaunchContext) -> Result<(), AppError> { Ok(()) }
+    fn will_quit(&mut self) -> Result<bool, AppError> { Ok(true) }
+    fn suspend(&mut self, _reason: aios_app::SuspendReason) -> Result<(), AppError> { Ok(()) }
+    fn resume(&mut self, _ctx: &aios_app::ResumeContext) -> Result<(), AppError> { Ok(()) }
+}
+
+// Interface Kit: Elm Architecture (Model / Message / update / view)
+struct CounterWidget;
+
+impl Widget<CounterMsg> for CounterWidget {
     type Model = CounterModel;
-    type Message = CounterMsg;
 
-    fn init() -> (CounterModel, Option<CounterMsg>) {
-        let model = CounterModel::load_or_default();
-        (model, None)
+    fn init() -> (CounterModel, Vec<Command<CounterMsg>>) {
+        (CounterModel { count: 0 }, vec![])
     }
 
-    fn update(model: &mut CounterModel, msg: CounterMsg) {
+    fn update(model: &mut CounterModel, msg: CounterMsg) -> Vec<Command<CounterMsg>> {
         match msg {
-            CounterMsg::Increment => {
-                model.count += 1;
-                model.save();
-            }
-            CounterMsg::Decrement => {
-                model.count -= 1;
-                model.save();
-            }
+            CounterMsg::Increment => model.count += 1,
+            CounterMsg::Decrement => model.count -= 1,
         }
+        vec![]
     }
 
-    fn view(model: &CounterModel) -> View<CounterMsg> {
+    fn view(model: &CounterModel) -> impl View<CounterMsg> {
         Column::new()
-            .child(Label::new(format!("Count: {}", model.count)))
-            .child(
-                Button::new("+1")
-                    .on_click(CounterMsg::Increment),
-            )
-            .child(
-                Button::new("-1")
-                    .on_click(CounterMsg::Decrement),
-            )
-            .into()
+            .push(Label::new(format!("Count: {}", model.count)))
+            .push(Button::new("+1").on_press(CounterMsg::Increment))
+            .push(Button::new("-1").on_press(CounterMsg::Decrement))
     }
 }
 ```

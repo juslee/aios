@@ -345,7 +345,7 @@ for event in &events {
 
 // Export the last 24 hours for external SIEM integration
 let export = audit.export(
-    AuditFilter::since(Duration::from_hours(24)),
+    AuditFilter::since(Duration::from_secs(24 * 60 * 60)),
     ExportFormat::JsonLines,
 )?;
 ```
