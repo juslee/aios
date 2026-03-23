@@ -261,11 +261,12 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 17+) |
 | Terminal emulator (hub) | `docs/applications/terminal.md` | §1 Core Insight, §2 Architecture, §9–§12 Design/Impl/Future/AI-Native, Document Map |
 | Terminal VT emulation | `docs/applications/terminal/emulation.md` | §3.1–§3.7 State machine, escape sequences, modes, charset, grid, colors, reference |
-| Terminal rendering | `docs/applications/terminal/rendering.md` | §4.1–§4.6 Font engine, glyph atlas, GPU rendering, damage tracking, scrollback, compositor |
-| Terminal sessions & PTY | `docs/applications/terminal/sessions.md` | §5.1–§5.10 IPC-based PTY, session lifecycle, shell spawning, job control, POSIX bridge, persistence, remote |
+| Terminal rendering | `docs/applications/terminal/rendering.md` | §4.1–§4.7 Font engine, glyph atlas, GPU rendering, damage tracking, scrollback, compositor, performance model |
+| Terminal sessions & PTY | `docs/applications/terminal/sessions.md` | §5.1–§5.11 IPC-based PTY, session lifecycle, shell spawning, job control, POSIX bridge, persistence, remote, error handling |
 | Terminal input | `docs/applications/terminal/input.md` | §6.1–§6.6 Keyboard flow, VT translation, mouse reporting, selection, secure input, IME |
-| Terminal multiplexer | `docs/applications/terminal/multiplexer.md` | §7.1–§7.6 Session broker, pane splitting, detach/reattach, SSH forwarding, reconnection |
-| Terminal integration | `docs/applications/terminal/integration.md` | §8.1–§8.7 Subsystem framework, capability gate, spaces, Flow, accessibility, audit |
+| Terminal multiplexer | `docs/applications/terminal/multiplexer.md` | §7.1–§7.7 Session broker, pane splitting, detach/reattach, SSH forwarding, reconnection, error recovery |
+| Terminal integration | `docs/applications/terminal/integration.md` | §8.1–§8.9 Subsystem framework, capability gate, spaces, Flow, accessibility, audit, power management, Scriptable terminal protocol |
+| Terminal testing & performance | `docs/applications/terminal/testing.md` | §13 Testing Strategy, §14 Performance Verification |
 | UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 29+) |
 | Security model (hub) | `docs/security/model.md` | §1 Threat model, §12 Impl order, Document Map |
 | Security defense layers | `docs/security/model/layers.md` | §2 Eight security layers deep dive |

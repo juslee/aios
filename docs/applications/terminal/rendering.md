@@ -289,3 +289,61 @@ The terminal does not render on a fixed timer. Instead, it renders on demand:
 For high-throughput output (compilation, log streaming), the terminal batches multiple PTY reads into a single render pass. A configurable debounce delay (default 8ms, ~120fps equivalent) prevents excessive rendering during burst output.
 
 For cursor blink, the terminal reports a small damage region at the cursor position on a timer (configurable, default 530ms on / 530ms off, matching xterm defaults).
+
+### 4.7 Performance Model
+
+The rendering pipeline operates under strict latency and throughput budgets. These targets ensure the terminal feels responsive for interactive use while maintaining efficiency during bulk output. For measurement methodology and verification procedures, see [testing.md](./testing.md) §14.
+
+#### 4.7.1 Latency Targets
+
+| Scenario | p50 Target | p99 Target | Notes |
+|---|---|---|---|
+| Keystroke echo (idle terminal) | <4ms | <8ms | Single compositor frame at 120fps |
+| Interactive output (line-by-line) | <8ms | <16ms | One frame at 60fps |
+| Bulk output (compilation) | <16ms | <33ms | Throughput-optimized, frame skipping allowed |
+| Cursor blink toggle | <2ms | <4ms | Damage region is single cell |
+| Window resize | <16ms | <50ms | Full grid rebuild + surface resize |
+
+Latency is measured from input event timestamp (T₁) to the compositor frame that includes the rendered result (T₂). The keystroke echo target (<4ms p50) means a character appears on screen within the same compositor frame at 120fps refresh rates.
+
+#### 4.7.2 Throughput Targets
+
+```text
+VT Parser:
+  Sustained throughput:  ≥100 MB/s (Alacritty-class, 10ms for 1MB of output)
+  Burst throughput:      ≥500 MB/s (short bursts with pre-allocated buffers)
+  Pure ASCII:            ≥1 GB/s (no escape sequences, straight Print action)
+  Heavy CSI:             ≥50 MB/s (dense escape sequences, e.g., colored ls -la)
+
+Rendering (grid-to-surface):
+  80×24 (standard):     <2ms full redraw, <0.5ms single row
+  120×40 (medium):      <4ms full redraw, <0.5ms single row
+  240×80 (large):       <8ms full redraw, <1ms single row
+
+Frame rate under sustained output:
+  Target: ≥60fps visible frame rate with frame skipping
+  Method: debounce at 8ms, skip intermediate frames during burst
+```
+
+#### 4.7.3 Memory Budgets
+
+| Resource | Default Budget | Maximum | Notes |
+|---|---|---|---|
+| Glyph atlas (GPU) | 4 MB | 16 MB | Grows on demand, LRU eviction |
+| Scrollback (memory tier) | 2 MB (~10K lines) | 20 MB (~100K lines) | Oldest lines spill to space tier |
+| Surface buffer (BGRA8888) | 1.9 MB (800×600) | 7.7 MB (1920×1080) | Proportional to surface dimensions |
+| PTY shared memory | 64 KB | 256 KB | Grows under sustained output |
+| Cell grid (in-memory) | 96 KB (80×24×50B/cell) | 960 KB (240×80×50B/cell) | Fixed per terminal size |
+| VT parser state | 4.2 KB | 4.2 KB (fixed) | ParamBuffer + OscBuffer + state |
+| Session state (per session) | ~8 KB | ~8 KB | Channels + notification + metadata |
+
+Memory metrics are reported to the observability subsystem every 10 seconds. Alerts trigger if any resource exceeds 80% of its maximum budget.
+
+#### 4.7.4 Adaptive Strategies
+
+The terminal adapts its rendering behavior based on output rate:
+
+- **Frame skipping:** When output rate exceeds the compositor frame rate, the terminal skips intermediate render passes. Only the most recent grid state is rendered, reducing GPU/CPU load without visible degradation.
+- **Dirty coalescing:** Adjacent dirty rows are merged into a single damage rectangle. When more than 50% of rows are dirty, the terminal reports `FullSurface` damage instead of individual row rectangles.
+- **Debounce:** A configurable delay (default 8ms) batches rapid PTY reads into single render passes. This prevents rendering every byte of a `cat large_file` individually.
+- **Scrollback pressure:** When the memory-tier scrollback approaches its limit, the terminal increases the spill rate to the space tier. Under extreme pressure, it reduces the memory tier size temporarily and relies on space-backed retrieval for scroll-up operations.

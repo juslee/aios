@@ -378,3 +378,61 @@ CI Agent wants to run a build:
 ```
 
 This is the "terminal-as-a-service" pattern described in §11.2 (Future Directions). The capability gate (§8.2) controls which agents can create and manage sessions.
+
+-----
+
+### 7.7 Error Recovery
+
+The multiplexer isolates failures so that one pane's crash never affects other panes or sessions.
+
+#### 7.7.1 Pane Crash Isolation
+
+When a shell in one pane crashes:
+
+```text
+1. Session broker receives shell exit notification
+2. Affected session marked as "exited" (not destroyed)
+3. Layout manager preserves pane slot with "[exited: code N]" indicator
+4. Other panes continue running — no state change, no interruption
+5. User can:
+   a. Press Enter to start a new shell in the same pane
+   b. Close the pane (layout reflows remaining panes)
+   c. Leave it as-is (scrollback remains accessible)
+```
+
+#### 7.7.2 Layout Persistence
+
+The pane layout (split directions, sizes, tab order) is persisted to the terminal's space object:
+
+- Layout state saved on every structural change (split, close, resize, tab reorder)
+- Survives terminal agent restart — broker reads saved layout on startup
+- Each tab's layout tree is serialized independently
+
+#### 7.7.3 Session Recovery on Agent Restart
+
+When the terminal agent restarts (crash, update):
+
+```text
+1. Broker reads persisted session metadata from space
+2. For each saved session:
+   a. Check if shell process is still running (POSIX process groups
+      survive agent restart if kernel manages process lifecycle)
+   b. If running: reattach to existing PTY channels
+   c. If exited: mark session as "[exited]", preserve scrollback from space
+3. Restore layout tree from persisted state
+4. Request new compositor surface
+5. Full redraw of all visible panes
+```
+
+Sessions whose shells are still running reconnect seamlessly. Sessions whose shells exited during the restart show the exit indicator with preserved scrollback.
+
+#### 7.7.4 Resource Cleanup
+
+The session broker performs periodic cleanup of dead resources:
+
+| Resource | Cleanup Trigger | Action |
+|---|---|---|
+| Exited sessions | User closes pane, or 24-hour timeout | Release channels, shared memory, notification objects |
+| Detached sessions | Configurable timeout (default: 7 days) | Persist scrollback to space, release memory-tier resources |
+| Orphaned channels | Session broker startup scan | Destroy channels with no associated session |
+| Stale space objects | Session broker startup scan | Delete session metadata for sessions older than retention period |

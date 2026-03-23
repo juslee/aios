@@ -202,6 +202,45 @@ pub enum ParserState {
 
 The parser is designed for `no_std` environments: all buffers are fixed-size, no heap allocation occurs during parsing, and the state machine processes one byte at a time with O(1) transitions via a lookup table.
 
+#### 3.1.6 Parser Error Recovery
+
+The VT parser processes untrusted byte streams from arbitrary programs running in the shell. Robust error recovery ensures that no malformed sequence can corrupt parser state, hang the terminal, or escape the emulation boundary.
+
+**Anywhere rules as universal recovery.** The "anywhere" transitions (§3.1.4) are the parser's primary recovery mechanism. From *any* state:
+
+- **CAN (0x18)** and **SUB (0x1A)** immediately return the parser to Ground state, discarding any partially-collected sequence. SUB additionally prints the substitution character (U+FFFD).
+- **ESC (0x1B)** transitions to Escape state, effectively starting a new sequence and abandoning any in-progress sequence.
+
+These rules guarantee that any malformed or truncated sequence is bounded: the parser recovers within at most one additional control byte.
+
+**CsiIgnore and DcsIgnore states.** When the parser detects structurally invalid parameters during CSI or DCS collection (e.g., a colon in CsiEntry, or a parameter byte after an intermediate byte in CsiInterm), it transitions to CsiIgnore or DcsIgnore. These states silently discard all subsequent bytes until a valid final byte (0x40-0x7E for CSI) or string terminator (ST for DCS) returns the parser to Ground. No handler is invoked — the malformed sequence is simply dropped.
+
+**Buffer overflow protection.** All parser buffers are fixed-size with strict bounds:
+
+| Buffer | Capacity | Overflow Behavior |
+|---|---|---|
+| ParamBuffer | 32 parameters | Extra parameters silently discarded |
+| IntermediateBuffer | 4 bytes | Extra intermediates trigger CsiIgnore/DcsIgnore |
+| OscBuffer | 4096 bytes | Excess bytes discarded, OSC truncated at 4096 |
+| Utf8Parser | 4 bytes | Invalid sequences emit U+FFFD, parser resets |
+
+**UTF-8 error handling.** Invalid UTF-8 byte sequences are handled per the Unicode specification's "best practice for maximum interoperability":
+
+- An unexpected continuation byte (0x80-0xBF) in Ground state emits U+FFFD and stays in Ground.
+- A lead byte followed by invalid continuation bytes emits U+FFFD for each invalid byte and restarts decoding.
+- Overlong encodings are rejected (emit U+FFFD).
+- Codepoints above U+10FFFF are rejected (emit U+FFFD).
+
+The parser never panics on any byte value, including null bytes (0x00), which are silently ignored in Ground state.
+
+**Security properties.** The parser's error recovery prevents several classes of attacks:
+
+- **Recursive ESC in strings:** An ESC byte within an OSC string triggers the anywhere rule, terminating the string and starting a new escape sequence. This prevents sequences designed to nest indefinitely.
+- **Unbounded strings:** OSC and DCS strings without terminators are bounded by their respective buffer limits (4096 bytes for OSC). The parser does not allocate additional memory.
+- **State machine convergence:** For any input byte sequence of length N, the parser returns to Ground state within at most N + max_sequence_length bytes. There are no cycles that avoid Ground indefinitely.
+
+**Performance.** Error recovery adds no overhead to the normal parsing path. The state machine processes every byte — valid or invalid — in O(1) time with a single table lookup. No backtracking or lookahead occurs. The parser's total memory footprint is fixed at 4.2 KB regardless of input.
+
 -----
 
 ### 3.2 Escape Sequence Handlers
@@ -264,6 +303,91 @@ DCS sequences are used for device-specific extensions. Format: `ESC P <params> <
 | ESC > | DECKPNM | Normal keypad mode |
 | ESC ( B | SCS G0 | Designate G0 character set (ASCII) |
 | ESC ( 0 | SCS G0 | Designate G0 character set (DEC Special Graphics) |
+
+#### 3.2.5 Kitty Graphics Protocol
+
+The kitty graphics protocol enables high-performance image display in the terminal. Unlike iTerm2's OSC 1337 (which base64-encodes image data inside an OSC string) or Sixel (which uses DCS with a bitmap encoding), kitty uses APC (Application Program Command) sequences with key-value control data and supports shared memory image transfer — a natural fit for AIOS's IPC architecture.
+
+**Protocol format:**
+
+```text
+ESC _ G <key>=<value>,<key>=<value>,...; <payload> ESC \
+ │       │                                │          │
+ APC     Control data (key-value pairs)   Base64     ST
+         a=T (transmit), a=p (place),     image
+         a=d (delete), a=q (query)        data
+```
+
+**Transmission modes:**
+
+| Mode | Key | Description | AIOS Adaptation |
+|---|---|---|---|
+| Direct | `t=d` | Base64 image data inline in APC payload | Parsed in SosPmApc state, decoded to buffer |
+| File | `t=f` | Path to image file on local filesystem | Resolved via space storage path |
+| Temp file | `t=t` | Path to temp file (deleted after use) | Mapped to ephemeral space object |
+| Shared memory | `t=s` | Shared memory region ID | Maps directly to AIOS `SharedMemoryId` |
+
+The shared memory mode (`t=s`) is the highest-performance path. The sending program writes image data to a shared memory region (allocated via IPC), then sends only the region ID in the APC sequence. The terminal reads the image directly from shared memory with zero copying. This aligns with AIOS's existing shared memory IPC infrastructure (§5.6 in [sessions.md](./sessions.md)).
+
+**Image lifecycle:**
+
+```text
+1. Transmit:  Program sends image data (any mode above)
+              Terminal assigns an image ID, stores image in memory/space
+2. Place:     Program sends placement command (a=p)
+              Terminal creates a virtual placement on the cell grid
+              Placement specifies: position, size (cells or pixels), z-index
+3. Display:   Rendering pipeline draws image at placement coordinates
+              Image composited with text (z-index determines layering)
+4. Delete:    Program sends delete command (a=d)
+              Terminal removes image and/or placements
+```
+
+**Image storage.** Transmitted images are stored in the terminal's space as objects, keyed by image ID. This provides:
+
+- **Persistence:** Images survive terminal detach/reattach (the multiplexer preserves them)
+- **Deduplication:** Identical images (by content hash) share storage
+- **Memory management:** Images evicted under memory pressure, re-fetched from space on demand
+
+**Placement model.** Each image can have multiple placements on the cell grid:
+
+```rust
+/// An image placement on the terminal grid.
+pub struct ImagePlacement {
+    /// Image ID (references stored image data).
+    pub image_id: u32,
+    /// Placement ID (unique within this image).
+    pub placement_id: u32,
+    /// Grid position (column, row) of top-left corner.
+    pub col: u16,
+    pub row: u16,
+    /// Display size in cells (0 = auto from image dimensions).
+    pub cols: u16,
+    pub rows: u16,
+    /// Z-index for layering (-1 = behind text, 0 = default, 1+ = above text).
+    pub z_index: i32,
+    /// Source rectangle within the image (for cropping/tiling).
+    pub src_rect: Option<ImageRect>,
+}
+```
+
+**Unicode placeholder mode.** For compatibility with text selection and accessibility, kitty supports a Unicode placeholder character (U+10EEEE from the private use area) that marks cells occupied by image placements. Screen readers announce these as "image" rather than reading invisible characters. Text selection skips placeholder cells.
+
+**Comparison with other image protocols:**
+
+| Feature | Kitty (APC) | iTerm2 (OSC 1337) | Sixel (DCS) |
+|---|---|---|---|
+| Transport | APC + ST | OSC + ST | DCS + ST |
+| Encoding | Base64 / SHM / file | Base64 only | Sixel bitmap |
+| Max payload | Unbounded (chunked) | 4096 bytes (OSC limit) | Unbounded |
+| Shared memory | Yes (`t=s`) | No | No |
+| Multiple placements | Yes (virtual) | No (inline only) | No (inline only) |
+| Z-ordering | Yes (-1, 0, 1+) | No | No |
+| Animation | Yes (frame composition) | No | No |
+| Cell-level control | Yes (rows × cols) | Yes (width × height) | Pixel-level |
+| AIOS fit | Best (SHM + space) | Good (simple) | Legacy (compat) |
+
+**Capability gate.** Image display is passive output — it requires no special capability beyond the shell's standard PTY output channel. However, shared memory transmission requires that the shell process has been granted access to the shared memory region, which is controlled by the existing IPC capability system (§8.2 in [integration.md](./integration.md)).
 
 -----
 

@@ -21,7 +21,8 @@ This document was split for navigability. Each sub-document preserves the origin
 | [sessions.md](./terminal/sessions.md) | §5 | Sessions, PTY, and shell: IPC-based PTY abstraction, session lifecycle, shell spawning, job control, signal translation, POSIX bridge |
 | [input.md](./terminal/input.md) | §6 | Input handling: keyboard event flow, VT escape translation, mouse reporting, selection, clipboard, secure input, IME support |
 | [multiplexer.md](./terminal/multiplexer.md) | §7 | Session multiplexer and remote: detachable PTYs, pane splitting, SSH forwarding, session persistence, reconnection |
-| [integration.md](./terminal/integration.md) | §8 | Platform integration: subsystem framework, capability gate, spaces, Flow, agent manifest, accessibility, audit |
+| [integration.md](./terminal/integration.md) | §8 | Platform integration: subsystem framework, capability gate, spaces, Flow, agent manifest, accessibility, audit, power management, Scriptable terminal protocol |
+| [testing.md](./terminal/testing.md) | §13, §14 | Testing strategy: VT parser conformance, fuzz testing, property-based testing, integration testing, performance verification |
 
 -----
 
@@ -244,9 +245,15 @@ Phase 31:  AI-native features
 
 Extend the terminal beyond a 2D character grid. A spatial terminal renders command output as structured blocks that can be folded, reordered, and linked. Each command invocation becomes a discrete region with its own scrollback, exit status indicator, and execution time. Related commands group visually, forming a navigable execution history rather than an undifferentiated stream of text.
 
-### 11.2 Terminal-as-a-Service
+### 11.2 Tiered Programmatic Access
 
-Expose terminal sessions as a capability-gated service that other agents can use programmatically. A CI agent could spawn a terminal session, execute a build script, capture structured output, and release the session — all without user interaction. This extends the terminal from a user-facing tool to a system automation primitive.
+Terminal programmatic access follows a three-tier model (see [integration.md](./terminal/integration.md) §8.9 for full specification):
+
+- **Tier 1 — App Kit Process Execution:** Most agents just need to run a command and capture output. App Kit provides `ProcessExecution` — no VT emulation, no terminal UI. This is the path for CI agents, build agents, and automation scripts.
+- **Tier 2 — Scriptable Terminal Service:** BeOS/Haiku-inspired Scriptable protocol for agents that need terminal session semantics — stateful shell, environment persistence, working directory tracking. Capability-gated via `TerminalControl`.
+- **Tier 3 — Embeddable Terminal View:** Interface Kit `TerminalView` widget for agents that need a full terminal UI embedded in their own surface (IDE, file manager, debug tool).
+
+The terminal does NOT expose a Terminal Kit. It remains an application with service interfaces at each tier, using existing Kits (App Kit, Interface Kit) plus its own Scriptable protocol. VT emulation is an implementation detail of the terminal UI, not a platform service.
 
 ### 11.3 Semantic Paste
 
@@ -263,6 +270,32 @@ Embed interactive widgets within the terminal output stream. A progress bar rend
 ### 11.6 Provenance-Aware History
 
 Every command in the terminal history carries provenance metadata: which agent suggested it, which task it was part of, which space objects it accessed, and what its exit status was. Users can search history not just by text content but by context: "show me all commands I ran while debugging the auth issue last Tuesday."
+
+### 11.7 Structured Shell Protocol
+
+A typed IPC message schema between shell and terminal that extends the traditional byte stream model. Commands emit structured data (tables, records, errors) alongside their byte stream output, and the terminal renders structured data semantically — sortable tables, collapsible JSON trees, linked file paths, type-annotated values.
+
+The protocol operates at the IPC channel level, not via escape sequences. A shell that supports structured output sends a `StructuredOutput` message on a sideband control channel, while the byte stream continues on the primary PTY channel. The terminal merges both streams for display:
+
+- **Tables:** Rendered with column headers, alignment, sortable by click. Based on Nushell's table model.
+- **Records:** Rendered as collapsible key-value trees with syntax highlighting.
+- **Errors:** Rendered with severity, source location links, and suggested fixes.
+- **File paths:** Rendered as clickable links that open in the appropriate agent.
+
+Legacy shells that do not implement the structured protocol continue using byte streams unchanged. The terminal detects structured protocol support during shell handshake (§5.3) and falls back gracefully.
+
+### 11.8 WASM Terminal Plugins
+
+Sandboxed WASM plugins that extend terminal functionality without modifying the terminal agent itself. Plugins run in AIOS's WASM runtime ([language-ecosystem.md](../project/language-ecosystem.md) §5) with attenuated capabilities — they can read terminal state but cannot access the PTY channels or shell processes directly.
+
+Plugin types:
+
+- **Custom renderers:** Render specific content types (e.g., Markdown preview, image thumbnails in scrollback).
+- **Protocol handlers:** Handle custom escape sequences or sideband protocol messages (e.g., a database client that renders query results as interactive tables).
+- **Status bar widgets:** Display persistent information in a terminal status bar (git branch, kubectl context, system load).
+- **Output filters:** Transform or annotate command output before display (e.g., colorize log levels, redact secrets).
+
+Inspired by Zellij's plugin architecture, but using AIOS's native WASM runtime and capability system rather than a custom plugin API. Plugins declare required capabilities in a manifest, and the terminal grants only the minimum set needed.
 
 -----
 
@@ -284,6 +317,10 @@ These features require semantic understanding from the AI Runtime and are unavai
 
 **Natural Language Commands.** The user types a natural language description ("find all Python files modified this week larger than 1MB") and AIRS translates it to the correct shell command (`find . -name "*.py" -mtime -7 -size +1M`), showing the translation for approval before execution.
 
+**Workflow Detection.** AIRS detects multi-step command workflows (git add → commit → push, docker build → tag → push, cargo test → cargo build --release → scp) and offers to automate them as saved workflows. Workflows are stored as space objects, executable via the Scriptable terminal protocol (§8.9). Users can name, edit, and share workflows across devices.
+
+**Error Diagnosis.** When a command fails, AIRS correlates the error output with known fix patterns, project context (Cargo.toml, package.json, Makefile), and documentation. Instead of just highlighting the error, AIRS offers actionable fix suggestions inline — "missing dependency: run `cargo add serde`" or "port 8080 in use by process X: run `kill -9 <pid>` or use port 8081." This goes beyond pattern matching by understanding the project's dependency graph and build system.
+
 ### 12.2 Kernel-Internal ML Features
 
 These features use purely statistical models (frozen decision trees, frequency tables) that run without AIRS dependency:
@@ -294,6 +331,8 @@ These features use purely statistical models (frozen decision trees, frequency t
 
 **Buffer Size Adaptation.** The PTY shared memory buffer size adapts based on measured throughput. High-throughput commands (compilation output, large file `cat`) trigger buffer growth. Interactive commands (shell prompt, text editing) shrink buffers to reduce latency. This is a simple heuristic, not ML.
 
+**Throughput-Adaptive Rendering.** A statistical model detects sustained high-output periods (compilation, log streaming, large file display) and switches the rendering pipeline to frame-skipping mode (see [rendering.md](./terminal/rendering.md) §4.7.4). The model uses exponentially weighted moving average of bytes-per-second to classify output rate into interactive (<10 KB/s), moderate (10 KB/s–1 MB/s), and burst (>1 MB/s) tiers. Each tier has different debounce delays and frame skip policies, reducing GPU/CPU load during burst output without user-visible degradation during interactive use.
+
 ### 12.3 Application-Level AI Features
 
 These features run in the terminal agent itself, without kernel or AIRS involvement:
@@ -303,6 +342,10 @@ These features run in the terminal agent itself, without kernel or AIRS involvem
 **URL Detection.** Clickable URL detection in terminal output with hover preview. URLs are identified via regex, verified via capability check (does the terminal have network access to this domain?), and rendered as interactive links.
 
 **Smart Selection.** Double-click selects a word; triple-click selects a line. But the terminal also understands structural boundaries: double-clicking a file path selects the entire path. Double-clicking a quoted string selects the full quoted content. This uses a rule-based boundary detection engine.
+
+**Command Duration Prediction.** Based on historical execution times for the same command pattern (stored in the terminal's space), the terminal displays an estimated remaining time for long-running commands. A progress indicator appears in the terminal status area after a command exceeds a configurable threshold (default: 5 seconds). The prediction uses median historical duration with confidence intervals — it shows "~2m remaining" rather than a precise countdown.
+
+**Exit Code Visualization.** The terminal renders a visual separator between command blocks, color-coded by exit status: green for success (exit 0), red for failure (non-zero), yellow for signals (SIGINT, SIGTERM). This works regardless of shell configuration — the terminal observes the shell's exit code via the PTY session metadata, not by parsing the prompt string.
 
 -----
 
@@ -320,5 +363,7 @@ These features run in the terminal agent itself, without kernel or AIRS involvem
 | §8 Integration | [integration.md](./terminal/integration.md) | [subsystem-framework.md](../platform/subsystem-framework.md) §2-§8, [capabilities.md](../security/model/capabilities.md) §3 |
 | §9 Design Principles | This file | [subsystem-framework.md](../platform/subsystem-framework.md) §1 |
 | §10 Impl Order | This file | [development-plan.md](../project/development-plan.md) §8 |
-| §11 Future Directions | This file | — |
+| §11 Future Directions | This file | [language-ecosystem.md](../project/language-ecosystem.md) §5 (WASM plugins) |
 | §12 AI-Native | This file | [airs.md](../intelligence/airs.md), [context-engine.md](../intelligence/context-engine.md) |
+| §13 Testing | [testing.md](./terminal/testing.md) | [fuzzing.md](../security/fuzzing.md) §3.1 |
+| §14 Performance | [testing.md](./terminal/testing.md) | [compositor/rendering.md](../platform/compositor/rendering.md) §5.4 |

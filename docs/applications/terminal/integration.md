@@ -392,3 +392,117 @@ system/audit/terminal/              ← Terminal audit space
 ```
 
 Audit data is retained per the system audit retention policy (configurable, default 90 days). Audit space objects are append-only and tamper-evident (content-addressed via SHA-256 hashes).
+
+-----
+
+### 8.8 Power Management
+
+The terminal adapts its behavior to system power state to reduce energy consumption without losing session state.
+
+#### 8.8.1 Power State Responses
+
+| Power State | Terminal Behavior |
+|---|---|
+| **Display dim** | Reduce surface damage reporting frequency (skip non-essential redraws). Cursor blink disabled. |
+| **Display off** | Suspend rendering entirely. PTY channels continue buffering output. |
+| **Low power mode** | Reduce scrollback memory tier size (spill to space earlier). Disable cursor blink timer. Reduce PTY buffer sizes. |
+| **Resume** | Full surface redraw on wake. Flush buffered PTY output through VT parser. Restart cursor blink. |
+
+#### 8.8.2 Interaction State Hints
+
+The terminal reports its interaction state to the compositor via the surface hints protocol (§4.6.1):
+
+- **Active:** User is typing or output is flowing. Compositor prioritizes this surface.
+- **Idle:** No user input for configurable timeout (default 30 seconds). Compositor can deprioritize.
+- **Background:** Terminal is on a non-visible workspace or minimized. Rendering fully suspended; PTY output buffered.
+
+These hints allow the compositor to make intelligent power decisions — an idle terminal on the current workspace costs less than an active one, and a background terminal costs nearly nothing.
+
+-----
+
+### 8.9 Scriptable Terminal Protocol
+
+Terminal programmatic access follows a three-tier model. The terminal does NOT expose a Terminal Kit — it remains an application with service interfaces. Each tier uses existing Kits (App Kit, Interface Kit) plus the terminal's own Scriptable protocol.
+
+#### 8.9.1 Tier 1 — App Kit Process Execution
+
+Most agents just need to run a command and capture output. App Kit provides `ProcessExecution` — spawn a process, send stdin, read stdout/stderr, get exit code. No VT emulation, no terminal UI.
+
+```text
+Use cases:
+  - CI agents running build commands
+  - Automation scripts executing shell commands
+  - System agents checking service status
+
+API (from App Kit, not terminal):
+  ProcessExecution::spawn(command, args, env) → ProcessHandle
+  ProcessHandle::write_stdin(data)
+  ProcessHandle::read_stdout() → Vec<u8>
+  ProcessHandle::wait() → ExitCode
+```
+
+This tier is the most common path. Agents that don't need terminal semantics should never interact with the terminal agent at all.
+
+#### 8.9.2 Tier 2 — Scriptable Terminal Service
+
+For agents that need terminal *session* semantics — multiple commands in a stateful shell, environment persistence, working directory tracking — the terminal exposes a BeOS/Haiku-inspired Scriptable agent protocol (see [BeOS/Haiku lessons discussion](../../knowledge/discussions/2026-03-23-jl-beos-haiku-redox-lessons.md)).
+
+```text
+Scriptable Suites:
+  Terminal Suite
+    Properties:
+      title         (string, GET/SET)
+      size          (rows × cols, GET/SET)
+      cursor_pos    (row, col, GET)
+      scrollback_len (usize, GET)
+      profile       (string, GET/SET)
+    Verbs:
+      CREATE        → new session (returns session_id)
+      DELETE        → destroy session
+      EXECUTE       → send input to session
+      GET           → read property
+      SET           → modify property
+
+  Session Suite
+    Properties:
+      shell         (string, GET)
+      cwd           (string, GET)
+      env           (map, GET)
+      pid           (u32, GET)
+      state         (Active|Detached|Exited, GET)
+    Verbs:
+      ATTACH        → attach to detached session
+      DETACH        → detach from active session
+      SNAPSHOT      → capture current grid state as text
+```
+
+Capability gated: requires `TerminalControl` capability (§8.2.1).
+
+Use cases:
+
+- CI agent running a multi-step build in a persistent shell
+- Accessibility agent querying terminal state for screen reader
+- Test harness driving interactive programs (§13.4)
+- IDE terminal panel embedding
+
+#### 8.9.3 Tier 3 — Embeddable Terminal View
+
+For agents that need a full terminal UI (IDE, file manager, debug tool), Interface Kit provides a `TerminalView` widget. The widget embeds a VT emulation engine and renderer, delegating to the terminal agent for PTY management.
+
+```text
+TerminalView widget (from Interface Kit):
+  - Embeds VT parser + cell grid + renderer
+  - Delegates PTY lifecycle to terminal agent
+  - Receives keyboard/mouse input from host agent
+  - Renders into host agent's compositor surface
+  - Shares glyph atlas with standalone terminal
+
+Use cases:
+  - IDE integrated terminal panel
+  - File manager embedded shell
+  - Debug tool with command input
+```
+
+#### 8.9.4 Design Rationale
+
+VT emulation is an implementation detail of the terminal UI, not a platform service. What agents need at each tier is fundamentally different — forcing everything through a single Kit API would over-expose internals to Tier 1 consumers while under-serving Tier 3 consumers. The three-tier model gives each consumer exactly the abstraction level it needs.
