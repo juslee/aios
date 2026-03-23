@@ -893,6 +893,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/verify-phase N` | After implementation | Runs all quality gates |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
+| `/merge-and-cleanup [PR]` | After PR approval | Squash merge, delete branch, remove worktree, update main |
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
