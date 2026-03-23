@@ -2196,9 +2196,10 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | Skill | Trigger | Purpose |
 |---|---|---|
 | `/build-team` | Start of autonomous session | Bootstraps the "aios-dev" team, spawns team-lead who spawns specialists as needed |
-| `/implement-phase N` | Phase implementation request | Full workflow: read phase doc → create worktree → plan → implement step-by-step → verify → audit → commit → PR |
-| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` → audit loop → PR |
+| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, kernel→shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review + merge |
+| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` → `/audit-loop` (auto docs-only mode) → PR |
 | `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
+| `/audit-loop` | Before any PR | Auto-detects scope (docs-only or full), runs recursive two-level audit loop until clean (doc + code review + security/bug review) |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main |
@@ -2264,22 +2265,29 @@ The `/merge-and-cleanup` skill automates the entire cleanup sequence.
 
 ### Audit Loop Pattern
 
-The doc-auditor enforces documentation quality through a mandatory recursive loop:
+The `/audit-loop` skill enforces quality through a mandatory **two-level convergence protocol** before any PR:
 
-1. **First pass**: Builds a canonical facts table (struct names, constants, file paths from code)
-2. **Subsequent passes**: Validates docs against the facts table + checks formatting
-3. **Repeats** until a full pass returns zero issues (max 10 passes)
+**Scope detection** (automatic): checks `git diff --name-only main...HEAD` — if all changed files are `.md`, runs docs-only mode; if any non-`.md` files changed, runs full mode.
 
-Common issues caught:
+**Docs-only mode**: doc audit (cross-reference errors, technical accuracy, naming consistency)
 
-- Broken markdown links and stale section references
-- Naming mismatches (doc says `UART_BASE` but code says `UART_BASE_ADDR`)
-- Type mismatches (doc says `AtomicU64` but code says `AtomicUsize`)
-- Bare code fences (opening ` ``` ` without a language specifier)
-- Missing blank lines before lists
-- Aspirational content incorrectly marked as "implemented"
+**Full mode**: doc audit + code review (convention compliance, unsafe documentation, W^X, dead code) + security/bug review (logic errors, address confusion, PTE bit correctness, race conditions)
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow, step 8.
+**Two-level loop**:
+
+```text
+OUTER LOOP:
+  INNER LOOP:
+    Run audits → if issues found: fix, commit, push → repeat
+    If 0 issues: exit inner loop → restart outer loop (fresh audit)
+  OUTER EXIT:
+    If fresh restart finds 0 issues on FIRST round → DONE
+    Otherwise: enter inner loop again
+```
+
+**Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
+
+The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
 
 ### Knowledge Hive Integration
 
@@ -2290,7 +2298,7 @@ Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across se
 | `docs/knowledge/decisions/` | Permanent | Architecture Decision Records — why we chose X over Y |
 | `docs/knowledge/lessons/` | Permanent | Hard-won insights — bugs, gotchas, platform quirks |
 | `docs/knowledge/research/` | Permanent | Research notes on explored topics |
-| `docs/knowledge/plans/` | Ephemeral | Working docs during implementation — distill after completion, then delete |
+| `docs/knowledge/plans/` | Ephemeral | Working implementation plans (use `_template.md`) — distill lessons/decisions after completion, then delete |
 | `docs/knowledge/discussions/` | Semi-permanent | Design explorations — graduate to architecture docs when settled |
 
 Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (author, date, tags, status).
