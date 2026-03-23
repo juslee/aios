@@ -1,7 +1,7 @@
 ---
 author: Justin Lee
 date: 2026-03-23
-tags: [kits, platform, intelligence, storage, compositor, security, posix]
+tags: [kits, platform, intelligence, storage, compositor, security]
 status: draft
 ---
 
@@ -110,7 +110,7 @@ Affected subsystems: Space Indexer, Context Engine, AIRS, Attention Manager, Flo
    **Recommendation: Space Indexer level.** The Block Engine is a storage primitive — it shouldn't know about query predicates. The Block Engine emits low-level mutation events (object created/updated/deleted) that the Space Indexer consumes. The Space Indexer evaluates registered predicates against these events. This preserves layer separation: Block Engine → mutation stream → Space Indexer → predicate evaluation → subscriber notifications.
 
 2. **How do reactive queries interact with the Version Store?**
-   **Recommendation: Notify on version creation as a separate subscription type.** Version creation is a Space Indexer event like any other. A reactive query like `SpaceQuery::Filter { criteria: [ObjectId(X), EventType::VersionCreated] }` notifies subscribers when new versions appear. Use case: AIRS subscribes to version events on a document → detects rapid version creation → infers "user is actively editing" → adjusts attention priority. Version events should be opt-in per subscription (`include_version_events: bool` in `SubscriptionMode`).
+   **Recommendation: Notify on version creation as a separate subscription type.** Version creation is a Space Indexer event like any other. This proposes an **extension to the existing `SpaceQuery` filtering semantics** — a reactive query like `subscribe(object_id, VersionEventFilter::Created, channel, SubscriptionMode::Debounced(500ms))` would notify subscribers when new versions appear for a specific object. Use case: AIRS subscribes to version events on a document → detects rapid version creation → infers "user is actively editing" → adjusts attention priority. Version events should be opt-in per subscription (`include_version_events: bool` in `SubscriptionMode`).
 
 3. **Maximum concurrent reactive queries per agent? System-wide?**
    **Recommendation: Per-agent 32, system-wide 1024.** Each reactive query costs predicate storage + evaluation on every mutation. 32 per agent prevents flooding. 1024 system-wide is generous but bounded. Both are capability-gated — an agent needs `QuerySubscription` capability, and the system can reject under pressure. For comparison: Haiku's `BQuery` had no documented limit, but practical use rarely exceeded a dozen per app. AIOS agents are more autonomous, so higher limits make sense.
@@ -472,18 +472,31 @@ pub trait Scriptable {
     fn describe(&self) -> Suite;
 
     /// Execute a standard verb on a property
-    fn execute_verb(&mut self, verb: Verb, specifier: &Specifier) -> Result<Value, ScriptError>;
+    fn execute_verb(&mut self, verb: VerbRequest, specifier: &Specifier) -> Result<Value, ScriptError>;
 }
 
-pub enum Verb {
-    Get,                       // Read property value
-    Set(Value),                // Write property value
-    Create(Value),             // Add new entity
-    Delete,                    // Remove entity
-    Count,                     // Count entities in collection
-    Execute,                   // Invoke action
-    Subscribe(ChannelId),      // Reactive query (Lesson 2 synergy)
-    Describe,                  // Return suite schema
+/// Payload-free verb kind — used in PropertyInfo for capability/allow-listing
+pub enum VerbKind {
+    Get,          // Read property value
+    Set,          // Write property value
+    Create,       // Add new entity
+    Delete,       // Remove entity
+    Count,        // Count entities in collection
+    Execute,      // Invoke action
+    Subscribe,    // Reactive query (Lesson 2 synergy)
+    Describe,     // Return suite schema
+}
+
+/// Payload-carrying verb request — used when actually executing a verb
+pub enum VerbRequest {
+    Get,
+    Set(Value),
+    Create(Value),
+    Delete,
+    Count,
+    Execute,
+    Subscribe(ChannelId),
+    Describe,
 }
 
 pub struct Suite {
@@ -493,8 +506,8 @@ pub struct Suite {
 
 pub struct PropertyInfo {
     pub name: &'static str,
-    pub verbs: &'static [Verb],       // Which verbs are valid
-    pub value_type: ValueType,         // Expected type
+    pub verbs: &'static [VerbKind],    // Which verbs are allowed (payload-free)
+    pub value_type: ValueType,          // Expected type
     pub capability: Option<Capability>, // Required capability
 }
 ```
@@ -518,37 +531,37 @@ const AGENT_BASE_SUITE: Suite = Suite {
     properties: &[
         PropertyInfo {
             name: "Name",
-            verbs: &[Verb::Get],
+            verbs: &[VerbKind::Get],
             value_type: ValueType::String,
             capability: None,  // Public — any caller with ChannelAccess
         },
         PropertyInfo {
             name: "State",
-            verbs: &[Verb::Get],
+            verbs: &[VerbKind::Get],
             value_type: ValueType::Enum(&["Running", "Suspended", "Starting", "Stopping"]),
             capability: None,
         },
         PropertyInfo {
             name: "Version",
-            verbs: &[Verb::Get],
+            verbs: &[VerbKind::Get],
             value_type: ValueType::String,  // SemVer
             capability: None,
         },
         PropertyInfo {
             name: "Capabilities",
-            verbs: &[Verb::Get, Verb::Count],
+            verbs: &[VerbKind::Get, VerbKind::Count],
             value_type: ValueType::List(ValueType::String),
             capability: Some(Capability::AgentIntrospect),
         },
         PropertyInfo {
             name: "SupportedTypes",
-            verbs: &[Verb::Get, Verb::Count],
+            verbs: &[VerbKind::Get, VerbKind::Count],
             value_type: ValueType::List(ValueType::String),  // MIME types
             capability: None,  // Public — enables Content Type Registry (Lesson 4)
         },
         PropertyInfo {
             name: "Suites",
-            verbs: &[Verb::Get, Verb::Describe],
+            verbs: &[VerbKind::Get, VerbKind::Describe],
             value_type: ValueType::List(ValueType::Suite),
             capability: None,  // Suite discovery is always public
         },
@@ -604,7 +617,7 @@ pub enum Specifier {
 }
 ```
 
-**How the derive macro works:**
+**How the derive macro works (pseudocode — actual macro generates `'static` data via `const` items):**
 
 ```rust
 // Agent author writes:
@@ -615,26 +628,27 @@ pub struct MyAgent {
     // ...
 }
 
+// The derive macro generates const suites with 'static lifetime.
+// Custom suites are declared as const items, not built dynamically:
 impl MyAgent {
-    // Extend with domain-specific suite
-    fn custom_suites(&self) -> Vec<Suite> {
-        vec![Suite {
-            name: "editor",
-            properties: &[
-                PropertyInfo {
-                    name: "Document",
-                    verbs: &[Verb::Get, Verb::Set, Verb::Create, Verb::Delete, Verb::Count],
-                    value_type: ValueType::ObjectId,
-                    capability: Some(Capability::SpaceAccess),
-                },
-                PropertyInfo {
-                    name: "Cursor",
-                    verbs: &[Verb::Get, Verb::Set],
-                    value_type: ValueType::Integer,
-                    capability: None,
-                },
-            ],
-        }]
+    const EDITOR_PROPS: &'static [PropertyInfo] = &[
+        PropertyInfo {
+            name: "Document",
+            verbs: &[VerbKind::Get, VerbKind::Set, VerbKind::Create, VerbKind::Delete, VerbKind::Count],
+            value_type: ValueType::ObjectId,
+            capability: Some(Capability::SpaceAccess),
+        },
+        PropertyInfo {
+            name: "Cursor",
+            verbs: &[VerbKind::Get, VerbKind::Set],
+            value_type: ValueType::Integer,
+            capability: None,
+        },
+    ];
+    const EDITOR_SUITE: Suite = Suite { name: "editor", properties: Self::EDITOR_PROPS };
+
+    fn custom_suites(&self) -> &'static [Suite] {
+        &[Self::EDITOR_SUITE]
     }
 }
 
@@ -649,7 +663,7 @@ impl MyAgent {
 
 The Space Indexer currently provides:
 
-- `SpaceQuery` enum: `TextSearch`, `Semantic`, `Traverse`, `Filter`, `Composed`
+- `SpaceQuery` enum: `TextSearch`, `Semantic`, `Traverse`, `Filter` (composition is via intersecting result sets, not a separate variant)
 - `SearchResponse` with results, source metadata, and latency
 - Score fusion via RRF (Reciprocal Rank Fusion)
 - Graceful degradation (full-text always works; semantic degrades if AIRS unavailable)
@@ -701,7 +715,7 @@ pub enum QueryUpdate {
 2. **Content type** — if predicate filters on `ContentType::Document`, skip non-document mutations
 3. **Attribute name** — if predicate filters on `modified_after`, only trigger on timestamp changes
 
-**Integration with Context Engine:** The Context Engine subscribes to Space Indexer events via reactive queries (not polling). Example: `subscribe(SpaceQuery::Filter { criteria: [ContentType::Conversation, ModifiedAfter(5min)] }, context_channel, Debounced(500ms))` — Context Engine learns "user is actively conversing" from object mutation patterns.
+**Integration with Context Engine:** The Context Engine subscribes to Space Indexer events via reactive queries (not polling). Example: `subscribe(SpaceQuery::Filter { content_type: Some(ContentType::Conversation), modified_after: Some(now() - Duration::from_secs(300)), ..Default::default() }, context_channel, SubscriptionMode::Debounced(Duration::from_millis(500)))` — Context Engine learns "user is actively conversing" from object mutation patterns.
 
 **Integration with Attention Manager:** Reactive queries feed the attention system: "notify when any object in workspace/ has urgency > High" → Attention Manager receives `QueryUpdate::Delta` → creates `AttentionItem`.
 
