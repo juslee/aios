@@ -313,9 +313,23 @@ impl BlockEngine {
             return Ok((content_hash, loc));
         }
 
-        // 3. Compute on-disk layout: [crc32c: u32 | data_len: u32 | data | padding]
+        // 3. CRC-32C of raw (uncompressed) data — always computed before compression.
+        let data_crc = crc32c(data);
+
+        // 4. Try LZ4 compression; skip if ratio >= 0.9 (saves < 10%).
+        let compressed = lz4_flex::block::compress(data);
+        let (comp_type, payload): (CompressionType, &[u8]) =
+            if compressed.len() < data.len() * 9 / 10 {
+                (CompressionType::Lz4, &compressed)
+            } else {
+                (CompressionType::None, data)
+            };
+
+        // 5. Compute on-disk layout:
+        //    [crc32c(4B) | data_len(4B) | comp_type(1B) | uncomp_size(4B) | payload | pad]
+        let wrapped_len = COMPRESSION_HEADER_SIZE + payload.len();
         let header_size = 8; // crc32c (4) + data_len (4)
-        let plaintext_envelope = header_size + data.len();
+        let plaintext_envelope = header_size + wrapped_len;
         let on_disk_size = if self.crypto.is_some() {
             plaintext_envelope + ENCRYPTION_OVERHEAD
         } else {
@@ -329,26 +343,26 @@ impl BlockEngine {
             return Err(StorageError::DeviceFull);
         }
 
-        // 4. CRC-32C of raw data.
-        let data_crc = crc32c(data);
-
-        // 5. Build the byte offset and size for BlockLocation.
-        if data.len() > u32::MAX as usize {
+        // 6. Build the byte offset and size for BlockLocation.
+        if wrapped_len > u32::MAX as usize {
             return Err(StorageError::IoError);
         }
         let byte_offset = self.data_next_sector * SECTOR_SIZE as u64;
-        let byte_size = data.len() as u32;
+        let byte_size = wrapped_len as u32;
 
-        // 6. WAL append (uncommitted).
+        // 7. WAL append (uncommitted).
         let (_seq, wal_index) = self.wal.append(content_hash, byte_offset, byte_size)?;
 
-        // 7. Build plaintext envelope: [crc32c | data_len | data]
+        // 8. Build plaintext envelope:
+        //    [crc32c | data_len | comp_type | uncompressed_size | payload]
         let mut envelope = alloc::vec![0u8; plaintext_envelope];
         envelope[0..4].copy_from_slice(&data_crc.to_le_bytes());
-        envelope[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
-        envelope[8..].copy_from_slice(data);
+        envelope[4..8].copy_from_slice(&(wrapped_len as u32).to_le_bytes());
+        envelope[8] = comp_type as u8;
+        envelope[9..13].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        envelope[13..].copy_from_slice(payload);
 
-        // 8. Encrypt if enabled.
+        // 9. Encrypt if enabled.
         let write_data = if let Some(ref crypto) = self.crypto {
             let mut encrypted = alloc::vec![0u8; on_disk_size];
             crypto.encrypt(&envelope, &mut encrypted)?;
@@ -361,7 +375,7 @@ impl BlockEngine {
             envelope
         };
 
-        // 9. Write sectors to disk.
+        // 10. Write sectors to disk.
         let mut write_offset = 0usize;
         let mut sector_idx = 0u64;
         while write_offset < write_data.len() {
@@ -373,10 +387,10 @@ impl BlockEngine {
             sector_idx += 1;
         }
 
-        // 10. WAL commit (O(1) using index from append).
+        // 11. WAL commit (O(1) using index from append).
         self.wal.commit_at(wal_index)?;
 
-        // 11. Advance append pointer.
+        // 12. Advance append pointer.
         self.data_next_sector += sectors_needed;
 
         let location = BlockLocation {
@@ -385,7 +399,7 @@ impl BlockEngine {
             tier: StorageTier::Hot,
         };
 
-        // 12. Insert into MemTable index.
+        // 13. Insert into MemTable index.
         self.memtable
             .insert(content_hash, location)
             .map_err(|_| StorageError::MemTableFull)?;
@@ -395,21 +409,20 @@ impl BlockEngine {
 
     /// Read a data block from disk by BlockLocation.
     ///
-    /// Handles transparent decryption when device encryption is enabled.
-    /// Returns the number of bytes read into `buf`.
+    /// Handles transparent decompression (LZ4) and decryption.
+    /// `loc.size` is the on-disk wrapped payload size (compression header + payload).
+    /// Returns the number of uncompressed bytes read into `buf`.
     pub fn read_block(&self, loc: &BlockLocation, buf: &mut [u8]) -> Result<usize, StorageError> {
         let start_sector = loc.offset / SECTOR_SIZE as u64;
-        let data_len = loc.size as usize;
-
-        if buf.len() < data_len {
-            return Err(StorageError::IoError);
-        }
+        let data_len = loc.size as usize; // wrapped payload size on disk
 
         let header_size = 8usize; // crc32c(4) + data_len(4)
         let plaintext_envelope = header_size + data_len;
 
-        if let Some(ref crypto) = self.crypto {
-            // Encrypted path: read all sectors, decrypt, then parse envelope.
+        // Read all envelope bytes into a temporary buffer (both paths need this
+        // because we must parse the compression header before copying to `buf`).
+        let envelope = if let Some(ref crypto) = self.crypto {
+            // Encrypted path: read all sectors, decrypt.
             let on_disk_size = plaintext_envelope + ENCRYPTION_OVERHEAD;
             let sectors = on_disk_size.div_ceil(SECTOR_SIZE) as u64;
             let mut raw = alloc::vec![0u8; sectors as usize * SECTOR_SIZE];
@@ -421,69 +434,47 @@ impl BlockEngine {
                 raw[off..off + SECTOR_SIZE].copy_from_slice(&sector_buf);
             }
 
-            // Decrypt: [nonce(12) | ciphertext | tag(16)] → plaintext at raw[12..12+pt_len].
+            // Decrypt: [nonce(12) | ciphertext | tag(16)] → plaintext.
             let pt_len = crypto.decrypt(&mut raw[..on_disk_size])?;
-            let envelope = &raw[12..12 + pt_len];
-
-            let stored_crc =
-                u32::from_le_bytes([envelope[0], envelope[1], envelope[2], envelope[3]]);
-            let stored_len =
-                u32::from_le_bytes([envelope[4], envelope[5], envelope[6], envelope[7]]) as usize;
-
-            if stored_len != data_len {
-                return Err(StorageError::ChecksumFailed);
-            }
-
-            buf[..data_len].copy_from_slice(&envelope[8..8 + data_len]);
-
-            if crc32c(&buf[..data_len]) != stored_crc {
-                return Err(StorageError::ChecksumFailed);
-            }
-
-            Ok(data_len)
+            raw[12..12 + pt_len].to_vec()
         } else {
-            // Plaintext path: read sector-by-sector, parse header, verify CRC.
+            // Plaintext path: read sectors into contiguous buffer.
+            let sectors = plaintext_envelope.div_ceil(SECTOR_SIZE) as u64;
+            let mut raw = alloc::vec![0u8; sectors as usize * SECTOR_SIZE];
+
             let mut sector_buf = [0u8; SECTOR_SIZE];
-            virtio_blk::read_sector(start_sector, &mut sector_buf)?;
-
-            let stored_crc =
-                u32::from_le_bytes([sector_buf[0], sector_buf[1], sector_buf[2], sector_buf[3]]);
-            let stored_len =
-                u32::from_le_bytes([sector_buf[4], sector_buf[5], sector_buf[6], sector_buf[7]])
-                    as usize;
-
-            if stored_len != data_len {
-                return Err(StorageError::ChecksumFailed);
+            for i in 0..sectors {
+                virtio_blk::read_sector(start_sector + i, &mut sector_buf)?;
+                let off = i as usize * SECTOR_SIZE;
+                raw[off..off + SECTOR_SIZE].copy_from_slice(&sector_buf);
             }
+            raw.truncate(plaintext_envelope);
+            raw
+        };
 
-            let first_chunk = data_len.min(SECTOR_SIZE - header_size);
-            buf[..first_chunk].copy_from_slice(&sector_buf[8..8 + first_chunk]);
+        // Parse envelope header.
+        let stored_crc = u32::from_le_bytes([envelope[0], envelope[1], envelope[2], envelope[3]]);
+        let stored_len =
+            u32::from_le_bytes([envelope[4], envelope[5], envelope[6], envelope[7]]) as usize;
 
-            let mut buf_offset = first_chunk;
-            let mut sector_idx = 1u64;
-            while buf_offset < data_len {
-                virtio_blk::read_sector(start_sector + sector_idx, &mut sector_buf)?;
-                let chunk = (data_len - buf_offset).min(SECTOR_SIZE);
-                buf[buf_offset..buf_offset + chunk].copy_from_slice(&sector_buf[..chunk]);
-                buf_offset += chunk;
-                sector_idx += 1;
-            }
-
-            if crc32c(&buf[..data_len]) != stored_crc {
-                return Err(StorageError::ChecksumFailed);
-            }
-
-            Ok(data_len)
+        if stored_len != data_len {
+            return Err(StorageError::ChecksumFailed);
         }
+
+        // Parse compression header and decompress.
+        let wrapped = &envelope[8..8 + data_len];
+        decompress_and_verify(wrapped, stored_crc, buf)
     }
 
-    /// Verify a block's CRC (and decrypt if encrypted).
+    /// Verify a block's CRC (and decrypt/decompress if needed).
     ///
-    /// Delegates to `read_block()` which handles both plaintext and encrypted paths.
+    /// Delegates to `read_block()` which handles compression and encryption.
     /// Used during WAL recovery to check if an uncommitted block was actually written.
     fn verify_block_crc(&self, loc: &BlockLocation) -> Result<(), StorageError> {
-        let data_len = loc.size as usize;
-        let mut buf = alloc::vec![0u8; data_len];
+        // Buffer must be large enough for the uncompressed data, which may be
+        // larger than loc.size (the on-disk wrapped size). Use a generous buffer.
+        let buf_size = (loc.size as usize) * 2 + 256;
+        let mut buf = alloc::vec![0u8; buf_size];
         self.read_block(loc, &mut buf)?;
         Ok(())
     }
@@ -683,6 +674,53 @@ impl BlockEngine {
     pub fn set_data_next_sector(&mut self, sector: u64) {
         self.data_next_sector = sector;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Compression helpers
+// ---------------------------------------------------------------------------
+
+/// Parse compression header from wrapped payload, decompress if LZ4,
+/// verify CRC-32C on uncompressed data, and copy into caller's buffer.
+///
+/// `wrapped` layout: `[compression_type(1B) | uncompressed_size(4B) | payload]`
+fn decompress_and_verify(
+    wrapped: &[u8],
+    stored_crc: u32,
+    buf: &mut [u8],
+) -> Result<usize, StorageError> {
+    if wrapped.len() < COMPRESSION_HEADER_SIZE {
+        return Err(StorageError::IoError);
+    }
+
+    let comp_type = wrapped[0];
+    let uncompressed_size =
+        u32::from_le_bytes([wrapped[1], wrapped[2], wrapped[3], wrapped[4]]) as usize;
+    let payload = &wrapped[COMPRESSION_HEADER_SIZE..];
+
+    if buf.len() < uncompressed_size {
+        return Err(StorageError::IoError);
+    }
+
+    if comp_type == CompressionType::Lz4 as u8 {
+        // LZ4-compressed: decompress into buffer.
+        let decompressed = lz4_flex::block::decompress(payload, uncompressed_size)
+            .map_err(|_| StorageError::IoError)?;
+        buf[..uncompressed_size].copy_from_slice(&decompressed);
+    } else {
+        // Uncompressed: payload is original data.
+        if payload.len() != uncompressed_size {
+            return Err(StorageError::IoError);
+        }
+        buf[..uncompressed_size].copy_from_slice(payload);
+    }
+
+    // CRC-32C check on uncompressed data.
+    if crc32c(&buf[..uncompressed_size]) != stored_crc {
+        return Err(StorageError::ChecksumFailed);
+    }
+
+    Ok(uncompressed_size)
 }
 
 // ---------------------------------------------------------------------------

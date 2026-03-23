@@ -557,8 +557,8 @@ pub fn compute_version_hash(
 /// Superblock magic: "AIOSPACE" as u64.
 pub const SUPERBLOCK_MAGIC: u64 = 0x41494F53_50414345;
 
-/// Superblock format version.
-pub const SUPERBLOCK_VERSION: u32 = 1;
+/// Superblock format version (bumped to 2 for compression header format).
+pub const SUPERBLOCK_VERSION: u32 = 2;
 
 /// Disk sector size in bytes.
 pub const SECTOR_SIZE: usize = 512;

@@ -169,6 +169,9 @@ fn run_self_tests() {
 
     // --- Test 9: POSIX bridge ---
     test_posix_bridge();
+
+    // --- Test 10: LZ4 compression ---
+    test_compression();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -679,6 +682,85 @@ fn test_posix_bridge() {
     match bridge.unlink(b"/home/user/test.txt") {
         Ok(()) => crate::kinfo!(Storage, "POSIX: unlink OK"),
         Err(e) => crate::kerror!(Storage, "POSIX: unlink failed: {:?}", e),
+    }
+}
+
+/// LZ4 compression self-test: write compressible data, verify round-trip.
+#[cfg(feature = "storage-tests")]
+fn test_compression() {
+    // Create highly compressible data (repeated pattern).
+    let mut compressible = [0u8; 256];
+    for (i, byte) in compressible.iter_mut().enumerate() {
+        *byte = b"AIOS-compress-test-data!"[i % 24];
+    }
+
+    // Write it — should trigger LZ4 compression (high redundancy).
+    match block_engine::write_block(&compressible) {
+        Ok((hash, _loc)) => {
+            // Read back — should decompress transparently.
+            let mut buf = [0u8; 512];
+            match block_engine::read_block_by_hash(&hash, &mut buf) {
+                Ok(n) => {
+                    if n == 256 && buf[..256] == compressible {
+                        crate::kinfo!(
+                            Storage,
+                            "Compression: 256B compressible data — round-trip OK"
+                        );
+                    } else {
+                        crate::kerror!(Storage, "Compression: data mismatch (got {} bytes)", n);
+                    }
+                }
+                Err(e) => crate::kerror!(Storage, "Compression: read failed: {:?}", e),
+            }
+
+            // Check on-disk size (wrapped_len in BlockLocation).
+            let on_disk = block_engine::with_engine(|engine| {
+                engine.memtable().get(&hash).map(|e| e.location.size)
+            })
+            .unwrap_or(None);
+
+            if let Some(disk_size) = on_disk {
+                // disk_size includes 5-byte compression header + payload.
+                // If compressed, payload < 256; if not, payload = 256.
+                let payload_size = disk_size as usize - shared::storage::COMPRESSION_HEADER_SIZE;
+                let ratio = payload_size * 100 / 256;
+                crate::kinfo!(
+                    Storage,
+                    "Compression: on-disk {}B ({}% of original 256B)",
+                    disk_size,
+                    ratio
+                );
+            }
+        }
+        Err(e) => crate::kerror!(Storage, "Compression: write failed: {:?}", e),
+    }
+
+    // Write incompressible data (should skip compression).
+    // Use a simple pseudo-random sequence.
+    let mut random_data = [0u8; 64];
+    for (i, byte) in random_data.iter_mut().enumerate() {
+        *byte = ((i * 131 + 17) % 256) as u8;
+    }
+
+    match block_engine::write_block(&random_data) {
+        Ok((hash, _loc)) => {
+            let mut buf = [0u8; 512];
+            match block_engine::read_block_by_hash(&hash, &mut buf) {
+                Ok(n) => {
+                    if n == 64 && buf[..64] == random_data {
+                        crate::kinfo!(Storage, "Compression: 64B random data — round-trip OK");
+                    } else {
+                        crate::kerror!(
+                            Storage,
+                            "Compression: random data mismatch (got {} bytes)",
+                            n
+                        );
+                    }
+                }
+                Err(e) => crate::kerror!(Storage, "Compression: random read failed: {:?}", e),
+            }
+        }
+        Err(e) => crate::kerror!(Storage, "Compression: random write failed: {:?}", e),
     }
 }
 
