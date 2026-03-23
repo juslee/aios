@@ -43,14 +43,14 @@ Follow this structure exactly:
 ```markdown
 # Phase N: <Name>
 
-| Field | Value |
-|---|---|
-| **Tier** | <from development-plan.md> |
-| **Duration** | <from development-plan.md> |
-| **Deliverable** | <from development-plan.md> |
-| **Status** | Planned |
-| **Prerequisites** | <previous phase(s)> |
-| **Unlocks** | <next phase(s)> |
+**Tier:** <from development-plan.md>
+**Duration:** <from development-plan.md>
+**Deliverable:** <from development-plan.md>
+**Status:** Planned
+**Prerequisites:** <previous phase(s)>
+**Unlocks:** <next phase(s)>
+
+-----
 
 ## Objective
 <2-3 paragraphs explaining what this phase builds and why>
@@ -63,12 +63,12 @@ Follow this structure exactly:
 ## Milestones
 | Milestone | Steps | Target | Observable result |
 |---|---|---|---|
-| MK+1: <name> | N steps | <what's built> | <verification command + expected output> |
-| MK+2: <name> | N steps | <what's built> | <verification command + expected output> |
-| MK+3: <name> | N steps | <what's built> | <verification command + expected output> |
+| M<number>: <name> | N steps | <what's built> | <verification command + expected output> |
+| M<number>: <name> | N steps | <what's built> | <verification command + expected output> |
+| M<number>: <name> | N steps | <what's built> | <verification command + expected output> |
 (3+ milestones required — add more rows as needed based on phase complexity)
 
-## Milestone MK+1: <name>
+## Milestone <number> — <name>
 ### Step 1: <step name>
 **What:** <description>
 **Tasks:**
@@ -88,7 +88,7 @@ Follow this structure exactly:
 - [ ] Write host-side unit tests for moved code
 **Acceptance:** `just check` + `just test` pass
 
-## Milestone MK+2: <name>
+## Milestone <number> — <name>
 (repeat pattern)
 
 ## Decision Points
@@ -104,7 +104,7 @@ Follow this structure exactly:
 ```
 
 **Key rules:**
-- Every milestone MUST end with a shared crate refactoring step
+- Every milestone SHOULD end with a shared crate refactoring step (include when the milestone produces types or logic that can move to `shared/`; skip if no sharable code was written)
 - Acceptance criteria must be mechanical (run command → see output)
 - Never duplicate architecture content — reference it by section number
 - Milestone numbers continue sequentially from the previous phase's last milestone

@@ -19,18 +19,15 @@ Follow the Phase Implementation Workflow from CLAUDE.md:
     - Use Obsidian MCP search_notes with keywords from the phase doc
     - Review any matching docs/knowledge/lessons/ and docs/knowledge/decisions/
     - Factor known pitfalls into implementation approach
-5. Write a working plan doc using the Write tool:
+5. Write a working plan doc using the Write tool, based on the existing template:
+    - Read `docs/knowledge/plans/_template.md` first — use its structure as the skeleton
     - Path: `docs/knowledge/plans/phase-$ARGUMENTS-description.md`
-    - Required frontmatter: `author: claude`, `date: YYYY-MM-DD`, `tags: [...]`, `status: in-progress`
-    - Start with a **Context** section: why this phase matters, current codebase state, what exists to build on
-    - For each step in the phase doc, write a **### Step N** section containing:
-      - **Files to create/modify:** explicit paths
-      - **Types/traits/functions to define:** names, signatures, field layouts
-      - **Key decisions:** naming, data structures, algorithms, deviations from arch docs (with rationale)
-      - **Reuse:** existing code to delegate to or wrap (with file paths)
-      - **Tests:** what to test, expected counts
-      - **Acceptance:** the exact commands and expected output
-    - End with a **Risks & Mitigations** table and a **Verification** checklist
+    - Fill in the template sections:
+      - **Frontmatter**: set `author: claude`, `date: YYYY-MM-DD`, `tags: [relevant subsystem tags]`, `status: in-progress`, `phase: $ARGUMENTS`, `milestone: MK`
+      - **Approach**: why this phase matters, current codebase state, key gaps, shared crate plan
+      - **Progress**: for each step in the phase doc, write a checkbox item with granular sub-tasks (files to create/modify, types/traits/functions, acceptance commands)
+      - **Code Structure Decisions**: naming, data structures, algorithms, deviations from arch docs (with rationale)
+      - **Dependencies & Risks**: what must exist before this work starts, what could go wrong
     - This plan is your implementation roadmap — do NOT skip it
     - Verify: confirm the file was written before proceeding to Phase 2
 

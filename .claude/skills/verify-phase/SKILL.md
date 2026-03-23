@@ -15,7 +15,8 @@ Run all Quality Gates from CLAUDE.md. Stop at the first FAIL and report — do n
 Use the Glob tool to find the phase doc:
 
 ```
-docs/phases/$ARGUMENTS-*.md OR docs/phases/0$ARGUMENTS-*.md
+docs/phases/$ARGUMENTS-*.md
+docs/phases/0$ARGUMENTS-*.md
 ```
 
 Read the phase doc fully. Extract the acceptance criteria for each milestone — these are your verification targets.
@@ -30,7 +31,7 @@ Run each gate sequentially. For each gate, report PASS or FAIL with the command 
 cargo build --target aarch64-unknown-none 2>&1
 ```
 
-**PASS condition:** Exit code 0 AND zero warnings in stderr. Use Grep to check for `warning:` in the output.
+**PASS condition:** Exit code 0 AND zero warnings in the output. Use Grep to check for `warning:` in the output.
 
 ### Gate 2: Check (fmt + clippy + build)
 
