@@ -5,8 +5,6 @@
 //!
 //! Per spaces.md §3.1 Spaces, §3.2 System Spaces.
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -30,74 +28,6 @@ fn generate_space_id() -> SpaceId {
     id[..8].copy_from_slice(&tick.to_le_bytes());
     id[8..].copy_from_slice(&counter.to_le_bytes());
     SpaceId(id)
-}
-
-// ---------------------------------------------------------------------------
-// Space table (stored in BlockEngine)
-// ---------------------------------------------------------------------------
-
-/// In-memory space registry. Fixed-size array of optional spaces.
-pub struct SpaceTable {
-    spaces: [Option<Space>; MAX_SPACES],
-}
-
-impl SpaceTable {
-    /// Create an empty space table.
-    pub const fn new() -> Self {
-        Self {
-            spaces: [None; MAX_SPACES],
-        }
-    }
-
-    /// Number of active spaces.
-    pub fn count(&self) -> usize {
-        self.spaces.iter().filter(|s| s.is_some()).count()
-    }
-
-    /// Find a space by ID.
-    pub fn get(&self, id: &SpaceId) -> Option<&Space> {
-        self.spaces
-            .iter()
-            .filter_map(|s| s.as_ref())
-            .find(|s| s.id == *id)
-    }
-
-    /// Find a space by ID (mutable, used for quota updates).
-    pub fn get_mut(&mut self, id: &SpaceId) -> Option<&mut Space> {
-        self.spaces
-            .iter_mut()
-            .filter_map(|s| s.as_mut())
-            .find(|s| s.id == *id)
-    }
-
-    /// Insert a new space. Returns error if table is full.
-    pub fn insert(&mut self, space: Space) -> Result<(), StorageError> {
-        // Find an empty slot.
-        for slot in self.spaces.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(space);
-                return Ok(());
-            }
-        }
-        Err(StorageError::QuotaExceeded) // Table full (MAX_SPACES reached)
-    }
-
-    /// Remove a space by ID. Returns the removed space.
-    pub fn remove(&mut self, id: &SpaceId) -> Option<Space> {
-        for slot in self.spaces.iter_mut() {
-            if let Some(space) = slot {
-                if space.id == *id {
-                    return slot.take();
-                }
-            }
-        }
-        None
-    }
-
-    /// List all active spaces.
-    pub fn list(&self) -> Vec<Space> {
-        self.spaces.iter().filter_map(|s| *s).collect()
-    }
 }
 
 // ---------------------------------------------------------------------------

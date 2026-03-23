@@ -1008,11 +1008,11 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 | Range | Interpretation | Examples |
 |---|---|---|
-| < 100 lines | Small, focused utility | `bump.rs` (~44), `heap.rs` (~68), `boot_phase.rs` (~68) |
-| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~248) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~614), `bench.rs` (~549) |
-| > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
+| < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
+| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~199), `space.rs` (~154), `object_store.rs` (~218) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~377) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~740), `bench.rs` (~549) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
 
@@ -1116,13 +1116,19 @@ Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment an
 
 ```text
 kernel/src/storage/
-  mod.rs            (~204) # init(), run_self_tests(), re-exports
-  block_engine.rs   (~614) # BlockEngine, Superblock, CRC-32C, SHA-256
-  wal.rs            (~248) # WalEntry, circular buffer, append/commit
-  lsm.rs            (~114) # MemTable, sorted Vec with binary search
+  mod.rs            (~866) # init(), run_self_tests() (11 test categories), re-exports
+  block_engine.rs   (~740) # BlockEngine, Superblock, LZ4 compression, encryption integration
+  wal.rs            (~199) # Wal struct, circular buffer, append/commit (WalEntry in shared crate)
+  lsm.rs              (~4) # Re-export: MemTable/ObjectIndex/SpaceTable in shared/src/storage.rs
+  object_store.rs   (~218) # object_create/read/delete, generate_object_id
+  version_store.rs  (~296) # version_create/list/rollback, object_update (Merkle DAG)
+  crypto.rs         (~139) # DeviceKeyManager, AES-256-GCM encrypt/decrypt, nonce counter
+  space.rs          (~154) # space_create/list/get/delete, init_system_spaces, register_service
+  posix_bridge.rs   (~377) # PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
+  budget.rs          (~55) # Storage budget stats, pressure monitoring, quota enforcement
 ```
 
-Dependency direction is strictly downward: `mod.rs` → `block_engine.rs` → `wal.rs` + `lsm.rs`. The block engine calls into the VirtIO driver (`crate::drivers::virtio_blk`) for disk I/O. Shared types (`ContentHash`, `BlockLocation`, `StorageError`) live in `shared/src/storage.rs`.
+Dependency direction is strictly downward: `mod.rs` → `posix_bridge.rs` → `object_store.rs` / `version_store.rs` / `space.rs` → `block_engine.rs` → `wal.rs` + `lsm.rs`. The `budget.rs` module reads from `block_engine`'s superblock, MemTable, and ObjectIndex. The `crypto.rs` module is called by `block_engine.rs` for transparent encryption. The block engine calls into the VirtIO driver (`crate::drivers::virtio_blk`) for disk I/O. Shared types (`ContentHash`, `BlockLocation`, `StorageError`, `StorageBudget`, `PressureLevel`, `CompressionType`, POSIX types) live in `shared/src/storage.rs`.
 
 ### 3.3 Naming Conventions
 
@@ -1564,7 +1570,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 275+ host-side tests pass |
+| **Test** | `just test` | All 364+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1616,7 +1622,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
 ```
 
-Currently 275 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 364 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1707,16 +1713,16 @@ mod tests {
 }
 ```
 
-**`no_std` test constraints:** The `shared` crate is `no_std`, so tests cannot use `Vec`, `String`, or heap allocation. Use fixed-size arrays and stack-based data structures. The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
+**`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (275 tests):**
+**Current test distribution (364 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
+| `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 51 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
 | `ipc` | 48 | Channel IDs, message validation, select entries, service names, user VA checks |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `storage` | 33 | Content types, block locations, VirtIO constants, struct sizes, WAL capacity |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
 | `observability` | 18 | Log level ordering, subsystem tags |
@@ -2190,9 +2196,10 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | Skill | Trigger | Purpose |
 |---|---|---|
 | `/build-team` | Start of autonomous session | Bootstraps the "aios-dev" team, spawns team-lead who spawns specialists as needed |
-| `/implement-phase N` | Phase implementation request | Full workflow: read phase doc → create worktree → plan → implement step-by-step → verify → audit → commit → PR |
-| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` → audit loop → PR |
+| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, follows phase doc steps including shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review + merge |
+| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` with shared crate refactoring step per milestone → `/audit-loop` (auto docs-only mode) → PR |
 | `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
+| `/audit-loop` | Before any PR | Auto-detects scope (docs-only or full), runs recursive two-level audit loop until clean (doc + code review + security/bug review) |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main |
@@ -2258,22 +2265,29 @@ The `/merge-and-cleanup` skill automates the entire cleanup sequence.
 
 ### Audit Loop Pattern
 
-The doc-auditor enforces documentation quality through a mandatory recursive loop:
+The `/audit-loop` skill enforces quality through a mandatory **two-level convergence protocol** before any PR:
 
-1. **First pass**: Builds a canonical facts table (struct names, constants, file paths from code)
-2. **Subsequent passes**: Validates docs against the facts table + checks formatting
-3. **Repeats** until a full pass returns zero issues (max 10 passes)
+**Scope detection** (automatic): checks `git diff --name-only main...HEAD` — if all changed files are `.md`, runs docs-only mode; if any non-`.md` files changed, runs full mode.
 
-Common issues caught:
+**Docs-only mode**: doc audit (cross-reference errors, technical accuracy, naming consistency)
 
-- Broken markdown links and stale section references
-- Naming mismatches (doc says `UART_BASE` but code says `UART_BASE_ADDR`)
-- Type mismatches (doc says `AtomicU64` but code says `AtomicUsize`)
-- Bare code fences (opening ` ``` ` without a language specifier)
-- Missing blank lines before lists
-- Aspirational content incorrectly marked as "implemented"
+**Full mode**: doc audit + code review (convention compliance, unsafe documentation, W^X, dead code) + security/bug review (logic errors, address confusion, PTE bit correctness, race conditions)
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow, step 8.
+**Two-level loop**:
+
+```text
+OUTER LOOP:
+  INNER LOOP:
+    Run audits → if issues found: fix, commit, push → repeat
+    If 0 issues: exit inner loop → restart outer loop (fresh audit)
+  OUTER EXIT:
+    If fresh restart finds 0 issues on FIRST round → DONE
+    Otherwise: enter inner loop again
+```
+
+**Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
+
+The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
 
 ### Knowledge Hive Integration
 
@@ -2284,7 +2298,7 @@ Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across se
 | `docs/knowledge/decisions/` | Permanent | Architecture Decision Records — why we chose X over Y |
 | `docs/knowledge/lessons/` | Permanent | Hard-won insights — bugs, gotchas, platform quirks |
 | `docs/knowledge/research/` | Permanent | Research notes on explored topics |
-| `docs/knowledge/plans/` | Ephemeral | Working docs during implementation — distill after completion, then delete |
+| `docs/knowledge/plans/` | Ephemeral | Working implementation plans (use `_template.md`) — distill lessons/decisions after completion, then delete |
 | `docs/knowledge/discussions/` | Semi-permanent | Design explorations — graduate to architecture docs when settled |
 
 Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (author, date, tags, status).
@@ -2352,10 +2366,10 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 |---|---|
 | **ASID** | Address Space Identifier. 16-bit tag in TTBR0 that allows the TLB to cache translations for multiple address spaces simultaneously without flushing on every context switch. Managed by `mm/asid.rs`. |
 | **BootInfo** | Structure passed from the UEFI stub to the kernel at boot. Contains the memory map, DTB physical address, framebuffer info, RNG seed, and a magic value (`0x41494F53_424F4F54` = "AIOSBOOT"). Defined in `shared/src/boot.rs`. |
-| **Block Engine** | Content-addressed storage layer providing crash-safe writes via WAL + CRC-32C integrity + SHA-256 hashing. Manages superblock, data region, and MemTable index. Implemented in `storage/block_engine.rs`. |
+| **Block Engine** | Content-addressed storage layer providing crash-safe writes via WAL + CRC-32C integrity + SHA-256 hashing + LZ4 compression + AES-256-GCM encryption. Manages superblock (v2), data region, and MemTable index. Implemented in `storage/block_engine.rs`. |
 | **Buddy allocator** | Physical page allocator that manages free pages in power-of-two blocks (orders 0--10, covering 4 KiB to 4 MiB). Uses bitmap coalescing to merge adjacent free blocks. Implemented in `mm/buddy.rs`. |
 | **ContentHash** | SHA-256 hash of a data block, used as the primary identifier for content-addressed storage. Wrapper type `[u8; 32]` with custom `Ord` for sorted MemTable lookups. Defined in `shared/src/storage.rs`. |
-| **CRC-32C** | Castagnoli variant of CRC-32 using polynomial 0x1EDC6F41. Used for both superblock and data block integrity verification. Computed via a 256-entry const-initialized lookup table in `storage/block_engine.rs`. |
+| **CRC-32C** | Castagnoli variant of CRC-32 using polynomial 0x1EDC6F41. Used for both superblock and data block integrity verification. Computed via a 256-entry const-initialized lookup table in `shared/src/storage.rs`. |
 | **Direct map** | A 1:1 virtual-to-physical mapping of all RAM at `DIRECT_MAP_BASE` (`0xFFFF_0001_0000_0000`). Allows the kernel to access any physical address via a fixed offset calculation. Built in `mm/kmap.rs`. |
 | **Direct switch** | IPC fast path that bypasses the scheduler. When thread A calls thread B and B is already waiting in `IpcRecv`, the kernel context-switches directly from A to B without touching the run queue. Approximately 0.2 microseconds. Implemented in `ipc/direct.rs`. |
 | **DMA pool** | Physical memory pool (64 MB on QEMU 2G) reserved for device-facing buffers. Required because DMA-capable devices need cache-coherent memory. VirtIO virtqueues and request buffers are allocated from this pool. |
@@ -2366,14 +2380,15 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 | **GICv3** | Generic Interrupt Controller version 3. ARM's standard interrupt controller. Components: Distributor (SPI routing), Redistributor (per-core PPI/SGI), CPU Interface (acknowledge/complete). |
 | **ISB** | Instruction Synchronization Barrier. ARM instruction that flushes the processor pipeline, ensuring all subsequent instructions are fetched and decoded using the current system register state. |
 | **Magazine** | Per-CPU object cache in the slab allocator. Provides a two-chance fast path: check current magazine, then previous magazine, before falling back to the slab. 32 objects per magazine round. |
-| **MemTable** | In-memory sorted index mapping `ContentHash` → `BlockLocation` with refcount for deduplication. Uses `Vec::binary_search_by()` for O(log n) lookup. Capacity 65536 entries. Implemented in `storage/lsm.rs`. |
+| **MemTable** | In-memory sorted index mapping `ContentHash` → `BlockLocation` with refcount for deduplication. Uses `Vec::binary_search_by()` for O(log n) lookup. Capacity 65536 entries. Pure data structure in `shared/src/storage.rs`; re-exported by `kernel/src/storage/lsm.rs`. |
 | **MPIDR** | Multiprocessor Affinity Register (`MPIDR_EL1`). Each core has a unique value. AIOS uses bits [7:0] as the core ID (valid for up to 256 cores on QEMU virt). |
 | **NC memory** | Non-Cacheable Normal memory. Phase 1 identity map uses NC attributes (edk2 MAIR Attr1=0x44). Atomic RMW operations hang on NC memory because the exclusive monitor requires cacheability. See SS4.1. |
 | **Pool** | A partition of the physical memory managed by separate buddy allocator instances. AIOS defines four pools: `Kernel` (128 MB), `User` (remainder), `Model` (0 MB, reserved for future AI model memory), `DMA` (64 MB). |
 | **PSCI** | Power State Coordination Interface. ARM firmware standard for CPU power management. AIOS uses `CPU_ON` (function ID `0xC400_0003`) to bring secondary cores online. Invoked via HVC on QEMU, SMC on real hardware. |
 | **Slab allocator** | Kernel object allocator with 5 size classes (64, 128, 256, 512, 4096 bytes). Backed by the buddy allocator's kernel pool. Features magazine caching and red zone corruption detection. Implemented in `mm/slab.rs`. |
 | **SPSC** | Single-Producer Single-Consumer. Lock-free ring buffer pattern used for per-core logging. Only the owning core writes (producer); only the drain function reads (consumer). See SS2.3. |
-| **StorageError** | Enum covering all storage failure modes (11 variants): `BlockNotFound`, `ChecksumFailed`, `DecryptionFailed`, `IoError`, `QuotaExceeded`, `DeviceFull`, `WalFull`, `SuperblockCorrupt`, `DeviceNotFound`, `VirtioError`, `MemTableFull`. All variants are `Copy` (no `String` fields) for `no_std` compatibility. |
+| **StorageBudget** | Aggregate storage usage summary: `total_bytes`, `used_bytes`, `free_bytes`, `data_blocks`, `wal_used`, `index_entries`. Computed from Block Engine superblock, MemTable, ObjectIndex, and WAL state. Used for pressure monitoring and quota enforcement. |
+| **StorageError** | Enum covering all storage failure modes (19 variants): `BlockNotFound`, `ChecksumFailed`, `DecryptionFailed`, `IoError`, `QuotaExceeded`, `DeviceFull`, `WalFull`, `SuperblockCorrupt`, `DeviceNotFound`, `VirtioError`, `MemTableFull`, `ObjectNotFound`, `SpaceNotFound`, `SpaceNotEmpty`, `VersionNotFound`, `NameExists`, `NotADirectory`, `FdTableFull`, `InvalidFd`. All variants are `Copy` (no `String` fields) for `no_std` compatibility. |
 | **Superblock** | On-disk metadata block (4096 bytes, sectors 0--7) containing storage layout parameters: WAL region location, data region start, append pointer, and CRC-32C checksum. Magic value `0x41494F53_50414345` ("AIOSPACE"). |
 | **TrapFrame** | 272-byte structure saved on exception entry from EL0. Contains all 31 general-purpose registers + SP_EL0 + ELR_EL1 + SPSR_EL1. `#[repr(C)]` layout matches assembly save/restore offsets in `exceptions.rs`. |
 | **ThreadContext** | 296-byte structure saved during voluntary context switch between kernel threads. Contains 31 GP regs + SP + PC + PSTATE + TTBR0 + timer state. Used by `save_context`/`restore_context` in `context_switch.S`. |

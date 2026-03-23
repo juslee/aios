@@ -156,6 +156,11 @@ pub enum StorageError {
     SpaceNotFound,
     SpaceNotEmpty,
     VersionNotFound,
+    // M15 POSIX bridge errors
+    NameExists,
+    NotADirectory,
+    FdTableFull,
+    InvalidFd,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,9 +248,10 @@ impl CompactObject {
         self.name_len = len as u8;
     }
 
-    /// Get extracted text content as a byte slice.
+    /// Get extracted text content as a byte slice. Clamps to array bounds for corruption safety.
     pub fn text_bytes(&self) -> &[u8] {
-        &self.text_content[..self.text_len as usize]
+        let len = (self.text_len as usize).min(MAX_TEXT_CONTENT_LEN);
+        &self.text_content[..len]
     }
 
     /// Set extracted text content. Truncates to MAX_TEXT_CONTENT_LEN.
@@ -552,8 +558,8 @@ pub fn compute_version_hash(
 /// Superblock magic: "AIOSPACE" as u64.
 pub const SUPERBLOCK_MAGIC: u64 = 0x41494F53_50414345;
 
-/// Superblock format version.
-pub const SUPERBLOCK_VERSION: u32 = 1;
+/// Superblock format version (bumped to 2 for compression header format).
+pub const SUPERBLOCK_VERSION: u32 = 2;
 
 /// Disk sector size in bytes.
 pub const SECTOR_SIZE: usize = 512;
@@ -708,6 +714,531 @@ const _: () = assert!(core::mem::size_of::<Space>() == 128);
 const _: () = assert!(core::mem::size_of::<ProvenanceEntry>() == 144);
 const _: () = assert!(core::mem::size_of::<ObjectIndexEntry>() == 32);
 const _: () = assert!(core::mem::size_of::<SpaceQuota>() == 16);
+
+// ---------------------------------------------------------------------------
+// M15 types: POSIX bridge, compression, storage budget
+// ---------------------------------------------------------------------------
+
+/// POSIX file-open flags (per spaces.md §9.1).
+pub mod posix_flags {
+    pub const O_RDONLY: u32 = 0;
+    pub const O_WRONLY: u32 = 1;
+    pub const O_RDWR: u32 = 2;
+    pub const O_CREAT: u32 = 0x40;
+    pub const O_APPEND: u32 = 0x400;
+}
+
+/// Synthesised POSIX stat result.
+#[derive(Clone, Copy, Debug)]
+pub struct PosixStat {
+    /// File size in bytes.
+    pub size: u64,
+    /// POSIX mode (0o755 dirs, 0o644 files).
+    pub mode: u32,
+    /// Last modification timestamp (ticks).
+    pub modified: u64,
+    /// Number of hard links (always 1).
+    pub nlink: u32,
+}
+
+/// Directory entry returned by readdir.
+#[derive(Clone, Copy, Debug)]
+pub struct DirEntry {
+    /// Entry name (up to 64 bytes, null-padded).
+    pub name: [u8; MAX_OBJECT_NAME_LEN],
+    /// Name length in bytes (fixed-width for cross-boundary ABI stability).
+    pub name_len: u32,
+    /// Object identifier.
+    pub object_id: ObjectId,
+    /// Content type.
+    pub content_type: ContentType,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+/// Maximum number of open file descriptors per bridge instance.
+pub const MAX_FDS: usize = 256;
+
+/// Compression type identifier.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum CompressionType {
+    /// No compression.
+    None = 0,
+    /// LZ4 block compression.
+    Lz4 = 1,
+}
+
+/// Compression header size: 1 byte type + 4 bytes uncompressed size.
+pub const COMPRESSION_HEADER_SIZE: usize = 5;
+
+/// Storage budget summary.
+#[derive(Clone, Copy, Debug)]
+pub struct StorageBudget {
+    /// Total data region bytes.
+    pub total_bytes: u64,
+    /// Used data region bytes.
+    pub used_bytes: u64,
+    /// Free data region bytes.
+    pub free_bytes: u64,
+    /// Number of data blocks.
+    pub data_blocks: u64,
+    /// WAL entries used.
+    pub wal_used: u64,
+    /// Index entries in MemTable + ObjectIndex.
+    pub index_entries: u64,
+}
+
+/// Storage pressure level derived from free percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PressureLevel {
+    /// >20% free.
+    Normal,
+    /// 10-20% free.
+    Warning,
+    /// 5-10% free.
+    Critical,
+    /// <5% free.
+    Emergency,
+}
+
+impl PressureLevel {
+    /// Compute pressure level from free percentage (0-100).
+    pub fn from_free_percentage(pct: u64) -> Self {
+        if pct > 20 {
+            PressureLevel::Normal
+        } else if pct > 10 {
+            PressureLevel::Warning
+        } else if pct > 5 {
+            PressureLevel::Critical
+        } else {
+            PressureLevel::Emergency
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CRC-32C (Castagnoli) — 256-entry lookup table
+// ---------------------------------------------------------------------------
+
+/// CRC-32C lookup table using Castagnoli polynomial 0x1EDC6F41.
+const CRC32C_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let poly: u32 = 0x82F6_3B78; // bit-reversed 0x1EDC6F41
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ poly;
+            } else {
+                crc >>= 1;
+            }
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+/// Compute CRC-32C checksum of `data`.
+pub fn crc32c(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in data {
+        crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    !crc
+}
+
+// ---------------------------------------------------------------------------
+// MemTable — in-memory sorted index for content-addressed blocks
+// ---------------------------------------------------------------------------
+
+use alloc::vec;
+use alloc::vec::Vec;
+
+/// In-memory sorted index entry.
+pub struct MemTableEntry {
+    pub key: ContentHash,
+    pub location: BlockLocation,
+    /// Reference count (separate from BlockLocation per arch doc).
+    pub refcount: u32,
+}
+
+/// Sorted array MemTable for content-addressed block lookups.
+///
+/// Heap-allocated sorted array with binary search for O(log n) lookups.
+/// Capacity: configurable (default 65536 entries).
+///
+/// Per spaces.md §4.2.
+pub struct MemTable {
+    entries: Vec<MemTableEntry>,
+    capacity: usize,
+}
+
+impl MemTable {
+    /// Create a new empty MemTable with the given capacity.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: vec![],
+            capacity,
+        }
+    }
+
+    /// Create a MemTable with default capacity (MEMTABLE_MAX_ENTRIES).
+    pub fn with_default_capacity() -> Self {
+        Self::new(MEMTABLE_MAX_ENTRIES)
+    }
+
+    /// Number of entries.
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Capacity.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Is the table full?
+    pub fn is_full(&self) -> bool {
+        self.entries.len() >= self.capacity
+    }
+
+    /// Look up a block by content hash.
+    pub fn get(&self, key: &ContentHash) -> Option<&MemTableEntry> {
+        let idx = self.binary_search(key).ok()?;
+        Some(&self.entries[idx])
+    }
+
+    /// Look up a block by content hash (mutable, for refcount updates).
+    pub fn get_mut(&mut self, key: &ContentHash) -> Option<&mut MemTableEntry> {
+        let idx = self.binary_search(key).ok()?;
+        Some(&mut self.entries[idx])
+    }
+
+    /// Insert a new entry. If key already exists, increments refcount instead.
+    ///
+    /// Returns `true` if this was a new insertion, `false` if dedup (refcount bump).
+    pub fn insert(
+        &mut self,
+        key: ContentHash,
+        location: BlockLocation,
+    ) -> Result<bool, StorageError> {
+        match self.binary_search(&key) {
+            Ok(idx) => {
+                // Key exists — increment refcount (dedup).
+                self.entries[idx].refcount += 1;
+                Ok(false)
+            }
+            Err(insert_pos) => {
+                if self.is_full() {
+                    return Err(StorageError::MemTableFull);
+                }
+                self.entries.insert(
+                    insert_pos,
+                    MemTableEntry {
+                        key,
+                        location,
+                        refcount: 1,
+                    },
+                );
+                Ok(true)
+            }
+        }
+    }
+
+    /// Remove an entry by key.
+    pub fn remove(&mut self, key: &ContentHash) -> Option<BlockLocation> {
+        let idx = self.binary_search(key).ok()?;
+        let entry = self.entries.remove(idx);
+        Some(entry.location)
+    }
+
+    /// Decrement refcount for a key. If refcount reaches 0, removes the entry.
+    ///
+    /// Returns `Some((location, freed))` where `freed` is true if the entry was removed.
+    /// Returns `None` if the key was not found.
+    pub fn dec_ref(&mut self, key: &ContentHash) -> Option<(BlockLocation, bool)> {
+        let idx = self.binary_search(key).ok()?;
+        let entry = &mut self.entries[idx];
+        let location = entry.location;
+        if entry.refcount <= 1 {
+            self.entries.remove(idx);
+            Some((location, true))
+        } else {
+            entry.refcount -= 1;
+            Some((location, false))
+        }
+    }
+
+    /// Binary search for a key. Returns Ok(index) if found, Err(insert_pos) if not.
+    fn binary_search(&self, key: &ContentHash) -> Result<usize, usize> {
+        self.entries
+            .binary_search_by(|entry| entry.key.0.cmp(&key.0))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ObjectIndex — sorted Vec keyed by ObjectId
+// ---------------------------------------------------------------------------
+
+/// Entry in the object index: ObjectId → CompactObject metadata.
+struct ObjectEntry {
+    id: ObjectId,
+    object: CompactObject,
+}
+
+/// Sorted index of objects, keyed by ObjectId. Binary search for O(log n) lookups.
+pub struct ObjectIndex {
+    entries: Vec<ObjectEntry>,
+}
+
+impl Default for ObjectIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ObjectIndex {
+    /// Create an empty object index.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Number of objects in the index.
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Look up an object by ID.
+    pub fn get(&self, id: &ObjectId) -> Option<&CompactObject> {
+        let idx = self.binary_search(id).ok()?;
+        Some(&self.entries[idx].object)
+    }
+
+    /// Look up an object by ID (mutable).
+    pub fn get_mut(&mut self, id: &ObjectId) -> Option<&mut CompactObject> {
+        let idx = self.binary_search(id).ok()?;
+        Some(&mut self.entries[idx].object)
+    }
+
+    /// Insert a new object. Returns error if index is full or ID already exists.
+    pub fn insert(&mut self, object: CompactObject) -> Result<(), StorageError> {
+        if self.entries.len() >= OBJECT_INDEX_MAX_ENTRIES {
+            return Err(StorageError::MemTableFull);
+        }
+        match self.binary_search(&object.id) {
+            Ok(_) => Err(StorageError::NameExists), // Duplicate ID
+            Err(pos) => {
+                self.entries.insert(
+                    pos,
+                    ObjectEntry {
+                        id: object.id,
+                        object,
+                    },
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Remove an object by ID. Returns the removed CompactObject.
+    pub fn remove(&mut self, id: &ObjectId) -> Option<CompactObject> {
+        let idx = self.binary_search(id).ok()?;
+        Some(self.entries.remove(idx).object)
+    }
+
+    /// Find an object by space and name (linear scan).
+    pub fn find_by_name(&self, space_id: &SpaceId, name: &[u8]) -> Option<ObjectId> {
+        self.entries
+            .iter()
+            .find(|e| e.object.space_id == *space_id && e.object.name_bytes() == name)
+            .map(|e| e.id)
+    }
+
+    /// List all object IDs in a given space (linear scan).
+    pub fn list_by_space(&self, space_id: &SpaceId) -> Vec<ObjectId> {
+        self.entries
+            .iter()
+            .filter(|e| e.object.space_id == *space_id)
+            .map(|e| e.id)
+            .collect()
+    }
+
+    fn binary_search(&self, id: &ObjectId) -> Result<usize, usize> {
+        self.entries.binary_search_by(|e| e.id.cmp(id))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SpaceTable — fixed-size array of optional spaces
+// ---------------------------------------------------------------------------
+
+/// In-memory space registry. Fixed-size array of optional spaces.
+pub struct SpaceTable {
+    spaces: [Option<Space>; MAX_SPACES],
+}
+
+impl Default for SpaceTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SpaceTable {
+    /// Create an empty space table.
+    pub const fn new() -> Self {
+        Self {
+            spaces: [None; MAX_SPACES],
+        }
+    }
+
+    /// Number of active spaces.
+    pub fn count(&self) -> usize {
+        self.spaces.iter().filter(|s| s.is_some()).count()
+    }
+
+    /// Find a space by ID.
+    pub fn get(&self, id: &SpaceId) -> Option<&Space> {
+        self.spaces
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .find(|s| s.id == *id)
+    }
+
+    /// Find a space by ID (mutable, used for quota updates).
+    pub fn get_mut(&mut self, id: &SpaceId) -> Option<&mut Space> {
+        self.spaces
+            .iter_mut()
+            .filter_map(|s| s.as_mut())
+            .find(|s| s.id == *id)
+    }
+
+    /// Insert a new space. Returns error if table is full.
+    pub fn insert(&mut self, space: Space) -> Result<(), StorageError> {
+        for slot in self.spaces.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(space);
+                return Ok(());
+            }
+        }
+        Err(StorageError::QuotaExceeded)
+    }
+
+    /// Remove a space by ID. Returns the removed space.
+    pub fn remove(&mut self, id: &SpaceId) -> Option<Space> {
+        for slot in self.spaces.iter_mut() {
+            if let Some(space) = slot {
+                if space.id == *id {
+                    return slot.take();
+                }
+            }
+        }
+        None
+    }
+
+    /// List all active spaces.
+    pub fn list(&self) -> Vec<Space> {
+        self.spaces.iter().filter_map(|s| *s).collect()
+    }
+
+    /// Find a space by name (linear scan).
+    pub fn find_by_name(&self, name: &[u8]) -> Option<&Space> {
+        self.spaces
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .find(|s| s.name_bytes() == name)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WalEntry — on-disk WAL entry struct (64 bytes)
+// ---------------------------------------------------------------------------
+
+/// On-disk WAL entry (64 bytes, fixed layout).
+///
+/// The `Wal` struct itself stays in kernel — it calls `virtio_blk::read_sector/write_sector`.
+/// Only the entry struct and its pure methods are shared.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WalEntry {
+    /// Monotonically increasing sequence number.
+    pub sequence_number: u64,
+    /// Content hash (SHA-256) of the block data.
+    pub block_id: [u8; 32],
+    /// Byte offset of the data in the data region (BlockLocation.offset).
+    pub data_offset: u64,
+    /// Data size in bytes (BlockLocation.size).
+    pub data_size: u32,
+    /// 0 = pending, 1 = committed.
+    pub committed: u8,
+    /// Padding.
+    _pad: [u8; 3],
+    /// CRC-32C of all fields above (bytes 0..56).
+    pub checksum: u32,
+    /// Padding to 64 bytes.
+    _pad2: [u8; 4],
+}
+
+const _: () = assert!(core::mem::size_of::<WalEntry>() == WAL_ENTRY_SIZE);
+
+impl WalEntry {
+    /// Create a zero-initialized WAL entry.
+    pub const ZERO: Self = Self {
+        sequence_number: 0,
+        block_id: [0; 32],
+        data_offset: 0,
+        data_size: 0,
+        committed: 0,
+        _pad: [0; 3],
+        checksum: 0,
+        _pad2: [0; 4],
+    };
+
+    /// Create a new WAL entry with the given fields (padding zeroed, checksum not yet set).
+    pub fn new(
+        sequence_number: u64,
+        block_id: [u8; 32],
+        data_offset: u64,
+        data_size: u32,
+        committed: u8,
+    ) -> Self {
+        Self {
+            sequence_number,
+            block_id,
+            data_offset,
+            data_size,
+            committed,
+            _pad: [0; 3],
+            checksum: 0,
+            _pad2: [0; 4],
+        }
+    }
+
+    /// Compute CRC-32C over the first 56 bytes (everything except checksum + pad2).
+    pub fn compute_checksum(&self) -> u32 {
+        // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
+        // Maintained by repr(C) attribute and compile-time size assertion.
+        // If violated, CRC is computed over wrong bytes, causing checksum mismatch on validation.
+        let bytes = unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 56) };
+        crc32c(bytes)
+    }
+
+    /// Check if this entry has a valid checksum.
+    pub fn is_valid(&self) -> bool {
+        self.checksum == self.compute_checksum()
+    }
+
+    /// Get the content hash as a ContentHash.
+    pub fn content_hash(&self) -> ContentHash {
+        ContentHash(self.block_id)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -915,8 +1446,12 @@ mod tests {
             StorageError::SpaceNotFound,
             StorageError::SpaceNotEmpty,
             StorageError::VersionNotFound,
+            StorageError::NameExists,
+            StorageError::NotADirectory,
+            StorageError::FdTableFull,
+            StorageError::InvalidFd,
         ];
-        assert_eq!(errors.len(), 15);
+        assert_eq!(errors.len(), 19);
         // Verify Copy by assignment.
         let e = StorageError::IoError;
         let e2 = e;
@@ -1354,5 +1889,560 @@ mod tests {
         assert_eq!(OBJECT_INDEX_MAX_ENTRIES, 16_384);
         assert_eq!(MAX_TEXT_CONTENT_LEN, 128);
         assert_eq!(ENCRYPTION_OVERHEAD, 28);
+    }
+
+    // -- M15 POSIX / compression / budget tests --
+
+    #[test]
+    fn m15_posix_flags() {
+        assert_eq!(posix_flags::O_RDONLY, 0);
+        assert_eq!(posix_flags::O_WRONLY, 1);
+        assert_eq!(posix_flags::O_RDWR, 2);
+        assert_eq!(posix_flags::O_CREAT, 0x40);
+        assert_eq!(posix_flags::O_APPEND, 0x400);
+    }
+
+    #[test]
+    fn m15_posix_stat_size() {
+        assert_eq!(core::mem::size_of::<PosixStat>(), 24);
+    }
+
+    #[test]
+    fn m15_compression_type_repr() {
+        assert_eq!(CompressionType::None as u8, 0);
+        assert_eq!(CompressionType::Lz4 as u8, 1);
+        assert_eq!(COMPRESSION_HEADER_SIZE, 5);
+    }
+
+    #[test]
+    fn m15_pressure_level_normal() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(100),
+            PressureLevel::Normal
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(21),
+            PressureLevel::Normal
+        );
+    }
+
+    #[test]
+    fn m15_pressure_level_warning() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(20),
+            PressureLevel::Warning
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(11),
+            PressureLevel::Warning
+        );
+    }
+
+    #[test]
+    fn m15_pressure_level_critical() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(10),
+            PressureLevel::Critical
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(6),
+            PressureLevel::Critical
+        );
+    }
+
+    #[test]
+    fn m15_pressure_level_emergency() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(5),
+            PressureLevel::Emergency
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(0),
+            PressureLevel::Emergency
+        );
+    }
+
+    #[test]
+    fn m15_max_fds() {
+        assert_eq!(MAX_FDS, 256);
+    }
+
+    // -- CRC-32C tests --
+
+    #[test]
+    fn crc32c_empty() {
+        assert_eq!(crc32c(&[]), 0x0000_0000);
+    }
+
+    #[test]
+    fn crc32c_known_vector() {
+        // Standard test vector: "123456789" → 0xE3069283
+        assert_eq!(crc32c(b"123456789"), 0xE306_9283);
+    }
+
+    #[test]
+    fn crc32c_single_byte() {
+        let result = crc32c(&[0x00]);
+        assert_ne!(result, 0); // non-trivial output
+    }
+
+    #[test]
+    fn crc32c_all_zeros() {
+        let data = [0u8; 64];
+        let result = crc32c(&data);
+        assert_ne!(result, 0);
+    }
+
+    #[test]
+    fn crc32c_all_ones() {
+        let data = [0xFF; 1024];
+        let result = crc32c(&data);
+        assert_ne!(result, 0);
+    }
+
+    #[test]
+    fn crc32c_different_data_different_hash() {
+        let a = crc32c(b"hello");
+        let b = crc32c(b"world");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn crc32c_same_data_same_hash() {
+        assert_eq!(crc32c(b"test"), crc32c(b"test"));
+    }
+
+    #[test]
+    fn crc32c_single_bit_change() {
+        let a = crc32c(&[0x00]);
+        let b = crc32c(&[0x01]);
+        assert_ne!(a, b);
+    }
+
+    // -- MemTable tests --
+
+    fn make_hash(val: u8) -> ContentHash {
+        let mut h = [0u8; 32];
+        h[0] = val;
+        ContentHash(h)
+    }
+
+    fn make_location(offset: u64) -> BlockLocation {
+        BlockLocation {
+            offset,
+            size: 512,
+            tier: StorageTier::Hot,
+        }
+    }
+
+    #[test]
+    fn memtable_new_empty() {
+        let mt = MemTable::new(100);
+        assert_eq!(mt.count(), 0);
+        assert_eq!(mt.capacity(), 100);
+        assert!(!mt.is_full());
+    }
+
+    #[test]
+    fn memtable_insert_and_get() {
+        let mut mt = MemTable::new(10);
+        let h = make_hash(42);
+        let loc = make_location(1000);
+        assert!(mt.insert(h, loc).unwrap()); // new insertion
+        assert_eq!(mt.count(), 1);
+        let entry = mt.get(&h).unwrap();
+        assert_eq!(entry.location.offset, 1000);
+        assert_eq!(entry.refcount, 1);
+    }
+
+    #[test]
+    fn memtable_insert_duplicate_increments_refcount() {
+        let mut mt = MemTable::new(10);
+        let h = make_hash(1);
+        let loc = make_location(100);
+        assert!(mt.insert(h, loc).unwrap()); // new
+        assert!(!mt.insert(h, loc).unwrap()); // dedup
+        assert_eq!(mt.count(), 1);
+        assert_eq!(mt.get(&h).unwrap().refcount, 2);
+    }
+
+    #[test]
+    fn memtable_insert_at_capacity_returns_error() {
+        let mut mt = MemTable::new(2);
+        mt.insert(make_hash(1), make_location(0)).unwrap();
+        mt.insert(make_hash(2), make_location(0)).unwrap();
+        let result = mt.insert(make_hash(3), make_location(0));
+        assert!(matches!(result, Err(StorageError::MemTableFull)));
+    }
+
+    #[test]
+    fn memtable_get_missing_returns_none() {
+        let mt = MemTable::new(10);
+        assert!(mt.get(&make_hash(99)).is_none());
+    }
+
+    #[test]
+    fn memtable_remove_existing() {
+        let mut mt = MemTable::new(10);
+        let h = make_hash(5);
+        mt.insert(h, make_location(500)).unwrap();
+        let loc = mt.remove(&h).unwrap();
+        assert_eq!(loc.offset, 500);
+        assert_eq!(mt.count(), 0);
+    }
+
+    #[test]
+    fn memtable_remove_missing_returns_none() {
+        let mut mt = MemTable::new(10);
+        assert!(mt.remove(&make_hash(99)).is_none());
+    }
+
+    #[test]
+    fn memtable_dec_ref_decrements() {
+        let mut mt = MemTable::new(10);
+        let h = make_hash(1);
+        mt.insert(h, make_location(0)).unwrap();
+        mt.insert(h, make_location(0)).unwrap(); // refcount=2
+        let (_, freed) = mt.dec_ref(&h).unwrap();
+        assert!(!freed); // refcount=1, not freed
+        assert_eq!(mt.get(&h).unwrap().refcount, 1);
+    }
+
+    #[test]
+    fn memtable_dec_ref_removes_at_zero() {
+        let mut mt = MemTable::new(10);
+        let h = make_hash(1);
+        mt.insert(h, make_location(0)).unwrap(); // refcount=1
+        let (_, freed) = mt.dec_ref(&h).unwrap();
+        assert!(freed);
+        assert_eq!(mt.count(), 0);
+    }
+
+    #[test]
+    fn memtable_sorted_ordering() {
+        let mut mt = MemTable::new(100);
+        // Insert in reverse order, verify sorted
+        for i in (0..10u8).rev() {
+            mt.insert(make_hash(i), make_location(i as u64)).unwrap();
+        }
+        // All should be findable
+        for i in 0..10u8 {
+            assert!(mt.get(&make_hash(i)).is_some());
+        }
+    }
+
+    #[test]
+    fn memtable_insert_remove_cycle() {
+        let mut mt = MemTable::new(5);
+        for i in 0..5u8 {
+            mt.insert(make_hash(i), make_location(i as u64)).unwrap();
+        }
+        assert!(mt.is_full());
+        mt.remove(&make_hash(2));
+        assert!(!mt.is_full());
+        mt.insert(make_hash(20), make_location(20)).unwrap();
+        assert!(mt.is_full());
+    }
+
+    #[test]
+    fn memtable_with_default_capacity() {
+        let mt = MemTable::with_default_capacity();
+        assert_eq!(mt.capacity(), MEMTABLE_MAX_ENTRIES);
+    }
+
+    // -- ObjectIndex tests --
+
+    fn make_object_id(val: u8) -> ObjectId {
+        let mut id = [0u8; 16];
+        id[0] = val;
+        ObjectId(id)
+    }
+
+    fn make_space_id(val: u8) -> SpaceId {
+        let mut id = [0u8; 16];
+        id[0] = val;
+        SpaceId(id)
+    }
+
+    fn make_compact_object(id: ObjectId, space_id: SpaceId, name: &[u8]) -> CompactObject {
+        let mut obj = CompactObject::ZERO;
+        obj.id = id;
+        obj.space_id = space_id;
+        obj.set_name(name);
+        obj
+    }
+
+    #[test]
+    fn object_index_new_empty() {
+        let idx = ObjectIndex::new();
+        assert_eq!(idx.count(), 0);
+    }
+
+    #[test]
+    fn object_index_insert_and_get() {
+        let mut idx = ObjectIndex::new();
+        let oid = make_object_id(1);
+        let sid = make_space_id(1);
+        let obj = make_compact_object(oid, sid, b"test");
+        idx.insert(obj).unwrap();
+        assert_eq!(idx.count(), 1);
+        let got = idx.get(&oid).unwrap();
+        assert_eq!(got.id, oid);
+    }
+
+    #[test]
+    fn object_index_insert_duplicate_returns_error() {
+        let mut idx = ObjectIndex::new();
+        let oid = make_object_id(1);
+        let sid = make_space_id(1);
+        idx.insert(make_compact_object(oid, sid, b"a")).unwrap();
+        let result = idx.insert(make_compact_object(oid, sid, b"b"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn object_index_remove_existing() {
+        let mut idx = ObjectIndex::new();
+        let oid = make_object_id(1);
+        let sid = make_space_id(1);
+        idx.insert(make_compact_object(oid, sid, b"test")).unwrap();
+        let removed = idx.remove(&oid).unwrap();
+        assert_eq!(removed.id, oid);
+        assert_eq!(idx.count(), 0);
+    }
+
+    #[test]
+    fn object_index_remove_missing() {
+        let mut idx = ObjectIndex::new();
+        assert!(idx.remove(&make_object_id(99)).is_none());
+    }
+
+    #[test]
+    fn object_index_find_by_name() {
+        let mut idx = ObjectIndex::new();
+        let sid = make_space_id(1);
+        idx.insert(make_compact_object(make_object_id(1), sid, b"alpha"))
+            .unwrap();
+        idx.insert(make_compact_object(make_object_id(2), sid, b"beta"))
+            .unwrap();
+        let found = idx.find_by_name(&sid, b"beta").unwrap();
+        assert_eq!(found, make_object_id(2));
+    }
+
+    #[test]
+    fn object_index_find_by_name_wrong_space() {
+        let mut idx = ObjectIndex::new();
+        let sid1 = make_space_id(1);
+        let sid2 = make_space_id(2);
+        idx.insert(make_compact_object(make_object_id(1), sid1, b"file"))
+            .unwrap();
+        assert!(idx.find_by_name(&sid2, b"file").is_none());
+    }
+
+    #[test]
+    fn object_index_find_by_name_not_found() {
+        let mut idx = ObjectIndex::new();
+        let sid = make_space_id(1);
+        idx.insert(make_compact_object(make_object_id(1), sid, b"exists"))
+            .unwrap();
+        assert!(idx.find_by_name(&sid, b"missing").is_none());
+    }
+
+    #[test]
+    fn object_index_list_by_space() {
+        let mut idx = ObjectIndex::new();
+        let sid1 = make_space_id(1);
+        let sid2 = make_space_id(2);
+        idx.insert(make_compact_object(make_object_id(1), sid1, b"a"))
+            .unwrap();
+        idx.insert(make_compact_object(make_object_id(2), sid1, b"b"))
+            .unwrap();
+        idx.insert(make_compact_object(make_object_id(3), sid2, b"c"))
+            .unwrap();
+        let list = idx.list_by_space(&sid1);
+        assert_eq!(list.len(), 2);
+        assert!(idx.list_by_space(&make_space_id(99)).is_empty());
+    }
+
+    #[test]
+    fn object_index_sorted_order() {
+        let mut idx = ObjectIndex::new();
+        let sid = make_space_id(1);
+        // Insert in reverse order
+        for i in (1..=10u8).rev() {
+            idx.insert(make_compact_object(make_object_id(i), sid, b"x"))
+                .unwrap();
+        }
+        // All should be findable
+        for i in 1..=10u8 {
+            assert!(idx.get(&make_object_id(i)).is_some());
+        }
+    }
+
+    #[test]
+    fn object_index_get_mut() {
+        let mut idx = ObjectIndex::new();
+        let oid = make_object_id(1);
+        let sid = make_space_id(1);
+        idx.insert(make_compact_object(oid, sid, b"test")).unwrap();
+        let obj = idx.get_mut(&oid).unwrap();
+        obj.content_size = 999;
+        assert_eq!(idx.get(&oid).unwrap().content_size, 999);
+    }
+
+    // -- SpaceTable tests --
+
+    fn make_space(id: SpaceId, name: &[u8]) -> Space {
+        let mut space = Space::ZERO;
+        space.id = id;
+        space.set_name(name);
+        space
+    }
+
+    #[test]
+    fn space_table_new_empty() {
+        let st = SpaceTable::new();
+        assert_eq!(st.count(), 0);
+    }
+
+    #[test]
+    fn space_table_insert_and_get() {
+        let mut st = SpaceTable::new();
+        let sid = make_space_id(1);
+        st.insert(make_space(sid, b"test")).unwrap();
+        assert_eq!(st.count(), 1);
+        let s = st.get(&sid).unwrap();
+        assert_eq!(s.id, sid);
+    }
+
+    #[test]
+    fn space_table_insert_full() {
+        let mut st = SpaceTable::new();
+        for i in 0..MAX_SPACES as u8 {
+            st.insert(make_space(make_space_id(i + 1), b"s")).unwrap();
+        }
+        let result = st.insert(make_space(make_space_id(255), b"overflow"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn space_table_remove_existing() {
+        let mut st = SpaceTable::new();
+        let sid = make_space_id(1);
+        st.insert(make_space(sid, b"test")).unwrap();
+        let removed = st.remove(&sid).unwrap();
+        assert_eq!(removed.id, sid);
+        assert_eq!(st.count(), 0);
+    }
+
+    #[test]
+    fn space_table_remove_missing() {
+        let mut st = SpaceTable::new();
+        assert!(st.remove(&make_space_id(99)).is_none());
+    }
+
+    #[test]
+    fn space_table_get_mut() {
+        let mut st = SpaceTable::new();
+        let sid = make_space_id(1);
+        st.insert(make_space(sid, b"test")).unwrap();
+        let s = st.get_mut(&sid).unwrap();
+        s.object_count = 42;
+        assert_eq!(st.get(&sid).unwrap().object_count, 42);
+    }
+
+    #[test]
+    fn space_table_list() {
+        let mut st = SpaceTable::new();
+        st.insert(make_space(make_space_id(1), b"a")).unwrap();
+        st.insert(make_space(make_space_id(2), b"b")).unwrap();
+        let list = st.list();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn space_table_find_by_name() {
+        let mut st = SpaceTable::new();
+        st.insert(make_space(make_space_id(1), b"alpha")).unwrap();
+        st.insert(make_space(make_space_id(2), b"beta")).unwrap();
+        let found = st.find_by_name(b"beta").unwrap();
+        assert_eq!(found.id, make_space_id(2));
+    }
+
+    #[test]
+    fn space_table_find_by_name_not_found() {
+        let mut st = SpaceTable::new();
+        st.insert(make_space(make_space_id(1), b"exists")).unwrap();
+        assert!(st.find_by_name(b"missing").is_none());
+    }
+
+    #[test]
+    fn space_table_count_after_insert_remove() {
+        let mut st = SpaceTable::new();
+        let sid1 = make_space_id(1);
+        let sid2 = make_space_id(2);
+        st.insert(make_space(sid1, b"a")).unwrap();
+        st.insert(make_space(sid2, b"b")).unwrap();
+        assert_eq!(st.count(), 2);
+        st.remove(&sid1);
+        assert_eq!(st.count(), 1);
+    }
+
+    // -- WalEntry tests --
+
+    #[test]
+    fn wal_entry_size_assertion() {
+        assert_eq!(core::mem::size_of::<WalEntry>(), 64);
+    }
+
+    #[test]
+    fn wal_entry_zero_checksum() {
+        let entry = WalEntry::ZERO;
+        let cs = entry.compute_checksum();
+        // Zero entry should have a computable checksum
+        assert_ne!(cs, 0); // CRC of all-zeros is non-zero
+    }
+
+    #[test]
+    fn wal_entry_compute_and_validate() {
+        let mut entry = WalEntry::ZERO;
+        entry.sequence_number = 42;
+        entry.data_offset = 1000;
+        entry.data_size = 512;
+        entry.checksum = entry.compute_checksum();
+        assert!(entry.is_valid());
+    }
+
+    #[test]
+    fn wal_entry_tamper_invalidates() {
+        let mut entry = WalEntry::ZERO;
+        entry.sequence_number = 1;
+        entry.checksum = entry.compute_checksum();
+        assert!(entry.is_valid());
+        entry.sequence_number = 2; // tamper
+        assert!(!entry.is_valid());
+    }
+
+    #[test]
+    fn wal_entry_content_hash() {
+        let mut entry = WalEntry::ZERO;
+        entry.block_id = [0xAB; 32];
+        let ch = entry.content_hash();
+        assert_eq!(ch.0, [0xAB; 32]);
+    }
+
+    #[test]
+    fn wal_entry_roundtrip_fields() {
+        let mut entry = WalEntry::ZERO;
+        entry.sequence_number = 100;
+        entry.data_offset = 5000;
+        entry.data_size = 256;
+        entry.committed = 1;
+        entry.checksum = entry.compute_checksum();
+        assert!(entry.is_valid());
+        assert_eq!(entry.sequence_number, 100);
+        assert_eq!(entry.data_offset, 5000);
+        assert_eq!(entry.data_size, 256);
+        assert_eq!(entry.committed, 1);
     }
 }

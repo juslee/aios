@@ -6,8 +6,6 @@
 //!
 //! Per spaces.md §5.1 Merkle DAG, §5.3 DAG Operations.
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 

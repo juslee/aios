@@ -12,52 +12,7 @@ use shared::storage::{
 
 use crate::drivers::virtio_blk;
 
-use super::block_engine::crc32c;
-
-/// On-disk WAL entry (64 bytes, fixed layout).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WalEntry {
-    /// Monotonically increasing sequence number.
-    pub sequence_number: u64,
-    /// Content hash (SHA-256) of the block data.
-    pub block_id: [u8; 32],
-    /// Byte offset of the data in the data region (BlockLocation.offset).
-    pub data_offset: u64,
-    /// Data size in bytes (BlockLocation.size).
-    pub data_size: u32,
-    /// 0 = pending, 1 = committed.
-    pub committed: u8,
-    /// Padding.
-    _pad: [u8; 3],
-    /// CRC-32C of all fields above (bytes 0..56).
-    pub checksum: u32,
-    /// Padding to 64 bytes.
-    _pad2: [u8; 4],
-}
-
-const _: () = assert!(core::mem::size_of::<WalEntry>() == WAL_ENTRY_SIZE);
-
-impl WalEntry {
-    /// Compute CRC-32C over the first 56 bytes (everything except checksum + pad2).
-    fn compute_checksum(&self) -> u32 {
-        // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
-        // Maintained by repr(C) attribute and compile-time size assertion.
-        // If violated, CRC is computed over wrong bytes, causing checksum mismatch on validation.
-        let bytes = unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 56) };
-        crc32c(bytes)
-    }
-
-    /// Check if this entry has a valid checksum.
-    pub fn is_valid(&self) -> bool {
-        self.checksum == self.compute_checksum()
-    }
-
-    /// Get the content hash as a ContentHash.
-    pub fn content_hash(&self) -> ContentHash {
-        ContentHash(self.block_id)
-    }
-}
+pub use shared::storage::WalEntry;
 
 /// Write-Ahead Log state.
 pub struct Wal {
@@ -123,22 +78,13 @@ impl Wal {
         data_offset: u64,
         data_size: u32,
     ) -> Result<(u64, u64), StorageError> {
-        // Check WAL capacity.
-        if self.head - self.tail >= self.capacity_entries() {
+        // Check WAL capacity (saturating_sub guards against corrupted tail > head).
+        if self.head.saturating_sub(self.tail) >= self.capacity_entries() {
             return Err(StorageError::WalFull);
         }
 
         let seq = self.next_sequence;
-        let mut entry = WalEntry {
-            sequence_number: seq,
-            block_id: block_id.0,
-            data_offset,
-            data_size,
-            committed: 0,
-            _pad: [0; 3],
-            checksum: 0,
-            _pad2: [0; 4],
-        };
+        let mut entry = WalEntry::new(seq, block_id.0, data_offset, data_size, 0);
         entry.checksum = entry.compute_checksum();
 
         let index = self.head;
@@ -181,7 +127,7 @@ impl Wal {
 
         let disk_sector = self.start_sector + sector_in_wal;
         let mut sector_buf = [0u8; SECTOR_SIZE];
-        virtio_blk::read_sector(disk_sector, array_ref_mut(&mut sector_buf))?;
+        virtio_blk::read_sector(disk_sector, &mut sector_buf)?;
 
         let offset = entry_in_sector * WAL_ENTRY_SIZE;
         let entry_bytes = &sector_buf[offset..offset + WAL_ENTRY_SIZE];
@@ -203,7 +149,7 @@ impl Wal {
 
         // Read-modify-write the sector (8 entries per sector).
         let mut sector_buf = [0u8; SECTOR_SIZE];
-        virtio_blk::read_sector(disk_sector, array_ref_mut(&mut sector_buf))?;
+        virtio_blk::read_sector(disk_sector, &mut sector_buf)?;
 
         let offset = entry_in_sector * WAL_ENTRY_SIZE;
         // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
@@ -217,7 +163,7 @@ impl Wal {
             );
         }
 
-        virtio_blk::write_sector(disk_sector, array_ref(&sector_buf))?;
+        virtio_blk::write_sector(disk_sector, &sector_buf)?;
         Ok(())
     }
 
@@ -238,16 +184,4 @@ impl Wal {
             }
         }
     }
-}
-
-/// Helper to convert `&[u8; 512]` to `&[u8; 512]` for virtio_blk API.
-#[inline(always)]
-fn array_ref(buf: &[u8; SECTOR_SIZE]) -> &[u8; 512] {
-    buf
-}
-
-/// Helper to convert `&mut [u8; 512]` to `&mut [u8; 512]` for virtio_blk API.
-#[inline(always)]
-fn array_ref_mut(buf: &mut [u8; SECTOR_SIZE]) -> &mut [u8; 512] {
-    buf
 }

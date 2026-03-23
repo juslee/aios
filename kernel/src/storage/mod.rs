@@ -7,9 +7,11 @@
 //! Per spaces.md §4.
 
 pub mod block_engine;
+pub mod budget;
 pub mod crypto;
 pub mod lsm;
 pub mod object_store;
+pub mod posix_bridge;
 pub mod space;
 pub mod version_store;
 pub mod wal;
@@ -165,9 +167,19 @@ fn run_self_tests() {
 
     // --- Test 8: Space management ---
     test_spaces();
+
+    // --- Test 9: POSIX bridge ---
+    test_posix_bridge();
+
+    // --- Test 10: LZ4 compression ---
+    test_compression();
+
+    // --- Test 11: Storage budget ---
+    test_budget();
 }
 
 /// Write 100 unique blocks and verify all are readable.
+#[cfg(feature = "storage-tests")]
 fn test_100_blocks() {
     let mut ok_count = 0u32;
     let mut fail_count = 0u32;
@@ -445,7 +457,7 @@ fn test_encryption() {
                 // First 12 bytes should be AES-GCM nonce, not CRC header.
                 // If encrypted, bytes 0..4 should NOT equal the CRC of plaintext.
                 let raw_prefix = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
-                let data_crc = block_engine::crc32c(plaintext);
+                let data_crc = shared::storage::crc32c(plaintext);
                 if raw_prefix != data_crc {
                     crate::kinfo!(
                         Storage,
@@ -576,6 +588,268 @@ fn test_object_store() {
     // Object count check.
     let count = block_engine::with_engine(|e| e.object_index().count()).unwrap_or(0);
     crate::kinfo!(Storage, "ObjStore: {} objects in index", count);
+}
+
+/// POSIX bridge self-tests: open, write, read, stat, readdir, unlink.
+#[cfg(feature = "storage-tests")]
+fn test_posix_bridge() {
+    use shared::storage::posix_flags;
+
+    let mut bridge = posix_bridge::PosixSpaceBridge::new();
+
+    // Create a file via POSIX open (O_CREAT | O_WRONLY).
+    let fd = match bridge.open(
+        b"/home/user/test.txt",
+        posix_flags::O_CREAT | posix_flags::O_WRONLY,
+    ) {
+        Ok(fd) => {
+            crate::kinfo!(Storage, "POSIX: open(create) OK — fd={}", fd);
+            fd
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: open(create) failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Write data.
+    match bridge.write(fd, b"Hello, AIOS!") {
+        Ok(n) => crate::kinfo!(Storage, "POSIX: write OK — {} bytes", n),
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: write failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Close.
+    if let Err(e) = bridge.close(fd) {
+        crate::kerror!(Storage, "POSIX: close failed: {:?}", e);
+        return;
+    }
+
+    // Re-open for reading.
+    let fd2 = match bridge.open(b"/home/user/test.txt", posix_flags::O_RDONLY) {
+        Ok(fd) => fd,
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: open(read) failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Read back.
+    let mut buf = [0u8; 128];
+    match bridge.read(fd2, &mut buf) {
+        Ok(n) => {
+            if &buf[..n] == b"Hello, AIOS!" {
+                crate::kinfo!(Storage, "POSIX: read verified OK — {} bytes", n);
+            } else {
+                crate::kerror!(Storage, "POSIX: read data mismatch!");
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: read failed: {:?}", e);
+            return;
+        }
+    }
+
+    let _ = bridge.close(fd2);
+
+    // Stat.
+    match bridge.stat(b"/home/user/test.txt") {
+        Ok(stat) => {
+            crate::kinfo!(
+                Storage,
+                "POSIX: stat OK — size={}, mode=0o{:o}",
+                stat.size,
+                stat.mode
+            );
+        }
+        Err(e) => crate::kerror!(Storage, "POSIX: stat failed: {:?}", e),
+    }
+
+    // Readdir.
+    match bridge.readdir(b"/home/user") {
+        Ok(entries) => {
+            crate::kinfo!(Storage, "POSIX: readdir OK — {} entries", entries.len());
+        }
+        Err(e) => crate::kerror!(Storage, "POSIX: readdir failed: {:?}", e),
+    }
+
+    // Stat directory root.
+    match bridge.stat(b"/home/user") {
+        Ok(stat) => {
+            crate::kinfo!(Storage, "POSIX: stat dir OK — mode=0o{:o}", stat.mode);
+        }
+        Err(e) => crate::kerror!(Storage, "POSIX: stat dir failed: {:?}", e),
+    }
+
+    // Unlink.
+    match bridge.unlink(b"/home/user/test.txt") {
+        Ok(()) => crate::kinfo!(Storage, "POSIX: unlink OK"),
+        Err(e) => crate::kerror!(Storage, "POSIX: unlink failed: {:?}", e),
+    }
+}
+
+/// LZ4 compression self-test: write compressible data, verify round-trip.
+#[cfg(feature = "storage-tests")]
+fn test_compression() {
+    // Create highly compressible data (repeated pattern).
+    let mut compressible = [0u8; 256];
+    for (i, byte) in compressible.iter_mut().enumerate() {
+        *byte = b"AIOS-compress-test-data!"[i % 24];
+    }
+
+    // Write it — should trigger LZ4 compression (high redundancy).
+    match block_engine::write_block(&compressible) {
+        Ok((hash, _loc)) => {
+            // Read back — should decompress transparently.
+            let mut buf = [0u8; 512];
+            match block_engine::read_block_by_hash(&hash, &mut buf) {
+                Ok(n) => {
+                    if n == 256 && buf[..256] == compressible {
+                        crate::kinfo!(
+                            Storage,
+                            "Compression: 256B compressible data — round-trip OK"
+                        );
+                    } else {
+                        crate::kerror!(Storage, "Compression: data mismatch (got {} bytes)", n);
+                    }
+                }
+                Err(e) => crate::kerror!(Storage, "Compression: read failed: {:?}", e),
+            }
+
+            // Check on-disk size (wrapped_len in BlockLocation).
+            let on_disk = block_engine::with_engine(|engine| {
+                engine.memtable().get(&hash).map(|e| e.location.size)
+            })
+            .unwrap_or(None);
+
+            if let Some(disk_size) = on_disk {
+                // disk_size includes 5-byte compression header + payload.
+                // If compressed, payload < 256; if not, payload = 256.
+                let payload_size = disk_size as usize - shared::storage::COMPRESSION_HEADER_SIZE;
+                let ratio = payload_size * 100 / 256;
+                crate::kinfo!(
+                    Storage,
+                    "Compression: on-disk {}B ({}% of original 256B)",
+                    disk_size,
+                    ratio
+                );
+            }
+        }
+        Err(e) => crate::kerror!(Storage, "Compression: write failed: {:?}", e),
+    }
+
+    // Write incompressible data (should skip compression).
+    // Use a simple pseudo-random sequence.
+    let mut random_data = [0u8; 64];
+    for (i, byte) in random_data.iter_mut().enumerate() {
+        *byte = ((i * 131 + 17) % 256) as u8;
+    }
+
+    match block_engine::write_block(&random_data) {
+        Ok((hash, _loc)) => {
+            let mut buf = [0u8; 512];
+            match block_engine::read_block_by_hash(&hash, &mut buf) {
+                Ok(n) => {
+                    if n == 64 && buf[..64] == random_data {
+                        crate::kinfo!(Storage, "Compression: 64B random data — round-trip OK");
+                    } else {
+                        crate::kerror!(
+                            Storage,
+                            "Compression: random data mismatch (got {} bytes)",
+                            n
+                        );
+                    }
+                }
+                Err(e) => crate::kerror!(Storage, "Compression: random read failed: {:?}", e),
+            }
+        }
+        Err(e) => crate::kerror!(Storage, "Compression: random write failed: {:?}", e),
+    }
+}
+
+/// Test storage budget stats and quota enforcement.
+#[cfg(feature = "storage-tests")]
+fn test_budget() {
+    use shared::storage::{ContentType, PressureLevel, SecurityZone, SpaceQuota};
+
+    // 1. Get budget stats.
+    match budget::storage_stats() {
+        Ok(b) => {
+            let used_pct = (b.used_bytes * 100).checked_div(b.total_bytes).unwrap_or(0);
+            crate::kinfo!(
+                Storage,
+                "Budget: {}KB used / {}KB total ({}%), {} blocks, {} objects",
+                b.used_bytes / 1024,
+                b.total_bytes / 1024,
+                used_pct,
+                b.data_blocks,
+                b.index_entries
+            );
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "Budget: stats failed: {:?}", e);
+            return;
+        }
+    }
+
+    // 2. Check pressure level.
+    match budget::check_pressure() {
+        Ok(level) => {
+            crate::kinfo!(Storage, "Budget: pressure={:?}", level);
+            // After boot tests, most of 256MB is free → should be Normal.
+            if level != PressureLevel::Normal {
+                crate::kwarn!(Storage, "Budget: unexpected pressure level {:?}", level);
+            }
+        }
+        Err(e) => crate::kerror!(Storage, "Budget: pressure check failed: {:?}", e),
+    }
+
+    // 3. Quota enforcement test: create a space with a tight quota, try to exceed it.
+    let quota = SpaceQuota {
+        max_bytes: 100,
+        max_objects: 2,
+        _padding: [0u8; 4],
+    };
+    match space::space_create(b"quota-test", SecurityZone::Personal, quota) {
+        Ok(sid) => {
+            // First object (small) should succeed.
+            match object_store::object_create(sid, b"small.txt", b"hello", ContentType::Text) {
+                Ok(_) => crate::kinfo!(Storage, "Budget: quota obj1 OK"),
+                Err(e) => {
+                    crate::kerror!(Storage, "Budget: quota obj1 failed: {:?}", e);
+                    return;
+                }
+            }
+            // Second object should succeed (under limit).
+            match object_store::object_create(sid, b"med.txt", b"world!", ContentType::Text) {
+                Ok(_) => crate::kinfo!(Storage, "Budget: quota obj2 OK"),
+                Err(e) => {
+                    crate::kerror!(Storage, "Budget: quota obj2 failed: {:?}", e);
+                    return;
+                }
+            }
+            // Third object should fail (max_objects=2, already have 2).
+            match object_store::object_create(sid, b"over.txt", b"too many", ContentType::Text) {
+                Ok(_) => crate::kwarn!(Storage, "Budget: quota should have rejected obj3!"),
+                Err(shared::storage::StorageError::QuotaExceeded) => {
+                    crate::kinfo!(Storage, "Budget: quota enforcement OK (obj3 rejected)")
+                }
+                Err(e) => crate::kerror!(Storage, "Budget: quota obj3 unexpected error: {:?}", e),
+            }
+
+            // Clean up: delete objects and space.
+            let objs =
+                block_engine::with_engine(|engine| engine.object_index().list_by_space(&sid))
+                    .unwrap_or_default();
+            for oid in &objs {
+                let _ = object_store::object_delete(oid);
+            }
+            let _ = space::space_delete(&sid);
+        }
+        Err(e) => crate::kerror!(Storage, "Budget: quota-test space creation failed: {:?}", e),
+    }
 }
 
 use shared::storage::MEMTABLE_MAX_ENTRIES;

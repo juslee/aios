@@ -632,7 +632,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      309 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+Shared crate unit tests:      364 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -660,6 +660,14 @@ version_head storage:         Stores SHA-256(serialized_version_bytes) from writ
 MAX_SPACES:                   16 system-wide
 System spaces:                system/ (Core), user/home/ (Personal), ephemeral/ (Ephemeral) — created at boot
 Space-storage service:        Registered via service_register(b"space-storage", pid=0, ch=3)
+POSIX bridge MAX_FDS:         256 file descriptors per PosixSpaceBridge instance
+POSIX path mapping:           /spaces/[name]/path → space lookup; /home/user/ → user/home/; /tmp/ → ephemeral/
+LZ4 compression:              lz4_flex crate (no_std), 5-byte header [type(1B)|uncompressed_size(4B)], skip if ratio ≥ 0.9
+CompressionType enum:         None=0, Lz4=1; stored in on-disk block format between CRC header and data
+Superblock version:           2 (v2 adds compression header in block format; v1 disks reformatted on boot)
+PressureLevel thresholds:     Normal (>20% free), Warning (10-20%), Critical (5-10%), Emergency (<5%)
+StorageBudget fields:         total_bytes, used_bytes, free_bytes, data_blocks, wal_used, index_entries
+StorageError variants:        19 total (added NameExists, NotADirectory, FdTableFull, InvalidFd in M15)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -712,7 +720,7 @@ Phase 5+: Sequential from M16 onward (variable count per phase)
 
 ## Workspace Layout
 
-Current (post-Phase 4 M14 — Object Store, Version Store & Encryption):
+Current (post-Phase 4 M15 — POSIX Bridge, Compression & Budget):
 
 ```
 aios/
@@ -734,7 +742,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm, lz4_flex; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
@@ -771,14 +779,16 @@ aios/
 │       │   ├── mod.rs    Driver module re-exports
 │       │   └── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
 │       ├── storage/
-│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space)
-│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, encryption integration, ObjectIndex, SpaceTable
+│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
+│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable
 │       │   ├── wal.rs    Write-ahead log: 64-byte WalEntry (repr(C)), circular buffer, append/replay/trim
-│       │   ├── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
-│       │   ├── object_store.rs ObjectIndex (sorted Vec + binary search on ObjectId), object_create/read/delete, generate_object_id
+│       │   ├── lsm.rs    MemTable re-export from shared crate (sorted Vec, binary search, capacity 65536, refcount dedup)
+│       │   ├── object_store.rs object_create/read/delete, generate_object_id (ObjectIndex in shared crate)
 │       │   ├── version_store.rs Version Store: Merkle DAG, version_create/list/rollback, object_update
 │       │   ├── crypto.rs  DeviceKeyManager: AES-256-GCM encrypt/decrypt, nonce counter, crash recovery
-│       │   └── space.rs   SpaceTable, space_create/list/get/delete, init_system_spaces, register_service
+│       │   ├── space.rs   space_create/list/get/delete, init_system_spaces, register_service (SpaceTable in shared crate)
+│       │   ├── posix_bridge.rs POSIX compatibility bridge: PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
+│       │   └── budget.rs  Storage budget: global usage tracking, pressure monitoring, quota enforcement
 │       ├── syscall/
 │       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-9), Notify(10-12), Stats(13), Cap(14-17), Mem(18-22), Proc(23-25), Time(26-28), Audit(29), Debug(30)
 │       ├── platform/
@@ -828,7 +838,7 @@ aios/
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
-│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants
+│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants, MemTable, ObjectIndex, SpaceTable, WalEntry, crc32c, PosixStat, DirEntry, CompressionType, StorageBudget, PressureLevel
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```
