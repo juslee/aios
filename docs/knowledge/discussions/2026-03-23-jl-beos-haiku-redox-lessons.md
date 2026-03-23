@@ -2,7 +2,7 @@
 author: Justin Lee
 date: 2026-03-23
 tags: [kits, platform, intelligence, storage, compositor, security]
-status: draft
+status: graduated
 ---
 
 # Discussion: Additional Lessons from BeOS, Haiku OS, and Redox OS

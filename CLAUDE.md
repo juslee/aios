@@ -256,7 +256,15 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Preference security | `docs/intelligence/preferences/security.md` | §15.1–§15.7 Capability-gated access, trust levels, enterprise policy, rate limiting, audit, privacy |
 | Preference intelligence | `docs/intelligence/preferences/intelligence.md` | §16.1–§16.5 AIRS-dependent (contextual bandits, NLU, anomaly), §17.1–§17.5 Kernel-internal ML (pattern detection, confidence, conflict prediction, feature importance, model budget) |
 | Preference testing | `docs/intelligence/preferences/testing.md` | §18.1–§18.5 Unit, integration, property-based, fuzz, QEMU validation |
-| Agents | `docs/applications/agents.md` | All (Phase 13+) |
+| Agent framework (hub) | `docs/applications/agents.md` | §1 Core Insight, §15 Impl Order, §16 Design Principles, Document Map |
+| Agent anatomy & categories | `docs/applications/agents/anatomy.md` | §2 What Is an Agent, §3 Categories, AgentProcess, AgentManifest, Agent Card |
+| Agent lifecycle & packages | `docs/applications/agents/lifecycle.md` | §4 Installation & Package Model, §5 Startup/States/Shutdown/Recovery/Updates |
+| Agent sandbox & security | `docs/applications/agents/sandbox.md` | §6 Isolation Mechanisms & Syscalls, §7 Security Layer Integration |
+| Agent SDK & Scriptable Protocol | `docs/applications/agents/sdk.md` | §8 SDK Architecture & AgentContext, §9 Scriptable Protocol & Language Runtimes |
+| Agent communication | `docs/applications/agents/communication.md` | §10 IPC Patterns & Reactive Queries, §11 Service Discovery, Content Types, URL Schemes |
+| Agent distribution | `docs/applications/agents/distribution.md` | §12 Agent Store & Package Format, §13 Testing & Development Tools |
+| Agent resources | `docs/applications/agents/resources.md` | §14 Memory/CPU/Network/Inference Budgets & Resource Accounting |
+| Agent intelligence | `docs/applications/agents/intelligence.md` | §17 Kernel-Internal ML, §18 AIRS-Dependent Intelligence, §19 Future Directions |
 | Browser | `docs/applications/browser.md` | All (Phase 30+) |
 | Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 17+) |
 | Terminal emulator (hub) | `docs/applications/terminal.md` | §1 Core Insight, §2 Architecture, §9–§12 Design/Impl/Future/AI-Native, Document Map |
