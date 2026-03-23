@@ -667,7 +667,7 @@ Each Kit links to its architecture doc (detailed internal design) and its Kit do
 |---|---|---|---|
 | [App Kit](application/app.md) | *(needs creation)* | [app.md](application/app.md) | Overview |
 | [Interface Kit](application/interface.md) | `docs/applications/ui-toolkit.md` *(needs rewrite)* | [interface.md](application/interface.md) | Overview |
-| [Browser Kit](application/browser.md) | `docs/applications/browser.md` *(needs rewrite)* | [browser.md](application/browser.md) | Overview |
+| [Browser Kit](application/browser.md) | `docs/applications/browser.md` + 6 sub-docs | [browser.md](application/browser.md) | Overview |
 | [Conversation Kit](application/conversation.md) | `docs/intelligence/conversation-manager.md` + 6 sub-docs | [conversation.md](application/conversation.md) | Overview |
 | [Identity Kit](application/identity.md) | `docs/experience/identity.md` | [identity.md](application/identity.md) | Overview |
 | [Notification Kit](application/notification.md) | *(partially in attention.md)* | [notification.md](application/notification.md) | Overview |
