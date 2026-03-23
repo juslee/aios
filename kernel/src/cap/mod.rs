@@ -294,12 +294,25 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
             .as_mut()
             .ok_or(CapabilityError::InvalidHandle { handle })?;
 
-        // Look up token ID from handle, then revoke.
-        let token_id = proc
-            .cap_table
-            .get(handle)
-            .map(|t| t.id)
-            .ok_or(CapabilityError::InvalidHandle { handle })?;
+        // Look up token ID from handle by inspecting the underlying slot.
+        // We use tokens() instead of get() to distinguish:
+        //   - out-of-bounds/empty → InvalidHandle
+        //   - present + revoked   → Revoked { token_id }
+        //   - present + active    → proceed with revocation
+        let token_id = {
+            let tokens = proc.cap_table.tokens();
+            let idx = handle.0 as usize;
+            let slot = tokens
+                .get(idx)
+                .ok_or(CapabilityError::InvalidHandle { handle })?;
+            let token = slot
+                .as_ref()
+                .ok_or(CapabilityError::InvalidHandle { handle })?;
+            if token.revoked {
+                return Err(CapabilityError::Revoked { token_id: token.id });
+            }
+            token.id
+        };
 
         proc.cap_table.revoke(token_id);
         // Must drop the PROCESS_TABLE lock before touching CHANNEL_TABLE

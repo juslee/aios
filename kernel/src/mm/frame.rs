@@ -287,10 +287,25 @@ impl memory_kit::FrameAllocator for KernelFrameAllocator {
 impl memory_kit::MemoryPressureMonitor for KernelFrameAllocator {
     fn current_level(&self) -> MemoryPressure {
         let guard = FRAME_ALLOC.lock();
-        match guard.as_ref() {
-            Some(fa) => fa.pressure(),
-            None => MemoryPressure::Oom,
+        let fa = match guard.as_ref() {
+            Some(fa) => fa,
+            None => return MemoryPressure::Oom,
+        };
+        // Compute worst (highest) pressure across all initialized pools.
+        let mut worst: Option<MemoryPressure> = None;
+        for pool in [Pool::Kernel, Pool::User, Pool::Model, Pool::Dma] {
+            let total = pool_total_pages(fa, pool);
+            if total == 0 {
+                continue;
+            }
+            let free = fa.pool_free_pages(pool);
+            let pressure = MemoryPressure::from_free_ratio(free, total);
+            worst = Some(match worst {
+                Some(current) if current >= pressure => current,
+                _ => pressure,
+            });
         }
+        worst.unwrap_or(MemoryPressure::Oom)
     }
 }
 

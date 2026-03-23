@@ -43,10 +43,10 @@ pub struct PhysFrame {
     pub pool: Pool,
 }
 
-/// Page permission flags with compile-time W^X enforcement.
+/// Page permission flags with W^X enforcement.
 ///
-/// Construct via [`PagePermissions::new`] which rejects any combination
-/// where both `write` and `execute` are true.
+/// Construct via [`PagePermissions::new`], which enforces the invariant by
+/// rejecting any combination where both `write` and `execute` are true.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PagePermissions {
     read: bool,

@@ -60,6 +60,12 @@ impl From<CapabilityError> for i64 {
 impl TryFrom<i64> for CapabilityError {
     type Error = i64;
 
+    /// Decode an error code back into a `CapabilityError` variant.
+    ///
+    /// **Note:** Field values (e.g. `requested`, `token_id`, `handle`) are
+    /// placeholders — only the error *kind* survives the i64 round-trip.
+    /// Callers needing the original fields should preserve the structured
+    /// error rather than relying on the decoded version.
     fn try_from(code: i64) -> Result<Self, i64> {
         match code {
             ERR_NOT_GRANTED => Ok(CapabilityError::NotGranted {
