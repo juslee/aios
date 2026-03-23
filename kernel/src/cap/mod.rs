@@ -209,6 +209,156 @@ pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) {
     crate::kinfo!(Cap, "pid={}: revoked token {}", pid.0, token_id.0);
 }
 
+// ---------------------------------------------------------------------------
+// Capability Kit trait implementation
+// ---------------------------------------------------------------------------
+
+extern crate alloc;
+use alloc::vec::Vec;
+
+use shared::kits::capability::{self as capability_kit, CapabilityError};
+
+/// Kernel-side implementation of the Capability Kit's `CapabilityEnforcer` trait.
+///
+/// This is a zero-sized unit struct that delegates to the global `PROCESS_TABLE`.
+#[allow(dead_code)]
+pub struct KernelCapabilitySystem;
+
+impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
+    fn check(
+        &self,
+        holder: ProcessId,
+        action: &Capability,
+    ) -> Result<CapabilityHandle, CapabilityError> {
+        let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
+        let table = PROCESS_TABLE.lock();
+        let proc = table[holder.0 as usize]
+            .as_ref()
+            .ok_or(CapabilityError::NotGranted {
+                requested: action.clone(),
+            })?;
+
+        // Find a token authorizing this action; convert token_id → handle.
+        let token_id = proc
+            .cap_table
+            .find_authorizing_token(action, now)
+            .ok_or(CapabilityError::NotGranted {
+                requested: action.clone(),
+            })?;
+
+        // Find the handle (slot index) for this token ID.
+        for (i, slot) in proc.cap_table.tokens().iter().enumerate() {
+            if let Some(t) = slot {
+                if t.id == token_id && !t.revoked {
+                    return Ok(CapabilityHandle(i as u32));
+                }
+            }
+        }
+
+        Err(CapabilityError::NotGranted {
+            requested: action.clone(),
+        })
+    }
+
+    fn grant(
+        &mut self,
+        holder: ProcessId,
+        cap: Capability,
+        granted_by: ProcessId,
+    ) -> Result<CapabilityHandle, CapabilityError> {
+        let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
+        let mut table = PROCESS_TABLE.lock();
+        let proc = table[holder.0 as usize]
+            .as_mut()
+            .ok_or(CapabilityError::TableFull)?;
+
+        let token = CapabilityToken {
+            id: new_token_id(),
+            capability: cap,
+            holder,
+            delegatable: true,
+            revoked: false,
+            parent_token: None,
+            usage_count: 0,
+            created_at_tick: now,
+            expires_at_tick: None,
+        };
+
+        // Suppress unused variable warning — granted_by is recorded in the
+        // token's provenance in future phases but not yet used.
+        let _ = granted_by;
+
+        proc.cap_table.grant(token).map_err(|_| CapabilityError::TableFull)
+    }
+
+    fn revoke(
+        &mut self,
+        holder: ProcessId,
+        handle: CapabilityHandle,
+    ) -> Result<(), CapabilityError> {
+        let mut table = PROCESS_TABLE.lock();
+        let proc = table[holder.0 as usize]
+            .as_mut()
+            .ok_or(CapabilityError::InvalidHandle { handle })?;
+
+        // Look up token ID from handle, then revoke.
+        let token_id = proc
+            .cap_table
+            .get(handle)
+            .map(|t| t.id)
+            .ok_or(CapabilityError::InvalidHandle { handle })?;
+
+        proc.cap_table.revoke(token_id);
+        // Note: channel cascade revocation (revoke_channels_for_cap) is not
+        // called here — it's triggered by the existing revoke_in_process() path.
+        // The Kit trait provides a clean API; cascade is a kernel-internal concern.
+        Ok(())
+    }
+
+    fn attenuate(
+        &mut self,
+        holder: ProcessId,
+        handle: CapabilityHandle,
+        narrowed: Capability,
+    ) -> Result<CapabilityHandle, CapabilityError> {
+        let mut table = PROCESS_TABLE.lock();
+        let proc = table[holder.0 as usize]
+            .as_mut()
+            .ok_or(CapabilityError::InvalidHandle { handle })?;
+
+        proc.cap_table
+            .attenuate(handle, narrowed, None, holder, new_token_id())
+            .map_err(|_| CapabilityError::InvalidAttenuation {
+                reason: "parent does not permit narrowing to requested capability",
+            })
+    }
+
+    fn list_active(&self, holder: ProcessId) -> Vec<CapabilityToken> {
+        let table = PROCESS_TABLE.lock();
+        let proc = match &table[holder.0 as usize] {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+
+        let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
+        let mut result = Vec::new();
+        for slot in proc.cap_table.tokens().iter() {
+            if let Some(token) = slot {
+                if !token.revoked {
+                    // Also filter expired tokens.
+                    if let Some(exp) = token.expires_at_tick {
+                        if now >= exp {
+                            continue;
+                        }
+                    }
+                    result.push((*token).clone());
+                }
+            }
+        }
+        result
+    }
+}
+
 /// Walk CHANNEL_TABLE and destroy channels whose creation_cap matches token_id.
 /// Wakes blocked threads with EPIPE.
 fn revoke_channels_for_cap(token_id: CapabilityTokenId) {
