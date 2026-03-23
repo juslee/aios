@@ -321,11 +321,31 @@ Fix all bare fences by adding `text`, `rust`, `asm`, or `mermaid` as appropriate
 
 1. Commit with message: `Docs: Add <topic> architecture document` (CREATE)
    or `Docs: Update <topic> architecture document` (MAINTAIN)
-2. Push branch to remote
-3. Create PR to `main` using `gh pr create`
-4. Wait 3-5 minutes for Copilot/reviewer comments
-5. Address review comments, commit fixes
-6. Report PR URL to user
+2. Push branch to remote with `-u` flag
+3. Create PR using `gh pr create`:
+
+```bash
+gh pr create --title "Docs: <Add|Update> <topic> architecture document" --body "$(cat <<'EOF'
+## Summary
+- <CREATE: New architecture doc for <topic>> OR <MAINTAIN: Updated <topic> architecture doc>
+- <N> sections, <N> Mermaid diagrams
+- Key changes: <list 2-3 bullet points>
+
+## Research Sources
+- <list key papers, OSes, or references incorporated>
+
+## Quality Gates
+- [ ] `/audit-loop` — 0 issues
+- [ ] All cross-references verified
+- [ ] No bare code fences
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+4. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
+5. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
 
 ## TodoWrite Template
 

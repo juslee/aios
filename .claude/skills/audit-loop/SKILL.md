@@ -13,7 +13,7 @@ Auto-detect which audits to run based on changed files, then loop until 0 issues
 
 ## Scope Detection
 
-Check changed files against the base branch:
+Run this Bash command to get the list of changed files:
 
 ```bash
 git diff --name-only main...HEAD
@@ -22,17 +22,24 @@ git diff --name-only main...HEAD
 - **Docs-only mode**: If ALL changed files are `.md` files → run doc audit only
 - **Full mode**: If ANY non-`.md` files are changed → run all three audits
 
-## Audit Categories
+## How to Run Each Audit
 
-### Docs-only mode (all changes are .md files)
+Spawn Agent tool subagents for each audit type. Run all applicable audits in parallel within each round.
 
-1. **Doc audit**: Cross-reference errors, technical accuracy, naming consistency in all modified docs
+### 1. Doc audit (both modes)
 
-### Full mode (any code changes)
+Spawn a `doc-auditor` agent with this prompt:
+> "Audit all modified docs for: cross-reference errors (broken links, wrong section numbers), technical accuracy (struct/function/constant names matching actual code), naming consistency, bare code fences (opening ``` without language specifier), stale cross-references to split docs. List of modified docs: [paste file list]. Report each issue with file path, line number, and what's wrong. Return the total issue count."
 
-1. **Doc audit**: Cross-reference errors, technical accuracy, naming consistency in all modified docs
-2. **Code review**: Convention compliance, unsafe documentation, W^X enforcement, naming, dead code
-3. **Security/bug review**: Logic errors, address confusion (virt vs phys), PTE bit correctness, race conditions
+### 2. Code review (full mode only)
+
+Spawn a `code-reviewer` agent with this prompt:
+> "Review all modified code files for: convention compliance (see .claude/rules/01-code-conventions.md), unsafe documentation (every unsafe block needs SAFETY comment with invariant + maintainer + violation consequence), W^X enforcement (no page both writable and executable), naming conventions (snake_case functions, CamelCase types, SCREAMING_SNAKE constants), dead code (#[allow(dead_code)] that can be removed). List of modified files: [paste file list]. Report each issue with file path, line number, and what's wrong. Return the total issue count."
+
+### 3. Security/bug review (full mode only)
+
+Spawn a `code-reviewer` agent with this prompt:
+> "Review all modified code files for: logic errors, address confusion (virtual vs physical addresses — check every pointer cast and address arithmetic), PTE bit correctness (permissions, attributes), race conditions (shared state accessed without proper synchronization), integer overflow in address calculations, missing barrier instructions (DSB/ISB after MMU/TLB operations). List of modified files: [paste file list]. Report each issue with file path, line number, and what's wrong. Return the total issue count."
 
 ## Convergence Protocol
 
@@ -41,11 +48,11 @@ The audit uses a **two-level loop**: an inner loop that fixes until 0 issues, th
 ```
 OUTER LOOP:
   INNER LOOP (Round N):
-    a. Run applicable audits (1 or 3 depending on mode)
-    b. Count total issues found
+    a. Spawn applicable audit agents (1 or 3 depending on mode) in parallel
+    b. Collect results, count total issues found across all agents
     c. If >0 issues:
-       - Fix all genuine issues
-       - Commit and push fixes
+       - Fix all genuine issues using Edit tool
+       - Commit and push: "Audit round N: fix <summary>"
        - Re-check scope (fixes may have added non-.md files — upgrade to full mode if needed)
        - Go to Round N+1
     d. If 0 issues:

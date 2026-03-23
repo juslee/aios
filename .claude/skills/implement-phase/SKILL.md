@@ -19,23 +19,45 @@ Follow the Phase Implementation Workflow from CLAUDE.md:
     - Use Obsidian MCP search_notes with keywords from the phase doc
     - Review any matching docs/knowledge/lessons/ and docs/knowledge/decisions/
     - Factor known pitfalls into implementation approach
-5. Create a working plan doc in docs/knowledge/plans/:
-    - File: docs/knowledge/plans/phase-$ARGUMENTS-description.md
-    - Plan out each milestone and step: approach, key decisions, risks, dependencies
-    - Include code structure decisions, data structure choices, algorithm rationale
-    - Status: in-progress
+5. Write a working plan doc using the Write tool, based on the existing template:
+    - Read `docs/knowledge/plans/_template.md` first — use its structure as the skeleton
+    - Path: `docs/knowledge/plans/phase-$ARGUMENTS-description.md`
+    - Fill in the template sections:
+      - **Frontmatter**: set `author: claude`, `date: YYYY-MM-DD`, `tags: [relevant subsystem tags]`, `status: in-progress`, `phase: $ARGUMENTS`, `milestone: MK`
+      - **Approach**: why this phase matters, current codebase state, key gaps, shared crate plan
+      - **Progress**: for each step in the phase doc, write a checkbox item with granular sub-tasks (files to create/modify, types/traits/functions, acceptance commands)
+      - **Code Structure Decisions**: naming, data structures, algorithms, deviations from arch docs (with rationale)
+      - **Dependencies & Risks**: what must exist before this work starts, what could go wrong
+    - This plan is your implementation roadmap — do NOT skip it
+    - Verify: confirm the file was written before proceeding to Phase 2
 
 ## Phase 2: Phase Doc Reconciliation
 
 6. Compare the plan against the current phase doc (`docs/phases/`):
     - If planning reveals changes needed (new steps, reordered steps, updated acceptance criteria, corrected references):
-      update the phase doc to match the plan
-    - Commit and push phase doc updates before any implementation begins
+      update the phase doc using the Edit tool to match the plan
+    - If no changes are needed, note "Phase doc verified — no updates required" and proceed
+    - If changes were made: commit and push phase doc updates before any implementation begins
     - This ensures the phase doc is the accurate source of truth for implementation
 
-## Phase 3: Create Worktree
+## Phase 3: Session Prep & Worktree
 
-7. Create an isolated worktree for all implementation work:
+7. Run the session start checklist (from `.claude/rules/04-phase-workflow.md`):
+
+```bash
+brew upgrade qemu just
+```
+
+Update Rust nightly in `rust-toolchain.toml` if needed, then:
+
+```bash
+cargo update
+just check
+```
+
+Commit `Cargo.lock` and `rust-toolchain.toml` if changed.
+
+8. Create an isolated worktree for all implementation work:
 
 ```bash
 # Ensure we're on main and up to date
@@ -47,7 +69,7 @@ git checkout main && git pull origin main
 git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-MK-<short-description> main
 ```
 
-8. **Switch working directory** to the worktree. ALL subsequent work (implementation, commits, pushes, quality gates) happens inside the worktree:
+9. **Switch working directory** to the worktree. ALL subsequent work (implementation, commits, pushes, quality gates) happens inside the worktree:
 
 ```bash
 cd .claude/worktrees/phase-$ARGUMENTS
@@ -57,36 +79,58 @@ cd .claude/worktrees/phase-$ARGUMENTS
 
 ## Phase 4: Implementation
 
-9. Create TodoWrite with one item per step, grouped by milestone
-10. For each milestone:
+10. Read the phase doc and create a TodoWrite entry for EACH step listed, grouped by milestone. Use the exact step names from the phase doc — do not paraphrase or invent steps.
+11. For each milestone:
     For each step within the milestone (including the shared crate refactoring step baked into the phase doc):
-    a. Implement the step
-    b. Run acceptance criteria for the step
-    c. If any gate fails: fix before proceeding
-    d. Commit and push: `Phase $ARGUMENTS MN: Step X — <step description>`
+    a. Read the step's acceptance criteria from the phase doc BEFORE writing any code
+    b. Consult your working plan doc for the approach, key decisions, and files to modify
+    c. Implement the step using Edit/Write tools — complete the full step, no partial work
+    d. Run the step's acceptance criteria commands (build, test, QEMU as applicable)
+    e. If any gate fails: read the error, fix the root cause, re-run — do not skip
+    f. Commit and push: `Phase $ARGUMENTS MN: Step X — <step description>`
+    g. Mark the TodoWrite item as completed
     After all steps in milestone complete:
-    e. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
-    f. Commit and push: `Phase $ARGUMENTS MN: update docs`
+    h. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
+    i. Commit and push: `Phase $ARGUMENTS MN: update docs`
 
 ## Phase 5: Verify & Audit
 
-11. Dead code cleanup: find all `#[allow(dead_code)]` items — remove the item if truly unused, or remove just the attribute if the code is now used. Commit and push.
-12. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
-13. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
-14. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
+12. Dead code cleanup: use the Grep tool to search for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. For each match: remove the item if truly unused, or remove just the attribute if the code is now used. Commit and push.
+13. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
+14. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
+15. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
 
 ## Phase 6: Knowledge Distillation
 
-15. Distill knowledge from the working plan doc:
-    - Extract hard-won insights → docs/knowledge/lessons/ (permanent)
-    - Extract key decisions → docs/knowledge/decisions/ (permanent)
-    - Use YYYY-MM-DD-initials-phase-$ARGUMENTS-description.md naming
-    - Delete the working plan doc (docs/knowledge/plans/phase-*.md)
+16. Read the working plan doc (`docs/knowledge/plans/phase-$ARGUMENTS-*.md`) and distill:
+    - **Lessons** (bugs hit, surprises, workarounds, platform quirks) → Write each to `docs/knowledge/lessons/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
+    - **Decisions** (why X over Y, trade-offs made, architecture choices) → Write each to `docs/knowledge/decisions/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
+    - If nothing was learned (unlikely), note "No new lessons or decisions" and skip the writes
+    - Delete the working plan doc
     - Commit and push
 
 ## Phase 7: PR, Review & Merge
 
-16. Create PR to main (from the worktree — `gh pr create` works from any checkout)
-17. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
-18. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
+17. Create PR to main using `gh pr create` with this structure:
+
+```bash
+gh pr create --title "Phase $ARGUMENTS: <phase name from phase doc>" --body "$(cat <<'EOF'
+## Summary
+- <what was implemented — milestones and key deliverables>
+- <notable decisions or deviations from phase doc>
+
+## Quality Gates
+- [ ] `just check` — zero warnings
+- [ ] `just test` — all pass
+- [ ] `just run` — QEMU acceptance criteria met
+- [ ] `/audit-loop` — 0 issues
+
+## Phase Doc
+`docs/phases/<phase-doc-filename>.md`
+EOF
+)"
+```
+
+18. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
+19. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
     - `/merge-and-cleanup` auto-detects the worktree, removes it, and returns to the main repo
