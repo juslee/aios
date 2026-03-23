@@ -1,5 +1,7 @@
 # AIOS — Claude Code Project Instructions
 
+> **Rules and conventions** are in `.claude/rules/` (auto-loaded). This file contains reference data only.
+
 ## Project Identity
 
 ```
@@ -357,171 +359,6 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 
 ---
 
-## Session Start Checklist
-
-Before any implementation work, run these steps at the start of every session:
-
-1. **Update system tools**: Run `brew upgrade qemu just` to get the latest QEMU and just versions
-2. **Update Rust nightly toolchain**: Check for the latest nightly (`rustc +nightly --version`), update `rust-toolchain.toml` to the latest date, verify the build still passes
-3. **Update dependencies**: Run `cargo update` to pull latest compatible versions of all dependencies, commit `Cargo.lock` if changed
-4. **Verify build**: Run `just check` (or `cargo build --target aarch64-unknown-none` if justfile doesn't exist yet) to confirm zero warnings after updates
-
----
-
-## Phase Implementation Workflow
-
-When implementing Phase N:
-
-1. **READ** (in this order):
-   - `docs/phases/NN-phase-name.md` — the phase implementation doc
-   - All architecture docs listed in the phase doc's "Architecture References" table
-   - This file's Code Conventions and Quality Gates sections
-
-2. **WORKTREE**: Create an isolated worktree for implementation:
-
-   ```bash
-   git checkout main && git pull origin main
-   git worktree add .claude/worktrees/phase-N -b claude/phase-N-MK-name main
-   cd .claude/worktrees/phase-N
-   ```
-
-   - Example: `git worktree add .claude/worktrees/phase-0 -b claude/phase-0-m2-boots main`
-   - All subsequent work (edits, builds, commits, pushes) happens inside the worktree
-   - The main repo stays on `main` (clean for other tasks)
-
-3. **PLAN** before writing any code:
-   - Identify which Milestone you are targeting (M1/M2/M3)
-   - List files to create or modify
-   - Verify no step dependencies are unmet
-   - Use TodoWrite for milestone tracking
-
-4. **IMPLEMENT** one step at a time:
-   - Each step in the phase doc is atomic — complete it fully before moving on
-   - Every step has an "Acceptance:" block — this is your done condition
-   - Do not proceed to the next step if acceptance criteria are not met
-
-5. **VERIFY** after each step:
-   - Run the acceptance criteria commands (`cargo build`, `just run`, `just check`, etc.)
-   - For QEMU output: match exact strings in acceptance criteria
-   - For objdump: check section addresses match linker script values
-
-6. **COMMIT + PUSH** after each step completes:
-   - Format: `Phase N MK: Step X — <step description>`
-   - Example: `Phase 2 M8: Step 4 — page table infrastructure`
-   - Commit and push immediately after each step passes verification
-   - Do not batch multiple steps into a single commit
-
-7. **UPDATE ALL DOCS** after each milestone:
-   - **CLAUDE.md**: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
-   - **README.md**: Project Structure, Build Commands, status text — anything that changed
-   - **Phase doc** (`docs/phases/NN-*.md`): Check off completed task boxes (`[ ]` → `[x]`), update Status field (e.g. "In Progress (M4 complete)")
-   - **Phase Completion Criteria**: Check off the completed milestone checkbox
-   - **Developer guide** (`docs/project/developer-guide.md`): Update file size examples (§3.1), test counts (§5.2, §5.4), and any new patterns or lessons learned from the milestone
-   - **Architecture docs** (`docs/kernel/*.md`, `docs/project/*.md`, etc.): Update any referenced architecture docs if the implementation revealed corrections, new facts, or deviations from the spec
-
-8. **AUDIT** after all steps complete, before PR — run recursively until all reach 0 issues:
-   - **Doc audit**: Cross-reference errors, technical accuracy, naming consistency in all modified docs
-   - **Code review**: Convention compliance, unsafe documentation, W^X, naming, dead code
-   - **Security/bug review**: Logic errors, address confusion (virt vs phys), PTE bit correctness, race conditions
-   - Fix all genuine issues found, commit, and re-run all three audits
-   - Repeat until a full round returns 0 issues across all three categories
-
-9. **PR** after audits pass clean: push branch, create PR to `main`
-   - One PR per milestone — keeps reviews small and focused
-   - After PR creation: wait 3–7 minutes for Copilot/automated reviewers to post comments
-   - Check Copilot/reviewer comments, fix issues, reply and resolve conversations
-   - Merge to `main` before starting the next milestone
-
-**BLOCKED?** Read the referenced architecture doc section. Architecture docs are the source of truth. Never invent register offsets, struct fields, or memory addresses.
-
----
-
-## Code Conventions
-
-### Rust
-
-- `#![no_std]` everywhere in `kernel/` and `shared/`
-- `#![no_main]` in `kernel/` and `uefi-stub/`
-- All `unsafe` blocks require a `// SAFETY:` comment (see Unsafe Documentation Standard below)
-- No TODO comments in code — complete implementations only
-- Naming: `snake_case` for functions/variables, `CamelCase` for types, `SCREAMING_SNAKE` for constants
-- Error handling: `Result<T, E>` for fallible operations; panics reserved for unrecoverable invariant violations
-- Panic handler: always prints to UART then halts with `wfe` loop (not `loop {}`)
-- Prefer the best approach over the simplest — choose the design that is cleanest, most maintainable, and architecturally sound, even if a shortcut exists
-
-### Architecture-Specific (aarch64)
-
-- FPU must be enabled before any Rust code runs (`boot.S` is responsible)
-- BSS must be zeroed before `kernel_main` is called (`boot.S` is responsible)
-- `VBAR_EL1` must be set before interrupts are unmasked
-- All MMIO access via `core::ptr::read_volatile` / `core::ptr::write_volatile`
-- Memory-mapped registers: define as `const` physical addresses; map to virtual after Phase 1 MMU
-- W^X: no page is both writable and executable
-- Stack alignment: 16-byte (ABI requirement)
-- Secondary cores: park with `wfe` (not `wfi`) — `sev` wakes all simultaneously
-- Phase 1 NC memory: `spin::Mutex` and atomic RMW (`fetch_add`, `compare_exchange`) use exclusive load/store pairs that require Inner Shareable + Cacheable memory. They **hang** on Non-Cacheable Normal memory (Phase 1 identity map). Use only `load(Acquire)` / `store(Release)` for inter-core synchronization until Phase 2 enables WB cacheable attributes.
-
-### Assembly
-
-- Files use `.S` extension (uppercase — Rust build system handles preprocessing)
-- Entry symbols: `#[no_mangle]` on the Rust side
-- Vector table: `.align 7` (128 bytes) per entry in assembly; `ALIGN(2048)` for section in linker script
-- All 16 exception vector entries present; stubs `b .` until real handlers added
-- Boot order (strict): FPU enable → VBAR install → park secondaries → set SP → zero BSS → build minimal TTBR1 → configure TCR T1SZ → install TTBR1 → convert SP to virtual → branch to virtual `kernel_main`
-- Boot CPU SP: converted from physical to virtual in boot.S (add VIRT_PHYS_OFFSET) before branching to kernel_main. Secondary core SPs remain physical (accessed via TTBR0 identity map).
-- Exception handler: uses direct `putc()` output, not `println!()`, to prevent recursive faults when TTBR0 is switched away from identity map
-
-### Crate & Dependency Rules
-
-- All kernel crates: `no_std`, `no_main`
-- All dependencies: must be `no_std` compatible
-- License: MIT or Apache-2.0 preferred (BSD-2-Clause compatible). **No GPL in kernel/ or shared/**
-- `Cargo.lock`: committed (binary crate, reproducible builds)
-
----
-
-## File Placement
-
-```
-kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, trap, boot.S, context_switch.S, linker.ld)
-kernel/src/arch/aarch64/mod.rs re-exports arch-specific items (uart, exceptions, gic, timer, mmu, psci, trap)
-kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
-kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, init, pgtable, kmap, kaslr, asid, tlb, GlobalAlloc)
-kernel/src/observability/      Structured logging, metrics, trace points
-kernel/src/sched/              Scheduler: per-CPU run queues (4-class FIFO), schedule(), block/unblock, idle threads, load balancer
-kernel/src/ipc/                IPC channels, call/reply, direct switch, timeouts, shared memory, notifications, select
-kernel/src/cap/                Capability system: per-process tables, enforcement API, cascade revocation
-kernel/src/task/               Thread/process data structures for scheduler and IPC
-kernel/src/service/            Service manager: registry, echo service, process lifecycle, audit ring
-kernel/src/syscall/            Syscall dispatch and handlers (IPC 0-9, Notify 10-12, Stats 13, Cap 14-17, Mem 18-22, Proc 23-25, Time 26-28, Audit 29, Debug 30)
-kernel/src/drivers/            Device drivers (virtio_blk)
-kernel/src/storage/            Block Engine, WAL, LSM-tree MemTable, Object Store, Version Store, crypto (AES-256-GCM), Space management (Phase 4+)
-kernel/src/                    platform-agnostic kernel logic (boot_phase.rs, dtb.rs, smp.rs, framebuffer.rs, bench.rs)
-shared/src/                    types crossing kernel/stub boundary (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
-uefi-stub/src/                 UEFI stub code (Phase 1+)
-docs/phases/                   phase implementation docs (NN-name.md, flat, no subdirs)
-```
-
----
-
-## Quality Gates
-
-Every milestone must pass all applicable gates:
-
-| Gate | Command | Passes when |
-|---|---|---|
-| Compile | `cargo build --target aarch64-unknown-none` | Zero warnings |
-| Check | `just check` (fmt-check + clippy + build) | Zero warnings, zero errors |
-| Test | `just test` (host-side unit tests) | All pass |
-| QEMU | `just run` | Expected UART string matches phase acceptance criteria |
-| CI | Push to GitHub | All CI jobs pass |
-| Objdump | `cargo objdump -- -h` | Sections at expected addresses |
-| EL | Boot diagnostics | EL = 1, core ID = 0 |
-
-Never mark a milestone complete if any gate fails.
-
----
-
 ## Key Technical Facts
 
 ```
@@ -710,23 +547,6 @@ When generating a phase doc for Phase N:
 
 ---
 
-## Milestone Numbering
-
-47 phases with variable milestones (3+ per phase, based on complexity).
-
-Phases 0–4 retain fixed milestone numbering (M1–M15). From Phase 5 onward, milestones are numbered sequentially starting at M16, with the count per phase determined when the phase doc is written.
-
-```
-Phase 0:  M1–M3   (3 milestones)
-Phase 1:  M4–M6   (3 milestones)
-Phase 2:  M7–M9   (3 milestones)
-Phase 3:  M10–M12 (3 milestones)
-Phase 4:  M13–M15 (3 milestones)
-Phase 5+: Sequential from M16 onward (variable count per phase)
-```
-
----
-
 ## Workspace Layout
 
 Current (post-Phase 4 M15 — POSIX Bridge, Compression & Budget):
@@ -747,6 +567,7 @@ aios/
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
+│   ├── rules/            01-code-conventions, 02-quality-gates, 03-git-workflow, 04-phase-workflow, 05-file-placement, 06-unsafe-documentation, 07-milestone-numbering, 08-knowledge-hive
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments, verify-phase, write-arch-doc
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
@@ -854,39 +675,6 @@ aios/
 
 ---
 
-## Unsafe Documentation Standard
-
-Every `unsafe` block in `kernel/` requires a preceding comment:
-
-```rust
-// SAFETY: <invariant that makes this safe>
-// <who maintains the invariant>
-// <what happens if violated>
-unsafe { ... }
-```
-
-Examples:
-
-```rust
-// SAFETY: UART base address 0x0900_0000 is valid MMIO on QEMU virt.
-// QEMU maps this region unconditionally. Writing to unmapped memory
-// on a different machine would cause a synchronous abort.
-unsafe { core::ptr::write_volatile(uart_base as *mut u32, byte as u32) };
-```
-
----
-
-## Git Branching Convention
-
-All work happens on `claude/*` branches. Never commit directly to `main`.
-
-- Milestone implementations: `claude/phase-N-MK-name` (e.g., `claude/phase-0-m2-boots`)
-- Doc generation: `claude/phase-N-docs` (e.g., `claude/phase-5-docs`)
-- Doc updates from code changes: `claude/docs-update-*`
-- One PR per milestone — merge to `main` before starting the next milestone
-
----
-
 ## Team & Agent Architecture
 
 Single team lead + specialist agents. Fully autonomous — human reviews async via PRs.
@@ -921,60 +709,3 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 - `engineering-workflow-skills:pr`, `commit-commands:commit`
 - `sc:implement`, `sc:test`, `sc:build`, `sc:analyze`
 - `pr-review-toolkit:review-pr`
-
----
-
-## Knowledge Hive
-
-The `docs/` directory is an Obsidian vault. The MCP server is configured in `.mcp.json`
-(project-scoped) and available to all developers automatically.
-
-### Searching docs
-
-Use Obsidian MCP tools to search architecture docs:
-- `search_notes("query")` — find docs by content or frontmatter
-- `read_note("path")` — read any doc in the vault
-- `manage_tags` — find docs by domain tags
-
-### Writing knowledge
-
-After significant sessions, write insights to `docs/knowledge/`:
-- `docs/knowledge/decisions/` — Architecture Decision Records (why we chose X over Y)
-- `docs/knowledge/research/` — Research notes on explored topics
-- `docs/knowledge/lessons/` — Hard-won lessons (bugs, gotchas, platform quirks)
-
-### Discussions (discussions/)
-
-For architecture brainstorming, design explorations, and Claude Code session notes:
-
-- `docs/knowledge/discussions/` — semi-permanent, kept until graduated or irrelevant
-- Revisit across sessions, add new insights as they come up
-- When design settles: graduate content to architecture docs, set `status: graduated`
-
-### Implementation plans (plans/)
-
-When implementing a phase/milestone, create a working doc in `docs/knowledge/plans/`:
-- Track approach, decisions, issues encountered as you work
-- At completion: distill lessons → `lessons/`, decisions → `decisions/`
-- Delete the plan doc after distilling (ephemeral — permanent notes survive)
-
-**Architecture docs are for finalized design only.** Do not put in-progress discussion or
-brainstorming into `docs/kernel/`, `docs/platform/`, etc. Use `docs/knowledge/discussions/`
-for design exploration and `docs/knowledge/plans/` for implementation planning — graduate
-to architecture docs only when the design is settled.
-
-### Conventions
-
-Naming: `YYYY-MM-DD-initials-short-description.md`
-Required frontmatter: author, date, tags, status (draft/in-progress/final)
-Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media
-
----
-
-## CLAUDE.md Self-Maintenance
-
-Team-lead updates this file after every milestone:
-
-1. Review what changed (new files, crates, constants, conventions)
-2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
-3. Commit as part of the milestone commit (same commit)
