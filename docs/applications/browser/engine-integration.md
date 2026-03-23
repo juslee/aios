@@ -352,6 +352,7 @@ The reference browser supports a practical subset of web standards:
 **HTML5 parsing:** Full HTML5 spec compliance via html5ever. All valid HTML5 documents parse correctly. The DOM tree supports standard traversal and manipulation through QuickJS bindings.
 
 **CSS rendering:** CSS 2.1 complete, plus selected CSS3 properties:
+
 - Box model, floats, positioning (static, relative, absolute, fixed)
 - Flexbox (basic, no advanced alignment edge cases)
 - Colors (hex, rgb, rgba, named colors, currentColor)
@@ -361,6 +362,7 @@ The reference browser supports a practical subset of web standards:
 - Custom properties (var())
 
 **JavaScript:** ES2020 via QuickJS:
+
 - Async/await, Promises, generators
 - Modules (import/export)
 - Proxy, Reflect, Symbol, WeakMap, WeakRef
@@ -370,6 +372,7 @@ The reference browser supports a practical subset of web standards:
 - setTimeout, setInterval, requestAnimationFrame
 
 **Adequate for:**
+
 - Documentation sites (MDN, Read the Docs, GitHub READMEs)
 - Simple web applications (todo apps, note-taking, calculators)
 - Settings and configuration pages

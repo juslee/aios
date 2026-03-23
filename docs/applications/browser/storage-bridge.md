@@ -339,6 +339,7 @@ The `passwords/` sub-space uses a dedicated encryption zone. Credentials are enc
 -----
 
 **Cross-references:**
+
 - Space architecture: [spaces.md](../../storage/spaces.md) — core Space data model and operations
 - Space sync protocol: [sync.md](../../storage/spaces/sync.md) — Space Mesh multi-device synchronization
 - Space encryption: [encryption.md](../../storage/spaces/encryption.md) — per-space encryption zones and key management
