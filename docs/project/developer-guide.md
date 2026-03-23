@@ -1570,7 +1570,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 317+ host-side tests pass |
+| **Test** | `just test` | All 364+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1622,7 +1622,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
 ```
 
-Currently 317 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 364 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1715,7 +1715,7 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std`, so tests cannot use `Vec`, `String`, or heap allocation. Use fixed-size arrays and stack-based data structures. The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (317 tests):**
+**Current test distribution (364 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
@@ -2369,7 +2369,7 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 | **Block Engine** | Content-addressed storage layer providing crash-safe writes via WAL + CRC-32C integrity + SHA-256 hashing + LZ4 compression + AES-256-GCM encryption. Manages superblock (v2), data region, and MemTable index. Implemented in `storage/block_engine.rs`. |
 | **Buddy allocator** | Physical page allocator that manages free pages in power-of-two blocks (orders 0--10, covering 4 KiB to 4 MiB). Uses bitmap coalescing to merge adjacent free blocks. Implemented in `mm/buddy.rs`. |
 | **ContentHash** | SHA-256 hash of a data block, used as the primary identifier for content-addressed storage. Wrapper type `[u8; 32]` with custom `Ord` for sorted MemTable lookups. Defined in `shared/src/storage.rs`. |
-| **CRC-32C** | Castagnoli variant of CRC-32 using polynomial 0x1EDC6F41. Used for both superblock and data block integrity verification. Computed via a 256-entry const-initialized lookup table in `storage/block_engine.rs`. |
+| **CRC-32C** | Castagnoli variant of CRC-32 using polynomial 0x1EDC6F41. Used for both superblock and data block integrity verification. Computed via a 256-entry const-initialized lookup table in `shared/src/storage.rs`. |
 | **Direct map** | A 1:1 virtual-to-physical mapping of all RAM at `DIRECT_MAP_BASE` (`0xFFFF_0001_0000_0000`). Allows the kernel to access any physical address via a fixed offset calculation. Built in `mm/kmap.rs`. |
 | **Direct switch** | IPC fast path that bypasses the scheduler. When thread A calls thread B and B is already waiting in `IpcRecv`, the kernel context-switches directly from A to B without touching the run queue. Approximately 0.2 microseconds. Implemented in `ipc/direct.rs`. |
 | **DMA pool** | Physical memory pool (64 MB on QEMU 2G) reserved for device-facing buffers. Required because DMA-capable devices need cache-coherent memory. VirtIO virtqueues and request buffers are allocated from this pool. |
@@ -2380,7 +2380,7 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 | **GICv3** | Generic Interrupt Controller version 3. ARM's standard interrupt controller. Components: Distributor (SPI routing), Redistributor (per-core PPI/SGI), CPU Interface (acknowledge/complete). |
 | **ISB** | Instruction Synchronization Barrier. ARM instruction that flushes the processor pipeline, ensuring all subsequent instructions are fetched and decoded using the current system register state. |
 | **Magazine** | Per-CPU object cache in the slab allocator. Provides a two-chance fast path: check current magazine, then previous magazine, before falling back to the slab. 32 objects per magazine round. |
-| **MemTable** | In-memory sorted index mapping `ContentHash` → `BlockLocation` with refcount for deduplication. Uses `Vec::binary_search_by()` for O(log n) lookup. Capacity 65536 entries. Implemented in `storage/lsm.rs`. |
+| **MemTable** | In-memory sorted index mapping `ContentHash` → `BlockLocation` with refcount for deduplication. Uses `Vec::binary_search_by()` for O(log n) lookup. Capacity 65536 entries. Pure data structure in `shared/src/storage.rs`; re-exported by `kernel/src/storage/lsm.rs`. |
 | **MPIDR** | Multiprocessor Affinity Register (`MPIDR_EL1`). Each core has a unique value. AIOS uses bits [7:0] as the core ID (valid for up to 256 cores on QEMU virt). |
 | **NC memory** | Non-Cacheable Normal memory. Phase 1 identity map uses NC attributes (edk2 MAIR Attr1=0x44). Atomic RMW operations hang on NC memory because the exclusive monitor requires cacheability. See SS4.1. |
 | **Pool** | A partition of the physical memory managed by separate buddy allocator instances. AIOS defines four pools: `Kernel` (128 MB), `User` (remainder), `Model` (0 MB, reserved for future AI model memory), `DMA` (64 MB). |

@@ -456,7 +456,7 @@ fn test_encryption() {
                 // First 12 bytes should be AES-GCM nonce, not CRC header.
                 // If encrypted, bytes 0..4 should NOT equal the CRC of plaintext.
                 let raw_prefix = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
-                let data_crc = block_engine::crc32c(plaintext);
+                let data_crc = shared::storage::crc32c(plaintext);
                 if raw_prefix != data_crc {
                     crate::kinfo!(
                         Storage,

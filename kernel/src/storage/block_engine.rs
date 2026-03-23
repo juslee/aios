@@ -12,45 +12,7 @@ use spin::Mutex;
 use crate::drivers::virtio_blk;
 
 use super::crypto::DeviceKeyManager;
-use super::lsm::MemTable;
-use super::object_store::ObjectIndex;
-use super::space::SpaceTable;
 use super::wal::Wal;
-
-// ---------------------------------------------------------------------------
-// CRC-32C (Castagnoli) — 256-entry lookup table
-// ---------------------------------------------------------------------------
-
-/// CRC-32C lookup table using Castagnoli polynomial 0x1EDC6F41.
-const CRC32C_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let poly: u32 = 0x82F6_3B78; // bit-reversed 0x1EDC6F41
-    let mut i = 0;
-    while i < 256 {
-        let mut crc = i as u32;
-        let mut j = 0;
-        while j < 8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ poly;
-            } else {
-                crc >>= 1;
-            }
-            j += 1;
-        }
-        table[i] = crc;
-        i += 1;
-    }
-    table
-};
-
-/// Compute CRC-32C checksum of `data`.
-pub fn crc32c(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &byte in data {
-        crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    !crc
-}
 
 // ---------------------------------------------------------------------------
 // Superblock (4096 bytes, on-disk at sectors 0-7)

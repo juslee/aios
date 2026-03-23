@@ -3,7 +3,7 @@
 **Tier:** 1.5 — Kit Foundation
 **Duration:** 5 weeks
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
-**Status:** In Progress (M14 complete, M15 Steps 9-12 complete, Step 13 pending)
+**Status:** Complete
 **Prerequisites:** Phase 3 (IPC & Capability System)
 **Unlocks:** Phase 5 (Kit Foundation), Phase 21 (Security Architecture)
 
@@ -419,13 +419,13 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Move pure data structures from `kernel/src/storage/` to `shared/src/` with comprehensive host-side unit tests. This covers all of Phase 4 (M13-M15). The principle: if it doesn't touch hardware (VirtIO, MMIO, interrupts) or kernel globals (TICK_COUNT, Mutex), it belongs in `shared/`.
 
 **Tasks:**
-- [ ] Move CRC-32C (lookup table + `crc32c()` function) from `block_engine.rs` to `shared/src/storage.rs`; add ~10 unit tests (known test vectors, empty input, single byte, large buffer)
-- [ ] Move `MemTable` + `MemTableEntry` from `lsm.rs` to `shared/src/storage.rs`; add ~15 unit tests (insert, get, dedup/refcount, capacity, dec_ref, binary search ordering)
-- [ ] Move `ObjectIndex` + `ObjectEntry` from `object_store.rs` to `shared/src/storage.rs`; add ~15 unit tests (insert, get, remove, find_by_name, list_by_space, capacity, binary search)
-- [ ] Move `SpaceTable` from `space.rs` to `shared/src/storage.rs`; add ~12 unit tests (insert, get, remove, find_by_name, list, count, full table)
-- [ ] Move `WalEntry` struct + `compute_checksum()` + `is_valid()` + `content_hash()` from `wal.rs` to `shared/src/storage.rs`; add ~8 unit tests (size assertion, checksum round-trip, tamper detection)
-- [ ] Update kernel imports: `block_engine.rs`, `wal.rs`, `object_store.rs`, `space.rs`, `lsm.rs` → import from `shared::storage`
-- [ ] Keep in kernel: `generate_object_id()` (uses TICK_COUNT), `generate_space_id()` (uses TICK_COUNT), `Wal` struct (uses virtio_blk), all `with_engine` operations
+- [x] Move CRC-32C (lookup table + `crc32c()` function) from `block_engine.rs` to `shared/src/storage.rs`; add ~10 unit tests (known test vectors, empty input, single byte, large buffer)
+- [x] Move `MemTable` + `MemTableEntry` from `lsm.rs` to `shared/src/storage.rs`; add ~15 unit tests (insert, get, dedup/refcount, capacity, dec_ref, binary search ordering)
+- [x] Move `ObjectIndex` + `ObjectEntry` from `object_store.rs` to `shared/src/storage.rs`; add ~15 unit tests (insert, get, remove, find_by_name, list_by_space, capacity, binary search)
+- [x] Move `SpaceTable` from `space.rs` to `shared/src/storage.rs`; add ~12 unit tests (insert, get, remove, find_by_name, list, count, full table)
+- [x] Move `WalEntry` struct + `compute_checksum()` + `is_valid()` + `content_hash()` from `wal.rs` to `shared/src/storage.rs`; add ~8 unit tests (size assertion, checksum round-trip, tamper detection)
+- [x] Update kernel imports: `block_engine.rs`, `wal.rs`, `object_store.rs`, `space.rs`, `lsm.rs` → import from `shared::storage`
+- [x] Keep in kernel: `generate_object_id()` (uses TICK_COUNT), `generate_space_id()` (uses TICK_COUNT), `Wal` struct (uses virtio_blk), all `with_engine` operations
 
 **Note:** `generate_object_id()` and `generate_space_id()` stay in kernel because they depend on `TICK_COUNT` (kernel global). The `Wal` struct stays because it calls `virtio_blk::read_sector/write_sector`. All `object_create/read/delete` and `space_create/list/get/delete` operations stay because they use `block_engine::with_engine`.
 

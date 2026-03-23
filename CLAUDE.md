@@ -632,7 +632,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      317 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+Shared crate unit tests:      364 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2

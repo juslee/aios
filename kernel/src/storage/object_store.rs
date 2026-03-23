@@ -6,9 +6,6 @@
 //!
 //! Per spaces.md §3.3 Objects, §3.3.1 Compact vs Full Objects, §4.2 Write Path.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
@@ -35,94 +32,6 @@ pub fn generate_object_id() -> ObjectId {
     id[..8].copy_from_slice(&tick.to_le_bytes());
     id[8..].copy_from_slice(&counter.to_le_bytes());
     ObjectId(id)
-}
-
-// ---------------------------------------------------------------------------
-// Object Index (sorted Vec keyed by ObjectId)
-// ---------------------------------------------------------------------------
-
-/// Entry in the object index: ObjectId → CompactObject metadata.
-struct ObjectEntry {
-    id: ObjectId,
-    object: CompactObject,
-}
-
-/// Sorted index of objects, keyed by ObjectId. Binary search for O(log n) lookups.
-pub struct ObjectIndex {
-    entries: Vec<ObjectEntry>,
-}
-
-impl ObjectIndex {
-    /// Create an empty object index.
-    pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
-
-    /// Number of objects in the index.
-    pub fn count(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Look up an object by ID.
-    pub fn get(&self, id: &ObjectId) -> Option<&CompactObject> {
-        let idx = self.binary_search(id).ok()?;
-        Some(&self.entries[idx].object)
-    }
-
-    /// Look up an object by ID (mutable).
-    pub fn get_mut(&mut self, id: &ObjectId) -> Option<&mut CompactObject> {
-        let idx = self.binary_search(id).ok()?;
-        Some(&mut self.entries[idx].object)
-    }
-
-    /// Insert a new object. Returns error if index is full or ID already exists.
-    pub fn insert(&mut self, object: CompactObject) -> Result<(), StorageError> {
-        if self.entries.len() >= OBJECT_INDEX_MAX_ENTRIES {
-            return Err(StorageError::MemTableFull);
-        }
-        match self.binary_search(&object.id) {
-            Ok(_) => Err(StorageError::IoError), // Duplicate ID
-            Err(pos) => {
-                self.entries.insert(
-                    pos,
-                    ObjectEntry {
-                        id: object.id,
-                        object,
-                    },
-                );
-                Ok(())
-            }
-        }
-    }
-
-    /// Remove an object by ID. Returns the removed CompactObject.
-    pub fn remove(&mut self, id: &ObjectId) -> Option<CompactObject> {
-        let idx = self.binary_search(id).ok()?;
-        Some(self.entries.remove(idx).object)
-    }
-
-    /// Find an object by space and name (linear scan).
-    pub fn find_by_name(&self, space_id: &SpaceId, name: &[u8]) -> Option<ObjectId> {
-        self.entries
-            .iter()
-            .find(|e| e.object.space_id == *space_id && e.object.name_bytes() == name)
-            .map(|e| e.id)
-    }
-
-    /// List all object IDs in a given space (linear scan).
-    pub fn list_by_space(&self, space_id: &SpaceId) -> Vec<ObjectId> {
-        self.entries
-            .iter()
-            .filter(|e| e.object.space_id == *space_id)
-            .map(|e| e.id)
-            .collect()
-    }
-
-    fn binary_search(&self, id: &ObjectId) -> Result<usize, usize> {
-        self.entries.binary_search_by(|e| e.id.cmp(id))
-    }
 }
 
 // ---------------------------------------------------------------------------

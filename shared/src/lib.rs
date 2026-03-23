@@ -1,5 +1,7 @@
 #![no_std]
 
+extern crate alloc;
+
 pub mod boot;
 pub mod cap;
 pub mod collections;
