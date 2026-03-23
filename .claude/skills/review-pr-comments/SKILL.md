@@ -19,7 +19,7 @@ If this fails, ask the user for the PR number.
 
 ## Step 2: Wait for reviewer comments
 
-Poll every 60 seconds for up to 5 minutes. Stop early if any comments appear.
+Poll every 60 seconds for up to 10 minutes. Stop early if any comments appear.
 
 Check all three comment sources and use their **combined count** as the stop condition:
 
@@ -34,7 +34,7 @@ gh pr view --json comments,reviews --jq '{
 gh api repos/{owner}/{repo}/pulls/{number}/comments --jq 'length'
 ```
 
-**Stop condition**: `issue_comments + reviews + inline_comments > 0`. If after 5 minutes the combined count is still 0, inform the user and stop.
+**Stop condition**: `issue_comments + reviews + inline_comments > 0`. If after 10 minutes the combined count is still 0, inform the user and stop.
 
 ## Step 3: Read all comments
 
