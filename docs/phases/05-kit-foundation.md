@@ -152,11 +152,11 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 
 **Tasks:**
 - [ ] In `kernel/src/mm/frame.rs`: import `shared::kits::memory::{FrameAllocator as FrameAllocatorKit, PhysFrame, PoolStats, MemoryError}`
-- [ ] Create `KernelFrameAllocator` unit struct in `kernel/src/mm/frame.rs` that wraps the existing global `FRAME_ALLOCATOR` state
+- [ ] Create `KernelFrameAllocator` unit struct in `kernel/src/mm/frame.rs` that wraps the existing global `FRAME_ALLOC` state
 - [ ] Implement `FrameAllocatorKit` for `KernelFrameAllocator`:
   - `alloc_frame()` delegates to existing `alloc_page()` / `alloc_user_page()` / `alloc_dma_page()` (pool-dispatched), wraps result in `PhysFrame`
   - `free_frame()` delegates to existing `buddy::free_page()` (unsafe, kernel wraps safely)
-  - `pool_pressure()` delegates to existing `FrameAllocator::pressure()` method
+  - `pool_pressure(pool)` computes pressure for the given pool from per-pool free/total data (using `pool_free_pages(pool)` and pool size), rather than delegating to the global `FrameAllocator::pressure()` which only covers the user pool
   - `pool_stats()` computes free/total from existing pool data
 - [ ] Implement `MemoryPressureMonitor` for `KernelFrameAllocator`:
   - `current_level()` returns worst pressure across all pools

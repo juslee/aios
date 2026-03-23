@@ -42,9 +42,9 @@ Follow the Phase Implementation Workflow from CLAUDE.md:
 git checkout main && git pull origin main
 
 # Create worktree with a new branch
-# Branch name: claude/phase-$ARGUMENTS-<short-description>
+# Branch name: claude/phase-$ARGUMENTS-MK-<short-description> (matches CLAUDE.md convention)
 # Worktree path: .claude/worktrees/phase-$ARGUMENTS
-git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-<short-description> main
+git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-MK-<short-description> main
 ```
 
 8. **Switch working directory** to the worktree. ALL subsequent work (implementation, commits, pushes, quality gates) happens inside the worktree:
