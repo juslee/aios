@@ -21,7 +21,17 @@ If this fails (e.g., no PR exists for the current branch), ask the user for the 
 
 Save the PR number and branch name for later steps.
 
-## Step 2: Squash merge
+## Step 2: Pre-merge check
+
+Verify CI checks have passed before merging:
+
+```bash
+gh pr checks <number>
+```
+
+If any checks are failing or pending, report the status and wait. Do NOT attempt to merge with failing checks.
+
+## Step 3: Squash merge
 
 ```bash
 gh pr merge <number> --squash --delete-branch
@@ -31,7 +41,7 @@ This merges the PR with a single squash commit and deletes the **remote** branch
 
 If the merge fails (e.g., merge conflicts, failing checks), report the error and stop.
 
-## Step 3: Detect worktree
+## Step 4: Detect worktree
 
 Check whether the current working directory is inside a git worktree:
 
@@ -44,7 +54,7 @@ git rev-parse --git-dir
 
 Alternatively, check `git worktree list` and compare the current directory against worktree paths.
 
-## Step 4: If in a worktree — remove it
+## Step 5: If in a worktree — remove it
 
 Record the worktree path and the main repository path:
 
@@ -62,7 +72,7 @@ git worktree remove "$WORKTREE_PATH"
 
 If `git worktree remove` fails because of uncommitted changes, use `--force` only if the PR was already merged (the changes are safe in main).
 
-## Step 5: Switch to main and pull
+## Step 6: Switch to main and pull
 
 You must switch off the branch before deleting it. If you're still on the feature branch (non-worktree case), this also moves you to main:
 
@@ -71,7 +81,7 @@ git checkout main
 git pull origin main
 ```
 
-## Step 6: Delete local branch
+## Step 7: Delete local branch
 
 The local branch may still exist after the worktree is removed. Delete it gracefully:
 
@@ -81,7 +91,7 @@ git branch -d <branch-name>
 
 If the branch doesn't exist (already cleaned up), ignore the error and continue.
 
-## Step 7: Report
+## Step 8: Report
 
 Print a summary of what was done:
 
