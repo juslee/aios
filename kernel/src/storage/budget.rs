@@ -26,11 +26,8 @@ pub fn storage_stats() -> Result<StorageBudget, shared::storage::StorageError> {
 
         let data_blocks = engine.memtable().count() as u64;
 
-        let wal_used = if sb.wal_head >= sb.wal_tail {
-            sb.wal_head - sb.wal_tail
-        } else {
-            sb.wal_size_sectors - sb.wal_tail + sb.wal_head
-        };
+        // head and tail are monotonically increasing entry indices (never wrap).
+        let wal_used = sb.wal_head.saturating_sub(sb.wal_tail);
 
         let index_entries = engine.object_index().count() as u64;
 

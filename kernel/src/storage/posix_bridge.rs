@@ -193,9 +193,9 @@ impl PosixSpaceBridge {
         // Update object via version store (creates new version).
         version_store::object_update(&object_id, &new_content[..new_len], b"posix", b"write")?;
 
-        // Advance offset.
+        // Advance offset by bytes written (POSIX: offset += count).
         if let Some(Some(entry)) = self.fd_table.get_mut(fd) {
-            entry.offset = new_len as u64;
+            entry.offset = (write_offset + data.len()) as u64;
         }
 
         Ok(data.len())
@@ -323,6 +323,11 @@ fn resolve_path(path: &[u8]) -> Result<(SpaceId, &[u8]), StorageError> {
         path
     };
 
+    // Reject path traversal components (.. and .).
+    if contains_traversal(path) {
+        return Err(StorageError::SpaceNotFound);
+    }
+
     if starts_with(path, b"spaces/") {
         // /spaces/<name>/<path>
         let rest = &path[7..]; // skip "spaces/"
@@ -362,6 +367,28 @@ fn find_space_by_name(name: &[u8]) -> Result<SpaceId, StorageError> {
 /// Check if `haystack` starts with `needle`.
 fn starts_with(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.len() >= needle.len() && &haystack[..needle.len()] == needle
+}
+
+/// Reject paths containing `.` or `..` components (path traversal defense).
+fn contains_traversal(path: &[u8]) -> bool {
+    // Split on '/' and check each component.
+    let mut start = 0;
+    loop {
+        let end = path[start..]
+            .iter()
+            .position(|&b| b == b'/')
+            .map(|p| start + p)
+            .unwrap_or(path.len());
+        let component = &path[start..end];
+        if component == b"." || component == b".." {
+            return true;
+        }
+        if end >= path.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    false
 }
 
 /// Split path into (space_name, object_path) by trying progressively longer

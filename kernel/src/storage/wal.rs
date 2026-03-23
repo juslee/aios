@@ -78,8 +78,8 @@ impl Wal {
         data_offset: u64,
         data_size: u32,
     ) -> Result<(u64, u64), StorageError> {
-        // Check WAL capacity.
-        if self.head - self.tail >= self.capacity_entries() {
+        // Check WAL capacity (saturating_sub guards against corrupted tail > head).
+        if self.head.saturating_sub(self.tail) >= self.capacity_entries() {
             return Err(StorageError::WalFull);
         }
 

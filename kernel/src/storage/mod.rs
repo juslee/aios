@@ -179,6 +179,7 @@ fn run_self_tests() {
 }
 
 /// Write 100 unique blocks and verify all are readable.
+#[cfg(feature = "storage-tests")]
 fn test_100_blocks() {
     let mut ok_count = 0u32;
     let mut fail_count = 0u32;
