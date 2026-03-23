@@ -2162,6 +2162,144 @@ This is purely optional — all docs are plain markdown readable in any editor o
 
 ---
 
+## 8c. Claude Code Agents, Skills & Worktrees
+
+AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+
+The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
+
+### Agents
+
+Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows CLAUDE.md conventions.
+
+| Agent | Role | Spawned by | Key capabilities |
+| --- | --- | --- | --- |
+| `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
+| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, MultiEdit, Bash, Grep, Glob |
+| `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
+| `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
+| `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
+| `doc-auditor` | Validates docs for cross-reference errors, technical accuracy, naming consistency | Hook (auto) or team-lead | Read, Edit, Grep, Glob, Bash |
+
+The doc-auditor deserves special mention: it runs in a **recursive loop** — audit → fix → re-audit — until zero issues are found (max 10 passes). It is triggered automatically by PostToolUse hooks whenever a markdown file in `docs/` is written or edited.
+
+### Skills (Slash Commands)
+
+Skills are reusable multi-step workflows invoked via slash commands. They encode the project's development patterns so common operations are repeatable and consistent.
+
+| Skill | Trigger | Purpose |
+|---|---|---|
+| `/build-team` | Start of autonomous session | Bootstraps the "aios-dev" team, spawns team-lead who spawns specialists as needed |
+| `/implement-phase N` | Phase implementation request | Full workflow: read phase doc → create worktree → plan → implement step-by-step → verify → audit → commit → PR |
+| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` → audit loop → PR |
+| `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
+| `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
+| `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
+| `/merge-and-cleanup [PR]` | After PR approval | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main |
+
+#### Skill usage examples
+
+```bash
+# Implement Phase 5 from its phase doc
+/implement-phase 5
+
+# Generate the phase doc for Phase 6
+/generate-phase-doc 6
+
+# After creating a PR, wait for and address reviewer comments
+/review-pr-comments
+
+# After PR is approved, merge and clean up everything
+/merge-and-cleanup 121
+
+# Create or update an architecture doc interactively
+/write-arch-doc docs/kernel/memory.md
+```
+
+### Worktree Workflow
+
+Many skills use **git worktrees** to isolate work from the main branch. This prevents accidental commits to `main` and allows parallel work (e.g., kernel-dev on Phase N while doc-writer generates Phase N+1 docs).
+
+**Where worktrees live**: `.claude/worktrees/` (gitignored, created on demand)
+
+**Naming conventions**:
+
+| Work type | Worktree path | Branch name |
+|---|---|---|
+| Phase implementation | `.claude/worktrees/phase-N` | `claude/phase-N-MK-name` |
+| Architecture docs | `.claude/worktrees/docs-$TOPIC` | `claude/docs-update-$TOPIC` |
+| Kit/other docs | `.claude/worktrees/docs-kits-*` | `claude/docs-kits-*` |
+
+**Lifecycle**:
+
+```text
+create worktree → work on branch → commit → push → create PR
+    → review → merge → remove worktree → delete local branch → update main
+```
+
+**Manual commands** (if not using skills):
+
+```bash
+# Create a worktree for doc work
+git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
+
+# Work in it
+cd .claude/worktrees/docs-memory
+# ... edit files, commit, push, create PR ...
+
+# After PR merges, clean up (from main repo root)
+cd /path/to/aios
+git worktree remove .claude/worktrees/docs-memory
+git branch -d claude/docs-update-memory
+git checkout main && git pull origin main
+```
+
+The `/merge-and-cleanup` skill automates the entire cleanup sequence.
+
+### Audit Loop Pattern
+
+The doc-auditor enforces documentation quality through a mandatory recursive loop:
+
+1. **First pass**: Builds a canonical facts table (struct names, constants, file paths from code)
+2. **Subsequent passes**: Validates docs against the facts table + checks formatting
+3. **Repeats** until a full pass returns zero issues (max 10 passes)
+
+Common issues caught:
+
+- Broken markdown links and stale section references
+- Naming mismatches (doc says `UART_BASE` but code says `UART_BASE_ADDR`)
+- Type mismatches (doc says `AtomicU64` but code says `AtomicUsize`)
+- Bare code fences (opening ` ``` ` without a language specifier)
+- Missing blank lines before lists
+- Aspirational content incorrectly marked as "implemented"
+
+The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow, step 8.
+
+### Knowledge Hive Integration
+
+Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across sessions:
+
+| Directory | Persistence | Purpose |
+|---|---|---|
+| `docs/knowledge/decisions/` | Permanent | Architecture Decision Records — why we chose X over Y |
+| `docs/knowledge/lessons/` | Permanent | Hard-won insights — bugs, gotchas, platform quirks |
+| `docs/knowledge/research/` | Permanent | Research notes on explored topics |
+| `docs/knowledge/plans/` | Ephemeral | Working docs during implementation — distill after completion, then delete |
+| `docs/knowledge/discussions/` | Semi-permanent | Design explorations — graduate to architecture docs when settled |
+
+Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (author, date, tags, status).
+
+### Configuration
+
+Agent teams and skills are configured in:
+
+- **`.claude/settings.json`** — hooks (SessionStart, PostToolUse), permissions, environment variables
+- **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
+- **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
+- **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
+
+---
+
 ## 9. Planned Expansions
 
 This guide is designed to grow alongside the kernel. The following areas are intentionally left as stubs or brief overviews, with expansion planned as the corresponding phases land.
