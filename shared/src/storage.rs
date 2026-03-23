@@ -248,9 +248,10 @@ impl CompactObject {
         self.name_len = len as u8;
     }
 
-    /// Get extracted text content as a byte slice.
+    /// Get extracted text content as a byte slice. Clamps to array bounds for corruption safety.
     pub fn text_bytes(&self) -> &[u8] {
-        &self.text_content[..self.text_len as usize]
+        let len = (self.text_len as usize).min(MAX_TEXT_CONTENT_LEN);
+        &self.text_content[..len]
     }
 
     /// Set extracted text content. Truncates to MAX_TEXT_CONTENT_LEN.
@@ -1445,8 +1446,12 @@ mod tests {
             StorageError::SpaceNotFound,
             StorageError::SpaceNotEmpty,
             StorageError::VersionNotFound,
+            StorageError::NameExists,
+            StorageError::NotADirectory,
+            StorageError::FdTableFull,
+            StorageError::InvalidFd,
         ];
-        assert_eq!(errors.len(), 15);
+        assert_eq!(errors.len(), 19);
         // Verify Copy by assignment.
         let e = StorageError::IoError;
         let e2 = e;

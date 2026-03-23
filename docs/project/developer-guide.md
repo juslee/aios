@@ -1008,10 +1008,10 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 | Range | Interpretation | Examples |
 |---|---|---|
-| < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68) |
-| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~253), `space.rs` (~230), `lsm.rs` (~131) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~379), `object_store.rs` (~309) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~778), `bench.rs` (~549) |
+| < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
+| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~199), `space.rs` (~154), `object_store.rs` (~218) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~377) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~740), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**

@@ -81,10 +81,7 @@ impl PosixSpaceBridge {
             // Check if it's a directory by reading the object metadata.
             let obj = block_engine::with_engine(|engine| engine.object_index().get(&id).copied())?
                 .ok_or(StorageError::ObjectNotFound)?;
-            (
-                id,
-                obj.content_type == ContentType::Binary && obj.content_size == 0,
-            )
+            (id, obj.content_type == ContentType::Directory)
         } else if flags & posix_flags::O_CREAT != 0 {
             // Create new file with empty content (single null byte — block engine
             // requires non-empty data; POSIX read returns 0 bytes for size-0 objects).
@@ -287,7 +284,8 @@ impl PosixSpaceBridge {
             return Err(StorageError::NameExists);
         }
 
-        object_store::object_create(space_id, dir_name, &[], ContentType::Binary)?;
+        // Use a single null byte as directory sentinel (Block Engine rejects empty data).
+        object_store::object_create(space_id, dir_name, b"\0", ContentType::Directory)?;
         Ok(())
     }
 

@@ -664,10 +664,10 @@ POSIX bridge MAX_FDS:         256 file descriptors per PosixSpaceBridge instance
 POSIX path mapping:           /spaces/[name]/path → space lookup; /home/user/ → user/home/; /tmp/ → ephemeral/
 LZ4 compression:              lz4_flex crate (no_std), 5-byte header [type(1B)|uncompressed_size(4B)], skip if ratio ≥ 0.9
 CompressionType enum:         None=0, Lz4=1; stored in on-disk block format between CRC header and data
-Superblock version:           2 (v2 adds compression format; v1 blocks auto-upgraded on read)
+Superblock version:           2 (v2 adds compression header in block format; v1 disks reformatted on boot)
 PressureLevel thresholds:     Normal (>20% free), Warning (10-20%), Critical (5-10%), Emergency (<5%)
 StorageBudget fields:         total_bytes, used_bytes, free_bytes, data_blocks, wal_used, index_entries
-StorageError variants:        16 total (added NameExists, NotADirectory, FdTableFull, InvalidFd, QuotaExceeded in M15)
+StorageError variants:        19 total (added NameExists, NotADirectory, FdTableFull, InvalidFd in M15)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -782,11 +782,11 @@ aios/
 │       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
 │       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable
 │       │   ├── wal.rs    Write-ahead log: 64-byte WalEntry (repr(C)), circular buffer, append/replay/trim
-│       │   ├── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
-│       │   ├── object_store.rs ObjectIndex (sorted Vec + binary search on ObjectId), object_create/read/delete, generate_object_id, find_by_name, list_by_space
+│       │   ├── lsm.rs    MemTable re-export from shared crate (sorted Vec, binary search, capacity 65536, refcount dedup)
+│       │   ├── object_store.rs object_create/read/delete, generate_object_id (ObjectIndex in shared crate)
 │       │   ├── version_store.rs Version Store: Merkle DAG, version_create/list/rollback, object_update
 │       │   ├── crypto.rs  DeviceKeyManager: AES-256-GCM encrypt/decrypt, nonce counter, crash recovery
-│       │   ├── space.rs   SpaceTable, space_create/list/get/delete, find_by_name, init_system_spaces, register_service
+│       │   ├── space.rs   space_create/list/get/delete, init_system_spaces, register_service (SpaceTable in shared crate)
 │       │   ├── posix_bridge.rs POSIX compatibility bridge: PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
 │       │   └── budget.rs  Storage budget: global usage tracking, pressure monitoring, quota enforcement
 │       ├── syscall/
@@ -838,7 +838,7 @@ aios/
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
 │       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
-│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants
+│       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants, MemTable, ObjectIndex, SpaceTable, WalEntry, crc32c, PosixStat, DirEntry, CompressionType, StorageBudget, PressureLevel
 │       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 └── docs/                 (architecture, phase, and research docs)
 ```

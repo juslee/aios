@@ -343,7 +343,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 
 **Tasks:**
 - [x] Add LZ4 compression support (use `lz4_flex` crate — `no_std` compatible, pure Rust)
-- [x] Define `CompressionStrategy` enum: None, Lz4
+- [x] Define `CompressionType` enum: None, Lz4
 - [x] Add compression header to block format: `[compression_type (1B) | uncompressed_size (4B) | compressed_data...]`
 - [x] Integrate compression into Block Engine write path (before encryption):
   1. Attempt LZ4 compression
