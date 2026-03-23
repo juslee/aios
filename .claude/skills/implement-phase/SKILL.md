@@ -53,23 +53,24 @@ Follow the Phase Implementation Workflow from CLAUDE.md:
    h. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
    i. Commit and push: `Phase $ARGUMENTS MN: update docs`
 
-## Phase 4: Knowledge Distillation
+## Phase 4: Verify & Audit
 
-10. Distill knowledge from the working plan doc:
+10. Dead code cleanup: find all `#[allow(dead_code)]` items — remove the item if truly unused, or remove just the attribute if the code is now used. Commit and push.
+11. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
+12. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
+13. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
+
+## Phase 5: Knowledge Distillation
+
+14. Distill knowledge from the working plan doc:
     - Extract hard-won insights → docs/knowledge/lessons/ (permanent)
     - Extract key decisions → docs/knowledge/decisions/ (permanent)
     - Use YYYY-MM-DD-initials-phase-$ARGUMENTS-description.md naming
     - Delete the working plan doc (docs/knowledge/plans/phase-*.md)
     - Commit and push
 
-## Phase 5: Verify & Audit
-
-11. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
-12. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
-13. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
-
 ## Phase 6: PR, Review & Merge
 
-14. Create PR to main
-15. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
-16. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
+15. Create PR to main
+16. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
+17. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
