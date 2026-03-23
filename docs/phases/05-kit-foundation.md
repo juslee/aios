@@ -237,7 +237,7 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
   - `fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError>` — fire-and-forget send
   - `fn recv(&self, id: ChannelId, timeout_ticks: u64) -> Result<RawMessage, IpcKitError>` — blocking receive
   - `fn call(&self, id: ChannelId, request: &RawMessage, timeout_ticks: u64) -> Result<RawMessage, IpcKitError>` — synchronous call (send + wait for reply)
-  - `fn reply(&self, msg: &RawMessage) -> Result<(), IpcKitError>` — reply to a pending call
+  - `fn reply(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError>` — reply to a pending call on the specified channel
 - [ ] Define `NotificationOps` trait:
   - `fn notification_create(&mut self) -> Result<NotificationId, IpcKitError>` — create a notification object
   - `fn signal(&self, id: NotificationId, bits: u64) -> Result<(), IpcKitError>` — atomic OR into notification word
