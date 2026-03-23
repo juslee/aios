@@ -256,6 +256,370 @@ Apps interact with the compositor indirectly — they allocate surfaces through 
 - **Discussion:** `docs/knowledge/discussions/2026-03-16-jl-platform-vision-custom-core.md`
 - **Design principle:** `docs/knowledge/decisions/2026-03-16-jl-custom-core-principle.md`
 
+## Getting Started
+
+A minimal AIOS application: a counter with a button, a label, and persistent state saved to a Space.
+
+### 1. Cargo.toml
+
+```toml
+[package]
+name = "counter-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aios_app = "0.1"
+aios_interface = "0.1"
+aios_storage = "0.1"
+```
+
+### 2. Agent Manifest
+
+Every AIOS agent ships a `manifest.toml` declaring its identity, required capabilities, and UI surface. The kernel reads this at install time to pre-validate permissions. See [Security Kit](application/security.md) for capability profiles.
+
+```toml
+[agent]
+name = "counter-agent"
+version = "0.1.0"
+author = "you@example.com"
+
+[capabilities.required]
+storage_read = { spaces = ["user/counter/"] }
+storage_write = { spaces = ["user/counter/"] }
+
+[capabilities.optional]
+flow_clipboard = true
+
+[ui]
+requires_compositor = true
+min_surface_size = { width = 300, height = 200 }
+```
+
+### 3. App Kit Lifecycle
+
+The [App Kit](application/app.md) manages your agent's process lifecycle (`Application`, `AppDelegate`). The [Interface Kit](application/interface.md) provides the Elm Architecture UI model — `Widget<M>` with `update()` and `view()`. Together they form the standard AIOS application pattern:
+
+```rust
+use aios_app::{Application, AppDelegate, LaunchContext, AppError};
+use aios_interface::prelude::*;
+use aios_storage::{Space, Object};
+
+// App Kit: process lifecycle
+struct CounterApp {
+    delegate: CounterDelegate,
+}
+
+impl Application for CounterApp {
+    fn run(&mut self) -> Result<(), AppError> {
+        // App Kit launches the message loop; Interface Kit renders the UI
+        aios_interface::run_widget::<CounterWidget>()
+    }
+    fn quit(&mut self) -> Result<(), AppError> { Ok(()) }
+}
+
+struct CounterDelegate;
+impl AppDelegate for CounterDelegate {
+    fn launched(&mut self, _ctx: &LaunchContext) -> Result<(), AppError> { Ok(()) }
+    fn will_quit(&mut self) -> Result<bool, AppError> { Ok(true) }
+    fn suspend(&mut self, _reason: aios_app::SuspendReason) -> Result<(), AppError> { Ok(()) }
+    fn resume(&mut self, _ctx: &aios_app::ResumeContext) -> Result<(), AppError> { Ok(()) }
+}
+
+// Interface Kit: Elm Architecture (Model / Message / update / view)
+struct CounterWidget;
+
+impl Widget<CounterMsg> for CounterWidget {
+    type Model = CounterModel;
+
+    fn init() -> (CounterModel, Vec<Command<CounterMsg>>) {
+        (CounterModel { count: 0 }, vec![])
+    }
+
+    fn update(model: &mut CounterModel, msg: CounterMsg) -> Vec<Command<CounterMsg>> {
+        match msg {
+            CounterMsg::Increment => model.count += 1,
+            CounterMsg::Decrement => model.count -= 1,
+        }
+        vec![]
+    }
+
+    fn view(model: &CounterModel) -> impl View<CounterMsg> {
+        Column::new()
+            .push(Label::new(format!("Count: {}", model.count)))
+            .push(Button::new("+1").on_press(CounterMsg::Increment))
+            .push(Button::new("-1").on_press(CounterMsg::Decrement))
+    }
+}
+```
+
+### 4. Model and Messages
+
+The Elm Architecture keeps state management predictable: `Model` is your single source of truth, `Message` is an enum of every possible state transition. No mutable shared state, no callbacks mutating the world — just `update(model, msg) -> model`.
+
+```rust
+#[derive(Clone)]
+struct CounterModel {
+    count: i64,
+}
+
+#[derive(Clone)]
+enum CounterMsg {
+    Increment,
+    Decrement,
+}
+```
+
+### 5. Storage Kit — Persisting to a Space
+
+[Storage Kit](platform/storage.md) provides typed access to Spaces. Objects in a Space carry attributes (inspired by BeOS/BFS extended attributes) and are automatically indexed by the [Search Kit](intelligence/search.md). The `Object::put_attr` / `get_attr` API replaces traditional file I/O with structured, queryable storage.
+
+```rust
+impl CounterModel {
+    fn load_or_default() -> Self {
+        let space = Space::open("user/home").expect("home space");
+        match space.get_object("counter-state") {
+            Ok(obj) => {
+                let count = obj.get_attr::<i64>("count").unwrap_or(0);
+                CounterModel { count }
+            }
+            Err(_) => CounterModel { count: 0 },
+        }
+    }
+
+    fn save(&self) {
+        let space = Space::open("user/home").expect("home space");
+        let obj = space.create_or_update("counter-state").expect("object");
+        obj.put_attr("count", &self.count).expect("write attr");
+    }
+}
+```
+
+This is the complete application. Run `aios-build` to package the agent, or `aios-run counter-agent` to launch it in the AIOS simulator.
+
+## Developer Journeys
+
+Cross-cutting trails showing how Kits compose for common use cases. Each journey starts at the leftmost Kit and flows right, adding capabilities as needed.
+
+### 1. Build a GUI App
+
+**Path:** [App Kit](application/app.md) -> [Interface Kit](application/interface.md) -> [Storage Kit](platform/storage.md) -> [Flow Kit](intelligence/flow.md)
+
+App Kit provides lifecycle and the message loop. Interface Kit supplies the view tree (buttons, labels, lists, layout containers). Storage Kit persists state to Spaces. Flow Kit enables clipboard, drag-and-drop, and inter-agent data exchange via typed content channels.
+
+```rust
+use aios_app::Application;
+use aios_interface::{View, TextInput, Column};
+
+// Start here: implement Application, define your Model and Message,
+// then build your view tree in view().
+impl Application for MyApp {
+    type Model = MyModel;
+    type Message = MyMsg;
+    // ...
+}
+```
+
+### 2. Add AI Features
+
+**Path:** [Conversation Kit](application/conversation.md) -> [AIRS Kit](intelligence/airs.md) -> [Context Kit](intelligence/context.md) -> [Search Kit](intelligence/search.md)
+
+Conversation Kit manages chat sessions with streaming token delivery. AIRS Kit provides inference (model selection, KV cache, compute scheduling). Context Kit feeds environmental signals (time of day, active Space, user activity) into prompts. Search Kit enables RAG by querying Space indexes for relevant objects.
+
+```rust
+use aios_conversation::{Session, SessionConfig};
+
+let session = Session::create(SessionConfig {
+    model: "default",
+    context_aware: true,   // auto-inject Context Kit signals
+    search_spaces: vec!["user/home", "user/notes"],
+})?;
+let response = session.send("Summarize my recent notes").await?;
+```
+
+### 3. Store and Sync Data
+
+**Path:** [Storage Kit](platform/storage.md) -> [Flow Kit](intelligence/flow.md) -> [Network Kit](platform/network.md)
+
+Storage Kit writes objects to Spaces with typed attributes. Flow Kit publishes change events that other agents can subscribe to. Network Kit handles multi-device sync via Merkle exchange over the Space Mesh protocol.
+
+```rust
+use aios_storage::Space;
+
+let space = Space::open("user/notes")?;
+let note = space.create_object("meeting-2026-03-23")?;
+note.put_attr("title", &"Weekly sync")?;
+note.put_attr("body", &"Discussed Kit architecture...")?;
+// Flow Kit automatically publishes a FlowEntry for this write.
+// Network Kit syncs to paired devices via Space Mesh.
+```
+
+### 4. Handle Media
+
+**Path:** [Camera Kit](platform/camera.md) -> [Media Kit](platform/media.md) -> [Audio Kit](platform/audio.md) -> [Compute Kit](kernel/compute.md)
+
+Camera Kit opens capture sessions with privacy-enforced LED indicators. Media Kit decodes/encodes via the codec registry. Audio Kit manages mixing, routing, and real-time scheduling. Compute Kit allocates GPU/NPU resources for hardware-accelerated encode/decode.
+
+```rust
+use aios_camera::{CameraSession, SessionIntent};
+
+let session = CameraSession::open(SessionIntent::VideoCall)?;
+let frame_stream = session.start_capture()?;
+// Feed frames to Media Kit encoder, route audio via Audio Kit.
+```
+
+### 5. Secure Your Agent
+
+**Path:** [Capability Kit](kernel/capability.md) -> [Intent Kit](intelligence/intent.md) -> [Security Kit](application/security.md) -> [Identity Kit](application/identity.md)
+
+Capability Kit gates every syscall — your agent only accesses what its manifest declares. Intent Kit verifies that runtime behavior matches declared intent (no exfiltration via side channels). Security Kit provides the high-level API for permission prompts and trust levels. Identity Kit manages cryptographic identity and credential isolation.
+
+```rust
+use aios_capability::CapabilityRequest;
+
+let cap = CapabilityRequest::new("network:connect")
+    .target("api.example.com:443")
+    .request()?;
+// If the manifest didn't declare network access, this fails at install time.
+// If it did, the kernel grants a scoped, attenuated capability token.
+```
+
+## Common Patterns
+
+Recurring patterns across Kit boundaries. These are the idioms that well-written AIOS agents share.
+
+### 1. Capability Negotiation
+
+Every resource access goes through capability tokens. Request what you need, check what you got, degrade gracefully when denied. Never assume a capability is present — the user or enterprise policy may have revoked it. See [Capability Kit](kernel/capability.md) for the full token lifecycle.
+
+```rust
+use aios_capability::{CapabilityRequest, CapabilityError};
+
+fn connect_with_fallback() -> Result<Connection, AppError> {
+    match CapabilityRequest::new("network:connect").request() {
+        Ok(cap) => {
+            let conn = NetworkClient::connect_with(cap, "api.example.com")?;
+            Ok(conn)
+        }
+        Err(CapabilityError::Denied) => {
+            // Graceful degradation: work offline with cached data
+            Ok(Connection::offline_cache())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+```
+
+### 2. Space-Backed State
+
+Spaces replace traditional config files and databases. Objects carry typed attributes that are automatically indexed. Use `Space::watch` to receive live updates when objects change — this is the AIOS equivalent of BeOS live queries, applied to Spaces. See [Storage Kit](platform/storage.md) for the full query API.
+
+```rust
+use aios_storage::{Space, Query, WatchEvent};
+
+let space = Space::open("user/home")?;
+
+// Reactive query: watch for all objects with content_type = "note"
+let watcher = space.watch(
+    Query::attr_eq("content_type", "note")
+)?;
+
+for event in watcher {
+    match event {
+        WatchEvent::Created(obj) => render_note_card(&obj),
+        WatchEvent::Modified(obj) => update_note_card(&obj),
+        WatchEvent::Deleted(id) => remove_note_card(id),
+    }
+}
+```
+
+### 3. Flow Integration
+
+Flow is the universal data exchange channel. Every inter-agent transfer — clipboard, drag-and-drop, share sheets — goes through Flow with typed content negotiation. Publishers declare what types they produce; subscribers declare what they accept. The Translation Kit converts between compatible types automatically. See [Flow Kit](intelligence/flow.md) for the full pipeline.
+
+```rust
+use aios_flow::{FlowPublisher, FlowSubscriber, ContentType};
+
+// Publishing: declare your output types
+let publisher = FlowPublisher::new("my-agent/export")
+    .content_type(ContentType::PlainText)
+    .content_type(ContentType::Markdown)
+    .register()?;
+
+publisher.publish("# Meeting Notes\n\nKey decisions...")?;
+
+// Subscribing: declare what you accept
+let subscriber = FlowSubscriber::new()
+    .accept(ContentType::PlainText)
+    .accept(ContentType::Markdown)
+    .channel("clipboard")?;
+
+if let Some(entry) = subscriber.recv()? {
+    let text = entry.as_text()?;
+    insert_at_cursor(text);
+}
+```
+
+### 4. Context-Aware Adaptation
+
+The Context Kit infers user activity (working, reading, presenting, sleeping) from environmental signals. Agents subscribe to context transitions and adapt their behavior — reducing notification volume during focus, switching to dark mode at night, or pre-loading resources before a recurring meeting. See [Context Kit](intelligence/context.md) for signal sources and the inference pipeline.
+
+```rust
+use aios_context::{ContextSubscriber, ActivityState};
+
+let ctx = ContextSubscriber::new()?;
+
+ctx.on_transition(|prev, current| {
+    match current.activity {
+        ActivityState::Focused => {
+            // Suppress non-urgent notifications
+            notification_filter.set_level(Level::Urgent);
+        }
+        ActivityState::Presenting => {
+            // Hide sensitive content, maximize contrast
+            ui.set_privacy_mode(true);
+            ui.set_high_contrast(true);
+        }
+        _ => {
+            notification_filter.set_level(Level::Normal);
+            ui.set_privacy_mode(false);
+        }
+    }
+});
+```
+
+### 5. Scriptable Agent Protocol
+
+AIOS agents expose actions to the AIRS runtime and other agents via the `Scriptable` trait — the modern descendant of BeOS `BMessage` scripting. AIRS agents can discover your agent's capabilities, invoke actions with structured parameters, and compose multi-agent workflows. See [App Kit](application/app.md) for the full scripting protocol and [AIRS Kit](intelligence/airs.md) for agent-to-agent orchestration.
+
+```rust
+use aios_app::{Scriptable, ScriptAction, ScriptResult, ScriptValue};
+
+impl Scriptable for CounterApp {
+    fn actions(&self) -> Vec<ScriptAction> {
+        vec![
+            ScriptAction::new("get_count")
+                .description("Returns the current counter value"),
+            ScriptAction::new("set_count")
+                .param("value", ScriptValue::Int)
+                .description("Sets the counter to a specific value"),
+        ]
+    }
+
+    fn invoke(&mut self, action: &str, params: &ScriptValue) -> ScriptResult {
+        match action {
+            "get_count" => ScriptResult::ok(self.model.count),
+            "set_count" => {
+                self.model.count = params.as_int()?;
+                self.model.save();
+                ScriptResult::ok(())
+            }
+            _ => ScriptResult::not_found(action),
+        }
+    }
+}
+```
+
 ## Document Map
 
 Each Kit links to its architecture doc (detailed internal design) and its Kit doc (SDK API surface — created as each Kit is implemented):
