@@ -156,6 +156,11 @@ pub enum StorageError {
     SpaceNotFound,
     SpaceNotEmpty,
     VersionNotFound,
+    // M15 POSIX bridge errors
+    NameExists,
+    NotADirectory,
+    FdTableFull,
+    InvalidFd,
 }
 
 // ---------------------------------------------------------------------------
@@ -708,6 +713,108 @@ const _: () = assert!(core::mem::size_of::<Space>() == 128);
 const _: () = assert!(core::mem::size_of::<ProvenanceEntry>() == 144);
 const _: () = assert!(core::mem::size_of::<ObjectIndexEntry>() == 32);
 const _: () = assert!(core::mem::size_of::<SpaceQuota>() == 16);
+
+// ---------------------------------------------------------------------------
+// M15 types: POSIX bridge, compression, storage budget
+// ---------------------------------------------------------------------------
+
+/// POSIX file-open flags (per spaces.md §9.1).
+pub mod posix_flags {
+    pub const O_RDONLY: u32 = 0;
+    pub const O_WRONLY: u32 = 1;
+    pub const O_RDWR: u32 = 2;
+    pub const O_CREAT: u32 = 0x40;
+    pub const O_APPEND: u32 = 0x400;
+}
+
+/// Synthesised POSIX stat result.
+#[derive(Clone, Copy, Debug)]
+pub struct PosixStat {
+    /// File size in bytes.
+    pub size: u64,
+    /// POSIX mode (0o755 dirs, 0o644 files).
+    pub mode: u32,
+    /// Last modification timestamp (ticks).
+    pub modified: u64,
+    /// Number of hard links (always 1).
+    pub nlink: u32,
+}
+
+/// Directory entry returned by readdir.
+#[derive(Clone, Copy)]
+pub struct DirEntry {
+    /// Entry name (up to 64 bytes, null-padded).
+    pub name: [u8; MAX_OBJECT_NAME_LEN],
+    /// Name length in bytes.
+    pub name_len: usize,
+    /// Object identifier.
+    pub object_id: ObjectId,
+    /// Content type.
+    pub content_type: ContentType,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+/// Maximum number of open file descriptors per bridge instance.
+pub const MAX_FDS: usize = 256;
+
+/// Compression type identifier.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum CompressionType {
+    /// No compression.
+    None = 0,
+    /// LZ4 block compression.
+    Lz4 = 1,
+}
+
+/// Compression header size: 1 byte type + 4 bytes uncompressed size.
+pub const COMPRESSION_HEADER_SIZE: usize = 5;
+
+/// Storage budget summary.
+#[derive(Clone, Copy, Debug)]
+pub struct StorageBudget {
+    /// Total data region bytes.
+    pub total_bytes: u64,
+    /// Used data region bytes.
+    pub used_bytes: u64,
+    /// Free data region bytes.
+    pub free_bytes: u64,
+    /// Number of data blocks.
+    pub data_blocks: u64,
+    /// WAL entries used.
+    pub wal_used: u64,
+    /// Index entries in MemTable + ObjectIndex.
+    pub index_entries: u64,
+}
+
+/// Storage pressure level derived from free percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PressureLevel {
+    /// >20% free.
+    Normal,
+    /// 10-20% free.
+    Warning,
+    /// 5-10% free.
+    Critical,
+    /// <5% free.
+    Emergency,
+}
+
+impl PressureLevel {
+    /// Compute pressure level from free percentage (0-100).
+    pub fn from_free_percentage(pct: u64) -> Self {
+        if pct > 20 {
+            PressureLevel::Normal
+        } else if pct > 10 {
+            PressureLevel::Warning
+        } else if pct > 5 {
+            PressureLevel::Critical
+        } else {
+            PressureLevel::Emergency
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -1354,5 +1461,81 @@ mod tests {
         assert_eq!(OBJECT_INDEX_MAX_ENTRIES, 16_384);
         assert_eq!(MAX_TEXT_CONTENT_LEN, 128);
         assert_eq!(ENCRYPTION_OVERHEAD, 28);
+    }
+
+    // -- M15 POSIX / compression / budget tests --
+
+    #[test]
+    fn m15_posix_flags() {
+        assert_eq!(posix_flags::O_RDONLY, 0);
+        assert_eq!(posix_flags::O_WRONLY, 1);
+        assert_eq!(posix_flags::O_RDWR, 2);
+        assert_eq!(posix_flags::O_CREAT, 0x40);
+        assert_eq!(posix_flags::O_APPEND, 0x400);
+    }
+
+    #[test]
+    fn m15_posix_stat_size() {
+        assert_eq!(core::mem::size_of::<PosixStat>(), 24);
+    }
+
+    #[test]
+    fn m15_compression_type_repr() {
+        assert_eq!(CompressionType::None as u8, 0);
+        assert_eq!(CompressionType::Lz4 as u8, 1);
+        assert_eq!(COMPRESSION_HEADER_SIZE, 5);
+    }
+
+    #[test]
+    fn m15_pressure_level_normal() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(100),
+            PressureLevel::Normal
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(21),
+            PressureLevel::Normal
+        );
+    }
+
+    #[test]
+    fn m15_pressure_level_warning() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(20),
+            PressureLevel::Warning
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(11),
+            PressureLevel::Warning
+        );
+    }
+
+    #[test]
+    fn m15_pressure_level_critical() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(10),
+            PressureLevel::Critical
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(6),
+            PressureLevel::Critical
+        );
+    }
+
+    #[test]
+    fn m15_pressure_level_emergency() {
+        assert_eq!(
+            PressureLevel::from_free_percentage(5),
+            PressureLevel::Emergency
+        );
+        assert_eq!(
+            PressureLevel::from_free_percentage(0),
+            PressureLevel::Emergency
+        );
+    }
+
+    #[test]
+    fn m15_max_fds() {
+        assert_eq!(MAX_FDS, 256);
     }
 }

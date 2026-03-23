@@ -98,6 +98,14 @@ impl SpaceTable {
     pub fn list(&self) -> Vec<Space> {
         self.spaces.iter().filter_map(|s| *s).collect()
     }
+
+    /// Find a space by name (linear scan).
+    pub fn find_by_name(&self, name: &[u8]) -> Option<&Space> {
+        self.spaces
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .find(|s| s.name_bytes() == name)
+    }
 }
 
 // ---------------------------------------------------------------------------

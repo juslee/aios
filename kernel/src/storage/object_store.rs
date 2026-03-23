@@ -103,6 +103,23 @@ impl ObjectIndex {
         Some(self.entries.remove(idx).object)
     }
 
+    /// Find an object by space and name (linear scan).
+    pub fn find_by_name(&self, space_id: &SpaceId, name: &[u8]) -> Option<ObjectId> {
+        self.entries
+            .iter()
+            .find(|e| e.object.space_id == *space_id && e.object.name_bytes() == name)
+            .map(|e| e.id)
+    }
+
+    /// List all object IDs in a given space (linear scan).
+    pub fn list_by_space(&self, space_id: &SpaceId) -> Vec<ObjectId> {
+        self.entries
+            .iter()
+            .filter(|e| e.object.space_id == *space_id)
+            .map(|e| e.id)
+            .collect()
+    }
+
     fn binary_search(&self, id: &ObjectId) -> Result<usize, usize> {
         self.entries.binary_search_by(|e| e.id.cmp(id))
     }

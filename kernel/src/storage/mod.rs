@@ -10,6 +10,7 @@ pub mod block_engine;
 pub mod crypto;
 pub mod lsm;
 pub mod object_store;
+pub mod posix_bridge;
 pub mod space;
 pub mod version_store;
 pub mod wal;
@@ -165,6 +166,9 @@ fn run_self_tests() {
 
     // --- Test 8: Space management ---
     test_spaces();
+
+    // --- Test 9: POSIX bridge ---
+    test_posix_bridge();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -576,6 +580,106 @@ fn test_object_store() {
     // Object count check.
     let count = block_engine::with_engine(|e| e.object_index().count()).unwrap_or(0);
     crate::kinfo!(Storage, "ObjStore: {} objects in index", count);
+}
+
+/// POSIX bridge self-tests: open, write, read, stat, readdir, unlink.
+#[cfg(feature = "storage-tests")]
+fn test_posix_bridge() {
+    use shared::storage::posix_flags;
+
+    let mut bridge = posix_bridge::PosixSpaceBridge::new();
+
+    // Create a file via POSIX open (O_CREAT | O_WRONLY).
+    let fd = match bridge.open(
+        b"/home/user/test.txt",
+        posix_flags::O_CREAT | posix_flags::O_WRONLY,
+    ) {
+        Ok(fd) => {
+            crate::kinfo!(Storage, "POSIX: open(create) OK — fd={}", fd);
+            fd
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: open(create) failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Write data.
+    match bridge.write(fd, b"Hello, AIOS!") {
+        Ok(n) => crate::kinfo!(Storage, "POSIX: write OK — {} bytes", n),
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: write failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Close.
+    if let Err(e) = bridge.close(fd) {
+        crate::kerror!(Storage, "POSIX: close failed: {:?}", e);
+        return;
+    }
+
+    // Re-open for reading.
+    let fd2 = match bridge.open(b"/home/user/test.txt", posix_flags::O_RDONLY) {
+        Ok(fd) => fd,
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: open(read) failed: {:?}", e);
+            return;
+        }
+    };
+
+    // Read back.
+    let mut buf = [0u8; 128];
+    match bridge.read(fd2, &mut buf) {
+        Ok(n) => {
+            if &buf[..n] == b"Hello, AIOS!" {
+                crate::kinfo!(Storage, "POSIX: read verified OK — {} bytes", n);
+            } else {
+                crate::kerror!(Storage, "POSIX: read data mismatch!");
+            }
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "POSIX: read failed: {:?}", e);
+            return;
+        }
+    }
+
+    let _ = bridge.close(fd2);
+
+    // Stat.
+    match bridge.stat(b"/home/user/test.txt") {
+        Ok(stat) => {
+            crate::kinfo!(
+                Storage,
+                "POSIX: stat OK — size={}, mode=0o{:o}",
+                stat.size,
+                stat.mode
+            );
+        }
+        Err(e) => crate::kerror!(Storage, "POSIX: stat failed: {:?}", e),
+    }
+
+    // Readdir.
+    match bridge.readdir(b"/home/user") {
+        Ok(entries) => {
+            crate::kinfo!(Storage, "POSIX: readdir OK — {} entries", entries.len());
+        }
+        Err(e) => crate::kerror!(Storage, "POSIX: readdir failed: {:?}", e),
+    }
+
+    // Stat directory root.
+    match bridge.stat(b"/home/user") {
+        Ok(stat) => {
+            crate::kinfo!(Storage, "POSIX: stat dir OK — mode=0o{:o}", stat.mode);
+        }
+        Err(e) => crate::kerror!(Storage, "POSIX: stat dir failed: {:?}", e),
+    }
+
+    // Unlink.
+    match bridge.unlink(b"/home/user/test.txt") {
+        Ok(()) => crate::kinfo!(Storage, "POSIX: unlink OK"),
+        Err(e) => crate::kerror!(Storage, "POSIX: unlink failed: {:?}", e),
+    }
 }
 
 use shared::storage::MEMTABLE_MAX_ENTRIES;
