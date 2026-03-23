@@ -746,8 +746,8 @@ pub struct PosixStat {
 pub struct DirEntry {
     /// Entry name (up to 64 bytes, null-padded).
     pub name: [u8; MAX_OBJECT_NAME_LEN],
-    /// Name length in bytes.
-    pub name_len: usize,
+    /// Name length in bytes (fixed-width for cross-boundary ABI stability).
+    pub name_len: u32,
     /// Object identifier.
     pub object_id: ObjectId,
     /// Content type.

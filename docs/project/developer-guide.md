@@ -1713,7 +1713,7 @@ mod tests {
 }
 ```
 
-**`no_std` test constraints:** The `shared` crate is `no_std`, so tests cannot use `Vec`, `String`, or heap allocation. Use fixed-size arrays and stack-based data structures. The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
+**`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
 **Current test distribution (364 tests):**
 

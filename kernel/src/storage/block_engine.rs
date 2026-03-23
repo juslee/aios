@@ -414,6 +414,11 @@ impl BlockEngine {
             raw
         };
 
+        // Validate envelope is large enough for the header.
+        if envelope.len() < 8 {
+            return Err(StorageError::ChecksumFailed);
+        }
+
         // Parse envelope header.
         let stored_crc = u32::from_le_bytes([envelope[0], envelope[1], envelope[2], envelope[3]]);
         let stored_len =
@@ -434,9 +439,10 @@ impl BlockEngine {
     /// Used during WAL recovery to check if an uncommitted block was actually written.
     fn verify_block_crc(&self, loc: &BlockLocation) -> Result<(), StorageError> {
         // Buffer must be large enough for the uncompressed data, which may be
-        // larger than loc.size (the on-disk wrapped size). LZ4 can achieve >10:1
-        // compression on highly compressible data, so use a generous multiplier.
-        let buf_size = (loc.size as usize) * 16 + 256;
+        // larger than loc.size (the on-disk wrapped size). Very highly
+        // compressible data can achieve large compression ratios, so we use a
+        // generous multiplier and saturating arithmetic to avoid overflow.
+        let buf_size = (loc.size as usize).saturating_mul(256).saturating_add(4096);
         let mut buf = alloc::vec![0u8; buf_size];
         self.read_block(loc, &mut buf)?;
         Ok(())
@@ -670,16 +676,21 @@ fn decompress_and_verify(
     }
 
     if comp_type == CompressionType::Lz4 as u8 {
-        // LZ4-compressed: decompress into buffer.
-        let decompressed = lz4_flex::block::decompress(payload, uncompressed_size)
+        // LZ4-compressed: decompress directly into the provided buffer.
+        let written = lz4_flex::block::decompress_into(payload, &mut buf[..uncompressed_size])
             .map_err(|_| StorageError::IoError)?;
-        buf[..uncompressed_size].copy_from_slice(&decompressed);
-    } else {
+        if written != uncompressed_size {
+            return Err(StorageError::IoError);
+        }
+    } else if comp_type == CompressionType::None as u8 {
         // Uncompressed: payload is original data.
         if payload.len() != uncompressed_size {
             return Err(StorageError::IoError);
         }
         buf[..uncompressed_size].copy_from_slice(payload);
+    } else {
+        // Unknown/unsupported compression type.
+        return Err(StorageError::IoError);
     }
 
     // CRC-32C check on uncompressed data.

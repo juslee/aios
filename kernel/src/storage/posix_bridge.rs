@@ -233,9 +233,14 @@ impl PosixSpaceBridge {
         let obj = block_engine::with_engine(|engine| engine.object_index().get(&obj_id).copied())?
             .ok_or(StorageError::ObjectNotFound)?;
 
+        let mode = match obj.content_type {
+            ContentType::Directory => 0o755,
+            _ => 0o644,
+        };
+
         Ok(PosixStat {
             size: obj.content_size as u64,
-            mode: 0o644,
+            mode,
             modified: obj.modified_at.0,
             nlink: 1,
         })
@@ -263,14 +268,14 @@ impl PosixSpaceBridge {
             let name = obj.name_bytes();
             let len = name.len().min(MAX_OBJECT_NAME_LEN);
             entry.name[..len].copy_from_slice(&name[..len]);
-            entry.name_len = len;
+            entry.name_len = len as u32;
             entries.push(entry);
         }
 
         Ok(entries)
     }
 
-    /// Create a directory (zero-length Binary object).
+    /// Create a directory (Directory object with null-byte sentinel).
     #[allow(dead_code)]
     pub fn mkdir(&mut self, path: &[u8]) -> Result<(), StorageError> {
         let (space_id, dir_name) = resolve_path(path)?;
