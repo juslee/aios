@@ -49,10 +49,10 @@ pub struct PhysFrame {
 /// where both `write` and `execute` are true.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PagePermissions {
-    pub read: bool,
-    pub write: bool,
-    pub execute: bool,
-    pub user: bool,
+    read: bool,
+    write: bool,
+    execute: bool,
+    user: bool,
 }
 
 impl PagePermissions {
@@ -70,6 +70,22 @@ impl PagePermissions {
             execute,
             user,
         })
+    }
+
+    pub fn read(&self) -> bool {
+        self.read
+    }
+
+    pub fn write(&self) -> bool {
+        self.write
+    }
+
+    pub fn execute(&self) -> bool {
+        self.execute
+    }
+
+    pub fn user(&self) -> bool {
+        self.user
     }
 }
 
@@ -222,10 +238,10 @@ mod tests {
     #[test]
     fn page_permissions_fields_accessible() {
         let p = PagePermissions::new(true, true, false, true).unwrap();
-        assert!(p.read);
-        assert!(p.write);
-        assert!(!p.execute);
-        assert!(p.user);
+        assert!(p.read());
+        assert!(p.write());
+        assert!(!p.execute());
+        assert!(p.user());
     }
 
     // -- PhysFrame --

@@ -74,9 +74,9 @@ impl TryFrom<i64> for CapabilityError {
                 token_id: CapabilityTokenId(0),
             }),
             ERR_TABLE_FULL => Ok(CapabilityError::TableFull),
-            ERR_INVALID_ATTENUATION => Ok(CapabilityError::InvalidAttenuation {
-                reason: "unknown",
-            }),
+            ERR_INVALID_ATTENUATION => {
+                Ok(CapabilityError::InvalidAttenuation { reason: "unknown" })
+            }
             ERR_INVALID_HANDLE => Ok(CapabilityError::InvalidHandle {
                 handle: CapabilityHandle(0),
             }),

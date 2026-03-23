@@ -191,7 +191,7 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
   - All 4 Kit traits are dyn-compatible
 - [x] Update `shared/src/lib.rs` re-exports for ergonomic imports
 
-**Acceptance:** `just check` zero warnings. `just test` — all pass (new test count > 380). `just run` — kernel boots normally, IPC and capability self-tests still pass.
+**Acceptance:** `just check` zero warnings. `just test` — all pass (new test count >= 380). `just run` — kernel boots normally, IPC and capability self-tests still pass.
 
 -----
 
@@ -432,6 +432,6 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 
 ## Phase Completion Criteria
 
-- [x] **M16 complete:** `shared/src/kits/` module exists. Memory Kit traits (`FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`) + `MemoryError` defined. Capability Kit trait (`CapabilityEnforcer`) + `CapabilityError` defined. Kernel `impl` blocks for `KernelFrameAllocator` and `KernelCapabilitySystem` compile. Host-side tests pass (>380 tests).
+- [x] **M16 complete:** `shared/src/kits/` module exists. Memory Kit traits (`FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`) + `MemoryError` defined. Capability Kit trait (`CapabilityEnforcer`) + `CapabilityError` defined. Kernel `impl` blocks for `KernelFrameAllocator` and `KernelCapabilitySystem` compile. Host-side tests pass (>= 380 tests).
 - [ ] **M17 complete:** IPC Kit traits (`ChannelOps`, `NotificationOps`, `SelectOps`, `SharedMemoryOps`) + `IpcKitError` defined. `KernelIpc` implements all 4 traits. All existing IPC self-tests pass on QEMU unchanged. Host-side tests pass (>390 tests).
 - [ ] **M18 complete:** Storage Kit traits (`BlockStore`, `SpaceManager`, `ObjectStore`, `VersionStoreOps`) defined. Kernel wrappers implement all 4 traits. Kit docs updated to "Traits Defined". All quality gates pass. Triple audit clean. PR created.

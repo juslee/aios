@@ -209,9 +209,7 @@ pub fn alloc_dma_pages(order: usize) -> Option<usize> {
 // Memory Kit trait implementation
 // ---------------------------------------------------------------------------
 
-use shared::kits::memory::{
-    self as memory_kit, MemoryError, PhysFrame, PoolStats,
-};
+use shared::kits::memory::{self as memory_kit, MemoryError, PhysFrame, PoolStats};
 
 /// Kernel-side implementation of the Memory Kit's `FrameAllocator` and
 /// `MemoryPressureMonitor` traits.
@@ -261,7 +259,12 @@ impl memory_kit::FrameAllocator for KernelFrameAllocator {
         let guard = FRAME_ALLOC.lock();
         let fa = match guard.as_ref() {
             Some(fa) => fa,
-            None => return PoolStats { free_frames: 0, total_frames: 0 },
+            None => {
+                return PoolStats {
+                    free_frames: 0,
+                    total_frames: 0,
+                }
+            }
         };
         PoolStats {
             free_frames: fa.pool_free_pages(pool),
@@ -285,9 +288,7 @@ impl memory_kit::MemoryPressureMonitor for KernelFrameAllocator {
 fn pool_total_pages(fa: &FrameAllocator, pool: Pool) -> usize {
     use super::buddy::PAGE_SIZE;
     match fa.pools.get(pool) {
-        Some(buddy) if buddy.is_initialized() => {
-            (buddy.end() - buddy.base()) / PAGE_SIZE
-        }
+        Some(buddy) if buddy.is_initialized() => (buddy.end() - buddy.base()) / PAGE_SIZE,
         _ => 0,
     }
 }

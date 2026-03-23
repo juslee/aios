@@ -234,17 +234,13 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         let table = PROCESS_TABLE.lock();
         let proc = table[holder.0 as usize]
             .as_ref()
-            .ok_or(CapabilityError::NotGranted {
-                requested: action.clone(),
-            })?;
+            .ok_or(CapabilityError::NotGranted { requested: *action })?;
 
         // Find a token authorizing this action; convert token_id → handle.
         let token_id = proc
             .cap_table
             .find_authorizing_token(action, now)
-            .ok_or(CapabilityError::NotGranted {
-                requested: action.clone(),
-            })?;
+            .ok_or(CapabilityError::NotGranted { requested: *action })?;
 
         // Find the handle (slot index) for this token ID.
         for (i, slot) in proc.cap_table.tokens().iter().enumerate() {
@@ -255,9 +251,7 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
             }
         }
 
-        Err(CapabilityError::NotGranted {
-            requested: action.clone(),
-        })
+        Err(CapabilityError::NotGranted { requested: *action })
     }
 
     fn grant(
@@ -288,7 +282,9 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         // token's provenance in future phases but not yet used.
         let _ = granted_by;
 
-        proc.cap_table.grant(token).map_err(|_| CapabilityError::TableFull)
+        proc.cap_table
+            .grant(token)
+            .map_err(|_| CapabilityError::TableFull)
     }
 
     fn revoke(
@@ -342,17 +338,15 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
 
         let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
         let mut result = Vec::new();
-        for slot in proc.cap_table.tokens().iter() {
-            if let Some(token) = slot {
-                if !token.revoked {
-                    // Also filter expired tokens.
-                    if let Some(exp) = token.expires_at_tick {
-                        if now >= exp {
-                            continue;
-                        }
+        for token in proc.cap_table.tokens().iter().flatten() {
+            if !token.revoked {
+                // Also filter expired tokens.
+                if let Some(exp) = token.expires_at_tick {
+                    if now >= exp {
+                        continue;
                     }
-                    result.push((*token).clone());
                 }
+                result.push(token.clone());
             }
         }
         result
