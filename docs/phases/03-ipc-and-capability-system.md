@@ -5,7 +5,7 @@
 **Deliverable:** Synchronous IPC with < 10 μs round-trip, capability-enforced channels, scheduler with 4 scheduling classes, kernel observability, service manager
 **Status:** Complete (M10–M12 done)
 **Prerequisites:** Phase 2 (Memory Management)
-**Unlocks:** Phase 4 (Block Storage & Object Store), Phase 28 (Composable Capability Profiles)
+**Unlocks:** Phase 4 (Block Storage & Object Store), Phase 45 (Composable Capability Profiles)
 
 -----
 

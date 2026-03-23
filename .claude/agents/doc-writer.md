@@ -1,7 +1,7 @@
 ---
 name: doc-writer
 description: >
-  Generates phase implementation docs (2-27) from architecture docs following
+  Generates phase implementation docs (5-46) from architecture docs following
   the Phase 0/1 template. Use when new phase docs need to be created.
 tools: Read, Write, Edit, Grep, Glob
 memory: project
@@ -13,7 +13,7 @@ You generate AIOS phase docs. Follow CLAUDE.md "Phase Doc Generation Workflow" e
 
 1. Read `docs/project/development-plan.md` §8 for phase name, duration, deliverable
 2. Read architecture docs for the phase's subsystems (use Architecture Document Map in CLAUDE.md)
-3. Read previous phase doc for milestone numbering: Phase N uses M(3N+1)–M(3N+3)
+3. Read previous phase doc for milestone numbering continuity (variable milestones per phase; see CLAUDE.md Milestone Numbering)
 4. Generate `docs/phases/NN-name.md` matching the Phase 0/1 template structure exactly
 
 ## Template Structure
@@ -22,7 +22,7 @@ You generate AIOS phase docs. Follow CLAUDE.md "Phase Doc Generation Workflow" e
 - Metadata: Tier, Duration, Deliverable, Status: Planned, Prerequisites, Unlocks
 - `## Objective` — 2-3 paragraphs
 - `## Architecture References` — table: Topic | Document | Relevant Sections
-- `## Milestones` — table with 3 milestones
+- `## Milestones` — table with 3+ milestones (variable per phase)
 - One section per Milestone with Step subsections
 - Each Step: What, Tasks (checkboxes), Note, Key reference, Acceptance criteria
 - `## Decision Points` table
@@ -32,5 +32,5 @@ You generate AIOS phase docs. Follow CLAUDE.md "Phase Doc Generation Workflow" e
 
 - Never duplicate architecture content — reference it
 - Acceptance criteria must be mechanical (command → expected output)
-- Each phase has exactly 3 milestones
+- Each phase has 3+ milestones (variable, based on complexity)
 - Duration must match development-plan.md
