@@ -26,10 +26,13 @@ These features require AIRS inference and degrade gracefully when AIRS is unavai
 
 #### 13.1.1 Page Content Summarization
 
-AIRS summarizes page content for tab overview, turning opaque URLs into human-readable descriptions. The browser engine extracts text content through the `ContentExtractor` Kit trait and sends it to AIRS via the standard inference channel.
+AIRS summarizes page content for tab overview, turning opaque URLs into human-readable descriptions. The browser engine extracts text content through an engine-internal `ContentExtractor` interface (not part of the Browser Kit trait budget — this is implemented entirely within the engine) and sends it to AIRS via the standard inference channel.
 
 ```rust
-/// Browser Kit trait for content extraction (implemented by engine)
+/// Engine-internal interface for content extraction (NOT a Browser Kit trait).
+/// Each engine implements this differently — Gecko uses its Readability module,
+/// Chromium uses its DOM distiller, the reference browser uses html5ever traversal.
+/// The extracted content is passed to AIRS via the Tab Agent's IPC channel.
 pub trait ContentExtractor {
     /// Extract main text content from the current page.
     /// Engine strips nav, ads, boilerplate — returns article body.

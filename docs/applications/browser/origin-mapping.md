@@ -40,7 +40,7 @@ fn derive_capabilities(origin: &Origin) -> CapabilitySet {
 
         // GPU: limited WebGL/WebGPU access through compositor mediation.
         // Memory cap prevents runaway shaders from exhausting GPU memory.
-        gpu: GpuCap::webgl(max_memory: Megabytes(256)),
+        gpu: GpuCap::webgl(Megabytes(256)),
 
         // Sensitive capabilities: None until user explicitly grants.
         // The Tab Agent cannot even attempt to access these subsystems

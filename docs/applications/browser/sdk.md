@@ -17,7 +17,7 @@ Every trait is engine-agnostic. Servo, Gecko, Blink, WebKit, or a minimal refere
 
 **Purpose:** Manages the compositor surface that browser content renders into. Each Tab Agent owns one or more surfaces (the page surface, popup surfaces, fullscreen video surfaces). BrowserSurface translates browser rendering commands into compositor protocol messages.
 
-**Kit dependency:** Compositor Kit — surface lifecycle, shared buffers, fences, damage reporting ([compositor protocol](../../platform/compositor/protocol.md) sections 3.1-3.4), semantic hints ([compositor protocol](../../platform/compositor/protocol.md) section 4).
+**Kit dependency:** Compute Kit (Tier 1) — display surfaces and canvas presentation; compositor service — surface lifecycle, shared buffers, fences, damage reporting ([compositor protocol](../../platform/compositor/protocol.md) sections 3.1-3.4), semantic hints ([compositor protocol](../../platform/compositor/protocol.md) section 4).
 
 ```rust
 /// Compositor surface contract for browser content.
@@ -596,7 +596,7 @@ Every Web API that accesses OS services routes through exactly one Browser Kit t
 | `document.cookie` | StorageBridge | Storage Kit | SpaceAccess(origin/cookies) |
 | `WebGL` / `WebGL2` | BrowserSurface | Compute Kit (Tier 1) | ComputeAccess(limited) |
 | `WebGPU` | BrowserSurface | Compute Kit (Tier 2) | ComputeAccess(limited) |
-| `Canvas 2D` | BrowserSurface | Compositor Kit | SurfaceAccess |
+| `Canvas 2D` | BrowserSurface | Compute Kit (Tier 1) | SurfaceAccess |
 | `<video>` / `<audio>` | MediaBridge | Media Kit | MediaAccess |
 | `MediaSource` (MSE) | MediaBridge | Media Kit | MediaAccess |
 | `Web Audio API` | MediaBridge | Audio subsystem | AudioCapability(playback) |
@@ -608,13 +608,13 @@ Every Web API that accesses OS services routes through exactly one Browser Kit t
 | `Gamepad API` | InputBridge | Input Kit | InputCapability(gamepad) |
 | `Keyboard` / `Mouse` / `Touch` events | InputBridge | Input Kit | InputCapability(default) |
 | `Pointer Lock` | InputBridge | Input Kit | InputCapability(pointer-lock) |
-| `Clipboard API` | CapabilityMapper | Compositor Kit | ClipboardCapability (prompted-read) |
+| `Clipboard API` | CapabilityMapper | Flow Kit | ClipboardCapability (prompted-read) |
 | `Notifications API` | CapabilityMapper | Attention Manager | AttentionCapability (prompted) |
 | `Service Worker` | WebContentProcess | Kernel | ProcessLifecycle(persistent) |
 | `Web Locks API` | StorageBridge | Storage Kit | SpaceAccess(origin) |
 | `navigator.permissions` | CapabilityMapper | Capability Kit | (query only, no capability needed) |
 | `aios.space()` (extension) | StorageBridge | Storage Kit | SpaceAccess(user-granted) |
-| `aios.flow()` (extension) | NetworkBridge | Flow Kit | FlowAccess(user-granted) |
+| `aios.flow()` (extension) | StorageBridge | Flow Kit | FlowAccess(user-granted) |
 
 **Design invariant:** Every row in this table crosses exactly one capability boundary. A Web API call never requires coordinating multiple capability checks — the Kit trait is responsible for any internal coordination with other OS services. This keeps the bridge layer thin and auditable.
 

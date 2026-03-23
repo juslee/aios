@@ -355,7 +355,7 @@ WebGL / WebGPU            GPU              Compute Kit         GpuCapability (li
 Bluetooth                 Wireless         Wireless Kit        BluetoothCapability (prompted)
 WebUSB                    USB              Device Kit          UsbCapability (prompted)
 Gamepad API               Input            Input Kit           InputCapability (gamepad)
-Notifications             Attention        Experience Kit      AttentionCapability (prompted)
+Notifications             Attention        Notification Kit    AttentionCapability (prompted)
 localStorage              Storage          Storage Kit         StorageCap (origin sub-space)
 IndexedDB                 Storage          Storage Kit         StorageCap (origin sub-space)
 Cache API                 Storage          Storage Kit         StorageCap (origin sub-space)
