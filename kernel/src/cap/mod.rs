@@ -261,7 +261,7 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         let mut table = PROCESS_TABLE.lock();
         let proc = table[holder.0 as usize]
             .as_mut()
-            .ok_or(CapabilityError::TableFull)?;
+            .ok_or(CapabilityError::NotGranted { requested: cap })?;
 
         let token = CapabilityToken {
             id: new_token_id(),
