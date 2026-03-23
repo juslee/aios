@@ -3,7 +3,7 @@
 **Tier:** 1.5 — Kit Foundation
 **Duration:** 3 weeks
 **Deliverable:** Memory Kit, IPC Kit, Capability Kit, and Storage Kit trait hierarchies extracted from Phases 0–4 implementation; Kit module structure in `shared/src/kits/`; kernel-side `impl` blocks; comprehensive host-side tests
-**Status:** Planned
+**Status:** In Progress (M16 complete)
 **Prerequisites:** Phase 4 (Block Storage & Object Store)
 **Unlocks:** Phase 6 (GPU & Display)
 
@@ -66,11 +66,11 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Create `shared/src/kits/mod.rs` with sub-modules. This establishes the foundational directory structure that all 30 Kits will eventually use.
 
 **Tasks:**
-- [ ] Create `shared/src/kits/mod.rs` with `pub mod memory;` and `pub mod capability;`
-- [ ] Create `shared/src/kits/memory.rs` — stub with module-level doc comment referencing `docs/kits/kernel/memory.md`
-- [ ] Create `shared/src/kits/capability.rs` — stub with module-level doc comment referencing `docs/kits/kernel/capability.md`
-- [ ] Add `pub mod kits;` to `shared/src/lib.rs`
-- [ ] Add `pub use kits::memory as memory_kit;` and `pub use kits::capability as capability_kit;` re-exports in `shared/src/lib.rs`
+- [x] Create `shared/src/kits/mod.rs` with `pub mod memory;` and `pub mod capability;`
+- [x] Create `shared/src/kits/memory.rs` — stub with module-level doc comment referencing `docs/kits/kernel/memory.md`
+- [x] Create `shared/src/kits/capability.rs` — stub with module-level doc comment referencing `docs/kits/kernel/capability.md`
+- [x] Add `pub mod kits;` to `shared/src/lib.rs`
+- [x] Add `pub use kits::memory as memory_kit;` and `pub use kits::capability as capability_kit;` re-exports in `shared/src/lib.rs`
 
 **Key reference:** `docs/kits/README.md` (Kit Discovery and Registration — Kernel Kits use static linking)
 
@@ -83,12 +83,12 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Define `MemoryError` and the supporting types that Memory Kit traits reference: `PhysFrame`, `PagePermissions` (with W^X enforcement), `Mapping`.
 
 **Tasks:**
-- [ ] Define `MemoryError` enum in `shared/src/kits/memory.rs` with variants: `OutOfMemory { pool: Pool, requested: usize, available: usize }`, `WxViolation`, `InvalidRegion`, `CapabilityDenied`, `AlreadyMapped { vaddr: VirtAddr }`, `NotMapped { vaddr: VirtAddr }`, `BudgetExceeded`, `TooManyRegions`
-- [ ] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `MemoryError`
-- [ ] Define `PhysFrame` struct: `pub addr: PhysAddr`, `pub pool: Pool` — wraps a physical page address with its originating pool
-- [ ] Define `PagePermissions` struct with fields: `read: bool`, `write: bool`, `execute: bool`, `user_accessible: bool` — constructor `new()` that enforces W^X invariant (returns `Err(MemoryError::WxViolation)` if both `write` and `execute` are true)
-- [ ] Define `Mapping` struct: `pub vaddr: VirtAddr`, `pub size: usize`, `pub perms: PagePermissions`, `pub pool: Pool`
-- [ ] Write host-side tests: `MemoryError` Debug formatting, `PagePermissions::new()` W^X enforcement (valid cases pass, W+X rejected), `PhysFrame` construction
+- [x] Define `MemoryError` enum in `shared/src/kits/memory.rs` with variants: `OutOfMemory { pool: Pool, requested: usize, available: usize }`, `WxViolation`, `InvalidRegion`, `CapabilityDenied`, `AlreadyMapped { vaddr: VirtAddr }`, `NotMapped { vaddr: VirtAddr }`, `BudgetExceeded`, `TooManyRegions`
+- [x] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `MemoryError`
+- [x] Define `PhysFrame` struct: `pub addr: PhysAddr`, `pub pool: Pool` — wraps a physical page address with its originating pool
+- [x] Define `PagePermissions` struct with fields: `read: bool`, `write: bool`, `execute: bool`, `user_accessible: bool` — constructor `new()` that enforces W^X invariant (returns `Err(MemoryError::WxViolation)` if both `write` and `execute` are true)
+- [x] Define `Mapping` struct: `pub vaddr: VirtAddr`, `pub size: usize`, `pub perms: PagePermissions`, `pub pool: Pool`
+- [x] Write host-side tests: `MemoryError` Debug formatting, `PagePermissions::new()` W^X enforcement (valid cases pass, W+X rejected), `PhysFrame` construction
 
 **Note:** `PhysAddr`, `VirtAddr`, and `Pool` are already defined in `shared/src/lib.rs` and `shared/src/memory.rs`. The Kit types build on these existing definitions.
 
@@ -103,20 +103,20 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Define the three Memory Kit traits: `FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`.
 
 **Tasks:**
-- [ ] Define `FrameAllocator` trait:
+- [x] Define `FrameAllocator` trait:
   - `fn alloc_frame(&self, pool: Pool) -> Result<PhysFrame, MemoryError>` — allocate one 4 KiB frame from the specified pool
   - `fn free_frame(&self, frame: PhysFrame) -> Result<(), MemoryError>` — return a frame to its pool
   - `fn pool_pressure(&self, pool: Pool) -> MemoryPressure` — current pressure level for a pool
   - `fn pool_stats(&self, pool: Pool) -> PoolStats` — free/total counts for a pool
-- [ ] Define `PoolStats` struct: `pub free_frames: usize`, `pub total_frames: usize`
-- [ ] Define `AddressSpace` trait:
+- [x] Define `PoolStats` struct: `pub free_frames: usize`, `pub total_frames: usize`
+- [x] Define `AddressSpace` trait:
   - `fn map(&mut self, vaddr: VirtAddr, frames: &[PhysFrame], perms: PagePermissions) -> Result<(), MemoryError>` — map contiguous virtual pages to physical frames
   - `fn unmap(&mut self, vaddr: VirtAddr, pages: usize) -> Result<(), MemoryError>` — unmap pages, return frames to pool
   - `fn protect(&mut self, vaddr: VirtAddr, pages: usize, perms: PagePermissions) -> Result<(), MemoryError>` — change permissions on existing mapping
   - `fn query(&self, vaddr: VirtAddr) -> Option<Mapping>` — look up mapping at a virtual address
-- [ ] Define `MemoryPressureMonitor` trait:
+- [x] Define `MemoryPressureMonitor` trait:
   - `fn current_level(&self) -> MemoryPressure` — aggregate pressure across all pools
-- [ ] Write host-side test verifying `FrameAllocator`, `AddressSpace`, and `MemoryPressureMonitor` are dyn-compatible (object-safe): `fn _assert_object_safe(_: &dyn FrameAllocator) {}` etc.
+- [x] Write host-side test verifying `FrameAllocator`, `AddressSpace`, and `MemoryPressureMonitor` are dyn-compatible (object-safe): `fn _assert_object_safe(_: &dyn FrameAllocator) {}` etc.
 
 **Key reference:** `docs/kits/kernel/memory.md` (Core Traits)
 
@@ -129,16 +129,16 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Define `CapabilityError` (replacing raw `i64` error codes in the kernel) and the `CapabilityEnforcer` trait.
 
 **Tasks:**
-- [ ] Define `CapabilityError` enum in `shared/src/kits/capability.rs` with variants: `NotGranted { requested: Capability }`, `Revoked { token_id: CapabilityTokenId }`, `Expired { token_id: CapabilityTokenId }`, `TableFull`, `InvalidAttenuation { reason: &'static str }`, `InvalidHandle { handle: CapabilityHandle }`, `NotDelegatable { token_id: CapabilityTokenId }`
-- [ ] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `CapabilityError`
-- [ ] Define `CapabilityEnforcer` trait:
+- [x] Define `CapabilityError` enum in `shared/src/kits/capability.rs` with variants: `NotGranted { requested: Capability }`, `Revoked { token_id: CapabilityTokenId }`, `Expired { token_id: CapabilityTokenId }`, `TableFull`, `InvalidAttenuation { reason: &'static str }`, `InvalidHandle { handle: CapabilityHandle }`, `NotDelegatable { token_id: CapabilityTokenId }`
+- [x] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `CapabilityError`
+- [x] Define `CapabilityEnforcer` trait:
   - `fn check(&self, holder: ProcessId, action: &Capability) -> Result<CapabilityHandle, CapabilityError>` — verify the holder has a valid token granting the action; return the handle if found
   - `fn grant(&mut self, holder: ProcessId, cap: Capability, granted_by: ProcessId) -> Result<CapabilityHandle, CapabilityError>` — create a new token
   - `fn revoke(&mut self, holder: ProcessId, handle: CapabilityHandle) -> Result<(), CapabilityError>` — revoke token and cascade to children
   - `fn attenuate(&mut self, holder: ProcessId, handle: CapabilityHandle, narrowed: Capability) -> Result<CapabilityHandle, CapabilityError>` — create attenuated child token
-  - `fn list_active(&self, holder: ProcessId) -> &[Option<CapabilityToken>]` — return the holder's capability table
-- [ ] Add conversion: `impl From<CapabilityError> for i64` (for syscall return compatibility) and `impl TryFrom<i64> for CapabilityError`
-- [ ] Write host-side tests: `CapabilityError` round-trip through `i64`, Debug formatting, `CapabilityEnforcer` is dyn-compatible
+  - `fn list_active(&self, holder: ProcessId) -> Vec<CapabilityToken>` — return the holder's active capabilities (deviation: returns Vec instead of &[] due to mutex lifetime)
+- [x] Add conversion: `impl From<CapabilityError> for i64` (for syscall return compatibility) and `impl TryFrom<i64> for CapabilityError`
+- [x] Write host-side tests: `CapabilityError` round-trip through `i64`, Debug formatting, `CapabilityEnforcer` is dyn-compatible
 
 **Key reference:** `docs/kits/kernel/capability.md` (Core Traits); `shared/src/cap.rs` (existing types)
 
@@ -151,16 +151,16 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Add `impl FrameAllocator` and `impl MemoryPressureMonitor` on existing kernel memory management types. The `AddressSpace` trait implementation is deferred to a wrapper struct since the kernel's address space operations use global state.
 
 **Tasks:**
-- [ ] In `kernel/src/mm/frame.rs`: import `shared::kits::memory::{FrameAllocator as FrameAllocatorKit, PhysFrame, PoolStats, MemoryError}`
-- [ ] Create `KernelFrameAllocator` unit struct in `kernel/src/mm/frame.rs` that wraps the existing global `FRAME_ALLOC` state
-- [ ] Implement `FrameAllocatorKit` for `KernelFrameAllocator`:
+- [x] In `kernel/src/mm/frame.rs`: import `shared::kits::memory::{self as memory_kit, PhysFrame, PoolStats, MemoryError}`
+- [x] Create `KernelFrameAllocator` unit struct in `kernel/src/mm/frame.rs` that wraps the existing global `FRAME_ALLOC` state
+- [x] Implement `memory_kit::FrameAllocator` for `KernelFrameAllocator`:
   - `alloc_frame()` delegates to existing `alloc_page()` / `alloc_user_page()` / `alloc_dma_page()` (pool-dispatched), wraps result in `PhysFrame`
   - `free_frame()` delegates to existing `buddy::free_page()` (unsafe, kernel wraps safely)
   - `pool_pressure(pool)` computes pressure for the given pool from per-pool free/total data (using `pool_free_pages(pool)` and pool size), rather than delegating to the global `FrameAllocator::pressure()` which only covers the user pool
   - `pool_stats()` computes free/total from existing pool data
-- [ ] Implement `MemoryPressureMonitor` for `KernelFrameAllocator`:
+- [x] Implement `MemoryPressureMonitor` for `KernelFrameAllocator`:
   - `current_level()` returns worst pressure across all pools
-- [ ] Verify existing kernel boot sequence unaffected — all existing code continues using the module-level functions; Kit trait is an additional API layer
+- [x] Verify existing kernel boot sequence unaffected — all existing code continues using the module-level functions; Kit trait is an additional API layer
 
 **Note:** The `AddressSpace` trait implementation is more complex because kernel address space operations (`pgtable.rs`, `kmap.rs`, `uspace.rs`) use `unsafe` operations with hardware page tables. A `KernelAddressSpace` wrapper will be added in a later phase when user-space address space management is formalized. For Phase 5, defining the trait in shared is sufficient — the kernel can implement it incrementally.
 
@@ -175,21 +175,21 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Add `impl CapabilityEnforcer` on the kernel capability system. Run final M16 shared crate cleanup and host-side tests.
 
 **Tasks:**
-- [ ] In `kernel/src/cap/mod.rs`: import `shared::kits::capability::{CapabilityEnforcer, CapabilityError}`
-- [ ] Create `KernelCapabilitySystem` unit struct in `kernel/src/cap/mod.rs`
-- [ ] Implement `CapabilityEnforcer` for `KernelCapabilitySystem`:
-  - `check()` delegates to existing `check_channel_create()` / `check_channel_access()` / `check_shared_memory_create()` / `check_shared_memory_access()` (action-dispatched), converts `i64` result to `CapabilityError`
-  - `grant()` delegates to existing `grant_to_process()` function
-  - `revoke()` delegates to existing `revoke_in_process()` function, includes cascade
-  - `attenuate()` — new implementation: create child token with narrowed capability from parent (not yet in kernel; implement directly in the `impl` block)
-  - `list_active()` — new implementation: return process's capability table slice (not yet in kernel; implement directly by reading `PROCESS_TABLE`)
-- [ ] Ensure `Debug`, `Clone`, `PartialEq`, `Eq` on all new Kit types in `shared/src/kits/`
-- [ ] Add comprehensive host-side tests for all M16 Kit types:
+- [x] In `kernel/src/cap/mod.rs`: import `shared::kits::capability::{self as capability_kit, CapabilityError}`
+- [x] Create `KernelCapabilitySystem` unit struct in `kernel/src/cap/mod.rs`
+- [x] Implement `CapabilityEnforcer` for `KernelCapabilitySystem`:
+  - `check()` uses `find_authorizing_token()` + token scan to find handle (generic, not action-dispatched)
+  - `grant()` creates new token with `new_token_id()`, delegates to `cap_table.grant()`
+  - `revoke()` looks up token_id from handle, delegates to `cap_table.revoke()` (no cascade — kernel-internal concern)
+  - `attenuate()` delegates to existing `cap_table.attenuate()` with new token ID
+  - `list_active()` collects non-revoked, non-expired tokens into `Vec<CapabilityToken>`
+- [x] Ensure `Debug`, `Clone`, `PartialEq`, `Eq` on all new Kit types in `shared/src/kits/`
+- [x] Add comprehensive host-side tests for all M16 Kit types:
   - `MemoryError` all variants construct correctly
   - `PagePermissions` W^X invariant cannot be violated
   - `CapabilityError <-> i64` round-trip for all variants
   - All 4 Kit traits are dyn-compatible
-- [ ] Update `shared/src/lib.rs` re-exports for ergonomic imports
+- [x] Update `shared/src/lib.rs` re-exports for ergonomic imports
 
 **Acceptance:** `just check` zero warnings. `just test` — all pass (new test count > 380). `just run` — kernel boots normally, IPC and capability self-tests still pass.
 
@@ -432,6 +432,6 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 
 ## Phase Completion Criteria
 
-- [ ] **M16 complete:** `shared/src/kits/` module exists. Memory Kit traits (`FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`) + `MemoryError` defined. Capability Kit trait (`CapabilityEnforcer`) + `CapabilityError` defined. Kernel `impl` blocks for `KernelFrameAllocator` and `KernelCapabilitySystem` compile. Host-side tests pass (>380 tests).
+- [x] **M16 complete:** `shared/src/kits/` module exists. Memory Kit traits (`FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`) + `MemoryError` defined. Capability Kit trait (`CapabilityEnforcer`) + `CapabilityError` defined. Kernel `impl` blocks for `KernelFrameAllocator` and `KernelCapabilitySystem` compile. Host-side tests pass (>380 tests).
 - [ ] **M17 complete:** IPC Kit traits (`ChannelOps`, `NotificationOps`, `SelectOps`, `SharedMemoryOps`) + `IpcKitError` defined. `KernelIpc` implements all 4 traits. All existing IPC self-tests pass on QEMU unchanged. Host-side tests pass (>390 tests).
 - [ ] **M18 complete:** Storage Kit traits (`BlockStore`, `SpaceManager`, `ObjectStore`, `VersionStoreOps`) defined. Kernel wrappers implement all 4 traits. Kit docs updated to "Traits Defined". All quality gates pass. Triple audit clean. PR created.
