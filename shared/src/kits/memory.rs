@@ -3,7 +3,7 @@
 //!
 //! Architecture reference: `docs/kits/kernel/memory.md`
 
-use crate::{PhysAddr, Pool, VirtAddr};
+use crate::{MemoryPressure, PhysAddr, Pool, VirtAddr};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -93,6 +93,66 @@ pub struct PoolStats {
     pub free_frames: usize,
     /// Total number of 4 KiB frames in this pool.
     pub total_frames: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Kit traits
+// ---------------------------------------------------------------------------
+
+/// Physical frame allocator interface.
+///
+/// Implementors manage a pool-partitioned buddy allocator and expose
+/// allocation, deallocation, pressure queries, and per-pool statistics.
+pub trait FrameAllocator {
+    /// Allocate a single 4 KiB frame from the specified pool.
+    fn alloc_frame(&self, pool: Pool) -> Result<PhysFrame, MemoryError>;
+
+    /// Return a previously allocated frame to its pool.
+    fn free_frame(&self, frame: PhysFrame) -> Result<(), MemoryError>;
+
+    /// Query the current memory pressure level for a pool.
+    fn pool_pressure(&self, pool: Pool) -> MemoryPressure;
+
+    /// Return allocation statistics for a pool.
+    fn pool_stats(&self, pool: Pool) -> PoolStats;
+}
+
+/// Virtual address space management interface.
+///
+/// Implementors manage page tables, mappings, and permission changes for
+/// a single address space (kernel or per-process).
+pub trait AddressSpace {
+    /// Create a new virtual mapping backed by physical frames from `pool`.
+    fn map(
+        &mut self,
+        vaddr: VirtAddr,
+        size: usize,
+        perms: PagePermissions,
+        pool: Pool,
+    ) -> Result<(), MemoryError>;
+
+    /// Remove a virtual mapping starting at `vaddr`.
+    fn unmap(&mut self, vaddr: VirtAddr, size: usize) -> Result<(), MemoryError>;
+
+    /// Change the permissions on an existing mapping.
+    fn protect(
+        &mut self,
+        vaddr: VirtAddr,
+        size: usize,
+        perms: PagePermissions,
+    ) -> Result<(), MemoryError>;
+
+    /// Query the mapping at a virtual address, if any.
+    fn query(&self, vaddr: VirtAddr) -> Option<Mapping>;
+}
+
+/// System-wide memory pressure monitor.
+///
+/// Provides a single method to query the worst-case pressure across all
+/// memory pools.
+pub trait MemoryPressureMonitor {
+    /// Return the highest (worst) pressure level across all pools.
+    fn current_level(&self) -> MemoryPressure;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,5 +276,19 @@ mod tests {
         };
         assert_eq!(s.free_frames, 100);
         assert_eq!(s.total_frames, 200);
+    }
+
+    // -- Trait dyn-compatibility --
+
+    // These functions assert that the traits are object-safe (dyn-compatible).
+    // If they compile, the traits can be used as trait objects.
+    fn _assert_frame_allocator_dyn(_: &dyn FrameAllocator) {}
+    fn _assert_address_space_dyn(_: &dyn AddressSpace) {}
+    fn _assert_pressure_monitor_dyn(_: &dyn MemoryPressureMonitor) {}
+
+    #[test]
+    fn traits_are_dyn_compatible() {
+        // Compilation of the above functions is the real test.
+        // This test just ensures the module compiles with those assertions.
     }
 }
