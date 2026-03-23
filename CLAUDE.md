@@ -26,7 +26,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Topic | Document | Key Sections |
 |---|---|---|
 | System overview & vision | `docs/project/overview.md` | §1 Vision, §2 Architecture |
-| Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §5 Gates (incl. Gate 1 retro), §8 Phase table, §8.1 Actual progress |
+| Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §5 Gates (incl. Gates 1-5), §8 Phase table (47 phases), §8.1 Actual progress |
+| Kit architecture (hub) | `docs/kits/README.md` | 30 Kits across 4 layers (Kernel, Platform, Intelligence, Application) |
+| Kit docs — Kernel layer | `docs/kits/kernel/{memory,ipc,capability,compute}.md` | Kit API traits, Phase 5 retroactive extraction |
+| Kit docs — Platform layer | `docs/kits/platform/{storage,network,input,audio,media,usb,camera,wireless,power,thermal,translation}.md` | Kit API traits extracted inline per phase |
+| Kit docs — Intelligence layer | `docs/kits/intelligence/{airs,context,preference,search,flow,intent,attention}.md` | Kit API traits extracted inline per phase |
+| Kit docs — Application layer | `docs/kits/application/{app,interface,browser,conversation,identity,notification,security}.md` | Kit API traits extracted inline per phase |
+| Kit cookbook | `docs/kits/cookbook.md` | SDK examples, Phase 26 |
 | Full architecture | `docs/project/architecture.md` | All |
 | Language ecosystem (hub) | `docs/project/language-ecosystem.md` | §1 Overview, Document Map, Impl Order |
 | Language runtimes | `docs/project/language-ecosystem/runtimes.md` | §2 Rust, §3 Python, §4 TypeScript (QuickJS-ng), §5 WASM (wasmtime + WAMR) |
@@ -384,6 +390,7 @@ When implementing Phase N:
    - Each step in the phase doc is atomic — complete it fully before moving on
    - Every step has an "Acceptance:" block — this is your done condition
    - Do not proceed to the next step if acceptance criteria are not met
+   - **Kit API extraction**: For phases that deliver a Kit, the final step of the last milestone must extract Kit API traits (public trait surface, capability integration, Kit-level tests). Follow the conventions established in Phase 5 (Kit Foundation).
 
 5. **VERIFY** after each step:
    - Run the acceptance criteria commands (`cargo build`, `just run`, `just check`, etc.)
@@ -682,22 +689,27 @@ When generating a phase doc for Phase N:
 3. **CONVENTIONS**:
    - Never duplicate architecture content — reference it
    - Acceptance criteria must be mechanical (run command → see output)
-   - Each phase has exactly 3 milestones
+   - Each phase has 3+ milestones (variable based on complexity; determined during doc generation)
    - Duration must match `development-plan.md`
+   - For phases that deliver a Kit, the final milestone must include Kit API trait extraction as its last step
 
 ---
 
 ## Milestone Numbering
 
-42 phases × 3 milestones = 126 milestones total.
+47 phases with variable milestones per phase (3+ based on complexity).
+
+**Phases 0–4** (fixed, unchanged):
 
 ```
-Phase 0:  M1–M3
-Phase 1:  M4–M6
-Phase 2:  M7–M9
-Phase N:  M(3N+1) – M(3N+3)
-Phase 41: M124–M126
+Phase 0:  M1–M3   (3 milestones)
+Phase 1:  M4–M6   (3 milestones)
+Phase 2:  M7–M9   (3 milestones)
+Phase 3:  M10–M12 (3 milestones)
+Phase 4:  M13–M15 (3 milestones)
 ```
+
+**Phases 5+**: Milestones numbered sequentially from M16 onward. The exact milestone count per phase is determined when its phase doc is generated, based on complexity analysis of the architecture docs. The fixed formula `M(3N+1)` no longer applies.
 
 ---
 
