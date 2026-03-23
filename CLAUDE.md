@@ -265,7 +265,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Agent distribution | `docs/applications/agents/distribution.md` | §12 Agent Store & Package Format, §13 Testing & Development Tools |
 | Agent resources | `docs/applications/agents/resources.md` | §14 Memory/CPU/Network/Inference Budgets & Resource Accounting |
 | Agent intelligence | `docs/applications/agents/intelligence.md` | §17 Kernel-Internal ML, §18 AIRS-Dependent Intelligence, §19 Future Directions |
-| Browser | `docs/applications/browser.md` | All (Phase 30+) |
+| Browser Kit (hub) | `docs/applications/browser.md` | §1 Core Insight, §2 Responsibility Decomposition, §3 Architecture Overview, §14 Design Principles, §15 Impl Order, Document Map |
+| Browser SDK traits | `docs/applications/browser/sdk.md` | §4 Browser Kit SDK (7 traits), §5 Web API Bridge |
+| Browser origin mapping | `docs/applications/browser/origin-mapping.md` | §6 Origin-to-capability mapping, §7 CORS as capabilities |
+| Browser storage bridge | `docs/applications/browser/storage-bridge.md` | §8 Web storage as Spaces |
+| Browser engine integration | `docs/applications/browser/engine-integration.md` | §9 Engine integration patterns, §10 Reference browser |
+| Browser security | `docs/applications/browser/security.md` | §11 Security architecture, §12 Unique capabilities |
+| Browser intelligence | `docs/applications/browser/intelligence.md` | §13 AI-native browser intelligence |
 | Inspector (hub) | `docs/applications/inspector.md` | §1 Core Insight, §2 Architecture, §15 Design Principles, §16 Impl Order, §17 Comparisons, Document Map |
 | Inspector architecture | `docs/applications/inspector/architecture.md` | §3 Agent Identity, §4 Component Architecture, Data Model, Innovations |
 | Inspector views | `docs/applications/inspector/views.md` | §5.1–§5.9 All 9 views with research enhancements |

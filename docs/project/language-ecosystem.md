@@ -1,7 +1,7 @@
 # AIOS Language Ecosystem: Technical Deep Dive
 
 **Parent document:** [architecture.md](./architecture.md), [development-plan.md](./development-plan.md)
-**Related:** [agents.md](../applications/agents.md) — Agent SDK and runtime adapters, [posix.md](../platform/posix.md) — C/C++ toolchain and POSIX layer, [browser.md](../applications/browser.md) — SpiderMonkey/WASM in browser
+**Related:** [agents.md](../applications/agents.md) — Agent SDK and runtime adapters, [posix.md](../platform/posix.md) — C/C++ toolchain and POSIX layer, [browser.md](../applications/browser.md) — Browser Kit (QuickJS/WASM in reference browser)
 **Scope:** Rust, Python, TypeScript, WASM — how each runs on AIOS, what's needed, when it arrives
 
 ---
