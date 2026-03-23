@@ -100,13 +100,14 @@ pub struct FlowEntry {
 /// Content can be inline (small payloads up to 64 KB) or backed by shared
 /// memory (large payloads). The transform pipeline operates on either form.
 pub struct TypedContent {
-    /// MIME-like content type (e.g., "text/plain", "image/png",
-    /// "application/aios-object-ref").
-    pub content_type: String,
-    /// The payload data.
-    pub payload: ContentPayload,
-    /// Alternative representations the sender can provide natively.
-    pub alternatives: Vec<(String, ContentPayload)>,
+    /// The primary content payload.
+    pub primary: ContentPayload,
+    /// Standard MIME type (e.g., "text/plain", "image/png", "application/pdf").
+    pub mime_type: String,
+    /// AIOS semantic type -- richer than MIME, used for type negotiation.
+    pub semantic_type: SemanticType,
+    /// Same content in alternative formats, pre-computed by source.
+    pub alternatives: Vec<ContentPayload>,
 }
 
 /// Transfer intent declares what the sender meant by this transfer.

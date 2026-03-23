@@ -314,7 +314,7 @@ let results = SearchKit::search(
 )?;
 
 for result in &results {
-    println!("Copied on {}: {}", result.timestamp, result.snippet);
+    println!("{} (score: {:.2}): {}", result.title, result.score, result.snippet);
 }
 ```
 

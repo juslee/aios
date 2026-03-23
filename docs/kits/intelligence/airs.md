@@ -236,9 +236,9 @@ let response = stream.collect_all()?;
 println!("\n{}", response);
 
 // Check resource usage
-let meter = session.meter();
-println!("Tokens used: {}, throughput: {:.1} tok/s",
-    meter.total_tokens(), meter.tokens_per_second());
+let usage = session.token_usage();
+println!("Tokens used: {}, remaining budget: {}",
+    usage.total_tokens, session.remaining_budget());
 
 session.close()?;
 ```
@@ -282,12 +282,11 @@ let engine = AirsKit::engine()?;
 let query_embedding = engine.embed(&["documents about project budgets"], None)?;
 
 // Pass to Search Kit for nearest-neighbor lookup
-let results = SearchKit::search(SearchQuery {
-    text: "documents about project budgets".into(),
-    embedding: Some(query_embedding[0].clone()),
-    scope: SearchScope::AllSpaces,
-    limit: 10,
-})?;
+// SearchQuery is a trait; use the default SimpleQuery builder
+let results = SearchKit::search(SimpleQuery::new(
+    "documents about project budgets",
+    SearchScope::AllSpaces,
+).with_embedding(query_embedding[0].clone()).with_limit(10))?;
 
 for result in results {
     println!("{}: {:.2} relevance", result.title, result.score);

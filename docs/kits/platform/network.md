@@ -322,7 +322,7 @@ NetworkAccess = { domains = ["api.example.com", "cdn.example.com"], protocols = 
 
 [capabilities.optional]
 ShadowAccess = { reason = "Privacy-routed connections for sensitive API calls" }
-NetworkAccess = { domains = ["*.example.com"], protocols = ["wss"], reason = "WebSocket for real-time updates" }
+NetworkAccessWebSocket = { domains = ["*.example.com"], protocols = ["wss"], reason = "WebSocket for real-time updates" }
 ```
 
 ## 6. Error Handling

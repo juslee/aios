@@ -249,7 +249,7 @@ loop {
         InputEvent::Motion(motion) => {
             if motion.buttons.contains(MouseButtons::LEFT) {
                 // Draw with mouse -- use raw deltas for precision
-                canvas.stroke_to(motion.x, motion.y, pressure: 1.0);
+                canvas.stroke_to(motion.x, motion.y, 1.0);
                 drawing = true;
             } else if drawing {
                 canvas.end_stroke();
@@ -386,7 +386,8 @@ let mut receiver = InputKit::event_receiver()?;
 
 loop {
     if let InputEvent::Key(key) = receiver.next_event().await? {
-        if key.device_class == Some(DeviceClass::SwitchDevice) {
+        // Filter for switch device events by checking the source device
+        if key.source_device.is_switch_device() {
             match key.state {
                 KeyState::Pressed => accessibility_scanner.advance(),
                 KeyState::Released => accessibility_scanner.select(),

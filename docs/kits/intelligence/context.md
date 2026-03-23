@@ -261,7 +261,7 @@ fn get_theme_for_context(
     // The Preference Kit evaluates context-driven temporal rules (§14)
     // internally. This example shows how an agent might query the resolved
     // preference, which already accounts for context.
-    prefs.resolve("display.theme", cap)
+    prefs.get("display.theme", cap)
         .unwrap_or_else(|_| "system-default".into())
 }
 ```
