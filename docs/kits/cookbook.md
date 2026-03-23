@@ -1143,6 +1143,641 @@ fn subscriptions(model: &ChatModel) -> Vec<Subscription<Msg>> {
 
 ---
 
+## Recipe 5: Photo Manager
+
+**Kits used:** Camera Kit + Storage Kit + Search Kit + Interface Kit + Flow Kit + Memory Kit
+
+A photo management agent that captures, organizes, searches, and shares photos.
+Demonstrates camera session lifecycle, zero-copy buffer handling, semantic search
+over image metadata, and memory pressure adaptation.
+
+### Agent manifest
+
+```toml
+[agent]
+name = "com.example.photo-manager"
+version = "1.0.0"
+
+[capabilities.required]
+camera_capture = true
+storage_read = { spaces = ["user/photos/"] }
+storage_write = { spaces = ["user/photos/"] }
+
+[capabilities.optional]
+search_semantic = true        # AI-powered photo search
+shared_memory = true          # Zero-copy camera buffer transfer
+flow_clipboard = true         # Share photos via Flow
+large_allocation = true       # High-resolution photo buffers
+```
+
+### Data model
+
+```rust
+use aios_storage::{ObjectId, Timestamp};
+
+struct Model {
+    photos: Vec<PhotoEntry>,
+    albums: Vec<Album>,
+    selected: Option<ObjectId>,
+    camera_active: bool,
+    search_query: String,
+    search_results: Vec<PhotoEntry>,
+    view: ViewMode,
+    memory_pressure: aios_memory::pressure::PressureLevel,
+    thumbnail_cache: ThumbnailCache,
+}
+
+struct PhotoEntry {
+    id: ObjectId,
+    name: String,
+    taken_at: Timestamp,
+    width: u32,
+    height: u32,
+    size_bytes: u64,
+    tags: Vec<String>,
+    album: Option<String>,
+}
+
+struct Album {
+    name: String,
+    photo_count: usize,
+    cover_photo: Option<ObjectId>,
+}
+
+enum ViewMode {
+    Grid,
+    Detail(ObjectId),
+    Camera,
+    Albums,
+    Search,
+}
+
+struct ThumbnailCache {
+    entries: Vec<(ObjectId, Vec<u8>)>,
+    max_entries: usize,
+}
+
+enum Msg {
+    PhotosLoaded(Vec<PhotoEntry>),
+    PhotoCreated(PhotoEntry),
+    SelectPhoto(ObjectId),
+    DeletePhoto(ObjectId),
+    PhotoDeleted(ObjectId),
+    OpenCamera,
+    CapturePhoto,
+    PhotoCaptured { data: Vec<u8>, width: u32, height: u32 },
+    CloseCamera,
+    SearchChanged(String),
+    SearchResults(Vec<PhotoEntry>),
+    SharePhoto(ObjectId),
+    ChangeView(ViewMode),
+    PressureChanged(aios_memory::pressure::PressureLevel),
+    AlbumsLoaded(Vec<Album>),
+    AddToAlbum { photo: ObjectId, album: String },
+}
+```
+
+### Update logic
+
+```rust
+fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
+    match msg {
+        Msg::OpenCamera => {
+            model.camera_active = true;
+            model.view = ViewMode::Camera;
+            vec![Command::perform(
+                aios_camera::open_session(aios_camera::SessionIntent::Preview),
+                Msg::CameraSessionOpened,
+            )]
+        }
+
+        Msg::CapturePhoto => {
+            vec![Command::perform(
+                aios_camera::capture_still(aios_camera::StillConfig {
+                    format: aios_camera::PixelFormat::Jpeg,
+                    quality: 90,
+                }),
+                |frame| Msg::PhotoCaptured {
+                    data: unsafe {
+                        core::slice::from_raw_parts(
+                            frame.buffer.as_ptr(),
+                            frame.data_length,
+                        )
+                    }.to_vec(),
+                    width: frame.width,
+                    height: frame.height,
+                },
+            )]
+        }
+
+        Msg::PhotoCaptured { data, width, height } => {
+            let name = format!("IMG_{}.jpg", chrono_timestamp());
+            vec![Command::perform(
+                aios_storage::object_create_with_metadata(
+                    "user/photos/",
+                    &name,
+                    &data,
+                    aios_storage::ContentType::Image,
+                    &[("width", &width.to_string()), ("height", &height.to_string())],
+                ),
+                move |id| Msg::PhotoCreated(PhotoEntry {
+                    id,
+                    name,
+                    taken_at: Timestamp::now(),
+                    width,
+                    height,
+                    size_bytes: data.len() as u64,
+                    tags: Vec::new(),
+                    album: None,
+                }),
+            )]
+        }
+
+        Msg::PhotoCreated(entry) => {
+            model.photos.insert(0, entry);
+            Vec::new()
+        }
+
+        Msg::SearchChanged(query) => {
+            model.search_query = query.clone();
+            if query.is_empty() {
+                model.search_results.clear();
+                return Vec::new();
+            }
+            vec![Command::perform(
+                aios_search::query(
+                    aios_search::SearchQuery::new(&query)
+                        .space("user/photos/")
+                        .content_type(aios_storage::ContentType::Image)
+                        .limit(50),
+                ),
+                |results| Msg::SearchResults(
+                    results.hits.iter()
+                        .filter_map(|hit| photo_from_object(hit.object_id))
+                        .collect(),
+                ),
+            )]
+        }
+
+        Msg::SharePhoto(id) => {
+            vec![Command::perform(
+                aios_flow::share_object(
+                    "user/photos/",
+                    id,
+                    "image/jpeg",
+                    ctx.capability(aios_capability::Capability::FlowPublish)?,
+                ),
+                |_| Msg::PhotoShared,
+            )]
+        }
+
+        Msg::PressureChanged(level) => {
+            model.memory_pressure = level;
+            // Adapt thumbnail cache based on memory pressure
+            match level {
+                PressureLevel::Normal => {
+                    model.thumbnail_cache.max_entries = 200;
+                }
+                PressureLevel::Low => {
+                    model.thumbnail_cache.max_entries = 100;
+                    model.thumbnail_cache.evict_to(100);
+                }
+                PressureLevel::Medium | PressureLevel::Critical => {
+                    model.thumbnail_cache.max_entries = 20;
+                    model.thumbnail_cache.evict_to(20);
+                }
+            }
+            Vec::new()
+        }
+
+        _ => Vec::new(),
+    }
+}
+```
+
+### View
+
+```rust
+fn view(model: &Model) -> Element<Msg> {
+    let content = match &model.view {
+        ViewMode::Grid => photo_grid(&model.photos, &model.thumbnail_cache),
+        ViewMode::Detail(id) => photo_detail(model, *id),
+        ViewMode::Camera => camera_viewfinder(model.camera_active),
+        ViewMode::Albums => album_list(&model.albums),
+        ViewMode::Search => search_view(&model.search_query, &model.search_results),
+    };
+
+    column![
+        // Navigation bar
+        row![
+            button("Grid").on_press(Msg::ChangeView(ViewMode::Grid)),
+            button("Albums").on_press(Msg::ChangeView(ViewMode::Albums)),
+            button("Camera").on_press(Msg::OpenCamera),
+            search_input(&model.search_query)
+                .on_change(Msg::SearchChanged),
+        ],
+        content,
+        // Memory pressure indicator (visible only under pressure)
+        if matches!(model.memory_pressure, PressureLevel::Medium | PressureLevel::Critical) {
+            text("Low memory — reduced thumbnails").style(Style::Warning)
+        } else {
+            Element::none()
+        },
+    ]
+    .into()
+}
+
+fn photo_grid(photos: &[PhotoEntry], cache: &ThumbnailCache) -> Element<Msg> {
+    let cells: Vec<Element<Msg>> = photos
+        .iter()
+        .map(|photo| {
+            let thumbnail = cache.get(photo.id)
+                .map(|data| image(data))
+                .unwrap_or_else(|| placeholder_image());
+            button(
+                column![thumbnail, text(&photo.name).size(12)]
+            )
+            .on_press(Msg::SelectPhoto(photo.id))
+            .into()
+        })
+        .collect();
+    grid(cells, 4) // 4 columns
+}
+```
+
+### Subscriptions
+
+```rust
+fn subscriptions(model: &Model) -> Vec<Subscription<Msg>> {
+    let mut subs = vec![
+        // Watch for new photos added by other agents (e.g., screenshots)
+        aios_storage::watch("user/photos/")
+            .filter(aios_storage::WatchFilter::Created)
+            .map(|event| Msg::PhotoCreated(photo_from_event(event))),
+
+        // Monitor memory pressure to adapt cache behavior
+        aios_memory::pressure::watch()
+            .map(Msg::PressureChanged),
+    ];
+
+    if model.camera_active {
+        // Camera preview frames (if viewfinder is shown)
+        subs.push(
+            aios_camera::watch_preview()
+                .map(|frame| Msg::PreviewFrame(frame)),
+        );
+    }
+
+    subs
+}
+```
+
+---
+
+## Recipe 6: System Monitor
+
+**Kits used:** Capability Kit + Thermal Kit + Power Kit + Interface Kit + Memory Kit + Compute Kit
+
+A system monitoring agent that displays real-time hardware status, resource usage,
+and security state. Demonstrates kernel Kit APIs, capability introspection, thermal
+zone monitoring, and per-pool memory statistics.
+
+### Agent manifest
+
+```toml
+[agent]
+name = "com.example.system-monitor"
+version = "1.0.0"
+
+[capabilities.required]
+memory_query = true           # Query memory pool statistics
+thermal_query = true          # Read thermal zone sensors
+
+[capabilities.optional]
+compute_query = true          # Query compute device status
+capability_inspect = true     # View other agents' capabilities (Inspector-level)
+power_query = true            # Read power state and battery level
+```
+
+### Data model
+
+```rust
+use aios_memory::pressure::PressureLevel;
+
+struct Model {
+    // Memory
+    memory_pools: Vec<PoolStatus>,
+    memory_pressure: PressureLevel,
+
+    // Thermal
+    thermal_zones: Vec<ThermalZoneStatus>,
+
+    // Compute
+    compute_devices: Vec<ComputeDeviceStatus>,
+
+    // Power
+    power_state: PowerState,
+
+    // System
+    cpu_usage: [f32; 4],       // per-core usage percentage
+    uptime_secs: u64,
+    agent_count: u32,
+
+    // UI
+    active_tab: Tab,
+    refresh_rate_ms: u64,
+}
+
+struct PoolStatus {
+    pool: aios_memory::frame::Pool,
+    total_pages: usize,
+    free_pages: usize,
+    pressure: f32,
+}
+
+struct ThermalZoneStatus {
+    name: String,
+    temperature_mc: i32,       // millicelsius
+    trip_points: Vec<TripPoint>,
+    throttling: bool,
+}
+
+struct TripPoint {
+    name: String,
+    temperature_mc: i32,
+    kind: TripKind,
+}
+
+enum TripKind { Passive, Active, Critical }
+
+struct ComputeDeviceStatus {
+    name: String,
+    class: aios_compute::manager::ComputeClass,
+    utilization: f32,
+    memory_used: usize,
+    memory_total: usize,
+}
+
+struct PowerState {
+    battery_percent: Option<u8>,
+    charging: bool,
+    power_profile: PowerProfile,
+    estimated_hours: Option<f32>,
+}
+
+enum PowerProfile { Performance, Balanced, PowerSaver }
+
+enum Tab { Overview, Memory, Thermal, Compute, Power, Agents }
+
+enum Msg {
+    Tick,
+    MemoryUpdated(Vec<PoolStatus>),
+    PressureChanged(PressureLevel),
+    ThermalUpdated(Vec<ThermalZoneStatus>),
+    ComputeUpdated(Vec<ComputeDeviceStatus>),
+    PowerUpdated(PowerState),
+    CpuUsageUpdated([f32; 4]),
+    AgentCountUpdated(u32),
+    SwitchTab(Tab),
+    SetRefreshRate(u64),
+}
+```
+
+### Update logic
+
+```rust
+fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
+    match msg {
+        Msg::Tick => {
+            // Dispatch parallel queries to all subsystems
+            let mut cmds = vec![
+                Command::perform(
+                    aios_memory::frame::query_all_pools(),
+                    |pools| Msg::MemoryUpdated(
+                        pools.iter().map(|p| PoolStatus {
+                            pool: p.pool,
+                            total_pages: p.total_pages,
+                            free_pages: p.free_pages,
+                            pressure: p.pressure,
+                        }).collect(),
+                    ),
+                ),
+                Command::perform(
+                    aios_thermal::query_zones(),
+                    |zones| Msg::ThermalUpdated(
+                        zones.iter().map(|zone| ThermalZoneStatus {
+                            name: zone.name().to_string(),
+                            temperature_mc: zone.temperature_mc(),
+                            trip_points: zone.trip_points().iter().map(|tp| TripPoint {
+                                name: tp.name().to_string(),
+                                temperature_mc: tp.temperature_mc(),
+                                kind: match tp.kind() {
+                                    aios_thermal::TripKind::Passive => TripKind::Passive,
+                                    aios_thermal::TripKind::Active => TripKind::Active,
+                                    aios_thermal::TripKind::Critical => TripKind::Critical,
+                                },
+                            }).collect(),
+                            throttling: zone.is_throttling(),
+                        }).collect(),
+                    ),
+                ),
+            ];
+
+            // Compute query is optional — only if capability granted
+            if ctx.capability(aios_capability::Capability::ComputeAccess {
+                tier: aios_compute::ComputeTier::Any,
+            }).is_ok() {
+                cmds.push(Command::perform(
+                    aios_compute::manager::query_devices(),
+                    |devices| Msg::ComputeUpdated(
+                        devices.iter().map(|dev| ComputeDeviceStatus {
+                            name: dev.name.clone(),
+                            class: dev.class,
+                            utilization: dev.utilization(),
+                            memory_used: dev.memory_used(),
+                            memory_total: dev.memory_total(),
+                        }).collect(),
+                    ),
+                ));
+            }
+
+            cmds
+        }
+
+        Msg::MemoryUpdated(pools) => {
+            model.memory_pools = pools;
+            Vec::new()
+        }
+
+        Msg::PressureChanged(level) => {
+            model.memory_pressure = level;
+            // Auto-reduce refresh rate under memory pressure
+            if matches!(level, PressureLevel::Critical) {
+                model.refresh_rate_ms = 5000; // Slow down to 5s
+            }
+            Vec::new()
+        }
+
+        Msg::ThermalUpdated(zones) => {
+            model.thermal_zones = zones;
+            Vec::new()
+        }
+
+        Msg::ComputeUpdated(devices) => {
+            model.compute_devices = devices;
+            Vec::new()
+        }
+
+        Msg::PowerUpdated(state) => {
+            model.power_state = state;
+            Vec::new()
+        }
+
+        Msg::SwitchTab(tab) => {
+            model.active_tab = tab;
+            Vec::new()
+        }
+
+        _ => Vec::new(),
+    }
+}
+```
+
+### View
+
+```rust
+fn view(model: &Model) -> Element<Msg> {
+    column![
+        // Tab bar
+        row![
+            tab_button("Overview", Tab::Overview, &model.active_tab),
+            tab_button("Memory", Tab::Memory, &model.active_tab),
+            tab_button("Thermal", Tab::Thermal, &model.active_tab),
+            tab_button("Compute", Tab::Compute, &model.active_tab),
+            tab_button("Power", Tab::Power, &model.active_tab),
+        ],
+        // Tab content
+        match model.active_tab {
+            Tab::Overview => overview_panel(model),
+            Tab::Memory => memory_panel(model),
+            Tab::Thermal => thermal_panel(model),
+            Tab::Compute => compute_panel(model),
+            Tab::Power => power_panel(model),
+            Tab::Agents => agents_panel(model),
+        },
+    ]
+    .into()
+}
+
+fn overview_panel(model: &Model) -> Element<Msg> {
+    column![
+        text("System Overview").size(20),
+        // CPU usage bars
+        row(model.cpu_usage.iter().enumerate().map(|(i, &usage)| {
+            column![
+                text(format!("CPU {}", i)).size(12),
+                progress_bar(usage / 100.0),
+                text(format!("{:.0}%", usage)).size(12),
+            ]
+        })),
+        // Memory summary
+        row(model.memory_pools.iter().map(|pool| {
+            let used_pct = 1.0 - (pool.free_pages as f32 / pool.total_pages as f32);
+            let color = if pool.pressure > 0.8 { Color::RED }
+                       else if pool.pressure > 0.5 { Color::YELLOW }
+                       else { Color::GREEN };
+            column![
+                text(format!("{:?}", pool.pool)).size(12),
+                progress_bar(used_pct).color(color),
+                text(format!("{} / {} pages",
+                    pool.total_pages - pool.free_pages,
+                    pool.total_pages,
+                )).size(10),
+            ]
+        })),
+        // Thermal summary
+        row(model.thermal_zones.iter().map(|zone| {
+            let temp_c = zone.temperature_mc as f32 / 1000.0;
+            let color = if zone.throttling { Color::RED }
+                       else if temp_c > 70.0 { Color::YELLOW }
+                       else { Color::GREEN };
+            column![
+                text(&zone.name).size(12),
+                text(format!("{:.1} C", temp_c)).size(16).color(color),
+            ]
+        })),
+    ]
+    .into()
+}
+
+fn memory_panel(model: &Model) -> Element<Msg> {
+    column![
+        text("Memory Pools").size(20),
+        text(format!("System pressure: {:?}", model.memory_pressure))
+            .style(pressure_style(model.memory_pressure)),
+        // Detailed per-pool view
+        column(model.memory_pools.iter().map(|pool| {
+            let total_mb = (pool.total_pages * 4096) / (1024 * 1024);
+            let free_mb = (pool.free_pages * 4096) / (1024 * 1024);
+            row![
+                text(format!("{:?}", pool.pool)).width(80),
+                progress_bar(pool.pressure).width(200),
+                text(format!("{} MB free / {} MB total", free_mb, total_mb)),
+            ]
+        })),
+    ]
+    .into()
+}
+
+fn thermal_panel(model: &Model) -> Element<Msg> {
+    column![
+        text("Thermal Zones").size(20),
+        column(model.thermal_zones.iter().map(|zone| {
+            let temp_c = zone.temperature_mc as f32 / 1000.0;
+            column![
+                row![
+                    text(&zone.name).size(14).weight(Bold),
+                    text(format!("{:.1} C", temp_c)).size(14),
+                    if zone.throttling {
+                        text("THROTTLING").color(Color::RED)
+                    } else {
+                        Element::none()
+                    },
+                ],
+                // Trip point indicators
+                row(zone.trip_points.iter().map(|tp| {
+                    let tp_c = tp.temperature_mc as f32 / 1000.0;
+                    text(format!("{}: {:.0} C", tp.name, tp_c)).size(10)
+                })),
+            ]
+        })),
+    ]
+    .into()
+}
+```
+
+### Subscriptions
+
+```rust
+fn subscriptions(model: &Model) -> Vec<Subscription<Msg>> {
+    vec![
+        // Periodic refresh tick
+        aios_app::interval(Duration::from_millis(model.refresh_rate_ms))
+            .map(|_| Msg::Tick),
+
+        // Memory pressure notifications (event-driven, not polled)
+        aios_memory::pressure::watch()
+            .map(Msg::PressureChanged),
+
+        // Thermal threshold crossings (event-driven)
+        aios_thermal::watch_thresholds()
+            .map(|event| Msg::ThermalUpdated(vec![event.zone_status()])),
+    ]
+}
+```
+
+---
+
 ## Related Documents
 
 - [Kit Architecture](README.md) — Hub document with dependency graph and design principles
@@ -1159,3 +1794,9 @@ fn subscriptions(model: &ChatModel) -> Vec<Subscription<Msg>> {
 - [Conversation Kit](application/conversation.md) — AI conversation sessions and streaming
 - [AIRS Kit](intelligence/airs.md) — AI inference engine and model management
 - [Notification Kit](application/notification.md) — System notifications
+- [Camera Kit](platform/camera.md) — Camera sessions and capture pipeline
+- [Memory Kit](kernel/memory.md) — Physical memory, shared memory, and pressure signals
+- [IPC Kit](kernel/ipc.md) — Message passing and shared memory
+- [Compute Kit](kernel/compute.md) — GPU, NPU, and inference pipeline
+- [Thermal Kit](platform/thermal.md) — Thermal zones and throttling
+- [Power Kit](platform/power.md) — Power states and battery management
