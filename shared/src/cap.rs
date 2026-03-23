@@ -94,6 +94,7 @@ impl Capability {
 // ---------------------------------------------------------------------------
 
 /// A capability token granting a specific permission to a process.
+#[derive(Clone)]
 pub struct CapabilityToken {
     /// Unique token identifier.
     pub id: CapabilityTokenId,
@@ -288,6 +289,11 @@ impl CapabilityTable {
     /// Return the number of active (non-revoked) tokens.
     pub fn count(&self) -> u32 {
         self.count
+    }
+
+    /// Read-only access to the token slots (for Kit trait implementations).
+    pub fn tokens(&self) -> &[Option<CapabilityToken>; MAX_CAPS_PER_PROCESS] {
+        &self.tokens
     }
 }
 

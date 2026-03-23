@@ -7,6 +7,7 @@ pub mod cap;
 pub mod collections;
 pub mod ipc;
 pub mod kaslr;
+pub mod kits;
 pub mod memory;
 pub mod observability;
 pub mod sched;
@@ -50,3 +51,7 @@ pub use storage::{
     StorageTier, Timestamp, BLOCK_SIZE, SECTOR_SIZE, SUPERBLOCK_MAGIC,
 };
 pub use syscall::{IpcError, Syscall, SYSCALL_COUNT};
+
+// Kit trait re-exports for ergonomic imports.
+pub use kits::capability as capability_kit;
+pub use kits::memory as memory_kit;

@@ -135,7 +135,9 @@ pub static FRAME_ALLOC: Mutex<Option<FrameAllocator>> = Mutex::new(None);
 pub fn alloc_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Identity map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_page(Pool::Kernel) }
 }
 
@@ -154,7 +156,9 @@ pub unsafe fn free_page(phys_addr: usize) {
 pub fn alloc_user_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_page(Pool::User) }
 }
 
@@ -162,7 +166,9 @@ pub fn alloc_user_page() -> Option<usize> {
 pub fn alloc_user_pages(order: usize) -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_pages(Pool::User, order) }
 }
 
@@ -193,7 +199,9 @@ pub unsafe fn free_user_pages(phys_addr: usize, order: usize) {
 pub fn alloc_dma_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_page(Pool::Dma) }
 }
 
@@ -201,6 +209,112 @@ pub fn alloc_dma_page() -> Option<usize> {
 pub fn alloc_dma_pages(order: usize) -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_pages(Pool::Dma, order) }
+}
+
+// ---------------------------------------------------------------------------
+// Memory Kit trait implementation
+// ---------------------------------------------------------------------------
+
+use shared::kits::memory::{self as memory_kit, MemoryError, PhysFrame, PoolStats};
+
+/// Kernel-side implementation of the Memory Kit's `FrameAllocator` and
+/// `MemoryPressureMonitor` traits.
+///
+/// This is a zero-sized unit struct that delegates to the global `FRAME_ALLOC`.
+#[allow(dead_code)]
+pub struct KernelFrameAllocator;
+
+impl memory_kit::FrameAllocator for KernelFrameAllocator {
+    fn alloc_frame(&self, pool: Pool) -> Result<PhysFrame, MemoryError> {
+        let mut guard = FRAME_ALLOC.lock();
+        let fa = guard.as_mut().ok_or(MemoryError::OutOfMemory)?;
+        // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+        // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+        // If the identity map were not active, the buddy allocator would
+        // fault on page metadata writes via intrusive free-list pointers.
+        let addr = unsafe { fa.alloc_page(pool) }.ok_or(MemoryError::OutOfMemory)?;
+        Ok(PhysFrame {
+            addr: addr as u64,
+            pool,
+        })
+    }
+
+    fn free_frame(&self, frame: PhysFrame) -> Result<(), MemoryError> {
+        let mut guard = FRAME_ALLOC.lock();
+        let fa = guard.as_mut().ok_or(MemoryError::OutOfMemory)?;
+        // SAFETY: The PhysFrame was obtained from alloc_frame, so the address
+        // is valid and was previously allocated as a single page (order 0).
+        // The caller maintains this invariant. The identity/direct map is
+        // active (maintained by kmap.rs). Passing an invalid address would
+        // corrupt the buddy free-list or fault on an unmapped page.
+        unsafe { fa.free_pages(frame.addr as usize, 0) };
+        Ok(())
+    }
+
+    fn pool_pressure(&self, pool: Pool) -> MemoryPressure {
+        let guard = FRAME_ALLOC.lock();
+        let fa = match guard.as_ref() {
+            Some(fa) => fa,
+            None => return MemoryPressure::Oom,
+        };
+        let free = fa.pool_free_pages(pool);
+        let total = pool_total_pages(fa, pool);
+        MemoryPressure::from_free_ratio(free, total)
+    }
+
+    fn pool_stats(&self, pool: Pool) -> PoolStats {
+        let guard = FRAME_ALLOC.lock();
+        let fa = match guard.as_ref() {
+            Some(fa) => fa,
+            None => {
+                return PoolStats {
+                    free_frames: 0,
+                    total_frames: 0,
+                }
+            }
+        };
+        PoolStats {
+            free_frames: fa.pool_free_pages(pool),
+            total_frames: pool_total_pages(fa, pool),
+        }
+    }
+}
+
+impl memory_kit::MemoryPressureMonitor for KernelFrameAllocator {
+    fn current_level(&self) -> MemoryPressure {
+        let guard = FRAME_ALLOC.lock();
+        let fa = match guard.as_ref() {
+            Some(fa) => fa,
+            None => return MemoryPressure::Oom,
+        };
+        // Compute worst (highest) pressure across all initialized pools.
+        let mut worst: Option<MemoryPressure> = None;
+        for pool in [Pool::Kernel, Pool::User, Pool::Model, Pool::Dma] {
+            let total = pool_total_pages(fa, pool);
+            if total == 0 {
+                continue;
+            }
+            let free = fa.pool_free_pages(pool);
+            let pressure = MemoryPressure::from_free_ratio(free, total);
+            worst = Some(match worst {
+                Some(current) if current >= pressure => current,
+                _ => pressure,
+            });
+        }
+        worst.unwrap_or(MemoryPressure::Oom)
+    }
+}
+
+/// Compute total pages for a specific pool from the buddy allocator range.
+#[allow(dead_code)]
+fn pool_total_pages(fa: &FrameAllocator, pool: Pool) -> usize {
+    use super::buddy::PAGE_SIZE;
+    match fa.pools.get(pool) {
+        Some(buddy) if buddy.is_initialized() => (buddy.end() - buddy.base()) / PAGE_SIZE,
+        _ => 0,
+    }
 }

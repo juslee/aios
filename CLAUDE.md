@@ -478,7 +478,10 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      364 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+Shared crate unit tests:      380 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants)
+Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs) — zero-sized unit structs delegating to global statics
+Kit trait dyn-compat:         All 4 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer) are dyn-compatible (object-safe)
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -549,7 +552,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 4 M15 — POSIX Bridge, Compression & Budget):
+Current (post-Phase 5 M16 — Kit Foundation, Memory Kit & Capability Kit):
 
 ```
 aios/
@@ -659,7 +662,7 @@ aios/
 ├── shared/
 │   ├── Cargo.toml
 │   └── src/
-│       ├── lib.rs        PhysAddr, VirtAddr, BOOTINFO_MAGIC, re-exports from submodules
+│       ├── lib.rs        PhysAddr, VirtAddr, BOOTINFO_MAGIC, re-exports (pub use kits::memory as memory_kit, kits::capability as capability_kit)
 │       ├── boot.rs       BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat
 │       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
 │       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests
@@ -667,9 +670,13 @@ aios/
 │       ├── kaslr.rs      KaslrConfig, compute_slide_from_entropy()
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
 │       ├── observability.rs LogLevel, Subsystem enums for shared use
-│       ├── sched.rs      SchedulerClass, ThreadState, SchedConfig shared types
+│       ├── sched.rs      ProcessId, ThreadId, SchedulerClass, ThreadState, CpuSet, KernelResourceLimits shared types
 │       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants, MemTable, ObjectIndex, SpaceTable, WalEntry, crc32c, PosixStat, DirEntry, CompressionType, StorageBudget, PressureLevel
-│       └── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
+│       ├── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
+│       └── kits/
+│           ├── mod.rs       pub mod memory; pub mod capability;
+│           ├── memory.rs    MemoryError, PhysFrame, PagePermissions (W^X), Mapping, PoolStats, FrameAllocator trait, AddressSpace trait, MemoryPressureMonitor trait
+│           └── capability.rs CapabilityError (7 variants, i64 round-trip), CapabilityEnforcer trait (check/grant/revoke/attenuate/list_active)
 └── docs/                 (architecture, phase, and research docs)
 ```
 
