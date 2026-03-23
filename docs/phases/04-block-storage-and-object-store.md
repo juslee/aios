@@ -3,7 +3,7 @@
 **Tier:** 1.5 — Kit Foundation
 **Duration:** 5 weeks
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
-**Status:** In Progress (M14 complete)
+**Status:** In Progress (M14 complete, M15 Steps 9-12 complete, Step 13 pending)
 **Prerequisites:** Phase 3 (IPC & Capability System)
 **Unlocks:** Phase 5 (Kit Foundation), Phase 21 (Security Architecture)
 
@@ -306,30 +306,30 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement the POSIX compatibility bridge that maps filesystem paths to Space API operations. BSD tools (`ls`, `cat`, `mkdir`, `rm`) work through this bridge.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/posix_bridge.rs`
-- [ ] Implement path mapping (per spaces.md §9.1):
+- [x] Create `kernel/src/storage/posix_bridge.rs`
+- [x] Implement path mapping (per spaces.md §9.1):
   - `/spaces/[name]/[path]` → space lookup + object access
   - `/home/user/` → `user/home/` space
   - `/tmp/` → `ephemeral/` space
-- [ ] Define `PosixSpaceBridge` struct with mount table entries
-- [ ] Implement `open(path, flags) -> Result<Fd, StorageError>`:
+- [x] Define `PosixSpaceBridge` struct with mount table entries
+- [x] Implement `open(path, flags) -> Result<Fd, StorageError>`:
   1. Parse path → (SpaceId, object_path)
   2. Look up or create object (O_CREAT)
   3. Allocate file descriptor (bounded table, max 256 per process)
   4. Return Fd
-- [ ] Implement `read(fd, buf, count) -> Result<usize, StorageError>`:
+- [x] Implement `read(fd, buf, count) -> Result<usize, StorageError>`:
   1. Look up Fd → (ObjectId, offset)
   2. Read object content via Object Store
   3. Copy to buffer from current offset
   4. Advance offset
-- [ ] Implement `write(fd, buf, count) -> Result<usize, StorageError>`:
+- [x] Implement `write(fd, buf, count) -> Result<usize, StorageError>`:
   1. Look up Fd → ObjectId
   2. Read current content, modify at offset, write back (copy-on-write via new version)
   3. Update object via Object Store (creates new version)
-- [ ] Implement `close(fd)`, `stat(path) -> Stat`, `readdir(path) -> Vec<DirEntry>`, `mkdir(path)`, `unlink(path)`
-- [ ] Synthesize POSIX mode bits from security zone (per spaces.md §9.2): directories 0o755, files 0o644
-- [ ] Wire POSIX file operations as IPC calls to the Space Storage service (dispatched via `IpcCall` to the space-storage channel, not as new syscall numbers — the 31 syscall table from Phase 3 is unchanged)
-- [ ] Test: create file via POSIX open+write, read back via POSIX open+read, mkdir, readdir, stat, unlink
+- [x] Implement `close(fd)`, `stat(path) -> Stat`, `readdir(path) -> Vec<DirEntry>`, `mkdir(path)`, `unlink(path)`
+- [x] Synthesize POSIX mode bits from security zone (per spaces.md §9.2): directories 0o755, files 0o644
+- [x] Wire POSIX file operations as IPC calls to the Space Storage service (dispatched via `IpcCall` to the space-storage channel, not as new syscall numbers — the 31 syscall table from Phase 3 is unchanged)
+- [x] Test: create file via POSIX open+write, read back via POSIX open+read, mkdir, readdir, stat, unlink
 
 **Note:** For Phase 4, POSIX operations are dispatched via IPC to the Space Storage service. The syscall handler translates POSIX calls into `IpcCall` messages and blocks on the reply (synchronous from the caller's perspective), but the actual storage operations run in the Space Storage service thread, not in-kernel. Phase 15 (POSIX Compatibility & BSD Userland) adds the full POSIX process model with fork/exec.
 
@@ -342,23 +342,23 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Add LZ4 compression to the Block Engine. Blocks are compressed before encryption. Adaptive selection skips incompressible content (images, already-compressed data).
 
 **Tasks:**
-- [ ] Add LZ4 compression support (use `lz4_flex` crate — `no_std` compatible, pure Rust)
-- [ ] Define `CompressionStrategy` enum: None, Lz4
-- [ ] Add compression header to block format: `[compression_type (1B) | uncompressed_size (4B) | compressed_data...]`
-- [ ] Integrate compression into Block Engine write path (before encryption):
+- [x] Add LZ4 compression support (use `lz4_flex` crate — `no_std` compatible, pure Rust)
+- [x] Define `CompressionStrategy` enum: None, Lz4
+- [x] Add compression header to block format: `[compression_type (1B) | uncompressed_size (4B) | compressed_data...]`
+- [x] Integrate compression into Block Engine write path (before encryption):
   1. Attempt LZ4 compression
   2. If compressed size >= original size × 0.9 → store uncompressed (skip incompressible content)
   3. Store compression type in block header
-- [ ] Integrate decompression into Block Engine read path (after decryption):
+- [x] Integrate decompression into Block Engine read path (after decryption):
   1. Read compression type from header
   2. Decompress if needed
   3. Verify uncompressed size matches header
-- [ ] Classify content types for compression eligibility (per spaces.md §4.6):
+- [x] Classify content types for compression eligibility (per spaces.md §4.6):
   - Always compress: Text, Code, Markdown, Json, Xml, Document
   - Never compress: Image, Video, Audio, Binary (already compressed)
   - Auto-detect: other types (try compress, skip if ratio < 0.9)
-- [ ] Log compression stats: compressed/uncompressed sizes, ratio, skipped count
-- [ ] Test: write text content (expect ~2:1 compression), write random bytes (expect skip), verify read-back correctness
+- [x] Log compression stats: compressed/uncompressed sizes, ratio, skipped count
+- [x] Test: write text content (expect ~2:1 compression), write random bytes (expect skip), verify read-back correctness
 
 **Key reference:** spaces.md §4.6 Block-Level Compression
 
@@ -369,18 +369,18 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Implement storage budget tracking and per-space quota enforcement. Monitor free space and raise pressure events when thresholds are crossed.
 
 **Tasks:**
-- [ ] Create `kernel/src/storage/budget.rs`
-- [ ] Define `StorageBudget` struct: total_bytes, used_bytes, free_bytes, category breakdowns (system, user, version_history, indexes)
-- [ ] Define `PressureLevel` enum: Normal (>20% free), Warning (10-20%), Critical (5-10%), Emergency (<5%)
-- [ ] Implement `check_pressure() -> PressureLevel`: compute from free_bytes / total_bytes
-- [ ] Implement per-space quota enforcement in Object Store:
+- [x] Create `kernel/src/storage/budget.rs`
+- [x] Define `StorageBudget` struct: total_bytes, used_bytes, free_bytes, category breakdowns (system, user, version_history, indexes)
+- [x] Define `PressureLevel` enum: Normal (>20% free), Warning (10-20%), Critical (5-10%), Emergency (<5%)
+- [x] Implement `check_pressure() -> PressureLevel`: compute from free_bytes / total_bytes
+- [x] Implement per-space quota enforcement in Object Store:
   - Before `object_create`: check space quota (max_objects, max_bytes)
   - Return `StorageError::QuotaExceeded` if over limit
-- [ ] Track Block Engine utilization: data blocks used, WAL usage, index size
-- [ ] Implement `storage_stats() -> StorageBudget`: aggregate all usage
-- [ ] Expose storage stats via IPC to the space-storage service (clients query budget information via `IpcCall`, not a separate syscall — the 31 syscall table from Phase 3 is unchanged)
-- [ ] Log pressure level changes via klog
-- [ ] Test: create space with 1 KB quota, write objects until quota exceeded, verify error
+- [x] Track Block Engine utilization: data blocks used, WAL usage, index size
+- [x] Implement `storage_stats() -> StorageBudget`: aggregate all usage
+- [x] Expose storage stats via IPC to the space-storage service (clients query budget information via `IpcCall`, not a separate syscall — the 31 syscall table from Phase 3 is unchanged)
+- [x] Log pressure level changes via klog
+- [x] Test: create space with 1 KB quota, write objects until quota exceeded, verify error
 
 **Note:** Adaptive version retention (pruning old versions under pressure) is Phase 4k per the implementation order. For Phase 4, quota enforcement prevents overcommit but does not actively reclaim. GC reclaims unreferenced blocks.
 
@@ -393,7 +393,7 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
 **What:** Run the complete storage stack end-to-end: POSIX create → Object Store → Version Store → Block Engine → VirtIO-blk → encrypted disk. Verify all quality gates.
 
 **Tasks:**
-- [ ] End-to-end test sequence:
+- [x] End-to-end test sequence:
   1. Boot → VirtIO-blk probed → Block Engine initialized (format or WAL replay)
   2. System spaces created (system/, user/home/, ephemeral/)
   3. POSIX open("/spaces/user/home/test.txt", O_CREAT | O_WRONLY) → write "Hello, AIOS!"
@@ -405,12 +405,12 @@ Milestones are numbered continuously across all phases. Phase 3 used M10–M12; 
   9. Delete one copy → verify other still readable (refcount = 1)
   10. Verify raw disk sector is encrypted (read sector, compare to plaintext)
   11. Log storage budget: used, free, compression ratio
-- [ ] Run `just check` — zero warnings, zero errors
-- [ ] Run `just test` — all unit tests pass (existing + new storage type tests)
-- [ ] Run `just run` — UART output shows complete storage lifecycle
-- [ ] Update CLAUDE.md: Workspace Layout (add storage/, drivers/), Key Technical Facts (VirtIO address, block size, encryption, storage types)
-- [ ] Update phase doc: check off M13–M15 boxes, update Status field
-- [ ] Update developer-guide.md: add storage module file sizes, test counts
+- [x] Run `just check` — zero warnings, zero errors
+- [x] Run `just test` — all unit tests pass (existing + new storage type tests)
+- [x] Run `just run` — UART output shows complete storage lifecycle
+- [x] Update CLAUDE.md: Workspace Layout (add storage/, drivers/), Key Technical Facts (VirtIO address, block size, encryption, storage types)
+- [x] Update phase doc: check off M13–M15 boxes, update Status field
+- [x] Update developer-guide.md: add storage module file sizes, test counts
 
 **Acceptance:** All quality gates pass. UART shows end-to-end storage lifecycle: VirtIO probe → Block Engine init → system spaces → POSIX create/read/update/rollback → dedup → encryption verification → storage budget.
 

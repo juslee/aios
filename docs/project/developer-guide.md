@@ -1008,11 +1008,11 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 | Range | Interpretation | Examples |
 |---|---|---|
-| < 100 lines | Small, focused utility | `bump.rs` (~44), `heap.rs` (~68), `boot_phase.rs` (~68) |
-| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~248) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~614), `bench.rs` (~549) |
-| > 800 lines | Must split into submodules | (none currently; `ipc/` and `sched/` were split) |
+| < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68) |
+| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~253), `space.rs` (~230), `lsm.rs` (~131) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~379), `object_store.rs` (~309) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~778), `bench.rs` (~549) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
 
@@ -1116,13 +1116,19 @@ Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment an
 
 ```text
 kernel/src/storage/
-  mod.rs            (~204) # init(), run_self_tests(), re-exports
-  block_engine.rs   (~614) # BlockEngine, Superblock, CRC-32C, SHA-256
+  mod.rs            (~866) # init(), run_self_tests() (11 test categories), re-exports
+  block_engine.rs   (~778) # BlockEngine, Superblock, CRC-32C, SHA-256, LZ4 compression, AES-256-GCM encryption
   wal.rs            (~248) # WalEntry, circular buffer, append/commit
-  lsm.rs            (~114) # MemTable, sorted Vec with binary search
+  lsm.rs            (~131) # MemTable, sorted Vec with binary search
+  object_store.rs   (~309) # ObjectIndex, object_create/read/delete, find_by_name, list_by_space
+  version_store.rs  (~191) # Version Store, Merkle DAG, version_create/list/rollback, object_update
+  crypto.rs         (~131) # DeviceKeyManager, AES-256-GCM encrypt/decrypt, nonce counter
+  space.rs          (~230) # SpaceTable, space_create/list/get/delete, find_by_name, init_system_spaces
+  posix_bridge.rs   (~379) # PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
+  budget.rs          (~55) # Storage budget stats, pressure monitoring, quota enforcement
 ```
 
-Dependency direction is strictly downward: `mod.rs` → `block_engine.rs` → `wal.rs` + `lsm.rs`. The block engine calls into the VirtIO driver (`crate::drivers::virtio_blk`) for disk I/O. Shared types (`ContentHash`, `BlockLocation`, `StorageError`) live in `shared/src/storage.rs`.
+Dependency direction is strictly downward: `mod.rs` → `posix_bridge.rs` → `object_store.rs` / `version_store.rs` / `space.rs` → `block_engine.rs` → `wal.rs` + `lsm.rs`. The `budget.rs` module reads from `block_engine`'s superblock, MemTable, and ObjectIndex. The `crypto.rs` module is called by `block_engine.rs` for transparent encryption. The block engine calls into the VirtIO driver (`crate::drivers::virtio_blk`) for disk I/O. Shared types (`ContentHash`, `BlockLocation`, `StorageError`, `StorageBudget`, `PressureLevel`, `CompressionType`, POSIX types) live in `shared/src/storage.rs`.
 
 ### 3.3 Naming Conventions
 
@@ -1564,7 +1570,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 275+ host-side tests pass |
+| **Test** | `just test` | All 317+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1616,7 +1622,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
 ```
 
-Currently 275 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 317 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1709,14 +1715,14 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std`, so tests cannot use `Vec`, `String`, or heap allocation. Use fixed-size arrays and stack-based data structures. The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (275 tests):**
+**Current test distribution (317 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
+| `storage` | 75 | Content types, block locations, VirtIO constants, struct sizes, WAL capacity, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 51 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
 | `ipc` | 48 | Channel IDs, message validation, select entries, service names, user VA checks |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `storage` | 33 | Content types, block locations, VirtIO constants, struct sizes, WAL capacity |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
 | `observability` | 18 | Log level ordering, subsystem tags |
@@ -2352,7 +2358,7 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 |---|---|
 | **ASID** | Address Space Identifier. 16-bit tag in TTBR0 that allows the TLB to cache translations for multiple address spaces simultaneously without flushing on every context switch. Managed by `mm/asid.rs`. |
 | **BootInfo** | Structure passed from the UEFI stub to the kernel at boot. Contains the memory map, DTB physical address, framebuffer info, RNG seed, and a magic value (`0x41494F53_424F4F54` = "AIOSBOOT"). Defined in `shared/src/boot.rs`. |
-| **Block Engine** | Content-addressed storage layer providing crash-safe writes via WAL + CRC-32C integrity + SHA-256 hashing. Manages superblock, data region, and MemTable index. Implemented in `storage/block_engine.rs`. |
+| **Block Engine** | Content-addressed storage layer providing crash-safe writes via WAL + CRC-32C integrity + SHA-256 hashing + LZ4 compression + AES-256-GCM encryption. Manages superblock (v2), data region, and MemTable index. Implemented in `storage/block_engine.rs`. |
 | **Buddy allocator** | Physical page allocator that manages free pages in power-of-two blocks (orders 0--10, covering 4 KiB to 4 MiB). Uses bitmap coalescing to merge adjacent free blocks. Implemented in `mm/buddy.rs`. |
 | **ContentHash** | SHA-256 hash of a data block, used as the primary identifier for content-addressed storage. Wrapper type `[u8; 32]` with custom `Ord` for sorted MemTable lookups. Defined in `shared/src/storage.rs`. |
 | **CRC-32C** | Castagnoli variant of CRC-32 using polynomial 0x1EDC6F41. Used for both superblock and data block integrity verification. Computed via a 256-entry const-initialized lookup table in `storage/block_engine.rs`. |
@@ -2373,7 +2379,8 @@ Terms that may be unfamiliar or have AIOS-specific meanings.
 | **PSCI** | Power State Coordination Interface. ARM firmware standard for CPU power management. AIOS uses `CPU_ON` (function ID `0xC400_0003`) to bring secondary cores online. Invoked via HVC on QEMU, SMC on real hardware. |
 | **Slab allocator** | Kernel object allocator with 5 size classes (64, 128, 256, 512, 4096 bytes). Backed by the buddy allocator's kernel pool. Features magazine caching and red zone corruption detection. Implemented in `mm/slab.rs`. |
 | **SPSC** | Single-Producer Single-Consumer. Lock-free ring buffer pattern used for per-core logging. Only the owning core writes (producer); only the drain function reads (consumer). See SS2.3. |
-| **StorageError** | Enum covering all storage failure modes (11 variants): `BlockNotFound`, `ChecksumFailed`, `DecryptionFailed`, `IoError`, `QuotaExceeded`, `DeviceFull`, `WalFull`, `SuperblockCorrupt`, `DeviceNotFound`, `VirtioError`, `MemTableFull`. All variants are `Copy` (no `String` fields) for `no_std` compatibility. |
+| **StorageBudget** | Aggregate storage usage summary: `total_bytes`, `used_bytes`, `free_bytes`, `data_blocks`, `wal_used`, `index_entries`. Computed from Block Engine superblock, MemTable, ObjectIndex, and WAL state. Used for pressure monitoring and quota enforcement. |
+| **StorageError** | Enum covering all storage failure modes (16 variants): `BlockNotFound`, `ChecksumFailed`, `DecryptionFailed`, `IoError`, `QuotaExceeded`, `DeviceFull`, `WalFull`, `SuperblockCorrupt`, `DeviceNotFound`, `VirtioError`, `MemTableFull`, `ObjectNotFound`, `SpaceNotFound`, `NameExists`, `NotADirectory`, `FdTableFull`, `InvalidFd`. All variants are `Copy` (no `String` fields) for `no_std` compatibility. |
 | **Superblock** | On-disk metadata block (4096 bytes, sectors 0--7) containing storage layout parameters: WAL region location, data region start, append pointer, and CRC-32C checksum. Magic value `0x41494F53_50414345` ("AIOSPACE"). |
 | **TrapFrame** | 272-byte structure saved on exception entry from EL0. Contains all 31 general-purpose registers + SP_EL0 + ELR_EL1 + SPSR_EL1. `#[repr(C)]` layout matches assembly save/restore offsets in `exceptions.rs`. |
 | **ThreadContext** | 296-byte structure saved during voluntary context switch between kernel threads. Contains 31 GP regs + SP + PC + PSTATE + TTBR0 + timer state. Used by `save_context`/`restore_context` in `context_switch.S`. |

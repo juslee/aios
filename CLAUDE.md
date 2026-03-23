@@ -632,7 +632,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      309 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
+Shared crate unit tests:      317 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall)
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -660,6 +660,14 @@ version_head storage:         Stores SHA-256(serialized_version_bytes) from writ
 MAX_SPACES:                   16 system-wide
 System spaces:                system/ (Core), user/home/ (Personal), ephemeral/ (Ephemeral) — created at boot
 Space-storage service:        Registered via service_register(b"space-storage", pid=0, ch=3)
+POSIX bridge MAX_FDS:         256 file descriptors per PosixSpaceBridge instance
+POSIX path mapping:           /spaces/[name]/path → space lookup; /home/user/ → user/home/; /tmp/ → ephemeral/
+LZ4 compression:              lz4_flex crate (no_std), 5-byte header [type(1B)|uncompressed_size(4B)], skip if ratio ≥ 0.9
+CompressionType enum:         None=0, Lz4=1; stored in on-disk block format between CRC header and data
+Superblock version:           2 (v2 adds compression format; v1 blocks auto-upgraded on read)
+PressureLevel thresholds:     Normal (>20% free), Warning (10-20%), Critical (5-10%), Emergency (<5%)
+StorageBudget fields:         total_bytes, used_bytes, free_bytes, data_blocks, wal_used, index_entries
+StorageError variants:        16 total (added NameExists, NotADirectory, FdTableFull, InvalidFd, QuotaExceeded in M15)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -771,14 +779,16 @@ aios/
 │       │   ├── mod.rs    Driver module re-exports
 │       │   └── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
 │       ├── storage/
-│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space)
-│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, encryption integration, ObjectIndex, SpaceTable
+│       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
+│       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable
 │       │   ├── wal.rs    Write-ahead log: 64-byte WalEntry (repr(C)), circular buffer, append/replay/trim
 │       │   ├── lsm.rs    MemTable: sorted Vec with binary search, capacity 65536, insert/get/remove with refcount
-│       │   ├── object_store.rs ObjectIndex (sorted Vec + binary search on ObjectId), object_create/read/delete, generate_object_id
+│       │   ├── object_store.rs ObjectIndex (sorted Vec + binary search on ObjectId), object_create/read/delete, generate_object_id, find_by_name, list_by_space
 │       │   ├── version_store.rs Version Store: Merkle DAG, version_create/list/rollback, object_update
 │       │   ├── crypto.rs  DeviceKeyManager: AES-256-GCM encrypt/decrypt, nonce counter, crash recovery
-│       │   └── space.rs   SpaceTable, space_create/list/get/delete, init_system_spaces, register_service
+│       │   ├── space.rs   SpaceTable, space_create/list/get/delete, find_by_name, init_system_spaces, register_service
+│       │   ├── posix_bridge.rs POSIX compatibility bridge: PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
+│       │   └── budget.rs  Storage budget: global usage tracking, pressure monitoring, quota enforcement
 │       ├── syscall/
 │       │   └── mod.rs    Syscall enum (31 syscalls), IpcError, syscall_dispatch(): IPC(0-9), Notify(10-12), Stats(13), Cap(14-17), Mem(18-22), Proc(23-25), Time(26-28), Audit(29), Debug(30)
 │       ├── platform/
