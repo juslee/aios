@@ -286,12 +286,12 @@ ThermalKit::on_state_change(Box::new(|state| {
 
 ```rust
 use aios_power::{PowerKit, WakeLockType};
-use aios_audio::{AudioKit, AudioSession, SessionIntent};
+use aios_audio::{AudioKit, AudioRole};
 
 // Audio Kit acquires wake locks automatically for active playback sessions.
 // Apps rarely need to manage this directly. Shown here for clarity.
 
-let session = AudioKit::create_session(SessionIntent::Playback)?;
+let session = AudioKit::create_session(AudioRole::Playback)?;
 let cap = aios_capability::CapabilityKit::request("WakeLockAcquire")?;
 
 // Lock is held for the duration of playback

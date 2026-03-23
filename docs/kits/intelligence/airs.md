@@ -453,4 +453,4 @@ model region allocation, [Compute Kit](../kernel/compute.md) for hardware dispat
 
 ---
 
-*See also: [Search Kit](search.md) | [Context Kit](context.md) | [Conversation Kit](conversation.md) | [Attention Kit](attention.md) | [Compute Kit](../kernel/compute.md) | [Memory Kit](../kernel/memory.md)*
+*See also: [Search Kit](search.md) | [Context Kit](context.md) | [Attention Kit](attention.md) | [Compute Kit](../kernel/compute.md) | [Memory Kit](../kernel/memory.md)*

@@ -9,7 +9,7 @@ drivers, and hotplug lifecycle management. It hides the differences between xHCI
 controller hardware behind the `UsbHostController` trait, while exposing capability-gated
 access to attached peripherals through typed device handles. USB Kit is primarily a
 *plumbing layer* -- most application developers will never import it directly. Instead,
-upper-layer Kits ([Input Kit](./input.md), [Audio Kit](./audio.md), [Storage Kit](../storage/storage.md),
+upper-layer Kits ([Input Kit](./input.md), [Audio Kit](./audio.md), [Storage Kit](./storage.md),
 [Camera Kit](./camera.md)) consume the class driver interfaces that USB Kit provides.
 
 The main reason an application developer would interact with USB Kit directly is to
@@ -421,4 +421,4 @@ if UsbKit::is_available() {
 
 ---
 
-*See also: [Input Kit](./input.md) | [Audio Kit](./audio.md) | [Storage Kit](../storage/storage.md) | [Camera Kit](./camera.md) | [Power Kit](./power.md)*
+*See also: [Input Kit](./input.md) | [Audio Kit](./audio.md) | [Storage Kit](./storage.md) | [Camera Kit](./camera.md) | [Power Kit](./power.md)*

@@ -23,7 +23,7 @@ all observers, including accessibility services and input method editors.
 
 Use Input Kit when your agent needs to receive keyboard input, pointer motion, touch events,
 gamepad input, or system hotkeys. Do not use it for voice input (use
-[Conversation Kit](../intelligence/conversation.md) speech-to-text, which routes through
+[Conversation Kit](../application/conversation.md) speech-to-text, which routes through
 [Audio Kit](./audio.md)) or for screen reading (use the accessibility tree in the
 compositor, not raw input events). Input Kit feeds directly into the compositor's focus
 system and the [Interface Kit](../application/interface.md) widget event handlers.

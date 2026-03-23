@@ -1154,3 +1154,8 @@ fn subscriptions(model: &ChatModel) -> Vec<Subscription<Msg>> {
 - [Context Kit](intelligence/context.md) — Activity context and adaptation
 - [Network Kit](platform/network.md) — Capability-gated HTTP
 - [Capability Kit](kernel/capability.md) — Capability request and negotiation
+- [Media Kit](platform/media.md) — Media playback pipeline and codecs
+- [Audio Kit](platform/audio.md) — Audio sessions and playback
+- [Conversation Kit](application/conversation.md) — AI conversation sessions and streaming
+- [AIRS Kit](intelligence/airs.md) — AI inference engine and model management
+- [Notification Kit](application/notification.md) — System notifications

@@ -23,7 +23,7 @@ is that translators compose: adding a single new translator to the roster can un
 conversion paths between formats that previously had none.
 
 Translation Kit is not the right tool for streaming media transcoding (use
-[Media Kit](./media-pipeline.md)) or for persistent file format conversion (use the
+[Media Kit](./media.md)) or for persistent file format conversion (use the
 agent's own import/export logic). Translation Kit is designed for clipboard-sized data
 transfers where low latency and format fidelity matter more than throughput.
 
@@ -492,9 +492,9 @@ with no hardware dependencies. Availability depends only on which translators ar
 registered, not on the underlying hardware.
 
 **Implementation phase:** Phase 10+. Translation Kit depends on [Memory Kit](../kernel/memory.md)
-for buffer management. It is consumed by [Flow Kit](../storage/flow.md) for clipboard and
+for buffer management. It is consumed by [Flow Kit](../intelligence/flow.md) for clipboard and
 drag-and-drop operations, and by any agent that imports or exports data in multiple formats.
 
 ---
 
-*See also: [Flow Kit](../storage/flow.md) | [Storage Kit](../storage/storage.md) | [Media Kit](./media-pipeline.md)*
+*See also: [Flow Kit](../intelligence/flow.md) | [Storage Kit](./storage.md) | [Media Kit](./media.md)*

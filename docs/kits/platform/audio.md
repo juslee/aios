@@ -455,4 +455,4 @@ pipeline). Hardware-specific drivers arrive with their respective BSP phases.
 
 ---
 
-*See also: [Media Kit](./media.md) | [Notification Kit](../application/notification.md) | [Conversation Kit](../intelligence/conversation.md) | [Capability Kit](../kernel/capability.md) | [Input Kit](./input.md)*
+*See also: [Media Kit](./media.md) | [Notification Kit](../application/notification.md) | [Conversation Kit](../application/conversation.md) | [Capability Kit](../kernel/capability.md) | [Input Kit](./input.md)*
