@@ -5,8 +5,6 @@
 //!
 //! Per spaces.md §3.1 Spaces, §3.2 System Spaces.
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 

@@ -7,8 +7,6 @@
 //!
 //! Per spaces.md §9.1 Path Mapping.
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 use shared::storage::{
@@ -44,7 +42,7 @@ pub struct PosixSpaceBridge {
 impl PosixSpaceBridge {
     /// Create a new empty POSIX bridge.
     pub const fn new() -> Self {
-        // SAFETY: Option<FdEntry> is not Copy, but const init with None is safe.
+        // Note: Option<FdEntry> is not Copy, but const init with None is safe.
         // We use a manual array init since [None; 256] requires Copy.
         const NONE_FD: Option<FdEntry> = None;
         Self {
@@ -171,21 +169,26 @@ impl PosixSpaceBridge {
             Err(e) => return Err(e),
         };
 
-        // Build new content.
+        // Build new content, preserving trailing bytes beyond the write region.
         let write_offset = if offset == u64::MAX {
             current_len
         } else {
             (offset as usize).min(current_len)
         };
 
-        let new_len = write_offset + data.len();
+        let write_end = write_offset + data.len();
+        let new_len = write_end.max(current_len);
         if new_len > 4096 {
             return Err(StorageError::QuotaExceeded);
         }
 
         let mut new_content = [0u8; 4096];
         new_content[..write_offset].copy_from_slice(&current[..write_offset]);
-        new_content[write_offset..new_len].copy_from_slice(data);
+        new_content[write_offset..write_end].copy_from_slice(data);
+        // Preserve trailing bytes from original content beyond the write region.
+        if current_len > write_end {
+            new_content[write_end..current_len].copy_from_slice(&current[write_end..current_len]);
+        }
 
         // Update object via version store (creates new version).
         version_store::object_update(&object_id, &new_content[..new_len], b"posix", b"write")?;
@@ -361,17 +364,27 @@ fn starts_with(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.len() >= needle.len() && &haystack[..needle.len()] == needle
 }
 
-/// Split path into first component and remainder.
-/// e.g., "user/home/foo.txt" → ("user/home", "foo.txt")
-/// e.g., "system/config.txt" → ("system", "config.txt")
+/// Split path into (space_name, object_path) by trying progressively longer
+/// prefixes until a matching space is found.
+///
+/// e.g., "user/home/foo.txt" → tries "user" (no match) → tries "user/home" (match) → ("user/home", "foo.txt")
+/// e.g., "system/config.txt" → tries "system" (match) → ("system", "config.txt")
 fn split_first_component(path: &[u8]) -> (&[u8], &[u8]) {
-    // For /spaces/<name>/<path>, we look up <name> as the space name.
-    // The space name may contain '/' (e.g., "user/home").
-    // Strategy: try progressively longer prefixes until we find a matching space.
-    // Fall back to first component if no match.
-    if let Some(pos) = path.iter().position(|&b| b == b'/') {
-        (&path[..pos], &path[pos + 1..])
-    } else {
-        (path, b"")
+    // Try progressively longer prefixes at each '/' boundary.
+    let mut search_from = 0;
+    while let Some(rel_pos) = path[search_from..].iter().position(|&b| b == b'/') {
+        let pos = search_from + rel_pos;
+        let candidate = &path[..pos];
+        // Check if this prefix matches a space name.
+        let found = block_engine::with_engine(|engine| {
+            engine.space_table().find_by_name(candidate).is_some()
+        })
+        .unwrap_or(false);
+        if found {
+            return (candidate, &path[pos + 1..]);
+        }
+        search_from = pos + 1;
     }
+    // No '/' remaining or no match found — treat entire path as space name.
+    (path, b"")
 }

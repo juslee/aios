@@ -80,7 +80,7 @@ impl Superblock {
 
     /// Create a fresh superblock for a new disk.
     fn format(total_sectors: u64) -> Self {
-        let data_sectors = total_sectors - DATA_START_SECTOR;
+        let data_sectors = total_sectors.saturating_sub(DATA_START_SECTOR);
 
         // Generate a random prefix from timer entropy.
         let tick =
@@ -434,8 +434,9 @@ impl BlockEngine {
     /// Used during WAL recovery to check if an uncommitted block was actually written.
     fn verify_block_crc(&self, loc: &BlockLocation) -> Result<(), StorageError> {
         // Buffer must be large enough for the uncompressed data, which may be
-        // larger than loc.size (the on-disk wrapped size). Use a generous buffer.
-        let buf_size = (loc.size as usize) * 2 + 256;
+        // larger than loc.size (the on-disk wrapped size). LZ4 can achieve >10:1
+        // compression on highly compressible data, so use a generous multiplier.
+        let buf_size = (loc.size as usize) * 16 + 256;
         let mut buf = alloc::vec![0u8; buf_size];
         self.read_block(loc, &mut buf)?;
         Ok(())
@@ -604,7 +605,7 @@ impl BlockEngine {
         self.superblock.wal_head = self.wal.head();
         self.superblock.wal_tail = self.wal.tail();
         let data_end = self.superblock.total_sectors;
-        self.superblock.free_data_sectors = data_end - self.data_next_sector;
+        self.superblock.free_data_sectors = data_end.saturating_sub(self.data_next_sector);
         // Persist encryption nonce counter for crash recovery.
         if let Some(ref crypto) = self.crypto {
             self.superblock.nonce_counter = crypto.nonce_counter();

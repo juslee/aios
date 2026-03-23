@@ -742,7 +742,7 @@ pub struct PosixStat {
 }
 
 /// Directory entry returned by readdir.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct DirEntry {
     /// Entry name (up to 64 bytes, null-padded).
     pub name: [u8; MAX_OBJECT_NAME_LEN],
@@ -1033,7 +1033,7 @@ impl ObjectIndex {
             return Err(StorageError::MemTableFull);
         }
         match self.binary_search(&object.id) {
-            Ok(_) => Err(StorageError::IoError), // Duplicate ID
+            Ok(_) => Err(StorageError::NameExists), // Duplicate ID
             Err(pos) => {
                 self.entries.insert(
                     pos,

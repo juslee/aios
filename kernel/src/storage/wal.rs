@@ -127,7 +127,7 @@ impl Wal {
 
         let disk_sector = self.start_sector + sector_in_wal;
         let mut sector_buf = [0u8; SECTOR_SIZE];
-        virtio_blk::read_sector(disk_sector, array_ref_mut(&mut sector_buf))?;
+        virtio_blk::read_sector(disk_sector, &mut sector_buf)?;
 
         let offset = entry_in_sector * WAL_ENTRY_SIZE;
         let entry_bytes = &sector_buf[offset..offset + WAL_ENTRY_SIZE];
@@ -149,7 +149,7 @@ impl Wal {
 
         // Read-modify-write the sector (8 entries per sector).
         let mut sector_buf = [0u8; SECTOR_SIZE];
-        virtio_blk::read_sector(disk_sector, array_ref_mut(&mut sector_buf))?;
+        virtio_blk::read_sector(disk_sector, &mut sector_buf)?;
 
         let offset = entry_in_sector * WAL_ENTRY_SIZE;
         // SAFETY: WalEntry is repr(C), 64 bytes, plain data (no pointers).
@@ -163,7 +163,7 @@ impl Wal {
             );
         }
 
-        virtio_blk::write_sector(disk_sector, array_ref(&sector_buf))?;
+        virtio_blk::write_sector(disk_sector, &sector_buf)?;
         Ok(())
     }
 
@@ -184,16 +184,4 @@ impl Wal {
             }
         }
     }
-}
-
-/// Helper to convert `&[u8; 512]` to `&[u8; 512]` for virtio_blk API.
-#[inline(always)]
-fn array_ref(buf: &[u8; SECTOR_SIZE]) -> &[u8; 512] {
-    buf
-}
-
-/// Helper to convert `&mut [u8; 512]` to `&mut [u8; 512]` for virtio_blk API.
-#[inline(always)]
-fn array_ref_mut(buf: &mut [u8; SECTOR_SIZE]) -> &mut [u8; 512] {
-    buf
 }

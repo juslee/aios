@@ -116,14 +116,6 @@ pub fn object_create(
         let (block_hash, _) = engine.write_block(version_bytes)?;
         obj.version_head = block_hash;
 
-        // Validate space exists before inserting object.
-        if engine.space_table().get(&space_id).is_none() {
-            // Dec_ref the content and version blocks we just wrote.
-            let _ = engine.dec_ref(&content_hash);
-            let _ = engine.dec_ref(&block_hash);
-            return Err(StorageError::SpaceNotFound);
-        }
-
         // Insert into object index.
         engine.object_index_mut().insert(obj)?;
 
