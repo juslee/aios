@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-42 phases across 8 tiers. Each tier delivers a usable milestone, building on the previous one to produce something demonstrable. Timeline estimates use a **graduated complexity model** based on observed AI-assisted development velocity from Phases 0–3 (see §8.1 for methodology).
+47 phases across 8 tiers. Each tier delivers a usable milestone, building on the previous one to produce something demonstrable. Timeline estimates use a **graduated complexity model** based on observed AI-assisted development velocity from Phases 0–3 (see §8.1 for methodology).
 
 | Estimate Model | Total Duration | Assumption |
 |---|---|---|
@@ -21,29 +21,32 @@ flowchart LR
     T1["`**Tier 1**: Hardware Foundation
     Phases 0-3 | Weeks 1-2 ✅
     *Boot, memory, IPC*`"]
+    T1a["`**Kit Foundation**
+    Phases 4-5 | Weeks 3-4
+    *Storage, Kit API extraction*`"]
     T2["`**Tier 2**: Core System Services
-    Phases 4-8 | Weeks 3-9
-    *Storage, GPU, compositor, input, networking*`"]
+    Phases 6-9 | Weeks 5-11
+    *GPU, compositor, input, networking*`"]
     T3["`**Tier 3**: AI & Intelligence
-    Phases 9-15 | Weeks 10-19
-    *AIRS, context, preferences, agents, flow*`"]
+    Phases 10-19 | Weeks 12-23
+    *AIRS, search, context, preferences, agents, flow, conversation, identity*`"]
     T4["`**Tier 4**: Platform Maturity
-    Phases 16-22 | Weeks 20-29
-    *SDK, security, compute, performance, POSIX*`"]
+    Phases 20-27 | Weeks 24-34
+    *Intent, security, compute, performance, SDK, POSIX*`"]
     T5["`**Tier 5**: Hardware & Connectivity
-    Phases 23-28 | Weeks 30-39
+    Phases 28-33 | Weeks 35-44
     *NTM, USB, wireless, power, thermal*`"]
     T6["`**Tier 6**: Rich Experience
-    Phases 29-33 | Weeks 40-51
+    Phases 34-38 | Weeks 45-56
     *UI toolkit, browser, media, camera, a11y*`"]
     T7["`**Tier 7**: Production OS
-    Phases 34-39 | Weeks 52-63
+    Phases 39-44 | Weeks 57-68
     *Secure boot, Linux compat, multi-device, launch*`"]
     T8["`**Tier 8**: Security Intelligence
-    Phases 40-41 | Weeks 64-67
+    Phases 45-46 | Weeks 69-72
     *Capability profiles, AIRS cap intelligence*`"]
 
-    T1 --> T2 --> T3 --> T4 --> T5 --> T6 --> T7 --> T8
+    T1 --> T1a --> T2 --> T3 --> T4 --> T5 --> T6 --> T7 --> T8
 
     style T1 fill:#228B22,color:white
 ```
@@ -59,13 +62,14 @@ Each tier produces a demonstrable result:
 | Tier | Target | Milestone | Demo |
 |---|---|---|---|
 | 1 | Week 2 | Microkernel boots on QEMU | UART output, memory allocation, IPC ping-pong benchmark |
-| 2 | Week 9 | Graphical desktop with shell | Window compositor, terminal emulator, basic networking (curl works) |
-| 3 | Week 19 | AI-enhanced OS | Conversation bar, semantic search, agents running with capability gates, Flow service |
-| 4 | Week 29 | Developer platform | SDK published, compute abstraction, GPU compute, security hardened, POSIX tools |
-| 5 | Week 39 | Hardware-ready OS | WiFi, Bluetooth, USB, power management, thermal — runs on Raspberry Pi |
-| 6 | Week 51 | Daily-driver OS | Web browser, media player, camera, accessibility, internationalization |
-| 7 | Week 63 | Production OS | Secure boot, Linux app compat, enterprise features, real hardware launch |
-| 8 | Week 67 | Security Intelligence | Composable capability profiles, AIRS-powered agent audit |
+| 1.5 | Week 4 | Kit Foundation | Storage complete, Kit API traits extracted for Phases 2-4, Kit crate structure established |
+| 2 | Week 11 | Graphical desktop with shell | Window compositor, terminal emulator, basic networking (curl works) |
+| 3 | Week 23 | AI-enhanced OS | Conversation bar, semantic search, agents running with capability gates, Flow service, identity & credentials |
+| 4 | Week 34 | Developer platform | Intent verification, SDK published, compute abstraction, GPU compute, security hardened, POSIX tools |
+| 5 | Week 44 | Hardware-ready OS | WiFi, Bluetooth, USB, power management, thermal — runs on Raspberry Pi |
+| 6 | Week 56 | Daily-driver OS | Web browser, media player, camera, accessibility, internationalization |
+| 7 | Week 68 | Production OS | Secure boot, Linux app compat, enterprise features, real hardware launch |
+| 8 | Week 72 | Security Intelligence | Composable capability profiles, AIRS-powered agent audit |
 
 -----
 
@@ -77,62 +81,73 @@ flowchart TD
     P1 --> P2["Phase 2: Memory Management"]
     P2 --> P3["Phase 3: IPC & Capability System"]
     P3 --> P4["Phase 4: Block Storage & Object Store"]
-    P4 --> P5["Phase 5: GPU & Display"]
-    P5 --> P6["Phase 6: Window Compositor & Shell"]
-    P6 --> P7["Phase 7: Input & Terminal"]
-    P7 --> P8["Phase 8: Basic Networking & Agent Model"]
+    P4 --> P5["Phase 5: Kit Foundation"]
+    P5 --> P6["Phase 6: GPU & Display"]
+    P6 --> P7["Phase 7: Window Compositor & Shell"]
+    P7 --> P8["Phase 8: Input & Terminal"]
+    P8 --> P9["Phase 9: Basic Networking"]
 
-    P8 --> P9["Phase 9: AIRS Inference Engine"]
-    P9 --> P10["Phase 10: AIRS Intelligence Services"]
-    P10 --> P11["Phase 11: Context Engine"]
-    P11 --> P12["Phase 12: Preference System"]
-    P10 --> P13["Phase 13: Agent Framework"]
-    P13 --> P14["Phase 14: Task Manager & Attention"]
-    P14 --> P15["Phase 15: Flow Service"]
-    P6 --> P15
-    P13 --> P16["Phase 16: Developer Experience & SDK"]
-    P13 --> P17["Phase 17: Security Architecture"]
-    P4 --> P17
-    P17 --> P18["Phase 18: Security Testing & Verification"]
+    P9 --> P10["Phase 10: Agent Framework"]
+    P9 --> P11["Phase 11: AIRS Inference Engine"]
+    P11 --> P12["Phase 12: AIRS Intelligence Services"]
+    P12 --> P13["Phase 13: Space Indexer & Search"]
+    P12 --> P14["Phase 14: Context Engine"]
+    P14 --> P15["Phase 15: Preference System"]
+    P15 --> P16["Phase 16: Flow & Translation"]
+    P7 --> P16
+    P16 --> P17["Phase 17: Attention, Task Manager & Notification"]
+    P13 --> P18["Phase 18: Conversation Manager"]
+    P14 --> P18
+    P17 --> P18
+    P10 --> P19["Phase 19: Identity & Credentials"]
 
-    P10 --> P19["Phase 19: Kernel Compute Abstraction"]
-    P5 --> P19
-    P19 --> P20["Phase 20: GPU Compute & Accelerator Drivers"]
-    P5 --> P20
-    P19 --> P21["Phase 21: Performance & Optimization"]
-    P6 --> P21
-    P21 --> P22["Phase 22: POSIX Compatibility & BSD Userland"]
+    P19 --> P20["Phase 20: Intent Verification"]
+    P12 --> P20
+    P20 --> P21["Phase 21: Security Architecture"]
+    P4 --> P21
+    P21 --> P22["Phase 22: Security Testing & Verification"]
 
-    P8 --> P23["Phase 23: Network Translation Module"]
-    P23 --> P24["Phase 24: USB Stack & Hotplug"]
-    P24 --> P25["Phase 25: WiFi Stack"]
-    P25 --> P26["Phase 26: Bluetooth & Wireless Integration"]
-    P26 --> P27["Phase 27: Power Management"]
-    P27 --> P28["Phase 28: Thermal Management"]
-    P19 --> P28
+    P12 --> P23["Phase 23: Kernel Compute Abstraction"]
+    P6 --> P23
+    P23 --> P24["Phase 24: GPU Compute & Accelerator Drivers"]
+    P6 --> P24
+    P23 --> P25["Phase 25: Performance & Optimization"]
+    P7 --> P25
+    P25 --> P27["Phase 27: POSIX Compatibility & BSD Userland"]
 
-    P16 --> P29["Phase 29: Interface Kit"]
-    P29 --> P30["Phase 30: Browser Kit"]
-    P20 --> P31["Phase 31: Media Pipeline & Codecs"]
-    P9 --> P31
-    P31 --> P32["Phase 32: Streaming, RTC & Camera"]
-    P24 --> P32
-    P32 --> P33["Phase 33: Accessibility & Internationalization"]
+    P10 --> P26["Phase 26: Developer Experience & SDK"]
+    P22 --> P26
 
-    P28 --> P34["Phase 34: Secure Boot & Update System"]
-    P34 --> P35["Phase 35: Linux Binary Loader"]
-    P35 --> P36["Phase 36: Wayland Bridge & Sandbox"]
-    P36 --> P37["Phase 37: Multi-Device Sync & Pairing"]
-    P37 --> P38["Phase 38: Enterprise Management"]
-    P20 --> P39["Phase 39: Real Hardware, Certification & Launch"]
-    P38 --> P39
+    P9 --> P28["Phase 28: Network Translation Module"]
+    P28 --> P29["Phase 29: USB Stack & Hotplug"]
+    P29 --> P30["Phase 30: WiFi Stack"]
+    P30 --> P31["Phase 31: Bluetooth & Wireless Integration"]
+    P31 --> P32["Phase 32: Power Management"]
+    P32 --> P33["Phase 33: Thermal Management"]
+    P23 --> P33
 
-    P3 --> P40["Phase 40: Composable Capability Profiles"]
-    P13 --> P40
-    P16 --> P40
-    P40 --> P41["Phase 41: AIRS Capability Intelligence"]
-    P10 --> P41
-    P17 --> P41
+    P26 --> P34["Phase 34: Interface Kit"]
+    P34 --> P35["Phase 35: Browser Kit"]
+    P24 --> P36["Phase 36: Media Pipeline & Codecs"]
+    P11 --> P36
+    P36 --> P37["Phase 37: Streaming, RTC & Camera"]
+    P29 --> P37
+    P37 --> P38["Phase 38: Accessibility & Internationalization"]
+
+    P33 --> P39["Phase 39: Secure Boot & Update System"]
+    P39 --> P40["Phase 40: Linux Binary Loader"]
+    P40 --> P41["Phase 41: Wayland Bridge & Sandbox"]
+    P41 --> P42["Phase 42: Multi-Device Sync & Pairing"]
+    P42 --> P43["Phase 43: Enterprise Management"]
+    P24 --> P44["Phase 44: Real Hardware, Certification & Launch"]
+    P43 --> P44
+
+    P3 --> P45["Phase 45: Composable Capability Profiles"]
+    P10 --> P45
+    P26 --> P45
+    P45 --> P46["Phase 46: AIRS Capability Intelligence"]
+    P12 --> P46
+    P21 --> P46
 
     style P0 fill:#228B22,color:white
     style P1 fill:#228B22,color:white
@@ -141,15 +156,17 @@ flowchart TD
     style P4 fill:#FFA500,color:white
 ```
 
-**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 13 → 16 → 29 → 30. Browser Kit (Phase 30) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
+**Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 26 → 34 → 35. Browser Kit (Phase 35) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
 
-Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 30) depends on the Interface Kit + Browser Kit chain (16 → 29 → 30), not POSIX tools. Phase 22 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
+Note: Phase 27 (POSIX/BSD Userland) is not on the critical path because the Daily Driver gate (Gate 3, after Phase 35) depends on the Interface Kit + Browser Kit chain (26 → 34 → 35), not POSIX tools. Phase 27 is a parallel workstream that enhances the developer experience but is not a prerequisite for the Gate 3 decision.
 
 **Parallel workstreams:** Several phase chains can proceed concurrently once their dependencies are met:
-- **Compute chain:** 19 → 20 → 31 (kernel compute abstraction → GPU compute → media pipeline)
-- **Connectivity chain:** 23 → 24 → 25 → 26 → 27 → 28 (networking → USB → wireless → power → thermal)
-- **Security chain:** 17 → 18 (security architecture → security testing)
-- **Intelligence chain:** 11 → 12 (context engine → preferences)
+
+- **Compute chain:** 23 → 24 → 36 (kernel compute abstraction → GPU compute → media pipeline)
+- **Connectivity chain:** 28 → 29 → 30 → 31 → 32 → 33 (networking → USB → wireless → power → thermal)
+- **Security chain:** 21 → 22 (security architecture → security testing)
+- **Intelligence chain:** 14 → 15 (context engine → preferences)
+- **Search/Conversation chain:** 13 → 18 (search → conversation manager)
 
 -----
 
@@ -161,7 +178,7 @@ Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Dail
 |---|---|---|---|---|
 | IPC performance < 5μs target | High — microkernel viability | Medium | **Resolved** — avg=4μs, p99=8μs (Gate 1 passed) | Prototype IPC in Phase 3, benchmark before proceeding. Fallback: hybrid kernel with in-kernel filesystem |
 | Inference bridge performance (candle default, GGML alternative) | High — AI features unusable | Low | Open | candle is pure Rust on aarch64; GGML alternative bridge available via FFI if hand-tuned NEON required. Mitigation: quantization, smaller models, NPU offload |
-| Engine bridge complexity (Servo default, Gecko/Blink via Linux compat) | High — browser delayed | Medium | Open | Servo is modular but massive (1.5M+ LoC). Firefox/Chrome available via Linux compat layer as alternative. Mitigation: start integration early (Phase 21 prep in Phase 16), maintain Servo fork |
+| Engine bridge complexity (Servo default, Gecko/Blink via Linux compat) | High — browser delayed | Medium | Open | Servo is modular but massive (1.5M+ LoC). Firefox/Chrome available via Linux compat layer as alternative. Mitigation: start integration early (Phase 35 prep in Phase 26), maintain Servo fork |
 | smoltcp limitations | Medium — networking incomplete | Low | Open | smoltcp handles TCP/UDP well. Missing: advanced congestion control, some edge cases. Mitigation: contribute upstream, fork if needed |
 | GPU driver complexity (real hardware) | High — no display on Pi | Medium | Open | VirtIO-GPU works in QEMU. Pi GPU (VC4/V3D) has open-source driver but is complex. Mitigation: start with framebuffer fallback |
 | Memory pressure on 2GB devices | Medium — degraded experience | Medium | Open | Models need 4+ GB RAM. Mitigation: aggressive quantization, model eviction, swap space, 4GB minimum recommended |
@@ -169,16 +186,16 @@ Note: Phase 22 (POSIX/BSD Userland) is not on the critical path because the Dail
 | Kernel memory safety despite unsafe Rust | High — security compromise | Low-Medium | Mitigated | 14.6K lines of kernel code with all `unsafe` blocks documented. 275 unit tests, zero memory corruption observed. Ongoing: minimize unsafe, fuzz all syscalls, formal verification for critical paths |
 | AI tooling dependency | Medium — velocity drops 3–5x | Low | Open | Development velocity depends on Claude Code. Mitigation: 58K lines of architecture docs serve as specification regardless of tooling; any developer can continue from current state |
 | QEMU version compatibility | Low — CI breaks | Low | Open | QEMU 10.x changed edk2 MMIO mapping behavior post-ExitBootServices (discovered Phase 4 M13). Mitigation: pin QEMU version in CI (pending), test against multiple versions |
-| Driver ecosystem time sink | High — hardware phases delayed | High | Open | Every comparable OS project (seL4, Fuchsia, Redox, Hubris) reports drivers as the single biggest time sink. Real hardware (Pi GPU, USB, WiFi) has undocumented quirks that resist AI acceleration. Mitigation: budget 2–3x estimated time for Phases 16–19 and 27; start with QEMU virtual devices before real hardware |
+| Driver ecosystem time sink | High — hardware phases delayed | High | Open | Every comparable OS project (seL4, Fuchsia, Redox, Hubris) reports drivers as the single biggest time sink. Real hardware (Pi GPU, USB, WiFi) has undocumented quirks that resist AI acceleration. Mitigation: budget 2–3x estimated time for Phases 28–33 and 44; start with QEMU virtual devices before real hardware |
 
 ### 4.2 Schedule Risks
 
 | Risk | Impact | Status | Mitigation |
 |---|---|---|---|
 | Phase 3 (IPC) takes longer than 6 weeks | Delays everything downstream | **Resolved** — completed in 3 days | IPC was flagged as the hardest kernel component. Architecture-first approach eliminated design uncertainty. |
-| Phase 8 (AIRS) underestimated | AI features delayed | Open | candle bridge integration is well-understood (pure Rust). Context management and indexing are the unknowns. |
-| Phase 21 (Browser) underestimated | Daily-driver delayed | Open | Servo bridge integration is the highest-risk single phase. External codebase integration has the lowest AI leverage. Budget extra slack. |
-| External dependency integration ceiling | Later phases slow down | Open | Kernel-internal phases (0–3) benefit most from AI assistance (10–45x speedup). External library integration phases (5, 7, 15, 21) involve coordination costs that resist acceleration. Expect 2–4x speedup at best. |
+| Phase 11 (AIRS) underestimated | AI features delayed | Open | candle bridge integration is well-understood (pure Rust). Context management and indexing are the unknowns. |
+| Phase 35 (Browser) underestimated | Daily-driver delayed | Open | Servo bridge integration is the highest-risk single phase. External codebase integration has the lowest AI leverage. Budget extra slack. |
+| External dependency integration ceiling | Later phases slow down | Open | Kernel-internal phases (0–3) benefit most from AI assistance (10–45x speedup). External library integration phases (6, 8, 28, 35) involve coordination costs that resist acceleration. Expect 2–4x speedup at best. |
 | Scope creep in any phase | Timeline extends | Open | Each phase has a strict deliverable. Feature requests go to future phases. |
 
 ### 4.3 Ecosystem Risks
@@ -202,7 +219,7 @@ Major decisions that must be made during development:
 **Criteria:**
 
 - IPC round-trip < 10 μs (target: < 5 μs). Note: architecture.md §6.9 lists the optimized target (< 5 μs); this gate uses the acceptance threshold (< 10 μs) that determines whether the architecture is viable at all.
-- Context switch < 20 μs (gate threshold). Note: architecture.md §6.9 lists the optimized target (< 10 μs); this gate uses a relaxed threshold since post-Phase 3 optimization (Phase 14) has not yet occurred.
+- Context switch < 20 μs (gate threshold). Note: architecture.md §6.9 lists the optimized target (< 10 μs); this gate uses a relaxed threshold since post-Phase 3 optimization (Phase 25) has not yet occurred.
 - No pathological performance cliffs
 
 **If NO:** Consider hybrid kernel (move Space Storage into kernel space). This is a significant architectural change but recoverable at this stage because no external users depend on the IPC interface yet, and only kernel and storage code has been written.
@@ -220,14 +237,14 @@ Major decisions that must be made during development:
 
 **Key findings:**
 
-- IPC avg (4 μs) meets the *optimized* target (< 5 μs) before Phase 14 optimization, indicating headroom for capability check overhead, auditing, and cross-core IPC.
+- IPC avg (4 μs) meets the *optimized* target (< 5 μs) before Phase 25 optimization, indicating headroom for capability check overhead, auditing, and cross-core IPC.
 - Context switch avg (2 μs) is 5x below the optimized target, suggesting the save/restore path is well-optimized.
 - Direct switch fast path (bypassing the scheduler when the receiver is already waiting) is the primary IPC optimization — co-locating caller and receiver on the same core enables sub-5μs round-trips.
 - P99 latencies (8 μs IPC, 5 μs context switch) indicate occasional scheduling jitter but no pathological cliffs.
 
 **Benchmark methodology:** 10,000 IPC iterations and 1,000 context switch iterations on QEMU virt (cortex-a72, 4 cores, 2 GiB RAM). Timer resolution: 16 ns (62.5 MHz CNTFRQ_EL0). IRQs masked during measurement to prevent timer preemption skew. Server and client co-located on CPU 0 for direct switch path. Production latencies with unmasked IRQs will be slightly higher.
 
-### Gate 2: AI Viability (after Phase 10)
+### Gate 2: AI Viability (after Phase 12)
 
 **Decision:** Can we run useful LLM inference on target hardware?
 
@@ -241,7 +258,7 @@ Major decisions that must be made during development:
 
 **Industry context:** The emerging standard (Apple Intelligence, Copilot+ PCs) is hybrid on-device/cloud — small models (1–3B) run locally for low-latency tasks while larger models are accessed via cloud fallback. AIRS should plan for this hybrid architecture regardless of Gate 2 outcome. On-device-only inference remains the primary target for privacy and offline capability, with cloud as an opt-in enhancement.
 
-### Gate 3: Daily Driver (after Phase 30)
+### Gate 3: Daily Driver (after Phase 35)
 
 **Decision:** Can someone use AIOS as their only computer for basic tasks?
 
@@ -254,13 +271,39 @@ Major decisions that must be made during development:
 
 **If NO:** Identify blocking issues and allocate additional time before Tier 7.
 
+### Gate 4: Intelligence Stack (after Phase 19)
+
+**Decision:** Is the full intelligence stack operational end-to-end?
+
+**Criteria:**
+
+- Conversation bar invokes semantic search across spaces
+- Agents execute with intent verification and capability gates
+- Identity system issues PQC keys and signs agent manifests
+- Context engine drives preference resolution and attention triage
+
+**If NO:** Intelligence subsystems may need tighter integration. Review cross-service interfaces (Search ↔ Context ↔ Conversation ↔ Attention) before proceeding to security hardening.
+
+### Gate 5: Hardware-Ready (after Phase 33)
+
+**Decision:** Does AIOS run on real hardware with wireless connectivity and thermal management?
+
+**Criteria:**
+
+- Boots on Raspberry Pi 4/5 with WiFi and Bluetooth functional
+- USB peripherals (keyboard, mouse, storage) work via hotplug
+- Thermal throttling prevents overheating under sustained load
+- Power management supports sleep/wake cycles
+
+**If NO:** Identify hardware-specific issues. Budget additional time for driver debugging before Tier 6 (which assumes stable hardware).
+
 -----
 
 ## 6. Staffing Model
 
 ### AI-Assisted Solo Developer (Current)
 
-All 42 phases are being implemented by a single developer using AI-assisted development (Claude Code):
+All 47 phases are being implemented by a single developer using AI-assisted development (Claude Code):
 
 - Phases 0–3 completed in 11 calendar days (planned: 16 weeks)
 - Observed speedup over unassisted baseline: 5–45x depending on phase complexity
@@ -279,22 +322,22 @@ All 42 phases are being implemented by a single developer using AI-assisted deve
 
 | AI Leverage | Tiers | Speedup | Reason |
 |---|---|---|---|
-| High | 1–2 (Phases 0–8) | 10–20x | Pure kernel code, well-specified by architecture docs |
-| Medium | 3–4 (Phases 9–22) | 3–8x | External library integration (candle bridge, smoltcp), compute abstraction. AI helps with glue code and testing. |
-| Lower | 5–7 (Phases 23–39) | 2–4x | Hardware drivers, engine bridges (Servo), certification. External constraints dominate. |
+| High | 1–2 (Phases 0–9) | 10–20x | Pure kernel code, well-specified by architecture docs |
+| Medium | 3–4 (Phases 10–27) | 3–8x | External library integration (candle bridge, smoltcp), compute abstraction. AI helps with glue code and testing. |
+| Lower | 5–7 (Phases 28–44) | 2–4x | Hardware drivers, engine bridges (Servo), certification. External constraints dominate. |
 
 ### Solo Developer (Unassisted Baseline)
 
-Without AI tools, the 42 phases would take ~200 weeks (~3.8 years) for an experienced systems programmer working full-time. This remains the reference estimate for unassisted development.
+Without AI tools, the 47 phases would take ~220 weeks (~4.2 years) for an experienced systems programmer working full-time. This remains the reference estimate for unassisted development.
 
 ### Small Team (Accelerated)
 
 With 2–3 AI-assisted developers, phases can be parallelized:
 
-- Developer A: kernel (Phases 0–3), then compute abstraction (19–20), then performance (21), then security (17–18)
-- Developer B: storage + GPU (Phases 4–6), then input/networking (7–8), then UI toolkit (29), then browser (30) — ordered to respect dependency chain (Phase 16 → 29 → 30)
-- Developer C: AI (Phases 9–15), then networking (23), then agent ecosystem (16)
-- Note: Remaining phases (22, 24–28, 31–39) are assigned based on availability as earlier phases complete.
+- Developer A: kernel (Phases 0–3), then compute abstraction (23–24), then performance (25), then security (21–22)
+- Developer B: storage + GPU (Phases 4–6), then input/networking (8–9), then UI toolkit (34), then browser (35) — ordered to respect dependency chain (Phase 26 → 34 → 35)
+- Developer C: AI (Phases 10–19), then networking (28), then agent ecosystem (26)
+- Note: Remaining phases (27, 29–33, 36–44) are assigned based on availability as earlier phases complete.
 
 Estimated timeline with 3 AI-assisted developers: ~15–25 weeks.
 
@@ -345,12 +388,12 @@ Rather than reinvent agent orchestration, channel adapters, and LLM routing, AIO
 
 | Phase | Integration | What AIOS Provides | What OpenFang Provides |
 |---|---|---|---|
-| 8 (AIRS Core) | LLM routing compatibility | Kernel-level inference with hardware scheduling | Model routing patterns, cost-aware metering, 27 provider configs |
+| 11 (AIRS Inference Engine) | LLM routing compatibility | Kernel-level inference with hardware scheduling | Model routing patterns, cost-aware metering, 27 provider configs |
 | 10 (Agent Framework) | Hand → AIOS agent mapping | AgentManifest with scheduled execution support | HAND.toml manifest format as candidate packaging standard, 7 bundled Hands |
 | 10 (Agent Framework) | Agent-to-Agent protocol | IPC channels with capability gates | A2A + OFP protocol patterns for inter-agent delegation |
-| 13 (Security) | Security layer mapping | Hardware capability tokens, MMU isolation | Taint tracking patterns, Merkle audit chain, prompt injection scanning |
-| 15 (POSIX) | Full binary compatibility | POSIX syscalls, musl libc | Unmodified OpenFang binary runs as AIOS process |
-| 16 (Network Translation Module) | Channel adapter support | TCP/IP + TLS stack | 40 channel adapters (Telegram, Discord, Slack, etc.) |
+| 21 (Security Architecture) | Security layer mapping | Hardware capability tokens, MMU isolation | Taint tracking patterns, Merkle audit chain, prompt injection scanning |
+| 27 (POSIX Compatibility) | Full binary compatibility | POSIX syscalls, musl libc | Unmodified OpenFang binary runs as AIOS process |
+| 28 (Network Translation Module) | Channel adapter support | TCP/IP + TLS stack | 40 channel adapters (Telegram, Discord, Slack, etc.) |
 
 ### OpenFang Concepts Adopted into AIOS
 
@@ -366,50 +409,55 @@ Rather than reinvent agent orchestration, channel adapters, and LLM routing, AIO
 
 Each phase has an implementation doc in `docs/phases/` containing objectives, milestone steps with acceptance criteria, decision points, and references to the existing architecture documents (which hold the technical design). This avoids duplicating architecture content while providing a clear implementation sequence.
 
-| Phase | Name | Arch Docs | Document | Status | Planned | Actual |
-|---|---|---|---|---|---|---|
-| 0 | Foundation & Tooling | boot.md | [`00-foundation-and-tooling.md`](../phases/00-foundation-and-tooling.md) | Complete | 2w | 2.5d |
-| 1 | Boot & First Pixels | boot.md, hal.md | [`01-boot-and-first-pixels.md`](../phases/01-boot-and-first-pixels.md) | Complete | 4w | 1.5d |
-| 2 | Memory Management | memory.md (5) | [`02-memory-management.md`](../phases/02-memory-management.md) | Complete | 4w | 5d |
-| 3 | IPC & Capability System | ipc.md, scheduler.md | [`03-ipc-and-capability-system.md`](../phases/03-ipc-and-capability-system.md) | Complete | 6w | 3d |
-| 4 | Block Storage & Object Store | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | In Progress (M14 complete) | 5w | — |
-| 5 | GPU & Display | gpu.md (5) | `05-gpu-and-display.md` | Planned | 6w | — |
-| 6 | Window Compositor & Shell | compositor.md (6) | `06-window-compositor-and-shell.md` | Planned | 7w | — |
-| 7 | Input & Terminal | input.md (6), terminal.md (6) | `07-input-and-terminal.md` | Planned | 4w | — |
-| 8 | Basic Networking & Agent Model | networking.md (6) | `08-basic-networking-and-agent-model.md` | Planned | 4w | — |
-| 9 | AIRS Inference Engine | airs/inference.md, model-registry.md, scaling.md | `09-airs-inference-engine.md` | Planned | 4w | — |
-| 10 | AIRS Intelligence Services | airs/intelligence-services.md, lifecycle-and-data.md, security.md, ai-native.md | `10-airs-intelligence-services.md` | Planned | 4w | — |
-| 11 | Context Engine | context-engine.md (6) | `11-context-engine.md` | Planned | 4w | — |
-| 12 | Preference System | preferences.md (8) | `12-preference-system.md` | Planned | 4w | — |
-| 13 | Agent Framework | agents.md | `13-agent-framework.md` | Planned | 5w | — |
-| 14 | Task Manager & Attention | task-manager.md, attention.md | `14-task-manager-and-attention.md` | Planned | 4w | — |
-| 15 | Flow Service | flow.md (7) | `15-flow-service.md` | Planned | 5w | — |
-| 16 | Developer Experience & SDK | — | `16-developer-experience-and-sdk.md` | Planned | 5w | — |
-| 17 | Security Architecture | security/model.md (4) | `17-security-architecture.md` | Planned | 4w | — |
-| 18 | Security Testing & Verification | fuzzing.md (4) | `18-security-testing-and-verification.md` | Planned | 4w | — |
-| 19 | Kernel Compute Abstraction | compute.md (6) | `19-kernel-compute-abstraction.md` | Planned | 5w | — |
-| 20 | GPU Compute & Accelerator Drivers | accelerators.md (5) | `20-gpu-compute-and-accelerator-drivers.md` | Planned | 5w | — |
-| 21 | Performance & Optimization | — | `21-performance-and-optimization.md` | Planned | 4w | — |
-| 22 | POSIX Compatibility & BSD Userland | posix.md | `22-posix-compatibility-and-bsd-userland.md` | Planned | 5w | — |
-| 23 | Network Translation Module | networking.md (6) | `23-network-translation-module.md` | Planned | 5w | — |
-| 24 | USB Stack & Hotplug | usb.md (4) | `24-usb-stack-and-hotplug.md` | Planned | 5w | — |
-| 25 | WiFi Stack | wireless/wifi.md, firmware.md, security.md | `25-wifi-stack.md` | Planned | 4w | — |
-| 26 | Bluetooth & Wireless Integration | wireless/bluetooth.md, integration.md, ai-native.md | `26-bluetooth-and-wireless-integration.md` | Planned | 4w | — |
-| 27 | Power Management | power-management.md | `27-power-management.md` | Planned | 3w | — |
-| 28 | Thermal Management | thermal.md (7) | `28-thermal-management.md` | Planned | 5w | — |
-| 29 | Interface Kit | ui-toolkit.md | `29-interface-kit.md` | Planned | 5w | — |
-| 30 | Browser Kit | browser.md | `30-browser-kit.md` | Planned | 7w | — |
-| 31 | Media Pipeline & Codecs | media-pipeline.md (6) | `31-media-pipeline-and-codecs.md` | Planned | 4w | — |
-| 32 | Streaming, RTC & Camera | camera.md (7) | `32-streaming-rtc-and-camera.md` | Planned | 5w | — |
-| 33 | Accessibility & Internationalization | accessibility.md | `33-accessibility-and-internationalization.md` | Planned | 5w | — |
-| 34 | Secure Boot & Update System | secure-boot.md (5) | `34-secure-boot-and-update-system.md` | Planned | 5w | — |
-| 35 | Linux Binary Loader | linux-compat.md (6) | `35-linux-binary-loader.md` | Planned | 4w | — |
-| 36 | Wayland Bridge & Sandbox | — | `36-wayland-bridge-and-sandbox.md` | Planned | 4w | — |
-| 37 | Multi-Device Sync & Pairing | multi-device.md (8) | `37-multi-device-sync-and-pairing.md` | Planned | 4w | — |
-| 38 | Enterprise Management | — | `38-enterprise-management.md` | Planned | 5w | — |
-| 39 | Real Hardware, Certification & Launch | bsp.md (6) | `39-real-hardware-certification-and-launch.md` | Planned | 6w | — |
-| 40 | Composable Capability Profiles | — | `40-composable-capability-profiles.md` | Planned | 4w | — |
-| 41 | AIRS Capability Intelligence | — | `41-airs-capability-intelligence.md` | Planned | 4w | — |
+| Phase | Name | Kit(s) | Arch Docs | Document | Status | Planned | Actual |
+|---|---|---|---|---|---|---|---|
+| 0 | Foundation & Tooling | — | boot.md | [`00-foundation-and-tooling.md`](../phases/00-foundation-and-tooling.md) | Complete | 2w | 2.5d |
+| 1 | Boot & First Pixels | — | boot.md, hal.md | [`01-boot-and-first-pixels.md`](../phases/01-boot-and-first-pixels.md) | Complete | 4w | 1.5d |
+| 2 | Memory Management | Memory Kit | memory.md (5) | [`02-memory-management.md`](../phases/02-memory-management.md) | Complete | 4w | 5d |
+| 3 | IPC & Capability System | IPC Kit, Capability Kit | ipc.md, scheduler.md | [`03-ipc-and-capability-system.md`](../phases/03-ipc-and-capability-system.md) | Complete | 6w | 3d |
+| 4 | Block Storage & Object Store | Storage Kit | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | In Progress (M14 complete) | 5w | — |
+| 5 | Kit Foundation | Memory Kit, IPC Kit, Capability Kit, Storage Kit | — | `05-kit-foundation.md` | Planned | 3w | — |
+| 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | `06-gpu-and-display.md` | Planned | 6w | — |
+| 7 | Window Compositor & Shell | — | compositor.md (6) | `07-window-compositor-and-shell.md` | Planned | 7w | — |
+| 8 | Input & Terminal | Input Kit | input.md (6), terminal.md (6) | `08-input-and-terminal.md` | Planned | 4w | — |
+| 9 | Basic Networking | Network Kit (core) | networking.md (6) | `09-basic-networking.md` | Planned | 4w | — |
+| 10 | Agent Framework | App Kit | agents.md (7) | `10-agent-framework.md` | Planned | 5w | — |
+| 11 | AIRS Inference Engine | AIRS Kit (inference) | airs/inference.md, model-registry.md, scaling.md | `11-airs-inference-engine.md` | Planned | 4w | — |
+| 12 | AIRS Intelligence Services | AIRS Kit (services) | airs/intelligence-services.md, lifecycle-and-data.md, security.md, ai-native.md | `12-airs-intelligence-services.md` | Planned | 4w | — |
+| 13 | Space Indexer & Search | Search Kit | space-indexer.md (8) | `13-space-indexer-and-search.md` | Planned | 4w | — |
+| 14 | Context Engine | Context Kit | context-engine.md (6) | `14-context-engine.md` | Planned | 4w | — |
+| 15 | Preference System | Preference Kit | preferences.md (8) | `15-preference-system.md` | Planned | 4w | — |
+| 16 | Flow & Translation | Flow Kit, Translation Kit | flow.md (7) | `16-flow-and-translation.md` | Planned | 5w | — |
+| 17 | Attention, Task Manager & Notification | Attention Kit, Notification Kit | task-manager.md, attention.md | `17-attention-task-manager-and-notification.md` | Planned | 4w | — |
+| 18 | Conversation Manager | Conversation Kit | conversation-manager.md (6) | `18-conversation-manager.md` | Planned | 4w | — |
+| 19 | Identity & Credentials | Identity Kit (core) | identity.md (8) | `19-identity-and-credentials.md` | Planned | 4w | — |
+| 20 | Intent Verification | Intent Kit | intent-verifier.md (6) | `20-intent-verification.md` | Planned | 3w | — |
+| 21 | Security Architecture | Security Kit, Capability Kit (hardening) | security/model.md (4) | `21-security-architecture.md` | Planned | 5w | — |
+| 22 | Security Testing & Verification | — | fuzzing.md (4) | `22-security-testing-and-verification.md` | Planned | 4w | — |
+| 23 | Kernel Compute Abstraction | Compute Kit (Tiers 2-3) | compute.md (6) | `23-kernel-compute-abstraction.md` | Planned | 5w | — |
+| 24 | GPU Compute & Accelerator Drivers | — | accelerators.md (5) | `24-gpu-compute-and-accelerator-drivers.md` | Planned | 5w | — |
+| 25 | Performance & Optimization | — | — | `25-performance-and-optimization.md` | Planned | 4w | — |
+| 26 | Developer Experience & SDK | Cookbook | — | `26-developer-experience-and-sdk.md` | Planned | 5w | — |
+| 27 | POSIX Compatibility & BSD Userland | — | posix.md | `27-posix-compatibility-and-bsd-userland.md` | Planned | 5w | — |
+| 28 | Network Translation Module | Network Kit (full) | networking.md (6) | `28-network-translation-module.md` | Planned | 5w | — |
+| 29 | USB Stack & Hotplug | USB Kit | usb.md (4) | `29-usb-stack-and-hotplug.md` | Planned | 5w | — |
+| 30 | WiFi Stack | Wireless Kit (WiFi) | wireless/wifi.md, firmware.md, security.md | `30-wifi-stack.md` | Planned | 4w | — |
+| 31 | Bluetooth & Wireless Integration | Wireless Kit (full) | wireless/bluetooth.md, integration.md, ai-native.md | `31-bluetooth-and-wireless-integration.md` | Planned | 4w | — |
+| 32 | Power Management | Power Kit | power-management.md | `32-power-management.md` | Planned | 3w | — |
+| 33 | Thermal Management | Thermal Kit | thermal.md (7) | `33-thermal-management.md` | Planned | 5w | — |
+| 34 | Interface Kit | Interface Kit | ui-toolkit.md | `34-interface-kit.md` | Planned | 5w | — |
+| 35 | Browser Kit | Browser Kit | browser.md (6) | `35-browser-kit.md` | Planned | 7w | — |
+| 36 | Media Pipeline & Codecs | Media Kit, Audio Kit | media-pipeline.md (6) | `36-media-pipeline-and-codecs.md` | Planned | 4w | — |
+| 37 | Streaming, RTC & Camera | Camera Kit | camera.md (7) | `37-streaming-rtc-and-camera.md` | Planned | 5w | — |
+| 38 | Accessibility & Internationalization | — | accessibility.md | `38-accessibility-and-internationalization.md` | Planned | 5w | — |
+| 39 | Secure Boot & Update System | — | secure-boot.md (5) | `39-secure-boot-and-update-system.md` | Planned | 5w | — |
+| 40 | Linux Binary Loader | — | linux-compat.md (6) | `40-linux-binary-loader.md` | Planned | 4w | — |
+| 41 | Wayland Bridge & Sandbox | — | — | `41-wayland-bridge-and-sandbox.md` | Planned | 4w | — |
+| 42 | Multi-Device Sync & Pairing | Identity Kit (full) | multi-device.md (8) | `42-multi-device-sync-and-pairing.md` | Planned | 4w | — |
+| 43 | Enterprise Management | — | — | `43-enterprise-management.md` | Planned | 5w | — |
+| 44 | Real Hardware, Certification & Launch | — | bsp.md (6) | `44-real-hardware-certification-and-launch.md` | Planned | 6w | — |
+| 45 | Composable Capability Profiles | Capability Kit (profiles) | — | `45-composable-capability-profiles.md` | Planned | 4w | — |
+| 46 | AIRS Capability Intelligence | AIRS Kit (cap intelligence) | — | `46-airs-capability-intelligence.md` | Planned | 4w | — |
 
 -----
 
@@ -458,15 +506,21 @@ Several subsystems span multiple phases but have a primary implementation phase.
 
 | Subsystem | Primary Phase | Also Touches | Arch Doc |
 |---|---|---|---|
-| Subsystem Framework | Phases 5–8 (established incrementally) | Every subsystem phase (9, 23–32) | `subsystem-framework.md` |
-| Device Model | Phases 0–5 (core), 24–39 (drivers) | Every driver phase | `device-model.md` (7 sub-docs) |
-| Preference System | Phase 12 | 5 (display config), 17 (security prefs), 23 (network prefs), 29 (UI prefs), 33 (a11y prefs) | `preferences.md` (8 sub-docs) |
-| Identity | Phase 3 (foundation) | 17 (per-space encryption), 13 (agent signatures), 37 (multi-device) | `identity.md` |
-| Experience Layer | Phase 6 (foundation) | 12, 14, 16, 29, 33 | `experience.md` |
-| Kernel Compute Abstraction | Phase 19 | 28 (thermal coupling), 20 (accelerators), 41 (AIRS intelligence) | `compute.md` (6 sub-docs) |
-| Language Ecosystem | All phases (Rust) | 13 (Python/TS runtimes), 16 (WASM/SDK), 41 (AIRS Runtime Advisor) | `language-ecosystem.md` (4 sub-docs) |
+| Subsystem Framework | Phases 6–9 (established incrementally) | Every subsystem phase (10, 28–33) | `subsystem-framework.md` |
+| Device Model | Phases 0–6 (core), 29–44 (drivers) | Every driver phase | `device-model.md` (7 sub-docs) |
+| Preference System | Phase 15 | 6 (display config), 21 (security prefs), 28 (network prefs), 34 (UI prefs), 38 (a11y prefs) | `preferences.md` (8 sub-docs) |
+| Identity | Phase 19 (core), 42 (full) | 21 (per-space encryption), 10 (agent signatures), 42 (multi-device) | `identity.md` (8 sub-docs) |
+| Experience Layer | Phase 7 (foundation) | 15, 17, 26, 34, 38 | `experience.md` |
+| Kernel Compute Abstraction | Phase 23 | 33 (thermal coupling), 24 (accelerators), 46 (AIRS intelligence) | `compute.md` (6 sub-docs) |
+| Language Ecosystem | All phases (Rust) | 10 (Python/TS runtimes), 26 (WASM/SDK), 12 (AIRS Runtime Advisor) | `language-ecosystem.md` (4 sub-docs) |
+| Search Kit | Phase 13 | 14 (context signals), 18 (conversation search), 35 (browser search) | `space-indexer.md` (8 sub-docs) |
+| Conversation Kit | Phase 18 | 13 (search integration), 14 (context windows), 17 (attention triage) | `conversation-manager.md` (6 sub-docs) |
+| Intent Kit | Phase 20 | 21 (security integration), 10 (agent signing), 12 (behavioral monitor) | `intent-verifier.md` (6 sub-docs) |
+| Translation Kit | Phase 16 (bundled with Flow) | 18 (conversation format), 35 (browser content) | `flow.md` §4 transforms |
+| Notification Kit | Phase 17 (bundled with Attention) | 18 (conversation alerts), 42 (multi-device notifications) | `attention.md` §notifications |
+| Security Kit | Phase 21 (bundled with Security Architecture) | 20 (intent verification UI), 34 (permission prompts) | `security/model.md` (4 sub-docs) |
 
-These subsystems do not have their own phases — their work is distributed across the phases listed above. Each primary phase is responsible for establishing the subsystem's core abstractions; subsequent phases extend them.
+These subsystems do not have their own standalone phases — their work is distributed across the phases listed above. Each primary phase is responsible for establishing the subsystem's core abstractions; subsequent phases extend them. Bundled Kits (Translation, Notification, Security Kit) share a phase with a closely coupled parent subsystem.
 
 -----
 
@@ -480,25 +534,34 @@ These subsystems do not have their own phases — their work is distributed acro
 - [x] Capability system enforces access control
 - [x] Service manager spawns and monitors services
 
-### Tier 2 Complete (Week 9)
+### Tier 1.5 Complete (Week 4)
 
 - [ ] Persistent spaces with content-addressing and versioning
+- [ ] Kit crate structure established (`kits/` workspace member)
+- [ ] Kit API traits extracted for Memory, IPC, Capability, Storage Kits
+- [ ] Kit testing pattern validated (trait-level tests independent of kernel internals)
+
+### Tier 2 Complete (Week 11)
+
 - [ ] GPU-accelerated compositor at 60 fps
 - [ ] Window management (floating + tiling)
 - [ ] Terminal emulator with keyboard/mouse input
 - [ ] TCP/IP networking (curl works from terminal)
 
-### Tier 3 Complete (Week 19)
+### Tier 3 Complete (Week 23) — Gate 4: Intelligence Stack
 
 - [ ] Local LLM inference with streaming responses
-- [ ] Semantic search across spaces
+- [ ] Semantic search across spaces (HNSW + BM25 + score fusion)
 - [ ] Conversation bar for natural language interaction
 - [ ] Capability-gated agents with intent verification
 - [ ] Task decomposition and Flow (smart clipboard)
 - [ ] AI-triaged attention management
+- [ ] Conversation manager with streaming token delivery
+- [ ] Identity & credentials with PQC key hierarchy
 
-### Tier 4 Complete (Week 29)
+### Tier 4 Complete (Week 34)
 
+- [ ] Intent verification pipeline (DIFC, data flow graph)
 - [ ] Multi-language SDK (Rust, Python, TypeScript)
 - [ ] `aios agent dev/test/audit/publish` workflow
 - [ ] Kernel compute abstraction with GPU compute on QEMU
@@ -506,7 +569,7 @@ These subsystems do not have their own phases — their work is distributed acro
 - [ ] Boot to desktop < 3 seconds
 - [ ] FreeBSD tools, musl libc, self-hosting capability
 
-### Tier 5 Complete (Week 39)
+### Tier 5 Complete (Week 44) — Gate 5: Hardware-Ready
 
 - [ ] Full NTM: Space Resolver, shadow engine, capability gate
 - [ ] USB: xHCI, HID, mass storage, hotplug
@@ -514,14 +577,14 @@ These subsystems do not have their own phases — their work is distributed acro
 - [ ] Power management: sleep, hibernate, thermal throttling
 - [ ] Runs on Raspberry Pi 4/5
 
-### Tier 6 Complete (Week 51)
+### Tier 6 Complete (Week 56) — Gate 3: Daily Driver
 
 - [ ] Interface Kit with iced bridge (AIOS/Linux/macOS)
 - [ ] Browser Kit with Servo bridge, tab-per-agent isolation
 - [ ] Media player, audio subsystem, camera subsystem
 - [ ] Screen reader, keyboard navigation, Unicode/i18n
 
-### Tier 7 Complete (Week 63)
+### Tier 7 Complete (Week 68)
 
 - [ ] Verified boot chain with A/B updates
 - [ ] Linux binary compatibility (ELF)
@@ -529,7 +592,7 @@ These subsystems do not have their own phases — their work is distributed acro
 - [ ] MDM, fleet management, cross-device sync
 - [ ] Pi 4/5 certified, Pine64 support, VM images published
 
-### Tier 8 Complete (Week 67)
+### Tier 8 Complete (Week 72)
 
 - [ ] Composable capability profiles: OS Base, Runtime, and Subsystem profiles shipped
 - [ ] Agent manifests reference profiles instead of duplicating capabilities

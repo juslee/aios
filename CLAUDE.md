@@ -106,7 +106,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | GPU rendering | `docs/platform/gpu/rendering.md` | §9 wgpu integration, §10 Rendering pipeline, §11 Font rendering, §12 GPU memory management |
 | GPU security | `docs/platform/gpu/security.md` | §13 Capability-gated GPU access, §14 DMA protection, §15 GPU isolation |
 | GPU integration | `docs/platform/gpu/integration.md` | §16 POSIX compatibility, §17 AI-native display, §18 Future directions |
-| Networking | `docs/platform/networking.md` | All (Phase 7+) |
+| Networking | `docs/platform/networking.md` | All (Phase 9+) |
 | Audio subsystem (hub) | `docs/platform/audio.md` | §1 Overview, §14 Impl Order, §15 Design Principles, §16 Future Directions, §17 AI-Native Audio, Document Map |
 | Audio subsystem & sessions | `docs/platform/audio/subsystem.md` | §2 Architecture, §3.1–§3.4 Sessions/capabilities/routing/conflict + AIRS integration hooks |
 | Audio mixing & capture | `docs/platform/audio/mixing.md` | §4.1–§4.6 Mixer/SRC/capture pipeline/DSP filter graph, §10.1–§10.2 Format types/negotiation |
@@ -155,7 +155,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Media content protection | `docs/platform/media-pipeline/drm.md` | §11.1–§11.6 DRM (CDM trait, Widevine/PlayReady/FairPlay, CENC, secure decode); §12.1–§12.3 Output protection (HDCP) |
 | Media integration | `docs/platform/media-pipeline/integration.md` | §13 Cross-subsystem coordination, §14 POSIX bridge (GStreamer/FFmpeg/V4L2), §15 Security/audit, §16 AI-native intelligence, §17 Thermal |
 | Subsystem framework | `docs/platform/subsystem-framework.md` | §1-§4 Overview/traits, §5 Capability gate, §6 DataChannel/zero-copy, §7 Audit, §8 POSIX bridge, §9 Power, §10 Device registry, §11-§12 Hotplug/USB, §13 Audio example, §14 Subsystem summary, §15-§16 Framework benefits/Networking, §17 Error handling, §18 Testing, §19 Perf monitoring, §20 Driver model, §21 Versioning, §22 Future directions |
-| POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 22+) |
+| POSIX compatibility | `docs/platform/posix.md` | §1-§6 Overview/arch/BSD/musl/FD/path, §7 Process+thread translation, §8 Sockets+AF_UNIX, §9 Devices, §10 Path semantics+mmap, §11-§12 Toolset/caps, §13-§14 Perf/limits, §15-§16 Linux compat/impl order, §17-§19 Principles/testing/future (Phase 27+) |
 | Linux binary & Wayland compat (hub) | `docs/platform/linux-compat.md` | §1 Core Insight, §2 Architecture, §14 Impl Order, §15 Design Principles, §16 Future Directions, Document Map |
 | Linux ELF loader & glibc shim | `docs/platform/linux-compat/elf-loader.md` | §3 ELF format/segments/ASLR/dynamic linker/VDSO/auxv, §4 glibc ABI shim/signals/threads |
 | Linux syscall translation | `docs/platform/linux-compat/syscall-translation.md` | §5 ~200 syscall table by category, §6 Deep dives: epoll/futex/io_uring/eventfd/signalfd/timerfd |
@@ -169,7 +169,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Accelerator memory | `docs/platform/accelerators/memory.md` | §8 Platform memory management, §9 Zero-copy CPU-accelerator paths |
 | Compute subsystem | `docs/platform/accelerators/subsystem.md` | §10 Compute subsystem (Subsystem trait), §11 POSIX bridge (/dev/compute/*) |
 | Accelerator intelligence | `docs/platform/accelerators/intelligence.md` | §12 AIRS integration, §15 Future directions |
-| Power management | `docs/platform/power-management.md` | All (Phase 27+) |
+| Power management | `docs/platform/power-management.md` | All (Phase 32+) |
 | Thermal management (hub) | `docs/platform/thermal.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
 | Thermal zones & sensors | `docs/platform/thermal/zones.md` | §2 ThermalZone/sensors/polling/filtering, §3 Trip points/escalation/hysteresis/coupling |
 | Thermal cooling & governors | `docs/platform/thermal/cooling.md` | §4 CoolingDevice trait/DVFS/fan/gating, §5 Governors (step-wise/PID/bang-bang) |
@@ -245,8 +245,8 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Context consumers | `docs/intelligence/context-engine/consumers.md` | §6 Scheduler, attention manager, compositor, preference service |
 | Context learning & AI | `docs/intelligence/context-engine/learning.md` | §7 Learning, §8 Fallback, §13 AI-native context intelligence, §14 Future directions |
 | Context SDK & diagnostics | `docs/intelligence/context-engine/sdk.md` | §9 SDK API, §10 Diagnostics & Inspector |
-| Attention management | `docs/intelligence/attention.md` | §1–§17 Core design (Phase 14+), §18 Security, §19 AI-Native Intelligence, §20 Testing Strategy, §21 Future Directions |
-| Task manager | `docs/intelligence/task-manager.md` | §1-§13 Core (Phase 14+), §14 Security, §15 Observability, §16 Multi-device, §17 Power/thermal, §18 AI-native AIRS, §19 Kernel-internal ML, §20 Future, §21 Cross-refs |
+| Attention management | `docs/intelligence/attention.md` | §1–§17 Core design (Phase 17+), §18 Security, §19 AI-Native Intelligence, §20 Testing Strategy, §21 Future Directions |
+| Task manager | `docs/intelligence/task-manager.md` | §1-§13 Core (Phase 17+), §14 Security, §15 Observability, §16 Multi-device, §17 Power/thermal, §18 AI-native AIRS, §19 Kernel-internal ML, §20 Future, §21 Cross-refs |
 | Preferences (hub) | `docs/intelligence/preferences.md` | §1 Overview, §2 Architecture, §19 Impl Order, §20 Design Principles, Document Map |
 | Preference data model | `docs/intelligence/preferences/data-model.md` | §3.1–§3.5 Preference types, values, sources (Enterprise/Context-driven), metadata, schema registry |
 | Preference resolution | `docs/intelligence/preferences/resolution.md` | §4.1–§4.4 7-tier source precedence, §5.1–§5.2 NLU pipeline, §10.1–§10.3 Conflict detection/resolution |
@@ -287,14 +287,14 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Terminal multiplexer | `docs/applications/terminal/multiplexer.md` | §7.1–§7.7 Session broker, pane splitting, detach/reattach, SSH forwarding, reconnection, error recovery |
 | Terminal integration | `docs/applications/terminal/integration.md` | §8.1–§8.9 Subsystem framework, capability gate, spaces, Flow, accessibility, audit, power management, Scriptable terminal protocol |
 | Terminal testing & performance | `docs/applications/terminal/testing.md` | §13 Testing Strategy, §14 Performance Verification |
-| UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 29+) |
+| UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 34+) |
 | Security model (hub) | `docs/security/model.md` | §1 Threat model, §12 Impl order, Document Map |
 | Security defense layers | `docs/security/model/layers.md` | §2 Eight security layers deep dive |
 | Capability system internals | `docs/security/model/capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
-| Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 40) |
+| Composable capability profiles | `docs/security/model/capabilities.md` | §3.7 (Phase 45) |
 | Crypto, ARM HW security, testing | `docs/security/model/hardening.md` | §4 Crypto, §5 ARM HW, §8 Testing |
 | Security operations & zero trust | `docs/security/model/operations.md` | §6 Events, §7 Audit, §9 AIRS, §10 Zero trust, §11 Comparisons, §13 Future |
-| AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 41) |
+| AIRS capability intelligence | `docs/intelligence/airs/intelligence-services.md` | §5.9 (Phase 46) |
 | Intent verifier (hub) | `docs/intelligence/intent-verifier.md` | §1 Core Insight, §14 Impl Order, §15 Design Principles, Document Map |
 | Intent verifier pipeline | `docs/intelligence/intent-verifier/pipeline.md` | §2 Architecture, §4 Verification Pipeline, §10 Performance Model |
 | Intent specification | `docs/intelligence/intent-verifier/specification.md` | §3 DeclaredIntent + StructuredIntent |
@@ -329,7 +329,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | AI privacy | `docs/security/privacy/ai-privacy.md` | §9.1–§9.4 Inference/provenance/ML/embeddings, §10.1–§10.2 Prompt injection/screening |
 | Privacy intelligence | `docs/security/privacy/intelligence.md` | §11.1–§11.3 Anomaly/prediction/PII detection, §12.1–§12.4 AIRS adaptation/scoring/queries/future |
 | Privacy testing & verification | `docs/security/privacy/testing.md` | §13.1–§13.3 Property/regression/red-team testing, §14.1–§14.2 POSIX bridge/cross-reference |
-| Experience layer | `docs/experience/experience.md` | §1 Core Insight, §2 Five Surfaces, §3-§11 Surface details, §12 First Boot, §13 Settings, §14 Multi-Device, §15 Security UX, §16 Developer, §17 Design Language, §18 What Users Never See, §19 AI-Native, §20 Future, §21 Impl Order (Phase 6+) |
+| Experience layer | `docs/experience/experience.md` | §1 Core Insight, §2 Five Surfaces, §3-§11 Surface details, §12 First Boot, §13 Settings, §14 Multi-Device, §15 Security UX, §16 Developer, §17 Design Language, §18 What Users Never See, §19 AI-Native, §20 Future, §21 Impl Order (Phase 7+) |
 | Accessibility (hub) | `docs/experience/accessibility.md` | §1 Overview, §2 Architecture, §12 Impl Order, §13 Design Principles, Document Map |
 | Assistive technology | `docs/experience/accessibility/assistive-technology.md` | §3 Screen reader (eSpeak-NG), §4 Braille display, §5 Switch scanning, §6 High contrast/magnification, §7 Voice control |
 | Accessibility system integration | `docs/experience/accessibility/system-integration.md` | §8 Boot-time accessibility, §9 Accessibility tree |
@@ -689,14 +689,17 @@ When generating a phase doc for Phase N:
 
 ## Milestone Numbering
 
-42 phases × 3 milestones = 126 milestones total.
+47 phases with variable milestones (3+ per phase, based on complexity).
+
+Phases 0–4 retain fixed milestone numbering (M1–M15). From Phase 5 onward, milestones are numbered sequentially starting at M16, with the count per phase determined when the phase doc is written.
 
 ```
-Phase 0:  M1–M3
-Phase 1:  M4–M6
-Phase 2:  M7–M9
-Phase N:  M(3N+1) – M(3N+3)
-Phase 41: M124–M126
+Phase 0:  M1–M3   (3 milestones)
+Phase 1:  M4–M6   (3 milestones)
+Phase 2:  M7–M9   (3 milestones)
+Phase 3:  M10–M12 (3 milestones)
+Phase 4:  M13–M15 (3 milestones)
+Phase 5+: Sequential from M16 onward (variable count per phase)
 ```
 
 ---
