@@ -663,8 +663,12 @@ impl BlockEngine {
         &mut self.wal
     }
 
+    /// Access the superblock (read-only).
+    pub fn superblock(&self) -> &Superblock {
+        &self.superblock
+    }
+
     /// Current data append sector.
-    #[allow(dead_code)]
     pub fn data_next_sector(&self) -> u64 {
         self.data_next_sector
     }

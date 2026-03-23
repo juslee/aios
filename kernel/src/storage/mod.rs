@@ -7,6 +7,7 @@
 //! Per spaces.md §4.
 
 pub mod block_engine;
+pub mod budget;
 pub mod crypto;
 pub mod lsm;
 pub mod object_store;
@@ -172,6 +173,9 @@ fn run_self_tests() {
 
     // --- Test 10: LZ4 compression ---
     test_compression();
+
+    // --- Test 11: Storage budget ---
+    test_budget();
 }
 
 /// Write 100 unique blocks and verify all are readable.
@@ -761,6 +765,89 @@ fn test_compression() {
             }
         }
         Err(e) => crate::kerror!(Storage, "Compression: random write failed: {:?}", e),
+    }
+}
+
+/// Test storage budget stats and quota enforcement.
+#[cfg(feature = "storage-tests")]
+fn test_budget() {
+    use shared::storage::{ContentType, PressureLevel, SecurityZone, SpaceQuota};
+
+    // 1. Get budget stats.
+    match budget::storage_stats() {
+        Ok(b) => {
+            let used_pct = (b.used_bytes * 100).checked_div(b.total_bytes).unwrap_or(0);
+            crate::kinfo!(
+                Storage,
+                "Budget: {}KB used / {}KB total ({}%), {} blocks, {} objects",
+                b.used_bytes / 1024,
+                b.total_bytes / 1024,
+                used_pct,
+                b.data_blocks,
+                b.index_entries
+            );
+        }
+        Err(e) => {
+            crate::kerror!(Storage, "Budget: stats failed: {:?}", e);
+            return;
+        }
+    }
+
+    // 2. Check pressure level.
+    match budget::check_pressure() {
+        Ok(level) => {
+            crate::kinfo!(Storage, "Budget: pressure={:?}", level);
+            // After boot tests, most of 256MB is free → should be Normal.
+            if level != PressureLevel::Normal {
+                crate::kwarn!(Storage, "Budget: unexpected pressure level {:?}", level);
+            }
+        }
+        Err(e) => crate::kerror!(Storage, "Budget: pressure check failed: {:?}", e),
+    }
+
+    // 3. Quota enforcement test: create a space with a tight quota, try to exceed it.
+    let quota = SpaceQuota {
+        max_bytes: 100,
+        max_objects: 2,
+        _padding: [0u8; 4],
+    };
+    match space::space_create(b"quota-test", SecurityZone::Personal, quota) {
+        Ok(sid) => {
+            // First object (small) should succeed.
+            match object_store::object_create(sid, b"small.txt", b"hello", ContentType::Text) {
+                Ok(_) => crate::kinfo!(Storage, "Budget: quota obj1 OK"),
+                Err(e) => {
+                    crate::kerror!(Storage, "Budget: quota obj1 failed: {:?}", e);
+                    return;
+                }
+            }
+            // Second object should succeed (under limit).
+            match object_store::object_create(sid, b"med.txt", b"world!", ContentType::Text) {
+                Ok(_) => crate::kinfo!(Storage, "Budget: quota obj2 OK"),
+                Err(e) => {
+                    crate::kerror!(Storage, "Budget: quota obj2 failed: {:?}", e);
+                    return;
+                }
+            }
+            // Third object should fail (max_objects=2, already have 2).
+            match object_store::object_create(sid, b"over.txt", b"too many", ContentType::Text) {
+                Ok(_) => crate::kwarn!(Storage, "Budget: quota should have rejected obj3!"),
+                Err(shared::storage::StorageError::QuotaExceeded) => {
+                    crate::kinfo!(Storage, "Budget: quota enforcement OK (obj3 rejected)")
+                }
+                Err(e) => crate::kerror!(Storage, "Budget: quota obj3 unexpected error: {:?}", e),
+            }
+
+            // Clean up: delete objects and space.
+            let objs =
+                block_engine::with_engine(|engine| engine.object_index().list_by_space(&sid))
+                    .unwrap_or_default();
+            for oid in &objs {
+                let _ = object_store::object_delete(oid);
+            }
+            let _ = space::space_delete(&sid);
+        }
+        Err(e) => crate::kerror!(Storage, "Budget: quota-test space creation failed: {:?}", e),
     }
 }
 

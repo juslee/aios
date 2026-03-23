@@ -143,6 +143,15 @@ pub fn object_create(
     content_type: ContentType,
 ) -> Result<(ObjectId, ContentHash), StorageError> {
     block_engine::with_engine(|engine| {
+        // Check space quota before writing any blocks.
+        if let Some(space) = engine.space_table().get(&space_id) {
+            if space.would_exceed_quota(content.len() as u64) {
+                return Err(StorageError::QuotaExceeded);
+            }
+        } else {
+            return Err(StorageError::SpaceNotFound);
+        }
+
         // Write content to Block Engine (handles dedup internally).
         let (content_hash, _loc) = engine.write_block(content)?;
 
