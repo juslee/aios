@@ -1117,14 +1117,14 @@ Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment an
 ```text
 kernel/src/storage/
   mod.rs            (~866) # init(), run_self_tests() (11 test categories), re-exports
-  block_engine.rs   (~778) # BlockEngine, Superblock, CRC-32C, SHA-256, LZ4 compression, AES-256-GCM encryption
-  wal.rs            (~248) # WalEntry, circular buffer, append/commit
-  lsm.rs            (~131) # MemTable, sorted Vec with binary search
-  object_store.rs   (~309) # ObjectIndex, object_create/read/delete, find_by_name, list_by_space
-  version_store.rs  (~191) # Version Store, Merkle DAG, version_create/list/rollback, object_update
-  crypto.rs         (~131) # DeviceKeyManager, AES-256-GCM encrypt/decrypt, nonce counter
-  space.rs          (~230) # SpaceTable, space_create/list/get/delete, find_by_name, init_system_spaces
-  posix_bridge.rs   (~379) # PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
+  block_engine.rs   (~740) # BlockEngine, Superblock, LZ4 compression, encryption integration
+  wal.rs            (~199) # Wal struct, circular buffer, append/commit (WalEntry in shared crate)
+  lsm.rs              (~4) # Re-export: MemTable/ObjectIndex/SpaceTable in shared/src/storage.rs
+  object_store.rs   (~218) # object_create/read/delete, generate_object_id
+  version_store.rs  (~296) # version_create/list/rollback, object_update (Merkle DAG)
+  crypto.rs         (~139) # DeviceKeyManager, AES-256-GCM encrypt/decrypt, nonce counter
+  space.rs          (~154) # space_create/list/get/delete, init_system_spaces, register_service
+  posix_bridge.rs   (~377) # PosixSpaceBridge, open/read/write/close/stat/readdir/unlink, path mapping
   budget.rs          (~55) # Storage budget stats, pressure monitoring, quota enforcement
 ```
 
@@ -2196,8 +2196,8 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | Skill | Trigger | Purpose |
 |---|---|---|
 | `/build-team` | Start of autonomous session | Bootstraps the "aios-dev" team, spawns team-lead who spawns specialists as needed |
-| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, kernel→shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review + merge |
-| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` → `/audit-loop` (auto docs-only mode) → PR |
+| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, follows phase doc steps including shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review + merge |
+| `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` with shared crate refactoring step per milestone → `/audit-loop` (auto docs-only mode) → PR |
 | `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
 | `/audit-loop` | Before any PR | Auto-detects scope (docs-only or full), runs recursive two-level audit loop until clean (doc + code review + security/bug review) |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
