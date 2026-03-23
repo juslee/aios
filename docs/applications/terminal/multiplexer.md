@@ -377,7 +377,7 @@ CI Agent wants to run a build:
 5. CI Agent → Terminal: DestroySession { session_id: 5 }
 ```
 
-This is the "terminal-as-a-service" pattern described in §11.2 (Future Directions). The capability gate (§8.2) controls which agents can create and manage sessions.
+This is the "Tiered Programmatic Access" pattern described in §11.2 (Future Directions). The capability gate (§8.2) controls which agents can create and manage sessions.
 
 -----
 

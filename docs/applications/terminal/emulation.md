@@ -235,7 +235,7 @@ The parser never panics on any byte value, including null bytes (0x00), which ar
 
 **Security properties.** The parser's error recovery prevents several classes of attacks:
 
-- **Recursive ESC in strings:** An ESC byte within an OSC string triggers the anywhere rule, terminating the string and starting a new escape sequence. This prevents sequences designed to nest indefinitely.
+- **Recursive ESC in strings:** OSC and DCS strings are only terminated by BEL or ST (either the 8-bit ST 0x9C or the 7-bit ST sequence `ESC \`). ESC bytes that appear inside these string states are interpreted as potential starts of the 7-bit ST sequence and do not introduce nested escape sequences. This prevents sequences designed to nest indefinitely.
 - **Unbounded strings:** OSC and DCS strings without terminators are bounded by their respective buffer limits (4096 bytes for OSC). The parser does not allocate additional memory.
 - **State machine convergence:** For any input byte sequence of length N, the parser returns to Ground state within at most N + max_sequence_length bytes. There are no cycles that avoid Ground indefinitely.
 
@@ -313,10 +313,12 @@ The kitty graphics protocol enables high-performance image display in the termin
 ```text
 ESC _ G <key>=<value>,<key>=<value>,...; <payload> ESC \
  │       │                                │          │
- APC     Control data (key-value pairs)   Base64     ST
+ APC     Control data (key-value pairs)   Base64     ST (7-bit: ESC \)
          a=T (transmit), a=p (place),     image
          a=d (delete), a=q (query)        data
 ```
+
+The APC sequence is terminated by ST — either the 7-bit form (`ESC \`, two bytes: 0x1B 0x5C) or the 8-bit form (0x9C). The VT state machine's `SosPmApc` state handles both termination forms. This is the same ST handling used for OSC and DCS strings throughout the parser.
 
 **Transmission modes:**
 
@@ -327,7 +329,7 @@ ESC _ G <key>=<value>,<key>=<value>,...; <payload> ESC \
 | Temp file | `t=t` | Path to temp file (deleted after use) | Mapped to ephemeral space object |
 | Shared memory | `t=s` | Shared memory region ID | Maps directly to AIOS `SharedMemoryId` |
 
-The shared memory mode (`t=s`) is the highest-performance path. The sending program writes image data to a shared memory region (allocated via IPC), then sends only the region ID in the APC sequence. The terminal reads the image directly from shared memory with zero copying. This aligns with AIOS's existing shared memory IPC infrastructure (§5.6 in [sessions.md](./sessions.md)).
+The shared memory mode (`t=s`) is the highest-performance path. The sending program writes image data to a shared memory region (allocated via IPC), then sends only the region ID in the APC sequence. The terminal reads the image directly from shared memory with zero copying. This aligns with AIOS's existing shared memory IPC infrastructure (§5.1 `bulk_buffer` in [sessions.md](./sessions.md)).
 
 **Image lifecycle:**
 
@@ -379,7 +381,7 @@ pub struct ImagePlacement {
 |---|---|---|---|
 | Transport | APC + ST | OSC + ST | DCS + ST |
 | Encoding | Base64 / SHM / file | Base64 only | Sixel bitmap |
-| Max payload | Unbounded (chunked) | 4096 bytes (OSC limit) | Unbounded |
+| Max payload | 4 KB per chunk (chunked transfer, bounded APC buffer) | 4096 bytes (OSC limit) | Unbounded |
 | Shared memory | Yes (`t=s`) | No | No |
 | Multiple placements | Yes (virtual) | No (inline only) | No (inline only) |
 | Z-ordering | Yes (-1, 0, 1+) | No | No |
