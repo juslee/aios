@@ -34,7 +34,7 @@ All subsequent work (edits, commits, pushes) happens inside the worktree.
     - Move pure data structures (no hardware deps) to `shared/src/`
     - Write host-side unit tests for moved code
     - Acceptance: `just check` + `just test` pass
-9. Milestone numbers: M(3*$ARGUMENTS+1) through M(3*$ARGUMENTS+3)
+9. Milestone numbers: M(3*$ARGUMENTS+1) through M(3*$ARGUMENTS+M), where M is the number of milestones in the phase (variable, 3+ per phase)
 10. Commit and push the generated phase doc
 11. Run `/audit-loop` — auto-detects docs-only mode, loops until 0 issues
 12. Create PR for review
