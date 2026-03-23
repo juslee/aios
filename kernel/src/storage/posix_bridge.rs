@@ -176,11 +176,12 @@ impl PosixSpaceBridge {
             (offset as usize).min(current_len)
         };
 
-        let write_end = write_offset + data.len();
-        let new_len = write_end.max(current_len);
-        if new_len > 4096 {
+        // Guard against usize overflow before computing write_end.
+        if data.len() > 4096 || write_offset.saturating_add(data.len()) > 4096 {
             return Err(StorageError::QuotaExceeded);
         }
+        let write_end = write_offset + data.len();
+        let new_len = write_end.max(current_len);
 
         let mut new_content = [0u8; 4096];
         new_content[..write_offset].copy_from_slice(&current[..write_offset]);
