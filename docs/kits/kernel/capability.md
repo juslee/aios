@@ -152,8 +152,8 @@ use aios_capability::{CapabilityHandle, CapError};
 use aios_app::AgentContext;
 
 fn export_notes(ctx: &AgentContext) -> Result<(), AppError> {
-    // Check if we have the optional flow_share capability
-    match ctx.capability(Capability::FlowShare) {
+    // Check if we have the optional flow_publish capability
+    match ctx.capability(Capability::FlowPublish) {
         Ok(handle) => {
             // We have sharing permission — export via Flow Kit
             let channel = aios_flow::open_channel("text/markdown", handle)?;

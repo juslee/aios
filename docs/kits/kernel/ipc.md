@@ -251,7 +251,10 @@ fn send_large_payload(
     data: &[u8],
 ) -> Result<(), AppError> {
     // Allocate shared memory for the payload
-    let region = SharedMemoryRegion::create(data.len(), MemoryFlags::READ | MemoryFlags::WRITE)?;
+    let region = SharedMemoryRegion::create(
+        data.len(),
+        MemoryFlags { read: true, write: true, execute: false },
+    )?;
 
     // Copy data into the shared region
     unsafe {

@@ -1245,60 +1245,43 @@ fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
         Msg::OpenCamera => {
             model.camera_active = true;
             model.view = ViewMode::Camera;
-            vec![Command::perform(async {
-                // Open camera session with preview intent — LED turns on
-                let session = aios_camera::open_session(
-                    aios_camera::SessionIntent::Preview,
-                )?;
-                Ok(session)
-            })]
+            vec![Command::perform(
+                aios_camera::open_session(aios_camera::SessionIntent::Preview),
+                Msg::CameraSessionOpened,
+            )]
         }
 
         Msg::CapturePhoto => {
-            vec![Command::perform(async {
-                let session = aios_camera::current_session()?;
-
-                // Capture a still frame — uses shared memory for zero-copy
-                let frame = session.capture_still(
-                    aios_camera::StillConfig {
-                        format: aios_camera::PixelFormat::Jpeg,
-                        quality: 90,
-                    },
-                )?;
-
-                // Read pixel data from the shared memory region
-                let data = unsafe {
-                    core::slice::from_raw_parts(
-                        frame.buffer.as_ptr(),
-                        frame.data_length,
-                    )
-                }.to_vec();
-
-                Ok(Msg::PhotoCaptured {
-                    data,
+            vec![Command::perform(
+                aios_camera::capture_still(aios_camera::StillConfig {
+                    format: aios_camera::PixelFormat::Jpeg,
+                    quality: 90,
+                }),
+                |frame| Msg::PhotoCaptured {
+                    data: unsafe {
+                        core::slice::from_raw_parts(
+                            frame.buffer.as_ptr(),
+                            frame.data_length,
+                        )
+                    }.to_vec(),
                     width: frame.width,
                     height: frame.height,
-                })
-            })]
+                },
+            )]
         }
 
         Msg::PhotoCaptured { data, width, height } => {
             let name = format!("IMG_{}.jpg", chrono_timestamp());
-            vec![Command::perform(async move {
-                // Write the photo to user/photos/ Space
-                let space = ctx.space("user/photos/")?;
-                let object = space.create_object(
+            vec![Command::perform(
+                aios_storage::object_create_with_metadata(
+                    "user/photos/",
                     &name,
                     &data,
                     aios_storage::ContentType::Image,
-                )?;
-
-                // Tag with dimensions for search
-                object.set_metadata("width", &width.to_string())?;
-                object.set_metadata("height", &height.to_string())?;
-
-                Ok(Msg::PhotoCreated(PhotoEntry {
-                    id: object.id(),
+                    &[("width", &width.to_string()), ("height", &height.to_string())],
+                ),
+                move |id| Msg::PhotoCreated(PhotoEntry {
+                    id,
                     name,
                     taken_at: Timestamp::now(),
                     width,
@@ -1306,8 +1289,8 @@ fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
                     size_bytes: data.len() as u64,
                     tags: Vec::new(),
                     album: None,
-                }))
-            })]
+                }),
+            )]
         }
 
         Msg::PhotoCreated(entry) => {
@@ -1321,35 +1304,31 @@ fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
                 model.search_results.clear();
                 return Vec::new();
             }
-            vec![Command::perform(async move {
-                // Use Search Kit for semantic photo search
-                let results = aios_search::query(
+            vec![Command::perform(
+                aios_search::query(
                     aios_search::SearchQuery::new(&query)
                         .space("user/photos/")
                         .content_type(aios_storage::ContentType::Image)
                         .limit(50),
-                )?;
-                let entries: Vec<PhotoEntry> = results
-                    .hits
-                    .iter()
-                    .filter_map(|hit| photo_from_object(hit.object_id))
-                    .collect();
-                Ok(Msg::SearchResults(entries))
-            })]
+                ),
+                |results| Msg::SearchResults(
+                    results.hits.iter()
+                        .filter_map(|hit| photo_from_object(hit.object_id))
+                        .collect(),
+                ),
+            )]
         }
 
         Msg::SharePhoto(id) => {
-            vec![Command::perform(async move {
-                let space = ctx.space("user/photos/")?;
-                let object = space.read_by_id(id)?;
-                // Post to Flow for sharing with other agents
-                let channel = aios_flow::open_channel(
+            vec![Command::perform(
+                aios_flow::share_object(
+                    "user/photos/",
+                    id,
                     "image/jpeg",
-                    ctx.capability(aios_capability::Capability::FlowClipboard)?,
-                )?;
-                channel.post_object(&object)?;
-                Ok(())
-            })]
+                    ctx.capability(aios_capability::Capability::FlowPublish)?,
+                ),
+                |_| Msg::PhotoShared,
+            )]
         }
 
         Msg::PressureChanged(level) => {
@@ -1572,24 +1551,21 @@ fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
         Msg::Tick => {
             // Dispatch parallel queries to all subsystems
             let mut cmds = vec![
-                Command::perform(async {
-                    let allocator = aios_memory::frame::global_allocator();
-                    let pools = [Pool::Kernel, Pool::User, Pool::Model, Pool::Dma]
-                        .iter()
-                        .map(|&pool| PoolStatus {
-                            pool,
-                            total_pages: allocator.total_pages(pool),
-                            free_pages: allocator.free_pages(pool),
-                            pressure: allocator.pressure(pool),
-                        })
-                        .collect();
-                    Ok(Msg::MemoryUpdated(pools))
-                }),
-                Command::perform(async {
-                    let zones = aios_thermal::query_zones()?;
-                    let statuses = zones
-                        .iter()
-                        .map(|zone| ThermalZoneStatus {
+                Command::perform(
+                    aios_memory::frame::query_all_pools(),
+                    |pools| Msg::MemoryUpdated(
+                        pools.iter().map(|p| PoolStatus {
+                            pool: p.pool,
+                            total_pages: p.total_pages,
+                            free_pages: p.free_pages,
+                            pressure: p.pressure,
+                        }).collect(),
+                    ),
+                ),
+                Command::perform(
+                    aios_thermal::query_zones(),
+                    |zones| Msg::ThermalUpdated(
+                        zones.iter().map(|zone| ThermalZoneStatus {
                             name: zone.name().to_string(),
                             temperature_mc: zone.temperature_mc(),
                             trip_points: zone.trip_points().iter().map(|tp| TripPoint {
@@ -1602,28 +1578,27 @@ fn update(model: &mut Model, msg: Msg, ctx: &AgentContext) -> Vec<Command> {
                                 },
                             }).collect(),
                             throttling: zone.is_throttling(),
-                        })
-                        .collect();
-                    Ok(Msg::ThermalUpdated(statuses))
-                }),
+                        }).collect(),
+                    ),
+                ),
             ];
 
             // Compute query is optional — only if capability granted
-            if ctx.capability(aios_capability::Capability::ComputeQuery).is_ok() {
-                cmds.push(Command::perform(async {
-                    let manager = aios_compute::manager::global_manager();
-                    let devices = manager.query_devices()
-                        .iter()
-                        .map(|dev| ComputeDeviceStatus {
+            if ctx.capability(aios_capability::Capability::ComputeAccess {
+                tier: aios_compute::ComputeTier::Any,
+            }).is_ok() {
+                cmds.push(Command::perform(
+                    aios_compute::manager::query_devices(),
+                    |devices| Msg::ComputeUpdated(
+                        devices.iter().map(|dev| ComputeDeviceStatus {
                             name: dev.name.clone(),
                             class: dev.class,
                             utilization: dev.utilization(),
                             memory_used: dev.memory_used(),
                             memory_total: dev.memory_total(),
-                        })
-                        .collect();
-                    Ok(Msg::ComputeUpdated(devices))
-                }));
+                        }).collect(),
+                    ),
+                ));
             }
 
             cmds

@@ -165,14 +165,14 @@ pub trait MemoryPressure {
 
 /// Pressure levels (ascending severity).
 pub enum PressureLevel {
-    /// Comfortable — no action needed.
+    /// > 20% free — comfortable, no action needed.
     Normal,
-    /// Low — release optional caches if convenient.
+    /// 11-20% free — release optional caches if convenient.
     Low,
-    /// Medium — release all caches, reduce memory usage.
-    Medium,
-    /// Critical — OOM kill imminent, release everything possible.
+    /// 5-10% free — aggressive reclamation, release everything possible.
     Critical,
+    /// < 5% free — OOM killer imminent, last resort.
+    Oom,
 }
 ```
 
@@ -189,11 +189,11 @@ fn adapt_to_pressure(ctx: &AgentContext) -> Result<(), AppError> {
         PressureLevel::Normal => {
             // Full functionality — use caches freely
         }
-        PressureLevel::Low | PressureLevel::Medium => {
+        PressureLevel::Low => {
             // Release optional caches
             ctx.image_cache().evict_least_recent()?;
         }
-        PressureLevel::Critical => {
+        PressureLevel::Critical | PressureLevel::Oom => {
             // Emergency — drop all caches, show degraded UI
             ctx.image_cache().clear()?;
             ctx.show_toast("Low memory — some features reduced");
@@ -439,8 +439,8 @@ fn register_cache_eviction(cache: &mut KitCache) {
     aios_memory::pressure::on_pressure_change(|level| {
         match level {
             PressureLevel::Low => cache.evict_expired(),
-            PressureLevel::Medium => cache.evict_lru(cache.len() / 2),
-            PressureLevel::Critical => cache.clear(),
+            PressureLevel::Critical => cache.evict_lru(cache.len() / 2),
+            PressureLevel::Oom => cache.clear(),
             _ => {}
         }
     });
