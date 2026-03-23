@@ -204,10 +204,10 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Create `IpcKitError` — a richer error type than the existing syscall-level `IpcError`. The syscall `IpcError` remains for binary compatibility; `IpcKitError` is the Kit-level error with more context.
 
 **Tasks:**
-- [ ] Create `shared/src/kits/ipc.rs`
-- [ ] Add `pub mod ipc;` to `shared/src/kits/mod.rs`
-- [ ] Add `pub use kits::ipc as ipc_kit;` to `shared/src/lib.rs`
-- [ ] Define `IpcKitError` enum with variants:
+- [x] Create `shared/src/kits/ipc.rs`
+- [x] Add `pub mod ipc;` to `shared/src/kits/mod.rs`
+- [x] Add `pub use kits::ipc as ipc_kit;` to `shared/src/lib.rs`
+- [x] Define `IpcKitError` enum with variants:
   - `InvalidChannel { id: ChannelId }` — channel does not exist
   - `ChannelFull { id: ChannelId, capacity: usize }` — ring buffer at capacity
   - `Timeout { elapsed_ticks: u64 }` — operation timed out
@@ -216,9 +216,9 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
   - `SharedMemoryError { reason: &'static str }` — shared memory operation failed
   - `MessageTooLarge { size: usize, max: usize }` — payload exceeds MAX_MESSAGE_SIZE
   - `NoReply` — call completed but no reply received
-- [ ] Derive `Debug`, `Clone`, `PartialEq`, `Eq`
-- [ ] Add conversions: `From<IpcKitError> for IpcError` and `From<IpcError> for IpcKitError`
-- [ ] Write host-side tests: conversion round-trips, Debug formatting
+- [x] Derive `Debug`, `Clone`, `PartialEq`, `Eq`
+- [x] Add conversions: `From<IpcKitError> for IpcError` and `From<IpcError> for IpcKitError`
+- [x] Write host-side tests: conversion round-trips, Debug formatting
 
 **Key reference:** `docs/kits/kernel/ipc.md` (Error Handling); `shared/src/syscall.rs` (existing `IpcError`)
 
@@ -231,25 +231,25 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Define the core IPC Kit traits: `ChannelOps`, `NotificationOps`, `SelectOps`, `SharedMemoryOps`.
 
 **Tasks:**
-- [ ] Define `ChannelOps` trait:
+- [x] Define `ChannelOps` trait:
   - `fn channel_create(&mut self) -> Result<ChannelId, IpcKitError>` — create a new channel pair
   - `fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError>` — destroy a channel
   - `fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError>` — fire-and-forget send
   - `fn recv(&self, id: ChannelId, timeout_ticks: u64) -> Result<RawMessage, IpcKitError>` — blocking receive
   - `fn call(&self, id: ChannelId, request: &RawMessage, timeout_ticks: u64) -> Result<RawMessage, IpcKitError>` — synchronous call (send + wait for reply)
   - `fn reply(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError>` — reply to a pending call on the specified channel
-- [ ] Define `NotificationOps` trait:
+- [x] Define `NotificationOps` trait:
   - `fn notification_create(&mut self) -> Result<NotificationId, IpcKitError>` — create a notification object
   - `fn signal(&self, id: NotificationId, bits: u64) -> Result<(), IpcKitError>` — atomic OR into notification word
   - `fn wait(&self, id: NotificationId, mask: u64, timeout_ticks: u64) -> Result<u64, IpcKitError>` — wait for masked bits, return matched
-- [ ] Define `SelectOps` trait:
+- [x] Define `SelectOps` trait:
   - `fn select(&self, entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize, u64), IpcKitError>` — multi-wait on channels + notifications
-- [ ] Define `SharedMemoryOps` trait:
+- [x] Define `SharedMemoryOps` trait:
   - `fn shmem_create(&mut self, size: usize, flags: u64) -> Result<SharedMemoryId, IpcKitError>` — create shared region
   - `fn shmem_map(&mut self, id: SharedMemoryId, vaddr: VirtAddr, flags: u64) -> Result<(), IpcKitError>` — map into caller's address space
   - `fn shmem_unmap(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>` — unmap from caller
   - `fn shmem_destroy(&mut self, id: SharedMemoryId) -> Result<(), IpcKitError>` — destroy region
-- [ ] Write host-side tests: all 4 traits are dyn-compatible
+- [x] Write host-side tests: all 4 traits are dyn-compatible
 
 **Key reference:** `docs/kits/kernel/ipc.md` (Core Traits)
 
@@ -262,24 +262,24 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Add trait implementations on the existing kernel IPC subsystem. Use wrapper structs that delegate to existing module-level functions.
 
 **Tasks:**
-- [ ] Create `KernelIpc` unit struct in `kernel/src/ipc/mod.rs`
-- [ ] Implement `ChannelOps` for `KernelIpc`:
+- [x] Create `KernelIpc` unit struct in `kernel/src/ipc/mod.rs`
+- [x] Implement `ChannelOps` for `KernelIpc`:
   - `channel_create()` delegates to existing `channel_create()` function
   - `channel_destroy()` delegates to existing `channel_destroy()` function
   - `send()` delegates to `ipc_send()`
   - `recv()` delegates to `ipc_recv()`
   - `call()` delegates to `ipc_call()`
   - `reply()` delegates to `ipc_reply()`
-- [ ] Implement `NotificationOps` for `KernelIpc`:
+- [x] Implement `NotificationOps` for `KernelIpc`:
   - `notification_create()` delegates to `notification_create()`
   - `signal()` delegates to `notification_signal()`
   - `wait()` delegates to `notification_wait()`
-- [ ] Implement `SelectOps` for `KernelIpc`:
+- [x] Implement `SelectOps` for `KernelIpc`:
   - `select()` delegates to `ipc_select()`
-- [ ] Implement `SharedMemoryOps` for `KernelIpc`:
+- [x] Implement `SharedMemoryOps` for `KernelIpc`:
   - Delegates to `shared_memory_create()`, `shared_memory_map()`, `shared_memory_unmap()`
   - `shmem_destroy()` — new implementation: unmap all mappings then release region (no dedicated destroy function exists yet; implement in the `impl` block)
-- [ ] Verify no regressions: all existing IPC self-tests (echo service, select, notifications, shared memory, priority inheritance) still pass
+- [x] Verify no regressions: all existing IPC self-tests (echo service, select, notifications, shared memory, priority inheritance) still pass
 
 **Key reference:** `kernel/src/ipc/mod.rs`; `kernel/src/ipc/channel.rs`; `kernel/src/ipc/notify.rs`; `kernel/src/ipc/select.rs`; `kernel/src/ipc/shmem.rs`
 
@@ -292,11 +292,11 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Ensure IPC Kit types are properly organized and comprehensively tested. Verify backward compatibility of existing `shared::ipc::*` imports.
 
 **Tasks:**
-- [ ] Verify `shared/src/ipc.rs` types (ChannelId, RawMessage, SelectEntry, etc.) are re-exported from `shared::kits::ipc` for convenience
-- [ ] Add tests for `IpcKitError <-> IpcError` round-trip for every variant
-- [ ] Add tests verifying constants (MAX_CHANNELS, RING_CAPACITY, MAX_MESSAGE_SIZE, DEFAULT_TIMEOUT_TICKS) are accessible from Kit module
-- [ ] Ensure backward compatibility: all existing `shared::ipc::*` imports still work (no breaking changes)
-- [ ] Run full `just test` — all existing 364+ tests pass alongside new Kit tests
+- [x] Verify `shared/src/ipc.rs` types (ChannelId, RawMessage, SelectEntry, etc.) are re-exported from `shared::kits::ipc` for convenience
+- [x] Add tests for `IpcKitError <-> IpcError` round-trip for every variant
+- [x] Add tests verifying constants (MAX_CHANNELS, RING_CAPACITY, MAX_MESSAGE_SIZE, DEFAULT_TIMEOUT_TICKS) are accessible from Kit module
+- [x] Ensure backward compatibility: all existing `shared::ipc::*` imports still work (no breaking changes)
+- [x] Run full `just test` — all existing 364+ tests pass alongside new Kit tests
 
 **Acceptance:** `just check` zero warnings. `just test` — all pass, new test count > 390.
 
@@ -336,7 +336,7 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
   - `fn get_head(&self, object_id: &crate::storage::ObjectId) -> Result<ContentHash, StorageError>` — current head version hash
   - `fn rollback(&mut self, object_id: &crate::storage::ObjectId, version_hash: &ContentHash) -> Result<ContentHash, StorageError>` — rollback to a previous version
 - [ ] Re-export `StorageError` from `shared::storage` (already well-defined with 19 variants)
-- [ ] Write host-side tests: all 4 traits are dyn-compatible
+- [x] Write host-side tests: all 4 traits are dyn-compatible
 
 **Key reference:** `docs/kits/platform/storage.md` (Core Traits); `shared/src/storage.rs` (existing types)
 
@@ -433,5 +433,5 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 ## Phase Completion Criteria
 
 - [x] **M16 complete:** `shared/src/kits/` module exists. Memory Kit traits (`FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`) + `MemoryError` defined. Capability Kit trait (`CapabilityEnforcer`) + `CapabilityError` defined. Kernel `impl` blocks for `KernelFrameAllocator` and `KernelCapabilitySystem` compile. Host-side tests pass (>= 380 tests).
-- [ ] **M17 complete:** IPC Kit traits (`ChannelOps`, `NotificationOps`, `SelectOps`, `SharedMemoryOps`) + `IpcKitError` defined. `KernelIpc` implements all 4 traits. All existing IPC self-tests pass on QEMU unchanged. Host-side tests pass (>390 tests).
+- [x] **M17 complete:** IPC Kit traits (`ChannelOps`, `NotificationOps`, `SelectOps`, `SharedMemoryOps`) + `IpcKitError` defined. `KernelIpc` implements all 4 traits. All existing IPC self-tests pass on QEMU unchanged. Host-side tests pass (391 tests).
 - [ ] **M18 complete:** Storage Kit traits (`BlockStore`, `SpaceManager`, `ObjectStore`, `VersionStoreOps`) defined. Kernel wrappers implement all 4 traits. Kit docs updated to "Traits Defined". All quality gates pass. Triple audit clean. PR created.
