@@ -1,7 +1,7 @@
 ---
 name: doc-writer
 description: >
-  Generates phase implementation docs (2-27) from architecture docs following
+  Generates phase implementation docs (5-46) from architecture docs following
   the Phase 0/1 template. Use when new phase docs need to be created.
 tools: Read, Write, Edit, Grep, Glob
 memory: project
@@ -22,7 +22,7 @@ You generate AIOS phase docs. Follow CLAUDE.md "Phase Doc Generation Workflow" e
 - Metadata: Tier, Duration, Deliverable, Status: Planned, Prerequisites, Unlocks
 - `## Objective` — 2-3 paragraphs
 - `## Architecture References` — table: Topic | Document | Relevant Sections
-- `## Milestones` — table with 3 milestones
+- `## Milestones` — table with 3+ milestones (variable per phase)
 - One section per Milestone with Step subsections
 - Each Step: What, Tasks (checkboxes), Note, Key reference, Acceptance criteria
 - `## Decision Points` table

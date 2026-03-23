@@ -414,10 +414,10 @@ Max objects writable, auto-snapshot before bulk ops.*`"]
 
 | Feature | Purpose | Phase |
 |---|---|---|
-| PAC (Pointer Authentication) | Sign return addresses, mitigate ROP | Phase 2 (kernel), Phase 13 (enforce) |
-| BTI (Branch Target Identification) | Mitigate JOP attacks | Phase 2 (kernel), Phase 13 (enforce) |
-| MTE (Memory Tagging Extension) | Hardware use-after-free detection | Phase 13 |
-| TrustZone (EL3) | Isolated secure world for key storage | Phase 24 (Secure Boot) |
+| PAC (Pointer Authentication) | Sign return addresses, mitigate ROP | Phase 2 (kernel), Phase 21 (enforce) |
+| BTI (Branch Target Identification) | Mitigate JOP attacks | Phase 2 (kernel), Phase 21 (enforce) |
+| MTE (Memory Tagging Extension) | Hardware use-after-free detection | Phase 21 |
+| TrustZone (EL3) | Isolated secure world for key storage | Phase 39 (Secure Boot) |
 | TTBR0/TTBR1 separation | User/kernel address space isolation | Phase 2 |
 | W^X enforcement | Prevent code injection | Phase 2 |
 | KASLR | Randomize kernel base address | Phase 2 |
@@ -454,17 +454,17 @@ All subsystems at a glance:
 
 | Subsystem | Channel Format | Conflict Policy | POSIX Interface | Phase |
 |---|---|---|---|---|
-| Network | ByteStream | Share (multiplex) | socket API | 7, 16 |
-| Audio | Audio samples | Output: Share (mixer), Input: Prompt | /dev/audio* | 22 |
-| Display | RenderSurface | Share (compositor) | /dev/fb*, DRM | 5 |
-| Input | Events | Share (broadcast to focus) | /dev/input/event* | 7 |
-| Camera | Video frames | Prompt user | /dev/video* | 22 |
+| Network | ByteStream | Share (multiplex) | socket API | 9, 28 |
+| Audio | Audio samples | Output: Share (mixer), Input: Prompt | /dev/audio* | 36 |
+| Display | RenderSurface | Share (compositor) | /dev/fb*, DRM | 6 |
+| Input | Events | Share (broadcast to focus) | /dev/input/event* | 8 |
+| Camera | Video frames | Prompt user | /dev/video* | 37 |
 | Storage | ByteStream | Share (filesystem layer) | /dev/sd*, block | 4 |
-| USB | Varies by class | Varies by class | /dev/usb* | 17 |
-| Bluetooth | ByteStream/Events | Per-profile | /dev/bluetooth* | 18 |
-| Print | Frames (pages) | Queue (FIFO) | /dev/lp*, CUPS | 22 |
-| GPS | Events (location) | Share (read-only) | — | 22 |
-| Power | Control commands | Exclusive (kernel) | /sys/power/* | 19 |
+| USB | Varies by class | Varies by class | /dev/usb* | 29 |
+| Bluetooth | ByteStream/Events | Per-profile | /dev/bluetooth* | 31 |
+| Print | Frames (pages) | Queue (FIFO) | /dev/lp*, CUPS | 38 |
+| GPS | Events (location) | Share (read-only) | — | 38 |
+| Power | Control commands | Exclusive (kernel) | /sys/power/* | 32 |
 
 ---
 
@@ -555,10 +555,10 @@ The SDK provides inference, storage, security, networking, and context as system
 
 | Stage | Target | Purpose |
 |---|---|---|
-| Phase 0–15 | QEMU aarch64 (HVF on macOS) | All development and testing |
-| Phase 16–19 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
-| Phase 20–23 | QEMU + Raspberry Pi | Rich experience development on both targets |
-| Phase 24–27 | VM images (UTM/QEMU) | Low-barrier adoption path |
+| Phase 0–27 | QEMU aarch64 (HVF on macOS) | All development and testing |
+| Phase 28–33 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
+| Phase 34–38 | QEMU + Raspberry Pi | Rich experience development on both targets |
+| Phase 39–44 | VM images (UTM/QEMU) | Low-barrier adoption path |
 | Post-MVP | Pine64, Framework Laptop | Open-hardware partners |
 | Maturity | Own hardware | Only if platform achieves critical mass |
 
@@ -579,104 +579,117 @@ Boot, memory, IPC. Pure OS fundamentals that don't change regardless of what's b
 | 2 | Memory Management | 4 weeks | Virtual memory, heap, W^X, KASLR |
 | 3 | IPC & Capability System | 6 weeks | Process isolation, capabilities, service manager |
 
-### Tier 2: Core System Services — Phases 4–8 (Weeks 3–9)
+### Kit Foundation — Phases 4–5 (Weeks 3–4)
 
-Storage, GPU, compositor, input, networking. The plumbing everything above depends on.
+Storage and Kit API extraction. Bridges hardware foundation to core services.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
 | 4 | Block Storage & Object Store | 5 weeks | Persistent spaces, content-addressing, versioning |
-| 5 | GPU & Display | 6 weeks | GPU-accelerated rendering, font rendering |
-| 6 | Window Compositor & Shell | 7 weeks | Boot to GUI desktop with window management |
-| 7 | Input & Terminal | 4 weeks | Keyboard/mouse, terminal emulator |
-| 8 | Basic Networking & Agent Model | 4 weeks | TCP/IP networking, agent model foundation |
+| 5 | Kit Foundation | 3 weeks | Kit crate structure, API traits for Memory/IPC/Capability/Storage Kits |
 
-### Tier 3: AI & Intelligence — Phases 9–15 (Weeks 10–19)
+### Tier 2: Core System Services — Phases 6–9 (Weeks 5–11)
+
+GPU, compositor, input, networking. The plumbing everything above depends on.
+
+| Phase | Name | Duration | Deliverable |
+|---|---|---|---|
+| 6 | GPU & Display | 6 weeks | GPU-accelerated rendering, font rendering |
+| 7 | Window Compositor & Shell | 7 weeks | Boot to GUI desktop with window management |
+| 8 | Input & Terminal | 4 weeks | Keyboard/mouse, terminal emulator |
+| 9 | Basic Networking | 4 weeks | TCP/IP networking (smoltcp) |
+
+### Tier 3: AI & Intelligence — Phases 10–19 (Weeks 12–23)
 
 This is where AIOS becomes what no other OS is.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 9 | AIRS Inference Engine | 4 weeks | Local LLM inference with GGML, streaming responses |
-| 10 | AIRS Intelligence Services | 4 weeks | Space Indexer, Intent Verifier, 9 intelligence services |
-| 11 | Context Engine | 4 weeks | Context signals, inference, consumer integration |
-| 12 | Preference System | 4 weeks | 7-tier resolution, behavioral inference, sync |
-| 13 | Agent Framework | 5 weeks | Capability-gated agents with intent verification |
-| 14 | Task Manager & Attention | 4 weeks | Task decomposition, triaged notifications |
-| 15 | Flow Service | 5 weeks | Smart clipboard with transform pipeline |
+| 10 | Agent Framework | 5 weeks | Capability-gated agents with sandbox and SDK |
+| 11 | AIRS Inference Engine | 4 weeks | Local LLM inference with GGML, streaming responses |
+| 12 | AIRS Intelligence Services | 4 weeks | Space Indexer, Behavioral Monitor, 9 intelligence services |
+| 13 | Space Indexer & Search | 4 weeks | HNSW + BM25 + score fusion semantic search |
+| 14 | Context Engine | 4 weeks | Context signals, inference, consumer integration |
+| 15 | Preference System | 4 weeks | 7-tier resolution, behavioral inference, sync |
+| 16 | Flow & Translation | 5 weeks | Smart clipboard with transform pipeline |
+| 17 | Attention, Task Manager & Notification | 4 weeks | Task decomposition, triaged notifications |
+| 18 | Conversation Manager | 4 weeks | Conversation bar, streaming token delivery |
+| 19 | Identity & Credentials | 4 weeks | PQC key hierarchy, agent signing, WebAuthn |
 
-### Tier 4: Platform Maturity — Phases 16–22 (Weeks 20–29)
+### Tier 4: Platform Maturity — Phases 20–27 (Weeks 24–34)
 
-Developer ecosystem, security, compute abstraction, performance, POSIX compatibility.
+Intent verification, security, compute abstraction, performance, SDK, POSIX compatibility.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 16 | Developer Experience & SDK | 5 weeks | Multi-language SDK, CLI toolchain, documentation |
-| 17 | Security Architecture | 4 weeks | PAC/BTI/MTE, per-space encryption, security model |
-| 18 | Security Testing & Verification | 4 weeks | Fuzzing, behavioral monitoring, formal verification |
-| 19 | Kernel Compute Abstraction | 5 weeks | ComputeDevice trait, ComputeRegistry, CPU-as-compute |
-| 20 | GPU Compute & Accelerator Drivers | 5 weeks | VirtIO-GPU 3D compute, AcceleratorDriver trait |
-| 21 | Performance & Optimization | 4 weeks | Boot <3s, 60fps compositor, <500ms inference |
-| 22 | POSIX Compatibility & BSD Userland | 5 weeks | FreeBSD tools, musl libc, self-hosting capability |
+| 20 | Intent Verification | 3 weeks | DIFC taint labels, data flow graph, MTL monitor |
+| 21 | Security Architecture | 5 weeks | PAC/BTI/MTE, per-space encryption, security model |
+| 22 | Security Testing & Verification | 4 weeks | Fuzzing, behavioral monitoring, formal verification |
+| 23 | Kernel Compute Abstraction | 5 weeks | ComputeDevice trait, ComputeRegistry, CPU-as-compute |
+| 24 | GPU Compute & Accelerator Drivers | 5 weeks | VirtIO-GPU 3D compute, AcceleratorDriver trait |
+| 25 | Performance & Optimization | 4 weeks | Boot <3s, 60fps compositor, <500ms inference |
+| 26 | Developer Experience & SDK | 5 weeks | Multi-language SDK, CLI toolchain, documentation |
+| 27 | POSIX Compatibility & BSD Userland | 5 weeks | FreeBSD tools, musl libc, self-hosting capability |
 
-### Tier 5: Hardware & Connectivity — Phases 23–28 (Weeks 30–39)
+### Tier 5: Hardware & Connectivity — Phases 28–33 (Weeks 35–44)
 
 Full networking, USB, wireless, power, thermal management. Required for real hardware.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 23 | Network Translation Module | 5 weeks | Full NTM: space resolver, shadow engine, protocols |
-| 24 | USB Stack & Hotplug | 5 weeks | xHCI, HID, mass storage, device hotplug |
-| 25 | WiFi Stack | 4 weeks | 802.11, WPA2/WPA3-SAE, station management |
-| 26 | Bluetooth & Wireless Integration | 4 weeks | HCI, L2CAP, A2DP, BLE GATT, coexistence |
-| 27 | Power Management | 3 weeks | DVFS, sleep/hibernate, power states |
-| 28 | Thermal Management | 5 weeks | Thermal zones, governors, compute budget coupling |
+| 28 | Network Translation Module | 5 weeks | Full NTM: space resolver, shadow engine, protocols |
+| 29 | USB Stack & Hotplug | 5 weeks | xHCI, HID, mass storage, device hotplug |
+| 30 | WiFi Stack | 4 weeks | 802.11, WPA2/WPA3-SAE, station management |
+| 31 | Bluetooth & Wireless Integration | 4 weeks | HCI, L2CAP, A2DP, BLE GATT, coexistence |
+| 32 | Power Management | 3 weeks | DVFS, sleep/hibernate, power states |
+| 33 | Thermal Management | 5 weeks | Thermal zones, governors, compute budget coupling |
 
-### Tier 6: Rich Experience — Phases 29–33 (Weeks 40–51)
+### Tier 6: Rich Experience — Phases 34–38 (Weeks 45–56)
 
 Portable UI toolkit, web browser, media, camera, accessibility.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 29 | Portable UI Toolkit | 5 weeks | Cross-platform toolkit (AIOS/Linux/macOS/Web) |
-| 30 | Web Browser | 7 weeks | Servo-based browser with tab-per-agent isolation |
-| 31 | Media Pipeline & Codecs | 4 weeks | MediaCodec framework, container engine, playback |
-| 32 | Streaming, RTC & Camera | 5 weeks | HLS/DASH, WebRTC, camera subsystem |
-| 33 | Accessibility & Internationalization | 5 weeks | Screen reader, keyboard nav, Unicode, i18n |
+| 34 | Interface Kit | 5 weeks | Cross-platform toolkit (AIOS/Linux/macOS via iced bridge) |
+| 35 | Browser Kit | 7 weeks | Servo-based browser with tab-per-agent isolation |
+| 36 | Media Pipeline & Codecs | 4 weeks | MediaCodec framework, container engine, playback |
+| 37 | Streaming, RTC & Camera | 5 weeks | HLS/DASH, WebRTC, camera subsystem |
+| 38 | Accessibility & Internationalization | 5 weeks | Screen reader, keyboard nav, Unicode, i18n |
 
-### Tier 7: Production OS — Phases 34–39 (Weeks 52–63)
+### Tier 7: Production OS — Phases 39–44 (Weeks 57–68)
 
 Secure boot, Linux compatibility, enterprise features, hardware certification, launch.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 34 | Secure Boot & Update System | 5 weeks | Verified boot chain, A/B updates, rollback |
-| 35 | Linux Binary Loader | 4 weeks | ELF loader, syscall translation, glibc shim |
-| 36 | Wayland Bridge & Sandbox | 4 weeks | Run Linux GUI apps, security sandbox |
-| 37 | Multi-Device Sync & Pairing | 4 weeks | SPAKE2+ pairing, Space Mesh, handoff |
-| 38 | Enterprise Management | 5 weeks | MDM, fleet management, policy engine |
-| 39 | Real Hardware, Certification & Launch | 6 weeks | Pi 4/5, Pine64, VM images, documentation |
+| 39 | Secure Boot & Update System | 5 weeks | Verified boot chain, A/B updates, rollback |
+| 40 | Linux Binary Loader | 4 weeks | ELF loader, syscall translation, glibc shim |
+| 41 | Wayland Bridge & Sandbox | 4 weeks | Run Linux GUI apps, security sandbox |
+| 42 | Multi-Device Sync & Pairing | 4 weeks | SPAKE2+ pairing, Space Mesh, handoff |
+| 43 | Enterprise Management | 5 weeks | MDM, fleet management, policy engine |
+| 44 | Real Hardware, Certification & Launch | 6 weeks | Pi 4/5, Pine64, VM images, documentation |
 
-### Tier 8: Security Intelligence — Phases 40–41 (Weeks 64–67)
+### Tier 8: Security Intelligence — Phases 45–46 (Weeks 69–72)
 
 Composable capability profiles, AIRS-powered agent capability analysis.
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 40 | Composable Capability Profiles | 4 weeks | 5-layer profile system, resolution algorithm |
-| 41 | AIRS Capability Intelligence | 4 weeks | 5-stage analysis pipeline, profile suggestions |
+| 45 | Composable Capability Profiles | 4 weeks | 5-layer profile system, resolution algorithm |
+| 46 | AIRS Capability Intelligence | 4 weeks | 5-stage analysis pipeline, profile suggestions |
 
 ### Timeline Summary
 
 ```text
 AI-assisted (~45–65 weeks):
-  Weeks 1–9:    Tiers 1–2 — Boot to graphical desktop with networking
-  Weeks 10–19:  Tier 3    — AI-enhanced OS with agents and Flow
-  Weeks 20–29:  Tier 4    — Developer platform with compute abstraction
-  Weeks 30–39:  Tier 5    — Hardware-ready with WiFi/BT/USB
-  Weeks 40–51:  Tier 6    — Daily-driver with browser and media
-  Weeks 52–63:  Tier 7    — Production OS on real hardware
-  Weeks 64–67:  Tier 8    — Security intelligence
+  Weeks 1–4:    Tiers 1+1.5 — Boot, memory, IPC, storage, Kit foundation
+  Weeks 5–11:   Tier 2      — Graphical desktop with networking
+  Weeks 12–23:  Tier 3      — AI-enhanced OS with agents and Flow
+  Weeks 24–34:  Tier 4      — Developer platform with compute abstraction
+  Weeks 35–44:  Tier 5      — Hardware-ready with WiFi/BT/USB
+  Weeks 45–56:  Tier 6      — Daily-driver with browser and media
+  Weeks 57–68:  Tier 7      — Production OS on real hardware
+  Weeks 69–72:  Tier 8      — Security intelligence
 
 Unassisted baseline: ~200 weeks (~3.8 years)
 ```

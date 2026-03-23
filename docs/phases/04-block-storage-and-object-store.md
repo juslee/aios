@@ -1,11 +1,11 @@
 # Phase 4: Block Storage & Object Store
 
-**Tier:** 2 — Core System Services
+**Tier:** 1.5 — Kit Foundation
 **Duration:** 5 weeks
 **Deliverable:** VirtIO-blk driver, LSM-tree block engine with WAL, content-addressed object store with deduplication, version store with Merkle DAG, device-level encryption, POSIX bridge
 **Status:** In Progress (M14 complete)
 **Prerequisites:** Phase 3 (IPC & Capability System)
-**Unlocks:** Phase 5 (Kit Foundation), Phase 6 (GPU & Display), Phase 21 (Security Architecture)
+**Unlocks:** Phase 5 (Kit Foundation), Phase 21 (Security Architecture)
 
 -----
 
