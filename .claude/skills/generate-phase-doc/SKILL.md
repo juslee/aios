@@ -21,5 +21,6 @@ Follow the Phase Doc Generation Workflow from CLAUDE.md:
 6. Generate `docs/phases/` with the correct `NN-name.md` filename
 7. Follow the Phase 0/1 template structure exactly (see CLAUDE.md)
 8. Milestone numbers: M(3*$ARGUMENTS+1) through M(3*$ARGUMENTS+3)
-9. Run doc-auditor to validate (loop until clean)
-10. Commit and create PR for review
+9. Commit and push the generated phase doc
+10. Run `/audit-loop` — auto-detects docs-only mode, loops until 0 issues
+11. Create PR for review
