@@ -17,7 +17,16 @@ Follow the Phase Doc Generation Workflow from CLAUDE.md:
     - Use Obsidian MCP search_notes with subsystem keywords
     - Review docs/knowledge/decisions/ for prior architectural choices
 4. Read the previous phase doc for milestone numbering continuity
-5. Create branch `claude/phase-$ARGUMENTS-docs` from main
+5. Create an isolated worktree for the doc work:
+
+```bash
+git checkout main && git pull origin main
+git worktree add .claude/worktrees/phase-$ARGUMENTS-docs -b claude/phase-$ARGUMENTS-docs main
+cd .claude/worktrees/phase-$ARGUMENTS-docs
+```
+
+All subsequent work (edits, commits, pushes) happens inside the worktree.
+
 6. Generate `docs/phases/` with the correct `NN-name.md` filename
 7. Follow the Phase 0/1 template structure exactly (see CLAUDE.md)
 8. For each milestone, include a shared crate refactoring step at the end:
