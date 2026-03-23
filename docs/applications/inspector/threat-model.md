@@ -161,7 +161,7 @@ Boot chain verification:
 
 2. **Measured boot.** The Inspector's binary hash is recorded in the measured boot log. Remote attestation can verify that the loaded Inspector matches the expected hash. Cross-reference: [trust-chain.md](../../security/secure-boot/trust-chain.md) §3.7.
 
-3. **Read-only for provenance.** Even a compromised Inspector cannot alter the provenance chain. It holds `AuditRead` capability, not `AuditWrite` (which does not exist). The kernel has no syscall for modifying provenance records. The worst a compromised Inspector can do is **suppress display** — not alter the underlying data.
+3. **Read-only for provenance.** Even a compromised Inspector cannot alter the provenance chain. It holds `AuditRead` capability and is not granted any capability that would allow writing or mutating kernel-created provenance records. `AuditWrite` exists for emitting audit log events but cannot rewrite existing provenance entries. The kernel exposes no syscall for modifying existing provenance records. The worst a compromised Inspector can do is **suppress display** — not alter the underlying data.
 
 4. **Bounded capabilities.** The Inspector's capability set is fixed in its manifest (§3 of [inspector.md](../inspector.md)). It can read audit data, read capability tables, revoke capabilities, and pause/resume agents. It cannot grant new capabilities, create agents, write to agent spaces, or modify the provenance chain.
 
@@ -197,7 +197,7 @@ pub enum CompromisedInspectorLimit {
 }
 ```
 
-**Recovery:** If Inspector compromise is suspected, the user can verify the Inspector's binary hash via the Conversation Bar ("verify Inspector integrity") or by booting into recovery mode. The kernel can re-verify the Inspector's signature on demand via `AgentQuery(inspector, verify_signature)`.
+**Recovery:** If Inspector compromise is suspected, the user can verify the Inspector's binary hash via the Conversation Bar ("verify Inspector integrity") or by booting into recovery mode. The kernel can re-verify the Inspector's signature on demand using the same secure-boot / measured-boot verification path it uses at startup, without requiring a dedicated syscall.
 
 ### 10.5 Event Overwhelming
 
@@ -264,9 +264,9 @@ Cross-reference: [behavioral-monitor.md](../../intelligence/behavioral-monitor.m
 
 ## 11. Security Layer Positioning
 
-The Inspector reads from all eight security layers defined in [layers.md](../../security/model/layers.md). It does not enforce any of them — enforcement is the kernel's responsibility. The Inspector provides visibility into what each layer is doing.
+The Inspector reads from all security layers (0–8) defined in [layers.md](../../security/model/layers.md). It does not enforce any of them — enforcement is the kernel's responsibility. The Inspector provides visibility into what each layer is doing.
 
-### 11.1 How Inspector Reads from All 8 Layers
+### 11.1 How Inspector Reads from Each Layer
 
 | Layer | Name | What Inspector Reads | Syscall | Inspector View |
 |---|---|---|---|---|

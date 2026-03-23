@@ -11,17 +11,17 @@ The Inspector is primarily a read-only dashboard, but it exposes controlled writ
 
 ### 6.1 Action Table
 
-| Action | Syscall | Confirmation | Reversible |
+| Action | Operation / API | Confirmation | Reversible |
 |---|---|---|---|
-| Revoke capability token | `CapabilityRevoke` | "Remove [agent]'s access to [resource]?" | Agent must re-request |
-| Revoke all agent capabilities | `CapabilityRevoke(agent, all)` | "Remove all permissions for [agent]? It will not be able to function." | Agent must be re-authorized |
-| Pause agent | `AgentControl(pause)` | "Pause [agent]? It will stop all activity." | Resume available |
-| Resume agent | `AgentControl(resume)` | Immediate (no confirmation for resume) | -- |
-| Add user override (Layer 90) | `ProfileWrite(User)` | "Add denial for [capability] on [agent]?" | Override can be removed |
-| Remove user override | `ProfileWrite(User)` | "Remove your override? Agent will regain [capability]." | Can re-add |
+| Revoke capability token | `CapabilityRevoke` (kernel syscall) | "Remove [agent]'s access to [resource]?" | Agent must re-request |
+| Revoke all agent capabilities | Inspector loop: list tokens for agent → `CapabilityRevoke` each | "Remove all permissions for [agent]? It will not be able to function." | Agent must be re-authorized |
+| Pause agent | Service Manager IPC: `service_control(agent_id, Pause)` | "Pause [agent]? It will stop all activity." | Resume available |
+| Resume agent | Service Manager IPC: `service_control(agent_id, Resume)` | Immediate (no confirmation for resume) | -- |
+| Add user override (Layer 90) | Profile service IPC (write user override layer) | "Add denial for [capability] on [agent]?" | Override can be removed |
+| Remove user override | Profile service IPC (remove user override entry) | "Remove your override? Agent will regain [capability]." | Can re-add |
 | Apply AIRS recommendation | Varies per recommendation | Shows specific effect before confirming | Depends on action type |
-| Export audit log | `AuditRead` + local file write | "Export [N] records to [path]?" | File can be deleted |
-| Acknowledge alert | `AuditRead(acknowledge)` | Immediate (clears badge) | Alert remains in history |
+| Export audit log | `AuditRead` capability + local file write | "Export [N] records to [path]?" | File can be deleted |
+| Acknowledge alert | Inspector local state (clears badge) | Immediate | Alert remains in history |
 
 ### 6.2 Confirmation Flow
 

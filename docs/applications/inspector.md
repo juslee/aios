@@ -46,14 +46,14 @@ The Inspector synthesizes this information into a coherent security narrative. R
 
 **Data Sources:**
 
-| Source | Syscall | Contents |
+| Source | Capability / Access API | Contents |
 |---|---|---|
-| Provenance chain | `AuditRead` | Merkle-chained action records ([layers.md §2.7](../security/model/layers.md)) |
-| Capability table | `CapabilityQuery` | Active tokens per agent ([capabilities.md §3.1](../security/model/capabilities.md)) |
-| Agent registry | `AgentQuery` | Metadata, trust level, behavioral baseline |
-| Security events | `AuditRead(filter: security)` | Denials, anomalies, injection attempts |
-| Profile store | `ProfileRead` | Capability profiles, resolution logs ([capabilities.md §3.7](../security/model/capabilities.md)) |
-| AIRS analysis | `InferenceQuery` | SecurityAnalysis results ([airs.md §5.9](../intelligence/airs.md)) |
+| Provenance chain | `AuditRead` capability | Merkle-chained action records ([layers.md §2.7](../security/model/layers.md)) |
+| Capability table | `CapabilityList` / `CapabilityRevoke` syscalls | Active tokens per agent ([capabilities.md §3.1](../security/model/capabilities.md)) |
+| Agent registry | Service Manager IPC query | Metadata, trust level, behavioral baseline |
+| Security events | `AuditRead` capability (security filter) | Denials, anomalies, injection attempts |
+| Profile store | Profile service IPC | Capability profiles, resolution logs ([capabilities.md §3.7](../security/model/capabilities.md)) |
+| AIRS analysis | AIRS inference service IPC | SecurityAnalysis results ([airs.md §5.9](../intelligence/airs.md)) |
 
 All reads are non-blocking. The provenance chain is append-only and immutable — the Inspector can never modify it.
 
@@ -118,11 +118,11 @@ graph TD
 
 ### What Ships When
 
-| Phase | Capabilities Added | Views Available |
+| Phase | Capabilities / APIs Added | Views Available |
 |---|---|---|
-| Phase 17 (Security Architecture) | Core Inspector: AuditRead, CapabilityQuery, AgentQuery, CapabilityRevoke, AgentControl | Dashboard, Agent, Provenance, Security Events, Capability, Hardware, Multi-View Linking |
-| Phase 40 (Composable Profiles) | ProfileRead, ProfileWrite(User) | + Profile View with resolution trace and user overrides |
-| Phase 41 (AIRS Intelligence) | InferenceQuery(SecurityAnalysis) | + AIRS Analysis View with recommendations and "Apply" actions |
+| Phase 17 (Security Architecture) | Core Inspector: `AuditRead` capability, `CapabilityList`/`CapabilityRevoke` syscalls, Service Manager IPC (agent query, pause/resume) | Dashboard, Agent, Provenance, Security Events, Capability, Hardware, Multi-View Linking |
+| Phase 40 (Composable Profiles) | Profile service IPC (read profiles, write user overrides) | + Profile View with resolution trace and user overrides |
+| Phase 41 (AIRS Intelligence) | AIRS inference service IPC (SecurityAnalysis) | + AIRS Analysis View with recommendations and "Apply" actions |
 
 ### Kernel-Internal ML Rollout
 

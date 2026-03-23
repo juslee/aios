@@ -487,7 +487,7 @@ Capability profile management. Shows how profiles compose into resolved capabili
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Key interaction**: The user can add Layer 90 overrides (deny or attenuate) to any agent's resolved set. Overrides are stored in `user/preferences/capability-overrides/` ([../../security/model.md §3.7.7](../../security/model.md)).
+**Key interaction**: The user can add Layer 90 overrides (deny or attenuate) to any agent's resolved set. Overrides are stored in `user/preferences/capability-overrides/` ([capabilities.md §3.7.7](../../security/model/capabilities.md)).
 
 The Profile View implements the visual equivalent of `aios agent audit --show-resolution` — showing exactly how each layer contributes to the final capability set.
 

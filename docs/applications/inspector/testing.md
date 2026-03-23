@@ -261,7 +261,7 @@ Performance tests verify that the Inspector meets its resource budgets and laten
 | Capability token snapshots | 32 agents x 256 tokens maximum | Measure snapshot memory |
 | Heatmap EMA matrix | 32 agents x 16 capability types | Verify matrix fits in 2 KiB |
 | Alert queue | 256 entries maximum | Count entries in ring buffer |
-| Total Inspector heap | < 8 MiB | Measure via `MemoryQuery` syscall |
+| Total Inspector heap | < 8 MiB | Measure via Inspector-internal allocator statistics |
 
 **Cold start time:**
 
@@ -318,7 +318,7 @@ All views are fully navigable via keyboard. No Inspector functionality requires 
 | Arrow Left/Right | Navigate timeline, expand/collapse tree nodes |
 | Enter | Activate focused element (open detail, confirm action) |
 | Escape | Dismiss dialog, cancel action, return focus to previous element |
-| Ctrl+1 through Ctrl+9 | Switch directly to view 1 (Dashboard) through view 9 (Multi-Device) |
+| Ctrl+1 through Ctrl+8 | Switch directly to view 1 (Dashboard) through view 8 (Hardware) |
 | Ctrl+F | Open query/filter bar for the active view |
 | Ctrl+Shift+A | Jump to highest-severity unacknowledged alert |
 

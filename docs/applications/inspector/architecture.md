@@ -88,7 +88,7 @@ The Inspector's capabilities are broad but bounded. It can **read** everything a
 
 Three design constraints enforce this boundary:
 
-1. **No `CapabilityGrant` capability.** The Inspector cannot mint new capability tokens or extend an agent's permission set. Granting is a policy decision that belongs to the profile resolution pipeline ([model.md §3.7](../../security/model.md)), not a monitoring tool.
+1. **No `CapabilityGrant` capability.** The Inspector cannot mint new capability tokens or extend an agent's permission set. Granting is a policy decision that belongs to the profile resolution pipeline ([capabilities.md §3.7](../../security/model/capabilities.md)), not a monitoring tool.
 
 2. **No `AgentCreate` or `AgentInstall` capability.** Installing an agent requires a signed manifest, AIRS analysis, and user consent — a multi-step ceremony that the Inspector observes but does not participate in.
 
@@ -146,7 +146,7 @@ graph TB
 
 **Dashboard Controller** aggregates summary data from all three query engines: agent count, alert count, recent activity, and system-wide security posture. It is the only component that queries all engines simultaneously on every refresh cycle.
 
-**Detail Views** are eight specialized renderers plus the Dashboard, each consuming data from one or two query engines. Views are lazy — they do not fetch data until the user navigates to them.
+**Detail Views** are seven specialized renderers plus the Dashboard (8 views total), each consuming data from one or two query engines. Multi-View Linking is an interaction pattern across views rather than a separate view. Views are lazy — they do not fetch data until the user navigates to them.
 
 | View | Primary Engine | Secondary Engine |
 |---|---|---|
@@ -158,7 +158,7 @@ graph TB
 | AIRS Analysis View | Agent Query | Capability Query |
 | Hardware View | Agent Query | Capability Query |
 
-**Action Handler** is the only component that issues write syscalls (`CapabilityRevoke`, `AgentControl`, `ProfileWrite`). Every action passes through a confirmation dialog before execution. The Action Handler never bypasses the presentation layer — it is always invoked by user interaction within a view.
+**Action Handler** is the only component that issues write operations (`CapabilityRevoke` syscall, Service Manager IPC for pause/resume, profile service IPC for overrides). Every action passes through a confirmation dialog before execution. The Action Handler never bypasses the presentation layer — it is always invoked by user interaction within a view.
 
 -----
 
