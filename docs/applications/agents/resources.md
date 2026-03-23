@@ -105,7 +105,7 @@ pub struct ResourceStats {
 - Inference fields track both token count and latency sum. Average latency per request is `inference_latency_sum_ns / inference_requests`. This avoids maintaining a histogram in kernel space while still enabling meaningful reporting.
 - `restart_count` tracks how many times the Agent Runtime has restarted this agent (due to crashes or watchdog timeouts). A high restart count signals instability to the Behavioral Monitor (see [behavioral-monitor.md](../../intelligence/behavioral-monitor.md) §3).
 
-**Access pattern:** Agents read their own `ResourceStats` via the `Stats` syscall (syscall 13). The Inspector reads any agent's stats via a capability-gated IPC query to the Agent Runtime. AIRS receives periodic snapshots for anomaly detection.
+**Access pattern:** Agents obtain their own `ResourceStats` via a capability-gated IPC query to the Agent Runtime, which reads the kernel-maintained counters. The Inspector reads any agent's stats via a privileged IPC query to the Agent Runtime. AIRS receives periodic snapshots for anomaly detection.
 
 ### 14.2 Memory Budgets
 

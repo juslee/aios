@@ -94,17 +94,17 @@ flowchart TD
 
 | Property | Tier 1 (System) | Tier 2 (Process) | Tier 3 (MicroVM) |
 |---|---|---|---|
-| Address space | Shared (kernel) | Separate TTBR0 | Separate TTBR0 + EL2 boundary |
-| IPC mechanism | Direct function call | Kernel-mediated channels | Kernel-mediated + hypercall exit |
+| Address space | Kernel process (trusted TTBR0) | Separate TTBR0 | Separate TTBR0 + EL2 boundary |
+| IPC mechanism | Optimized kernel IPC (direct switch) | Kernel-mediated channels | Kernel-mediated + hypercall exit |
 | Capability set | Broad (system caps) | Manifest-declared | Restricted subset |
 | Resource limits | Generous (system budgets) | Per-manifest | Strict (reduced ceilings) |
 | Behavioral monitoring | Audit-only | Full statistical baseline | Full + elevated alert threshold |
 | Recovery on crash | Kernel restart path | Process restart | VM teardown + restart |
-| Context switch cost | None (in-kernel) | TTBR0 swap (~1 us) | VM exit/enter (~5-10 us) |
+| Context switch cost | Minimal (direct switch ~0.3 us) | TTBR0 swap (~1 us) | VM exit/enter (~5-10 us) |
 
 **Tier selection is immutable after installation.** An agent cannot request a tier upgrade at runtime. Upgrading from Tier 3 to Tier 2 requires a new manifest version, AIRS re-analysis, and user re-approval.
 
-**Tier 1 agents are not trusted blindly.** They are signed by the AIOS root key, compiled from audited source, and verified at boot. The type-system isolation relies on Rust's ownership and borrowing guarantees — a system agent written in safe Rust cannot corrupt another system agent's data structures even within the same address space. `unsafe` blocks in system agents are minimized and individually reviewed.
+**Tier 1 agents are still isolated processes.** System agents run in their own TTBR0 address space like all agents — they are not kernel threads. The "trusted" designation means they receive broader capabilities, less restrictive resource limits, and audit-only behavioral monitoring. The performance advantage comes from IPC direct switch (bypassing the scheduler) rather than from shared address space. Type-system isolation through Rust's ownership and borrowing guarantees provides an additional safety layer — a system agent written in safe Rust cannot corrupt kernel data structures even if its capabilities are broad. `unsafe` blocks in system agents are minimized and individually reviewed.
 
 ### 6.3 Capability Confinement & Static Route Verification
 
@@ -193,70 +193,74 @@ Agents interact with the kernel through 17 syscalls organized into six categorie
 ```rust
 /// Agent-facing syscalls. A subset of the 31 kernel syscalls,
 /// exposed through the Agent SDK as safe Rust functions.
-#[repr(u64)]
+///
+/// NOTE: This enum documents the *categories* of syscalls agents can make.
+/// Actual numeric syscall IDs are defined in kernel/src/syscall/mod.rs
+/// (shared/src/syscall.rs) and are subject to change as new phases add
+/// syscalls. Do not rely on specific numeric values here.
 pub enum AgentSyscall {
     // ── IPC (4 syscalls) ──────────────────────────────────
     /// Send a message and block until reply.
     /// Requires: ChannelAccess(channel_id)
-    IpcCall     = 0,
+    IpcCall,
     /// Send a message without blocking.
     /// Requires: ChannelAccess(channel_id)
-    IpcSend     = 1,
+    IpcSend,
     /// Block until a message arrives on a channel.
     /// Requires: ChannelAccess(channel_id)
-    IpcRecv     = 2,
+    IpcRecv,
     /// Reply to a received call.
     /// Requires: none (reply token from IpcRecv)
-    IpcReply    = 3,
+    IpcReply,
 
     // ── Memory (3 syscalls) ───────────────────────────────
     /// Allocate pages in the agent's address space.
     /// Requires: none (bounded by BlastRadiusPolicy.max_memory)
-    MemAlloc    = 18,
+    MemAlloc,
     /// Free previously allocated pages.
     /// Requires: none (must own the pages)
-    MemFree     = 19,
+    MemFree,
     /// Create or map a shared memory region.
     /// Requires: SharedMemoryCreate or SharedMemoryAccess
-    MemShare    = 20,
+    MemShare,
 
     // ── Capabilities (3 syscalls) ─────────────────────────
     /// Request a new capability (triggers user approval UI).
     /// Requires: none (approval is the gate)
-    CapRequest  = 14,
+    CapRequest,
     /// Delegate an attenuated capability to another agent.
     /// Requires: the capability being delegated + CapDelegate
-    CapDelegate = 15,
+    CapDelegate,
     /// Revoke a previously delegated capability.
     /// Requires: ownership of the delegation chain
-    CapRevoke   = 16,
+    CapRevoke,
 
     // ── Flow (3 syscalls) ─────────────────────────────────
     /// Push content to the Flow clipboard/transfer system.
     /// Requires: FlowPush
-    FlowPush    = 40,
+    FlowPush,
     /// Pull content from Flow.
     /// Requires: FlowPull
-    FlowPull    = 41,
+    FlowPull,
     /// Subscribe to Flow events matching a predicate.
     /// Requires: FlowSubscribe
-    FlowSubscribe = 42,
+    FlowSubscribe,
 
     // ── System (3 syscalls) ───────────────────────────────
     /// Open a handle to a Space for reading/writing objects.
     /// Requires: SpaceRead(path) or SpaceWrite(path)
-    SpaceOpen   = 50,
+    SpaceOpen,
     /// Query objects within an open Space.
     /// Requires: SpaceRead(path)
-    SpaceQuery  = 51,
+    SpaceQuery,
     /// Submit an inference request to AIRS.
     /// Requires: InferRequest
-    InferRequest = 60,
+    InferRequest,
 
     // ── Debug (1 syscall) ─────────────────────────────────
     /// Write a debug log line (visible in Inspector).
     /// Requires: none (rate-limited to 100 lines/second)
-    DebugLog    = 30,
+    DebugLog,
 }
 ```
 
