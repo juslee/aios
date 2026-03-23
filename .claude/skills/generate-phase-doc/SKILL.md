@@ -17,7 +17,16 @@ Follow the Phase Doc Generation Workflow from CLAUDE.md:
     - Use Obsidian MCP search_notes with subsystem keywords
     - Review docs/knowledge/decisions/ for prior architectural choices
 4. Read the previous phase doc for milestone numbering continuity
-5. Create branch `claude/phase-$ARGUMENTS-docs` from main
+5. Create an isolated worktree for the doc work:
+
+```bash
+git checkout main && git pull origin main
+git worktree add .claude/worktrees/phase-$ARGUMENTS-docs -b claude/phase-$ARGUMENTS-docs main
+cd .claude/worktrees/phase-$ARGUMENTS-docs
+```
+
+All subsequent work (edits, commits, pushes) happens inside the worktree.
+
 6. Generate `docs/phases/` with the correct `NN-name.md` filename
 7. Follow the Phase 0/1 template structure exactly (see CLAUDE.md)
 8. For each milestone, include a shared crate refactoring step at the end:
@@ -25,7 +34,9 @@ Follow the Phase Doc Generation Workflow from CLAUDE.md:
     - Move pure data structures (no hardware deps) to `shared/src/`
     - Write host-side unit tests for moved code
     - Acceptance: `just check` + `just test` pass
-9. Milestone numbers: M(3*$ARGUMENTS+1) through M(3*$ARGUMENTS+3)
+9. Milestone numbers: continue sequentially from the previous phase's last milestone. If the previous phase ended at Mk, number this phase's milestones Mk+1, Mk+2, Mk+3, … in order.
 10. Commit and push the generated phase doc
 11. Run `/audit-loop` — auto-detects docs-only mode, loops until 0 issues
 12. Create PR for review
+13. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
+14. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main

@@ -377,8 +377,17 @@ When implementing Phase N:
    - All architecture docs listed in the phase doc's "Architecture References" table
    - This file's Code Conventions and Quality Gates sections
 
-2. **BRANCH**: Create `claude/phase-N-MK-name` from latest `main` (one branch per milestone)
-   - Example: `claude/phase-0-m2-boots` for Phase 0 Milestone 2
+2. **WORKTREE**: Create an isolated worktree for implementation:
+
+   ```bash
+   git checkout main && git pull origin main
+   git worktree add .claude/worktrees/phase-N -b claude/phase-N-MK-name main
+   cd .claude/worktrees/phase-N
+   ```
+
+   - Example: `git worktree add .claude/worktrees/phase-0 -b claude/phase-0-m2-boots main`
+   - All subsequent work (edits, builds, commits, pushes) happens inside the worktree
+   - The main repo stays on `main` (clean for other tasks)
 
 3. **PLAN** before writing any code:
    - Identify which Milestone you are targeting (M1/M2/M3)
