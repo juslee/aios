@@ -20,8 +20,8 @@ After significant sessions, write insights to `docs/knowledge/`:
 
 ## CLAUDE.md Self-Maintenance
 
-Team-lead updates CLAUDE.md after every milestone:
+Team-lead updates CLAUDE.md and relevant rule files after every milestone:
 
 1. Review what changed (new files, crates, constants, conventions)
-2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
+2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map in `CLAUDE.md`; and the corresponding rule files in `.claude/rules/` (code conventions, quality gates, etc.)
 3. Commit as part of the milestone commit (same commit)

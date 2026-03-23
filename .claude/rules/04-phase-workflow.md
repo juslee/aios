@@ -2,7 +2,7 @@
 
 When implementing Phase N:
 
-1. **READ**: Phase doc → architecture docs → CLAUDE.md conventions
+1. **READ**: Phase doc → architecture docs → `.claude/rules/*` conventions (and CLAUDE.md reference data)
 2. **WORKTREE**: Create isolated worktree at `.claude/worktrees/phase-N`
 3. **PLAN**: Identify milestone, list files to create/modify, verify dependencies, use TodoWrite
 4. **IMPLEMENT**: One step at a time. Each step is atomic — complete it fully before moving on. Every step has an "Acceptance:" block — this is your done condition.
