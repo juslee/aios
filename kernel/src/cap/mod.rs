@@ -14,8 +14,6 @@ use crate::task::process::{ProcessId, PROCESS_TABLE};
 use crate::task::{ThreadId, CURRENT_THREAD, THREAD_TABLE};
 
 // Re-export shared types for ergonomic kernel-side imports.
-#[allow(unused_imports)]
-pub use shared::MAX_CAPS_PER_PROCESS;
 pub use shared::{
     Capability, CapabilityHandle, CapabilityTable, CapabilityToken, CapabilityTokenId,
 };
@@ -305,9 +303,12 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
             .ok_or(CapabilityError::InvalidHandle { handle })?;
 
         proc.cap_table.revoke(token_id);
-        // Note: channel cascade revocation (revoke_channels_for_cap) is not
-        // called here — it's triggered by the existing revoke_in_process() path.
-        // The Kit trait provides a clean API; cascade is a kernel-internal concern.
+        // Must drop the PROCESS_TABLE lock before touching CHANNEL_TABLE
+        // to respect lock ordering: PROCESS_TABLE > CHANNEL_TABLE.
+        drop(table);
+
+        // Cascade: destroy channels created under this capability token.
+        revoke_channels_for_cap(token_id);
         Ok(())
     }
 
