@@ -135,7 +135,9 @@ pub static FRAME_ALLOC: Mutex<Option<FrameAllocator>> = Mutex::new(None);
 pub fn alloc_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Identity map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_page(Pool::Kernel) }
 }
 
@@ -154,7 +156,9 @@ pub unsafe fn free_page(phys_addr: usize) {
 pub fn alloc_user_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_page(Pool::User) }
 }
 
@@ -162,7 +166,9 @@ pub fn alloc_user_page() -> Option<usize> {
 pub fn alloc_user_pages(order: usize) -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_pages(Pool::User, order) }
 }
 
@@ -193,7 +199,9 @@ pub unsafe fn free_user_pages(phys_addr: usize, order: usize) {
 pub fn alloc_dma_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_page(Pool::Dma) }
 }
 
@@ -201,7 +209,9 @@ pub fn alloc_dma_page() -> Option<usize> {
 pub fn alloc_dma_pages(order: usize) -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();
     let fa = guard.as_mut()?;
-    // SAFETY: Direct map is active after MMU enable.
+    // SAFETY: Identity/direct map is active after Phase 1 boot completes.
+    // Boot sequence (kmap.rs init_kernel_address_space) maintains this.
+    // If the map were not active, buddy allocator metadata writes would fault.
     unsafe { fa.alloc_pages(Pool::Dma, order) }
 }
 
