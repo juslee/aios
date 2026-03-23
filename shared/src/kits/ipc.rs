@@ -10,6 +10,12 @@ use crate::ipc::{
 use crate::syscall::IpcError;
 use crate::VirtAddr;
 
+// Re-export IPC types and constants so consumers can import via the Kit module.
+pub use crate::ipc::{
+    DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES,
+    MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS,
+};
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -372,5 +378,80 @@ mod tests {
     fn traits_are_dyn_compatible() {
         // Compilation of the above assertion functions is the real test.
         // If any trait is not object-safe, the functions above won't compile.
+    }
+
+    // -- Constants accessible from Kit module --
+
+    #[test]
+    fn kit_constants_accessible() {
+        // Verify constants are re-exported from the Kit module.
+        assert_eq!(super::MAX_CHANNELS, 128);
+        assert_eq!(super::DEFAULT_TIMEOUT_TICKS, 5_000);
+        assert_eq!(super::MAX_NOTIFICATIONS, 64);
+        assert_eq!(super::MAX_SELECT_ENTRIES, 8);
+        assert_eq!(super::MAX_SHARED_REGIONS, 64);
+        assert_eq!(super::MAX_SHARED_MAPPINGS, 8);
+    }
+
+    #[test]
+    fn kit_message_constants() {
+        // MAX_MESSAGE_SIZE and RING_CAPACITY are used in trait impls.
+        assert_eq!(MAX_MESSAGE_SIZE, 256);
+        assert_eq!(RING_CAPACITY, 16);
+    }
+
+    // -- IpcKitError -> IpcError: every variant maps to a specific code --
+
+    #[test]
+    fn ipc_kit_error_to_i64_via_ipc_error() {
+        assert_eq!(
+            IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(0) }) as i64,
+            -2
+        );
+        assert_eq!(
+            IpcError::from(IpcKitError::ChannelFull {
+                id: ChannelId(0),
+                capacity: 16
+            }) as i64,
+            -3
+        );
+        assert_eq!(
+            IpcError::from(IpcKitError::Timeout { elapsed_ticks: 0 }) as i64,
+            -1
+        );
+        assert_eq!(IpcError::from(IpcKitError::Cancelled) as i64, -4);
+        assert_eq!(
+            IpcError::from(IpcKitError::CapabilityDenied {
+                required: Capability::ChannelCreate
+            }) as i64,
+            -5
+        );
+        assert_eq!(
+            IpcError::from(IpcKitError::SharedMemoryError { reason: "x" }) as i64,
+            -6
+        );
+        assert_eq!(
+            IpcError::from(IpcKitError::MessageTooLarge { size: 0, max: 256 }) as i64,
+            -7
+        );
+        assert_eq!(IpcError::from(IpcKitError::NoReply) as i64, -8);
+    }
+
+    // -- Backward compatibility: existing ipc types still accessible --
+
+    #[test]
+    fn backward_compat_ipc_types() {
+        // Verify types used in trait signatures are the same as shared::ipc types.
+        let ch = ChannelId(42);
+        let ch2: crate::ipc::ChannelId = ch;
+        assert_eq!(ch, ch2);
+
+        let nid = NotificationId(7);
+        let nid2: crate::ipc::NotificationId = nid;
+        assert_eq!(nid, nid2);
+
+        let sid = SharedMemoryId(3);
+        let sid2: crate::ipc::SharedMemoryId = sid;
+        assert_eq!(sid, sid2);
     }
 }
