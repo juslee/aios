@@ -258,7 +258,13 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Preference testing | `docs/intelligence/preferences/testing.md` | §18.1–§18.5 Unit, integration, property-based, fuzz, QEMU validation |
 | Agents | `docs/applications/agents.md` | All (Phase 13+) |
 | Browser | `docs/applications/browser.md` | All (Phase 30+) |
-| Inspector (security dashboard) | `docs/applications/inspector.md` | All (Phase 17+) |
+| Inspector (hub) | `docs/applications/inspector.md` | §1 Core Insight, §2 Architecture, §15 Design Principles, §16 Impl Order, §17 Comparisons, Document Map |
+| Inspector architecture | `docs/applications/inspector/architecture.md` | §3 Agent Identity, §4 Component Architecture, Data Model, Innovations |
+| Inspector views | `docs/applications/inspector/views.md` | §5.1–§5.9 All 9 views with research enhancements |
+| Inspector actions | `docs/applications/inspector/actions.md` | §6 User Actions, §7 Conversation Bar, §8 Auto-Open, §9 Performance |
+| Inspector threat model | `docs/applications/inspector/threat-model.md` | §10 Threat Model, §11 Security Layer Positioning, Provenance Integrity, Trust Model |
+| Inspector intelligence | `docs/applications/inspector/intelligence.md` | §12 AIRS-Dependent, §13 Kernel-Internal ML, §14 Future Directions |
+| Inspector testing | `docs/applications/inspector/testing.md` | §18 Testing Strategy, §19 Accessibility |
 | Terminal emulator (hub) | `docs/applications/terminal.md` | §1 Core Insight, §2 Architecture, §9–§12 Design/Impl/Future/AI-Native, Document Map |
 | Terminal VT emulation | `docs/applications/terminal/emulation.md` | §3.1–§3.7 State machine, escape sequences, modes, charset, grid, colors, reference |
 | Terminal rendering | `docs/applications/terminal/rendering.md` | §4.1–§4.7 Font engine, glyph atlas, GPU rendering, damage tracking, scrollback, compositor, performance model |
