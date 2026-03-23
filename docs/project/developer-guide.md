@@ -2179,9 +2179,9 @@ Agents are specialist sub-processes spawned by the team-lead orchestrator. Each 
 | `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
 | `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
 | `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
-| `doc-auditor` | Validates docs for cross-reference errors, technical accuracy, naming consistency | Hook (auto) or team-lead | Read, Edit, Grep, Glob, Bash |
+| `doc-auditor` | Validates docs for cross-reference errors, technical accuracy, naming consistency | team-lead or user (prompted by `doc-audit-needed` hook) | Read, Edit, Grep, Glob, Bash |
 
-The doc-auditor deserves special mention: it runs in a **recursive loop** — audit → fix → re-audit — until zero issues are found (max 10 passes). It is triggered automatically by PostToolUse hooks whenever a markdown file in `docs/` is written or edited.
+The doc-auditor deserves special mention: when invoked, it runs in a **recursive loop** — audit → fix → re-audit — until zero issues are found (max 10 passes). The PostToolUse hook does **not** spawn `doc-auditor` directly; instead, it emits a `doc-audit-needed` reminder whenever a markdown file in `docs/` is written or edited, and the team-lead or user then decides when to run the doc-auditor agent to process pending audits.
 
 ### Skills (Slash Commands)
 

@@ -49,8 +49,8 @@ Alternatively, check `git worktree list` and compare the current directory again
 Record the worktree path and the main repository path:
 
 ```bash
-WORKTREE_PATH=$(pwd)
-MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
+WORKTREE_PATH="$(git rev-parse --show-toplevel)"
+MAIN_REPO="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
 ```
 
 Change to the main repository and remove the worktree:
@@ -62,7 +62,16 @@ git worktree remove "$WORKTREE_PATH"
 
 If `git worktree remove` fails because of uncommitted changes, use `--force` only if the PR was already merged (the changes are safe in main).
 
-## Step 5: Delete local branch
+## Step 5: Switch to main and pull
+
+You must switch off the branch before deleting it. If you're still on the feature branch (non-worktree case), this also moves you to main:
+
+```bash
+git checkout main
+git pull origin main
+```
+
+## Step 6: Delete local branch
 
 The local branch may still exist after the worktree is removed. Delete it gracefully:
 
@@ -71,13 +80,6 @@ git branch -d <branch-name>
 ```
 
 If the branch doesn't exist (already cleaned up), ignore the error and continue.
-
-## Step 6: Update main
-
-```bash
-git checkout main
-git pull origin main
-```
 
 ## Step 7: Report
 
