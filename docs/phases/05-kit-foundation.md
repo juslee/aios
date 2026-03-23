@@ -154,9 +154,9 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 - [ ] In `kernel/src/mm/frame.rs`: import `shared::kits::memory::{FrameAllocator as FrameAllocatorKit, PhysFrame, PoolStats, MemoryError}`
 - [ ] Create `KernelFrameAllocator` unit struct in `kernel/src/mm/frame.rs` that wraps the existing global `FRAME_ALLOCATOR` state
 - [ ] Implement `FrameAllocatorKit` for `KernelFrameAllocator`:
-  - `alloc_frame()` delegates to existing `alloc_frame()` function, wraps result in `PhysFrame`
-  - `free_frame()` delegates to existing `free_frame()` function
-  - `pool_pressure()` delegates to existing `pressure()` function
+  - `alloc_frame()` delegates to existing `alloc_page()` / `alloc_user_page()` / `alloc_dma_page()` (pool-dispatched), wraps result in `PhysFrame`
+  - `free_frame()` delegates to existing `buddy::free_page()` (unsafe, kernel wraps safely)
+  - `pool_pressure()` delegates to existing `FrameAllocator::pressure()` method
   - `pool_stats()` computes free/total from existing pool data
 - [ ] Implement `MemoryPressureMonitor` for `KernelFrameAllocator`:
   - `current_level()` returns worst pressure across all pools
@@ -178,11 +178,11 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 - [ ] In `kernel/src/cap/mod.rs`: import `shared::kits::capability::{CapabilityEnforcer, CapabilityError}`
 - [ ] Create `KernelCapabilitySystem` unit struct in `kernel/src/cap/mod.rs`
 - [ ] Implement `CapabilityEnforcer` for `KernelCapabilitySystem`:
-  - `check()` delegates to existing `capability_check()` function, converts result to `CapabilityError`
-  - `grant()` delegates to existing `capability_grant()` function
-  - `revoke()` delegates to existing `capability_revoke()` function, includes cascade
-  - `attenuate()` delegates to existing `capability_attenuate()` function
-  - `list_active()` delegates to existing `capability_list()` function
+  - `check()` delegates to existing `check_channel_create()` / `check_channel_access()` / `check_shared_memory_create()` / `check_shared_memory_access()` (action-dispatched), converts `i64` result to `CapabilityError`
+  - `grant()` delegates to existing `grant_to_process()` function
+  - `revoke()` delegates to existing `revoke_in_process()` function, includes cascade
+  - `attenuate()` — new implementation: create child token with narrowed capability from parent (not yet in kernel; implement directly in the `impl` block)
+  - `list_active()` — new implementation: return process's capability table slice (not yet in kernel; implement directly by reading `PROCESS_TABLE`)
 - [ ] Ensure `Debug`, `Clone`, `PartialEq`, `Eq` on all new Kit types in `shared/src/kits/`
 - [ ] Add comprehensive host-side tests for all M16 Kit types:
   - `MemoryError` all variants construct correctly
@@ -277,7 +277,8 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 - [ ] Implement `SelectOps` for `KernelIpc`:
   - `select()` delegates to `ipc_select()`
 - [ ] Implement `SharedMemoryOps` for `KernelIpc`:
-  - Delegates to `shmem_create()`, `shmem_map()`, `shmem_unmap()`, `shmem_destroy()`
+  - Delegates to `shared_memory_create()`, `shared_memory_map()`, `shared_memory_unmap()`
+  - `shmem_destroy()` — new implementation: unmap all mappings then release region (no dedicated destroy function exists yet; implement in the `impl` block)
 - [ ] Verify no regressions: all existing IPC self-tests (echo service, select, notifications, shared memory, priority inheritance) still pass
 
 **Key reference:** `kernel/src/ipc/mod.rs`; `kernel/src/ipc/channel.rs`; `kernel/src/ipc/notify.rs`; `kernel/src/ipc/select.rs`; `kernel/src/ipc/shmem.rs`
@@ -355,13 +356,16 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
   - `block_exists()` delegates to `BlockEngine::block_exists()` (or index lookup)
 - [ ] Create `KernelSpaceManager` unit struct in `kernel/src/storage/space.rs`
 - [ ] Implement `SpaceManager` for `KernelSpaceManager`:
-  - Delegates to existing `space_create()`, `space_get()`, `space_list()`, `space_delete()`, `storage_stats()`, `pressure_level()`
+  - Delegates to existing `space_create()`, `space_get()`, `space_list()`, `space_delete()`, `storage_stats()`
+  - `pressure_level()` — new implementation: derive `PressureLevel` from `StorageBudget` free/total ratio (thresholds in `shared/src/storage.rs`)
 - [ ] Create `KernelObjectStore` unit struct in `kernel/src/storage/object_store.rs`
 - [ ] Implement `ObjectStore` for `KernelObjectStore`:
-  - Delegates to existing `object_create()`, `object_read()`, `object_delete()`, `object_list()`
+  - Delegates to existing `object_create()`, `object_read()`, `object_delete()`
+  - `list_objects()` — new implementation: iterate `ObjectIndex` entries filtered by `SpaceId` (no dedicated list function exists yet)
 - [ ] Create `KernelVersionStore` unit struct in `kernel/src/storage/version_store.rs`
 - [ ] Implement `VersionStoreOps` for `KernelVersionStore`:
-  - Delegates to existing `version_create()`, `version_list()`, `version_head()`, `version_rollback()`
+  - Delegates to existing `version_create()`, `version_list()`, `version_rollback()`
+  - `get_head()` — new implementation: look up `version_head` in `ObjectIndex` entry (no dedicated function exists yet; read from `BlockEngine`'s object index)
 - [ ] Verify no regressions: all existing storage self-tests still pass on QEMU
 
 **Acceptance:** `just check` zero warnings. `just run` — storage self-tests produce identical UART output.
