@@ -38,3 +38,5 @@ All subsequent work (edits, commits, pushes) happens inside the worktree.
 10. Commit and push the generated phase doc
 11. Run `/audit-loop` — auto-detects docs-only mode, loops until 0 issues
 12. Create PR for review
+13. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
+14. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
