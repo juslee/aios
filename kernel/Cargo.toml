@@ -10,7 +10,7 @@ fdt-parser = "0.5"
 sha2 = { version = "0.10", default-features = false }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex"] }
-lz4_flex = { version = "0.11", default-features = false, features = ["safe-encode", "safe-decode"] }
+lz4_flex = { version = "0.13", default-features = false, features = ["safe-encode", "safe-decode"] }
 
 [features]
 default = ["kernel-metrics", "storage-tests"]
