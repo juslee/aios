@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # Only run in remote/web environments
-if [ "$CLAUDE_CODE_REMOTE" != "true" ] && [ -z "${FORCE_SETUP:-}" ]; then
+if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ] && [ -z "${FORCE_SETUP:-}" ]; then
     echo "[setup] Local environment detected, skipping. Set FORCE_SETUP=1 to override."
     exit 0
 fi
