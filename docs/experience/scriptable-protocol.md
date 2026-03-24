@@ -212,7 +212,7 @@ The ADR recommendation is clear: AIRS uses Scriptable for **discovery and compos
 
 **Exception: simple reads** — `GET` and `COUNT` on non-sensitive properties bypass the Tool Manager. AIRS issues them directly when building context (e.g., reading agent state before deciding how to route a user request). Direct reads are logged to the audit ring but do not go through the 7-stage pipeline.
 
-```
+```text
 User request → AIRS
     │
     ├── Discovery: DESCRIBE all agents → AgentScriptableMap cache

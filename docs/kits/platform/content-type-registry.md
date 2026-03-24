@@ -134,7 +134,7 @@ pub trait ContentTypeRegistry {
 
 When the system needs to open a Space object, it calls `ContentTypeRegistry::resolve` with the object's content type and a `ResolutionContext` carrying the active user preferences. The registry applies a fixed priority chain:
 
-```
+```text
 1. User override         — explicit preference stored via Preference service
 2. Preferred handler     — agent that claimed preferred status at registration
 3. Supporting handler    — first entry in supporting_handlers list
@@ -157,7 +157,7 @@ pub struct ResolutionContext {
 }
 
 fn resolve_handler(
-    registry: &ContentTypeRegistry,
+    entries: &BTreeMap<String, ContentTypeEntry>,
     mime_type: &str,
     ctx: &ResolutionContext,
 ) -> Option<AgentId> {
@@ -166,7 +166,7 @@ fn resolve_handler(
         return Some(*agent_id);
     }
 
-    let entry = registry.get_entry(mime_type)?;
+    let entry = entries.get(mime_type)?;
 
     // Step 2: registered preferred handler.
     if let Some(handler) = entry.preferred_handler {
@@ -218,11 +218,12 @@ The `ContentType` enum in `shared/src/storage.rs` represents the types the kerne
 pub fn sniff_content_type(
     bytes: &[u8],
     filename_hint: Option<&str>,
-    registry: &ContentTypeRegistry,
+    entries: &BTreeMap<String, ContentTypeEntry>,
 ) -> String {
     // Phase 1: byte patterns from registered sniffing rules.
-    let mut candidates: Vec<(u8, &str)> = registry
-        .all_sniffing_rules()
+    let mut candidates: Vec<(u8, &str)> = entries
+        .iter()
+        .flat_map(|(mime, e)| e.sniffing_rules.iter().map(move |r| (mime.as_str(), r)))
         .filter_map(|(mime, rule)| {
             let end = rule.offset as usize + rule.pattern.len();
             if bytes.len() >= end
@@ -265,7 +266,7 @@ The **contextual suggestion** (step 5) is advisory: it is only consulted when no
 
 The registry itself exposes the `Scriptable` trait (from the Scriptable Protocol), making it introspectable by AIRS through standard verbs:
 
-```
+```text
 GET PreferredHandler of ContentType "application/pdf"  → AgentId
 GET SupportedTypes of Agent "code-editor"             → Vec<String>
 SET PreferredHandler of ContentType "text/plain" to "my-editor"

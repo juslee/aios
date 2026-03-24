@@ -227,7 +227,7 @@ flowchart LR
 | --- | --- | --- |
 | §1 Core Insight | This file | [device-model.md](./device-model.md) §1, [airs.md](../intelligence/airs.md) §1, [scheduler.md](./scheduler.md) §1 |
 | §2 Architecture Overview | This file | [device-model.md](./device-model.md) §2, [subsystem-framework.md](../platform/subsystem-framework.md) §3, [airs/inference.md](../intelligence/airs/inference.md) §3.2 |
-| §2.3 Resource Manager | This file | [thermal.md](../platform/thermal.md) §6, [ADR: Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md) |
+| §2.3 Resource Manager | This file | [thermal/scheduling.md](../platform/thermal/scheduling.md) §6, [ADR: Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md) |
 | §2.4 Bridge Stack | This file | [ADR: Custom Core](../knowledge/decisions/2026-03-16-jl-custom-core-principle.md), [gpu/rendering.md](../platform/gpu/rendering.md) §9 |
 | §3 ComputeDevice Trait | [classification.md](./compute/classification.md) | [device-model/discovery.md](./device-model/discovery.md) §6, [hal.md](./hal.md) §4.4 |
 | §4 ComputeCapabilityDescriptor | [classification.md](./compute/classification.md) | [airs/inference.md](../intelligence/airs/inference.md) §3.2, [airs/ai-native.md](../intelligence/airs/ai-native.md) §13.1 |
