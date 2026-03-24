@@ -63,9 +63,9 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 
 | Sub-phase | Steps | Dependency | Observable Result |
 |---|---|---|---|
-| 13a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 11 | Agent actions verified against declared intent; behavioral baselines established |
-| **13b** | **Adversarial Defense + hint screening (Layer 5)** | **Phase 14a** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
-| 13c | Tool Manager + Agent Lifecycle | Phase 14b | Full agent framework operational with adversarial protection |
+| 14a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 11 | Agent actions verified against declared intent; behavioral baselines established |
+| **14b** | **Adversarial Defense + hint screening (Layer 5)** | **Phase 14a** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
+| 14c | Tool Manager + Agent Lifecycle | Phase 14b | Full agent framework operational with adversarial protection |
 
 ### Phase 14b Milestones
 

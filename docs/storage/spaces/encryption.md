@@ -9,7 +9,7 @@ Part of: [spaces.md](../spaces.md) — Space Storage System
 
 > **Implementation status:** Phase 18a (not active in Phase 4a-4l). This section documents the design for per-space encryption. Phase 4 uses device-level encryption only (§4.10). Per-space encryption for Personal/Collaborative/Untrusted zones will be added in Phase 18a, providing cross-zone isolation within the running system.
 >
-> **Security note for Phases 4-16:** During Phases 4-16, all spaces rely solely on device-level encryption (§4.10). This means an attacker who obtains the device key (e.g., via physical access after boot, when the TPM/TrustZone-sealed key is loaded into memory) can read plaintext from ALL spaces — Personal, Collaborative, and Untrusted zones are not individually encrypted. The 8-layer security model's Layer 6 (Cryptographic Enforcement) operates at device granularity only until Phase 18a adds per-space keys. The other 7 layers (capability checks, intent verification, behavioral monitoring, etc.) still provide defense-in-depth during this period.
+> **Security note for Phases 4-17:** During Phases 4-17, all spaces rely solely on device-level encryption (§4.10). This means an attacker who obtains the device key (e.g., via physical access after boot, when the TPM/TrustZone-sealed key is loaded into memory) can read plaintext from ALL spaces — Personal, Collaborative, and Untrusted zones are not individually encrypted. The 8-layer security model's Layer 6 (Cryptographic Enforcement) operates at device granularity only until Phase 18a adds per-space keys. The other 7 layers (capability checks, intent verification, behavioral monitoring, etc.) still provide defense-in-depth during this period.
 
 ### 6.1 Key Management
 

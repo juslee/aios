@@ -1,7 +1,7 @@
 # AIOS Multi-Device & Enterprise Architecture
 
 **Audience:** All developers (kernel, platform, application)
-**Phase:** 37 (Tier 7, weeks 36–40)
+**Phase:** 38 (Tier 7, weeks 36–40)
 **Prerequisites:** Phase 8 (Networking), Phase 24 (Full NTM), Phase 35 (Secure Boot & Update System)
 **Related:** [identity.md](../experience/identity.md), [sync.md](../storage/spaces/sync.md), [networking.md](./networking.md), [model.md](../security/model.md)
 

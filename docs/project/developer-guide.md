@@ -2208,10 +2208,10 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 
 ```bash
 # Implement Phase 6 from its phase doc
-/implement-phase 5
+/implement-phase 6
 
 # Generate the phase doc for Phase 7
-/generate-phase-doc 6
+/generate-phase-doc 7
 
 # After creating a PR, wait for and address reviewer comments
 /review-pr-comments

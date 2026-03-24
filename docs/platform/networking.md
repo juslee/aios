@@ -154,19 +154,19 @@ Each sub-phase delivers usable functionality independently. Basic networking is 
 
 ```text
 Phase 8 — Basic Networking:
-  ├── 7a: smoltcp + VirtIO-Net driver         → raw TCP/IP works
-  ├── 7b: rustls + DNS/DHCP                   → TLS and name resolution work
-  └── 7c: POSIX socket emulation              → BSD tools with networking (curl, ssh)
+  ├── 8a: smoltcp + VirtIO-Net driver         → raw TCP/IP works
+  ├── 8b: rustls + DNS/DHCP                   → TLS and name resolution work
+  └── 8c: POSIX socket emulation              → BSD tools with networking (curl, ssh)
 
 Phase 24 — Full Network Translation Module:
-  ├── 23a: Connection Manager + Protocol      → HTTP/2, WebSocket work
-  ├── 23b: Space Resolver + Capability Gate   → space operations over network
-  ├── 23c: Shadow Engine                      → offline support
-  ├── 23d: Resilience + Bandwidth Scheduler   → production-grade
-  └── 23e: AIOS Peer Protocol                 → AIOS-to-AIOS communication
+  ├── 24a: Connection Manager + Protocol      → HTTP/2, WebSocket work
+  ├── 24b: Space Resolver + Capability Gate   → space operations over network
+  ├── 24c: Shadow Engine                      → offline support
+  ├── 24d: Resilience + Bandwidth Scheduler   → production-grade
+  └── 24e: AIOS Peer Protocol                 → AIOS-to-AIOS communication
 ```
 
-After Phase 8c, a developer can `curl` from the AIOS shell. After Phase 24b, agents can reach remote spaces. After 23c, the system works offline. Each layer is testable independently.
+After Phase 8c, a developer can `curl` from the AIOS shell. After Phase 24b, agents can reach remote spaces. After 24c, the system works offline. Each layer is testable independently.
 
 -----
 
