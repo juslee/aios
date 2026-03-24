@@ -178,6 +178,34 @@ The SDK provides typed query builders that construct composed queries. Internall
 
 Traditional index structures (B-trees, bloom filters, hash maps) treat data distribution as unknown. Learned indexes replace these structures with ML models trained on the actual data distribution, achieving significant space and latency improvements:
 
+### 7.7 Reactive Queries (Live Subscriptions)
+
+Inspired by BeOS's live query system ([ADR: BeOS Lessons](../../knowledge/decisions/2026-03-23-jl-beos-haiku-redox-lessons.md) — Lesson 2), the query engine supports **reactive queries** — queries that remain open and push notifications when results change.
+
+```rust
+/// A reactive query that notifies subscribers when matching objects change.
+pub struct ReactiveQuery {
+    /// The predicate that defines what this query matches.
+    predicate: QueryPredicate,
+    /// Subscriber channels (IPC) to notify on match changes.
+    subscribers: Vec<ChannelId>,
+    /// Current result set (object IDs matching the predicate).
+    result_set: Vec<ObjectId>,
+}
+```
+
+**Trigger mechanism:** When a version is created (`version_create`) or an object is modified, the query engine evaluates all active reactive queries against the changed object. If an object newly matches (enters result set) or no longer matches (leaves result set), subscribers receive an `ObjectEntered` or `ObjectLeft` notification via IPC.
+
+**Use cases:**
+
+- **Context Engine feeds:** The Context Engine subscribes to reactive queries like "all objects in the current space modified in the last hour" — results update automatically as the user works, without polling.
+- **Attention Manager:** Subscribes to "objects with priority > high" — new urgent items trigger attention notifications immediately.
+- **Agent workspace views:** An agent showing "recent documents" subscribes to a reactive query rather than polling on a timer.
+
+**Performance:** Reactive queries are evaluated incrementally — only changed objects are tested against predicates, not the full index. The evaluation is a separate subscription type from the version notification system (which notifies on all changes). Reactive queries filter to only relevant changes for each subscriber.
+
+-----
+
 **Bourbon (OSDI '20)** demonstrated that replacing bloom filters in LSM-trees with learned models reduces false positive rates by 30-80% at the same memory budget, or achieves the same false positive rate with 40-60% less memory. For AIOS's Block Engine, this means fewer unnecessary disk reads during LSM-tree lookups.
 
 **LearnedKV** extends learned indexes to the full key-value lookup path, using lightweight neural networks to predict which SSTable and offset contains a given key. On workloads with predictable access patterns (common in content-addressed storage where hashes are uniformly distributed), learned indexes can reduce read amplification by 2-3x compared to traditional bloom filters.

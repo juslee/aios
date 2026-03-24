@@ -8,7 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [compositor.md](../platform/compositor.md) — Compositor and display, [airs.md](../intelligence/airs.md) — AI Runtime Service, [spaces.md](../storage/spaces.md) — Space Storage, [flow.md](../storage/flow.md) — Flow data transfer, [conversation-bar.md](../intelligence/conversation-manager/conversation-bar.md) — Conversation Bar technical spec, [context-engine.md](../intelligence/context-engine.md) — Context inference, [attention.md](../intelligence/attention.md) — Attention management, [preferences.md](../intelligence/preferences.md) — Preference system, [task-manager.md](../intelligence/task-manager.md) — Task lifecycle, [agents.md](../applications/agents.md) — Agent runtime, [inspector.md](../applications/inspector.md) — Security dashboard, [terminal.md](../applications/terminal.md) — Terminal emulator, [ui-toolkit.md](../applications/ui-toolkit.md) — iced UI toolkit, [accessibility.md](./accessibility.md) — Accessibility architecture, [identity.md](./identity.md) — Identity and onboarding, [model.md](../security/model.md) — Security model, [privacy.md](../security/privacy.md) — Privacy architecture, [multi-device/experience.md](../platform/multi-device/experience.md) — Multi-device UX
+**Related:** [compositor.md](../platform/compositor.md) — Compositor and display, [airs.md](../intelligence/airs.md) — AI Runtime Service, [spaces.md](../storage/spaces.md) — Space Storage, [flow.md](../storage/flow.md) — Flow data transfer, [conversation-bar.md](../intelligence/conversation-manager/conversation-bar.md) — Conversation Bar technical spec, [context-engine.md](../intelligence/context-engine.md) — Context inference, [attention.md](../intelligence/attention.md) — Attention management, [preferences.md](../intelligence/preferences.md) — Preference system, [task-manager.md](../intelligence/task-manager.md) — Task lifecycle, [agents.md](../applications/agents.md) — Agent runtime, [inspector.md](../applications/inspector.md) — Security dashboard, [terminal.md](../applications/terminal.md) — Terminal emulator, [ui-toolkit.md](../applications/ui-toolkit.md) — Interface Kit (AIOS-native UI), [accessibility.md](./accessibility.md) — Accessibility architecture, [identity.md](./identity.md) — Identity and onboarding, [model.md](../security/model.md) — Security model, [privacy.md](../security/privacy.md) — Privacy architecture, [multi-device/experience.md](../platform/multi-device/experience.md) — Multi-device UX
 
 -----
 
@@ -47,6 +47,27 @@ Every desktop operating system presents the same model: a desktop with icons, a 
 AIOS doesn't have that world. AIOS has spaces instead of files, agents instead of applications, Flow instead of clipboard, context instead of explicit modes, and an AI runtime that understands what the user is doing. The GUI must reflect this fundamentally different model.
 
 **The AIOS experience is not a reskinned Linux desktop.** There is no desktop with scattered icons. There is no Start menu with a list of installed programs. There is no file manager with a tree of directories. There is no notification center that dumps every alert into a chronological list. Every one of these is replaced by something designed for how AIOS actually works.
+
+-----
+
+## 1.1 Three Interaction Layers
+
+The AIOS experience is not a single fixed UX model. It coexists in three layers, each adding intelligence on top of the previous. Users experience whichever layer their hardware and AIRS state supports. See [ADR: Three Interaction Layers](../knowledge/decisions/2026-03-16-jl-three-interaction-layers.md).
+
+| Layer | Name | AIRS Required | What Changes |
+| --- | --- | --- | --- |
+| **Layer 1** | Classic Desktop | No | Traditional windows, taskbar, mouse/keyboard. The Five Surfaces (§2) render as conventional UI. No intelligence — pure compositor + input. |
+| **Layer 2** | Smart Desktop | Basic AIRS (Context Engine) | Windows + AIOS intelligence: information gravity, context-aware layout, Flow integration, attention-dimming, semantic workspace switching. The Five Surfaces gain adaptive behavior. |
+| **Layer 3** | Intelligence Surface | Full AIRS stack | No fixed windows. AIRS composes a generative UI per context — temporal screen, fluid layout, proactive content. The Five Surfaces dissolve into continuous intelligence. |
+
+**Key properties:**
+
+- **Layer 1 is always available.** If AIRS fails, crashes, or hasn't loaded yet, the user has a fully functional desktop. Layer 1 is the minimum viable compositor (Phase 7).
+- **Layers coexist via weighted blending.** A user in Layer 2 might have some windows in fixed positions (Layer 1 behavior) and others in context-aware layout (Layer 2 behavior). The transition is continuous, not a mode switch.
+- **Linux apps participate in Layer 1 fully, Layer 2 partially.** A Firefox window gets positioned by the context-aware layout engine in Layer 2, but its internal content is opaque to AIRS. AIOS-native apps can expose semantic hints that make Layer 2/3 more effective.
+- **Layer 3 is the long-term vision** (Phase 30+). Layers 1 and 2 are the near-term deliverables.
+
+The Five Surfaces described below are the building blocks used by all three layers. Their behavior adapts based on which layer is active.
 
 -----
 
