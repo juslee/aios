@@ -19,7 +19,7 @@ AIOS takes a different approach. The GPU driver runs as a **privileged userspace
 
 This design is inspired by Fuchsia's Magma (userspace GPU drivers with VMO-based buffer sharing), seL4's capability-gated device frames, and Linux DRM/KMS's atomic modesetting — but adapted for AIOS's capability-based security model and AI-first architecture.
 
-The key constraint: **software rendering must always work**. Every AIOS platform can fall back to CPU-based rendering when GPU hardware is unavailable or untrusted. GPU acceleration is an optimization, not a requirement.
+The key constraint: **every target platform has a GPU**. QEMU provides VirtIO-GPU, Pi 4/5 provides VC4/V3D, Apple Silicon provides AGX. Software-only rendering was removed from the architecture — all target hardware has GPU capability, so the "software fallback" complexity is eliminated. See [ADR: Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md).
 
 **Layering: GPU driver → Compute Kit → wgpu bridge.** The GPU drivers described in this document are low-level hardware backends. Compute Kit ([compute.md](../kernel/compute.md)) provides the AIOS-native abstraction above: Tier 1 (`GpuSurface` trait) for framebuffer/scanout, Tier 2 (`GpuRender` trait) for shader submission. wgpu and Vulkan are optional **bridges above Compute Kit** — they translate standard graphics APIs to Kit primitives, giving ported apps (via Linux compat or cross-platform toolkits) access to GPU features through familiar interfaces. AIOS-native apps use Compute Kit directly.
 
@@ -118,8 +118,8 @@ flowchart TD
 Phase 6a:  VirtIO-GPU 2D driver (userspace)        → page-flip display output replaces GOP framebuffer
 Phase 6b:  Font rendering (fontdue + glyph atlas)   → text on screen via GPU buffer
 Phase 6c:  wgpu GPU Service + surface composition   → multiple surfaces composited with GPU acceleration
-Phase 6d:  Software renderer fallback               → CPU-only path for all platforms
-Phase 6e:  Display mode setting + multi-monitor      → EDID parsing, resolution control
+Phase 6d:  Display mode setting + EDID parsing        → resolution control, multi-monitor detection
+Phase 6e:  Compute Kit Tier 1 integration             → GpuSurface trait wired to VirtIO-GPU scanout
 Phase 7+:  Compositor integration (see compositor.md §12)
 Phase 30+: VirtIO-GPU 3D (virgl), Vulkan (Venus)
 Phase 37:  Wayland compatibility layer
@@ -129,9 +129,9 @@ Phase 40+: Bare-metal GPU drivers (VC4/V3D, AGX)
 **QEMU-first development strategy:**
 
 1. VirtIO-GPU 2D on QEMU (paravirtualized, simple protocol)
-2. Software renderer as fallback (works everywhere)
-3. VirtIO-GPU 3D for GPU acceleration on QEMU
-4. Native GPU drivers only when targeting real hardware
+2. Compute Kit Tier 1 (`GpuSurface`) wired to VirtIO-GPU scanout
+3. VirtIO-GPU 3D for Tier 2 (`GpuRender`) GPU acceleration on QEMU
+4. Native GPU drivers (VC4/V3D, AGX) when targeting real hardware
 
 **Dependency chain:**
 
@@ -146,7 +146,7 @@ Phase 6 (This doc)           → Phase 7 (Compositor) → Phase 8 (Input) → Ph
 
 ## 20. Design Principles
 
-1. **Software always works.** Every rendering path has a CPU-only fallback. GPU acceleration is layered on top, never required.
+1. **Every platform has a GPU.** All AIOS target hardware provides GPU capability (VirtIO-GPU on QEMU, VC4/V3D on Pi, AGX on Apple Silicon). Software-only rendering was eliminated — GPU is the baseline, not an optimization.
 
 2. **Userspace drivers, kernel mediation.** GPU drivers run as privileged userspace processes. The kernel provides only MMIO capability grants, IRQ notification routing, and SMMU configuration. A crashing GPU driver does not crash the kernel.
 
@@ -156,7 +156,7 @@ Phase 6 (This doc)           → Phase 7 (Compositor) → Phase 8 (Input) → Ph
 
 5. **Atomic state commits.** Display state changes (resolution, plane bindings, gamma) are committed atomically — all changes apply or none do. Modeled after Linux DRM atomic modesetting.
 
-6. **Progressive enhancement.** Start with the simplest working path and add complexity incrementally: GOP framebuffer → VirtIO-GPU 2D → VirtIO-GPU 3D → native GPU drivers → Vulkan.
+6. **Progressive enhancement.** Start with the simplest working path and add complexity incrementally: GOP framebuffer → VirtIO-GPU 2D (Tier 1) → VirtIO-GPU 3D (Tier 2) → native GPU drivers → Vulkan bridge.
 
 7. **Platform abstraction at the HAL.** The `GpuDevice` trait in `hal.md` §4.4 abstracts all platform differences. Adding a new GPU platform means implementing one trait — the GPU Service, Compositor, and all agents are unchanged.
 
