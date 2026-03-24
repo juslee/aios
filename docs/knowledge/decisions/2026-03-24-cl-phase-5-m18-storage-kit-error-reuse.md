@@ -1,7 +1,7 @@
 ---
 author: claude
 date: 2026-03-24
-tags: [storage, kits]
+tags: [storage]
 status: final
 ---
 

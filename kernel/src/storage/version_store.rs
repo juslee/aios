@@ -220,7 +220,7 @@ pub fn version_rollback(
         obj_mut.content_size = target_version.content_size;
         obj_mut.modified_at = now;
 
-        Ok(target_version.content_hash)
+        Ok(version_hash)
     })?
 }
 
@@ -311,7 +311,10 @@ impl storage_kit::VersionStoreOps for KernelVersionStore {
         data: &[u8],
         message: &str,
     ) -> Result<ContentHash, StorageError> {
-        object_update(object_id, data, b"kernel", message.as_bytes())
+        // object_update returns the content hash, but the trait contract
+        // returns the logical version hash (composable with get_head/rollback).
+        object_update(object_id, data, b"kernel", message.as_bytes())?;
+        self.get_head(object_id)
     }
 
     fn list_versions(&self, object_id: &ObjectId) -> Vec<Version> {

@@ -2,8 +2,6 @@
 //!
 //! Architecture reference: `docs/kits/platform/storage.md`
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 // Re-export key storage types so consumers can import via the Kit module.
