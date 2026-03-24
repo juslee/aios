@@ -123,39 +123,39 @@ Phase 4: Block Storage & Object Store (Weeks 17-21)
   - Kernel audit log flush to space storage
   - Phase 1 boot sequence operational
 
-Phase 5-6: GPU, Display, Compositor (Weeks 22-30)
+Phase 6-7: GPU, Display, Compositor (Weeks 22-30)
   - VirtIO-GPU driver
   - Framebuffer handoff
   - Compositor
   - Phase 2 boot sequence operational
 
-Phase 7: Input, Terminal, Networking (Weeks 31-34)
+Phase 8: Input, Terminal, Networking (Weeks 31-34)
   - VirtIO-Input, keyboard/mouse
   - Network (smoltcp, VirtIO-Net)
   - Terminal emulator
   - Phase 2 fully operational
 
-Phase 9: AIRS Inference Engine (Weeks 35-39)
+Phase 10: AIRS Inference Engine (Weeks 35-39)
   - GGML integration, model loading
   - Phase 3 boot sequence operational
 
-(Phases 10-20 and 22-33 are defined in development-plan.md)
+(Phases 11-21 and 23-34 are defined in development-plan.md)
 
-Phase 21: Performance & Optimization (Weeks 64-66)
+Phase 22: Performance & Optimization (Weeks 64-66)
   - Boot time profiling and optimization
   - Achieve < 3 second boot target
   - Recovery mode implementation
   - Safe mode
   - Rollback mechanism
 
-Phase 34: Secure Boot (Weeks 113-116)
+Phase 35: Secure Boot (Weeks 113-116)
   - Verified boot chain
   - A/B partition scheme
   - Boot counter in UEFI variables
   - Automatic rollback on failure
 ```
 
-The boot sequence is built incrementally. After Phase 1, the kernel boots and shows pixels. After Phase 3, it launches the Service Manager. After Phase 4, storage works. After Phase 6, there's a desktop. Each phase is a demonstrable milestone — the boot sequence is never "all or nothing."
+The boot sequence is built incrementally. After Phase 1, the kernel boots and shows pixels. After Phase 3, it launches the Service Manager. After Phase 4, storage works. After Phase 7, there's a desktop. Each phase is a demonstrable milestone — the boot sequence is never "all or nothing."
 
 -----
 
@@ -179,7 +179,7 @@ Concepts referenced in boot.md that do not yet have full documentation elsewhere
 
 8. **Audio subsystem architecture** — **RESOLVED.** [audio.md](../../platform/audio.md) now documents: PCM mixing engine, per-platform device drivers (VirtIO-Sound, I2S/PWM, HDMI audio), RT scheduling integration, A/V sync with compositor, and latency requirements.
 
-9. **Measured boot and attestation** — Implementation Order lists "Phase 34: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
+9. **Measured boot and attestation** — Implementation Order lists "Phase 35: Secure Boot" but boot.md does not describe *what* gets measured or *where* measurements are stored. On Pi there is no discrete TPM — measurements would need to use a software TPM (fTPM in ARM TrustZone) or the UEFI variable store. A future `docs/security/secure-boot.md` should cover: firmware measurement, kernel hash verification, initramfs integrity, and remote attestation for enterprise deployment.
 
 10. **SMMU driver internals** — **RESOLVED.** hal.md §15 now documents: SMMUv3 stream table architecture, command/event queues, per-device TLB invalidation, and BCM2712 platform-specific quirks.
 
