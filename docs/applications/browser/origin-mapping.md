@@ -145,7 +145,7 @@ flowchart TD
 
 **Phase 4: Active use.** Each time a capability is exercised (network request, storage write, GPU draw call), the kernel increments the token's `usage_count` and updates `last_used`. This usage data is available to the user through the audit space.
 
-**Phase 5: Revocation on tab close.** When the user closes a tab, Browser Shell destroys the Tab Agent. The kernel walks the agent's CapabilityTable and revokes every token, including any child tokens created through attenuation. Cascade revocation ensures no orphaned capabilities survive the tab's lifecycle. Session-scoped capabilities (e.g., `sessionStorage` access) are destroyed; persistent grants (e.g., "always allow camera for meet.google.com") are preserved in the permissions sub-space for future sessions.
+**Phase 6: Revocation on tab close.** When the user closes a tab, Browser Shell destroys the Tab Agent. The kernel walks the agent's CapabilityTable and revokes every token, including any child tokens created through attenuation. Cascade revocation ensures no orphaned capabilities survive the tab's lifecycle. Session-scoped capabilities (e.g., `sessionStorage` access) are destroyed; persistent grants (e.g., "always allow camera for meet.google.com") are preserved in the permissions sub-space for future sessions.
 
 ### 6.4 User Overrides
 

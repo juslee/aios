@@ -321,7 +321,7 @@ AIOS provides three font rendering tiers, each active at different system phases
 
 **Tier 2: Early userspace (fontdue + ttf-parser).** Active once the GPU Service starts but before the full text layout engine is available. `ttf-parser` (no_std + alloc) parses TrueType/OpenType font files to extract glyph outlines and metrics. `fontdue` (no_std + alloc) rasterizes glyph outlines into bitmaps at requested sizes. This tier supports proportional fonts, multiple sizes, and basic kerning — sufficient for window titles, labels, and simple text display.
 
-**Tier 3: Full text layout (cosmic-text).** Active when the Experience Layer (Phase 6+) is running. `cosmic-text` provides the complete text layout pipeline: bidirectional text (Arabic, Hebrew), complex script shaping (Devanagari, Thai, CJK), line breaking (Unicode UAX #14), font fallback chains, and rich text (mixed fonts/sizes within a paragraph). This is the tier used by the browser, document viewer, and all user-facing text rendering.
+**Tier 3: Full text layout (cosmic-text).** Active when the Experience Layer (Phase 7+) is running. `cosmic-text` provides the complete text layout pipeline: bidirectional text (Arabic, Hebrew), complex script shaping (Devanagari, Thai, CJK), line breaking (Unicode UAX #14), font fallback chains, and rich text (mixed fonts/sizes within a paragraph). This is the tier used by the browser, document viewer, and all user-facing text rendering.
 
 | Tier | Library | Allocator | Shaping | Scripts | Phase |
 | --- | --- | --- | --- | --- | --- |
@@ -593,7 +593,7 @@ When GPU memory usage approaches pool limits, the GPU Service implements a multi
 
 Evicted buffers are moved to system RAM (User pool). The GPU Service retains metadata and remaps the buffer into GPU-accessible memory when it becomes visible again. Agents are not notified of eviction — the migration is transparent.
 
-**AIRS integration (Phase 14+).** AIRS provides predictive hints about which surfaces the user will interact with next. The GPU Service pre-allocates buffers for predicted surfaces and avoids evicting high-importance surfaces, reducing visible impact of memory pressure.
+**AIRS integration (Phase 15+).** AIRS provides predictive hints about which surfaces the user will interact with next. The GPU Service pre-allocates buffers for predicted surfaces and avoids evicting high-importance surfaces, reducing visible impact of memory pressure.
 
 -----
 

@@ -138,7 +138,7 @@ This separation ensures the query engine never blocks on AIRS availability. Full
 Development plan phases (see [development-plan.md](../project/development-plan.md)):
 
 ```text
-Dev Phase 10a: Space Indexer core
+Dev Phase 11a: Space Indexer core
   - SpaceIndexer struct, IndexQueue, IndexJob, IndexTrigger
   - Content extraction pipeline (all ExtractionStrategy variants)
   - Full-text index: inverted index, BM25 scoring, synchronous updates
@@ -149,33 +149,33 @@ Dev Phase 10a: Space Indexer core
   - SemanticMetadata storage on promoted objects
   - Index persistence (WAL + periodic serialization)
 
-Dev Phase 10a+: Search integration
+Dev Phase 11a+: Search integration
   - SpaceQuery::Semantic handling in query engine
   - On-demand embedding (poor full-text match → real-time embed)
   - Score fusion: RRF implementation
   - Composed queries (Filter + Semantic, TextSearch + Semantic)
   - Graceful degradation (AIRS unavailable → full-text only)
 
-Dev Phase 10b: Entity & relationship extraction
+Dev Phase 11b: Entity & relationship extraction
   - Entity extraction (tiered: LLM / companion / rule-based)
   - Relationship graph: storage, edge creation, traversal
   - Cross-object discovery (embedding similarity, entity co-occurrence)
   - Summary and tag generation
   - Graph traversal queries (SpaceQuery::Traverse)
 
-Dev Phase 12a: Full-text index hardening
+Dev Phase 13a: Full-text index hardening
   - Phrase and proximity queries
   - CJK bigram tokenization
   - Index compaction and tombstone cleanup
   - Bloom filters for negative lookups
 
-Dev Phase 12b: Embedding index optimization
+Dev Phase 13b: Embedding index optimization
   - Vector quantization (SQ8 and/or RaBitQ)
   - In-algorithm filtered search
   - HNSW eviction and regeneration
   - Batch re-indexing (model update, periodic sweep)
 
-Dev Phase 21+: Advanced intelligence
+Dev Phase 22+: Advanced intelligence
   - Learned score fusion (linear combination with adaptive alpha)
   - Adaptive indexing priority (search hit tracking)
   - Cross-space semantic clustering

@@ -717,7 +717,7 @@ pub enum SpaceRequest {
     SnapshotRollback { space: SpaceId, snapshot: SnapshotId },
     /// Diff between two versions of an object (spaces.md §5.3)
     Diff { space: SpaceId, object: ObjectId, v1: Hash, v2: Hash },
-    /// Space Sync operations (spaces.md §8) — Phase 9c
+    /// Space Sync operations (spaces.md §8) — Phase 10c
     SyncStart { space: SpaceId, remote: RemoteSpaceId, policy: SyncPolicy },
     SyncStatus { space: SpaceId },
     SyncCancel { space: SpaceId },
@@ -1157,20 +1157,20 @@ Phase 3f:  IPC performance optimization
            Direct thread switch (already designed)
            → sub-5μs round-trip, no priority inversion
 
-Phase 9:   AI-native IPC (requires AIRS)
+Phase 10:   AI-native IPC (requires AIRS)
            Context-adaptive IPC scheduling (§13.4)
            Inference-aware batching (§13.3)
            Behavioral gating integration (model.md §10.3)
            Provenance-carrying IPC (§13.5)
            → IPC that understands agents
 
-Phase 13:  Agent IPC extensions (requires Agent SDK)
+Phase 14:  Agent IPC extensions (requires Agent SDK)
            Intent-aware IPC routing (§13.1)
            Predictive channel warming (§13.2)
            Semantic capability activation (§13.6)
            → IPC that anticipates agents
 
-Phase 22:  POSIX syscall translation layer + shim caching
+Phase 23:  POSIX syscall translation layer + shim caching
            → BSD tools work fast
 ```
 
@@ -1239,7 +1239,7 @@ Full FIDL-style typed marshaling (generated code, wire format validation) can be
 
 4. **Write coalescing.** Buffer small `write()` calls and flush to the Space Service on `fsync()`, `close()`, or when the buffer is full. This is standard stdio behavior but should be in the POSIX shim for all file descriptors, not just buffered streams.
 
-These optimizations are invisible to POSIX callers and maintain correctness (cache invalidation via notification channels when objects change). Implementation belongs in Phase 22 alongside the POSIX translation layer.
+These optimizations are invisible to POSIX callers and maintain correctness (cache invalidation via notification channels when objects change). Implementation belongs in Phase 23 alongside the POSIX translation layer.
 
 #### Gap 7: No control-plane / data-plane separation pattern
 

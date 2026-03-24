@@ -458,7 +458,7 @@ pub const VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB: u32 = 0x000A;
 
 **RESOURCE_CREATE_BLOB** is the preferred resource type for 3D mode. Unlike `RESOURCE_CREATE_2D` (which copies data via `TRANSFER_TO_HOST_2D`), blob resources share memory directly between guest and host via a single DMA mapping — zero-copy. The host maps the guest's physical pages into its GPU address space, enabling the guest to render directly into memory the host GPU can scan out.
 
-3D mode is future work (Phase 29+). The 2D command set provides all functionality needed for initial display output and framebuffer-based compositing.
+3D mode is future work (Phase 30+). The 2D command set provides all functionality needed for initial display output and framebuffer-based compositing.
 
 ### 3.7 Driver Architecture
 

@@ -130,6 +130,6 @@ Network connections are unreliable. The sync protocol handles failures gracefull
 
 **Encryption for synced spaces:** Personal spaces use per-device space keys — each device derives its own key from the user's passphrase (same passphrase, same derivation, same key). Collaborative spaces use a shared key distributed during the pairing ceremony (encrypted with the receiving device's public key). Untrusted spaces (web storage) are not synced.
 
-**Sync uses the Network Translation Module (NTM).** The NTM ([networking.md](../../platform/networking.md)) provides encrypted point-to-point channels between devices. Space Sync sends structured messages to the NTM, which handles TLS/Noise encryption, routing, and retry logic. Space Sync code never deals with plaintext on the wire. Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). Sync IPC messages will be defined in ipc.md (Phase 12c, not yet specified).
+**Sync uses the Network Translation Module (NTM).** The NTM ([networking.md](../../platform/networking.md)) provides encrypted point-to-point channels between devices. Space Sync sends structured messages to the NTM, which handles TLS/Noise encryption, routing, and retry logic. Space Sync code never deals with plaintext on the wire. Remote spaces are accessed via space operations (`space::remote("device-b/shared/project")`). Sync IPC messages will be defined in ipc.md (Phase 13c, not yet specified).
 
 -----

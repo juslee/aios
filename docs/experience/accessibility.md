@@ -222,23 +222,23 @@ The following sections have moved to sub-documents. These stubs preserve cross-r
 
 ## 12. Implementation Order
 
-Accessibility is not a single phase. It is woven through the development plan from Phase 6 (compositor) through Phase 33 (polish). The principle is: build the infrastructure early, add features incrementally, polish last.
+Accessibility is not a single phase. It is woven through the development plan from Phase 7 (compositor) through Phase 34 (polish). The principle is: build the infrastructure early, add features incrementally, polish last.
 
 | Phase | Milestone | Deliverable | Dependencies |
 |---|---|---|---|
-| **Phase 6** | Compositor Foundation | Accessibility tree data structure (AccessNode, AccessRole), high contrast shader, large text support, reduced motion flag, focus indicator rendering, keyboard focus management (Tab/Enter/Escape/Arrows) | None — first accessibility infrastructure |
-| **Phase 9** | AIRS Integration | Image description API (for later use by accessibility) | Phase 6 tree structure |
-| **Phase 12** | Experience Layer | Accessibility options in first-boot flow, BootAccessibilityConfig persistence, Conversation Bar: "turn on screen reader" works | Phase 6, Phase 9 |
-| **Phase 24** | USB Stack | USB HID Braille display detection and driver, USB HID switch device detection | Phase 12 (config persistence) |
-| **Phase 29** | UI Toolkit (iced) | All widgets emit AccessNode automatically, AccessRole for every standard widget, accessible label/description API, agent audit (warn on missing labels), keyboard navigation (Tab order, arrow key nav), accessibility tree from iced hierarchy, cross-platform a11y (AT-SPI2, NSAccessibility), focus management in iced backend | Phase 6, Phase 24 |
-| **Phase 31** | Audio Subsystem | eSpeak-NG integration (IPC to GPL process), TTS audio output pipeline (priority mixing), earcon playback, voice activity detection | Phase 29 (tree generation) |
-| **Phase 33** | Accessibility Polish | Full screen reader with text extraction, Braille display (Grade 1/2/Computer), switch scanning (single/two/row-column), magnification (full-screen/lens/split), voice control (keyword + NLU), neural TTS (AIRS), AI image description (AIRS), context-aware adaptation (AIRS), grid overlay for voice mouse, WCAG AA audit, SDK accessibility linter, accessibility testing suite | All previous phases |
+| **Phase 7** | Compositor Foundation | Accessibility tree data structure (AccessNode, AccessRole), high contrast shader, large text support, reduced motion flag, focus indicator rendering, keyboard focus management (Tab/Enter/Escape/Arrows) | None — first accessibility infrastructure |
+| **Phase 10** | AIRS Integration | Image description API (for later use by accessibility) | Phase 7 tree structure |
+| **Phase 13** | Experience Layer | Accessibility options in first-boot flow, BootAccessibilityConfig persistence, Conversation Bar: "turn on screen reader" works | Phase 7, Phase 10 |
+| **Phase 25** | USB Stack | USB HID Braille display detection and driver, USB HID switch device detection | Phase 13 (config persistence) |
+| **Phase 30** | UI Toolkit (iced) | All widgets emit AccessNode automatically, AccessRole for every standard widget, accessible label/description API, agent audit (warn on missing labels), keyboard navigation (Tab order, arrow key nav), accessibility tree from iced hierarchy, cross-platform a11y (AT-SPI2, NSAccessibility), focus management in iced backend | Phase 7, Phase 25 |
+| **Phase 32** | Audio Subsystem | eSpeak-NG integration (IPC to GPL process), TTS audio output pipeline (priority mixing), earcon playback, voice activity detection | Phase 30 (tree generation) |
+| **Phase 34** | Accessibility Polish | Full screen reader with text extraction, Braille display (Grade 1/2/Computer), switch scanning (single/two/row-column), magnification (full-screen/lens/split), voice control (keyword + NLU), neural TTS (AIRS), AI image description (AIRS), context-aware adaptation (AIRS), grid overlay for voice mouse, WCAG AA audit, SDK accessibility linter, accessibility testing suite | All previous phases |
 
-**Why accessibility infrastructure starts in Phase 6:** Retrofitting accessibility into a finished compositor is much harder than building it in from the start. The accessibility tree, focus management, and keyboard navigation are structural — they must be designed into the widget hierarchy and compositor protocol, not bolted on afterward. By Phase 33, the infrastructure exists; the work is features, polish, and compliance testing.
+**Why accessibility infrastructure starts in Phase 7:** Retrofitting accessibility into a finished compositor is much harder than building it in from the start. The accessibility tree, focus management, and keyboard navigation are structural — they must be designed into the widget hierarchy and compositor protocol, not bolted on afterward. By Phase 34, the infrastructure exists; the work is features, polish, and compliance testing.
 
 ```mermaid
 flowchart LR
-    P6["Phase 6\nCompositor"] --> P9["Phase 9\nAIRS"] --> P12["Phase 12\nExperience"] --> P24["Phase 24\nUSB"] --> P29["Phase 29\nUI Toolkit"] --> P31["Phase 31\nAudio"] --> P33["Phase 33\nPolish"]
+    P6["Phase 7\nCompositor"] --> P9["Phase 10\nAIRS"] --> P12["Phase 13\nExperience"] --> P24["Phase 25\nUSB"] --> P29["Phase 30\nUI Toolkit"] --> P31["Phase 32\nAudio"] --> P33["Phase 34\nPolish"]
 ```
 
 -----

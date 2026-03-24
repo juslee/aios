@@ -502,7 +502,7 @@ gantt
 | 23 | 4 | Full AIOS Peer Protocol, Shadow Engine, Connection Manager |
 | 37 | All | Multi-device mesh, cross-device delegation, intelligence continuity, federated learning |
 
-**Phase 37 is where full decentralisation activates** — all five pillars are present and composing. But each pillar delivers value independently before Phase 37. Content-addressed storage (Phase 4) works on a single device. Local inference (Phase 10) works without sync. The Peer Protocol (Phase 23) works without full multi-device management.
+**Phase 38 is where full decentralisation activates** — all five pillars are present and composing. But each pillar delivers value independently before Phase 38. Content-addressed storage (Phase 4) works on a single device. Local inference (Phase 11) works without sync. The Peer Protocol (Phase 24) works without full multi-device management.
 
 See [development-plan.md §8](../project/development-plan.md) for the full phase table.
 

@@ -382,7 +382,7 @@ Trade-offs:
     - Cannot use smoltcp (needs custom zero-copy stack)
 ```
 
-This is Phase 23+ territory and only relevant for specialized workloads. The standard smoltcp path handles >95% of use cases.
+This is Phase 24+ territory and only relevant for specialized workloads. The standard smoltcp path handles >95% of use cases.
 
 -----
 

@@ -450,7 +450,7 @@ pub enum AudioError {
 | Raspberry Pi 5 | HDMI/I2S/USB | USB audio | Software DSP | Software only | No onboard mic |
 | Apple Silicon | System audio | Built-in mic | Hardware + SW | Hardware spatial | Full experience |
 
-**Implementation phase:** Phase 8+ (session management, mixer, VirtIO-Sound driver, DSP
+**Implementation phase:** Phase 9+ (session management, mixer, VirtIO-Sound driver, DSP
 pipeline). Hardware-specific drivers arrive with their respective BSP phases.
 
 ---

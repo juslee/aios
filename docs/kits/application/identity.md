@@ -397,7 +397,7 @@ pub enum IdentityError {
 | Apple Silicon | Secure Enclave | Face ID / Touch ID | Hardware-backed | Full hardware security |
 
 **Implementation phase:** Phase 3+ (basic identity and credential store). Full identity with
-device pairing and WebAuthn in Phase 15+. PQC key migration in Phase 35+.
+device pairing and WebAuthn in Phase 16+. PQC key migration in Phase 36+.
 
 ---
 

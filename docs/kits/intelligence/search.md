@@ -434,7 +434,7 @@ if capabilities.has_embeddings {
 }
 ```
 
-**Implementation phase:** Phase 10+. Search Kit depends on [AIRS Kit](airs.md) for embedding
+**Implementation phase:** Phase 11+. Search Kit depends on [AIRS Kit](airs.md) for embedding
 generation, [Storage Kit](../platform/storage.md) for Space object access, and
 [Compute Kit](../kernel/compute.md) for hardware-accelerated embedding.
 

@@ -243,7 +243,7 @@ flowchart TD
 **Verification status in BootInfo:**
 
 ```rust
-/// Proposed addition to BootInfo (shared/src/boot.rs) — implemented in Phase 34
+/// Proposed addition to BootInfo (shared/src/boot.rs) — implemented in Phase 35
 pub struct VerificationStatus {
     /// Was Secure Boot enabled in firmware?
     secure_boot_enabled: bool,
@@ -335,15 +335,15 @@ Each target platform has unique firmware behavior that affects secure boot imple
 
 ## §5 TrustZone & Secure Element Integration
 
-ARM TrustZone provides a hardware-isolated secure world for key storage, cryptographic operations, and anti-rollback counters. Phase 34 implements an SMC-based interface to ARM Trusted Firmware (BL31); Phase 39+ provides a migration path to OP-TEE Trusted Applications for complex operations.
+ARM TrustZone provides a hardware-isolated secure world for key storage, cryptographic operations, and anti-rollback counters. Phase 35 implements an SMC-based interface to ARM Trusted Firmware (BL31); Phase 40+ provides a migration path to OP-TEE Trusted Applications for complex operations.
 
 ### §5.1 Key Migration
 
-Before Phase 34, all cryptographic keys reside in kernel memory (pinned, no-dump pages). This protects against software-only attackers but not physical access (cold boot, DMA attacks). Phase 34 migrates critical keys to the TrustZone secure world.
+Before Phase 35, all cryptographic keys reside in kernel memory (pinned, no-dump pages). This protects against software-only attackers but not physical access (cold boot, DMA attacks). Phase 35 migrates critical keys to the TrustZone secure world.
 
 **Keys migrated to secure world:**
 
-| Key | Pre-Phase 34 Location | Phase 34 Location | Purpose |
+| Key | Pre-Phase 35 Location | Phase 35 Location | Purpose |
 |---|---|---|---|
 | Device encryption key | Kernel memory | TrustZone secure SRAM | Block encryption (AES-256-GCM) |
 | Master key | Kernel memory | TrustZone secure SRAM | Space key derivation |
@@ -358,9 +358,9 @@ Before Phase 34, all cryptographic keys reside in kernel memory (pinned, no-dump
 | Agent session keys | Per-session, ephemeral; SMC latency unacceptable for IPC-speed operations |
 | AIRS model signing key (verify) | Public key only; no secrecy requirement |
 
-**Migration process (Phase 34 M74):**
+**Migration process (Phase 35 M74):**
 
-1. At first boot after Phase 34 update, kernel detects TrustZone availability via SMCCC (SMC Calling Convention) probing
+1. At first boot after Phase 35 update, kernel detects TrustZone availability via SMCCC (SMC Calling Convention) probing
 2. If TrustZone available: kernel derives device key from passphrase (Argon2id), sends it to secure world via SMC, requests sealing
 3. TrustZone seals the key to the current boot state (PCR values / platform measurements)
 4. On subsequent boots: kernel requests unsealing via SMC; TrustZone verifies boot state matches before releasing key
@@ -466,7 +466,7 @@ pub trait MonotonicCounter {
 
 The kernel delegates sensitive cryptographic operations to TrustZone rather than holding key material in normal-world memory.
 
-**SMC interface (Phase 34):**
+**SMC interface (Phase 35):**
 
 ```rust
 /// SMC function IDs for AIOS TrustZone services
@@ -602,13 +602,13 @@ fn detect_secure_element() -> SecureElementType {
 
 -----
 
-## §5.7 OP-TEE Migration Path (Phase 39+)
+## §5.7 OP-TEE Migration Path (Phase 40+)
 
-Phase 34 implements a minimal SMC-based interface to ARM Trusted Firmware (BL31). For Phase 39 (hardware certification) and beyond, a migration path to OP-TEE Trusted Applications (TAs) enables more complex secure-world operations.
+Phase 35 implements a minimal SMC-based interface to ARM Trusted Firmware (BL31). For Phase 40 (hardware certification) and beyond, a migration path to OP-TEE Trusted Applications (TAs) enables more complex secure-world operations.
 
 **Why migrate to OP-TEE:**
 
-| Capability | BL31 SMC (Phase 34) | OP-TEE TA (Phase 39+) |
+| Capability | BL31 SMC (Phase 35) | OP-TEE TA (Phase 40+) |
 |---|---|---|
 | Complexity | ~500 lines of BL31 service code | Full trusted OS with TA framework |
 | Dynamic TAs | No — all services built into BL31 | Yes — load TAs on demand |
@@ -620,9 +620,9 @@ Phase 34 implements a minimal SMC-based interface to ARM Trusted Firmware (BL31)
 
 **Migration strategy:**
 
-1. **Phase 34:** SMC interface to BL31 (seal, unseal, counter, sign, verify, encrypt, decrypt)
-2. **Phase 39:** Deploy OP-TEE alongside BL31; wrap existing SMC services as OP-TEE TAs
-3. **Phase 39+:** New features implemented as OP-TEE TAs:
+1. **Phase 35:** SMC interface to BL31 (seal, unseal, counter, sign, verify, encrypt, decrypt)
+2. **Phase 40:** Deploy OP-TEE alongside BL31; wrap existing SMC services as OP-TEE TAs
+3. **Phase 40+:** New features implemented as OP-TEE TAs:
    - Secure biometric template storage
    - DRM key management
    - Secure payment processing
@@ -633,9 +633,9 @@ Phase 34 implements a minimal SMC-based interface to ARM Trusted Firmware (BL31)
 ```rust
 /// Kernel abstraction over secure element backend
 pub enum SecureBackend {
-    /// Direct SMC to BL31 (Phase 34)
+    /// Direct SMC to BL31 (Phase 35)
     Bl31Smc(TrustZoneService),
-    /// OP-TEE session (Phase 39+)
+    /// OP-TEE session (Phase 40+)
     OpTee(OpTeeSession),
     /// TPM 2.0 via MMIO/I2C
     Tpm2(Tpm2Device),

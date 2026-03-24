@@ -665,7 +665,7 @@ pub fn resolve_capability_set(
         }
     }
 
-    // Phase 5: Remove denied capabilities (deny-always-wins, except OS Base)
+    // Phase 6: Remove denied capabilities (deny-always-wins, except OS Base)
     grants.retain(|grant| {
         // OS Base capabilities are foundational and cannot be denied by any higher layer.
         // They can only be attenuated (Phase 4 above) — never fully removed.
@@ -675,7 +675,7 @@ pub fn resolve_capability_set(
         !denials.iter().any(|d| d.pattern.matches(&grant.capability))
     });
 
-    // Phase 6: Deduplicate
+    // Phase 7: Deduplicate
     let deduped = deduplicate_grants(grants);
 
     Ok(ResolvedCapabilitySet {
@@ -764,6 +764,6 @@ This follows the attenuation semantics defined in §3.3 — attenuation is monot
 
 User Override profiles are not individually signed with a separate cryptographic key; their authenticity and integrity are enforced by the local OS user account boundary and the secure storage semantics of the user profile store.
 
-Profiles are space objects — content-addressed, versioned, and distributed through the same update channel as OS updates (Phase 34). Runtime and subsystem profiles can be updated independently of the OS version.
+Profiles are space objects — content-addressed, versioned, and distributed through the same update channel as OS updates (Phase 35). Runtime and subsystem profiles can be updated independently of the OS version.
 
 -----

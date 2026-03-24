@@ -609,9 +609,9 @@ pub enum MediaError {
 | PlayReady SL3000 | Platform-dependent | Requires hardware security module |
 | FairPlay | Apple Silicon only | Native integration via Secure Enclave |
 
-**Implementation phase:** Phase 9+ (codec framework, container engine, playback pipeline,
-A/V sync). Streaming protocols arrive in Phase 10+. WebRTC arrives in Phase 11+. DRM
-integration requires Phase 12+ (security infrastructure). AI features require Phase 14+
+**Implementation phase:** Phase 10+ (codec framework, container engine, playback pipeline,
+A/V sync). Streaming protocols arrive in Phase 11+. WebRTC arrives in Phase 12+. DRM
+integration requires Phase 13+ (security infrastructure). AI features require Phase 15+
 (AIRS integration).
 
 ---

@@ -499,9 +499,9 @@ pub enum InputError {
 | Raspberry Pi 5 | Yes | N/A | Yes | Yes (USB) | Yes (USB/BT) | Full input stack |
 | Apple Silicon | Yes | N/A | Yes | Yes (built-in) | Yes (USB/BT) | Full experience |
 
-**Implementation phase:** Phase 6+ (event model, keyboard/pointer drivers, focus routing,
-gesture recognition). Bluetooth HID arrives with Phase 10+ (wireless). AI features
-require Phase 14+ (AIRS integration).
+**Implementation phase:** Phase 7+ (event model, keyboard/pointer drivers, focus routing,
+gesture recognition). Bluetooth HID arrives with Phase 11+ (wireless). AI features
+require Phase 15+ (AIRS integration).
 
 ---
 

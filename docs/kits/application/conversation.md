@@ -421,9 +421,9 @@ function as a conversation engine without inference.
 | Raspberry Pi 5 | 3-7B quantized | Standard (8K tokens) | Full | 8GB RAM enables larger models |
 | Apple Silicon | 7-70B models | Large (32K+ tokens) | Full | Neural Engine + unified memory |
 
-**Implementation phase:** Phase 14+. Conversation Kit is one of the first intelligence-layer
-features, built on top of AIRS Kit's inference engine (Phase 5+), Search Kit (Phase 12+),
-and Context Kit (Phase 14+).
+**Implementation phase:** Phase 15+. Conversation Kit is one of the first intelligence-layer
+features, built on top of AIRS Kit's inference engine (Phase 6+), Search Kit (Phase 13+),
+and Context Kit (Phase 15+).
 
 ---
 

@@ -181,7 +181,7 @@ system/                      ← Core zone, kernel-managed
   credentials/               ← Credential store (NTM)
   agents/                    ← Installed agent manifests
   context/                   ← Context Engine learned patterns
-  services/                  ← Service binaries (Phase 3-5, loaded from storage)
+  services/                  ← Service binaries (Phase 3-6, loaded from storage)
   session/                   ← Semantic snapshots, boot traces, proactive wake data
   identity/                  ← Identity keypairs and authentication state
   flow/                      ← Flow transfer history and provenance (flow.md §3.1)

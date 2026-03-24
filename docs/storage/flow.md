@@ -59,7 +59,7 @@ replicate, merge, resolve`"]
 (DataChannels, FlowPipes)`"]
 ```
 
-The Flow Service runs as a system service registered at `sys.flow`. The core service lands in dev Phase 11 (Tasks, Flow & Attention), with compositor drag/drop protocol scaffolded in Phase 6 and AIRS transform scaffolding in Phase 8 (see §13 for full implementation order). At runtime, it starts during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
+The Flow Service runs as a system service registered at `sys.flow`. The core service lands in dev Phase 12 (Tasks, Flow & Attention), with compositor drag/drop protocol scaffolded in Phase 7 and AIRS transform scaffolding in Phase 9 (see §13 for full implementation order). At runtime, it starts during boot Phase 4 (user services), after Space Storage (boot Phase 1) and IPC (boot Phase 2) are available. AIRS-powered transforms become available when AIRS completes boot Phase 3 initialization. Agents connect via IPC channels with `FlowRead` and/or `FlowWrite` capabilities.
 
 The six internal components:
 
@@ -93,23 +93,23 @@ This document is the hub for the Flow system. Detailed content has been split in
 
 ## 13. Implementation Order
 
-Phases reference the canonical project-wide phase numbers from [development-plan.md](../project/development-plan.md). The dependency chain for Flow is: Phase 6 (compositor scaffolds drag/drop protocol) → Phase 9 (AIRS scaffolds transform engine) → Phase 15 (Flow service lands, connects to compositor and AIRS) → later phases extend.
+Phases reference the canonical project-wide phase numbers from [development-plan.md](../project/development-plan.md). The dependency chain for Flow is: Phase 7 (compositor scaffolds drag/drop protocol) → Phase 10 (AIRS scaffolds transform engine) → Phase 16 (Flow service lands, connects to compositor and AIRS) → later phases extend.
 
 ```text
-Phase 6:   Compositor drag/drop protocol scaffold
+Phase 7:   Compositor drag/drop protocol scaffold
              DragFlowRequest/DragFlowResponse message types defined
              Drag preview generation and visual feedback framework
              Drop target type query API (stubbed — real Flow negotiation
-             connects in Phase 15 when the Flow Service exists)
+             connects in Phase 16 when the Flow Service exists)
 
-Phase 9:   AIRS transform scaffold
+Phase 10:   AIRS transform scaffold
              Transform Engine data structures and ConversionGraph
              AIRS-powered transforms registered: summarize, transcribe,
              translate, embed
              TransformRegistry with system + AIRS providers
              Conversion graph shortest-path selection algorithm
 
-Phase 15:  Flow Service (core phase — most Flow work lands here)
+Phase 16:  Flow Service (core phase — most Flow work lands here)
              Flow Service process, sys.flow IPC channel, boot Phase 4
              FlowWrite/FlowRead capability enforcement
              Push/pull with full TypedContent and type negotiation
@@ -129,18 +129,18 @@ Phase 15:  Flow Service (core phase — most Flow work lands here)
              Content screening for sensitive data (§11.2)
              Rate limiting and per-agent transfer quotas (§11.3)
 
-Phase 22:  POSIX clipboard bridge
+Phase 23:  POSIX clipboard bridge
              pbcopy/pbpaste equivalents
              X11 selection protocol translation
              Wayland clipboard protocol translation
              POSIX tools see a standard clipboard, Flow sees typed transfers
 
-Phase 30:  Browser Flow integration
+Phase 31:  Browser Flow integration
              aios.flow() Web API for PWAs
              Browser tab ↔ native agent transfers
              Cross-tab Flow (tab agents share clipboard through Flow)
 
-Phase 37:  Multi-device sync
+Phase 38:  Multi-device sync
              Cross-device transfer via AIOS Peer Protocol
              History merge (CRDT-style, grow-only set)
              Conflict resolution (latest-write-wins for active transfers)

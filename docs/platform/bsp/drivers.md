@@ -98,7 +98,7 @@ ANS specifics — the Apple NVMe Storage Controller uses a proprietary command p
 | Rendering API | wgpu (Vulkan subset) | Vulkan 1.0 | Vulkan 1.2 | Metal-compatible |
 | IOMMU | n/a | None (IOMMU bypass) | None | DART |
 
-On QEMU the framebuffer is set up by the UEFI stub via GOP before `ExitBootServices`. The kernel uses the `BootInfo.framebuffer` field directly; no GPU driver is needed for basic display. The VirtIO-GPU driver (Phase 6+) enables accelerated rendering.
+On QEMU the framebuffer is set up by the UEFI stub via GOP before `ExitBootServices`. The kernel uses the `BootInfo.framebuffer` field directly; no GPU driver is needed for basic display. The VirtIO-GPU driver (Phase 7+) enables accelerated rendering.
 
 On Pi 4/5 the VideoCore GPU is controlled by the firmware mailbox (§10.2). The `vc4_hdmi.rs` driver handles display timing and HDMI output; `v3d.rs` handles the 3D pipeline exposed via a DRM/KMS-style interface.
 

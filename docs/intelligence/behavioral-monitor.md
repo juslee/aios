@@ -223,17 +223,17 @@ The Behavioral Monitor spans multiple development phases, reflecting its depende
 ### Dependencies
 
 ```text
-Phase 9 (AIRS Inference Engine) ──► Phase 10 (Behavioral Monitor core)
-Phase 10 ──► Phase 13 (Agent profiling)
-Phase 10 ──► Phase 17 (Security integration)
-Phase 9 + Phase 41 ──► Tier 2 intelligence
+Phase 10 (AIRS Inference Engine) ──► Phase 11 (Behavioral Monitor core)
+Phase 11 ──► Phase 14 (Agent profiling)
+Phase 11 ──► Phase 18 (Security integration)
+Phase 10 + Phase 42 ──► Tier 2 intelligence
 ```
 
 ### What Ships When
 
-- **After Phase 10**: Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Audit trail exists. Users see anomalies in Inspector.
-- **After Phase 17**: Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof.
-- **After Phase 41**: Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
+- **After Phase 11**: Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Audit trail exists. Users see anomalies in Inspector.
+- **After Phase 18**: Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof.
+- **After Phase 42**: Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
 
 -----
 

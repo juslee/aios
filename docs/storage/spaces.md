@@ -32,7 +32,7 @@ similar_to() traverse() subscribe() import() export()
 
     subgraph QE["Query Engine"]
         Q1["`SpaceQuery dispatch: Filter, TextSearch, Semantic, Traverse
-Full-text index (inverted, BM25) -- available from Phase 12a
+Full-text index (inverted, BM25) -- available from Phase 13a
 Embedding index (HNSW) -- requires AIRS
 Relationship graph (adjacency lists, bidirectional)
 Temporal index (B-tree on timestamps)`"]
@@ -114,7 +114,7 @@ This document is the hub for the Space Storage system. Detailed content has been
 
 ## 12. Implementation Order
 
-Phase numbering follows the AIOS-wide phase plan ([development-plan.md](../project/development-plan.md)). Phases 1-3 cover kernel initialization and basic services. Phase 4 is the storage system (this document). Phases 5-8 cover other system layers (Phase 5: GPU & Display, Phase 6: Window Compositor & Shell, Phase 7: Input & Terminal, Phase 8: Basic Networking — see development-plan.md for details). "Single-device operation" refers to the Phase 4a-4l sub-phases below. Multi-device features begin in Phase 12c.
+Phase numbering follows the AIOS-wide phase plan ([development-plan.md](../project/development-plan.md)). Phases 1-3 cover kernel initialization and basic services. Phase 4 is the storage system (this document). Phases 5-8 cover other system layers (Phase 6: GPU & Display, Phase 7: Window Compositor & Shell, Phase 8: Input & Terminal, Phase 9: Basic Networking — see development-plan.md for details). "Single-device operation" refers to the Phase 4a-4l sub-phases below. Multi-device features begin in Phase 13c.
 
 ```text
 Phase 4a:  Block engine + WAL + LSM-tree index      → raw persistent storage with flash-friendly index
@@ -131,16 +131,16 @@ Phase 4i:  Flash-aware zone allocation (hot/warm/cold) → write-time zone place
 Phase 4j:  Storage budget + quotas + pressure levels  → bounded storage per category
 Phase 4k:  Adaptive version retention                 → pressure-responsive history pruning
 Phase 4l:  Write amplification tracking (§4.8)        → continuous WAF monitoring + alerts
-Phase 12a: Full-text index + text search              → keyword search
-Phase 12b: Embedding index + selective embedding      → semantic search (promoted objects only)
-Phase 12c: Space Sync protocol                        → cross-device sync
-Phase 17a: Per-space encryption layer + key management → encrypted Personal/Collaborative/Untrusted zones
-Phase 21a: Tiered storage (hot/warm/cold)             → background TierManager daemon + automatic tier migration + recompression
-Phase 21b: Audit retention + chain compaction         → bounded audit storage growth
-Phase 21c: Model disk eviction + streaming download   → reclaim model storage under pressure
-Phase 21d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
-Phase 21e: Sub-block deduplication (§4.9)             → Rabin rolling hash for near-duplicate savings
-Phase 34a: Secure Boot integration + hardware key binding → TPM/TrustZone-sealed device keys
+Phase 13a: Full-text index + text search              → keyword search
+Phase 13b: Embedding index + selective embedding      → semantic search (promoted objects only)
+Phase 13c: Space Sync protocol                        → cross-device sync
+Phase 18a: Per-space encryption layer + key management → encrypted Personal/Collaborative/Untrusted zones
+Phase 22a: Tiered storage (hot/warm/cold)             → background TierManager daemon + automatic tier migration + recompression
+Phase 22b: Audit retention + chain compaction         → bounded audit storage growth
+Phase 22c: Model disk eviction + streaming download   → reclaim model storage under pressure
+Phase 22d: Storage monitoring dashboard (Inspector)   → user-visible storage analytics
+Phase 22e: Sub-block deduplication (§4.9)             → Rabin rolling hash for near-duplicate savings
+Phase 35a: Secure Boot integration + hardware key binding → TPM/TrustZone-sealed device keys
            + session persistence hardening            → hardware-bound device key auto-unlock
 ```
 

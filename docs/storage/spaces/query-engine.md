@@ -148,7 +148,7 @@ Queries compose by intersecting result sets. Each sub-query runs against its own
 | Query Type | Backing Index | Always Available? | Expected Latency | Notes |
 |---|---|---|---|---|
 | `Filter` | Object metadata (in-memory hash maps) | Yes | < 1 ms | Field equality, range checks |
-| `TextSearch` | Inverted index (BM25) | Yes (Phase 12a+) | < 50 ms | Full-text with ranking |
+| `TextSearch` | Inverted index (BM25) | Yes (Phase 13a+) | < 50 ms | Full-text with ranking |
 | `Semantic` | HNSW embedding index | Requires AIRS | < 500 ms | Nearest-neighbor on embeddings |
 | `Traverse` | Relationship graph (adjacency lists) | Yes | < 10 ms/hop | Bidirectional graph walk |
 
@@ -188,4 +188,4 @@ Traditional index structures (B-trees, bloom filters, hash maps) treat data dist
 - **Full-text posting lists** → learned term-to-posting models — moderate complexity, moderate win
 - **HNSW parameters** → auto-tuned via workload profiling — already adaptive by design
 
-Integration path: AIRS (Phase 9+) provides the ML runtime. A background "Index Tuner" agent could profile query patterns and train lightweight models to replace or augment traditional index structures. This aligns with AIOS's AI-first philosophy — the storage system improves itself based on usage patterns.
+Integration path: AIRS (Phase 10+) provides the ML runtime. A background "Index Tuner" agent could profile query patterns and train lightweight models to replace or augment traditional index structures. This aligns with AIOS's AI-first philosophy — the storage system improves itself based on usage patterns.

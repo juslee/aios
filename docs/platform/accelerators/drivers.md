@@ -188,7 +188,7 @@ Driver Registration Flow:
 
 ## 4. VirtIO-GPU 3D Compute Driver (QEMU)
 
-VirtIO-GPU with the VIRGL feature bit provides a paravirtualized 3D rendering and compute surface on QEMU. This is AIOS's primary accelerator development target through Phase 22. The driver reuses the existing VirtIO-GPU display infrastructure ([gpu/drivers.md](../gpu/drivers.md) §3) and adds compute shader support.
+VirtIO-GPU with the VIRGL feature bit provides a paravirtualized 3D rendering and compute surface on QEMU. This is AIOS's primary accelerator development target through Phase 23. The driver reuses the existing VirtIO-GPU display infrastructure ([gpu/drivers.md](../gpu/drivers.md) §3) and adds compute shader support.
 
 ### 4.1 Architecture
 

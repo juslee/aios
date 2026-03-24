@@ -1,7 +1,7 @@
 # AIOS Secure Boot & Update System
 
 **Audience:** Kernel developers, platform engineers, application developers
-**Phase:** 34 (Secure Boot & Update System) — depends on Phase 27 (Power Management)
+**Phase:** 34 (Secure Boot & Update System) — depends on Phase 28 (Power Management)
 **Related:** [model.md](./model.md) — Security model and capability system,
 [model/hardening.md](./model/hardening.md) — Cryptographic foundations and key hierarchy,
 [boot.md](../kernel/boot.md) — Boot sequence and firmware handoff,
@@ -100,7 +100,7 @@ flowchart LR
 | 13 | Agent manifest signing; AIRS model integrity (SHA-256) | Agent framework, AIRS |
 | 17 | Formal verification of capability system | Security model |
 
-### Phase 34: Secure Boot & Update System (Weeks 93–96)
+### Phase 35: Secure Boot & Update System (Weeks 93–96)
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -108,7 +108,7 @@ flowchart LR
 | M104 | TrustZone + A/B updates + rollback protection | Week 94–95 | Keys sealed in secure world; monotonic counter prevents rollback; delta updates work |
 | M105 | Update channels + AI-native intelligence | Week 95–96 | Separate kernel/agent/model update channels; AIRS-aware scheduling; boot anomaly detection |
 
-### Post-Phase 34
+### Post-Phase 35
 
 | Phase | Enhancement |
 |---|---|

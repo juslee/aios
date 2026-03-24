@@ -414,10 +414,10 @@ Max objects writable, auto-snapshot before bulk ops.*`"]
 
 | Feature | Purpose | Phase |
 |---|---|---|
-| PAC (Pointer Authentication) | Sign return addresses, mitigate ROP | Phase 2 (kernel), Phase 21 (enforce) |
-| BTI (Branch Target Identification) | Mitigate JOP attacks | Phase 2 (kernel), Phase 21 (enforce) |
-| MTE (Memory Tagging Extension) | Hardware use-after-free detection | Phase 21 |
-| TrustZone (EL3) | Isolated secure world for key storage | Phase 39 (Secure Boot) |
+| PAC (Pointer Authentication) | Sign return addresses, mitigate ROP | Phase 2 (kernel), Phase 22 (enforce) |
+| BTI (Branch Target Identification) | Mitigate JOP attacks | Phase 2 (kernel), Phase 22 (enforce) |
+| MTE (Memory Tagging Extension) | Hardware use-after-free detection | Phase 22 |
+| TrustZone (EL3) | Isolated secure world for key storage | Phase 40 (Secure Boot) |
 | TTBR0/TTBR1 separation | User/kernel address space isolation | Phase 2 |
 | W^X enforcement | Prevent code injection | Phase 2 |
 | KASLR | Randomize kernel base address | Phase 2 |
@@ -556,9 +556,9 @@ The SDK provides inference, storage, security, networking, and context as system
 | Stage | Target | Purpose |
 |---|---|---|
 | Phase 0–27 | QEMU aarch64 (HVF on macOS) | All development and testing |
-| Phase 28–33 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
-| Phase 34–38 | QEMU + Raspberry Pi | Rich experience development on both targets |
-| Phase 39–44 | VM images (UTM/QEMU) | Low-barrier adoption path |
+| Phase 29–33 | Raspberry Pi 4/5 | First real hardware validation (Tier 5 milestone) |
+| Phase 35–38 | QEMU + Raspberry Pi | Rich experience development on both targets |
+| Phase 40–44 | VM images (UTM/QEMU) | Low-barrier adoption path |
 | Post-MVP | Pine64, Framework Laptop | Open-hardware partners |
 | Maturity | Own hardware | Only if platform achieves critical mass |
 

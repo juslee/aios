@@ -431,7 +431,7 @@ println!("Active profile: {}", PowerKit::active_profile().name());
 println!("Power state: {:?}", PowerKit::power_state().current());
 ```
 
-**Implementation phase:** Phase 27+. Power Kit depends on [Memory Kit](../kernel/memory.md)
+**Implementation phase:** Phase 28+. Power Kit depends on [Memory Kit](../kernel/memory.md)
 and [Capability Kit](../kernel/capability.md). It is consumed by virtually all other Kits
 for power-aware behavior.
 

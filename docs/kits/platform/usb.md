@@ -416,7 +416,7 @@ if UsbKit::is_available() {
 }
 ```
 
-**Implementation phase:** Phase 8+. USB Kit depends on [Memory Kit](../kernel/memory.md)
+**Implementation phase:** Phase 9+. USB Kit depends on [Memory Kit](../kernel/memory.md)
 (DMA buffer allocation) and [Capability Kit](../kernel/capability.md) (device access gating).
 
 ---

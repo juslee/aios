@@ -26,7 +26,7 @@ Tools that require no custom infrastructure and integrate directly into the exis
 
 **Kani** (AWS) proves absence of undefined behavior via bit-precise model checking. Unlike fuzzing, which finds bugs, Kani proves that specific properties hold for all possible inputs within a bounded state space. It integrates with Bolero for harness reuse — the same test harness can run as a fuzz target and a Kani proof.
 
-### 5.2 Tier 2: Phase 5+ Adoption
+### 5.2 Tier 2: Phase 6+ Adoption
 
 Tools that require moderate infrastructure (modified QEMU builds, hardware features, custom instrumentation).
 
@@ -43,7 +43,7 @@ Tools that require moderate infrastructure (modified QEMU builds, hardware featu
 
 **FourFuzz** (EASE 2025) selectively instruments only functions containing or reaching `unsafe` code, reducing instrumentation overhead to ~20% of functions while focusing coverage feedback on the most critical paths. This is ideal for AIOS, where ~90% of kernel code is safe Rust and the critical bugs live in the ~10% of `unsafe` blocks handling MMIO, page tables, and context switching.
 
-### 5.3 Tier 3: Phase 13+ Custom Infrastructure
+### 5.3 Tier 3: Phase 14+ Custom Infrastructure
 
 Tools that require significant custom development or specialized hardware.
 

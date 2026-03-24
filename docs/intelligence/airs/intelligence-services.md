@@ -581,7 +581,7 @@ pub struct SecurityAnalysis {
     analyzed_at: Timestamp,
     model: ModelId,
 
-    // === New fields (Phase 41) ===
+    // === New fields (Phase 42) ===
     /// Capabilities the code uses but the manifest does not declare
     capabilities_missing: Vec<CapabilitySuggestion>,
     /// Suggested capability profiles matching this agent's needs

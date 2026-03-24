@@ -131,13 +131,13 @@ The compute abstraction is built incrementally, layered on top of the device mod
 
 ```mermaid
 flowchart LR
-    P5["Phase 5\nGPU display\n(no compute)"]
-    P9["Phase 9\nAIRS\nComputeScheduler"]
-    P19["Phase 19\nComputeDevice trait\nComputeRegistry"]
-    P28["Phase 28\nThermal coupling\ncompute budgets"]
-    P20["Phase 20\nGPU compute\n(VirtIO-GPU 3D)"]
-    P39["Phase 39\nPi 5 VC VII\nApple ANE"]
-    P41["Phase 41\nAIRS intelligent\nplacement"]
+    P5["Phase 6\nGPU display\n(no compute)"]
+    P9["Phase 10\nAIRS\nComputeScheduler"]
+    P19["Phase 20\nComputeDevice trait\nComputeRegistry"]
+    P28["Phase 29\nThermal coupling\ncompute budgets"]
+    P20["Phase 21\nGPU compute\n(VirtIO-GPU 3D)"]
+    P39["Phase 40\nPi 5 VC VII\nApple ANE"]
+    P41["Phase 42\nAIRS intelligent\nplacement"]
 
     P5 --> P9 --> P19
     P19 --> P28
@@ -149,17 +149,17 @@ flowchart LR
 
 | Phase | Compute Deliverables | Dependencies |
 | --- | --- | --- |
-| 5 | GPU display driver (VirtIO-GPU) — no compute path yet | Phase 4 (device model) |
-| 9 | AIRS ComputeScheduler with standalone `Vec<ComputeDevice>` | Phase 5 (GPU driver infra) |
-| 19 | ComputeDevice trait, ComputeRegistry, CPU-as-compute baseline, ComputeAccess capability, ComputeSubsystem skeleton | Phase 9 (AIRS) |
-| 28 | Thermal coupling with compute budget integration, cross-device thermal zones | Phase 19 (compute abstraction) |
-| 20 | GPU compute path via VirtIO-GPU 3D on QEMU, MediaCodec acceleration | Phase 19 (compute abstraction) |
-| 39 | VideoCore VII compute driver (Pi 5), Apple Neural Engine driver | Phase 20 (GPU compute) |
-| 41 | AIRS intelligent placement using full compute registry, learned cost models | Phase 39 (real hardware) |
+| 6 | GPU display driver (VirtIO-GPU) — no compute path yet | Phase 4 (device model) |
+| 10 | AIRS ComputeScheduler with standalone `Vec<ComputeDevice>` | Phase 6 (GPU driver infra) |
+| 20 | ComputeDevice trait, ComputeRegistry, CPU-as-compute baseline, ComputeAccess capability, ComputeSubsystem skeleton | Phase 10 (AIRS) |
+| 29 | Thermal coupling with compute budget integration, cross-device thermal zones | Phase 20 (compute abstraction) |
+| 21 | GPU compute path via VirtIO-GPU 3D on QEMU, MediaCodec acceleration | Phase 20 (compute abstraction) |
+| 40 | VideoCore VII compute driver (Pi 5), Apple Neural Engine driver | Phase 21 (GPU compute) |
+| 42 | AIRS intelligent placement using full compute registry, learned cost models | Phase 40 (real hardware) |
 
-**Compute Kit tiers are the app-facing API surface** — the `GpuSurface`, `GpuRender`, and `InferencePipeline` traits are extracted organically as each tier's kernel implementation stabilizes. Phase 5 establishes Tier 1 (display), Phase 20 establishes Tier 2 (GPU compute), and Phase 9 establishes Tier 3 (inference). The Kit trait definitions live in `docs/kits/kernel/compute.md`.
+**Compute Kit tiers are the app-facing API surface** — the `GpuSurface`, `GpuRender`, and `InferencePipeline` traits are extracted organically as each tier's kernel implementation stabilizes. Phase 6 establishes Tier 1 (display), Phase 21 establishes Tier 2 (GPU compute), and Phase 10 establishes Tier 3 (inference). The Kit trait definitions live in `docs/kits/kernel/compute.md`.
 
-**Phase 19 is the pivotal phase.** Before Phase 19, AIRS manages its own `Vec<ComputeDevice>` without kernel involvement ([inference.md](../intelligence/airs/inference.md) §3.2). Phase 19 introduces the kernel compute registry and AIRS transitions from standalone device tracking to querying the kernel's canonical registry. This is a refactor of AIRS internals, not a breaking change — the `ComputeDevice` variants (Cpu, Gpu, Npu) gain a `kernel_device_id: ComputeDeviceId` field linking to the kernel's registry.
+**Phase 20 is the pivotal phase.** Before Phase 20, AIRS manages its own `Vec<ComputeDevice>` without kernel involvement ([inference.md](../intelligence/airs/inference.md) §3.2). Phase 20 introduces the kernel compute registry and AIRS transitions from standalone device tracking to querying the kernel's canonical registry. This is a refactor of AIRS internals, not a breaking change — the `ComputeDevice` variants (Cpu, Gpu, Npu) gain a `kernel_device_id: ComputeDeviceId` field linking to the kernel's registry.
 
 -----
 

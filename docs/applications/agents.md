@@ -110,19 +110,19 @@ Phase 1-3: Foundation
   ├── Phase 3b: Capability system — kernel-managed, unforgeable tokens
   └── Phase 3c: Shared memory — zero-copy data transfer
 
-Phase 7: Basic Agent Model
+Phase 8: Basic Agent Model
   ├── AgentProcess struct, basic lifecycle (start/stop)
   ├── Agent Runtime service (manages running agents)
   ├── Manifest parsing (minimal: name, code, capabilities)
   ├── Capability grant/revoke at agent level
   └── Lazy/eager activation modes in manifest
 
-Phase 9: AIRS Integration
+Phase 10: AIRS Integration
   ├── AIRS security analysis of agent code
   ├── Intent verification (Layer 1) — basic behavioral comparison
   └── SecurityAnalysis attached to manifests
 
-Phase 13: Full Agent Framework
+Phase 14: Full Agent Framework
   ├── Complete AgentManifest (all fields, Agent Card for runtime discovery)
   ├── Agent states (Active, Paused, Suspended, Background, InputRequired, etc.)
   ├── Agent SDK — AgentContext trait, #[agent] macro
@@ -135,12 +135,12 @@ Phase 13: Full Agent Framework
   ├── Reactive queries on Spaces — predicate-based subscriptions
   └── Resource accounting (ResourceStats)
 
-Phase 14-15: Tasks, Flow & Attention
+Phase 15-16: Tasks, Flow & Attention
   ├── Task agents — ephemeral agents for user intents (A2A task lifecycle)
   ├── Flow integration — FlowPush/FlowPull syscalls
   └── Attention posting from agents
 
-Phase 16: Developer Experience & SDK
+Phase 17: Developer Experience & SDK
   ├── aios agent dev — development mode with hot-reload
   ├── aios agent test — hermetic testing with mock capabilities
   ├── aios agent audit — static analysis and AIRS review
@@ -150,7 +150,7 @@ Phase 16: Developer Experience & SDK
   ├── WASM runtime (wasmtime, wasi-aios-* worlds)
   └── SLSA provenance for agent packages
 
-Phase 17: Security Hardening
+Phase 18: Security Hardening
   ├── Graduated isolation (type-system → process → microVM by trust level)
   ├── Behavioral baseline and anomaly detection (Layer 3)
   ├── Multi-agent collusion detection (temporal correlation, capability union)
@@ -159,12 +159,12 @@ Phase 17: Security Hardening
   ├── Causal trace DAGs for incident reconstruction
   └── Full 8-layer security integration
 
-Phase 30: Browser (Tab Agents)
+Phase 31: Browser (Tab Agents)
   ├── Tab agents — per-origin browser tab isolation
   ├── Service worker agents — persistent background web agents
   └── Web API capability mapping
 
-Phase 37: Agent Store
+Phase 38: Agent Store
   ├── Content-addressed .aios-agent package format
   ├── Store submission and review pipeline
   ├── Automated AIRS analysis at scale
@@ -175,21 +175,21 @@ Phase 37: Agent Store
 ```mermaid
 flowchart LR
     P3["Phase 3
-    IPC & Caps"] --> P7["Phase 7
+    IPC & Caps"] --> P7["Phase 8
     Basic Agent"]
-    P7 --> P9["Phase 9
+    P7 --> P9["Phase 10
     AIRS Analysis"]
-    P9 --> P13["Phase 13
+    P9 --> P13["Phase 14
     **Full Framework**"]
-    P13 --> P14["Phase 14-15
+    P13 --> P14["Phase 15-16
     Tasks & Flow"]
-    P13 --> P16["Phase 16
+    P13 --> P16["Phase 17
     Multi-Runtime"]
-    P16 --> P17["Phase 17
+    P16 --> P17["Phase 18
     Security"]
-    P17 --> P30["Phase 30
+    P17 --> P30["Phase 31
     Browser"]
-    P30 --> P37["Phase 37
+    P30 --> P37["Phase 38
     Agent Store"]
 ```
 
@@ -197,11 +197,11 @@ flowchart LR
 
 - Agents require IPC (Phase 3) — agents cannot do anything without IPC.
 - Agent SDK requires Space Storage (Phase 4) — `ctx.spaces()` needs a backend.
-- Scriptable Protocol requires Tool Manager (Phase 13c) — verb dispatch routes through IPC.
-- Agent analysis requires AIRS (Phase 9) — `SecurityAnalysis` needs inference.
-- Tab agents require browser shell (Phase 30) — tab agent lifecycle is browser-managed.
-- Agent Store requires network (Phase 23) — distribution needs connectivity.
-- WASM agents require WASI integration (Phase 16) — `wasi-aios-*` worlds define the sandbox.
+- Scriptable Protocol requires Tool Manager (Phase 14c) — verb dispatch routes through IPC.
+- Agent analysis requires AIRS (Phase 10) — `SecurityAnalysis` needs inference.
+- Tab agents require browser shell (Phase 31) — tab agent lifecycle is browser-managed.
+- Agent Store requires network (Phase 24) — distribution needs connectivity.
+- WASM agents require WASI integration (Phase 17) — `wasi-aios-*` worlds define the sandbox.
 
 -----
 

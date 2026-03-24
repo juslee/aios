@@ -839,23 +839,23 @@ AIOS uses the **Declarative** generative UI pattern: agents return structured co
 ## 21. Implementation Order
 
 ```text
-Phase 6a:  Compositor + window management        → surfaces composited
-Phase 6b:  Status Strip (basic)                  → system status visible
-Phase 6c:  Workspace (static, no context)        → home view with spaces + tasks
-Phase 6d:  Input routing + focus management      → keyboard/mouse works
-Phase 12a: Conversation Bar (search only)        → semantic space search
-Phase 12b: Conversation Bar (full)               → task creation, system control, agent interaction
-Phase 12c: Space Navigator                       → visual space exploration
-Phase 15a: Flow Tray                             → visible data transfer
-Phase 15b: Attention Panel                       → AI-triaged notifications
-Phase 15c: Context transitions                   → visual context shifts
-Phase 15d: Workspace (contextual)                → context-adaptive home view
-Phase 16:  Agent Cards + presence                → agent visibility
-Phase 20:  First boot & onboarding               → OOBE with accessibility
-Phase 24:  Settings & preferences UX             → conversational configuration
-Phase 26:  Multi-device experience               → handoff, cross-device Flow
-Phase 29:  Iced integration                      → full toolkit with cross-platform
-Phase 33:  Accessibility throughout              → screen reader, keyboard nav
-Phase 36:  Security UX patterns                  → capability prompts, trust indicators
-Phase 38:  AI-native experience                  → AIRS-driven layout, triage, search
+Phase 7a:  Compositor + window management        → surfaces composited
+Phase 7b:  Status Strip (basic)                  → system status visible
+Phase 7c:  Workspace (static, no context)        → home view with spaces + tasks
+Phase 7d:  Input routing + focus management      → keyboard/mouse works
+Phase 13a: Conversation Bar (search only)        → semantic space search
+Phase 13b: Conversation Bar (full)               → task creation, system control, agent interaction
+Phase 13c: Space Navigator                       → visual space exploration
+Phase 16a: Flow Tray                             → visible data transfer
+Phase 16b: Attention Panel                       → AI-triaged notifications
+Phase 16c: Context transitions                   → visual context shifts
+Phase 16d: Workspace (contextual)                → context-adaptive home view
+Phase 17:  Agent Cards + presence                → agent visibility
+Phase 21:  First boot & onboarding               → OOBE with accessibility
+Phase 25:  Settings & preferences UX             → conversational configuration
+Phase 27:  Multi-device experience               → handoff, cross-device Flow
+Phase 30:  Iced integration                      → full toolkit with cross-platform
+Phase 34:  Accessibility throughout              → screen reader, keyboard nav
+Phase 37:  Security UX patterns                  → capability prompts, trust indicators
+Phase 39:  AI-native experience                  → AIRS-driven layout, triage, search
 ```

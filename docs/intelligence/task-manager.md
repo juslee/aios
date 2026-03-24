@@ -1000,7 +1000,7 @@ Task agents are deliberately not persisted across reboots for three reasons:
 
 ### 9.1 Boot Phase
 
-The Task Manager starts during **Phase 5 (Experience)** of the boot sequence. It depends on services from Phase 3 (AI Services) and Phase 4 (User Services) being available.
+The Task Manager starts during **Phase 6 (Experience)** of the boot sequence. It depends on services from Phase 3 (AI Services) and Phase 4 (User Services) being available.
 
 ```text
 Phase 3: AI Services (non-critical path)
@@ -1018,7 +1018,7 @@ Phase 4: User Services (critical path continues)
   │       │
   │       └──→ agent_runtime
   │
-Phase 5: Experience (starts when Phase 4 completes)
+Phase 6: Experience (starts when Phase 4 completes)
   ├── workspace ──→ conversation_bar
   │                      │
   │                      └──→ autostart_agents
@@ -1054,7 +1054,7 @@ pub struct TaskManagerService {
 }
 
 impl TaskManagerService {
-    /// Called during Phase 5 boot
+    /// Called during Phase 6 boot
     pub async fn init(&mut self) -> Result<()> {
         // 1. Connect to Space Storage — load persisted task state
         self.state_store.connect("system/tasks/").await?;
@@ -1098,7 +1098,7 @@ impl TaskManagerService {
 
 ### 9.4 Late AIRS Connection
 
-AIRS may not be ready when the Task Manager starts (Phase 5 does not wait for Phase 3). The Task Manager handles this gracefully:
+AIRS may not be ready when the Task Manager starts (Phase 6 does not wait for Phase 3). The Task Manager handles this gracefully:
 
 1. On startup, attempt to connect to AIRS. If AIRS is not ready, proceed without it.
 2. Register for AIRS health notifications. When AIRS becomes healthy, connect.
@@ -1339,14 +1339,14 @@ pub struct TaskResourceUsage {
 The Task Manager is built incrementally across several development phases. Each phase delivers independently testable functionality.
 
 ```text
-Phase 13: Basic Task Model
+Phase 14: Basic Task Model
   ├── Task struct and TaskState enum
   ├── Task state persistence in system/tasks/ space
   ├── IPC endpoint (sys.tasks) with basic operations
   ├── Workspace integration (display active tasks)
   └── Manual task creation from Conversation Bar (single-step tasks)
 
-Phase 14: Task Decomposition and Execution
+Phase 15: Task Decomposition and Execution
   ├── Intent decomposition via AIRS (NL → task graph)
   ├── Task template library (common intents without AIRS)
   ├── DAG executor (topological order, sequential execution)
@@ -1355,28 +1355,28 @@ Phase 14: Task Decomposition and Execution
   ├── User confirmation gates
   └── Result collection and task completion
 
-Phase 16: Agent Orchestration and Concurrency
+Phase 17: Agent Orchestration and Concurrency
   ├── Agent selector (reuse, tool delegation, spawn)
   ├── Concurrent subtask execution (parallel DAG branches)
   ├── Concurrency limits (global and per-task)
   ├── Context-aware priority adjustment
   └── Inspector integration (task diagnostics)
 
-Phase 17: Error Handling and Resilience
+Phase 18: Error Handling and Resilience
   ├── Retry policy (exponential backoff, retryable errors)
   ├── Partial result preservation
   ├── Agent crash recovery (respawn and re-execute)
   ├── Interrupted task recovery on reboot
   └── Deferred intent queue (AIRS unavailable)
 
-Phase 21: Optimization and Intelligence
+Phase 22: Optimization and Intelligence
   ├── Task history learning (common intents → cached decompositions)
   ├── Predictive task preparation (Context Engine signals)
   ├── Agent pool (pre-warmed task agents for fast startup)
   ├── Streaming progress to Workspace (real-time subtask updates)
   └── SDK: TaskRead, TaskCreate, TaskWrite capabilities for agents
 
-Phase 21-22: Security and Observability (§14-§15)
+Phase 22-23: Security and Observability (§14-§15)
   ├── Per-task capability ceiling enforcement
   ├── BlastRadiusPolicy and DAG size limits
   ├── Behavioral verification (post-execution IPC audit)
@@ -1386,7 +1386,7 @@ Phase 21-22: Security and Observability (§14-§15)
   ├── Task lifecycle metrics and trace points
   └── SLO target definitions and monitoring
 
-Phase 25-27: AI-Native Intelligence (§18-§19)
+Phase 26-28: AI-Native Intelligence (§18-§19)
   ├── Graph-of-Thoughts decomposition (multi-candidate scoring)
   ├── Learned decomposition library (Voyager-style)
   ├── ReAct/Reflexion adaptive retry
@@ -1399,7 +1399,7 @@ Phase 25-27: AI-Native Intelligence (§18-§19)
   ├── Critical-path DAG scheduling
   └── Idempotency tokens for crash-safe execution
 
-Phase 29+: Multi-Device and Power-Aware (§16-§17)
+Phase 30+: Multi-Device and Power-Aware (§16-§17)
   ├── Task handoff via Space Sync (TaskHandoffPayload)
   ├── Checkpoint protocol (incremental Merkle DAG sync)
   ├── Device-aware DAG partitioning
@@ -1412,11 +1412,11 @@ Phase 29+: Multi-Device and Power-Aware (§16-§17)
 **Critical dependencies:**
 
 - Task Manager requires IPC (Phase 3) — all communication is IPC-based.
-- Task Manager requires Agent Runtime (Phase 13) — cannot spawn task agents without it.
+- Task Manager requires Agent Runtime (Phase 14) — cannot spawn task agents without it.
 - Task Manager requires Space Storage (Phase 4) — task state persisted in `system/tasks/`.
-- AIRS integration requires AIRS inference engine (Phase 9) — intent decomposition needs inference.
-- Context-aware scheduling requires Context Engine (Phase 11) — priority hints from context state.
-- Workspace display requires Compositor (Phase 6) — task progress shown in the Workspace UI.
+- AIRS integration requires AIRS inference engine (Phase 10) — intent decomposition needs inference.
+- Context-aware scheduling requires Context Engine (Phase 12) — priority hints from context state.
+- Workspace display requires Compositor (Phase 7) — task progress shown in the Workspace UI.
 
 -----
 
@@ -2454,7 +2454,7 @@ These capabilities are not scheduled for near-term implementation but represent 
 
 ### 20.1 Distributed DAG Execution Across Device Mesh
 
-Full distributed task execution where the Task Manager automatically partitions DAGs across devices based on their capabilities, with consensus-based state management. This requires mature Space Mesh (Phase 37+) and the AIOS Peer Protocol for reliable cross-device subtask coordination. Builds on the device-aware DAG partitioning described in §16.3.
+Full distributed task execution where the Task Manager automatically partitions DAGs across devices based on their capabilities, with consensus-based state management. This requires mature Space Mesh (Phase 38+) and the AIOS Peer Protocol for reliable cross-device subtask coordination. Builds on the device-aware DAG partitioning described in §16.3.
 
 ### 20.2 Federated Task Learning
 

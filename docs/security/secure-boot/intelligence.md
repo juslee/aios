@@ -18,7 +18,7 @@ AIOS is an AI-first OS where the AI runtime (AIRS) makes security-critical decis
 
 ### §12.1 Model Integrity Verification
 
-Beyond hash-based integrity (SHA-256 comparison, implemented in [airs.md §4.1](../../intelligence/airs.md)), Phase 34 introduces **signed model manifests** that provide provenance, safety evaluation results, and anti-rollback protection for AI models.
+Beyond hash-based integrity (SHA-256 comparison, implemented in [airs.md §4.1](../../intelligence/airs.md)), Phase 35 introduces **signed model manifests** that provide provenance, safety evaluation results, and anti-rollback protection for AI models.
 
 **Why SHA-256 alone is insufficient:**
 
@@ -254,7 +254,7 @@ pub struct BootMetrics {
     firmware_to_kernel_ms: u32,
     /// Time from kernel_main to Phase 3 (core services) (ms)
     kernel_to_services_ms: u32,
-    /// Time from Phase 3 to Phase 5 (AIRS ready) (ms)
+    /// Time from Phase 3 to Phase 6 (AIRS ready) (ms)
     services_to_airs_ms: u32,
     /// Number of memory regions from UEFI map
     uefi_memory_regions: u32,
@@ -395,7 +395,7 @@ The boot chain logic (manifest parsing, signature verification, hash comparison,
 
 Current signing uses Ed25519 (elliptic curve, 128-bit security). Future quantum computers could break elliptic curve cryptography. Migration plan:
 
-- **Phase 39+:** Add ML-DSA (CRYSTALS-Dilithium) as an alternative signature algorithm
+- **Phase 40+:** Add ML-DSA (CRYSTALS-Dilithium) as an alternative signature algorithm
 - **Hybrid signatures:** sign with both Ed25519 and ML-DSA during transition period
 - **Key size impact:** ML-DSA-65 signatures are ~3.3 KB (vs. 64 bytes for Ed25519); boot manifest grows but remains small
 - **Performance:** ML-DSA verification is ~2-5x slower than Ed25519 on ARM; acceptable for boot (verified once)

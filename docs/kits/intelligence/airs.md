@@ -445,7 +445,7 @@ match AirsKit::engine() {
 }
 ```
 
-**Implementation phase:** Phase 9+. AIRS Kit depends on [Memory Kit](../kernel/memory.md) for
+**Implementation phase:** Phase 10+. AIRS Kit depends on [Memory Kit](../kernel/memory.md) for
 model region allocation, [Compute Kit](../kernel/compute.md) for hardware dispatch,
 [Storage Kit](../platform/storage.md) for model blob storage, and
 [Capability Kit](../kernel/capability.md) for access control.

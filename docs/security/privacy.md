@@ -193,19 +193,19 @@ Privacy features are distributed across multiple phases, following the subsystem
 | Phase | Privacy Component | Dependency | Observable Result |
 |---|---|---|---|
 | Phase 3 | Capability-gated access control | Phase 2 (memory) | Agents cannot access resources without tokens |
-| Phase 5 | Framebuffer privacy indicators | Phase 4 (storage) | Privacy dot rendered in framebuffer |
-| Phase 6 | Compositor indicator bar | Phase 5 (GPU) | Non-obscurable privacy indicator overlay |
-| Phase 8 | Network taint enforcement | Phase 7 (networking) | Tainted IPC blocked at NTM egress |
-| Phase 12 | Conversational consent UI | Phase 11 (preferences) | User prompted for sensor consent |
-| Phase 13 | Privacy manifests + budgets | Phase 12 (agents) | Agent install shows privacy declaration |
-| Phase 14 | AIRS privacy intelligence | Phase 13 (AIRS) | Contextual budget adaptation |
-| Phase 17 | Intent verification + DIFC | Phase 16 (intent verifier) | Cross-agent flow blocked by taint labels |
-| Phase 27 | Power-aware privacy | Phase 26 (power mgmt) | Kill switch detection via GPIO |
-| Phase 32 | Camera/audio hardware privacy | Phase 31 (camera) | Hardware LED before first frame |
-| Phase 33 | Accessibility privacy | Phase 32 (accessibility) | Screen reader announces active sensors |
-| Phase 34 | Model provenance attestation | Phase 33 (secure boot) | Boot-time model integrity check |
-| Phase 37 | Cross-device privacy sync | Phase 36 (multi-device) | Privacy consent synced across devices |
-| Phase 38 | Enterprise DLP + compliance | Phase 37 (enterprise) | GDPR erasure across fleet |
+| Phase 6 | Framebuffer privacy indicators | Phase 4 (storage) | Privacy dot rendered in framebuffer |
+| Phase 7 | Compositor indicator bar | Phase 6 (GPU) | Non-obscurable privacy indicator overlay |
+| Phase 9 | Network taint enforcement | Phase 8 (networking) | Tainted IPC blocked at NTM egress |
+| Phase 13 | Conversational consent UI | Phase 12 (preferences) | User prompted for sensor consent |
+| Phase 14 | Privacy manifests + budgets | Phase 13 (agents) | Agent install shows privacy declaration |
+| Phase 15 | AIRS privacy intelligence | Phase 14 (AIRS) | Contextual budget adaptation |
+| Phase 18 | Intent verification + DIFC | Phase 17 (intent verifier) | Cross-agent flow blocked by taint labels |
+| Phase 28 | Power-aware privacy | Phase 27 (power mgmt) | Kill switch detection via GPIO |
+| Phase 33 | Camera/audio hardware privacy | Phase 32 (camera) | Hardware LED before first frame |
+| Phase 34 | Accessibility privacy | Phase 33 (accessibility) | Screen reader announces active sensors |
+| Phase 35 | Model provenance attestation | Phase 34 (secure boot) | Boot-time model integrity check |
+| Phase 38 | Cross-device privacy sync | Phase 37 (multi-device) | Privacy consent synced across devices |
+| Phase 39 | Enterprise DLP + compliance | Phase 38 (enterprise) | GDPR erasure across fleet |
 
 ---
 

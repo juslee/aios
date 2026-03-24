@@ -113,7 +113,7 @@ pub trait VirtioGpu2D {
 
 **Frame presentation flow.** A single frame goes through: (1) the compositor renders into a guest-side buffer, (2) `transfer_to_host_2d` copies the damaged region to the host resource, (3) `resource_flush` tells QEMU to update the display window. Only damaged regions are transferred, matching the compositor's damage tracking.
 
-**2D vs 3D.** Phase 5 uses the 2D command set exclusively — it provides surface composition without requiring 3D acceleration on the host. The 3D command set (Virgl for OpenGL, Venus for Vulkan) enables GPU-accelerated rendering inside the guest, but requires host GPU drivers and is reserved for future phases where agents need WebGPU or GPU compute.
+**2D vs 3D.** Phase 6 uses the 2D command set exclusively — it provides surface composition without requiring 3D acceleration on the host. The 3D command set (Virgl for OpenGL, Venus for Vulkan) enables GPU-accelerated rendering inside the guest, but requires host GPU drivers and is reserved for future phases where agents need WebGPU or GPU compute.
 
 **Backing storage.** Each 2D resource requires guest memory to hold the pixel data. The driver allocates backing pages from the DMA pool (`Pool::Dma`) and attaches them to the resource via `resource_attach_backing`. The host reads from these pages during `transfer_to_host_2d`. Pages remain pinned for the lifetime of the resource.
 
@@ -129,7 +129,7 @@ pub trait VirtioGpu2D {
 | `InterruptStatus` | `0x060` | Interrupt status (polled, not used) |
 | `Status` | `0x070` | Device status (ACKNOWLEDGE, DRIVER, FEATURES_OK, DRIVER_OK) |
 
-**Driver structure notes.** The VirtIO-GPU driver reuses the same virtqueue infrastructure as VirtIO-blk: descriptor table, available ring, used ring, and polled completion. The primary difference is command encoding — GPU commands are variable-length control messages rather than fixed block I/O requests. Full driver architecture details are specified in a dedicated GPU/driver architecture document for Phase 5 implementation.
+**Driver structure notes.** The VirtIO-GPU driver reuses the same virtqueue infrastructure as VirtIO-blk: descriptor table, available ring, used ring, and polled completion. The primary difference is command encoding — GPU commands are variable-length control messages rather than fixed block I/O requests. Full driver architecture details are specified in a dedicated GPU/driver architecture document for Phase 6 implementation.
 
 ### 8.3 Hardware GPU Drivers
 

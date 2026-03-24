@@ -7,7 +7,7 @@ Part of: [flow.md](../flow.md) — Flow System
 
 ## 15. Near-Term Extensions
 
-These are concrete extensions that fit within the current architecture and should be considered for Phase 15 or early follow-on work.
+These are concrete extensions that fit within the current architecture and should be considered for Phase 16 or early follow-on work.
 
 ### 15.1 Flow Batching
 
@@ -192,7 +192,7 @@ Note: Inspired by Android's `ClipboardManager` Intent support.
 
 ## 16. Future Directions
 
-These are more ambitious extensions that would build on top of the Phase 15-37 implementation. They are not committed to any phase but are worth designing toward.
+These are more ambitious extensions that would build on top of the Phase 16-38 implementation. They are not committed to any phase but are worth designing toward.
 
 ### 16.1 Standing Flow Rules (Pipelines)
 

@@ -56,7 +56,7 @@ No syscall implementation trusts any user-supplied value without validation. Thi
 | **BTI** (Branch Target Identification) | JOP (Jump-Oriented Programming) attacks | 13+ |
 | **MTE** (Memory Tagging Extension) | Spatial and temporal memory errors in `unsafe` blocks | 13+ |
 
-PAC, BTI, and MTE are aarch64 hardware features enabled in Phase 17 (Security Architecture). MTE is particularly valuable for fuzzing: when enabled, the hardware tags every 16-byte granule and checks tags on every access, catching use-after-free and out-of-bounds access at the exact instruction — not just when a crash eventually occurs.
+PAC, BTI, and MTE are aarch64 hardware features enabled in Phase 18 (Security Architecture). MTE is particularly valuable for fuzzing: when enabled, the hardware tags every 16-byte granule and checks tags on every access, catching use-after-free and out-of-bounds access at the exact instruction — not just when a crash eventually occurs.
 
 **MTE caveat.** TIKTAG research (2024) demonstrated that MTE tags can be leaked via speculative execution side channels. This affects MTE's security guarantees against sophisticated attackers but does not diminish its value as a fuzzing accelerator — during testing, the attacker model is the fuzzer itself, not a speculative side channel.
 
@@ -77,7 +77,7 @@ Device drivers read data from hardware via MMIO, which is inherently untrusted (
 
 - **Timeout on busy-wait**: every loop that polls a device status register has a maximum iteration count. If the device does not respond within the timeout, the driver returns an error instead of hanging the kernel.
 - **Bounds-check on reads**: values read from device registers are validated before use (e.g., a DMA descriptor length is checked against the expected maximum before allocating a buffer).
-- **DMA buffer isolation**: when DMA is introduced (Phase 7+), DMA buffers are allocated from a dedicated pool with guard pages. IOMMU is used (where available) to restrict device access to only the intended buffers.
+- **DMA buffer isolation**: when DMA is introduced (Phase 8+), DMA buffers are allocated from a dedicated pool with guard pages. IOMMU is used (where available) to restrict device access to only the intended buffers.
 
 **VirtIO-blk hardening (Phase 4+).** The VirtIO block driver validates MMIO magic values (`0x74726976`) during device probe — invalid magic causes the probe to skip the device rather than panic. Polling loops for virtqueue completion use configurable iteration-count timeouts; exhaustion returns `StorageError` rather than blocking indefinitely. Device-reported capacity is sanity-checked before use. The polled I/O path validates descriptor status bytes and rejects unexpected values.
 

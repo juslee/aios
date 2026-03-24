@@ -479,9 +479,9 @@ operates independently.
 | Raspberry Pi 5 | Compositor UI | Modal dialog | Full | Same as Pi 4 |
 | Apple Silicon | Full compositor UI | Biometric-enhanced prompts | Full | Secure Enclave integration |
 
-**Implementation phase:** Phase 17+. Security Kit depends on Capability Kit (Phase 3+),
-Interface Kit (Phase 6+ for prompts), Intent Kit (Phase 15+), and the behavioral monitor
-(Phase 16+) for anomaly detection.
+**Implementation phase:** Phase 18+. Security Kit depends on Capability Kit (Phase 3+),
+Interface Kit (Phase 7+ for prompts), Intent Kit (Phase 16+), and the behavioral monitor
+(Phase 17+) for anomaly detection.
 
 ---
 

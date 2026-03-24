@@ -44,12 +44,12 @@ wasmtime AOT-compiled*`"]
 
 | Language | Introduced | Tooling Complete | Self-Hosting on AIOS |
 |---|---|---|---|
-| Rust | Phase 0 (kernel) | Phase 16 (SDK) | Phase 22+ (needs rustc + LLVM) |
-| Python | Phase 16 | Phase 16 | Phase 16 (RustPython ships with OS) |
-| TypeScript | Phase 16 | Phase 16 | Phase 16 (QuickJS-ng ships with OS) |
-| WASM | Phase 16 (agents) | Phase 16 + 30 (browser) | N/A (compile on host, deploy .wasm) |
-| C/C++ | Phase 22 | Phase 22f | Phase 22f (clang builds on AIOS) |
-| Linux binaries | Phase 35 | Phase 35 | Whatever runs on Linux |
+| Rust | Phase 0 (kernel) | Phase 17 (SDK) | Phase 23+ (needs rustc + LLVM) |
+| Python | Phase 17 | Phase 17 | Phase 17 (RustPython ships with OS) |
+| TypeScript | Phase 17 | Phase 17 | Phase 17 (QuickJS-ng ships with OS) |
+| WASM | Phase 17 (agents) | Phase 17 + 30 (browser) | N/A (compile on host, deploy .wasm) |
+| C/C++ | Phase 23 | Phase 23f | Phase 23f (clang builds on AIOS) |
+| Linux binaries | Phase 36 | Phase 36 | Whatever runs on Linux |
 
 ---
 

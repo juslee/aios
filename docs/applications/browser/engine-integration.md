@@ -9,11 +9,11 @@ Part of: [browser.md](../browser.md) — Browser Kit Architecture
 
 Browser Kit defines three integration tiers, each representing a different depth of OS-browser coupling. Every major browser engine fits into at least one tier. The tiers are additive -- an engine can start at Tier 1 (Linux compat, zero modification) and progressively adopt Tier 2 (Kit SDK) as AIOS-specific backends mature.
 
-The tiered model exists because browser engines are among the most complex software artifacts ever built. Expecting Firefox or Chrome to rewrite their platform layers for AIOS on day one is unrealistic. But running them unmodified through Linux compatibility is possible immediately (once Phase 35-36 land), and that provides a viable browser while Tier 2 integration develops incrementally.
+The tiered model exists because browser engines are among the most complex software artifacts ever built. Expecting Firefox or Chrome to rewrite their platform layers for AIOS on day one is unrealistic. But running them unmodified through Linux compatibility is possible immediately (once Phase 36-37 land), and that provides a viable browser while Tier 2 integration develops incrementally.
 
 ### 9.1 Tier 1: Linux Compatibility (Passive)
 
-Firefox, Chrome, and WebKit GTK run unmodified through the Linux binary compatibility layer (Phase 35: ELF loader + glibc shim, Phase 36: Wayland bridge). The browser engine doesn't know it's running on AIOS. From the engine's perspective, it's running on a Linux system with a Wayland compositor.
+Firefox, Chrome, and WebKit GTK run unmodified through the Linux binary compatibility layer (Phase 36: ELF loader + glibc shim, Phase 37: Wayland bridge). The browser engine doesn't know it's running on AIOS. From the engine's perspective, it's running on a Linux system with a Wayland compositor.
 
 AIOS applies capability restrictions at the syscall translation boundary. Every `connect()`, `open()`, `mmap()`, `ioctl()` passes through the syscall translation layer (docs/platform/linux-compat/syscall-translation.md, Section 5), where AIOS can enforce per-agent capability policies.
 
@@ -25,7 +25,7 @@ Tier 1: Linux Compatibility (Passive)
 │     Firefox / Chrome / WebKit GTK              │
 │     Thinks it's running on Linux               │
 ├──────────────────────────────────────────────┤
-│            glibc ABI Shim (Phase 35)           │
+│            glibc ABI Shim (Phase 36)           │
 │     Translates glibc calls to AIOS syscalls    │
 ├──────────────────────────────────────────────┤
 │         Syscall Translation Layer               │
@@ -37,7 +37,7 @@ Tier 1: Linux Compatibility (Passive)
 │     │  - Audio: restrict ioctl(ALSA_*)    │     │
 │     └────────────────────────────────────┘     │
 ├──────────────────────────────────────────────┤
-│          Wayland Bridge (Phase 36)              │
+│          Wayland Bridge (Phase 37)              │
 │     AIOS compositor ←→ Wayland protocol        │
 └──────────────────────────────────────────────┘
 ```
@@ -90,7 +90,7 @@ netwerk/ (nsIChannel)         →  NetworkBridge trait
 
 Gecko is the most complex integration target because `widget/` touches nearly every subsystem (clipboard, drag-and-drop, IME, accessibility, printing). The recommended approach is incremental: start with `netwerk/` replacement (highest isolation value -- moves networking to OS-mediated channels), then `gfx/` (replaces GPU abstraction), and finally `widget/` (replaces windowing).
 
-Estimated effort: 6-9 months for full Tier 2 integration, starting after Phase 30 Kit traits stabilize.
+Estimated effort: 6-9 months for full Tier 2 integration, starting after Phase 31 Kit traits stabilize.
 
 #### 9.2.2 Chrome/Chromium
 
@@ -202,8 +202,8 @@ Tier 1 availability depends on the Linux binary compatibility subsystem. No brow
 
 ```mermaid
 graph TD
-    P30[Phase 30: Browser Kit Traits] --> T2[Tier 2: WPE + Servo]
-    P35[Phase 35: ELF Loader + glibc Shim] --> P36[Phase 36: Wayland Bridge]
+    P30[Phase 31: Browser Kit Traits] --> T2[Tier 2: WPE + Servo]
+    P35[Phase 36: ELF Loader + glibc Shim] --> P36[Phase 37: Wayland Bridge]
     P36 --> T1[Tier 1: Firefox/Chrome/WebKit unmodified]
     P30 --> T2
     T1 --> T1FF[Firefox via Linux Compat]
@@ -223,18 +223,18 @@ graph TD
 
 **Timeline implications:**
 
-- **Phase 30 (Browser Kit):** Tier 2 integration work can begin. WPE and Servo backends are the first targets. Users have the reference browser (Section 10) for basic web browsing.
-- **Phase 35 (ELF Loader):** Linux binaries can execute. Browsers can launch but cannot render (no display output).
-- **Phase 36 (Wayland Bridge):** Browsers gain display output. Tier 1 is fully functional. Firefox and Chrome become available to users.
-- **Post-Phase 36:** Tier 2 integration for Chromium Ozone and Gecko proceeds incrementally. Each engine gains deeper AIOS integration over time.
+- **Phase 31 (Browser Kit):** Tier 2 integration work can begin. WPE and Servo backends are the first targets. Users have the reference browser (Section 10) for basic web browsing.
+- **Phase 36 (ELF Loader):** Linux binaries can execute. Browsers can launch but cannot render (no display output).
+- **Phase 37 (Wayland Bridge):** Browsers gain display output. Tier 1 is fully functional. Firefox and Chrome become available to users.
+- **Post-Phase 37:** Tier 2 integration for Chromium Ozone and Gecko proceeds incrementally. Each engine gains deeper AIOS integration over time.
 
-Between Phase 30 and Phase 35, the reference browser (Section 10) is the only browser available. This 5-phase gap is why the reference browser exists -- it validates the Kit API and provides basic web browsing capability during the window before Linux compat enables production engines.
+Between Phase 31 and Phase 36, the reference browser (Section 10) is the only browser available. This 5-phase gap is why the reference browser exists -- it validates the Kit API and provides basic web browsing capability during the window before Linux compat enables production engines.
 
 -----
 
 ## 10. Reference Browser
 
-The reference browser is a minimal, AIOS-native web browser built on html5ever and QuickJS. It exists to validate the Browser Kit API surface and to provide basic web browsing before Linux compatibility (Phase 35-36) enables production engines.
+The reference browser is a minimal, AIOS-native web browser built on html5ever and QuickJS. It exists to validate the Browser Kit API surface and to provide basic web browsing before Linux compatibility (Phase 36-37) enables production engines.
 
 ### 10.1 Purpose
 
@@ -242,7 +242,7 @@ The reference browser serves three roles:
 
 **Kit API validation.** Every Browser Kit trait must be exercised by at least one consumer before production engines integrate. The reference browser is that consumer. If a trait is awkward to use, the reference browser reveals it before WPE or Servo attempt integration.
 
-**Phase 30 deliverable.** Phase 30 (Web Browser, 5 weeks) must produce a working browser. The reference browser is that working browser -- it renders HTML, executes JavaScript, and demonstrates the full Tab Agent lifecycle, origin-to-capability mapping, and Space-backed storage.
+**Phase 31 deliverable.** Phase 31 (Web Browser, 5 weeks) must produce a working browser. The reference browser is that working browser -- it renders HTML, executes JavaScript, and demonstrates the full Tab Agent lifecycle, origin-to-capability mapping, and Space-backed storage.
 
 **Integration test bed.** The reference browser exercises the path from URL entry through capability derivation, network fetch, HTML parse, layout, render, and compositor submit. It tests the same integration seams that production engines will use, but with a codebase small enough to debug in hours rather than days.
 
@@ -397,4 +397,4 @@ The reference browser deliberately omits features that would require months of e
 
 **No PDF rendering.** PDF documents are offered for download or opened by a native AIOS PDF viewer agent, not rendered inline.
 
-These limitations are acceptable because the reference browser exists to prove the Kit, not to compete with production engines. Every limitation listed above works correctly when Firefox, Chrome, or WebKit runs through Tier 1 (Linux compat) or Tier 2 (Kit SDK integration). The reference browser is a bridge -- it covers the gap between Phase 30 (Browser Kit) and Phase 35-36 (Linux compat), then gracefully yields to production engines for daily browsing.
+These limitations are acceptable because the reference browser exists to prove the Kit, not to compete with production engines. Every limitation listed above works correctly when Firefox, Chrome, or WebKit runs through Tier 1 (Linux compat) or Tier 2 (Kit SDK integration). The reference browser is a bridge -- it covers the gap between Phase 31 (Browser Kit) and Phase 36-37 (Linux compat), then gracefully yields to production engines for daily browsing.

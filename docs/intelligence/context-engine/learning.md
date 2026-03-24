@@ -246,7 +246,7 @@ impl ContextEngine {
 
 3. **Boot heuristic source.** The audit log records that this context state came from boot heuristics (via `ContextSource::Fallback`), not from real signal analysis. Useful for debugging context transitions.
 
-**Transition to real context.** Once the compositor starts (Phase 5) and the user begins interacting, real signals flow in. The Context Engine transitions from boot heuristics to normal inference:
+**Transition to real context.** Once the compositor starts (Phase 6) and the user begins interacting, real signals flow in. The Context Engine transitions from boot heuristics to normal inference:
 
 ```text
 Boot context lifecycle:
@@ -255,18 +255,18 @@ Phase 3: Context Engine starts (after AIRS, non-critical path)
   → Publishes BootHeuristic context (Low confidence)
   → All consumers receive conservative defaults
 
-Phase 5: Compositor + agents start
+Phase 6: Compositor + agents start
   → ActiveSpace signal arrives (user's last workspace)
   → RunningAgents signal populates as agents launch
   → Confidence rises to Medium
 
-Phase 5 + 30s: User interacts
+Phase 6 + 30s: User interacts
   → InputPattern signal activates
   → Confidence rises to High
   → Context Engine switches from rule-based to AIRS classifier
     (if AIRS model is loaded by now)
 
-Phase 5 + 5min: Steady state
+Phase 6 + 5min: Steady state
   → All 8 signal sources active
   → AIRS classifier running
   → Learning engine observing

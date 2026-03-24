@@ -491,7 +491,7 @@ if WirelessKit::bluetooth_available() {
 }
 ```
 
-**Implementation phase:** Phase 8+. Wireless Kit depends on [Memory Kit](../kernel/memory.md),
+**Implementation phase:** Phase 9+. Wireless Kit depends on [Memory Kit](../kernel/memory.md),
 [Capability Kit](../kernel/capability.md), and [Network Kit](./network.md) (for WiFi-backed
 network interfaces).
 

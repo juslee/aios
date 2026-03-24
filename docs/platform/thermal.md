@@ -49,7 +49,7 @@ Unlike traditional OSes that treat thermal management as a driver-level concern,
 | 23 | Subsystem framework `PowerManaged` trait with thermal coordination points | Subsystem framework |
 | 25 | Wireless power management with thermal sensor polling infrastructure | Device model |
 
-### Phase 28: Thermal Management (Weeks 75–78)
+### Phase 29: Thermal Management (Weeks 75–78)
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -57,7 +57,7 @@ Unlike traditional OSes that treat thermal management as a driver-level concern,
 | M59 | Cooling devices + governors | Week 76–77 | PID governor smoothly controls frequency; fan PWM on Pi 5 |
 | M60 | Integration + security + AI | Week 77–78 | Agent thermal headroom API; audit trail; thermal prediction |
 
-### Post-Phase 28
+### Post-Phase 29
 
 | Phase | Enhancement |
 |---|---|

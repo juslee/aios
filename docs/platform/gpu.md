@@ -115,15 +115,15 @@ flowchart TD
 ## 19. Implementation Order
 
 ```text
-Phase 5a:  VirtIO-GPU 2D driver (userspace)        → page-flip display output replaces GOP framebuffer
-Phase 5b:  Font rendering (fontdue + glyph atlas)   → text on screen via GPU buffer
-Phase 5c:  wgpu GPU Service + surface composition   → multiple surfaces composited with GPU acceleration
-Phase 5d:  Software renderer fallback               → CPU-only path for all platforms
-Phase 5e:  Display mode setting + multi-monitor      → EDID parsing, resolution control
-Phase 6+:  Compositor integration (see compositor.md §12)
-Phase 29+: VirtIO-GPU 3D (virgl), Vulkan (Venus)
-Phase 36:  Wayland compatibility layer
-Phase 39+: Bare-metal GPU drivers (VC4/V3D, AGX)
+Phase 6a:  VirtIO-GPU 2D driver (userspace)        → page-flip display output replaces GOP framebuffer
+Phase 6b:  Font rendering (fontdue + glyph atlas)   → text on screen via GPU buffer
+Phase 6c:  wgpu GPU Service + surface composition   → multiple surfaces composited with GPU acceleration
+Phase 6d:  Software renderer fallback               → CPU-only path for all platforms
+Phase 6e:  Display mode setting + multi-monitor      → EDID parsing, resolution control
+Phase 7+:  Compositor integration (see compositor.md §12)
+Phase 30+: VirtIO-GPU 3D (virgl), Vulkan (Venus)
+Phase 37:  Wayland compatibility layer
+Phase 40+: Bare-metal GPU drivers (VC4/V3D, AGX)
 ```
 
 **QEMU-first development strategy:**
@@ -139,7 +139,7 @@ Phase 39+: Bare-metal GPU drivers (VC4/V3D, AGX)
 Phase 3 (IPC + Capabilities) → GPU Service process (needs IPC channels + capability tokens)
 Phase 3 (Shared Memory)      → Buffer sharing (needs shmem with capability-gated access)
 Phase 4 (VirtIO-blk)         → VirtIO transport reuse (virtqueue setup, MMIO probe)
-Phase 5 (This doc)           → Phase 6 (Compositor) → Phase 7 (Input) → Phase 29 (UI Toolkit)
+Phase 6 (This doc)           → Phase 7 (Compositor) → Phase 8 (Input) → Phase 30 (UI Toolkit)
 ```
 
 -----

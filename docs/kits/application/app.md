@@ -675,4 +675,4 @@ No App Kit API changes behavior based on AIRS availability. The API contract is 
 
 ## Implementation Phase
 
-Phase 13+ (agent lifecycle, scripting protocol, message loop). Full content type registry integration Phase 14+.
+Phase 14+ (agent lifecycle, scripting protocol, message loop). Full content type registry integration Phase 15+.
