@@ -89,7 +89,7 @@ See compositor.md section 9`"]
     AM --> UIToolkit["`UI Toolkit - iced
 (accessibility tree, focus management,
 semantic roles)
-See interface-kit.md section 12`"]
+See interface-kit/accessibility.md section 12`"]
     Compositor --> Audio["`Audio Subsystem
 (TTS output, audio cues)`"]
     UIToolkit --> Input["`Input Subsystem

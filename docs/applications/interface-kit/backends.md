@@ -12,6 +12,9 @@ Part of: [interface-kit.md](../interface-kit.md) — Interface Kit Architecture
 The AIOS backend communicates with the compositor via IPC instead of creating its own window:
 
 ```rust
+// Note: partial implementation shown for illustration. Full InterfaceBackend
+// trait (destroy_surface, poll_events, clipboard, request_frame, scale_factor)
+// is defined in docs/kits/application/interface.md §2.7.
 pub struct AiosBackend {
     compositor_channel: IpcChannel,
     surface_buffers: HashMap<SurfaceId, GpuBuffer>,

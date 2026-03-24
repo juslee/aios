@@ -34,6 +34,8 @@ enum Message {
     SpaceSynced(Vec<Note>),    // from space subscription
 }
 
+// Note: simplified for illustration. Full trait signature is in
+// docs/kits/application/interface.md §2.3 (Widget<M: Clone>).
 impl Widget<Message> for NotesApp {
     type Flags = AppFlags;
 

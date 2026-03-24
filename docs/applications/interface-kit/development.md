@@ -18,12 +18,12 @@ name = "weather-agent"
 version = "0.1.0"
 
 [dependencies]
-aios-interface = "0.1"
+aios_interface = "0.1"
 aios-sdk = "0.1"
 
 [target.'cfg(not(target_os = "aios"))'.dependencies]
 # Fallback backends for development
-aios-interface-linux = "0.1"
+aios_interface-linux = "0.1"
 ```
 
 ### 11.2 Manifest UI Declaration

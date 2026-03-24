@@ -454,14 +454,14 @@ Every accessibility section references and is referenced by other architecture d
 | Section | Related Documents |
 |---|---|
 | §1 Overview | `experience/experience.md`, `project/architecture.md` §7.6 |
-| §2 Architecture | `platform/compositor.md` §9, `applications/interface-kit.md` §12 |
+| §2 Architecture | `platform/compositor.md` §9, `applications/interface-kit/accessibility.md` §12 |
 | §3 Screen Reader | `platform/audio/subsystem.md` §3, `kernel/boot/accessibility.md` §19 |
 | §4 Braille Display | `platform/usb/device-classes.md` §4.7, `platform/input/devices.md` §3.5 |
 | §5 Switch Scanning | `platform/input/devices.md` §3.5, `platform/input/events.md` §4 |
 | §6 High Contrast | `platform/compositor/rendering.md` §5, `platform/gpu/rendering.md` §11 |
 | §7 Voice Control | `platform/input/ai.md` §10.7, `intelligence/airs/intelligence-services.md` §5 |
 | §8 Boot-Time Accessibility | `kernel/boot/accessibility.md` §19, `kernel/boot/services.md` §4-5 |
-| §9 Accessibility Tree | `platform/compositor/security.md` §11, `applications/interface-kit.md` §12 |
+| §9 Accessibility Tree | `platform/compositor/security.md` §11, `applications/interface-kit/accessibility.md` §12 |
 | §10 AIRS Enhancement | `intelligence/airs/inference.md` §3, `intelligence/airs/intelligence-services.md` §5 |
 | §11 No-AIRS Fallback | `intelligence/airs.md` §2, `kernel/boot/accessibility.md` §19 |
 | §12 Implementation Order | `platform/subsystem-framework.md` §5, `platform/input/integration.md` §6 |

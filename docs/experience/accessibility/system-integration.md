@@ -171,7 +171,7 @@ flowchart TD
 Every widget emits an AccessNode
 Roles, labels, states, actions from widget type
 Developer adds: label, description, custom role
-See interface-kit.md section 12.1`"]
+See interface-kit/accessibility.md section 12.1`"]
         S2["`Source 2: Agent-provided semantic hints
 Agents annotate surfaces with SemanticRole
 Agents provide alt-text for images,
