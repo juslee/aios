@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md) — Section 7.6 Accessibility
-**Related:** [experience.md](./experience.md) — Experience layer surfaces, [compositor.md](../platform/compositor.md) — Compositor accessibility layer and rendering, [ui-toolkit.md](../applications/ui-toolkit.md) — Widget accessibility tree and keyboard navigation, [airs.md](../intelligence/airs.md) — AI-enhanced descriptions and voice control, [accessibility.md](../kernel/boot/accessibility.md) — Boot accessibility (§19), [airs/intelligence-services.md](../intelligence/airs/intelligence-services.md) — Intelligence services, [compositor/security.md](../platform/compositor/security.md) — Compositor accessibility (§11), [privacy.md](../security/privacy.md) — Privacy architecture, [input/ai.md](../platform/input/ai.md) — Input AI-native intelligence
+**Related:** [experience.md](./experience.md) — Experience layer surfaces, [compositor.md](../platform/compositor.md) — Compositor accessibility layer and rendering, [interface-kit.md](../applications/interface-kit.md) — Widget accessibility tree and keyboard navigation, [airs.md](../intelligence/airs.md) — AI-enhanced descriptions and voice control, [accessibility.md](../kernel/boot/accessibility.md) — Boot accessibility (§19), [airs/intelligence-services.md](../intelligence/airs/intelligence-services.md) — Intelligence services, [compositor/security.md](../platform/compositor/security.md) — Compositor accessibility (§11), [privacy.md](../security/privacy.md) — Privacy architecture, [input/ai.md](../platform/input/ai.md) — Input AI-native intelligence
 
 -----
 
@@ -89,7 +89,7 @@ See compositor.md section 9`"]
     AM --> UIToolkit["`UI Toolkit - iced
 (accessibility tree, focus management,
 semantic roles)
-See ui-toolkit.md section 12`"]
+See interface-kit/accessibility.md section 12`"]
     Compositor --> Audio["`Audio Subsystem
 (TTS output, audio cues)`"]
     UIToolkit --> Input["`Input Subsystem

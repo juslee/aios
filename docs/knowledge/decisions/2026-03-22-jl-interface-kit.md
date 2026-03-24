@@ -46,4 +46,4 @@ Cross-platform toolkits (Flutter, Qt, GTK, Electron) are bridges that translate 
 - Interface Kit's design language can be published as a specification (like Apple's HIG)
 - Developers can port existing Flutter/Qt apps to AIOS via bridges immediately
 - Native AIOS apps using Interface Kit get the richest experience
-- `docs/applications/ui-toolkit.md` needs rewrite (iced -> Interface Kit + bridge strategy)
+- `docs/applications/interface-kit.md` needs rewrite (iced -> Interface Kit + bridge strategy)

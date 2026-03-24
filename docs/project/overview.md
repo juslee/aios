@@ -922,7 +922,7 @@ docs/
 │   │   ├── input.md                     Keyboard flow, mouse reporting, IME
 │   │   ├── multiplexer.md               Session broker, pane splitting, SSH
 │   │   └── integration.md              Subsystem framework, capabilities, spaces
-│   └── ui-toolkit.md                        Portable UI toolkit (AIOS/Linux/macOS/Web)
+│   └── interface-kit.md                        Portable UI toolkit (AIOS/Linux/macOS/Web)
 │
 ├── security/
 │   ├── model.md                             Security model hub (4 sub-docs)
@@ -1041,7 +1041,7 @@ Deep-dive technical specifications organized by domain. **Bold** documents are h
 | [browser.md](../applications/browser.md) | Decomposed browser — Servo, tab-per-agent isolation |
 | [inspector.md](../applications/inspector.md) | Inspector — security dashboard, capability visibility |
 | **[terminal.md](../applications/terminal.md)** | Terminal emulator hub (6) — emulation, rendering, sessions, input, multiplexer |
-| [ui-toolkit.md](../applications/ui-toolkit.md) | Portable UI toolkit — AIOS/Linux/macOS/Web |
+| [interface-kit.md](../applications/interface-kit.md) | Portable UI toolkit — AIOS/Linux/macOS/Web |
 
 ### Security
 

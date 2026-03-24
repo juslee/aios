@@ -8,7 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [compositor.md](../platform/compositor.md) — Compositor and display, [airs.md](../intelligence/airs.md) — AI Runtime Service, [spaces.md](../storage/spaces.md) — Space Storage, [flow.md](../storage/flow.md) — Flow data transfer, [conversation-bar.md](../intelligence/conversation-manager/conversation-bar.md) — Conversation Bar technical spec, [context-engine.md](../intelligence/context-engine.md) — Context inference, [attention.md](../intelligence/attention.md) — Attention management, [preferences.md](../intelligence/preferences.md) — Preference system, [task-manager.md](../intelligence/task-manager.md) — Task lifecycle, [agents.md](../applications/agents.md) — Agent runtime, [inspector.md](../applications/inspector.md) — Security dashboard, [terminal.md](../applications/terminal.md) — Terminal emulator, [ui-toolkit.md](../applications/ui-toolkit.md) — Interface Kit (AIOS-native UI), [accessibility.md](./accessibility.md) — Accessibility architecture, [identity.md](./identity.md) — Identity and onboarding, [model.md](../security/model.md) — Security model, [privacy.md](../security/privacy.md) — Privacy architecture, [multi-device/experience.md](../platform/multi-device/experience.md) — Multi-device UX
+**Related:** [compositor.md](../platform/compositor.md) — Compositor and display, [airs.md](../intelligence/airs.md) — AI Runtime Service, [spaces.md](../storage/spaces.md) — Space Storage, [flow.md](../storage/flow.md) — Flow data transfer, [conversation-bar.md](../intelligence/conversation-manager/conversation-bar.md) — Conversation Bar technical spec, [context-engine.md](../intelligence/context-engine.md) — Context inference, [attention.md](../intelligence/attention.md) — Attention management, [preferences.md](../intelligence/preferences.md) — Preference system, [task-manager.md](../intelligence/task-manager.md) — Task lifecycle, [agents.md](../applications/agents.md) — Agent runtime, [inspector.md](../applications/inspector.md) — Security dashboard, [terminal.md](../applications/terminal.md) — Terminal emulator, [interface-kit.md](../applications/interface-kit.md) — Interface Kit (AIOS-native UI), [accessibility.md](./accessibility.md) — Accessibility architecture, [identity.md](./identity.md) — Identity and onboarding, [model.md](../security/model.md) — Security model, [privacy.md](../security/privacy.md) — Privacy architecture, [multi-device/experience.md](../platform/multi-device/experience.md) — Multi-device UX
 
 -----
 
@@ -31,8 +31,8 @@ type: architecture
 | §13 Settings & Preferences UX | [preferences.md](../intelligence/preferences.md), [preferences/resolution.md](../intelligence/preferences/resolution.md) §5, [preferences/temporal.md](../intelligence/preferences/temporal.md) §14 |
 | §14 Multi-Device Experience | [multi-device/experience.md](../platform/multi-device/experience.md) §4.1–§4.5 |
 | §15 Security UX Patterns | [model/capabilities.md](../security/model/capabilities.md) §3, [privacy.md](../security/privacy.md) |
-| §16 Developer Experience | [ui-toolkit.md](../applications/ui-toolkit.md), [compositor/protocol.md](../platform/compositor/protocol.md) §4 |
-| §17 Design Language | [compositor/protocol.md](../platform/compositor/protocol.md) §4, [ui-toolkit.md](../applications/ui-toolkit.md) |
+| §16 Developer Experience | [interface-kit.md](../applications/interface-kit.md), [compositor/protocol.md](../platform/compositor/protocol.md) §4 |
+| §17 Design Language | [compositor/protocol.md](../platform/compositor/protocol.md) §4, [interface-kit.md](../applications/interface-kit.md) |
 | §18 What Users Never See | — |
 | §19 AI-Native Experience | [airs/intelligence-services.md](../intelligence/airs/intelligence-services.md) §5, [compositor/ai-native.md](../platform/compositor/ai-native.md) §12–§13 |
 | §20 Future Directions | — |
@@ -733,7 +733,7 @@ The Microsoft Copilot notification backlash (Windows rolling back AI integration
 
 ## 16. Developer Experience
 
-> **Authoritative reference:** [ui-toolkit.md](../applications/ui-toolkit.md) — iced-based UI toolkit. [agents.md](../applications/agents.md) — agent development model. [compositor/protocol.md](../platform/compositor/protocol.md) §4 — semantic hints.
+> **Authoritative reference:** [interface-kit.md](../applications/interface-kit.md) — iced-based UI toolkit. [agents.md](../applications/agents.md) — agent development model. [compositor/protocol.md](../platform/compositor/protocol.md) §4 — semantic hints.
 
 ### 16.1 Toolkit Integration
 
@@ -777,7 +777,7 @@ Agent developers get AIOS integration automatically:
 
 ### 17.2 Built With Iced
 
-The entire experience layer is built with the iced toolkit ([ui-toolkit.md](../applications/ui-toolkit.md), Rust, Elm-inspired). This means:
+The entire experience layer is built with the iced toolkit ([interface-kit.md](../applications/interface-kit.md), Rust, Elm-inspired). This means:
 
 - Cross-platform: the same UI code runs on AIOS, Linux, macOS, and Web
 - Developers building agents use the same toolkit, so agent UIs feel native

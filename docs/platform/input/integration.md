@@ -555,7 +555,7 @@ These three timestamps enable end-to-end latency measurement at any point in the
 
 ### 6.6 UI Toolkit Integration
 
-The UI toolkit receives typed `InputEvent` values from the compositor and maps them to widget interactions. The full toolkit architecture is defined in [ui-toolkit.md](../../applications/ui-toolkit.md). This section covers the input handling contract between the toolkit and the input subsystem.
+The UI toolkit receives typed `InputEvent` values from the compositor and maps them to widget interactions. The full toolkit architecture is defined in [interface-kit.md](../../applications/interface-kit.md). This section covers the input handling contract between the toolkit and the input subsystem.
 
 #### 6.6.1 Widget Focus Model
 

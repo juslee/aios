@@ -446,7 +446,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 31 | Bluetooth & Wireless Integration | Wireless Kit (full) | wireless/bluetooth.md, integration.md, ai-native.md | `31-bluetooth-and-wireless-integration.md` | Planned | 4w | — |
 | 32 | Power Management | Power Kit | power-management.md | `32-power-management.md` | Planned | 3w | — |
 | 33 | Thermal Management | Thermal Kit | thermal.md (7) | `33-thermal-management.md` | Planned | 5w | — |
-| 34 | Interface Kit | Interface Kit | ui-toolkit.md | `34-interface-kit.md` | Planned | 5w | — |
+| 34 | Interface Kit | Interface Kit | interface-kit.md | `34-interface-kit.md` | Planned | 5w | — |
 | 35 | Browser Kit | Browser Kit | browser.md (6) | `35-browser-kit.md` | Planned | 7w | — |
 | 36 | Media Pipeline & Codecs | Media Kit, Audio Kit | media-pipeline.md (6) | `36-media-pipeline-and-codecs.md` | Planned | 4w | — |
 | 37 | Streaming, RTC & Camera | Camera Kit | camera.md (7) | `37-streaming-rtc-and-camera.md` | Planned | 5w | — |

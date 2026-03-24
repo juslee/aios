@@ -3,7 +3,7 @@
 Part of: [architecture.md](../project/architecture.md) — System Architecture
 **Kit overview:** [Browser Kit](../kits/application/browser.md) — Application Kit (Layer 4)
 **ADR:** [Browser Kit Replaces Progressive Browser](../knowledge/decisions/2026-03-22-jl-browser-kit.md)
-**Related:** [subsystem-framework.md](../platform/subsystem-framework.md), [networking.md](../platform/networking.md), [linux-compat.md](../platform/linux-compat.md), [Interface Kit](./ui-toolkit.md)
+**Related:** [subsystem-framework.md](../platform/subsystem-framework.md), [networking.md](../platform/networking.md), [linux-compat.md](../platform/linux-compat.md), [Interface Kit](./interface-kit.md)
 
 -----
 

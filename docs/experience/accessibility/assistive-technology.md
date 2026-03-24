@@ -120,7 +120,7 @@ pub enum SpeechSource {
 
 ### 3.2 Text Extraction from Accessibility Tree
 
-The screen reader does not read pixels. It reads the accessibility tree maintained by the compositor (see [compositor.md](../../platform/compositor.md) §9.1) and populated by the UI toolkit (see [ui-toolkit.md](../../applications/ui-toolkit.md) §12.1). Every widget has a semantic role, a label, and a state. The screen reader converts these into natural speech:
+The screen reader does not read pixels. It reads the accessibility tree maintained by the compositor (see [compositor.md](../../platform/compositor.md) §9.1) and populated by the UI toolkit (see [interface-kit.md](../../applications/interface-kit/accessibility.md) §12.1). Every widget has a semantic role, a label, and a state. The screen reader converts these into natural speech:
 
 ```rust
 impl ScreenReaderEngine {

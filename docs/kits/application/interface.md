@@ -1,6 +1,6 @@
 # Interface Kit
 
-**Layer:** Application | **Crate:** `aios_interface` | **Architecture:** [`docs/applications/ui-toolkit.md`](../../applications/ui-toolkit.md)
+**Layer:** Application | **Crate:** `aios_interface` | **Architecture:** [`docs/applications/interface-kit.md`](../../applications/interface-kit.md)
 
 ## 1. Overview
 

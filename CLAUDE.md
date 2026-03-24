@@ -289,7 +289,19 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | Terminal multiplexer | `docs/applications/terminal/multiplexer.md` | §7.1–§7.7 Session broker, pane splitting, detach/reattach, SSH forwarding, reconnection, error recovery |
 | Terminal integration | `docs/applications/terminal/integration.md` | §8.1–§8.9 Subsystem framework, capability gate, spaces, Flow, accessibility, audit, power management, Scriptable terminal protocol |
 | Terminal testing & performance | `docs/applications/terminal/testing.md` | §13 Testing Strategy, §14 Performance Verification |
-| UI toolkit | `docs/applications/ui-toolkit.md` | All (Phase 34+) |
+| Interface Kit (hub) | `docs/applications/interface-kit.md` | §1 Overview, §2 Architecture, §15 Design Principles, §16 Impl Order, Document Map |
+| Interface Kit application model | `docs/applications/interface-kit/application-model.md` | §3 Elm Architecture, Widget trait, InterfaceCommand system |
+| Interface Kit widgets | `docs/applications/interface-kit/widgets.md` | §4 Widget library (30+ widgets), custom widgets |
+| Interface Kit layout | `docs/applications/interface-kit/layout.md` | §5 Constraint-based layout, responsive, incremental layout, grid |
+| Interface Kit theme | `docs/applications/interface-kit/theme.md` | §6 Design tokens, context-aware themes, motion tokens, elevation |
+| Interface Kit text | `docs/applications/interface-kit/text.md` | §7 Text pipeline, font fallback, glyph cache, i18n (ICU4X), variable fonts |
+| Interface Kit rendering | `docs/applications/interface-kit/rendering.md` | §8 Render pipeline, display list, damage tracking, animation system |
+| Interface Kit backends | `docs/applications/interface-kit/backends.md` | §9 Platform backends, bridge trait, AIOS/Linux/macOS/Web |
+| Interface Kit AIOS features | `docs/applications/interface-kit/aios-features.md` | §10 Semantic hints, Flow integration, Space persistence, capability-aware UI |
+| Interface Kit development | `docs/applications/interface-kit/development.md` | §11 SDK integration, §14 CI/CD, testing strategy |
+| Interface Kit accessibility | `docs/applications/interface-kit/accessibility.md` | §12 Accessibility tree (AccessKit), screen reader, keyboard nav, reduced motion |
+| Interface Kit performance | `docs/applications/interface-kit/performance.md` | §13 Frame budget, texture atlas, performance guidelines |
+| Interface Kit intelligence | `docs/applications/interface-kit/intelligence.md` | §17 AIRS-dependent UI, §18 Kernel-internal ML, §19 Future directions |
 | Security model (hub) | `docs/security/model.md` | §1 Threat model, §12 Impl order, Document Map |
 | Security defense layers | `docs/security/model/layers.md` | §2 Eight security layers deep dive |
 | Capability system internals | `docs/security/model/capabilities.md` | §3.1–§3.6 Token lifecycle, kernel table, attenuation, delegation, temporal caps |
