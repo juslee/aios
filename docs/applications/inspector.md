@@ -3,7 +3,7 @@
 ## Security & Capability Management Dashboard
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [model.md §7.1](../security/model.md), [agents.md](agents.md), [compositor.md](../platform/compositor.md), [ui-toolkit.md](ui-toolkit.md), [behavioral-monitor.md](../intelligence/behavioral-monitor.md), [adversarial-defense.md](../security/adversarial-defense.md)
+**Related:** [model.md §7.1](../security/model.md), [agents.md](agents.md), [compositor.md](../platform/compositor.md), [interface-kit.md](interface-kit.md), [behavioral-monitor.md](../intelligence/behavioral-monitor.md), [adversarial-defense.md](../security/adversarial-defense.md)
 
 -----
 

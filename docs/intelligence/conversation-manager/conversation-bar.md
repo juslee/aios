@@ -271,7 +271,7 @@ The Conversation Bar is a compositor surface ([compositor/protocol.md §3](../..
 
 **Focus management:** When the Bar slides in, it captures keyboard focus. When it slides out, focus returns to the previously focused window. The compositor handles focus transfer via the standard focus protocol ([compositor/input.md §7.2](../../platform/compositor/input.md)).
 
-**Rendering:** The Bar's content is rendered using the UI toolkit's compositor integration ([ui-toolkit.md](../../applications/ui-toolkit.md)). Text rendering uses the system font engine. Structured result components are composed of toolkit primitives (cards, tables, buttons, icons).
+**Rendering:** The Bar's content is rendered using the UI toolkit's compositor integration ([interface-kit.md](../../applications/interface-kit.md)). Text rendering uses the system font engine. Structured result components are composed of toolkit primitives (cards, tables, buttons, icons).
 
 ### 11.2 Context Engine Integration
 

@@ -298,7 +298,7 @@ Layer 3 reimagines the screen as an information surface rather than a window man
 - `docs/platform/compositor/rendering.md` — Scene graph, frame composition
 - `docs/platform/gpu.md` — GPU & Display hub
 - `docs/kernel/compute.md` — Heterogeneous compute architecture (aligns with Compute Kit)
-- `docs/applications/ui-toolkit.md` — Current iced-based toolkit design (to be updated → Interface Kit)
+- `docs/applications/interface-kit.md` — Current iced-based toolkit design (to be updated → Interface Kit)
 - `docs/applications/browser.md` — Current Servo-based browser plan (to be updated → Browser Kit)
 - `docs/intelligence/airs.md` — AIRS architecture overview
 - `docs/intelligence/airs/inference.md` — Inference engine (currently GGML → candle)
@@ -331,7 +331,7 @@ Architecture docs to update after graduation:
 - `docs/platform/compositor.md` — Compositor as system service, not a Kit
 - `docs/platform/compositor/gpu.md` — Compute Kit replaces GpuDevice
 - `docs/kernel/compute.md` — Align with Compute Kit 3-tier model
-- `docs/applications/ui-toolkit.md` — Rename to Interface Kit, add cross-platform bridge strategy
+- `docs/applications/interface-kit.md` — Rename to Interface Kit, add cross-platform bridge strategy
 - `docs/applications/browser.md` — Browser Kit replaces progressive browser
 - `docs/intelligence/airs/inference.md` — candle replaces GGML, Compute Kit Tier 3
 - `docs/project/development-plan.md` — Update risk register and phase descriptions

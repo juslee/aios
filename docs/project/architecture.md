@@ -29,7 +29,7 @@
 - [experience.md](../experience/experience.md) — Experience layer and UI design
 - [browser.md](../applications/browser.md) — Browser Kit: platform SDK for web browsers
 - [inspector.md](../applications/inspector.md) — Security dashboard and provenance viewer
-- [ui-toolkit.md](../applications/ui-toolkit.md) — Interface Kit: AIOS-native UI toolkit
+- [interface-kit.md](../applications/interface-kit.md) — Interface Kit: AIOS-native UI toolkit
 - [kits/README.md](../kits/README.md) — Kit architecture overview (29 Kits across 4 layers)
 - [attention.md](../intelligence/attention.md) — Attention Manager and notification triage
 - [preferences.md](../intelligence/preferences.md) — Preference Service
@@ -906,7 +906,7 @@ Tools never know they're not on a traditional filesystem. Self-hosting capabilit
 
 ### 2.11 Interface Kit
 
-**Full design in [ui-toolkit.md](../applications/ui-toolkit.md). Kit overview: [Interface Kit](../kits/application/interface.md). ADR: [Interface Kit decision](../knowledge/decisions/2026-03-22-jl-interface-kit.md).**
+**Full design in [interface-kit.md](../applications/interface-kit.md). Kit overview: [Interface Kit](../kits/application/interface.md). ADR: [Interface Kit decision](../knowledge/decisions/2026-03-22-jl-interface-kit.md).**
 
 Interface Kit is the AIOS-native UI foundation — Rust traits defining widgets, layout, events, and theming. Open-source toolkits (iced, Flutter, Qt, GTK, Electron) are **bridges above Interface Kit**, translating their widget/rendering model to Interface Kit primitives. This gives ported apps access to AIOS features through familiar interfaces while keeping Interface Kit as the source of truth.
 
@@ -977,7 +977,7 @@ flowchart TD
 **Cross-platform example:**
 
 ```rust
-use aios_toolkit::prelude::*;
+use aios_interface::prelude::*;
 
 fn view(state: &AppState) -> Element {
     column![
