@@ -62,7 +62,13 @@
       "Bash(tail *)",
       "Bash(wc *)",
       "Bash(file *)",
-      "Bash(objdump *)"
+      "Bash(objdump *)",
+      "Bash(gh *)",
+      "Bash(sleep *)",
+      "Bash(git worktree *)",
+      "Bash(git rm *)",
+      "Bash(brew *)",
+      "Bash(cd *)"
     ],
     "deny": [
       "Bash(rm -rf /)*"
