@@ -416,7 +416,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 2 | Memory Management | Memory Kit | memory.md (5) | [`02-memory-management.md`](../phases/02-memory-management.md) | Complete | 4w | 5d |
 | 3 | IPC & Capability System | IPC Kit, Capability Kit | ipc.md, scheduler.md | [`03-ipc-and-capability-system.md`](../phases/03-ipc-and-capability-system.md) | Complete | 6w | 3d |
 | 4 | Block Storage & Object Store | Storage Kit | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | In Progress (M14 complete) | 5w | — |
-| 5 | Kit Foundation | Memory Kit, IPC Kit, Capability Kit, Storage Kit | — | `05-kit-foundation.md` | Planned | 3w | — |
+| 5 | Kit Foundation | Memory Kit, IPC Kit, Capability Kit, Storage Kit | — | [`05-kit-foundation.md`](../phases/05-kit-foundation.md) | Complete | 3w | — |
 | 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | `06-gpu-and-display.md` | Planned | 6w | — |
 | 7 | Window Compositor & Shell | — | compositor.md (6) | `07-window-compositor-and-shell.md` | Planned | 7w | — |
 | 8 | Input & Terminal | Input Kit | input.md (6), terminal.md (6) | `08-input-and-terminal.md` | Planned | 4w | — |

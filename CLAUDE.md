@@ -478,10 +478,10 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      391 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
-Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants)
-Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs) — zero-sized unit structs delegating to global statics
-Kit trait dyn-compat:         All 8 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps) are dyn-compatible
+Shared crate unit tests:      394 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError)
+Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
+Kit trait dyn-compat:         All 12 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps) are dyn-compatible
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -674,10 +674,11 @@ aios/
 │       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants, MemTable, ObjectIndex, SpaceTable, WalEntry, crc32c, PosixStat, DirEntry, CompressionType, StorageBudget, PressureLevel
 │       ├── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 │       └── kits/
-│           ├── mod.rs       pub mod memory; pub mod capability; pub mod ipc;
+│           ├── mod.rs       pub mod memory; pub mod capability; pub mod ipc; pub mod storage;
 │           ├── memory.rs    MemoryError, PhysFrame, PagePermissions (W^X), Mapping, PoolStats, FrameAllocator trait, AddressSpace trait, MemoryPressureMonitor trait
 │           ├── capability.rs CapabilityError (7 variants, i64 round-trip), CapabilityEnforcer trait (check/grant/revoke/attenuate/list_active)
-│           └── ipc.rs       IpcKitError (8 variants), ChannelOps trait, NotificationOps trait, SelectOps trait, SharedMemoryOps trait
+│           ├── ipc.rs       IpcKitError (8 variants), ChannelOps trait, NotificationOps trait, SelectOps trait, SharedMemoryOps trait
+│           └── storage.rs   BlockStore trait (3 methods), SpaceManager trait (6 methods), ObjectStore trait (4 methods), VersionStoreOps trait (4 methods); reuses StorageError directly
 └── docs/                 (architecture, phase, and research docs)
 ```
 
