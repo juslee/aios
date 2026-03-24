@@ -5,11 +5,11 @@ tags: [kits, platform, intelligence, storage, compositor, security]
 status: final
 ---
 
-# Discussion: Additional Lessons from BeOS, Haiku OS, and Redox OS
+# ADR: Additional Lessons from BeOS, Haiku OS, and Redox OS
 
 ## Context
 
-AIOS already adopts several foundational BeOS design patterns: the Kit architecture (30 Kits, 4 layers), App Kit messaging (BLooper/BHandler), Translation Kit (format conversion), Interface Kit naming, Storage Kit→Spaces evolution, and Flow Kit (unifying clipboard/drag-drop/share). These were formalized in the [Custom Core discussion](2026-03-16-jl-platform-vision-custom-core.md) and 10 ADRs extracted on 2026-03-22.
+AIOS already adopts several foundational BeOS design patterns: the Kit architecture (30 Kits, 4 layers), App Kit messaging (BLooper/BHandler), Translation Kit (format conversion), Interface Kit naming, Storage Kit→Spaces evolution, and Flow Kit (unifying clipboard/drag-drop/share). These were formalized in the [Custom Core discussion](../discussions/2026-03-16-jl-platform-vision-custom-core.md) and 10 ADRs extracted on 2026-03-22.
 
 This discussion explores **7 additional design lessons** from three sources:
 
