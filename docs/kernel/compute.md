@@ -86,7 +86,47 @@ The compute abstraction is **not** a scheduler. The kernel CPU scheduler ([sched
 | `GpuRender` (Kit Tier 2) | App-facing trait for GPU shader submission | [Compute Kit](../kits/kernel/compute.md) |
 | `InferencePipeline` (Kit Tier 3) | App-facing trait for NPU→GPU→CPU inference fallback | [Compute Kit](../kits/kernel/compute.md) |
 
-### 2.3 Data Flow: Workload Submission
+### 2.3 Resource Manager
+
+The Resource Manager is the **single authority** for compute device scheduling within the kernel. It is not a separate process — it is a kernel-internal component that mediates between AIRS placement decisions and hardware drivers.
+
+**Responsibilities:**
+
+| Function | Description |
+| --- | --- |
+| **Workload routing** | Accepts `submit_compute()` from AIRS, validates capability, selects driver |
+| **Memory allocation** | Allocates GPU/NPU memory from `Pool::Dma`, tracks per-agent usage |
+| **Capability enforcement** | Checks `ComputeAccess` tokens before any hardware submission |
+| **Thermal/power budget** | Integrates with thermal framework ([thermal.md](../platform/thermal.md)); reduces quotas before hardware throttling |
+| **Fault isolation** | Per-agent command streams; driver crash does not corrupt other agents' state |
+| **AIRS scheduling policy** | Default: yield to interactive rendering (Option A). With Context Engine: context-aware priority (Option C). On NPU-equipped hardware: no GPU conflict for inference |
+
+The Resource Manager does NOT make placement decisions — AIRS does. The Resource Manager enforces constraints: "AIRS says run on GPU, but this agent's budget is exhausted → reject." See [ADR: Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md) for the scheduling policy rationale.
+
+### 2.4 Bridge Stack
+
+Standard graphics and inference APIs layer **above** Compute Kit as bridges, not below. This follows the [Custom Core principle](../knowledge/decisions/2026-03-16-jl-custom-core-principle.md): AIOS-native first, bridges for compatibility.
+
+```text
+┌─────────────────────────────────────────────────────┐
+│                    Applications                      │
+├──────────────┬──────────────┬────────────────────────┤
+│ Vulkan (Mesa)│   wgpu       │  candle / GGML compat  │  ← Bridges
+├──────────────┴──────────────┴────────────────────────┤
+│        Compute Kit (Tier 1 / Tier 2 / Tier 3)       │  ← Native API
+├──────────────────────────────────────────────────────┤
+│           Kernel Compute Layer (Resource Manager)     │
+├──────────────────────────────────────────────────────┤
+│      GPU Driver    │    NPU Driver    │  CPU NEON    │  ← Hardware
+└──────────────────────────────────────────────────────┘
+```
+
+- **Vulkan** (via Mesa): bridges to Compute Kit Tier 2 (Render Pipeline). Linux apps using Vulkan go through the Wayland bridge → Vulkan → Compute Kit.
+- **wgpu**: bridges to Compute Kit Tier 2. AIOS-native apps can use wgpu for portable GPU access, or use Tier 2 directly for tighter integration.
+- **candle**: bridges to Compute Kit Tier 3 (Inference Pipeline). AIRS calls candle for LLM inference; candle routes through Tier 3 which selects NPU → GPU → CPU NEON.
+- **Software fallback removed**: All AIOS target hardware has GPU (QEMU has VirtIO-GPU, Pi has VC4/V3D, Apple Silicon has AGX). No software-only rendering path.
+
+### 2.5 Data Flow: Workload Submission
 
 ```mermaid
 sequenceDiagram
@@ -187,6 +227,8 @@ flowchart LR
 | --- | --- | --- |
 | §1 Core Insight | This file | [device-model.md](./device-model.md) §1, [airs.md](../intelligence/airs.md) §1, [scheduler.md](./scheduler.md) §1 |
 | §2 Architecture Overview | This file | [device-model.md](./device-model.md) §2, [subsystem-framework.md](../platform/subsystem-framework.md) §3, [airs/inference.md](../intelligence/airs/inference.md) §3.2 |
+| §2.3 Resource Manager | This file | [thermal.md](../platform/thermal.md) §6, [ADR: Compute Kit](../knowledge/decisions/2026-03-22-jl-compute-kit.md) |
+| §2.4 Bridge Stack | This file | [ADR: Custom Core](../knowledge/decisions/2026-03-16-jl-custom-core-principle.md), [gpu/rendering.md](../platform/gpu/rendering.md) §9 |
 | §3 ComputeDevice Trait | [classification.md](./compute/classification.md) | [device-model/discovery.md](./device-model/discovery.md) §6, [hal.md](./hal.md) §4.4 |
 | §4 ComputeCapabilityDescriptor | [classification.md](./compute/classification.md) | [airs/inference.md](../intelligence/airs/inference.md) §3.2, [airs/ai-native.md](../intelligence/airs/ai-native.md) §13.1 |
 | §5 ComputeRegistry | [registry.md](./compute/registry.md) | [device-model/representation.md](./device-model/representation.md) §4, [airs/inference.md](../intelligence/airs/inference.md) §3.2 |
