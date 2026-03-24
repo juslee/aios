@@ -71,6 +71,13 @@
       "Bash(brew *)",
       "Bash(cd *)",
       "Bash(for *)",
+      "Bash(python3 -c *)",
+      "Bash(sed *)",
+      "Bash(diff *)",
+      "Bash(xargs *)",
+      "Bash(awk *)",
+      "Bash(touch *)",
+      "Bash(echo *)",
       "WebSearch"
     ],
     "deny": [
