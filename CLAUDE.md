@@ -552,7 +552,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 5 M17 — Kit Foundation, Memory Kit, Capability Kit & IPC Kit):
+Current (post-Phase 5 M18 — Kit Foundation, Memory Kit, Capability Kit, IPC Kit & Storage Kit):
 
 ```
 aios/
@@ -662,7 +662,7 @@ aios/
 ├── shared/
 │   ├── Cargo.toml
 │   └── src/
-│       ├── lib.rs        PhysAddr, VirtAddr, BOOTINFO_MAGIC, re-exports (pub use kits::memory as memory_kit, kits::capability as capability_kit, kits::ipc as ipc_kit)
+│       ├── lib.rs        PhysAddr, VirtAddr, BOOTINFO_MAGIC, re-exports (pub use kits::memory as memory_kit, kits::capability as capability_kit, kits::ipc as ipc_kit, kits::storage as storage_kit)
 │       ├── boot.rs       BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat
 │       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
 │       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests

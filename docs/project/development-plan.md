@@ -153,7 +153,8 @@ flowchart TD
     style P1 fill:#228B22,color:white
     style P2 fill:#228B22,color:white
     style P3 fill:#228B22,color:white
-    style P4 fill:#FFA500,color:white
+    style P4 fill:#228B22,color:white
+    style P5 fill:#228B22,color:white
 ```
 
 **Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 26 → 34 → 35. Browser Kit (Phase 35) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
@@ -415,7 +416,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 1 | Boot & First Pixels | — | boot.md, hal.md | [`01-boot-and-first-pixels.md`](../phases/01-boot-and-first-pixels.md) | Complete | 4w | 1.5d |
 | 2 | Memory Management | Memory Kit | memory.md (5) | [`02-memory-management.md`](../phases/02-memory-management.md) | Complete | 4w | 5d |
 | 3 | IPC & Capability System | IPC Kit, Capability Kit | ipc.md, scheduler.md | [`03-ipc-and-capability-system.md`](../phases/03-ipc-and-capability-system.md) | Complete | 6w | 3d |
-| 4 | Block Storage & Object Store | Storage Kit | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | In Progress (M14 complete) | 5w | — |
+| 4 | Block Storage & Object Store | Storage Kit | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | Complete | 5w | — |
 | 5 | Kit Foundation | Memory Kit, IPC Kit, Capability Kit, Storage Kit | — | [`05-kit-foundation.md`](../phases/05-kit-foundation.md) | Complete | 3w | — |
 | 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | `06-gpu-and-display.md` | Planned | 6w | — |
 | 7 | Window Compositor & Shell | — | compositor.md (6) | `07-window-compositor-and-shell.md` | Planned | 7w | — |

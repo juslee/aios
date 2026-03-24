@@ -320,11 +320,27 @@ impl storage_kit::VersionStoreOps for KernelVersionStore {
 
     fn get_head(&self, object_id: &ObjectId) -> Result<ContentHash, StorageError> {
         block_engine::with_engine(|engine| {
-            engine
+            let obj = engine
                 .object_index()
                 .get(object_id)
-                .map(|obj| obj.version_head)
-                .ok_or(StorageError::ObjectNotFound)
+                .ok_or(StorageError::ObjectNotFound)?;
+
+            // version_head is the block storage hash (SHA-256 of serialized bytes).
+            // Read the version block and return its logical hash (ver.hash) which
+            // is what rollback() expects for version identification.
+            if obj.version_head.is_zero() {
+                return Ok(ContentHash::ZERO);
+            }
+            let mut buf = [0u8; 256];
+            let n = engine.read_block_by_hash(&obj.version_head, &mut buf)?;
+            if n != core::mem::size_of::<Version>() {
+                return Err(StorageError::BlockNotFound);
+            }
+            // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+            // Maintained by compile-time assertion: size_of::<Version>() == 256.
+            // If violated, read_unaligned returns garbage bytes.
+            let version = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+            Ok(version.hash)
         })?
     }
 
