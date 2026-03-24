@@ -70,7 +70,8 @@
       "Bash(git rm *)",
       "Bash(brew *)",
       "Bash(cd *)",
-      "Bash(for *)"
+      "Bash(for *)",
+      "WebSearch"
     ],
     "deny": [
       "Bash(rm -rf /)*"
