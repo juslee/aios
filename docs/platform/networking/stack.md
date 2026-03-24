@@ -56,7 +56,7 @@ flowchart TD
 
 ### 4.1 smoltcp Integration
 
-[smoltcp](https://github.com/smoltcp-rs/smoltcp) is a standalone, event-driven TCP/IP stack designed for bare-metal and embedded systems. It provides TCP, UDP, ICMP, ARP, NDP, DHCP, and DNS — everything AIOS needs for Phase 7.
+[smoltcp](https://github.com/smoltcp-rs/smoltcp) is a standalone, event-driven TCP/IP stack designed for bare-metal and embedded systems. It provides TCP, UDP, ICMP, ARP, NDP, DHCP, and DNS — everything AIOS needs for Phase 8.
 
 #### 4.1.1 Why smoltcp
 
@@ -159,13 +159,13 @@ impl NetworkStack {
 smoltcp requires periodic polling to process packets. AIOS uses a hybrid approach:
 
 ```text
-Interrupt-driven (Phase 7+):
+Interrupt-driven (Phase 8+):
     VirtIO-Net raises IRQ on packet arrival
     → GICv3 routes to handler
     → Handler signals network service thread
     → Service thread calls NetworkStack::poll()
 
-Adaptive polling (Phase 23+):
+Adaptive polling (Phase 24+):
     High traffic: switch to polling mode (check every 100μs)
     Low traffic: switch to interrupt mode (wake on packet)
     Threshold: >1000 packets/sec sustained → polling mode
@@ -420,29 +420,29 @@ Receive path (NIC → application):
     Traditional OS:  NIC → kernel buffer → socket buffer → user buffer (3 copies)
     AIOS target:     NIC → DMA buffer → application mapping (1 copy)
 
-    Phase 7:   NIC → DMA → smoltcp → NTM → agent (2 copies)
-    Phase 23+: NIC → DMA → mapped to agent address space (1 copy)
+    Phase 8:   NIC → DMA → smoltcp → NTM → agent (2 copies)
+    Phase 24+: NIC → DMA → mapped to agent address space (1 copy)
 
 Transmit path (application → NIC):
     Traditional OS:  user buffer → socket buffer → kernel buffer → NIC (3 copies)
     AIOS target:     application mapping → DMA buffer → NIC (1 copy)
 
-    Phase 7:   agent → NTM → smoltcp → DMA → NIC (2 copies)
-    Phase 23+: agent buffer → DMA mapping → NIC (1 copy)
+    Phase 8:   agent → NTM → smoltcp → DMA → NIC (2 copies)
+    Phase 24+: agent buffer → DMA mapping → NIC (1 copy)
 ```
 
-#### 4.4.2 Phase 7 Data Path
+#### 4.4.2 Phase 8 Data Path
 
-In Phase 7, the data path involves two copies — acceptable for initial bringup:
+In Phase 8, the data path involves two copies — acceptable for initial bringup:
 
 ```text
 RX: DMA buffer → smoltcp processes TCP/IP headers → payload copied to NTM buffer → NTM delivers to agent
 TX: Agent writes to NTM buffer → NTM passes to smoltcp → smoltcp builds frame in DMA buffer → VirtIO sends
 ```
 
-#### 4.4.3 Phase 16+ Zero-Copy Path
+#### 4.4.3 Phase 17+ Zero-Copy Path
 
-In Phase 16, the NTM maps DMA buffers directly into agent address spaces using shared memory regions (see [memory/virtual.md §7](../../kernel/memory/virtual.md)):
+In Phase 17, the NTM maps DMA buffers directly into agent address spaces using shared memory regions (see [memory/virtual.md §7](../../kernel/memory/virtual.md)):
 
 ```text
 RX: DMA buffer → smoltcp processes headers → payload region mapped read-only into agent address space
@@ -551,13 +551,13 @@ For QEMU virt, the built-in DHCP server provides addresses in the 10.0.2.0/24 ra
 DNS resolution is provided at two levels:
 
 ```text
-Level 1: smoltcp DNS stub (Phase 7)
+Level 1: smoltcp DNS stub (Phase 8)
     - Simple recursive DNS queries over UDP
     - Single upstream server (from DHCP or static config)
     - Response caching with TTL
     - Sufficient for POSIX compat (curl, ssh)
 
-Level 2: hickory-dns client (Phase 23)
+Level 2: hickory-dns client (Phase 24)
     - DNS-over-HTTPS (DoH) and DNS-over-TLS (DoT)
     - DNSSEC validation
     - Encrypted queries (privacy)

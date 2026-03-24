@@ -159,7 +159,7 @@ flowchart TD
 | **BootInfo** | Native — `uefi-stub/` builds it directly | Requires BootInfo shim | Requires BootInfo shim |
 | **Secure boot** | UEFI Secure Boot (db/dbx/KEK), optional on Pi | `boot.sig` GPU verification (optional) | iBoot mandatory + user-enrolled key |
 | **Debug access** | UEFI shell, GDB via `-gdb tcp::1234` | UART + JTAG | m1n1 hypervisor, USB serial (DFU) |
-| **Phase 39 target** | QEMU (complete), Pi via rpi4-uefi | Pi 4, Pi 5 | Apple M1/M2/M3/M4 |
+| **Phase 40 target** | QEMU (complete), Pi via rpi4-uefi | Pi 4, Pi 5 | Apple M1/M2/M3/M4 |
 
 ---
 
@@ -277,7 +277,7 @@ The GPU firmware can optionally verify `config.txt` and the next-stage bootloade
 
 Apple Silicon Macs enforce a mandatory boot chain: the Secure Enclave Processor (SEP) verifies each boot stage cryptographically before granting execution. m1n1 installs as a recoveryOS extension and is signed by a key the user enrolls using Apple's `kmutil` / `bputil` tooling. This is the same mechanism used by Asahi Linux — it does not bypass Apple's security model, but extends it to include user-authorized third-party software.
 
-AIOS's position in this chain: trust the platform firmware to do its job. AIOS does not attempt to verify the firmware, re-verify m1n1, or duplicate the platform's trust chain. AIOS verifies `BootInfo.magic` at entry and, in future phases, will verify the kernel image hash via the capability system once the security model (Phase 40) is implemented.
+AIOS's position in this chain: trust the platform firmware to do its job. AIOS does not attempt to verify the firmware, re-verify m1n1, or duplicate the platform's trust chain. AIOS verifies `BootInfo.magic` at entry and, in future phases, will verify the kernel image hash via the capability system once the security model (Phase 41) is implemented.
 
 **Boot path trust summary:**
 

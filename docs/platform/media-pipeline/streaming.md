@@ -191,7 +191,7 @@ Combines buffer level, throughput estimate, and switching cost to make quality d
 - **Switching hysteresis:** Track consecutive quality-up signals; require 3 consecutive signals before switching up. Switch down on first trigger.
 - **Switching cost:** Avoid frequent quality oscillation. Penalize quality switches that improve QoE by less than a threshold.
 
-**RL-Based ABR (AIRS-dependent, Phase 41+):**
+**RL-Based ABR (AIRS-dependent, Phase 42+):**
 
 Learned ABR trained with reinforcement learning, in the class of Pensieve (Mao et al., 2017) and PLL-ABR (2025):
 

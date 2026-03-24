@@ -115,7 +115,7 @@ A lightweight anomaly detector runs in the translation layer, using a decision t
 
 The anomaly detector uses per-sandbox counters with exponential decay (window: 1 second, decay factor: 0.5). This keeps memory usage constant (~64 bytes per sandbox) while tracking recent behavior.
 
-#### §13.3.2 AIRS-Dependent Intelligence (Phase 41+)
+#### §13.3.2 AIRS-Dependent Intelligence (Phase 42+)
 
 When AIRS is available, deeper behavioral analysis becomes possible:
 
@@ -151,7 +151,7 @@ The Linux Test Project provides ~3000 syscall test cases. The compatibility laye
 
 | Category | LTP Tests | Target Pass Rate | Notes |
 |---|---|---|---|
-| File I/O | ~400 | 95% | Core POSIX I/O, well-tested by Phase 22 |
+| File I/O | ~400 | 95% | Core POSIX I/O, well-tested by Phase 23 |
 | Process/thread | ~350 | 90% | clone, fork, exec, wait |
 | Memory management | ~250 | 85% | mmap, mprotect, mremap |
 | Signal handling | ~200 | 85% | sigaction, signal delivery |

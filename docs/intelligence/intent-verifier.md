@@ -63,27 +63,27 @@ Intent verification and behavioral monitoring operate in tandem: Layer 1 checks 
 
 ## §14 Implementation Order
 
-Intent verification is implemented incrementally across multiple phases, building on the capability system (Phase 3) and AIRS inference engine (Phase 9).
+Intent verification is implemented incrementally across multiple phases, building on the capability system (Phase 3) and AIRS inference engine (Phase 10).
 
 | Phase | Component | Dependencies | Deliverable |
 |---|---|---|---|
-| **Phase 13a** | Core IntentVerifier + Behavioral Monitor | Phase 9 (AIRS inference), Phase 10 (context engine) | `IntentVerifier` struct, `DeclaredIntent`, `VerificationResult`, security path IPC, synchronous/async verification modes, `BehavioralMonitor` with baseline learning |
-| **Phase 13b** | Structured Intent Specs + Algorithmic Pre-Check | Phase 13a | `StructuredIntent`, `IntentPurpose` enum, algorithmic pre-filter (no LLM for ~80% of checks), `TemporalSpec` formulas |
-| **Phase 13c** | Adversarial Defense integration | Phase 13a | `InjectionClassifier`, control/data separation enforcement, multi-round adversarial self-testing for high-risk actions |
-| **Phase 15+** | IPC Taint Labels | Phase 3 (IPC), Phase 13a | `LabelSet` on IPC messages, kernel-enforced DIFC, declassification protocol |
-| **Phase 15+** | MTL Evaluator | Phase 13b | Compact in-kernel temporal logic evaluator, rules loaded from agent manifests |
-| **Phase 16+** | Capability Flow Graph | Phase 3 (capabilities) | Periodic delegation chain analysis, confused deputy detection, escalation path detection |
-| **Phase 41** | Agent Capability Intelligence | Phase 13a, Phase 40 (capability profiles) | 5-stage analysis pipeline, behavioral prediction, corpus comparison, profile suggestion |
+| **Phase 14a** | Core IntentVerifier + Behavioral Monitor | Phase 10 (AIRS inference), Phase 11 (context engine) | `IntentVerifier` struct, `DeclaredIntent`, `VerificationResult`, security path IPC, synchronous/async verification modes, `BehavioralMonitor` with baseline learning |
+| **Phase 14b** | Structured Intent Specs + Algorithmic Pre-Check | Phase 14a | `StructuredIntent`, `IntentPurpose` enum, algorithmic pre-filter (no LLM for ~80% of checks), `TemporalSpec` formulas |
+| **Phase 14c** | Adversarial Defense integration | Phase 14a | `InjectionClassifier`, control/data separation enforcement, multi-round adversarial self-testing for high-risk actions |
+| **Phase 16+** | IPC Taint Labels | Phase 3 (IPC), Phase 14a | `LabelSet` on IPC messages, kernel-enforced DIFC, declassification protocol |
+| **Phase 16+** | MTL Evaluator | Phase 14b | Compact in-kernel temporal logic evaluator, rules loaded from agent manifests |
+| **Phase 17+** | Capability Flow Graph | Phase 3 (capabilities) | Periodic delegation chain analysis, confused deputy detection, escalation path detection |
+| **Phase 42** | Agent Capability Intelligence | Phase 14a, Phase 41 (capability profiles) | 5-stage analysis pipeline, behavioral prediction, corpus comparison, profile suggestion |
 
 ### Dependency Chain
 
 ```text
-Phase 3 (IPC + Caps) ──→ Phase 9 (AIRS) ──→ Phase 13a (Core Verifier)
-                                              ├──→ Phase 13b (Structured Intent)
-                                              ├──→ Phase 13c (Adversarial Defense)
-                                              ├──→ Phase 15+ (Taint Labels, MTL)
-                                              ├──→ Phase 16+ (Cap Flow Graph)
-                                              └──→ Phase 41 (Capability Intelligence)
+Phase 3 (IPC + Caps) ──→ Phase 10 (AIRS) ──→ Phase 14a (Core Verifier)
+                                              ├──→ Phase 14b (Structured Intent)
+                                              ├──→ Phase 14c (Adversarial Defense)
+                                              ├──→ Phase 16+ (Taint Labels, MTL)
+                                              ├──→ Phase 17+ (Cap Flow Graph)
+                                              └──→ Phase 42 (Capability Intelligence)
 ```
 
 ---

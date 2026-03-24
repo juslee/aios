@@ -237,10 +237,10 @@ stateDiagram-v2
 
 ## §18 Implementation Order
 
-The media pipeline is implemented across multiple development phases, building complexity incrementally. Core playback infrastructure lands in Phase 31 alongside the Audio and Camera subsystem completions. Advanced features follow in subsequent phases.
+The media pipeline is implemented across multiple development phases, building complexity incrementally. Core playback infrastructure lands in Phase 32 alongside the Audio and Camera subsystem completions. Advanced features follow in subsequent phases.
 
 ```text
-Phase 31: Media pipeline core
+Phase 32: Media pipeline core
          ├── MediaElement trait hierarchy (Source, Decoder, Filter, Sink, Demuxer, Muxer)
          ├── Pipeline graph builder and executor (PipelineBuilder, PipelineManager)
          ├── MediaSession lifecycle (capability-gated, MediaPlayback capability)
@@ -256,7 +256,7 @@ Phase 31: Media pipeline core
          ├── Basic subtitle rendering (SRT, WebVTT → compositor overlay)
          └── Test: play MP4 (H.264+AAC) from HTTP source with A/V sync
 
-Phase 31+: Advanced streaming
+Phase 32+: Advanced streaming
           ├── HLS support (M3U8 master+media playlists, segment fetch)
           ├── DASH support (MPD parsing, segment templates)
           ├── Adaptive bitrate: buffer-based + throughput-based hybrid ABR
@@ -268,7 +268,7 @@ Phase 31+: Advanced streaming
           ├── Recording pipeline (CameraSource → encoder → muxer → SpaceSink)
           └── Test: adaptive HLS playback with quality switching
 
-Phase 31+: Real-time communication
+Phase 32+: Real-time communication
           ├── WebRTC PeerConnection lifecycle (offer/answer SDP)
           ├── ICE candidate gathering (host, srflx, relay via STUN/TURN)
           ├── DTLS-SRTP media encryption
@@ -280,7 +280,7 @@ Phase 31+: Real-time communication
           ├── Data channels (SCTP over DTLS)
           └── Test: two-agent video call over loopback
 
-Phase 31+: DRM and content protection
+Phase 32+: DRM and content protection
           ├── DRM session lifecycle (MediaDrm capability token)
           ├── ContentDecryptionModule trait (pluggable CDM)
           ├── CENC decryption (CTR and CBCS schemes, ISO 23001-7)
@@ -290,7 +290,7 @@ Phase 31+: DRM and content protection
           ├── HDCP enforcement via compositor output protection
           └── Test: play CENC-encrypted content with ClearKey CDM
 
-Phase 31+: Hardware codecs and optimization
+Phase 32+: Hardware codecs and optimization
           ├── V4L2 stateless codec driver (RPi 4: H.264+HEVC decode, H.264 encode)
           ├── V4L2 stateless codec driver (RPi 5: HEVC decode)
           ├── VirtIO-Video codec driver (QEMU, when spec stabilizes)
@@ -299,14 +299,14 @@ Phase 31+: Hardware codecs and optimization
           ├── Hardware-accelerated encode (RPi 4 H.264 encoder)
           └── Test: hardware decode of H.264 on RPi 4 with zero-copy display
 
-Phase 36: POSIX bridge and compatibility
+Phase 37: POSIX bridge and compatibility
          ├── GStreamer plugin bridge (GstElement ↔ MediaElement adapter)
          ├── FFmpeg/libav compatibility layer (AVCodec ↔ MediaCodec)
          ├── V4L2 M2M device nodes (/dev/video* for codec access)
          ├── ALSA PCM bridge for media applications
          └── Test: GStreamer-based application plays video via bridge
 
-Phase 41+: AI-native media intelligence
+Phase 42+: AI-native media intelligence
           ├── Content-type-aware transcoding (AIRS selects codec/bitrate)
           ├── Neural super-resolution video filter element
           ├── AI-driven ABR (Pensieve/PLL-ABR-class learned adaptation)
@@ -370,5 +370,5 @@ Phase 41+: AI-native media intelligence
 | §15.1–§15.4 | [integration.md](./media-pipeline/integration.md) | Security and audit: media capabilities, attenuation, audit events, content screening |
 | §16.1–§16.3 | [integration.md](./media-pipeline/integration.md) | AI-native media intelligence: AIRS-dependent, kernel-internal ML, future directions |
 | §17.1–§17.3 | [integration.md](./media-pipeline/integration.md) | Thermal coordination: thermal-aware quality adaptation, power-proportional media, implementation order |
-| §18 | **This file** | Implementation order — phased delivery from Phase 31 through Phase 41+ |
+| §18 | **This file** | Implementation order — phased delivery from Phase 32 through Phase 42+ |
 | §19 | **This file** | Design principles — 13 principles governing media pipeline architecture |

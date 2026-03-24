@@ -579,7 +579,7 @@ pub struct FederatedConfig {
 
 **Communication overhead:** A LoRA adapter for an 8B model at rank 16 is ~80 MB. With gradient compression, upload per round is ~20-50 MB. Feasible over WiFi but not practical over metered cellular connections.
 
-**Limitations:** Requires multi-device infrastructure (Phase 37+). Convergence is slow with heterogeneous user data (non-IID). Most valuable for domain-specific improvements (e.g., fleet of devices used in the same industry).
+**Limitations:** Requires multi-device infrastructure (Phase 38+). Convergence is slow with heterogeneous user data (non-IID). Most valuable for domain-specific improvements (e.g., fleet of devices used in the same industry).
 
 ### 14.8 Model Distillation Pipeline
 

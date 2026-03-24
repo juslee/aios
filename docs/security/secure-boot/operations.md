@@ -299,7 +299,7 @@ Linux applications and containers that expect dm-verity (device-mapper verity) f
 **dm-verity bridge:**
 
 - AIOS does not use dm-verity internally (the Block Engine provides its own integrity via CRC-32C and content-addressing)
-- For Linux binary compatibility (Phase 35), a dm-verity translation layer maps dm-verity ioctls to Block Engine integrity verification
+- For Linux binary compatibility (Phase 36), a dm-verity translation layer maps dm-verity ioctls to Block Engine integrity verification
 - Container runtimes (if supported) can use dm-verity-protected root filesystems through this bridge
 - The bridge provides **read-only** verified block access — write operations go through the normal Block Engine path
 

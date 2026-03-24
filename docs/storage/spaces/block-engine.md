@@ -68,7 +68,7 @@ pub struct MemTable {
 
 > **Implementation note:** The Phase 4a implementation (`kernel/src/storage/lsm.rs`) uses a sorted `Vec<MemTableEntry>` with binary search instead of `BTreeMap`. This provides equivalent O(log n) lookup performance with better cache locality and predictable memory usage. Both approaches satisfy the design requirements. The `BlockId` type used throughout is equivalent to `ContentHash` — a SHA-256 content hash — consistent with the data-structures doc.
 
-> **Future optimization (WiscKey KV-separation):** WiscKey (FAST '16) demonstrated that separating keys from values in LSM-trees reduces write amplification 2.5-111x on SSDs by avoiding value movement during compaction. AIOS could adopt this approach in Phase 14 by storing block content hashes (keys) in the LSM-tree while keeping block data (values) in the append-only data region — which is already AIOS's natural layout. The key insight is that AIOS's content-addressed design naturally separates keys (hashes) from values (data blocks), making this optimization straightforward to adopt.
+> **Future optimization (WiscKey KV-separation):** WiscKey (FAST '16) demonstrated that separating keys from values in LSM-trees reduces write amplification 2.5-111x on SSDs by avoiding value movement during compaction. AIOS could adopt this approach in Phase 15 by storing block content hashes (keys) in the LSM-tree while keeping block data (values) in the append-only data region — which is already AIOS's natural layout. The key insight is that AIOS's content-addressed design naturally separates keys (hashes) from values (data blocks), making this optimization straightforward to adopt.
 
 ```rust
 pub struct SSTable {
@@ -708,7 +708,7 @@ pub struct TierStats {
 
 **Recompression is lazy.** The recompressor runs at lowest I/O priority and yields to any foreground read or write. On a Pi with an SD card, recompression is throttled to avoid wearing the card. Tier transitions are batched — the recompressor processes blocks in groups during idle periods.
 
-> **Future optimization (ML-based tiering):** Recent research in AI-driven storage tiering uses streaming machine learning models to predict access patterns and automatically classify blocks as hot/warm/cold. AIOS's AIRS subsystem could drive tiering decisions using learned access pattern models, replacing static heuristics with adaptive prediction (Phase 21a+).
+> **Future optimization (ML-based tiering):** Recent research in AI-driven storage tiering uses streaming machine learning models to predict access patterns and automatically classify blocks as hot/warm/cold. AIOS's AIRS subsystem could drive tiering decisions using learned access pattern models, replacing static heuristics with adaptive prediction (Phase 22a+).
 
 #### 4.7.1 AIRS-Directed Compression Scheduling
 
@@ -742,7 +742,7 @@ AIRS compression directive:
 
 **Why no shortcut:** As with prefetch (§4.3.1), there is no bypass path. AIRS compression directives are advisory — "compress this block at zstd level 9" — not operational. Space Storage does the work through its existing, checksum-verified, WAL-protected write path.
 
-**Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 21 optimization — single-device tiering via compression is the Phase 4 implementation.
+**Multi-device tiering (future):** On systems with both NVMe and SD storage, Hot data lives on NVMe and Cold data on SD. The tier manager handles migration transparently. This is a Phase 22 optimization — single-device tiering via compression is the Phase 4 implementation.
 
 ### 4.8 Write Amplification Tracking
 
@@ -841,7 +841,7 @@ pub struct WafAlert {
 
 ### 4.9 Sub-Block Deduplication
 
-> **Implementation status:** Phase 21e. This section describes the design for sub-block deduplication. Phase 4 uses whole-block SHA-256 deduplication only. Near-duplicate content (e.g., edited documents) is stored in full until Phase 21e adds Rabin rolling hash chunk-level savings.
+> **Implementation status:** Phase 22e. This section describes the design for sub-block deduplication. Phase 4 uses whole-block SHA-256 deduplication only. Near-duplicate content (e.g., edited documents) is stored in full until Phase 22e adds Rabin rolling hash chunk-level savings.
 
 Standard content-addressed deduplication (§4.2) identifies identical blocks via SHA-256 hash comparison. This works perfectly when two objects contain the same content — the block is stored once and referenced by both objects. But it fails for **near-duplicate content**: if a user edits one paragraph in a 100 KB document, the entire block is stored again because the SHA-256 hash changed, even though 99% of the content is identical.
 

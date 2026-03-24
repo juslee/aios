@@ -95,16 +95,16 @@ The storage subsystem introduces binary-format fuzz surfaces with on-disk persis
 
 ### 4.4 Phases 6–8: Compositor and Network Fuzzing
 
-When the compositor (Phase 6) and network stack (Phase 8) arrive, new binary-protocol fuzz surfaces open:
+When the compositor (Phase 7) and network stack (Phase 9) arrive, new binary-protocol fuzz surfaces open:
 
-- **Compositor input events** (Phase 6): fuzz with out-of-range coordinates, invalid surface IDs, and rapid event floods. The compositor must clamp or reject, never crash.
+- **Compositor input events** (Phase 7): fuzz with out-of-range coordinates, invalid surface IDs, and rapid event floods. The compositor must clamp or reject, never crash.
 - **Network packet parser**: fuzz with malformed Ethernet frames, truncated IP/TCP/UDP headers, oversized payloads, invalid checksums. The stack must drop bad packets silently — no buffer overflow, no kernel panic.
 
 These targets are mutation-based: start with valid captured packets or event sequences, then mutate bytes, truncate, and inject garbage. `cargo-fuzz` on host-side parsing logic; QEMU-based fuzzing for the full kernel path.
 
 ### 4.5 Phases 13–16: Agent and Manifest Fuzzing
 
-When the agent framework is introduced (Phase 13), three new fuzz surfaces appear:
+When the agent framework is introduced (Phase 14), three new fuzz surfaces appear:
 
 - **Manifest parser**: fuzz with malformed TOML, truncated files, oversized fields, invalid UTF-8
 - **IPC message bodies**: fuzz with truncated payloads, wrong type tags, oversized messages, capability references to non-existent handles
@@ -112,22 +112,22 @@ When the agent framework is introduced (Phase 13), three new fuzz surfaces appea
 
 These are grammar-based fuzzing targets — the fuzzer generates inputs from the manifest schema and IPC protocol definitions, then mutates them to exercise error paths.
 
-### 4.6 Phase 17+: Full Fuzzing Campaign
+### 4.6 Phase 18+: Full Fuzzing Campaign
 
-Phase 17 (Security Architecture) enables hardware security features that make fuzzing dramatically more effective:
+Phase 18 (Security Architecture) enables hardware security features that make fuzzing dramatically more effective:
 
 - **MTE-enabled fuzzing**: every heap allocation gets a 4-bit tag at 16-byte granularity. Accessing freed memory or overflowing into an adjacent allocation causes an immediate synchronous exception — not a silent corruption that manifests later. This turns temporal and spatial memory errors from "hard to detect" to "instantly caught." QEMU supports MTE emulation for testing before hardware availability.
 - **PAC-enabled builds**: corrupted return addresses are detected at function return, catching control-flow hijacking.
 - **Continuous fuzzing in CI**: the fuzzer runs 24/7 on a dedicated CI runner. New crashes are filed automatically. Regression tests are generated from crash inputs and added to the test suite.
 - **Corpus management**: the fuzzing corpus is stored in the repository and shared across CI runs. Interesting inputs (those that found new coverage) are kept; redundant inputs are minimized.
 
-### 4.7 Phase 34: Formal Verification Complements Fuzzing
+### 4.7 Phase 35: Formal Verification Complements Fuzzing
 
 Fuzzing finds bugs but cannot prove their absence. Formal verification provides mathematical guarantees for the most critical subsystems:
 
 | Target | Method | Property |
 |---|---|---|
-| Capability system | TLA+ model (Phase 17) → Coq proofs (Phase 34) | No forge, no escalation |
+| Capability system | TLA+ model (Phase 18) → Coq proofs (Phase 35) | No forge, no escalation |
 | IPC | TLA+ model | No cross-address-space memory leak |
 | Provenance chain | Coq proofs | Append-only, tamper-evident |
 | W^X enforcement | Exhaustive path analysis | No page is ever both writable and executable |

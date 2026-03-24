@@ -103,8 +103,8 @@ All reads are non-blocking. The provenance chain is append-only and immutable �
 
 ```mermaid
 graph TD
-    A[Phase 17: Core Inspector] --> B[Phase 40: Profile View]
-    A --> C[Phase 41: AIRS Analysis View]
+    A[Phase 18: Core Inspector] --> B[Phase 41: Profile View]
+    A --> C[Phase 42: AIRS Analysis View]
     B --> C
     A --> D[Kernel-Internal ML]
     D --> E[Alert Scoring]
@@ -120,9 +120,9 @@ graph TD
 
 | Phase | Capabilities / APIs Added | Views Available |
 |---|---|---|
-| Phase 17 (Security Architecture) | Core Inspector: `AuditRead` capability, `CapabilityList`/`CapabilityRevoke` syscalls, Service Manager IPC (agent query, pause/resume) | Dashboard, Agent, Provenance, Security Events, Capability, Hardware, Multi-View Linking |
-| Phase 40 (Composable Profiles) | Profile service IPC (read profiles, write user overrides) | + Profile View with resolution trace and user overrides |
-| Phase 41 (AIRS Intelligence) | AIRS inference service IPC (SecurityAnalysis) | + AIRS Analysis View with recommendations and "Apply" actions |
+| Phase 18 (Security Architecture) | Core Inspector: `AuditRead` capability, `CapabilityList`/`CapabilityRevoke` syscalls, Service Manager IPC (agent query, pause/resume) | Dashboard, Agent, Provenance, Security Events, Capability, Hardware, Multi-View Linking |
+| Phase 41 (Composable Profiles) | Profile service IPC (read profiles, write user overrides) | + Profile View with resolution trace and user overrides |
+| Phase 42 (AIRS Intelligence) | AIRS inference service IPC (SecurityAnalysis) | + AIRS Analysis View with recommendations and "Apply" actions |
 
 ### Kernel-Internal ML Rollout
 
@@ -130,12 +130,12 @@ These features require no AIRS dependency and ship progressively:
 
 | Feature | Prerequisite | Ships With |
 |---|---|---|
-| Alert priority scoring | Behavioral monitor baseline data | Phase 17+ (after sufficient baseline data) |
-| Behavioral baseline (Welford/z-score) | Already partially designed in behavioral-monitor.md | Phase 17 |
-| Provenance graph feature scoring | Provenance chain query engine | Phase 17+ |
-| Isolation forest for capability abuse | Capability query engine | Phase 17+ |
-| Temporal pattern detection | Timer + provenance correlation | Phase 17+ |
-| Capability usage heatmap (EMA matrix) | Capability query engine | Phase 17 |
+| Alert priority scoring | Behavioral monitor baseline data | Phase 18+ (after sufficient baseline data) |
+| Behavioral baseline (Welford/z-score) | Already partially designed in behavioral-monitor.md | Phase 18 |
+| Provenance graph feature scoring | Provenance chain query engine | Phase 18+ |
+| Isolation forest for capability abuse | Capability query engine | Phase 18+ |
+| Temporal pattern detection | Timer + provenance correlation | Phase 18+ |
+| Capability usage heatmap (EMA matrix) | Capability query engine | Phase 18 |
 
 -----
 
@@ -198,8 +198,8 @@ These features require no AIRS dependency and ship progressively:
 | §5.3 Provenance View | [views.md](./inspector/views.md) | Merkle chain browser with semantic zoom |
 | §5.4 Security Events | [views.md](./inspector/views.md) | Alert feed with fatigue mitigation and investigation workflow |
 | §5.5 Capability View | [views.md](./inspector/views.md) | System-wide tokens with toxic combination detection |
-| §5.6 Profile View | [views.md](./inspector/views.md) | Phase 40+ profile management with dry-run enforcement |
-| §5.7 AIRS Analysis View | [views.md](./inspector/views.md) | Phase 41+ AI-assisted analysis with recommendations |
+| §5.6 Profile View | [views.md](./inspector/views.md) | Phase 41+ profile management with dry-run enforcement |
+| §5.7 AIRS Analysis View | [views.md](./inspector/views.md) | Phase 42+ AI-assisted analysis with recommendations |
 | §5.8 Hardware View | [views.md](./inspector/views.md) | Cross-subsystem audit with trust borders |
 | §5.9 Multi-View Linking | [views.md](./inspector/views.md) | Cross-view brushing and persona-based presets |
 | §6 User Actions | [actions.md](./inspector/actions.md) | Confirmation flows, undo semantics |

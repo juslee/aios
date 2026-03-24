@@ -316,33 +316,33 @@ pub struct ConversationMetadata {
 Development phases aligned with [airs.md §12](./airs.md) and [development-plan.md](../project/development-plan.md):
 
 ```text
-Dev Phase 9c:  Session Manager + Context Assembler + Persistence Engine
+Dev Phase 10c:  Session Manager + Context Assembler + Persistence Engine
                → basic single-turn conversation, storage as space objects
                → multi-turn with history, context assembly from spaces
                → streaming output integration with Stream Multiplexer
 
-Dev Phase 10a: Space Indexer integration
+Dev Phase 11a: Space Indexer integration
                → RAG: semantic search results injected into conversation context
 
-Dev Phase 10b: Context Engine integration
+Dev Phase 11b: Context Engine integration
                → context-aware conversation behavior (adapt to focus/leisure)
 
-Dev Phase 10c: Conversation Bar UI
+Dev Phase 11c: Conversation Bar UI
                → Bar Controller, compositor surface, structured output rendering
                → invocation/dismissal, keyboard navigation, accessibility
                → multi-conversation management (session switcher, search)
 
-Dev Phase 13c: Tool Dispatcher + Tool Manager integration
+Dev Phase 14c: Tool Dispatcher + Tool Manager integration
                → tool invocation within conversations, multi-step chains
                → confirmation gates for destructive operations
                → built-in tools (space ops, system control, Flow)
 
-Dev Phase 21+: Compression Engine (advanced)
+Dev Phase 22+: Compression Engine (advanced)
                → abstractive and hierarchical compression
                → multi-model context transfer
                → conversation forking and branching
 
-Dev Phase 29+: AI-native intelligence
+Dev Phase 30+: AI-native intelligence
                → predictive context retrieval
                → adaptive token delivery rate
                → conversation quality metrics
@@ -355,16 +355,16 @@ Dev Phase 29+: AI-native intelligence
 Must complete BEFORE Conversation Manager:
     Phase 3:  IPC & Capability System (capability-gated access)
     Phase 4:  Space Storage (conversation persistence)
-    Phase 6:  Window Compositor (Conversation Bar rendering)
-    Phase 9a: GGML integration (inference engine)
-    Phase 9b: KV cache management (concurrent sessions)
+    Phase 7:  Window Compositor (Conversation Bar rendering)
+    Phase 10a: GGML integration (inference engine)
+    Phase 10b: KV cache management (concurrent sessions)
 
 Enabled BY Conversation Manager:
-    Phase 10: Intelligence Services (Conversation Manager is a core service)
-    Phase 11: Context Engine consumers (conversation context adaptation)
-    Phase 13: Agent Framework (agents invoke conversations)
-    Phase 14: Task Manager (conversational task decomposition)
-    Phase 16: Developer SDK (Conversation API for third-party agents)
+    Phase 11: Intelligence Services (Conversation Manager is a core service)
+    Phase 12: Context Engine consumers (conversation context adaptation)
+    Phase 14: Agent Framework (agents invoke conversations)
+    Phase 15: Task Manager (conversational task decomposition)
+    Phase 17: Developer SDK (Conversation API for third-party agents)
 ```
 
 -----

@@ -13,7 +13,7 @@ Each platform has radically different accelerator programming models. VideoCore 
 
 **The key constraint:** the `AcceleratorDriver` trait is a *refinement*, not a replacement. An accelerator driver is still a device driver — it goes through the same probe/bind/lifecycle as any other driver ([device-model/discovery.md](../kernel/device-model/discovery.md) §6). The accelerator-specific operations are layered on top.
 
-**Development strategy:** QEMU first. VirtIO-GPU 3D compute (or a VirtIO-Compute device) is the primary development target. Real hardware drivers (VideoCore VII, Apple ANE) follow in Phase 39 when the platform BSP ([bsp.md](./bsp.md)) provides the necessary MMIO access and interrupt routing.
+**Development strategy:** QEMU first. VirtIO-GPU 3D compute (or a VirtIO-Compute device) is the primary development target. Real hardware drivers (VideoCore VII, Apple ANE) follow in Phase 40 when the platform BSP ([bsp.md](./bsp.md)) provides the necessary MMIO access and interrupt routing.
 
 -----
 
@@ -86,30 +86,30 @@ flowchart TD
 ## 13. Implementation Order
 
 ```text
-Phase 5:   VirtIO-GPU 2D display driver (no compute path)
+Phase 6:   VirtIO-GPU 2D display driver (no compute path)
              └── establishes VirtIO transport, buffer management, driver isolation
 
-Phase 19:  ComputeDevice trait + CPU-as-compute baseline
+Phase 20:  ComputeDevice trait + CPU-as-compute baseline
              └── kernel compute abstraction ready; no accelerator drivers yet
 
-Phase 20:  VirtIO-GPU 3D compute (QEMU development target)
+Phase 21:  VirtIO-GPU 3D compute (QEMU development target)
              ├── virgl compute shaders on QEMU
              ├── AcceleratorDriver trait implementation
              ├── ComputeSubsystem registration
              └── MediaCodec hardware acceleration via compute shaders
 
-Phase 39:  VideoCore VII compute driver (Raspberry Pi 5)
+Phase 40:  VideoCore VII compute driver (Raspberry Pi 5)
              ├── Mailbox interface for QPU program submission
              ├── Shared memory buffer management (unified memory)
              └── Thermal zone registration with SoC coupling coefficients
 
-Phase 39:  Apple Neural Engine driver
+Phase 40:  Apple Neural Engine driver
              ├── ANE command queue interface
              ├── Compiled model loading (CoreML/ONNX → ANE format)
              ├── DMA-based buffer exchange
              └── Fixed-function inference (no general-purpose compute)
 
-Phase 41:  AIRS intelligent placement across all accelerators
+Phase 42:  AIRS intelligent placement across all accelerators
              ├── Learned cost models per device
              ├── Cross-device model partitioning
              └── Predictive accelerator power management
@@ -120,10 +120,10 @@ Phase 41:  AIRS intelligent placement across all accelerators
 ```text
 Phase 3 (IPC + Caps)       → Capability tokens for compute access
 Phase 4 (VirtIO-blk)       → VirtIO transport reuse
-Phase 5 (GPU display)      → VirtIO-GPU driver infrastructure
-Phase 19 (Compute trait)   → ComputeDevice + ComputeRegistry
-Phase 20 (Accelerators)    → First accelerator driver (VirtIO-GPU 3D)
-Phase 39 (Real Hardware)   → Platform-specific drivers
+Phase 6 (GPU display)      → VirtIO-GPU driver infrastructure
+Phase 20 (Compute trait)   → ComputeDevice + ComputeRegistry
+Phase 21 (Accelerators)    → First accelerator driver (VirtIO-GPU 3D)
+Phase 40 (Real Hardware)   → Platform-specific drivers
 ```
 
 -----
@@ -134,13 +134,13 @@ Phase 39 (Real Hardware)   → Platform-specific drivers
 
 2. **Subsystem framework compliance.** The compute subsystem follows the same session/capability/audit/POSIX pattern as audio, networking, and display ([subsystem-framework.md](./subsystem-framework.md)). Adding compute to a platform is formulaic, not architectural.
 
-3. **QEMU-first development.** VirtIO-GPU 3D compute is the primary development target through Phase 20. Real hardware drivers are added in Phase 39 when BSP support is ready. The VirtIO driver validates the entire stack (capability grants, budget enforcement, memory management) before real hardware introduces platform-specific complexity.
+3. **QEMU-first development.** VirtIO-GPU 3D compute is the primary development target through Phase 21. Real hardware drivers are added in Phase 40 when BSP support is ready. The VirtIO driver validates the entire stack (capability grants, budget enforcement, memory management) before real hardware introduces platform-specific complexity.
 
 4. **Unified memory is the fast path.** ARM SoCs share system RAM between CPU and accelerators. The driver stack optimizes for cache operations (flush/invalidate), not DMA transfers. Discrete memory support (DMA copies) is layered on top for hypothetical future hardware.
 
 5. **NPU is not a GPU.** NPUs run compiled graphs to completion — they are not general-purpose. The `AcceleratorDriver` trait accommodates this: `compile_program()` accepts pre-compiled model formats (not shader source), and `submit()` runs the entire graph as one unit. The abstraction does not force GPU-style command buffer semantics onto fixed-function hardware.
 
-6. **Driver isolation.** Accelerator drivers run as privileged userspace processes (Phase 5+) with capability-gated MMIO access. A crashing GPU driver does not crash the kernel. The kernel provides MMIO grants, IRQ forwarding, and SMMU configuration — the driver does everything else in userspace.
+6. **Driver isolation.** Accelerator drivers run as privileged userspace processes (Phase 6+) with capability-gated MMIO access. A crashing GPU driver does not crash the kernel. The kernel provides MMIO grants, IRQ forwarding, and SMMU configuration — the driver does everything else in userspace.
 
 7. **Progressive hardware support.** Start with the simplest platform (QEMU VirtIO), then add real hardware one platform at a time. Each new platform validates the abstraction — if the `AcceleratorDriver` trait doesn't fit a platform, the trait is wrong, not the platform.
 

@@ -182,16 +182,16 @@ pub enum RuntimeType {
 
 | Phase | Component | Dependency |
 |---|---|---|
-| Phase 13 | Rate-based anomaly detection (kernel-internal) | Observability (Phase 2), capability system (Phase 3) |
-| Phase 13 | Automatic capability minimization (`aios agent audit`) | AIRS inference engine, agent manifest format |
-| Phase 16 | Runtime Advisor CLI (`aios agent audit` runtime recommendations) | AIRS Stage 1 static analysis, language runtimes |
-| Phase 21 | Learned scheduling weights | AIRS workload profiler, kernel scheduler telemetry |
-| Phase 21 | Lifetime-aware allocation | AIRS allocation trace collection, slab allocator telemetry |
-| Phase 21 | GC scheduling optimization | AIRS RL training, interpreter GC hooks |
-| Phase 21 | LSTM sequence-based anomaly detection | AIRS inference engine, syscall audit traces |
-| Phase 21 | Cross-agent semantic anomaly correlation | AIRS LLM inference, provenance graphs |
+| Phase 14 | Rate-based anomaly detection (kernel-internal) | Observability (Phase 2), capability system (Phase 3) |
+| Phase 14 | Automatic capability minimization (`aios agent audit`) | AIRS inference engine, agent manifest format |
+| Phase 17 | Runtime Advisor CLI (`aios agent audit` runtime recommendations) | AIRS Stage 1 static analysis, language runtimes |
+| Phase 22 | Learned scheduling weights | AIRS workload profiler, kernel scheduler telemetry |
+| Phase 22 | Lifetime-aware allocation | AIRS allocation trace collection, slab allocator telemetry |
+| Phase 22 | GC scheduling optimization | AIRS RL training, interpreter GC hooks |
+| Phase 22 | LSTM sequence-based anomaly detection | AIRS inference engine, syscall audit traces |
+| Phase 22 | Cross-agent semantic anomaly correlation | AIRS LLM inference, provenance graphs |
 
-**Profiling infrastructure first.** Phases 2-3 build the telemetry foundation (LogRing, TraceRing, syscall audit). Phase 13 adds kernel-internal rate-based detection using that telemetry. Phase 21 adds the full AIRS learning loop that consumes telemetry and produces frozen artifacts.
+**Profiling infrastructure first.** Phases 2-3 build the telemetry foundation (LogRing, TraceRing, syscall audit). Phase 14 adds kernel-internal rate-based detection using that telemetry. Phase 22 adds the full AIRS learning loop that consumes telemetry and produces frozen artifacts.
 
 -----
 

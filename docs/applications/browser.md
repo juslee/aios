@@ -112,7 +112,7 @@ graph TB
 
 ### §3.1 Tier 1: Linux Compatibility (Passive)
 
-Firefox, Chrome, and WebKit run unmodified through AIOS's Linux binary compatibility layer (Phase 35-36). The OS applies capability restrictions at the syscall translation boundary — the browser doesn't know it's on AIOS, but AIOS enforces per-process network restrictions, filesystem isolation, and resource accounting.
+Firefox, Chrome, and WebKit run unmodified through AIOS's Linux binary compatibility layer (Phase 36-37). The OS applies capability restrictions at the syscall translation boundary — the browser doesn't know it's on AIOS, but AIOS enforces per-process network restrictions, filesystem isolation, and resource accounting.
 
 **What works**: Full web compatibility, extensions, developer tools — everything the browser already does.
 
@@ -128,7 +128,7 @@ Browser engines call Browser Kit traits directly for deeper OS integration. This
 
 A lightweight browser built on html5ever (HTML parser) and QuickJS (JavaScript engine) that exercises every Kit trait. Its purpose is to prove the Kit API surface works and provide a basic browser before Linux compat enables full engines.
 
-**What this enables**: Early browser availability (Phase 30, before Linux compat in Phase 35-36), Kit API validation, and a test bed for browser-OS integration patterns.
+**What this enables**: Early browser availability (Phase 31, before Linux compat in Phase 36-37), Kit API validation, and a test bed for browser-OS integration patterns.
 
 -----
 
@@ -162,17 +162,17 @@ All web content — HTML, CSS, JavaScript, WASM, images, fonts — is untrusted 
 
 ## §15 Implementation Order
 
-Browser Kit integrates at Phase 30 (5 weeks), with full engine availability depending on Linux compatibility (Phase 35-36):
+Browser Kit integrates at Phase 31 (5 weeks), with full engine availability depending on Linux compatibility (Phase 36-37):
 
 | Sub-phase | Duration | Content | Dependencies |
 |---|---|---|---|
 | 30A | 2 weeks | Browser Kit traits + reference browser scaffold | Compute Kit, Network Kit, Storage Kit |
 | 30B | 2 weeks (concurrent) | Web API bridge (fetch, storage, WebGL, permissions) | 30A traits defined |
-| 30C | 1 week | Browser shell (tab management, URL bar, bookmarks) | Interface Kit (Phase 29) |
+| 30C | 1 week | Browser shell (tab management, URL bar, bookmarks) | Interface Kit (Phase 30) |
 | 30D | 1 week (concurrent) | Integration (multi-tab compositor, Flow, ad blocking) | 30A + 30B |
 | 30E | 1 week | AIOS Web API extensions (aios.space, aios.flow) | 30D |
 
-**Linux compat dependency chain**: Firefox/Chrome availability requires Phase 35 (ELF loader, glibc shim) and Phase 36 (Wayland bridge). WebKit/WPE is recommended as the first Tier 2 integration target due to its minimal embedding API (~4 structs).
+**Linux compat dependency chain**: Firefox/Chrome availability requires Phase 36 (ELF loader, glibc shim) and Phase 37 (Wayland bridge). WebKit/WPE is recommended as the first Tier 2 integration target due to its minimal embedding API (~4 structs).
 
 -----
 

@@ -184,7 +184,7 @@ Future AIOS versions may support network-attached accelerators — GPUs or NPUs 
 
 ### 17.2 AIRS-Dependent Compute Intelligence
 
-When AIRS is available (Phase 29+), compute scheduling gains advanced capabilities:
+When AIRS is available (Phase 30+), compute scheduling gains advanced capabilities:
 
 - **Workload classification**: Given a compute workload's characteristics (memory access pattern, arithmetic intensity, data types), predict which device class is most efficient using a lightweight gradient-boosted tree trained on historical workload-device-performance triples.
 - **Model-to-device routing**: Match quantized model formats to hardware capabilities. An INT4 model routes to NPU if available, then GPU, then CPU NEON — but with learned cost models that account for the specific model architecture, not just data types.

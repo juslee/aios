@@ -148,7 +148,7 @@ The architecture supports future federated learning where only gradient updates 
 - **Privacy budget** — Each device would have a per-round privacy budget for gradient contributions, implemented as differential privacy at the gradient level (DP-SGD).
 - **Opt-in only** — Federated learning participation would require explicit user consent and would be off by default.
 
-This is defined as architectural readiness — the interfaces exist but federated learning is not implemented until a fleet management layer is available (Phase 37+).
+This is defined as architectural readiness — the interfaces exist but federated learning is not implemented until a fleet management layer is available (Phase 38+).
 
 ### §9.4 Embedding Privacy
 

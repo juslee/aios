@@ -180,7 +180,7 @@ pub fn translate_drm_ioctl(
 
 -----
 
-### 16.4 Wayland Compatibility (Phase 36)
+### 16.4 Wayland Compatibility (Phase 37)
 
 A dedicated Wayland compatibility agent translates the Wayland wire protocol to AIOS native surface IPC. This enables unmodified Linux Wayland applications to run on AIOS with zero source modifications.
 

@@ -1,7 +1,7 @@
 # AIOS Secure Boot & Update System
 
 **Audience:** Kernel developers, platform engineers, application developers
-**Phase:** 34 (Secure Boot & Update System) — depends on Phase 27 (Power Management)
+**Phase:** 35 (Secure Boot & Update System) — depends on Phase 29 (Power Management)
 **Related:** [model.md](./model.md) — Security model and capability system,
 [model/hardening.md](./model/hardening.md) — Cryptographic foundations and key hierarchy,
 [boot.md](../kernel/boot.md) — Boot sequence and firmware handoff,
@@ -96,11 +96,11 @@ flowchart LR
 | 1 | UEFI stub loads kernel from ESP; BootInfo handoff | UEFI firmware |
 | 3 | Capability system; Ed25519 signing in security model | IPC, scheduler |
 | 4 | AES-256-GCM block encryption; content-addressed storage | Storage layer |
-| 9 | A/B ESP rollback; boot failure counter; recovery shell | Boot sequence |
-| 13 | Agent manifest signing; AIRS model integrity (SHA-256) | Agent framework, AIRS |
-| 17 | Formal verification of capability system | Security model |
+| 10 | A/B ESP rollback; boot failure counter; recovery shell | Boot sequence |
+| 14 | Agent manifest signing; AIRS model integrity (SHA-256) | Agent framework, AIRS |
+| 18 | Formal verification of capability system | Security model |
 
-### Phase 34: Secure Boot & Update System (Weeks 93–96)
+### Phase 35: Secure Boot & Update System (Weeks 93–96)
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -108,15 +108,15 @@ flowchart LR
 | M104 | TrustZone + A/B updates + rollback protection | Week 94–95 | Keys sealed in secure world; monotonic counter prevents rollback; delta updates work |
 | M105 | Update channels + AI-native intelligence | Week 95–96 | Separate kernel/agent/model update channels; AIRS-aware scheduling; boot anomaly detection |
 
-### Post-Phase 34
+### Post-Phase 36
 
 | Phase | Enhancement |
 |---|---|
-| 35 | Linux binary compatibility layer with dm-verity bridge |
-| 38 | Enterprise fleet attestation; MDM integration |
-| 39 | Hardware certification; real TPM 2.0 testing |
-| 40 | Composable security profiles for update agents |
-| 41 | AIRS-driven adaptive update policy; GNN anomaly detection |
+| 36 | Linux binary compatibility layer with dm-verity bridge |
+| 39 | Enterprise fleet attestation; MDM integration |
+| 40 | Hardware certification; real TPM 2.0 testing |
+| 41 | Composable security profiles for update agents |
+| 42 | AIRS-driven adaptive update policy; GNN anomaly detection |
 
 ---
 

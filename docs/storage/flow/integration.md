@@ -391,7 +391,7 @@ impl PosixClipboardBridge {
 | `wl-copy` / `wl-paste` | Same via Wayland clipboard protocol |
 | `xdotool` (X11 drag/drop simulation) | Translated to compositor drag/drop events |
 
-**X11 selection protocol:** The X11 compatibility layer (Phase 22) translates X11's three selections (PRIMARY, SECONDARY, CLIPBOARD) into Flow operations. PRIMARY (select-to-copy) maps to `flow.push(intent: Copy)`. CLIPBOARD (explicit copy) maps to the same. SECONDARY is rarely used and maps to a targeted transfer.
+**X11 selection protocol:** The X11 compatibility layer (Phase 23) translates X11's three selections (PRIMARY, SECONDARY, CLIPBOARD) into Flow operations. PRIMARY (select-to-copy) maps to `flow.push(intent: Copy)`. CLIPBOARD (explicit copy) maps to the same. SECONDARY is rarely used and maps to a targeted transfer.
 
 **Wayland clipboard protocol:** The Wayland compatibility layer translates `wl_data_offer` / `wl_data_source` into Flow push/pull. MIME type negotiation in Wayland maps to Flow's type negotiation.
 

@@ -154,12 +154,12 @@ flowchart TD
 
 | DeviceID | Type | Driver | Phase |
 |---|---|---|---|
-| 1 | Network | `virtio-net` | Phase 7 |
+| 1 | Network | `virtio-net` | Phase 8 |
 | 2 | Block | `virtio-blk` | Phase 0 (implemented) |
-| 4 | Random | `virtio-rng` | Phase 7 |
-| 16 | GPU | `virtio-gpu` | Phase 5 |
-| 18 | Input | `virtio-input` | Phase 7 |
-| 25 | Sound | `virtio-sound` | Phase 31 |
+| 4 | Random | `virtio-rng` | Phase 8 |
+| 16 | GPU | `virtio-gpu` | Phase 6 |
+| 18 | Input | `virtio-input` | Phase 8 |
+| 25 | Sound | `virtio-sound` | Phase 32 |
 
 Each discovered VirtIO device produces a `HardwareDescriptor` with:
 
@@ -438,7 +438,7 @@ pub fn register_builtin_drivers(registry: &mut DriverRegistry) {
 }
 ```
 
-**Loadable drivers (Phase 5+):**
+**Loadable drivers (Phase 6+):**
 
 Loadable drivers are compiled as separate crates and loaded at runtime. This model is inspired by Theseus OS's cell-based architecture, where kernel components are independently loadable and swappable without rebooting.
 

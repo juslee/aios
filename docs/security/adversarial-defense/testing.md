@@ -127,7 +127,7 @@ Each scenario produces a PASS/FAIL result and a structured log line to UART. The
 
 ### §13.4 Formal Properties
 
-The following properties are candidates for formal verification in Phase 39, which introduces static analysis and formal verification tooling. These properties are stated informally here for design clarity and will be encoded in the formal verification framework when it becomes available.
+The following properties are candidates for formal verification in Phase 40, which introduces static analysis and formal verification tooling. These properties are stated informally here for design clarity and will be encoded in the formal verification framework when it becomes available.
 
 **Property 1 — Data integrity.** No code path exists where DATA-labeled content becomes an INSTRUCTION source without explicit user authorization.
 
@@ -171,7 +171,7 @@ Formalization:
 
 These five properties collectively encode the core security invariants of the adversarial defense subsystem. Properties 1–3 address the control/data separation layer (§4). Property 4 addresses the provenance and forensics layer (§9). Property 5 addresses the capability enforcement layer (Layer 2), confirming that structural enforcement holds even when semantic defenses are bypassed.
 
-VeriGuard (2025) and FIDES (Microsoft, 2025) demonstrate formal verification approaches for LLM agent safety properties using similar formulations. The AIOS approach will draw on these prior results when Phase 39 formal verification tooling is integrated.
+VeriGuard (2025) and FIDES (Microsoft, 2025) demonstrate formal verification approaches for LLM agent safety properties using similar formulations. The AIOS approach will draw on these prior results when Phase 40 formal verification tooling is integrated.
 
 ---
 

@@ -347,7 +347,7 @@ AIRS verdict: VIOLATION
 
 ## 19. Future Directions
 
-### 19.1 Dynamic Collections (Phase 22+)
+### 19.1 Dynamic Collections (Phase 23+)
 
 Inspired by Fuchsia's component framework, dynamic collections enable runtime creation of agent instances from parameterized templates. A template defines the agent's code, default capabilities, and configuration schema. The Agent Runtime instantiates agents on demand with per-instance parameters.
 
@@ -359,7 +359,7 @@ Use cases:
 
 Dynamic collections interact with the capability system through template-level capability ceilings — no instance can exceed the template's declared maximum capabilities. Each instance receives independent address spaces (TTBR0), capability tables, and behavioral baselines.
 
-### 19.2 Graph-Based Workflow Orchestration (Phase 30+)
+### 19.2 Graph-Based Workflow Orchestration (Phase 31+)
 
 Inspired by LangGraph and similar agent orchestration frameworks, graph-based workflows define multi-agent computations as directed acyclic graphs (DAGs). Nodes are agents, edges are typed data dependencies.
 
@@ -387,7 +387,7 @@ The Agent Runtime serves as the DAG executor. It tracks node completion, manages
 
 **Capability composition safety:** The workflow engine validates that the combined capability set of all agents in the workflow does not create a collusion risk (reusing the capability union analysis from §18.3). If the workflow requires a dangerous capability combination, the user is prompted for explicit approval.
 
-### 19.3 Behavioral Constitutions (Phase 25+)
+### 19.3 Behavioral Constitutions (Phase 26+)
 
 Declarative safety rules that agents self-check before executing actions. A constitution is a set of invariants that an agent commits to maintaining, expressed as predicate functions over the agent's state and proposed actions.
 
@@ -420,7 +420,7 @@ Constitutions complement external enforcement (Tier 1/Tier 2 detection) with int
 - **Category rules** apply per trust level: "Third-party agents must not access Spaces outside their declared scope."
 - **Agent-specific rules** are declared in the manifest: "This email agent should not send messages after 10 PM."
 
-### 19.4 ARM CCA Realms (Phase 30+)
+### 19.4 ARM CCA Realms (Phase 31+)
 
 ARM Confidential Compute Architecture (CCA) provides hardware-backed isolation through Realms — encrypted memory regions that are opaque even to the hypervisor and OS kernel. AIOS maps each agent to a CCA Realm:
 
@@ -432,7 +432,7 @@ CCA Realms extend the graduated isolation model (see [sandbox.md](./sandbox.md) 
 
 **Platform dependencies:** ARM CCA requires ARMv9-A or later. Apple Silicon uses a different mechanism (Secure Enclave + IOMMU) — AIOS abstracts both behind a common `ConfidentialRuntime` trait. Trade-offs include ~5-10% overhead for memory encryption, ~50us per realm entry/exit transition, and mandatory data copy for cross-realm IPC (no zero-copy).
 
-### 19.5 WASI Multi-Threading (Phase 22+)
+### 19.5 WASI Multi-Threading (Phase 23+)
 
 The current WASM agent model uses single-threaded execution with cooperative concurrency via `async`/`await`. When the WASI threads proposal stabilizes, AIOS adopts a shared-nothing threading model:
 

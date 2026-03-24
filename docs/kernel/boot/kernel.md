@@ -158,7 +158,7 @@ Enable direct-map mode for the buddy allocator (`mm::buddy::enable_direct_map()`
 
 **Step 7: SMP secondary core bringup.** Via PSCI `CPU_ON` (`0xC400_0003`, HVC conduit on QEMU). Each secondary core executes `_secondary_entry` in boot.S: enable FPU → install Rust exception vectors → load MAIR/TCR/TTBR0/TTBR1 → enable MMU → load per-core SP from `SECONDARY_STACKS` array → branch to `secondary_main`. Secondary stacks are allocated by `smp.rs` during this step. Each secondary core initializes its own GIC redistributor and timer. Advance phase: `ProcessManagerReady`.
 
-**Step 8: Framebuffer.** If `boot_info.framebuffer != 0`, construct a `Framebuffer` from BootInfo fields (800×600 Bgr8 on QEMU, stride=3200B). Render a test pattern (#5B8CFF blue). This is the early framebuffer — the compositor takes over in Phase 5+.
+**Step 8: Framebuffer.** If `boot_info.framebuffer != 0`, construct a `Framebuffer` from BootInfo fields (800×600 Bgr8 on QEMU, stride=3200B). Render a test pattern (#5B8CFF blue). This is the early framebuffer — the compositor takes over in Phase 7+.
 
 **Step 9: Per-agent address spaces.** Switch UART base to the TTBR1 MMIO mapping (`MMIO_BASE + UART_PHYS`) before TTBR0 is repurposed from identity map to user space (`uart::update_base()`). Test TTBR0 switching: create two user address spaces with independent ASIDs, map test pages at `USER_DATA_BASE`, switch between them to verify TTBR0 programming and that no fault occurs.
 

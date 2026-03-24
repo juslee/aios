@@ -121,7 +121,7 @@ After staging, the system reboots into the new version. The new version must pro
 
 1. UEFI stub verifies boot manifest (Ed25519 signature valid)
 2. Kernel hash matches manifest
-3. Kernel boots to `EarlyBootPhase::Complete` (Phase 17 of 18 boot phases)
+3. Kernel boots to `EarlyBootPhase::Complete` (Phase 18 of 18 boot phases)
 4. Service Manager reaches Phase 3 (core services running)
 5. AIRS loads at least one model successfully
 6. Boot success timer fires (30 seconds after Phase 3 without crash)

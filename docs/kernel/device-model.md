@@ -23,7 +23,7 @@ Between these two layers sits the **device model** — the subject of this docum
 - **How does the kernel–userspace boundary work for drivers?** HAL drivers run in kernel space. Subsystem services run in userspace. The device model specifies how interrupts cross this boundary, how DMA buffers are shared, and how driver crashes are contained and recovered.
 - **How does a VirtIO virtqueue actually work?** HAL describes the transport at trait level; the subsystem framework describes the session at API level. The device model specifies the descriptor tables, available/used rings, and scatter-gather chains that make data flow.
 
-**Design principle:** The device model is the *kernel's internal representation of hardware*. It exists whether drivers run in-kernel (Phase 0–4) or in userspace (Phase 5+). The HAL populates it; the subsystem framework queries it. Adding a new bus type, a new device class, or a new driver isolation model changes this layer — not the layers above or below.
+**Design principle:** The device model is the *kernel's internal representation of hardware*. It exists whether drivers run in-kernel (Phase 0–4) or in userspace (Phase 6+). The HAL populates it; the subsystem framework queries it. Adding a new bus type, a new device class, or a new driver isolation model changes this layer — not the layers above or below.
 
 -----
 
@@ -134,11 +134,11 @@ flowchart LR
     P2["Phase 2\nMemory pools\nDMA pool"]
     P3["Phase 3\nIPC + caps\nDriverGrant"]
     P4["Phase 4\nBlock Engine\nVirtIO transport"]
-    P5["Phase 5\nGPU + Display\nFramebuffer driver"]
-    P7["Phase 7\nNetwork + Input\nVirtIO-Net/Input"]
-    P8["Phase 9+\nAIRS + AI\nDevice intelligence"]
-    P17["Phase 24\nUSB stack\nHotplug"]
-    P18["Phase 25-26\nWiFi + BT\nWireless drivers"]
+    P5["Phase 6\nGPU + Display\nFramebuffer driver"]
+    P7["Phase 8\nNetwork + Input\nVirtIO-Net/Input"]
+    P8["Phase 10+\nAIRS + AI\nDevice intelligence"]
+    P17["Phase 25\nUSB stack\nHotplug"]
+    P18["Phase 26-27\nWiFi + BT\nWireless drivers"]
 
     P0 --> P2 --> P3 --> P4
     P4 --> P5 --> P7
@@ -154,18 +154,18 @@ flowchart LR
 | 3 | IPC channels, capability system, DriverGrant token type | Phase 2 |
 | 4 | Block Engine integration, VirtIO transport abstraction, data disk I/O | Phase 3 |
 | 5 | GPU driver (VirtIO-GPU on QEMU), framebuffer scanout, display subsystem | Phase 4 |
-| 6 | Compositor integration, surface management, multi-monitor | Phase 5 |
+| 6 | Compositor integration, surface management, multi-monitor | Phase 6 |
 | 7 | VirtIO-Net driver, VirtIO-Input driver, network + input subsystems | Phase 4 |
-| 9–10 | AIRS kernel-internal statistical models (fault prediction, power hints) | Phase 7 |
-| 13–14 | Agent framework integration, device capabilities in agent manifests | Phase 9 |
-| 16 | DeviceRegistry as system space, formal verification (TLA+ lifecycle) | Phase 13 |
-| 17–18 | Security hardening: MMIO guard pages, DMA IOMMU enforcement | Phase 16 |
-| 21 | Performance: interrupt coalescing, zero-copy DataChannel, DMA batching | Phase 17 |
-| 24 | USB stack: xHCI driver, hub enumeration, hotplug lifecycle, class drivers | Phase 7 |
-| 25–26 | WiFi (802.11), Bluetooth (HCI/L2CAP), wireless power management | Phase 24 |
-| 27 | Unified power management: per-device D-states, thermal throttling | Phase 25 |
-| 31 | Audio subsystem: VirtIO-Sound, I2S/PWM, period-based DMA | Phase 7 |
-| 39 | Real hardware drivers: Pi 4/5 VC4/V3D, Genet, SD/eMMC, Apple AGX/ANS | Phase 27 |
+| 9–10 | AIRS kernel-internal statistical models (fault prediction, power hints) | Phase 8 |
+| 13–14 | Agent framework integration, device capabilities in agent manifests | Phase 10 |
+| 16 | DeviceRegistry as system space, formal verification (TLA+ lifecycle) | Phase 14 |
+| 17–18 | Security hardening: MMIO guard pages, DMA IOMMU enforcement | Phase 17 |
+| 21 | Performance: interrupt coalescing, zero-copy DataChannel, DMA batching | Phase 18 |
+| 24 | USB stack: xHCI driver, hub enumeration, hotplug lifecycle, class drivers | Phase 8 |
+| 25–26 | WiFi (802.11), Bluetooth (HCI/L2CAP), wireless power management | Phase 25 |
+| 27 | Unified power management: per-device D-states, thermal throttling | Phase 26 |
+| 31 | Audio subsystem: VirtIO-Sound, I2S/PWM, period-based DMA | Phase 8 |
+| 39 | Real hardware drivers: Pi 4/5 VC4/V3D, Genet, SD/eMMC, Apple AGX/ANS | Phase 28 |
 
 -----
 
@@ -181,9 +181,9 @@ flowchart LR
 
 5. **Lifecycle is a state machine, not ad-hoc code.** Every device transitions through the same states (Discovered → Probed → Bound → Active → Suspended → Unbound → Removed). Error handling, crash recovery, and hot-swap are defined as state transitions with invariants — not scattered cleanup code.
 
-6. **In-kernel first, userspace later.** Phases 0–4 use in-kernel drivers for simplicity. Phase 5+ introduces userspace driver isolation with interrupt forwarding and DMA sharing. The device model supports both — the `Driver` trait is the same whether the driver is a kernel module or a userspace process.
+6. **In-kernel first, userspace later.** Phases 0–4 use in-kernel drivers for simplicity. Phase 6+ introduces userspace driver isolation with interrupt forwarding and DMA sharing. The device model supports both — the `Driver` trait is the same whether the driver is a kernel module or a userspace process.
 
-7. **VirtIO is the development transport.** QEMU's VirtIO MMIO devices are the primary development target through Phase 22. The VirtIO transport abstraction is first-class, not an afterthought. Real hardware transports (PCI, SoC MMIO) are added when hardware phases begin.
+7. **VirtIO is the development transport.** QEMU's VirtIO MMIO devices are the primary development target through Phase 23. The VirtIO transport abstraction is first-class, not an afterthought. Real hardware transports (PCI, SoC MMIO) are added when hardware phases begin.
 
 8. **DMA is a kernel service.** Drivers request DMA buffers; the kernel allocates from the DMA pool, maps through the IOMMU (if present), and enforces cache coherency. Drivers never allocate DMA memory directly — this is the foundation of DMA isolation.
 

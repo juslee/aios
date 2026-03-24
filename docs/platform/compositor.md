@@ -145,7 +145,7 @@ flowchart TD
 
 3. **Zero-copy when possible.** Shared buffers, direct scanout, multiplane overlay, damage tracking — minimize GPU copies. The compositor never copies pixel data if a pointer swap suffices.
 
-4. **Accessibility from day one.** Accessibility is a design constraint from Phase 6; full implementation is delivered in Phase 33. Screen reader support shapes early architectural decisions. The accessibility tree exists from the first composited frame.
+4. **Accessibility from day one.** Accessibility is a design constraint from Phase 7; full implementation is delivered in Phase 34. Screen reader support shapes early architectural decisions. The accessibility tree exists from the first composited frame.
 
 5. **Input is mediated.** All input flows through the compositor. No agent can capture global input without a capability token. Keystroke injection is impossible without `SyntheticInput` capability ([§7.6](./compositor/input.md)).
 
@@ -170,14 +170,14 @@ flowchart TD
 ## 16. Implementation Order
 
 ```text
-Phase 5 — GPU and Display:
+Phase 6 — GPU and Display:
   ├── VirtIO-GPU driver (MMIO transport, 2D/3D commands)
   ├── wgpu initialization (Vulkan backend on real hardware, VirtIO on QEMU)
   ├── Font rendering (fontdue or ab_glyph, glyph atlas)
   ├── Basic surface composition (scene graph, damage tracking)
   └── Direct scanout for single fullscreen surface
 
-Phase 6 — Window Compositor and Shell:
+Phase 7 — Window Compositor and Shell:
   ├── Compositor protocol (IPC-based surface lifecycle)
   ├── Shared buffer protocol (double buffering, release fences)
   ├── Window manager (floating + tiling layout modes)
@@ -188,35 +188,35 @@ Phase 6 — Window Compositor and Shell:
   ├── Animation system (window open/close/resize transitions)
   └── Multi-monitor support (HiDPI, extended desktop)
 
-Phase 14 — Attention Management:
+Phase 15 — Attention Management:
   ├── AIRS importance scoring integration
   ├── Attention-aware rendering priority
   └── Context-aware notification suppression
 
-Phase 17 — Security Hardening:
+Phase 18 — Security Hardening:
   ├── Capability-gated surface operations
   ├── GPU process isolation (IOMMU enforcement)
   ├── Screen capture protection
   └── Secure input mode
 
-Phase 21 — Performance and Optimization:
+Phase 22 — Performance and Optimization:
   ├── Kernel-internal ML: predictive frame scheduling
   ├── GPU DVFS power management
   ├── Activity-based variable refresh rate
   ├── AOT shader compilation pipeline
   └── Multiplane overlay (hardware planes bypass compositor)
 
-Phase 29 — Interface Kit:
+Phase 30 — Interface Kit:
   └── Interface Kit (AIOS-native UI foundation; iced/Flutter/Qt are bridges above)
 
-Phase 33 — Accessibility:
+Phase 34 — Accessibility:
   ├── Accessibility tree (full WAI-ARIA role support)
   ├── Screen reader integration
   ├── Compositor-level magnification
   ├── High contrast / reduced motion modes
   └── Keyboard navigation (focus ring, spatial nav)
 
-Phase 36 — Wayland Compatibility:
+Phase 37 — Wayland Compatibility:
   ├── Wayland translation layer (Smithay-based)
   ├── Protocol mapping (wl_surface → SurfaceId)
   ├── XWayland integration (X11 backward compatibility)

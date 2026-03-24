@@ -1237,7 +1237,7 @@ Boot Phase 4 — Attention Manager startup:
 7. Connect to Compositor notification pipeline
    - Register as the notification source for Status Strip badge
    - Register as the source for interrupt overlays
-   - If Compositor not yet ready (Phase 4 runs before Phase 5):
+   - If Compositor not yet ready (Phase 4 runs before Phase 6):
      buffer presentation events until compositor connects
 
 8. Signal Service Manager: Attention Manager ready
@@ -1342,7 +1342,7 @@ The Attention Manager is functional with zero configuration:
 | AIRS | Maybe (loading model) | Rule-based triage (§15.2) |
 | Context Engine | Maybe (starting concurrently) | Assume ContextMode::Default — medium threshold |
 | Identity Service | Maybe (starting concurrently) | No relationship boosts; all senders treated equally |
-| Compositor | No (Phase 5) | Buffer presentation events; deliver when compositor connects |
+| Compositor | No (Phase 6) | Buffer presentation events; deliver when compositor connects |
 | User Preferences | Yes (loaded from Space) | Built-in defaults if first boot |
 | Audit Log | Yes (Space writer) | Always available after Phase 2 (storage) |
 
@@ -1350,7 +1350,7 @@ The Attention Manager is functional with zero configuration:
 
 ### 15.4 Compositor Connection
 
-The Attention Manager connects to the compositor's notification pipeline during Phase 5, when the compositor starts. Before that connection:
+The Attention Manager connects to the compositor's notification pipeline during Phase 6, when the compositor starts. Before that connection:
 
 - Items that would be interrupts are buffered (max 10 buffered interrupts)
 - Items that would be digest or silent are stored normally
@@ -1379,25 +1379,25 @@ pub enum PresentationCommand {
 Development plan phases (see development-plan.md — not to be confused with boot phases):
 
 ```text
-Dev Phase 11a:  Attention Manager service          → intake queue, audit log
-Dev Phase 11b:  AIRS urgency assessment            → basic content analysis
-Dev Phase 11c:  Context filtering                  → context-aware thresholds
-Dev Phase 11d:  Status Strip badge                 → unseen count visible
+Dev Phase 12a:  Attention Manager service          → intake queue, audit log
+Dev Phase 12b:  AIRS urgency assessment            → basic content analysis
+Dev Phase 12c:  Context filtering                  → context-aware thresholds
+Dev Phase 12d:  Status Strip badge                 → unseen count visible
 
-Dev Phase 15a:  Attention Panel UI                 → digest view with grouping
-Dev Phase 15b:  Interrupt overlay                  → urgent items break through
-Dev Phase 15c:  Toast notifications                → NextBreak delivery
-Dev Phase 15d:  Grouping and summarization         → AI-generated summaries
+Dev Phase 16a:  Attention Panel UI                 → digest view with grouping
+Dev Phase 16b:  Interrupt overlay                  → urgent items break through
+Dev Phase 16c:  Toast notifications                → NextBreak delivery
+Dev Phase 16d:  Grouping and summarization         → AI-generated summaries
 
-Dev Phase 21a:  Auto-actionable items              → one-click actions
-Dev Phase 21b:  Relationship-aware priority        → identity integration
-Dev Phase 21c:  User controls                      → per-agent, per-person settings
-Dev Phase 21d:  Conversational configuration       → Conversation Bar integration
+Dev Phase 22a:  Auto-actionable items              → one-click actions
+Dev Phase 22b:  Relationship-aware priority        → identity integration
+Dev Phase 22c:  User controls                      → per-agent, per-person settings
+Dev Phase 22d:  Conversational configuration       → Conversation Bar integration
 
-Dev Phase 24:   Break detection                    → idle-based NextBreak delivery
-Dev Phase 27:   Pattern analysis                   → AIRS learns from engagement
-Dev Phase 30:   Cross-device attention sync        → Space Mesh attention state
-Dev Phase 34:   Attention analytics                → queryable history, trends
+Dev Phase 25:   Break detection                    → idle-based NextBreak delivery
+Dev Phase 28:   Pattern analysis                   → AIRS learns from engagement
+Dev Phase 31:   Cross-device attention sync        → Space Mesh attention state
+Dev Phase 35:   Attention analytics                → queryable history, trends
 ```
 
 -----

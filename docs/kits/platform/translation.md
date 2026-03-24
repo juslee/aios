@@ -491,7 +491,7 @@ Translation Kit is platform-independent -- it operates entirely on in-memory dat
 with no hardware dependencies. Availability depends only on which translators are
 registered, not on the underlying hardware.
 
-**Implementation phase:** Phase 10+. Translation Kit depends on [Memory Kit](../kernel/memory.md)
+**Implementation phase:** Phase 11+. Translation Kit depends on [Memory Kit](../kernel/memory.md)
 for buffer management. It is consumed by [Flow Kit](../intelligence/flow.md) for clipboard and
 drag-and-drop operations, and by any agent that imports or exports data in multiple formats.
 

@@ -97,7 +97,7 @@ The engine runs as a subservice of AIRS, sharing AIRS's privileged access to sys
 The Context Engine is built incrementally. Each development phase (numbered per the project development plan in [development-plan.md](../project/development-plan.md), not to be confused with boot phases) delivers testable functionality. Later phases add intelligence.
 
 ```text
-Dev Phase 11: Basic Context Engine
+Dev Phase 12: Basic Context Engine
   ├── ContextState struct and IPC publishing
   ├── Signal Collector (ActiveSpace, RunningAgents, TimeOfDay)
   ├── Rule-based inference (weighted average, no AIRS)
@@ -107,14 +107,14 @@ Dev Phase 11: Basic Context Engine
   ├── Scheduler integration (context multipliers)
   └── Inspector diagnostics (current state, signal values)
 
-Dev Phase 11: AIRS Classifier Integration
+Dev Phase 12: AIRS Classifier Integration
   ├── Feature extractor (signals → fixed-length vector)
   ├── Context classifier model (small GGUF, ~2 MB)
   ├── AIRS inference integration (~1ms per inference)
   ├── Fallback detection (AIRS unavailable → rule-based)
   └── Classifier training pipeline (offline, ship with OS)
 
-Dev Phase 11: Attention Manager Integration
+Dev Phase 12: Attention Manager Integration
   ├── AttentionItem processing pipeline
   ├── AIRS urgency re-assessment
   ├── Notification threshold filtering
@@ -122,7 +122,7 @@ Dev Phase 11: Attention Manager Integration
   ├── Compositor notification routing
   └── Auto-action support
 
-Dev Phase 21: Learning and Personalization
+Dev Phase 22: Learning and Personalization
   ├── Observation recording (context transitions, stability)
   ├── Pattern extraction (work hours, space associations)
   ├── Override correction learning
@@ -130,7 +130,7 @@ Dev Phase 21: Learning and Personalization
   ├── Privacy controls (inspect, delete, disable)
   └── Pattern export for Inspector
 
-Dev Phase 21a: AI-Native Context Intelligence (§13)
+Dev Phase 22a: AI-Native Context Intelligence (§13)
   ├── TCN/TinyHAR learned classifiers (<500KB, ARM NEON)
   ├── Dempster-Shafer evidential signal fusion
   ├── Kalman filter context state smoothing
@@ -140,7 +140,7 @@ Dev Phase 21a: AI-Native Context Intelligence (§13)
   ├── Cross-device context sync (BLE + CRDTs)
   └── LLM-powered context narration
 
-Dev Phase 21b: Future Directions (§14)
+Dev Phase 22b: Future Directions (§14)
   ├── Kernel-internal frozen decision trees
   ├── Federated context learning (FedAvg/FedPer)
   ├── Differential privacy (Apple LDP model)
@@ -149,7 +149,7 @@ Dev Phase 21b: Future Directions (§14)
   ├── Multimodal & ambient context (wearables)
   └── Formal verification (seL4 IFC model)
 
-Dev Phase 27: Power-Aware Context
+Dev Phase 28: Power-Aware Context
   ├── Battery level as signal (low battery → resource conservation)
   ├── Thermal state as signal (throttled → reduce background work)
   ├── Power source as signal (plugged in → less conservative)

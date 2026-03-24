@@ -445,7 +445,7 @@ A toggle switches between concrete and raw display. The concrete descriptions ar
 
 -----
 
-### 5.6 Profile View (Phase 40+)
+### 5.6 Profile View (Phase 41+)
 
 Capability profile management. Shows how profiles compose into resolved capability sets.
 
@@ -517,7 +517,7 @@ Dry-run mode replays recent provenance records against the hypothetical capabili
 
 -----
 
-### 5.7 AIRS Analysis View (Phase 41+)
+### 5.7 AIRS Analysis View (Phase 42+)
 
 Displays AIRS capability intelligence results for installed agents.
 

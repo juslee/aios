@@ -317,7 +317,7 @@ sequenceDiagram
     end
 ```
 
-**IRQ-driven flow (Phase 5+):**
+**IRQ-driven flow (Phase 6+):**
 
 ```mermaid
 sequenceDiagram
@@ -351,13 +351,13 @@ AIOS uses the following VirtIO device types across its implementation phases:
 
 | Device Type | ID | Queues | Queue Names | Description | AIOS Phase |
 |---|---|---|---|---|---|
-| Network | 1 | 2 | rx, tx | Ethernet adapter; packet-based send/receive | Phase 7 |
+| Network | 1 | 2 | rx, tx | Ethernet adapter; packet-based send/receive | Phase 8 |
 | Block | 2 | 1 | requests | Block storage; sector-level read/write | Phase 1+ |
 | Console | 3 | 2 | receiveq, transmitq | Serial console; byte-stream I/O | -- |
 | Entropy | 4 | 1 | requests | Hardware RNG source; fills buffers with random bytes | Phase 1+ |
-| GPU | 16 | 2 | controlq, cursorq | 2D/3D display adapter; framebuffer and cursor management | Phase 5 |
-| Input | 18 | 2 | events, status | Keyboard, mouse, tablet; HID event delivery | Phase 7 |
-| Sound | 25 | 4 | controlq, eventq, txq, rxq | Audio adapter; PCM stream playback and capture | Phase 31 |
+| GPU | 16 | 2 | controlq, cursorq | 2D/3D display adapter; framebuffer and cursor management | Phase 6 |
+| Input | 18 | 2 | events, status | Keyboard, mouse, tablet; HID event delivery | Phase 8 |
+| Sound | 25 | 4 | controlq, eventq, txq, rxq | Audio adapter; PCM stream playback and capture | Phase 32 |
 
 #### Per-Device Queue Usage Patterns
 
@@ -422,8 +422,8 @@ Each packed descriptor contains the buffer pointer, length, flags, *and* availab
 | Milestone | Transport | Rationale |
 |-----------|-----------|-----------|
 | Phase 1-4 | Legacy MMIO (v1) | Simplicity; QEMU default; sufficient for polled block I/O |
-| Phase 5 | Modern MMIO (v2) | GPU and entropy devices benefit from 64-bit feature space |
-| Phase 7+ | Modern + packed | Network throughput requires cache-efficient descriptor processing |
+| Phase 6 | Modern MMIO (v2) | GPU and entropy devices benefit from 64-bit feature space |
+| Phase 8+ | Modern + packed | Network throughput requires cache-efficient descriptor processing |
 
 The VirtIO transport trait in the driver model (device-model.md §6, hal.md §6) abstracts over legacy/modern/packed differences. Individual device drivers call `virtqueue.add_buf()` and `virtqueue.get_buf()` without knowledge of the underlying ring format.
 
@@ -438,6 +438,6 @@ The VirtIO transport trait in the driver model (device-model.md §6, hal.md §6)
 | DMA buffer allocation | [dma.md](./dma.md) | §11 — DMA engine, buffer lifecycle, pool allocation for virtqueue regions |
 | Existing VirtIO-blk driver | `kernel/src/drivers/virtio_blk.rs` | Legacy MMIO transport, polled I/O, 3-descriptor chain pattern |
 | VirtIO constants | `shared/src/storage.rs` | MMIO register offsets, status bits, feature flags, descriptor flags |
-| VirtIO-Net driver design | [networking/stack.md](../../platform/networking/stack.md) | §4.2 — VirtIO-Net multi-queue driver (Phase 7) |
-| VirtIO-Sound driver design | [audio/drivers.md](../../platform/audio/drivers.md) | §5.1 — VirtIO-Sound 4-queue driver (Phase 31) |
-| VirtIO-GPU driver design | [compositor/gpu.md](../../platform/compositor/gpu.md) | §8.2 — VirtIO-GPU control/cursor queues (Phase 5) |
+| VirtIO-Net driver design | [networking/stack.md](../../platform/networking/stack.md) | §4.2 — VirtIO-Net multi-queue driver (Phase 8) |
+| VirtIO-Sound driver design | [audio/drivers.md](../../platform/audio/drivers.md) | §5.1 — VirtIO-Sound 4-queue driver (Phase 32) |
+| VirtIO-GPU driver design | [compositor/gpu.md](../../platform/compositor/gpu.md) | §8.2 — VirtIO-GPU control/cursor queues (Phase 6) |

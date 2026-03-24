@@ -278,7 +278,7 @@ AIRS enables users to query their privacy state through natural language, routed
 
 **On-device differential privacy for cross-device learning:**
 
-When multi-device support enables fleet-wide model improvement (Phase 37+), differential privacy at the gradient level (DP-SGD) would ensure that individual device contributions cannot be reverse-engineered from the aggregate model. Target privacy budget: ε ≤ 8 per training round.
+When multi-device support enables fleet-wide model improvement (Phase 38+), differential privacy at the gradient level (DP-SGD) would ensure that individual device contributions cannot be reverse-engineered from the aggregate model. Target privacy budget: ε ≤ 8 per training round.
 
 **Privacy-aware model selection:**
 

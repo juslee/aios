@@ -1,8 +1,8 @@
 # AIOS Multi-Device & Enterprise Architecture
 
 **Audience:** All developers (kernel, platform, application)
-**Phase:** 37 (Tier 7, weeks 36–40)
-**Prerequisites:** Phase 7 (Networking), Phase 23 (Full NTM), Phase 34 (Secure Boot & Update System)
+**Phase:** 38 (Tier 7, weeks 36–40)
+**Prerequisites:** Phase 8 (Networking), Phase 24 (Full NTM), Phase 35 (Secure Boot & Update System)
 **Related:** [identity.md](../experience/identity.md), [sync.md](../storage/spaces/sync.md), [networking.md](./networking.md), [model.md](../security/model.md)
 
 ---
@@ -139,7 +139,7 @@ flowchart TB
 
 ## §12 Implementation Order
 
-Phase 37 spans milestones M79–M81:
+Phase 38 spans milestones M79–M81:
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -149,15 +149,15 @@ Phase 37 spans milestones M79–M81:
 
 **Prerequisites:**
 
-- Phase 7 (Networking) — TCP/IP stack for device communication
-- Phase 23 (Full NTM) — Space Resolver, Shadow Engine, Peer Protocol
-- Phase 34 (Secure Boot & Update System) — Measured boot chain for attestation
-- Phase 35 (Linux Binary & Wayland Compatibility) — Broad app support for enterprise adoption
+- Phase 8 (Networking) — TCP/IP stack for device communication
+- Phase 24 (Full NTM) — Space Resolver, Shadow Engine, Peer Protocol
+- Phase 35 (Secure Boot & Update System) — Measured boot chain for attestation
+- Phase 36 (Linux Binary & Wayland Compatibility) — Broad app support for enterprise adoption
 
 **Unlocks:**
 
-- Phase 39 (Real Hardware, Certification & Launch) — Enterprise-ready for organizational deployment
-- Phase 40 (Composable Capability Profiles) — Fine-grained organizational capability templates
+- Phase 40 (Real Hardware, Certification & Launch) — Enterprise-ready for organizational deployment
+- Phase 41 (Composable Capability Profiles) — Fine-grained organizational capability templates
 
 ---
 

@@ -134,9 +134,9 @@ Most agents receive `DeviceClass` capabilities — they interact with the device
 
 ## 12. Implementation Order
 
-The USB subsystem is implemented in **Phase 24** (5 weeks) across three milestones. Prerequisites: Phase 20 (Camera) completes the subsystem framework pattern; Phase 3 (IPC/Scheduler) provides the threading model.
+The USB subsystem is implemented in **Phase 25** (5 weeks) across three milestones. Prerequisites: Phase 21 (Camera) completes the subsystem framework pattern; Phase 3 (IPC/Scheduler) provides the threading model.
 
-### Phase 24 Milestones
+### Phase 25 Milestones
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -149,25 +149,25 @@ The USB subsystem is implemented in **Phase 24** (5 weeks) across three mileston
 ```text
 Phase 3 (IPC) ────────── Thread model, IPC channels for device events
 Phase 4 (Storage) ─────── Block Engine for mass storage integration
-Phase 7 (Networking) ──── Network subsystem for CDC Ethernet routing
-Phase 16 (HAL) ────────── PlatformUsb trait, IOMMU abstraction
-Phase 20 (Camera) ─────── Subsystem Framework pattern established
+Phase 8 (Networking) ──── Network subsystem for CDC Ethernet routing
+Phase 17 (HAL) ────────── PlatformUsb trait, IOMMU abstraction
+Phase 21 (Camera) ─────── Subsystem Framework pattern established
      │
-Phase 24 (USB) ────────── This document
+Phase 25 (USB) ────────── This document
      │
-Phase 25 (WiFi/BT) ───── Wireless subsystems (USB dongle support)
-Phase 27 (Power) ──────── Full USB-C PD integration
+Phase 26 (WiFi/BT) ───── Wireless subsystems (USB dongle support)
+Phase 28 (Power) ──────── Full USB-C PD integration
 ```
 
 ### Cross-Phase USB Features
 
-Some USB features are implemented in phases other than Phase 24:
+Some USB features are implemented in phases other than Phase 25:
 
-- **USB Audio Class driver**: Phase 25 (audio/drivers.md §5.6)
-- **USB HID Braille displays**: Phase 24+ (accessibility.md §4)
-- **USB-C Power Delivery negotiation**: Phase 27 (power-management.md)
-- **USB4/Thunderbolt tunneling**: Phase 31+ (§14 Future Directions)
-- **AI-native USB features**: Phase 41+ (security.md §10)
+- **USB Audio Class driver**: Phase 26 (audio/drivers.md §5.6)
+- **USB HID Braille displays**: Phase 25+ (accessibility.md §4)
+- **USB-C Power Delivery negotiation**: Phase 28 (power-management.md)
+- **USB4/Thunderbolt tunneling**: Phase 32+ (§14 Future Directions)
+- **AI-native USB features**: Phase 42+ (security.md §10)
 
 -----
 

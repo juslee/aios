@@ -220,7 +220,7 @@ AIOS supports two driver execution models through the same `Driver` trait:
 
 - **Phase 0-4: In-kernel drivers.** All drivers run in kernel address space (EL1). They access MMIO regions directly via `read_volatile`/`write_volatile`. Interrupt handlers run in kernel context. DMA buffers are allocated from the kernel DMA pool. This is simpler and has zero IPC overhead, but a driver bug can corrupt kernel memory.
 
-- **Phase 5+: Userspace drivers.** Drivers run as isolated processes in their own address spaces (EL0). They access hardware through a `DriverGrant` capability that the kernel mediates. Interrupts are forwarded as IPC notifications. DMA buffers are shared through the kernel's mapping infrastructure. A driver crash is contained to its own address space.
+- **Phase 6+: Userspace drivers.** Drivers run as isolated processes in their own address spaces (EL0). They access hardware through a `DriverGrant` capability that the kernel mediates. Interrupts are forwarded as IPC notifications. DMA buffers are shared through the kernel's mapping infrastructure. A driver crash is contained to its own address space.
 
 The `Driver` trait is identical in both models. The difference is in how `probe()`, `attach()`, and `detach()` are invoked:
 

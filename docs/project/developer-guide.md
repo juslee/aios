@@ -2207,11 +2207,11 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 #### Skill usage examples
 
 ```bash
-# Implement Phase 5 from its phase doc
-/implement-phase 5
+# Implement Phase 6 from its phase doc
+/implement-phase 6
 
-# Generate the phase doc for Phase 6
-/generate-phase-doc 6
+# Generate the phase doc for Phase 7
+/generate-phase-doc 7
 
 # After creating a PR, wait for and address reviewer comments
 /review-pr-comments
@@ -2326,8 +2326,8 @@ This guide is designed to grow alongside the kernel. The following areas are int
 | CI pipeline explanation | Phase 4+ | GitHub Actions workflow breakdown, what each job catches, how to read CI failures |
 | Integration test patterns | Phase 4+ (user-space) | How to write kernel integration tests, QEMU-based acceptance test harness |
 | `shared` crate test patterns | **Done (SS5.5)** | Extraction workflow, dependency injection, test helper patterns, no_std constraints, test distribution |
-| Storage debugging patterns | Phase 5+ | Block Engine diagnosis, WAL recovery analysis, CRC verification procedures |
-| Cross-compilation troubleshooting | Phase 7+ (multi-platform) | Common linker errors, target-specific build issues, conditional compilation patterns |
+| Storage debugging patterns | Phase 6+ | Block Engine diagnosis, WAL recovery analysis, CRC verification procedures |
+| Cross-compilation troubleshooting | Phase 8+ (multi-platform) | Common linker errors, target-specific build issues, conditional compilation patterns |
 
 ### Section 6: Debugging Techniques
 
@@ -2336,7 +2336,7 @@ This guide is designed to grow alongside the kernel. The following areas are int
 | QEMU GDB deep-dive | Ongoing | Breakpoints in exception handlers, `x/8gx` for page table inspection, system register reads |
 | Memory debugging | Phase 4+ | Buddy poison patterns (`0xDEAD_DEAD`), slab red zone detection, diagnosing use-after-free |
 | Common QEMU failure modes | **Done (SS6.6)** | Silent hang, garbage UART, immediate reboot, IPC/scheduler failures |
-| Per-phase debugging recipes | Each phase | E.g., "Phase 4 storage debugging", "Phase 5 compositor debugging" |
+| Per-phase debugging recipes | Each phase | E.g., "Phase 4 storage debugging", "Phase 6 compositor debugging" |
 | Multi-core debugging | Phase 4+ | IPC deadlock detection, priority inversion diagnosis, per-core log correlation |
 
 ### Section 7: Contributing a New Subsystem
@@ -2351,10 +2351,10 @@ This guide is designed to grow alongside the kernel. The following areas are int
 
 | Section | Expand When | Content |
 |---|---|---|
-| Performance Profiling | Phase 5+ | Measurement methodology, timer-based profiling, IPC latency benchmarks |
+| Performance Profiling | Phase 6+ | Measurement methodology, timer-based profiling, IPC latency benchmarks |
 | Security Review Checklist | Phase 4+ | Expanding beyond W^X: capability audit patterns, trust level verification, syscall boundary checks |
-| Multi-Platform Porting | Phase 7+ (RISC-V) | Platform abstraction patterns, arch-conditional compilation, HAL trait implementation guide |
-| Application Developer Guide | Phase 16+ | `std`-based development, runtime APIs, agent SDK, IPC from user-space |
+| Multi-Platform Porting | Phase 8+ (RISC-V) | Platform abstraction patterns, arch-conditional compilation, HAL trait implementation guide |
+| Application Developer Guide | Phase 17+ | `std`-based development, runtime APIs, agent SDK, IPC from user-space |
 
 ---
 

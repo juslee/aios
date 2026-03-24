@@ -1461,25 +1461,25 @@ Policy Engine sets BatteryMode::Low
 
 ## 12. Implementation Order
 
-Power management spans multiple development phases, with each phase building on the previous. The core Policy Engine is Phase 27, but preparatory work begins earlier and refinements continue later.
+Power management spans multiple development phases, with each phase building on the previous. The core Policy Engine is Phase 28, but preparatory work begins earlier and refinements continue later.
 
 ```text
 Phase    Weeks       Deliverable                                    Depends On
 ─────    ─────       ───────────                                    ──────────
 Phase 1  5-8        Timer, GIC — foundation for idle/WFI           Phase 0
 Phase 2  9-12       Memory management — DMA tracking for guards    Phase 1
-Phase 5  21-24      Compositor — screen dim/off integration        Phase 4
-Phase 7  29-34      Input subsystem — user activity tracking       Phase 5
-Phase 9  35-39      AIRS core — usage model, prediction API        Phase 7
-Phase 21 55-58      Tickless idle, DVFS governor, thermal monitor  Phase 6, 9
+Phase 6  21-24      Compositor — screen dim/off integration        Phase 4
+Phase 8  29-34      Input subsystem — user activity tracking       Phase 6
+Phase 10  35-39      AIRS core — usage model, prediction API        Phase 8
+Phase 22 55-58      Tickless idle, DVFS governor, thermal monitor  Phase 7, 9
                     (scheduler power features, scheduler.md §11)
-Phase 23 63-66      Subsystem Framework power management (§9)      Phase 7
+Phase 24 63-66      Subsystem Framework power management (§9)      Phase 8
                     — per-device IdlePolicy, PowerManaged trait
-Phase 24 67-70      USB stack — suspend/resume for USB devices     Phase 23
-Phase 25 71-74      WiFi/BT — wireless power management            Phase 24
+Phase 25 67-70      USB stack — suspend/resume for USB devices     Phase 24
+Phase 26 71-74      WiFi/BT — wireless power management            Phase 25
                     (radio power states, scan scheduling)
 
-Phase 27 75-78      *** POWER MANAGEMENT POLICY ENGINE ***         Phase 25
+Phase 28 75-78      *** POWER MANAGEMENT POLICY ENGINE ***         Phase 26
                     ├── Sensor aggregator (all inputs)
                     ├── Policy rule engine (state machine)
                     ├── Transition executor (S0↔S0ix↔S3↔S4↔S5)
@@ -1495,14 +1495,14 @@ Phase 27 75-78      *** POWER MANAGEMENT POLICY ENGINE ***         Phase 25
                     ├── Audit logging to system/audit/power/
                     └── QEMU power testing harness
 
-Phase 29 79-82      UI toolkit — power status indicator, settings  Phase 16
-Phase 31 87-90      Media/audio — power-aware media playback       Phase 25
+Phase 30 79-82      UI toolkit — power status indicator, settings  Phase 17
+Phase 32 87-90      Media/audio — power-aware media playback       Phase 26
                     (prevent suspend during playback)
-Phase 34 93-96      Secure boot — authenticated suspend/resume     Phase 27
+Phase 35 93-96      Secure boot — authenticated suspend/resume     Phase 28
                     (verify hibernate image integrity)
 ```
 
-### 12.1 Phase 27 Internal Milestones
+### 12.1 Phase 28 Internal Milestones
 
 ```text
 Week 75: Sensor aggregator and policy rule engine
@@ -1546,7 +1546,7 @@ Week 78: AIRS integration and refinement
 
 6. **Platform differences are contained.** The per-platform code lives in HAL trait implementations (§6.4, §9.1-9.4). The Policy Engine's rule table, state machine, and transition logic are platform-independent. Adding a new platform means implementing `PlatformThermal`, `BatteryFuelGauge`, and the PSCI/PMGR power state interface — not changing the policy rules.
 
-7. **Intelligence is an optimization.** AIRS predictions make proactive wake and workload-aware budgeting possible. Without AIRS (Phase 2, before Phase 9), the Policy Engine uses time-of-day heuristics and fixed idle timeouts. The system is fully functional — just not predictive.
+7. **Intelligence is an optimization.** AIRS predictions make proactive wake and workload-aware budgeting possible. Without AIRS (Phase 2, before Phase 10), the Policy Engine uses time-of-day heuristics and fixed idle timeouts. The system is fully functional — just not predictive.
 
 8. **Every decision is auditable.** The audit log in `system/audit/power/` records every rule evaluation, every state transition, every guard failure, and every AIRS prediction that influenced a decision. A user or developer can always answer "why did the system suspend/wake/throttle at this moment?"
 
@@ -1596,7 +1596,7 @@ These techniques run as frozen models in kernel space with no AIRS dependency. T
 
 ### 14.4 AIRS-Dependent Intelligence
 
-These techniques require semantic understanding, user context, or complex ML inference provided by the AI Runtime Service (Phase 9+).
+These techniques require semantic understanding, user context, or complex ML inference provided by the AI Runtime Service (Phase 10+).
 
 **GNN Spatial Thermal Prediction.** Use a Graph Neural Network to model thermal coupling between neighboring cores, predicting per-core temperatures 1-5 minutes ahead (average error <1°C, based on RNN thermal prediction research). The graph structure captures heat recirculation patterns — a hot P-core cluster raises adjacent E-core temperatures even if E-cores are idle. AIRS trains the GNN offline on simulation data (QEMU + physics-based thermal model); the frozen graph runs in the AIRS Thermal Advisor process. This enables Model Predictive Control (MPC) for thermal management — reducing frequency on cores predicted to overheat before they actually reach the trip point, eliminating reactive throttle events that cause visible stutter.
 

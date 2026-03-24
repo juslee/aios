@@ -105,7 +105,7 @@ Free headroom:           35-70 GB      70-140 GB     140-280 GB    280-560 GB
 
 ### 10.3 Storage Budget — Future Device Classes
 
-> **Implementation status:** Phase 21+. These budgets are for architectural planning. Phase 4 targets LaptopPC only. Phone, TV, and SBC profiles will be activated when hardware support is added.
+> **Implementation status:** Phase 22+. These budgets are for architectural planning. Phase 4 targets LaptopPC only. Phone, TV, and SBC profiles will be activated when hardware support is added.
 
 These budgets are not active yet. They exist for architectural planning so the storage system doesn't make assumptions that only work on laptops.
 
@@ -453,7 +453,7 @@ Current compression selection uses entropy analysis to choose between LZ4 (fast)
 
 #### 10.9.4 Integration via AIRS
 
-All ML-driven storage features integrate through AIRS (Phase 9+):
+All ML-driven storage features integrate through AIRS (Phase 10+):
 
 - **Training:** Background agent profiles storage access patterns and trains lightweight models using AIRS inference
 - **Inference:** Models run as AIRS micro-tasks, consuming minimal compute

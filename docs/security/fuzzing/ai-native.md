@@ -43,7 +43,7 @@ This prioritizes fuzzing effort: allocate more cycles to high-risk functions (th
 
 **ECHO** (MDPI 2024) provides lightweight call-stack-based deduplication using longest common subsequence between normalized kernel stack traces. For AIOS, stack traces are normalized by stripping KASLR offsets before comparison.
 
-### 7.2 Kernel-Internal AI (Frozen Models, Phase 17+)
+### 7.2 Kernel-Internal AI (Frozen Models, Phase 18+)
 
 Lightweight inference models that run inside the kernel or as privileged system services for runtime anomaly detection. These do NOT depend on AIRS — they are frozen, small models loaded at boot and updated only through kernel upgrades.
 
@@ -88,7 +88,7 @@ Train a small decision tree on observed lock acquisition sequences from `TraceRi
 
 Cross-reference: [static-analysis.md](static-analysis.md) §4.8 (Converos for compile-time concurrency verification).
 
-### 7.3 AIRS-Dependent Security (Phase 10+)
+### 7.3 AIRS-Dependent Security (Phase 11+)
 
 These features require the AI Runtime Service (AIRS) and are part of the broader intelligence layer. They represent the convergence of fuzzing insights and runtime AI capabilities.
 

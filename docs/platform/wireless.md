@@ -128,17 +128,17 @@ The architecture follows six design principles documented in §13, with a clean 
 
 ## 11. Implementation Order
 
-The wireless subsystem is implemented in Phase 25 (WiFi, Bluetooth & Wireless — 5 weeks), building on Phase 24 (USB Stack & Hotplug) for USB dongle support.
+The wireless subsystem is implemented in Phase 26 (WiFi, Bluetooth & Wireless — 5 weeks), building on Phase 25 (USB Stack & Hotplug) for USB dongle support.
 
 ```text
-Phase 25 M1:  WiFi Foundation
+Phase 26 M1:  WiFi Foundation
               ├── WifiDriver trait + USB WiFi class driver skeleton
               ├── SoftMAC 802.11 frame processing (basic TX/RX)
               ├── WPA3-SAE authentication (Dragonfly key exchange)
               ├── Regulatory domain enforcement (embedded wireless-regdb)
               └── WiFi capability gate (WifiScan, WifiConnect)
 
-Phase 25 M2:  Bluetooth Foundation
+Phase 26 M2:  Bluetooth Foundation
               ├── HciTransport trait + btusb driver
               ├── HCI Core + L2CAP (basic channel multiplexing)
               ├── LE Secure Connections pairing (P-256 ECDH)
@@ -146,7 +146,7 @@ Phase 25 M2:  Bluetooth Foundation
               ├── A2DP → audio subsystem (SBC codec minimum)
               └── Bluetooth capability gate (BtDiscovery, BtPair, BtAudio, BtHid)
 
-Phase 25 M3:  Integration & Intelligence
+Phase 26 M3:  Integration & Intelligence
               ├── Firmware loading (capability-gated, signature-verified)
               ├── WiFi/BT coexistence (AFH, time-domain arbitration)
               ├── Power management (PSM, TWT, BLE connection intervals)

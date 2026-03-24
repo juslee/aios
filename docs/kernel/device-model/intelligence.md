@@ -260,7 +260,7 @@ flowchart TD
         IC["IRQ Coalescing\n(rate monitor)"]
     end
 
-    subgraph AIRS["AIRS (Phase 9+)"]
+    subgraph AIRS["AIRS (Phase 10+)"]
         NL["NL Policies"]
         AD["Anomaly Detection\n(GNN)"]
         WS["Workload Scheduling"]

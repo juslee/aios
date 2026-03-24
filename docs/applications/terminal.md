@@ -192,7 +192,7 @@ Terminal scrollback history is stored as a space object, not an in-memory ring b
 The terminal emulator is implemented across multiple development phases, building complexity incrementally.
 
 ```text
-Phase 7:   Terminal emulator (basic)
+Phase 8:   Terminal emulator (basic)
            ├── VT100 escape sequence parser (core CSI/SGR subset)
            ├── Cell grid with 16-color support
            ├── Compositor surface rendering (CPU-rasterized, basic font)
@@ -201,7 +201,7 @@ Phase 7:   Terminal emulator (basic)
            ├── TerminalCreate capability type
            └── Test: interactive shell session in QEMU
 
-Phase 8:   Terminal emulator (enhanced)
+Phase 9:   Terminal emulator (enhanced)
            ├── Full xterm-256color emulation
            ├── GPU-accelerated glyph rendering (glyph atlas)
            ├── Mouse reporting (SGR mode)
@@ -209,27 +209,27 @@ Phase 8:   Terminal emulator (enhanced)
            ├── Selection and clipboard (Flow integration)
            └── Terminal profile (colors, font, shell preference)
 
-Phase 13:  Session multiplexer
+Phase 14:  Session multiplexer
            ├── Multi-tab sessions (multiple PTYs per terminal window)
            ├── Pane splitting (horizontal/vertical within a surface)
            ├── Session detach/reattach
            ├── Session persistence across compositor restarts
            └── Audit logging (session lifecycle events)
 
-Phase 22:  POSIX compatibility
+Phase 23:  POSIX compatibility
            ├── /dev/tty and /dev/pts/* mapping via POSIX bridge
            ├── termios translation to VT mode state
            ├── SIGWINCH delivery on resize
            ├── Job control signal translation (SIGINT, SIGTSTP, SIGCONT)
            └── Process group semantics
 
-Phase 25:  Remote terminals
+Phase 26:  Remote terminals
            ├── SSH PTY forwarding (networking subsystem integration)
            ├── Remote session reconnection (Mosh-style)
            ├── Session migration between devices
            └── Encrypted session state transfer
 
-Phase 31:  AI-native features
+Phase 32:  AI-native features
            ├── AIRS context-aware command suggestions
            ├── Semantic scrollback search
            ├── Anomaly detection for suspicious commands

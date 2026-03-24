@@ -173,27 +173,27 @@ Complete mapping of privacy mechanisms to their primary implementation location 
 | Privacy Mechanism | Primary Location | Existing Doc Reference | Phase |
 |---|---|---|---|
 | Capability system | `kernel/src/cap/` | [model/capabilities.md](../model/capabilities.md) §3.1–§3.7 | Phase 3 |
-| DIFC taint labels | `shared/src/ipc.rs` | [intent-verifier/information-flow.md](../../intelligence/intent-verifier/information-flow.md) §5 | Phase 17 |
-| Camera LED enforcement | `kernel/src/drivers/camera/` | [camera/security.md](../../platform/camera/security.md) §8.1 | Phase 32 |
-| Camera consent | `kernel/src/drivers/camera/` | [camera/security.md](../../platform/camera/security.md) §8.4 | Phase 32 |
-| Microphone indicator | `kernel/src/drivers/audio/` | [audio/integration.md](../../platform/audio/integration.md) §11.4 | Phase 10 |
-| Audio audit | `kernel/src/drivers/audio/` | [audio/integration.md](../../platform/audio/integration.md) §11.2 | Phase 10 |
-| DLP classification | `kernel/src/storage/` | [multi-device/data-protection.md](../../platform/multi-device/data-protection.md) §9.1 | Phase 38 |
-| DLP enforcement | `kernel/src/storage/` | [multi-device/data-protection.md](../../platform/multi-device/data-protection.md) §9.2 | Phase 38 |
+| DIFC taint labels | `shared/src/ipc.rs` | [intent-verifier/information-flow.md](../../intelligence/intent-verifier/information-flow.md) §5 | Phase 18 |
+| Camera LED enforcement | `kernel/src/drivers/camera/` | [camera/security.md](../../platform/camera/security.md) §8.1 | Phase 33 |
+| Camera consent | `kernel/src/drivers/camera/` | [camera/security.md](../../platform/camera/security.md) §8.4 | Phase 33 |
+| Microphone indicator | `kernel/src/drivers/audio/` | [audio/integration.md](../../platform/audio/integration.md) §11.4 | Phase 11 |
+| Audio audit | `kernel/src/drivers/audio/` | [audio/integration.md](../../platform/audio/integration.md) §11.2 | Phase 11 |
+| DLP classification | `kernel/src/storage/` | [multi-device/data-protection.md](../../platform/multi-device/data-protection.md) §9.1 | Phase 39 |
+| DLP enforcement | `kernel/src/storage/` | [multi-device/data-protection.md](../../platform/multi-device/data-protection.md) §9.2 | Phase 39 |
 | Encryption zones | `kernel/src/storage/crypto.rs` | [storage/spaces/encryption.md](../../storage/spaces/encryption.md) §6 | Phase 4 |
-| Embedding privacy | `kernel/src/intelligence/` | [space-indexer/security.md](../../intelligence/space-indexer/security.md) §10.4 | Phase 14 |
-| Session isolation | `kernel/src/intelligence/` | [conversation-manager/security.md](../../intelligence/conversation-manager/security.md) §14.3 | Phase 14 |
-| Preference privacy | `kernel/src/intelligence/` | [preferences/security.md](../../intelligence/preferences/security.md) §15 | Phase 12 |
-| Prompt injection defense | `kernel/src/security/` | [adversarial-defense/screening.md](../adversarial-defense/screening.md) §5–§7 | Phase 17 |
-| Behavioral monitoring | `kernel/src/intelligence/` | [behavioral-monitor/detection.md](../../intelligence/behavioral-monitor/detection.md) §4 | Phase 14 |
-| Model registry | `kernel/src/intelligence/` | [airs/model-registry.md](../../intelligence/airs/model-registry.md) §4 | Phase 14 |
-| Secure boot attestation | `kernel/src/security/` | [secure-boot/trust-chain.md](../secure-boot/trust-chain.md) §3 | Phase 34 |
-| Enterprise policies | `kernel/src/intelligence/` | [multi-device/policy.md](../../platform/multi-device/policy.md) §7 | Phase 38 |
-| POSIX sandbox | `kernel/src/platform/posix/` | [linux-compat/sandbox.md](../../platform/linux-compat/sandbox.md) §9 | Phase 22 |
-| Privacy manifests | `shared/src/privacy.rs` | [agent-privacy.md](./agent-privacy.md) §3.1 | Phase 13 |
-| Privacy budgets | `kernel/src/cap/` | [agent-privacy.md](./agent-privacy.md) §3.2 | Phase 13 |
-| Privacy coordinator | `kernel/src/security/` | [privacy.md](../privacy.md) §2.2 | Phase 13 |
-| Consent flow | `kernel/src/security/` | [sensor-privacy.md](./sensor-privacy.md) §6.2 | Phase 12 |
-| Scrubbing pipeline | `kernel/src/storage/` | [data-lifecycle.md](./data-lifecycle.md) §7.3 | Phase 17 |
-| Privacy anomaly detection | `kernel/src/intelligence/` | [intelligence.md](./intelligence.md) §11.1 | Phase 14 |
-| Agent privacy scoring | `kernel/src/intelligence/` | [intelligence.md](./intelligence.md) §12.2 | Phase 14 |
+| Embedding privacy | `kernel/src/intelligence/` | [space-indexer/security.md](../../intelligence/space-indexer/security.md) §10.4 | Phase 15 |
+| Session isolation | `kernel/src/intelligence/` | [conversation-manager/security.md](../../intelligence/conversation-manager/security.md) §14.3 | Phase 15 |
+| Preference privacy | `kernel/src/intelligence/` | [preferences/security.md](../../intelligence/preferences/security.md) §15 | Phase 13 |
+| Prompt injection defense | `kernel/src/security/` | [adversarial-defense/screening.md](../adversarial-defense/screening.md) §5–§7 | Phase 18 |
+| Behavioral monitoring | `kernel/src/intelligence/` | [behavioral-monitor/detection.md](../../intelligence/behavioral-monitor/detection.md) §4 | Phase 15 |
+| Model registry | `kernel/src/intelligence/` | [airs/model-registry.md](../../intelligence/airs/model-registry.md) §4 | Phase 15 |
+| Secure boot attestation | `kernel/src/security/` | [secure-boot/trust-chain.md](../secure-boot/trust-chain.md) §3 | Phase 35 |
+| Enterprise policies | `kernel/src/intelligence/` | [multi-device/policy.md](../../platform/multi-device/policy.md) §7 | Phase 39 |
+| POSIX sandbox | `kernel/src/platform/posix/` | [linux-compat/sandbox.md](../../platform/linux-compat/sandbox.md) §9 | Phase 23 |
+| Privacy manifests | `shared/src/privacy.rs` | [agent-privacy.md](./agent-privacy.md) §3.1 | Phase 14 |
+| Privacy budgets | `kernel/src/cap/` | [agent-privacy.md](./agent-privacy.md) §3.2 | Phase 14 |
+| Privacy coordinator | `kernel/src/security/` | [privacy.md](../privacy.md) §2.2 | Phase 14 |
+| Consent flow | `kernel/src/security/` | [sensor-privacy.md](./sensor-privacy.md) §6.2 | Phase 13 |
+| Scrubbing pipeline | `kernel/src/storage/` | [data-lifecycle.md](./data-lifecycle.md) §7.3 | Phase 18 |
+| Privacy anomaly detection | `kernel/src/intelligence/` | [intelligence.md](./intelligence.md) §11.1 | Phase 15 |
+| Agent privacy scoring | `kernel/src/intelligence/` | [intelligence.md](./intelligence.md) §12.2 | Phase 15 |

@@ -525,9 +525,9 @@ let has_scene_ai = aios_airs::is_available()
     && aios_airs::has_model("camera-scene-classifier");
 ```
 
-**Implementation phase:** Phase 9+ (session lifecycle, capture pipeline, UVC driver, ISP
+**Implementation phase:** Phase 10+ (session lifecycle, capture pipeline, UVC driver, ISP
 framework, privacy indicators). CSI/MIPI drivers arrive with BSP phases. AI features
-require Phase 14+ (AIRS integration).
+require Phase 15+ (AIRS integration).
 
 ---
 

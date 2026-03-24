@@ -1255,10 +1255,10 @@ pub struct PatternDetector {
 
 |Feature                           |Use                                  |Phase                               |
 |----------------------------------|-------------------------------------|------------------------------------|
-|PAC (Pointer Authentication)      |Sign return addresses, mitigate ROP  |Phase 2 (kernel), Phase 17 (enforce)|
-|BTI (Branch Target Identification)|Mitigate JOP attacks                 |Phase 2 (kernel), Phase 17 (enforce)|
-|MTE (Memory Tagging Extension)    |Hardware use-after-free detection    |Phase 17                            |
-|TrustZone (EL3)                   |Isolated secure world for key storage|Phase 34 (Secure Boot)              |
+|PAC (Pointer Authentication)      |Sign return addresses, mitigate ROP  |Phase 2 (kernel), Phase 18 (enforce)|
+|BTI (Branch Target Identification)|Mitigate JOP attacks                 |Phase 2 (kernel), Phase 18 (enforce)|
+|MTE (Memory Tagging Extension)    |Hardware use-after-free detection    |Phase 18                            |
+|TrustZone (EL3)                   |Isolated secure world for key storage|Phase 35 (Secure Boot)              |
 |TTBR0/TTBR1 separation            |User/kernel address space isolation  |Phase 2                             |
 |W^X enforcement                   |Prevent code injection               |Phase 2                             |
 |KASLR                             |Randomize kernel base address        |Phase 2                             |
@@ -1436,7 +1436,7 @@ Space Indexer, Context Engine*`"]
         P4["`Phase 4 -- User Services
 *Identity, Preferences
 Attention Manager, Agent Runtime*`"]
-        P5["`Phase 5 -- Experience
+        P5["`Phase 6 -- Experience
 *Workspace displayed
 Conversation bar available
 Boot complete*`"]
@@ -1700,45 +1700,45 @@ pub struct Object {
 
 Beyond the MVP, a production OS requires these additional subsystems. Each implements the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md)) — the same capability gate, session model, audit logging, power management, and POSIX bridge as every other subsystem. See [development-plan.md](./development-plan.md) for implementation phases.
 
-### 7.1 Power Management (Phase 27)
+### 7.1 Power Management (Phase 28)
 
 CPU frequency scaling (DVFS), display power management, device suspend, sleep/hibernate. Without this, AIOS is tethered to a power outlet. See [power-management.md](../platform/power-management.md).
 
-### 7.2 USB Stack (Phase 24)
+### 7.2 USB Stack (Phase 25)
 
 xHCI host controller, USB hub support, mass storage, HID (keyboard, mouse, controllers), audio, video (webcams), serial, device hotplug. Real hardware uses USB for nearly everything. See [usb.md](../platform/usb.md).
 
 ### 7.3 WiFi & Bluetooth (Phases 25–26)
 
-WiFi (Phase 25): firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth (Phase 26): HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware. See [wireless.md](../platform/wireless.md) for the full architecture.
+WiFi (Phase 26): firmware loading, WPA2/WPA3 authentication, regulatory compliance. Bluetooth (Phase 27): HID peripherals, audio (A2DP), nearby device communication. Both require proprietary firmware blobs on most hardware. See [wireless.md](../platform/wireless.md) for the full architecture.
 
-### 7.4 Secure Boot & Updates (Phase 34)
+### 7.4 Secure Boot & Updates (Phase 35)
 
 Verified boot chain (firmware → bootloader → kernel → AIRS → services). A/B partition scheme for atomic updates. Delta updates. Automatic rollback on failure. Separate model and agent update channels. See [secure-boot.md](../security/secure-boot.md).
 
-### 7.5 Display Protocol Compatibility (Phase 36)
+### 7.5 Display Protocol Compatibility (Phase 37)
 
 Wayland compatibility layer for existing Linux GUI applications. XWayland for X11 apps. This gives access to thousands of existing applications. See [linux-compat.md](../platform/linux-compat.md).
 
-### 7.6 Accessibility (Phase 33)
+### 7.6 Accessibility (Phase 34)
 
-Screen reader support with semantic accessibility tree. Full keyboard navigation. High contrast / large text modes. Voice control. Switch access. Must be designed into compositor and toolkit from Phase 6, not retrofitted.
+Screen reader support with semantic accessibility tree. Full keyboard navigation. High contrast / large text modes. Voice control. Switch access. Must be designed into compositor and toolkit from Phase 7, not retrofitted.
 
-### 7.7 Internationalization (Phase 33)
+### 7.7 Internationalization (Phase 34)
 
 Full Unicode everywhere. Input methods for CJK and complex scripts. Locale support (date, number, currency formats). UI string externalization for translation. Right-to-left layout support.
 
-### 7.8 Printing & Peripherals (Phase 32)
+### 7.8 Printing & Peripherals (Phase 33)
 
 CUPS port for printer support. Scanner support. Camera support. All require working network stack and USB stack. See [camera.md](../platform/camera.md).
 
-### 7.9 Linux Binary Compatibility (Phase 35)
+### 7.9 Linux Binary Compatibility (Phase 36)
 
 Compatibility layer for running unmodified Linux ELF binaries. Translates Linux syscalls to AIOS syscalls. Eliminates the app gap entirely. See [linux-compat.md](../platform/linux-compat.md).
 
 ### 7.10 Enterprise Features (Phases 37–38)
 
-Multi-device sync and pairing (Phase 37), MDM, fleet management, remote wipe, compliance reporting, centralized policy enforcement (Phase 38). Required for organizational adoption. See [multi-device.md](../platform/multi-device.md).
+Multi-device sync and pairing (Phase 38), MDM, fleet management, remote wipe, compliance reporting, centralized policy enforcement (Phase 39). Required for organizational adoption. See [multi-device.md](../platform/multi-device.md).
 
 -----
 
@@ -1774,9 +1774,9 @@ For launch, Tiers 1-3 must be solid. Tier 2 (web apps) is the critical one — i
 
 **Stage 1: QEMU aarch64 (development target, dev Phases 0–22).** All development and testing. HVF acceleration on macOS for near-native speed.
 
-**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 23+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §10 for the phase-aligned hardware timeline.
+**Stage 2: Raspberry Pi 4/5 (first real hardware, dev Phase 24+).** Proves the OS works on real silicon. Known, documented hardware. Large community. See overview.md §10 for the phase-aligned hardware timeline.
 
-**Stage 3: VM images (adoption path, dev Phase 34+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
+**Stage 3: VM images (adoption path, dev Phase 35+).** AIOS runs in UTM/QEMU on Mac/Linux/Windows. Low barrier to entry.
 
 **Stage 4: Partner hardware (growth).** Pine64 (PineBook, PinePhone), Framework Laptop, or similar open-hardware vendors.
 
@@ -2129,7 +2129,7 @@ AIOS's 8-layer security model (`docs/security/model/layers.md` §2) can incorpor
 
 - **Capsicum (FreeBSD)** demonstrates that capability systems work best when they *coexist* with POSIX abstractions rather than replacing them. Capsicum's `cap_enter()` switches a process into capability mode where all global namespaces (filesystem, PIDs, network) become inaccessible — only pre-opened file descriptor capabilities work. AIOS's POSIX compatibility layer (`docs/storage/spaces/posix.md`) should adopt this fd-as-capability model: each POSIX fd maps to an AIOS capability token, and `cap_enter()` equivalent restricts the process to its existing capability set.
 
-- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/model/capabilities.md` §3.7, Phase 28) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
+- **CAmkES** (seL4 Component Architecture) generates capability distributions at build time from a static architecture description. Components declare interfaces; CAmkES generates IPC stubs and capability setup code. AIOS's composable capability profiles (`docs/security/model/capabilities.md` §3.7, Phase 29) should adopt static capability composition: agent manifests declare required capabilities, and the capability manager pre-allocates them at agent launch time — no runtime negotiation, no ambient authority.
 
 - **CHERI** (Capability Hardware Enhanced RISC Instructions) extends pointers to 128-bit bounded capabilities with hardware-enforced bounds, permissions, and sealing. While aarch64 doesn't have CHERI today, Arm's Morello prototype demonstrates the direction. AIOS's software capability tokens should be designed so they can be backed by hardware capabilities when CHERI-ARM ships — the `CapabilityToken` structure already stores bounds (rights mask) and permissions that map to CHERI fields. MTE (Memory Tagging Extension) on current aarch64 provides a subset of CHERI's spatial safety.
 

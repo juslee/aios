@@ -518,8 +518,8 @@ pub enum StorageError {
 | Apple Silicon | NVMe | Full | Full | Full (ANE acceleration) | Full mesh sync |
 
 **Implementation phase:** Phase 4+ (Block Engine, Object Store, Version Store, encryption).
-Query Engine arrives in Phase 10+. Space Sync in Phase 12+. Semantic search requires
-AIRS Kit (Phase 13+).
+Query Engine arrives in Phase 11+. Space Sync in Phase 13+. Semantic search requires
+AIRS Kit (Phase 14+).
 
 ---
 

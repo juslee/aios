@@ -141,7 +141,7 @@ flowchart LR
 Development plan phases (see [development-plan.md](../project/development-plan.md)):
 
 ```text
-Dev Phase 13c: Tool Manager + Agent Lifecycle         → core framework
+Dev Phase 14c: Tool Manager + Agent Lifecycle         → core framework
   ├── ToolRegistry data structures (RegisteredTool, ToolId, ToolSchema)
   ├── ToolRegister syscall handler in AIRS
   ├── Tool call routing via IPC
@@ -151,14 +151,14 @@ Dev Phase 13c: Tool Manager + Agent Lifecycle         → core framework
   ├── Task Manager integration (AgentSelector.tool_registry)
   └── Audit logging for all tool calls
 
-Dev Phase 16: Agent Orchestration                     → multi-runtime & advanced
+Dev Phase 17: Agent Orchestration                     → multi-runtime & advanced
   ├── Multi-runtime SDK bindings (Python, TypeScript, WASM)
   ├── Cross-runtime tool bridging via WIT
   ├── Tool versioning (SemVer, schema diff, deprecation)
   ├── Concurrent tool execution limits
   └── Tool call timeout escalation and cancellation
 
-Dev Phase 21+: AI-Native Tool Intelligence            → intelligent routing
+Dev Phase 22+: AI-Native Tool Intelligence            → intelligent routing
   ├── LLM-powered tool selection (constrained decoding)
   ├── Tool recommendation based on user context
   ├── Behavioral anomaly detection for tool call patterns
@@ -169,17 +169,17 @@ Dev Phase 21+: AI-Native Tool Intelligence            → intelligent routing
 ```mermaid
 flowchart LR
     P3["Phase 3
-    IPC & Caps"] --> P8["Phase 8
+    IPC & Caps"] --> P8["Phase 9
     Agent Model"]
-    P8 --> P10["Phase 10
+    P8 --> P10["Phase 11
     AIRS Services"]
-    P10 --> P13["Phase 13c
+    P10 --> P13["Phase 14c
     **Tool Manager**"]
-    P13 --> P14["Phase 14
+    P13 --> P14["Phase 15
     Task Manager"]
-    P13 --> P16["Phase 16
+    P13 --> P16["Phase 17
     Multi-Runtime"]
-    P16 --> P21["Phase 21+
+    P16 --> P21["Phase 22+
     AI Intelligence"]
 ```
 

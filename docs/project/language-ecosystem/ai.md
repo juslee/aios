@@ -62,7 +62,7 @@ and AIRS periodically updates them based on observed workload patterns.
 
 ### 13.1 AIRS Runtime Advisor
 
-**Category:** AIRS-dependent (Phase 16)
+**Category:** AIRS-dependent (Phase 17)
 
 When a developer runs `aios agent audit`, AIRS analyzes the agent's manifest and source code
 to recommend the optimal runtime — matching compute patterns, dependencies, and capability
@@ -71,7 +71,7 @@ pipeline (see [airs.md](../../intelligence/airs.md) §5.9).
 
 ### 13.2 Learned Scheduling Weights
 
-**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 21
+**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 22
 
 AIRS learns per-agent scheduling weights from observed workload patterns and pushes frozen
 weight tables to the kernel scheduler. Inspired by ALPS (USENIX ATC'24), which achieved 57.2%
@@ -83,7 +83,7 @@ learning frontend (§3), kernel scheduler backend (§4).
 
 ### 13.3 Lifetime-Aware Allocation
 
-**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 21
+**Category:** Kernel-internal ML (inference) / AIRS-dependent (training) — Phase 22
 
 AIRS trains per-runtime lifetime predictors from allocation traces (stack trace + size + observed
 lifetime) and pushes frozen decision trees to the kernel's slab allocator. Inspired by LLAMA
@@ -95,7 +95,7 @@ lifetime prediction (§5), kernel slab integration (§6).
 
 ### 13.4 Garbage Collection Scheduling
 
-**Category:** AIRS-dependent (Phase 21)
+**Category:** AIRS-dependent (Phase 22)
 
 AIRS uses reinforcement learning to determine optimal GC timing and aggressiveness for
 RustPython and QuickJS-ng cycle collectors. Per-agent GC policies are pushed as state machines
@@ -107,7 +107,7 @@ AIRS RL-based policy learning (§7), runtime GC hook integration (§8).
 
 ### 13.5 Behavioral Anomaly Detection
 
-**Category:** Kernel-internal ML (rate-based) / AIRS-dependent (semantic) — Phase 13
+**Category:** Kernel-internal ML (rate-based) / AIRS-dependent (semantic) — Phase 14
 
 Three detection layers protect against anomalous agent behavior: rate-based statistics in the
 kernel (no AIRS dependency), LSTM sequence models in AIRS for sophisticated attack detection,
@@ -120,7 +120,7 @@ Full architecture: [anomaly-detection.md](../../intelligence/runtime-advisor/ano
 
 ### 13.6 Automatic Capability Minimization
 
-**Category:** AIRS-dependent (Phase 13)
+**Category:** AIRS-dependent (Phase 14)
 
 AIRS compares an agent's declared capabilities against actual code usage via static analysis,
 dynamic profiling, and LLM reasoning to suggest minimal permission sets. Inspired by MiniScope
@@ -152,7 +152,7 @@ ComponentizeJS compiles JavaScript to a WASM component via StarlingMonkey. This 
 "JS-as-WASM-component" path where TypeScript agents are compiled to WASM components at install
 time, gaining WASM's sandboxing benefits with SpiderMonkey's performance.
 
-**Relevance:** Phase 30 browser integration (Servo uses SpiderMonkey). Agent TypeScript could
+**Relevance:** Phase 31 browser integration (Servo uses SpiderMonkey). Agent TypeScript could
 optionally compile to WASM components for stronger isolation.
 
 ### 14.3 WIT-Based Agent Manifests

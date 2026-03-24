@@ -1535,25 +1535,25 @@ fn view(&self) -> Element<Message> {
 ## 15. Implementation Order
 
 ```
-Phase 6a:   Interface Kit traits + iced bridge   → Kit compiles for AIOS target
-Phase 6b:   AIOS platform backend (basic)      → surfaces rendered via Compute Kit Tier 1 + compositor IPC
-Phase 6c:   Input routing                      → keyboard/mouse events reach widgets
-Phase 6d:   Core widgets (text, button, input) → basic interactive UI works
+Phase 7a:   Interface Kit traits + iced bridge   → Kit compiles for AIOS target
+Phase 7b:   AIOS platform backend (basic)      → surfaces rendered via Compute Kit Tier 1 + compositor IPC
+Phase 7c:   Input routing                      → keyboard/mouse events reach widgets
+Phase 7d:   Core widgets (text, button, input) → basic interactive UI works
 
-Phase 12a:  Theme system                       → context-aware theming on AIOS
-Phase 12b:  Full widget set                    → all standard widgets available
-Phase 12c:  Text rendering pipeline            → shaping, bidi, font fallback
+Phase 13a:  Theme system                       → context-aware theming on AIOS
+Phase 13b:  Full widget set                    → all standard widgets available
+Phase 13c:  Text rendering pipeline            → shaping, bidi, font fallback
 
-Phase 15a:  Flow integration                   → drag/drop through Flow system
-Phase 15b:  Space-backed persistence           → agent state saved to spaces
-Phase 15c:  Capability-aware UI                → widgets respond to capability set
-Phase 15d:  Semantic window hints              → compositor understands content
+Phase 16a:  Flow integration                   → drag/drop through Flow system
+Phase 16b:  Space-backed persistence           → agent state saved to spaces
+Phase 16c:  Capability-aware UI                → widgets respond to capability set
+Phase 16d:  Semantic window hints              → compositor understands content
 
-Phase 22:   Accessibility tree                 → screen reader support
-Phase 23:   Performance optimization           → damage tracking, texture atlas, profiling
-Phase 25:   Web backend                        → WASM target works
-Phase 29:   Agent SDK packaging                → aios-toolkit crate published
-Phase 33:   Accessibility polish               → WCAG AA compliance
+Phase 23:   Accessibility tree                 → screen reader support
+Phase 24:   Performance optimization           → damage tracking, texture atlas, profiling
+Phase 26:   Web backend                        → WASM target works
+Phase 30:   Agent SDK packaging                → aios-toolkit crate published
+Phase 34:   Accessibility polish               → WCAG AA compliance
 ```
 
 -----

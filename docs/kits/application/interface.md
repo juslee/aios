@@ -1481,6 +1481,6 @@ W3C ARIA design patterns.
 
 ## Implementation Phase
 
-Phase 6+ (basic compositor surfaces and core widgets). Full widget set and theme system
-Phase 12+. Flow integration and Space-backed persistence Phase 15+. Accessibility tree
-Phase 22+. Agent SDK packaging Phase 29+.
+Phase 7+ (basic compositor surfaces and core widgets). Full widget set and theme system
+Phase 13+. Flow integration and Space-backed persistence Phase 16+. Accessibility tree
+Phase 23+. Agent SDK packaging Phase 30+.

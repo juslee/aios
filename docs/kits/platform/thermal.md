@@ -439,7 +439,7 @@ if ThermalKit::is_available() {
 }
 ```
 
-**Implementation phase:** Phase 27+. Thermal Kit depends on [Memory Kit](../kernel/memory.md)
+**Implementation phase:** Phase 28+. Thermal Kit depends on [Memory Kit](../kernel/memory.md)
 and [Capability Kit](../kernel/capability.md). It is consumed by the scheduler,
 [Compute Kit](../kernel/compute.md), and all subsystems with thermal-sensitive behavior.
 

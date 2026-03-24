@@ -54,20 +54,20 @@ The audio subsystem provides:
 The audio subsystem is implemented across multiple development phases, building complexity incrementally.
 
 ```text
-Phase 8:   HAL PlatformAudio trait + VirtIO-Sound driver
+Phase 9:   HAL PlatformAudio trait + VirtIO-Sound driver
            ├── VirtIO-Sound device discovery and initialization
            ├── Raw PCM output (write_samples via HAL)
            ├── Boot chime (synthesized, direct HAL write)
            └── Test: audible tone in QEMU
 
-Phase 13:  Audio subsystem service (basic)
+Phase 14:  Audio subsystem service (basic)
            ├── Subsystem registration with framework
            ├── Session open/close with capability gate
            ├── Single-stream playback (no mixing)
            ├── AudioPlayback capability type
            └── Audit logging (session opened/closed)
 
-Phase 16:  PCM mixing engine
+Phase 17:  PCM mixing engine
            ├── Multi-stream software mixer
            ├── Per-stream volume and pan
            ├── Format negotiation
@@ -75,14 +75,14 @@ Phase 16:  PCM mixing engine
            ├── RT task registration (5ms period, 0.5ms WCET)
            └── Ring buffer shared memory between agent and mixer
 
-Phase 21:  Raspberry Pi audio drivers
+Phase 22:  Raspberry Pi audio drivers
            ├── HDMI audio (VC4/VC7)
            ├── PWM audio (3.5mm headphone jack)
            ├── I2S driver (HiFiBerry DAC support)
            ├── DMA-driven output (ping-pong buffers)
            └── Device detection from device tree
 
-Phase 23:  Advanced mixing and capture
+Phase 24:  Advanced mixing and capture
            ├── Audio capture (microphone input)
            ├── Capture multiplexing to multiple agents
            ├── AI-enhanced capture pipeline (noise suppression, VAD)
@@ -92,7 +92,7 @@ Phase 23:  Advanced mixing and capture
            ├── DSP filter graph (per-stream and post-mix insertion points)
            └── Full-duplex (voice calls)
 
-Phase 25:  USB and Bluetooth audio
+Phase 26:  USB and Bluetooth audio
            ├── USB Audio Class driver
            ├── Isochronous USB transfers
            ├── Bluetooth A2DP (audio streaming)
@@ -101,7 +101,7 @@ Phase 25:  USB and Bluetooth audio
            ├── Hardware microphone kill switch support
            └── Crossfade on device change
 
-Phase 27:  A/V sync and HDMI advanced
+Phase 28:  A/V sync and HDMI advanced
            ├── Shared media timeline with compositor
            ├── Presentation timestamps
            ├── HDMI EDID audio capability parsing
@@ -110,7 +110,7 @@ Phase 27:  A/V sync and HDMI advanced
            ├── Predictive buffer management (AIRS integration)
            └── Multi-channel audio (5.1/7.1 for HDMI)
 
-Phase 31:  Apple Silicon audio + power management
+Phase 32:  Apple Silicon audio + power management
            ├── Apple codec drivers (CS42L83, TAS5770L)
            ├── Hardware DSP integration
            ├── Lid close/open mute behavior
@@ -119,7 +119,7 @@ Phase 31:  Apple Silicon audio + power management
            ├── AIRS route advisor (context-aware device selection)
            └── Suspend/resume with state preservation
 
-Phase 36:  POSIX bridge + compatibility + spatial audio
+Phase 37:  POSIX bridge + compatibility + spatial audio
            ├── /dev/audio*, /dev/dsp, /dev/mixer* nodes
            ├── OSS-compatible ioctl interface
            ├── ALSA compatibility shim (if needed)
@@ -170,7 +170,7 @@ Current polyphase sinc interpolation provides high-quality SRC for music playbac
 
 ### 16.2 Spatial Audio and HRTF Rendering
 
-OS-level spatial audio (binaural HRTF rendering, Ambisonics decoding) is a Phase 36+ DSP filter. Key design constraint: spatial processing must be an optional filter node in the DSP graph, not a mandatory system transform — otherwise it conflicts with exclusive-mode access (the WASAPI lesson). HRTF personalization (matching the user's head/ear geometry) is an AIRS-dependent feature requiring calibration data.
+OS-level spatial audio (binaural HRTF rendering, Ambisonics decoding) is a Phase 37+ DSP filter. Key design constraint: spatial processing must be an optional filter node in the DSP graph, not a mandatory system transform — otherwise it conflicts with exclusive-mode access (the WASAPI lesson). HRTF personalization (matching the user's head/ear geometry) is an AIRS-dependent feature requiring calibration data.
 
 Formats to support:
 

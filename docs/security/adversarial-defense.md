@@ -59,15 +59,15 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 | 5 | Security zones (Layer 4) and blast radius (Layer 8) | Spaces + capabilities |
 | 10 | AIRS intelligence services framework | AIRS inference engine |
 
-### Phase 13: Agent Framework
+### Phase 14: Agent Framework
 
 | Sub-phase | Steps | Dependency | Observable Result |
 |---|---|---|---|
-| 13a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 10 | Agent actions verified against declared intent; behavioral baselines established |
-| **13b** | **Adversarial Defense + hint screening (Layer 5)** | **Phase 13a** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
-| 13c | Tool Manager + Agent Lifecycle | Phase 13b | Full agent framework operational with adversarial protection |
+| 14a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 11 | Agent actions verified against declared intent; behavioral baselines established |
+| **14b** | **Adversarial Defense + hint screening (Layer 5)** | **Phase 14a** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
+| 14c | Tool Manager + Agent Lifecycle | Phase 14b | Full agent framework operational with adversarial protection |
 
-### Phase 13b Milestones
+### Phase 14b Milestones
 
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
@@ -75,7 +75,7 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 | M41 | InputScreener + InjectionDetector + ML classifier stub | Week 2 | Pattern-based injection detection; screening responses enforced |
 | M42 | OutputValidator + HintScreener + forensic logging | Week 3 | Exfiltration detection; hint screening active; full audit trail |
 
-### Post-Phase 13b
+### Post-Phase 14b
 
 | Phase | Enhancement |
 |---|---|

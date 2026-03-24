@@ -439,8 +439,8 @@ pub enum NotificationError {
 | Raspberry Pi 5 | Compositor banners | HDMI/I2S audio | Via Network Kit | Same as Pi 4 |
 | Apple Silicon | Full compositor UI | System audio | Full mesh sync | Complete experience |
 
-**Implementation phase:** Phase 14+. Notification Kit depends on Attention Kit (Phase 14+),
-Interface Kit (Phase 6+ for basic surfaces), and Audio Kit (Phase 9+) for sound delivery.
+**Implementation phase:** Phase 15+. Notification Kit depends on Attention Kit (Phase 15+),
+Interface Kit (Phase 7+ for basic surfaces), and Audio Kit (Phase 10+) for sound delivery.
 
 ---
 

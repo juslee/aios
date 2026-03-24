@@ -217,10 +217,10 @@ flowchart TD
 
 Each sub-phase delivers usable functionality independently.
 
-### Phase 7 — Input, Terminal & Basic Networking
+### Phase 8 — Input, Terminal & Basic Networking
 
 ```text
-Phase 7a — VirtIO-Input Driver + Event Model:
+Phase 8a — VirtIO-Input Driver + Event Model:
   ├── VirtIO-input MMIO driver (reuse VirtIO-blk transport code)
   ├── virtio-keyboard-device + virtio-tablet-device support
   ├── RawInputEvent struct (evdev-compatible: type, code, value, timestamp)
@@ -229,7 +229,7 @@ Phase 7a — VirtIO-Input Driver + Event Model:
   ├── Input subsystem service skeleton (register with subsystem framework)
   └── Basic keyboard event delivery to compositor → focused agent
 
-Phase 7b — Pointer + Transform Pipeline:
+Phase 8b — Pointer + Transform Pipeline:
   ├── Pointer event delivery (absolute coordinates from virtio-tablet)
   ├── Transform pipeline infrastructure (InputTransform trait, ordered chain)
   ├── XKB-compatible keyboard layout engine (keycodes → keysyms)
@@ -238,7 +238,7 @@ Phase 7b — Pointer + Transform Pipeline:
   ├── Focus-based routing in compositor
   └── Global hotkey interception (system shortcuts, secure attention)
 
-Phase 7c — Sessions + POSIX Bridge:
+Phase 8c — Sessions + POSIX Bridge:
   ├── Input session lifecycle (open, configure, close)
   ├── Capability gate enforcement (InputReceive, InputDevice)
   ├── /dev/input/event* POSIX bridge (evdev ioctl emulation)
@@ -247,49 +247,49 @@ Phase 7c — Sessions + POSIX Bridge:
   └── Power management integration (idle detection, wake-on-key)
 ```
 
-### Phase 24 — USB Stack
+### Phase 25 — USB Stack
 
 ```text
-Phase 24a — USB HID Core:
+Phase 25a — USB HID Core:
   ├── USB HID report descriptor parser (no_std Rust)
   ├── HID report → evdev event translation
   ├── Boot protocol support (keyboard, mouse)
   ├── BadUSB defense pipeline (descriptor classifier + timing entropy + traffic CNN)
   └── USB keyboard, mouse, gamepad drivers
 
-Phase 24b — Bluetooth HID:
+Phase 25b — Bluetooth HID:
   ├── Bluetooth HID profile
   ├── Wireless keyboard, mouse, gamepad support
   └── Pairing + reconnection management
 ```
 
-### Phase 24 — Extended USB Devices (cont.)
+### Phase 25 — Extended USB Devices (cont.)
 
 ```text
-Phase 24c — USB HID Extended:
+Phase 25c — USB HID Extended:
   ├── USB Braille display driver (HID usage page 0x41)
   ├── USB switch device support
   └── USB gamepad with force feedback (HID FF usage page)
 ```
 
-### Phase 29+ — Advanced Input
+### Phase 30+ — Advanced Input
 
 ```text
-Phase 29a — Touch + Gesture Recognition:
+Phase 30a — Touch + Gesture Recognition:
   ├── Multi-touch protocol (tracking IDs, contact tracking)
   ├── Palm rejection CNN (frozen, ~200KB)
   ├── Gesture recognition (three-layer: $P+ geometric → TCN backbone → AIRS interpretation)
   ├── Gesture grammar engine (applications register gesture grammars)
   └── Touchscreen gestures (tap, swipe, pinch, rotate)
 
-Phase 29b — Adaptive + ML:
+Phase 30b — Adaptive + ML:
   ├── Adaptive pointer acceleration (online Bayesian update)
   ├── Adaptive key debounce HMM
   ├── Tremor Kalman filter (auto-detected, progressive enhancement)
   ├── Touch trajectory prediction (latency reduction)
   └── Kernel-internal anomaly detection (keystroke/mouse dynamics SVM)
 
-Phase 29c — AIRS Integration:
+Phase 30c — AIRS Integration:
   ├── Transformer keyboard prediction via AIRS
   ├── Context-aware autocorrect (neural reranker)
   ├── Context-aware gesture interpretation
@@ -297,10 +297,10 @@ Phase 29c — AIRS Integration:
   └── Shortcut prediction via Context Engine
 ```
 
-### Phase 33 — Accessibility
+### Phase 34 — Accessibility
 
 ```text
-Phase 33a — Accessibility Input:
+Phase 34a — Accessibility Input:
   ├── Switch scanning engine (linear, row-column, group, Huffman)
   ├── Adaptive scanning (frequency-based reordering + AIRS context prediction)
   ├── StickyKeys, FilterKeys, BounceKeys transforms
@@ -308,7 +308,7 @@ Phase 33a — Accessibility Input:
   ├── Fitts' Law adaptive target sizing
   └── Eye tracking device interface + gaze-to-selection engine
 
-Phase 33b — Braille + AAC:
+Phase 34b — Braille + AAC:
   ├── Braille display bidirectional channel (text out, button input in)
   ├── AIRS-assisted sentence completion for AAC
   └── Full keyboard navigation from first frame

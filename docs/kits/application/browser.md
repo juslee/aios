@@ -29,9 +29,9 @@ mediating capability delegation on the user's behalf.
 
 | Tier | Description | Browser Availability |
 |---|---|---|
-| **Tier 1: Linux Compat** | Browsers run unmodified via Linux binary compatibility | Phase 35-36 |
-| **Tier 2: Kit SDK** | Engines call Browser Kit traits directly for deep integration | Phase 30+ |
-| **Tier 3: Reference** | html5ever + QuickJS native browser proves Kit APIs | Phase 30 |
+| **Tier 1: Linux Compat** | Browsers run unmodified via Linux binary compatibility | Phase 36-37 |
+| **Tier 2: Kit SDK** | Engines call Browser Kit traits directly for deep integration | Phase 31+ |
+| **Tier 3: Reference** | html5ever + QuickJS native browser proves Kit APIs | Phase 31 |
 
 ## 2. Core Traits
 

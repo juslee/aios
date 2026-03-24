@@ -94,7 +94,7 @@ Fuchsia's Zircon Boot Image (ZBI) packages the kernel, bootloader, and all boot 
 
 ### Boot Intelligence (Context-Aware Boot)
 
-The [intelligence.md](./boot/intelligence.md) companion document describes boot intelligence — using past boot traces to predict optimal service startup order, prefetch frequently-accessed data pages, and adapt AIRS model selection based on usage patterns. This is a long-term goal that integrates the Context Engine (Phase 11+) with the boot sequence.
+The [intelligence.md](./boot/intelligence.md) companion document describes boot intelligence — using past boot traces to predict optimal service startup order, prefetch frequently-accessed data pages, and adapt AIRS model selection based on usage patterns. This is a long-term goal that integrates the Context Engine (Phase 12+) with the boot sequence.
 
 ### Measured Boot and Attestation
 
@@ -116,4 +116,4 @@ Huawei's HongMeng kernel (OSDI 2024) identifies IPC *frequency* — not per-invo
 
 ### LionsOS Control-Plane / Data-Plane Separation
 
-The seL4 Device Driver Framework (sDDF) in LionsOS separates control-plane policy (capability-based IPC) from data-plane performance (lock-free shared-memory ring buffers). This achieves near-native I/O with full driver isolation — a model AIOS should adopt as drivers move from kernel space to user space in Phase 5+. See [research.md §22.19](./boot/research.md) for full analysis.
+The seL4 Device Driver Framework (sDDF) in LionsOS separates control-plane policy (capability-based IPC) from data-plane performance (lock-free shared-memory ring buffers). This achieves near-native I/O with full driver isolation — a model AIOS should adopt as drivers move from kernel space to user space in Phase 6+. See [research.md §22.19](./boot/research.md) for full analysis.

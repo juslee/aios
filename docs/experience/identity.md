@@ -113,36 +113,36 @@ Phase 4b:   Identity creation at first boot    → primary key, device key, reco
 Phase 4c:   Identity storage in system space   → identity persisted
 Phase 4d:   CryptoBackend trait                → Algorithm enum, SoftwareHsm default
 
-Phase 9a:   Relationship data model            → TrustRelation struct, relationship CRUD
-Phase 9b:   QR-based relationship exchange     → in-person identity verification (did:peer)
-Phase 9c:   Trust model computation            → EigenTrust 2-hop, TOFU upgrade pattern
-Phase 9d:   Key transparency log               → append-only signed identity event log
+Phase 10a:   Relationship data model            → TrustRelation struct, relationship CRUD
+Phase 10b:   QR-based relationship exchange     → in-person identity verification (did:peer)
+Phase 10c:   Trust model computation            → EigenTrust 2-hop, TOFU upgrade pattern
+Phase 10d:   Key transparency log               → append-only signed identity event log
 
-Phase 16a:  Credential vault                   → encrypted credential storage
-Phase 16b:  Credential isolation               → agents use, never possess
-Phase 16c:  Service identity modeling          → external services as identities
-Phase 16d:  Platform authenticator             → CTAP2/WebAuthn passkey provider
-Phase 16e:  Credential rotation                → auto-rotate OAuth, expiry warnings
+Phase 17a:  Credential vault                   → encrypted credential storage
+Phase 17b:  Credential isolation               → agents use, never possess
+Phase 17c:  Service identity modeling          → external services as identities
+Phase 17d:  Platform authenticator             → CTAP2/WebAuthn passkey provider
+Phase 17e:  Credential rotation                → auto-rotate OAuth, expiry warnings
 
-Phase 22a:  Cross-device identity              → device addition, revocation (SLIP-0010 HD)
-Phase 22b:  Space Mesh sync                    → space sync across devices
-Phase 22c:  Peer Protocol authentication       → mutual device authentication (DIDComm v2)
-Phase 22d:  Tier 2 recovery                    → Feldman VSS device-to-device key recovery
+Phase 23a:  Cross-device identity              → device addition, revocation (SLIP-0010 HD)
+Phase 23b:  Space Mesh sync                    → space sync across devices
+Phase 23c:  Peer Protocol authentication       → mutual device authentication (DIDComm v2)
+Phase 23d:  Tier 2 recovery                    → Feldman VSS device-to-device key recovery
 
-Phase 25a:  Mutual introduction                → relationship via intermediary
-Phase 25b:  Privacy controls                   → disclosure settings, anonymous mode
-Phase 25c:  Selective disclosure               → Schnorr proofs, Bulletproofs, ring signatures
-Phase 25d:  Key rotation                       → scheduled and emergency re-keying
-Phase 25e:  Tier 3 recovery                    → identity VSS, dead man's switch, cancel window
-Phase 25f:  Proactive share refresh            → Herzberg protocol, threshold resharing
+Phase 26a:  Mutual introduction                → relationship via intermediary
+Phase 26b:  Privacy controls                   → disclosure settings, anonymous mode
+Phase 26c:  Selective disclosure               → Schnorr proofs, Bulletproofs, ring signatures
+Phase 26d:  Key rotation                       → scheduled and emergency re-keying
+Phase 26e:  Tier 3 recovery                    → identity VSS, dead man's switch, cancel window
+Phase 26f:  Proactive share refresh            → Herzberg protocol, threshold resharing
 
-Phase 30a:  SD-JWT verifiable credentials      → Ed25519-compatible selective disclosure
-Phase 30b:  PQC migration Phase A              → hybrid Ed25519+ML-DSA-44 identity keys
-Phase 30c:  PQC root key                       → SLH-DSA-128s offline root, versioned signatures
+Phase 31a:  SD-JWT verifiable credentials      → Ed25519-compatible selective disclosure
+Phase 31b:  PQC migration Phase A              → hybrid Ed25519+ML-DSA-44 identity keys
+Phase 31c:  PQC root key                       → SLH-DSA-128s offline root, versioned signatures
 
-Phase 35a:  Agent manifest signing             → supply chain verification, transparency receipts
-Phase 35b:  Agent delegation chains            → provenance with agent identity, depth limits
-Phase 35c:  AI content provenance              → model ID, prompt hash, generation params
+Phase 36a:  Agent manifest signing             → supply chain verification, transparency receipts
+Phase 36b:  Agent delegation chains            → provenance with agent identity, depth limits
+Phase 36c:  AI content provenance              → model ID, prompt hash, generation params
 ```
 
 -----

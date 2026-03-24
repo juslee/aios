@@ -2377,7 +2377,7 @@ The AIOS subsystem framework (see [subsystem-framework.md](../platform/subsystem
 
 This aligns with AIOS's capability-based security model — a driver can only access the hardware resources granted to it.
 
-**Phase fit:** Phase 4-5 (subsystem framework + first userspace drivers).
+**Phase fit:** Phase 4-6 (subsystem framework + first userspace drivers).
 
 ### 18.3 Capability-Gated Device Access
 
@@ -2437,7 +2437,7 @@ impl SmmuV3 {
 
 This is purely a performance optimization — correctness is identical to individual operations. The batch size trades latency (larger batches = more delay before the first mapping is visible) for throughput (fewer TLBI operations per mapping).
 
-**Phase fit:** Phase 7+ (networking) or Phase 4 (storage), where high-throughput DMA is first needed.
+**Phase fit:** Phase 8+ (networking) or Phase 4 (storage), where high-throughput DMA is first needed.
 
 ### 18.5 Type-System Memory Safety for Device Drivers
 
