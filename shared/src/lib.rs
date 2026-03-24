@@ -54,4 +54,5 @@ pub use syscall::{IpcError, Syscall, SYSCALL_COUNT};
 
 // Kit trait re-exports for ergonomic imports.
 pub use kits::capability as capability_kit;
+pub use kits::ipc as ipc_kit;
 pub use kits::memory as memory_kit;

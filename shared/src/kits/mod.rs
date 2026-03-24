@@ -8,4 +8,5 @@
 //! See `docs/kits/README.md` for the full Kit architecture.
 
 pub mod capability;
+pub mod ipc;
 pub mod memory;

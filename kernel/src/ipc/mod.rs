@@ -214,3 +214,268 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
     crate::kinfo!(Ipc, "Channel {} destroyed", idx);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// IPC Kit trait implementations
+// ---------------------------------------------------------------------------
+
+use shared::kits::ipc::{self as ipc_kit, IpcKitError};
+
+/// Kernel-side implementation of the IPC Kit traits.
+///
+/// A zero-sized unit struct that delegates to the global IPC subsystem
+/// (CHANNEL_TABLE, NOTIFICATION_TABLE, SHARED_REGION_TABLE, etc.).
+#[allow(dead_code)]
+pub struct KernelIpc;
+
+/// Convert a raw i64 error code to an IpcKitError.
+#[allow(dead_code)]
+fn i64_to_kit_err(code: i64) -> IpcKitError {
+    // Try to interpret as a known IpcError discriminant.
+    match code {
+        x if x == IpcError::Etimedout as i64 => IpcKitError::Timeout { elapsed_ticks: 0 },
+        x if x == IpcError::Epipe as i64 => IpcKitError::InvalidChannel { id: ChannelId(0) },
+        x if x == IpcError::Eagain as i64 => IpcKitError::ChannelFull {
+            id: ChannelId(0),
+            capacity: RING_CAPACITY,
+        },
+        x if x == IpcError::Ecanceled as i64 => IpcKitError::Cancelled,
+        x if x == IpcError::Eacces as i64 => IpcKitError::CapabilityDenied {
+            required: shared::Capability::ChannelCreate,
+        },
+        x if x == IpcError::Eperm as i64 => IpcKitError::SharedMemoryError {
+            reason: "operation not permitted",
+        },
+        x if x == IpcError::Enospc as i64 => IpcKitError::SharedMemoryError {
+            reason: "out of space",
+        },
+        x if x == IpcError::Eproto as i64 => IpcKitError::NoReply,
+        x if x == IpcError::Enomem as i64 => IpcKitError::SharedMemoryError {
+            reason: "out of memory",
+        },
+        x if x == IpcError::Eexist as i64 => IpcKitError::SharedMemoryError {
+            reason: "already exists",
+        },
+        x if x == IpcError::Einval as i64 => IpcKitError::InvalidChannel { id: ChannelId(0) },
+        _ => IpcKitError::SharedMemoryError {
+            reason: "unknown error",
+        },
+    }
+}
+
+impl ipc_kit::ChannelOps for KernelIpc {
+    fn channel_create(&mut self) -> Result<ChannelId, IpcKitError> {
+        let tid = current_thread_id().ok_or(IpcKitError::CapabilityDenied {
+            required: shared::Capability::ChannelCreate,
+        })?;
+        channel_create(tid).map_err(|code| {
+            // Enospc from channel_create means "table full", not "message too large".
+            if code == IpcError::Enospc as i64 {
+                IpcKitError::ChannelFull {
+                    id: ChannelId(0),
+                    capacity: MAX_CHANNELS,
+                }
+            } else {
+                i64_to_kit_err(code)
+            }
+        })
+    }
+
+    fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError> {
+        channel_destroy(id).map_err(i64_to_kit_err)
+    }
+
+    fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError> {
+        let code = ipc_send(id, &msg.data[..msg.len]);
+        if code < 0 {
+            let err = if code == IpcError::Enospc as i64 {
+                if msg.len > MAX_MESSAGE_SIZE {
+                    IpcKitError::MessageTooLarge {
+                        size: msg.len,
+                        max: MAX_MESSAGE_SIZE,
+                    }
+                } else {
+                    IpcKitError::ChannelFull {
+                        id,
+                        capacity: RING_CAPACITY,
+                    }
+                }
+            } else {
+                i64_to_kit_err(code)
+            };
+            Err(err)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn recv(&self, id: ChannelId, timeout_ticks: u64) -> Result<RawMessage, IpcKitError> {
+        let mut buf = [0u8; MAX_MESSAGE_SIZE];
+        let (bytes, sender) = ipc_recv(id, &mut buf, timeout_ticks).map_err(i64_to_kit_err)?;
+        let mut msg = RawMessage::EMPTY;
+        msg.sender = sender;
+        msg.len = bytes;
+        msg.data[..bytes].copy_from_slice(&buf[..bytes]);
+        Ok(msg)
+    }
+
+    fn call(
+        &self,
+        id: ChannelId,
+        request: &RawMessage,
+        timeout_ticks: u64,
+    ) -> Result<RawMessage, IpcKitError> {
+        let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
+        let code = ipc_call(
+            id,
+            &request.data[..request.len],
+            &mut recv_buf,
+            timeout_ticks,
+        );
+        if code < 0 {
+            // Enospc from ipc_call: "message too large" if request exceeds limit,
+            // "channel full" (ring push failure) otherwise.
+            let err = if code == IpcError::Enospc as i64 {
+                if request.len > MAX_MESSAGE_SIZE {
+                    IpcKitError::MessageTooLarge {
+                        size: request.len,
+                        max: MAX_MESSAGE_SIZE,
+                    }
+                } else {
+                    IpcKitError::ChannelFull {
+                        id,
+                        capacity: RING_CAPACITY,
+                    }
+                }
+            } else {
+                i64_to_kit_err(code)
+            };
+            Err(err)
+        } else {
+            let bytes = code as usize;
+            let mut msg = RawMessage::EMPTY;
+            msg.len = bytes;
+            msg.data[..bytes].copy_from_slice(&recv_buf[..bytes]);
+            Ok(msg)
+        }
+    }
+
+    fn reply(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError> {
+        let code = ipc_reply(id, &msg.data[..msg.len]);
+        if code < 0 {
+            Err(i64_to_kit_err(code))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl ipc_kit::NotificationOps for KernelIpc {
+    fn notification_create(&mut self) -> Result<shared::NotificationId, IpcKitError> {
+        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
+            required: shared::Capability::ChannelCreate,
+        })?;
+        notify::notification_create(pid).map_err(i64_to_kit_err)
+    }
+
+    fn signal(&self, id: shared::NotificationId, bits: u64) -> Result<(), IpcKitError> {
+        notify::notification_signal(id, bits);
+        Ok(())
+    }
+
+    fn wait(
+        &self,
+        id: shared::NotificationId,
+        mask: u64,
+        timeout_ticks: u64,
+    ) -> Result<u64, IpcKitError> {
+        notify::notification_wait(id, mask, timeout_ticks).map_err(i64_to_kit_err)
+    }
+}
+
+impl ipc_kit::SelectOps for KernelIpc {
+    fn select(
+        &self,
+        entries: &[shared::SelectEntry],
+        timeout_ticks: u64,
+    ) -> Result<(usize, u64), IpcKitError> {
+        select::ipc_select(entries, timeout_ticks).map_err(i64_to_kit_err)
+    }
+}
+
+impl ipc_kit::SharedMemoryOps for KernelIpc {
+    fn shmem_create(
+        &mut self,
+        size: usize,
+        flags: u64,
+    ) -> Result<shared::SharedMemoryId, IpcKitError> {
+        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
+            required: shared::Capability::SharedMemoryCreate,
+        })?;
+        let vm_flags = crate::mm::pgtable::VmFlags::from_bits(flags as u32);
+        shmem::shared_memory_create(pid, size, vm_flags).map_err(i64_to_kit_err)
+    }
+
+    fn shmem_map(
+        &mut self,
+        id: shared::SharedMemoryId,
+        _vaddr: shared::VirtAddr,
+        flags: u64,
+    ) -> Result<(), IpcKitError> {
+        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
+            required: shared::Capability::SharedMemoryCreate,
+        })?;
+        let vm_flags = crate::mm::pgtable::VmFlags::from_bits(flags as u32);
+        shmem::shared_memory_map(pid, id, vm_flags)
+            .map(|_va| ())
+            .map_err(i64_to_kit_err)
+    }
+
+    fn shmem_unmap(&mut self, id: shared::SharedMemoryId) -> Result<(), IpcKitError> {
+        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
+            required: shared::Capability::SharedMemoryCreate,
+        })?;
+        shmem::shared_memory_unmap(pid, id).map_err(i64_to_kit_err)
+    }
+
+    fn shmem_destroy(&mut self, id: shared::SharedMemoryId) -> Result<(), IpcKitError> {
+        // No dedicated kernel destroy function exists. Walk the region's
+        // mappings and unmap each one. The last unmap frees backing pages.
+        let pids_to_unmap: alloc::vec::Vec<crate::task::process::ProcessId> = {
+            let idx = id.0 as usize;
+            if idx >= shared::MAX_SHARED_REGIONS {
+                return Err(IpcKitError::SharedMemoryError {
+                    reason: "invalid region id",
+                });
+            }
+            let table = shmem::SHARED_REGION_TABLE.lock();
+            match &table[idx] {
+                Some(region) => region
+                    .mappings
+                    .iter()
+                    .filter_map(|m| m.as_ref().map(|mapping| mapping.pid))
+                    .collect(),
+                None => {
+                    return Err(IpcKitError::SharedMemoryError {
+                        reason: "region not found",
+                    })
+                }
+            }
+        };
+
+        let mut first_err: Option<IpcKitError> = None;
+        for pid in pids_to_unmap {
+            if let Err(code) = shmem::shared_memory_unmap(pid, id) {
+                if first_err.is_none() {
+                    first_err = Some(i64_to_kit_err(code));
+                }
+            }
+        }
+
+        if let Some(err) = first_err {
+            Err(err)
+        } else {
+            Ok(())
+        }
+    }
+}
