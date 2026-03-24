@@ -531,22 +531,23 @@ When generating a phase doc for Phase N:
    - Architecture docs for the subsystems this phase implements (cross-reference against Architecture Document Map above)
    - The previous phase doc — for milestone numbering continuity and "Unlocks" field
 
-2. **STRUCTURE** (match Phase 0/1 template exactly):
+2. **STRUCTURE** (match established Phase 04/05 conventions):
    - Header: `# Phase N: <Name>`
-   - Metadata: Tier, Duration, Deliverable, Status: Planned, Prerequisites, Unlocks
-   - `## Objective` — 2-3 paragraphs
-   - `## Architecture References` — table: Topic | Document | Relevant Sections
-   - `## Milestones` — table: Milestone | Steps | Target | Observable result
-   - One `## Milestone N` section per milestone, with `### Step N:` subsections
+   - Metadata block, `-----` separators between all sections
+   - `## Objective`, `## Architecture References` (relative links), `## Milestones` (numbering context + summary table)
+   - `## Milestone N — <Name> (timeframe)` with italic `*Goal:*` line, `### Step N:` subsections
    - Each Step: What, Tasks (checkboxes), Note (if needed), Key reference, Acceptance criteria
-   - `## Decision Points` — table
-   - `## Phase Completion Criteria` — checklist
+   - `-----` between every step and between milestones
+   - `## Decision Points`, `## Phase Completion Criteria`
 
 3. **CONVENTIONS**:
    - Never duplicate architecture content — reference it
    - Acceptance criteria must be mechanical (run command → see output)
-   - Each phase has 3+ milestones (variable, based on complexity)
+   - Each phase has 3+ milestones (variable, no upper limit)
+   - Step numbering: continuous across milestones within a phase (variable count per milestone), resets to 1 each new Phase
+   - Milestone numbering: continuous across all phases (M16, M17, M18, M19...)
    - Duration must match `development-plan.md`
+   - Full details in `/generate-phase-doc` skill
 
 ---
 
