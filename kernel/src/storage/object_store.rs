@@ -208,3 +208,49 @@ pub fn compute_content_hash(data: &[u8]) -> ContentHash {
     hash.copy_from_slice(&result);
     ContentHash(hash)
 }
+
+// ---------------------------------------------------------------------------
+// Storage Kit: KernelObjectStore
+// ---------------------------------------------------------------------------
+
+use alloc::vec::Vec;
+use shared::storage_kit;
+
+/// Zero-sized wrapper implementing [`storage_kit::ObjectStore`] by delegating
+/// to existing object store functions.
+#[allow(dead_code)]
+pub struct KernelObjectStore;
+
+impl storage_kit::ObjectStore for KernelObjectStore {
+    fn create_object(
+        &mut self,
+        space_id: &SpaceId,
+        name: &str,
+        content_type: ContentType,
+        data: &[u8],
+    ) -> Result<ObjectId, StorageError> {
+        let (id, _hash) = object_create(*space_id, name.as_bytes(), data, content_type)?;
+        Ok(id)
+    }
+
+    fn read_object(&self, id: &ObjectId) -> Result<Vec<u8>, StorageError> {
+        let mut buf = alloc::vec![0u8; BLOCK_SIZE];
+        let (_obj, n) = object_read(id, &mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
+    fn delete_object(&mut self, id: &ObjectId) -> Result<(), StorageError> {
+        object_delete(id)
+    }
+
+    fn list_objects(&self, space_id: &SpaceId) -> Vec<CompactObject> {
+        block_engine::with_engine(|engine| {
+            let ids = engine.object_index().list_by_space(space_id);
+            ids.iter()
+                .filter_map(|id| engine.object_index().get(id).copied())
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+}

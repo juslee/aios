@@ -292,3 +292,55 @@ pub fn object_update(
         Ok(new_hash)
     })?
 }
+
+// ---------------------------------------------------------------------------
+// Storage Kit: KernelVersionStore
+// ---------------------------------------------------------------------------
+
+use shared::storage_kit;
+
+/// Zero-sized wrapper implementing [`storage_kit::VersionStoreOps`] by
+/// delegating to existing version store functions.
+#[allow(dead_code)]
+pub struct KernelVersionStore;
+
+impl storage_kit::VersionStoreOps for KernelVersionStore {
+    fn create_version(
+        &mut self,
+        object_id: &ObjectId,
+        data: &[u8],
+        message: &str,
+    ) -> Result<ContentHash, StorageError> {
+        object_update(object_id, data, b"kernel", message.as_bytes())
+    }
+
+    fn list_versions(&self, object_id: &ObjectId) -> Vec<Version> {
+        version_list(object_id).unwrap_or_default()
+    }
+
+    fn get_head(&self, object_id: &ObjectId) -> Result<ContentHash, StorageError> {
+        block_engine::with_engine(|engine| {
+            engine
+                .object_index()
+                .get(object_id)
+                .map(|obj| obj.version_head)
+                .ok_or(StorageError::ObjectNotFound)
+        })?
+    }
+
+    fn rollback(
+        &mut self,
+        object_id: &ObjectId,
+        version_hash: &ContentHash,
+    ) -> Result<ContentHash, StorageError> {
+        version_rollback(object_id, version_hash)?;
+        // After rollback, return the new head's content hash.
+        block_engine::with_engine(|engine| {
+            engine
+                .object_index()
+                .get(object_id)
+                .map(|obj| obj.content_hash)
+                .ok_or(StorageError::ObjectNotFound)
+        })?
+    }
+}

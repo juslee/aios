@@ -5,6 +5,7 @@
 //!
 //! Per spaces.md §4.1 (superblock), §4.4 (WAL), §3.0 (content addressing).
 
+use alloc::vec::Vec;
 use sha2::{Digest, Sha256};
 use shared::storage::*;
 use spin::Mutex;
@@ -749,4 +750,34 @@ where
     let mut guard = BLOCK_ENGINE.lock();
     let engine = guard.as_mut().ok_or(StorageError::DeviceNotFound)?;
     Ok(f(engine))
+}
+
+// ---------------------------------------------------------------------------
+// Storage Kit: KernelBlockStore
+// ---------------------------------------------------------------------------
+
+use shared::storage_kit;
+
+/// Zero-sized wrapper implementing [`storage_kit::BlockStore`] by delegating
+/// to the global `BLOCK_ENGINE`.
+#[allow(dead_code)]
+pub struct KernelBlockStore;
+
+impl storage_kit::BlockStore for KernelBlockStore {
+    fn write_block(&mut self, data: &[u8]) -> Result<BlockId, StorageError> {
+        let (hash, _loc) = write_block(data)?;
+        Ok(hash)
+    }
+
+    fn read_block(&self, id: &BlockId) -> Result<Vec<u8>, StorageError> {
+        // Allocate a max-size buffer, read into it, then truncate.
+        let mut buf = alloc::vec![0u8; BLOCK_SIZE];
+        let n = read_block_by_hash(id, &mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
+    fn block_exists(&self, id: &BlockId) -> bool {
+        with_engine(|engine| engine.memtable().get(id).is_some()).unwrap_or(false)
+    }
 }
