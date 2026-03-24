@@ -144,7 +144,7 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
     g. Mark the TodoWrite item as completed
     h. **Update the working plan doc**: record any issues encountered, decisions made, or lessons learned in the corresponding sections — do this as you go, not at the end
     After all steps in milestone complete:
-    i. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
+    i. Update CLAUDE.md, README.md, developer guide, phase doc (check off completed tasks)
     j. Dead code cleanup: Grep for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. Remove the item if truly unused, or remove just the attribute if now used.
     k. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) until 0 issues. Fix all issues found.
     l. Commit and push: `Phase $ARGUMENTS MN: update docs`
@@ -155,11 +155,13 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
 
 13. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
 14. Run `/audit-loop` one final time — must return 0 issues across all three categories (doc, code, security/bug). If any issues found, fix them, commit, and re-run until clean.
-15. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
+15. Update the phase doc Status to "Complete", check off all Phase Completion Criteria
+16. Update `docs/project/development-plan.md`: mark phase $ARGUMENTS as complete, update §8.1 Actual Progress with dates and deliverables
+17. Commit and push
 
 ### Phase 6: Knowledge Distillation
 
-17. Read the working plan doc (`docs/knowledge/plans/phase-$ARGUMENTS-*.md`) and distill:
+18. Read the working plan doc (`docs/knowledge/plans/phase-$ARGUMENTS-*.md`) and distill:
     - **Lessons** (bugs hit, surprises, workarounds, platform quirks) → Write each to `docs/knowledge/lessons/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
     - **Decisions** (why X over Y, trade-offs made, architecture choices) → Write each to `docs/knowledge/decisions/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
     - The plan's "Issues Encountered", "Decisions Made", and "Lessons Learned" sections (filled during Phase 4) are your primary source — distill from those
@@ -169,7 +171,7 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
 
 ### Phase 7: PR, Review & Merge
 
-18. Create PR to main using `gh pr create` with this structure:
+19. Create PR to main using `gh pr create` with this structure:
 
 ```bash
 gh pr create --title "Phase $ARGUMENTS: <phase name from phase doc>" --body "$(cat <<'EOF'
@@ -189,9 +191,9 @@ EOF
 )"
 ```
 
-⛔ **GATE: Do NOT skip steps 19-20. The phase is NOT complete until merge.**
+⛔ **GATE: Do NOT skip steps 20-21. The phase is NOT complete until merge.**
 
-19. Run `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
-20. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main.
+20. Run `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
+21. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main.
     - `/merge-and-cleanup` auto-detects the worktree, removes it, and returns to the main repo
     - The phase is complete only after this step succeeds
