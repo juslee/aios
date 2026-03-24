@@ -290,7 +290,7 @@ fn test_version_store() {
             if versions.len() >= 2 {
                 let target = &versions[1]; // Version 3 content (second-newest)
                 match version_store::version_rollback(&obj_id, &target.hash) {
-                    Ok(()) => {
+                    Ok(_content_hash) => {
                         crate::kinfo!(Storage, "VersionStore: rollback OK");
 
                         // Verify content matches the target version.

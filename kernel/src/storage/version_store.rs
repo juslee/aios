@@ -129,7 +129,7 @@ pub fn version_list(object_id: &ObjectId) -> Result<Vec<Version>, StorageError> 
 pub fn version_rollback(
     object_id: &ObjectId,
     target_hash: &ContentHash,
-) -> Result<(), StorageError> {
+) -> Result<ContentHash, StorageError> {
     block_engine::with_engine(|engine| {
         // Walk the version chain to find the target version by its logical hash.
         // We can't look up by target_hash directly because blocks are indexed
@@ -220,7 +220,7 @@ pub fn version_rollback(
         obj_mut.content_size = target_version.content_size;
         obj_mut.modified_at = now;
 
-        Ok(())
+        Ok(target_version.content_hash)
     })?
 }
 
@@ -333,14 +333,6 @@ impl storage_kit::VersionStoreOps for KernelVersionStore {
         object_id: &ObjectId,
         version_hash: &ContentHash,
     ) -> Result<ContentHash, StorageError> {
-        version_rollback(object_id, version_hash)?;
-        // After rollback, return the new head's content hash.
-        block_engine::with_engine(|engine| {
-            engine
-                .object_index()
-                .get(object_id)
-                .map(|obj| obj.content_hash)
-                .ok_or(StorageError::ObjectNotFound)
-        })?
+        version_rollback(object_id, version_hash)
     }
 }
