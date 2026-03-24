@@ -268,7 +268,17 @@ impl ipc_kit::ChannelOps for KernelIpc {
         let tid = current_thread_id().ok_or(IpcKitError::CapabilityDenied {
             required: shared::Capability::ChannelCreate,
         })?;
-        channel_create(tid).map_err(i64_to_kit_err)
+        channel_create(tid).map_err(|code| {
+            // Enospc from channel_create means "table full", not "message too large".
+            if code == IpcError::Enospc as i64 {
+                IpcKitError::ChannelFull {
+                    id: ChannelId(0),
+                    capacity: MAX_CHANNELS,
+                }
+            } else {
+                i64_to_kit_err(code)
+            }
+        })
     }
 
     fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError> {
