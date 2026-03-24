@@ -3,7 +3,7 @@
 **Tier:** 1.5 — Kit Foundation
 **Duration:** 3 weeks
 **Deliverable:** Memory Kit, IPC Kit, Capability Kit, and Storage Kit trait hierarchies extracted from Phases 0–4 implementation; Kit module structure in `shared/src/kits/`; kernel-side `impl` blocks; comprehensive host-side tests
-**Status:** In Progress (M16 complete)
+**Status:** Complete (M16, M17, M18 complete)
 **Prerequisites:** Phase 4 (Block Storage & Object Store)
 **Unlocks:** Phase 6 (GPU & Display)
 
@@ -311,31 +311,31 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Define Storage Kit traits: `BlockStore`, `SpaceManager`, `ObjectStore`, `VersionStoreOps`. Storage Kit is a Platform Kit (Layer 2) per the Kit hierarchy, but shares its types with the Kernel layer.
 
 **Tasks:**
-- [ ] Create `shared/src/kits/storage.rs`
-- [ ] Add `pub mod storage;` to `shared/src/kits/mod.rs`
-- [ ] Add `pub use kits::storage as storage_kit;` to `shared/src/lib.rs`
-- [ ] Define `BlockStore` trait:
+- [x] Create `shared/src/kits/storage.rs`
+- [x] Add `pub mod storage;` to `shared/src/kits/mod.rs`
+- [x] Add `pub use kits::storage as storage_kit;` to `shared/src/lib.rs`
+- [x] Define `BlockStore` trait:
   - `fn write_block(&mut self, data: &[u8]) -> Result<BlockId, StorageError>` — write data, return content hash as block ID
   - `fn read_block(&self, id: &BlockId) -> Result<alloc::vec::Vec<u8>, StorageError>` — read block by content hash
   - `fn block_exists(&self, id: &BlockId) -> bool` — check if block exists
-- [ ] Define `SpaceManager` trait:
+- [x] Define `SpaceManager` trait:
   - `fn create_space(&mut self, name: &str, zone: SecurityZone) -> Result<SpaceId, StorageError>` — create a new space
   - `fn get_space(&self, id: &SpaceId) -> Result<crate::storage::Space, StorageError>` — retrieve space metadata
   - `fn list_spaces(&self) -> alloc::vec::Vec<crate::storage::Space>` — list all spaces
   - `fn delete_space(&mut self, id: &SpaceId) -> Result<(), StorageError>` — delete a space
   - `fn storage_budget(&self) -> crate::storage::StorageBudget` — current storage usage
   - `fn pressure_level(&self) -> crate::storage::PressureLevel` — current pressure
-- [ ] Define `ObjectStore` trait:
+- [x] Define `ObjectStore` trait:
   - `fn create_object(&mut self, space_id: &SpaceId, name: &str, content_type: ContentType, data: &[u8]) -> Result<crate::storage::ObjectId, StorageError>` — create a new object
   - `fn read_object(&self, id: &crate::storage::ObjectId) -> Result<alloc::vec::Vec<u8>, StorageError>` — read object data
   - `fn delete_object(&mut self, id: &crate::storage::ObjectId) -> Result<(), StorageError>` — delete an object
   - `fn list_objects(&self, space_id: &SpaceId) -> alloc::vec::Vec<crate::storage::CompactObject>` — list objects in a space
-- [ ] Define `VersionStoreOps` trait:
+- [x] Define `VersionStoreOps` trait:
   - `fn create_version(&mut self, object_id: &crate::storage::ObjectId, data: &[u8], message: &str) -> Result<ContentHash, StorageError>` — create a new version
   - `fn list_versions(&self, object_id: &crate::storage::ObjectId) -> alloc::vec::Vec<crate::storage::Version>` — list version history
   - `fn get_head(&self, object_id: &crate::storage::ObjectId) -> Result<ContentHash, StorageError>` — current head version hash
   - `fn rollback(&mut self, object_id: &crate::storage::ObjectId, version_hash: &ContentHash) -> Result<ContentHash, StorageError>` — rollback to a previous version
-- [ ] Re-export `StorageError` from `shared::storage` (already well-defined with 19 variants)
+- [x] Re-export `StorageError` from `shared::storage` (already well-defined with 19 variants)
 - [x] Write host-side tests: all 4 traits are dyn-compatible
 
 **Key reference:** `docs/kits/platform/storage.md` (Core Traits); `shared/src/storage.rs` (existing types)
@@ -349,24 +349,24 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Implement Kit traits on existing kernel storage subsystem. Use wrapper structs that delegate to existing `with_engine` operations.
 
 **Tasks:**
-- [ ] Create `KernelBlockStore` unit struct in `kernel/src/storage/block_engine.rs`
-- [ ] Implement `BlockStore` for `KernelBlockStore`:
+- [x] Create `KernelBlockStore` unit struct in `kernel/src/storage/block_engine.rs`
+- [x] Implement `BlockStore` for `KernelBlockStore`:
   - `write_block()` delegates to `BlockEngine::write_block()`
   - `read_block()` delegates to `BlockEngine::read_block()`
   - `block_exists()` delegates to `BlockEngine::block_exists()` (or index lookup)
-- [ ] Create `KernelSpaceManager` unit struct in `kernel/src/storage/space.rs`
-- [ ] Implement `SpaceManager` for `KernelSpaceManager`:
+- [x] Create `KernelSpaceManager` unit struct in `kernel/src/storage/space.rs`
+- [x] Implement `SpaceManager` for `KernelSpaceManager`:
   - Delegates to existing `space_create()`, `space_get()`, `space_list()`, `space_delete()`, `storage_stats()`
   - `pressure_level()` — new implementation: derive `PressureLevel` from `StorageBudget` free/total ratio (thresholds in `shared/src/storage.rs`)
-- [ ] Create `KernelObjectStore` unit struct in `kernel/src/storage/object_store.rs`
-- [ ] Implement `ObjectStore` for `KernelObjectStore`:
+- [x] Create `KernelObjectStore` unit struct in `kernel/src/storage/object_store.rs`
+- [x] Implement `ObjectStore` for `KernelObjectStore`:
   - Delegates to existing `object_create()`, `object_read()`, `object_delete()`
   - `list_objects()` — new implementation: iterate `ObjectIndex` entries filtered by `SpaceId` (no dedicated list function exists yet)
-- [ ] Create `KernelVersionStore` unit struct in `kernel/src/storage/version_store.rs`
-- [ ] Implement `VersionStoreOps` for `KernelVersionStore`:
+- [x] Create `KernelVersionStore` unit struct in `kernel/src/storage/version_store.rs`
+- [x] Implement `VersionStoreOps` for `KernelVersionStore`:
   - Delegates to existing `version_create()`, `version_list()`, `version_rollback()`
   - `get_head()` — new implementation: look up `version_head` in `ObjectIndex` entry (no dedicated function exists yet; read from `BlockEngine`'s object index)
-- [ ] Verify no regressions: all existing storage self-tests still pass on QEMU
+- [x] Verify no regressions: all existing storage self-tests still pass on QEMU
 
 **Acceptance:** `just check` zero warnings. `just run` — storage self-tests produce identical UART output.
 
@@ -377,18 +377,18 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 **What:** Update Kit docs to reflect actual trait signatures. Update status from "Overview" to "Traits Defined". Update CLAUDE.md and README.md.
 
 **Tasks:**
-- [ ] Update `docs/kits/kernel/memory.md` — verify trait signatures match `shared/src/kits/memory.rs` exactly
-- [ ] Update `docs/kits/kernel/ipc.md` — verify trait signatures match `shared/src/kits/ipc.rs` exactly
-- [ ] Update `docs/kits/kernel/capability.md` — verify trait signatures match `shared/src/kits/capability.rs` exactly
-- [ ] Update `docs/kits/platform/storage.md` — verify trait signatures match `shared/src/kits/storage.rs` exactly
-- [ ] Update `docs/kits/README.md` — change status for Memory Kit, IPC Kit, Capability Kit from "Overview" to "Traits Defined"; change Storage Kit from "Overview" to "Traits Defined"
-- [ ] Update `CLAUDE.md`:
+- [x] Update `docs/kits/kernel/memory.md` — verify trait signatures match `shared/src/kits/memory.rs` exactly
+- [x] Update `docs/kits/kernel/ipc.md` — verify trait signatures match `shared/src/kits/ipc.rs` exactly
+- [x] Update `docs/kits/kernel/capability.md` — verify trait signatures match `shared/src/kits/capability.rs` exactly
+- [x] Update `docs/kits/platform/storage.md` — verify trait signatures match `shared/src/kits/storage.rs` exactly
+- [x] Update `docs/kits/README.md` — change status for Memory Kit, IPC Kit, Capability Kit from "Overview" to "Traits Defined"; change Storage Kit from "Overview" to "Traits Defined"
+- [x] Update `CLAUDE.md`:
   - Workspace Layout: add `shared/src/kits/` directory with sub-modules
   - Key Technical Facts: add Kit trait counts, wrapper struct names
   - Architecture Doc Map: add Kit doc status
-- [ ] Update `README.md` project structure if applicable
-- [ ] Update `docs/project/development-plan.md` Phase 5 row: status from "Planned" to "In Progress" (or "Complete" if this is the final step)
-- [ ] Update this phase doc: check off completed task boxes, update Status field
+- [x] Update `README.md` project structure if applicable
+- [x] Update `docs/project/development-plan.md` Phase 5 row: status from "Planned" to "In Progress" (or "Complete" if this is the final step)
+- [x] Update this phase doc: check off completed task boxes, update Status field
 
 **Key reference:** All Kit docs in `docs/kits/kernel/` and `docs/kits/platform/`
 
@@ -434,4 +434,4 @@ Milestones are numbered continuously across all phases. Phase 4 used M13–M15; 
 
 - [x] **M16 complete:** `shared/src/kits/` module exists. Memory Kit traits (`FrameAllocator`, `AddressSpace`, `MemoryPressureMonitor`) + `MemoryError` defined. Capability Kit trait (`CapabilityEnforcer`) + `CapabilityError` defined. Kernel `impl` blocks for `KernelFrameAllocator` and `KernelCapabilitySystem` compile. Host-side tests pass (>= 380 tests).
 - [x] **M17 complete:** IPC Kit traits (`ChannelOps`, `NotificationOps`, `SelectOps`, `SharedMemoryOps`) + `IpcKitError` defined. `KernelIpc` implements all 4 traits. All existing IPC self-tests pass on QEMU unchanged. Host-side tests pass (391 tests).
-- [ ] **M18 complete:** Storage Kit traits (`BlockStore`, `SpaceManager`, `ObjectStore`, `VersionStoreOps`) defined. Kernel wrappers implement all 4 traits. Kit docs updated to "Traits Defined". All quality gates pass. Triple audit clean. PR created.
+- [x] **M18 complete:** Storage Kit traits (`BlockStore`, `SpaceManager`, `ObjectStore`, `VersionStoreOps`) defined. Kernel wrappers implement all 4 traits. Kit docs updated to "Traits Defined". All quality gates pass. Triple audit clean. PR created.

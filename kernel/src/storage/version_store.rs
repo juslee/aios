@@ -129,7 +129,7 @@ pub fn version_list(object_id: &ObjectId) -> Result<Vec<Version>, StorageError> 
 pub fn version_rollback(
     object_id: &ObjectId,
     target_hash: &ContentHash,
-) -> Result<(), StorageError> {
+) -> Result<ContentHash, StorageError> {
     block_engine::with_engine(|engine| {
         // Walk the version chain to find the target version by its logical hash.
         // We can't look up by target_hash directly because blocks are indexed
@@ -220,7 +220,7 @@ pub fn version_rollback(
         obj_mut.content_size = target_version.content_size;
         obj_mut.modified_at = now;
 
-        Ok(())
+        Ok(version_hash)
     })?
 }
 
@@ -291,4 +291,67 @@ pub fn object_update(
 
         Ok(new_hash)
     })?
+}
+
+// ---------------------------------------------------------------------------
+// Storage Kit: KernelVersionStore
+// ---------------------------------------------------------------------------
+
+use shared::storage_kit;
+
+/// Zero-sized wrapper implementing [`storage_kit::VersionStoreOps`] by
+/// delegating to existing version store functions.
+#[allow(dead_code)]
+pub struct KernelVersionStore;
+
+impl storage_kit::VersionStoreOps for KernelVersionStore {
+    fn create_version(
+        &mut self,
+        object_id: &ObjectId,
+        data: &[u8],
+        message: &str,
+    ) -> Result<ContentHash, StorageError> {
+        // object_update returns the content hash, but the trait contract
+        // returns the logical version hash (composable with get_head/rollback).
+        object_update(object_id, data, b"kernel", message.as_bytes())?;
+        self.get_head(object_id)
+    }
+
+    fn list_versions(&self, object_id: &ObjectId) -> Vec<Version> {
+        version_list(object_id).unwrap_or_default()
+    }
+
+    fn get_head(&self, object_id: &ObjectId) -> Result<ContentHash, StorageError> {
+        block_engine::with_engine(|engine| {
+            let obj = engine
+                .object_index()
+                .get(object_id)
+                .ok_or(StorageError::ObjectNotFound)?;
+
+            // version_head is the block storage hash (SHA-256 of serialized bytes).
+            // Read the version block and return its logical hash (ver.hash) which
+            // is what rollback() expects for version identification.
+            if obj.version_head.is_zero() {
+                return Ok(ContentHash::ZERO);
+            }
+            let mut buf = [0u8; 256];
+            let n = engine.read_block_by_hash(&obj.version_head, &mut buf)?;
+            if n != core::mem::size_of::<Version>() {
+                return Err(StorageError::BlockNotFound);
+            }
+            // SAFETY: Version is repr(C), 256 bytes, plain data (no pointers).
+            // Maintained by compile-time assertion: size_of::<Version>() == 256.
+            // If violated, read_unaligned returns garbage bytes.
+            let version = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Version) };
+            Ok(version.hash)
+        })?
+    }
+
+    fn rollback(
+        &mut self,
+        object_id: &ObjectId,
+        version_hash: &ContentHash,
+    ) -> Result<ContentHash, StorageError> {
+        version_rollback(object_id, version_hash)
+    }
 }

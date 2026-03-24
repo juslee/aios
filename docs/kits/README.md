@@ -628,9 +628,9 @@ Each Kit links to its architecture doc (detailed internal design) and its Kit do
 
 | Kit | Architecture Doc | Kit Doc | Status |
 |---|---|---|---|
-| [Memory Kit](kernel/memory.md) | `docs/kernel/memory.md` + 5 sub-docs | [memory.md](kernel/memory.md) | Overview |
-| [IPC Kit](kernel/ipc.md) | `docs/kernel/ipc.md` | [ipc.md](kernel/ipc.md) | Overview |
-| [Capability Kit](kernel/capability.md) | `docs/security/model.md` + `docs/security/model/capabilities.md` | [capability.md](kernel/capability.md) | Overview |
+| [Memory Kit](kernel/memory.md) | `docs/kernel/memory.md` + 5 sub-docs | [memory.md](kernel/memory.md) | Traits Defined |
+| [IPC Kit](kernel/ipc.md) | `docs/kernel/ipc.md` | [ipc.md](kernel/ipc.md) | Traits Defined |
+| [Capability Kit](kernel/capability.md) | `docs/security/model.md` + `docs/security/model/capabilities.md` | [capability.md](kernel/capability.md) | Traits Defined |
 | [Compute Kit](kernel/compute.md) | `docs/kernel/compute.md` + 6 sub-docs, `docs/platform/gpu.md` + 5 sub-docs | [compute.md](kernel/compute.md) | Overview |
 
 ### Platform Kits
@@ -638,7 +638,7 @@ Each Kit links to its architecture doc (detailed internal design) and its Kit do
 | Kit | Architecture Doc | Kit Doc | Status |
 |---|---|---|---|
 | [Network Kit](platform/network.md) | `docs/platform/networking.md` + 6 sub-docs | [network.md](platform/network.md) | Overview |
-| [Storage Kit](platform/storage.md) | `docs/storage/spaces.md` + 8 sub-docs | [storage.md](platform/storage.md) | Overview |
+| [Storage Kit](platform/storage.md) | `docs/storage/spaces.md` + 8 sub-docs | [storage.md](platform/storage.md) | Traits Defined |
 | [Audio Kit](platform/audio.md) | `docs/platform/audio.md` + 5 sub-docs | [audio.md](platform/audio.md) | Overview |
 | [Media Kit](platform/media.md) | `docs/platform/media-pipeline.md` + 6 sub-docs | [media.md](platform/media.md) | Overview |
 | [Input Kit](platform/input.md) | `docs/platform/input.md` + 6 sub-docs | [input.md](platform/input.md) | Overview |

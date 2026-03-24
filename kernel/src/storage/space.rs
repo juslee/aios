@@ -150,3 +150,47 @@ pub fn register_service() {
         crate::kinfo!(Storage, "Registered 'space-storage' service (ch={})", ch.0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Storage Kit: KernelSpaceManager
+// ---------------------------------------------------------------------------
+
+use shared::storage_kit;
+
+/// Zero-sized wrapper implementing [`storage_kit::SpaceManager`] by delegating
+/// to existing space management functions and storage budget queries.
+#[allow(dead_code)]
+pub struct KernelSpaceManager;
+
+impl storage_kit::SpaceManager for KernelSpaceManager {
+    fn create_space(&mut self, name: &str, zone: SecurityZone) -> Result<SpaceId, StorageError> {
+        space_create(name.as_bytes(), zone, SpaceQuota::UNLIMITED)
+    }
+
+    fn get_space(&self, id: &SpaceId) -> Result<Space, StorageError> {
+        space_get(id)
+    }
+
+    fn list_spaces(&self) -> Vec<Space> {
+        space_list().unwrap_or_default()
+    }
+
+    fn delete_space(&mut self, id: &SpaceId) -> Result<(), StorageError> {
+        space_delete(id)
+    }
+
+    fn storage_budget(&self) -> StorageBudget {
+        super::budget::storage_stats().unwrap_or(StorageBudget {
+            total_bytes: 0,
+            used_bytes: 0,
+            free_bytes: 0,
+            data_blocks: 0,
+            wal_used: 0,
+            index_entries: 0,
+        })
+    }
+
+    fn pressure_level(&self) -> PressureLevel {
+        super::budget::check_pressure().unwrap_or(PressureLevel::Emergency)
+    }
+}

@@ -10,3 +10,4 @@
 pub mod capability;
 pub mod ipc;
 pub mod memory;
+pub mod storage;
