@@ -189,6 +189,9 @@ EOF
 )"
 ```
 
-19. Run `/review-pr-comments`: wait for Copilot/reviewer comments, fix issues, reply, resolve conversations, push fixes
-20. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main
+⛔ **GATE: Do NOT skip steps 19-20. The phase is NOT complete until merge.**
+
+19. Run `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
+20. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main.
     - `/merge-and-cleanup` auto-detects the worktree, removes it, and returns to the main repo
+    - The phase is complete only after this step succeeds
