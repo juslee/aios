@@ -5,6 +5,7 @@
 **Related:** [power-management.md](./power-management.md) — unified power policy engine,
 [hal.md](../kernel/hal.md) — platform abstraction layer,
 [scheduler.md](../kernel/scheduler.md) — thermal-aware scheduling
+**Kit overview:** [Thermal Kit](../kits/platform/thermal.md) — Zone monitoring, cooling governors, thermal-aware scheduling
 
 ---
 

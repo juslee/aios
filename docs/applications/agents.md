@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [App Kit](../kits/application/app.md) — Agent lifecycle, sandbox, SDK, Scriptable Protocol
 **Related:** [ipc.md](../kernel/ipc.md) — IPC and syscall interface, [spaces.md](../storage/spaces.md) — Space storage, [tool-manager.md](../intelligence/tool-manager.md) — Tool registration and routing, [model.md](../security/model.md) — Security model, [airs.md](../intelligence/airs.md) — AI Runtime Service, [language-ecosystem.md](../project/language-ecosystem.md) — Multi-Runtime Architecture
 
 -----

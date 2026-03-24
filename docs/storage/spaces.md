@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Storage Kit](../kits/platform/storage.md) — Block store, space management, object/version operations
 **Related:** [airs.md](../intelligence/airs.md) — AI Runtime Service (Space Indexer), [ipc.md](../kernel/ipc.md) — Syscall interface
 
 -----

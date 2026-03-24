@@ -3,6 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Preference Kit](../kits/intelligence/preference.md) — 7-tier preference resolution, NLU pipeline, cross-device sync
 **Related:** [airs.md](./airs.md) — Behavioral inference and NLU, [context-engine.md](./context-engine.md) — Context-driven preference adaptation, [experience.md](../experience/experience.md) — Conversation Bar configuration, [spaces.md](../storage/spaces.md) — Preference storage and sync, [agents.md](../applications/agents.md) — Agent preference scoping, [model.md](../security/model.md) — Capability-based access control, [multi-device.md](../platform/multi-device.md) — Cross-device preference sync, [subsystem-framework.md](../platform/subsystem-framework.md) — Universal capability gate and audit patterns
 
 **Note:** The Preference System is a privileged system service. Its capability gate, audit logging, and enterprise policy integration follow the universal patterns defined in the security model document.

@@ -3,6 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Attention Kit](../kits/intelligence/attention.md) — Priority management, notification routing, focus tracking
 **Related:** [airs.md](./airs.md) — Urgency inference and summarization, [context-engine.md](./context-engine.md) — Context-aware filtering, [experience.md](../experience/experience.md) — Attention Panel UI, [agents.md](../applications/agents.md) — Agent attention posting, [model.md](../security/model.md) — Capability enforcement
 
 -----

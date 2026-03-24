@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Wireless Kit](../kits/platform/wireless.md) — WiFi/Bluetooth stacks, firmware management, coexistence
 **Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [networking.md](./networking.md) — WiFi as NTM transport, [audio.md](./audio.md) — Bluetooth audio integration (A2DP, HFP, LE Audio), [input.md](./input.md) — Bluetooth HID (HOGP), [usb.md](./usb.md) — USB WiFi/BT dongle discovery, [hal.md](../kernel/hal.md) — `PlatformWifi` and `PlatformBluetooth` extension traits (§12.7), [model.md](../security/model.md) — Capability system, [power-management.md](./power-management.md) — Radio power states
 
 **Note:** The wireless subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the wireless-specific design decisions and architecture.

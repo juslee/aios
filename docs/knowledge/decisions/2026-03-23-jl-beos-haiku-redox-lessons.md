@@ -2,11 +2,8 @@
 author: Justin Lee
 date: 2026-03-23
 tags: [kits, platform, intelligence, storage, compositor, security]
-status: graduated
-promoted_to: ../decisions/2026-03-23-jl-beos-haiku-redox-lessons.md
+status: final
 ---
-
-> **Promoted to ADR:** This discussion graduated to a formal Architecture Decision Record at [decisions/2026-03-23-jl-beos-haiku-redox-lessons.md](../decisions/2026-03-23-jl-beos-haiku-redox-lessons.md). The canonical version is the ADR; this file is kept for history.
 
 # Discussion: Additional Lessons from BeOS, Haiku OS, and Redox OS
 

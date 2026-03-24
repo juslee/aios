@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [AIRS Kit](../kits/intelligence/airs.md) — Inference engine, model registry, intelligence services orchestration
 **Related:** [spaces.md](../storage/spaces.md) — Space Storage, [subsystem-framework.md](../platform/subsystem-framework.md) — Universal hardware abstraction
 
 -----

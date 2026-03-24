@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Capability Kit](../kits/kernel/capability.md) — Token lifecycle, enforcement, attenuation, delegation
 **Related:** [subsystem-framework.md](../platform/subsystem-framework.md) — Capability gate, [airs.md](../intelligence/airs.md) — Intent verification, behavioral monitoring, [spaces.md](../storage/spaces.md) — Encryption, provenance, [ipc.md](../kernel/ipc.md) — Syscall validation
 
 -----
