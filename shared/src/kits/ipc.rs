@@ -3,17 +3,14 @@
 //! Architecture reference: `docs/kits/kernel/ipc.md`
 
 use crate::cap::Capability;
-use crate::ipc::{
-    ChannelId, NotificationId, RawMessage, SelectEntry, SharedMemoryId, MAX_MESSAGE_SIZE,
-    RING_CAPACITY,
-};
+use crate::ipc::{ChannelId, NotificationId, RawMessage, SelectEntry, SharedMemoryId};
 use crate::syscall::IpcError;
 use crate::VirtAddr;
 
 // Re-export IPC types and constants so consumers can import via the Kit module.
 pub use crate::ipc::{
-    DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES,
-    MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS,
+    DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES,
+    MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS, RING_CAPACITY,
 };
 
 // ---------------------------------------------------------------------------
@@ -81,12 +78,11 @@ impl From<IpcError> for IpcKitError {
             IpcError::Eacces => IpcKitError::CapabilityDenied {
                 required: Capability::ChannelCreate,
             },
-            IpcError::Eperm => IpcKitError::CapabilityDenied {
-                required: Capability::ChannelCreate,
+            IpcError::Eperm => IpcKitError::SharedMemoryError {
+                reason: "operation not permitted",
             },
-            IpcError::Enospc => IpcKitError::MessageTooLarge {
-                size: 0,
-                max: MAX_MESSAGE_SIZE,
+            IpcError::Enospc => IpcKitError::SharedMemoryError {
+                reason: "out of space",
             },
             IpcError::Eproto => IpcKitError::NoReply,
             IpcError::Enotsup => IpcKitError::SharedMemoryError {
@@ -280,34 +276,60 @@ mod tests {
 
     #[test]
     fn ipc_error_to_ipc_kit_error_all_variants() {
-        // Verify each IpcError maps to a specific IpcKitError variant kind.
-        // Field values are placeholders — we check discriminant only.
-        let mapping: &[(IpcError, &str)] = &[
-            (IpcError::Etimedout, "Timeout"),
-            (IpcError::Epipe, "InvalidChannel"),
-            (IpcError::Eagain, "ChannelFull"),
-            (IpcError::Ecanceled, "Cancelled"),
-            (IpcError::Eacces, "CapabilityDenied"),
-            (IpcError::Eperm, "CapabilityDenied"),
-            (IpcError::Enospc, "MessageTooLarge"),
-            (IpcError::Eproto, "NoReply"),
-            (IpcError::Enotsup, "SharedMemoryError"),
-            (IpcError::EcapDormant, "CapabilityDenied"),
-            (IpcError::Eexist, "SharedMemoryError"),
-            (IpcError::Einval, "InvalidChannel"),
-            (IpcError::Enomem, "SharedMemoryError"),
-        ];
-        for (ipc_err, expected_prefix) in mapping {
-            let kit_err = IpcKitError::from(*ipc_err);
-            let debug = format!("{:?}", kit_err);
-            assert!(
-                debug.starts_with(expected_prefix),
-                "IpcError::{:?} -> {:?}, expected prefix {:?}",
-                ipc_err,
-                debug,
-                expected_prefix
-            );
-        }
+        // Verify each IpcError maps to the correct IpcKitError variant.
+        // Field values are placeholders — we check variant kind via matches!.
+        assert!(matches!(
+            IpcKitError::from(IpcError::Etimedout),
+            IpcKitError::Timeout { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Epipe),
+            IpcKitError::InvalidChannel { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Eagain),
+            IpcKitError::ChannelFull { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Ecanceled),
+            IpcKitError::Cancelled
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Eacces),
+            IpcKitError::CapabilityDenied { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Eperm),
+            IpcKitError::SharedMemoryError { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Enospc),
+            IpcKitError::SharedMemoryError { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Eproto),
+            IpcKitError::NoReply
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Enotsup),
+            IpcKitError::SharedMemoryError { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::EcapDormant),
+            IpcKitError::CapabilityDenied { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Eexist),
+            IpcKitError::SharedMemoryError { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Einval),
+            IpcKitError::InvalidChannel { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::Enomem),
+            IpcKitError::SharedMemoryError { .. }
+        ));
     }
 
     // -- Round-trip: IpcKitError -> IpcError -> IpcKitError --
@@ -315,56 +337,61 @@ mod tests {
     #[test]
     fn ipc_kit_error_round_trip_preserves_variant_kind() {
         // Only variants with 1:1 mappings survive round-trip.
-        // SharedMemoryError -> Eperm -> CapabilityDenied (lossy — excluded).
-        let originals: &[IpcKitError] = &[
-            IpcKitError::InvalidChannel { id: ChannelId(42) },
-            IpcKitError::ChannelFull {
+        // MessageTooLarge -> Enospc -> SharedMemoryError (lossy — excluded).
+        // SharedMemoryError -> Eperm -> SharedMemoryError (survives now).
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::InvalidChannel {
+                id: ChannelId(42)
+            })),
+            IpcKitError::InvalidChannel { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::ChannelFull {
                 id: ChannelId(7),
-                capacity: 16,
-            },
-            IpcKitError::Timeout {
-                elapsed_ticks: 5000,
-            },
-            IpcKitError::Cancelled,
-            IpcKitError::CapabilityDenied {
-                required: Capability::ChannelCreate,
-            },
-            IpcKitError::MessageTooLarge {
-                size: 500,
-                max: 256,
-            },
-            IpcKitError::NoReply,
-        ];
-        for orig in originals {
-            let ipc_err = IpcError::from(orig.clone());
-            let back = IpcKitError::from(ipc_err);
-            let orig_debug = format!("{:?}", orig);
-            let back_debug = format!("{:?}", back);
-            let orig_kind = orig_debug
-                .split(|c: char| c == ' ' || c == '{')
-                .next()
-                .unwrap();
-            let back_kind = back_debug
-                .split(|c: char| c == ' ' || c == '{')
-                .next()
-                .unwrap();
-            assert_eq!(
-                orig_kind, back_kind,
-                "round-trip changed variant: {} -> {}",
-                orig_debug, back_debug
-            );
-        }
+                capacity: 16
+            })),
+            IpcKitError::ChannelFull { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::Timeout {
+                elapsed_ticks: 5000
+            })),
+            IpcKitError::Timeout { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::Cancelled)),
+            IpcKitError::Cancelled
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::CapabilityDenied {
+                required: Capability::ChannelCreate
+            })),
+            IpcKitError::CapabilityDenied { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::SharedMemoryError {
+                reason: "test"
+            })),
+            IpcKitError::SharedMemoryError { .. }
+        ));
+        assert!(matches!(
+            IpcKitError::from(IpcError::from(IpcKitError::NoReply)),
+            IpcKitError::NoReply
+        ));
     }
 
     #[test]
-    fn ipc_kit_error_shared_memory_error_lossy_round_trip() {
-        // SharedMemoryError maps to Eperm, which maps back to CapabilityDenied.
-        // This is expected — the conversion is intentionally lossy.
-        let orig = IpcKitError::SharedMemoryError { reason: "test" };
+    fn ipc_kit_error_message_too_large_lossy_round_trip() {
+        // MessageTooLarge maps to Enospc, which now maps back to SharedMemoryError.
+        // This is expected — the conversion is intentionally lossy for this variant.
+        let orig = IpcKitError::MessageTooLarge {
+            size: 500,
+            max: 256,
+        };
         let ipc_err = IpcError::from(orig);
-        assert_eq!(ipc_err, IpcError::Eperm);
+        assert_eq!(ipc_err, IpcError::Enospc);
         let back = IpcKitError::from(ipc_err);
-        assert!(matches!(back, IpcKitError::CapabilityDenied { .. }));
+        assert!(matches!(back, IpcKitError::SharedMemoryError { .. }));
     }
 
     // -- Trait dyn-compatibility --

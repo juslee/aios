@@ -240,14 +240,14 @@ fn i64_to_kit_err(code: i64) -> IpcKitError {
             capacity: RING_CAPACITY,
         },
         x if x == IpcError::Ecanceled as i64 => IpcKitError::Cancelled,
-        x if x == IpcError::Eacces as i64 || x == IpcError::Eperm as i64 => {
-            IpcKitError::CapabilityDenied {
-                required: shared::Capability::ChannelCreate,
-            }
-        }
-        x if x == IpcError::Enospc as i64 => IpcKitError::MessageTooLarge {
-            size: 0,
-            max: MAX_MESSAGE_SIZE,
+        x if x == IpcError::Eacces as i64 => IpcKitError::CapabilityDenied {
+            required: shared::Capability::ChannelCreate,
+        },
+        x if x == IpcError::Eperm as i64 => IpcKitError::SharedMemoryError {
+            reason: "operation not permitted",
+        },
+        x if x == IpcError::Enospc as i64 => IpcKitError::SharedMemoryError {
+            reason: "out of space",
         },
         x if x == IpcError::Eproto as i64 => IpcKitError::NoReply,
         x if x == IpcError::Enomem as i64 => IpcKitError::SharedMemoryError {
@@ -288,7 +288,22 @@ impl ipc_kit::ChannelOps for KernelIpc {
     fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError> {
         let code = ipc_send(id, &msg.data[..msg.len]);
         if code < 0 {
-            Err(i64_to_kit_err(code))
+            let err = if code == IpcError::Enospc as i64 {
+                if msg.len > MAX_MESSAGE_SIZE {
+                    IpcKitError::MessageTooLarge {
+                        size: msg.len,
+                        max: MAX_MESSAGE_SIZE,
+                    }
+                } else {
+                    IpcKitError::ChannelFull {
+                        id,
+                        capacity: RING_CAPACITY,
+                    }
+                }
+            } else {
+                i64_to_kit_err(code)
+            };
+            Err(err)
         } else {
             Ok(())
         }
@@ -318,7 +333,24 @@ impl ipc_kit::ChannelOps for KernelIpc {
             timeout_ticks,
         );
         if code < 0 {
-            Err(i64_to_kit_err(code))
+            // Enospc from ipc_call: "message too large" if request exceeds limit,
+            // "channel full" (ring push failure) otherwise.
+            let err = if code == IpcError::Enospc as i64 {
+                if request.len > MAX_MESSAGE_SIZE {
+                    IpcKitError::MessageTooLarge {
+                        size: request.len,
+                        max: MAX_MESSAGE_SIZE,
+                    }
+                } else {
+                    IpcKitError::ChannelFull {
+                        id,
+                        capacity: RING_CAPACITY,
+                    }
+                }
+            } else {
+                i64_to_kit_err(code)
+            };
+            Err(err)
         } else {
             let bytes = code as usize;
             let mut msg = RawMessage::EMPTY;
@@ -410,8 +442,13 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         // No dedicated kernel destroy function exists. Walk the region's
         // mappings and unmap each one. The last unmap frees backing pages.
         let pids_to_unmap: alloc::vec::Vec<crate::task::process::ProcessId> = {
-            let table = shmem::SHARED_REGION_TABLE.lock();
             let idx = id.0 as usize;
+            if idx >= shared::MAX_SHARED_REGIONS {
+                return Err(IpcKitError::SharedMemoryError {
+                    reason: "invalid region id",
+                });
+            }
+            let table = shmem::SHARED_REGION_TABLE.lock();
             match &table[idx] {
                 Some(region) => region
                     .mappings
@@ -419,16 +456,26 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
                     .filter_map(|m| m.as_ref().map(|mapping| mapping.pid))
                     .collect(),
                 None => {
-                    return Err(IpcKitError::InvalidChannel {
-                        id: ChannelId(id.0),
+                    return Err(IpcKitError::SharedMemoryError {
+                        reason: "region not found",
                     })
                 }
             }
         };
 
+        let mut first_err: Option<IpcKitError> = None;
         for pid in pids_to_unmap {
-            let _ = shmem::shared_memory_unmap(pid, id);
+            if let Err(code) = shmem::shared_memory_unmap(pid, id) {
+                if first_err.is_none() {
+                    first_err = Some(i64_to_kit_err(code));
+                }
+            }
         }
-        Ok(())
+
+        if let Some(err) = first_err {
+            Err(err)
+        } else {
+            Ok(())
+        }
     }
 }
