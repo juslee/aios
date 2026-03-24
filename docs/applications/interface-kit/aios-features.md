@@ -10,22 +10,22 @@ Part of: [interface-kit.md](../interface-kit.md) — Interface Kit Architecture
 These features are only available when running on AIOS. On other platforms, the API calls compile but return defaults or no-ops. Application code uses feature detection, not conditional compilation:
 
 ```rust
-fn update(&mut self, message: Message) -> Command<Message> {
+fn update(&mut self, message: Message) -> InterfaceCommand<Message> {
     match message {
         Message::ShareData(data) => {
             if platform::capabilities().flow_integration {
                 // On AIOS: push to Flow tray with full type info
-                Command::platform(PlatformCommand::FlowPush(FlowData {
+                InterfaceCommand::platform(PlatformCommand::FlowPush(FlowData {
                     content: data,
                     content_type: ContentType::Document,
                     provenance: Provenance::current(),
                 }))
             } else {
                 // Elsewhere: standard clipboard
-                Command::clipboard(ClipboardAction::Write(data.to_string()))
+                InterfaceCommand::clipboard(ClipboardAction::Write(data.to_string()))
             }
         }
-        _ => Command::none(),
+        _ => InterfaceCommand::none(),
     }
 }
 ```
@@ -102,10 +102,10 @@ Agent state can be persisted to spaces automatically:
 ```rust
 pub trait SpacePersistence {
     /// Save widget state to the agent's space
-    fn save_state<S: Serialize>(&self, key: &str, state: &S) -> Command<()>;
+    fn save_state<S: Serialize>(&self, key: &str, state: &S) -> InterfaceCommand<()>;
 
     /// Load widget state from the agent's space
-    fn load_state<D: DeserializeOwned>(&self, key: &str) -> Command<Option<D>>;
+    fn load_state<D: DeserializeOwned>(&self, key: &str) -> InterfaceCommand<Option<D>>;
 
     /// Watch for external changes to persisted state
     fn watch_state(&self, key: &str) -> Subscription<StateChanged>;
