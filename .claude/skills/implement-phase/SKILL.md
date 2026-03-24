@@ -145,14 +145,17 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
     h. **Update the working plan doc**: record any issues encountered, decisions made, or lessons learned in the corresponding sections — do this as you go, not at the end
     After all steps in milestone complete:
     i. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
-    j. Commit and push: `Phase $ARGUMENTS MN: update docs`
+    j. Dead code cleanup: Grep for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. Remove the item if truly unused, or remove just the attribute if now used.
+    k. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) until 0 issues. Fix all issues found.
+    l. Commit and push: `Phase $ARGUMENTS MN: update docs`
 
-### Phase 5: Verify & Audit
+### Phase 5: Final Verification
 
-13. Dead code cleanup: use the Grep tool to search for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. For each match: remove the item if truly unused, or remove just the attribute if the code is now used. Commit and push.
-14. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
-15. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
-16. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
+⛔ **GATE: Do NOT proceed to Knowledge Distillation or PR until ALL of the following pass:**
+
+13. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
+14. Run `/audit-loop` one final time — must return 0 issues across all three categories (doc, code, security/bug). If any issues found, fix them, commit, and re-run until clean.
+15. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
 
 ### Phase 6: Knowledge Distillation
 

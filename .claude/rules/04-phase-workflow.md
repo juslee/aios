@@ -16,7 +16,9 @@ When implementing Phase N:
    - Phase doc: Check off completed tasks, update Status field
    - Developer guide: file sizes, test counts, new patterns
    - Architecture docs: corrections or deviations from spec
-10. **AUDIT**: Run `/audit-loop` — recursive triple audit until 0 issues
+   - Dead code cleanup: remove `#[allow(dead_code)]` if unused or if code is now used
+   - Run `/audit-loop` — recursive triple audit until 0 issues. Fix all issues, commit.
+10. **FINAL GATE**: Run `/verify-phase` + `/audit-loop` one final time before PR — must be 0 issues
 11. **DISTILL**: Read working plan, extract lessons/decisions to knowledge hive, delete plan
 12. **PR**: Push branch, create PR, run `/review-pr-comments`, then `/merge-and-cleanup`
 
