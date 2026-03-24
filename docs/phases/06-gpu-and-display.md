@@ -61,17 +61,18 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Add VirtIO-GPU device ID, command constants, response codes, and `repr(C)` command/response structs to a new `shared/src/gpu.rs` module. These are the wire-format types from drivers.md §3.1–3.3.
 
 **Tasks:**
-- [ ] Create `shared/src/gpu.rs` with `pub mod gpu;` in `shared/src/lib.rs`
+- [ ] Create `shared/src/gpu.rs`
+- [ ] Add `pub mod gpu;` to `shared/src/lib.rs`
 - [ ] Add `VIRTIO_DEVICE_ID_GPU: u32 = 16` constant
 - [ ] Add VirtIO-GPU command type constants: `GET_DISPLAY_INFO` (0x0100), `RESOURCE_CREATE_2D` (0x0101), `RESOURCE_UNREF` (0x0102), `SET_SCANOUT` (0x0103), `RESOURCE_FLUSH` (0x0104), `TRANSFER_TO_HOST_2D` (0x0105), `RESOURCE_ATTACH_BACKING` (0x0106), `RESOURCE_DETACH_BACKING` (0x0107)
 - [ ] Add response constants: `RESP_OK_NODATA` (0x1100), `RESP_OK_DISPLAY_INFO` (0x1101), error codes (0x1200–0x1205)
 - [ ] Define `repr(C)` structs: `VirtioGpuCtrlHdr`, `VirtioGpuRect`, `VirtioGpuDisplayOne`, `VirtioGpuRespDisplayInfo`, `VirtioGpuResourceCreate2d`, `VirtioGpuSetScanout`, `VirtioGpuResourceFlush`, `VirtioGpuTransferToHost2d`, `VirtioGpuResourceAttachBacking`, `VirtioGpuMemEntry`, `VirtioGpuResourceUnref`, `VirtioGpuResourceDetachBacking`
 - [ ] Define `VirtioGpuFormat` enum: `B8G8R8A8Unorm = 1`, `R8G8B8A8Unorm = 67`
 - [ ] Add `VIRTIO_GPU_FLAG_FENCE: u32 = 1` constant
-- [ ] Define `PixelFormat` enum for AIOS-native use: `B8G8R8A8`, `R8G8B8A8`
-- [ ] Define `DisplayInfo` struct: `width: u32`, `height: u32`, `format: PixelFormat`, `scanout_id: u32`
+- [ ] Define `GpuPixelFormat` enum for AIOS-native GPU use: `B8G8R8A8`, `R8G8B8A8` (distinct from the boot `PixelFormat` in `shared/src/boot.rs`)
+- [ ] Define `DisplayInfo` struct: `width: u32`, `height: u32`, `format: GpuPixelFormat`, `scanout_id: u32`
 - [ ] Define `GpuError` enum: `DeviceNotFound`, `InitFailed`, `CommandFailed`, `OutOfMemory`, `InvalidResource`, `ScanoutFailed`
-- [ ] Add `Gpu = 13` variant to `Subsystem` enum in `shared/src/observability.rs`
+- [ ] Add `Gpu = 13` variant to `Subsystem` enum in `shared/src/observability.rs`, update `Subsystem::COUNT` to 14 and `Subsystem::name()` match arm, and adjust unit tests that assert `COUNT` or the last discriminant
 - [ ] Write host-side tests: struct size assertions (`core::mem::size_of`) ensuring `repr(C)` layout matches VirtIO spec, `GpuError` derives
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.1–3.3
@@ -125,7 +126,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 - [ ] Implement `resource_attach_backing(&mut self, resource_id: u32, entries: &[VirtioGpuMemEntry]) -> Result<(), GpuError>` using `submit_command_with_extra()`
 - [ ] Implement `resource_detach_backing(&mut self, resource_id: u32)` and `resource_unref(&mut self, resource_id: u32)` for cleanup
 - [ ] Implement `allocate_framebuffer(&mut self, width: u32, height: u32) -> Result<GpuBufferHandle, GpuError>`: computes total bytes (width × height × 4 for BGRA8), allocates DMA pages from `Pool::Dma`, zeros them, creates resource, attaches backing, returns handle with physical/virtual addresses
-- [ ] Define `GpuBufferHandle` struct: `resource_id: u32`, `width: u32`, `height: u32`, `format: PixelFormat`, `stride: u32`, `fb_phys: usize`, `fb_virt: usize`, `page_count: usize`
+- [ ] Define `GpuBufferHandle` struct: `resource_id: u32`, `width: u32`, `height: u32`, `format: GpuPixelFormat`, `stride: u32`, `fb_phys: usize`, `fb_virt: usize`, `page_count: usize`
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.3 (RESOURCE_CREATE_2D, RESOURCE_ATTACH_BACKING), §3.5 (2D display flow)
 
@@ -249,7 +250,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **Tasks:**
 - [ ] Modify `kernel_main` GPU init section: after `virtio_gpu::init()` succeeds and GPU Service thread starts, render AIOS test pattern (#5B8CFF) to VirtIO-GPU back buffer via the GPU Service, call swap
 - [ ] When VirtIO-GPU is not present (`just run` without `-device virtio-gpu-device`), skip GPU init, log fallback to GOP
-- [ ] Add boot phase `EarlyBootPhase::GpuReady` variant (after `Complete`)
+- [ ] Add boot phase `EarlyBootPhase::GpuReady` variant before `Complete` (keeping `Complete` as the last variant and updating phase-count constants/tests as needed)
 - [ ] Advance boot phase to `GpuReady` after successful VirtIO-GPU init + GPU Service start
 - [ ] `framebuffer.rs` is NOT modified — it remains as the GOP fallback path
 
@@ -342,7 +343,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 - [ ] Add `pub use kits::compute as compute_kit;` to `shared/src/lib.rs`
 - [ ] Define `ComputeError` enum: `DeviceNotAvailable`, `BudgetExhausted`, `ThermalThrottled`, `InvalidCommandBuffer`, `FenceTimeout`, `CapabilityDenied`, `OutOfMemory`, `NotInitialized`
 - [ ] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `ComputeError`
-- [ ] Define `SurfaceBuffer` struct: `handle: u32` (resource_id), `width: u32`, `height: u32`, `format: PixelFormat`, `stride: u32`
+- [ ] Define `SurfaceBuffer` struct: `handle: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `stride: u32`
 - [ ] Define `DamageRect` struct: `x: u32`, `y: u32`, `width: u32`, `height: u32`
 - [ ] Define `SemanticHint` enum: `UiText`, `VideoPlayback`, `Rendering3D`, `ScrollingContent`, `StaticContent`
 - [ ] Write host-side tests: `ComputeError` derives, struct field access, `SemanticHint` enum coverage
@@ -359,7 +360,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 **Tasks:**
 - [ ] Define `GpuSurface` trait in `shared/src/kits/compute.rs`:
-  - `fn allocate_buffer(&self, width: u32, height: u32, format: PixelFormat) -> Result<SurfaceBuffer, ComputeError>`
+  - `fn allocate_buffer(&self, width: u32, height: u32, format: GpuPixelFormat) -> Result<SurfaceBuffer, ComputeError>`
   - `fn submit_damage(&self, buffer: &SurfaceBuffer, damage: &[DamageRect]) -> Result<(), ComputeError>`
   - `fn set_semantic_hint(&self, hint: SemanticHint) -> Result<(), ComputeError>`
   - `fn request_direct_scanout(&self) -> Result<bool, ComputeError>`
