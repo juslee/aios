@@ -20,6 +20,8 @@ When implementing Phase N:
 11. **DISTILL**: Read working plan, extract lessons/decisions to knowledge hive, delete plan
 12. **PR**: Push branch, create PR, run `/review-pr-comments`, then `/merge-and-cleanup`
 
+**PLAN MODE**: If plan mode is active, the `/implement-phase` skill automatically restricts to research + planning only (no builds, commits, or worktree creation). The plan is written to the system plan file. After user approval, the execution path picks up from Phase 1 with the approved plan.
+
 **BLOCKED?** Read the referenced architecture doc section. Architecture docs are the source of truth. Never invent register offsets, struct fields, or memory addresses.
 
 ## Session Start Checklist

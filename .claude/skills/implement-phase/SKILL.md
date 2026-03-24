@@ -8,9 +8,52 @@ argument-hint: "[phase-number]"
 
 # Implement AIOS Phase $ARGUMENTS
 
-Follow the Phase Implementation Workflow from `.claude/rules/04-phase-workflow.md` (READ → WORKTREE → PLAN → IMPLEMENT).
+Follow the Phase Implementation Workflow from `.claude/rules/04-phase-workflow.md`.
 
-## Phase 1: Session Prep & Worktree
+## Step 0: Plan Mode Routing
+
+Check whether **plan mode is active** (the system will have injected a reminder saying "Plan mode is active" and assigned a plan file path).
+
+- **If plan mode IS active** → Execute **Planning Path** below, then call `ExitPlanMode`. Do NOT proceed to the Execution Path.
+- **If plan mode is NOT active** → Skip the Planning Path entirely. Go straight to the **Execution Path**.
+
+---
+
+## Planning Path (plan mode only)
+
+When plan mode is active, you can only read files and write to the system-assigned plan file. No edits, builds, commits, or worktree creation.
+
+### P1. Research
+
+1. Read `docs/phases/` and find the doc matching phase $ARGUMENTS (glob for `$ARGUMENTS-*.md` or `0$ARGUMENTS-*.md`)
+2. Read all Architecture References listed in the phase doc
+3. Read CLAUDE.md Code Conventions (`.claude/rules/`) and Quality Gates
+4. Search the knowledge hive for relevant lessons and decisions:
+    - Use Obsidian MCP search_notes with keywords from the phase doc
+    - Review any matching `docs/knowledge/lessons/` and `docs/knowledge/decisions/`
+    - Factor known pitfalls into implementation approach
+5. Read `docs/knowledge/plans/_template.md` — use its structure as the skeleton for the plan
+
+### P2. Write Plan to System Plan File
+
+Write the implementation plan to the **system-assigned plan file** (the path from the plan mode system message). Use the same structure as `docs/knowledge/plans/_template.md`:
+
+- **Frontmatter**: set `author: claude`, `date: YYYY-MM-DD`, `tags: [relevant subsystem tags]`, `status: in-progress`, `phase: $ARGUMENTS`, `milestone: MK`
+- **Approach**: why this phase matters, current codebase state, key gaps, shared crate plan
+- **Progress**: for each step in the phase doc, write a checkbox item with granular sub-tasks (files to create/modify, types/traits/functions, acceptance commands)
+- **Code Structure Decisions**: naming, data structures, algorithms, deviations from arch docs (with rationale)
+- **Dependencies & Risks**: what must exist before this work starts, what could go wrong
+- **Phase Doc Reconciliation**: note any changes needed to the phase doc (new steps, reordered steps, updated acceptance criteria, corrected references) — these will be applied during execution
+
+### P3. Exit Plan Mode
+
+Call `ExitPlanMode` so the user can review the plan. **STOP HERE** — do not proceed to the Execution Path.
+
+---
+
+## Execution Path (normal mode)
+
+### Phase 1: Session Prep
 
 1. Run the session start checklist (from `.claude/rules/04-phase-workflow.md`):
 
@@ -26,6 +69,8 @@ just check
 ```
 
 Commit `Cargo.lock` and `rust-toolchain.toml` to `main` only if changed (toolchain updates are the one exception to the no-commit-to-main rule).
+
+### Phase 2: Worktree Setup
 
 2. Create an isolated worktree for ALL subsequent work:
 
@@ -47,7 +92,17 @@ cd .claude/worktrees/phase-$ARGUMENTS
 
 **IMPORTANT**: From this point forward, every file read/write, git command, build command, and test command MUST be executed inside the worktree directory. Do NOT operate in the main repo directory until `/merge-and-cleanup` at the end.
 
-## Phase 2: Research & Planning
+### Phase 3: Planning
+
+Check whether a **plan already exists from a prior plan-mode session**. Look for the system plan file (the path from the earlier plan mode session, typically `~/.claude/plans/*.md`). Also check if context from the Planning Path is available in the current conversation.
+
+**If a plan exists from plan mode:**
+
+4. Copy the plan content into `docs/knowledge/plans/phase-$ARGUMENTS-description.md` inside the worktree
+5. Commit and push as the first commit: `Phase $ARGUMENTS: working plan`
+6. Apply any Phase Doc Reconciliation notes from the plan — edit the phase doc if changes were identified, commit and push
+
+**If NO prior plan exists (skill invoked directly without plan mode):**
 
 4. Read `docs/phases/` and find the doc matching phase $ARGUMENTS (glob for `$ARGUMENTS-*.md` or `0$ARGUMENTS-*.md`)
 5. Read all Architecture References listed in the phase doc
@@ -71,17 +126,11 @@ cd .claude/worktrees/phase-$ARGUMENTS
     - `git add docs/knowledge/plans/phase-$ARGUMENTS-*.md`
     - Commit: `Phase $ARGUMENTS: working plan`
     - Push: `git push -u origin HEAD`
-
-## Phase 3: Phase Doc Reconciliation
-
 10. Compare the plan against the current phase doc (`docs/phases/`):
-    - If planning reveals changes needed (new steps, reordered steps, updated acceptance criteria, corrected references):
-      update the phase doc using the Edit tool to match the plan
-    - If no changes are needed, note "Phase doc verified — no updates required" and proceed
-    - If changes were made: commit and push phase doc updates before any implementation begins
-    - This ensures the phase doc is the accurate source of truth for implementation
+    - If planning reveals changes needed: update the phase doc, commit and push
+    - If no changes needed: note "Phase doc verified — no updates required" and proceed
 
-## Phase 4: Implementation
+### Phase 4: Implementation
 
 11. Read the phase doc and create a TodoWrite entry for EACH step listed, grouped by milestone. Use the exact step names from the phase doc — do not paraphrase or invent steps.
 12. For each milestone:
@@ -98,14 +147,14 @@ cd .claude/worktrees/phase-$ARGUMENTS
     i. Update CLAUDE.md, README.md, phase doc (check off completed tasks)
     j. Commit and push: `Phase $ARGUMENTS MN: update docs`
 
-## Phase 5: Verify & Audit
+### Phase 5: Verify & Audit
 
 13. Dead code cleanup: use the Grep tool to search for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. For each match: remove the item if truly unused, or remove just the attribute if the code is now used. Commit and push.
 14. Run `/verify-phase $ARGUMENTS` — build/test/QEMU quality gates must all pass
 15. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) that loops until 0 issues
 16. Update the phase doc Status to "Complete", check off all Phase Completion Criteria, commit and push
 
-## Phase 6: Knowledge Distillation
+### Phase 6: Knowledge Distillation
 
 17. Read the working plan doc (`docs/knowledge/plans/phase-$ARGUMENTS-*.md`) and distill:
     - **Lessons** (bugs hit, surprises, workarounds, platform quirks) → Write each to `docs/knowledge/lessons/YYYY-MM-DD-cl-phase-$ARGUMENTS-description.md` with frontmatter: author, date, tags, status: final
@@ -115,7 +164,7 @@ cd .claude/worktrees/phase-$ARGUMENTS
     - Delete the working plan doc (`git rm docs/knowledge/plans/phase-$ARGUMENTS-*.md`)
     - Commit and push: `Phase $ARGUMENTS: knowledge distillation`
 
-## Phase 7: PR, Review & Merge
+### Phase 7: PR, Review & Merge
 
 18. Create PR to main using `gh pr create` with this structure:
 
