@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Flow Kit](../kits/intelligence/flow.md) — Unified clipboard/drag-drop/share, typed content, transform pipeline
 **Related:** [compositor.md](../platform/compositor.md) — Drag/drop integration, [subsystem-framework.md](../platform/subsystem-framework.md) — DataChannel/Flow pipes, [agents.md](../applications/agents.md) — SDK FlowClient, [spaces.md](./spaces.md) — History storage, [experience.md](../experience/experience.md) — Flow Tray UI, [data-model.md](./flow/data-model.md) — Data model, [transforms.md](./flow/transforms.md) — Transform engine, [history.md](./flow/history.md) — History & sync, [integration.md](./flow/integration.md) — Compositor & subsystem integration, [security.md](./flow/security.md) — Security, [sdk.md](./flow/sdk.md) — SDK APIs, [extensions.md](./flow/extensions.md) — Extensions
 
 -----

@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Media Kit](../kits/platform/media.md) — Codec framework, playback pipeline, streaming protocols, DRM
 **Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [audio.md](./audio.md) — Audio mixing, capture, RT scheduling, A/V sync timeline, [camera.md](./camera.md) — Camera capture, ISP pipeline, privacy enforcement, [compositor.md](./compositor.md) — Video surface compositing, direct scanout, HDR, [gpu.md](./gpu.md) — wgpu rendering, GPU memory, hardware decode textures, [networking.md](./networking.md) — HTTP/2, QUIC, bandwidth scheduling, [storage/spaces.md](../storage/spaces.md) — Content-addressed media storage
 
 **Note:** The media pipeline implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the media-specific design decisions and architecture. The media pipeline does not replace Audio, Camera, or Compositor — it **coordinates** them for media workloads (playback, recording, streaming, real-time communication).

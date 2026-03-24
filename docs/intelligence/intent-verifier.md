@@ -3,6 +3,7 @@
 **Audience:** Kernel developers, security engineers, AIRS implementers
 **Scope:** Intent verification pipeline, action alignment, capability checking, adversarial resistance
 **Related:** [airs.md](./airs.md) — AIRS Runtime, [Security Model](../security/model.md), [Agents](../applications/agents.md), [IPC](../kernel/ipc.md)
+**Kit overview:** [Intent Kit](../kits/intelligence/intent.md) — Intent verification pipeline, information flow analysis, behavioral integration
 
 ---
 

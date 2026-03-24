@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Camera Kit](../kits/platform/camera.md) — Capture sessions, ISP pipeline, privacy-first access control
 **Related:** [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction (capability gate, sessions, data channels, audit, power, POSIX bridge), [usb/device-classes.md](./usb/device-classes.md) — UVC driver architecture (§4.4), [compositor.md](./compositor.md) — Viewfinder surface compositing, [gpu.md](./gpu.md) — GPU memory management and wgpu integration, [audio.md](./audio.md) — Companion subsystem for A/V sync, [input.md](./input.md) — Gesture input from camera
 
 **Note:** The camera subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the camera-specific design decisions and architecture.

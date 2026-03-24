@@ -8,6 +8,7 @@ type: architecture
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
+**Kit overview:** [Context Kit](../kits/intelligence/context.md) — Signal collection, context inference, consumer notification
 **Related:** [airs.md](./airs.md) — AI Runtime Service, [compositor.md](../platform/compositor.md) — Compositor and display, [agents.md](../applications/agents.md) — Agent framework
 
 -----

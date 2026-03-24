@@ -6,6 +6,7 @@ type: architecture
 # AIOS Space Indexer
 
 **Parent document:** [airs.md](./airs.md) — AI Runtime Service (§5.1)
+**Kit overview:** [Search Kit](../kits/intelligence/search.md) — Full-text and semantic search, embedding index, relationship graph
 **Related:** [spaces/query-engine.md](../storage/spaces/query-engine.md) — Query dispatch & index structures, [spaces/data-structures.md](../storage/spaces/data-structures.md) — CompactObject & promotion, [airs/intelligence-services.md](./airs/intelligence-services.md) — All AIRS intelligence services, [airs/model-registry.md](./airs/model-registry.md) — Embedding model loading, [airs/security.md](./airs/security.md) — Resource path isolation
 
 -----
