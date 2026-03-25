@@ -221,7 +221,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 **Key reference:** `kernel/src/service/mod.rs` (service registration, echo service pattern); `kernel/src/ipc/` (channel create, recv, reply)
 
-**Acceptance:** `just check` zero warnings. QEMU boot logs "Service 'gpu-service' registered (pid=0, ch=N)". GPU commands dispatched via IPC work.
+**Acceptance:** `just check` zero warnings. QEMU boot logs "Service 'gpu-service' registered (pid=9, ch=N)". GPU commands dispatched via IPC work.
 
 -----
 

@@ -376,7 +376,9 @@ fn init_double_buffering(state: &mut GpuServiceState) {
             // Clean up front buffer.
             let _ = virtio_gpu::gpu_resource_detach_backing(front.resource_id);
             let _ = virtio_gpu::gpu_resource_unref(front.resource_id);
-            // SAFETY: front was just allocated by gpu_allocate_framebuffer.
+            // SAFETY: front.fb_phys/order were returned by alloc_dma_pages inside
+            // gpu_allocate_framebuffer. Maintained by: local scope (not yet stored).
+            // Violation: buddy bitmap corruption if phys_addr/order are wrong.
             unsafe { crate::mm::frame::free_dma_pages(front.fb_phys, front.order) };
             return;
         }
@@ -395,8 +397,9 @@ fn init_double_buffering(state: &mut GpuServiceState) {
         // Clean up both buffers on scanout failure.
         let _ = virtio_gpu::gpu_resource_detach_backing(front.resource_id);
         let _ = virtio_gpu::gpu_resource_unref(front.resource_id);
-        // SAFETY: front/back were just allocated by gpu_allocate_framebuffer.
-        // No other references exist (not yet stored in state).
+        // SAFETY: front/back fb_phys/order were returned by alloc_dma_pages inside
+        // gpu_allocate_framebuffer. Not yet stored in state (no other references).
+        // Violation: buddy bitmap corruption if phys_addr/order are wrong.
         unsafe { crate::mm::frame::free_dma_pages(front.fb_phys, front.order) };
         let _ = virtio_gpu::gpu_resource_detach_backing(back.resource_id);
         let _ = virtio_gpu::gpu_resource_unref(back.resource_id);
