@@ -142,6 +142,8 @@ fn probe(dt: &DeviceTree) -> Option<usize> {
 fn probe_slot(phys: usize) -> bool {
     let virt = MMIO_BASE + phys;
     // SAFETY: MMIO region 0x0-0x40000000 is mapped as device memory in TTBR1.
+    // Reading an unoccupied slot returns 0 (not the VirtIO magic), which is safe.
+    // Reading an unmapped address would cause a synchronous data abort.
     unsafe {
         let magic = mmio_read32(virt + VIRTIO_MMIO_MAGIC_VALUE);
         if magic != VIRTIO_MMIO_MAGIC {
@@ -164,6 +166,7 @@ fn probe_slot(phys: usize) -> bool {
 fn init_device(base: usize) -> Result<VirtioBlk, StorageError> {
     // SAFETY: All MMIO accesses are to a VirtIO device at a validated address.
     // The base address was confirmed to have correct magic and device_id.
+    // Writing to an invalid MMIO address would cause a synchronous data abort.
     unsafe {
         // 1. Reset device.
         mmio_write32(base + VIRTIO_MMIO_STATUS, 0);

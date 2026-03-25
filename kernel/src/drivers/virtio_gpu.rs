@@ -89,7 +89,7 @@ pub fn init(dt: &DeviceTree) -> bool {
 }
 
 /// Get the display resolution, or None if no GPU device.
-#[allow(dead_code)] // Used by M20 GPU Service
+#[allow(dead_code)] // Not yet called; needed for GPU service
 pub fn display_info() -> Option<DisplayInfo> {
     VIRTIO_GPU.lock().as_ref().map(|g| g.display)
 }
@@ -108,7 +108,8 @@ pub fn display_test_frame() -> Result<(), GpuError> {
 
     // Fill framebuffer with AIOS blue.
     // SAFETY: fb_virt points to zeroed DMA pages allocated by alloc_dma_pages.
-    // The region is mapped RW via direct map. We fill width×height pixels.
+    // allocate_framebuffer ensures page_count covers width*height*4 bytes.
+    // Writing beyond the allocation would corrupt adjacent DMA memory.
     unsafe {
         let fb = handle.fb_virt as *mut u32;
         let pixel_count = (width * height) as usize;
@@ -169,6 +170,7 @@ fn probe_slot(phys: usize) -> Option<usize> {
     let virt = MMIO_BASE + phys;
     // SAFETY: MMIO region 0x0-0x40000000 is mapped as device memory in TTBR1.
     // Each slot is 512 bytes apart, within the mapped range.
+    // Reading an unoccupied slot returns 0 (not the VirtIO magic), which is safe.
     unsafe {
         let magic = mmio_read32(virt + VIRTIO_MMIO_MAGIC_VALUE);
         if magic != VIRTIO_MMIO_MAGIC {
@@ -205,6 +207,7 @@ fn probe_slot(phys: usize) -> Option<usize> {
 fn init_device(base: usize) -> Result<VirtioGpu, GpuError> {
     // SAFETY: All MMIO accesses are to a VirtIO device at a validated address.
     // The base address was confirmed to have correct magic, version, and device_id.
+    // Writing to an invalid MMIO address would cause a synchronous data abort.
     unsafe {
         // 1. Reset device.
         mmio_write32(base + VIRTIO_MMIO_STATUS, 0);
@@ -308,12 +311,14 @@ impl VirtioGpu {
     fn submit_command(&mut self, cmd: &[u8], resp: &mut [u8]) -> Result<(), GpuError> {
         let cmd_len = cmd.len();
         let resp_len = resp.len();
-        assert!(cmd_len <= RESP_OFFSET);
-        assert!(resp_len <= VIRT_PAGE_SIZE - RESP_OFFSET);
+        if cmd_len > RESP_OFFSET || resp_len > VIRT_PAGE_SIZE - RESP_OFFSET {
+            return Err(GpuError::CommandFailed);
+        }
 
-        // SAFETY: cmd_virt points to a zeroed DMA page. We copy command data
-        // to offset 0 and response area at RESP_OFFSET. Both are within the page.
-        // Physical addresses in descriptors are valid for VirtIO device DMA.
+        // SAFETY: cmd_virt points to a zeroed DMA page allocated by alloc_dma_page.
+        // We copy command data to offset 0 and response area at RESP_OFFSET.
+        // Both regions are within the 4K page. Physical addresses in descriptors
+        // are valid for VirtIO device DMA. Buffer overflow would corrupt DMA state.
         unsafe {
             let cmd_virt = self.cmd_virt;
             let cmd_phys = self.cmd_phys;
@@ -405,10 +410,15 @@ impl VirtioGpu {
         let cmd_len = cmd.len();
         let extra_len = extra.len();
         let resp_len = resp.len();
-        assert!(cmd_len + extra_len <= RESP_OFFSET);
-        assert!(resp_len <= VIRT_PAGE_SIZE - RESP_OFFSET);
+        if cmd_len + extra_len > RESP_OFFSET || resp_len > VIRT_PAGE_SIZE - RESP_OFFSET {
+            return Err(GpuError::CommandFailed);
+        }
 
-        // SAFETY: Same as submit_command. Extra data is placed at cmd_len offset.
+        // SAFETY: cmd_virt points to a DMA page allocated by alloc_dma_page.
+        // Command header is copied to offset 0, extra data at cmd_len offset,
+        // response area at RESP_OFFSET. All within the 4K page boundaries.
+        // Physical addresses in descriptors target DMA-coherent memory.
+        // Buffer overflow would corrupt DMA state or adjacent memory.
         unsafe {
             let cmd_virt = self.cmd_virt;
             let cmd_phys = self.cmd_phys;
@@ -536,10 +546,12 @@ impl VirtioGpu {
         Self::check_response(&resp_bytes)?;
 
         // Parse response: find first enabled scanout.
-        // SAFETY: resp_bytes is exactly the size of VirtioGpuRespDisplayInfo,
-        // which is a repr(C) struct with known layout. The bytes were written
-        // by the VirtIO device and we verified the response type.
-        let resp = unsafe { &*(resp_bytes.as_ptr() as *const VirtioGpuRespDisplayInfo) };
+        // SAFETY: resp_bytes is exactly size_of::<VirtioGpuRespDisplayInfo>() bytes.
+        // We use read_unaligned to avoid alignment assumptions on the byte array.
+        // The struct is repr(C) with defined layout. Misinterpreting the bytes
+        // would produce garbage display dimensions but not memory unsafety.
+        let resp =
+            unsafe { core::ptr::read_unaligned(resp_bytes.as_ptr() as *const VirtioGpuRespDisplayInfo) };
 
         for (i, pmode) in resp.pmodes.iter().enumerate() {
             if pmode.enabled != 0 && pmode.r.width > 0 && pmode.r.height > 0 {
@@ -775,7 +787,10 @@ impl VirtioGpu {
         height: u32,
     ) -> Result<GpuBufferHandle, GpuError> {
         let bpp = GpuPixelFormat::B8G8R8A8.bytes_per_pixel();
-        let total_bytes = (width as usize) * (height as usize) * (bpp as usize);
+        let total_bytes = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|wh| wh.checked_mul(bpp as usize))
+            .ok_or(GpuError::ResolutionTooLarge)?;
 
         if total_bytes > MAX_FRAMEBUFFER_BYTES {
             crate::kwarn!(
@@ -796,7 +811,9 @@ impl VirtioGpu {
         let fb_virt = DIRECT_MAP_BASE + fb_phys;
 
         // Zero the framebuffer pages.
-        // SAFETY: fb_virt points to freshly allocated DMA pages, mapped via direct map.
+        // SAFETY: fb_virt points to freshly allocated DMA pages from Pool::Dma,
+        // mapped RW via TTBR1 direct map. alloc_dma_pages guarantees 2^order
+        // contiguous pages. Writing beyond this region would corrupt other DMA buffers.
         unsafe {
             let alloc_pages = 1usize << order;
             core::ptr::write_bytes(fb_virt as *mut u8, 0, alloc_pages * VIRT_PAGE_SIZE);
@@ -842,15 +859,23 @@ impl VirtioGpu {
 // ---------------------------------------------------------------------------
 
 /// View a `repr(C)` struct as a byte slice.
+///
+/// Caller must ensure `T` is `repr(C)` with no padding containing
+/// uninitialized bytes. All VirtIO-GPU command structs satisfy this.
 fn as_bytes<T: Sized>(val: &T) -> &[u8] {
-    // SAFETY: repr(C) structs have a defined layout. The resulting slice
-    // covers exactly size_of::<T>() bytes from the struct's address.
+    // SAFETY: All callers pass repr(C) structs with defined, fully-initialized
+    // layout. The resulting slice covers size_of::<T>() bytes from val's address.
+    // Passing a non-repr(C) type would expose unspecified field ordering.
     unsafe { core::slice::from_raw_parts(val as *const T as *const u8, core::mem::size_of::<T>()) }
 }
 
 /// View a slice of `repr(C)` structs as a byte slice.
+///
+/// Caller must ensure `T` is `repr(C)`. See `as_bytes` for requirements.
 fn as_byte_slice<T: Sized>(slice: &[T]) -> &[u8] {
-    // SAFETY: repr(C) slice elements are contiguous in memory.
+    // SAFETY: All callers pass repr(C) struct slices. Elements are contiguous
+    // in memory with no inter-element padding. Passing a non-repr(C) type
+    // would expose unspecified layout.
     unsafe {
         core::slice::from_raw_parts(slice.as_ptr() as *const u8, core::mem::size_of_val(slice))
     }
