@@ -1,13 +1,13 @@
 # AIOS Networking — Protocol Engines
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
-**Related:** [stack.md](./stack.md) — Network stack, [components.md](./components.md) — NTM components, [security.md](./security.md) — TLS and credential management
+**Related:** [anm.md](./anm.md) — ANM specification, [mesh.md](./mesh.md) — Mesh Layer, [bridge.md](./bridge.md) — Bridge Module, [stack.md](./stack.md) — Network stacks, [components.md](./components.md) — NTM components, [security.md](./security.md) — TLS and credential management
 
 -----
 
 ## 5. Protocol Engines
 
-The protocol engines translate between NTM space operations and wire protocols. Each engine handles a specific protocol family, converting `space::read()` / `space::write()` / `space::subscribe()` into the appropriate wire format.
+The protocol engines translate between NTM space operations and wire protocols. AIOS has two distinct protocol paths: the **Mesh Protocol** for native AIOS-to-AIOS communication, and the **Bridge Protocols** for legacy internet services. The choice is transparent to agents — they issue space operations and the NTM selects the appropriate path.
 
 ```mermaid
 flowchart TD
@@ -19,52 +19,59 @@ flowchart TD
         Transfer["Flow::transfer()"]
     end
 
-    subgraph Engines["Protocol Engines"]
+    subgraph MeshPath["Mesh Path (AIOS-to-AIOS)"]
+        MP["§5.1 AIOS Peer\n(Mesh Protocol)"]
+        Noise["Noise IK\n(mandatory encryption)"]
+        MeshTransport["Direct Link (raw Ethernet)\nRelay (trusted peer)\nTunnel (QUIC/UDP)"]
+    end
+
+    subgraph BridgePath["Bridge Path (legacy internet)"]
         direction LR
-        PE["§5.1 AIOS Peer"]
         H2["§5.2 HTTP/2"]
         Q["§5.3 QUIC/HTTP/3"]
         WS["§5.4 WebSocket/SSE"]
-    end
-
-    subgraph Transport["Transport"]
-        TLS["§5.5 TLS 1.3\n(rustls)"]
-        QUIC["QUIC\n(quinn)"]
+        TLSLayer["§5.5 TLS 1.3\n(rustls)"]
         TCP["TCP\n(smoltcp)"]
         UDP["UDP\n(smoltcp)"]
     end
 
-    Read --> Engines
-    Write --> Engines
-    Sub --> Engines
-    Query --> Engines
-    Transfer --> Engines
+    Read --> MP
+    Write --> MP
+    Sub --> MP
+    Read --> H2
+    Write --> H2
+    Sub --> WS
+    Query --> MP
+    Query --> H2
+    Transfer --> MP
 
-    PE --> QUIC
-    H2 --> TLS
-    Q --> QUIC
-    WS --> TLS
+    MP --> Noise
+    Noise --> MeshTransport
 
-    TLS --> TCP
-    QUIC --> UDP
+    H2 --> TLSLayer
+    Q -->|"TLS 1.3 built into QUIC"| UDP
+    WS --> TLSLayer
+
+    TLSLayer --> TCP
 ```
 
-**Protocol selection** is handled by the Connection Manager (§3.2). The NTM never exposes protocol choice to agents — it selects the optimal engine based on the `SpaceEndpoint` configuration and runtime conditions.
+**Protocol selection** is handled by the Connection Manager (§3.2). When the Space Resolver determines the target is an AIOS peer (identified by DeviceId), the Mesh Protocol is used. When the target is a legacy IP endpoint (identified by hostname/URL), the appropriate Bridge Protocol is selected. The NTM never exposes protocol choice to agents.
 
 -----
 
-### 5.1 AIOS Peer Protocol
+### 5.1 AIOS Peer Protocol (Mesh Protocol)
 
-When two AIOS machines talk to each other, they don't need HTTP. They speak a native protocol that carries the full richness of spaces.
+The AIOS Peer Protocol is the **native mesh protocol** for all AIOS-to-AIOS communication. It does NOT require HTTP, TCP, TLS, or any IP-based infrastructure. It runs directly over the Mesh Layer's three transport modes: Direct Link (raw Ethernet), Relay (through a trusted peer), or Tunnel (QUIC/UDP encapsulation for WAN). See [mesh.md](./mesh.md) for the full Mesh Layer architecture, including Noise IK handshake details, transport mode selection, and peer discovery.
 
 #### 5.1.1 Protocol Design
 
 ```text
 AIOS Peer Protocol:
-    Transport: QUIC (connection migration, multiplexing, 0-RTT)
-    Auth: Mutual TLS with AIOS identity certificates
+    Transport: Mesh Layer (Direct Link, Relay, or Tunnel)
+    Auth: Noise IK mutual authentication (not TLS — see mesh.md §M3)
+    Encryption: Noise IK (mandatory, no plaintext mode)
     Encoding: Structured binary (not text-based like HTTP)
-    Framing: Length-prefixed messages on QUIC streams
+    Framing: Length-prefixed messages in Noise-encrypted payload
 
     Operations:
         SPACE_READ    (key)            → object + metadata
@@ -77,9 +84,11 @@ AIOS Peer Protocol:
         CAPABILITY_EXCHANGE            → mutual capability negotiation
 ```
 
+On the same LAN segment, two AIOS devices communicate via Direct Link — raw Ethernet frames with EtherType `0x4149`, encrypted with Noise IK. No IP stack, no DNS, no TCP, no TLS. Latency is ~0.1 ms. Across the internet, the same protocol runs inside a QUIC tunnel, with IP serving only as a carrier for the already-encrypted mesh packets.
+
 #### 5.1.2 Capability Exchange
 
-When two AIOS devices connect, they negotiate capabilities — this is unique to AIOS-to-AIOS communication:
+When two AIOS devices connect, they negotiate capabilities — this is unique to AIOS-to-AIOS communication and is authenticated by the Noise session (see [mesh.md §M8](./mesh.md) for the full protocol):
 
 ```text
 Machine A: "I have space 'photos/vacation'. I'm willing to grant you: read."
@@ -96,28 +105,27 @@ This is AirDrop but generalized, persistent, capability-controlled, and working 
 
 #### 5.1.3 Discovery
 
-AIOS devices discover each other on the local network using mDNS/DNS-SD (RFC 6762/6763):
+AIOS devices discover each other through the Mesh Layer's peer discovery protocol (see [mesh.md §M5](./mesh.md) for full details):
 
 ```text
-Service type: _aios-peer._quic.local
-TXT records:
-    device_id=<AIOS device fingerprint>
-    spaces=<comma-separated list of shared space prefixes>
-    version=<protocol version>
-    caps=<capability flags>
+Link-local discovery:
+    Custom Ethernet broadcast on EtherType 0x4149 (ANNOUNCE frame)
+    Signed with Ed25519 to prevent spoofing
+    Contains truncated DeviceId + ephemeral Noise key for immediate handshake
 
-Discovery flow:
-    1. Device broadcasts mDNS query for _aios-peer._quic.local
-    2. Nearby AIOS devices respond with their endpoints
-    3. Mutual TLS handshake establishes identity
-    4. Capability exchange negotiates shared spaces
-    5. Connections are persistent (reconnect on migration)
+BLE discovery:
+    Low-power proximity discovery for mobile devices
+    Triggers transition to WiFi/Ethernet for data exchange
+
+WAN discovery (stored peers):
+    PeerStore maintains DeviceId → last-known reachability mapping
+    Strategies: direct QUIC connect, relay peers, STUN hole-punch, bootstrap nodes
 ```
 
 #### 5.1.4 Wire Format
 
 ```text
-Message frame (on QUIC stream):
+Message frame (in Noise-encrypted payload):
     ┌────────────────────────────────────────┐
     │ Length (4 bytes, big-endian)            │
     │ OpCode (2 bytes)                       │
@@ -148,14 +156,14 @@ OpCodes:
 
 Flags:
     bit 0: compressed (zstd)
-    bit 1: encrypted (beyond TLS — e2e for relay)
+    bit 1: encrypted (beyond Noise — e2e for relay)
     bit 2: idempotent (safe to retry)
     bit 3: priority (high/normal)
 ```
 
 #### 5.1.5 Stream Multiplexing
 
-Each space operation type gets its own QUIC stream, enabling independent flow control:
+For Tunnel mode (QUIC/UDP), each space operation type gets its own QUIC stream, enabling independent flow control:
 
 ```text
 Stream allocation:
@@ -166,11 +174,15 @@ Stream allocation:
     Unidirectional streams: Flow transfers (bulk data)
 ```
 
+For Direct Link mode, multiplexing is handled by the MeshPacket sequence numbers and request IDs within the Noise-encrypted payload. Each operation is independently tracked without QUIC's stream abstraction.
+
 -----
 
-### 5.2 HTTP/2 Engine
+### 5.2 Bridge Protocol: HTTP/2
 
-The HTTP/2 engine handles communication with standard web APIs (the majority of remote spaces).
+> **Scope:** The HTTP/2 engine is a Bridge Protocol only. It is used exclusively by the [Bridge Module](./bridge.md) for communicating with legacy HTTP servers (web APIs, cloud services). HTTP/2 is NOT used for AIOS-to-AIOS communication — the Mesh Protocol (§5.1) handles that natively.
+
+The HTTP/2 engine handles communication with standard web APIs (the majority of remote spaces backed by internet services).
 
 #### 5.2.1 h2 Crate Integration
 
@@ -238,7 +250,11 @@ Content-Type negotiation is automatic — the engine sets `Accept` headers based
 
 ### 5.3 QUIC and HTTP/3
 
-QUIC provides connection migration, 0-RTT resumption, and multiplexing without head-of-line blocking — ideal for mobile devices and unreliable networks.
+QUIC serves two distinct purposes in AIOS:
+
+1. **Mesh use (Tunnel mode):** QUIC/UDP encapsulates already-encrypted mesh packets for transit across the IP internet. In this role, QUIC is a transport carrier — the mesh payload is Noise-encrypted end-to-end, and QUIC provides NAT traversal and connection migration. See [mesh.md §M4.3](./mesh.md) for Tunnel mode details.
+
+2. **Bridge use (HTTP/3):** QUIC carries HTTP/3 requests to modern web servers that advertise `h3` support. In this role, QUIC replaces TCP+TLS as the transport for Bridge Protocol connections, providing 0-RTT resumption and eliminating head-of-line blocking.
 
 #### 5.3.1 quinn Integration
 
@@ -250,9 +266,11 @@ AIOS uses [quinn](https://crates.io/crates/quinn) for QUIC support. quinn is pur
 - Per-stream flow control (no HOL blocking)
 - DATAGRAM extension (RFC 9221) for low-latency unreliable delivery
 
-#### 5.3.2 QUIC vs TCP Selection
+Quinn is used by both the Mesh Layer (for Tunnel mode) and the Bridge Module (for HTTP/3). The Mesh Layer uses quinn's raw QUIC streams to carry Noise-encrypted mesh packets. The Bridge Module uses quinn's HTTP/3 layer for web API access.
 
-The Connection Manager selects QUIC over TCP when:
+#### 5.3.2 QUIC vs TCP Selection (Bridge)
+
+For Bridge connections to legacy internet services, the Connection Manager selects QUIC over TCP when:
 
 ```text
 Prefer QUIC when:
@@ -267,6 +285,8 @@ Prefer TCP (HTTP/2) when:
     - Single short request (TCP 3-way handshake ≈ QUIC 1-RTT)
     - Debugging/inspection needed (QUIC is opaque to middleboxes)
 ```
+
+For Mesh Tunnel mode, QUIC is always used (no TCP option) — the mesh requires UDP for NAT traversal and connection migration.
 
 #### 5.3.3 Connection Migration
 
@@ -283,7 +303,7 @@ Connection migration flow:
     7. Agent's subscription is uninterrupted
 ```
 
-This is transparent to the NTM and agents — quinn handles migration internally.
+This applies to both Bridge connections (HTTP/3 to web servers) and Mesh Tunnel connections (QUIC carrying mesh packets between AIOS devices). In both cases, the migration is transparent to the NTM and agents — quinn handles it internally.
 
 #### 5.3.4 0-RTT Resumption
 
@@ -306,9 +326,11 @@ The Connection Manager stores QUIC session tickets in the TLS session cache, sha
 
 -----
 
-### 5.4 WebSocket and Server-Sent Events
+### 5.4 Bridge Protocol: WebSocket and Server-Sent Events
 
-Real-time space subscriptions (`space::subscribe()`) use WebSocket or SSE depending on server support.
+> **Scope:** WebSocket and SSE are Bridge Protocols only. They are used for real-time subscriptions to legacy servers that do not speak the AIOS Mesh Protocol. For AIOS-to-AIOS subscriptions, the Mesh Protocol's native `SPACE_SUBSCRIBE` operation (§5.1.1) provides event streaming directly over the mesh — no WebSocket or SSE required.
+
+Real-time space subscriptions (`space::subscribe()`) to legacy servers use WebSocket or SSE depending on server support.
 
 #### 5.4.1 WebSocket Engine
 
@@ -382,9 +404,13 @@ During reconnection, the NTM sends the last-received version/event-id to the ser
 
 -----
 
-### 5.5 TLS and rustls
+### 5.5 Bridge Security: TLS and rustls
 
-All network communication (except local AIOS peer discovery) uses TLS 1.3. AIOS uses [rustls](https://crates.io/crates/rustls) — a pure Rust TLS implementation with no dependency on OpenSSL.
+> **Scope:** TLS is a Bridge-only security mechanism. The Mesh Stack uses Noise IK for encryption and authentication (see [mesh.md §M3](./mesh.md)). TLS is used exclusively for HTTPS connections through the Bridge Module — communicating with legacy internet servers that require TLS certificates.
+>
+> **Comparison:** Mesh uses Noise IK (peer-to-peer, raw public keys, no CAs, ~5 KB code). Bridge uses TLS 1.3 (client-server, X.509 certificates, ~150 root CAs, ~300 KB code). See [mesh.md §M3.1](./mesh.md) for the full comparison table.
+
+All Bridge network communication uses TLS 1.3. AIOS uses [rustls](https://crates.io/crates/rustls) — a pure Rust TLS implementation with no dependency on OpenSSL.
 
 #### 5.5.1 Why rustls
 
@@ -400,6 +426,8 @@ All network communication (except local AIOS peer discovery) uses TLS 1.3. AIOS 
 
 ```rust
 /// System-wide TLS configuration managed by the NTM.
+/// Used ONLY by the Bridge Module for legacy internet connections.
+/// Mesh connections use Noise IK (see mesh.md §M3).
 pub struct TlsConfig {
     /// Root certificate store (Mozilla roots via webpki-roots)
     root_store: RootCertStore,
@@ -453,17 +481,19 @@ Second connection (within ticket lifetime, typically 24h):
     (space::write) wait for full handshake confirmation.
 ```
 
-#### 5.5.5 Mutual TLS (mTLS)
+#### 5.5.5 Mutual TLS (mTLS) — Bridge Only
 
-For AIOS-to-AIOS connections, mutual TLS establishes bilateral identity:
+For Bridge connections that require client certificate authentication (enterprise APIs, cloud services):
 
 ```text
-mTLS flow:
-    1. Client presents AIOS device certificate (from device identity space)
-    2. Server presents AIOS device certificate
-    3. Both verify against AIOS CA (built into OS image)
+mTLS flow (Bridge):
+    1. Client presents AIOS device certificate
+    2. Server presents its certificate
+    3. Both verify against respective CA chains
     4. Connection established with bilateral identity proof
-    5. Capability exchange (§5.1.2) proceeds on verified connection
+    5. Bridge translates space operations over the authenticated connection
 ```
+
+Note: AIOS-to-AIOS mutual authentication uses Noise IK (see [mesh.md §M3](./mesh.md)), not mTLS. Noise IK provides stronger guarantees: raw public key authentication without CA dependencies, mandatory encryption, and identity hiding from passive observers. mTLS via the Bridge is used only when connecting to legacy servers that require client certificates.
 
 Device certificates are generated during first boot and stored in the identity space (see [identity.md](../../experience/identity.md)). They are never exported or accessible to agents.

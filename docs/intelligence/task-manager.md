@@ -1764,7 +1764,7 @@ pub enum DeviceCapability {
 
 1. Source device: Task Manager serializes `TaskHandoffPayload`
 2. Source device: Space Sync ensures completed subtask outputs are replicated
-3. Target device: Task Manager receives handoff via AIOS Peer Protocol
+3. Target device: Task Manager receives handoff via ANM Mesh Protocol
 4. Target device: Validates `required_capabilities` — can this device resume the task?
 5. Target device: If capable, loads task state, marks in-flight subtasks as `Failed(DeviceHandoff)`, and re-executes them from their inputs
 6. Target device: If not capable (e.g., no GPU for inference), notifies user: "This task requires capabilities not available on this device. [Continue on original device] [Wait for sync]"
@@ -2454,7 +2454,7 @@ These capabilities are not scheduled for near-term implementation but represent 
 
 ### 20.1 Distributed DAG Execution Across Device Mesh
 
-Full distributed task execution where the Task Manager automatically partitions DAGs across devices based on their capabilities, with consensus-based state management. This requires mature Space Mesh (Phase 38+) and the AIOS Peer Protocol for reliable cross-device subtask coordination. Builds on the device-aware DAG partitioning described in §16.3.
+Full distributed task execution where the Task Manager automatically partitions DAGs across devices based on their capabilities, with consensus-based state management. This requires mature Space Mesh (Phase 38+) and the ANM Mesh Protocol for reliable cross-device subtask coordination. Builds on the device-aware DAG partitioning described in §16.3.
 
 ### 20.2 Federated Task Learning
 

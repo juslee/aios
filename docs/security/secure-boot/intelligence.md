@@ -110,7 +110,7 @@ AIRS can predict when updates will be needed and pre-fetch them before the user'
 
 - **Usage-based model prediction:** If the user starts using a new feature that requires a specialized model (e.g., vision processing for camera), AIRS pre-fetches the recommended model before the user explicitly requests it.
 
-- **Peer-informed updates:** When AIOS Peer Protocol exchanges attestation tokens between devices, a device running a newer version can hint to an older device that an update is available, triggering an early check.
+- **Peer-informed updates:** When ANM Mesh Protocol exchanges attestation tokens between devices, a device running a newer version can hint to an older device that an update is available, triggering an early check.
 
 ### §12.4 Anomaly Detection for Update Behavior
 

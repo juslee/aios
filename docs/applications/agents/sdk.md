@@ -761,7 +761,7 @@ class AnalyzerAgent(Scriptable):
 - Scriptable suites: declared as Python dicts, marshalled to Rust `Suite` by the bridge
 - Best for: AI/ML agents, data processing, rapid prototyping
 
-**TypeScript runtime (TypeScriptRuntime).** TypeScript agents run in QuickJS-ng, a small embeddable JavaScript engine. The `AgentContext` is exposed as a JavaScript object via a napi-like bridge. Node.js APIs are not available — agents use the AIOS SDK. `fetch()` is redirected through the Network Translation Module.
+**TypeScript runtime (TypeScriptRuntime).** TypeScript agents run in QuickJS-ng, a small embeddable JavaScript engine. The `AgentContext` is exposed as a JavaScript object via a napi-like bridge. Node.js APIs are not available — agents use the AIOS SDK. `fetch()` is redirected through the AI Network Model (ANM).
 
 ```typescript
 import { agent, AgentContext, defineSuite } from "aios-sdk";

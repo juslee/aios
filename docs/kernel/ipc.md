@@ -1424,7 +1424,7 @@ Agent: "summarize this document" + local_only=true
 
 Agent: "translate this text to Japanese" + local_only=false
   → AIRS checks: is a translation model loaded? If yes, route locally.
-  → If not, route to cloud translation API via Network Translation Module.
+  → If not, route to cloud translation API via AI Network Model (ANM).
   → Agent code is identical in both cases.
 
 Agent: "find similar images in my photos"

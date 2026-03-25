@@ -12,8 +12,8 @@ firmware blob loading, and radio coexistence internally.
 
 Application developers use Wireless Kit when they need to interact with wireless
 connectivity beyond what [Network Kit](./network.md) provides. Network Kit handles
-TCP/IP-level networking and is the right choice for HTTP requests, socket connections, and
-DNS resolution. Wireless Kit is for lower-level wireless concerns: scanning for WiFi
+ANM mesh and Bridge Module (TCP/IP) networking and is the right choice for HTTP requests,
+socket connections, and DNS resolution. Wireless Kit is for lower-level wireless concerns: scanning for WiFi
 networks, managing Bluetooth pairings, communicating with BLE peripherals (fitness
 trackers, IoT sensors, smart home devices), or checking signal strength. If your agent
 only needs internet access, use Network Kit instead.

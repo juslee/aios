@@ -1,47 +1,61 @@
 # AIOS Networking — Network Security
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
-**Related:** [components.md](./components.md) — Capability Gate summary (§3.5), [protocols.md](./protocols.md) — TLS architecture, [../../security/model.md](../../security/model.md) — Security model
+**Related:** [anm.md](./anm.md) — ANM specification, [mesh.md](./mesh.md) — Mesh Layer, [bridge.md](./bridge.md) — Bridge Module, [components.md](./components.md) — Capability Gate summary (§3.5), [protocols.md](./protocols.md) — TLS architecture, [../../security/model.md](../../security/model.md) — Security model
 
 -----
 
 ## 6. Network Security
 
-AIOS networking security is built on three pillars: **capability enforcement** (who can talk to what), **packet filtering** (what traffic is allowed on the wire), and **credential isolation** (secrets never touch application code). Together they provide defense in depth — even if one layer is compromised, the others prevent data exfiltration.
+AIOS networking security follows the AI Network Model (ANM), where security is **structural** rather than policy-based. Traditional network security layers defenses on top of an inherently insecure transport (TCP/IP). ANM builds security into the network model itself — encryption is mandatory, authorization determines reachability, and identity is cryptographic.
 
-```mermaid
-flowchart TD
-    Agent["Agent"]
-    Agent -->|"space::read()"| CapGate
+This document covers the five ANM security layers and how they map to AIOS networking implementation. For mesh-native traffic, security is a property of the protocol. For bridge traffic (legacy TCP/IP), additional defense-in-depth measures compensate for the weaker trust model.
 
-    subgraph Kernel["Kernel (mandatory)"]
-        CapGate["§6.1 Capability Gate\ncheck + audit"]
-    end
+-----
 
-    subgraph NTM["NTM (userspace)"]
-        CredVault["§6.4 Credential Vault\ninject auth headers"]
-        Isolation["§6.3 Per-Agent Isolation\nnetwork namespace"]
-        Trust["§6.5 Layered Trust\ntls:os-managed labels"]
-    end
+### 6.0 ANM Security Model
 
-    subgraph Stack["Network Stack"]
-        Filter["§6.2 Packet Filter\negress/ingress rules"]
-    end
+The AI Network Model defines five security layers, ordered from lowest (closest to the wire) to highest (closest to the application). Each layer provides a distinct guarantee, and the guarantees compose — a packet traverses all five layers on both send and receive.
 
-    CapGate -->|"allowed"| CredVault
-    CredVault --> Isolation
-    Isolation --> Trust
-    Trust --> Filter
-    Filter --> Wire["Network"]
-
-    CapGate -->|"denied"| AuditDeny["Audit: DENIED"]
+```text
+L5: Behavioral Monitor    — anomalous pattern detection (AIRS-dependent)
+L4: Content Verification  — SHA-256 content hashes, Merkle DAG integrity
+L3: Capability Gate        — kernel-enforced authorization (NEVER degrades)
+L2: Mesh Encryption        — Noise IK, always-on, no plaintext mode
+L1: Peer Authentication    — Ed25519 chain, DeviceId = sha256(pubkey), no CAs
 ```
+
+#### Layer Descriptions
+
+**L1 — Peer Authentication** authenticates every peer cryptographically. A device's identity is `DeviceId = sha256(Ed25519_public_key)` — derived from its key pair, not assigned by any authority. There are no certificate authorities in the mesh. Trust is established through direct pairing (SPAKE2+), not through CA hierarchies. Authentication never degrades to anonymous or unverified connections.
+
+**L2 — Mesh Encryption** provides mandatory encryption via the Noise IK handshake pattern (see [mesh.md §M3](./mesh.md)). Every mesh packet is encrypted with forward-secret session keys derived from the Noise handshake. There is no plaintext mode, no configuration to disable encryption, and no "development mode" bypass. ChaCha20-Poly1305 is the default AEAD; AES-256-GCM is used on platforms with hardware AES acceleration.
+
+**L3 — Capability Gate** is the kernel-enforced authorization boundary. Every network operation requires a valid `CapabilityToken` — signed, attenuatable, temporally bounded. No token means no packet: the operation is never constructed, never routed, never delivered. This layer **NEVER degrades** — there is no partial authorization, no fallback to a weaker check, no "allow if capability service is unavailable." Capability enforcement is the structural zero-trust boundary of ANM.
+
+**L4 — Content Verification** ensures data integrity through content-addressed hashing. Objects are identified by `ContentHash` (SHA-256), and version history is maintained in a Merkle DAG. A receiver can verify that data has not been tampered with by checking the hash — no trust in the transport is required. For bridge-originated content, content verification is weaker because the hash is computed on arrival, not at the source.
+
+**L5 — Behavioral Monitor** detects anomalous network patterns through statistical analysis and, when AIRS is available, through ML-based anomaly detection. This layer identifies unusual traffic volumes, unexpected destinations, timing anomalies, and behavioral drift from established baselines. It operates on the audit trail generated by L3 (Capability Gate). See [behavioral-monitor](../../intelligence/behavioral-monitor.md) for the full detection architecture.
+
+#### ANM Security vs OSI Security
+
+| Security Concern | OSI / Traditional | ANM / AIOS |
+|---|---|---|
+| **Identity verification** | CA hierarchy (~150 root CAs, any can vouch for any server) | Ed25519 key chain, self-certifying DeviceId, no CAs |
+| **Authentication model** | Server proves identity to client; client auth optional | Mutual authentication always (Noise IK pattern) |
+| **Firewalls** | External policy appliance filtering by IP/port | Unnecessary — L3 Capability Gate is the filter |
+| **VPNs** | Encrypted tunnel to trusted network perimeter | Unnecessary — every connection is individually encrypted |
+| **Transport encryption** | TLS bolted on at session layer (optional, negotiated) | Noise IK at mesh layer (mandatory, no negotiation) |
+| **API keys / tokens** | Application manages credentials, often in environment variables | Credential Vault (Bridge only); mesh peers authenticate cryptographically |
+| **Audit trail** | Per-application logging (if any) | Structural — every L3 operation audited to tamper-evident log |
 
 -----
 
 ### 6.1 Kernel Capability Gate
 
 The capability gate is the only mandatory kernel component in the networking subsystem. Every network operation passes through it before reaching the NTM. It is non-negotiable and non-bypassable.
+
+> **ANM Context:** This is ANM Layer 3 (Capability Gate) — the structural zero-trust boundary. In the ANM security model, no capability token means no packet. This invariant holds for both mesh and bridge traffic paths.
 
 #### 6.1.1 Gate Architecture
 
@@ -124,9 +138,24 @@ pub struct GateToken {
 
 ### 6.2 Packet Filtering
 
-Below the NTM, the network stack enforces packet-level filtering rules derived from capabilities. This provides defense in depth — even if the NTM has a bug, the packet filter prevents unauthorized traffic.
+Packet filtering in ANM operates differently for mesh traffic and bridge traffic. The distinction is structural: mesh traffic is authorized by capability tokens at L3 before any packet is constructed, making IP-based filtering unnecessary. Bridge traffic requires traditional packet-level filtering because it interfaces with the IP-based internet.
 
-#### 6.2.1 Capability-Derived Filter Rules
+#### 6.2.1 Mesh Traffic — Capability IS the Filter
+
+For mesh-native traffic (Direct Link, Relay, Tunnel between AIOS peers), no IP-based packet filtering is needed. The Capability Gate (§6.1) prevents unauthorized operations from generating traffic in the first place. A packet without a valid capability token is never constructed — there is nothing to filter.
+
+```text
+Mesh path:
+    Agent → Capability Gate (L3) → Noise encryption (L2) → Mesh routing → Wire
+
+    No capability = no packet constructed = nothing to filter.
+    Port scanning returns nothing — there are no ports.
+    Network scanning returns nothing — unauthenticated peers cannot generate mesh traffic.
+```
+
+#### 6.2.2 Bridge Traffic — Capability-Derived Filter Rules
+
+For bridge traffic (TCP/IP to legacy internet services), packet filter rules are derived from active capabilities. This provides defense in depth — even if the NTM has a bug, the packet filter prevents unauthorized traffic.
 
 Instead of traditional firewall rules (static IP/port pairs), AIOS derives packet filter rules from active capabilities:
 
@@ -143,7 +172,7 @@ Derived filter rules (automatically generated):
 
 Rules are updated dynamically when capabilities are granted or revoked. There is no static firewall configuration file.
 
-#### 6.2.2 Filter Architecture
+#### 6.2.3 Filter Architecture
 
 The packet filter operates at the smoltcp interface level, inspecting packets before they reach the wire:
 
@@ -176,7 +205,7 @@ pub enum FilterAction {
 }
 ```
 
-#### 6.2.3 Default Deny
+#### 6.2.4 Default Deny
 
 The filter operates on a default-deny basis:
 
@@ -186,14 +215,14 @@ Rule evaluation order:
     2. Check system-wide ALLOW rules (DNS, DHCP, NTP)
     3. DEFAULT DENY — drop packet, log attempt
 
-System-wide ALLOW rules (always permitted):
+System-wide ALLOW rules (always permitted, Bridge traffic only):
     ALLOW UDP OUT → dhcp-server:67    (DHCP client)
     ALLOW UDP OUT → dns-server:53     (DNS resolution)
     ALLOW UDP OUT → ntp-server:123    (Time sync)
     ALLOW ICMP OUT → *                (Ping, path MTU)
 ```
 
-#### 6.2.4 No eBPF — Capability-Native Filtering
+#### 6.2.5 No eBPF — Capability-Native Filtering
 
 Traditional OSes use eBPF for programmable packet filtering. AIOS doesn't need eBPF because capabilities already express the filtering policy at a higher level of abstraction:
 
@@ -219,7 +248,7 @@ For use cases requiring deep packet inspection (malware scanning, content filter
 
 ### 6.3 Per-Agent Network Isolation
 
-Each agent's network traffic is isolated from other agents, preventing cross-agent packet snooping or traffic analysis.
+Each agent's network traffic is isolated from other agents, preventing cross-agent packet snooping or traffic analysis. This isolation applies to both mesh and bridge traffic paths.
 
 #### 6.3.1 Isolation Mechanisms
 
@@ -241,6 +270,8 @@ Layer 4: Address space isolation (kernel)
     Agent address spaces are separated (TTBR0 per process).
     DMA buffers are mapped only into the owning agent's space.
 ```
+
+> **Mesh isolation:** Mesh connections are also isolated per-agent. Each agent's Noise sessions are separate — Agent A's Noise session with a peer device cannot be accessed or observed by Agent B. The Noise session keys, handshake state, and transport cipher state are all per-agent. This means two agents on the same device communicating with the same remote peer establish independent Noise sessions.
 
 #### 6.3.2 Traffic Separation
 
@@ -273,7 +304,9 @@ Process running curl:
 
 ### 6.4 Credential Vault
 
-The credential vault stores API keys, tokens, certificates, and passwords. Agents use credentials without possessing them — the NTM injects credentials into outgoing requests.
+The Credential Vault is a **Bridge Module component**. Mesh peers authenticate cryptographically via Noise IK without stored credentials — the Ed25519 key pair IS the credential, and it never leaves the device's secure storage. The Credential Vault exists specifically for legacy internet services accessed through the Bridge, where API keys, OAuth tokens, and certificates must be injected into HTTP requests.
+
+Agents use credentials without possessing them — the NTM injects credentials into outgoing requests.
 
 #### 6.4.1 Credential Architecture
 
@@ -387,46 +420,75 @@ OAuth2 flow:
 
 -----
 
-### 6.5 Layered Trust Model
+### 6.5 Graduated Trust Model
 
-The networking subsystem follows the "mandatory kernel gate + optional userspace services" pattern from the [subsystem framework](../subsystem-framework.md). This creates a layered trust model visible to users.
+The ANM replaces the traditional binary trust model (trusted network / untrusted network) with **graduated trust levels** that reflect the actual security properties of each communication path. Trust is not a configuration — it is a property of the cryptographic relationship between peers.
 
-#### 6.5.1 Mandatory vs Optional Services
-
-```text
-Mandatory (kernel):
-    Capability gate — every network operation checked
-
-Strongly recommended (userspace):
-    OS TLS Service — connection pooling, session resumption,
-        certificate pinning, unified trust store
-    OS DNS Service — encrypted DNS (DoH/DoT), caching, audit
-
-Optional (userspace):
-    OS HTTP Service — connection pooling, response caching,
-        compression, retry, rate limit management
-```
-
-Agents CAN bypass the optional services (e.g., do their own TLS). But this is visible to the user through trust labels.
-
-#### 6.5.2 Trust Labels
-
-The layered approach creates visible trust signals for the user:
+#### 6.5.1 ANM Trust Levels
 
 ```text
-Agent A: net(api.weather.gov), tls(os-managed), http(os-managed), dns(os-managed)
-  → "Fully auditable. Maximum trust."
+Full (own devices)
+    Same user's devices sharing a primary identity key.
+    Mutual Noise IK authentication + shared space sync + mutual backup.
+    All spaces accessible. Unrestricted relay.
+    Example: user's laptop ↔ user's phone.
 
-Agent B: net(custom-server.io), tls(os-managed), http(self-managed), dns(os-managed)
-  → "Custom protocol over OS-verified TLS."
+Delegated (friends, family, colleagues)
+    Explicitly paired peers via SPAKE2+ pairing protocol.
+    Mutual Noise IK authentication + shared spaces as configured.
+    Relay with consent. Capability-bounded access.
+    Example: user's laptop ↔ friend's laptop (shared photo space).
 
-Agent C: net(*.onion), tls(self-managed), dns(self-managed)
-  → "Manages own encryption and DNS. OS verifies destination only."
+Service (relay nodes, backup servers, bootstrap nodes)
+    Infrastructure peers with role-specific capabilities only.
+    mesh.relay, space.backup, mesh.discovery — nothing more.
+    Cannot read data (Noise E2E encryption). Cannot escalate privileges.
+    Replaceable — switch providers by updating a capability delegation.
+    Example: public relay node forwarding encrypted mesh packets.
+
+Bridge (legacy internet services)
+    TCP/IP endpoints accessed through the Bridge Module.
+    All content DATA-labeled at the kernel level.
+    TLS best-effort (CA hierarchy, pinning where configured).
+    Credentials managed by Vault — agents never see raw secrets.
+    Trust limited to: "server responded, TLS verified, content screened."
+    Example: api.openai.com, api.github.com.
+
+Unknown (default deny)
+    No pairing, no capability, no trust.
+    Discovery and handshake only.
+    No space operations, no relay, no data exchange.
+    Example: unrecognized device broadcasting on local network.
 ```
 
-The user sees meaningful information, not IP addresses and port numbers. Trust labels are displayed in the Inspector ([inspector.md](../../applications/inspector.md)).
+#### 6.5.2 Trust Visibility
 
-#### 6.5.3 Browser Exception
+Trust levels are visible to the user through the Inspector ([inspector.md](../../applications/inspector.md)):
+
+```text
+Agent A: space::sync("photos/vacation")
+  → Peer: user's phone (trust: Full)
+  → Transport: Direct Link (Noise IK)
+  → "Syncing with your own device. End-to-end encrypted."
+
+Agent B: space::read("openai/v1/models")
+  → Endpoint: api.openai.com (trust: Bridge)
+  → Transport: Bridge (TLS 1.3, pinned certificate)
+  → "Accessing external API. TLS-encrypted. Credentials managed by OS."
+```
+
+#### 6.5.3 Honest Limitations of Bridge Trust
+
+Bridge-level trust is fundamentally weaker than mesh trust. The following limitations are inherent to communicating with legacy internet services and cannot be fully mitigated:
+
+- **Malicious API servers returning wrong-but-valid data.** If a weather API returns fabricated temperatures that pass schema validation, the Bridge cannot detect the lie. The data is well-formed but false. Mitigation: multi-source verification at the agent level.
+- **Server-side credential breaches.** If the API provider's database is compromised, Bridge security is irrelevant — the breach is upstream. Mitigation: credential rotation, scoping, monitoring.
+- **Government CA compromise for unpinned spaces.** A state-level adversary with CA access can intercept TLS for services where AIOS does not control certificate pinning. Pinned spaces are immune. Mitigation: expand pinning coverage over time.
+- **Metadata leakage.** DNS queries, IP addresses, and timing patterns reveal communication targets even when content is encrypted. Mitigation: DoH/DoT reduces DNS leakage; traffic padding is a future direction.
+
+These limitations are specific to the Bridge path. Mesh-native traffic (Full, Delegated, Service trust levels) is not subject to these weaknesses.
+
+#### 6.5.4 Browser Exception
 
 The web browser is the one agent where OS-managed TLS and HTTP are **mandatory, not optional**. The browser runs arbitrary, untrusted code (JavaScript) from any website. The browser agent cannot opt out of OS network management because its execution environment is fundamentally untrusted.
 
@@ -441,7 +503,7 @@ Browser agent trust constraints:
 
 For the browser's network architecture, see [browser.md](../../applications/browser.md).
 
-#### 6.5.4 Audit Integration
+#### 6.5.5 Audit Integration
 
 Every network operation is logged in the audit ring with sufficient detail for forensic analysis:
 
@@ -453,9 +515,11 @@ Audit entry fields:
     space_id        — target remote space
     capability_id   — which capability authorized it
     decision        — ALLOWED or DENIED
-    protocol        — HTTP/2, QUIC, AIOS Peer, etc.
-    tls_managed     — os-managed or self-managed
-    destination     — resolved IP:port (for forensic correlation)
+    trust_level     — Full/Delegated/Service/Bridge/Unknown
+    transport       — DirectLink/Relay/Tunnel/Bridge
+    protocol        — Noise IK, HTTP/2, QUIC, etc.
+    tls_managed     — os-managed or self-managed (Bridge only)
+    destination     — DeviceId (mesh) or resolved IP:port (Bridge)
     bytes_sent      — request size
     bytes_received  — response size
     latency_ms      — operation duration

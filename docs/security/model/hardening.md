@@ -113,7 +113,7 @@ pub enum CryptoSyscall {
 }
 ```
 
-**Why agents don't hold keys:** If an agent is compromised (supply chain attack, memory corruption, logic bug), any keys it holds are also compromised. By keeping keys in the kernel, a compromised agent cannot exfiltrate key material. The agent can perform crypto operations (sign, verify, encrypt, decrypt) but never possesses the keys themselves. This is the same principle as credential isolation in the Network Translation Module — agents use keys without possessing them.
+**Why agents don't hold keys:** If an agent is compromised (supply chain attack, memory corruption, logic bug), any keys it holds are also compromised. By keeping keys in the kernel, a compromised agent cannot exfiltrate key material. The agent can perform crypto operations (sign, verify, encrypt, decrypt) but never possesses the keys themselves. This is the same principle as credential isolation in the AI Network Model (ANM) — agents use keys without possessing them.
 
 -----
 

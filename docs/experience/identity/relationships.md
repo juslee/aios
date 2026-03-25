@@ -1,7 +1,7 @@
 # AIOS Relationships & Trust Model
 
 Part of: [identity.md](../identity.md) — Identity & Relationships
-**Related:** [core.md](./core.md) — Identity data model & key management, [sharing.md](./sharing.md) — Space sharing configuration, [cross-device.md](./cross-device.md) — Peer protocol & device sync, [privacy.md](./privacy.md) — Selective disclosure & ZKP
+**Related:** [core.md](./core.md) — Identity data model & key management, [sharing.md](./sharing.md) — Space sharing configuration, [cross-device.md](./cross-device.md) — ANM Mesh Protocol & device sync, [privacy.md](./privacy.md) — Selective disclosure & ZKP
 
 **Cross-references:** [decentralisation.md](../../security/decentralisation.md) — Pillar 1 (did:peer, SD-JWT), [behavioral-monitor](../../intelligence/behavioral-monitor.md) — Trust anomaly feeds
 

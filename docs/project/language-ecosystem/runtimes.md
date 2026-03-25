@@ -206,7 +206,7 @@ All I/O goes through the AIOS SDK:
 - `ctx.network.fetch()` instead of `http.request()` — capability-gated
 - `ctx.ai.complete()` instead of calling an external API
 
-`fetch()` is available but redirected through the Network Translation Module, which enforces
+`fetch()` is available but redirected through the AI Network Model (ANM), which enforces
 capability gates on which domains the agent can contact.
 
 ### Why QuickJS-ng?

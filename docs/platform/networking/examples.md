@@ -1,11 +1,57 @@
 # AIOS Networking — Concrete Examples & Data Model
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
-**Related:** [components.md](./components.md) — NTM components, [security.md](./security.md) — Network security, [protocols.md](./protocols.md) — Protocol engines
+**Related:** [components.md](./components.md) — NTM components, [security.md](./security.md) — Network security, [protocols.md](./protocols.md) — Protocol engines, [anm.md](./anm.md) — AIOS Network Model, [mesh.md](./mesh.md) — Mesh Layer, [bridge.md](./bridge.md) — Bridge Module
 
 -----
 
 ## 9. Concrete Examples & Integration
+
+### 9.0 Mesh-First Examples
+
+The following examples demonstrate the mesh layer's native capabilities — peer-to-peer communication that requires no IP, DNS, TLS, or HTTP. These represent the primary networking model for AIOS device-to-device interaction.
+
+#### Example 1: Two-Device Space Sync (Direct Link)
+
+```text
+Device A and Device B on same WiFi network.
+
+1. Device A broadcasts ANNOUNCE (EtherType 0x4149) on link-local
+2. Device B recognizes Device A from pairing database → sends ANNOUNCE_REPLY
+3. Noise IK handshake (0-RTT, both know each other's static keys from pairing)
+4. Capability exchange: A offers read on "photos/vacation", B accepts
+5. B: space::read("photos/vacation") → mesh resolves to Device A
+6. Mesh packet: SPACE_READ { space: photos/vacation, cap: <token> }
+7. A verifies capability token, returns content-addressed objects
+8. B verifies SHA-256 hashes of received objects, stores locally
+
+No IP, no DNS, no TLS, no HTTP involved.
+```
+
+This example illustrates the mesh layer's zero-configuration nature. Once devices are paired (a one-time operation), all subsequent synchronization is automatic and serverless. The Noise IK pattern provides 0-RTT encryption because both sides already know each other's public keys.
+
+#### Example 2: Capability Delegation Over Mesh
+
+```text
+User shares a space with a friend.
+
+1. Friend's device paired (BLE proximity + QR code verification)
+2. User selects "photos/vacation" → share → read-only → 7 days
+3. Kernel creates attenuated capability token:
+     - Base: full access to "photos/vacation"
+     - Attenuation: read-only (write stripped)
+     - Temporal: expires 2026-04-01T00:00:00Z
+4. Token sent via Noise IK mesh to friend's device
+5. Friend's kernel installs token in capability table
+6. Friend's agent: space::read("photos/vacation") → mesh routes to user's device
+7. After 7 days: token expires, automatic revocation propagated via mesh
+
+No server mediated this interaction.
+```
+
+This demonstrates the L4 Capability Layer's "never-degrade" invariant: the friend receives a strictly attenuated token (read-only, time-limited) that cannot be upgraded. The mesh protocol ensures the attenuation chain is cryptographically verifiable — no intermediate peer can modify the capability in transit.
+
+-----
 
 ### 9.1 Web Browsing
 
@@ -37,6 +83,8 @@ fn load_page(url: &str) -> Document {
 
 The browser is dramatically simpler because the OS handles connection pooling, TLS, caching (shadow engine), offline (cached pages), privacy (per-space cookie isolation), and security (CORS-like rules enforced at capability level).
 
+> **ANM context:** This is a **Bridge Module** example. The browser agent uses the Bridge Module for all HTTP/TLS traffic to internet endpoints. Space resolution for URLs goes through the Bridge's `SpaceResolver`, which performs DNS lookup and TCP/TLS connection management via smoltcp + rustls. The mesh layer is not involved in web browsing.
+
 -----
 
 ### 9.2 Agent-to-Agent Communication
@@ -64,6 +112,8 @@ shared.subscribe(|change| {
 ```
 
 This is the Plan 9 dream, realized. Location transparency — not as a leaky abstraction over sockets, but as a fundamental property of the space model.
+
+> **ANM context:** This example uses **mesh** for AIOS peer-to-peer communication (Device A ↔ Device B on local network or via tunnel) and **Bridge** for internet API access (e.g., if the shared space proxies data from a web service). The `space::remote()` call transparently selects mesh (for known AIOS peers) or Bridge (for internet endpoints) based on the Space Resolver's peer table.
 
 -----
 
@@ -101,6 +151,8 @@ close()    → drop channel, release resources
 
 For the POSIX translation layer architecture, see [posix.md](../posix.md).
 
+> **ANM context:** POSIX sockets (`socket()`, `connect()`, `send()`, `recv()`) route exclusively through the **Bridge Module**, not the mesh layer. BSD tools like `curl` and `wget` use TCP/IP, which requires the Bridge's smoltcp stack. Mesh peers are not addressable via IP sockets — they are accessed through the space API.
+
 -----
 
 ### 9.4 Automatic Credential Routing
@@ -137,6 +189,8 @@ Credentials flow from the credential space to the Network Translation Module. Th
 6. Response flows back to agent — credential was never in agent's address space
 
 For credential vault architecture, see [security.md §6.4](./security.md).
+
+> **ANM context:** Credential routing is **Bridge-specific**. Mesh peers authenticate via Noise IK handshakes using their device identity keys — no HTTP credentials, API keys, or TLS certificates are involved. The credential vault and automatic credential injection only apply to Bridge connections (HTTP/TLS to internet endpoints).
 
 -----
 
@@ -260,7 +314,72 @@ pub enum NetCapability {
 }
 ```
 
-#### 9.5.5 Circuit Breaker State
+#### 9.5.5 Mesh Types
+
+```rust
+/// Unique device identifier (derived from device identity key)
+pub struct DeviceId([u8; 32]);
+
+/// An active Noise IK session with a mesh peer
+pub struct NoiseSession {
+    /// The remote peer's device identity
+    peer: DeviceId,
+    /// Transport mode for this session
+    transport: TransportMode,
+    /// Session state (Noise handshake phase)
+    state: NoiseState,
+    /// Capabilities exchanged with this peer
+    capabilities: Vec<CapabilityGrant>,
+    /// Last activity timestamp
+    last_active: Timestamp,
+}
+
+/// Transport mode for mesh communication
+pub enum TransportMode {
+    /// Raw Ethernet frames (EtherType 0x4149), link-local only
+    DirectLink,
+    /// QUIC tunnel over IP (for WAN or when Direct Link unavailable)
+    Tunnel,
+}
+
+/// A mesh-layer packet (space operations over Noise)
+pub struct MeshPacket {
+    /// Operation type
+    op: MeshOp,
+    /// Target space for this operation
+    space: SpaceId,
+    /// Capability token authorizing this operation
+    cap_token: CapabilityToken,
+    /// Payload (content-addressed objects, metadata, etc.)
+    payload: Vec<u8>,
+}
+
+/// Mesh operations
+pub enum MeshOp {
+    SpaceRead,
+    SpaceWrite,
+    SpaceSync,
+    CapabilityExchange,
+    Announce,
+    AnnounceReply,
+}
+
+/// Entry in the peer table
+pub struct PeerEntry {
+    /// Device identity
+    device_id: DeviceId,
+    /// Human-readable name (from pairing)
+    name: String,
+    /// Current transport mode (or None if unreachable)
+    transport: Option<TransportMode>,
+    /// Capabilities this peer has granted us
+    granted_capabilities: Vec<CapabilityGrant>,
+    /// Last seen timestamp
+    last_seen: Timestamp,
+}
+```
+
+#### 9.5.6 Circuit Breaker State
 
 ```rust
 /// Circuit breaker state per remote space

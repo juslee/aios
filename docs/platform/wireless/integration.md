@@ -1,13 +1,13 @@
 # AIOS Wireless Subsystem Integration
 
 Part of: [wireless.md](../wireless.md) — WiFi & Bluetooth
-**Related:** [subsystem-framework.md](../subsystem-framework.md) — Universal framework patterns, [usb.md](../usb.md) — USB dongle discovery, [audio.md](../audio.md) — BT audio routing, [input.md](../input.md) — BT HID devices, [networking.md](../networking.md) — WiFi as NTM transport, [power-management.md](../power-management.md) — Radio power states
+**Related:** [subsystem-framework.md](../subsystem-framework.md) — Universal framework patterns, [usb.md](../usb.md) — USB dongle discovery, [audio.md](../audio.md) — BT audio routing, [input.md](../input.md) — BT HID devices, [networking.md](../networking.md) — WiFi as ANM Link Layer transport, [power-management.md](../power-management.md) — Radio power states
 
 -----
 
 ## 7. Subsystem Integration
 
-The wireless subsystem does not exist in isolation. WiFi connects to the Network Translation Module for IP transport. Bluetooth routes audio through the audio subsystem, HID input through the input subsystem, and serial data through POSIX device nodes. Both radios arrive over USB on QEMU and early hardware targets. Both share the 2.4 GHz band and must coordinate to avoid mutual interference. This section defines every integration surface — the contracts between the wireless subsystem and the rest of AIOS.
+The wireless subsystem does not exist in isolation. WiFi provides Link Layer transport for the ANM mesh (native AIOS networking) and the Bridge Module (legacy TCP/IP). Bluetooth routes audio through the audio subsystem, HID input through the input subsystem, and serial data through POSIX device nodes. BLE additionally provides peer discovery for ANM mesh peers. Both radios arrive over USB on QEMU and early hardware targets. Both share the 2.4 GHz band and must coordinate to avoid mutual interference. This section defines every integration surface — the contracts between the wireless subsystem and the rest of AIOS.
 
 -----
 
@@ -285,7 +285,7 @@ Braille displays commonly use Bluetooth serial connections (RFCOMM/SPP profile).
 
 ### 7.5 Networking Integration
 
-WiFi provides the physical link over which the Network Translation Module (NTM) operates. The WiFi subsystem manages radio-level concerns — scanning, association, authentication, roaming, power saving — while the NTM handles everything from IP addressing upward. The boundary is clean: WiFi delivers and accepts Ethernet-like frames; the NTM handles IP, TCP/UDP, TLS, HTTP, and QUIC.
+WiFi provides the physical link over which AIOS networking operates. For native AIOS traffic, WiFi carries ANM mesh packets directly (Noise IK encrypted, no IP layer). For legacy/external traffic, WiFi carries Ethernet frames to the Bridge Module (NTM), which handles IP, TCP/UDP, TLS, HTTP, and QUIC. The WiFi subsystem manages radio-level concerns — scanning, association, authentication, roaming, power saving — while the ANM mesh and Bridge Module handle everything above the link layer.
 
 #### 7.5.1 Integration Points
 
@@ -303,7 +303,7 @@ WiFi ↔ NTM:
     data frames (Ethernet II format via DataChannel)
 ```
 
-Link state changes notify the NTM when WiFi connectivity changes. The NTM uses this to trigger DNS re-resolution, DHCP renewal, and QUIC connection migration. Bandwidth estimates allow the NTM's bandwidth scheduler ([networking.md](../networking.md) §3.6) to make informed scheduling decisions — no point queuing a 4K video stream if the WiFi link is reporting 2 Mbps.
+Link state changes notify both the ANM mesh and the Bridge Module when WiFi connectivity changes. The ANM mesh uses this to update peer reachability and trigger mesh re-convergence. The Bridge Module uses this to trigger DNS re-resolution, DHCP renewal, and QUIC connection migration for legacy traffic. Bandwidth estimates allow the NTM's bandwidth scheduler ([networking.md](../networking.md) §3.6) to make informed scheduling decisions — no point queuing a 4K video stream if the WiFi link is reporting 2 Mbps.
 
 #### 7.5.2 WMM Access Category Mapping
 
@@ -320,9 +320,9 @@ AC_BK (Background)     Bulk / Low Priority         OS updates, backup sync
 
 Agent manifests can declare QoS requirements (see [ai-native.md](./ai-native.md) §8.8). An agent declared as `qos: voice` has its traffic mapped to AC_VO, receiving the highest-priority WiFi access. Agents without QoS declarations default to AC_BE.
 
-#### 7.5.3 QUIC Connection Migration
+#### 7.5.3 QUIC Connection Migration (Bridge Module)
 
-When the device transitions between WiFi and cellular (or between WiFi networks during a roam), established QUIC connections (via the quinn crate, see [networking.md](../networking.md) §5.3) can migrate to the new network path without dropping the connection. The flow:
+When the device transitions between WiFi and cellular (or between WiFi networks during a roam), established QUIC connections in the Bridge Module (via the quinn crate, see [networking.md](../networking.md) §5.3) can migrate to the new network path without dropping the connection. ANM mesh connections are inherently transport-agnostic and re-converge automatically via peer discovery. For legacy QUIC traffic, the flow is:
 
 1. WiFi subsystem detects roam or disconnection, notifies NTM via `link_state_change`
 2. NTM detects that the source IP address has changed (new DHCP lease on new network)

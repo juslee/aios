@@ -434,7 +434,7 @@ const OS_BASE_GRANTS: &[Capability] = &[
 
 | Profile | Grants | Use case |
 |---|---|---|
-| `subsystem.network-client.v1` | `Network(*)` with outbound-only, rate-limited | Agents that make HTTP requests |
+| `subsystem.network-client.v1` | `Network(*)` with outbound-only, rate-limited | Agents that access remote services (mesh peers or Bridge Module HTTP) |
 | `subsystem.space-reader.v1` | `ReadSpace(pattern)` with common attenuations | Read-only data access |
 | `subsystem.audio-playback.v1` | `Audio(Playback, default_device)` | Audio output only |
 | `subsystem.inference-user.v1` | `InferenceCpu(Normal)` with token budget | Agents using AIRS inference |

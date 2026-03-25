@@ -16,7 +16,7 @@
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) — Lock ordering and deadlock prevention
 - [spaces.md](../storage/spaces.md) — Space storage system deep dive
 - [compositor.md](../platform/compositor.md) — GPU compositor and window management
-- [networking.md](../platform/networking.md) — Network Translation Module deep dive
+- [networking.md](../platform/networking.md) — AI Network Model (ANM) deep dive
 - [subsystem-framework.md](../platform/subsystem-framework.md) — Universal hardware abstraction architecture
 - [airs.md](../intelligence/airs.md) — AI Runtime Service deep dive
 - [agents.md](../applications/agents.md) — Agent framework and SDK specification
@@ -71,7 +71,7 @@ AIOS reuses common OS terms but gives them specific meanings. This glossary defi
 | **Task** | Kernel | `Thread` | A schedulable unit of work assigned to a scheduling class (RT, Interactive, Normal, Idle) |
 | **Session** | Hardware | `SubsystemSession` | A bounded interaction with a hardware subsystem (audio output session, camera capture session) |
 | **Session** | AIRS | `InferenceSession` | A single inference request with its own KV cache, priority, token callback, and stop sequences |
-| **Service** | System | Trust Level 1 process | A userspace daemon (AIRS, Space Storage, Compositor, NTM, Service Manager) with elevated capabilities |
+| **Service** | System | Trust Level 1 process | A userspace daemon (AIRS, Space Storage, Compositor, ANM, Service Manager) with elevated capabilities |
 | **Service** | IPC | `ChannelId` + protocol | A capability-gated IPC channel with a registered protocol that clients call via `IpcCall` |
 | **Space** | Storage | `Space` | A named collection of typed objects with a security zone, encryption state, quota, and parent hierarchy |
 | **Space** | Security | `SecurityZone` | The zone classification of a space: Core, Personal, Collaborative, Untrusted, or Ephemeral |
@@ -165,8 +165,8 @@ flowchart TD
 *context-aware data transfer, transform*`"]
         IdentitySvc["`Identity Svc
 *crypto keys, relationships, trust model*`"]
-        NTM["`Network Translation Module
-*spaces to net*`"]
+        ANM["`AI Network Model
+*mesh native, bridge legacy*`"]
         PrefSvc["`Preference Svc
 *conversational config, learn*`"]
         Compositor["`Compositor
@@ -793,9 +793,9 @@ pub enum PreferenceSource {
 }
 ```
 
-### 2.9 Network Translation Module
+### 2.9 AI Network Model (ANM)
 
-Replaces application-level networking. Applications see spaces; the OS handles all networking transparently. **Full design in [networking.md](../platform/networking.md).**
+Replaces application-level networking. Applications see spaces; the OS handles all networking transparently via the ANM 5-layer model: mesh for AIOS-native peers, Bridge Module for legacy internet. **Full design in [networking.md](../platform/networking.md).**
 
 **Core principle:** Applications never see the network. There are only space operations — some of which happen to involve remote spaces — and the OS handles everything else.
 
@@ -804,12 +804,12 @@ flowchart TD
     App["`Application
 space::read#40;openai/v1/models#41;`"]
 
-    subgraph NTM["Network Translation Module"]
+    subgraph ANM["AI Network Model"]
         direction LR
         SpaceRes["`Space Resolver
-*semantic name to endpoint + protocol + auth*`"]
+*semantic name to mesh peer or bridge endpoint*`"]
         ConnMgr["`Connection Manager
-*pool, TLS, multiplex, keepalive*`"]
+*mesh direct, relay, bridge pool*`"]
         Shadow["`Shadow Engine
 *offline transparency, local cache, sync*`"]
         Resilience["`Resilience Engine
@@ -820,29 +820,36 @@ space::read#40;openai/v1/models#41;`"]
 *verify net capability before ANY operation*`"]
     end
 
-    Proto["`Protocol Engines
-*HTTP/2 | HTTP/3/QUIC | AIOS Peer | MQTT | Raw Socket*`"]
-    Transport["`Transport
-*TLS 1.3 rustls | QUIC quinn | Plain TCP/UDP*`"]
-    NetStack["`Network Stack
+    subgraph MeshStack["Mesh Stack (native)"]
+        MeshProto["`ANM Mesh Protocol
+*Noise IK, capability exchange*`"]
+    end
+
+    subgraph BridgeStack["Bridge Stack (legacy)"]
+        BridgeProto["`Bridge Protocols
+*HTTP/2 | QUIC/HTTP/3 | WebSocket | TLS*`"]
+        NetStack["`TCP/IP Stack
 *smoltcp: TCP/UDP/ICMP/IPv4/IPv6/ARP/DHCP*`"]
+    end
+
     Drivers["`Interface Drivers
 *VirtIO-Net | Ethernet | WiFi | Bluetooth | Cellular*`"]
 
-    App --> NTM
-    NTM --> Proto --> Transport --> NetStack --> Drivers
+    App --> ANM
+    ANM --> MeshStack --> Drivers
+    ANM --> BridgeStack --> Drivers
 ```
 
 **Key innovations:**
 
 - Mandatory kernel capability gate — agents cannot bypass network access control
-- Layered optional services — TLS, HTTP, connection pooling are userspace services agents can use or bypass with appropriate capability labeling
+- Dual-stack: ANM mesh (Noise IK, zero-trust, capability-delegated) for AIOS peers; Bridge Module (TCP/IP, TLS, HTTP) for legacy internet
 - Six error types instead of hundreds (Unreachable, Unavailable, PermissionDenied, NotFound, Conflict, TooLarge)
 - Offline transparency — applications never know whether they're online or offline
 - Credential isolation — agents use credentials without possessing them
 - Per-space capability enforcement — no default network access
-- Trust labeling — agents using OS TLS get higher trust rating than self-managed TLS
-- AIOS Peer Protocol for native device-to-device communication with capability exchange
+- Trust labeling — mesh connections get highest trust; agents using OS Bridge TLS get higher trust than self-managed TLS
+- ANM Mesh Protocol for native device-to-device communication with capability exchange
 - Implements the subsystem framework (see [subsystem-framework.md](../platform/subsystem-framework.md))
 
 ### 2.10 BSD Compatibility Layer
@@ -1429,7 +1436,7 @@ Load kernel ELF from EFI System Partition`"]
 System spaces: system/devices, system/audit*`"]
         P2["`Phase 2 -- Core Services
 *Device Registry, Subsystem Framework
-Input, Display, Compositor, Network TCP/IP*`"]
+Input, Display, Compositor, ANM (mesh + bridge)*`"]
         P3["`Phase 3 -- AI Services
 *AIRS loads, model registry scanned
 Space Indexer, Context Engine*`"]
@@ -1812,7 +1819,7 @@ AIOS is architected for multi-device support, even though only laptops/PCs are s
 Each future target brings a unique constraint that the architecture must handle:
 
 - **Phones:** Apps and media consume 50-70% of storage. Today's iPhones have a minimum of 128 GB with 256 GB being the practical buy. AIOS competes for the remaining 30-50%. The storage budget and pressure system handles this, but the model strategy shifts to 1-2 small models with aggressive eviction.
-- **TVs:** Minimal local storage. Models are streamed from a hub device on the local network or downloaded on demand. The NTM's mmap-over-network capability enables this — model weights are fetched as page faults, block by block.
+- **TVs:** Minimal local storage. Models are streamed from a hub device on the local network or downloaded on demand. The ANM's mmap-over-mesh capability enables this — model weights are fetched as page faults, block by block.
 - **SBCs:** The tightest constraints but also the simplest use case. Single model, minimal version history, aggressive compression.
 
 ### 9.4 Hardware Trends and AIOS Adaptation

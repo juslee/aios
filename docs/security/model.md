@@ -48,7 +48,7 @@ AIOS runs autonomous agents that perform actions on behalf of the user. This is 
 
 **Physical access.** An adversary with physical access to the device attempts to extract data from storage, inject code via USB, or boot an alternative OS to bypass security. Relevant for lost/stolen devices.
 
-**Network attacks.** Man-in-the-middle attacks on agent-to-service communication, DNS spoofing to redirect agent traffic, rogue AIOS peer devices attempting capability exchange, replay attacks against the AIOS Peer Protocol.
+**Network attacks.** On the ANM mesh: rogue peer devices attempting capability exchange, replay attacks against the Noise IK handshake, relay node manipulation. On the Bridge Module (legacy IP): man-in-the-middle attacks on agent-to-service communication, DNS spoofing to redirect agent traffic. The mesh and bridge have distinct security models — mesh traffic is authenticated by device identity keys (Noise IK), while bridge traffic relies on TLS with certificate validation.
 
 ### 1.2 Trust Boundaries
 
@@ -94,7 +94,7 @@ communicate with agents outside IPC channels`"]
     subgraph TL4["TRUST LEVEL 4: Web content / Tab agents (lowest trust)"]
         TL4_desc["`Each browser tab is an agent. Runs arbitrary JS from any
 origin. Capabilities derived from URL origin, not manifest.
-Mandatory OS-managed TLS and HTTP. Cannot opt out.
+Web traffic via Bridge Module (OS-managed TLS). Cannot opt out.
 
 CAN: render content, make network requests to own origin,
 use Web APIs (with user prompts for camera/mic/GPS)

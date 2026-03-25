@@ -41,7 +41,7 @@ The user never has to interact with AI to use the computer. AI enhances silently
 | User accounts | Identity & relationships | Cryptographic identity, graduated trust |
 | Window manager | Semantic compositor (GPU-native) | AI understands window content, mediates interactions |
 | Filesystem permissions | 8-layer security model | Intent verification, behavioral boundaries, adversarial AI defense |
-| Sockets & HTTP libraries | Network Translation Module | Apps see spaces, OS handles networking transparently |
+| Sockets & HTTP libraries | AI Network Model (ANM) | Apps see spaces, OS handles networking via mesh (native) or Bridge Module (legacy) |
 | Application-level device APIs | Subsystem Framework | Universal hardware abstraction with capability gates |
 
 ---
@@ -110,8 +110,8 @@ flowchart TD
 *context-aware data transfer, transform*`"]
         IdentitySvc["`Identity Svc
 *crypto keys, relationships, trust model*`"]
-        NTM["`Network Translation Module
-*spaces to net*`"]
+        ANM["`AI Network Model
+*mesh native, bridge legacy*`"]
         PrefSvc["`Preference Svc
 *conversational config, learn*`"]
         Compositor["`Compositor
@@ -239,7 +239,7 @@ flowchart TD
 
 **Preferences** replaces config files. Conversational configuration, AI-mediated, evolves through observed behavior.
 
-**Network Translation Module** replaces application-level networking. Applications see space operations; the OS handles DNS, TLS, connection pooling, retry logic, offline caching, bandwidth scheduling.
+**AI Network Model (ANM)** replaces application-level networking. AIOS-native peers communicate over the ANM mesh (Noise IK authenticated, capability-delegated); legacy internet traffic flows through the Bridge Module (TCP/IP, TLS, HTTP). Applications see space operations; the OS handles all transport transparently.
 
 **Subsystem Framework** replaces ad-hoc hardware abstraction. Every hardware subsystem (network, audio, USB, display, camera, Bluetooth, GPS, print) implements the same five-layer architecture with capability gates, sessions, data channels, audit, and POSIX bridges.
 
@@ -468,21 +468,21 @@ All subsystems at a glance:
 
 ---
 
-## 5. Network Translation Module
+## 5. AI Network Model (ANM)
 
-Applications never see the network. There are only space operations — some of which happen to involve remote spaces — and the OS handles everything else.
+Applications never see the network. There are only space operations — some of which happen to involve remote spaces — and the OS handles everything else. AIOS-native peers communicate over the ANM mesh (Noise IK); legacy internet traffic flows through the Bridge Module (TCP/IP, TLS).
 
 ```mermaid
 flowchart TD
     App["`Application
 space::read#40;openai/v1/models#41;`"]
 
-    subgraph NTM["Network Translation Module"]
+    subgraph ANM["AI Network Model"]
         direction LR
         SpaceRes["`Space Resolver
-*semantic name to endpoint + protocol + auth*`"]
+*semantic name to mesh peer or bridge endpoint*`"]
         ConnMgr["`Connection Manager
-*pool, TLS, multiplex, keepalive*`"]
+*mesh direct, relay, bridge pool*`"]
         Shadow["`Shadow Engine
 *offline transparency, local cache, sync*`"]
         Resilience["`Resilience Engine
@@ -493,17 +493,24 @@ space::read#40;openai/v1/models#41;`"]
 *verify net capability before ANY operation*`"]
     end
 
-    Proto["`Protocol Engines
-*HTTP/2 | HTTP/3/QUIC | AIOS Peer | MQTT | Raw Socket*`"]
-    Transport["`Transport
-*TLS 1.3 rustls | QUIC quinn | Plain TCP/UDP*`"]
-    NetStack["`Network Stack
+    subgraph MeshStack["Mesh Stack (native)"]
+        MeshProto["`ANM Mesh Protocol
+*Noise IK, capability exchange*`"]
+    end
+
+    subgraph BridgeStack["Bridge Stack (legacy)"]
+        BridgeProto["`Bridge Protocols
+*HTTP/2 | QUIC/HTTP/3 | WebSocket | TLS*`"]
+        NetStack["`TCP/IP Stack
 *smoltcp: TCP/UDP/ICMP/IPv4/IPv6/ARP/DHCP*`"]
+    end
+
     Drivers["`Interface Drivers
 *VirtIO-Net | Ethernet | WiFi | Bluetooth | Cellular*`"]
 
-    App --> NTM
-    NTM --> Proto --> Transport --> NetStack --> Drivers
+    App --> ANM
+    ANM --> MeshStack --> Drivers
+    ANM --> BridgeStack --> Drivers
 ```
 
 ---
@@ -597,7 +604,7 @@ GPU, compositor, input, networking. The plumbing everything above depends on.
 | 6 | GPU & Display | 6 weeks | GPU-accelerated rendering, font rendering |
 | 7 | Window Compositor & Shell | 7 weeks | Boot to GUI desktop with window management |
 | 8 | Input & Terminal | 4 weeks | Keyboard/mouse, terminal emulator |
-| 9 | Basic Networking | 4 weeks | TCP/IP networking (smoltcp) |
+| 9 | Basic Networking | 4 weeks | ANM mesh (native) + Bridge Module (TCP/IP via smoltcp) |
 
 ### Tier 3: AI & Intelligence — Phases 10–19 (Weeks 12–23)
 
@@ -637,7 +644,7 @@ Full networking, USB, wireless, power, thermal management. Required for real har
 
 | Phase | Name | Duration | Deliverable |
 |---|---|---|---|
-| 28 | Network Translation Module | 5 weeks | Full NTM: space resolver, shadow engine, protocols |
+| 28 | AI Network Model (Full) | 5 weeks | Full ANM: mesh manager, space resolver, shadow engine, bridge protocols |
 | 29 | USB Stack & Hotplug | 5 weeks | xHCI, HID, mass storage, device hotplug |
 | 30 | WiFi Stack | 4 weeks | 802.11, WPA2/WPA3-SAE, station management |
 | 31 | Bluetooth & Wireless Integration | 4 weeks | HCI, L2CAP, A2DP, BLE GATT, coexistence |
@@ -831,13 +838,16 @@ docs/
 │   │   ├── integration.md               Capability system, POSIX bridge, power
 │   │   ├── ai.md                        Predictive input, adaptive params
 │   │   └── future.md                    Spatial, voice, neural, haptics
-│   ├── networking.md                        Networking hub (6 sub-docs)
-│   │   ├── components.md                Space Resolver, Shadow Engine, Bandwidth Scheduler
-│   │   ├── stack.md                     smoltcp, VirtIO-Net, buffer management
-│   │   ├── protocols.md                 HTTP/2, QUIC, WebSocket, TLS
-│   │   ├── security.md                  Capability gate, packet filtering
-│   │   ├── examples.md                  Usage scenarios and data model
-│   │   └── future.md                    AI-driven networking
+│   ├── networking.md                        Networking hub (ANM, 8 sub-docs)
+│   │   ├── anm.md                       ANM 5-layer model, data units, design principles
+│   │   ├── mesh.md                      Mesh Layer: Noise IK, transport modes, peer discovery
+│   │   ├── bridge.md                    Bridge Module: TCP/IP translation, POSIX socket shim
+│   │   ├── components.md                Mesh Manager, Space Resolver, Bandwidth Scheduler
+│   │   ├── stack.md                     Mesh Stack + Bridge Stack (smoltcp), VirtIO-Net
+│   │   ├── protocols.md                 ANM Mesh Protocol (native), Bridge protocols (HTTP/2, QUIC, TLS)
+│   │   ├── security.md                  ANM security model, capability gate, packet filtering
+│   │   ├── examples.md                  Mesh-first and Bridge usage scenarios
+│   │   └── future.md                    AI-driven networking, mesh research
 │   ├── audio.md                             Audio subsystem hub (5 sub-docs)
 │   │   ├── subsystem.md                 Sessions, capabilities, routing
 │   │   ├── mixing.md                    Mixer, SRC, capture, DSP graph
@@ -1011,7 +1021,7 @@ Deep-dive technical specifications organized by domain. **Bold** documents are h
 | **[compositor.md](../platform/compositor.md)** | Compositor hub (6) — protocol, rendering, input, GPU, security, AI-native |
 | **[accelerators.md](../platform/accelerators.md)** | Accelerator drivers hub (5) — VirtIO-GPU 3D, VideoCore VII, Apple ANE |
 | **[input.md](../platform/input.md)** | Input subsystem hub (6) — devices, events, gestures, integration, AI |
-| **[networking.md](../platform/networking.md)** | Networking hub (6) — components, stack, protocols, security, examples |
+| **[networking.md](../platform/networking.md)** | Networking hub (ANM, 8) — ANM spec, mesh, bridge, components, stack, protocols, security, examples |
 | **[audio.md](../platform/audio.md)** | Audio subsystem hub (5) — sessions, mixing, drivers, scheduling, integration |
 | **[usb.md](../platform/usb.md)** | USB subsystem hub (4) — controller, device classes, hotplug, security |
 | **[wireless.md](../platform/wireless.md)** | Wireless hub (6) — WiFi, Bluetooth, firmware, security, integration |

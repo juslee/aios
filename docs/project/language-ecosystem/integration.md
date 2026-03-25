@@ -105,7 +105,7 @@ CPython + Node.js available*`"]
 - [ ] napi-like bridge for `AgentContext`
 - [ ] `@aios/sdk` npm package
 - [ ] TypeScript → JavaScript transpilation at install time
-- [ ] `fetch()` redirection through Network Translation Module
+- [ ] `fetch()` redirection through AI Network Model (ANM)
 - [ ] Promise/async integration with AIOS IPC
 
 **WASM Runtime (Phase 17):**

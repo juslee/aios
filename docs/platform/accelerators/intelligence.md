@@ -227,7 +227,7 @@ Future AIOS versions may support network-attached accelerators accessible over T
 
 - **eGPU compute**: External GPU connected via Thunderbolt. The VirtIO-GPU 3D driver model extends naturally — the transport changes from MMIO to PCIe/Thunderbolt, but the command protocol is similar.
 - **AI accelerator dongles**: USB-attached NPU devices (Intel Neural Compute Stick, Google Coral USB). These would implement `AcceleratorDriver` with USB transport instead of MMIO.
-- **Remote inference**: Network-attached inference servers accessed via AIOS Peer Protocol. The compute subsystem would add a `RemoteAcceleratorDriver` that proxies `submit()` over the network.
+- **Remote inference**: Network-attached inference servers accessed via ANM Mesh Protocol. The compute subsystem would add a `RemoteAcceleratorDriver` that proxies `submit()` over the network.
 
 The ComputeTopology ([compute/registry.md](../../kernel/compute/registry.md) §6) already supports asymmetric latency between devices, making disaggregated accelerators a topology extension rather than an architectural change.
 

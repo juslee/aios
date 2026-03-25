@@ -2,7 +2,7 @@
 
 **Audience:** All developers (kernel, platform, application, security)
 **Scope:** Cross-cutting — identity, storage, networking, intelligence, security, agents
-**Related:** [identity.md](../experience/identity.md) — Cryptographic identity, [multi-device.md](../platform/multi-device.md) — Device mesh and enterprise, [sync.md](../storage/spaces/sync.md) — Merkle exchange protocol, [model.md](./model.md) — Capability system and security layers, [networking.md](../platform/networking.md) — Network Translation Module, [airs.md](../intelligence/airs.md) — AI Runtime Service, [agents.md](../applications/agents.md) — Agent model, [inspector.md](../applications/inspector.md) — Security dashboard
+**Related:** [identity.md](../experience/identity.md) — Cryptographic identity, [multi-device.md](../platform/multi-device.md) — Device mesh and enterprise, [sync.md](../storage/spaces/sync.md) — Merkle exchange protocol, [model.md](./model.md) — Capability system and security layers, [networking.md](../platform/networking.md) — Network Translation Module, [anm.md](../platform/networking/anm.md) — AI Network Model, [airs.md](../intelligence/airs.md) — AI Runtime Service, [agents.md](../applications/agents.md) — Agent model, [inspector.md](../applications/inspector.md) — Security dashboard
 
 ---
 
@@ -10,7 +10,7 @@
 
 Every mainstream operating system depends on servers you don't control. Your identity is an Apple ID, a Google Account, a Microsoft Account — a row in someone else's database. Your files live in iCloud, Google Drive, OneDrive — on someone else's disks. Your device syncs through someone else's infrastructure. If that infrastructure goes down, changes policy, or gets compromised, your digital life is held hostage.
 
-AIOS eliminates this dependency. Not by being offline-only or anti-cloud, but by making **cryptographic proof** the foundation of trust instead of **institutional authority**. Your identity is an Ed25519 key pair that you generate, on your device, with no server involved. Your data is content-addressed and Merkle-verified — two devices can prove they have identical data without trusting each other or any third party. Your devices find and authenticate each other directly, using mutual TLS with device certificates issued by your identity key (no external CA).
+AIOS eliminates this dependency. Not by being offline-only or anti-cloud, but by making **cryptographic proof** the foundation of trust instead of **institutional authority**. Your identity is an Ed25519 key pair that you generate, on your device, with no server involved. Your data is content-addressed and Merkle-verified — two devices can prove they have identical data without trusting each other or any third party. Your devices find and authenticate each other directly, using the ANM Mesh Protocol with Noise IK handshakes verified by your Ed25519 identity key chain (no external CA).
 
 The result: everything works without a server. Everything works offline. Everything works if a company goes bankrupt, changes its terms of service, or gets acquired. And when you do want cloud services — a hosted LLM, a web API, a collaborative workspace — AIOS connects to them as a peer with explicit, revocable capability tokens, not as a dependent with implicit trust.
 
@@ -62,7 +62,7 @@ flowchart TB
     end
 
     subgraph P4["Pillar 4\nPeer-to-Peer Communication"]
-        P2P["AIOS Peer Protocol (QUIC)\nMutual TLS\nmDNS/BLE discovery"]
+        P2P["ANM Mesh Protocol\nNoise IK authentication\nLink-local/BLE discovery"]
     end
 
     subgraph P5["Pillar 5\nFederated Intelligence"]
@@ -81,7 +81,7 @@ flowchart TB
         S1["Identity Service\n→ identity.md"]
         S2["Kernel Capability System\n→ model/capabilities.md"]
         S3["Space Storage + Sync\n→ spaces.md, sync.md"]
-        S4["NTM + Peer Protocol\n→ networking.md"]
+        S4["NTM + ANM Mesh Protocol\n→ networking.md"]
         S5["AIRS\n→ airs.md"]
     end
 
@@ -97,7 +97,7 @@ flowchart TB
 | Cryptographic Identity | No accounts, no passwords. Scan QR to add a device. | Ed25519 key hierarchy, device certificates, peer CRL | [core.md §3-4](../experience/identity/core.md), [relationships.md §5](../experience/identity/relationships.md) |
 | Capability-Gated Trust | Apps ask for what they need. Revoke anytime. | Unforgeable tokens, attenuation, cross-device delegation | [capabilities.md §3](./model/capabilities.md) |
 | Content-Addressed Storage | Files sync across devices automatically. No conflicts lost. | SHA-256 hashes, Merkle DAG, three-round exchange | [sync.md §8](../storage/spaces/sync.md) |
-| Peer-to-Peer Communication | Devices find each other. No cloud account needed. | QUIC + mutual TLS, mDNS/BLE discovery, Shadow Engine | [protocols.md §5.1](../platform/networking/protocols.md) |
+| Peer-to-Peer Communication | Devices find each other. No cloud account needed. | ANM Mesh Protocol (Noise IK), link-local + BLE discovery, Shadow Engine | [protocols.md §5.1](../platform/networking/protocols.md), [anm.md](../platform/networking/anm.md) |
 | Federated Intelligence | AI knows your preferences everywhere. Data stays on device. | AIRS context sync, federated learning, local inference | [airs.md §1-2](../intelligence/airs.md) |
 
 The pillars have a dependency order: Identity (1) must exist before capabilities (2) can be identity-bound. Capabilities (2) must exist before storage (3) can be access-controlled. Identity (1) and storage (3) must exist before peer communication (4) can authenticate and verify. All four must exist before intelligence (5) can sync across devices. This dependency chain determines the implementation order (see §13).
@@ -136,7 +136,7 @@ flowchart TD
 ```
 
 - **Primary key**: Generated once, stored in TPM/Secure Enclave where available. Signs device keys. Recovery via threshold secret sharing across trusted devices (see [privacy.md §14](../experience/identity/privacy.md)).
-- **Device keys**: One per device, signed by the primary key. Used for mutual TLS in peer connections. Can be revoked individually without affecting other devices.
+- **Device keys**: One per device, signed by the primary key. Used for Noise IK authentication in mesh peer connections. Can be revoked individually without affecting other devices.
 - **Session keys**: Ephemeral, derived per-connection. Compromise of a session key does not compromise the device key.
 - **Graduated trust**: Relationships aren't binary. Trust is a spectrum: Family → Friend → Colleague → Acquaintance → Service → Unknown. Trust level affects sync defaults, capability delegation limits, and attention priority (see [relationships.md §5](../experience/identity/relationships.md)).
 
@@ -167,7 +167,7 @@ AIOS uses **capability-based security**: every access requires presenting an unf
 - **Temporally bounded** — every token has a mandatory expiry (see [capabilities.md §3.1](./model/capabilities.md))
 - **Revoked** — by the user, by timeout, or by the system. Revocation cascades to all delegated children.
 
-**Cross-device delegation:** When a capability is delegated to an agent on another device, it travels via the AIOS Peer Protocol as an encrypted, signed token. The receiving device's kernel verifies the signature chain (token → granting identity → primary key) before installing the token in the agent's capability table. No central capability server is needed — the cryptographic chain is self-verifying.
+**Cross-device delegation:** When a capability is delegated to an agent on another device, it travels via the ANM Mesh Protocol as an encrypted, signed token (protected by the Noise IK session). The receiving device's kernel verifies the signature chain (token → granting identity → primary key) before installing the token in the agent's capability table. No central capability server is needed — the cryptographic chain is self-verifying.
 
 See [capabilities.md §3.1-§3.6](./model/capabilities.md) for the full token lifecycle, and [layers.md §2](./model/layers.md) for how capability checks integrate with the eight defense layers.
 
@@ -219,7 +219,7 @@ sequenceDiagram
     A->>A: Append to local Merkle DAG
 ```
 
-**No server participates** in this exchange. The two devices communicate directly via the AIOS Peer Protocol (§6). The Merkle tree structure guarantees that a malicious peer cannot inject false data — every hash is verifiable.
+**No server participates** in this exchange. The two devices communicate directly via the ANM Mesh Protocol (§6). The Merkle tree structure guarantees that a malicious peer cannot inject false data — every hash is verifiable.
 
 **Conflict resolution** without a central arbiter: each security zone has a default policy (Personal → manual user choice, Collaborative → three-way merge with fork fallback, Core → last-writer-wins, Ephemeral → not synced). See [sync.md §8.1-§8.2](../storage/spaces/sync.md) for the full protocol and [versioning.md §5](../storage/spaces/versioning.md) for the Merkle DAG structure.
 
@@ -235,18 +235,22 @@ When you're away from home, your devices sync over the internet — still direct
 
 ### How it works
 
-When two AIOS devices communicate, they speak the **AIOS Peer Protocol** — a native binary protocol built on QUIC that carries the full richness of spaces, capabilities, and identity.
+When two AIOS devices communicate, they speak the **ANM Mesh Protocol** — the native ANM Layer 2 protocol that operates over raw Ethernet (Direct Link for LAN), relay peers, or QUIC tunnels (for WAN). The Mesh Protocol carries the full richness of spaces, capabilities, and identity.
 
-**Why not just HTTP?** HTTP is designed for client-server interactions: a browser requests a page from a server. AIOS device-to-device communication is symmetric — both devices are peers. The Peer Protocol supports bidirectional streaming, multiplexed space operations, and capability exchange natively. HTTP/2 and HTTP/3 are available for connecting to web services, but device-to-device always uses the native protocol.
+**Why not HTTP?** HTTP lives in the Bridge Module as a translation layer for legacy internet services — web APIs, cloud endpoints, CDNs. The native AIOS network is the mesh. Device-to-device communication is symmetric: both devices are peers speaking the same protocol. The Mesh Protocol supports bidirectional streaming, multiplexed space operations, and capability exchange natively. HTTP/2 and HTTP/3 are available only for connecting to TCP/IP services via the Bridge Module. See [anm.md](../platform/networking/anm.md) for the full ANM specification.
 
 **Connection establishment:**
 
-1. **Discovery**: mDNS for local network, BLE for proximity, stored peer addresses for WAN. No central directory service.
-2. **Mutual TLS**: Both devices present their device certificates (signed by their primary identity key). Both verify the other's certificate chain against the AIOS CA bundle built into the OS image. This "AIOS CA" is not a third-party or vendor CA; it is a set of trust anchors derived from the identity keys established during initial pairing (and subsequent device enrolment) for that user/mesh.
-3. **Capability exchange**: After TLS handshake, devices exchange their sync capability sets — which spaces they're authorized to sync, what operations are permitted.
+1. **Discovery**: Link-local multicast (EtherType `0x4149`) for LAN, BLE for proximity, stored peers for WAN. No central directory.
+2. **Authentication**: Noise IK handshake — both devices verify each other's Ed25519 key chain (session key → device key → primary identity key). Previously paired peers establish sessions with 0-RTT.
+3. **Capability exchange**: After Noise handshake, devices exchange their sync capability sets — which spaces they're authorized to sync, what operations are permitted.
 4. **Space operations**: Sync proceeds via the Merkle exchange protocol (§5). Application-level space operations (`space::read()`, `space::write()`) are transparently routed to the peer when the target space is remote.
 
-**Offline-first via Shadow Engine**: The NTM's Shadow Engine maintains local copies of remote spaces. All operations target the shadow first. When the peer is reachable, the Shadow Engine reconciles via Merkle exchange. This means applications never need to handle "offline" as a special case — they always operate on local data, and sync is an OS-level concern.
+**Offline-first via Shadow Engine**: The NTM's Shadow Engine maintains local copies of remote spaces. All operations target the shadow first. When the peer is reachable, the Shadow Engine reconciles via Merkle exchange. The Shadow Engine caches content-addressed space objects (SHA-256 hashes), not HTTP responses. This means applications never need to handle "offline" as a special case — they always operate on local data, and sync is an OS-level concern.
+
+### Servers as Mesh Peers
+
+In ANM, there is no structural distinction between "client" and "server." Relay servers, backup servers, discovery servers, and compute servers are mesh peers with role capabilities — they run the same Mesh Protocol, authenticate with the same Noise IK handshake, and are subject to the same audit trail. A relay peer is simply a peer that holds a `Relay` capability and forwards `MeshPacket`s on behalf of others. This uniformity means the security model applies identically to all participants. See [anm.md §A4 Principle 5](../platform/networking/anm.md) for the "Servers ARE Peers" design principle.
 
 See [protocols.md §5.1](../platform/networking/protocols.md) for protocol wire format, [components.md §3.1, §3.3](../platform/networking/components.md) for Space Resolver and Shadow Engine, and [pairing.md §3.1](../platform/multi-device/pairing.md) for discovery mechanisms.
 
@@ -290,7 +294,7 @@ flowchart TB
     end
 
     subgraph L4["Layer 4: Secure Transport"]
-        ST["Can I trust this connection?\n\nMutual TLS with identity certificates\nNo CA — trust anchored to pairing\nSession keys ephemeral, forward secrecy"]
+        ST["Can I trust this connection?\n\nNoise IK with identity key chain\nNo CA — trust anchored to pairing\nSession keys ephemeral, forward secrecy"]
     end
 
     subgraph L3["Layer 3: Data Integrity"]
@@ -330,7 +334,7 @@ When an agent on Device A needs a capability scoped to a space that lives on Dev
 1. Agent on A requests the capability via IPC.
 2. A's AIRS evaluates the request against the agent's behavioral profile and trust level.
 3. If approved, A's kernel creates an attenuated capability token (narrowed to the specific space and operation, time-bounded).
-4. The token is signed by A's device key and transmitted to B via the Peer Protocol.
+4. The token is signed by A's device key and transmitted to B via the ANM Mesh Protocol.
 5. B's kernel verifies the signature chain: token → A's device key → primary identity key.
 6. B installs the token in a proxy capability table. Agent operations from A are mediated by B's kernel using this proxy token.
 
@@ -338,7 +342,7 @@ When an agent on Device A needs a capability scoped to a space that lives on Dev
 
 Revocation cascades through all layers:
 
-1. **Device revocation**: User removes a device via Inspector. The primary key signs a CRL entry. The CRL propagates to all remaining devices via the Peer Protocol.
+1. **Device revocation**: User removes a device via Inspector. The primary key signs a CRL entry. The CRL propagates to all remaining devices via the ANM Mesh Protocol.
 2. **Capability cascade**: All tokens held by the revoked device are invalidated. All tokens delegated *from* the revoked device are invalidated (cascade revocation — see [capabilities.md §3.6](./model/capabilities.md)).
 3. **Sync termination**: The revoked device is removed from all space sync relationships. Its Shadow Engine copies become stale.
 4. **Key rotation**: Shared space encryption keys that the revoked device possessed are rotated. New keys are distributed only to remaining devices.
@@ -356,9 +360,9 @@ Decentralised systems face a distinct threat landscape compared to centralised o
 | **Network partition** | Mesh splits due to connectivity loss, devices diverge | Shadow Engine queues all operations locally. Merkle exchange reconciles upon reconnection. Conflict resolution is deterministic and offline-capable. | 3, 4 |
 | **Key compromise** | Device key or primary key is stolen | Device keys: revoke the specific device via CRL propagation. Primary key: threshold recovery + key rotation across all devices. Temporal capabilities auto-expire even without revocation. | 1, 2 |
 | **Rogue peer** | Compromised device injects malicious data into shared spaces | Content-hash verification (data must match declared hash). Provenance tracking (all changes signed by author identity). Behavioral monitoring flags anomalous sync patterns. | 1, 3, 5 |
-| **Metadata leakage** | Peer-to-peer discovery reveals device presence and identity to network observers | Passive discovery by default — devices only respond to known peers. mDNS/BLE advertisements use rotating identifiers, not raw public keys. | 4 |
-| **Replay attack** | Attacker replays a captured peer protocol session | Session keys are ephemeral with forward secrecy. QUIC connection IDs are randomized. Merkle roots include monotonic epoch counters. | 4 |
-| **Capability theft** | Attacker intercepts a capability token in transit | Tokens are encrypted in the TLS channel. Tokens are identity-bound — they cannot be used by a different device even if intercepted. Token binding is verified by the kernel at use time. | 2, 4 |
+| **Metadata leakage** | Peer-to-peer discovery reveals device presence and identity to network observers | Passive discovery by default — devices only respond to known peers. Link-local/BLE advertisements use rotating identifiers, not raw public keys. | 4 |
+| **Replay attack** | Attacker replays a captured mesh protocol session | Session keys are ephemeral with forward secrecy. Noise IK nonces are monotonic. Merkle roots include monotonic epoch counters. | 4 |
+| **Capability theft** | Attacker intercepts a capability token in transit | Tokens are encrypted in the Noise IK session. Tokens are identity-bound — they cannot be used by a different device even if intercepted. Token binding is verified by the kernel at use time. | 2, 4 |
 
 For the broader AIOS threat model covering malicious agents, prompt injection, privilege escalation, and supply chain attacks, see [model.md §1](./model.md) and [adversarial-defense.md](./adversarial-defense.md).
 
@@ -481,9 +485,8 @@ gantt
     Space Sync protocol               :p8, 8, 12
 
     section Pillar 4: Communication
-    Basic networking (TCP/TLS)        :p7, 7, 9
-    AIOS Peer Protocol                :p23, 23, 27
-    Shadow Engine                     :p23b, 23, 27
+    ANM Mesh + Bridge Layer            :p9, 9, 12
+    Full ANM stack + Shadow Engine    :p28, 28, 32
 
     section Pillar 5: Intelligence
     Local AIRS inference              :p10, 10, 14
@@ -495,14 +498,14 @@ gantt
 |---|---|---|
 | 3 | 1, 2 | Ed25519 identity + capability token system (single device) |
 | 4 | 3 | Content-addressed objects, Merkle DAG versioning (single device) |
-| 7 | 4 | Basic networking: TCP/IP, DNS, TLS via rustls |
-| 8 | 3 | Space Sync protocol (Merkle exchange between devices) |
+| 9 | 4 | Basic networking: ANM Mesh Layer + VirtIO-Net (Direct Link), Bridge Layer for TCP/IP |
+| 9 | 3, 4 | Space Sync protocol (Merkle exchange between devices), ANM Mesh Layer |
 | 10 | 5 | Local AIRS inference engine |
 | 17 | 1, 3 | Per-space encryption, device certificates, sync key management |
-| 23 | 4 | Full AIOS Peer Protocol, Shadow Engine, Connection Manager |
+| 28 | 4 | Full ANM stack, Shadow Engine, Connection Manager, WAN mesh |
 | 37 | All | Multi-device mesh, cross-device delegation, intelligence continuity, federated learning |
 
-**Phase 38 is where full decentralisation activates** — all five pillars are present and composing. But each pillar delivers value independently before Phase 38. Content-addressed storage (Phase 4) works on a single device. Local inference (Phase 11) works without sync. The Peer Protocol (Phase 24) works without full multi-device management.
+**Phase 38 is where full decentralisation activates** — all five pillars are present and composing. But each pillar delivers value independently before Phase 38. Content-addressed storage (Phase 4) works on a single device. Local inference (Phase 11) works without sync. The ANM Mesh Protocol (Phase 9/28) works without full multi-device management.
 
 See [development-plan.md §8](../project/development-plan.md) for the full phase table.
 
@@ -554,7 +557,7 @@ These principles govern all decentralisation-related design decisions across AIO
 
 6. **Graceful degradation over hard failure.** If a peer is unreachable, the system works locally. If a device is revoked, remaining devices continue unaffected. If a key is compromised, the blast radius is contained to that key's scope.
 
-7. **Decentralisation must be invisible.** Users experience the benefits (sync, offline, ownership, privacy) without needing to understand the mechanism (Merkle trees, Ed25519, capabilities, QUIC). The Inspector provides opt-in visibility for those who want it.
+7. **Decentralisation must be invisible.** Users experience the benefits (sync, offline, ownership, privacy) without needing to understand the mechanism (Merkle trees, Ed25519, capabilities, Noise IK). The Inspector provides opt-in visibility for those who want it.
 
 ---
 
@@ -573,11 +576,11 @@ These principles govern all decentralisation-related design decisions across AIO
 | Space Sync (Merkle exchange) | §5, §8, §11 | [sync.md §8.1-8.2](../storage/spaces/sync.md) |
 | Conflict resolution | §5, §11 | [sync.md §8.2](../storage/spaces/sync.md) |
 | Encryption zones | §5 | [encryption.md §6.1-6.3](../storage/spaces/encryption.md) |
-| AIOS Peer Protocol | §6 | [protocols.md §5.1](../platform/networking/protocols.md) |
+| ANM Mesh Protocol | §6 | [anm.md](../platform/networking/anm.md), [protocols.md §5.1](../platform/networking/protocols.md) |
 | Space Resolver | §6 | [components.md §3.1](../platform/networking/components.md) |
 | Shadow Engine | §6, §11 | [components.md §3.3](../platform/networking/components.md) |
 | Discovery (mDNS, BLE) | §6 | [pairing.md §3.1](../platform/multi-device/pairing.md) |
-| Network security (TLS) | §6, §9 | [security.md §6.1-6.5](../platform/networking/security.md) |
+| Network security (Noise IK, TLS for Bridge) | §6, §9 | [security.md §6.1-6.5](../platform/networking/security.md), [anm.md](../platform/networking/anm.md) |
 | AIRS architecture | §7 | [airs.md §1-2](../intelligence/airs.md) |
 | Intelligence continuity | §7 | [experience.md §4.4](../platform/multi-device/experience.md) |
 | Federated learning | §7 | [intelligence.md §13-14](../platform/multi-device/intelligence.md) |

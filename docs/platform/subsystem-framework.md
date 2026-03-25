@@ -1004,7 +1004,7 @@ pub struct AudioCapability {
 
 ### 13.1 Audio Mixer: A Subsystem Service
 
-Like the optional TLS service in networking, the audio subsystem provides an **audio mixer service**. Multiple agents playing audio simultaneously get mixed together:
+Like the optional Bridge Module services (TLS, HTTP) in networking, the audio subsystem provides an **audio mixer service**. Multiple agents playing audio simultaneously get mixed together:
 
 - Apply per-agent volume (capability can set max volume)
 - Apply system-wide volume
@@ -1089,10 +1089,11 @@ The networking subsystem was the first to be designed in detail (see [networking
 
 Networking follows the framework with some domain-specific additions:
 
-- **Layered optional services:** The TLS service and HTTP service are subsystem services (like the audio mixer). Agents can use them or bypass them with raw capabilities. This is the "mandatory gate + optional services" pattern.
-- **The capability gate enforces destination restrictions**, not just "can this agent use the network" but "can this agent reach this specific service."
+- **Two-stack architecture:** The ANM mesh (native, Noise IK) and Bridge Module (legacy TCP/IP) are both subsystem services. The mesh is the native path for AIOS-to-AIOS communication; the bridge handles web/IP traffic. Both pass through the same mandatory capability gate.
+- **Bridge Module optional services:** TLS and HTTP are Bridge Layer services (like the audio mixer). Agents can use them or bypass them with raw capabilities. This is the "mandatory gate + optional services" pattern.
+- **The capability gate enforces destination restrictions**, not just "can this agent use the network" but "can this agent reach this specific service" (mesh peer or bridge endpoint).
 - **Connection intent maps to SessionIntent** with network-specific extensions (Realtime, API, Transfer, BackgroundSync, Streaming).
-- **The Space Mesh Protocol** is a networking subsystem service for device-to-device space synchronization.
+- **Space Sync** uses the ANM mesh layer for device-to-device space synchronization.
 
 The same "mandatory kernel gate + optional userspace services" pattern applies to every subsystem.
 

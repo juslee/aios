@@ -247,7 +247,7 @@ Bootstrap flow:
 Users who opt in to federated preference sharing contribute gradient updates (not raw data) to a population preference model. This model enables better cold-start predictions for new users and improves cross-device bootstrapping. The federated protocol uses:
 
 - Local training on device (AIRS never sends raw preference values off-device)
-- Gradient aggregation via AIOS Peer Protocol (see [networking/protocols.md](../../platform/networking/protocols.md) §5.1)
+- Gradient aggregation via ANM Mesh Protocol (see [networking/protocols.md](../../platform/networking/protocols.md) §5.1)
 - Differential privacy (Gaussian noise addition before gradient upload)
 - Explicit opt-in per preference category, with granular control
 
@@ -479,7 +479,7 @@ These capabilities are under research consideration for later development phases
 
 **Differential privacy for behavioral inference:** The behavioral observer (see [inference.md](./inference.md) §6) could apply DP-SGD (differentially private stochastic gradient descent) to the AIRS bandit model training, providing formal privacy guarantees on the learned preference patterns. The main challenge is calibrating the privacy budget (ε) against utility loss — early experiments suggest ε=2.0 preserves >90% of suggestion accuracy while providing meaningful privacy guarantees.
 
-**Federated preference learning across devices:** The opt-in federated transfer described in §16.5 currently covers new-device bootstrap. A deeper version would allow the population model to improve continuously across devices without centralizing raw data, using secure aggregation and the AIOS Peer Protocol mesh. This requires solving the heterogeneous-device federated learning problem (different device capabilities, intermittent connectivity, varying update frequencies).
+**Federated preference learning across devices:** The opt-in federated transfer described in §16.5 currently covers new-device bootstrap. A deeper version would allow the population model to improve continuously across devices without centralizing raw data, using secure aggregation and the ANM Mesh Protocol. This requires solving the heterogeneous-device federated learning problem (different device capabilities, intermittent connectivity, varying update frequencies).
 
 **Safe RLHF for preference optimization:** The contextual bandit framework (§16.1) could be extended to reinforcement learning from human feedback (RLHF), where the reward model is trained on accept/reject signals and the policy is optimized subject to a safety constraint that prevents suggestions that reverse privacy settings or reduce accessibility features. The key design challenge is decoupling helpfulness optimization from safety — ensuring the RL objective cannot find adversarial suggestion strategies that technically maximize reward while violating user trust.
 

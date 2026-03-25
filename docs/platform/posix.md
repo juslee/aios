@@ -926,7 +926,7 @@ fn translate_pthread_setschedparam(
 
 ## 8. Socket Translation
 
-Network operations are the second most complex translation after process management. POSIX socket calls are translated to IPC messages to the Network Service.
+Network operations are the second most complex translation after process management. POSIX socket calls (`AF_INET`, `AF_INET6`) are translated to IPC messages to the Network Service's Bridge Module, which provides TCP/IP compatibility for legacy code. AIOS-native networking uses the ANM mesh (Noise IK); POSIX sockets are the Bridge Layer consumer.
 
 ```rust
 fn translate_socket(domain: i32, sock_type: i32, protocol: i32) -> Result<i32> {
@@ -991,7 +991,7 @@ fn translate_connect(fd: i32, addr: &sockaddr, addrlen: u32) -> Result<()> {
 }
 ```
 
-Once connected, `send()`/`recv()` on the socket fd become IPC messages through the Network Service channel. The Network Service handles TLS, connection pooling, and all transport details. The BSD tool sees a simple byte stream.
+Once connected, `send()`/`recv()` on the socket fd become IPC messages through the Network Service's Bridge Module channel. The Bridge Module handles TLS, connection pooling, and all TCP/IP transport details. The BSD tool sees a simple byte stream.
 
 ### 8.1 Socket State Machine
 
@@ -1510,7 +1510,7 @@ Phase 23d: Device translation — virtual /dev/* nodes
            Deliverable: BSD tools can access /dev/null, /dev/urandom, /dev/tty
 
 Phase 23e: Socket translation — network operations via Network Service
-           Depends on: Phase 23c, Phase 8 (Network Subsystem)
+           Depends on: Phase 23c, Phase 9 (Network Subsystem)
            Deliverable: curl and ssh work
 
 Phase 23f: Full FreeBSD userland — all included tools compiled and tested
@@ -1572,7 +1572,7 @@ End-to-end tests that exercise realistic BSD tool workflows:
 
 - **Shell pipelines:** `ls /spaces/test | grep pattern | sort | uniq -c` — exercises pipe, fork, exec, dup2, read, write
 - **Compiler self-host:** Build musl libc with clang on AIOS — exercises the full tool chain (make, clang, lld, ar, file I/O)
-- **Network tools:** `curl https://example.com` — exercises socket, connect, send, recv, TLS (via Network Service)
+- **Network tools:** `curl https://example.com` — exercises socket, connect, send, recv, TLS (via Network Service Bridge Module)
 - **Concurrent workloads:** Multi-threaded compilation (`make -j4`) — exercises pthreads, mutex, shared memory, scheduler interaction
 - **File watching:** `tail -f /spaces/logs/app.log` — exercises inotify→Space event subscription translation
 

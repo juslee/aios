@@ -26,8 +26,8 @@ What a traditional browser does, and where each responsibility lives in AIOS:
 ```text
 Traditional Browser                    AIOS Decomposition
 ──────────────────                    ──────────────────
-Network stack (HTTP, TLS, DNS)     →  Network Kit (capability-gated, audited)
-Connection pooling, caching        →  Network Kit connection manager
+Network stack (HTTP, TLS, DNS)     →  Network Kit Bridge Module (capability-gated, audited)
+Connection pooling, caching        →  Network Kit connection manager (Bridge Layer)
 Cookie storage                     →  Storage Kit (web-storage Space, per-origin)
 localStorage, IndexedDB            →  Storage Kit (sub-spaces per origin)
 Process isolation per site         →  Kernel agent isolation (per-tab agent)

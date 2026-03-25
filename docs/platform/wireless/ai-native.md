@@ -422,7 +422,7 @@ AIRS predicts WiFi loss before it happens — the user is walking toward an elev
 
 **Bandwidth-aware:** Prefetch runs only during idle periods to avoid competing with active traffic. AIRS assigns prefetch requests to WMM Background (BK) category and pauses prefetch if any agent has active latency-sensitive flows.
 
-**Integration with NTM:** Prefetch requests are routed through the Network Transport Manager ([networking.md](../networking.md)) with background QoS. The NTM applies its own bandwidth scheduling to ensure prefetch does not impact user-visible traffic.
+**Integration with NTM:** Prefetch requests are routed through the NTM ([networking.md](../networking.md)) with background QoS. The NTM applies its own bandwidth scheduling to ensure prefetch does not impact user-visible traffic.
 
 **Integration with Spaces:** Prefetched content is stored as cached objects in the appropriate Space. When WiFi drops, agents access cached data transparently through the Space API — they do not know whether data is live or prefetched.
 
