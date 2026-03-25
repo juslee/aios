@@ -1,6 +1,6 @@
 //! Bitmap font text rendering for the GPU framebuffer.
 //!
-//! Uses spleen-font (8x16 PSF2 bitmap font) to render characters directly
+//! Uses spleen-font (16x32 PSF2 bitmap font) to render characters directly
 //! to the VirtIO-GPU framebuffer. All rendering operates on raw `*mut u32`
 //! pointers with pixel-stride addressing for decoupling from GPU Service types.
 
@@ -133,10 +133,8 @@ fn fill_rect(fb: &FbInfo, x: u32, y: u32, w: u32, h: u32, color: u32) {
 ///
 /// Fills the framebuffer with a dark background, draws a header, then
 /// renders recent boot log entries captured by the observability subsystem.
-///
-/// # Safety
-/// Caller must ensure `fb` in `FbInfo` points to a valid framebuffer of at least
-/// `stride_px * height` u32 elements.
+/// The caller must ensure `FbInfo.fb` points to a valid framebuffer of at
+/// least `stride_px * height` u32 elements.
 pub fn draw_boot_log(fb: &FbInfo) {
     // Create font — if this fails, keep the existing AIOS blue screen.
     let mut font = match PSF2Font::new(FONT_16X32) {
@@ -184,12 +182,11 @@ pub fn draw_boot_log(fb: &FbInfo) {
     let display_count = count.min(max_lines);
 
     for i in 0..display_count {
-        let idx = i;
-        let len = lens[idx] as usize;
+        let len = lens[i] as usize;
         if len == 0 {
             continue;
         }
-        let line_str = core::str::from_utf8(&lines[idx][..len]).unwrap_or("<invalid>");
+        let line_str = core::str::from_utf8(&lines[i][..len]).unwrap_or("<invalid>");
         let line_y = log_y_start + (i as i32 * GLYPH_HEIGHT as i32);
         draw_text(
             &mut font,
