@@ -46,11 +46,12 @@ pub enum Subsystem {
     Smp = 10,
     Storage = 11,
     Audit = 12,
+    Gpu = 13,
 }
 
 impl Subsystem {
     /// Total number of subsystem variants.
-    pub const COUNT: usize = 13;
+    pub const COUNT: usize = 14;
 
     /// 5-character padded name for formatted output.
     pub const fn name(self) -> &'static str {
@@ -68,6 +69,7 @@ impl Subsystem {
             Subsystem::Smp => "Smp  ",
             Subsystem::Storage => "Stor ",
             Subsystem::Audit => "Audit",
+            Subsystem::Gpu => "Gpu  ",
         }
     }
 }
@@ -171,9 +173,9 @@ mod tests {
 
     #[test]
     fn subsystem_count() {
-        assert_eq!(Subsystem::COUNT, 13);
-        // Audit is the last variant at index 12.
-        assert_eq!(Subsystem::Audit as u8, 12);
+        assert_eq!(Subsystem::COUNT, 14);
+        // Gpu is the last variant at index 13.
+        assert_eq!(Subsystem::Gpu as u8, 13);
     }
 
     #[test]
@@ -209,6 +211,7 @@ mod tests {
             Subsystem::Smp,
             Subsystem::Storage,
             Subsystem::Audit,
+            Subsystem::Gpu,
         ];
         for sub in subsystems {
             assert_eq!(sub.name().len(), 5, "{:?} name not 5 chars", sub);

@@ -7,20 +7,13 @@
 //! Per VirtIO spec §3.1 (device init), §4.2.2 (MMIO transport), §5.2 (block device).
 //! Uses legacy (v1) MMIO register layout (QUEUE_PFN, GUEST_PAGE_SIZE).
 
+use shared::order_for_pages;
 use shared::storage::*;
 use spin::Mutex;
 
+use super::virtio_common::*;
 use crate::arch::aarch64::mmu::{DIRECT_MAP_BASE, MMIO_BASE};
 use crate::dtb::DeviceTree;
-
-/// Virtqueue size (number of descriptors). Must be ≤ QUEUE_NUM_MAX from device.
-const QUEUE_SIZE: u16 = 128;
-
-/// Polling timeout iterations for virtqueue completion.
-const POLL_TIMEOUT: u32 = 10_000_000;
-
-/// Page size used for legacy VirtIO MMIO queue alignment.
-const VIRT_PAGE_SIZE: usize = 4096;
 
 /// Global VirtIO-blk device instance.
 static VIRTIO_BLK: Mutex<Option<VirtioBlk>> = Mutex::new(None);
@@ -45,29 +38,6 @@ struct VirtioBlk {
     last_used_idx: u16,
     /// Negotiated virtqueue size (may be smaller than QUEUE_SIZE).
     queue_size: u16,
-}
-
-// ---------------------------------------------------------------------------
-// MMIO helpers (same pattern as uart.rs)
-// ---------------------------------------------------------------------------
-
-/// Read a 32-bit MMIO register.
-///
-/// # Safety
-/// `addr` must be a valid MMIO register address mapped as device memory
-/// (e.g., via the TTBR1 MMIO map at `MMIO_BASE + phys`).
-#[inline(always)]
-unsafe fn mmio_read32(addr: usize) -> u32 {
-    core::ptr::read_volatile(addr as *const u32)
-}
-
-/// Write a 32-bit MMIO register.
-///
-/// # Safety
-/// `addr` must be a valid MMIO register address mapped as device memory.
-#[inline(always)]
-unsafe fn mmio_write32(addr: usize, val: u32) {
-    core::ptr::write_volatile(addr as *mut u32, val);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +142,8 @@ fn probe(dt: &DeviceTree) -> Option<usize> {
 fn probe_slot(phys: usize) -> bool {
     let virt = MMIO_BASE + phys;
     // SAFETY: MMIO region 0x0-0x40000000 is mapped as device memory in TTBR1.
+    // Reading an unoccupied slot returns 0 (not the VirtIO magic), which is safe.
+    // Reading an unmapped address would cause a synchronous data abort.
     unsafe {
         let magic = mmio_read32(virt + VIRTIO_MMIO_MAGIC_VALUE);
         if magic != VIRTIO_MMIO_MAGIC {
@@ -188,40 +160,13 @@ fn probe_slot(phys: usize) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy virtqueue layout helpers
-// ---------------------------------------------------------------------------
-
-/// Calculate the byte offset of the available ring from the start of the
-/// virtqueue allocation (immediately after the descriptor table).
-const fn avail_offset(queue_size: usize) -> usize {
-    // Descriptor table: queue_size × 16 bytes.
-    queue_size * 16
-}
-
-/// Calculate the byte offset of the used ring from the start of the
-/// virtqueue allocation (page-aligned after the available ring).
-const fn used_offset(queue_size: usize) -> usize {
-    // Available ring: 4 bytes header + queue_size × 2 bytes + 2 bytes used_event.
-    let avail_end = avail_offset(queue_size) + 4 + queue_size * 2 + 2;
-    // Align up to page boundary.
-    (avail_end + VIRT_PAGE_SIZE - 1) & !(VIRT_PAGE_SIZE - 1)
-}
-
-/// Total size of the virtqueue allocation in bytes.
-const fn virtqueue_size(queue_size: usize) -> usize {
-    // Used ring: 4 bytes header + queue_size × 8 bytes + 2 bytes avail_event.
-    let used_end = used_offset(queue_size) + 4 + queue_size * 8 + 2;
-    // Align up to page boundary.
-    (used_end + VIRT_PAGE_SIZE - 1) & !(VIRT_PAGE_SIZE - 1)
-}
-
-// ---------------------------------------------------------------------------
 // Device initialization (VirtIO spec §3.1, legacy MMIO v1)
 // ---------------------------------------------------------------------------
 
 fn init_device(base: usize) -> Result<VirtioBlk, StorageError> {
     // SAFETY: All MMIO accesses are to a VirtIO device at a validated address.
     // The base address was confirmed to have correct magic and device_id.
+    // Writing to an invalid MMIO address would cause a synchronous data abort.
     unsafe {
         // 1. Reset device.
         mmio_write32(base + VIRTIO_MMIO_STATUS, 0);
@@ -329,21 +274,6 @@ fn init_device(base: usize) -> Result<VirtioBlk, StorageError> {
             queue_size,
         })
     }
-}
-
-/// Compute the buddy allocator order for the given number of pages.
-/// Returns the smallest `order` such that `2^order >= pages`.
-fn order_for_pages(pages: usize) -> usize {
-    if pages <= 1 {
-        return 0;
-    }
-    let mut order = 0;
-    let mut size = 1;
-    while size < pages {
-        order += 1;
-        size <<= 1;
-    }
-    order
 }
 
 // ---------------------------------------------------------------------------

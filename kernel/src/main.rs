@@ -296,6 +296,14 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     }
     observability::drain_logs();
 
+    // --- Step 7b2: GPU Init ---
+    if drivers::virtio_gpu::init(&dt) {
+        if let Err(e) = drivers::virtio_gpu::display_test_frame() {
+            crate::kwarn!(Boot, "VirtIO-GPU test frame failed: {:?}", e);
+        }
+    }
+    observability::drain_logs();
+
     // --- Step 7c: Benchmark Init ---
     bench::init();
     observability::drain_logs();

@@ -479,7 +479,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M14):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
+Lock ordering (full M19):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > {VIRTIO_BLK, VIRTIO_GPU}
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
@@ -490,7 +490,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      394 tests (boot, cap, collections, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Shared crate unit tests:      405 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
 Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError)
 Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
 Kit trait dyn-compat:         All 12 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps) are dyn-compatible
@@ -529,6 +529,14 @@ Superblock version:           2 (v2 adds compression header in block format; v1 
 PressureLevel thresholds:     Normal (>20% free), Warning (10-20%), Critical (5-10%), Emergency (<5%)
 StorageBudget fields:         total_bytes, used_bytes, free_bytes, data_blocks, wal_used, index_entries
 StorageError variants:        19 total (added NameExists, NotADirectory, FdTableFull, InvalidFd in M15)
+VirtIO-GPU device ID:         16
+VirtIO-GPU MMIO slot (QEMU):  slot 30, phys 0x0A00_3C00 (detected via brute-force scan)
+VirtIO-GPU transport:         MMIO legacy v1 (same as VirtIO-blk), polled I/O, single controlq
+VirtIO-GPU config space:      events_read(0x100), events_clear(0x104), num_scanouts(0x108), num_capsets(0x10C)
+VirtIO-GPU default res (QEMU): 1280x800 B8G8R8A8 (scanout 0)
+VirtIO-GPU cmd DMA page:      4K split: cmd at offset 0, response at offset 2048
+VirtIO-GPU framebuffer DMA:   Contiguous alloc from Pool::Dma, single VirtioGpuMemEntry; max 4MB (order-10)
+AIOS blue color:              #5B8CFF = B8G8R8A8 u32 0xFF5B8CFF
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -565,7 +573,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 5 M18 — Kit Foundation, Memory Kit, Capability Kit, IPC Kit & Storage Kit):
+Current (post-Phase 6 M19 — VirtIO-GPU 2D Driver):
 
 ```
 aios/
@@ -576,7 +584,7 @@ aios/
 ├── Cargo.toml            workspace root (resolver = "2", members: kernel, shared, uefi-stub)
 ├── Cargo.lock            committed for reproducibility
 ├── rust-toolchain.toml   pinned nightly + aarch64-unknown-none + aarch64-unknown-uefi
-├── justfile              build, build-stub, disk, run (edk2), run-display, run-direct, check, test, clean
+├── justfile              build, build-stub, disk, run (edk2), run-display, run-gpu, run-direct, check, test, clean
 ├── LICENSE               BSD-2-Clause
 ├── .cargo/
 │   └── config.toml       relocation-model=static for aarch64-unknown-none
@@ -623,7 +631,9 @@ aios/
 │       ├── bench.rs      Gate 1 benchmarks: IPC round-trip, context switch, direct switch, cap overhead, shmem throughput
 │       ├── drivers/
 │       │   ├── mod.rs    Driver module re-exports
-│       │   └── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
+│       │   ├── virtio_common.rs Shared VirtIO MMIO helpers: mmio_read32/write32, virtqueue layout, constants
+│       │   ├── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
+│       │   └── virtio_gpu.rs VirtIO-GPU 2D driver: probe, init, resource/scanout/transfer/flush, display_test_frame
 │       ├── storage/
 │       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
 │       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable
@@ -679,6 +689,7 @@ aios/
 │       ├── boot.rs       BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat
 │       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
 │       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests
+│       ├── gpu.rs        VirtIO-GPU wire-format structs (repr(C)), GpuPixelFormat, DisplayInfo, GpuError, GpuBufferHandle, command/response constants
 │       ├── ipc.rs        ChannelId, SharedMemoryId, NotificationId, RawMessage, ServiceName, SelectKind, IPC/shmem/notify constants
 │       ├── kaslr.rs      KaslrConfig, compute_slide_from_entropy()
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()
