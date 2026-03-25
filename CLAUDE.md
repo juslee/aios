@@ -490,7 +490,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests (old): 394 tests — see updated count above under VirtIO-GPU section
+Shared crate unit tests:      405 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
 Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError)
 Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
 Kit trait dyn-compat:         All 12 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps) are dyn-compatible
@@ -537,7 +537,6 @@ VirtIO-GPU default res (QEMU): 1280x800 B8G8R8A8 (scanout 0)
 VirtIO-GPU cmd DMA page:      4K split: cmd at offset 0, response at offset 2048
 VirtIO-GPU framebuffer DMA:   Contiguous alloc from Pool::Dma, single VirtioGpuMemEntry; max 4MB (order-10)
 AIOS blue color:              #5B8CFF = B8G8R8A8 u32 0xFF5B8CFF
-Shared crate unit tests:      405 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -574,7 +573,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 5 M18 — Kit Foundation, Memory Kit, Capability Kit, IPC Kit & Storage Kit):
+Current (post-Phase 6 M19 — VirtIO-GPU 2D Driver):
 
 ```
 aios/

@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 6 weeks
 **Deliverable:** VirtIO-GPU 2D kernel driver, custom GPU Service (kernel-side IPC service with capability-gated buffer management), Compute Kit Tier 1 (`GpuSurface` trait), bitmap font text rendering on GPU framebuffer
-**Status:** Planned
+**Status:** M19 Complete, M20–M22 Planned
 **Prerequisites:** Phase 5 (Kit Foundation)
 **Unlocks:** Phase 7 (Window Compositor & Shell), Phase 23 (Kernel Compute Abstraction)
 
@@ -113,7 +113,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.3 (GET_DISPLAY_INFO); `kernel/src/drivers/virtio_blk.rs` `submit_request()` pattern
 
-**Acceptance:** `just check` zero warnings. QEMU boot logs "VirtIO-GPU: scanout 0: WxH" (e.g., 1024x768).
+**Acceptance:** `just check` zero warnings. QEMU boot logs "VirtIO-GPU: scanout 0: WxH" (e.g., 1280x800).
 
 -----
 
