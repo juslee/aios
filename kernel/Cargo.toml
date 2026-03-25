@@ -11,7 +11,7 @@ sha2 = { version = "0.10", default-features = false }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex"] }
 lz4_flex = { version = "0.13", default-features = false, features = ["safe-encode", "safe-decode"] }
-spleen-font = { version = "0.2", default-features = false, features = ["s8x16"] }
+spleen-font = { version = "0.2", default-features = false, features = ["s16x32"] }
 
 [features]
 default = ["kernel-metrics", "storage-tests"]

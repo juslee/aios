@@ -4,13 +4,13 @@
 //! to the VirtIO-GPU framebuffer. All rendering operates on raw `*mut u32`
 //! pointers with pixel-stride addressing for decoupling from GPU Service types.
 
-use spleen_font::{PSF2Font, FONT_8X16};
+use spleen_font::{PSF2Font, FONT_16X32};
 
-/// Glyph width in pixels (spleen 8x16).
-pub const GLYPH_WIDTH: u32 = 8;
+/// Glyph width in pixels (spleen 16x32).
+pub const GLYPH_WIDTH: u32 = 16;
 
-/// Glyph height in pixels (spleen 8x16).
-pub const GLYPH_HEIGHT: u32 = 16;
+/// Glyph height in pixels (spleen 16x32).
+pub const GLYPH_HEIGHT: u32 = 32;
 
 /// Framebuffer parameters bundled for rendering functions.
 pub struct FbInfo {
@@ -139,10 +139,10 @@ fn fill_rect(fb: &FbInfo, x: u32, y: u32, w: u32, h: u32, color: u32) {
 /// `stride_px * height` u32 elements.
 pub fn draw_boot_log(fb: &FbInfo) {
     // Create font — if this fails, keep the existing AIOS blue screen.
-    let mut font = match PSF2Font::new(FONT_8X16) {
+    let mut font = match PSF2Font::new(FONT_16X32) {
         Ok(f) => f,
         Err(_) => {
-            crate::kwarn!(Gpu, "spleen-font: failed to load FONT_8X16");
+            crate::kwarn!(Gpu, "spleen-font: failed to load FONT_16X32");
             return;
         }
     };
@@ -179,12 +179,12 @@ pub fn draw_boot_log(fb: &FbInfo) {
         max_lines
     );
 
-    // Render most recent entries that fit on screen.
+    // Render entries from the beginning of boot (most interesting).
+    // Interactive scrolling is a Phase 7+ compositor feature.
     let display_count = count.min(max_lines);
-    let start_idx = count.saturating_sub(display_count);
 
     for i in 0..display_count {
-        let idx = start_idx + i;
+        let idx = i;
         let len = lens[idx] as usize;
         if len == 0 {
             continue;

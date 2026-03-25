@@ -301,7 +301,7 @@ pub fn drain_logs() {
 use core::sync::atomic::AtomicBool;
 
 /// Maximum boot log lines captured for GPU display.
-pub const MAX_LOG_LINES: usize = 48;
+pub const MAX_LOG_LINES: usize = 256;
 
 /// Maximum characters per boot log line.
 pub const MAX_LINE_LEN: usize = 160;
