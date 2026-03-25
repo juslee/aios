@@ -139,6 +139,16 @@ fn gpu_service_loop() -> ! {
         }
     }
 
+    // Verify KernelGpuSurface Kit API works.
+    {
+        use shared::compute_kit::GpuSurface;
+        let surface = crate::gpu::KernelGpuSurface;
+        match surface.request_direct_scanout() {
+            Ok(true) => crate::kinfo!(Gpu, "Compute Kit: GpuSurface direct scanout OK"),
+            other => crate::kwarn!(Gpu, "Compute Kit: GpuSurface unexpected: {:?}", other),
+        }
+    }
+
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
     loop {
