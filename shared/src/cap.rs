@@ -33,8 +33,8 @@ pub struct CapabilityHandle(pub u32);
 
 /// What a capability grants access to.
 ///
-/// Phase 3 subset: channel operations, shared memory (placeholder),
-/// agent spawning, and debug output. Full set comes in later phases.
+/// Phases 3–6: channel operations, shared memory, agent spawning,
+/// debug output, and GPU access. Full set comes in later phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
     /// Permission to create IPC channels.
@@ -49,6 +49,14 @@ pub enum Capability {
     SpawnAgent,
     /// Permission to use the DebugPrint syscall.
     DebugPrint,
+    /// Permission to access GPU MMIO registers (GPU Service only).
+    GpuMmioAccess,
+    /// Permission to allocate GPU framebuffers.
+    GpuBufferCreate,
+    /// Permission to access a specific GPU buffer by resource ID.
+    GpuBufferAccess(u32),
+    /// Permission to configure display scanout (mode setting, page flip).
+    DisplayControl,
 }
 
 impl Capability {
@@ -68,6 +76,12 @@ impl Capability {
             }
             (Capability::SpawnAgent, Capability::SpawnAgent) => true,
             (Capability::DebugPrint, Capability::DebugPrint) => true,
+            (Capability::GpuMmioAccess, Capability::GpuMmioAccess) => true,
+            (Capability::GpuBufferCreate, Capability::GpuBufferCreate) => true,
+            (Capability::GpuBufferAccess(held), Capability::GpuBufferAccess(needed)) => {
+                held == needed
+            }
+            (Capability::DisplayControl, Capability::DisplayControl) => true,
             _ => false,
         }
     }
@@ -83,6 +97,8 @@ impl Capability {
             (Capability::ChannelCreate, Capability::ChannelAccess(_)) => true,
             // SharedMemoryCreate can be narrowed to SharedMemoryAccess.
             (Capability::SharedMemoryCreate, Capability::SharedMemoryAccess(_)) => true,
+            // GpuBufferCreate can be narrowed to GpuBufferAccess (broader → narrower).
+            (Capability::GpuBufferCreate, Capability::GpuBufferAccess(_)) => true,
             // Same-variant is always valid (identity attenuation).
             _ => self.permits(other),
         }
@@ -956,5 +972,70 @@ mod tests {
             .grant(make_token(2, Capability::SpawnAgent, 1))
             .unwrap();
         assert_eq!(h1.0, 1);
+    }
+
+    // --- GPU capability permits tests (Phase 6 M20) ---
+
+    #[test]
+    fn permits_gpu_mmio_access() {
+        assert!(Capability::GpuMmioAccess.permits(&Capability::GpuMmioAccess));
+    }
+
+    #[test]
+    fn permits_gpu_buffer_create() {
+        assert!(Capability::GpuBufferCreate.permits(&Capability::GpuBufferCreate));
+    }
+
+    #[test]
+    fn permits_gpu_buffer_access_same() {
+        let cap = Capability::GpuBufferAccess(1);
+        assert!(cap.permits(&Capability::GpuBufferAccess(1)));
+    }
+
+    #[test]
+    fn denies_gpu_buffer_access_different() {
+        let cap = Capability::GpuBufferAccess(1);
+        assert!(!cap.permits(&Capability::GpuBufferAccess(2)));
+    }
+
+    #[test]
+    fn permits_display_control() {
+        assert!(Capability::DisplayControl.permits(&Capability::DisplayControl));
+    }
+
+    #[test]
+    fn denies_gpu_cross_variant() {
+        assert!(!Capability::GpuMmioAccess.permits(&Capability::GpuBufferCreate));
+        assert!(!Capability::GpuBufferCreate.permits(&Capability::DisplayControl));
+        assert!(!Capability::DisplayControl.permits(&Capability::GpuMmioAccess));
+        assert!(!Capability::GpuBufferAccess(1).permits(&Capability::ChannelCreate));
+        assert!(!Capability::ChannelCreate.permits(&Capability::GpuMmioAccess));
+    }
+
+    // --- GPU capability attenuation tests ---
+
+    #[test]
+    fn attenuate_gpu_buffer_create_to_access() {
+        assert!(Capability::GpuBufferCreate.can_attenuate_to(&Capability::GpuBufferAccess(42)));
+    }
+
+    #[test]
+    fn attenuate_gpu_buffer_access_denies_broadening() {
+        assert!(!Capability::GpuBufferAccess(1).can_attenuate_to(&Capability::GpuBufferCreate));
+    }
+
+    #[test]
+    fn attenuate_gpu_identity() {
+        assert!(Capability::GpuMmioAccess.can_attenuate_to(&Capability::GpuMmioAccess));
+        assert!(Capability::DisplayControl.can_attenuate_to(&Capability::DisplayControl));
+        assert!(Capability::GpuBufferAccess(5).can_attenuate_to(&Capability::GpuBufferAccess(5)));
+    }
+
+    #[test]
+    fn attenuate_gpu_denies_cross_domain() {
+        assert!(
+            !Capability::GpuBufferCreate.can_attenuate_to(&Capability::ChannelAccess(ChannelId(0)))
+        );
+        assert!(!Capability::ChannelCreate.can_attenuate_to(&Capability::GpuBufferAccess(1)));
     }
 }

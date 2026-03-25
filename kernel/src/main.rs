@@ -12,6 +12,7 @@ mod cap;
 mod drivers;
 mod dtb;
 mod framebuffer;
+mod gpu;
 mod ipc;
 mod mm;
 mod observability;
@@ -301,6 +302,18 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         if let Err(e) = drivers::virtio_gpu::display_test_frame() {
             crate::kwarn!(Boot, "VirtIO-GPU test frame failed: {:?}", e);
         }
+
+        // Initialize GPU Service: create process, IPC channel, and thread.
+        // The thread starts running when the scheduler begins (Step 7d).
+        gpu::service::init_gpu_service();
+
+        // GOP → VirtIO-GPU transition: release test frame, render to double buffer.
+        // Uses direct driver calls (scheduler hasn't started yet — IPC unavailable).
+        gpu_display_transition();
+
+        advance_boot_phase(EarlyBootPhase::GpuReady);
+    } else {
+        kinfo!(Boot, "No VirtIO-GPU — GOP framebuffer fallback");
     }
     observability::drain_logs();
 
@@ -323,6 +336,23 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
 
     // Enter the scheduler — picks the first thread and never returns.
     sched::enter_scheduler();
+}
+
+/// Prepare VirtIO-GPU display for the GPU Service.
+///
+/// Releases the M19 test frame's DMA memory so the GPU Service's
+/// `init_double_buffering()` can allocate fresh double buffers when
+/// the scheduler starts. No new buffers are allocated here — the
+/// GPU Service owns the display lifecycle from init onward.
+fn gpu_display_transition() {
+    // Release M19 test frame to reclaim ~4MB DMA memory.
+    // The GPU Service's init_double_buffering() will allocate fresh
+    // front/back buffers and bind them to the scanout.
+    drivers::virtio_gpu::gpu_release_test_frame();
+    kinfo!(
+        Boot,
+        "GPU transition: test frame released, GPU Service will take over"
+    );
 }
 
 /// Halt the CPU in a low-power loop (never returns).

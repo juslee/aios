@@ -151,7 +151,7 @@ impl MemoryDescriptor {
 /// tracks the current phase via an atomic global; structured logging
 /// uses this to decide between direct UART output and ring buffer.
 ///
-/// Total: 18 variants (EntryPoint=0 through Complete=17).
+/// Total: 19 variants (EntryPoint=0 through Complete=18).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum EarlyBootPhase {
@@ -172,11 +172,12 @@ pub enum EarlyBootPhase {
     AuditLogReady = 14,
     ProcessManagerReady = 15,
     ProvenanceReady = 16,
-    Complete = 17,
+    GpuReady = 17,
+    Complete = 18,
 }
 
 /// Total number of boot phase variants.
-pub const EARLY_BOOT_PHASE_COUNT: usize = 18;
+pub const EARLY_BOOT_PHASE_COUNT: usize = 19;
 
 #[cfg(test)]
 mod tests {
@@ -320,8 +321,9 @@ mod tests {
 
     #[test]
     fn early_boot_phase_count() {
-        assert_eq!(EARLY_BOOT_PHASE_COUNT, 18);
-        assert_eq!(EarlyBootPhase::Complete as u32, 17);
+        assert_eq!(EARLY_BOOT_PHASE_COUNT, 19);
+        assert_eq!(EarlyBootPhase::GpuReady as u32, 17);
+        assert_eq!(EarlyBootPhase::Complete as u32, 18);
     }
 
     #[test]
@@ -336,7 +338,8 @@ mod tests {
         assert!(EarlyBootPhase::MmuEnabled < EarlyBootPhase::HeapReady);
         assert!(EarlyBootPhase::HeapReady < EarlyBootPhase::LogRingsReady);
         assert!(EarlyBootPhase::LogRingsReady < EarlyBootPhase::IpcReady);
-        assert!(EarlyBootPhase::IpcReady < EarlyBootPhase::Complete);
+        assert!(EarlyBootPhase::IpcReady < EarlyBootPhase::GpuReady);
+        assert!(EarlyBootPhase::GpuReady < EarlyBootPhase::Complete);
     }
 
     #[test]
@@ -354,7 +357,7 @@ mod tests {
 
     #[test]
     fn early_boot_phase_contiguous_values() {
-        // All 18 variants have sequential repr values 0..=17.
+        // All 19 variants have sequential repr values 0..=18.
         let phases = [
             EarlyBootPhase::EntryPoint,
             EarlyBootPhase::ExceptionVectors,
@@ -373,6 +376,7 @@ mod tests {
             EarlyBootPhase::AuditLogReady,
             EarlyBootPhase::ProcessManagerReady,
             EarlyBootPhase::ProvenanceReady,
+            EarlyBootPhase::GpuReady,
             EarlyBootPhase::Complete,
         ];
         for (i, phase) in phases.iter().enumerate() {
