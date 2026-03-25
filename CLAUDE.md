@@ -4,7 +4,7 @@
 
 ## Project Identity
 
-```
+```text
 Name:           AIOS — AI-First Operating System
 Target arch:    aarch64 (hard-float ABI)
 Kernel target:  aarch64-unknown-none
@@ -26,7 +26,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 ## Architecture Document Map
 
 | Topic | Document | Key Sections |
-|---|---|---|
+| --- | --- | --- |
 | System overview & vision | `docs/project/overview.md` | §1 Vision, §2 Architecture |
 | Development plan & phases | `docs/project/development-plan.md` | §3 Dependencies, §5 Gates (incl. Gate 1 retro), §8 Phase table, §8.1 Actual progress |
 | Full architecture | `docs/project/architecture.md` | All |
@@ -375,7 +375,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 
 ## Key Technical Facts
 
-```
+```text
 QEMU virt RAM base:           0x4000_0000
 Kernel load address:          0x4008_0000 (Phase 0); virtual mapping Phase 1+
 UART base (QEMU):             0x0900_0000
@@ -492,10 +492,10 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      437 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Shared crate unit tests:      442 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
 Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError) + Compute Kit (1 trait, 5 error variants)
 Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
-Kit trait dyn-compat:         All 12 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps) are dyn-compatible
+Kit trait dyn-compat:         All 13 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps, GpuSurface) are dyn-compatible
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
 VirtIO MMIO magic:            0x74726976 ("virt")
 VirtIO-blk device ID:         2
@@ -586,9 +586,9 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 6 M20 — Custom GPU Service):
+Current (post-Phase 6 M22 — Compute Kit Tier 1 & Gate):
 
-```
+```text
 aios/
 ├── CLAUDE.md
 ├── README.md
@@ -733,7 +733,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 **Agents** (defined in `.claude/agents/`):
 
 | Agent | Role | Spawned by |
-|---|---|---|
+| --- | --- | --- |
 | `team-lead` | Orchestrates phases, manages tasks, commits, creates PRs | User or `/build-team` |
 | `kernel-dev` | Implements Rust/asm code per phase doc steps | team-lead |
 | `doc-writer` | Generates phase docs from architecture docs | team-lead |
@@ -744,7 +744,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 **Skills** (defined in `.claude/skills/`):
 
 | Skill | Trigger | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `/build-team` | Start of autonomous session | Creates team, spawns agents |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
@@ -756,6 +756,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
 **Existing skills reused** (not recreated):
+
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
 - `engineering-workflow-skills:pr`, `commit-commands:commit`
 - `sc:implement`, `sc:test`, `sc:build`, `sc:analyze`

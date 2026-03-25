@@ -114,46 +114,153 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compute_error_variants() {
-        let e = ComputeError::DeviceUnavailable;
-        assert_eq!(e, ComputeError::DeviceUnavailable);
-        assert_ne!(e, ComputeError::AllocationFailed);
+    fn compute_error_all_variants_distinct() {
+        let variants = [
+            ComputeError::DeviceUnavailable,
+            ComputeError::AllocationFailed,
+            ComputeError::InvalidParameters,
+            ComputeError::ServiceError,
+            ComputeError::PermissionDenied,
+        ];
+        // Every variant equals itself.
+        for v in &variants {
+            assert_eq!(*v, *v);
+        }
+        // Every pair of distinct variants is unequal.
+        for (i, a) in variants.iter().enumerate() {
+            for (j, b) in variants.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "variants {i} and {j} should differ");
+                }
+            }
+        }
     }
 
     #[test]
-    fn surface_buffer_default() {
+    fn compute_error_is_copy() {
+        let e = ComputeError::AllocationFailed;
+        let e2 = e; // Copy
+        assert_eq!(e, e2);
+    }
+
+    #[test]
+    fn surface_buffer_fields() {
         let buf = SurfaceBuffer {
-            id: 1,
+            id: 42,
             width: 1280,
             height: 800,
             format: GpuPixelFormat::B8G8R8A8,
-            fb_virt: 0,
+            fb_virt: 0xDEAD_0000,
             stride: 5120,
         };
+        assert_eq!(buf.id, 42);
         assert_eq!(buf.width, 1280);
         assert_eq!(buf.height, 800);
+        assert_eq!(buf.format, GpuPixelFormat::B8G8R8A8);
+        assert_eq!(buf.fb_virt, 0xDEAD_0000);
+        assert_eq!(buf.stride, 5120);
+        // Stride is in bytes; for B8G8R8A8 it must be at least width * 4 and
+        // should be a multiple of the bytes-per-pixel, but may include padding.
+        assert!(buf.stride >= buf.width * 4);
+        assert_eq!(buf.stride % 4, 0);
     }
 
     #[test]
-    fn damage_rect() {
+    fn surface_buffer_is_copy() {
+        let buf = SurfaceBuffer {
+            id: 1,
+            width: 640,
+            height: 480,
+            format: GpuPixelFormat::B8G8R8A8,
+            fb_virt: 0,
+            stride: 2560,
+        };
+        let buf2 = buf; // Copy
+        assert_eq!(buf.id, buf2.id);
+    }
+
+    #[test]
+    fn damage_rect_fields() {
         let d = DamageRect {
-            x: 0,
-            y: 0,
+            x: 10,
+            y: 20,
             width: 100,
             height: 50,
         };
+        assert_eq!(d.x, 10);
+        assert_eq!(d.y, 20);
         assert_eq!(d.width, 100);
+        assert_eq!(d.height, 50);
     }
 
     #[test]
-    fn semantic_hint_variants() {
-        assert_ne!(SemanticHint::UiText, SemanticHint::VideoPlayback);
-        assert_eq!(SemanticHint::StaticContent, SemanticHint::StaticContent);
+    fn damage_rect_full_surface() {
+        // Damage rect covering the entire 1280x800 surface.
+        let d = DamageRect {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 800,
+        };
+        assert_eq!(d.x, 0);
+        assert_eq!(d.width * d.height, 1_024_000);
+    }
+
+    #[test]
+    fn semantic_hint_all_variants_distinct() {
+        let variants = [
+            SemanticHint::UiText,
+            SemanticHint::VideoPlayback,
+            SemanticHint::Rendering3D,
+            SemanticHint::ScrollingContent,
+            SemanticHint::StaticContent,
+        ];
+        for v in &variants {
+            assert_eq!(*v, *v);
+        }
+        for (i, a) in variants.iter().enumerate() {
+            for (j, b) in variants.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "hints {i} and {j} should differ");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_hint_is_copy() {
+        let h = SemanticHint::UiText;
+        let h2 = h; // Copy
+        assert_eq!(h, h2);
     }
 
     /// Verify GpuSurface is dyn-compatible (object-safe).
     #[test]
     fn gpu_surface_dyn_compatible() {
         fn _accept(_s: &dyn GpuSurface) {}
+    }
+
+    /// Verify all 13 Kit traits are dyn-compatible in one place.
+    /// This cross-Kit test lives here because Compute Kit is the last Kit added.
+    #[test]
+    fn all_kit_traits_dyn_compatible() {
+        // Memory Kit (3 traits)
+        fn _frame_allocator(_: &dyn crate::kits::memory::FrameAllocator) {}
+        fn _address_space(_: &dyn crate::kits::memory::AddressSpace) {}
+        fn _pressure_monitor(_: &dyn crate::kits::memory::MemoryPressureMonitor) {}
+        // Capability Kit (1 trait)
+        fn _capability_enforcer(_: &dyn crate::kits::capability::CapabilityEnforcer) {}
+        // IPC Kit (4 traits)
+        fn _channel_ops(_: &dyn crate::kits::ipc::ChannelOps) {}
+        fn _notification_ops(_: &dyn crate::kits::ipc::NotificationOps) {}
+        fn _select_ops(_: &dyn crate::kits::ipc::SelectOps) {}
+        fn _shared_memory_ops(_: &dyn crate::kits::ipc::SharedMemoryOps) {}
+        // Storage Kit (4 traits)
+        fn _block_store(_: &dyn crate::kits::storage::BlockStore) {}
+        fn _space_manager(_: &dyn crate::kits::storage::SpaceManager) {}
+        fn _object_store(_: &dyn crate::kits::storage::ObjectStore) {}
+        fn _version_store(_: &dyn crate::kits::storage::VersionStoreOps) {}
+        // Compute Kit (1 trait)
+        fn _gpu_surface(_: &dyn GpuSurface) {}
     }
 }

@@ -419,7 +419,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 3 | IPC & Capability System | IPC Kit, Capability Kit | ipc.md, scheduler.md | [`03-ipc-and-capability-system.md`](../phases/03-ipc-and-capability-system.md) | Complete | 6w | 3d |
 | 4 | Block Storage & Object Store | Storage Kit | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | Complete | 5w | 10d |
 | 5 | Kit Foundation | Memory Kit, IPC Kit, Capability Kit, Storage Kit | — | [`05-kit-foundation.md`](../phases/05-kit-foundation.md) | Complete | 3w | 1.5d |
-| 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | `06-gpu-and-display.md` | Planned | 6w | — |
+| 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | [`06-gpu-and-display.md`](../phases/06-gpu-and-display.md) | Complete | 6w | 6d |
 | 7 | Window Compositor & Shell | — | compositor.md (6) | `07-window-compositor-and-shell.md` | Planned | 7w | — |
 | 8 | Input & Terminal | Input Kit | input.md (6), terminal.md (6) | `08-input-and-terminal.md` | Planned | 4w | — |
 | 9 | Basic Networking | Network Kit (core) | networking.md (6), anm.md | `09-basic-networking.md` | Planned | 4w | — |
@@ -475,7 +475,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 3 (IPC & Capability) | 6 weeks | 3 days | 14x | M10–M12 | 2026-03-10 | 2026-03-13 |
 | 4 (Block Storage) | 5 weeks | 10 days | 3.5x | M13–M15 | 2026-03-13 | 2026-03-23 |
 | 5 (Kit Foundation) | 3 weeks | 1.5 days | 14x | M16–M18 | 2026-03-23 | 2026-03-24 |
-| **Phases 0–5 total** | **24 weeks** | **~22.5 days** | **~7.5x** | **18/18** | | |
+| 6 (GPU & Display) | 6 weeks | 6 days | 7x | M19–M22 | 2026-03-24 | 2026-03-25 |
+| **Phases 0–6 total** | **30 weeks** | **~28.5 days** | **~7.4x** | **22/22** | | |
 
 **Project inception:** 2026-02-19 (architecture docs began). **First code commit:** 2026-03-02. **Architecture docs before code:** 17 days, 58K lines across 70 documents.
 
