@@ -339,14 +339,14 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Create `shared/src/kits/compute.rs` with `ComputeError` enum and supporting types for the `GpuSurface` trait.
 
 **Tasks:**
-- [x] Add `pub mod compute;` to `shared/src/kits/mod.rs`
-- [x] Add `pub use kits::compute as compute_kit;` to `shared/src/lib.rs`
-- [x] Define `ComputeError` enum: `DeviceUnavailable`, `AllocationFailed`, `InvalidParameters`, `ServiceError`, `PermissionDenied`
-- [x] Derive `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` on `ComputeError`
-- [x] Define `SurfaceBuffer` struct: `id: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `fb_virt: usize`, `stride: u32`
-- [x] Define `DamageRect` struct: `x: u32`, `y: u32`, `width: u32`, `height: u32`
-- [x] Define `SemanticHint` enum: `UiText`, `VideoPlayback`, `Rendering3D`, `ScrollingContent`, `StaticContent`
-- [x] Write host-side tests: `ComputeError` derives, struct field access, `SemanticHint` enum coverage
+- [ ] Add `pub mod compute;` to `shared/src/kits/mod.rs`
+- [ ] Add `pub use kits::compute as compute_kit;` to `shared/src/lib.rs`
+- [ ] Define `ComputeError` enum: `DeviceUnavailable`, `AllocationFailed`, `InvalidParameters`, `ServiceError`, `PermissionDenied`
+- [ ] Derive `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` on `ComputeError`
+- [ ] Define `SurfaceBuffer` struct: `id: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `fb_virt: usize`, `stride: u32`
+- [ ] Define `DamageRect` struct: `x: u32`, `y: u32`, `width: u32`, `height: u32`
+- [ ] Define `SemanticHint` enum: `UiText`, `VideoPlayback`, `Rendering3D`, `ScrollingContent`, `StaticContent`
+- [ ] Write host-side tests: `ComputeError` derives, struct field access, `SemanticHint` enum coverage
 
 **Key reference:** [kits/kernel/compute.md](../kits/kernel/compute.md) §2 (Tier 1 GpuSurface), §6 (ComputeError)
 
@@ -359,13 +359,13 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Define the `GpuSurface` trait for Compute Kit Tier 1, following the pattern established by Memory Kit and IPC Kit.
 
 **Tasks:**
-- [x] Define `GpuSurface` trait in `shared/src/kits/compute.rs`:
+- [ ] Define `GpuSurface` trait in `shared/src/kits/compute.rs`:
   - `fn allocate_buffer(&self, width: u32, height: u32, format: GpuPixelFormat) -> Result<SurfaceBuffer, ComputeError>`
   - `fn submit_damage(&self, buffer: &SurfaceBuffer, damage: &[DamageRect]) -> Result<(), ComputeError>`
   - `fn set_semantic_hint(&self, hint: SemanticHint) -> Result<(), ComputeError>`
   - `fn request_direct_scanout(&self) -> Result<bool, ComputeError>`
-- [x] Ensure trait is dyn-compatible (object-safe)
-- [x] Write host-side test: `fn _assert_object_safe(_: &dyn GpuSurface) {}` compile-time check
+- [ ] Ensure trait is dyn-compatible (object-safe)
+- [ ] Write host-side test: `fn _assert_object_safe(_: &dyn GpuSurface) {}` compile-time check
 
 **Key reference:** [kits/kernel/compute.md](../kits/kernel/compute.md) §2 (GpuSurface trait definition)
 
@@ -378,13 +378,13 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement `GpuSurface` for the kernel's GPU Service, following the `KernelFrameAllocator` / `KernelCapabilitySystem` zero-sized wrapper pattern.
 
 **Tasks:**
-- [x] Create zero-sized `KernelGpuSurface` struct in `kernel/src/gpu/mod.rs`
-- [x] Implement `GpuSurface for KernelGpuSurface`:
+- [ ] Create zero-sized `KernelGpuSurface` struct in `kernel/src/gpu/mod.rs`
+- [ ] Implement `GpuSurface for KernelGpuSurface`:
   - `allocate_buffer`: sends `AllocateBuffer` command to GPU Service via IPC
   - `submit_damage`: sends `Present` command with damage rect to GPU Service
   - `set_semantic_hint`: stores hint in GPU Service state (informational — used by compositor in Phase 7+)
   - `request_direct_scanout`: returns `Ok(true)` (single surface, no compositor yet)
-- [x] Test: allocate buffer via `KernelGpuSurface`, render pixels, submit damage, verify display updates
+- [ ] Test: allocate buffer via `KernelGpuSurface`, render pixels, submit damage, verify display updates
 
 **Key reference:** [kits/kernel/compute.md](../kits/kernel/compute.md) §2; Kit kernel wrapper pattern from Phase 5 (`KernelFrameAllocator` in `kernel/src/mm/frame.rs`)
 
@@ -397,9 +397,9 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Final review of kernel/ code from M22, ensure all sharable types are in shared crate.
 
 **Tasks:**
-- [x] Review `kernel/src/gpu/` for types that can move to `shared/src/kits/compute.rs` or `shared/src/gpu.rs`
-- [x] Write additional host-side tests for Compute Kit types
-- [x] Verify all 12+ Kit traits (including new `GpuSurface`) are dyn-compatible
+- [ ] Review `kernel/src/gpu/` for types that can move to `shared/src/kits/compute.rs` or `shared/src/gpu.rs`
+- [ ] Write additional host-side tests for Compute Kit types
+- [ ] Verify all 12+ Kit traits (including new `GpuSurface`) are dyn-compatible
 
 **Acceptance:** `just check` + `just test` pass.
 
@@ -450,6 +450,6 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 - [x] Custom GPU Service runs as kernel IPC service with capability-gated access
 - [x] Double-buffered page flip works (buffer swap demonstrated)
 - [x] spleen-font bitmap text renders legibly on GPU framebuffer
-- [x] Compute Kit Tier 1 `GpuSurface` trait defined and implemented
+- [ ] Compute Kit Tier 1 `GpuSurface` trait defined and implemented
 - [x] All existing functionality (UART, storage, IPC, scheduler) unaffected
 - [x] Audit loop clean across all three categories
