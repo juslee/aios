@@ -598,6 +598,9 @@ pub const VIRTIO_MMIO_VERSION_MODERN: u32 = 2;
 /// VirtIO device ID for block devices.
 pub const VIRTIO_DEVICE_ID_BLK: u32 = 2;
 
+/// VirtIO device ID for GPU devices.
+pub const VIRTIO_DEVICE_ID_GPU: u32 = 16;
+
 /// QEMU virt machine VirtIO MMIO region base address.
 pub const VIRTIO_MMIO_REGION_BASE: u64 = 0x0A00_0000;
 
