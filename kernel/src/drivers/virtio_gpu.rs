@@ -91,7 +91,6 @@ pub fn init(dt: &DeviceTree) -> bool {
 }
 
 /// Get the display resolution, or None if no GPU device.
-#[allow(dead_code)] // Not yet called; needed for GPU service
 pub fn display_info() -> Option<DisplayInfo> {
     VIRTIO_GPU.lock().as_ref().map(|g| g.display)
 }
@@ -898,7 +897,6 @@ pub fn gpu_allocate_framebuffer(width: u32, height: u32) -> Result<GpuBufferHand
 }
 
 /// Bind a resource to a display scanout.
-#[allow(dead_code)] // Used in Step 10 (double buffering) and Step 11 (GOP transition).
 pub fn gpu_set_scanout(
     scanout_id: u32,
     resource_id: u32,
@@ -951,9 +949,8 @@ pub fn gpu_resource_unref(resource_id: u32) -> Result<(), GpuError> {
 
 /// Release the M19 test frame: detach backing, unref resource, free DMA pages.
 ///
-/// Called during GPU transition (Step 11) to reclaim the boot test frame's DMA
-/// memory before allocating double buffers.
-#[allow(dead_code)] // Used in Step 11 (GOP transition).
+/// Called during GPU transition to reclaim the boot test frame's DMA
+/// memory before the GPU Service allocates double buffers.
 pub fn gpu_release_test_frame() {
     let mut guard = VIRTIO_GPU.lock();
     let gpu = match guard.as_mut() {

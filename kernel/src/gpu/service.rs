@@ -281,6 +281,12 @@ fn handle_present(state: &GpuServiceState, req: &GpuRequest) -> GpuResponse {
 
     // Use damage rect from request, or full buffer if damage is zero-sized.
     let rect = if req.damage_w > 0 && req.damage_h > 0 {
+        // Validate damage rect stays within buffer bounds.
+        if req.damage_x.saturating_add(req.damage_w) > handle.width
+            || req.damage_y.saturating_add(req.damage_h) > handle.height
+        {
+            return GpuResponse::error(GpuError::InvalidResource);
+        }
         VirtioGpuRect {
             x: req.damage_x,
             y: req.damage_y,
@@ -374,6 +380,15 @@ fn init_double_buffering(state: &mut GpuServiceState) {
     if let Err(e) = virtio_gpu::gpu_set_scanout(state.display.scanout_id, front.resource_id, &rect)
     {
         crate::kwarn!(Gpu, "GPU Service: set_scanout failed: {:?}", e);
+        // Clean up both buffers on scanout failure.
+        let _ = virtio_gpu::gpu_resource_detach_backing(front.resource_id);
+        let _ = virtio_gpu::gpu_resource_unref(front.resource_id);
+        // SAFETY: front/back were just allocated by gpu_allocate_framebuffer.
+        // No other references exist (not yet stored in state).
+        unsafe { crate::mm::frame::free_dma_pages(front.fb_phys, front.order) };
+        let _ = virtio_gpu::gpu_resource_detach_backing(back.resource_id);
+        let _ = virtio_gpu::gpu_resource_unref(back.resource_id);
+        unsafe { crate::mm::frame::free_dma_pages(back.fb_phys, back.order) };
         return;
     }
 
@@ -408,15 +423,10 @@ fn swap_buffers(state: &mut GpuServiceState) -> Result<(), GpuError> {
     // Bind new front to scanout.
     virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect)?;
 
-    // Transfer and flush with fence tracking.
-    let fence_id = state.fence_tracker.allocate();
+    // Transfer and flush (polled I/O completes synchronously).
+    // Fenced command path (VIRTIO_GPU_FLAG_FENCE + IRQ) deferred to Phase 7+.
     virtio_gpu::gpu_transfer_to_host(new_front.resource_id, &rect, 0)?;
-
-    // Use fenced flush to track completion.
-    // For now, use unfenced flush (polled I/O completes synchronously).
-    // Fenced command path will be added when IRQ-driven I/O is available.
     virtio_gpu::gpu_resource_flush(new_front.resource_id, &rect)?;
-    state.fence_tracker.complete(fence_id);
 
     state.front_buffer = Some(new_front);
     state.back_buffer = Some(new_back);

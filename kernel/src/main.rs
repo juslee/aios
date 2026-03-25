@@ -338,83 +338,20 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     sched::enter_scheduler();
 }
 
-/// Transition display from GOP test frame to VirtIO-GPU double-buffered output.
+/// Prepare VirtIO-GPU display for the GPU Service.
 ///
-/// Called during boot (before scheduler starts) using direct driver calls.
-/// Releases the M19 test frame's DMA memory, allocates double buffers via
-/// the GPU Service's public API, fills the back buffer with AIOS blue, and
-/// presents it. The GPU Service IPC loop takes over once the scheduler starts.
+/// Releases the M19 test frame's DMA memory so the GPU Service's
+/// `init_double_buffering()` can allocate fresh double buffers when
+/// the scheduler starts. No new buffers are allocated here — the
+/// GPU Service owns the display lifecycle from init onward.
 fn gpu_display_transition() {
-    use shared::gpu::{GpuPixelFormat, VirtioGpuRect, AIOS_BLUE_B8G8R8A8};
-
     // Release M19 test frame to reclaim ~4MB DMA memory.
+    // The GPU Service's init_double_buffering() will allocate fresh
+    // front/back buffers and bind them to the scanout.
     drivers::virtio_gpu::gpu_release_test_frame();
-
-    // Allocate double buffers using direct driver calls.
-    let display = match drivers::virtio_gpu::display_info() {
-        Some(d) => d,
-        None => return,
-    };
-    let w = display.width;
-    let h = display.height;
-
-    let front = match drivers::virtio_gpu::gpu_allocate_framebuffer(w, h) {
-        Ok(handle) => handle,
-        Err(e) => {
-            crate::kwarn!(Boot, "GPU transition: front buffer alloc failed: {:?}", e);
-            return;
-        }
-    };
-
-    let back = match drivers::virtio_gpu::gpu_allocate_framebuffer(w, h) {
-        Ok(handle) => handle,
-        Err(e) => {
-            crate::kwarn!(Boot, "GPU transition: back buffer alloc failed: {:?}", e);
-            return;
-        }
-    };
-
-    // Fill back buffer with AIOS blue.
-    let pixel_count = (w * h) as usize;
-    let bpp = GpuPixelFormat::B8G8R8A8.bytes_per_pixel() as usize;
-    let total_bytes = pixel_count * bpp;
-    if total_bytes > 0 {
-        // SAFETY: back.fb_virt points to DMA pages from gpu_allocate_framebuffer.
-        // page_count covers width*height*4 bytes. We write exactly pixel_count u32s.
-        unsafe {
-            let fb = back.fb_virt as *mut u32;
-            let fb_slice = core::slice::from_raw_parts_mut(fb, pixel_count);
-            fb_slice.fill(AIOS_BLUE_B8G8R8A8);
-        }
-    }
-
-    // Bind front to scanout, present back buffer content.
-    let rect = VirtioGpuRect {
-        x: 0,
-        y: 0,
-        width: w,
-        height: h,
-    };
-
-    // Set scanout to back buffer (it has the blue content), then present.
-    if let Err(e) =
-        drivers::virtio_gpu::gpu_set_scanout(display.scanout_id, back.resource_id, &rect)
-    {
-        crate::kwarn!(Boot, "GPU transition: set_scanout failed: {:?}", e);
-        return;
-    }
-    if let Err(e) = drivers::virtio_gpu::gpu_present_frame(&back) {
-        crate::kwarn!(Boot, "GPU transition: present failed: {:?}", e);
-        return;
-    }
-
     kinfo!(
         Boot,
-        "GPU transition: VirtIO-GPU display active (front={}, back={}, {}x{})",
-        front.resource_id,
-        back.resource_id,
-        w,
-        h
+        "GPU transition: test frame released, GPU Service will take over"
     );
 }
 

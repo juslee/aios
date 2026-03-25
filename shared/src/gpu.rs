@@ -256,11 +256,12 @@ const _: () = assert!(core::mem::size_of::<VirtioGpuResourceDetachBacking>() == 
 /// Distinct from the boot `PixelFormat` in `shared/src/boot.rs` and the
 /// VirtIO `VirtioGpuFormat` wire values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
 pub enum GpuPixelFormat {
     /// Blue-Green-Red-Alpha, 8 bits per channel.
-    B8G8R8A8,
+    B8G8R8A8 = 0,
     /// Red-Green-Blue-Alpha, 8 bits per channel.
-    R8G8B8A8,
+    R8G8B8A8 = 1,
 }
 
 impl GpuPixelFormat {
