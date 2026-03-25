@@ -187,6 +187,7 @@ dependencies = [
  "sha2",
  "shared",
  "spin",
+ "spleen-font",
 ]
 
 [[package]]
@@ -286,6 +287,12 @@ name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+
+[[package]]
+name = "spleen-font"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43744d8a750592871f6182fd1b9ba6a341d31da3ebf430c9d9d3634d49296600"
 
 [[package]]
 name = "stable_deref_trait"

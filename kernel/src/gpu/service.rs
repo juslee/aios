@@ -124,6 +124,18 @@ fn gpu_service_loop() -> ! {
     // Initialize double buffering if display is valid.
     if display.width > 0 && display.height > 0 {
         init_double_buffering(&mut state);
+
+        // Render boot log text to the back buffer and present it.
+        if let Some(back) = state.back_buffer.as_ref() {
+            let fb_info = crate::gpu::text::FbInfo {
+                fb: back.fb_virt as *mut u32,
+                stride_px: back.stride / 4,
+                width: back.width,
+                height: back.height,
+            };
+            crate::gpu::text::draw_boot_log(&fb_info);
+            let _ = swap_buffers(&mut state);
+        }
     }
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];

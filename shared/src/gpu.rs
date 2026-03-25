@@ -361,6 +361,19 @@ pub const AIOS_BLUE_B8G8R8A8: u32 = 0xFF5B_8CFF;
 pub const MAX_GPU_BUFFERS: usize = 8;
 
 // ---------------------------------------------------------------------------
+// Boot log text rendering colors (B8G8R8A8 format)
+// ---------------------------------------------------------------------------
+
+/// Dark blue-grey background for boot log display (#1A1A2E).
+pub const BOOT_LOG_BG: u32 = 0xFF1A_1A2E;
+
+/// Light grey foreground for boot log text (#E0E0E0).
+pub const BOOT_LOG_FG: u32 = 0xFFE0_E0E0;
+
+/// AIOS blue for boot log header text (#5B8CFF).
+pub const BOOT_LOG_HEADER: u32 = AIOS_BLUE_B8G8R8A8;
+
+// ---------------------------------------------------------------------------
 // Fence tracker (Phase 6 M20 — double buffering)
 // ---------------------------------------------------------------------------
 

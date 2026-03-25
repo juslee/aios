@@ -4,3 +4,4 @@
 //! IPC service with double-buffered display management.
 
 pub mod service;
+pub mod text;
