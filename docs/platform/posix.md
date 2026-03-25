@@ -1510,7 +1510,7 @@ Phase 23d: Device translation — virtual /dev/* nodes
            Deliverable: BSD tools can access /dev/null, /dev/urandom, /dev/tty
 
 Phase 23e: Socket translation — network operations via Network Service
-           Depends on: Phase 23c, Phase 8 (Network Subsystem)
+           Depends on: Phase 23c, Phase 9 (Network Subsystem)
            Deliverable: curl and ssh work
 
 Phase 23f: Full FreeBSD userland — all included tools compiled and tested

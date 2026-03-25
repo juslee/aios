@@ -120,7 +120,7 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | USB device classes | `docs/platform/usb/device-classes.md` | §3.1–§3.3 Enumeration, §4.1–§4.7 HID/storage/audio/video/network/serial/accessibility, §5 Routing |
 | USB hotplug & power | `docs/platform/usb/hotplug.md` | §6.1–§6.3 Hub enumeration, §7.1–§7.4 Hotplug state machine, §8.1–§8.4 Power management |
 | USB security & AI | `docs/platform/usb/security.md` | §9.1–§9.5 Threat model/caps/IOMMU/fuzzing/allowlist, §10.1–§10.4 AI-native, §11.1–§11.3 Audit |
-| Networking (hub) | `docs/platform/networking.md` | §1 Core Insight, §2 ANM Architecture, §7 Impl Order, §8 Tech Choices, §10 Design Principles, Document Map |
+| Networking (hub) | `docs/platform/networking.md` | §1 Core Insight, §2 Full Architecture, §7 Impl Order, §8 Tech Choices, §10 Design Principles, Document Map |
 | ANM specification | `docs/platform/networking/anm.md` | §A1–§A8 ANM 5-layer model, data units, encapsulation, design principles, ANM vs OSI, failure modes, tech stack |
 | Mesh Layer | `docs/platform/networking/mesh.md` | §M1–§M10 Identity Layer, Noise IK protocol, transport modes (Direct/Relay/Tunnel), peer discovery, peer table, mesh packet format, capability exchange |
 | Bridge Module | `docs/platform/networking/bridge.md` | §B1–§B7 Bridge components, translation flows, bridge security (7 layers), honest limitations, protocol integration guide (WireGuard reference), POSIX socket emulation |

@@ -195,13 +195,13 @@ impl NetworkStack {
 smoltcp requires periodic polling to process packets. AIOS uses a hybrid approach:
 
 ```text
-Interrupt-driven (Phase 8+):
+Interrupt-driven (Phase 9+):
     VirtIO-Net raises IRQ on packet arrival
     → GICv3 routes to handler
     → Handler signals network service thread
     → Service thread calls NetworkStack::poll()
 
-Adaptive polling (Phase 24+):
+Adaptive polling (Phase 28+):
     High traffic: switch to polling mode (check every 100μs)
     Low traffic: switch to interrupt mode (wake on packet)
     Threshold: >1000 packets/sec sustained → polling mode
@@ -465,20 +465,20 @@ Receive path (NIC → application):
     Traditional OS:  NIC → kernel buffer → socket buffer → user buffer (3 copies)
     AIOS target:     NIC → DMA buffer → application mapping (1 copy)
 
-    Phase 8:   NIC → DMA → smoltcp → NTM → agent (2 copies)
-    Phase 24+: NIC → DMA → mapped to agent address space (1 copy)
+    Phase 9:   NIC → DMA → smoltcp → NTM → agent (2 copies)
+    Phase 28+: NIC → DMA → mapped to agent address space (1 copy)
 
 Transmit path (application → NIC):
     Traditional OS:  user buffer → socket buffer → kernel buffer → NIC (3 copies)
     AIOS target:     application mapping → DMA buffer → NIC (1 copy)
 
-    Phase 8:   agent → NTM → smoltcp → DMA → NIC (2 copies)
-    Phase 24+: agent buffer → DMA mapping → NIC (1 copy)
+    Phase 9:   agent → NTM → smoltcp → DMA → NIC (2 copies)
+    Phase 28+: agent buffer → DMA mapping → NIC (1 copy)
 ```
 
-#### 4.4.2 Phase 8 Data Path
+#### 4.4.2 Phase 9 Data Path
 
-In Phase 8, the Bridge Stack data path involves two copies — acceptable for initial bringup:
+In Phase 9, the Bridge Stack data path involves two copies — acceptable for initial bringup:
 
 ```text
 RX: DMA buffer → smoltcp processes TCP/IP headers → payload copied to NTM buffer → NTM delivers to agent
@@ -600,13 +600,13 @@ For QEMU virt, the built-in DHCP server provides addresses in the 10.0.2.0/24 ra
 DNS resolution is provided at two levels:
 
 ```text
-Level 1: smoltcp DNS stub (Phase 8)
+Level 1: smoltcp DNS stub (Phase 9)
     - Simple recursive DNS queries over UDP
     - Single upstream server (from DHCP or static config)
     - Response caching with TTL
     - Sufficient for POSIX compat (curl, ssh)
 
-Level 2: hickory-dns client (Phase 24)
+Level 2: hickory-dns client (Phase 28)
     - DNS-over-HTTPS (DoH) and DNS-over-TLS (DoT)
     - DNSSEC validation
     - Encrypted queries (privacy)

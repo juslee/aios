@@ -477,8 +477,8 @@ pub enum NetworkError {
 | Raspberry Pi 5 | Ethernet/WiFi | Full | Full | Full | Hardware NIC |
 | Apple Silicon | Platform NIC | Full | Full | Full | Native drivers |
 
-**Implementation phase:** Phase 8+ (core networking stack, VirtIO-Net, smoltcp, HTTP).
-QUIC/HTTP3 in Phase 8+. WebSocket in Phase 8+. Shadow Engine in Phase 13+.
+**Implementation phase:** Phase 9+ (core networking stack, VirtIO-Net, smoltcp, HTTP).
+QUIC/HTTP3 in Phase 9+. WebSocket in Phase 9+. Shadow Engine in Phase 13+.
 
 ## 8. Technology Stack (ANM Split)
 

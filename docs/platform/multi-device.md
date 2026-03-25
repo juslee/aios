@@ -2,7 +2,7 @@
 
 **Audience:** All developers (kernel, platform, application)
 **Phase:** 38 (Tier 7, weeks 36–40)
-**Prerequisites:** Phase 8 (Networking), Phase 24 (Full NTM), Phase 35 (Secure Boot & Update System)
+**Prerequisites:** Phase 9 (Networking), Phase 28 (Full NTM), Phase 35 (Secure Boot & Update System)
 **Related:** [identity.md](../experience/identity.md), [sync.md](../storage/spaces/sync.md), [networking.md](./networking.md), [model.md](../security/model.md)
 
 ---
@@ -149,8 +149,8 @@ Phase 38 spans milestones M79–M81:
 
 **Prerequisites:**
 
-- Phase 8 (Networking) — ANM mesh stack for device communication (TCP/IP via Bridge Module for legacy)
-- Phase 24 (Full NTM) — Space Resolver, Shadow Engine, ANM Mesh Protocol
+- Phase 9 (Networking) — ANM mesh stack for device communication (TCP/IP via Bridge Module for legacy)
+- Phase 28 (Full NTM) — Space Resolver, Shadow Engine, ANM Mesh Protocol
 - Phase 35 (Secure Boot & Update System) — Measured boot chain for attestation
 - Phase 36 (Linux Binary & Wayland Compatibility) — Broad app support for enterprise adoption
 

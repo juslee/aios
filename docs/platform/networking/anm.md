@@ -400,8 +400,8 @@ All crates are `no_std` compatible or have `no_std` feature flags. No GPL depend
 
 ### Architecture Decision Records
 
-- [ADR: Space-centric networking](../../knowledge/decisions/) — Why applications see spaces, not sockets
-- [ADR: Capability-gated networking](../../knowledge/decisions/) — Why L4 is mandatory and non-bypassable
+- [ADR: Capability-routed networking](../../knowledge/decisions/2026-03-25-jl-capability-routed-networking.md) — Why L4 is mandatory and non-bypassable
+- [ADR: ANM over OSI](../../knowledge/decisions/2026-03-25-jl-anm-over-osi.md) — Why ANM replaces OSI for AI-native systems
 
 ### Related Architecture Documents
 

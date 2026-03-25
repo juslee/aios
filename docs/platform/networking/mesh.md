@@ -101,7 +101,7 @@ pub struct PeerIdentity {
 
 The Identity Layer integrates with the AIOS key hierarchy (see [identity/core.md §4](../../experience/identity/core.md)):
 
-```
+```text
 Primary Key (Ed25519)
     |
     +---> IdentityId (user-level identity)
@@ -176,7 +176,7 @@ Noise IK is chosen because ANM is fundamentally peer-to-peer: every connection i
 
 The IK pattern means: Initiator sends its static key (`s`), and the responder's static key is Known (`K`) to the initiator beforehand (from prior discovery or peer table).
 
-```
+```text
 Initiator (knows responder's static key)         Responder
     |                                                  |
     |  Message 1: e, es, s, ss                         |
@@ -285,7 +285,7 @@ pub enum TransportMode {
 
 Raw Ethernet frames with custom AIOS EtherType `0x4149` ("AI" in ASCII). No IP stack, no TCP, no TLS. Noise IK encryption provides confidentiality and authentication directly over the link layer.
 
-```
+```text
 Ethernet Frame (Direct Link):
 +------------------+------------------+-----------+---------------------+
 | Dst MAC (6B)     | Src MAC (6B)     | 0x4149    | MeshPacket          |
@@ -331,7 +331,7 @@ Multiple relay paths may exist simultaneously for redundancy. Failover between r
 
 Mesh packets encapsulated in QUIC/UDP for transit across the IP internet. QUIC provides NAT traversal, connection migration (device changes network without dropping session), and multiplexing. IP is the carrier, not the identity — DeviceId remains the address throughout.
 
-```
+```text
 UDP Datagram (Tunnel mode):
 +----------+----------+------+---------------------------+
 | IP Hdr   | UDP Hdr  | QUIC | MeshPacket                |
@@ -352,7 +352,7 @@ The double encryption (Noise inside QUIC) is intentional and harmless. QUIC encr
 
 ### M4.4 Path Selection Algorithm
 
-```
+```text
 1. Check peer table for all known paths to destination DeviceId
 2. Filter paths by liveness (last_verified < MAX_STALE_DURATION)
 3. Sort by preference:
@@ -374,7 +374,7 @@ Path selection is transparent to upper layers. The Space Layer issues a `SpaceOp
 
 Custom Ethernet broadcast frame sent on EtherType `0x4149` every 30 seconds or on link state change (interface up, address change, new network join).
 
-```
+```text
 ANNOUNCE Frame Format:
 +----------+------+-------------------+----------+---------------------+------------+-----------+
 | Version  | Type | DeviceId[0..16]   | Nonce    | Capabilities Bitmap | Noise_e    | Signature |

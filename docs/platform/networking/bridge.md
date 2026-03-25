@@ -7,7 +7,7 @@ type: architecture
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
 **Related:** [stack.md](./stack.md) — TCP/IP stack (used by Bridge), [security.md](./security.md) — Network security, [components.md](./components.md) — NTM components, [protocols.md](./protocols.md) — Protocol engines
-**Source:** [ANM Discussion](../../../knowledge/discussions/2026-03-25-jl-ai-network-model.md) — sections 4-5
+**Source:** [ANM Discussion](../../knowledge/discussions/2026-03-25-jl-ai-network-model.md) — sections 4-5
 
 -----
 
@@ -73,7 +73,7 @@ The Bridge assembles six crates, each handling one concern. All are `no_std` com
 | TLS 1.3 | `rustls` | Apache-2.0/MIT | Encrypted HTTPS, certificate pinning, CT verification |
 | HTTP/2 | `h2` | MIT | Multiplexed request/response, HPACK compression, flow control |
 | QUIC/HTTP/3 | `quinn` | Apache-2.0/MIT | HTTP/3 for external APIs; also used for Tunnel mode encapsulation |
-| DNS resolver | `hickory-dns` | Apache-2.0/MIT | Stub resolver (Phase 8); full DoH/DoT (Phase 24) |
+| DNS resolver | `hickory-dns` | Apache-2.0/MIT | Stub resolver (Phase 9); full DoH/DoT (Phase 28) |
 | Credential Vault | (kernel internal) | N/A | API keys, OAuth tokens, mTLS certs — agents never see credentials |
 
 ### Component Relationships
@@ -114,7 +114,7 @@ The Credential Vault is deliberately not a crate — it is a kernel-internal ser
 
 The most common Bridge flow. An agent reads from a space that resolves to an external HTTPS endpoint.
 
-```
+```text
 space::read("openai/v1/models")
   |
   +-> Capability Gate: net:read:openai/v1/models? --- check ---+
@@ -187,7 +187,7 @@ Inbound requests follow the same trust model as outbound responses: all content 
 
 When two AIOS devices cannot reach each other via Direct Link (same LAN) or Relay (trusted peer), the Bridge provides Tunnel mode: mesh packets encapsulated in QUIC/UDP.
 
-```
+```text
 Device A                         Internet                        Device B
     |                                                                |
     |  MeshPacket (Noise-encrypted)                                  |
@@ -289,7 +289,7 @@ Attacks 1-4 target the mesh — the Bridge is not involved. Attacks 5-9 target t
 
 Defense in depth with seven distinct layers, ordered from outermost (checked first) to innermost (the structural trust boundary):
 
-```
+```text
      Outbound request path                 Inbound response path
      =====================                 =====================
 
@@ -327,8 +327,8 @@ API keys, OAuth tokens, and mTLS certificates are stored in an isolated kernel-i
 **L3 — TLS Enforcement** (TLS 1.3 only, no fallback)
 
 - TLS 1.3 mandatory — no fallback to TLS 1.2 or earlier
-- Certificate pinning for known services (top 20 services pinned at Phase 8)
-- Certificate Transparency log verification (Phase 24)
+- Certificate pinning for known services (top 20 services pinned at Phase 9)
+- Certificate Transparency log verification (Phase 28)
 - Rejection of certificates from distrusted CAs
 
 **L4 — Packet Filter** (capability-derived rules, default deny)
@@ -369,8 +369,8 @@ Bridge security is implemented incrementally across phases:
 
 | Phase | Capabilities Added |
 |---|---|
-| **Phase 8** | TLS 1.3 (rustls), cert pinning (top 20 services), Credential Vault, DATA labeling, packet filter, capability gate |
-| **Phase 24** | DoH/DoT (hickory-dns), DNSSEC validation, CT verification, schema validation per space, InputScreener content screening |
+| **Phase 9** | TLS 1.3 (rustls), cert pinning (top 20 services), Credential Vault, DATA labeling, packet filter, capability gate |
+| **Phase 28** | DoH/DoT (hickory-dns), DNSSEC validation, CT verification, schema validation per space, InputScreener content screening |
 | **Phase 28** | Dynamic pinning (pin on first use + rotation), credential rotation policies, anomaly detection on response patterns, per-agent unique credentials |
 | **Future** | Onion routing integration, traffic padding, formal verification of DATA label invariant, post-quantum TLS cipher suites |
 
@@ -518,7 +518,7 @@ Legacy applications (curl, ssh, wget, Python scripts) expect BSD socket APIs. Th
 
 POSIX socket traffic always flows through the Bridge, never through the mesh. Applications using POSIX sockets receive Bridge-level trust (not mesh trust). This is intentional — POSIX sockets carry no capability tokens, no DeviceId authentication, and no content hashing. They are a compatibility mechanism, not a security mechanism.
 
-```
+```text
 +-------------------+     +-------------------+     +-------------------+
 |  Native Agent     |     |  Legacy App       |     |  Native Agent     |
 |  space::read()    |     |  send()/recv()    |     |  space::sync()    |
@@ -543,5 +543,5 @@ Agents using native space operations get mesh-level cryptographic guarantees. Le
 | Network security | [security.md](./security.md) | Capability gate, packet filter, credential vault, layered trust |
 | Adversarial screening | [../../security/adversarial-defense/screening.md](../../security/adversarial-defense/screening.md) | InputScreener used by Bridge L6 |
 | Decentralisation model | [../../security/decentralisation.md](../../security/decentralisation.md) | Mesh-first, Bridge-optional philosophy |
-| ANM discussion | [../../../knowledge/discussions/2026-03-25-jl-ai-network-model.md](../../../knowledge/discussions/2026-03-25-jl-ai-network-model.md) | Full ANM design including Bridge sections 4-5 |
-| Capability-routed networking ADR | [../../../knowledge/decisions/2026-03-25-jl-capability-routed-networking.md](../../../knowledge/decisions/2026-03-25-jl-capability-routed-networking.md) | Decision record for ANM capability routing |
+| ANM discussion | [../../knowledge/discussions/2026-03-25-jl-ai-network-model.md](../../knowledge/discussions/2026-03-25-jl-ai-network-model.md) | Full ANM design including Bridge sections 4-5 |
+| Capability-routed networking ADR | [../../knowledge/decisions/2026-03-25-jl-capability-routed-networking.md](../../knowledge/decisions/2026-03-25-jl-capability-routed-networking.md) | Decision record for ANM capability routing |

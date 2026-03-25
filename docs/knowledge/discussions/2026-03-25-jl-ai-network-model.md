@@ -28,7 +28,7 @@ The **AI Network Model (ANM)** is a 5-layer networking architecture that replace
 
 ANM has five layers plus a Bridge Module. Each layer has a single responsibility, a defined data unit, and clear failure semantics.
 
-```
+```text
 +----------------------------------------------------------+
 |  L5: Space Layer                                         |
 |  Unit: SpaceOperation   Address: SpaceId + ContentHash   |
@@ -90,7 +90,7 @@ A translation membrane between the ANM mesh world and the legacy IP internet. Co
 
 ### Data Unit Encapsulation
 
-```
+```text
 Agent calls space::write(data)
          |
          v
@@ -149,7 +149,7 @@ The critical invariant: **L4 Capability Layer never degrades.** Every other laye
 
 ### Principle 1: Identity IS the Address
 
-```
+```text
 DeviceId = sha256(Ed25519_public_key)
 ```
 
@@ -233,7 +233,7 @@ Raw Ethernet frames with AIOS EtherType `0x4149`. No IP stack. No TCP. No TLS. N
 
 Use case: devices on the same LAN segment. A laptop and a phone on the same WiFi network. Two QEMU instances connected by a virtual bridge.
 
-```
+```text
 Ethernet Frame (Direct Link):
 +------------------+------------------+-----------+------------------+
 | Dst MAC (6B)     | Src MAC (6B)     | 0x4149    | MeshPacket       |
@@ -251,7 +251,7 @@ Relay peers are auto-discovered from the peer table. Any peer with the `mesh.rel
 
 AIOS mesh packets encapsulated in QUIC/UDP for transit across the internet. QUIC provides NAT traversal, multiplexing, and congestion control. The IP layer is the carrier, not the identity layer — DeviceId remains the address.
 
-```
+```text
 UDP Datagram (Tunnel mode):
 +----------+----------+------+---------------------------+
 | IP Hdr   | UDP Hdr  | QUIC | MeshPacket                |
@@ -280,7 +280,7 @@ UDP Datagram (Tunnel mode):
 
 The same Ed25519 key pair used for DeviceId serves double duty for Noise encryption. Ed25519 signing keys are converted to X25519 Diffie-Hellman keys using the birational map between the Edwards and Montgomery curves. One key pair, one identity, one encryption context.
 
-```
+```text
 Ed25519 key pair
     |
     +---> DeviceId = sha256(public_key)     [Identity]
@@ -292,7 +292,7 @@ Ed25519 key pair
 
 **Handshake Flow:**
 
-```
+```text
 Initiator (knows responder's static key)        Responder
     |                                                |
     |  Message 1: e, es, s, ss (48B + 0-RTT payload)|
@@ -315,7 +315,7 @@ Initiator (knows responder's static key)        Responder
 
 Custom Ethernet broadcast frame sent every 30 seconds or on link state change.
 
-```
+```text
 ANNOUNCE Frame Format:
 +----------+------+-------------------+----------+---------------------+------------+-----------+
 | Version  | Type | DeviceId[0..16]   | Nonce    | Capabilities Bitmap | Noise_e    | Signature |
@@ -340,7 +340,7 @@ Service UUID `0xAIOS`, payload contains `DeviceId[0..8]` (8 bytes). BLE is for d
 
 `PeerStore` maps `DeviceId` to last-known connection information:
 
-```
+```text
 PeerStore entry:
   DeviceId      -> last_ip: SocketAddr
                    relay_peers: Vec<DeviceId>
@@ -468,7 +468,7 @@ The Bridge acts as a tunnel (encapsulating mesh packets in QUIC/UDP), not as a t
 
 The Bridge enforces defense in depth with seven distinct security layers:
 
-```
+```text
 L7: DATA Labeling        kernel-enforced trust boundary (THE boundary)
 L6: Content Screening    InputScreener: pattern + ML analysis
 L5: Response Validation  schema checking, size limits, rate monitoring
@@ -556,7 +556,7 @@ For ANY protocol added to the Bridge Module, answer these eight questions:
 
 Decentralization is not binary. It is a spectrum:
 
-```
+```text
 Fully Centralized ----+---- Federated ----+---- Hybrid ----+---- Fully P2P
 (Google, Apple)        (Matrix, Email)      (AIOS)          (IPFS, BitTorrent)
 ```
@@ -625,7 +625,7 @@ Properties of servers-as-peers:
 
 Decentralization must be adopted through convenience, not ideology:
 
-```
+```text
 Phase 1: "No accounts needed"
     Users notice: no email signup, no password, device just works
          |
@@ -663,7 +663,7 @@ The economic model differs fundamentally from cloud-centric systems:
 
 ### 7.1 Five ANM Security Layers
 
-```
+```text
 L5: Behavioral Monitor     anomalous mesh traffic patterns
 L4: Content Verification   SHA-256, Merkle DAG, tamper-evident
 L3: Capability Gate         kernel, mandatory, unforgeable, audited

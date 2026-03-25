@@ -9,7 +9,7 @@ type: architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
 **Kit overview:** [Network Kit](../kits/platform/network.md) — AI Network Model (ANM) — mesh-native networking, Bridge Module for legacy IP
-**Related:** [development-plan.md](../project/development-plan.md) — Phase 8 (mesh + bridge networking), Phase 24 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction, [wireless.md](./wireless.md) — WiFi as Link Layer transport (L1)
+**Related:** [development-plan.md](../project/development-plan.md) — Phase 9 (Basic Networking / ANM), Phase 28 (full NTM), [subsystem-framework.md](./subsystem-framework.md) — Universal hardware abstraction, [wireless.md](./wireless.md) — WiFi as Link Layer transport (L1)
 
 **Note:** The networking subsystem implements the subsystem framework. Its capability gate, session model, audit logging, power management, and POSIX bridge follow the universal patterns defined in the framework document. This document covers the network-specific design decisions and architecture.
 
@@ -23,14 +23,14 @@ This document was split for navigability. Each sub-document preserves the origin
 |---|---|---|
 | **This file** | §1, §2, §7, §8, §10 | Core insight, ANM architecture overview, implementation order, technology choices, design principles |
 | [anm.md](./networking/anm.md) | §A1–§A8 | ANM specification: 5-layer model, data units, encapsulation, failure modes, technology stack |
-| [mesh.md](./networking/mesh.md) | §M1–§M6 | Mesh Layer: peer discovery, routing, transport modes, relay, offline queuing |
-| [bridge.md](./networking/bridge.md) | §B1–§B6 | Bridge Module: TCP/IP translation, DNS, TLS, HTTP, connection pooling, DATA labeling |
-| [components.md](./networking/components.md) | §3.1–§3.6 | NTM components: Space Resolver, Connection Manager, Shadow Engine, Resilience Engine, Capability Gate, Bandwidth Scheduler |
-| [stack.md](./networking/stack.md) | §4.1–§4.7 | Bridge Module internals: smoltcp integration, VirtIO-Net driver, zero-copy I/O, buffer management, DHCP/DNS |
-| [protocols.md](./networking/protocols.md) | §5.1–§5.5 | Bridge Module protocol engines: AIOS Peer Protocol, HTTP/2, QUIC/HTTP/3, WebSocket/SSE, TLS/rustls |
-| [security.md](./networking/security.md) | §6.1–§6.5 | L4 Capability Layer kernel enforcement, packet filtering, per-agent isolation, credential vault, layered trust |
-| [examples.md](./networking/examples.md) | §9.1–§9.5 | Mesh peer communication, web browsing via Bridge, POSIX compat, credential routing, data model |
-| [future.md](./networking/future.md) | §11.1–§11.8 | AI-driven networking, learned congestion control, predictive prefetch, anomaly detection |
+| [mesh.md](./networking/mesh.md) | §M1–§M10 | Mesh Layer: identity, Noise IK, transport modes, peer discovery, peer table, mesh packet format, capability exchange, integration, security |
+| [bridge.md](./networking/bridge.md) | §B1–§B7 | Bridge Module: TCP/IP translation, DNS, TLS, HTTP, security, protocol integration, POSIX socket emulation, cross-references |
+| [components.md](./networking/components.md) | §3.0–§3.6 | NTM components: Mesh Manager, Space Resolver, Connection Manager, Shadow Engine, Resilience Engine, Capability Gate, Bandwidth Scheduler |
+| [stack.md](./networking/stack.md) | §4.0–§4.7 | Network stacks: Mesh Stack overview, Bridge Stack (smoltcp), VirtIO-Net driver, buffer management, zero-copy I/O, DHCP/DNS |
+| [protocols.md](./networking/protocols.md) | §5.1–§5.5 | Protocol engines: AIOS Mesh Protocol (native), Bridge protocols (HTTP/2, QUIC/HTTP/3, WebSocket/SSE, TLS/rustls) |
+| [security.md](./networking/security.md) | §6.0–§6.5 | ANM security model, capability gate, packet filtering, per-agent isolation, credential vault, graduated trust |
+| [examples.md](./networking/examples.md) | §9.0–§9.5 | Mesh-first examples, web browsing via Bridge, POSIX compat, credential routing, data model |
+| [future.md](./networking/future.md) | §11.1–§11.9 | AI-driven networking, learned congestion control, predictive prefetch, anomaly detection, mesh-specific research |
 
 -----
 
@@ -157,25 +157,25 @@ See [anm.md](./networking/anm.md) for the full ANM specification, [mesh.md](./ne
 
 ## 7. Implementation Order
 
-Each sub-phase delivers usable functionality independently. Phase 8 delivers mesh-first networking with bridge support for legacy IP. Phase 24 adds the full NTM intelligence layer.
+Each sub-phase delivers usable functionality independently. Phase 9 delivers mesh-first networking with bridge support for legacy IP. Phase 28 adds the full NTM intelligence layer.
 
 ```text
-Phase 8 — Mesh + Bridge Networking:
-  +-- 8a: Mesh Layer (L1-L3)                -> raw Ethernet, Noise IK, peer discovery
-  +-- 8b: Bridge Layer (Bridge Module)       -> smoltcp, rustls, DHCP/DNS, HTTP
-  +-- 8c: POSIX + WAN                       -> socket emulation, QUIC tunnel for WAN relay
+Phase 9 — Basic Networking (ANM):
+  +-- 9a: Mesh Layer (L1-L3)                -> raw Ethernet, Noise IK, peer discovery
+  +-- 9b: Bridge Layer (Bridge Module)       -> smoltcp, rustls, DHCP/DNS, HTTP
+  +-- 9c: POSIX + WAN                       -> socket emulation, QUIC tunnel for WAN relay
 
-Phase 24 — Full NTM with Shadow Engine, Resilience:
-  +-- 24a: Connection Manager + Protocol     -> HTTP/2, WebSocket over Bridge
-  +-- 24b: Space Resolver + Capability Gate  -> space operations over network (L4-L5 full)
-  +-- 24c: Shadow Engine                     -> offline support, CRDT sync
-  +-- 24d: Resilience + Bandwidth Scheduler  -> production-grade QoS
-  +-- 24e: AIOS Peer Protocol                -> full mesh protocol with relay
+Phase 28 — Full NTM with Shadow Engine, Resilience:
+  +-- 28a: Connection Manager + Protocol     -> HTTP/2, WebSocket over Bridge
+  +-- 28b: Space Resolver + Capability Gate  -> space operations over network (L4-L5 full)
+  +-- 28c: Shadow Engine                     -> offline support, CRDT sync
+  +-- 28d: Resilience + Bandwidth Scheduler  -> production-grade QoS
+  +-- 28e: AIOS Peer Protocol                -> full mesh protocol with relay
 ```
 
-After Phase 8a, two AIOS devices on the same Ethernet segment can exchange space operations — no IP, no DNS, no TLS certificates. After 8b, agents can reach legacy TCP/IP services (web APIs, cloud storage) through the Bridge Module. After 8c, a developer can `curl` from the AIOS shell and mesh peers can relay over the WAN.
+After Phase 9a, two AIOS devices on the same Ethernet segment can exchange space operations — no IP, no DNS, no TLS certificates. After 9b, agents can reach legacy TCP/IP services (web APIs, cloud storage) through the Bridge Module. After 9c, a developer can `curl` from the AIOS shell and mesh peers can relay over the WAN.
 
-After Phase 24b, the full NTM intelligence layer resolves space names to endpoints and enforces capabilities at the network boundary. After 24c, the system works offline with shadow copies. After 24e, the full AIOS Peer Protocol enables multi-hop relay and cross-WAN mesh communication.
+After Phase 28b, the full NTM intelligence layer resolves space names to endpoints and enforces capabilities at the network boundary. After 28c, the system works offline with shadow copies. After 28e, the full AIOS Peer Protocol enables multi-hop relay and cross-WAN mesh communication.
 
 -----
 
@@ -251,14 +251,16 @@ All pure Rust, all permissively licensed, all no_std compatible or portable. See
 | §A6 Failure mode table | [anm.md](./networking/anm.md) | Per-layer failure responses, degradation policy |
 | §A7 Technology stack | [anm.md](./networking/anm.md) | Crate selection per ANM layer |
 | §A8 Cross-references | [anm.md](./networking/anm.md) | ADRs, related architecture docs |
-| §M1–§M6 Mesh Layer | [mesh.md](./networking/mesh.md) | Peer discovery, routing, transport modes, relay, offline |
-| §B1–§B6 Bridge Module | [bridge.md](./networking/bridge.md) | TCP/IP translation, DNS, TLS, HTTP, DATA labeling |
+| §M1–§M10 Mesh Layer | [mesh.md](./networking/mesh.md) | Identity, Noise IK, transport modes, peer discovery, peer table, mesh packet, capability exchange, integration, security |
+| §B1–§B7 Bridge Module | [bridge.md](./networking/bridge.md) | TCP/IP translation, DNS, TLS, HTTP, security, protocol integration, POSIX sockets, cross-references |
+| §3.0 Mesh Manager | [components.md](./networking/components.md) | Native peer-to-peer networking, peer table, discovery |
 | §3.1 Space Resolver | [components.md](./networking/components.md) | Semantic addressing, space registry, agent manifests |
 | §3.2 Connection Manager | [components.md](./networking/components.md) | Connection pooling, protocol negotiation, TLS sessions |
 | §3.3 Shadow Engine | [components.md](./networking/components.md) | Offline support, shadow policies, CRDT sync |
 | §3.4 Resilience Engine | [components.md](./networking/components.md) | Retry policies, circuit breaker, error simplification |
 | §3.5 Capability Gate | [components.md](./networking/components.md) | Per-space capabilities, credential isolation |
 | §3.6 Bandwidth Scheduler | [components.md](./networking/components.md) | Priority scheduling, multi-path routing |
+| §4.0 Mesh Stack overview | [stack.md](./networking/stack.md) | Native mesh stack architecture, dual-stack design |
 | §4.1 smoltcp integration | [stack.md](./networking/stack.md) | TCP/IP stack architecture (Bridge Module internal) |
 | §4.2 VirtIO-Net driver | [stack.md](./networking/stack.md) | MMIO transport, virtqueue, DMA buffers |
 | §4.3 Buffer management | [stack.md](./networking/stack.md) | Packet buffers, pool allocation, scatter-gather |
@@ -271,13 +273,15 @@ All pure Rust, all permissively licensed, all no_std compatible or portable. See
 | §5.3 QUIC and HTTP/3 | [protocols.md](./networking/protocols.md) | quinn integration, connection migration (Bridge + WAN tunnel) |
 | §5.4 WebSocket and SSE | [protocols.md](./networking/protocols.md) | Real-time subscriptions (Bridge Module) |
 | §5.5 TLS and rustls | [protocols.md](./networking/protocols.md) | Certificate management (Bridge Module) |
+| §6.0 ANM security model | [security.md](./networking/security.md) | 5-layer ANM security model, ANM vs OSI security |
 | §6.1 Kernel capability gate | [security.md](./networking/security.md) | L4 enforcement architecture, audit integration |
 | §6.2 Packet filtering | [security.md](./networking/security.md) | Capability-based filtering, BPF alternative |
 | §6.3 Per-agent network isolation | [security.md](./networking/security.md) | Network namespacing, traffic separation |
 | §6.4 Credential vault | [security.md](./networking/security.md) | Credential space, automatic routing, key lifecycle |
 | §6.5 Layered trust model | [security.md](./networking/security.md) | Trust labels, browser exception, service tiers |
-| §9.1 Mesh peer communication | [examples.md](./networking/examples.md) | Peer discovery and space sync over mesh |
-| §9.2 Web browsing via Bridge | [examples.md](./networking/examples.md) | Browser integration, space-based page loading |
+| §9.0 Mesh-first examples | [examples.md](./networking/examples.md) | Space sync, capability delegation over mesh |
+| §9.1 Web browsing | [examples.md](./networking/examples.md) | Browser integration, space-based page loading |
+| §9.2 Agent-to-agent communication | [examples.md](./networking/examples.md) | Agent communication via mesh and Bridge |
 | §9.3 POSIX compatibility | [examples.md](./networking/examples.md) | Socket emulation, BSD tool support |
 | §9.4 Credential routing | [examples.md](./networking/examples.md) | Automatic auth header injection |
 | §9.5 Data model | [examples.md](./networking/examples.md) | SpaceEndpoint, Shadow, SpaceError, NetCapability types |
@@ -289,3 +293,4 @@ All pure Rust, all permissively licensed, all no_std compatible or portable. See
 | §11.6 Protocol optimization | [future.md](./networking/future.md) | Learned protocol selection |
 | §11.7 Autonomous troubleshooting | [future.md](./networking/future.md) | LLM-assisted network diagnostics |
 | §11.8 Research innovations | [future.md](./networking/future.md) | Academic papers, production OS patterns |
+| §11.9 Mesh-specific research | [future.md](./networking/future.md) | Onion routing, post-quantum crypto, formal verification |
