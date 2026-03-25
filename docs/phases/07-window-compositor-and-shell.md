@@ -222,7 +222,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 - [ ] Define `SurfaceContentType` enum (simplified): `Document`, `Terminal`, `Browser`, `Game`, `Settings`, `SystemUI`, `Generic`
 - [ ] Define `DamageRegion` enum: `Rect { x: u32, y: u32, width: u32, height: u32 }`, `FullSurface`, `Empty`
 - [ ] Define `CompositorRequest` repr(C): `CreateSurface { width, height, title, content_type, layer }`, `AttachBuffer { surface_id, shmem_id, damage }`, `DestroySurface { surface_id }`, `Resize { surface_id, width, height }`, `SetLayer { surface_id, layer }`
-- [ ] Define `CompositorEvent` repr(C): `Configure { surface_id, width, height, scale_x100 }`, `FocusChanged { surface_id, focused }`, `CloseRequested { surface_id }`, `BufferReleased { shmem_id }`, `FramePresented { surface_id, timestamp_ticks }`
+- [ ] Define `CompositorEvent` repr(C): `Configure { surface_id, width, height, scale_x100 }`, `FocusChanged { surface_id, focused }`, `CloseRequested { surface_id }`, `BufferReleased { shmem_id }`, `FramePresented { surface_id, timestamp_ticks }`, `Input { surface_id, event: InputEvent }`
 - [ ] Add `Compositor = 15` variant to `Subsystem` enum, update `COUNT` to 16, update `name()` and tests
 - [ ] Add compile-time size assertions: `CompositorRequest` ≤ 256 bytes, `CompositorEvent` ≤ 256 bytes
 - [ ] Write host-side tests: size assertions, SurfaceState ordering, SurfaceLayer ordering, SurfaceTitle construction and truncation
