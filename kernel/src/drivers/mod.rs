@@ -2,3 +2,4 @@
 
 pub mod virtio_blk;
 pub mod virtio_common;
+pub mod virtio_gpu;

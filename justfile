@@ -67,6 +67,21 @@ run-display: disk create-data-disk
         -device virtio-blk-device,drive=data0 \
         -device ramfb
 
+# Build and launch QEMU with VirtIO-GPU device (for GPU display verification)
+run-gpu: disk create-data-disk
+    qemu-system-aarch64 \
+        -machine virt,gic-version=3 \
+        -cpu cortex-a72 \
+        -smp 4 \
+        -m 2G \
+        -serial stdio \
+        -bios {{edk2_fw}} \
+        -drive if=none,id=disk0,file={{disk_img}},format=raw \
+        -device virtio-blk-pci,drive=disk0 \
+        -drive if=none,id=data0,file={{data_img}},format=raw \
+        -device virtio-blk-device,drive=data0 \
+        -device virtio-gpu-device
+
 # Build and launch QEMU with GDB server (paused, edk2 boot)
 debug: disk create-data-disk
     qemu-system-aarch64 \
