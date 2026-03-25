@@ -392,6 +392,21 @@ fn init_double_buffering(state: &mut GpuServiceState) {
         return;
     }
 
+    // Fill front buffer with AIOS blue and present it.
+    let pixel_count = (w as usize) * (h as usize);
+    if pixel_count > 0 {
+        // SAFETY: front.fb_virt points to DMA pages from gpu_allocate_framebuffer.
+        // page_count covers width*height*4 bytes. We write exactly pixel_count u32s.
+        unsafe {
+            let fb = front.fb_virt as *mut u32;
+            let fb_slice = core::slice::from_raw_parts_mut(fb, pixel_count);
+            fb_slice.fill(shared::gpu::AIOS_BLUE_B8G8R8A8);
+        }
+    }
+    // Transfer front buffer content to host and flush display.
+    let _ = virtio_gpu::gpu_transfer_to_host(front.resource_id, &rect, 0);
+    let _ = virtio_gpu::gpu_resource_flush(front.resource_id, &rect);
+
     crate::kinfo!(
         Gpu,
         "VirtIO-GPU: double buffering enabled (front={}, back={})",
