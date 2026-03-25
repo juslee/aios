@@ -227,6 +227,11 @@ fn handle_allocate_buffer(state: &mut GpuServiceState, req: &GpuRequest) -> GpuR
         state.display.height
     };
 
+    // Reject zero-sized buffers.
+    if width == 0 || height == 0 {
+        return GpuResponse::error(GpuError::InvalidResource);
+    }
+
     match virtio_gpu::gpu_allocate_framebuffer(width, height) {
         Ok(handle) => {
             let resource_id = handle.resource_id;

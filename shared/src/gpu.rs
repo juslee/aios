@@ -842,7 +842,7 @@ mod tests {
     }
 
     #[test]
-    fn fence_tracker_zero_never_complete() {
+    fn fence_tracker_zero_always_complete() {
         let ft = FenceTracker::new();
         // Fence 0 is always complete (0 <= 0).
         assert!(ft.is_complete(0));

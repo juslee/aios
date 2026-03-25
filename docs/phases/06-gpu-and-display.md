@@ -211,7 +211,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 - [x] Create `kernel/src/gpu/service.rs` with `gpu_service_loop()` entry function
 - [x] In `gpu_service_loop()`: create IPC channel, register as "gpu-service" via `service_register()`, loop on `ipc_recv()`, decode `GpuCommand` from message data, dispatch to handler, `ipc_reply()` with response
 - [x] Implement `handle_get_display_info()`: reads display info from VirtIO-GPU driver, packs into response
-- [x] Implement `handle_allocate_buffer()`: allocates a new VirtIO-GPU framebuffer (via the driver), enforces `GpuBufferCreate` capability check, returns resource_id
+- [x] Implement `handle_allocate_buffer()`: allocates a new VirtIO-GPU framebuffer (via the driver) and returns resource_id (per-command capability enforcement deferred — IPC-layer ChannelAccess is the Phase 6 enforcement point)
 - [x] Implement `handle_release_buffer()`: detaches backing, unrefs resource, frees DMA pages
 - [x] Implement `handle_present()`: calls `transfer_to_host_2d` + `resource_flush` for the specified damage region
 - [x] Implement `handle_get_buffer_info()`: returns DMA virtual address, width, height, stride for a resource
@@ -235,7 +235,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 - [x] Implement `swap_buffers()`: swaps front/back handles, calls `set_scanout()` to bind new front, `transfer_to_host_2d()` + `resource_flush()` for new front
 - [x] Add `SwapBuffers = 6` to `GpuCommand` enum for IPC-triggered swap
 - [x] Implement `FenceTracker` struct: `next_id: u64`, `last_completed: u64` with `allocate()`, `complete()`, `is_complete()` methods
-- [x] Use fenced commands on `resource_flush` to track when it is safe to render into the freed buffer
+- [x] For now, use unfenced synchronous `resource_flush()`; defer real fenced completion tracking (VIRTIO_GPU_FLAG_FENCE + IRQ) to Phase 7+ when interrupt-driven VirtIO is available
 
 **Key reference:** [gpu/display.md](../platform/gpu/display.md) §7.2 (double buffering), §7.3 (page flip); [gpu/drivers.md](../platform/gpu/drivers.md) §3.4 (fences)
 
@@ -248,7 +248,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** When VirtIO-GPU is available, transition display output from the GOP framebuffer to VirtIO-GPU. When VirtIO-GPU is not available, GOP framebuffer remains active as fallback.
 
 **Tasks:**
-- [x] Modify `kernel_main` GPU init section: after `virtio_gpu::init()` succeeds and GPU Service thread starts, render AIOS test pattern (#5B8CFF) to VirtIO-GPU back buffer via the GPU Service, call swap
+- [x] Modify `kernel_main` GPU init section: after `virtio_gpu::init()` succeeds, release test frame via direct driver calls (pre-scheduler); GPU Service allocates double buffers and renders AIOS blue when scheduler starts
 - [x] When VirtIO-GPU is not present (`just run` without `-device virtio-gpu-device`), skip GPU init, log fallback to GOP
 - [x] Add boot phase `EarlyBootPhase::GpuReady` variant before `Complete` (keeping `Complete` as the last variant and updating phase-count constants/tests as needed)
 - [x] Advance boot phase to `GpuReady` after successful VirtIO-GPU init + GPU Service start
