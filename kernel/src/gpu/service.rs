@@ -135,6 +135,7 @@ fn gpu_service_loop() -> ! {
             };
             crate::gpu::text::draw_boot_log(&fb_info);
             let _ = swap_buffers(&mut state);
+            crate::kinfo!(Gpu, "Boot log rendered to display");
         }
     }
 

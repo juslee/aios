@@ -172,6 +172,13 @@ pub fn draw_boot_log(fb: &FbInfo) {
     let mut lens = [0u8; crate::observability::MAX_LOG_LINES];
     let count = crate::observability::take_boot_log(&mut lines, &mut lens);
 
+    crate::kinfo!(
+        Gpu,
+        "Boot log: {} entries captured, max_lines={}",
+        count,
+        max_lines
+    );
+
     // Render most recent entries that fit on screen.
     let display_count = count.min(max_lines);
     let start_idx = count.saturating_sub(display_count);
