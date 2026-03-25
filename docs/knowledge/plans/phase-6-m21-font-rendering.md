@@ -76,7 +76,7 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
   2. Boot-time `drain_logs()` calls fill buffer (IRQs masked, no contention)
   3. GPU Service's `take_boot_log()` sets `false` BEFORE locking Mutex → disables capture
   4. After step 3, timer tick drain_logs sees false → skips buffer entirely
-  5. **No-GPU path**: Capture stays `true` but nobody reads. Timer tick overhead: try_lock + format per entry (~2μs/tick) — negligible. Buffer in BSS (7.5 KiB) — negligible.
+  5. **No-GPU path**: Capture stays `true` but nobody reads. Timer tick overhead: try_lock + format per entry (~2μs/tick) — negligible. Buffer in BSS (~40 KiB for 256×160) — negligible.
 
 - **Deadlock prevention** (belt-and-suspenders):
   - `drain_logs()` uses `try_lock()` (not `lock()`) for BOOT_LOG — if Mutex held, skip capture
@@ -97,7 +97,7 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
 
 4. **DMA memory is WB Cacheable** (MAIR Attr3, confirmed in `kmap.rs:290`): Regular writes to `fb_virt` are safe. No `write_volatile` needed. Use `core::ptr::write` or slice assignment for framebuffer pixels.
 
-5. **Timer tick safety**: Timer ticks start AFTER `sched::start()` → `DAIFClr` IRQ unmask. All boot-time `drain_logs()` calls happen BEFORE IRQ unmask — no contention. After scheduler: (a) capture flag starts false for no-GPU path; (b) GPU Service sets false before locking; (c) drain_logs uses `try_lock()` as final safety net. Three-layer defense against IRQ-context deadlock.
+5. **Timer tick safety**: Timer ticks start AFTER `sched::start()` → `DAIFClr` IRQ unmask. All boot-time `drain_logs()` calls happen BEFORE IRQ unmask — no contention. After scheduler: (a) capture flag is initialized `true` so boot logs are collected on both GPU and no-GPU paths; (b) on the GPU path, the GPU Service calls `take_boot_log()` to consume the buffer and set the flag `false`; (c) `drain_logs` uses `try_lock()` as final safety net. Three-layer defense against IRQ-context deadlock.
 
 6. **Full-screen fill optimization**: Use `core::slice::from_raw_parts_mut(fb, pixel_count).fill(color)` for filling background — much faster than per-pixel writes.
 

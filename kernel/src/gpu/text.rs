@@ -160,14 +160,15 @@ pub fn draw_boot_log(fb: &FbInfo) {
     );
 
     // Calculate visible log area (below header).
+    // Cap at 48 lines to keep stack usage under 8 KiB (48 * 160 = 7680 bytes).
+    const MAX_DISPLAY_LINES: usize = 48;
     let log_y_start = (GLYPH_HEIGHT * 2) as i32;
     let max_lines = ((fb.height as i32 - log_y_start) / GLYPH_HEIGHT as i32).max(0) as usize;
-    let max_lines = max_lines.min(crate::observability::MAX_LOG_LINES);
+    let max_lines = max_lines.min(MAX_DISPLAY_LINES);
 
-    // Retrieve boot log entries.
-    let mut lines =
-        [[0u8; crate::observability::MAX_LINE_LEN]; crate::observability::MAX_LOG_LINES];
-    let mut lens = [0u8; crate::observability::MAX_LOG_LINES];
+    // Retrieve boot log entries into a screen-sized buffer (not the full ring).
+    let mut lines = [[0u8; crate::observability::MAX_LINE_LEN]; MAX_DISPLAY_LINES];
+    let mut lens = [0u8; MAX_DISPLAY_LINES];
     let count = crate::observability::take_boot_log(&mut lines, &mut lens);
 
     crate::kinfo!(

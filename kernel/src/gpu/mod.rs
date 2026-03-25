@@ -22,6 +22,10 @@ impl GpuSurface for KernelGpuSurface {
         height: u32,
         format: GpuPixelFormat,
     ) -> Result<SurfaceBuffer, ComputeError> {
+        // Phase 6: only B8G8R8A8 supported (VirtIO-GPU default).
+        if format != GpuPixelFormat::B8G8R8A8 {
+            return Err(ComputeError::InvalidParameters);
+        }
         // Phase 6: direct driver call. Phase 7+ will route via IPC to GPU Service.
         let handle = crate::drivers::virtio_gpu::gpu_allocate_framebuffer(width, height)
             .map_err(|_| ComputeError::AllocationFailed)?;
@@ -30,7 +34,7 @@ impl GpuSurface for KernelGpuSurface {
             id: handle.resource_id,
             width: handle.width,
             height: handle.height,
-            format,
+            format: GpuPixelFormat::B8G8R8A8,
             fb_virt: handle.fb_virt,
             stride: handle.stride,
         })

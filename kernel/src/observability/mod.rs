@@ -223,9 +223,16 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     let _ = lb.write_fmt(args);
     let line_len = lb.len();
 
-    // Write to UART.
+    // Write to UART. Use valid_up_to() on truncated UTF-8 to avoid dropping the whole line.
     let mut w = UartWriter;
-    let _ = w.write_str(core::str::from_utf8(&line_storage[..line_len]).unwrap_or(""));
+    let utf8_str = match core::str::from_utf8(&line_storage[..line_len]) {
+        Ok(s) => s,
+        Err(e) => {
+            // SAFETY: valid_up_to() is on a UTF-8 code point boundary per Utf8Error contract.
+            unsafe { core::str::from_utf8_unchecked(&line_storage[..e.valid_up_to()]) }
+        }
+    };
+    let _ = w.write_str(utf8_str);
     let _ = w.write_str("\n");
 
     // Capture to boot log buffer.
@@ -279,8 +286,15 @@ pub fn drain_logs() {
                 );
                 let line_len = lb.len();
 
-                // Write to UART.
-                let _ = w.write_str(core::str::from_utf8(&line_storage[..line_len]).unwrap_or(""));
+                // Write to UART. Use valid_up_to() on truncated UTF-8.
+                let line_str = match core::str::from_utf8(&line_storage[..line_len]) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        // SAFETY: valid_up_to() is on a UTF-8 boundary per Utf8Error contract.
+                        unsafe { core::str::from_utf8_unchecked(&line_storage[..e.valid_up_to()]) }
+                    }
+                };
+                let _ = w.write_str(line_str);
                 let _ = w.write_str("\n");
 
                 // Capture to boot log buffer.
