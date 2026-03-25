@@ -159,8 +159,10 @@ mod tests {
         assert_eq!(buf.format, GpuPixelFormat::B8G8R8A8);
         assert_eq!(buf.fb_virt, 0xDEAD_0000);
         assert_eq!(buf.stride, 5120);
-        // Stride = width * 4 bytes per pixel for B8G8R8A8.
-        assert_eq!(buf.stride, buf.width * 4);
+        // Stride is in bytes; for B8G8R8A8 it must be at least width * 4 and
+        // should be a multiple of the bytes-per-pixel, but may include padding.
+        assert!(buf.stride >= buf.width * 4);
+        assert_eq!(buf.stride % 4, 0);
     }
 
     #[test]

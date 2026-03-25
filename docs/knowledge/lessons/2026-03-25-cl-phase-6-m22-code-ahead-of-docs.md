@@ -1,7 +1,7 @@
 ---
 author: claude
 date: 2026-03-25
-tags: [gpu, compute, kits, workflow]
+tags: [gpu, kits]
 status: final
 ---
 
@@ -18,6 +18,7 @@ When a milestone depends on types/traits that a previous milestone needs for ver
 ## Impact
 
 M22 became a pure verification, testing, and documentation milestone. No new code files were created. The work was:
+
 - Verify existing implementations match the spec
 - Expand test coverage (437 → 442 tests, including cross-Kit dyn-compatibility for all 13 traits)
 - Update documentation (CLAUDE.md, phase doc, development plan)
