@@ -13,7 +13,7 @@
 
 Phase 7 brings interactive graphical display to AIOS by building the window compositor and desktop shell — the Layer 1 (Classic Desktop) foundation. This is the first phase where the user can see and interact with multiple windows, move them around, and switch focus with keyboard shortcuts.
 
-The compositor is a **system service** (not a Kit) following the [ADR: Compositor as System Service](../knowledge/decisions/2026-03-22-jl-kit-architecture.md). Apps interact with display through Compute Kit Tier 1 (`GpuSurface`), input through Input Kit, and data transfer through Flow Kit — never compositor APIs directly. The compositor consumes these Kit primitives internally to compose surfaces, route input, and manage layout.
+The compositor is a **system service** (not a Kit) following the [ADR: Compositor as System Service](../knowledge/decisions/2026-03-22-jl-compositor-system-service.md). Apps interact with display through Compute Kit Tier 1 (`GpuSurface`), input through Input Kit, and data transfer through Flow Kit — never compositor APIs directly. The compositor consumes these Kit primitives internally to compose surfaces, route input, and manage layout.
 
 Phase 7 implements Layer 1 only ([ADR: Three Interaction Layers](../knowledge/decisions/2026-03-16-jl-three-interaction-layers.md)): traditional windows, taskbar, manual floating layout, no intelligence. If AIRS fails, crashes, or hasn't loaded yet, the user has a fully functional desktop. Layer 2 (Smart Desktop, context-aware layout) and Layer 3 (Intelligence Surface, generative UI) are future phases.
 
@@ -70,7 +70,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Define VirtIO-input wire-format types and evdev constants in the shared crate. These are the on-wire types from VirtIO spec §5.8 and Linux evdev — distinct from the higher-level typed InputEvent used by the compositor.
 
 **Tasks:**
-- [ ] Create `shared/src/input.rs` with `pub mod input` in `shared/src/lib.rs`
+- [ ] Create `shared/src/input.rs` with `pub mod input;` in `shared/src/lib.rs`
 - [ ] Define `VirtioInputEvent` — 8-byte `repr(C)` wire format: `event_type: u16`, `code: u16`, `value: u32`
 - [ ] Define evdev event type constants: `EV_SYN` (0x00), `EV_KEY` (0x01), `EV_REL` (0x02), `EV_ABS` (0x03), `SYN_REPORT` (0)
 - [ ] Define evdev key code constants: `KEY_A` (30) through `KEY_Z`, `KEY_ENTER` (28), `KEY_ESC` (1), `KEY_BACKSPACE` (14), `KEY_TAB` (15), `KEY_SPACE` (57), `KEY_LEFTSHIFT` (42), `KEY_LEFTCTRL` (29), `KEY_LEFTALT` (56), `KEY_LEFTMETA` (125), `KEY_F1`–`KEY_F12`
@@ -95,7 +95,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Note:** VirtIO-input config space uses a select/subsel/read pattern (VirtIO spec §5.8.2). Write `select` and `subsel` fields to config space, then read `size` and `u.string[]` or `u.bitmap[]`. This is needed to read device name and absolute axis info (min/max range for tablet coordinates).
 
 **Tasks:**
-- [ ] Create `kernel/src/drivers/virtio_input.rs`, add `pub mod virtio_input` to `kernel/src/drivers/mod.rs`
+- [ ] Create `kernel/src/drivers/virtio_input.rs`, add `pub mod virtio_input;` to `kernel/src/drivers/mod.rs`
 - [ ] Define `VirtioInputDevice` struct: `base: usize` (MMIO virt addr), `eventq` state (vq_phys, desc/avail/used offsets, queue_size), `device_id: InputDeviceId`, `name: [u8; 64]`
 - [ ] Define `MAX_INPUT_DEVICES: usize = 4` and `static INPUT_DEVICES: Mutex<[Option<VirtioInputDevice>; MAX_INPUT_DEVICES]>`
 - [ ] Implement `probe_all()` — scan DTB bases first, then brute-force MMIO slots; find ALL devices with `device_id=18`, not just the first
@@ -176,8 +176,8 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Tasks:**
 - [ ] Add `InputReady = 19` and `CompositorReady = 20` variants to `EarlyBootPhase` in `shared/src/boot.rs`
 - [ ] Update `Complete` variant to `= 21`
-- [ ] Update `EarlyBootPhase::name()` match arms in `kernel/src/boot_phase.rs`
-- [ ] Update unit tests for `EarlyBootPhase` count and discriminant values
+- [ ] Ensure `EarlyBootPhase` logging works as expected (it derives `Debug`; there is no `name()` method to update)
+- [ ] Update `EARLY_BOOT_PHASE_COUNT` to 22, the "Total: N variants" comment in `shared/src/boot.rs`, and all unit tests that assert count or discriminant values
 - [ ] Call `advance_boot_phase(InputReady)` after input init in `kernel/src/main.rs`
 
 **Key reference:** `kernel/src/boot_phase.rs`, `shared/src/boot.rs`
@@ -214,7 +214,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Define compositor protocol types in the shared crate. All message types must fit within MAX_MESSAGE_SIZE (256 bytes) — verified with compile-time assertions.
 
 **Tasks:**
-- [ ] Create `shared/src/compositor.rs` with `pub mod compositor` in `shared/src/lib.rs`
+- [ ] Create `shared/src/compositor.rs` with `pub mod compositor;` in `shared/src/lib.rs`
 - [ ] Define `SurfaceId(u64)` — unique surface identifier
 - [ ] Define `SurfaceState` enum: `Created`, `Configured`, `Active`, `Suspended`, `Destroyed`
 - [ ] Define `SurfaceLayer` enum: `Background = 0`, `Normal = 1`, `TopLevel = 2`, `Overlay = 3`, `Panel = 4`
@@ -649,7 +649,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Extract Input Kit traits to `shared/src/kits/input.rs` following the Kit pattern (Memory Kit, Capability Kit, etc.). Phase 7 extracts minimal traits for keyboard + pointer. Full trait set (GestureEvent, TextEvent, GamepadEvent, TouchEvent) deferred to Phase 8+.
 
 **Tasks:**
-- [ ] Create `shared/src/kits/input.rs`, add `pub mod input` to `shared/src/kits/mod.rs`
+- [ ] Create `shared/src/kits/input.rs`, add `pub mod input;` to `shared/src/kits/mod.rs`
 - [ ] Define `InputKitError` enum: `DeviceNotFound`, `QueueFull`, `EventDropped`, `InvalidKeyCode`, `Timeout`
 - [ ] Define `InputDevice` trait: `fn id(&self) -> InputDeviceId`, `fn name(&self) -> &[u8]`, `fn capabilities(&self) -> InputCapabilities`, `fn is_connected(&self) -> bool`
 - [ ] Define `InputEventReceiver` trait: `fn poll_event(&self) -> Result<Option<InputEvent>, InputKitError>`, `fn has_events(&self) -> bool`
