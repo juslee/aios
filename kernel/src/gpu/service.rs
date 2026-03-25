@@ -7,8 +7,8 @@
 //! Per docs/platform/gpu/drivers.md §3.3–3.5, docs/platform/gpu/display.md §7.2–7.4.
 
 use shared::gpu::{
-    DisplayInfo, GpuBufferHandle, GpuCommand, GpuError, GpuRequest, GpuResponse, VirtioGpuRect,
-    MAX_GPU_BUFFERS,
+    DisplayInfo, FenceTracker, GpuBufferHandle, GpuCommand, GpuError, GpuRequest, GpuResponse,
+    VirtioGpuRect, MAX_GPU_BUFFERS,
 };
 
 use crate::drivers::virtio_gpu;
@@ -24,14 +24,22 @@ use crate::task::process::ProcessId;
 const MAX_BUFFERS: usize = MAX_GPU_BUFFERS;
 
 /// GPU Service runtime state, held inside the service loop.
+#[allow(dead_code)] // `channel` field reserved for future use (client notification on swap).
 struct GpuServiceState {
     /// Allocated buffer tracking table.
     buffers: [Option<GpuBufferHandle>; MAX_BUFFERS],
     /// Display information from VirtIO-GPU.
     display: DisplayInfo,
-    /// IPC channel for this service (used in Step 10 for swap notification).
-    #[allow(dead_code)]
+    /// IPC channel for this service.
     channel: shared::ChannelId,
+    /// Front buffer (currently displayed).
+    front_buffer: Option<GpuBufferHandle>,
+    /// Back buffer (rendering target).
+    back_buffer: Option<GpuBufferHandle>,
+    /// Fence tracker for asynchronous command completion.
+    fence_tracker: FenceTracker,
+    /// Whether double buffering is active.
+    double_buffering: bool,
 }
 
 impl GpuServiceState {
@@ -40,6 +48,10 @@ impl GpuServiceState {
             buffers: [None; MAX_BUFFERS],
             display,
             channel,
+            front_buffer: None,
+            back_buffer: None,
+            fence_tracker: FenceTracker::new(),
+            double_buffering: false,
         }
     }
 
@@ -107,6 +119,12 @@ fn gpu_service_loop() -> ! {
     crate::kinfo!(Gpu, "GPU Service: started, channel={}", ch.0);
 
     let mut state = GpuServiceState::new(display, ch);
+
+    // Initialize double buffering if display is valid.
+    if display.width > 0 && display.height > 0 {
+        init_double_buffering(&mut state);
+    }
+
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
     loop {
@@ -304,10 +322,106 @@ fn handle_get_buffer_info(state: &GpuServiceState, req: &GpuRequest) -> GpuRespo
     }
 }
 
-fn handle_swap_buffers(_state: &mut GpuServiceState) -> GpuResponse {
-    // Swap buffers is implemented in Step 10 (double buffering).
-    // For now, return success as a no-op.
+fn handle_swap_buffers(state: &mut GpuServiceState) -> GpuResponse {
+    if !state.double_buffering {
+        return GpuResponse::error(GpuError::DeviceNotFound);
+    }
+
+    if let Err(e) = swap_buffers(state) {
+        return GpuResponse::error(e);
+    }
+
     GpuResponse::zeroed()
+}
+
+// ---------------------------------------------------------------------------
+// Double buffering
+// ---------------------------------------------------------------------------
+
+/// Initialize double buffering: allocate front and back buffers, set scanout.
+fn init_double_buffering(state: &mut GpuServiceState) {
+    let w = state.display.width;
+    let h = state.display.height;
+
+    let front = match virtio_gpu::gpu_allocate_framebuffer(w, h) {
+        Ok(handle) => handle,
+        Err(e) => {
+            crate::kwarn!(Gpu, "GPU Service: failed to allocate front buffer: {:?}", e);
+            return;
+        }
+    };
+
+    let back = match virtio_gpu::gpu_allocate_framebuffer(w, h) {
+        Ok(handle) => handle,
+        Err(e) => {
+            crate::kwarn!(Gpu, "GPU Service: failed to allocate back buffer: {:?}", e);
+            // Clean up front buffer.
+            let _ = virtio_gpu::gpu_resource_detach_backing(front.resource_id);
+            let _ = virtio_gpu::gpu_resource_unref(front.resource_id);
+            // SAFETY: front was just allocated by gpu_allocate_framebuffer.
+            unsafe { crate::mm::frame::free_dma_pages(front.fb_phys, front.order) };
+            return;
+        }
+    };
+
+    // Bind front buffer to scanout 0.
+    let rect = VirtioGpuRect {
+        x: 0,
+        y: 0,
+        width: w,
+        height: h,
+    };
+    if let Err(e) = virtio_gpu::gpu_set_scanout(state.display.scanout_id, front.resource_id, &rect)
+    {
+        crate::kwarn!(Gpu, "GPU Service: set_scanout failed: {:?}", e);
+        return;
+    }
+
+    crate::kinfo!(
+        Gpu,
+        "VirtIO-GPU: double buffering enabled (front={}, back={})",
+        front.resource_id,
+        back.resource_id
+    );
+
+    state.front_buffer = Some(front);
+    state.back_buffer = Some(back);
+    state.double_buffering = true;
+}
+
+/// Swap front and back buffers: rebind scanout to new front, present.
+fn swap_buffers(state: &mut GpuServiceState) -> Result<(), GpuError> {
+    let front = state.front_buffer.take().ok_or(GpuError::InvalidResource)?;
+    let back = state.back_buffer.take().ok_or(GpuError::InvalidResource)?;
+
+    // New front = old back; new back = old front.
+    let new_front = back;
+    let new_back = front;
+
+    let rect = VirtioGpuRect {
+        x: 0,
+        y: 0,
+        width: new_front.width,
+        height: new_front.height,
+    };
+
+    // Bind new front to scanout.
+    virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect)?;
+
+    // Transfer and flush with fence tracking.
+    let fence_id = state.fence_tracker.allocate();
+    virtio_gpu::gpu_transfer_to_host(new_front.resource_id, &rect, 0)?;
+
+    // Use fenced flush to track completion.
+    // For now, use unfenced flush (polled I/O completes synchronously).
+    // Fenced command path will be added when IRQ-driven I/O is available.
+    virtio_gpu::gpu_resource_flush(new_front.resource_id, &rect)?;
+    state.fence_tracker.complete(fence_id);
+
+    state.front_buffer = Some(new_front);
+    state.back_buffer = Some(new_back);
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

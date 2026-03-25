@@ -360,6 +360,60 @@ pub const AIOS_BLUE_B8G8R8A8: u32 = 0xFF5B_8CFF;
 pub const MAX_GPU_BUFFERS: usize = 8;
 
 // ---------------------------------------------------------------------------
+// Fence tracker (Phase 6 M20 — double buffering)
+// ---------------------------------------------------------------------------
+
+/// Tracks VirtIO-GPU fence completion for asynchronous command synchronization.
+///
+/// Fences are monotonically increasing IDs assigned to commands. The host signals
+/// completion by returning a response with the same fence_id. The driver marks
+/// fences as completed and waiters check completion status.
+///
+/// Per docs/platform/gpu/drivers.md §3.4.
+#[derive(Debug, Clone)]
+pub struct FenceTracker {
+    /// Next fence ID to assign (monotonically increasing).
+    pub next_id: u64,
+    /// All fence IDs <= this value are complete.
+    pub last_completed: u64,
+}
+
+impl Default for FenceTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FenceTracker {
+    /// Create a new fence tracker.
+    pub const fn new() -> Self {
+        Self {
+            next_id: 1,
+            last_completed: 0,
+        }
+    }
+
+    /// Allocate a new fence ID.
+    pub fn allocate(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// Mark a fence (and all prior fences) as completed.
+    pub fn complete(&mut self, fence_id: u64) {
+        if fence_id > self.last_completed {
+            self.last_completed = fence_id;
+        }
+    }
+
+    /// Check whether a specific fence has completed.
+    pub fn is_complete(&self, fence_id: u64) -> bool {
+        fence_id <= self.last_completed
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GPU Service IPC protocol types (Phase 6 M20)
 // ---------------------------------------------------------------------------
 
@@ -736,5 +790,60 @@ mod tests {
     #[test]
     fn max_gpu_buffers() {
         assert_eq!(MAX_GPU_BUFFERS, 8);
+    }
+
+    // --- FenceTracker tests ---
+
+    #[test]
+    fn fence_tracker_new() {
+        let ft = FenceTracker::new();
+        assert_eq!(ft.next_id, 1);
+        assert_eq!(ft.last_completed, 0);
+    }
+
+    #[test]
+    fn fence_tracker_allocate_increments() {
+        let mut ft = FenceTracker::new();
+        assert_eq!(ft.allocate(), 1);
+        assert_eq!(ft.allocate(), 2);
+        assert_eq!(ft.allocate(), 3);
+        assert_eq!(ft.next_id, 4);
+    }
+
+    #[test]
+    fn fence_tracker_complete_updates() {
+        let mut ft = FenceTracker::new();
+        ft.complete(5);
+        assert_eq!(ft.last_completed, 5);
+        // Completing an older fence doesn't reduce last_completed.
+        ft.complete(3);
+        assert_eq!(ft.last_completed, 5);
+        // Completing a newer fence advances.
+        ft.complete(10);
+        assert_eq!(ft.last_completed, 10);
+    }
+
+    #[test]
+    fn fence_tracker_is_complete() {
+        let mut ft = FenceTracker::new();
+        let f1 = ft.allocate();
+        let f2 = ft.allocate();
+        let f3 = ft.allocate();
+
+        assert!(!ft.is_complete(f1));
+        assert!(!ft.is_complete(f2));
+        assert!(!ft.is_complete(f3));
+
+        ft.complete(f2);
+        assert!(ft.is_complete(f1)); // f1 <= f2
+        assert!(ft.is_complete(f2));
+        assert!(!ft.is_complete(f3)); // f3 > f2
+    }
+
+    #[test]
+    fn fence_tracker_zero_never_complete() {
+        let ft = FenceTracker::new();
+        // Fence 0 is always complete (0 <= 0).
+        assert!(ft.is_complete(0));
     }
 }
