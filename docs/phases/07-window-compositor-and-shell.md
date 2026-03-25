@@ -5,7 +5,7 @@
 **Deliverable:** Window compositor with IPC-based surface lifecycle, software composition with damage tracking, floating window management with input routing, desktop shell (Status Strip, Taskbar, Workspace), Input Kit Tier 1
 **Status:** Planned
 **Prerequisites:** Phase 6 (GPU & Display)
-**Unlocks:** Phase 8 (Input & Terminal), Phase 23 (Kernel Compute Abstraction)
+**Unlocks:** Phase 8 (Input & Terminal), Phase 16 (Flow & Translation), Phase 25 (Performance & Optimization)
 
 -----
 
@@ -161,7 +161,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 - [ ] Implement input polling in the timer tick or a dedicated polling loop (poll all devices every ~16ms)
 - [ ] Create input demo: log key name and pointer coordinates to UART on each event
 
-**Note:** QEMU GUI interaction: click into the QEMU window to capture keyboard/mouse input. `Ctrl+Alt+G` releases the mouse grab. UART output continues to the terminal via `-serial stdio`.
+**Note:** QEMU GUI interaction: click into the QEMU window to capture keyboard/mouse input. `Ctrl+Alt+G` releases the mouse grab. UART output continues to the terminal via `-serial stdio` (the GPU/input recipes use `-serial stdio` with a graphical window, unlike `just run` which uses `-nographic`).
 
 **Key reference:** Existing justfile patterns
 
