@@ -151,7 +151,15 @@ fn gpu_service_loop() -> ! {
         }
     }
 
-    // Service should never exit — loop forever if channel destroyed.
+    // Mark ourselves dead and yield forever (same pattern as echo server).
+    let cpu = crate::arch::aarch64::exceptions::core_id() as usize;
+    let my_tid = { *crate::task::CURRENT_THREAD[cpu].lock() };
+    if let Some(tid) = my_tid {
+        let mut table = crate::task::THREAD_TABLE.lock();
+        if let Some(thread) = &mut table[tid.0 as usize] {
+            thread.sched.state = crate::task::ThreadState::Dead;
+        }
+    }
     loop {
         crate::sched::thread_yield();
     }

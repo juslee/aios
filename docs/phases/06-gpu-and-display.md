@@ -191,7 +191,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Define the GPU Service IPC command/response types in the shared crate. These are the message formats exchanged over IPC channels.
 
 **Tasks:**
-- [x] Add `GpuCommand` enum to `shared/src/gpu.rs`: `GetDisplayInfo = 1`, `AllocateBuffer = 2`, `ReleaseBuffer = 3`, `Present = 4`, `GetBufferInfo = 5`
+- [x] Add `GpuCommand` enum to `shared/src/gpu.rs`: `GetDisplayInfo = 1`, `AllocateBuffer = 2`, `ReleaseBuffer = 3`, `Present = 4`, `GetBufferInfo = 5`, `SwapBuffers = 6`
 - [x] Define `GpuRequest` struct (repr(C), fits in `RawMessage.data[256]`): `command: u32` discriminant (matches `GpuCommand` values), followed by command-specific fields (width/height/format for AllocateBuffer, resource_id for ReleaseBuffer/Present/GetBufferInfo, damage rect for Present)
 - [x] Define `GpuResponse` struct (repr(C)): `status: i32` (0 = success, negative = `GpuError` via `to_status()`/`from_status()`), followed by response-specific fields (DisplayInfo for GetDisplayInfo, resource_id for AllocateBuffer, buffer info for GetBufferInfo)
 - [x] Write host-side tests: command/response struct sizes fit within `MAX_MESSAGE_SIZE` (256 bytes), round-trip serialization
@@ -230,7 +230,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Extend the GPU Service to manage two framebuffers (front and back) and implement page-flip by alternating which resource is bound to the scanout.
 
 **Tasks:**
-- [x] Allocate two VirtIO-GPU resources at GPU Service init (resource IDs 1 and 2)
+- [x] Allocate two VirtIO-GPU resources at GPU Service init (front/back, dynamically assigned IDs)
 - [x] Track `front_buffer` and `back_buffer` as `GpuBufferHandle` in the service state
 - [x] Implement `swap_buffers()`: swaps front/back handles, calls `set_scanout()` to bind new front, `transfer_to_host_2d()` + `resource_flush()` for new front
 - [x] Add `SwapBuffers = 6` to `GpuCommand` enum for IPC-triggered swap

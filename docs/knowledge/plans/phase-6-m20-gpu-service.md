@@ -2,7 +2,7 @@
 author: claude
 date: 2026-03-25
 tags: [gpu, ipc, capability, display, drivers]
-status: in-progress
+status: final
 phase: 6
 milestone: M20
 ---

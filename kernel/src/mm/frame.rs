@@ -152,7 +152,11 @@ pub unsafe fn free_page(phys_addr: usize) {
     }
 }
 
-/// Free `2^order` contiguous pages from the DMA pool.
+/// Free `2^order` contiguous pages previously allocated by `alloc_dma_pages`.
+///
+/// The owning pool is inferred from the physical address range by the
+/// underlying `FrameAllocator::free_pages`. Callers must only pass
+/// addresses returned by `alloc_dma_pages`.
 ///
 /// # Safety
 /// `phys_addr` must have been returned by `alloc_dma_pages` with the same `order`.
