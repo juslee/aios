@@ -192,8 +192,8 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 **Tasks:**
 - [x] Add `GpuCommand` enum to `shared/src/gpu.rs`: `GetDisplayInfo = 1`, `AllocateBuffer = 2`, `ReleaseBuffer = 3`, `Present = 4`, `GetBufferInfo = 5`
-- [x] Define `GpuRequest` struct (fits in `RawMessage.data[256]`): `command: GpuCommand`, followed by command-specific fields (width/height/format for AllocateBuffer, resource_id for ReleaseBuffer/Present/GetBufferInfo, damage rect for Present)
-- [x] Define `GpuResponse` struct: `status: GpuError` (or success), followed by response-specific fields (DisplayInfo for GetDisplayInfo, resource_id for AllocateBuffer, buffer info for GetBufferInfo)
+- [x] Define `GpuRequest` struct (repr(C), fits in `RawMessage.data[256]`): `command: u32` discriminant (matches `GpuCommand` values), followed by command-specific fields (width/height/format for AllocateBuffer, resource_id for ReleaseBuffer/Present/GetBufferInfo, damage rect for Present)
+- [x] Define `GpuResponse` struct (repr(C)): `status: i32` (0 = success, negative = `GpuError` via `to_status()`/`from_status()`), followed by response-specific fields (DisplayInfo for GetDisplayInfo, resource_id for AllocateBuffer, buffer info for GetBufferInfo)
 - [x] Write host-side tests: command/response struct sizes fit within `MAX_MESSAGE_SIZE` (256 bytes), round-trip serialization
 
 **Key reference:** IPC message format in `shared/src/ipc.rs` (`RawMessage`, `MAX_MESSAGE_SIZE = 256`)

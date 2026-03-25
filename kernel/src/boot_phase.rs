@@ -58,9 +58,11 @@ pub fn advance_boot_phase(phase: EarlyBootPhase) {
 /// Get the current boot phase.
 pub fn current_boot_phase() -> EarlyBootPhase {
     let val = CURRENT_PHASE.load(Ordering::Relaxed) as u32;
-    // SAFETY: All values 0..=18 are valid EarlyBootPhase variants.
-    if val <= 18 {
-        // SAFETY: repr(u32) enum with contiguous values 0..=18.
+    let max_val = EarlyBootPhase::Complete as u32;
+    // SAFETY: All values 0..=Complete are valid EarlyBootPhase variants.
+    // Maintained by: Complete is always the last variant (highest discriminant).
+    // Violation: transmuting an out-of-range value would create an invalid enum (UB).
+    if val <= max_val {
         unsafe { core::mem::transmute::<u32, EarlyBootPhase>(val) }
     } else {
         EarlyBootPhase::EntryPoint

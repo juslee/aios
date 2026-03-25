@@ -608,7 +608,7 @@ aios/
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
-│       ├── boot_phase.rs EarlyBootPhase enum (18 phases incl. LogRingsReady), advance_boot_phase(), boot timing
+│       ├── boot_phase.rs EarlyBootPhase enum (19 phases incl. GpuReady), advance_boot_phase(), boot timing
 │       ├── dtb.rs        DeviceTree wrapper (fdt-parser), DTB parse + QEMU defaults + MPIDR extraction
 │       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main, per-core timer init + IRQ unmask
 │       ├── framebuffer.rs GOP framebuffer driver: fill_rect, render_test_pattern (#5B8CFF)

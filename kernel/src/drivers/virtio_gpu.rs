@@ -826,13 +826,19 @@ impl VirtioGpu {
         let resource_id = self.next_resource_id;
         self.next_resource_id += 1;
 
-        // Create 2D resource.
-        self.resource_create_2d(
+        // Create 2D resource. On failure, free DMA pages.
+        if let Err(e) = self.resource_create_2d(
             resource_id,
             GpuPixelFormat::B8G8R8A8.to_virtio(),
             width,
             height,
-        )?;
+        ) {
+            // SAFETY: fb_phys/order were returned by alloc_dma_pages above.
+            // resource_create_2d failed so no VirtIO resource to clean up.
+            // Violation: buddy bitmap corruption if phys_addr/order are wrong.
+            unsafe { crate::mm::frame::free_dma_pages(fb_phys, order) };
+            return Err(e);
+        }
 
         // Attach single contiguous DMA region as backing.
         let mem_entry = VirtioGpuMemEntry {
@@ -840,7 +846,15 @@ impl VirtioGpu {
             length: total_bytes as u32,
             padding: 0,
         };
-        self.resource_attach_backing(resource_id, &[mem_entry])?;
+        if let Err(e) = self.resource_attach_backing(resource_id, &[mem_entry]) {
+            // Clean up both the VirtIO resource and DMA pages.
+            let _ = self.resource_unref(resource_id);
+            // SAFETY: fb_phys/order were returned by alloc_dma_pages above.
+            // resource_attach_backing failed so backing is not attached.
+            // Violation: buddy bitmap corruption if phys_addr/order are wrong.
+            unsafe { crate::mm::frame::free_dma_pages(fb_phys, order) };
+            return Err(e);
+        }
 
         let stride = width * bpp;
 
@@ -926,7 +940,7 @@ pub fn gpu_resource_flush(resource_id: u32, rect: &VirtioGpuRect) -> Result<(), 
 }
 
 /// Transfer + flush for the full framebuffer (convenience).
-#[allow(dead_code)] // Used in Step 11 (GOP transition).
+#[allow(dead_code)] // No callers in M20; retained for M21+ text rendering.
 pub fn gpu_present_frame(handle: &GpuBufferHandle) -> Result<(), GpuError> {
     let mut guard = VIRTIO_GPU.lock();
     let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;

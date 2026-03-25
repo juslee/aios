@@ -24,19 +24,20 @@ use crate::task::process::ProcessId;
 const MAX_BUFFERS: usize = MAX_GPU_BUFFERS;
 
 /// GPU Service runtime state, held inside the service loop.
-#[allow(dead_code)] // `channel` field reserved for future use (client notification on swap).
 struct GpuServiceState {
     /// Allocated buffer tracking table.
     buffers: [Option<GpuBufferHandle>; MAX_BUFFERS],
     /// Display information from VirtIO-GPU.
     display: DisplayInfo,
-    /// IPC channel for this service.
+    /// IPC channel for this service (used by Phase 7+ compositor for swap notification).
+    #[allow(dead_code)]
     channel: shared::ChannelId,
     /// Front buffer (currently displayed).
     front_buffer: Option<GpuBufferHandle>,
     /// Back buffer (rendering target).
     back_buffer: Option<GpuBufferHandle>,
-    /// Fence tracker for asynchronous command completion.
+    /// Fence tracker for asynchronous command completion (Phase 7+ IRQ-driven I/O).
+    #[allow(dead_code)]
     fence_tracker: FenceTracker,
     /// Whether double buffering is active.
     double_buffering: bool,
@@ -166,10 +167,12 @@ fn dispatch_command(state: &mut GpuServiceState, data: &[u8]) -> GpuResponse {
         return GpuResponse::error(GpuError::CommandFailed);
     }
 
-    // SAFETY: GpuRequest is repr(C) with only integer fields (no padding UB).
-    // data.len() >= size_of::<GpuRequest>() checked above.
-    // GpuRequest::zeroed() provides a valid initial value; copy_nonoverlapping
-    // overwrites all fields from the IPC buffer.
+    // SAFETY: GpuRequest is repr(C) with only u32 integer fields (no padding UB).
+    // Invariant: data.len() >= size_of::<GpuRequest>() checked above.
+    // Maintained by: the size guard at the top of this function.
+    // Violation: if GpuRequest had non-integer fields (references, restricted enums),
+    // copy_nonoverlapping from IPC data could produce invalid representations (UB).
+    // Currently safe because all fields are plain integer types.
     let req = unsafe {
         let mut req = GpuRequest::zeroed();
         core::ptr::copy_nonoverlapping(
@@ -246,6 +249,12 @@ fn handle_allocate_buffer(state: &mut GpuServiceState, req: &GpuRequest) -> GpuR
                     // Buffer table full — release the just-allocated buffer.
                     let _ = virtio_gpu::gpu_resource_detach_backing(resource_id);
                     let _ = virtio_gpu::gpu_resource_unref(resource_id);
+                    // SAFETY: handle.fb_phys and handle.order were returned by
+                    // alloc_dma_pages inside gpu_allocate_framebuffer. GpuBufferHandle
+                    // is Copy so handle is still valid. Double-free impossible because
+                    // track_buffer failed (handle not stored). Violation: buddy bitmap
+                    // corruption if phys_addr/order are wrong.
+                    unsafe { crate::mm::frame::free_dma_pages(handle.fb_phys, handle.order) };
                     GpuResponse::error(e)
                 }
             }
@@ -259,8 +268,11 @@ fn handle_release_buffer(state: &mut GpuServiceState, req: &GpuRequest) -> GpuRe
         Some(handle) => {
             let _ = virtio_gpu::gpu_resource_detach_backing(handle.resource_id);
             let _ = virtio_gpu::gpu_resource_unref(handle.resource_id);
-            // SAFETY: handle.fb_phys and handle.order were returned by alloc_dma_pages.
-            // remove_buffer ensures this handle is removed from tracking (no double-free).
+            // SAFETY: handle.fb_phys and handle.order were returned by alloc_dma_pages
+            // inside gpu_allocate_framebuffer. remove_buffer ensures this handle is
+            // removed from tracking (no double-free).
+            // Maintained by: buffer tracking table (each handle stored once).
+            // Violation: buddy bitmap corruption if phys_addr/order are wrong.
             unsafe { crate::mm::frame::free_dma_pages(handle.fb_phys, handle.order) };
             crate::kinfo!(
                 Gpu,
@@ -396,7 +408,9 @@ fn init_double_buffering(state: &mut GpuServiceState) {
     let pixel_count = (w as usize) * (h as usize);
     if pixel_count > 0 {
         // SAFETY: front.fb_virt points to DMA pages from gpu_allocate_framebuffer.
-        // page_count covers width*height*4 bytes. We write exactly pixel_count u32s.
+        // Maintained by: gpu_allocate_framebuffer guarantees fb_virt covers
+        // width*height*4 bytes. We write exactly pixel_count u32s.
+        // Violation: writing past the allocation corrupts adjacent DMA memory.
         unsafe {
             let fb = front.fb_virt as *mut u32;
             let fb_slice = core::slice::from_raw_parts_mut(fb, pixel_count);
@@ -435,18 +449,26 @@ fn swap_buffers(state: &mut GpuServiceState) -> Result<(), GpuError> {
         height: new_front.height,
     };
 
-    // Bind new front to scanout.
-    virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect)?;
+    // Bind new front to scanout, transfer, and flush.
+    // On error, restore buffers to state before returning to prevent DMA leak.
+    let result = (|| -> Result<(), GpuError> {
+        virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect)?;
+        virtio_gpu::gpu_transfer_to_host(new_front.resource_id, &rect, 0)?;
+        virtio_gpu::gpu_resource_flush(new_front.resource_id, &rect)?;
+        Ok(())
+    })();
 
-    // Transfer and flush (polled I/O completes synchronously).
-    // Fenced command path (VIRTIO_GPU_FLAG_FENCE + IRQ) deferred to Phase 7+.
-    virtio_gpu::gpu_transfer_to_host(new_front.resource_id, &rect, 0)?;
-    virtio_gpu::gpu_resource_flush(new_front.resource_id, &rect)?;
+    // Always restore buffers to state (even on error) to prevent handle loss.
+    if result.is_ok() {
+        state.front_buffer = Some(new_front);
+        state.back_buffer = Some(new_back);
+    } else {
+        // Restore original positions (swap back).
+        state.front_buffer = Some(new_back);
+        state.back_buffer = Some(new_front);
+    }
 
-    state.front_buffer = Some(new_front);
-    state.back_buffer = Some(new_back);
-
-    Ok(())
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +480,9 @@ fn gpu_response_as_bytes(resp: &GpuResponse) -> &[u8] {
     // SAFETY: GpuResponse is repr(C) with only integer fields. All fields are
     // initialized (zeroed() or explicitly set). The slice covers exactly
     // size_of::<GpuResponse>() bytes from resp's address.
+    // Maintained by: GpuResponse constructors (zeroed(), error()).
+    // Violation: passing a struct with uninitialized padding would expose
+    // undefined bytes in the IPC reply. Not possible with current integer-only fields.
     unsafe {
         core::slice::from_raw_parts(
             resp as *const GpuResponse as *const u8,

@@ -19,7 +19,7 @@ Phase 6 M19 delivered a working VirtIO-GPU 2D driver (`kernel/src/drivers/virtio
 - Service manager: `service_register()`, `service_lookup()`, echo service pattern in `kernel/src/service/mod.rs`
 - Capability system: 6 variants in `shared/src/cap.rs` (ChannelCreate, ChannelAccess, SharedMemoryCreate, SharedMemoryAccess, SpawnAgent, DebugPrint)
 - IPC: `MAX_MESSAGE_SIZE = 256`, `RawMessage` with 256-byte inline data
-- Boot phases: 18 variants (0-17), `Complete = 17` is last
+- Boot phases: 19 variants (0-18), `GpuReady = 17`, `Complete = 18` is last (updated during M20)
 - No `kernel/src/gpu/` module exists yet
 - No `GpuCommand`/`GpuRequest`/`GpuResponse`/`FenceTracker` types exist yet in shared crate
 
@@ -283,7 +283,8 @@ Per `ipc.md §9.1`, `ipc_reply` does not require capability enforcement. The com
 ### GPU Service serialization: `core::ptr::copy_nonoverlapping` for flat repr(C) structs
 
 `GpuRequest` and `GpuResponse` are flat `repr(C)` structs. To serialize into `RawMessage.data[256]`:
-```
+
+```rust
 // Serialize: copy struct bytes into message data
 let req = GpuRequest { ... };
 let bytes = core::slice::from_raw_parts(&req as *const _ as *const u8, core::mem::size_of::<GpuRequest>());
