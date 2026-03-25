@@ -81,6 +81,8 @@
       "Bash(echo *)",
       "Bash(cp *)",
       "Bash(pkill -f \"qemu-system-aarch64*)",
+      "Bash(pkill *; sleep *; timeout * just run-gpu *)",
+      "Bash(pkill *; sleep *; timeout * just run *)",
       "WebSearch"
     ],
     "deny": [
