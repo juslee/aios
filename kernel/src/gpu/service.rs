@@ -439,6 +439,9 @@ fn init_double_buffering(state: &mut GpuServiceState) {
         unsafe { crate::mm::frame::free_dma_pages(front.fb_phys, front.order) };
         let _ = virtio_gpu::gpu_resource_detach_backing(back.resource_id);
         let _ = virtio_gpu::gpu_resource_unref(back.resource_id);
+        // SAFETY: back.fb_phys/order were returned by alloc_dma_pages inside
+        // gpu_allocate_framebuffer. Not yet stored in state (no other references).
+        // Violation: buddy bitmap corruption if phys_addr/order are wrong.
         unsafe { crate::mm::frame::free_dma_pages(back.fb_phys, back.order) };
         return;
     }

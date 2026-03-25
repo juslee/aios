@@ -286,7 +286,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **Tasks:**
 - [x] Add `spleen-font = { version = "0.2", default-features = false, features = ["s16x32"] }` to `kernel/Cargo.toml`
 - [x] Verify `spleen-font` compiles for `aarch64-unknown-none` (no_std, no alloc)
-- [x] Create `kernel/src/gpu/text.rs` with `FbInfo` struct (fb, stride_px, width, height) and `blit_glyph(font: &mut PSF2Font, fb: &FbInfo, ch: char, x: i32, y: i32, fg: u32, bg: u32)` — reads the 16x32 bitmap from spleen-font, writes pixels to framebuffer via `write_volatile`
+- [x] Create `kernel/src/gpu/text.rs` with `FbInfo` struct (fb, stride_px, width, height) and `blit_glyph(font: &mut PSF2Font, fb: &FbInfo, ch: char, x: i32, y: i32, fg: u32, bg: u32)` — reads the 16x32 bitmap from spleen-font, writes pixels to framebuffer via regular `ptr::write` (WB Cacheable memory)
 - [x] Handle boundary clipping (glyph partially off-screen)
 - [x] Test with a single character rendered to the VirtIO-GPU back buffer
 
@@ -303,14 +303,14 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement `draw_text()` and `draw_boot_log()` functions that render strings and kernel log entries to the GPU framebuffer.
 
 **Tasks:**
-- [x] Implement `draw_text(fb: &FbInfo, text: &str, x: i32, y: i32, fg: u32, bg: u32)`: iterates characters, calls `blit_glyph` for each, advances cursor by 16 pixels per character
+- [x] Implement `draw_text(font: &mut PSF2Font, fb: &FbInfo, text: &str, start_x: i32, start_y: i32, fg: u32, bg: u32)`: iterates characters, calls `blit_glyph` for each, advances cursor by 16 pixels per character
 - [x] Handle newline (`\n`): advance Y by 32, reset X to starting position
 - [x] Handle line wrapping: when X exceeds framebuffer width, wrap to next line
-- [x] Implement `draw_boot_log(fb: &FbInfo)`: drains the last N log entries from the kernel log ring (`observability::drain_logs()`), renders them as white text on dark background
-- [x] Wire `draw_boot_log()` into `kernel_main` after GPU Service starts: fill back buffer with dark background (#1A1A2E), draw boot log text, present via GPU Service
+- [x] Implement `draw_boot_log(fb: &FbInfo)`: retrieves boot log entries via `observability::take_boot_log()` from `BootLogBuffer`, renders them as light grey text on dark background
+- [x] Wire `draw_boot_log()` into `gpu_service_loop()` after `init_double_buffering()`: fill back buffer with dark background (#1A1A2E), draw boot log text, swap buffers to present
 - [x] Calculate how many log lines fit on screen: (height / 32) lines, (width / 16) chars per line
 
-**Key reference:** `kernel/src/observability/mod.rs` (LogRing, drain_logs)
+**Key reference:** `kernel/src/observability/mod.rs` (BootLogBuffer, take_boot_log)
 
 **Acceptance:** `just check` zero warnings. `just run-gpu` displays boot log text visually on the QEMU display window. Text is legible and properly positioned.
 
@@ -339,14 +339,14 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Create `shared/src/kits/compute.rs` with `ComputeError` enum and supporting types for the `GpuSurface` trait.
 
 **Tasks:**
-- [ ] Add `pub mod compute;` to `shared/src/kits/mod.rs`
-- [ ] Add `pub use kits::compute as compute_kit;` to `shared/src/lib.rs`
-- [ ] Define `ComputeError` enum: `DeviceNotAvailable`, `BudgetExhausted`, `ThermalThrottled`, `InvalidCommandBuffer`, `FenceTimeout`, `CapabilityDenied`, `OutOfMemory`, `NotInitialized`
-- [ ] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `ComputeError`
-- [ ] Define `SurfaceBuffer` struct: `handle: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `stride: u32`
-- [ ] Define `DamageRect` struct: `x: u32`, `y: u32`, `width: u32`, `height: u32`
-- [ ] Define `SemanticHint` enum: `UiText`, `VideoPlayback`, `Rendering3D`, `ScrollingContent`, `StaticContent`
-- [ ] Write host-side tests: `ComputeError` derives, struct field access, `SemanticHint` enum coverage
+- [x] Add `pub mod compute;` to `shared/src/kits/mod.rs`
+- [x] Add `pub use kits::compute as compute_kit;` to `shared/src/lib.rs`
+- [x] Define `ComputeError` enum: `DeviceUnavailable`, `AllocationFailed`, `InvalidParameters`, `ServiceError`, `PermissionDenied`
+- [x] Derive `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` on `ComputeError`
+- [x] Define `SurfaceBuffer` struct: `id: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `fb_virt: usize`, `stride: u32`
+- [x] Define `DamageRect` struct: `x: u32`, `y: u32`, `width: u32`, `height: u32`
+- [x] Define `SemanticHint` enum: `UiText`, `VideoPlayback`, `Rendering3D`, `ScrollingContent`, `StaticContent`
+- [x] Write host-side tests: `ComputeError` derives, struct field access, `SemanticHint` enum coverage
 
 **Key reference:** [kits/kernel/compute.md](../kits/kernel/compute.md) §2 (Tier 1 GpuSurface), §6 (ComputeError)
 

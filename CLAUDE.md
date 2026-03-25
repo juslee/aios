@@ -609,7 +609,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm, lz4_flex; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm, lz4_flex, spleen-font; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask

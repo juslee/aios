@@ -2,7 +2,7 @@
 author: claude
 date: 2026-03-25
 tags: [gpu, display, font, rendering, phase-6]
-status: in-progress
+status: final
 phase: 6
 milestone: M21
 ---
@@ -15,7 +15,7 @@ M19-M20 delivered the VirtIO-GPU 2D driver and GPU Service with double-buffered 
 
 ## Approach
 
-**Scope**: Steps 13-15 from the phase doc. Simple bitmap font rendering using `spleen-font` crate (8x16 monospace glyphs). No TTF parsing, no glyph atlas, no complex text layout — that's Tier 2/3 for later phases.
+**Scope**: Steps 13-15 from the phase doc. Simple bitmap font rendering using `spleen-font` crate (16x32 monospace glyphs). No TTF parsing, no glyph atlas, no complex text layout — that's Tier 2/3 for later phases.
 
 ### Key Design Decisions
 
@@ -31,13 +31,13 @@ M19-M20 delivered the VirtIO-GPU 2D driver and GPU Service with double-buffered 
 
 ### spleen-font Crate (Verified)
 
-- **Version**: 0.1, **License**: MIT (compatible with BSD-2-Clause)
-- **Feature**: `s8x16` (NOT `font-8x16` as phase doc states — reconcile needed)
-- **Cargo.toml**: `spleen-font = { version = "0.1", default-features = false, features = ["s8x16"] }`
+- **Version**: 0.2, **License**: MIT (compatible with BSD-2-Clause)
+- **Feature**: `s16x32` (upgraded from 8x16 for readability at 1280x800)
+- **Cargo.toml**: `spleen-font = { version = "0.2", default-features = false, features = ["s16x32"] }`
 - **API**:
   ```rust
-  use spleen_font::{PSF2Font, FONT_8X16};
-  let font = PSF2Font::new(FONT_8X16).unwrap();
+  use spleen_font::{PSF2Font, FONT_16X32};
+  let font = PSF2Font::new(FONT_16X32).unwrap();
   let glyph = font.glyph_for_utf8("A".as_bytes());
   for row in glyph {
       for pixel in row {
@@ -45,20 +45,20 @@ M19-M20 delivered the VirtIO-GPU 2D driver and GPU Service with double-buffered 
       }
   }
   ```
-- **Properties**: Zero allocations, no_std, no alloc needed, ~4 KiB binary for 8x16
+- **Properties**: Zero allocations, no_std, no alloc needed, ~40 KiB binary for 16x32
 
-### Screen Layout (1280×800 at 8×16)
+### Screen Layout (1280×800 at 16×32)
 
-- Characters per line: `1280 / 8 = 160`
-- Total lines: `800 / 16 = 50`
+- Characters per line: `1280 / 16 = 80`
+- Total lines: `800 / 32 = 25`
 - Header: 1 line ("AIOS Boot Log") + 1 blank line = 2 lines
-- Content lines: `50 - 2 = 48` visible log entries
-- `BootLogBuffer` size: 48 lines × 160 chars = 7680 bytes (fits in BSS)
+- Content lines: `25 - 2 = 23` visible log entries
+- `BootLogBuffer` size: 256 lines × 160 chars = 40960 bytes (fits in BSS, ring buffer captures full boot)
 
 ### BootLogBuffer Design
 
 ```rust
-const MAX_LOG_LINES: usize = 48;
+const MAX_LOG_LINES: usize = 256;
 const MAX_LINE_LEN: usize = 160;
 
 struct BootLogBuffer {
@@ -84,14 +84,14 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
   - This prevents: GPU Service holds lock on CPU 0 → timer tick IRQ preempts → drain_logs tries lock → deadlock
   - Even if the atomic flag race occurs, `try_lock()` returns None → safe skip
 
-- **No-GPU path**: Capture stays `false` forever — zero overhead in `drain_logs()` (one atomic load per call)
+- **No-GPU path**: Capture stays `true` but nobody reads. Timer tick overhead: one `try_lock` + format per entry — negligible. Buffer in BSS (~40 KiB) — negligible.
 - **Overflow**: When `count >= MAX_LOG_LINES`, oldest lines are overwritten (ring buffer). GPU Service reads the last N lines that fit on screen.
 
 ### Implementation Details (Gap Closures)
 
 1. **stride is BYTES, not pixels**: `GpuBufferHandle.stride = width * 4` for B8G8R8A8. Pixel offset into `*mut u32` buffer = `py * (stride / 4) + px`. Must divide stride by 4 for u32 pointer arithmetic.
 
-2. **PSF2Font caching**: `PSF2Font::new(FONT_8X16)` parses the PSF2 header — lightweight but shouldn't be called per-glyph. `draw_text()` creates it once and passes `&PSF2Font` to `blit_glyph()`. `blit_glyph` signature takes `&PSF2Font` as first param.
+2. **PSF2Font caching**: `PSF2Font::new(FONT_16X32)` parses the PSF2 header — lightweight but shouldn't be called per-glyph. `draw_text()` creates it once and passes `&PSF2Font` to `blit_glyph()`. `blit_glyph` signature takes `&PSF2Font` as first param.
 
 3. **char → UTF-8 for glyph lookup**: `glyph_for_utf8` takes `&[u8]`. For ASCII: `&[ch as u8]`. For multi-byte: use `ch.encode_utf8(&mut [0u8; 4])` → pass the resulting slice. Fallback for unknown glyphs: render `'?'`.
 
@@ -101,7 +101,7 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
 
 6. **Full-screen fill optimization**: Use `core::slice::from_raw_parts_mut(fb, pixel_count).fill(color)` for filling background — much faster than per-pixel writes.
 
-7. **Font load failure**: If `PSF2Font::new(FONT_8X16)` returns `Err`, skip text rendering entirely (keep AIOS blue screen). Log warning to UART.
+7. **Font load failure**: If `PSF2Font::new(FONT_16X32)` returns `Err`, skip text rendering entirely (keep AIOS blue screen). Log warning to UART.
 
 ### Files Modified
 
@@ -119,7 +119,7 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
 ## Progress
 
 - [ ] Step 13: spleen-font integration and glyph renderer
-  - [ ] 13a: Add `spleen-font = { version = "0.1", default-features = false, features = ["s8x16"] }` to `kernel/Cargo.toml`
+  - [ ] 13a: Add `spleen-font = { version = "0.2", default-features = false, features = ["s16x32"] }` to `kernel/Cargo.toml`
   - [ ] 13b: Verify compiles: `just check` (confirms no_std compatibility on aarch64-unknown-none)
   - [ ] 13c: Create `kernel/src/gpu/text.rs`, add `pub mod text;` to `kernel/src/gpu/mod.rs`
   - [ ] 13d: Implement `blit_glyph()`:
@@ -127,7 +127,7 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
     - `stride_px = handle.stride / 4` (convert bytes to pixels — caller computes once)
     - Convert char to UTF-8 bytes: `let mut buf = [0u8; 4]; let bytes = ch.encode_utf8(&mut buf);`
     - Call `font.glyph_for_utf8(bytes.as_bytes())` — if returns empty/no glyph, try `'?'` as fallback
-    - Iterate rows (16) × pixels (8) via glyph row/pixel iterators, check each `bool`
+    - Iterate rows (32) × pixels (16) via glyph row/pixel iterators, check each `bool`
     - For each pixel: compute `px = x + col`, `py = y + row`
     - Boundary clip: skip if `px < 0 || px >= fb_w as i32 || py < 0 || py >= fb_h as i32`
     - Write color: `fb.add((py as u32 * stride_px + px as u32) as usize).write(color)` — regular write (WB Cacheable memory)
@@ -145,15 +145,15 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
     - Signature: `pub fn draw_text(font: &PSF2Font, fb: *mut u32, stride_px: u32, fb_w: u32, fb_h: u32, text: &str, start_x: i32, start_y: i32, fg: u32, bg: u32)`
     - `stride_px` = handle.stride / 4 (pixels, not bytes)
     - Create font ONCE in caller (`draw_boot_log`), pass `&PSF2Font` through
-    - Iterate chars, call `blit_glyph` for each, advance cursor X by 8
-    - `\n`: advance Y by 16, reset X to `start_x`
-    - Line wrap: when `cursor_x + 8 > fb_w as i32`, advance Y by 16, reset X
-    - Stop rendering if `cursor_y + 16 > fb_h as i32` (off bottom)
+    - Iterate chars, call `blit_glyph` for each, advance cursor X by 16
+    - `\n`: advance Y by 32, reset X to `start_x`
+    - Line wrap: when `cursor_x + 16 > fb_w as i32`, advance Y by 32, reset X
+    - Stop rendering if `cursor_y + 32 > fb_h as i32` (off bottom)
   - [ ] 14b: Implement `fill_rect()` helper in `kernel/src/gpu/text.rs`:
     - Fill rectangular region with solid color (for background)
     - Used to clear framebuffer before drawing text
   - [ ] 14c: Add `BootLogBuffer` to `kernel/src/observability/mod.rs`:
-    - Static `BOOT_LOG: Mutex<BootLogBuffer>` with BSS-allocated buffer (7.5 KiB)
+    - Static `BOOT_LOG: Mutex<BootLogBuffer>` with BSS-allocated buffer (~40 KiB)
     - Static `BOOT_LOG_CAPTURE: AtomicBool = true` — checked before locking Mutex
     - `BootLogBuffer::push_line(line: &[u8])` — appends formatted line; if `count >= MAX_LOG_LINES`, overwrite oldest (ring)
     - `pub fn take_boot_log(out_lines: &mut [[u8; MAX_LINE_LEN]], out_lens: &mut [u8]) -> usize`:
@@ -180,7 +180,7 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
   - (No 14d2 needed — capture starts `true` at static init, captures from first drain_logs call)
   - [ ] 14e: Implement `draw_boot_log()` in `kernel/src/gpu/text.rs`:
     - Signature: `pub fn draw_boot_log(fb: *mut u32, stride_px: u32, fb_w: u32, fb_h: u32)`
-    - Create `PSF2Font::new(FONT_8X16)` — if Err, log warning and return (keep AIOS blue)
+    - Create `PSF2Font::new(FONT_16X32)` — if Err, log warning and return (keep AIOS blue)
     - Fill entire framebuffer with `BOOT_LOG_BG` via `slice::fill()`
     - Draw header "AIOS Boot Log" at (8, 0) in `BOOT_LOG_HEADER` color via `draw_text()`
     - Calculate visible lines: `max_lines = (fb_h - 32) / 16` (32px header area)
@@ -203,10 +203,10 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
   - [ ] 15b: Add host-side tests for color constants in `shared/src/gpu.rs` (value assertions)
   - [ ] 15c: Update `CLAUDE.md`:
     - Workspace Layout: add `kernel/src/gpu/text.rs`
-    - Key Technical Facts: spleen-font 0.1 (s8x16 feature), glyph 8×16, BootLogBuffer 48 lines × 160 chars
+    - Key Technical Facts: spleen-font 0.2 (s16x32 feature), glyph 16×32, BootLogBuffer 256 lines × 160 chars
     - kernel/Cargo.toml deps: add spleen-font
   - [ ] 15d: Update `README.md` project structure if applicable
-  - [ ] 15e: Update phase doc: fix `font-8x16` → `s8x16`, uncheck prematurely checked boxes in Step 14, check off Steps 13-15, update Status
+  - [ ] 15e: Update phase doc: check off Steps 13-15, update Status (feature name and version already reconciled)
   - [ ] 15f: Dead code cleanup: grep for `#[allow(dead_code)]`
   - [ ] 15g: Run `/audit-loop` — triple audit until 0 issues
   - [ ] 15h: Verify: `just check` + `just test` pass
@@ -215,15 +215,15 @@ static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);  // starts ENABLED 
 ## Dependencies & Risks
 
 - **Depends on**: M20 complete (GPU Service, double buffering, VirtIO-GPU driver) ✓
-- **Risk: spleen-font `PSF2Font::new` panics on aarch64**: The `unwrap()` could panic if font data is invalid. Mitigation: use `unwrap()` since FONT_8X16 is compiled-in constant data; if it fails, it's a crate bug.
-- **Risk: spleen-font API differs from research**: Crate is version 0.1 and may have limited docs. Mitigation: read source code during Step 13b if API doesn't match; fall back to `font8x8` crate (MIT, simpler API, 8×8 only) as backup.
+- **Risk: spleen-font `PSF2Font::new` panics on aarch64**: The `unwrap()` could panic if font data is invalid. Mitigation: use `unwrap()` since FONT_16X32 is compiled-in constant data; if it fails, it's a crate bug.
+- **Risk: spleen-font API differs from research**: Crate is version 0.2. Mitigation: read source code during Step 13b if API doesn't match; fall back to `font8x8` crate (MIT, simpler API, 8×8 only) as backup.
 - **Risk: BootLogBuffer deadlock in IRQ context**: drain_logs() is called from timer tick on CPU 0. If GPU Service holds BOOT_LOG lock on same CPU and timer preempts → deadlock. Mitigation: (1) drain_logs uses `try_lock()` — never blocks; (2) `BOOT_LOG_CAPTURE` flag set false by GPU Service BEFORE locking. Two-layer defense.
 - **Risk: Character encoding**: spleen-font handles ASCII well but log messages should be ASCII-only. Non-ASCII → render '?' via fallback.
 
 ## Phase Doc Reconciliation
 
-1. **Feature name**: Phase doc says `features = ["font-8x16"]` → should be `features = ["s8x16"]`
-2. **Version**: Phase doc says `version = "0.1"` — this is correct
+1. **Feature name**: Phase doc updated to `features = ["s16x32"]` (was `font-8x16`)
+2. **Version**: Phase doc updated to `version = "0.2"` (upgraded from 0.1 for 16x32 support)
 3. **Step 14 checkboxes**: `draw_text` and `draw_boot_log` signatures are marked `[x]` but don't exist in code — uncheck them
 4. **Function signature deviation**: Phase doc says `draw_boot_log(fb: &GpuBufferHandle)` — implementing as `draw_boot_log(fb: *mut u32, stride, width, height)` for decoupling. Document in plan.
 5. **drain_logs integration**: Phase doc says "drains the last N log entries from the kernel log ring" — implementing via BootLogBuffer capture since ring buffers are empty by GPU Service start time. Functionally equivalent.
