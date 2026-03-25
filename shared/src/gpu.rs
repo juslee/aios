@@ -356,6 +356,173 @@ pub const MAX_FRAMEBUFFER_BYTES: usize = 4 * 1024 * 1024;
 /// AIOS blue color: #5B8CFF in B8G8R8A8 format (little-endian u32).
 pub const AIOS_BLUE_B8G8R8A8: u32 = 0xFF5B_8CFF;
 
+/// Maximum GPU buffers tracked by the GPU Service.
+pub const MAX_GPU_BUFFERS: usize = 8;
+
+// ---------------------------------------------------------------------------
+// GPU Service IPC protocol types (Phase 6 M20)
+// ---------------------------------------------------------------------------
+
+/// GPU Service command identifiers sent via IPC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum GpuCommand {
+    /// Query display dimensions and format.
+    GetDisplayInfo = 1,
+    /// Allocate a GPU framebuffer.
+    AllocateBuffer = 2,
+    /// Release a previously allocated buffer.
+    ReleaseBuffer = 3,
+    /// Present (transfer + flush) a buffer's damage region.
+    Present = 4,
+    /// Query buffer info (virtual address, dimensions, stride).
+    GetBufferInfo = 5,
+    /// Swap front and back buffers (double buffering).
+    SwapBuffers = 6,
+}
+
+impl GpuCommand {
+    /// Convert from a raw u32 discriminant.
+    pub fn from_u32(val: u32) -> Option<Self> {
+        match val {
+            1 => Some(Self::GetDisplayInfo),
+            2 => Some(Self::AllocateBuffer),
+            3 => Some(Self::ReleaseBuffer),
+            4 => Some(Self::Present),
+            5 => Some(Self::GetBufferInfo),
+            6 => Some(Self::SwapBuffers),
+            _ => None,
+        }
+    }
+}
+
+/// GPU Service request message — sent from client to GPU Service via IPC.
+///
+/// Flat `repr(C)` struct for zero-copy serialization into `RawMessage.data[256]`.
+/// All fields are always present; unused fields are 0.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct GpuRequest {
+    /// Command discriminant (matches `GpuCommand` values).
+    pub command: u32,
+    /// Resource ID (for ReleaseBuffer, Present, GetBufferInfo).
+    pub resource_id: u32,
+    /// Buffer width in pixels (for AllocateBuffer).
+    pub width: u32,
+    /// Buffer height in pixels (for AllocateBuffer).
+    pub height: u32,
+    /// Pixel format as u32 (for AllocateBuffer; 0 = B8G8R8A8).
+    pub format: u32,
+    /// Damage region X offset (for Present).
+    pub damage_x: u32,
+    /// Damage region Y offset (for Present).
+    pub damage_y: u32,
+    /// Damage region width (for Present).
+    pub damage_w: u32,
+    /// Damage region height (for Present).
+    pub damage_h: u32,
+}
+
+impl GpuRequest {
+    /// Create a zeroed request.
+    pub const fn zeroed() -> Self {
+        Self {
+            command: 0,
+            resource_id: 0,
+            width: 0,
+            height: 0,
+            format: 0,
+            damage_x: 0,
+            damage_y: 0,
+            damage_w: 0,
+            damage_h: 0,
+        }
+    }
+}
+
+/// GPU Service response message — sent from GPU Service to client via IPC.
+///
+/// Flat `repr(C)` struct for zero-copy serialization into `RawMessage.data[256]`.
+/// All fields are always present; unused fields are 0.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct GpuResponse {
+    /// Status: 0 = success, negative = GpuError (see `GpuError::to_status`).
+    pub status: i32,
+    /// Resource ID (for AllocateBuffer response).
+    pub resource_id: u32,
+    /// Display/buffer width in pixels.
+    pub width: u32,
+    /// Display/buffer height in pixels.
+    pub height: u32,
+    /// Bytes per row.
+    pub stride: u32,
+    /// Pixel format as u32.
+    pub format: u32,
+    /// Framebuffer virtual address (for GetBufferInfo).
+    pub fb_virt: u64,
+    /// Scanout index (for GetDisplayInfo).
+    pub scanout_id: u32,
+    /// Padding for alignment.
+    pub _pad: u32,
+}
+
+impl GpuResponse {
+    /// Create a zeroed (success) response.
+    pub const fn zeroed() -> Self {
+        Self {
+            status: 0,
+            resource_id: 0,
+            width: 0,
+            height: 0,
+            stride: 0,
+            format: 0,
+            fb_virt: 0,
+            scanout_id: 0,
+            _pad: 0,
+        }
+    }
+
+    /// Create an error response from a `GpuError`.
+    pub fn error(err: GpuError) -> Self {
+        let mut resp = Self::zeroed();
+        resp.status = err.to_status();
+        resp
+    }
+}
+
+impl GpuError {
+    /// Convert to a negative i32 status code for IPC response.
+    pub fn to_status(self) -> i32 {
+        match self {
+            GpuError::DeviceNotFound => -1,
+            GpuError::InitFailed => -2,
+            GpuError::CommandFailed => -3,
+            GpuError::OutOfMemory => -4,
+            GpuError::InvalidResource => -5,
+            GpuError::ScanoutFailed => -6,
+            GpuError::Timeout => -7,
+            GpuError::ResolutionTooLarge => -8,
+        }
+    }
+
+    /// Convert from a negative i32 status code. Returns None for 0 (success)
+    /// or unknown codes.
+    pub fn from_status(status: i32) -> Option<Self> {
+        match status {
+            -1 => Some(GpuError::DeviceNotFound),
+            -2 => Some(GpuError::InitFailed),
+            -3 => Some(GpuError::CommandFailed),
+            -4 => Some(GpuError::OutOfMemory),
+            -5 => Some(GpuError::InvalidResource),
+            -6 => Some(GpuError::ScanoutFailed),
+            -7 => Some(GpuError::Timeout),
+            -8 => Some(GpuError::ResolutionTooLarge),
+            _ => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Host-side tests
 // ---------------------------------------------------------------------------
@@ -474,5 +641,100 @@ mod tests {
     #[test]
     fn fence_flag_value() {
         assert_eq!(VIRTIO_GPU_FLAG_FENCE, 1);
+    }
+
+    // --- GPU Service IPC protocol tests (Phase 6 M20) ---
+
+    #[test]
+    fn gpu_request_size_fits_message() {
+        assert!(
+            size_of::<GpuRequest>() <= 256,
+            "GpuRequest must fit in MAX_MESSAGE_SIZE"
+        );
+    }
+
+    #[test]
+    fn gpu_response_size_fits_message() {
+        assert!(
+            size_of::<GpuResponse>() <= 256,
+            "GpuResponse must fit in MAX_MESSAGE_SIZE"
+        );
+    }
+
+    #[test]
+    fn gpu_request_zeroed() {
+        let req = GpuRequest::zeroed();
+        assert_eq!(req.command, 0);
+        assert_eq!(req.resource_id, 0);
+        assert_eq!(req.width, 0);
+    }
+
+    #[test]
+    fn gpu_response_zeroed() {
+        let resp = GpuResponse::zeroed();
+        assert_eq!(resp.status, 0);
+        assert_eq!(resp.resource_id, 0);
+        assert_eq!(resp.fb_virt, 0);
+    }
+
+    #[test]
+    fn gpu_response_error() {
+        let resp = GpuResponse::error(GpuError::OutOfMemory);
+        assert_eq!(resp.status, -4);
+    }
+
+    #[test]
+    fn gpu_command_discriminants() {
+        assert_eq!(GpuCommand::GetDisplayInfo as u32, 1);
+        assert_eq!(GpuCommand::AllocateBuffer as u32, 2);
+        assert_eq!(GpuCommand::ReleaseBuffer as u32, 3);
+        assert_eq!(GpuCommand::Present as u32, 4);
+        assert_eq!(GpuCommand::GetBufferInfo as u32, 5);
+        assert_eq!(GpuCommand::SwapBuffers as u32, 6);
+    }
+
+    #[test]
+    fn gpu_command_from_u32() {
+        assert_eq!(GpuCommand::from_u32(1), Some(GpuCommand::GetDisplayInfo));
+        assert_eq!(GpuCommand::from_u32(6), Some(GpuCommand::SwapBuffers));
+        assert_eq!(GpuCommand::from_u32(0), None);
+        assert_eq!(GpuCommand::from_u32(7), None);
+        assert_eq!(GpuCommand::from_u32(u32::MAX), None);
+    }
+
+    #[test]
+    fn gpu_error_status_round_trip() {
+        let errors = [
+            GpuError::DeviceNotFound,
+            GpuError::InitFailed,
+            GpuError::CommandFailed,
+            GpuError::OutOfMemory,
+            GpuError::InvalidResource,
+            GpuError::ScanoutFailed,
+            GpuError::Timeout,
+            GpuError::ResolutionTooLarge,
+        ];
+        for err in errors {
+            let status = err.to_status();
+            assert!(status < 0, "error status must be negative");
+            let recovered = GpuError::from_status(status);
+            assert_eq!(recovered, Some(err), "round-trip failed for {:?}", err);
+        }
+    }
+
+    #[test]
+    fn gpu_error_from_status_success() {
+        assert_eq!(GpuError::from_status(0), None);
+    }
+
+    #[test]
+    fn gpu_error_from_status_unknown() {
+        assert_eq!(GpuError::from_status(-99), None);
+        assert_eq!(GpuError::from_status(1), None);
+    }
+
+    #[test]
+    fn max_gpu_buffers() {
+        assert_eq!(MAX_GPU_BUFFERS, 8);
     }
 }
