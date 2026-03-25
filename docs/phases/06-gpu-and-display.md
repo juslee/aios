@@ -61,19 +61,19 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Add VirtIO-GPU device ID, command constants, response codes, and `repr(C)` command/response structs to a new `shared/src/gpu.rs` module. These are the wire-format types from drivers.md §3.1–3.3.
 
 **Tasks:**
-- [ ] Create `shared/src/gpu.rs`
-- [ ] Add `pub mod gpu;` to `shared/src/lib.rs`
-- [ ] Add `VIRTIO_DEVICE_ID_GPU: u32 = 16` constant
-- [ ] Add VirtIO-GPU command type constants: `GET_DISPLAY_INFO` (0x0100), `RESOURCE_CREATE_2D` (0x0101), `RESOURCE_UNREF` (0x0102), `SET_SCANOUT` (0x0103), `RESOURCE_FLUSH` (0x0104), `TRANSFER_TO_HOST_2D` (0x0105), `RESOURCE_ATTACH_BACKING` (0x0106), `RESOURCE_DETACH_BACKING` (0x0107)
-- [ ] Add response constants: `RESP_OK_NODATA` (0x1100), `RESP_OK_DISPLAY_INFO` (0x1101), error codes (0x1200–0x1205)
-- [ ] Define `repr(C)` structs: `VirtioGpuCtrlHdr`, `VirtioGpuRect`, `VirtioGpuDisplayOne`, `VirtioGpuRespDisplayInfo`, `VirtioGpuResourceCreate2d`, `VirtioGpuSetScanout`, `VirtioGpuResourceFlush`, `VirtioGpuTransferToHost2d`, `VirtioGpuResourceAttachBacking`, `VirtioGpuMemEntry`, `VirtioGpuResourceUnref`, `VirtioGpuResourceDetachBacking`
-- [ ] Define `VirtioGpuFormat` enum: `B8G8R8A8Unorm = 1`, `R8G8B8A8Unorm = 67`
-- [ ] Add `VIRTIO_GPU_FLAG_FENCE: u32 = 1` constant
-- [ ] Define `GpuPixelFormat` enum for AIOS-native GPU use: `B8G8R8A8`, `R8G8B8A8` (distinct from the boot `PixelFormat` in `shared/src/boot.rs`)
-- [ ] Define `DisplayInfo` struct: `width: u32`, `height: u32`, `format: GpuPixelFormat`, `scanout_id: u32`
-- [ ] Define `GpuError` enum: `DeviceNotFound`, `InitFailed`, `CommandFailed`, `OutOfMemory`, `InvalidResource`, `ScanoutFailed`
-- [ ] Add `Gpu = 13` variant to `Subsystem` enum in `shared/src/observability.rs`, update `Subsystem::COUNT` to 14 and `Subsystem::name()` match arm, and adjust unit tests that assert `COUNT` or the last discriminant
-- [ ] Write host-side tests: struct size assertions (`core::mem::size_of`) ensuring `repr(C)` layout matches VirtIO spec, `GpuError` derives
+- [x] Create `shared/src/gpu.rs`
+- [x] Add `pub mod gpu;` to `shared/src/lib.rs`
+- [x] Add `VIRTIO_DEVICE_ID_GPU: u32 = 16` constant
+- [x] Add VirtIO-GPU command type constants: `GET_DISPLAY_INFO` (0x0100), `RESOURCE_CREATE_2D` (0x0101), `RESOURCE_UNREF` (0x0102), `SET_SCANOUT` (0x0103), `RESOURCE_FLUSH` (0x0104), `TRANSFER_TO_HOST_2D` (0x0105), `RESOURCE_ATTACH_BACKING` (0x0106), `RESOURCE_DETACH_BACKING` (0x0107)
+- [x] Add response constants: `RESP_OK_NODATA` (0x1100), `RESP_OK_DISPLAY_INFO` (0x1101), error codes (0x1200–0x1205)
+- [x] Define `repr(C)` structs: `VirtioGpuCtrlHdr`, `VirtioGpuRect`, `VirtioGpuDisplayOne`, `VirtioGpuRespDisplayInfo`, `VirtioGpuResourceCreate2d`, `VirtioGpuSetScanout`, `VirtioGpuResourceFlush`, `VirtioGpuTransferToHost2d`, `VirtioGpuResourceAttachBacking`, `VirtioGpuMemEntry`, `VirtioGpuResourceUnref`, `VirtioGpuResourceDetachBacking`
+- [x] Define `VirtioGpuFormat` enum: `B8G8R8A8Unorm = 1`, `R8G8B8A8Unorm = 67`
+- [x] Add `VIRTIO_GPU_FLAG_FENCE: u32 = 1` constant
+- [x] Define `GpuPixelFormat` enum for AIOS-native GPU use: `B8G8R8A8`, `R8G8B8A8` (distinct from the boot `PixelFormat` in `shared/src/boot.rs`)
+- [x] Define `DisplayInfo` struct: `width: u32`, `height: u32`, `format: GpuPixelFormat`, `scanout_id: u32`
+- [x] Define `GpuError` enum: `DeviceNotFound`, `InitFailed`, `CommandFailed`, `OutOfMemory`, `InvalidResource`, `ScanoutFailed`
+- [x] Add `Gpu = 13` variant to `Subsystem` enum in `shared/src/observability.rs`, update `Subsystem::COUNT` to 14 and `Subsystem::name()` match arm, and adjust unit tests that assert `COUNT` or the last discriminant
+- [x] Write host-side tests: struct size assertions (`core::mem::size_of`) ensuring `repr(C)` layout matches VirtIO spec, `GpuError` derives
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.1–3.3
 
@@ -86,12 +86,12 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Create `kernel/src/drivers/virtio_gpu.rs` implementing device probe (reusing VirtIO MMIO scan from `virtio_blk.rs`) and initialization following VirtIO spec §3.1. The GPU device needs two virtqueues (controlq index 0, cursorq index 1) but only controlq is used initially.
 
 **Tasks:**
-- [ ] Create `kernel/src/drivers/virtio_gpu.rs` with `VirtioGpu` struct holding: `base` (MMIO virtual addr), controlq virtqueue state (`desc_virt`/`avail_virt`/`used_virt`), command buffer DMA page (`cmd_phys`/`cmd_virt`), `last_used_idx`, `queue_size`, `next_resource_id`, scanout dimensions
-- [ ] Implement `probe()`: DTB scan then brute-force MMIO scan (0x0A00_0000–0x0A00_3E00, 512-byte stride), checking for device ID 16 (GPU) instead of 2 (BLK)
-- [ ] Implement `init_device()`: reset → ACKNOWLEDGE → DRIVER → read features → write driver features (zero for Phase 6 — no 3D) → set GUEST_PAGE_SIZE → setup controlq (queue 0) → allocate DMA pages for virtqueue and command buffer → set DRIVER_OK
-- [ ] Read config space: `num_scanouts` at offset 0x108
-- [ ] Implement `pub fn init(dt: &DeviceTree) -> bool` with global `VIRTIO_GPU: Mutex<Option<VirtioGpu>>`
-- [ ] Add `pub mod virtio_gpu;` to `kernel/src/drivers/mod.rs`
+- [x] Create `kernel/src/drivers/virtio_gpu.rs` with `VirtioGpu` struct holding: `base` (MMIO virtual addr), controlq virtqueue state (`desc_virt`/`avail_virt`/`used_virt`), command buffer DMA page (`cmd_phys`/`cmd_virt`), `last_used_idx`, `queue_size`, `next_resource_id`, scanout dimensions
+- [x] Implement `probe()`: DTB scan then brute-force MMIO scan (0x0A00_0000–0x0A00_3E00, 512-byte stride), checking for device ID 16 (GPU) instead of 2 (BLK)
+- [x] Implement `init_device()`: reset → ACKNOWLEDGE → DRIVER → read features → write driver features (zero for Phase 6 — no 3D) → set GUEST_PAGE_SIZE → setup controlq (queue 0) → allocate DMA pages for virtqueue and command buffer → set DRIVER_OK
+- [x] Read config space: `num_scanouts` at offset 0x108
+- [x] Implement `pub fn init(dt: &DeviceTree) -> bool` with global `VIRTIO_GPU: Mutex<Option<VirtioGpu>>`
+- [x] Add `pub mod virtio_gpu;` to `kernel/src/drivers/mod.rs`
 
 **Note:** The probe reuses the same MMIO slot range as virtio_blk. Each slot has a unique device at a unique address — the GPU will appear at a different slot than the block device. QEMU flag: `-device virtio-gpu-device`.
 
@@ -106,10 +106,10 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement the generic command submission function that sends a command on the controlq and polls for the response. Use it to query display info (scanout dimensions).
 
 **Tasks:**
-- [ ] Implement `submit_command(&mut self, cmd: &[u8], resp: &mut [u8])`: builds a 2-descriptor chain (device-readable command, device-writable response), posts to available ring, notifies device, polls used ring for completion, verifies response header
-- [ ] Implement `submit_command_with_extra(&mut self, cmd: &[u8], extra: &[u8], resp: &mut [u8])` for commands needing additional data (e.g., `RESOURCE_ATTACH_BACKING` followed by `VirtioGpuMemEntry` array)
-- [ ] Implement `get_display_info(&mut self) -> Result<DisplayInfo, GpuError>`: sends `GET_DISPLAY_INFO`, parses `VirtioGpuRespDisplayInfo`, extracts first enabled scanout's width/height
-- [ ] Call `get_display_info()` at end of `init_device()`, store in struct, log dimensions
+- [x] Implement `submit_command(&mut self, cmd: &[u8], resp: &mut [u8])`: builds a 2-descriptor chain (device-readable command, device-writable response), posts to available ring, notifies device, polls used ring for completion, verifies response header
+- [x] Implement `submit_command_with_extra(&mut self, cmd: &[u8], extra: &[u8], resp: &mut [u8])` for commands needing additional data (e.g., `RESOURCE_ATTACH_BACKING` followed by `VirtioGpuMemEntry` array)
+- [x] Implement `get_display_info(&mut self) -> Result<DisplayInfo, GpuError>`: sends `GET_DISPLAY_INFO`, parses `VirtioGpuRespDisplayInfo`, extracts first enabled scanout's width/height
+- [x] Call `get_display_info()` at end of `init_device()`, store in struct, log dimensions
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.3 (GET_DISPLAY_INFO); `kernel/src/drivers/virtio_blk.rs` `submit_request()` pattern
 
@@ -122,11 +122,11 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement the VirtIO-GPU 2D resource lifecycle: create a 2D resource, allocate DMA-backed framebuffer pages, and attach the backing memory.
 
 **Tasks:**
-- [ ] Implement `resource_create_2d(&mut self, resource_id: u32, format: u32, width: u32, height: u32) -> Result<(), GpuError>`
-- [ ] Implement `resource_attach_backing(&mut self, resource_id: u32, entries: &[VirtioGpuMemEntry]) -> Result<(), GpuError>` using `submit_command_with_extra()`
-- [ ] Implement `resource_detach_backing(&mut self, resource_id: u32)` and `resource_unref(&mut self, resource_id: u32)` for cleanup
-- [ ] Implement `allocate_framebuffer(&mut self, width: u32, height: u32) -> Result<GpuBufferHandle, GpuError>`: computes total bytes (width × height × 4 for BGRA8), allocates DMA pages from `Pool::Dma`, zeros them, creates resource, attaches backing, returns handle with physical/virtual addresses
-- [ ] Define `GpuBufferHandle` struct: `resource_id: u32`, `width: u32`, `height: u32`, `format: GpuPixelFormat`, `stride: u32`, `fb_phys: usize`, `fb_virt: usize`, `page_count: usize`
+- [x] Implement `resource_create_2d(&mut self, resource_id: u32, format: u32, width: u32, height: u32) -> Result<(), GpuError>`
+- [x] Implement `resource_attach_backing(&mut self, resource_id: u32, entries: &[VirtioGpuMemEntry]) -> Result<(), GpuError>` using `submit_command_with_extra()`
+- [x] Implement `resource_detach_backing(&mut self, resource_id: u32)` and `resource_unref(&mut self, resource_id: u32)` for cleanup
+- [x] Implement `allocate_framebuffer(&mut self, width: u32, height: u32) -> Result<GpuBufferHandle, GpuError>`: computes total bytes (width × height × 4 for BGRA8), allocates DMA pages from `Pool::Dma`, zeros them, creates resource, attaches backing, returns handle with physical/virtual addresses
+- [x] Define `GpuBufferHandle` struct: `resource_id: u32`, `width: u32`, `height: u32`, `format: GpuPixelFormat`, `stride: u32`, `fb_phys: usize`, `fb_virt: usize`, `page_count: usize`
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.3 (RESOURCE_CREATE_2D, RESOURCE_ATTACH_BACKING), §3.5 (2D display flow)
 
@@ -139,13 +139,13 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Bind the resource to scanout 0, fill the framebuffer with a solid color, transfer to host, and flush. This proves the full 2D pipeline works. Add the `run-gpu` recipe to the justfile.
 
 **Tasks:**
-- [ ] Implement `set_scanout(&mut self, scanout_id: u32, resource_id: u32, rect: &VirtioGpuRect) -> Result<(), GpuError>`
-- [ ] Implement `transfer_to_host_2d(&mut self, resource_id: u32, rect: &VirtioGpuRect, offset: u64) -> Result<(), GpuError>`
-- [ ] Implement `resource_flush(&mut self, resource_id: u32, rect: &VirtioGpuRect) -> Result<(), GpuError>`
-- [ ] Implement `present_frame(&mut self, handle: &GpuBufferHandle) -> Result<(), GpuError>`: convenience that calls `transfer_to_host_2d` then `resource_flush` for the full rectangle
-- [ ] In init: after resource creation, call `set_scanout(0, resource_id, full_rect)`, fill framebuffer with AIOS blue (#5B8CFF as B8G8R8A8), call `present_frame()`, log "VirtIO-GPU: first frame displayed"
-- [ ] Add `drivers::virtio_gpu::init(&dt)` call in `kernel_main` after storage init
-- [ ] Add `run-gpu` recipe to justfile: `-serial stdio`, `-device virtio-gpu-device`, no `-device ramfb`
+- [x] Implement `set_scanout(&mut self, scanout_id: u32, resource_id: u32, rect: &VirtioGpuRect) -> Result<(), GpuError>`
+- [x] Implement `transfer_to_host_2d(&mut self, resource_id: u32, rect: &VirtioGpuRect, offset: u64) -> Result<(), GpuError>`
+- [x] Implement `resource_flush(&mut self, resource_id: u32, rect: &VirtioGpuRect) -> Result<(), GpuError>`
+- [x] Implement `present_frame(&mut self, handle: &GpuBufferHandle) -> Result<(), GpuError>`: convenience that calls `transfer_to_host_2d` then `resource_flush` for the full rectangle
+- [x] In init: after resource creation, call `set_scanout(0, resource_id, full_rect)`, fill framebuffer with AIOS blue (#5B8CFF as B8G8R8A8), call `present_frame()`, log "VirtIO-GPU: first frame displayed"
+- [x] Add `drivers::virtio_gpu::init(&dt)` call in `kernel_main` after storage init
+- [x] Add `run-gpu` recipe to justfile: `-serial stdio`, `-device virtio-gpu-device`, no `-device ramfb`
 
 **Key reference:** [gpu/drivers.md](../platform/gpu/drivers.md) §3.3 (SET_SCANOUT, TRANSFER_TO_HOST_2D, RESOURCE_FLUSH), §3.5 (2D display flow)
 
@@ -158,9 +158,9 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Review kernel/ code from M19 steps, ensure shared types are properly placed.
 
 **Tasks:**
-- [ ] Verify VirtIO-GPU wire types are in `shared/src/gpu.rs` (not kernel/)
-- [ ] Verify `GpuBufferHandle`, `DisplayInfo`, `GpuError`, `PixelFormat` are in shared crate
-- [ ] Write additional host-side tests for new shared types
+- [x] Verify VirtIO-GPU wire types are in `shared/src/gpu.rs` (not kernel/)
+- [x] Verify `GpuBufferHandle`, `DisplayInfo`, `GpuError`, `GpuPixelFormat` are in shared crate
+- [x] Write additional host-side tests for new shared types
 
 **Acceptance:** `just check` + `just test` pass.
 
@@ -210,11 +210,11 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 - [ ] Create `kernel/src/gpu/mod.rs` with `pub mod service;`
 - [ ] Create `kernel/src/gpu/service.rs` with `gpu_service_loop()` entry function
 - [ ] In `gpu_service_loop()`: create IPC channel, register as "gpu-service" via `service_register()`, loop on `ipc_recv()`, decode `GpuCommand` from message data, dispatch to handler, `ipc_reply()` with response
-- [ ] Implement `handle_get_display_info()`: reads display info from VirtIO-GPU driver, packs into response
-- [ ] Implement `handle_allocate_buffer()`: allocates a new VirtIO-GPU framebuffer (via the driver), enforces `GpuBufferCreate` capability check, returns resource_id
-- [ ] Implement `handle_release_buffer()`: detaches backing, unrefs resource, frees DMA pages
-- [ ] Implement `handle_present()`: calls `transfer_to_host_2d` + `resource_flush` for the specified damage region
-- [ ] Implement `handle_get_buffer_info()`: returns DMA virtual address, width, height, stride for a resource
+- [x] Implement `handle_get_display_info()`: reads display info from VirtIO-GPU driver, packs into response
+- [x] Implement `handle_allocate_buffer()`: allocates a new VirtIO-GPU framebuffer (via the driver), enforces `GpuBufferCreate` capability check, returns resource_id
+- [x] Implement `handle_release_buffer()`: detaches backing, unrefs resource, frees DMA pages
+- [x] Implement `handle_present()`: calls `transfer_to_host_2d` + `resource_flush` for the specified damage region
+- [x] Implement `handle_get_buffer_info()`: returns DMA virtual address, width, height, stride for a resource
 - [ ] Spawn the GPU Service thread in `kernel_main` after VirtIO-GPU init succeeds, with `SchedulerClass::Interactive` priority
 
 **Note:** The GPU Service thread runs in kernel space (EL1) for Phase 6. When userspace process execution is available, this service will be extracted to an EL0 privileged process. The IPC protocol remains identical.
@@ -232,9 +232,9 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **Tasks:**
 - [ ] Allocate two VirtIO-GPU resources at GPU Service init (resource IDs 1 and 2)
 - [ ] Track `front_buffer` and `back_buffer` as `GpuBufferHandle` in the service state
-- [ ] Implement `swap_buffers()`: swaps front/back handles, calls `set_scanout()` to bind new front, `transfer_to_host_2d()` + `resource_flush()` for new front
+- [x] Implement `swap_buffers()`: swaps front/back handles, calls `set_scanout()` to bind new front, `transfer_to_host_2d()` + `resource_flush()` for new front
 - [ ] Add `SwapBuffers = 6` to `GpuCommand` enum for IPC-triggered swap
-- [ ] Implement `FenceTracker` struct: `next_id: u64`, `last_completed: u64` with `allocate()`, `complete()`, `is_complete()` methods
+- [x] Implement `FenceTracker` struct: `next_id: u64`, `last_completed: u64` with `allocate()`, `complete()`, `is_complete()` methods
 - [ ] Use fenced commands on `resource_flush` to track when it is safe to render into the freed buffer
 
 **Key reference:** [gpu/display.md](../platform/gpu/display.md) §7.2 (double buffering), §7.3 (page flip); [gpu/drivers.md](../platform/gpu/drivers.md) §3.4 (fences)
@@ -303,10 +303,10 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement `draw_text()` and `draw_boot_log()` functions that render strings and kernel log entries to the GPU framebuffer.
 
 **Tasks:**
-- [ ] Implement `draw_text(fb: &GpuBufferHandle, text: &str, x: i32, y: i32, fg: u32, bg: u32)`: iterates characters, calls `blit_glyph` for each, advances cursor by 8 pixels per character
+- [x] Implement `draw_text(fb: &GpuBufferHandle, text: &str, x: i32, y: i32, fg: u32, bg: u32)`: iterates characters, calls `blit_glyph` for each, advances cursor by 8 pixels per character
 - [ ] Handle newline (`\n`): advance Y by 16, reset X to starting position
 - [ ] Handle line wrapping: when X exceeds framebuffer width, wrap to next line
-- [ ] Implement `draw_boot_log(fb: &GpuBufferHandle)`: drains the last N log entries from the kernel log ring (`observability::drain_logs()`), renders them as white text on dark background
+- [x] Implement `draw_boot_log(fb: &GpuBufferHandle)`: drains the last N log entries from the kernel log ring (`observability::drain_logs()`), renders them as white text on dark background
 - [ ] Wire `draw_boot_log()` into `kernel_main` after GPU Service starts: fill back buffer with dark background (#1A1A2E), draw boot log text, present via GPU Service
 - [ ] Calculate how many log lines fit on screen: (height / 16) lines, (width / 8) chars per line
 
@@ -379,7 +379,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 **Tasks:**
 - [ ] Create zero-sized `KernelGpuSurface` struct in `kernel/src/gpu/mod.rs`
-- [ ] Implement `GpuSurface for KernelGpuSurface`:
+- [x] Implement `GpuSurface for KernelGpuSurface`:
   - `allocate_buffer`: sends `AllocateBuffer` command to GPU Service via IPC
   - `submit_damage`: sends `Present` command with damage rect to GPU Service
   - `set_semantic_hint`: stores hint in GPU Service state (informational — used by compositor in Phase 7+)
