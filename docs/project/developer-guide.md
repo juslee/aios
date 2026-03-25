@@ -1991,6 +1991,38 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 | Double context switch corruption | `IN_SCHEDULER` guard not set | Set per-CPU `IN_SCHEDULER` AtomicBool before schedule(), clear after |
 | Direct switch to wrong thread | CURRENT_THREAD stale after save_context return | Re-read core ID from hardware (`MPIDR_EL1`) after save_context |
 
+### 6.7 Code Navigation with LSP
+
+Claude Code has LSP (Language Server Protocol) integration with `rust-analyzer` for semantic code intelligence. **Always prefer LSP over manual searching** when navigating the codebase.
+
+**Configuration** (already set up in `.claude/`):
+
+- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section
+- `.claude/.lsp.json` — maps `.rs` files to `rust-analyzer`
+
+**Available LSP operations:**
+
+| Operation | Use case | Example |
+|---|---|---|
+| `goToDefinition` | Jump to where a symbol is defined | Find `FrameAllocator` trait definition |
+| `findReferences` | Find all usages of a symbol | Find all callers of `alloc_frame()` |
+| `hover` | Get type info and docs | Check return type of a function |
+| `documentSymbol` | List all symbols in a file | Overview of `mm/frame.rs` contents |
+| `workspaceSymbol` | Search symbols across the workspace | Find `BuddyAllocator` anywhere |
+| `goToImplementation` | Find trait implementations | Find all `Platform` trait impls |
+| `incomingCalls` | What calls this function? | Trace callers of `schedule()` |
+| `outgoingCalls` | What does this function call? | Trace callees of `kernel_main()` |
+
+**Tool priority for code navigation** (most to least preferred):
+
+1. **LSP** — semantic code intelligence (definitions, references, types, call hierarchy)
+2. **Grep** — content search (patterns, strings, regex across files)
+3. **Glob** — file discovery (by name pattern)
+4. **Read** — file contents (when you need full implementation details)
+5. **Bash** — system commands (only when dedicated tools cannot accomplish the task)
+
+**When NOT to use LSP:** searching for string literals or comments (use Grep), finding files by name (use Glob), or working with non-Rust files.
+
 ---
 
 ## 7. Contributing a New Subsystem
