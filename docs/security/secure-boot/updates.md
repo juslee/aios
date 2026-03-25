@@ -343,7 +343,7 @@ flowchart TD
 
 ### §7.4 Resumable Downloads
 
-The update agent uses the Network Translation Module (NTM, [networking/protocols.md §5](../../platform/networking/protocols.md)) for update downloads.
+The update agent uses the AI Network Model (ANM, [networking/protocols.md §5](../../platform/networking/protocols.md)) for update downloads.
 
 **Download resilience:**
 

@@ -324,18 +324,18 @@ The kernel configures stage-2 to restrict DMA to the agent's physical memory pag
 
 Network-attached devices extend the device model beyond locally connected hardware. A `DeviceProxy` presents a remote device as if it were local, implementing the same `Driver` trait as local drivers. From the subsystem framework's perspective, a remote device is indistinguishable from a local one -- it has a `DeviceNode` in the registry, supports sessions, and exposes properties.
 
-- **Protocol:** IPC-over-network for control, DataChannels for bulk transfer, via the AIOS Peer Protocol
-- **Capability tokens:** Device capability tokens that span machine boundaries, authenticated via the peer protocol's TLS channel
+- **Protocol:** IPC-over-network for control, DataChannels for bulk transfer, via the ANM Mesh Protocol
+- **Capability tokens:** Device capability tokens that span machine boundaries, authenticated via the mesh protocol's Noise IK channel
 - **Use case:** AI model inference on a remote GPU, presented as a local device to the requesting agent
 - **Latency tracking:** Kernel-internal statistics track RTT per remote device; the subsystem framework reports latency as a quality-of-service property
 
-> **Cross-reference:** [networking/protocols.md](../../platform/networking/protocols.md) §5.1 (AIOS Peer Protocol).
+> **Cross-reference:** [networking/protocols.md](../../platform/networking/protocols.md) §5.1 (ANM Mesh Protocol).
 
 -----
 
 ### 19.4 Disaggregated Storage
 
-NVMe over Fabrics (NVMe-oF) presents remote block devices as local NVMe namespaces. Integration with the Block Engine ([spaces/block-engine.md](../../storage/spaces/block-engine.md)) is transparent to upper layers -- the storage subsystem sees a block device and does not distinguish local from remote. Connection management runs through the Network Transport Manager ([networking/components.md](../../platform/networking/components.md) §3.2).
+NVMe over Fabrics (NVMe-oF) presents remote block devices as local NVMe namespaces. Integration with the Block Engine ([spaces/block-engine.md](../../storage/spaces/block-engine.md)) is transparent to upper layers -- the storage subsystem sees a block device and does not distinguish local from remote. Connection management runs through the NTM ([networking/components.md](../../platform/networking/components.md) §3.2).
 
 -----
 

@@ -331,7 +331,7 @@ The DFS state is tracked per channel and persisted across suspend/resume cycles.
 
 AFC integration in AIOS:
 
-- AFC queries are sent through the Network Translation Module (NTM), which requires network connectivity — creating a bootstrap dependency (WiFi needs AFC, AFC needs network). Initial 6 GHz connections use LPI/VLP modes until an AFC response is obtained.
+- AFC queries are sent through the AI Network Model (ANM), which requires network connectivity — creating a bootstrap dependency (WiFi needs AFC, AFC needs network). Initial 6 GHz connections use LPI/VLP modes until an AFC response is obtained.
 - AFC responses are cached with a validity period (typically 24 hours). The cache persists across suspend/resume in the ephemeral Space.
 - Location information for AFC queries uses coarse precision (street-level, not exact coordinates) to limit privacy exposure.
 - AFC database providers must be certified by the FCC (US) or equivalent authority. AIOS ships with a configurable list of AFC provider URLs.

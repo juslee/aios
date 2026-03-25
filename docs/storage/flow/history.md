@@ -110,13 +110,13 @@ sequenceDiagram
     Note over A: User copies text<br/>Flow push(content, intent: Copy, target: Any)
     Note over A: Flow Service stores locally
 
-    A->>B: Replicate via AIOS Peer Protocol<br/>[encrypted with identity keys]<br/>[includes: TypedContent, intent, source_device, timestamp]
+    A->>B: Replicate via ANM Mesh Protocol<br/>[encrypted with identity keys]<br/>[includes: TypedContent, intent, source_device, timestamp]
 
     Note over B: Flow Service receives<br/>Stores in local history<br/>Available for pull()
     Note over B: User pastes<br/>Flow pull()<br/>content delivered
 ```
 
-**Transport:** Cross-device Flow uses the AIOS Peer Protocol (defined in [networking.md](../../platform/networking.md)). Content is encrypted in transit using the shared identity's keys. The Peer Protocol handles device discovery, connection establishment, and reliable delivery.
+**Transport:** Cross-device Flow uses the ANM Mesh Protocol (defined in [networking.md](../../platform/networking.md)). Content is encrypted in transit using the shared identity's keys. The Mesh Protocol handles device discovery, connection establishment, and reliable delivery.
 
 **What syncs:**
 - Active transfers (target: Any) are replicated to all devices

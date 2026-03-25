@@ -420,5 +420,5 @@ pub enum AttestationSignature {
 
 - **MDM enrollment** — device proves it booted with approved firmware/kernel before accessing corporate resources
 - **Zero-trust network** — attestation token presented with every connection to corporate services
-- **Cross-device trust** — AIOS Peer Protocol includes attestation exchange for capability delegation between devices
+- **Cross-device trust** — ANM Mesh Protocol includes attestation exchange for capability delegation between devices
 - **Compliance reporting** — attestation logs stored in `system/audit/attestation/` with provenance chain entries

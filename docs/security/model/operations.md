@@ -485,7 +485,7 @@ Migration path:
 - Phase 2: ML-DSA-65 primary with Ed25519 fallback for legacy peer devices
 - Phase 3: Pure ML-DSA-65 once ecosystem migration is complete
 - Signature size impact: Ed25519 = 64 bytes → ML-DSA-65 = 3,309 bytes (capability token size budget increase)
-- Key exchange: X25519 → ML-KEM-768 for AIOS Peer Protocol handshakes
+- Key exchange: X25519 → ML-KEM-768 for ANM Mesh Protocol handshakes
 
 ### 13.2 ARM Confidential Compute Architecture (CCA) Integration
 

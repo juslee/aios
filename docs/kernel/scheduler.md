@@ -66,7 +66,7 @@ Lowest      Idle           Simple FIFO            Indexing, garbage collection,
 
 **Interactive:** Soft deadlines. The foreground agent, conversation bar, and anything the user is directly interacting with. Priority round-robin with a 10ms time slice. When the user presses a key or clicks, the receiving thread gets an immediate priority boost — it moves to the front of the interactive queue for one slice. This makes input feel instantaneous.
 
-**Normal:** No deadlines. Background agents, system services (Space Storage, Network Translation Module), and inference threads. Weighted Fair Queuing ensures proportional CPU sharing. Weights are derived from agent priority, CPU quota, and context multiplier.
+**Normal:** No deadlines. Background agents, system services (Space Storage, ANM), and inference threads. Weighted Fair Queuing ensures proportional CPU sharing. Weights are derived from agent priority, CPU quota, and context multiplier.
 
 **Idle:** Only runs when no other class has runnable threads. Indexing, garbage collection, behavioral analysis baselines. Simple FIFO — threads run in order, preempted immediately when any higher-class thread becomes runnable. Default time slice is 50ms, but preemption is instant.
 

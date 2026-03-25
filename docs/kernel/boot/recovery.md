@@ -240,7 +240,7 @@ Factory reset requires confirmation (type "FACTORY RESET" on the UART console). 
 
 The A/B rollback mechanism (§9.4) protects against bad updates, but this section describes how updates arrive on the ESP in the first place.
 
-**Update delivery:** A system update is a signed archive containing any combination of: a new kernel ELF, a new initramfs, and new Phase 3-5 service binaries. Updates are fetched by the Network Translation Module (when available) from a configured update endpoint, or applied manually from a USB drive.
+**Update delivery:** A system update is a signed archive containing any combination of: a new kernel ELF, a new initramfs, and new Phase 3-5 service binaries. Updates are fetched by the AI Network Model (ANM) (when available) from a configured update endpoint, or applied manually from a USB drive.
 
 ```text
 Update flow:

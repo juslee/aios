@@ -33,7 +33,7 @@ graph TB
     end
 
     subgraph "Networking"
-        NTM["NTM — Network Transparency Manager\nHTTPS license request/response"]
+        NTM["NTM (Bridge)\nHTTPS license request/response"]
     end
 
     subgraph "License Server (external)"

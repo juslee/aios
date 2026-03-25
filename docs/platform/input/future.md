@@ -147,14 +147,14 @@ Using one device as an input source for another:
 #### Phone as Trackpad
 
 - Phone's touchscreen provides multi-touch input to the AIOS desktop
-- Connection: Bluetooth HID or AIOS Peer Protocol
+- Connection: Bluetooth HID or ANM Mesh Protocol
 - Phone runs a thin client that translates touch events to HID reports
 - Desktop receives events through standard Bluetooth HID pipeline
 
 #### Tablet as Drawing Surface
 
 - Tablet's touchscreen + stylus provide high-precision drawing input
-- Pressure, tilt, and position data transmitted via AIOS Peer Protocol
+- Pressure, tilt, and position data transmitted via ANM Mesh Protocol
 - Lower latency than Bluetooth HID (QUIC-based protocol)
 - Desktop treats tablet as a remote touchscreen device
 
@@ -171,7 +171,7 @@ Using one device as an input source for another:
 Device A (phone/tablet)          Device B (desktop)
 ─────────────────────            ──────────────────
 Touch/stylus events              Bluetooth HID or
-        │                        AIOS Peer Protocol
+        │                        ANM Mesh Protocol
         ▼                               │
   Local input subsystem                  ▼
   (optional local UI)            Input subsystem
