@@ -79,6 +79,7 @@
       "Bash(awk *)",
       "Bash(touch *)",
       "Bash(echo *)",
+      "Bash(cp *)",
       "Bash(pkill -f \"qemu-system-aarch64*)",
       "WebSearch"
     ],
