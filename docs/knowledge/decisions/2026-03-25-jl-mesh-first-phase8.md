@@ -5,11 +5,11 @@ tags: [networking, implementation, phases, anm]
 status: final
 ---
 
-# ADR: Mesh-First Phase 8 Implementation Order
+# ADR: Mesh-First Phase 9 Implementation Order
 
 ## Context
 
-Phase 8 implements basic networking. The current plan orders milestones as: 8a = smoltcp TCP/IP stack, 8b = TLS/DNS, 8c = POSIX socket emulation. This TCP-first ordering means the mesh layer would be built on top of TCP/IP abstractions, and TCP/IP assumptions would be baked into the foundation. Given the ANM decision (ADR: ANM Over OSI), the implementation order should be reconsidered.
+Phase 9 implements basic networking. The current plan orders milestones as: 8a = smoltcp TCP/IP stack, 8b = TLS/DNS, 8c = POSIX socket emulation. This TCP-first ordering means the mesh layer would be built on top of TCP/IP abstractions, and TCP/IP assumptions would be baked into the foundation. Given the ANM decision (ADR: ANM Over OSI), the implementation order should be reconsidered.
 
 ## Options Considered
 
@@ -25,7 +25,7 @@ Phase 8 implements basic networking. The current plan orders milestones as: 8a =
 
 ## Decision
 
-Mesh-first. Phase 8 milestones reordered: 8a = Mesh Layer (VirtIO-Net driver, raw Ethernet frames, Noise IK encryption, LAN peer discovery), 8b = Bridge Layer (smoltcp TCP/IP, rustls TLS, DHCP/DNS), 8c = Integration (POSIX socket emulation, QUIC WAN tunnel, space-level networking API).
+Mesh-first. Phase 9 milestones reordered: 8a = Mesh Layer (VirtIO-Net driver, raw Ethernet frames, Noise IK encryption, LAN peer discovery), 8b = Bridge Layer (smoltcp TCP/IP, rustls TLS, DHCP/DNS), 8c = Integration (POSIX socket emulation, QUIC WAN tunnel, space-level networking API).
 
 ## Consequences
 

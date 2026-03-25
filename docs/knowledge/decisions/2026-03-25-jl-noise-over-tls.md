@@ -5,7 +5,7 @@ tags: [networking, security, crypto, anm]
 status: final
 ---
 
-# ADR: Noise IK Over TLS for Mesh Encryption
+# ADR: Noise IK Instead of TLS for Mesh Encryption
 
 ## Context
 

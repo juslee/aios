@@ -235,7 +235,7 @@ When you're away from home, your devices sync over the internet — still direct
 
 ### How it works
 
-When two AIOS devices communicate, they speak the **AIOS Mesh Protocol** — the native ANM Layer 2 protocol that operates over raw Ethernet (Direct Link for LAN), relay peers, or QUIC tunnels (for WAN). The Mesh Protocol carries the full richness of spaces, capabilities, and identity.
+When two AIOS devices communicate, they speak the **ANM Mesh Protocol** — the native ANM Layer 2 protocol that operates over raw Ethernet (Direct Link for LAN), relay peers, or QUIC tunnels (for WAN). The Mesh Protocol carries the full richness of spaces, capabilities, and identity.
 
 **Why not HTTP?** HTTP lives in the Bridge Module as a translation layer for legacy internet services — web APIs, cloud endpoints, CDNs. The native AIOS network is the mesh. Device-to-device communication is symmetric: both devices are peers speaking the same protocol. The Mesh Protocol supports bidirectional streaming, multiplexed space operations, and capability exchange natively. HTTP/2 and HTTP/3 are available only for connecting to TCP/IP services via the Bridge Module. See [anm.md](../platform/networking/anm.md) for the full ANM specification.
 

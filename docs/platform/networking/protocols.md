@@ -49,7 +49,7 @@ flowchart TD
     Noise --> MeshTransport
 
     H2 --> TLSLayer
-    Q --> UDP
+    Q -->|"TLS 1.3 built into QUIC"| UDP
     WS --> TLSLayer
 
     TLSLayer --> TCP

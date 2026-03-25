@@ -127,11 +127,13 @@ The Identity Layer handles cryptographic identity and encryption. Every frame is
 ```rust
 /// An authorized operation encrypted under the sender's identity.
 pub struct IdentityFrame {
-    /// The authorized operation (encrypted within noise_ciphertext).
-    pub authorized_op: AuthorizedOp,
-    /// Device identity of the sender.
+    /// Device identity of the sender (visible in header, not encrypted).
     pub source: DeviceId,
-    /// Noise Protocol Framework ciphertext (encrypts authorized_op).
+    /// Noise Protocol Framework ciphertext.
+    /// Contains the encrypted AuthorizedOp — the plaintext operation
+    /// is NOT transmitted alongside this field. Only the ciphertext
+    /// travels on the wire; the recipient decrypts to recover the
+    /// AuthorizedOp after verifying the Noise session.
     pub noise_ciphertext: Vec<u8>,
 }
 ```
@@ -387,7 +389,7 @@ The critical invariant: **L4 (Capability) and L3 (Identity) never degrade.** Sec
 | L3 Identity | `ed25519-dalek` | BSD-3-Clause | Ed25519 signatures for device identity |
 | L3 Identity | `x25519-dalek` | BSD-3-Clause | X25519 key agreement for session keys |
 | L2 Mesh | (kernel-internal) | BSD-2-Clause | Mesh routing, transport mode selection |
-| L1 Link | `smoltcp` | BSD-0-Clause | TCP/IP stack (used by Bridge Module and Link Layer) |
+| Bridge | `smoltcp` | BSD-2-Clause | TCP/IP stack (Bridge Module only — not used by mesh) |
 | Bridge | `rustls` | Apache-2.0 / MIT | TLS for Bridge Module TCP/IP connections |
 | Bridge | `h2` | MIT | HTTP/2 framing for Bridge Module |
 | Bridge | `quinn` | Apache-2.0 / MIT | QUIC transport for Bridge Module |
