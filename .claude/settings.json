@@ -51,6 +51,7 @@
       "Bash(git pull *)",
       "Bash(git log *)",
       "Bash(git diff *)",
+      "Bash(git -C * diff *)",
       "Bash(git stash *)",
       "Bash(git rebase *)",
       "Bash(rustup *)",
