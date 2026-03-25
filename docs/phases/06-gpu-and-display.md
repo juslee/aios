@@ -359,13 +359,13 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Define the `GpuSurface` trait for Compute Kit Tier 1, following the pattern established by Memory Kit and IPC Kit.
 
 **Tasks:**
-- [ ] Define `GpuSurface` trait in `shared/src/kits/compute.rs`:
+- [x] Define `GpuSurface` trait in `shared/src/kits/compute.rs`:
   - `fn allocate_buffer(&self, width: u32, height: u32, format: GpuPixelFormat) -> Result<SurfaceBuffer, ComputeError>`
   - `fn submit_damage(&self, buffer: &SurfaceBuffer, damage: &[DamageRect]) -> Result<(), ComputeError>`
   - `fn set_semantic_hint(&self, hint: SemanticHint) -> Result<(), ComputeError>`
   - `fn request_direct_scanout(&self) -> Result<bool, ComputeError>`
-- [ ] Ensure trait is dyn-compatible (object-safe)
-- [ ] Write host-side test: `fn _assert_object_safe(_: &dyn GpuSurface) {}` compile-time check
+- [x] Ensure trait is dyn-compatible (object-safe)
+- [x] Write host-side test: `fn _assert_object_safe(_: &dyn GpuSurface) {}` compile-time check
 
 **Key reference:** [kits/kernel/compute.md](../kits/kernel/compute.md) §2 (GpuSurface trait definition)
 
@@ -378,13 +378,13 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement `GpuSurface` for the kernel's GPU Service, following the `KernelFrameAllocator` / `KernelCapabilitySystem` zero-sized wrapper pattern.
 
 **Tasks:**
-- [ ] Create zero-sized `KernelGpuSurface` struct in `kernel/src/gpu/mod.rs`
+- [x] Create zero-sized `KernelGpuSurface` struct in `kernel/src/gpu/mod.rs`
 - [x] Implement `GpuSurface for KernelGpuSurface`:
   - `allocate_buffer`: sends `AllocateBuffer` command to GPU Service via IPC
   - `submit_damage`: sends `Present` command with damage rect to GPU Service
   - `set_semantic_hint`: stores hint in GPU Service state (informational — used by compositor in Phase 7+)
   - `request_direct_scanout`: returns `Ok(true)` (single surface, no compositor yet)
-- [ ] Test: allocate buffer via `KernelGpuSurface`, render pixels, submit damage, verify display updates
+- [x] Test: allocate buffer via `KernelGpuSurface`, render pixels, submit damage, verify display updates
 
 **Key reference:** [kits/kernel/compute.md](../kits/kernel/compute.md) §2; Kit kernel wrapper pattern from Phase 5 (`KernelFrameAllocator` in `kernel/src/mm/frame.rs`)
 
@@ -397,9 +397,9 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Final review of kernel/ code from M22, ensure all sharable types are in shared crate.
 
 **Tasks:**
-- [ ] Review `kernel/src/gpu/` for types that can move to `shared/src/kits/compute.rs` or `shared/src/gpu.rs`
-- [ ] Write additional host-side tests for Compute Kit types
-- [ ] Verify all 12+ Kit traits (including new `GpuSurface`) are dyn-compatible
+- [x] Review `kernel/src/gpu/` for types that can move to `shared/src/kits/compute.rs` or `shared/src/gpu.rs`
+- [x] Write additional host-side tests for Compute Kit types
+- [x] Verify all 12+ Kit traits (including new `GpuSurface`) are dyn-compatible
 
 **Acceptance:** `just check` + `just test` pass.
 
@@ -442,14 +442,14 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 ## Phase Completion Criteria
 
-- [ ] `just check` — zero warnings
-- [ ] `just test` — all pass, test count > 394
-- [ ] `just run` — boots normally without VirtIO-GPU (GOP framebuffer fallback)
-- [ ] `just run-gpu` — VirtIO-GPU display with boot log text visible
-- [ ] VirtIO-GPU 2D driver probes, initializes, and displays content on QEMU
-- [ ] Custom GPU Service runs as kernel IPC service with capability-gated access
-- [ ] Double-buffered page flip works (buffer swap demonstrated)
-- [ ] spleen-font bitmap text renders legibly on GPU framebuffer
-- [ ] Compute Kit Tier 1 `GpuSurface` trait defined and implemented
-- [ ] All existing functionality (UART, storage, IPC, scheduler) unaffected
+- [x] `just check` — zero warnings
+- [x] `just test` — all pass, test count > 394
+- [x] `just run` — boots normally without VirtIO-GPU (GOP framebuffer fallback)
+- [x] `just run-gpu` — VirtIO-GPU display with boot log text visible
+- [x] VirtIO-GPU 2D driver probes, initializes, and displays content on QEMU
+- [x] Custom GPU Service runs as kernel IPC service with capability-gated access
+- [x] Double-buffered page flip works (buffer swap demonstrated)
+- [x] spleen-font bitmap text renders legibly on GPU framebuffer
+- [x] Compute Kit Tier 1 `GpuSurface` trait defined and implemented
+- [x] All existing functionality (UART, storage, IPC, scheduler) unaffected
 - [ ] Audit loop clean across all three categories

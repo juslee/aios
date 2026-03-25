@@ -940,7 +940,7 @@ pub fn gpu_resource_flush(resource_id: u32, rect: &VirtioGpuRect) -> Result<(), 
 }
 
 /// Transfer + flush for the full framebuffer (convenience).
-#[allow(dead_code)] // No callers in M20; retained for M21+ text rendering.
+#[allow(dead_code)] // Convenience wrapper; callers prefer individual transfer+flush for damage rects.
 pub fn gpu_present_frame(handle: &GpuBufferHandle) -> Result<(), GpuError> {
     let mut guard = VIRTIO_GPU.lock();
     let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
