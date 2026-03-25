@@ -197,6 +197,7 @@ pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 }
 
 /// Early boot log: format directly to UART, synchronous.
+/// Also captures to BootLogBuffer for GPU text rendering.
 fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     use crate::arch::aarch64::uart::UartWriter;
     use core::fmt::Write;
@@ -207,9 +208,11 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 
     let (secs, micros) = shared::timestamp_to_secs_micros(timestamp, freq);
 
-    let mut w = UartWriter;
+    // Format to stack buffer first for dual output (UART + boot log capture).
+    let mut line_storage = [0u8; MAX_LINE_LEN];
+    let mut lb = LineBuf::new(&mut line_storage);
     let _ = write!(
-        w,
+        lb,
         "[{:4}.{:06}] [{}] {} {} ",
         secs,
         micros,
@@ -217,8 +220,23 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
         level.name(),
         subsystem.name()
     );
-    let _ = w.write_fmt(args);
+    let _ = lb.write_fmt(args);
+    let line_len = lb.len();
+
+    // Write to UART. Use valid_up_to() on truncated UTF-8 to avoid dropping the whole line.
+    let mut w = UartWriter;
+    let utf8_str = match core::str::from_utf8(&line_storage[..line_len]) {
+        Ok(s) => s,
+        Err(e) => {
+            // SAFETY: valid_up_to() is on a UTF-8 code point boundary per Utf8Error contract.
+            unsafe { core::str::from_utf8_unchecked(&line_storage[..e.valid_up_to()]) }
+        }
+    };
+    let _ = w.write_str(utf8_str);
     let _ = w.write_str("\n");
+
+    // Capture to boot log buffer.
+    capture_to_boot_log(&line_storage[..line_len]);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +252,7 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 const DRAIN_BATCH_SIZE: usize = 16;
 
 /// Drain all per-core log rings and write formatted entries to UART.
+/// Also captures to BootLogBuffer for GPU text rendering when capture is enabled.
 /// Called from timer tick handler and boot-time flush. Must NOT call klog! (re-entrancy).
 pub fn drain_logs() {
     use crate::arch::aarch64::uart::UartWriter;
@@ -252,8 +271,11 @@ pub fn drain_logs() {
                 let msg_len = (entry.msg_len as usize).min(48);
                 let msg = core::str::from_utf8(&entry.message[..msg_len]).unwrap_or("<invalid>");
 
-                let _ = writeln!(
-                    w,
+                // Format to stack buffer for dual output (UART + boot log capture).
+                let mut line_storage = [0u8; MAX_LINE_LEN];
+                let mut lb = LineBuf::new(&mut line_storage);
+                let _ = write!(
+                    lb,
                     "[{:4}.{:06}] [{}] {} {} {}",
                     secs,
                     micros,
@@ -262,12 +284,142 @@ pub fn drain_logs() {
                     entry.subsystem.name(),
                     msg,
                 );
+                let line_len = lb.len();
+
+                // Write to UART. Use valid_up_to() on truncated UTF-8.
+                let line_str = match core::str::from_utf8(&line_storage[..line_len]) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        // SAFETY: valid_up_to() is on a UTF-8 boundary per Utf8Error contract.
+                        unsafe { core::str::from_utf8_unchecked(&line_storage[..e.valid_up_to()]) }
+                    }
+                };
+                let _ = w.write_str(line_str);
+                let _ = w.write_str("\n");
+
+                // Capture to boot log buffer.
+                capture_to_boot_log(&line_storage[..line_len]);
+
                 drained += 1;
             } else {
                 break;
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Boot log capture buffer (Phase 6 M21 — text rendering)
+// ---------------------------------------------------------------------------
+
+use core::sync::atomic::AtomicBool;
+
+/// Maximum boot log lines captured for GPU display.
+pub const MAX_LOG_LINES: usize = 256;
+
+/// Maximum characters per boot log line.
+pub const MAX_LINE_LEN: usize = 160;
+
+/// Static buffer capturing formatted boot log lines for GPU text rendering.
+///
+/// Entries are written by `drain_logs()` and `early_boot_log()` during boot,
+/// then read once by the GPU Service's `draw_boot_log()` function.
+struct BootLogBuffer {
+    lines: [[u8; MAX_LINE_LEN]; MAX_LOG_LINES],
+    line_lens: [u8; MAX_LOG_LINES],
+    count: usize,
+}
+
+impl BootLogBuffer {
+    const fn new() -> Self {
+        Self {
+            lines: [[0u8; MAX_LINE_LEN]; MAX_LOG_LINES],
+            line_lens: [0u8; MAX_LOG_LINES],
+            count: 0,
+        }
+    }
+
+    /// Push a formatted log line. Overwrites oldest when full (ring behavior).
+    fn push_line(&mut self, line: &[u8]) {
+        let idx = self.count % MAX_LOG_LINES;
+        let len = line.len().min(MAX_LINE_LEN);
+        self.lines[idx][..len].copy_from_slice(&line[..len]);
+        self.line_lens[idx] = len as u8;
+        self.count += 1;
+    }
+}
+
+static BOOT_LOG: spin::Mutex<BootLogBuffer> = spin::Mutex::new(BootLogBuffer::new());
+
+/// When true, `drain_logs()` and `early_boot_log()` capture formatted lines
+/// to `BOOT_LOG`. Set to false by `take_boot_log()` once the GPU Service reads
+/// the buffer. Starts enabled so the full boot sequence is captured.
+static BOOT_LOG_CAPTURE: AtomicBool = AtomicBool::new(true);
+
+/// Helper that formats into a fixed-size byte buffer for boot log capture.
+/// Silently truncates if the formatted output exceeds the buffer.
+struct LineBuf<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> LineBuf<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn len(&self) -> usize {
+        self.pos
+    }
+}
+
+impl fmt::Write for LineBuf<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        let avail = self.buf.len() - self.pos;
+        let copy_len = bytes.len().min(avail);
+        self.buf[self.pos..self.pos + copy_len].copy_from_slice(&bytes[..copy_len]);
+        self.pos += copy_len;
+        Ok(()) // Always Ok — silently truncates
+    }
+}
+
+/// Capture a formatted log line to `BOOT_LOG` if capture is enabled.
+/// Uses `try_lock()` to avoid deadlock in IRQ context (timer tick handler).
+fn capture_to_boot_log(line: &[u8]) {
+    if !BOOT_LOG_CAPTURE.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Some(mut guard) = BOOT_LOG.try_lock() {
+        guard.push_line(line);
+    }
+}
+
+/// Retrieve boot log lines for GPU text rendering.
+///
+/// Disables capture BEFORE locking to prevent IRQ-context deadlock,
+/// then copies the most recent lines to the caller's buffers.
+/// Returns the number of lines copied.
+pub fn take_boot_log(out_lines: &mut [[u8; MAX_LINE_LEN]], out_lens: &mut [u8]) -> usize {
+    // Disable capture FIRST — prevents timer tick drain_logs from locking.
+    BOOT_LOG_CAPTURE.store(false, Ordering::Release);
+
+    let guard = BOOT_LOG.lock();
+    let total = guard.count;
+    let capacity = out_lines.len().min(out_lens.len());
+    let available = total.min(MAX_LOG_LINES); // Can't have more than ring size
+    let copy_count = available.min(capacity);
+
+    // Copy the most recent `copy_count` lines.
+    // Ring buffer: entries are at indices (count-available..count-1) % MAX_LOG_LINES.
+    let start = total.saturating_sub(copy_count);
+    for i in 0..copy_count {
+        let src_idx = (start + i) % MAX_LOG_LINES;
+        out_lines[i] = guard.lines[src_idx];
+        out_lens[i] = guard.line_lens[src_idx];
+    }
+
+    copy_count
 }
 
 // ---------------------------------------------------------------------------

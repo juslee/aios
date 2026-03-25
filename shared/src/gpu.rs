@@ -361,6 +361,19 @@ pub const AIOS_BLUE_B8G8R8A8: u32 = 0xFF5B_8CFF;
 pub const MAX_GPU_BUFFERS: usize = 8;
 
 // ---------------------------------------------------------------------------
+// Boot log text rendering colors (B8G8R8A8 format)
+// ---------------------------------------------------------------------------
+
+/// Dark blue-grey background for boot log display (#1A1A2E).
+pub const BOOT_LOG_BG: u32 = 0xFF1A_1A2E;
+
+/// Light grey foreground for boot log text (#E0E0E0).
+pub const BOOT_LOG_FG: u32 = 0xFFE0_E0E0;
+
+/// AIOS blue for boot log header text (#5B8CFF).
+pub const BOOT_LOG_HEADER: u32 = AIOS_BLUE_B8G8R8A8;
+
+// ---------------------------------------------------------------------------
 // Fence tracker (Phase 6 M20 — double buffering)
 // ---------------------------------------------------------------------------
 
@@ -846,5 +859,16 @@ mod tests {
         let ft = FenceTracker::new();
         // Fence 0 is always complete (0 <= 0).
         assert!(ft.is_complete(0));
+    }
+
+    #[test]
+    fn boot_log_color_constants() {
+        // BOOT_LOG_BG: #1A1A2E in B8G8R8A8 (alpha=0xFF, R=0x1A, G=0x1A, B=0x2E)
+        assert_eq!(BOOT_LOG_BG, 0xFF1A_1A2E);
+        // BOOT_LOG_FG: #E0E0E0 in B8G8R8A8
+        assert_eq!(BOOT_LOG_FG, 0xFFE0_E0E0);
+        // BOOT_LOG_HEADER: same as AIOS blue
+        assert_eq!(BOOT_LOG_HEADER, AIOS_BLUE_B8G8R8A8);
+        assert_eq!(BOOT_LOG_HEADER, 0xFF5B_8CFF);
     }
 }

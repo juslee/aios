@@ -124,6 +124,29 @@ fn gpu_service_loop() -> ! {
     // Initialize double buffering if display is valid.
     if display.width > 0 && display.height > 0 {
         init_double_buffering(&mut state);
+
+        // Render boot log text to the back buffer and present it.
+        if let Some(back) = state.back_buffer.as_ref() {
+            let fb_info = crate::gpu::text::FbInfo {
+                fb: back.fb_virt as *mut u32,
+                stride_px: back.stride / 4,
+                width: back.width,
+                height: back.height,
+            };
+            crate::gpu::text::draw_boot_log(&fb_info);
+            let _ = swap_buffers(&mut state);
+            crate::kinfo!(Gpu, "Boot log rendered to display");
+        }
+    }
+
+    // Verify KernelGpuSurface Kit API works.
+    {
+        use shared::compute_kit::GpuSurface;
+        let surface = crate::gpu::KernelGpuSurface;
+        match surface.request_direct_scanout() {
+            Ok(true) => crate::kinfo!(Gpu, "Compute Kit: GpuSurface direct scanout OK"),
+            other => crate::kwarn!(Gpu, "Compute Kit: GpuSurface unexpected: {:?}", other),
+        }
     }
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
@@ -416,6 +439,9 @@ fn init_double_buffering(state: &mut GpuServiceState) {
         unsafe { crate::mm::frame::free_dma_pages(front.fb_phys, front.order) };
         let _ = virtio_gpu::gpu_resource_detach_backing(back.resource_id);
         let _ = virtio_gpu::gpu_resource_unref(back.resource_id);
+        // SAFETY: back.fb_phys/order were returned by alloc_dma_pages inside
+        // gpu_allocate_framebuffer. Not yet stored in state (no other references).
+        // Violation: buddy bitmap corruption if phys_addr/order are wrong.
         unsafe { crate::mm::frame::free_dma_pages(back.fb_phys, back.order) };
         return;
     }

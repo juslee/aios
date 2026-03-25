@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 6 weeks
 **Deliverable:** VirtIO-GPU 2D kernel driver, custom GPU Service (kernel-side IPC service with capability-gated buffer management), Compute Kit Tier 1 (`GpuSurface` trait), bitmap font text rendering on GPU framebuffer
-**Status:** M19–M20 Complete, M21–M22 Planned
+**Status:** M19–M21 Complete, M22 Planned
 **Prerequisites:** Phase 5 (Kit Foundation)
 **Unlocks:** Phase 7 (Window Compositor & Shell), Phase 23 (Kernel Compute Abstraction)
 
@@ -47,7 +47,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 |---|---|---|---|
 | **M19 — VirtIO-GPU 2D Driver** | 1–6 | End of week 2 | VirtIO-GPU probed, initialized; 2D resource created with DMA backing; solid-color frame visible on QEMU display via `just run-gpu` |
 | **M20 — Custom GPU Service** | 7–12 | End of week 4 | Kernel-side IPC service registered as "gpu-service"; capability-gated buffer allocation; double-buffered page-flip; GOP→VirtIO-GPU transition |
-| **M21 — Font Rendering & Text Display** | 13–15 | End of week 5 | `spleen-font` 8x16 bitmap text rendered to GPU framebuffer; boot log visible on QEMU display |
+| **M21 — Font Rendering & Text Display** | 13–15 | End of week 5 | `spleen-font` 16x32 bitmap text rendered to GPU framebuffer; boot log visible on QEMU display |
 | **M22 — Compute Kit Tier 1 & Gate** | 16–20 | End of week 6 | `GpuSurface` trait defined and implemented; all quality gates pass; documentation updated |
 
 -----
@@ -277,20 +277,20 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 ## Milestone 21 — Font Rendering & Text Display (End of Week 5)
 
-*Goal: Integrate spleen-font for 8x16 bitmap glyph rendering. Display boot log text on the VirtIO-GPU framebuffer. This gives the kernel a visual diagnostic output beyond UART.*
+*Goal: Integrate spleen-font for 16x32 bitmap glyph rendering. Display boot log text on the VirtIO-GPU framebuffer. This gives the kernel a visual diagnostic output beyond UART.*
 
 ### Step 13: spleen-font integration and glyph renderer
 
 **What:** Add `spleen-font` as a kernel dependency and implement a glyph rendering function that blits bitmap characters to the GPU framebuffer.
 
 **Tasks:**
-- [ ] Add `spleen-font = { version = "0.1", default-features = false, features = ["font-8x16"] }` to `kernel/Cargo.toml`
-- [ ] Verify `spleen-font` compiles for `aarch64-unknown-none` (no_std, no alloc)
-- [ ] Create `kernel/src/gpu/text.rs` with `blit_glyph(fb_virt: *mut u32, fb_stride: u32, fb_width: u32, fb_height: u32, ch: char, x: i32, y: i32, fg_color: u32, bg_color: u32)` — reads the 8x16 bitmap from spleen-font, writes pixels to framebuffer via `write_volatile`
-- [ ] Handle boundary clipping (glyph partially off-screen)
-- [ ] Test with a single character rendered to the VirtIO-GPU back buffer
+- [x] Add `spleen-font = { version = "0.2", default-features = false, features = ["s16x32"] }` to `kernel/Cargo.toml`
+- [x] Verify `spleen-font` compiles for `aarch64-unknown-none` (no_std, no alloc)
+- [x] Create `kernel/src/gpu/text.rs` with `FbInfo` struct (fb, stride_px, width, height) and `blit_glyph(font: &mut PSF2Font, fb: &FbInfo, ch: char, x: i32, y: i32, fg: u32, bg: u32)` — reads the 16x32 bitmap from spleen-font, writes pixels to framebuffer via regular `ptr::write` (WB Cacheable memory)
+- [x] Handle boundary clipping (glyph partially off-screen)
+- [x] Test with a single character rendered to the VirtIO-GPU back buffer
 
-**Note:** spleen-font provides 1-bit-per-pixel bitmaps. Each glyph is 8 pixels wide × 16 pixels tall. The renderer iterates 16 rows × 8 columns, checking each bit, and writes either `fg_color` or `bg_color` to the framebuffer. No alpha blending needed.
+**Note:** spleen-font provides PSF2 bitmap glyphs. Each glyph is 16 pixels wide × 32 pixels tall. The renderer iterates 32 rows × 16 columns, checking each bit, and writes either `fg` or `bg` to the framebuffer. No alpha blending needed.
 
 **Key reference:** [gpu/rendering.md](../platform/gpu/rendering.md) §11 (font rendering pipeline — simplified for bitmap); `spleen-font` crate API
 
@@ -303,14 +303,14 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Implement `draw_text()` and `draw_boot_log()` functions that render strings and kernel log entries to the GPU framebuffer.
 
 **Tasks:**
-- [x] Implement `draw_text(fb: &GpuBufferHandle, text: &str, x: i32, y: i32, fg: u32, bg: u32)`: iterates characters, calls `blit_glyph` for each, advances cursor by 8 pixels per character
-- [ ] Handle newline (`\n`): advance Y by 16, reset X to starting position
-- [ ] Handle line wrapping: when X exceeds framebuffer width, wrap to next line
-- [x] Implement `draw_boot_log(fb: &GpuBufferHandle)`: drains the last N log entries from the kernel log ring (`observability::drain_logs()`), renders them as white text on dark background
-- [ ] Wire `draw_boot_log()` into `kernel_main` after GPU Service starts: fill back buffer with dark background (#1A1A2E), draw boot log text, present via GPU Service
-- [ ] Calculate how many log lines fit on screen: (height / 16) lines, (width / 8) chars per line
+- [x] Implement `draw_text(font: &mut PSF2Font, fb: &FbInfo, text: &str, start_x: i32, start_y: i32, fg: u32, bg: u32)`: iterates characters, calls `blit_glyph` for each, advances cursor by 16 pixels per character
+- [x] Handle newline (`\n`): advance Y by 32, reset X to starting position
+- [x] Handle line wrapping: when X exceeds framebuffer width, wrap to next line
+- [x] Implement `draw_boot_log(fb: &FbInfo)`: retrieves boot log entries via `observability::take_boot_log()` from `BootLogBuffer`, renders them as light grey text on dark background
+- [x] Wire `draw_boot_log()` into `gpu_service_loop()` after `init_double_buffering()`: fill back buffer with dark background (#1A1A2E), draw boot log text, swap buffers to present
+- [x] Calculate how many log lines fit on screen: (height / 32) lines, (width / 16) chars per line
 
-**Key reference:** `kernel/src/observability/mod.rs` (LogRing, drain_logs)
+**Key reference:** `kernel/src/observability/mod.rs` (BootLogBuffer, take_boot_log)
 
 **Acceptance:** `just check` zero warnings. `just run-gpu` displays boot log text visually on the QEMU display window. Text is legible and properly positioned.
 
@@ -321,10 +321,10 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Move any sharable text rendering types to shared crate, update documentation.
 
 **Tasks:**
-- [ ] Move text color constants or text layout types to `shared/src/gpu.rs` if applicable
-- [ ] Update `CLAUDE.md`: Workspace Layout (new `kernel/src/gpu/` module), Key Technical Facts (spleen-font version, glyph dimensions 8x16)
-- [ ] Update `kernel/Cargo.toml` deps listing in CLAUDE.md
-- [ ] Update phase doc status
+- [x] Move text color constants or text layout types to `shared/src/gpu.rs` if applicable
+- [x] Update `CLAUDE.md`: Workspace Layout (new `kernel/src/gpu/` module), Key Technical Facts (spleen-font version, glyph dimensions 16x32)
+- [x] Update `kernel/Cargo.toml` deps listing in CLAUDE.md
+- [x] Update phase doc status
 
 **Acceptance:** `just check` + `just test` pass. Documentation is accurate.
 
@@ -341,9 +341,9 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **Tasks:**
 - [ ] Add `pub mod compute;` to `shared/src/kits/mod.rs`
 - [ ] Add `pub use kits::compute as compute_kit;` to `shared/src/lib.rs`
-- [ ] Define `ComputeError` enum: `DeviceNotAvailable`, `BudgetExhausted`, `ThermalThrottled`, `InvalidCommandBuffer`, `FenceTimeout`, `CapabilityDenied`, `OutOfMemory`, `NotInitialized`
-- [ ] Derive `Debug`, `Clone`, `PartialEq`, `Eq` on `ComputeError`
-- [ ] Define `SurfaceBuffer` struct: `handle: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `stride: u32`
+- [ ] Define `ComputeError` enum: `DeviceUnavailable`, `AllocationFailed`, `InvalidParameters`, `ServiceError`, `PermissionDenied`
+- [ ] Derive `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` on `ComputeError`
+- [ ] Define `SurfaceBuffer` struct: `id: u32` (resource_id), `width: u32`, `height: u32`, `format: GpuPixelFormat`, `fb_virt: usize`, `stride: u32`
 - [ ] Define `DamageRect` struct: `x: u32`, `y: u32`, `width: u32`, `height: u32`
 - [ ] Define `SemanticHint` enum: `UiText`, `VideoPlayback`, `Rendering3D`, `ScrollingContent`, `StaticContent`
 - [ ] Write host-side tests: `ComputeError` derives, struct field access, `SemanticHint` enum coverage
@@ -379,7 +379,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 **Tasks:**
 - [ ] Create zero-sized `KernelGpuSurface` struct in `kernel/src/gpu/mod.rs`
-- [x] Implement `GpuSurface for KernelGpuSurface`:
+- [ ] Implement `GpuSurface for KernelGpuSurface`:
   - `allocate_buffer`: sends `AllocateBuffer` command to GPU Service via IPC
   - `submit_damage`: sends `Present` command with damage rect to GPU Service
   - `set_semantic_hint`: stores hint in GPU Service state (informational — used by compositor in Phase 7+)
@@ -433,7 +433,7 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 | Decision | Options | Recommendation | Rationale |
 |---|---|---|---|
 | GPU types module | `shared/src/gpu.rs` (new) vs extend `shared/src/storage.rs` | New `shared/src/gpu.rs` | Separation of concerns; GPU and storage are distinct subsystems |
-| Font crate | spleen-font vs noto-sans-mono-bitmap vs font8x8 vs embedded VGA | spleen-font 8x16 | BSD-2-Clause license match, ~40 KB, professional quality, no_std/no-alloc |
+| Font crate | spleen-font vs noto-sans-mono-bitmap vs font8x8 vs embedded VGA | spleen-font 16x32 | BSD-2-Clause license match, ~40 KB, professional quality, no_std/no-alloc |
 | GPU Service location | `kernel/src/gpu/service.rs` vs `kernel/src/drivers/` vs `kernel/src/service/` | `kernel/src/gpu/service.rs` | Higher-level than a driver, distinct from the VirtIO-blk-style raw driver code |
 | Display abstraction scope | Full atomic modesetting vs simplified DisplayInfo | Simplified `DisplayInfo` for Phase 6 | VirtIO-GPU has 1 scanout, no overlays. Full model for Phase 7+ compositor |
 | QEMU display recipe | `-display cocoa` vs default display backend | Default (no explicit `-display` flag) | QEMU auto-selects platform-native display; `-serial stdio` for UART |
@@ -442,14 +442,14 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 
 ## Phase Completion Criteria
 
-- [ ] `just check` — zero warnings
-- [ ] `just test` — all pass, test count > 394
-- [ ] `just run` — boots normally without VirtIO-GPU (GOP framebuffer fallback)
-- [ ] `just run-gpu` — VirtIO-GPU display with boot log text visible
-- [ ] VirtIO-GPU 2D driver probes, initializes, and displays content on QEMU
-- [ ] Custom GPU Service runs as kernel IPC service with capability-gated access
-- [ ] Double-buffered page flip works (buffer swap demonstrated)
-- [ ] spleen-font bitmap text renders legibly on GPU framebuffer
+- [x] `just check` — zero warnings
+- [x] `just test` — all pass, test count > 394
+- [x] `just run` — boots normally without VirtIO-GPU (GOP framebuffer fallback)
+- [x] `just run-gpu` — VirtIO-GPU display with boot log text visible
+- [x] VirtIO-GPU 2D driver probes, initializes, and displays content on QEMU
+- [x] Custom GPU Service runs as kernel IPC service with capability-gated access
+- [x] Double-buffered page flip works (buffer swap demonstrated)
+- [x] spleen-font bitmap text renders legibly on GPU framebuffer
 - [ ] Compute Kit Tier 1 `GpuSurface` trait defined and implemented
-- [ ] All existing functionality (UART, storage, IPC, scheduler) unaffected
-- [ ] Audit loop clean across all three categories
+- [x] All existing functionality (UART, storage, IPC, scheduler) unaffected
+- [x] Audit loop clean across all three categories

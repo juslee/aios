@@ -492,8 +492,8 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      431 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
-Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError)
+Shared crate unit tests:      437 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError) + Compute Kit (1 trait, 5 error variants)
 Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
 Kit trait dyn-compat:         All 12 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps) are dyn-compatible
 VirtIO MMIO scan range:       0x0A00_0000–0x0A00_3E00, 512-byte stride (QEMU virt)
@@ -548,6 +548,9 @@ MAX_GPU_BUFFERS:              8 per GPU Service instance
 GPU double buffering:         front/back GpuBufferHandle, swap_buffers() rebinds scanout
 GPU transition (boot):        Direct driver calls (pre-scheduler); releases M19 test frame, allocates double buffers
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
+spleen-font version:          0.2 (feature: s16x32), 16x32 glyphs at 1280x800 = 80x25 chars
+Boot log buffer:              MAX_LOG_LINES=256, MAX_LINE_LEN=160, ring buffer with chronological display
+Compute Kit:                  GpuSurface trait (4 methods), ComputeError (5 variants), SurfaceBuffer, DamageRect, SemanticHint
 ```
 
 ---
@@ -606,7 +609,7 @@ aios/
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
 ├── kernel/
-│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm, lz4_flex; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
+│   ├── Cargo.toml        deps: shared, fdt-parser, spin, sha2, aes-gcm, lz4_flex, spleen-font; features: kernel-metrics (default), kernel-tracing, storage-tests (default)
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
@@ -646,7 +649,8 @@ aios/
 │       │   └── virtio_gpu.rs VirtIO-GPU 2D driver: probe, init, resource/scanout/transfer/flush, display_test_frame, public GPU Service wrappers
 │       ├── gpu/
 │       │   ├── mod.rs    GPU subsystem module
-│       │   └── service.rs GPU Service: IPC service, capability-gated buffer management, double-buffered display, FenceTracker
+│       │   ├── service.rs GPU Service: IPC service, capability-gated buffer management, double-buffered display, FenceTracker
+│       │   └── text.rs   Boot log text rendering: PSF2 font, draw_boot_log(), FbInfo
 │       ├── storage/
 │       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
 │       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable
@@ -711,11 +715,12 @@ aios/
 │       ├── storage.rs    ContentHash, BlockId, ObjectId, SpaceId, Timestamp, ContentType, SecurityZone, StorageError, StorageTier, BlockLocation, CompactObject(512B), Version(256B), Space(128B), SpaceQuota, ProvenanceEntry, ProvenanceAction, EncryptionState, ObjectIndexEntry, compute_version_hash, VirtIO constants, MemTable, ObjectIndex, SpaceTable, WalEntry, crc32c, PosixStat, DirEntry, CompressionType, StorageBudget, PressureLevel
 │       ├── syscall.rs    Syscall enum (31 variants), IpcError, SyscallResult
 │       └── kits/
-│           ├── mod.rs       pub mod memory; pub mod capability; pub mod ipc; pub mod storage;
+│           ├── mod.rs       pub mod memory; pub mod capability; pub mod ipc; pub mod storage; pub mod compute;
 │           ├── memory.rs    MemoryError, PhysFrame, PagePermissions (W^X), Mapping, PoolStats, FrameAllocator trait, AddressSpace trait, MemoryPressureMonitor trait
 │           ├── capability.rs CapabilityError (7 variants, i64 round-trip), CapabilityEnforcer trait (check/grant/revoke/attenuate/list_active)
 │           ├── ipc.rs       IpcKitError (8 variants), ChannelOps trait, NotificationOps trait, SelectOps trait, SharedMemoryOps trait
-│           └── storage.rs   BlockStore trait (3 methods), SpaceManager trait (6 methods), ObjectStore trait (4 methods), VersionStoreOps trait (4 methods); reuses StorageError directly
+│           ├── storage.rs   BlockStore trait (3 methods), SpaceManager trait (6 methods), ObjectStore trait (4 methods), VersionStoreOps trait (4 methods); reuses StorageError directly
+│           └── compute.rs   Compute Kit: GpuSurface trait, ComputeError, SurfaceBuffer, DamageRect, SemanticHint
 └── docs/                 (architecture, phase, and research docs)
 ```
 
