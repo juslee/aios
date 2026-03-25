@@ -12,6 +12,7 @@ mod cap;
 mod drivers;
 mod dtb;
 mod framebuffer;
+mod gpu;
 mod ipc;
 mod mm;
 mod observability;
@@ -301,6 +302,9 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         if let Err(e) = drivers::virtio_gpu::display_test_frame() {
             crate::kwarn!(Boot, "VirtIO-GPU test frame failed: {:?}", e);
         }
+        // Initialize GPU Service: create process, IPC channel, and thread.
+        // The thread starts running when the scheduler begins (Step 7d).
+        gpu::service::init_gpu_service();
     }
     observability::drain_logs();
 

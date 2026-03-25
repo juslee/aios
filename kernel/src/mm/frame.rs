@@ -152,6 +152,17 @@ pub unsafe fn free_page(phys_addr: usize) {
     }
 }
 
+/// Free `2^order` contiguous pages from the DMA pool.
+///
+/// # Safety
+/// `phys_addr` must have been returned by `alloc_dma_pages` with the same `order`.
+/// Double-free causes undefined behavior (buddy bitmap corruption).
+pub unsafe fn free_dma_pages(phys_addr: usize, order: usize) {
+    if let Some(fa) = FRAME_ALLOC.lock().as_mut() {
+        fa.free_pages(phys_addr, order);
+    }
+}
+
 /// Allocate a single page from the user pool (for shared memory / user heaps).
 pub fn alloc_user_page() -> Option<usize> {
     let mut guard = FRAME_ALLOC.lock();

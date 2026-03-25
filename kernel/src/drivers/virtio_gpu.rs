@@ -660,7 +660,6 @@ impl VirtioGpu {
     }
 
     /// Detach guest DMA pages from a resource.
-    #[allow(dead_code)]
     fn resource_detach_backing(&mut self, resource_id: u32) -> Result<(), GpuError> {
         let cmd = VirtioGpuResourceDetachBacking {
             hdr: VirtioGpuCtrlHdr {
@@ -681,7 +680,6 @@ impl VirtioGpu {
     }
 
     /// Destroy a resource.
-    #[allow(dead_code)]
     fn resource_unref(&mut self, resource_id: u32) -> Result<(), GpuError> {
         let cmd = VirtioGpuResourceUnref {
             hdr: VirtioGpuCtrlHdr {
@@ -885,5 +883,96 @@ fn as_byte_slice<T: Sized>(slice: &[T]) -> &[u8] {
     // would expose unspecified layout.
     unsafe {
         core::slice::from_raw_parts(slice.as_ptr() as *const u8, core::mem::size_of_val(slice))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public wrapper functions for GPU Service (Phase 6 M20)
+// ---------------------------------------------------------------------------
+
+/// Allocate a DMA-backed framebuffer and create a VirtIO-GPU 2D resource.
+pub fn gpu_allocate_framebuffer(width: u32, height: u32) -> Result<GpuBufferHandle, GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.allocate_framebuffer(width, height)
+}
+
+/// Bind a resource to a display scanout.
+#[allow(dead_code)] // Used in Step 10 (double buffering) and Step 11 (GOP transition).
+pub fn gpu_set_scanout(
+    scanout_id: u32,
+    resource_id: u32,
+    rect: &VirtioGpuRect,
+) -> Result<(), GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.set_scanout(scanout_id, resource_id, rect)
+}
+
+/// Transfer pixel data from guest to host resource.
+pub fn gpu_transfer_to_host(
+    resource_id: u32,
+    rect: &VirtioGpuRect,
+    offset: u64,
+) -> Result<(), GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.transfer_to_host_2d(resource_id, rect, offset)
+}
+
+/// Signal the host to refresh the display for a resource region.
+pub fn gpu_resource_flush(resource_id: u32, rect: &VirtioGpuRect) -> Result<(), GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.resource_flush(resource_id, rect)
+}
+
+/// Transfer + flush for the full framebuffer (convenience).
+#[allow(dead_code)] // Used in Step 11 (GOP transition).
+pub fn gpu_present_frame(handle: &GpuBufferHandle) -> Result<(), GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.present_frame(handle)
+}
+
+/// Detach guest DMA pages from a resource.
+pub fn gpu_resource_detach_backing(resource_id: u32) -> Result<(), GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.resource_detach_backing(resource_id)
+}
+
+/// Destroy a VirtIO-GPU resource.
+pub fn gpu_resource_unref(resource_id: u32) -> Result<(), GpuError> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut().ok_or(GpuError::DeviceNotFound)?;
+    gpu.resource_unref(resource_id)
+}
+
+/// Release the M19 test frame: detach backing, unref resource, free DMA pages.
+///
+/// Called during GPU transition (Step 11) to reclaim the boot test frame's DMA
+/// memory before allocating double buffers.
+#[allow(dead_code)] // Used in Step 11 (GOP transition).
+pub fn gpu_release_test_frame() {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = match guard.as_mut() {
+        Some(g) => g,
+        None => return,
+    };
+    if let Some(handle) = gpu.test_frame.take() {
+        let _ = gpu.resource_detach_backing(handle.resource_id);
+        let _ = gpu.resource_unref(handle.resource_id);
+        // SAFETY: handle.fb_phys and handle.order were returned by alloc_dma_pages
+        // during allocate_framebuffer(). Freeing with the same order returns pages
+        // to the DMA pool. Double-free is prevented by test_frame.take() clearing
+        // the handle (can only be called once).
+        unsafe { crate::mm::frame::free_dma_pages(handle.fb_phys, handle.order) };
+        crate::kinfo!(
+            Gpu,
+            "VirtIO-GPU: released test frame (resource={}, {} pages)",
+            handle.resource_id,
+            handle.page_count
+        );
     }
 }
