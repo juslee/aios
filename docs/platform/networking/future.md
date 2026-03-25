@@ -1,7 +1,7 @@
 # AIOS Networking — Future Directions
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
-**Related:** [stack.md](./stack.md) — Network stack, [components.md](./components.md) — NTM components, [../../intelligence/airs.md](../../intelligence/airs.md) — AI Runtime Service
+**Related:** [stack.md](./stack.md) — Network stack, [components.md](./components.md) — NTM components, [../../intelligence/airs.md](../../intelligence/airs.md) — AI Runtime Service, [anm.md](./anm.md) — AIOS Network Model, [mesh.md](./mesh.md) — Mesh Layer, [bridge.md](./bridge.md) — Bridge Module
 
 -----
 
@@ -36,6 +36,12 @@ Inference cost: ~100ns (branch traversal, no floating point)
 ```
 
 The decision tree is trained offline on network traces from diverse conditions (datacenter, WiFi, cellular, satellite) and shipped as part of the OS image. It runs in the smoltcp TCP implementation with zero kernel memory allocation.
+
+**ANM context:** Congestion control applies to two distinct transport contexts within the AIOS Network Model:
+
+- **Bridge connections (TCP via smoltcp)** — the frozen decision tree CC described above applies here, optimizing TCP flows for internet-facing traffic through the Bridge Module.
+- **Tunnel mode (QUIC via quinn)** — for mesh traffic routed over WAN when Direct Link is unavailable. QUIC's built-in CC (with learned enhancements) applies to tunneled mesh packets.
+- **Direct Link mesh** — no congestion control needed. Direct Link operates over raw Ethernet frames (EtherType `0x4149`) on a point-to-point or link-local basis, where L2 flow control is sufficient.
 
 **Research basis:**
 - Aurora (NSDI 2020): RL-trained congestion control that generalizes across network conditions
@@ -94,6 +100,12 @@ Heuristic prefetch rules:
 ```
 
 These heuristics work without semantic understanding — they're based on recency, configuration, and scheduling.
+
+**ANM mesh context:** In addition to Bridge connection pre-warming, AIRS and the kernel can also pre-warm mesh-related resources:
+
+- **Mesh peer connections** — AIRS can anticipate which peers will be needed (e.g., user usually syncs with work laptop after arriving at the office) and trigger Noise IK handshakes proactively.
+- **Discovery broadcasts** — trigger link-local ANNOUNCE (EtherType `0x4149`) before the predicted need, so peer presence is confirmed before the first space operation.
+- **Bridge fallback** — if a mesh peer is predicted to be unreachable on Direct Link, pre-warm the Tunnel (QUIC) connection to the relay.
 
 -----
 
@@ -383,6 +395,40 @@ Trade-offs:
 ```
 
 This is Phase 24+ territory and only relevant for specialized workloads. The standard smoltcp path handles >95% of use cases.
+
+-----
+
+### 11.9 Mesh-Specific Research Directions
+
+The AIOS Network Model's mesh layer introduces unique research opportunities that go beyond traditional OS networking:
+
+#### 11.9.1 Onion Routing for Bridge Traffic
+
+Bridge traffic (TCP/TLS to internet endpoints) could be routed through multiple AIOS mesh peers before exiting to the internet, providing Tor-like anonymization. Each hop peels one layer of encryption, so no single peer knows both the source and destination. This is particularly relevant for privacy-sensitive agents that need internet access but want to minimize metadata exposure to network observers.
+
+#### 11.9.2 Traffic Padding for Correlation Resistance
+
+Mesh-to-Bridge traffic patterns can reveal which mesh peer initiated a particular internet request. Constant-rate traffic padding between mesh peers (sending dummy frames when idle) defeats correlation attacks. The challenge is balancing padding overhead against battery and bandwidth cost — AIRS could adaptively tune padding rates based on threat model and power constraints.
+
+#### 11.9.3 Formal Verification of the Capability Layer
+
+The L4 Capability Layer enforces the invariant that capabilities can never be upgraded through the mesh — only attenuated or revoked. This "never-degrade" property is critical for security and is a candidate for formal verification using tools like Kani (Rust model checker) or TLA+ for the protocol state machine. Proving this invariant holds across all possible message sequences would provide strong assurance that the mesh cannot be used as a privilege escalation vector.
+
+#### 11.9.4 Post-Quantum Cryptography for Noise
+
+The mesh layer uses Noise IK with Curve25519 for key exchange. When post-quantum key exchange mechanisms (ML-KEM/Kyber) stabilize and receive NIST final standardization, the Noise protocol should be extended with a hybrid key exchange (classical + PQ). The `snow` crate is tracking PQ Noise patterns. Migration must preserve 0-RTT properties for Direct Link performance.
+
+#### 11.9.5 Hardware NIC Offload for Noise Encryption
+
+Modern NICs support inline encryption offload (e.g., kTLS offload). Extending this to Noise protocol encryption would reduce CPU overhead for high-throughput mesh traffic. This requires NIC firmware that understands the Noise frame format, or alternatively using a hardware AES-GCM engine with the Noise session keys exported to the NIC.
+
+#### 11.9.6 Content-Addressable Networking at the Mesh Layer
+
+AIOS spaces use content-addressed objects (SHA-256 hashes). The mesh layer could implement NDN-style in-network caching: when a mesh peer forwards a space object, it caches the content by hash. Subsequent requests for the same content-hash from any peer are served from cache without contacting the origin. This is particularly effective for shared spaces accessed by multiple devices on the same network.
+
+#### 11.9.7 Mesh-Native Multicast for Space Sync
+
+When multiple peers share the same space, updates currently require point-to-point delivery to each peer. A mesh-native multicast protocol could deliver space updates to all subscribed peers simultaneously using a single link-local multicast frame. This reduces bandwidth usage proportionally to the number of peers and is especially valuable for collaborative editing scenarios.
 
 -----
 

@@ -63,7 +63,7 @@ Each tier produces a demonstrable result:
 |---|---|---|---|
 | 1 | Week 2 | Microkernel boots on QEMU | UART output, memory allocation, IPC ping-pong benchmark |
 | 1.5 | Week 4 | Kit Foundation | Storage complete, Kit API traits extracted for Phases 2-4, Kit crate structure established |
-| 2 | Week 11 | Graphical desktop with shell | Window compositor, terminal emulator, basic networking (curl works) |
+| 2 | Week 11 | Graphical desktop with shell | Window compositor, terminal emulator, ANM mesh networking (peer-to-peer works), Bridge for TCP/IP (curl works) |
 | 3 | Week 23 | AI-enhanced OS | Conversation bar, semantic search, agents running with capability gates, Flow service, identity & credentials |
 | 4 | Week 34 | Developer platform | Intent verification, SDK published, compute abstraction, GPU compute, security hardened, POSIX tools |
 | 5 | Week 44 | Hardware-ready OS | WiFi, Bluetooth, USB, power management, thermal — runs on Raspberry Pi |
@@ -85,7 +85,7 @@ flowchart TD
     P5 --> P6["Phase 6: GPU & Display"]
     P6 --> P7["Phase 7: Window Compositor & Shell"]
     P7 --> P8["Phase 8: Input & Terminal"]
-    P8 --> P9["Phase 9: Basic Networking"]
+    P8 --> P9["Phase 9: Basic Networking (ANM)"]
 
     P9 --> P10["Phase 10: Agent Framework"]
     P9 --> P11["Phase 11: AIRS Inference Engine"]
@@ -356,8 +356,9 @@ Estimated timeline with 3 AI-assisted developers: ~15–25 weeks.
 | Cryptographic hash | sha2 (SHA-256, no_std) | MIT/Apache-2.0 | Phase 4 |
 | Authenticated encryption | aes-gcm (AES-256-GCM, no_std) | MIT/Apache-2.0 | Phase 4 |
 | Compression | lz4_flex (LZ4, no_std) | MIT | Phase 4 (planned) |
-| TCP/IP | smoltcp | BSD-2-Clause | — |
-| TLS | rustls | Apache-2.0/MIT | — |
+| Noise Protocol | snow | Apache-2.0 | — |
+| TCP/IP (Bridge) | smoltcp | BSD-2-Clause | — |
+| TLS (Bridge) | rustls | Apache-2.0/MIT | — |
 | HTTP | h2, hyper | MIT | — |
 | QUIC | quinn | Apache-2.0/MIT | — |
 | DNS | hickory-dns | Apache-2.0/MIT | — |
@@ -421,7 +422,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | `06-gpu-and-display.md` | Planned | 6w | — |
 | 7 | Window Compositor & Shell | — | compositor.md (6) | `07-window-compositor-and-shell.md` | Planned | 7w | — |
 | 8 | Input & Terminal | Input Kit | input.md (6), terminal.md (6) | `08-input-and-terminal.md` | Planned | 4w | — |
-| 9 | Basic Networking | Network Kit (core) | networking.md (6) | `09-basic-networking.md` | Planned | 4w | — |
+| 9 | Basic Networking | Network Kit (core) | networking.md (6), anm.md | `09-basic-networking.md` | Planned | 4w | — |
 | 10 | Agent Framework | App Kit | agents.md (7) | `10-agent-framework.md` | Planned | 5w | — |
 | 11 | AIRS Inference Engine | AIRS Kit (inference) | airs/inference.md, model-registry.md, scaling.md | `11-airs-inference-engine.md` | Planned | 4w | — |
 | 12 | AIRS Intelligence Services | AIRS Kit (services) | airs/intelligence-services.md, lifecycle-and-data.md, security.md, ai-native.md | `12-airs-intelligence-services.md` | Planned | 4w | — |
@@ -440,7 +441,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 25 | Performance & Optimization | — | — | `25-performance-and-optimization.md` | Planned | 4w | — |
 | 26 | Developer Experience & SDK | Cookbook | — | `26-developer-experience-and-sdk.md` | Planned | 5w | — |
 | 27 | POSIX Compatibility & BSD Userland | — | posix.md | `27-posix-compatibility-and-bsd-userland.md` | Planned | 5w | — |
-| 28 | Network Translation Module | Network Kit (full) | networking.md (6) | `28-network-translation-module.md` | Planned | 5w | — |
+| 28 | Network Translation Module | Network Kit (full) | networking.md (6), anm.md | `28-network-translation-module.md` | Planned | 5w | — |
 | 29 | USB Stack & Hotplug | USB Kit | usb.md (4) | `29-usb-stack-and-hotplug.md` | Planned | 5w | — |
 | 30 | WiFi Stack | Wireless Kit (WiFi) | wireless/wifi.md, firmware.md, security.md | `30-wifi-stack.md` | Planned | 4w | — |
 | 31 | Bluetooth & Wireless Integration | Wireless Kit (full) | wireless/bluetooth.md, integration.md, ai-native.md | `31-bluetooth-and-wireless-integration.md` | Planned | 4w | — |
@@ -548,7 +549,7 @@ These subsystems do not have their own standalone phases — their work is distr
 - [ ] GPU-accelerated compositor at 60 fps
 - [ ] Window management (floating + tiling)
 - [ ] Terminal emulator with keyboard/mouse input
-- [ ] TCP/IP networking (curl works from terminal)
+- [ ] ANM mesh networking (peer-to-peer space sync), TCP/IP via Bridge (curl works from terminal)
 
 ### Tier 3 Complete (Week 23) — Gate 4: Intelligence Stack
 
@@ -573,7 +574,7 @@ These subsystems do not have their own standalone phases — their work is distr
 
 ### Tier 5 Complete (Week 44) — Gate 5: Hardware-Ready
 
-- [ ] Full NTM: Space Resolver, shadow engine, capability gate
+- [ ] Full NTM with complete ANM stack: Space Resolver, Shadow Engine, Resilience Engine, capability gate
 - [ ] USB: xHCI, HID, mass storage, hotplug
 - [ ] WiFi (WPA2/WPA3) and Bluetooth (audio, HID)
 - [ ] Power management: sleep, hibernate, thermal throttling

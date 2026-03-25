@@ -1,21 +1,33 @@
-# AIOS Networking — Network Stack
+# AIOS Networking — Network Stacks
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
-**Related:** [components.md](./components.md) — NTM components, [protocols.md](./protocols.md) — Protocol engines, [security.md](./security.md) — Network security
+**Related:** [anm.md](./anm.md) — ANM specification, [mesh.md](./mesh.md) — Mesh Layer, [bridge.md](./bridge.md) — Bridge Module, [components.md](./components.md) — NTM components, [protocols.md](./protocols.md) — Protocol engines, [security.md](./security.md) — Network security
 
 -----
 
-## 4. Network Stack
+## 4. Network Stacks
 
-The network stack sits between the protocol engines (§5) and the hardware drivers. It provides TCP/IP networking using smoltcp, a pure-Rust, no_std-compatible TCP/IP stack. This section covers the integration architecture, driver design, buffer management, and I/O paths.
+AIOS has **two distinct network stacks** serving fundamentally different purposes:
+
+1. **Mesh Stack** (native) — handles all AIOS-to-AIOS communication. Uses Noise IK encryption, identity-based routing via DeviceId, and raw Ethernet frames (Direct Link) or QUIC tunnels (WAN). This is the primary networking path. See [mesh.md](./mesh.md) for the full architecture.
+
+2. **Bridge Stack** (compatibility) — handles communication with legacy IP-based systems (the existing internet). Uses smoltcp for TCP/IP, rustls for TLS, and protocol engines (HTTP/2, QUIC/HTTP/3) for web API access. This is a translation layer, not the foundation.
+
+Two AIOS devices on the same Ethernet segment communicate exclusively through the Mesh Stack — no IP, no DNS, no TLS, no TCP. The Bridge Stack is activated only when reaching non-AIOS endpoints or when AIOS devices must communicate across the IP internet (Tunnel mode).
 
 ```mermaid
 flowchart TD
-    subgraph NTM["NTM (userspace)"]
-        Proto["Protocol Engines\n(HTTP/2, QUIC, etc.)"]
+    subgraph MeshStack["Mesh Stack (native)"]
+        direction TB
+        Noise["Noise IK\n(L3 Identity)"]
+        MeshRoute["Mesh Router\n(L2 Mesh)"]
+        DL["Direct Link\n(raw Ethernet 0x4149)"]
+        Tunnel["Tunnel Mode\n(QUIC/UDP)"]
     end
 
-    subgraph Stack["Network Stack"]
+    subgraph BridgeStack["Bridge Stack (compatibility)"]
+        direction TB
+        Proto["Protocol Engines\n(HTTP/2, QUIC, etc.)"]
         subgraph smoltcp["smoltcp"]
             TCP["TCP"]
             UDP["UDP"]
@@ -37,6 +49,11 @@ flowchart TD
         NIC["Network Interface"]
     end
 
+    Noise --> MeshRoute
+    MeshRoute --> DL
+    MeshRoute --> Tunnel
+    Tunnel --> UDP
+
     Proto --> TCP
     Proto --> UDP
     TCP --> IP
@@ -46,6 +63,7 @@ flowchart TD
     DHCP --> UDP
     DNS --> UDP
     IP --> BufMgr
+    DL --> VirtNet
     BufMgr --> VirtNet
     BufMgr --> EthMAC
     VirtNet --> NIC
@@ -54,9 +72,27 @@ flowchart TD
 
 -----
 
-### 4.1 smoltcp Integration
+### 4.0 Mesh Stack Overview
 
-[smoltcp](https://github.com/smoltcp-rs/smoltcp) is a standalone, event-driven TCP/IP stack designed for bare-metal and embedded systems. It provides TCP, UDP, ICMP, ARP, NDP, DHCP, and DNS — everything AIOS needs for Phase 8.
+The Mesh Stack is AIOS's native networking layer. It replaces TCP/IP for all peer-to-peer communication between AIOS devices. The full architecture is specified in [mesh.md](./mesh.md); this section provides a brief summary for context.
+
+**Key properties:**
+
+- **Noise IK encryption** (not TLS) — 1-RTT for first contact, 0-RTT for returning peers, mandatory encryption with no plaintext mode. See [mesh.md §M3](./mesh.md) for the Noise protocol details.
+- **Identity-based routing** — peers are addressed by `DeviceId = sha256(Ed25519_public_key)`, not by IP address. No DNS resolution required.
+- **Raw Ethernet transport** (Direct Link) — on the same LAN segment, mesh packets are carried in raw Ethernet frames with EtherType `0x4149`. No IP, no ARP, no TCP.
+- **QUIC tunnel transport** (WAN) — across the internet, mesh packets are encapsulated in QUIC/UDP. IP is the carrier, not the identity layer.
+- **Relay transport** — when neither Direct Link nor Tunnel is available, packets are forwarded through a trusted peer. End-to-end Noise encryption ensures the relay cannot read content.
+
+The Mesh Stack uses the VirtIO-Net driver (§4.2) for raw Ethernet frame injection/reception (Direct Link mode) and smoltcp's UDP socket (via the Bridge Stack) for QUIC tunnel encapsulation.
+
+-----
+
+### 4.1 Bridge Stack: smoltcp Integration
+
+> **Scope:** This section covers the Bridge Stack only. smoltcp provides TCP/IP networking for the [Bridge Module](./bridge.md), which handles communication with legacy IP-based systems (web APIs, POSIX socket emulation). smoltcp is NOT used for AIOS-to-AIOS mesh communication — the Mesh Stack handles that directly via Noise IK over raw Ethernet or QUIC tunnels. smoltcp's UDP socket layer is also used by the QUIC tunnel transport for mesh WAN connectivity.
+
+[smoltcp](https://github.com/smoltcp-rs/smoltcp) is a standalone, event-driven TCP/IP stack designed for bare-metal and embedded systems. It provides TCP, UDP, ICMP, ARP, NDP, DHCP, and DNS — everything the Bridge Module needs for legacy internet access.
 
 #### 4.1.1 Why smoltcp
 
@@ -182,6 +218,8 @@ The polling strategy integrates with the power management framework ([power-mana
 ### 4.2 VirtIO-Net Driver
 
 The VirtIO-Net driver follows the same MMIO transport pattern as the existing VirtIO-blk driver (`kernel/src/drivers/virtio_blk.rs`) but with network-specific virtqueues and interrupt-driven I/O.
+
+**Dual-stack usage:** The VirtIO-Net driver serves BOTH the Mesh Stack and the Bridge Stack. The Mesh Stack uses it for raw Ethernet frame injection and reception (Direct Link mode — EtherType `0x4149`). The Bridge Stack uses it for IP packet transmission and reception (standard Ethernet frames carrying IPv4/IPv6). Incoming frames are demultiplexed by EtherType: `0x4149` frames are routed to the Mesh Layer, while IP frames (`0x0800`/`0x86DD`) are routed to smoltcp.
 
 #### 4.2.1 VirtIO-Net Device Layout
 
@@ -341,6 +379,8 @@ The IRQ is registered with GICv3 as a shared peripheral interrupt (SPI). On QEMU
 
 ### 4.3 Buffer Management
 
+> **Scope:** Buffer management serves both the Mesh Stack and Bridge Stack. DMA buffers are shared infrastructure — the Mesh Stack uses them for raw Ethernet frames, the Bridge Stack uses them for IP packets. The pool, lifecycle, and DMA safety rules below apply to both stacks.
+
 Network I/O requires careful buffer management to minimize copying and avoid allocation in the hot path.
 
 #### 4.3.1 Packet Buffer Pool
@@ -385,13 +425,16 @@ RX path:
     2. Buffer placed in VirtIO RX available ring (phys addr)
     3. Device fills buffer with received packet
     4. Driver retrieves from used ring
-    5. Buffer passed to smoltcp for protocol processing
-    6. Data consumed by NTM/protocol engine
+    5. EtherType demux:
+       - 0x4149 → Mesh Stack (Noise decrypt, space operation dispatch)
+       - 0x0800/0x86DD → Bridge Stack (smoltcp protocol processing)
+    6. Data consumed by Mesh Layer or NTM/protocol engine
     7. PacketBufferPool::free() → buffer returned to pool
 
 TX path:
-    1. Protocol engine fills packet data
-    2. smoltcp produces raw frame via AiosTxToken::consume()
+    1. Mesh Stack or protocol engine fills packet data
+    2. For Bridge: smoltcp produces raw frame via AiosTxToken::consume()
+       For Mesh: Noise-encrypted MeshPacket wrapped in Ethernet frame
     3. Buffer placed in VirtIO TX available ring
     4. Device transmits packet
     5. Driver reclaims from used ring
@@ -411,7 +454,9 @@ VirtIO requires physical addresses in descriptor rings. Buffer management must g
 
 ### 4.4 Zero-Copy I/O Paths
 
-The networking stack minimizes memory copies on the data path:
+> **Scope:** Zero-copy optimizations described here apply to Bridge Stack data paths (IP-based traffic through smoltcp). Mesh Stack data paths have their own zero-copy design — Direct Link frames bypass the IP stack entirely, achieving inherent zero-copy between the Noise layer and the NIC.
+
+The Bridge Stack minimizes memory copies on the data path:
 
 #### 4.4.1 Copy Counts by Path
 
@@ -433,7 +478,7 @@ Transmit path (application → NIC):
 
 #### 4.4.2 Phase 8 Data Path
 
-In Phase 8, the data path involves two copies — acceptable for initial bringup:
+In Phase 8, the Bridge Stack data path involves two copies — acceptable for initial bringup:
 
 ```text
 RX: DMA buffer → smoltcp processes TCP/IP headers → payload copied to NTM buffer → NTM delivers to agent
@@ -454,6 +499,8 @@ This eliminates the NTM-to-agent copy, achieving a true single-copy path. RX map
 -----
 
 ### 4.5 Interrupt Handling and Adaptive Polling
+
+> **Scope:** Interrupt handling and polling strategies apply to the VirtIO-Net driver, which serves both stacks. The adaptive polling thresholds account for combined Mesh + Bridge traffic.
 
 #### 4.5.1 Interrupt Coalescing
 
@@ -522,6 +569,8 @@ The receive steering (RSS/RFS) is configured via the control virtqueue to distri
 
 ### 4.6 DHCP and DNS
 
+> **Scope:** DHCP and DNS are Bridge Stack services. They are used for IP address acquisition and name resolution when communicating with legacy internet services. The Mesh Stack does not use DHCP (it has no IP addresses) or DNS (it routes by DeviceId). However, Tunnel mode requires an IP address to reach remote peers, so DHCP indirectly supports Mesh WAN connectivity.
+
 #### 4.6.1 DHCP Client
 
 AIOS uses smoltcp's built-in DHCP client for address acquisition on Ethernet/WiFi interfaces:
@@ -570,6 +619,8 @@ DNS results are cached in a dedicated DNS cache space, shared across all agents.
 -----
 
 ### 4.7 IPv4/IPv6 Dual Stack
+
+> **Scope:** IPv4/IPv6 dual stack support is a Bridge Stack feature. It is used for communicating with legacy internet services and for Tunnel mode WAN connectivity between AIOS devices. The Mesh Stack's native Direct Link and Relay modes do not use IP addressing.
 
 AIOS supports both IPv4 and IPv6, with IPv6 preferred when available:
 

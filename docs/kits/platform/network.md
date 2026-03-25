@@ -2,6 +2,8 @@
 
 **Layer:** Platform | **Crate:** `aios_network` | **Architecture:** [`docs/platform/networking.md`](../../platform/networking.md)
 
+**Related:** [anm.md](../../platform/networking/anm.md) — AIOS Network Model, [mesh.md](../../platform/networking/mesh.md) — Mesh Layer, [bridge.md](../../platform/networking/bridge.md) — Bridge Module
+
 ## 1. Overview
 
 Network Kit provides capability-gated networking with Space-aware name resolution,
@@ -36,6 +38,11 @@ use std::time::Duration;
 /// SpaceResolver provides capability-gated DNS that respects the agent's
 /// network access policy. Lookups for blocked domains return an error
 /// rather than silently failing.
+///
+/// **ANM context:** Resolution checks the mesh peer table first. If the
+/// target space is hosted by a known mesh peer, resolution returns a mesh
+/// endpoint (no DNS involved). DNS lookup through the Bridge Module is
+/// the fallback for internet-facing spaces.
 pub trait SpaceResolver {
     /// Resolve a hostname to one or more IP addresses.
     fn resolve(&self, hostname: &str) -> Result<Vec<IpAddr>, NetworkError>;
@@ -54,6 +61,11 @@ pub trait SpaceResolver {
 /// Each connection is associated with the creating agent's identity.
 /// ConnectionManager enforces that agents cannot access each other's
 /// connections and that all connections respect capability constraints.
+///
+/// **ANM context:** ConnectionManager manages **Bridge connections**
+/// (TCP/TLS/QUIC to internet endpoints). Mesh peer connections are
+/// managed by the separate `MeshManager` trait. Agents do not choose
+/// between mesh and Bridge — the SpaceResolver routes automatically.
 pub trait ConnectionManager {
     /// Open a TCP connection to the specified endpoint.
     fn connect_tcp(&self, addr: &Endpoint) -> Result<TcpStream, NetworkError>;
@@ -83,6 +95,11 @@ pub trait ConnectionManager {
 ///
 /// Provides a high-level HTTP/1.1 and HTTP/2 interface. For HTTP/3 (QUIC),
 /// use `connect_quic()` on ConnectionManager directly.
+///
+/// **ANM context:** HttpClient is a **Bridge Module** trait. HTTP is not
+/// used for mesh peer communication — mesh peers exchange space operations
+/// directly via the Noise-encrypted mesh protocol. HttpClient is used
+/// exclusively for internet-facing traffic (web APIs, downloads, etc.).
 pub trait HttpClient {
     /// Send an HTTP request and receive the response.
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, NetworkError>;
@@ -96,6 +113,11 @@ pub trait HttpClient {
 ///
 /// ShadowEngine routes traffic through a proxy to shield the agent's
 /// network identity. This is opt-in and requires the ShadowAccess capability.
+///
+/// **ANM context:** Shadows are content-addressed (SHA-256 hashes), not
+/// URL-based. The Shadow Engine caches space objects by content hash,
+/// enabling deduplication and offline access regardless of the object's
+/// origin (mesh peer or internet endpoint).
 pub trait ShadowEngine {
     /// Check whether shadow routing is available.
     fn is_available(&self) -> bool;
@@ -133,6 +155,61 @@ pub trait BandwidthScheduler {
     /// Request a temporary bandwidth increase (may be denied).
     fn request_burst(&mut self, bytes: u64, duration: Duration)
         -> Result<BurstGrant, NetworkError>;
+}
+
+/// Mesh peer discovery, connection management, and routing.
+///
+/// MeshManager handles the AIOS mesh layer — peer-to-peer communication
+/// between AIOS devices using Noise IK encryption. Unlike Bridge connections
+/// (TCP/TLS to internet endpoints), mesh connections operate over raw
+/// Ethernet frames (Direct Link) or QUIC tunnels (Tunnel mode) with no
+/// HTTP, DNS, or TLS involved.
+///
+/// Agents do not typically call MeshManager directly — the SpaceResolver
+/// transparently routes space operations to mesh peers when appropriate.
+/// MeshManager is exposed for system agents that need direct peer management
+/// (e.g., the pairing agent, sync agent, or Inspector).
+pub trait MeshManager {
+    /// Discover peers on the local network via link-local broadcast.
+    ///
+    /// Sends an ANNOUNCE frame (EtherType 0x4149) and collects
+    /// ANNOUNCE_REPLY responses from known peers within a timeout.
+    fn discover_local_peers(&self) -> Result<Vec<PeerEntry>, NetworkError>;
+
+    /// Establish a Noise IK session with a known peer.
+    ///
+    /// The peer must be in the pairing database (known static key).
+    /// Returns a NoiseSession that can be used for space operations.
+    /// Direct Link is attempted first; falls back to Tunnel if unavailable.
+    fn connect_peer(&self, peer: DeviceId) -> Result<NoiseSession, NetworkError>;
+
+    /// Send a mesh packet to a peer (selects best transport mode).
+    ///
+    /// Transport selection: Direct Link if peer is on the same L2 network,
+    /// Tunnel (QUIC) otherwise. The capability token in the packet is
+    /// verified by the receiving peer's kernel.
+    fn send(&self, peer: DeviceId, packet: MeshPacket) -> Result<(), NetworkError>;
+
+    /// Receive the next mesh packet from any peer.
+    ///
+    /// Blocks until a packet arrives or timeout. The packet's capability
+    /// token has already been verified by the local kernel before delivery.
+    fn recv(&self) -> Result<(DeviceId, MeshPacket), NetworkError>;
+
+    /// Get the current peer table.
+    ///
+    /// Returns all known peers with their current transport mode,
+    /// granted capabilities, and last-seen timestamps.
+    fn peer_table(&self) -> &PeerTable;
+
+    /// Exchange capabilities with a peer.
+    ///
+    /// Offers a set of capabilities to the peer and receives their
+    /// grants in return. Capabilities are attenuated — the peer receives
+    /// only the permissions specified in the offers, never more than
+    /// the local agent holds.
+    fn exchange_capabilities(&self, peer: DeviceId, offers: &[CapabilityOffer])
+        -> Result<Vec<CapabilityGrant>, NetworkError>;
 }
 ```
 
@@ -402,6 +479,33 @@ pub enum NetworkError {
 
 **Implementation phase:** Phase 8+ (core networking stack, VirtIO-Net, smoltcp, HTTP).
 QUIC/HTTP3 in Phase 8+. WebSocket in Phase 8+. Shadow Engine in Phase 13+.
+
+## 8. Technology Stack (ANM Split)
+
+The networking subsystem is organized into two layers per the AIOS Network Model:
+
+**Mesh Layer** (peer-to-peer, serverless):
+
+| Component | Crate | Purpose |
+| --- | --- | --- |
+| Noise IK protocol | `snow` | Encrypted peer sessions (0-RTT with known keys) |
+| Direct Link framing | custom | Raw Ethernet frames, EtherType `0x4149` |
+| Peer discovery | custom | Link-local ANNOUNCE/ANNOUNCE_REPLY protocol |
+| Capability exchange | custom | L4 capability negotiation over Noise |
+| Peer table | custom | DeviceId-indexed session and capability tracking |
+
+**Bridge Module** (internet-facing, traditional networking):
+
+| Component | Crate | Purpose |
+| --- | --- | --- |
+| TCP/IP stack | `smoltcp` | TCP, UDP, ICMP, ARP, IPv4/IPv6 |
+| TLS | `rustls` | TLS 1.3, certificate validation |
+| QUIC/HTTP3 | `quinn` | QUIC transport, also used for mesh Tunnel mode |
+| HTTP/1.1 & HTTP/2 | `h2` / custom | High-level HTTP client |
+| DNS | `smoltcp` + custom | DNS resolution (Bridge fallback after mesh peer lookup) |
+| Credential vault | custom | Automatic credential injection for HTTP requests |
+
+The SpaceResolver sits above both layers: it checks the mesh peer table first, and falls back to Bridge DNS resolution for unknown spaces.
 
 ---
 

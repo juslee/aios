@@ -1,18 +1,20 @@
 # AIOS Networking — NTM Components
 
 **Part of:** [networking.md](../networking.md) — Network Translation Module
-**Related:** [stack.md](./stack.md) — Network stack internals, [security.md](./security.md) — Network security, [protocols.md](./protocols.md) — Protocol engines
+**Related:** [anm.md](./anm.md) — ANM specification, [mesh.md](./mesh.md) — Mesh Layer, [bridge.md](./bridge.md) — Bridge Module, [stack.md](./stack.md) — Network stack internals, [security.md](./security.md) — Network security, [protocols.md](./protocols.md) — Protocol engines
 
 -----
 
-## 3. The Six Components
+## 3. The Seven Components
 
-The Network Translation Module consists of six components, each responsible for a distinct aspect of translating space operations into network operations. They form a pipeline: space operation → capability check → resolution → connection → protocol translation → resilience → scheduling → wire.
+The Network Translation Module consists of seven components, each responsible for a distinct aspect of translating space operations into network operations. The Mesh Manager handles peer-to-peer mesh networking natively; the remaining six components form the pipeline for bridge and hybrid traffic: space operation → capability check → resolution → connection → protocol translation → resilience → scheduling → wire.
 
 ```mermaid
 flowchart LR
     Op["space::read()"] --> CG["§3.5 Capability\nGate"]
-    CG --> SR["§3.1 Space\nResolver"]
+    CG --> MM["§3.0 Mesh\nManager"]
+    MM -->|"mesh peer"| MeshWire["Mesh Layer\n(L2)"]
+    MM -->|"bridge"| SR["§3.1 Space\nResolver"]
     SR --> CM["§3.2 Connection\nManager"]
     CM --> RE["§3.4 Resilience\nEngine"]
     RE --> BS["§3.6 Bandwidth\nScheduler"]
@@ -22,6 +24,61 @@ flowchart LR
     SE -.->|"serve from\ncache"| Op
     SE -.->|"sync when\nonline"| Wire
 ```
+
+-----
+
+### 3.0 Mesh Manager — Native Peer-to-Peer Networking
+
+The Mesh Manager is the component responsible for AIOS's native mesh networking layer. It manages the peer table, runs the discovery protocol, maintains Noise IK sessions, selects transport paths, and handles transport mode switching. For communication between AIOS devices, the Mesh Manager bypasses the entire Bridge pipeline — no DNS, no TLS, no HTTP, no IP addresses.
+
+Full specification: [mesh.md](./mesh.md).
+
+#### 3.0.1 Architecture
+
+```rust
+/// The Mesh Manager owns peer state, discovery, and Noise sessions.
+/// It is the first component consulted after the Capability Gate —
+/// if the destination is a known mesh peer, traffic never touches
+/// the Bridge pipeline.
+pub struct MeshManager {
+    /// All known peers, indexed by DeviceId.
+    peer_table: PeerTable,
+
+    /// Link-local and BLE discovery service.
+    discovery: DiscoveryService,
+
+    /// Active Noise IK sessions, one per connected peer.
+    noise_sessions: BTreeMap<DeviceId, NoiseSession>,
+}
+```
+
+#### 3.0.2 Responsibilities
+
+| Responsibility | Description |
+|---|---|
+| **Peer table** | Maintains `PeerTable` mapping `DeviceId` to reachability paths (Direct Link, Relay, Tunnel). See [mesh.md §M6](./mesh.md). |
+| **Discovery** | Runs link-local ANNOUNCE broadcast (EtherType `0x4149`) and BLE advertisement. See [mesh.md §M5](./mesh.md). |
+| **Noise sessions** | Manages Noise IK handshake lifecycle (initiate, respond, transport). See [mesh.md §M3](./mesh.md). |
+| **Path selection** | Selects best transport mode: Direct Link > Relay > Tunnel. Automatic failover on path failure. See [mesh.md §M4.4](./mesh.md). |
+| **Capability exchange** | Post-handshake negotiation of shared spaces and role capabilities. See [mesh.md §M8](./mesh.md). |
+
+#### 3.0.3 Routing Decision
+
+When a space operation arrives after passing the Capability Gate, the Mesh Manager is consulted first:
+
+```text
+1. Is the target space held by a known mesh peer?
+   → Check peer_table for peers whose spaces_available includes the target SpaceHash.
+   → If yes: route via mesh (Direct Link / Relay / Tunnel). No Bridge involved.
+
+2. Is the target space a local space?
+   → Handle locally. No network involved.
+
+3. Neither local nor mesh-reachable?
+   → Pass to Space Resolver for Bridge resolution (DNS, HTTP, etc.).
+```
+
+This ordering ensures that mesh peers are always preferred over Bridge paths. If a space is available from both a mesh peer and a Bridge endpoint, the mesh path wins.
 
 -----
 
@@ -55,17 +112,20 @@ Traditional DNS maps names to IP addresses. The Space Resolver maps semantic ide
 
 #### 3.1.1 Resolution Chain
 
-Resolution proceeds through five stages, consulted in order. The first match wins.
+Resolution proceeds through six stages, consulted in order. The first match wins.
 
 ```text
 1. Local cache (recently resolved, still valid)
-2. Space Registry (local database of known remote spaces)
-3. Well-known providers (openai/, github/, google/ have built-in mappings)
-4. AIOS Discovery Protocol (mDNS-like, finds nearby AIOS peers)
-5. DNS (fallback for raw hostnames, used by POSIX compat layer)
+2. Mesh peer table (check if space is held by a known peer — via Mesh Manager §3.0)
+3. Space Registry (local database of known remote spaces)
+4. Well-known providers (openai/, github/, google/ have built-in mappings)
+5. Mesh Discovery (link-local broadcast on EtherType 0x4149, BLE advertisement)
+6. DNS fallback (Bridge — for raw hostnames, used by POSIX compat layer)
 ```
 
-**The Space Registry** is the critical piece. It's a local database that maps semantic space identifiers to connection details. Registries are:
+The key change from traditional resolution: **mesh peers are checked BEFORE DNS**. DNS is a Bridge fallback for legacy hostname resolution, not a primary resolution method. For AIOS-native spaces, the mesh peer table and discovery protocol provide resolution without any IP infrastructure.
+
+**The Space Registry** is the critical piece for Bridge-accessed spaces. It's a local database that maps semantic space identifiers to connection details. Registries are:
 
 - Pre-populated for common services (like `/etc/hosts` but for the AI era — OpenAI, Anthropic, HuggingFace, GitHub, etc.)
 - User-extensible — add your own company's APIs as spaces
@@ -79,18 +139,21 @@ flowchart TD
     Query["space::remote('openai/v1/models')"]
     Query --> Cache{"Local cache\nhit?"}
     Cache -->|"hit"| Return["Return SpaceEndpoint"]
-    Cache -->|"miss"| Registry{"Space Registry\nmatch?"}
+    Cache -->|"miss"| Mesh{"Mesh peer\nholds space?"}
+    Mesh -->|"yes"| MeshRoute["Route via Mesh Manager"]
+    Mesh -->|"miss"| Registry{"Space Registry\nmatch?"}
     Registry -->|"match"| Populate["Populate cache"]
     Registry -->|"miss"| WellKnown{"Well-known\nprovider?"}
     WellKnown -->|"match"| Populate
-    WellKnown -->|"miss"| Discovery{"AIOS Discovery\n(mDNS)"}
+    WellKnown -->|"miss"| Discovery{"Mesh Discovery\n(broadcast + BLE)"}
     Discovery -->|"found"| Populate
-    Discovery -->|"miss"| DNS["DNS fallback"]
+    Discovery -->|"miss"| DNS["DNS fallback\n(Bridge)"]
     DNS --> Populate
     Populate --> Return
 
     style Cache fill:#e8f5e9
     style Return fill:#c8e6c9
+    style MeshRoute fill:#4a9eff,color:#fff
 ```
 
 The resolver maintains a **negative cache** for failed lookups (TTL 30 seconds) to avoid repeated expensive DNS queries for non-existent spaces.
@@ -141,9 +204,29 @@ pub enum RegistrySource {
 
 ### 3.2 Connection Manager — Invisible, Intelligent Connections
 
-Applications never manage connections. The Connection Manager does.
+The Connection Manager handles two distinct connection types: mesh connections (Noise IK sessions with peers) and bridge connections (TCP/TLS to legacy servers). Applications never manage either type.
 
-#### 3.2.1 Connection Pooling
+#### 3.2.1 Mesh Connection Manager
+
+The Mesh Connection Manager works in conjunction with the Mesh Manager (§3.0) to maintain Noise IK sessions with peers.
+
+```text
+Session lifecycle:
+    1. Peer discovered (ANNOUNCE frame or peer table lookup)
+    2. Noise IK handshake initiated (1-RTT for new peers, 0-RTT for returning)
+    3. Capability exchange (post-handshake, negotiate shared spaces)
+    4. Transport active (encrypted space operations flow)
+    5. Keepalive (Heartbeat packets maintain path liveness)
+    6. Teardown (peer unreachable after all paths exhausted)
+```
+
+Path selection follows the preference order: Direct Link (lowest latency, same LAN) > Relay (forwarded through trusted peer, E2E encrypted) > Tunnel (QUIC/UDP across internet). Failover between paths is automatic and transparent to the Space Layer. See [mesh.md §M4.4](./mesh.md) for the full path selection algorithm.
+
+#### 3.2.2 Bridge Connection Manager
+
+The Bridge Connection Manager handles TCP/TLS connections to legacy internet servers. This is where HTTP/2 multiplexing, TLS session caching, and connection pooling reside.
+
+##### Connection Pooling
 
 Multiple reads from `openai/v1` reuse the same HTTP/2 connection. The agent doesn't know or care.
 
@@ -160,22 +243,21 @@ The pool is keyed by `(host, port, protocol)`. Each pool entry maintains:
 - Last activity timestamp for idle timeout
 - Health status from the resilience engine (§3.4)
 
-#### 3.2.2 Protocol Negotiation
+##### Protocol Negotiation
 
 The OS picks the best protocol based on a priority hierarchy:
 
 ```text
-1. AIOS Peer Protocol  — if both endpoints are AIOS devices
-2. HTTP/3 (QUIC)       — if server supports ALPN h3
-3. HTTP/2              — if server supports ALPN h2
-4. WebSocket           — for subscription/streaming operations
-5. HTTP/1.1            — fallback for legacy servers
-6. Raw TCP             — POSIX compatibility only
+1. HTTP/3 (QUIC)       — if server supports ALPN h3
+2. HTTP/2              — if server supports ALPN h2
+3. WebSocket           — for subscription/streaming operations
+4. HTTP/1.1            — fallback for legacy servers
+5. Raw TCP             — POSIX compatibility only
 ```
 
 Protocol selection is automatic but overridable per space in the registry. A space entry can pin a protocol (e.g., MQTT for IoT devices) or exclude protocols (e.g., no plain HTTP for financial APIs).
 
-#### 3.2.3 TLS Session Management
+##### TLS Session Management
 
 TLS handshakes are expensive (1-2 RTT). The Connection Manager aggressively caches TLS sessions:
 
@@ -186,7 +268,7 @@ TLS handshakes are expensive (1-2 RTT). The Connection Manager aggressively cach
 
 No agent ever sees a certificate, handles a TLS error, or decides whether to trust a server. The OS decides based on the system certificate store and the space's trust policy.
 
-#### 3.2.4 Connection Lifecycle
+##### Connection Lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -203,7 +285,7 @@ stateDiagram-v2
 
 The manager pre-warms connections for spaces with `prefetch: true` in their registry entry. When AIRS predicts an agent will access a space (based on usage patterns), the connection is established before the first request arrives.
 
-#### 3.2.5 Multiplexing
+##### Multiplexing
 
 HTTP/2 and QUIC support multiplexing — many requests over one connection. The OS exploits this transparently. Ten agents reading different objects from `github/api` share one connection.
 
@@ -213,7 +295,9 @@ The Connection Manager tracks per-connection stream limits (HTTP/2 `SETTINGS_MAX
 
 ### 3.3 Shadow Engine — Networking Disappears When Offline
 
-The Shadow Engine maintains local shadows of remote spaces. A shadow is a local copy of remote space objects, kept in sync when online and served locally when offline.
+The Shadow Engine maintains local shadows of remote spaces. In ANM, the Shadow Engine operates as a **content-addressed cache** — it stores space objects identified by their `ContentHash` (SHA-256), not by URL. It serves as a "local mesh peer" that happens to cache data from either bridge-originated or remote-peer sources.
+
+For mesh peers, the Shadow Engine caches space objects received during sync operations. For bridge endpoints, it caches translated API responses. In both cases, the shadow is content-addressed: if two different sources provide the same content, it is stored once (deduplication by hash).
 
 #### 3.3.1 Shadow Policies
 
@@ -296,6 +380,7 @@ Shadows are stored in the local Block Engine (see [spaces.md §4](../../storage/
 
 - `shadow_source`: the remote space this shadows
 - `shadow_version`: the remote version at last sync
+- `content_hash`: SHA-256 of the cached content (content-addressed identity)
 - `pending_writes`: ordered list of unsynced local modifications
 - `conflict_policy`: how to resolve divergent versions
 
@@ -314,6 +399,8 @@ For `Full` shadow policy, conflicts are resolved using one of three strategies:
 ### 3.4 Resilience Engine — Failures Are the OS's Problem
 
 Every network operation goes through the Resilience Engine. It converts the chaos of network failures into predictable, handleable outcomes.
+
+The Resilience Engine primarily serves the **Bridge path**. Mesh connections have inherent resilience through multi-path transport: if Direct Link fails, the Mesh Manager automatically tries Relay, then Tunnel, then queues for the Shadow Engine. Bridge connections lack this multi-path redundancy and need explicit retry and circuit-breaker logic.
 
 #### 3.4.1 Retry Policies
 
@@ -422,6 +509,8 @@ Health metrics feed into the Bandwidth Scheduler (§3.6) for intelligent routing
 
 The most important component and the most radical departure from traditional networking. Full details in [security.md §6](./security.md).
 
+In ANM, the Capability Gate is Layer 3 (Capability Layer) — the structural zero-trust boundary. No capability token means no packet: the operation is never constructed, never routed, never delivered. This invariant holds for both mesh and bridge traffic. See [anm.md §A2](./anm.md) and [security.md §6.0](./security.md).
+
 **Traditional security model:** Applications have unrestricted network access. A firewall (if one exists) blocks by port/IP. Any application can connect to any server, exfiltrate any data, phone home to any tracking endpoint.
 
 **AIOS model:** No agent has ANY network access by default. Each network operation requires a specific capability. The kernel enforces this before the packet ever reaches the network stack.
@@ -463,7 +552,7 @@ The agent uses the credential without possessing it. Like a hotel room key that 
 
 ### 3.6 Bandwidth Scheduler — Fair, Priority-Aware, Multi-Path
 
-The OS controls all network operations, so it can schedule them intelligently.
+The OS controls all network operations, so it can schedule them intelligently. Mesh traffic and bridge traffic are scheduled together, with mesh traffic given priority — same-network peer data is lower latency and does not consume internet bandwidth.
 
 #### 3.6.1 Priority Levels
 
@@ -478,6 +567,7 @@ Priority is assigned based on:
 
 - **Operation source** — foreground agent operations get `High`, background agents get `Normal`
 - **Space metadata** — security patches are always `Critical`
+- **Transport type** — mesh traffic gets a priority boost (lower latency, no bandwidth cost)
 - **AIRS context** — if the user is actively waiting for a result, AIRS boosts priority to `High`
 - **Explicit override** — spaces can pin a priority level in their registry entry
 
