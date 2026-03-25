@@ -96,15 +96,15 @@ flowchart TD
         syscall events`"]
         SS["`**Space Storage**
         read/write events`"]
-        NTM["`**Network (NTM)**
-        traffic events`"]
+        ANM["`**Network (ANM)**
+        mesh + bridge traffic events`"]
         AIRS_INT["`**AIRS Internal**
         inference requests`"]
     end
 
     IPC --> AGG
     SS --> AGG
-    NTM --> AGG
+    ANM --> AGG
     AIRS_INT --> AGG
 
     AGG["`**Event Aggregator**

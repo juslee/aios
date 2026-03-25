@@ -59,7 +59,7 @@ pub struct HandoffPacket {
 
 Two modes cover different user scenarios:
 
-**Automatic (proximity).** When Device B is nearby (BLE advertising range, typically under 10 meters) and unlocked, Device A sends a `HandoffPacket` via the AIOS Peer Protocol (see [networking/protocols.md](../networking/protocols.md) §5.1). Device B displays a subtle indicator — a small icon near the dock or status bar — showing the activity type and source device name. The user taps or clicks to accept. If the user does not act within the TTL window, the offer silently expires. No data transfers until the user explicitly accepts.
+**Automatic (proximity).** When Device B is nearby (BLE advertising range, typically under 10 meters) and unlocked, Device A sends a `HandoffPacket` via the ANM Mesh Protocol (see [networking/protocols.md](../networking/protocols.md) §5.1). Device B displays a subtle indicator — a small icon near the dock or status bar — showing the activity type and source device name. The user taps or clicks to accept. If the user does not act within the TTL window, the offer silently expires. No data transfers until the user explicitly accepts.
 
 **Explicit (via Flow).** The user triggers handoff from a system menu (e.g., right-click on an activity, select "Continue on..."). The `HandoffPacket` is wrapped in a `FlowEntry` with `content_type = Handoff` and sent to the target device through the Flow sync channel (see [flow/history.md](../../storage/flow/history.md) §9 for sync). The target device receives the entry and presents a notification. This mode works over any network path — not limited to BLE proximity.
 
@@ -69,7 +69,7 @@ Two modes cover different user scenarios:
 sequenceDiagram
     participant UserA as User @ Device A
     participant DA as Device A<br/>(Continuity Engine)
-    participant PP as Peer Protocol
+    participant PP as ANM Mesh Protocol
     participant DB as Device B<br/>(Continuity Engine)
     participant UserB as User @ Device B
 
@@ -128,7 +128,7 @@ pub struct ClipboardEntry {
 For clipboard content exceeding 1 MiB (images, rich documents, large text blocks), only metadata syncs initially:
 
 - The `FlowEntry` payload contains a `ClipboardRef` with content hash, size, and MIME type — not the actual bytes.
-- When the user pastes on Device B, the clipboard subsystem fetches the full content on-demand from Device A via the Peer Protocol.
+- When the user pastes on Device B, the clipboard subsystem fetches the full content on-demand from Device A via the ANM Mesh Protocol.
 - A progress indicator appears for transfers over 5 MiB.
 - If Device A is unreachable, the paste fails with a clear error message.
 
@@ -318,7 +318,7 @@ AIOS supports using multiple devices as an extended workspace — sharing displa
 
 ### Display Extension
 
-A tablet can serve as a secondary display for a laptop. The compositor on Device A allocates a virtual display output and streams its rendered frames to Device B via the Peer Protocol. Device B's compositor treats the incoming stream as a local display source and renders it to its physical screen.
+A tablet can serve as a secondary display for a laptop. The compositor on Device A allocates a virtual display output and streams its rendered frames to Device B via the ANM Mesh Protocol. Device B's compositor treats the incoming stream as a local display source and renders it to its physical screen.
 
 This operates at the compositor level (see [compositor.md](../compositor.md) §6 for multi-monitor architecture), treating the remote device as another display output with network-imposed latency constraints.
 
@@ -367,7 +367,7 @@ pub enum DisplayEncoding {
 
 ### Input Sharing
 
-A single keyboard and mouse can control multiple devices. When the cursor reaches the edge of Device A's screen in the direction of Device B (as configured), input focus seamlessly transitions to Device B. All keyboard and mouse events are forwarded via the Peer Protocol until the cursor returns.
+A single keyboard and mouse can control multiple devices. When the cursor reaches the edge of Device A's screen in the direction of Device B (as configured), input focus seamlessly transitions to Device B. All keyboard and mouse events are forwarded via the ANM Mesh Protocol until the cursor returns.
 
 ```rust
 /// Configuration for sharing input devices across device boundaries.

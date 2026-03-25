@@ -10,7 +10,7 @@ Part of: [media-pipeline.md](../media-pipeline.md) — Media Pipeline
 
 Streaming connects the media pipeline to network-delivered content. Rather than loading an entire file before playback, streaming protocols allow the pipeline to begin presenting media as data arrives. AIOS supports the full spectrum from simple progressive download through adaptive multi-variant delivery, with a path to unified low-latency transport via Media over QUIC.
 
-All streaming sources are implemented as `NetworkSource` pipeline elements that wrap the NTM connection manager. The pipeline graph ([playback.md](./playback.md) §5.1) treats a `NetworkSource` identically to a `FileSource` — it delivers bytes into the demuxer regardless of whether those bytes came from a local Space object or a remote CDN segment. This abstraction enables playback, recording, and live streaming pipelines to share the same downstream element graph.
+All streaming sources are implemented as `NetworkSource` pipeline elements that wrap the ANM connection manager. The pipeline graph ([playback.md](./playback.md) §5.1) treats a `NetworkSource` identically to a `FileSource` — it delivers bytes into the demuxer regardless of whether those bytes came from a local Space object or a remote CDN segment. This abstraction enables playback, recording, and live streaming pipelines to share the same downstream element graph.
 
 -----
 
@@ -49,7 +49,7 @@ impl MediaSource for NetworkSource {
 }
 ```
 
-**Cross-reference:** [networking.md](../networking.md) §5.2 — HTTP/2 multiplexing enables parallel range requests for fragment-based formats. [networking.md](../networking.md) §3.2 — NTM Connection Manager manages the underlying HTTP/2 connection lifecycle.
+**Cross-reference:** [networking.md](../networking.md) §5.2 — HTTP/2 multiplexing (via Bridge Module) enables parallel range requests for fragment-based formats. [networking.md](../networking.md) §3.2 — ANM Connection Manager manages the underlying connection lifecycle (mesh for AIOS peers, bridge for CDN/internet).
 
 -----
 
@@ -78,7 +78,7 @@ graph TD
 
 **Encryption:** HLS supports two encryption modes:
 
-- `AES-128`: entire segments encrypted with a 16-byte AES key in CBC mode. Key URI fetched via NTM before first encrypted segment. Key rotation: new key URI per segment or per key period.
+- `AES-128`: entire segments encrypted with a 16-byte AES key in CBC mode. Key URI fetched via ANM Bridge before first encrypted segment. Key rotation: new key URI per segment or per key period.
 - `SAMPLE-AES`: individual audio/video samples encrypted within the container. Required for HLS with DRM. Integration with the CDM trait — see [drm.md](./drm.md) §11.5.
 
 **Segment containers:** fMP4 (fragmented MP4, ISO BMFF) is preferred — uses the same demuxer as progressive MP4 with initialization segment parsing. MPEG-TS is supported for legacy compatibility via the TS demuxer (see [codecs.md](./codecs.md) §4.4).
@@ -366,7 +366,7 @@ The EWMA alpha is weighted by segment size: large segment downloads provide more
 
 **GCC (Google Congestion Control):** Combines TWCC delay signals with packet loss signals using a Kalman filter on the one-way delay gradient. Produces a target bitrate that is fed back to the encoder to adjust output rate. Used as the congestion control algorithm for WebRTC sessions.
 
-**NTM bandwidth scheduler integration:** The media pipeline reports its expected bandwidth demand to the NTM bandwidth scheduler ([networking/components.md](../networking/components.md) §3.6). The scheduler allocates bandwidth across competing connections (concurrent media sessions, background downloads). Under contention, the scheduler can reduce the media pipeline's bandwidth allocation, triggering ABR quality reduction.
+**ANM bandwidth scheduler integration:** The media pipeline reports its expected bandwidth demand to the ANM bandwidth scheduler ([networking/components.md](../networking/components.md) §3.6). The scheduler allocates bandwidth across competing connections (concurrent media sessions, background downloads). Under contention, the scheduler can reduce the media pipeline's bandwidth allocation, triggering ABR quality reduction.
 
 -----
 
@@ -382,9 +382,9 @@ Streaming pipelines must degrade gracefully under network degradation rather tha
 
 **Offline mode:** When network is unavailable, the pipeline falls back to pre-downloaded content stored in Space objects. Offline-capable agents download content via `FileSink` elements (see [integration.md](./integration.md) §13.6). During playback, a `FileSource` element reads from the cached content. Version Store snapshots ([storage/spaces/versioning.md](../../storage/spaces/versioning.md) §5.2) enable caching multiple quality levels for offline ABR simulation.
 
-**Prefetch cancellation:** When the agent issues a seek, the pipeline immediately cancels all in-flight segment downloads. This frees the NTM connection bandwidth for the new segment requests at the seek position. Cancelled downloads do not consume connection quota.
+**Prefetch cancellation:** When the agent issues a seek, the pipeline immediately cancels all in-flight segment downloads. This frees the ANM connection bandwidth for the new segment requests at the seek position. Cancelled downloads do not consume connection quota.
 
-**DNS prefetch:** During manifest parsing, the `HlsSource` and `DashSource` elements extract all CDN hostnames from segment URLs and issue DNS pre-resolution requests via NTM. By the time segment fetches begin, DNS results are cached and the first segment request does not incur a DNS round-trip.
+**DNS prefetch:** During manifest parsing, the `HlsSource` and `DashSource` elements extract all CDN hostnames from segment URLs and issue DNS pre-resolution requests via the ANM Bridge. By the time segment fetches begin, DNS results are cached and the first segment request does not incur a DNS round-trip.
 
 **Retry with exponential backoff:** Failed segment downloads are retried with backoff:
 

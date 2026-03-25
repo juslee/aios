@@ -160,7 +160,7 @@ flowchart TD
 
     subgraph DATA["Data Retrieval Channels"]
         SR[("Space reads\nObject store")]
-        NR[("Network receives\nHTTP/WebSocket/Peer")]
+        NR[("Network receives\nMesh/Bridge (HTTP/WS)")]
         TO[("Tool outputs\nSearch/Compute/Convert")]
     end
 
@@ -221,7 +221,7 @@ The table below maps each entry point to the specific defense layers that protec
 |---|---|---|---|---|
 | Conversation bar / API input | DATA label (control/data separation) | InputScreener pattern + ML | Layer 2 caps limit agent actions | §2.1 Direct injection, §2.3 Jailbreak |
 | Space object reads | DATA label at IPC boundary | InputScreener before delivery | Layer 2 SpaceAccess, Layer 4 SecurityZone | §2.2 Indirect injection, §2.4 Injection chain |
-| Network receives (HTTP/WS/Peer) | DATA label; TLS for transport integrity | InputScreener; OutputValidator on outbound | Layer 2 NetworkAccess scope | §2.2 Indirect injection, §2.5 Evasion |
+| Network receives (Mesh/Bridge) | DATA label; Noise IK (mesh) or TLS (bridge) for transport integrity | InputScreener; OutputValidator on outbound | Layer 2 NetworkAccess scope | §2.2 Indirect injection, §2.5 Evasion |
 | Tool outputs | DATA label (tools not privileged channel) | InputScreener (same pipeline as data reads) | Layer 2 per-tool capability | §2.2 Indirect injection, §2.7 Supply chain |
 | Inter-agent IPC (incoming) | Kernel-authenticated sender ID; DATA label | InputScreener on received payload | Layer 2 ChannelAccess; Layer 4 zone check | §2.4 Multi-agent attacks, §2.4 AitM |
 | Resource hints to AIRS | HintScreener capability consistency check | HintScreener anomaly classifier | Hint channel rate limit; no feedback | §2.6 Hint abuse, §2.6 Side channel |

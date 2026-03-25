@@ -9,7 +9,7 @@ Part of: [multi-device.md](../multi-device.md) — Multi-Device & Enterprise Arc
 
 AIOS devices discover each other through three complementary channels, selected based on proximity and network availability.
 
-**mDNS/DNS-SD (LAN discovery):** Devices on the same local network advertise presence via `_aios._tcp.local` service records. The Space Resolver (see [networking/components.md](../networking/components.md) §3.1) handles resolution. Each announcement includes the device's Ed25519 public key fingerprint, display name, and supported pairing methods.
+**Link-local multicast (ANM peer discovery):** Devices on the same local network advertise presence via ANM discovery packets (link-local multicast). The Mesh Manager (see [networking/components.md](../networking/components.md) §3.0) handles resolution. Each announcement includes the device's Ed25519 public key fingerprint, display name, and supported pairing methods.
 
 **BLE Advertisement (proximity discovery):** For devices not on the same network, BLE beacons carry a compressed DeviceAnnouncement. Range-limited to ~10 meters, providing implicit physical proximity verification. BLE discovery triggers automatically when a user opens the pairing UI.
 
@@ -17,7 +17,7 @@ AIOS devices discover each other through three complementary channels, selected 
 
 ```rust
 /// Signed device discovery announcement.
-/// Broadcast via mDNS, BLE, or encoded in QR.
+/// Broadcast via ANM discovery (link-local multicast), BLE, or encoded in QR.
 pub struct DeviceAnnouncement {
     /// Ed25519 public key of the announcing device.
     pub device_key: [u8; 32],
@@ -35,7 +35,7 @@ pub struct DeviceAnnouncement {
 
 bitflags! {
     pub struct PairingMethods: u8 {
-        const MDNS      = 0b0001;
+        const ANM_DISCOVERY = 0b0001;
         const BLE       = 0b0010;
         const QR        = 0b0100;
         const MDM       = 0b1000;
@@ -52,8 +52,8 @@ sequenceDiagram
     participant B as Device B
 
     rect rgb(240, 253, 244)
-        Note over A,B: Path 1 — mDNS (LAN)
-        A->>N: _aios._tcp.local (DeviceAnnouncement)
+        Note over A,B: Path 1 — ANM Discovery (LAN)
+        A->>N: ANM discovery multicast (DeviceAnnouncement)
         N->>B: Service discovered
     end
 
@@ -80,7 +80,7 @@ Personal pairing establishes peer-to-peer trust between two devices owned by the
 
 **Protocol: SPAKE2+ Key Agreement with SAS Verification**
 
-The pairing ceremony uses SPAKE2+ (RFC 9383) for password-authenticated key exchange, where the "password" is either the QR-encoded token or a user-entered PIN. This prevents MITM attacks even over unauthenticated channels (BLE, mDNS).
+The pairing ceremony uses SPAKE2+ (RFC 9383) for password-authenticated key exchange, where the "password" is either the QR-encoded token or a user-entered PIN. This prevents MITM attacks even over unauthenticated channels (BLE, ANM discovery).
 
 ```mermaid
 sequenceDiagram
@@ -110,7 +110,7 @@ sequenceDiagram
 
 **SAS (Short Authentication String):** Both devices independently compute a 6-digit code from the shared secret. The user visually confirms the codes match on both screens. This human verification step ensures no MITM has intercepted the key exchange. If codes don't match, pairing is aborted and both devices discard the session.
 
-**Certificate exchange:** After SAS verification, each device issues a DeviceCertificate to the other, signed by its primary identity key. These certificates are stored in the device's identity keyring and authorize future Space Sync and Peer Protocol connections without repeating the pairing ceremony.
+**Certificate exchange:** After SAS verification, each device issues a DeviceCertificate to the other, signed by its primary identity key. These certificates are stored in the device's identity keyring and authorize future Space Sync and ANM Mesh Protocol connections without repeating the pairing ceremony. The pairing ceremony establishes the Noise IK static keys used for all subsequent mesh communication between the devices.
 
 ```rust
 /// Certificate issued during pairing, authorizing a remote device.
@@ -277,9 +277,9 @@ When a device is lost, stolen, or decommissioned, its trust must be revoked acro
 **User-initiated revocation (personal mode):** The user triggers revocation from any remaining trusted device. This extends [identity.md](../../experience/identity.md) §8.2 (revoke_device):
 
 1. The revoking device generates a `RevocationCertificate` signed by the user's primary key
-2. The certificate is propagated to all devices in the Space Mesh via the Peer Protocol
+2. The certificate is propagated to all devices in the Space Mesh via the ANM Mesh Protocol
 3. Each device removes the revoked device's `DeviceCertificate` from its keyring
-4. All active Peer Protocol sessions with the revoked device are terminated
+4. All active ANM mesh sessions with the revoked device are terminated
 5. Space Sync stops pushing data to the revoked device
 6. If the revoked device comes online later, it is rejected by all peers
 

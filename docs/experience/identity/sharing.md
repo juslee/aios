@@ -83,7 +83,7 @@ impl IdentityService {
             &config,
         );
 
-        // 6. If peer is online, notify them via AIOS Peer Protocol
+        // 6. If peer is online, notify them via ANM Mesh Protocol
         if let Some(peer) = self.network.find_peer(with) {
             peer.send(PeerMessage::SpaceShared {
                 space_id: space_id.clone(),

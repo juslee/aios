@@ -166,7 +166,7 @@ Automatic user and device lifecycle management via SCIM 2.0 (System for Cross-do
 
 1. Organization admin removes the user from the directory (or sets `active: false`).
 2. A SCIM `DELETE /Users/{id}` (or `PATCH` with `active: false`) event reaches Fleet Management.
-3. All devices enrolled under this user receive a deprovisioning command via the AIOS Peer Protocol (see [networking/protocols.md](../networking/protocols.md) §5.1).
+3. All devices enrolled under this user receive a deprovisioning command via the ANM Mesh Protocol (see [networking/protocols.md](../networking/protocols.md) §5.1).
 4. On each device, organization-scoped spaces are wiped via crypto-erasure — the encryption zone key is destroyed, rendering the data unrecoverable (see [encryption.md](../../storage/spaces/encryption.md) §6 for encryption zones).
 5. MDM capabilities for this user's sessions are cascade-revoked (see [capabilities.md](../../security/model/capabilities.md) §3.5 for cascade revocation).
 6. Personal data on BYOD devices is preserved. The MDM agent's capability scope is limited to organizational spaces; personal spaces are invisible to it.

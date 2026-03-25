@@ -19,7 +19,7 @@ This architecture supports two modes that share common primitives:
 
 - **Organizational multi-device** — MDM-driven enrollment with centralized policy. Devices present hardware attestation to an enrollment server and receive a scoped capability set. The organization defines policies declaratively; devices enforce them autonomously (self-healing, works offline). Users can inspect exactly what the MDM agent can and cannot do through Inspector.
 
-Both modes build on the same foundation: Ed25519 device identity, capability-gated resource access, Space Sync for data, Flow for cross-device content transfer, and NTM for networking.
+Both modes build on the same foundation: Ed25519 device identity, capability-gated resource access, Space Sync for data, Flow for cross-device content transfer, and the ANM mesh for networking.
 
 ```mermaid
 flowchart TB
@@ -44,7 +44,7 @@ flowchart TB
     subgraph shared["Shared Infrastructure"]
         SS[Space Sync<br/>Merkle Exchange]
         FL[Flow<br/>Cross-device Content]
-        NT[NTM<br/>Peer Protocol]
+        NT[ANM Mesh<br/>Mesh Protocol]
         AI[AIRS<br/>Intelligence Continuity]
     end
 
@@ -131,7 +131,7 @@ flowchart TB
 
 5. **Cryptographic trust chain** — Every management operation traces to a cryptographic root: device identity (Ed25519), organization certificate chain, signed policy bundles, attested boot measurements. No management action relies on network-layer trust alone.
 
-6. **Unified primitives** — Personal and organizational modes share the same building blocks: Ed25519 identity, capability tokens, Space Sync, Flow, NTM. This means one codebase, one security model, one audit system — not two parallel management stacks.
+6. **Unified primitives** — Personal and organizational modes share the same building blocks: Ed25519 identity, capability tokens, Space Sync, Flow, ANM mesh. This means one codebase, one security model, one audit system — not two parallel management stacks.
 
 7. **AI-augmented operations** — Fleet anomaly detection, self-healing remediation, content classification, and policy generation leverage AIRS intelligence. Kernel-internal ML provides lightweight inference (sync optimization, anomaly scoring) that works without AIRS dependency.
 
@@ -149,8 +149,8 @@ Phase 38 spans milestones M79–M81:
 
 **Prerequisites:**
 
-- Phase 8 (Networking) — TCP/IP stack for device communication
-- Phase 24 (Full NTM) — Space Resolver, Shadow Engine, Peer Protocol
+- Phase 8 (Networking) — ANM mesh stack for device communication (TCP/IP via Bridge Module for legacy)
+- Phase 24 (Full NTM) — Space Resolver, Shadow Engine, ANM Mesh Protocol
 - Phase 35 (Secure Boot & Update System) — Measured boot chain for attestation
 - Phase 36 (Linux Binary & Wayland Compatibility) — Broad app support for enterprise adoption
 

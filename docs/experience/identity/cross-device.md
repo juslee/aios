@@ -1,9 +1,9 @@
-# AIOS Cross-Device Identity & Peer Protocol
+# AIOS Cross-Device Identity & ANM Mesh Protocol
 
 Part of: [identity.md](../identity.md) — Identity & Relationships
 **Related:** [core.md](./core.md) — Key management & device keys, [sharing.md](./sharing.md) — Space sharing, [relationships.md](./relationships.md) — Trust-based capability exchange
 
-**Cross-references:** [multi-device/pairing.md](../../platform/multi-device/pairing.md) — Device pairing & SPAKE2+, [networking/protocols.md](../../platform/networking/protocols.md) — AIOS Peer Protocol
+**Cross-references:** [multi-device/pairing.md](../../platform/multi-device/pairing.md) — Device pairing & SPAKE2+, [networking/protocols.md](../../platform/networking/protocols.md) — ANM Mesh Protocol
 
 -----
 
@@ -135,7 +135,7 @@ pub enum SyncDirection {
 
 -----
 
-## 9. AIOS Peer Protocol Identity
+## 9. ANM Mesh Protocol Identity
 
 ### 9.1 Peer Authentication
 

@@ -142,7 +142,7 @@ Phase 31:  Browser Flow integration
              Cross-tab Flow (tab agents share clipboard through Flow)
 
 Phase 38:  Multi-device sync
-             Cross-device transfer via AIOS Peer Protocol
+             Cross-device transfer via ANM Mesh Protocol
              History merge (CRDT-style, grow-only set)
              Conflict resolution (latest-write-wins for active transfers)
              Encrypted transit (identity keys)

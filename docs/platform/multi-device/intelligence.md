@@ -172,7 +172,7 @@ A Graph Neural Network operates on the fleet device graph to detect coordinated 
 **Graph construction:**
 
 - **Nodes:** Each enrolled device is a node with feature vector: [device_class, os_version, compliance_score, anomaly_count, network_zone, time_since_last_check_in]
-- **Edges:** Devices that communicate (Space Sync, Flow transfer, Peer Protocol) have edges weighted by communication frequency
+- **Edges:** Devices that communicate (Space Sync, Flow transfer, ANM Mesh Protocol) have edges weighted by communication frequency
 
 **Detection targets:**
 
@@ -550,7 +550,7 @@ Output: PolicyDocument {
 
 ### §15.1 Mesh Intelligence
 
-Distributed inference across the device mesh: split model layers across devices for collaborative inference when no single device has enough RAM for the full model. Device A runs layers 1-12, Device B runs layers 13-24, connected by the Peer Protocol (see [networking/protocols.md](../networking/protocols.md) §5.1) with less than 10ms latency on LAN. This enables running large language models across a personal device fleet without cloud dependency.
+Distributed inference across the device mesh: split model layers across devices for collaborative inference when no single device has enough RAM for the full model. Device A runs layers 1-12, Device B runs layers 13-24, connected by the ANM Mesh Protocol (see [networking/protocols.md](../networking/protocols.md) §5.1) with less than 10ms latency on LAN. This enables running large language models across a personal device fleet without cloud dependency.
 
 ### §15.2 Zero-Touch Provisioning
 

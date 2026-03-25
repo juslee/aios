@@ -139,20 +139,21 @@ pub trait WebContentProcess {
 
 **Purpose:** Translates browser network requests (HTTP fetches, WebSocket upgrades, Server-Sent Events) into Network Kit operations. The bridge enforces origin-scoped capabilities and applies web security policies (CORS, CORB) at the OS level rather than inside the browser engine.
 
-**Kit dependency:** Network Kit — ConnectionManager for connection lifecycle, CapabilityGate for origin enforcement ([networking components](../../platform/networking/components.md) sections 3.2, 3.5).
+**Kit dependency:** Network Kit Bridge Module — ConnectionManager for connection lifecycle, CapabilityGate for origin enforcement ([networking components](../../platform/networking/components.md) sections 3.2, 3.5). Web content uses the Bridge Layer (HTTP/TLS over TCP/IP), not the native ANM mesh. AIOS-native browser extensions (e.g., `aios.space()`) may use the mesh for peer communication.
 
 ```rust
 /// Translates browser network requests to Network Kit.
 ///
 /// All network I/O from web content passes through this bridge.
 /// The browser engine never opens raw sockets or performs DNS resolution;
-/// the Network Kit handles all transport concerns. The bridge's role is
-/// to map web-level concepts (origins, CORS, CORB) to OS-level concepts
-/// (capabilities, connection pools, audit events).
+/// the Network Kit's Bridge Module handles all transport concerns (TCP/IP,
+/// TLS, DNS). The bridge's role is to map web-level concepts (origins,
+/// CORS, CORB) to OS-level concepts (capabilities, connection pools,
+/// audit events).
 pub trait NetworkBridge {
     /// Create a network connection scoped to an origin.
     ///
-    /// The Network Kit manages the actual TCP/TLS/QUIC connection.
+    /// The Network Kit's Bridge Module manages the actual TCP/TLS/QUIC connection.
     /// The bridge validates that the target URL falls within the Tab
     /// Agent's network capabilities before forwarding the request.
     fn create_connection(&mut self, request: HttpRequest) -> Result<ConnectionHandle, NetworkError>;
@@ -453,7 +454,7 @@ sequenceDiagram
     Shim-->>JS: Response object
 ```
 
-At no point does the browser engine perform DNS resolution, open a socket, or negotiate TLS. The Network Kit owns transport; the browser owns semantics. A renderer exploit that achieves arbitrary code execution inside the Tab Agent still cannot bypass capability checks because the IPC channel to the Network Kit validates capabilities on every request.
+At no point does the browser engine perform DNS resolution, open a socket, or negotiate TLS. The Network Kit's Bridge Module owns transport (TCP/IP, TLS); the browser owns semantics. A renderer exploit that achieves arbitrary code execution inside the Tab Agent still cannot bypass capability checks because the IPC channel to the Network Kit validates capabilities on every request.
 
 -----
 

@@ -37,7 +37,7 @@ mediating capability delegation on the user's behalf.
 
 - **Compute Kit (Tier 1)** — display surfaces and canvas presentation; compositor service — surface lifecycle, shared buffers, fences, damage reporting
 - **Compute Kit (Tier 2)** — GPU command submission for WebGPU and canvas rendering
-- **Network Kit** — all browser network I/O runs through capability-gated AIOS network stack
+- **Network Kit** — all browser network I/O runs through the ANM Bridge Module (capability-gated TCP/IP for web content)
 - **Media Kit** — codec selection, DRM, and session management for web media
 - **Input Kit** — keyboard, pointer, touch, and gamepad event delivery
 - **Storage Kit** — origin-partitioned persistent storage mapped to Spaces

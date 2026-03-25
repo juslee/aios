@@ -3,7 +3,7 @@
 ## Deep Technical Architecture
 
 **Parent document:** [architecture.md](../project/architecture.md)
-**Related:** [model.md](../security/model.md) — Capability system and trust boundaries, [spaces.md](../storage/spaces.md) — Space sharing and provenance, [networking.md](../platform/networking.md) — Peer protocol and credential isolation, [agents.md](../applications/agents.md) — Agent identity and delegation, [airs.md](../intelligence/airs.md) — Relationship-aware AI behavior, [decentralisation.md](../security/decentralisation.md) — DID/VC integration (Pillar 1)
+**Related:** [model.md](../security/model.md) — Capability system and trust boundaries, [spaces.md](../storage/spaces.md) — Space sharing and provenance, [networking.md](../platform/networking.md) — ANM Mesh Protocol and credential isolation, [agents.md](../applications/agents.md) — Agent identity and delegation, [airs.md](../intelligence/airs.md) — Relationship-aware AI behavior, [decentralisation.md](../security/decentralisation.md) — DID/VC integration (Pillar 1)
 
 -----
 
@@ -79,7 +79,7 @@ flowchart TD
     IS --> STO["`Space Storage
 (shared spaces, provenance signing)`"]
     IS --> NS["`Network Service
-(peer protocol, DIDComm v2)`"]
+(ANM Mesh Protocol, DIDComm v2)`"]
     IS --> AIRS["`AIRS
 (behavioral biometrics, trust inference,
 collusion detection)`"]
@@ -126,7 +126,7 @@ Phase 17e:  Credential rotation                → auto-rotate OAuth, expiry war
 
 Phase 23a:  Cross-device identity              → device addition, revocation (SLIP-0010 HD)
 Phase 23b:  Space Mesh sync                    → space sync across devices
-Phase 23c:  Peer Protocol authentication       → mutual device authentication (DIDComm v2)
+Phase 23c:  ANM Mesh Protocol authentication    → Noise IK device authentication (DIDComm v2)
 Phase 23d:  Tier 2 recovery                    → Feldman VSS device-to-device key recovery
 
 Phase 26a:  Mutual introduction                → relationship via intermediary

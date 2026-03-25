@@ -195,7 +195,7 @@ Privacy features are distributed across multiple phases, following the subsystem
 | Phase 3 | Capability-gated access control | Phase 2 (memory) | Agents cannot access resources without tokens |
 | Phase 6 | Framebuffer privacy indicators | Phase 4 (storage) | Privacy dot rendered in framebuffer |
 | Phase 7 | Compositor indicator bar | Phase 6 (GPU) | Non-obscurable privacy indicator overlay |
-| Phase 9 | Network taint enforcement | Phase 8 (networking) | Tainted IPC blocked at NTM egress |
+| Phase 9 | Network taint enforcement | Phase 8 (networking) | Tainted IPC blocked at NTM egress (mesh and bridge) |
 | Phase 13 | Conversational consent UI | Phase 12 (preferences) | User prompted for sensor consent |
 | Phase 14 | Privacy manifests + budgets | Phase 13 (agents) | Agent install shows privacy declaration |
 | Phase 15 | AIRS privacy intelligence | Phase 14 (AIRS) | Contextual budget adaptation |
