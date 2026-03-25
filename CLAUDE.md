@@ -108,7 +108,6 @@ Kernel load:    0x4008_0000 physical (Phase 0–1, identity map); VMA 0xFFFF_000
 | GPU rendering | `docs/platform/gpu/rendering.md` | §9 wgpu integration, §10 Rendering pipeline, §11 Font rendering, §12 GPU memory management |
 | GPU security | `docs/platform/gpu/security.md` | §13 Capability-gated GPU access, §14 DMA protection, §15 GPU isolation |
 | GPU integration | `docs/platform/gpu/integration.md` | §16 POSIX compatibility, §17 AI-native display, §18 Future directions |
-| Networking | `docs/platform/networking.md` | All (Phase 9+) |
 | Audio subsystem (hub) | `docs/platform/audio.md` | §1 Overview, §14 Impl Order, §15 Design Principles, §16 Future Directions, §17 AI-Native Audio, Document Map |
 | Audio subsystem & sessions | `docs/platform/audio/subsystem.md` | §2 Architecture, §3.1–§3.4 Sessions/capabilities/routing/conflict + AIRS integration hooks |
 | Audio mixing & capture | `docs/platform/audio/mixing.md` | §4.1–§4.6 Mixer/SRC/capture pipeline/DSP filter graph, §10.1–§10.2 Format types/negotiation |
