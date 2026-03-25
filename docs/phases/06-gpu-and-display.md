@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 6 weeks
 **Deliverable:** VirtIO-GPU 2D kernel driver, custom GPU Service (kernel-side IPC service with capability-gated buffer management), Compute Kit Tier 1 (`GpuSurface` trait), bitmap font text rendering on GPU framebuffer
-**Status:** M19 Complete, M20–M22 Planned
+**Status:** M19–M20 Complete, M21–M22 Planned
 **Prerequisites:** Phase 5 (Kit Foundation)
 **Unlocks:** Phase 7 (Window Compositor & Shell), Phase 23 (Kernel Compute Abstraction)
 
@@ -175,10 +175,10 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Extend the `Capability` enum with GPU-specific variants for capability-gated access to GPU resources.
 
 **Tasks:**
-- [ ] Add to `Capability` enum in `shared/src/cap.rs`: `GpuMmioAccess` (access GPU MMIO region), `GpuBufferCreate` (allocate GPU buffers), `GpuBufferAccess(u32)` (access specific buffer by resource ID), `DisplayControl` (configure display scanout)
-- [ ] Update `permits()` match arms for the new variants (exact match for simple, resource ID match for parameterized)
-- [ ] Update `can_attenuate_to()`: `GpuBufferCreate` can attenuate to `GpuBufferAccess(id)`
-- [ ] Write host-side tests for new capability variants: permits, denies cross-variant, attenuation rules
+- [x] Add to `Capability` enum in `shared/src/cap.rs`: `GpuMmioAccess` (access GPU MMIO region), `GpuBufferCreate` (allocate GPU buffers), `GpuBufferAccess(u32)` (access specific buffer by resource ID), `DisplayControl` (configure display scanout)
+- [x] Update `permits()` match arms for the new variants (exact match for simple, resource ID match for parameterized)
+- [x] Update `can_attenuate_to()`: `GpuBufferCreate` can attenuate to `GpuBufferAccess(id)`
+- [x] Write host-side tests for new capability variants: permits, denies cross-variant, attenuation rules
 
 **Key reference:** [security/model/capabilities.md](../security/model/capabilities.md) §3.1–3.5; existing `permits()` and `can_attenuate_to()` patterns in `shared/src/cap.rs`
 
@@ -191,10 +191,10 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Define the GPU Service IPC command/response types in the shared crate. These are the message formats exchanged over IPC channels.
 
 **Tasks:**
-- [ ] Add `GpuCommand` enum to `shared/src/gpu.rs`: `GetDisplayInfo = 1`, `AllocateBuffer = 2`, `ReleaseBuffer = 3`, `Present = 4`, `GetBufferInfo = 5`
-- [ ] Define `GpuRequest` struct (fits in `RawMessage.data[256]`): `command: GpuCommand`, followed by command-specific fields (width/height/format for AllocateBuffer, resource_id for ReleaseBuffer/Present/GetBufferInfo, damage rect for Present)
-- [ ] Define `GpuResponse` struct: `status: GpuError` (or success), followed by response-specific fields (DisplayInfo for GetDisplayInfo, resource_id for AllocateBuffer, buffer info for GetBufferInfo)
-- [ ] Write host-side tests: command/response struct sizes fit within `MAX_MESSAGE_SIZE` (256 bytes), round-trip serialization
+- [x] Add `GpuCommand` enum to `shared/src/gpu.rs`: `GetDisplayInfo = 1`, `AllocateBuffer = 2`, `ReleaseBuffer = 3`, `Present = 4`, `GetBufferInfo = 5`
+- [x] Define `GpuRequest` struct (fits in `RawMessage.data[256]`): `command: GpuCommand`, followed by command-specific fields (width/height/format for AllocateBuffer, resource_id for ReleaseBuffer/Present/GetBufferInfo, damage rect for Present)
+- [x] Define `GpuResponse` struct: `status: GpuError` (or success), followed by response-specific fields (DisplayInfo for GetDisplayInfo, resource_id for AllocateBuffer, buffer info for GetBufferInfo)
+- [x] Write host-side tests: command/response struct sizes fit within `MAX_MESSAGE_SIZE` (256 bytes), round-trip serialization
 
 **Key reference:** IPC message format in `shared/src/ipc.rs` (`RawMessage`, `MAX_MESSAGE_SIZE = 256`)
 
@@ -207,15 +207,15 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Create the GPU Service as a kernel thread that registers an IPC channel and processes GPU commands. Follows the echo service pattern from `kernel/src/service/mod.rs`.
 
 **Tasks:**
-- [ ] Create `kernel/src/gpu/mod.rs` with `pub mod service;`
-- [ ] Create `kernel/src/gpu/service.rs` with `gpu_service_loop()` entry function
-- [ ] In `gpu_service_loop()`: create IPC channel, register as "gpu-service" via `service_register()`, loop on `ipc_recv()`, decode `GpuCommand` from message data, dispatch to handler, `ipc_reply()` with response
+- [x] Create `kernel/src/gpu/mod.rs` with `pub mod service;`
+- [x] Create `kernel/src/gpu/service.rs` with `gpu_service_loop()` entry function
+- [x] In `gpu_service_loop()`: create IPC channel, register as "gpu-service" via `service_register()`, loop on `ipc_recv()`, decode `GpuCommand` from message data, dispatch to handler, `ipc_reply()` with response
 - [x] Implement `handle_get_display_info()`: reads display info from VirtIO-GPU driver, packs into response
 - [x] Implement `handle_allocate_buffer()`: allocates a new VirtIO-GPU framebuffer (via the driver), enforces `GpuBufferCreate` capability check, returns resource_id
 - [x] Implement `handle_release_buffer()`: detaches backing, unrefs resource, frees DMA pages
 - [x] Implement `handle_present()`: calls `transfer_to_host_2d` + `resource_flush` for the specified damage region
 - [x] Implement `handle_get_buffer_info()`: returns DMA virtual address, width, height, stride for a resource
-- [ ] Spawn the GPU Service thread in `kernel_main` after VirtIO-GPU init succeeds, with `SchedulerClass::Interactive` priority
+- [x] Spawn the GPU Service thread in `kernel_main` after VirtIO-GPU init succeeds, with `SchedulerClass::Interactive` priority
 
 **Note:** The GPU Service thread runs in kernel space (EL1) for Phase 6. When userspace process execution is available, this service will be extracted to an EL0 privileged process. The IPC protocol remains identical.
 
@@ -230,12 +230,12 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Extend the GPU Service to manage two framebuffers (front and back) and implement page-flip by alternating which resource is bound to the scanout.
 
 **Tasks:**
-- [ ] Allocate two VirtIO-GPU resources at GPU Service init (resource IDs 1 and 2)
-- [ ] Track `front_buffer` and `back_buffer` as `GpuBufferHandle` in the service state
+- [x] Allocate two VirtIO-GPU resources at GPU Service init (resource IDs 1 and 2)
+- [x] Track `front_buffer` and `back_buffer` as `GpuBufferHandle` in the service state
 - [x] Implement `swap_buffers()`: swaps front/back handles, calls `set_scanout()` to bind new front, `transfer_to_host_2d()` + `resource_flush()` for new front
-- [ ] Add `SwapBuffers = 6` to `GpuCommand` enum for IPC-triggered swap
+- [x] Add `SwapBuffers = 6` to `GpuCommand` enum for IPC-triggered swap
 - [x] Implement `FenceTracker` struct: `next_id: u64`, `last_completed: u64` with `allocate()`, `complete()`, `is_complete()` methods
-- [ ] Use fenced commands on `resource_flush` to track when it is safe to render into the freed buffer
+- [x] Use fenced commands on `resource_flush` to track when it is safe to render into the freed buffer
 
 **Key reference:** [gpu/display.md](../platform/gpu/display.md) §7.2 (double buffering), §7.3 (page flip); [gpu/drivers.md](../platform/gpu/drivers.md) §3.4 (fences)
 
@@ -248,11 +248,11 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** When VirtIO-GPU is available, transition display output from the GOP framebuffer to VirtIO-GPU. When VirtIO-GPU is not available, GOP framebuffer remains active as fallback.
 
 **Tasks:**
-- [ ] Modify `kernel_main` GPU init section: after `virtio_gpu::init()` succeeds and GPU Service thread starts, render AIOS test pattern (#5B8CFF) to VirtIO-GPU back buffer via the GPU Service, call swap
-- [ ] When VirtIO-GPU is not present (`just run` without `-device virtio-gpu-device`), skip GPU init, log fallback to GOP
-- [ ] Add boot phase `EarlyBootPhase::GpuReady` variant before `Complete` (keeping `Complete` as the last variant and updating phase-count constants/tests as needed)
-- [ ] Advance boot phase to `GpuReady` after successful VirtIO-GPU init + GPU Service start
-- [ ] `framebuffer.rs` is NOT modified — it remains as the GOP fallback path
+- [x] Modify `kernel_main` GPU init section: after `virtio_gpu::init()` succeeds and GPU Service thread starts, render AIOS test pattern (#5B8CFF) to VirtIO-GPU back buffer via the GPU Service, call swap
+- [x] When VirtIO-GPU is not present (`just run` without `-device virtio-gpu-device`), skip GPU init, log fallback to GOP
+- [x] Add boot phase `EarlyBootPhase::GpuReady` variant before `Complete` (keeping `Complete` as the last variant and updating phase-count constants/tests as needed)
+- [x] Advance boot phase to `GpuReady` after successful VirtIO-GPU init + GPU Service start
+- [x] `framebuffer.rs` is NOT modified — it remains as the GOP fallback path
 
 **Key reference:** `kernel/src/framebuffer.rs` (GOP framebuffer); `kernel/src/main.rs` (boot sequence)
 
@@ -265,11 +265,11 @@ Milestones are numbered continuously across all phases. Phase 5 used M16–M18; 
 **What:** Move pure data structures to shared crate, add host-side tests, update documentation.
 
 **Tasks:**
-- [ ] Verify all GPU types with no hardware deps are in `shared/src/gpu.rs`
-- [ ] Write additional host-side tests for `FenceTracker`, `GpuCommand` dispatch logic, `GpuBufferHandle` field access
-- [ ] Update `CLAUDE.md`: Workspace Layout (new files), Key Technical Facts (VirtIO-GPU constants, display dimensions, device ID 16, spleen-font)
-- [ ] Update `README.md`: Project Structure, Build Commands (new `run-gpu` recipe)
-- [ ] Update phase doc: check off M19 and M20 steps
+- [x] Verify all GPU types with no hardware deps are in `shared/src/gpu.rs`
+- [x] Write additional host-side tests for `FenceTracker`, `GpuCommand` dispatch logic, `GpuBufferHandle` field access
+- [x] Update `CLAUDE.md`: Workspace Layout (new files), Key Technical Facts (VirtIO-GPU constants, display dimensions, device ID 16, spleen-font)
+- [x] Update `README.md`: Project Structure, Build Commands (new `run-gpu` recipe)
+- [x] Update phase doc: check off M19 and M20 steps
 
 **Acceptance:** `just check` + `just test` pass. Documentation is accurate.
 

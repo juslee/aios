@@ -464,7 +464,7 @@ TraceRing size:               4096 entries per core (128 KiB)
 Timer PPI INTID:              30 (EL1 physical timer on QEMU)
 MAX_THREADS:                  64 system-wide
 MAX_PROCESSES:                32 system-wide
-EarlyBootPhase count:         18 variants (EntryPoint=0 through Complete=17)
+EarlyBootPhase count:         19 variants (EntryPoint=0 through Complete=18; GpuReady=17 added in M20)
 Scheduler classes:            RT (4ms), Interactive (10ms), Normal (50ms), Idle (50ms) — FIFO per class
 Per-CPU run queues:           RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES], lock order = ascending CPU ID
 Idle threads:                 One per CPU (class=Idle), created in sched::init(), ensures pick_next() never returns None
@@ -479,7 +479,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M19):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > {VIRTIO_BLK, VIRTIO_GPU}
+Lock ordering (full M20):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > {VIRTIO_BLK, VIRTIO_GPU}
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
@@ -490,7 +490,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      405 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Shared crate unit tests:      431 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
 Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError)
 Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
 Kit trait dyn-compat:         All 12 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps) are dyn-compatible
@@ -537,6 +537,14 @@ VirtIO-GPU default res (QEMU): 1280x800 B8G8R8A8 (scanout 0)
 VirtIO-GPU cmd DMA page:      4K split: cmd at offset 0, response at offset 2048
 VirtIO-GPU framebuffer DMA:   Contiguous alloc from Pool::Dma, single VirtioGpuMemEntry; max 4MB (order-10)
 AIOS blue color:              #5B8CFF = B8G8R8A8 u32 0xFF5B8CFF
+GPU Service process:          ProcessId(9) "gpu-svc", ThreadId(0x900) label, SchedulerClass::Interactive
+GPU Service IPC channel:      dynamically allocated via channel_create_unchecked, registered as "gpu-service"
+GpuCommand enum:              6 variants (GetDisplayInfo=1..SwapBuffers=6), GpuRequest/GpuResponse repr(C) <=256B
+GpuCapability variants:       GpuMmioAccess, GpuBufferCreate, GpuBufferAccess(u32), DisplayControl
+FenceTracker:                 shared/src/gpu.rs, monotonic fence_id allocation + completion tracking
+MAX_GPU_BUFFERS:              8 per GPU Service instance
+GPU double buffering:         front/back GpuBufferHandle, swap_buffers() rebinds scanout
+GPU transition (boot):        Direct driver calls (pre-scheduler); releases M19 test frame, allocates double buffers
 Slab direct-map fix:          convert_to_direct_map() patches physical→virtual addresses after TTBR1 enabled
 ```
 
@@ -573,7 +581,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 6 M19 — VirtIO-GPU 2D Driver):
+Current (post-Phase 6 M20 — Custom GPU Service):
 
 ```
 aios/
@@ -633,7 +641,10 @@ aios/
 │       │   ├── mod.rs    Driver module re-exports
 │       │   ├── virtio_common.rs Shared VirtIO MMIO helpers: mmio_read32/write32, virtqueue layout, constants
 │       │   ├── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
-│       │   └── virtio_gpu.rs VirtIO-GPU 2D driver: probe, init, resource/scanout/transfer/flush, display_test_frame
+│       │   └── virtio_gpu.rs VirtIO-GPU 2D driver: probe, init, resource/scanout/transfer/flush, display_test_frame, public GPU Service wrappers
+│       ├── gpu/
+│       │   ├── mod.rs    GPU subsystem module
+│       │   └── service.rs GPU Service: IPC service, capability-gated buffer management, double-buffered display, FenceTracker
 │       ├── storage/
 │       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
 │       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable

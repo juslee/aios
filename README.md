@@ -110,6 +110,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just build-stub` | Compile the UEFI stub for `aarch64-unknown-uefi` |
 | `just disk` | Build kernel + stub and create ESP disk image (requires mtools) |
 | `just run` | Boot via edk2 firmware with UEFI stub |
+| `just run-gpu` | Boot with VirtIO-GPU device (GPU display verification) |
 | `just run-display` | Boot with QEMU display window (for framebuffer visual verification) |
 | `just run-direct` | Boot kernel directly via QEMU `-kernel` (Phase 0 mode) |
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
