@@ -49,6 +49,8 @@ struct VirtioGpu {
     next_resource_id: u32,
     /// Display information from GET_DISPLAY_INFO.
     display: DisplayInfo,
+    /// Boot test frame handle (retained to prevent DMA leak).
+    test_frame: Option<GpuBufferHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -107,26 +109,29 @@ pub fn display_test_frame() -> Result<(), GpuError> {
     let handle = gpu.allocate_framebuffer(width, height)?;
 
     // Fill framebuffer with AIOS blue.
-    // SAFETY: fb_virt points to zeroed DMA pages allocated by alloc_dma_pages.
-    // allocate_framebuffer ensures page_count covers width*height*4 bytes.
-    // Writing beyond the allocation would corrupt adjacent DMA memory.
+    // SAFETY: fb_virt points to DMA pages from allocate_framebuffer.
+    // page_count covers width*height*4 bytes. We create a slice of exactly
+    // pixel_count u32 elements. Writing beyond would corrupt adjacent DMA memory.
     unsafe {
         let fb = handle.fb_virt as *mut u32;
         let pixel_count = (width * height) as usize;
-        for i in 0..pixel_count {
-            core::ptr::write_volatile(fb.add(i), AIOS_BLUE_B8G8R8A8);
-        }
+        let fb_slice = core::slice::from_raw_parts_mut(fb, pixel_count);
+        fb_slice.fill(AIOS_BLUE_B8G8R8A8);
     }
 
     // Set scanout, transfer to host, flush.
+    let scanout_id = gpu.display.scanout_id;
     let rect = VirtioGpuRect {
         x: 0,
         y: 0,
         width,
         height,
     };
-    gpu.set_scanout(0, handle.resource_id, &rect)?;
+    gpu.set_scanout(scanout_id, handle.resource_id, &rect)?;
     gpu.present_frame(&handle)?;
+
+    // Retain the handle to prevent DMA resource leak.
+    gpu.test_frame = Some(handle);
 
     crate::kinfo!(
         Gpu,
@@ -289,6 +294,7 @@ fn init_device(base: usize) -> Result<VirtioGpu, GpuError> {
             queue_size,
             next_resource_id: 1,
             display: DisplayInfo::default(),
+            test_frame: None,
         };
 
         // Query display info.
@@ -550,8 +556,9 @@ impl VirtioGpu {
         // We use read_unaligned to avoid alignment assumptions on the byte array.
         // The struct is repr(C) with defined layout. Misinterpreting the bytes
         // would produce garbage display dimensions but not memory unsafety.
-        let resp =
-            unsafe { core::ptr::read_unaligned(resp_bytes.as_ptr() as *const VirtioGpuRespDisplayInfo) };
+        let resp = unsafe {
+            core::ptr::read_unaligned(resp_bytes.as_ptr() as *const VirtioGpuRespDisplayInfo)
+        };
 
         for (i, pmode) in resp.pmodes.iter().enumerate() {
             if pmode.enabled != 0 && pmode.r.width > 0 && pmode.r.height > 0 {
@@ -641,7 +648,7 @@ impl VirtioGpu {
 
         let total_pages: u32 = entries
             .iter()
-            .map(|e| e.length / VIRT_PAGE_SIZE as u32)
+            .map(|e| e.length.div_ceil(VIRT_PAGE_SIZE as u32))
             .sum();
         crate::kinfo!(
             Gpu,
@@ -795,7 +802,7 @@ impl VirtioGpu {
         if total_bytes > MAX_FRAMEBUFFER_BYTES {
             crate::kwarn!(
                 Gpu,
-                "VirtIO-GPU: framebuffer {}x{} = {} bytes > {} max, clamping",
+                "VirtIO-GPU: framebuffer {}x{} = {} bytes > {} max, rejected",
                 width,
                 height,
                 total_bytes,
