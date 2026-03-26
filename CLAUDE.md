@@ -614,7 +614,7 @@ aios/
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   ├── rules/            01-code-conventions, 02-quality-gates, 03-git-workflow, 04-phase-workflow, 05-file-placement, 06-unsafe-documentation, 07-milestone-numbering, 08-knowledge-hive
+│   ├── rules/            01-code-conventions, 02-quality-gates, 03-git-workflow, 04-phase-workflow, 05-file-placement, 06-unsafe-documentation, 07-milestone-numbering, 08-knowledge-hive, 09-tool-priority
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments, verify-phase, write-arch-doc
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
@@ -623,7 +623,7 @@ aios/
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
-│       ├── boot_phase.rs EarlyBootPhase enum (19 phases incl. GpuReady), advance_boot_phase(), boot timing
+│       ├── boot_phase.rs EarlyBootPhase enum (21 variants incl. InputReady, CompositorReady), advance_boot_phase(), boot timing
 │       ├── dtb.rs        DeviceTree wrapper (fdt-parser), DTB parse + QEMU defaults + MPIDR extraction
 │       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main, per-core timer init + IRQ unmask
 │       ├── framebuffer.rs GOP framebuffer driver: fill_rect, render_test_pattern (#5B8CFF)
