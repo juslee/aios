@@ -331,7 +331,9 @@ fn create_input_thread() {
 /// typed events to UART for the M23 demo.
 fn input_poll_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit only. All interrupt
+    // infrastructure (GIC, timer, vector table) is initialized by boot sequence.
+    // If called before IRQ setup, spurious interrupts would fault.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     loop {

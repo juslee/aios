@@ -267,7 +267,9 @@ pub fn get_abs_info(device_idx: usize) -> Option<(u32, u32)> {
 fn probe_slot(phys: usize) -> bool {
     let virt = MMIO_BASE + phys;
     // SAFETY: MMIO region 0x0-0x40000000 is mapped as device memory in TTBR1.
-    // Reading an unoccupied slot returns 0 (not the VirtIO magic), which is safe.
+    // Maintained by init_kernel_address_space() in kmap.rs (MMIO_BASE mapping).
+    // Reading an unoccupied slot returns 0 (not the VirtIO magic); reading an
+    // unmapped address would cause a synchronous data abort.
     unsafe {
         let magic = mmio_read32(virt + VIRTIO_MMIO_MAGIC_VALUE);
         if magic != VIRTIO_MMIO_MAGIC {
@@ -419,7 +421,9 @@ fn init_device(
 
             if let Some(sq_phys) = crate::mm::frame::alloc_dma_pages(sq_order) {
                 let sq_virt = DIRECT_MAP_BASE + sq_phys;
-                // SAFETY: DMA allocation, zeroing is safe.
+                // SAFETY: sq_virt is a valid DMA allocation via TTBR1 direct map.
+                // Maintained by alloc_dma_pages() returning page-aligned Pool::Dma memory.
+                // Writing beyond the allocation would corrupt adjacent DMA state.
                 core::ptr::write_bytes(
                     sq_virt as *mut u8,
                     0,
