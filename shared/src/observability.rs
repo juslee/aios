@@ -195,6 +195,7 @@ mod tests {
         assert_eq!(Subsystem::Smp as u8, 10);
         assert_eq!(Subsystem::Storage as u8, 11);
         assert_eq!(Subsystem::Audit as u8, 12);
+        assert_eq!(Subsystem::Gpu as u8, 13);
         assert_eq!(Subsystem::Input as u8, 14);
     }
 

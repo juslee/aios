@@ -516,8 +516,10 @@ pub fn abs_to_display(abs_val: u32, abs_max: u32, display_dim: u32) -> u32 {
     if abs_max == 0 || display_dim == 0 {
         return 0;
     }
+    // Clamp abs_val to abs_max to handle buggy/malicious device data.
+    let clamped = if abs_val > abs_max { abs_max } else { abs_val };
     // Use u64 intermediate to avoid overflow for large values.
-    let result = (abs_val as u64) * (display_dim as u64) / (abs_max as u64 + 1);
+    let result = (clamped as u64) * (display_dim as u64) / (abs_max as u64 + 1);
     result as u32
 }
 
@@ -560,6 +562,8 @@ mod tests {
             // value at offset 4 (4 bytes LE)
             assert_eq!(*ptr.add(4), 0x08);
             assert_eq!(*ptr.add(5), 0x07);
+            assert_eq!(*ptr.add(6), 0x06);
+            assert_eq!(*ptr.add(7), 0x05);
         }
     }
 

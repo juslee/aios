@@ -148,9 +148,13 @@ pub fn poll_device(device_idx: usize) -> Option<VirtioInputEvent> {
     let dev = guard[device_idx].as_mut()?;
 
     // SAFETY: used_virt points to the used ring in DMA memory, mapped via
-    // DIRECT_MAP_BASE. Reading the u16 idx field is valid for the lifetime
-    // of the DMA allocation. Misreading would return stale/no events.
-    let used_idx = unsafe { core::ptr::read_volatile((dev.used_virt + 2) as *const u16) };
+    // DIRECT_MAP_BASE. DSB SY ensures device DMA writes are observable before
+    // we read the used ring index. Maintained by TTBR1 direct map (kmap.rs).
+    // Reading without the barrier could return stale data, missing events.
+    let used_idx = unsafe {
+        core::arch::asm!("dsb sy");
+        core::ptr::read_volatile((dev.used_virt + 2) as *const u16)
+    };
 
     if dev.last_used_idx == used_idx {
         return None; // No new events.
@@ -211,9 +215,11 @@ pub fn poll_all(buf: &mut [(InputDeviceId, VirtioInputEvent)]) -> usize {
                     break;
                 }
 
-                // SAFETY: Same as poll_device — reads used ring in DMA memory.
-                let used_idx =
-                    unsafe { core::ptr::read_volatile((dev.used_virt + 2) as *const u16) };
+                // SAFETY: Same as poll_device — DSB SY before used ring read.
+                let used_idx = unsafe {
+                    core::arch::asm!("dsb sy");
+                    core::ptr::read_volatile((dev.used_virt + 2) as *const u16)
+                };
 
                 if dev.last_used_idx == used_idx {
                     break;
@@ -227,6 +233,12 @@ pub fn poll_all(buf: &mut [(InputDeviceId, VirtioInputEvent)]) -> usize {
 
                 // Bounds check (same as poll_device).
                 if desc_id >= dev.queue_size as u32 {
+                    crate::kerror!(
+                        Input,
+                        "invalid desc_id {} from device (max {})",
+                        desc_id,
+                        dev.queue_size
+                    );
                     dev.last_used_idx = dev.last_used_idx.wrapping_add(1);
                     continue;
                 }
