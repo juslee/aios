@@ -13,6 +13,9 @@ mod drivers;
 mod dtb;
 mod framebuffer;
 mod gpu;
+// Allow dead_code until Step 5 wires input init into boot sequence.
+#[allow(dead_code)]
+mod input;
 mod ipc;
 mod mm;
 mod observability;
