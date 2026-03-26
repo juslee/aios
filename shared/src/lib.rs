@@ -6,6 +6,7 @@ pub mod boot;
 pub mod cap;
 pub mod collections;
 pub mod gpu;
+pub mod input;
 pub mod ipc;
 pub mod kaslr;
 pub mod kits;
