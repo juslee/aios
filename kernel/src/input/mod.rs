@@ -97,7 +97,9 @@ pub fn poll_if_due() {
         return;
     }
 
-    // Collect raw events while holding INPUT_DEVICES lock.
+    // Drain all pending events by repeatedly polling until no more are available.
+    // Each poll_all call acquires/releases INPUT_DEVICES; processing happens
+    // outside that lock to avoid nesting with PENDING_POINTER/INPUT_QUEUE.
     let mut raw_buf = [(
         InputDeviceId(0),
         VirtioInputEvent {
@@ -106,11 +108,15 @@ pub fn poll_if_due() {
             value: 0,
         },
     ); 64];
-    let count = virtio_input::poll_all(&mut raw_buf);
 
-    // Process events WITHOUT holding INPUT_DEVICES lock.
-    for &(_device_id, event) in raw_buf.iter().take(count) {
-        process_raw_event(event);
+    loop {
+        let count = virtio_input::poll_all(&mut raw_buf);
+        if count == 0 {
+            break;
+        }
+        for &(_device_id, event) in raw_buf.iter().take(count) {
+            process_raw_event(event);
+        }
     }
 }
 
@@ -200,20 +206,27 @@ fn process_button_event(code: u16, value: u32) {
 }
 
 /// Process an absolute axis event (accumulate in pending state).
+///
+/// Computes the display coordinate BEFORE locking PENDING_POINTER to avoid
+/// holding PENDING_POINTER while get_abs_max_x/y acquires INPUT_DEVICES.
 fn process_abs_event(code: u16, value: u32) {
-    let mut pending = PENDING_POINTER.lock();
-
     match code {
         ABS_X => {
             let max_x = get_abs_max_x();
             let width = DISPLAY_WIDTH.load(Ordering::Relaxed);
-            pending.x = abs_to_display(value, max_x, width);
+            let new_x = abs_to_display(value, max_x, width);
+
+            let mut pending = PENDING_POINTER.lock();
+            pending.x = new_x;
             pending.dirty = true;
         }
         ABS_Y => {
             let max_y = get_abs_max_y();
             let height = DISPLAY_HEIGHT.load(Ordering::Relaxed);
-            pending.y = abs_to_display(value, max_y, height);
+            let new_y = abs_to_display(value, max_y, height);
+
+            let mut pending = PENDING_POINTER.lock();
+            pending.y = new_y;
             pending.dirty = true;
         }
         _ => {} // Ignore other axes.

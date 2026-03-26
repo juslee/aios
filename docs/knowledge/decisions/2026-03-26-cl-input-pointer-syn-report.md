@@ -5,12 +5,24 @@ tags: [input, compositor]
 status: final
 ---
 
-# Pointer Events Use SYN_REPORT Accumulation
+# ADR: Pointer Events Use SYN_REPORT Accumulation
 
-Decided to accumulate pointer events (ABS_X, ABS_Y, button state) in a pending state and flush as a single InputEvent::Pointer on EV_SYN/SYN_REPORT. This is the correct evdev atomic grouping model.
+## Context
 
-**Alternative considered:** Push each ABS_X/ABS_Y as a separate Pointer event immediately. Rejected because this would produce partial pointer states (new X with stale Y, or vice versa), which would cause cursor jitter in the compositor.
+The evdev model groups pointer-related events atomically using `EV_SYN/SYN_REPORT`. Individual events such as `ABS_X`, `ABS_Y`, and button state transitions arrive separately but represent a single logical pointer state update that the compositor expects as a coherent snapshot.
 
-**Trade-off:** Slightly more complex code (PENDING_POINTER state + flush logic) but correct behavior that the compositor can rely on. Keyboard events are still pushed immediately since each key event is self-contained (no grouping needed).
+## Options Considered
 
-**Lock nesting:** PENDING_POINTER and INPUT_QUEUE are both leaf locks, acquired separately in process_raw_event(). INPUT_DEVICES is released before processing to avoid 3-level nesting.
+1. Accumulate pointer events in a pending state and flush as a single `InputEvent::Pointer` on `EV_SYN/SYN_REPORT`.
+2. Push each `ABS_X`/`ABS_Y` as a separate Pointer event immediately.
+
+Option 2 was rejected because it produces partial pointer states (new X with stale Y), causing cursor jitter in the compositor.
+
+## Decision
+
+Accumulate `ABS_X`, `ABS_Y`, and button state in `PENDING_POINTER`. Flush as a single `InputEvent::Pointer` on `SYN_REPORT`. Keyboard events are pushed immediately (self-contained, no grouping needed).
+
+## Consequences
+
+- Slightly more complex code (PENDING_POINTER state + flush logic) but correct, jitter-free behavior.
+- `PENDING_POINTER` and `INPUT_QUEUE` are both leaf locks, acquired separately. `INPUT_DEVICES` is released before processing to avoid 3-level lock nesting.
