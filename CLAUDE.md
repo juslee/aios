@@ -466,7 +466,7 @@ TraceRing size:               4096 entries per core (128 KiB)
 Timer PPI INTID:              30 (EL1 physical timer on QEMU)
 MAX_THREADS:                  64 system-wide
 MAX_PROCESSES:                32 system-wide
-EarlyBootPhase count:         19 variants (EntryPoint=0 through Complete=18; GpuReady=17 added in M20)
+EarlyBootPhase count:         21 variants (EntryPoint=0 through Complete=20; InputReady=18, CompositorReady=19 added in M23)
 Scheduler classes:            RT (4ms), Interactive (10ms), Normal (50ms), Idle (50ms) — FIFO per class
 Per-CPU run queues:           RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES], lock order = ascending CPU ID
 Idle threads:                 One per CPU (class=Idle), created in sched::init(), ensures pick_next() never returns None
@@ -481,7 +481,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M20):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > {VIRTIO_BLK, VIRTIO_GPU}
+Lock ordering (full M23):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} > {INPUT_QUEUE, PENDING_POINTER (leaf, independent)}
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
@@ -492,7 +492,7 @@ Audit ring:                   256-entry ring buffer, timestamp + pid + event[48]
 Load balancer:                try_load_balance every 4 ticks, migrate Normal threads from overloaded to underloaded CPU
 Bench (Gate 1):               IPC round-trip, context switch, direct switch, capability overhead, shared memory throughput
 RawMessage size:              272 bytes (ThreadId(4B) + padding(4B) + data(256B) + len(8B)), compile-time asserted
-Shared crate unit tests:      442 tests (boot, cap, collections, gpu, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
+Shared crate unit tests:      479 tests (boot, cap, collections, gpu, input, ipc, kaslr, memory, observability, sched, storage, syscall, kits)
 Kit module:                   shared/src/kits/ — Memory Kit (3 traits, 8 error variants) + Capability Kit (1 trait, 7 error variants) + IPC Kit (4 traits, 8 error variants) + Storage Kit (4 traits, reuses StorageError) + Compute Kit (1 trait, 5 error variants)
 Kit kernel wrappers:          KernelFrameAllocator (mm/frame.rs), KernelCapabilitySystem (cap/mod.rs), KernelIpc (ipc/mod.rs), KernelBlockStore (storage/block_engine.rs), KernelSpaceManager (storage/space.rs), KernelObjectStore (storage/object_store.rs), KernelVersionStore (storage/version_store.rs) — zero-sized unit structs delegating to global statics
 Kit trait dyn-compat:         All 13 Kit traits (FrameAllocator, AddressSpace, MemoryPressureMonitor, CapabilityEnforcer, ChannelOps, NotificationOps, SelectOps, SharedMemoryOps, BlockStore, SpaceManager, ObjectStore, VersionStoreOps, GpuSurface) are dyn-compatible
@@ -551,6 +551,16 @@ Slab direct-map fix:          convert_to_direct_map() patches physical→virtual
 spleen-font version:          0.2 (feature: s16x32), 16x32 glyphs at 1280x800 = 80x25 chars
 Boot log buffer:              MAX_LOG_LINES=256, MAX_LINE_LEN=160, ring buffer with chronological display
 Compute Kit:                  GpuSurface trait (4 methods), ComputeError (5 variants), SurfaceBuffer, DamageRect, SemanticHint
+VirtIO-input device ID:       18
+VirtIO-input MMIO transport:  Legacy v1, polled I/O, eventq (device-to-driver) + statusq (unused)
+VirtIO-input config space:    select/subsel/size/data union at MMIO offset 0x100; abs_info for tablet
+MAX_INPUT_DEVICES:            4
+INPUT_QUEUE capacity:         256 (FixedQueue<InputEvent, 256>)
+Input polling:                Deferred flag (INPUT_POLL_DUE AtomicBool set every 16ms by timer tick, polled in input thread)
+Input thread:                 ThreadId(0xA00 label), SchedulerClass::Interactive, sleep_ticks(16) between polls
+Modifier tracking:            AtomicU8 bitmask (SHIFT=1, CTRL=2, ALT=4, SUPER=8)
+Pointer accumulation:         PENDING_POINTER flushed on SYN_REPORT (correct evdev atomic grouping)
+KEYMAP_US:                    128-entry const array, evdev keycode → (unshifted, shifted) Option<(char,char)>
 ```
 
 ---
@@ -586,7 +596,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 6 M22 — Compute Kit Tier 1 & Gate):
+Current (post-Phase 7 M23 — VirtIO-Input Driver):
 
 ```text
 aios/
@@ -597,14 +607,14 @@ aios/
 ├── Cargo.toml            workspace root (resolver = "2", members: kernel, shared, uefi-stub)
 ├── Cargo.lock            committed for reproducibility
 ├── rust-toolchain.toml   pinned nightly + aarch64-unknown-none + aarch64-unknown-uefi
-├── justfile              build, build-stub, disk, run (edk2), run-display, run-gpu, run-direct, check, test, clean
+├── justfile              build, build-stub, disk, run (edk2), run-display, run-gpu, run-input, run-direct, check, test, clean
 ├── LICENSE               BSD-2-Clause
 ├── .cargo/
 │   └── config.toml       relocation-model=static for aarch64-unknown-none
 ├── .claude/
 │   ├── settings.json
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   ├── rules/            01-code-conventions, 02-quality-gates, 03-git-workflow, 04-phase-workflow, 05-file-placement, 06-unsafe-documentation, 07-milestone-numbering, 08-knowledge-hive
+│   ├── rules/            01-code-conventions, 02-quality-gates, 03-git-workflow, 04-phase-workflow, 05-file-placement, 06-unsafe-documentation, 07-milestone-numbering, 08-knowledge-hive, 09-tool-priority
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments, verify-phase, write-arch-doc
 ├── .github/
 │   └── workflows/ci.yml  check + build-release + test
@@ -613,7 +623,7 @@ aios/
 │   ├── build.rs          emits linker script path
 │   └── src/
 │       ├── main.rs       kernel_main: full boot sequence, extern crate alloc, klog! structured logging, timer tick + IRQ unmask
-│       ├── boot_phase.rs EarlyBootPhase enum (19 phases incl. GpuReady), advance_boot_phase(), boot timing
+│       ├── boot_phase.rs EarlyBootPhase enum (21 variants incl. InputReady, CompositorReady), advance_boot_phase(), boot timing
 │       ├── dtb.rs        DeviceTree wrapper (fdt-parser), DTB parse + QEMU defaults + MPIDR extraction
 │       ├── smp.rs        SMP bringup: PSCI CPU_ON, per-core stacks, Scheduler stub, secondary_main, per-core timer init + IRQ unmask
 │       ├── framebuffer.rs GOP framebuffer driver: fill_rect, render_test_pattern (#5B8CFF)
@@ -646,7 +656,10 @@ aios/
 │       │   ├── mod.rs    Driver module re-exports
 │       │   ├── virtio_common.rs Shared VirtIO MMIO helpers: mmio_read32/write32, virtqueue layout, constants
 │       │   ├── virtio_blk.rs VirtIO-blk MMIO transport driver: probe, init, read_sector/write_sector, polled I/O
-│       │   └── virtio_gpu.rs VirtIO-GPU 2D driver: probe, init, resource/scanout/transfer/flush, display_test_frame, public GPU Service wrappers
+│       │   ├── virtio_gpu.rs VirtIO-GPU 2D driver: probe, init, resource/scanout/transfer/flush, display_test_frame, public GPU Service wrappers
+│       │   └── virtio_input.rs VirtIO-input MMIO driver: multi-device probe, eventq pre-fill, polled event read, config select/subsel, abs info
+│       ├── input/
+│       │   └── mod.rs    Input subsystem: event translation, modifier tracking, coordinate conversion, polling thread, INPUT_QUEUE
 │       ├── gpu/
 │       │   ├── mod.rs    GPU subsystem module
 │       │   ├── service.rs GPU Service: IPC service, capability-gated buffer management, double-buffered display, FenceTracker
@@ -707,6 +720,7 @@ aios/
 │       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
 │       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests
 │       ├── gpu.rs        VirtIO-GPU wire-format structs (repr(C)), GpuPixelFormat, DisplayInfo, GpuError, GpuBufferHandle, command/response constants
+│       ├── input.rs      VirtIO-input wire-format (VirtioInputEvent 8B, VirtioInputAbsInfo 20B), evdev constants, InputEvent, KeyCode, KeyState, Modifiers, MouseButton, ButtonState, KEYMAP_US, abs_to_display
 │       ├── ipc.rs        ChannelId, SharedMemoryId, NotificationId, RawMessage, ServiceName, SelectKind, IPC/shmem/notify constants
 │       ├── kaslr.rs      KaslrConfig, compute_slide_from_entropy()
 │       ├── memory.rs     Pool, PoolConfig, MemoryPressure, buddy_of(), BenchStats, ticks_to_ns()

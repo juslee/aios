@@ -13,6 +13,7 @@ mod drivers;
 mod dtb;
 mod framebuffer;
 mod gpu;
+mod input;
 mod ipc;
 mod mm;
 mod observability;
@@ -314,6 +315,16 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         advance_boot_phase(EarlyBootPhase::GpuReady);
     } else {
         kinfo!(Boot, "No VirtIO-GPU — GOP framebuffer fallback");
+    }
+    observability::drain_logs();
+
+    // --- Step 7b3: Input Init ---
+    let input_count = drivers::virtio_input::init_all(&dt);
+    if input_count > 0 {
+        input::init(input_count);
+        advance_boot_phase(EarlyBootPhase::InputReady);
+    } else {
+        kinfo!(Boot, "No VirtIO-input devices — input subsystem skipped");
     }
     observability::drain_logs();
 

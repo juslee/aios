@@ -155,6 +155,7 @@ flowchart TD
     style P3 fill:#228B22,color:white
     style P4 fill:#228B22,color:white
     style P5 fill:#228B22,color:white
+    style P6 fill:#228B22,color:white
 ```
 
 **Critical path:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 26 → 34 → 35. Browser Kit (Phase 35) is the last item on the critical path before the OS can be someone's daily driver. Every phase on the critical path is a potential bottleneck.
@@ -420,7 +421,7 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 4 | Block Storage & Object Store | Storage Kit | spaces.md (8) | [`04-block-storage-and-object-store.md`](../phases/04-block-storage-and-object-store.md) | Complete | 5w | 10d |
 | 5 | Kit Foundation | Memory Kit, IPC Kit, Capability Kit, Storage Kit | — | [`05-kit-foundation.md`](../phases/05-kit-foundation.md) | Complete | 3w | 1.5d |
 | 6 | GPU & Display | Compute Kit (Tier 1) | gpu.md (5) | [`06-gpu-and-display.md`](../phases/06-gpu-and-display.md) | Complete | 6w | 6d |
-| 7 | Window Compositor & Shell | — | compositor.md (6) | `07-window-compositor-and-shell.md` | Planned | 7w | — |
+| 7 | Window Compositor & Shell | — | compositor.md (6) | [`07-window-compositor-and-shell.md`](../phases/07-window-compositor-and-shell.md) | In Progress | 7w | — |
 | 8 | Input & Terminal | Input Kit | input.md (6), terminal.md (6) | `08-input-and-terminal.md` | Planned | 4w | — |
 | 9 | Basic Networking | Network Kit (core) | networking.md (6), anm.md | `09-basic-networking.md` | Planned | 4w | — |
 | 10 | Agent Framework | App Kit | agents.md (7) | `10-agent-framework.md` | Planned | 5w | — |
@@ -476,7 +477,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 4 (Block Storage) | 5 weeks | 10 days | 3.5x | M13–M15 | 2026-03-13 | 2026-03-23 |
 | 5 (Kit Foundation) | 3 weeks | 1.5 days | 14x | M16–M18 | 2026-03-23 | 2026-03-24 |
 | 6 (GPU & Display) | 6 weeks | 6 days | 7x | M19–M22 | 2026-03-24 | 2026-03-25 |
-| **Phases 0–6 total** | **30 weeks** | **~28.5 days** | **~7.4x** | **22/22** | | |
+| 7 M23 (VirtIO-Input) | 2 weeks | 1 day | 14x | M23 | 2026-03-26 | 2026-03-26 |
+| **Phases 0–6 + M23** | **32 weeks** | **~29.5 days** | **~7.6x** | **23/27** | | |
 
 **Project inception:** 2026-02-19 (architecture docs began). **First code commit:** 2026-03-02. **Architecture docs before code:** 17 days, 58K lines across 70 documents.
 
