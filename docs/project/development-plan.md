@@ -476,7 +476,8 @@ Each phase has an implementation doc in `docs/phases/` containing objectives, mi
 | 4 (Block Storage) | 5 weeks | 10 days | 3.5x | M13–M15 | 2026-03-13 | 2026-03-23 |
 | 5 (Kit Foundation) | 3 weeks | 1.5 days | 14x | M16–M18 | 2026-03-23 | 2026-03-24 |
 | 6 (GPU & Display) | 6 weeks | 6 days | 7x | M19–M22 | 2026-03-24 | 2026-03-25 |
-| **Phases 0–6 total** | **30 weeks** | **~28.5 days** | **~7.4x** | **22/22** | | |
+| 7 M23 (VirtIO-Input) | 2 weeks | 1 day | 14x | M23 | 2026-03-26 | 2026-03-26 |
+| **Phases 0–6 + M23** | **32 weeks** | **~29.5 days** | **~7.6x** | **23/27** | | |
 
 **Project inception:** 2026-02-19 (architecture docs began). **First code commit:** 2026-03-02. **Architecture docs before code:** 17 days, 58K lines across 70 documents.
 
