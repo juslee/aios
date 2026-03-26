@@ -199,7 +199,12 @@ pub fn timer_tick_handler() {
         crate::sched::try_load_balance();
     }
 
-    // 7. Signal preemption needed.
+    // 7. Signal input polling every 16ms (CPU 0 only).
+    if cpu == 0 && tick.is_multiple_of(16) {
+        crate::input::set_poll_due();
+    }
+
+    // 8. Signal preemption needed.
     NEED_RESCHED.store(true, Ordering::Release);
 
     // 8. Increment IRQ metrics.

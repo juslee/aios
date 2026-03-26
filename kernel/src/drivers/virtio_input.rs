@@ -33,6 +33,7 @@ const INPUT_EVENT_SIZE: usize = core::mem::size_of::<VirtioInputEvent>();
 
 /// Errors from VirtIO-input driver operations.
 #[derive(Debug)]
+#[allow(dead_code)] // Some variants used only in error paths or future phases.
 pub enum InputError {
     /// Device probe failed (wrong magic, version, or device ID).
     ProbeError,
@@ -52,16 +53,16 @@ pub enum InputError {
 pub struct VirtioInputDevice {
     /// MMIO virtual base address (MMIO_BASE + phys).
     base: usize,
-    /// Physical base address (for logging).
-    phys_base: usize,
-    /// Eventq descriptor table virtual address (DIRECT_MAP_BASE + phys).
-    desc_virt: usize,
+    /// Physical base address (for logging/debugging).
+    _phys_base: usize,
+    /// Eventq descriptor table virtual address (for future cleanup).
+    _desc_virt: usize,
     /// Eventq available ring virtual address.
     avail_virt: usize,
     /// Eventq used ring virtual address.
     used_virt: usize,
-    /// DMA page for event buffers — physical address.
-    event_buf_phys: usize,
+    /// DMA page for event buffers — physical address (for future cleanup).
+    _event_buf_phys: usize,
     /// DMA page for event buffers — virtual address.
     event_buf_virt: usize,
     /// Last consumed used ring index.
@@ -128,6 +129,7 @@ pub fn init_all(dt: &DeviceTree) -> usize {
 }
 
 /// Get the number of initialized input devices.
+#[allow(dead_code)] // Used by compositor (M25+).
 pub fn device_count() -> usize {
     let guard = INPUT_DEVICES.lock();
     guard.iter().filter(|d| d.is_some()).count()
@@ -137,6 +139,7 @@ pub fn device_count() -> usize {
 ///
 /// Checks the used ring for completed event buffers, extracts the event,
 /// and recycles the buffer back to the available ring.
+#[allow(dead_code)] // Used by compositor (M25+).
 pub fn poll_device(device_idx: usize) -> Option<VirtioInputEvent> {
     let mut guard = INPUT_DEVICES.lock();
     let dev = guard[device_idx].as_mut()?;
@@ -421,11 +424,11 @@ fn init_device(
 
         Ok(VirtioInputDevice {
             base,
-            phys_base: phys,
-            desc_virt,
+            _phys_base: phys,
+            _desc_virt: desc_virt,
             avail_virt,
             used_virt,
-            event_buf_phys,
+            _event_buf_phys: event_buf_phys,
             event_buf_virt,
             last_used_idx: 0,
             queue_size,

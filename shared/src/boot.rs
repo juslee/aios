@@ -151,7 +151,7 @@ impl MemoryDescriptor {
 /// tracks the current phase via an atomic global; structured logging
 /// uses this to decide between direct UART output and ring buffer.
 ///
-/// Total: 19 variants (EntryPoint=0 through Complete=18).
+/// Total: 21 variants (EntryPoint=0 through Complete=20).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum EarlyBootPhase {
@@ -173,11 +173,13 @@ pub enum EarlyBootPhase {
     ProcessManagerReady = 15,
     ProvenanceReady = 16,
     GpuReady = 17,
-    Complete = 18,
+    InputReady = 18,
+    CompositorReady = 19,
+    Complete = 20,
 }
 
 /// Total number of boot phase variants.
-pub const EARLY_BOOT_PHASE_COUNT: usize = 19;
+pub const EARLY_BOOT_PHASE_COUNT: usize = 21;
 
 #[cfg(test)]
 mod tests {
@@ -321,9 +323,11 @@ mod tests {
 
     #[test]
     fn early_boot_phase_count() {
-        assert_eq!(EARLY_BOOT_PHASE_COUNT, 19);
+        assert_eq!(EARLY_BOOT_PHASE_COUNT, 21);
         assert_eq!(EarlyBootPhase::GpuReady as u32, 17);
-        assert_eq!(EarlyBootPhase::Complete as u32, 18);
+        assert_eq!(EarlyBootPhase::InputReady as u32, 18);
+        assert_eq!(EarlyBootPhase::CompositorReady as u32, 19);
+        assert_eq!(EarlyBootPhase::Complete as u32, 20);
     }
 
     #[test]
@@ -339,7 +343,9 @@ mod tests {
         assert!(EarlyBootPhase::HeapReady < EarlyBootPhase::LogRingsReady);
         assert!(EarlyBootPhase::LogRingsReady < EarlyBootPhase::IpcReady);
         assert!(EarlyBootPhase::IpcReady < EarlyBootPhase::GpuReady);
-        assert!(EarlyBootPhase::GpuReady < EarlyBootPhase::Complete);
+        assert!(EarlyBootPhase::GpuReady < EarlyBootPhase::InputReady);
+        assert!(EarlyBootPhase::InputReady < EarlyBootPhase::CompositorReady);
+        assert!(EarlyBootPhase::CompositorReady < EarlyBootPhase::Complete);
     }
 
     #[test]
@@ -357,7 +363,7 @@ mod tests {
 
     #[test]
     fn early_boot_phase_contiguous_values() {
-        // All 19 variants have sequential repr values 0..=18.
+        // All 21 variants have sequential repr values 0..=20.
         let phases = [
             EarlyBootPhase::EntryPoint,
             EarlyBootPhase::ExceptionVectors,
@@ -377,6 +383,8 @@ mod tests {
             EarlyBootPhase::ProcessManagerReady,
             EarlyBootPhase::ProvenanceReady,
             EarlyBootPhase::GpuReady,
+            EarlyBootPhase::InputReady,
+            EarlyBootPhase::CompositorReady,
             EarlyBootPhase::Complete,
         ];
         for (i, phase) in phases.iter().enumerate() {
