@@ -97,6 +97,9 @@ static INPUT_DEVICES: Mutex<[Option<VirtioInputDevice>; MAX_INPUT_DEVICES]> =
 /// device found with device_id=18. Returns the number of devices initialized.
 pub fn init_all(dt: &DeviceTree) -> usize {
     let mut count = 0usize;
+    // Track already-initialized physical addresses to avoid double-init when
+    // both DTB and brute-force scan discover the same device.
+    let mut initialized_phys = [0usize; MAX_INPUT_DEVICES];
 
     // Strategy 1: DTB-provided VirtIO MMIO bases.
     for i in 0..dt.virtio_mmio_count {
@@ -105,7 +108,7 @@ pub fn init_all(dt: &DeviceTree) -> usize {
             return count;
         }
         let phys = dt.virtio_mmio_bases[i] as usize;
-        if probe_slot(phys) && try_init_device(phys, &mut count) {
+        if probe_slot(phys) && try_init_device(phys, &mut count, &mut initialized_phys) {
             continue;
         }
     }
@@ -118,7 +121,7 @@ pub fn init_all(dt: &DeviceTree) -> usize {
         }
         let phys = VIRTIO_MMIO_REGION_BASE as usize + slot * VIRTIO_MMIO_REGION_STRIDE as usize;
         if probe_slot(phys) {
-            try_init_device(phys, &mut count);
+            try_init_device(phys, &mut count, &mut initialized_phys);
         }
     }
 
@@ -160,11 +163,24 @@ pub fn poll_device(device_idx: usize) -> Option<VirtioInputEvent> {
     // in the used ring DMA memory. Valid while the virtqueue allocation exists.
     let desc_id = unsafe { core::ptr::read_volatile(elem_addr as *const u32) };
 
+    // Bounds check: reject invalid descriptor IDs from device to prevent
+    // out-of-bounds DMA reads. A conformant device never exceeds queue_size.
+    if desc_id >= dev.queue_size as u32 {
+        crate::kerror!(
+            Input,
+            "invalid desc_id {} from device (max {})",
+            desc_id,
+            dev.queue_size
+        );
+        dev.last_used_idx = dev.last_used_idx.wrapping_add(1);
+        return None;
+    }
+
     // Read the event from the DMA event buffer.
     let buf_addr = dev.event_buf_virt + (desc_id as usize) * INPUT_EVENT_SIZE;
 
     // SAFETY: buf_addr points to an 8-byte VirtioInputEvent in the DMA event
-    // buffer page. The device wrote exactly INPUT_EVENT_SIZE bytes. The buffer
+    // buffer page. desc_id was bounds-checked above (< queue_size). The buffer
     // is 8-byte aligned (desc_id * 8 within a page-aligned DMA allocation).
     let event = unsafe { core::ptr::read_volatile(buf_addr as *const VirtioInputEvent) };
 
@@ -209,9 +225,16 @@ pub fn poll_all(buf: &mut [(InputDeviceId, VirtioInputEvent)]) -> usize {
                 // SAFETY: Same as poll_device — reads VirtqUsedElem from DMA.
                 let desc_id = unsafe { core::ptr::read_volatile(elem_addr as *const u32) };
 
+                // Bounds check (same as poll_device).
+                if desc_id >= dev.queue_size as u32 {
+                    dev.last_used_idx = dev.last_used_idx.wrapping_add(1);
+                    continue;
+                }
+
                 let buf_addr = dev.event_buf_virt + (desc_id as usize) * INPUT_EVENT_SIZE;
 
                 // SAFETY: Same as poll_device — reads VirtioInputEvent from DMA.
+                // desc_id bounds-checked above.
                 let event =
                     unsafe { core::ptr::read_volatile(buf_addr as *const VirtioInputEvent) };
 
@@ -261,7 +284,16 @@ fn probe_slot(phys: usize) -> bool {
 
 /// Try to initialize a device at the given physical address.
 /// On success, stores it in INPUT_DEVICES and increments count.
-fn try_init_device(phys: usize, count: &mut usize) -> bool {
+/// Skips devices already in `initialized_phys` to avoid double-init.
+fn try_init_device(
+    phys: usize,
+    count: &mut usize,
+    initialized_phys: &mut [usize; MAX_INPUT_DEVICES],
+) -> bool {
+    // Dedup: skip if we already initialized a device at this physical address.
+    if initialized_phys[..*count].contains(&phys) {
+        return false;
+    }
     let virt = MMIO_BASE + phys;
     match init_device(virt, phys, InputDeviceId(*count as u8)) {
         Ok(dev) => {
@@ -280,6 +312,7 @@ fn try_init_device(phys: usize, count: &mut usize) -> bool {
             }
             let mut guard = INPUT_DEVICES.lock();
             guard[*count] = Some(dev);
+            initialized_phys[*count] = phys;
             *count += 1;
             true
         }

@@ -207,7 +207,7 @@ pub fn timer_tick_handler() {
     // 8. Signal preemption needed.
     NEED_RESCHED.store(true, Ordering::Release);
 
-    // 8. Increment IRQ metrics.
+    // 9. Increment IRQ metrics.
     #[cfg(feature = "kernel-metrics")]
     {
         crate::observability::metrics::METRICS.irq_total.inc();

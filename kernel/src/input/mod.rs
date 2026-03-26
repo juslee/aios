@@ -4,7 +4,7 @@
 //! coordinates, and accumulates pointer events between SYN_REPORT boundaries
 //! for correct evdev atomic grouping.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use shared::collections::FixedQueue;
 use shared::input::*;
@@ -52,8 +52,6 @@ impl PendingPointer {
 /// Display dimensions for coordinate conversion (cached from GPU).
 static DISPLAY_WIDTH: AtomicU32 = AtomicU32::new(1280);
 static DISPLAY_HEIGHT: AtomicU32 = AtomicU32::new(800);
-
-use core::sync::atomic::AtomicU32;
 
 // ---------------------------------------------------------------------------
 // Public API
