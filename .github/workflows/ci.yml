@@ -21,7 +21,7 @@ jobs:
           targets: aarch64-unknown-none, aarch64-unknown-uefi
           components: rust-src, llvm-tools, clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
       - run: just check
 
   build-release:
@@ -35,7 +35,7 @@ jobs:
           targets: aarch64-unknown-none, aarch64-unknown-uefi
           components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
       - run: just build-release
 
   test:
@@ -49,7 +49,7 @@ jobs:
           targets: aarch64-unknown-none, aarch64-unknown-uefi
           components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
       - run: just test
 
   security:
@@ -63,7 +63,7 @@ jobs:
           targets: aarch64-unknown-none, aarch64-unknown-uefi
           components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
       - name: Install cargo-audit and cargo-deny
         run: cargo install cargo-audit cargo-deny --locked
       - run: just audit
@@ -80,5 +80,5 @@ jobs:
           targets: aarch64-unknown-none, aarch64-unknown-uefi
           components: rust-src, llvm-tools, miri
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
       - run: just miri
