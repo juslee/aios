@@ -48,11 +48,12 @@ pub enum Subsystem {
     Audit = 12,
     Gpu = 13,
     Input = 14,
+    Compositor = 15,
 }
 
 impl Subsystem {
     /// Total number of subsystem variants.
-    pub const COUNT: usize = 15;
+    pub const COUNT: usize = 16;
 
     /// 5-character padded name for formatted output.
     pub const fn name(self) -> &'static str {
@@ -72,6 +73,7 @@ impl Subsystem {
             Subsystem::Audit => "Audit",
             Subsystem::Gpu => "Gpu  ",
             Subsystem::Input => "Input",
+            Subsystem::Compositor => "Comp ",
         }
     }
 }
@@ -175,9 +177,9 @@ mod tests {
 
     #[test]
     fn subsystem_count() {
-        assert_eq!(Subsystem::COUNT, 15);
-        // Input is the last variant at index 14.
-        assert_eq!(Subsystem::Input as u8, 14);
+        assert_eq!(Subsystem::COUNT, 16);
+        // Compositor is the last variant at index 15.
+        assert_eq!(Subsystem::Compositor as u8, 15);
     }
 
     #[test]
@@ -197,6 +199,7 @@ mod tests {
         assert_eq!(Subsystem::Audit as u8, 12);
         assert_eq!(Subsystem::Gpu as u8, 13);
         assert_eq!(Subsystem::Input as u8, 14);
+        assert_eq!(Subsystem::Compositor as u8, 15);
     }
 
     #[test]
@@ -217,6 +220,7 @@ mod tests {
             Subsystem::Audit,
             Subsystem::Gpu,
             Subsystem::Input,
+            Subsystem::Compositor,
         ];
         for sub in subsystems {
             assert_eq!(sub.name().len(), 5, "{:?} name not 5 chars", sub);
@@ -229,6 +233,7 @@ mod tests {
         assert_eq!(Subsystem::Sched.name(), "Sched");
         assert_eq!(Subsystem::Storage.name(), "Stor ");
         assert_eq!(Subsystem::Input.name(), "Input");
+        assert_eq!(Subsystem::Compositor.name(), "Comp ");
     }
 
     // --- LogEntry tests ---

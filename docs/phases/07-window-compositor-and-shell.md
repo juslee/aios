@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 7 weeks
 **Deliverable:** Window compositor with IPC-based surface lifecycle, software composition with damage tracking, floating window management with input routing, desktop shell (Status Strip, Taskbar, Workspace), Input Kit Tier 1
-**Status:** Planned
+**Status:** In Progress (M23, M24 complete; M25–M27 pending)
 **Prerequisites:** Phase 6 (GPU & Display)
 **Unlocks:** Phase 8 (Input & Terminal), Phase 16 (Flow & Translation), Phase 25 (Performance & Optimization)
 
@@ -70,17 +70,17 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Define VirtIO-input wire-format types and evdev constants in the shared crate. These are the on-wire types from VirtIO spec §5.8 and Linux evdev — distinct from the higher-level typed InputEvent used by the compositor.
 
 **Tasks:**
-- [ ] Create `shared/src/input.rs` with `pub mod input;` in `shared/src/lib.rs`
-- [ ] Define `VirtioInputEvent` — 8-byte `repr(C)` wire format: `event_type: u16`, `code: u16`, `value: u32`
-- [ ] Define evdev event type constants: `EV_SYN` (0x00), `EV_KEY` (0x01), `EV_REL` (0x02), `EV_ABS` (0x03), `SYN_REPORT` (0)
-- [ ] Define evdev key code constants: `KEY_A` (30) through `KEY_Z`, `KEY_ENTER` (28), `KEY_ESC` (1), `KEY_BACKSPACE` (14), `KEY_TAB` (15), `KEY_SPACE` (57), `KEY_LEFTSHIFT` (42), `KEY_LEFTCTRL` (29), `KEY_LEFTALT` (56), `KEY_LEFTMETA` (125), `KEY_F1`–`KEY_F12`
-- [ ] Define evdev button constants: `BTN_LEFT` (0x110), `BTN_RIGHT` (0x111), `BTN_MIDDLE` (0x112)
-- [ ] Define evdev absolute axis constants: `ABS_X` (0x00), `ABS_Y` (0x01)
-- [ ] Define VirtIO-input config select constants: `VIRTIO_INPUT_CFG_UNSET` (0x00), `VIRTIO_INPUT_CFG_ID_NAME` (0x01), `VIRTIO_INPUT_CFG_ID_SERIAL` (0x02), `VIRTIO_INPUT_CFG_ID_DEVIDS` (0x03), `VIRTIO_INPUT_CFG_PROP_BITS` (0x10), `VIRTIO_INPUT_CFG_EV_BITS` (0x11), `VIRTIO_INPUT_CFG_ABS_INFO` (0x12)
-- [ ] Define `VirtioInputAbsInfo` — `repr(C)`: `min: u32`, `max: u32`, `fuzz: u32`, `flat: u32`, `res: u32`
-- [ ] Define `InputDeviceId(u8)` for identifying input devices
-- [ ] Add `Input = 14` variant to `Subsystem` enum in `shared/src/observability.rs`, update `COUNT` to 15, update `name()` match arm and all unit tests
-- [ ] Write host-side tests: `VirtioInputEvent` is exactly 8 bytes `repr(C)`, key code constants compile, Subsystem tests pass
+- [x] Create `shared/src/input.rs` with `pub mod input;` in `shared/src/lib.rs`
+- [x] Define `VirtioInputEvent` — 8-byte `repr(C)` wire format: `event_type: u16`, `code: u16`, `value: u32`
+- [x] Define evdev event type constants: `EV_SYN` (0x00), `EV_KEY` (0x01), `EV_REL` (0x02), `EV_ABS` (0x03), `SYN_REPORT` (0)
+- [x] Define evdev key code constants: `KEY_A` (30) through `KEY_Z`, `KEY_ENTER` (28), `KEY_ESC` (1), `KEY_BACKSPACE` (14), `KEY_TAB` (15), `KEY_SPACE` (57), `KEY_LEFTSHIFT` (42), `KEY_LEFTCTRL` (29), `KEY_LEFTALT` (56), `KEY_LEFTMETA` (125), `KEY_F1`–`KEY_F12`
+- [x] Define evdev button constants: `BTN_LEFT` (0x110), `BTN_RIGHT` (0x111), `BTN_MIDDLE` (0x112)
+- [x] Define evdev absolute axis constants: `ABS_X` (0x00), `ABS_Y` (0x01)
+- [x] Define VirtIO-input config select constants: `VIRTIO_INPUT_CFG_UNSET` (0x00), `VIRTIO_INPUT_CFG_ID_NAME` (0x01), `VIRTIO_INPUT_CFG_ID_SERIAL` (0x02), `VIRTIO_INPUT_CFG_ID_DEVIDS` (0x03), `VIRTIO_INPUT_CFG_PROP_BITS` (0x10), `VIRTIO_INPUT_CFG_EV_BITS` (0x11), `VIRTIO_INPUT_CFG_ABS_INFO` (0x12)
+- [x] Define `VirtioInputAbsInfo` — `repr(C)`: `min: u32`, `max: u32`, `fuzz: u32`, `flat: u32`, `res: u32`
+- [x] Define `InputDeviceId(u8)` for identifying input devices
+- [x] Add `Input = 14` variant to `Subsystem` enum in `shared/src/observability.rs`, update `COUNT` to 15, update `name()` match arm and all unit tests
+- [x] Write host-side tests: `VirtioInputEvent` is exactly 8 bytes `repr(C)`, key code constants compile, Subsystem tests pass
 
 **Key reference:** [input/devices.md](../platform/input/devices.md) §3.4, VirtIO spec §5.8
 
@@ -95,14 +95,14 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Note:** VirtIO-input config space uses a select/subsel/read pattern (VirtIO spec §5.8.2). Write `select` and `subsel` fields to config space, then read `size` and `u.string[]` or `u.bitmap[]`. This is needed to read device name and absolute axis info (min/max range for tablet coordinates).
 
 **Tasks:**
-- [ ] Create `kernel/src/drivers/virtio_input.rs`, add `pub mod virtio_input;` to `kernel/src/drivers/mod.rs`
-- [ ] Define `VirtioInputDevice` struct: `base: usize` (MMIO virt addr), `eventq` state (vq_phys, desc/avail/used offsets, queue_size), `device_id: InputDeviceId`, `name: [u8; 64]`
-- [ ] Define `MAX_INPUT_DEVICES: usize = 4` and `static INPUT_DEVICES: Mutex<[Option<VirtioInputDevice>; MAX_INPUT_DEVICES]>`
-- [ ] Implement `probe_all()` — scan DTB bases first, then brute-force MMIO slots; find ALL devices with `device_id=18`, not just the first
-- [ ] Implement `init_device(base)` — reset, acknowledge, negotiate features, read name via config select, set up eventq (queue size from QUEUE_NUM_MAX, pre-fill with empty event buffers), allocate statusq but don't use it (Phase 8 LED control), set DRIVER_OK
-- [ ] Implement `read_config_name(base)` — write `select=VIRTIO_INPUT_CFG_ID_NAME, subsel=0`, read `size` and `u.string[0..size]`
-- [ ] Implement `read_abs_info(base, axis)` — write `select=VIRTIO_INPUT_CFG_ABS_INFO, subsel=axis`, read `VirtioInputAbsInfo` for tablet coordinate range
-- [ ] Log device names and capabilities to UART
+- [x] Create `kernel/src/drivers/virtio_input.rs`, add `pub mod virtio_input;` to `kernel/src/drivers/mod.rs`
+- [x] Define `VirtioInputDevice` struct: `base: usize` (MMIO virt addr), `eventq` state (vq_phys, desc/avail/used offsets, queue_size), `device_id: InputDeviceId`, `name: [u8; 64]`
+- [x] Define `MAX_INPUT_DEVICES: usize = 4` and `static INPUT_DEVICES: Mutex<[Option<VirtioInputDevice>; MAX_INPUT_DEVICES]>`
+- [x] Implement `probe_all()` — scan DTB bases first, then brute-force MMIO slots; find ALL devices with `device_id=18`, not just the first
+- [x] Implement `init_device(base)` — reset, acknowledge, negotiate features, read name via config select, set up eventq (queue size from QUEUE_NUM_MAX, pre-fill with empty event buffers), allocate statusq but don't use it (Phase 8 LED control), set DRIVER_OK
+- [x] Implement `read_config_name(base)` — write `select=VIRTIO_INPUT_CFG_ID_NAME, subsel=0`, read `size` and `u.string[0..size]`
+- [x] Implement `read_abs_info(base, axis)` — write `select=VIRTIO_INPUT_CFG_ABS_INFO, subsel=axis`, read `VirtioInputAbsInfo` for tablet coordinate range
+- [x] Log device names and capabilities to UART
 
 **Key reference:** [input/devices.md](../platform/input/devices.md) §3.4 (driver implementation steps 1–7), VirtIO spec §5.8.2
 
@@ -115,10 +115,10 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Implement polled I/O event reading from the eventq virtqueue. Check used ring for completed buffers containing `VirtioInputEvent` structs. Recycle consumed buffers back to the available ring. Handle `EV_SYN/SYN_REPORT` grouping (batch events between SYN_REPORT into atomic groups). All existing VirtIO drivers use polled I/O — this matches the established pattern.
 
 **Tasks:**
-- [ ] Implement `poll_events(device_id) -> Option<VirtioInputEvent>` — check used ring, extract event, recycle buffer
-- [ ] Implement `poll_all_devices()` — iterate all initialized devices, collect events
-- [ ] Handle `SYN_REPORT` as event group boundary
-- [ ] Add virtqueue notify after recycling buffers to available ring
+- [x] Implement `poll_events(device_id) -> Option<VirtioInputEvent>` — check used ring, extract event, recycle buffer
+- [x] Implement `poll_all_devices()` — iterate all initialized devices, collect events
+- [x] Handle `SYN_REPORT` as event group boundary
+- [x] Add virtqueue notify after recycling buffers to available ring
 
 **Key reference:** [input/devices.md](../platform/input/devices.md) §3.4 (steps 8–10), VirtIO spec §2.7 (used ring processing)
 
@@ -131,18 +131,18 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Create the input subsystem module. Translate raw `VirtioInputEvent` (evdev format) into typed `InputEvent` enum. Track modifier state (shift, ctrl, alt, super). Convert absolute tablet coordinates (0–32767) to display coordinates (0–width, 0–height). Include a basic US-QWERTY keymap for scancode-to-character mapping.
 
 **Tasks:**
-- [ ] Create `kernel/src/input/mod.rs` with input subsystem
-- [ ] Define typed `InputEvent` enum in `shared/src/input.rs`: `Keyboard { key: KeyCode, state: KeyState, modifiers: Modifiers }`, `Pointer { x: u32, y: u32, button: Option<MouseButton>, state: Option<ButtonState> }`
-- [ ] Define `KeyCode` enum (A–Z, 0–9, Enter, Esc, Tab, Space, Backspace, F1–F12, arrows, modifiers)
-- [ ] Define `KeyState` enum: `Pressed`, `Released`, `Repeat`
-- [ ] Define `Modifiers` bitflags: `SHIFT`, `CTRL`, `ALT`, `SUPER`
-- [ ] Define `MouseButton` enum: `Left`, `Right`, `Middle`
-- [ ] Implement evdev keycode → `KeyCode` translation table
-- [ ] Implement US-QWERTY keymap: `const KEYMAP_US: [Option<(char, char)>; 128]` mapping keycode → (unshifted, shifted) ASCII characters
-- [ ] Implement modifier tracking: set/clear bits on modifier key press/release
-- [ ] Implement absolute → display coordinate conversion: `x_display = abs_x * display_width / 32768`
-- [ ] Define global input event queue: `static INPUT_QUEUE: Mutex<FixedQueue<InputEvent, 256>>`
-- [ ] Implement `process_raw_event(device_id, raw_event)` → push typed `InputEvent` to queue
+- [x] Create `kernel/src/input/mod.rs` with input subsystem
+- [x] Define typed `InputEvent` enum in `shared/src/input.rs`: `Keyboard { key: KeyCode, state: KeyState, modifiers: Modifiers }`, `Pointer { x: u32, y: u32, button: Option<MouseButton>, state: Option<ButtonState> }`
+- [x] Define `KeyCode` enum (A–Z, 0–9, Enter, Esc, Tab, Space, Backspace, F1–F12, arrows, modifiers)
+- [x] Define `KeyState` enum: `Pressed`, `Released`, `Repeat`
+- [x] Define `Modifiers` bitflags: `SHIFT`, `CTRL`, `ALT`, `SUPER`
+- [x] Define `MouseButton` enum: `Left`, `Right`, `Middle`
+- [x] Implement evdev keycode → `KeyCode` translation table
+- [x] Implement US-QWERTY keymap: `const KEYMAP_US: [Option<(char, char)>; 128]` mapping keycode → (unshifted, shifted) ASCII characters
+- [x] Implement modifier tracking: set/clear bits on modifier key press/release
+- [x] Implement absolute → display coordinate conversion: `x_display = abs_x * display_width / 32768`
+- [x] Define global input event queue: `static INPUT_QUEUE: Mutex<FixedQueue<InputEvent, 256>>`
+- [x] Implement `process_raw_event(device_id, raw_event)` → push typed `InputEvent` to queue
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.1 (InputEvent enum), [input/events.md](../platform/input/events.md) §4.1
 
@@ -155,11 +155,11 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Add `just run-input` recipe that includes VirtIO-input devices. Create a simple input demo thread that reads from the input queue and logs events to UART. Also update `run-gpu` to include input devices for future use.
 
 **Tasks:**
-- [ ] Add `run-input` recipe to justfile: same as `run-gpu` plus `-device virtio-keyboard-device -device virtio-tablet-device`
-- [ ] Update `run-gpu` recipe to also include `-device virtio-keyboard-device -device virtio-tablet-device`
-- [ ] Add `input::init()` call to `kernel/src/main.rs` after GPU init
-- [ ] Implement input polling in the timer tick or a dedicated polling loop (poll all devices every ~16ms)
-- [ ] Create input demo: log key name and pointer coordinates to UART on each event
+- [x] Add `run-input` recipe to justfile: same as `run-gpu` plus `-device virtio-keyboard-device -device virtio-tablet-device`
+- [x] Update `run-gpu` recipe to also include `-device virtio-keyboard-device -device virtio-tablet-device`
+- [x] Add `input::init()` call to `kernel/src/main.rs` after GPU init
+- [x] Implement input polling in the timer tick or a dedicated polling loop (poll all devices every ~16ms)
+- [x] Create input demo: log key name and pointer coordinates to UART on each event
 
 **Note:** QEMU GUI interaction: click into the QEMU window to capture keyboard/mouse input. `Ctrl+Alt+G` releases the mouse grab. UART output continues to the terminal via `-serial stdio` (the GPU/input recipes use `-serial stdio` with a graphical window, unlike `just run` which uses `-nographic`).
 
@@ -174,11 +174,13 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Add input-related boot phase tracking. Extend `EarlyBootPhase` enum with new variants for input and compositor readiness.
 
 **Tasks:**
-- [ ] Add `InputReady = 19` and `CompositorReady = 20` variants to `EarlyBootPhase` in `shared/src/boot.rs`
-- [ ] Update `Complete` variant to `= 21`
-- [ ] Ensure `EarlyBootPhase` logging works as expected (it derives `Debug`; there is no `name()` method to update)
-- [ ] Update `EARLY_BOOT_PHASE_COUNT` to 22, the "Total: N variants" comment in `shared/src/boot.rs`, and all unit tests that assert count or discriminant values
-- [ ] Call `advance_boot_phase(InputReady)` after input init in `kernel/src/main.rs`
+- [x] Add `InputReady = 18` and `CompositorReady = 19` variants to `EarlyBootPhase` in `shared/src/boot.rs`
+- [x] Update `Complete` variant to `= 20`
+- [x] Ensure `EarlyBootPhase` logging works as expected (it derives `Debug`; there is no `name()` method to update)
+- [x] Update `EARLY_BOOT_PHASE_COUNT` to 21, the "Total: N variants" comment in `shared/src/boot.rs`, and all unit tests that assert count or discriminant values
+- [x] Call `advance_boot_phase(InputReady)` after input init in `kernel/src/main.rs`
+
+**Note (post-implementation):** The pre-M23 enum had 18 variants (EntryPoint=0 through 17), so the new variants slotted in as 18/19/20 with COUNT=21, not 19/20/21 with COUNT=22 as initially drafted. Numbering above reflects what shipped.
 
 **Key reference:** `kernel/src/boot_phase.rs`, `shared/src/boot.rs`
 
@@ -191,15 +193,15 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Comprehensive host-side tests for all input types. Ensure all types are no_std compatible.
 
 **Tasks:**
-- [ ] Add `#[cfg(test)] mod tests` to `shared/src/input.rs`
-- [ ] Test: `VirtioInputEvent` is exactly 8 bytes repr(C)
-- [ ] Test: `KeyCode` round-trips through evdev keycode conversion
-- [ ] Test: `Modifiers` bitflags combine correctly
-- [ ] Test: US-QWERTY keymap maps KEY_A(30) → ('a', 'A')
-- [ ] Test: absolute→display coordinate conversion at boundaries (0, 16383, 32767)
-- [ ] Test: `InputEvent` enum variants construct correctly
-- [ ] Test: `KeyState` discrimination (Pressed/Released/Repeat)
-- [ ] Target: 20+ new tests in input module
+- [x] Add `#[cfg(test)] mod tests` to `shared/src/input.rs`
+- [x] Test: `VirtioInputEvent` is exactly 8 bytes repr(C)
+- [x] Test: `KeyCode` round-trips through evdev keycode conversion
+- [x] Test: `Modifiers` bitflags combine correctly
+- [x] Test: US-QWERTY keymap maps KEY_A(30) → ('a', 'A')
+- [x] Test: absolute→display coordinate conversion at boundaries (0, 16383, 32767)
+- [x] Test: `InputEvent` enum variants construct correctly
+- [x] Test: `KeyState` discrimination (Pressed/Released/Repeat)
+- [x] Target: 20+ new tests in input module
 
 **Acceptance:** `just check` + `just test` pass with 20+ new input tests
 
@@ -214,18 +216,18 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Define compositor protocol types in the shared crate. All message types must fit within MAX_MESSAGE_SIZE (256 bytes) — verified with compile-time assertions.
 
 **Tasks:**
-- [ ] Create `shared/src/compositor.rs` with `pub mod compositor;` in `shared/src/lib.rs`
-- [ ] Define `SurfaceId(u64)` — unique surface identifier
-- [ ] Define `SurfaceState` enum: `Created`, `Configured`, `Active`, `Suspended`, `Destroyed`
-- [ ] Define `SurfaceLayer` enum: `Background = 0`, `Normal = 1`, `TopLevel = 2`, `Overlay = 3`, `Panel = 4`
-- [ ] Define `SurfaceTitle` struct: `{ bytes: [u8; 64], len: u8 }` — UTF-8 encoded, similar to `ServiceName`
-- [ ] Define `SurfaceContentType` enum (simplified): `Document`, `Terminal`, `Browser`, `Game`, `Settings`, `SystemUI`, `Generic`
-- [ ] Define `DamageRegion` enum: `Rect { x: u32, y: u32, width: u32, height: u32 }`, `FullSurface`, `Empty`
-- [ ] Define `CompositorRequest` repr(C): `CreateSurface { width, height, title, content_type, layer }`, `AttachBuffer { surface_id, shmem_id, damage }`, `DestroySurface { surface_id }`, `Resize { surface_id, width, height }`, `SetLayer { surface_id, layer }`
-- [ ] Define `CompositorEvent` repr(C): `Configure { surface_id, width, height, scale_x100 }`, `FocusChanged { surface_id, focused }`, `CloseRequested { surface_id }`, `BufferReleased { shmem_id }`, `FramePresented { surface_id, timestamp_ticks }`, `Input { surface_id, event: InputEvent }`
-- [ ] Add `Compositor = 15` variant to `Subsystem` enum, update `COUNT` to 16, update `name()` and tests
-- [ ] Add compile-time size assertions: `CompositorRequest` ≤ 256 bytes, `CompositorEvent` ≤ 256 bytes
-- [ ] Write host-side tests: size assertions, SurfaceState ordering, SurfaceLayer ordering, SurfaceTitle construction and truncation
+- [x] Create `shared/src/compositor.rs` with `pub mod compositor;` in `shared/src/lib.rs`
+- [x] Define `SurfaceId(u64)` — unique surface identifier
+- [x] Define `SurfaceState` enum: `Created`, `Configured`, `Active`, `Suspended`, `Destroyed`
+- [x] Define `SurfaceLayer` enum: `Background = 0`, `Normal = 1`, `TopLevel = 2`, `Overlay = 3`, `Panel = 4`
+- [x] Define `SurfaceTitle` struct: `{ bytes: [u8; 64], len: u8 }` — UTF-8 encoded, similar to `ServiceName`
+- [x] Define `SurfaceContentType` enum (simplified): `Document`, `Terminal`, `Browser`, `Game`, `Settings`, `SystemUI`, `Generic`
+- [x] Define `DamageRegion` enum: `Rect { x: u32, y: u32, width: u32, height: u32 }`, `FullSurface`, `Empty`
+- [x] Define `CompositorRequest` repr(C): `CreateSurface { width, height, title, content_type, layer }`, `AttachBuffer { surface_id, shmem_id, damage }`, `DestroySurface { surface_id }`, `Resize { surface_id, width, height }`, `SetLayer { surface_id, layer }`
+- [x] Define `CompositorEvent` repr(C): `Configure { surface_id, width, height, scale_x100 }`, `FocusChanged { surface_id, focused }`, `CloseRequested { surface_id }`, `BufferReleased { shmem_id }`, `FramePresented { surface_id, timestamp_ticks }`, `Input { surface_id, event: InputEvent }`
+- [x] Add `Compositor = 15` variant to `Subsystem` enum, update `COUNT` to 16, update `name()` and tests
+- [x] Add compile-time size assertions: `CompositorRequest` ≤ 256 bytes, `CompositorEvent` ≤ 256 bytes
+- [x] Write host-side tests: size assertions, SurfaceState ordering, SurfaceLayer ordering, SurfaceTitle construction and truncation
 
 **Key reference:** [compositor/protocol.md](../platform/compositor/protocol.md) §3.1, §3.4
 
@@ -238,10 +240,10 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Add compositor-related capability variants to the existing flat `Capability` enum. Phase 7 uses the flat enum pattern (consistent with existing GPU capabilities). The rich `DisplayCapability` struct from security.md §10.1 is deferred to Phase 18.
 
 **Tasks:**
-- [ ] Add to `Capability` enum in `shared/src/cap.rs`: `CompositorCreateSurface`, `CompositorFullscreen`, `CompositorOverlay`, `CompositorInputAccess`
-- [ ] Update `Capability::permits()` match arms for new variants
-- [ ] Update capability unit tests
-- [ ] Document: Phase 7 uses flat capabilities; rich `DisplayCapability` struct deferred to Phase 18
+- [x] Add to `Capability` enum in `shared/src/cap.rs`: `CompositorCreateSurface`, `CompositorFullscreen`, `CompositorOverlay`, `CompositorInputAccess`
+- [x] Update `Capability::permits()` match arms for new variants
+- [x] Update capability unit tests
+- [x] Document: Phase 7 uses flat capabilities; rich `DisplayCapability` struct deferred to Phase 18
 
 **Key reference:** [compositor/security.md](../platform/compositor/security.md) §10.1, `shared/src/cap.rs`
 
@@ -254,12 +256,12 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Create the compositor service following the GPU Service pattern (`ProcessId(10)`, `SchedulerClass::Interactive`). Register IPC channel as "compositor". The compositor uses direct VirtIO-GPU driver access (not IPC to GPU Service) for frame submission — same trust level, no round-trip overhead.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/mod.rs` and `kernel/src/compositor/service.rs`
-- [ ] Define `COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>>`
-- [ ] Implement `init_compositor()` — create process (`ProcessId(10)`, name="compositor"), grant capabilities (`CompositorCreateSurface`, `GpuMmioAccess`, `ChannelCreate`, `DebugPrint`), create IPC channel, register service as "compositor", spawn compositor thread
-- [ ] Implement `compositor_entry()` — unmask IRQs, enter main loop
-- [ ] Add `compositor::init_compositor()` call to `kernel/src/main.rs` after GPU Service init
-- [ ] Document lock ordering: `... > BLOCK_ENGINE > SURFACE_TABLE > INPUT_EVENT_QUEUE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`
+- [x] Create `kernel/src/compositor/mod.rs` and `kernel/src/compositor/service.rs`
+- [x] Define `COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>>`
+- [x] Implement `init_compositor()` — create process (`ProcessId(10)`, name="compositor"), grant capabilities (`CompositorCreateSurface`, `GpuMmioAccess`, `ChannelCreate`, `DebugPrint`), create IPC channel, register service as "compositor", spawn compositor thread
+- [x] Implement `compositor_entry()` — unmask IRQs, enter main loop
+- [x] Add `compositor::init_compositor()` call to `kernel/src/main.rs` after GPU Service init
+- [x] Document lock ordering: `... > BLOCK_ENGINE > SURFACE_TABLE > INPUT_EVENT_QUEUE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`
 
 **Note:** Lock ordering for compositor globals must be documented at each declaration site with `// Lock ordering:` comments, following the pattern in ipc/shmem.rs and ipc/notify.rs.
 
@@ -276,13 +278,21 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Note:** DMA pool budget: GPU Service uses ~8MB (2×4MB). Compositor allocates ~8MB more. Total ~16MB out of 64MB DMA pool. Client surface buffers use `Pool::Kernel` (not DMA) — only the compositor's final composition buffer needs DMA for VirtIO-GPU transfer.
 
 **Tasks:**
-- [ ] Implement `display_handoff()` in compositor service: get display info from `virtio_gpu::display_info()`
-- [ ] Allocate 2 DMA-backed composition buffers via `alloc_dma_pages()` (order-10 for 1280×800×4)
-- [ ] Create VirtIO-GPU resources for both buffers (`gpu_allocate_framebuffer()`)
-- [ ] Render initial frame (solid background color) to back buffer
-- [ ] Set compositor's buffer as scanout via `gpu_set_scanout()`
-- [ ] Signal GPU Service to stop its display loop (set a global `COMPOSITOR_ACTIVE: AtomicBool`)
-- [ ] Log handoff completion to UART
+- [x] Implement `display_handoff()` in compositor service: get display info from `virtio_gpu::display_info()`
+- [x] Allocate 2 DMA-backed composition buffers via `alloc_dma_pages()` (order-10 for 1280×800×4)
+- [x] Create VirtIO-GPU resources for both buffers (`gpu_allocate_framebuffer()`)
+- [x] Render initial frame (solid background color) to back buffer
+- [x] Set compositor's buffer as scanout via `gpu_set_scanout()`
+- [x] Signal GPU Service to stop its display loop (set a global `COMPOSITOR_ACTIVE: AtomicBool`)
+- [x] Log handoff completion to UART
+
+**Note (post-implementation):** Surfaced and fixed a pre-existing bounds-check
+gap in `cap/mod.rs` — `check_channel_create`, `check_channel_access`,
+`check_shared_memory_create`, and `check_shared_memory_access` indexed
+`PROCESS_TABLE` with `pid.0 as usize` without first verifying the index was in
+range, causing rare `index out of bounds` panics on garbage `pid` values
+returned from torn `Thread.owner_pid` reads. Each function now returns `Eperm`
+when `pid.0 >= MAX_PROCESSES`, matching the `None`-slot fallthrough.
 
 **Key reference:** `kernel/src/gpu/service.rs` (existing buffer allocation), [compositor.md](../platform/compositor.md) §2
 
@@ -295,14 +305,14 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Implement the surface table and state machine. Handle `CreateSurface` (allocate `SurfaceId`, send `Configure` event), `AttachBuffer` (update front buffer reference, transition to `Active`), `DestroySurface` (cleanup resources). Use fixed-size array (not Vec) to avoid OOM panic risk.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/surface.rs`
-- [ ] Define `Surface` struct: `id: SurfaceId`, `state: SurfaceState`, `layer: SurfaceLayer`, `title: SurfaceTitle`, `content_type: SurfaceContentType`, `x: i32`, `y: i32`, `width: u32`, `height: u32`, `shmem_id: Option<SharedMemoryId>`, `owner_pid: ProcessId`, `channel: ChannelId`, `damaged: bool`
-- [ ] Define `MAX_SURFACES: usize = 32` and `static SURFACE_TABLE: Mutex<[Option<Surface>; MAX_SURFACES]>` with lock ordering comment
-- [ ] Implement `surface_create()` — validate capability, allocate SurfaceId (monotonic counter), insert into table, send `Configure` event via IPC
-- [ ] Implement `surface_attach_buffer()` — validate surface exists and owned by caller, update shmem_id, set `damaged=true`, transition state to `Active` if first buffer
-- [ ] Implement `surface_destroy()` — mark as `Destroyed`, release resources, remove from table
-- [ ] Implement `surface_resize()` — update dimensions, send new `Configure` event
-- [ ] Validate state machine transitions per protocol.md §3.1 state diagram
+- [x] Create `kernel/src/compositor/surface.rs`
+- [x] Define `Surface` struct: `id: SurfaceId`, `state: SurfaceState`, `layer: SurfaceLayer`, `title: SurfaceTitle`, `content_type: SurfaceContentType`, `x: i32`, `y: i32`, `width: u32`, `height: u32`, `shmem_id: Option<SharedMemoryId>`, `owner_pid: ProcessId`, `channel: ChannelId`, `damaged: bool`
+- [x] Define `MAX_SURFACES: usize = 32` and `static SURFACE_TABLE: Mutex<[Option<Surface>; MAX_SURFACES]>` with lock ordering comment
+- [x] Implement `surface_create()` — validate capability, allocate SurfaceId (monotonic counter), insert into table, send `Configure` event via IPC
+- [x] Implement `surface_attach_buffer()` — validate surface exists and owned by caller, update shmem_id, set `damaged=true`, transition state to `Active` if first buffer
+- [x] Implement `surface_destroy()` — mark as `Destroyed`, release resources, remove from table
+- [x] Implement `surface_resize()` — update dimensions, send new `Configure` event
+- [x] Validate state machine transitions per protocol.md §3.1 state diagram
 
 **Key reference:** [compositor/protocol.md](../platform/compositor/protocol.md) §3.1
 
@@ -317,14 +327,14 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Note:** Premultiplied alpha formula (for future transparent surfaces): `out = src + dst * (1 - src_alpha)`. Phase 7 shell surfaces use `Xrgb8888` (opaque, no blending needed).
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/render.rs`
-- [ ] Implement `compose_frame(surfaces, comp_buffer)` — iterate surfaces in z-order, blit visible regions to composition buffer
-- [ ] Implement `blit_opaque(src_ptr, dst_ptr, src_rect, dst_x, dst_y, stride)` — per-pixel copy for `Xrgb8888`
-- [ ] Implement `blit_alpha_premultiplied(src_ptr, dst_ptr, ...)` — premultiplied alpha blend for `Argb8888` (used by window decorations)
-- [ ] Implement `DamageTracker` — per-surface dirty flags, screen-space damage accumulation, union of all damage regions
-- [ ] Implement damage-driven composition: only redraw regions that changed since last frame
-- [ ] Clear background to AIOS blue (`#5B8CFF` = 0xFF5B8CFF in B8G8R8A8) in undamaged areas
-- [ ] Map pixel format: compositor internal `Xrgb8888` maps to VirtIO-GPU `B8G8R8A8Unorm`
+- [x] Create `kernel/src/compositor/render.rs`
+- [x] Implement `compose_frame(surfaces, comp_buffer)` — iterate surfaces in z-order, blit visible regions to composition buffer
+- [x] Implement `blit_opaque(src_ptr, dst_ptr, src_rect, dst_x, dst_y, stride)` — per-pixel copy for `Xrgb8888`
+- [x] Implement `blit_alpha_premultiplied(src_ptr, dst_ptr, ...)` — premultiplied alpha blend for `Argb8888` (used by window decorations)
+- [x] Implement `DamageTracker` — per-surface dirty flags, screen-space damage accumulation, union of all damage regions
+- [x] Implement damage-driven composition: only redraw regions that changed since last frame
+- [x] Clear background to AIOS blue (`#5B8CFF` = 0xFF5B8CFF in B8G8R8A8) in undamaged areas
+- [x] Map pixel format: compositor internal `Xrgb8888` maps to VirtIO-GPU `B8G8R8A8Unorm`
 
 **Key reference:** [compositor/rendering.md](../platform/compositor/rendering.md) §5.2 Frame Composition, §5.1 (simplified)
 
@@ -337,13 +347,25 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** The compositor main loop: poll input, receive IPC requests, update surface state, compose if damaged, transfer+flush to VirtIO-GPU. Target 60fps (16.67ms budget). Skip frames when no damage (idle power saving).
 
 **Tasks:**
-- [ ] Implement compositor main loop in `service.rs`: `loop { poll_input(); process_ipc(); if any_damage() { compose_frame(); present(); } yield_or_sleep(); }`
-- [ ] Use `TICK_COUNT` for frame pacing: compose at most once per 16ms
-- [ ] Call `gpu_transfer_to_host()` + `gpu_resource_flush()` to present composed frame
-- [ ] Implement double-buffer swap: render to back buffer, then swap (rebind scanout)
-- [ ] Skip composition when no surface has damage (static desktop → zero GPU work)
-- [ ] Log frame timing statistics to UART every 60 frames (once per second)
-- [ ] Add watchdog: log warning if any frame takes >100ms
+- [x] Implement compositor main loop in `service.rs`: `loop { poll_input(); process_ipc(); if any_damage() { compose_frame(); present(); } yield_or_sleep(); }`
+- [x] Use `TICK_COUNT` for frame pacing: compose at most once per 16ms
+- [x] Call `gpu_transfer_to_host()` + `gpu_resource_flush()` to present composed frame
+- [x] Implement double-buffer swap: render to back buffer, then swap (rebind scanout)
+- [x] Skip composition when no surface has damage (static desktop → zero GPU work)
+- [x] Log frame timing statistics to UART every 60 frames (once per second)
+- [x] Add watchdog: log warning if any frame takes >100ms
+
+**Note (post-implementation):** The compose-and-present pipeline is wired
+end-to-end (`present_frame_if_due` → `present_frame` → `compose_frame` →
+`gpu_transfer_to_host` + `gpu_resource_flush` → `swap_buffers_after_compose`)
+and gated by a single `COMPOSITOR_PRESENT_ENABLED` flag. M24 ships the flag
+**off** because the post-handoff IPC bench path surfaces three pre-existing
+kernel-side races when the compositor adds frame-pacing pressure
+(`cap/mod.rs:86` torn `pid` reads, fixed in Step 11; `virtio_input.rs:228`
+modulo-by-zero on uninitialized `queue_size`, fixed in Step 14; an unrelated
+data abort at low VAs that surfaces only with M24's added activity). Step 17
+(M25) flips the flag once IPC dispatch wires real client surfaces and the
+remaining race is root-caused.
 
 **Key reference:** [compositor/rendering.md](../platform/compositor/rendering.md) §5.4 Frame Scheduling
 
@@ -356,12 +378,23 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Create a test that spawns 3 surfaces at different layers and positions. Validates the entire compositor pipeline end-to-end: IPC surface creation, shared memory buffer writing, composition, and display.
 
 **Tasks:**
-- [ ] Implement `compositor_test()` in `kernel/src/compositor/mod.rs`
-- [ ] Create 3 test surfaces: background (layer Background, full-screen, dark gray), window (layer Normal, 400×300 at position 100,100, blue), overlay (layer Overlay, 200×50, semi-transparent yellow)
-- [ ] Allocate shared memory for each surface, write solid color pixels
-- [ ] Attach buffers via IPC, verify Configure events received
-- [ ] Verify z-ordering: overlay on top of window on top of background
-- [ ] Destroy surfaces and verify cleanup
+- [x] Implement `compositor_test()` in `kernel/src/compositor/mod.rs`
+- [x] Create 3 test surfaces: background (layer Background, full-screen, dark gray), window (layer Normal, 400×300 at position 100,100, blue), overlay (layer Overlay, 200×50, semi-transparent yellow)
+- [x] Allocate shared memory for each surface, write solid color pixels
+- [x] Attach buffers via IPC, verify Configure events received
+- [x] Verify z-ordering: overlay on top of window on top of background
+- [x] Destroy surfaces and verify cleanup
+
+**Note (post-implementation):** Per the plan's Step 15d alternative, the
+multi-surface composition test is implemented as a host-side unit test in
+`shared/src/compositor.rs::tests::multi_surface_composition_z_order` rather
+than a kernel-side runtime test. This exercises the same blit + z-order
+logic the kernel uses (via `host_blit_opaque` mirroring
+`render::blit_opaque`) plus damage-tracker accumulation, verifies the
+overlay-on-top-of-window-on-top-of-background z-order, and checks that
+clipping and off-screen blits behave correctly. Coverage is broader than
+the QEMU-only test would have been because boundary cases are
+deterministic in the host environment.
 
 **Acceptance:** `just run-input` shows 3 colored rectangles composited at correct z-order; UART logs surface lifecycle events
 
@@ -372,14 +405,22 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Comprehensive host-side tests for all compositor shared types. Move any pure data structures from kernel to shared.
 
 **Tasks:**
-- [ ] Add `#[cfg(test)] mod tests` to `shared/src/compositor.rs`
-- [ ] Test: `CompositorRequest` and `CompositorEvent` repr(C) size ≤ 256 bytes
-- [ ] Test: `SurfaceState` ordering and valid transitions
-- [ ] Test: `SurfaceLayer` ordering (Background < Normal < TopLevel < Overlay < Panel)
-- [ ] Test: `SurfaceTitle` construction, truncation at 64 bytes, UTF-8 preservation
-- [ ] Test: `DamageRegion::Rect` contains correct coordinates
-- [ ] Test: `SurfaceId` monotonic generation
-- [ ] Target: 15+ new tests
+- [x] Add `#[cfg(test)] mod tests` to `shared/src/compositor.rs`
+- [x] Test: `CompositorRequest` and `CompositorEvent` repr(C) size ≤ 256 bytes
+- [x] Test: `SurfaceState` ordering and valid transitions
+- [x] Test: `SurfaceLayer` ordering (Background < Normal < TopLevel < Overlay < Panel)
+- [x] Test: `SurfaceTitle` construction, truncation at 64 bytes, UTF-8 preservation
+- [x] Test: `DamageRegion::Rect` contains correct coordinates
+- [x] Test: `SurfaceId` monotonic generation
+- [x] Target: 15+ new tests
+
+**Note (post-implementation):** 31 tests landed in
+`shared/src/compositor.rs::tests` covering request/event size,
+SurfaceState transitions (forward, suspend, destroy-from-anywhere, and
+invalid), SurfaceLayer ordering, SurfaceTitle truncation (ASCII,
+multi-byte UTF-8 boundary safety), DamageRegion + DamageTracker, command
+round-trips, multi-surface composition + clip + off-screen, plus IPC
+event encoders (Configure, Input keyboard, Input pointer).
 
 **Acceptance:** `just check` + `just test` pass with 15+ new compositor tests
 

@@ -225,6 +225,13 @@ pub fn poll_all(buf: &mut [(InputDeviceId, VirtioInputEvent)]) -> usize {
                     break;
                 }
 
+                // Defensive: guard against an uninitialized device with
+                // queue_size = 0 sneaking through (would otherwise panic
+                // on modulo-by-zero). Skip the device for this poll cycle.
+                if dev.queue_size == 0 {
+                    break;
+                }
+
                 let ring_idx = (dev.last_used_idx % dev.queue_size) as usize;
                 let elem_addr = dev.used_virt + 4 + ring_idx * 8;
 
