@@ -459,21 +459,218 @@ pub fn hit_test_topmost(px: i32, py: i32, deco: &WindowDecoration) -> Option<(Su
 // Decoration event handling — invoked when input lands on a non-content zone
 // ---------------------------------------------------------------------------
 
+/// Apply a new geometry to a surface in the kernel surface table.
+///
+/// Used by the move handler to update the surface origin and by the
+/// resize handler to update size+origin together. Holds the surface
+/// table briefly; never holds it across IPC.
+fn apply_geometry(id: SurfaceId, x: i32, y: i32, width: u32, height: u32) {
+    let mut table = SURFACE_TABLE.lock();
+    if let Some(slot) = table
+        .iter_mut()
+        .find(|s| s.as_ref().map(|surf| surf.id == id).unwrap_or(false))
+    {
+        if let Some(surface) = slot.as_mut() {
+            surface.x = x;
+            surface.y = y;
+            surface.width = width;
+            surface.height = height;
+            surface.damaged = true;
+        }
+    }
+}
+
+/// Snapshot the current `(origin, size)` for a surface, or `None` if the
+/// surface no longer exists.
+fn surface_geometry(id: SurfaceId) -> Option<((i32, i32), (u32, u32))> {
+    let table = SURFACE_TABLE.lock();
+    table.iter().find_map(|s| {
+        s.as_ref()
+            .filter(|surf| surf.id == id)
+            .map(|surf| ((surf.x, surf.y), (surf.width, surf.height)))
+    })
+}
+
 /// Dispatch an input event that landed on a window decoration.
 ///
 /// `surface` is the surface owning the decoration; `zone` identifies which
-/// part of the chrome the pointer hit. Step 21 fills in the move/resize/
-/// close-button behaviour. M25 Step 20 calls this from the input router
-/// whenever `route_event` returns a `RouteTarget::Decoration` so the
-/// wiring is in place ahead of Step 21.
+/// part of the chrome the pointer hit. Step 21 implements the body — the
+/// router (Step 20) already routes here.
 pub fn handle_decoration_event(
     surface: SurfaceId,
     zone: HitZone,
     event: &shared::input::InputEvent,
 ) {
-    let _ = (surface, zone, event);
-    // Step 21: dispatch to drag/resize/close handlers based on `zone` and
-    // the event kind (pointer down/up/move).
+    use shared::input::{ButtonState, InputEvent, MouseButton};
+
+    let pointer = match event {
+        InputEvent::Pointer {
+            x,
+            y,
+            button,
+            state,
+        } => (*x as i32, *y as i32, *button, *state),
+        InputEvent::Keyboard { .. } => return,
+    };
+    let (px, py, button, button_state) = pointer;
+
+    // Resolve the current drag state once; we may need to update it.
+    let mut drag = DRAG_STATE.lock();
+    match (button, button_state) {
+        // Left button pressed on a chrome zone: enter drag/resize/close.
+        (Some(MouseButton::Left), Some(ButtonState::Pressed)) => match zone {
+            HitZone::TitleBar => {
+                if let Some(((sx, sy), _dims)) = surface_geometry(surface) {
+                    *drag = DragState::Moving {
+                        surface,
+                        start_pointer: (px, py),
+                        start_origin: (sx, sy),
+                    };
+                }
+            }
+            HitZone::ResizeBorder(edge) => {
+                if let Some(((sx, sy), (w, h))) = surface_geometry(surface) {
+                    *drag = DragState::Resizing {
+                        surface,
+                        edge,
+                        start_pointer: (px, py),
+                        start_origin: (sx, sy),
+                        start_dims: (w, h),
+                    };
+                }
+            }
+            HitZone::CloseButton => {
+                drop(drag);
+                let channel = {
+                    let table = SURFACE_TABLE.lock();
+                    table.iter().find_map(|s| {
+                        s.as_ref()
+                            .filter(|surf| surf.id == surface)
+                            .map(|surf| surf.channel)
+                    })
+                };
+                if let Some(ch) = channel {
+                    let close = shared::compositor::CompositorEvent::close_requested(surface);
+                    super::input_route::send_event_bytes(ch, &close);
+                }
+            }
+            HitZone::Content => {} // not possible — content is not a decoration
+        },
+        // Left button released: exit drag mode regardless of where it lands.
+        (Some(MouseButton::Left), Some(ButtonState::Released)) => {
+            *drag = DragState::Idle;
+        }
+        // Pointer motion — apply move/resize delta if we are in a drag.
+        (None, None) => {
+            // Apply delta inside the lock so the read-modify-write of the
+            // drag-state-derived geometry stays atomic with the drag state.
+            let action = match *drag {
+                DragState::Moving {
+                    surface,
+                    start_pointer,
+                    start_origin,
+                } => Some((
+                    surface,
+                    start_origin.0 + (px - start_pointer.0),
+                    start_origin.1 + (py - start_pointer.1),
+                    None,
+                )),
+                DragState::Resizing {
+                    surface,
+                    edge,
+                    start_pointer,
+                    start_origin,
+                    start_dims,
+                } => {
+                    let dx = px - start_pointer.0;
+                    let dy = py - start_pointer.1;
+                    let (mut nx, mut ny) = start_origin;
+                    let mut nw = start_dims.0 as i32;
+                    let mut nh = start_dims.1 as i32;
+                    match edge {
+                        ResizeEdge::East => nw = (start_dims.0 as i32) + dx,
+                        ResizeEdge::West => {
+                            nw = (start_dims.0 as i32) - dx;
+                            nx = start_origin.0 + dx;
+                        }
+                        ResizeEdge::South => nh = (start_dims.1 as i32) + dy,
+                        ResizeEdge::North => {
+                            nh = (start_dims.1 as i32) - dy;
+                            ny = start_origin.1 + dy;
+                        }
+                        ResizeEdge::SouthEast => {
+                            nw = (start_dims.0 as i32) + dx;
+                            nh = (start_dims.1 as i32) + dy;
+                        }
+                        ResizeEdge::NorthEast => {
+                            nw = (start_dims.0 as i32) + dx;
+                            nh = (start_dims.1 as i32) - dy;
+                            ny = start_origin.1 + dy;
+                        }
+                        ResizeEdge::SouthWest => {
+                            nw = (start_dims.0 as i32) - dx;
+                            nh = (start_dims.1 as i32) + dy;
+                            nx = start_origin.0 + dx;
+                        }
+                        ResizeEdge::NorthWest => {
+                            nw = (start_dims.0 as i32) - dx;
+                            nh = (start_dims.1 as i32) - dy;
+                            nx = start_origin.0 + dx;
+                            ny = start_origin.1 + dy;
+                        }
+                    }
+                    let nw_u = nw.max(0) as u32;
+                    let nh_u = nh.max(0) as u32;
+                    let (nw_clamped, nh_clamped) = clamp_window_size(nw_u, nh_u);
+                    // Re-anchor north/west origins if the clamp shrank the
+                    // proposed size: keep the opposite edge fixed.
+                    if matches!(
+                        edge,
+                        ResizeEdge::West | ResizeEdge::NorthWest | ResizeEdge::SouthWest
+                    ) {
+                        nx = start_origin.0 + start_dims.0 as i32 - nw_clamped as i32;
+                    }
+                    if matches!(
+                        edge,
+                        ResizeEdge::North | ResizeEdge::NorthEast | ResizeEdge::NorthWest
+                    ) {
+                        ny = start_origin.1 + start_dims.1 as i32 - nh_clamped as i32;
+                    }
+                    Some((surface, nx, ny, Some((nw_clamped, nh_clamped))))
+                }
+                DragState::Idle => None,
+            };
+            // Drop the drag lock before touching SURFACE_TABLE / IPC to keep
+            // the lock-ordering invariant intact (DRAG_STATE is a leaf).
+            drop(drag);
+            if let Some((id, nx, ny, dims)) = action {
+                let (w, h) = match dims {
+                    Some(d) => d,
+                    None => surface_geometry(id).map(|(_, d)| d).unwrap_or((0, 0)),
+                };
+                if w > 0 && h > 0 {
+                    apply_geometry(id, nx, ny, w, h);
+                    if dims.is_some() {
+                        // Resize: notify the surface of its new dimensions.
+                        let channel = {
+                            let table = SURFACE_TABLE.lock();
+                            table.iter().find_map(|s| {
+                                s.as_ref()
+                                    .filter(|surf| surf.id == id)
+                                    .map(|surf| surf.channel)
+                            })
+                        };
+                        if let Some(ch) = channel {
+                            let cfg = shared::compositor::CompositorEvent::configure(id, w, h, 100);
+                            super::input_route::send_event_bytes(ch, &cfg);
+                        }
+                    }
+                }
+            }
+        }
+        // Other button or scroll events on chrome are ignored in M25.
+        _ => {}
+    }
 }
 
 // ---------------------------------------------------------------------------
