@@ -75,6 +75,33 @@ pub struct Surface {
     pub damaged: bool,
 }
 
+/// Process id used by every compositor-internal shell surface (Status
+/// Strip, Taskbar, Workspace). The compositor service registers itself
+/// as `ProcessId(10)` in `service::init_compositor`; the shell allocates
+/// its surfaces from inside that service so they all share this owner.
+const COMPOSITOR_PROCESS_ID: ProcessId = ProcessId(10);
+
+impl Surface {
+    /// Returns true when this surface is a compositor-internal "shell"
+    /// surface (Status Strip, Taskbar, future Workspace).
+    ///
+    /// Shell predicate is `(owner_pid == compositor) && (layer == Panel)`.
+    /// `Panel` is reserved for system chrome per `SurfaceLayer`'s docs;
+    /// only the compositor itself is allowed to publish on that layer in
+    /// Phase 7. The compound check is defense-in-depth against a future
+    /// kernel-internal surface that uses ProcessId(10) but a different
+    /// layer (none planned, but the predicate stays robust).
+    ///
+    /// Used by the Taskbar to filter shell surfaces out of its window
+    /// list (Step 25), and by Step 27's input router to refuse keyboard
+    /// focus on shell surfaces.
+    #[allow(dead_code)] // First consumer is Step 25 taskbar; Step 27 adds
+                        // the input-routing call site.
+    pub fn is_shell(&self) -> bool {
+        self.owner_pid.0 == COMPOSITOR_PROCESS_ID.0 && matches!(self.layer, SurfaceLayer::Panel)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Surface table — kernel-global, fixed-size, mutex-protected
 // ---------------------------------------------------------------------------
@@ -253,6 +280,36 @@ pub fn surface_set_layer(
     }
     surface.layer = layer;
     surface.layer_seq = NEXT_LAYER_SEQ.fetch_add(1, Ordering::Relaxed);
+    surface.damaged = true;
+    Ok(())
+}
+
+/// Reposition a surface in screen coordinates.
+///
+/// Used by the compositor's window-move drag handler and by shell
+/// surfaces (Taskbar, Workspace) that need to lock to specific edges of
+/// the display. Marks the surface damaged so the next composition
+/// frame picks up the new position.
+#[allow(dead_code)] // First consumer is M26 Step 25 (taskbar bottom-edge
+                    // anchoring); the M25 drag handler still mutates
+                    // SURFACE_TABLE inline and will migrate to this
+                    // helper when the lock-ordering audit revisits it.
+pub fn surface_set_position(
+    id: SurfaceId,
+    x: i32,
+    y: i32,
+    caller_pid: ProcessId,
+) -> Result<(), SurfaceError> {
+    let mut table = SURFACE_TABLE.lock();
+    let surface = find_mut(&mut table, id).ok_or(SurfaceError::NotFound)?;
+    if surface.owner_pid.0 != caller_pid.0 {
+        return Err(SurfaceError::NotOwner);
+    }
+    if surface.state.is_terminal() {
+        return Err(SurfaceError::InvalidTransition);
+    }
+    surface.x = x;
+    surface.y = y;
     surface.damaged = true;
     Ok(())
 }

@@ -6,13 +6,15 @@
 //! surface but never have IPC events delivered to them — `service::is_self_channel`
 //! suppresses self-deliveries to the compositor's well-known channel.
 //!
-//! Step 24 ships the Status Strip only. Steps 25–27 layer Taskbar,
-//! Workspace, and shell input integration on the same scaffolding.
+//! Step 24 ships the Status Strip; Step 25 adds the Taskbar; Steps 26–27
+//! layer Workspace and shell input integration on the same scaffolding.
 //!
-//! Per docs/experience/experience.md §6 (Status Strip) and the M26 working
-//! plan in docs/knowledge/plans/phase-7-m26-desktop-shell.md.
+//! Per docs/experience/experience.md §2 (Five Surfaces), §6 (Status
+//! Strip), and the M26 working plan in
+//! `docs/knowledge/plans/phase-7-m26-desktop-shell.md`.
 
 pub mod status_strip;
+pub mod taskbar;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -52,6 +54,7 @@ pub fn init_shell_surfaces(display_width: u32, display_height: u32) -> Result<()
         return Err(ShellError::NoDisplay);
     }
     status_strip::init(display_width)?;
+    taskbar::init(display_width, display_height)?;
     Ok(())
 }
 
@@ -64,4 +67,5 @@ pub fn init_shell_surfaces(display_width: u32, display_height: u32) -> Result<()
 /// compositor is running headless).
 pub fn tick(now_ms: u64) {
     status_strip::tick(now_ms);
+    taskbar::tick(now_ms);
 }

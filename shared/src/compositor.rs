@@ -1185,6 +1185,138 @@ pub const fn format_u32_left4(value: u32) -> [u8; 4] {
 }
 
 // ---------------------------------------------------------------------------
+// Taskbar layout (M26 Step 25)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of taskbar entries laid out per frame. Layer 1 desktops
+/// rarely show more than ~4 windows; 8 leaves headroom while keeping the
+/// fixed-size array cheap to copy.
+pub const MAX_TASKBAR_ENTRIES: usize = 8;
+
+/// Width in pixels of the workspace button cell on the taskbar's left edge.
+pub const TASKBAR_WORKSPACE_BUTTON_WIDTH: u32 = 40;
+
+/// Default per-entry width before clipping. Each entry holds a truncated
+/// surface title. Wide enough for ~24 8px glyphs after edge padding.
+pub const TASKBAR_ENTRY_WIDTH: u32 = 200;
+
+/// Reserved horizontal space for the right-anchored "N windows" count
+/// readout. Wide enough for "8 windows" at the 8px cell width plus a small
+/// margin on each side.
+pub const TASKBAR_COUNT_RESERVED_WIDTH: u32 = 96;
+
+/// One laid-out cell on the taskbar. Coordinates are in surface-local
+/// pixels (origin at the taskbar's own top-left).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskbarCell {
+    /// Left edge of the cell in surface-local pixels.
+    pub x: i32,
+    /// Cell width in pixels.
+    pub width: u32,
+}
+
+/// Result of `compute_taskbar_layout` — fixed-capacity entry array plus
+/// auxiliary cells for the workspace button and surface-count readout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskbarLayout {
+    /// Cell occupied by the `[W]` workspace button.
+    pub workspace_button: TaskbarCell,
+    /// Per-entry cells. Only the first `visible_entries` slots are used.
+    pub entries: [TaskbarCell; MAX_TASKBAR_ENTRIES],
+    /// Number of `entries` slots that fit on this taskbar width.
+    pub visible_entries: usize,
+    /// Cell reserved for the right-anchored "N windows" count text.
+    pub count_cell: TaskbarCell,
+}
+
+/// Lay out the taskbar's interactive cells for a given display width and
+/// number of taskbar-eligible surfaces.
+///
+/// Pure function — no allocation, no dependence on kernel state — so it
+/// can be unit-tested host-side. Callers that have more surfaces than
+/// fit at the requested width receive a truncated layout (`visible_entries
+/// < entry_count`); the remainder of the array is zeroed.
+///
+/// Layout (left → right):
+///   * `workspace_button` at `x = 0`, fixed width
+///     `TASKBAR_WORKSPACE_BUTTON_WIDTH`.
+///   * Up to `MAX_TASKBAR_ENTRIES` entry cells starting at
+///     `TASKBAR_WORKSPACE_BUTTON_WIDTH`, each `TASKBAR_ENTRY_WIDTH` wide.
+///   * `count_cell` right-anchored at `display_width -
+///     TASKBAR_COUNT_RESERVED_WIDTH`, fixed width
+///     `TASKBAR_COUNT_RESERVED_WIDTH`.
+pub const fn compute_taskbar_layout(display_width: u32, entry_count: usize) -> TaskbarLayout {
+    let workspace_button = TaskbarCell {
+        x: 0,
+        width: TASKBAR_WORKSPACE_BUTTON_WIDTH,
+    };
+
+    // Right-anchored count cell: clamp at the workspace button's right edge
+    // if the display is impossibly narrow so we never produce a negative x.
+    let count_x = if display_width > TASKBAR_COUNT_RESERVED_WIDTH {
+        display_width - TASKBAR_COUNT_RESERVED_WIDTH
+    } else {
+        TASKBAR_WORKSPACE_BUTTON_WIDTH
+    };
+    let count_cell = TaskbarCell {
+        x: count_x as i32,
+        width: TASKBAR_COUNT_RESERVED_WIDTH,
+    };
+
+    // Available space between the workspace button and the count cell.
+    // Saturating: when the count cell sits at or before the workspace
+    // button's right edge (extreme-narrow display), no entries fit.
+    let entries_left = TASKBAR_WORKSPACE_BUTTON_WIDTH;
+    let entries_right_limit = count_x;
+    let available = entries_right_limit.saturating_sub(entries_left);
+    let max_fit = (available / TASKBAR_ENTRY_WIDTH) as usize;
+
+    // Visible entries: min(requested, fit, MAX).
+    let mut visible = entry_count;
+    if visible > max_fit {
+        visible = max_fit;
+    }
+    if visible > MAX_TASKBAR_ENTRIES {
+        visible = MAX_TASKBAR_ENTRIES;
+    }
+
+    let zero_cell = TaskbarCell { x: 0, width: 0 };
+    let mut entries = [zero_cell; MAX_TASKBAR_ENTRIES];
+    let mut i = 0;
+    while i < visible {
+        entries[i] = TaskbarCell {
+            x: (entries_left + (i as u32) * TASKBAR_ENTRY_WIDTH) as i32,
+            width: TASKBAR_ENTRY_WIDTH,
+        };
+        i += 1;
+    }
+
+    TaskbarLayout {
+        workspace_button,
+        entries,
+        visible_entries: visible,
+        count_cell,
+    }
+}
+
+/// Truncate `title` to at most `max_chars` ASCII bytes for taskbar display.
+///
+/// Returns the longest prefix of `title` that fits in `max_chars` bytes.
+/// Treats the title as opaque bytes (no UTF-8 boundary handling) — taskbar
+/// glyph cells are 1 byte = 1 column at the spleen 8×16 cell width, so
+/// the caller is responsible for passing ASCII-only titles. Non-ASCII
+/// bytes are still returned as-is; the renderer's `?` fallback handles
+/// them at the glyph level.
+pub fn taskbar_entry_truncate(title: &[u8], max_chars: usize) -> &[u8] {
+    let cut = if title.len() <= max_chars {
+        title.len()
+    } else {
+        max_chars
+    };
+    &title[..cut]
+}
+
+// ---------------------------------------------------------------------------
 // Compile-time invariants
 // ---------------------------------------------------------------------------
 
@@ -2114,5 +2246,116 @@ mod tests {
     #[test]
     fn format_u32_left4_saturates() {
         assert_eq!(&format_u32_left4(99_999), b"9999");
+    }
+
+    // ---- Taskbar layout (M26 Step 25) ----
+
+    #[test]
+    fn compute_taskbar_layout_workspace_button_always_first() {
+        let layout = compute_taskbar_layout(1280, 0);
+        assert_eq!(layout.workspace_button.x, 0);
+        assert_eq!(
+            layout.workspace_button.width,
+            TASKBAR_WORKSPACE_BUTTON_WIDTH
+        );
+    }
+
+    #[test]
+    fn compute_taskbar_layout_count_cell_right_anchored() {
+        let layout = compute_taskbar_layout(1280, 0);
+        assert_eq!(
+            layout.count_cell.x,
+            (1280 - TASKBAR_COUNT_RESERVED_WIDTH) as i32
+        );
+        assert_eq!(layout.count_cell.width, TASKBAR_COUNT_RESERVED_WIDTH);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_zero_entries() {
+        let layout = compute_taskbar_layout(1280, 0);
+        assert_eq!(layout.visible_entries, 0);
+        // Unused slots are zero-cells.
+        assert_eq!(layout.entries[0], TaskbarCell { x: 0, width: 0 });
+    }
+
+    #[test]
+    fn compute_taskbar_layout_one_entry_starts_after_workspace_button() {
+        let layout = compute_taskbar_layout(1280, 1);
+        assert_eq!(layout.visible_entries, 1);
+        assert_eq!(layout.entries[0].x, TASKBAR_WORKSPACE_BUTTON_WIDTH as i32);
+        assert_eq!(layout.entries[0].width, TASKBAR_ENTRY_WIDTH);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_packs_multiple_entries() {
+        let layout = compute_taskbar_layout(1280, 4);
+        assert_eq!(layout.visible_entries, 4);
+        for (i, cell) in layout.entries.iter().take(4).enumerate() {
+            let expected_x =
+                TASKBAR_WORKSPACE_BUTTON_WIDTH as i32 + (i as i32) * TASKBAR_ENTRY_WIDTH as i32;
+            assert_eq!(cell.x, expected_x);
+            assert_eq!(cell.width, TASKBAR_ENTRY_WIDTH);
+        }
+    }
+
+    #[test]
+    fn compute_taskbar_layout_truncates_when_too_many() {
+        // 1280 - 40 (button) - 96 (count) = 1144 → 5 entries fit at 200 wide.
+        let layout = compute_taskbar_layout(1280, 12);
+        assert_eq!(layout.visible_entries, 5);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_caps_at_max_entries() {
+        // 4000 px is wide enough for 18 entries but the array max is 8.
+        let layout = compute_taskbar_layout(4000, 100);
+        assert_eq!(layout.visible_entries, MAX_TASKBAR_ENTRIES);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_narrow_display_drops_all_entries() {
+        // Only just enough room for the workspace button + count cell.
+        let layout = compute_taskbar_layout(
+            TASKBAR_WORKSPACE_BUTTON_WIDTH + TASKBAR_COUNT_RESERVED_WIDTH,
+            5,
+        );
+        assert_eq!(layout.visible_entries, 0);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_extreme_narrow_display_clamps_count_cell() {
+        // Display narrower than the count cell — count_cell is parked at
+        // the workspace button's right edge so x is never negative.
+        let layout = compute_taskbar_layout(20, 3);
+        assert_eq!(layout.visible_entries, 0);
+        assert_eq!(layout.count_cell.x, TASKBAR_WORKSPACE_BUTTON_WIDTH as i32);
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_short_title_unchanged() {
+        assert_eq!(taskbar_entry_truncate(b"app", 24), b"app");
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_exact_length() {
+        assert_eq!(taskbar_entry_truncate(b"abcdef", 6), b"abcdef");
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_cuts_to_limit() {
+        assert_eq!(
+            taskbar_entry_truncate(b"a-very-long-window-title", 8),
+            b"a-very-l"
+        );
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_zero_max_chars() {
+        assert_eq!(taskbar_entry_truncate(b"app", 0), b"");
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_empty_input() {
+        assert_eq!(taskbar_entry_truncate(b"", 16), b"");
     }
 }
