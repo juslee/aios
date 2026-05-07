@@ -16,6 +16,7 @@
 use core::sync::atomic::AtomicBool;
 
 pub mod service;
+pub mod surface;
 
 // ---------------------------------------------------------------------------
 // Display ownership flag

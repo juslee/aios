@@ -305,14 +305,14 @@ when `pid.0 >= MAX_PROCESSES`, matching the `None`-slot fallthrough.
 **What:** Implement the surface table and state machine. Handle `CreateSurface` (allocate `SurfaceId`, send `Configure` event), `AttachBuffer` (update front buffer reference, transition to `Active`), `DestroySurface` (cleanup resources). Use fixed-size array (not Vec) to avoid OOM panic risk.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/surface.rs`
-- [ ] Define `Surface` struct: `id: SurfaceId`, `state: SurfaceState`, `layer: SurfaceLayer`, `title: SurfaceTitle`, `content_type: SurfaceContentType`, `x: i32`, `y: i32`, `width: u32`, `height: u32`, `shmem_id: Option<SharedMemoryId>`, `owner_pid: ProcessId`, `channel: ChannelId`, `damaged: bool`
-- [ ] Define `MAX_SURFACES: usize = 32` and `static SURFACE_TABLE: Mutex<[Option<Surface>; MAX_SURFACES]>` with lock ordering comment
-- [ ] Implement `surface_create()` — validate capability, allocate SurfaceId (monotonic counter), insert into table, send `Configure` event via IPC
-- [ ] Implement `surface_attach_buffer()` — validate surface exists and owned by caller, update shmem_id, set `damaged=true`, transition state to `Active` if first buffer
-- [ ] Implement `surface_destroy()` — mark as `Destroyed`, release resources, remove from table
-- [ ] Implement `surface_resize()` — update dimensions, send new `Configure` event
-- [ ] Validate state machine transitions per protocol.md §3.1 state diagram
+- [x] Create `kernel/src/compositor/surface.rs`
+- [x] Define `Surface` struct: `id: SurfaceId`, `state: SurfaceState`, `layer: SurfaceLayer`, `title: SurfaceTitle`, `content_type: SurfaceContentType`, `x: i32`, `y: i32`, `width: u32`, `height: u32`, `shmem_id: Option<SharedMemoryId>`, `owner_pid: ProcessId`, `channel: ChannelId`, `damaged: bool`
+- [x] Define `MAX_SURFACES: usize = 32` and `static SURFACE_TABLE: Mutex<[Option<Surface>; MAX_SURFACES]>` with lock ordering comment
+- [x] Implement `surface_create()` — validate capability, allocate SurfaceId (monotonic counter), insert into table, send `Configure` event via IPC
+- [x] Implement `surface_attach_buffer()` — validate surface exists and owned by caller, update shmem_id, set `damaged=true`, transition state to `Active` if first buffer
+- [x] Implement `surface_destroy()` — mark as `Destroyed`, release resources, remove from table
+- [x] Implement `surface_resize()` — update dimensions, send new `Configure` event
+- [x] Validate state machine transitions per protocol.md §3.1 state diagram
 
 **Key reference:** [compositor/protocol.md](../platform/compositor/protocol.md) §3.1
 
