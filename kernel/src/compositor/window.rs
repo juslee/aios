@@ -1,0 +1,625 @@
+//! Window manager — floating layout, z-order, and compositor-rendered decorations.
+//!
+//! M25 introduces the first piece of the compositor that the user can see and
+//! interact with: title bars, focus borders, and a stable z-order list. The
+//! compositor draws decorations on top of each surface's client buffer during
+//! composition; clients never see the decoration pixels.
+//!
+//! Per docs/platform/compositor/rendering.md §6.1 (Layout Modes — floating only
+//! for Layer 1).
+//!
+//! ## Lock ordering
+//!
+//! Both `WINDOW_Z_ORDER` and `DRAG_STATE` rank **above** `SURFACE_TABLE`
+//! in the global lock chain — `hit_test_topmost` walks the z-order list
+//! while holding `SURFACE_TABLE` open, and `handle_decoration_event`
+//! enters `DRAG_STATE` first then snapshots geometry from
+//! `SURFACE_TABLE`. Each is **below** the IPC tables (CHANNEL_TABLE,
+//! SHARED_REGION_TABLE) and is never held across an IPC call — callers
+//! snapshot the affected fields under the lock then drop it before
+//! `ipc_send`/`ipc_reply`. See `CLAUDE.md` for the full chain.
+//!
+//! See [shared::compositor] for the pure data types ([`HitZone`],
+//! [`ResizeEdge`], [`WindowDecoration`]) and the geometric `hit_zone()`
+//! helper.
+//
+// Items in this module are introduced incrementally across M25 Steps 17–22.
+// Each helper is referenced by a later step; the module-level `dead_code`
+// allow keeps the build clean while the wiring lands in the same milestone.
+#![allow(dead_code)]
+
+use shared::compositor::{
+    HitZone, ResizeEdge, SurfaceId, SurfaceLayer, WindowDecoration, ZOrder, MIN_WINDOW_HEIGHT,
+    MIN_WINDOW_WIDTH,
+};
+use spin::Mutex;
+
+use super::surface::{Surface, SURFACE_TABLE};
+
+// ---------------------------------------------------------------------------
+// Z-order tracking
+// ---------------------------------------------------------------------------
+
+/// Global z-order list.
+///
+/// Lock ordering: ranks above `SURFACE_TABLE` (the hit-test walk locks Z
+/// first, then SURFACE_TABLE) and below the IPC tables. Never held
+/// across an `ipc_send`/`ipc_reply` call.
+pub static WINDOW_Z_ORDER: Mutex<ZOrder> = Mutex::new(ZOrder::new());
+
+// ---------------------------------------------------------------------------
+// Default placement
+// ---------------------------------------------------------------------------
+
+/// Cascading offset between successive new windows so they do not stack
+/// exactly atop one another.
+const CASCADE_STEP: i32 = 24;
+
+/// Maximum cascade distance before wrapping back to the centered position.
+const CASCADE_WRAP: i32 = 8 * CASCADE_STEP;
+
+/// Compute a centered position with a cascading offset based on `sequence`.
+///
+/// `sequence` is a monotonic counter (typically the surface's `layer_seq`)
+/// so successive windows do not overlap exactly.
+pub fn default_position(
+    width: u32,
+    height: u32,
+    display_w: u32,
+    display_h: u32,
+    sequence: u64,
+) -> (i32, i32) {
+    let w = width as i32;
+    let h = height as i32;
+    let dw = display_w as i32;
+    let dh = display_h as i32;
+    let cx = ((dw - w) / 2).max(0);
+    let cy = ((dh - h) / 2).max(0);
+    let offset = ((sequence as i32) * CASCADE_STEP) % CASCADE_WRAP;
+    (cx + offset, cy + offset)
+}
+
+// ---------------------------------------------------------------------------
+// Drag state machine (used by Step 21 move/resize handlers)
+// ---------------------------------------------------------------------------
+
+/// Compositor drag mode — at most one window can be dragged at a time, so
+/// this is a single global atomic state rather than a per-surface field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragState {
+    /// No drag in progress.
+    Idle,
+    /// User is moving a window by its title bar.
+    Moving {
+        surface: SurfaceId,
+        /// Pointer position when the drag started (display coords).
+        start_pointer: (i32, i32),
+        /// Surface origin when the drag started.
+        start_origin: (i32, i32),
+    },
+    /// User is resizing a window by an edge or corner.
+    Resizing {
+        surface: SurfaceId,
+        edge: ResizeEdge,
+        /// Pointer position when the drag started (display coords).
+        start_pointer: (i32, i32),
+        /// Surface origin when the drag started.
+        start_origin: (i32, i32),
+        /// Surface dimensions when the drag started.
+        start_dims: (u32, u32),
+    },
+}
+
+impl DragState {
+    pub const fn is_idle(self) -> bool {
+        matches!(self, Self::Idle)
+    }
+}
+
+/// Global drag state.
+///
+/// Lock ordering: ranks above `SURFACE_TABLE` (`handle_decoration_event`
+/// holds DRAG_STATE while reading surface geometry on pointer-down)
+/// and below `WINDOW_Z_ORDER` in the chain. `FOCUS_MANAGER` is
+/// leaf-independent and is never co-held with DRAG_STATE — drag never
+/// raises focus directly; that path runs through
+/// `input_route::promote_to_focus` after `DRAG_STATE` is dropped.
+/// Never held across an IPC call — pointer-up flips state to `Idle`
+/// synchronously without IPC.
+pub static DRAG_STATE: Mutex<DragState> = Mutex::new(DragState::Idle);
+
+// ---------------------------------------------------------------------------
+// Decoration rendering
+// ---------------------------------------------------------------------------
+
+/// Color for the title bar background of a focused window (B8G8R8A8).
+pub const TITLE_BAR_FOCUSED_BG: u32 = 0xFF1E_2A48;
+/// Color for the title bar background of an unfocused window.
+pub const TITLE_BAR_UNFOCUSED_BG: u32 = 0xFF55_5A66;
+/// Title text color.
+pub const TITLE_BAR_FG: u32 = 0xFFEC_F0F8;
+/// Border color for focused windows.
+pub const BORDER_FOCUSED: u32 = 0xFF5B_8CFF;
+/// Border color for unfocused windows.
+pub const BORDER_UNFOCUSED: u32 = 0xFF7A_8190;
+/// Close-button cross color.
+pub const CLOSE_BUTTON_FG: u32 = 0xFFFF_FFFF;
+
+/// Fill a rectangle in the destination framebuffer with a solid color.
+/// Coordinates are clipped to the framebuffer bounds.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_rect(
+    dst: &mut [u32],
+    dst_w: u32,
+    dst_h: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    color: u32,
+) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let dst_w_i = dst_w as i32;
+    let dst_h_i = dst_h as i32;
+    let x0 = x.max(0).min(dst_w_i);
+    let y0 = y.max(0).min(dst_h_i);
+    let x1 = (x.saturating_add(width as i32)).max(0).min(dst_w_i);
+    let y1 = (y.saturating_add(height as i32)).max(0).min(dst_h_i);
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let stride = dst_w as usize;
+    for row in y0 as usize..y1 as usize {
+        let start = row * stride + x0 as usize;
+        let end = row * stride + x1 as usize;
+        dst[start..end].fill(color);
+    }
+}
+
+/// Render the decoration border around a surface's outer rectangle.
+///
+/// `(x, y, width, height)` is the **decorated** outer rectangle (i.e.
+/// content surface plus decoration). Returns the four border rectangles
+/// drawn so the caller can union them into the damage tracker.
+#[allow(clippy::too_many_arguments)]
+pub fn render_focus_indicator(
+    dst: &mut [u32],
+    dst_w: u32,
+    dst_h: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    focused: bool,
+    deco: &WindowDecoration,
+) {
+    let color = if focused {
+        BORDER_FOCUSED
+    } else {
+        BORDER_UNFOCUSED
+    };
+    let border = deco.border_width;
+    if border == 0 {
+        return;
+    }
+    // Top
+    fill_rect(dst, dst_w, dst_h, x, y, width, border, color);
+    // Bottom
+    fill_rect(
+        dst,
+        dst_w,
+        dst_h,
+        x,
+        y + height as i32 - border as i32,
+        width,
+        border,
+        color,
+    );
+    // Left
+    fill_rect(dst, dst_w, dst_h, x, y, border, height, color);
+    // Right
+    fill_rect(
+        dst,
+        dst_w,
+        dst_h,
+        x + width as i32 - border as i32,
+        y,
+        border,
+        height,
+        color,
+    );
+}
+
+/// Draw a small "X" close-button glyph centered in the close-button cell.
+///
+/// Uses two diagonal lines drawn as one-pixel dots — keeps the renderer
+/// dependency-free of the spleen-font for the glyph (the glyph is too small
+/// for the 16x32 font anyway).
+#[allow(clippy::too_many_arguments)]
+fn draw_close_glyph(
+    dst: &mut [u32],
+    dst_w: u32,
+    dst_h: u32,
+    cell_x: i32,
+    cell_y: i32,
+    cell_w: u32,
+    cell_h: u32,
+    color: u32,
+) {
+    let pad = (cell_w.min(cell_h) / 4).max(2) as i32;
+    let inner_w = cell_w as i32 - 2 * pad;
+    let inner_h = cell_h as i32 - 2 * pad;
+    if inner_w <= 0 || inner_h <= 0 {
+        return;
+    }
+    let span = inner_w.min(inner_h);
+    let stride = dst_w as usize;
+    for i in 0..span {
+        let x_main = cell_x + pad + i;
+        let y_main = cell_y + pad + i;
+        let x_anti = cell_x + pad + (span - 1 - i);
+        let y_anti = cell_y + pad + i;
+        if (0..dst_w as i32).contains(&x_main) && (0..dst_h as i32).contains(&y_main) {
+            dst[y_main as usize * stride + x_main as usize] = color;
+        }
+        if (0..dst_w as i32).contains(&x_anti) && (0..dst_h as i32).contains(&y_anti) {
+            dst[y_anti as usize * stride + x_anti as usize] = color;
+        }
+    }
+}
+
+/// Render the title bar (background + title text + close button) on top of
+/// the surface's content area in the destination framebuffer.
+///
+/// `(x, y)` is the decorated outer origin. `content_width`/`content_height`
+/// are the content dimensions of the surface (decorations wrap them).
+#[allow(clippy::too_many_arguments)]
+pub fn render_title_bar(
+    dst: &mut [u32],
+    dst_w: u32,
+    dst_h: u32,
+    x: i32,
+    y: i32,
+    content_width: u32,
+    focused: bool,
+    title: &[u8],
+    deco: &WindowDecoration,
+) {
+    let outer_w = content_width + 2 * deco.border_width;
+    let bar_x = x;
+    let bar_y = y + deco.border_width as i32;
+    let bar_w = outer_w;
+    let bar_h = deco.title_bar_height;
+
+    let bg = if focused {
+        TITLE_BAR_FOCUSED_BG
+    } else {
+        TITLE_BAR_UNFOCUSED_BG
+    };
+
+    fill_rect(dst, dst_w, dst_h, bar_x, bar_y, bar_w, bar_h, bg);
+
+    // Title text — capped to fit before the close button cell.
+    let close_w = deco.close_button_width as i32;
+    let text_max_x = bar_x + bar_w as i32 - deco.border_width as i32 - close_w - 4;
+    let text_x = bar_x + 8;
+    let text_y = bar_y + (bar_h as i32 / 2) - 6;
+    if text_max_x > text_x {
+        super::text::draw_text_clipped(
+            dst,
+            dst_w,
+            dst_h,
+            text_x,
+            text_y,
+            text_max_x,
+            title,
+            TITLE_BAR_FG,
+            bg,
+        );
+    }
+
+    // Close button cell.
+    let cell_x = bar_x + bar_w as i32 - deco.border_width as i32 - close_w;
+    let cell_y = bar_y;
+    draw_close_glyph(
+        dst,
+        dst_w,
+        dst_h,
+        cell_x,
+        cell_y,
+        deco.close_button_width,
+        deco.title_bar_height,
+        CLOSE_BUTTON_FG,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Decorated outer rectangle helpers
+// ---------------------------------------------------------------------------
+
+/// The decorated outer rectangle for `surface` given the default decoration.
+///
+/// Surfaces in the `Background`, `Overlay`, and `Panel` layers are rendered
+/// without decorations (Background = wallpaper, Overlay = popovers,
+/// Panel = system chrome). Only `Normal` and `TopLevel` are decorated.
+pub fn outer_rect(surface: &Surface, deco: &WindowDecoration) -> (i32, i32, u32, u32) {
+    if !is_decorated(surface) {
+        return (surface.x, surface.y, surface.width, surface.height);
+    }
+    let outer_w = surface.width + 2 * deco.border_width;
+    let outer_h = surface.height + 2 * deco.border_width + deco.title_bar_height;
+    (surface.x, surface.y, outer_w, outer_h)
+}
+
+/// Returns true when `surface` should receive title-bar + border decorations.
+pub const fn is_decorated(surface: &Surface) -> bool {
+    matches!(surface.layer, SurfaceLayer::Normal | SurfaceLayer::TopLevel)
+}
+
+/// Clamp a candidate `(width, height)` resize to the minimum allowed
+/// content dimensions. Returns the adjusted dimensions.
+pub fn clamp_window_size(width: u32, height: u32) -> (u32, u32) {
+    (width.max(MIN_WINDOW_WIDTH), height.max(MIN_WINDOW_HEIGHT))
+}
+
+// ---------------------------------------------------------------------------
+// Walk z-order to find the surface whose decorated rectangle contains a point
+// ---------------------------------------------------------------------------
+
+/// Walk the global z-order from top to bottom and return the topmost surface
+/// (and the zone within it) that contains `(px, py)`. Skips destroyed
+/// surfaces, surfaces in `SurfaceState::Created` (no buffer yet), and
+/// surfaces whose outer rectangle does not contain the point.
+pub fn hit_test_topmost(px: i32, py: i32, deco: &WindowDecoration) -> Option<(SurfaceId, HitZone)> {
+    let z = WINDOW_Z_ORDER.lock();
+    let table = SURFACE_TABLE.lock();
+    for id in z.iter_top_down() {
+        if id.is_none() {
+            continue;
+        }
+        let surface = match table.iter().find_map(|s| {
+            s.as_ref()
+                .filter(|surf| surf.id == id && surf.state.is_visible())
+                .copied()
+        }) {
+            Some(s) => s,
+            None => continue,
+        };
+        let (x, y, w, h) = outer_rect(&surface, deco);
+        if let Some(zone) = shared::compositor::hit_zone(px, py, x, y, w, h, deco) {
+            return Some((surface.id, zone));
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Decoration event handling — invoked when input lands on a non-content zone
+// ---------------------------------------------------------------------------
+
+/// Apply a new geometry to a surface in the kernel surface table.
+///
+/// Used by the move handler to update the surface origin and by the
+/// resize handler to update size+origin together. Holds the surface
+/// table briefly; never holds it across IPC.
+fn apply_geometry(id: SurfaceId, x: i32, y: i32, width: u32, height: u32) {
+    let mut table = SURFACE_TABLE.lock();
+    if let Some(slot) = table
+        .iter_mut()
+        .find(|s| s.as_ref().map(|surf| surf.id == id).unwrap_or(false))
+    {
+        if let Some(surface) = slot.as_mut() {
+            surface.x = x;
+            surface.y = y;
+            surface.width = width;
+            surface.height = height;
+            surface.damaged = true;
+        }
+    }
+}
+
+/// Snapshot the current `(origin, size)` for a surface, or `None` if the
+/// surface no longer exists.
+fn surface_geometry(id: SurfaceId) -> Option<((i32, i32), (u32, u32))> {
+    let table = SURFACE_TABLE.lock();
+    table.iter().find_map(|s| {
+        s.as_ref()
+            .filter(|surf| surf.id == id)
+            .map(|surf| ((surf.x, surf.y), (surf.width, surf.height)))
+    })
+}
+
+/// Dispatch an input event that landed on a window decoration.
+///
+/// `surface` is the surface owning the decoration; `zone` identifies which
+/// part of the chrome the pointer hit. Step 21 implements the body — the
+/// router (Step 20) already routes here.
+pub fn handle_decoration_event(
+    surface: SurfaceId,
+    zone: HitZone,
+    event: &shared::input::InputEvent,
+) {
+    use shared::input::{ButtonState, InputEvent, MouseButton};
+
+    let pointer = match event {
+        InputEvent::Pointer {
+            x,
+            y,
+            button,
+            state,
+        } => (*x as i32, *y as i32, *button, *state),
+        InputEvent::Keyboard { .. } => return,
+    };
+    let (px, py, button, button_state) = pointer;
+
+    // Resolve the current drag state once; we may need to update it.
+    let mut drag = DRAG_STATE.lock();
+    match (button, button_state) {
+        // Left button pressed on a chrome zone: enter drag/resize/close.
+        (Some(MouseButton::Left), Some(ButtonState::Pressed)) => match zone {
+            HitZone::TitleBar => {
+                if let Some(((sx, sy), _dims)) = surface_geometry(surface) {
+                    *drag = DragState::Moving {
+                        surface,
+                        start_pointer: (px, py),
+                        start_origin: (sx, sy),
+                    };
+                }
+            }
+            HitZone::ResizeBorder(edge) => {
+                if let Some(((sx, sy), (w, h))) = surface_geometry(surface) {
+                    *drag = DragState::Resizing {
+                        surface,
+                        edge,
+                        start_pointer: (px, py),
+                        start_origin: (sx, sy),
+                        start_dims: (w, h),
+                    };
+                }
+            }
+            HitZone::CloseButton => {
+                drop(drag);
+                let channel = {
+                    let table = SURFACE_TABLE.lock();
+                    table.iter().find_map(|s| {
+                        s.as_ref()
+                            .filter(|surf| surf.id == surface)
+                            .map(|surf| surf.channel)
+                    })
+                };
+                if let Some(ch) = channel {
+                    let close = shared::compositor::CompositorEvent::close_requested(surface);
+                    super::input_route::send_event_bytes(ch, &close);
+                }
+            }
+            HitZone::Content => {} // not possible — content is not a decoration
+        },
+        // Left button released: exit drag mode regardless of where it lands.
+        (Some(MouseButton::Left), Some(ButtonState::Released)) => {
+            *drag = DragState::Idle;
+        }
+        // Pointer motion — apply move/resize delta if we are in a drag.
+        (None, None) => {
+            // Apply delta inside the lock so the read-modify-write of the
+            // drag-state-derived geometry stays atomic with the drag state.
+            let action = match *drag {
+                DragState::Moving {
+                    surface,
+                    start_pointer,
+                    start_origin,
+                } => Some((
+                    surface,
+                    start_origin.0 + (px - start_pointer.0),
+                    start_origin.1 + (py - start_pointer.1),
+                    None,
+                )),
+                DragState::Resizing {
+                    surface,
+                    edge,
+                    start_pointer,
+                    start_origin,
+                    start_dims,
+                } => {
+                    let dx = px - start_pointer.0;
+                    let dy = py - start_pointer.1;
+                    let (mut nx, mut ny) = start_origin;
+                    let mut nw = start_dims.0 as i32;
+                    let mut nh = start_dims.1 as i32;
+                    match edge {
+                        ResizeEdge::East => nw = (start_dims.0 as i32) + dx,
+                        ResizeEdge::West => {
+                            nw = (start_dims.0 as i32) - dx;
+                            nx = start_origin.0 + dx;
+                        }
+                        ResizeEdge::South => nh = (start_dims.1 as i32) + dy,
+                        ResizeEdge::North => {
+                            nh = (start_dims.1 as i32) - dy;
+                            ny = start_origin.1 + dy;
+                        }
+                        ResizeEdge::SouthEast => {
+                            nw = (start_dims.0 as i32) + dx;
+                            nh = (start_dims.1 as i32) + dy;
+                        }
+                        ResizeEdge::NorthEast => {
+                            nw = (start_dims.0 as i32) + dx;
+                            nh = (start_dims.1 as i32) - dy;
+                            ny = start_origin.1 + dy;
+                        }
+                        ResizeEdge::SouthWest => {
+                            nw = (start_dims.0 as i32) - dx;
+                            nh = (start_dims.1 as i32) + dy;
+                            nx = start_origin.0 + dx;
+                        }
+                        ResizeEdge::NorthWest => {
+                            nw = (start_dims.0 as i32) - dx;
+                            nh = (start_dims.1 as i32) - dy;
+                            nx = start_origin.0 + dx;
+                            ny = start_origin.1 + dy;
+                        }
+                    }
+                    let nw_u = nw.max(0) as u32;
+                    let nh_u = nh.max(0) as u32;
+                    let (nw_clamped, nh_clamped) = clamp_window_size(nw_u, nh_u);
+                    // Re-anchor north/west origins if the clamp shrank the
+                    // proposed size: keep the opposite edge fixed.
+                    if matches!(
+                        edge,
+                        ResizeEdge::West | ResizeEdge::NorthWest | ResizeEdge::SouthWest
+                    ) {
+                        nx = start_origin.0 + start_dims.0 as i32 - nw_clamped as i32;
+                    }
+                    if matches!(
+                        edge,
+                        ResizeEdge::North | ResizeEdge::NorthEast | ResizeEdge::NorthWest
+                    ) {
+                        ny = start_origin.1 + start_dims.1 as i32 - nh_clamped as i32;
+                    }
+                    Some((surface, nx, ny, Some((nw_clamped, nh_clamped))))
+                }
+                DragState::Idle => None,
+            };
+            // Drop the drag lock before issuing IPC; DRAG_STATE may be
+            // re-acquired briefly on the next pointer event and we never
+            // hold it across an `ipc_send`.
+            drop(drag);
+            if let Some((id, nx, ny, dims)) = action {
+                let (w, h) = match dims {
+                    Some(d) => d,
+                    None => surface_geometry(id).map(|(_, d)| d).unwrap_or((0, 0)),
+                };
+                if w > 0 && h > 0 {
+                    apply_geometry(id, nx, ny, w, h);
+                    if dims.is_some() {
+                        // Resize: notify the surface of its new dimensions.
+                        let channel = {
+                            let table = SURFACE_TABLE.lock();
+                            table.iter().find_map(|s| {
+                                s.as_ref()
+                                    .filter(|surf| surf.id == id)
+                                    .map(|surf| surf.channel)
+                            })
+                        };
+                        if let Some(ch) = channel {
+                            let cfg = shared::compositor::CompositorEvent::configure(id, w, h, 100);
+                            super::input_route::send_event_bytes(ch, &cfg);
+                        }
+                    }
+                }
+            }
+        }
+        // Other button or scroll events on chrome are ignored in M25.
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+//
+// Pure-logic tests for `ZOrder`, `default_position`, `clamp_window_size`,
+// `fill_rect` clipping, and `hit_zone` live in
+// `shared::compositor::tests` so they execute under host-side
+// `just test`. The kernel-side render code is exercised end-to-end
+// through M26's test app.

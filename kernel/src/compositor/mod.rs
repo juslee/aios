@@ -6,18 +6,25 @@
 //! double-buffered DMA composition buffer, and presents through the
 //! VirtIO-GPU driver.
 //!
-//! M24 establishes the service skeleton, capability grants, IPC channel,
+//! M24 established the service skeleton, capability grants, IPC channel,
 //! and the global flag that signals the GPU Service to release the display.
-//! Surface lifecycle, the actual render pipeline, and the composition loop
-//! arrive in Steps 12-15.
+//! M25 layers in the window manager, decoration rendering, hit-testing and
+//! cursor (Steps 17–18), focus management (Step 19), the input pipeline
+//! and IPC dispatch (Steps 20, 21), and system hotkeys (Step 22).
 //!
 //! Per docs/platform/compositor.md and docs/platform/compositor/protocol.md.
 
 use core::sync::atomic::AtomicBool;
 
+pub mod cursor;
+pub mod focus;
+pub mod hotkey;
+pub mod input_route;
 pub mod render;
 pub mod service;
 pub mod surface;
+pub mod text;
+pub mod window;
 
 // ---------------------------------------------------------------------------
 // Display ownership flag

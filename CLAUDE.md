@@ -95,13 +95,20 @@ swap) HANGS on Non-Cacheable Normal memory.
 Size classes: 5 (64, 128, 256, 512, 4096B); smaller rounds up to 64. Backed by frame allocator (kernel pool).
 
 # Concurrency / kernel correctness
-Lock ordering (full, M24):    PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE >
-                              SELECT_WAITERS > BLOCK_ENGINE > SURFACE_TABLE >
-                              {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} >
-                              {INPUT_QUEUE, PENDING_POINTER (leaf, independent)}
+Lock ordering (full, M25):    PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE >
+                              SELECT_WAITERS > BLOCK_ENGINE > WINDOW_Z_ORDER > DRAG_STATE >
+                              SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} >
+                              {INPUT_QUEUE, PENDING_POINTER, FOCUS_MANAGER, CURSOR_POS,
+                               TITLE_FONT (leaf, independent)}
 Capability enforcement:       channel_create → ChannelCreate;
                               ipc_call/send/recv → ChannelAccess;
                               ipc_reply → NONE (spec §9.1).
+Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op returns a
+                              FocusChange so the caller drops it before issuing IPC.
+                              WINDOW_Z_ORDER and DRAG_STATE rank above SURFACE_TABLE
+                              (hit-test walks Z then reads the table; drag handler enters
+                              DRAG_STATE then snapshots geometry from the table). None of
+                              the compositor mutexes is ever held across ipc_send / ipc_call.
 ```
 
 ---
@@ -162,7 +169,10 @@ aios/
 │   ├── drivers/          virtio_common + virtio_blk / virtio_gpu / virtio_input
 │   ├── input/            event translation, polling thread, INPUT_QUEUE
 │   ├── gpu/              GPU Service, boot log text rendering
-│   ├── compositor/       Compositor service, surface lifecycle, software compositor
+│   ├── compositor/       Compositor service, surface lifecycle, decorations,
+│   │                     hit-test/cursor, focus, input routing + IPC dispatch,
+│   │                     window move/resize, system hotkeys (M25 adds
+│   │                     window/cursor/focus/input_route/hotkey/text)
 │   ├── storage/          BlockEngine, WAL, MemTable, object/version stores, crypto, posix bridge, budget
 │   ├── observability/    structured log, metrics, trace (feature-gated)
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
