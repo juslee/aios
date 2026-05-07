@@ -30,7 +30,6 @@ use crate::task::process::ProcessId;
 ///
 /// Mapped to IPC error codes when the compositor replies to a client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Wired by Step 14 IPC dispatch and Step 15 self-test.
 pub enum SurfaceError {
     /// `SURFACE_TABLE` is full.
     TableFull,
@@ -50,7 +49,10 @@ pub enum SurfaceError {
 
 /// A compositor surface — the kernel-side record for a window or panel.
 #[derive(Clone, Copy)]
-#[allow(dead_code)] // Several fields read by render/composition pipeline (Steps 13-14).
+#[allow(dead_code)] // `state`, `content_type`, `damaged`, `shmem_id` are read
+                    // only once the gated COMPOSITOR_PRESENT_ENABLED render
+                    // path turns on (M26+); the IPC dispatch (Step 20) reads
+                    // the rest.
 pub struct Surface {
     pub id: SurfaceId,
     pub state: SurfaceState,
@@ -88,11 +90,9 @@ pub static SURFACE_TABLE: Mutex<[Option<Surface>; MAX_SURFACES]> = {
 };
 
 /// Monotonic surface-id allocator. Never reused, even across `surface_destroy`.
-#[allow(dead_code)] // Read by surface_create() once IPC dispatch lands in Step 14.
 static NEXT_SURFACE_ID: AtomicU64 = AtomicU64::new(SurfaceId::FIRST.0);
 
 /// Monotonic per-layer insertion counter for stable z-order tie-break.
-#[allow(dead_code)] // Read by surface_create() / surface_set_layer() — Step 14.
 static NEXT_LAYER_SEQ: AtomicU64 = AtomicU64::new(1);
 
 // ---------------------------------------------------------------------------
@@ -105,7 +105,6 @@ static NEXT_LAYER_SEQ: AtomicU64 = AtomicU64::new(1);
 /// compositor's IPC dispatcher) is responsible for sending the `Configure`
 /// event back to the client before any `AttachBuffer` call is processed.
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)] // Wired by Step 14 IPC dispatch and Step 15 self-test.
 pub fn surface_create(
     owner_pid: ProcessId,
     channel: ChannelId,
@@ -151,7 +150,6 @@ pub fn surface_create(
 /// Attach a shared memory buffer to a surface. Marks the surface as damaged
 /// according to `damage` and transitions Created/Configured → Active on the
 /// first attach.
-#[allow(dead_code)] // Wired by Step 14 IPC dispatch and Step 15 self-test.
 pub fn surface_attach_buffer(
     id: SurfaceId,
     shmem_id: SharedMemoryId,
@@ -191,7 +189,6 @@ pub fn surface_attach_buffer(
 
 /// Tear down a surface. Releases its slot in `SURFACE_TABLE`. The `SurfaceId`
 /// itself is never reused — `NEXT_SURFACE_ID` continues forward.
-#[allow(dead_code)] // Wired by Step 14 IPC dispatch and Step 15 self-test.
 pub fn surface_destroy(id: SurfaceId, caller_pid: ProcessId) -> Result<(), SurfaceError> {
     let mut table = SURFACE_TABLE.lock();
     let slot = table
@@ -213,7 +210,6 @@ pub fn surface_destroy(id: SurfaceId, caller_pid: ProcessId) -> Result<(), Surfa
 
 /// Resize a surface. Returns the new (possibly clamped) dimensions so the
 /// caller can include them in the follow-up `Configure` event.
-#[allow(dead_code)] // Wired by Step 14 IPC dispatch.
 pub fn surface_resize(
     id: SurfaceId,
     width: u32,
@@ -239,7 +235,6 @@ pub fn surface_resize(
 
 /// Move a surface to a different z-order layer. Allocates a fresh insertion
 /// sequence so the surface lands at the top of the new layer.
-#[allow(dead_code)] // Wired by Step 14 IPC dispatch.
 pub fn surface_set_layer(
     id: SurfaceId,
     layer: SurfaceLayer,
@@ -274,7 +269,10 @@ fn find_mut(table: &mut [Option<Surface>; MAX_SURFACES], id: SurfaceId) -> Optio
 ///
 /// Used when the compositor itself detects a reason to recomposite a surface
 /// (e.g., a focus change or a layer reshuffle).
-#[allow(dead_code)] // Used by Steps 13 and 14.
+/// Used by the gated `COMPOSITOR_PRESENT_ENABLED` render loop (M26+) and
+/// future call sites that need to force a recomposite without owning the
+/// surface (e.g., focus indicator change).
+#[allow(dead_code)]
 pub fn mark_damaged(id: SurfaceId) {
     let mut table = SURFACE_TABLE.lock();
     if let Some(surface) = find_mut(&mut table, id) {
