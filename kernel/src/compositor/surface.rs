@@ -73,6 +73,14 @@ pub struct Surface {
     pub layer_seq: u64,
     /// True when the surface has produced damage since the last frame.
     pub damaged: bool,
+    /// True when this surface should be included in the composited frame.
+    ///
+    /// Distinct from `state == Active`: a surface can be Active (has a
+    /// buffer attached) yet hidden by the user (e.g., the Workspace
+    /// surface toggling via Super). `compose_frame` skips surfaces with
+    /// `visible == false`. Default `true`; toggled by
+    /// `surface_set_visible`. Per M26 Step 26.
+    pub visible: bool,
 }
 
 /// Process id used by every compositor-internal shell surface (Status
@@ -172,6 +180,7 @@ pub fn surface_create(
         channel,
         layer_seq,
         damaged: true,
+        visible: true,
     });
 
     Ok(id)
@@ -311,6 +320,35 @@ pub fn surface_set_position(
     surface.x = x;
     surface.y = y;
     surface.damaged = true;
+    Ok(())
+}
+
+/// Toggle a surface's visibility flag.
+///
+/// `compose_frame` skips surfaces where `visible == false`, so flipping
+/// this hides/shows the surface without changing its `SurfaceState`
+/// (Active/Suspended). Used by the Workspace surface (M26 Step 26) to
+/// toggle home view via Super. Marks the surface damaged so the next
+/// composition rebuilds the affected screen region.
+#[allow(dead_code)] // First consumer is M26 Step 26 (Workspace toggle);
+                    // future agent-backgrounding paths will reuse this.
+pub fn surface_set_visible(
+    id: SurfaceId,
+    visible: bool,
+    caller_pid: ProcessId,
+) -> Result<(), SurfaceError> {
+    let mut table = SURFACE_TABLE.lock();
+    let surface = find_mut(&mut table, id).ok_or(SurfaceError::NotFound)?;
+    if surface.owner_pid.0 != caller_pid.0 {
+        return Err(SurfaceError::NotOwner);
+    }
+    if surface.state.is_terminal() {
+        return Err(SurfaceError::InvalidTransition);
+    }
+    if surface.visible != visible {
+        surface.visible = visible;
+        surface.damaged = true;
+    }
     Ok(())
 }
 

@@ -97,6 +97,19 @@ impl HotkeyFilter {
     }
 
     fn handle(&self, event: &InputEvent) -> FilterResult {
+        // M26 Step 26: feed every keyboard event into the bare-Super
+        // edge detector first. It returns `Some(ShowWorkspace)` only on
+        // a true tap-and-release of Super alone; Super-anything-else
+        // combos are silently absorbed. Super press/release events are
+        // always consumed so they never reach client surfaces.
+        if let Some(action) = hotkey::super_key_edge_detector(event) {
+            hotkey::apply(action);
+            return FilterResult::Consume;
+        }
+        if hotkey::is_super_event(event) {
+            return FilterResult::Consume;
+        }
+
         if let InputEvent::Keyboard {
             key,
             state,

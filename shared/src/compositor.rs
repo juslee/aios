@@ -1147,6 +1147,142 @@ pub const fn format_hhmm(elapsed_ms: u64) -> [u8; 5] {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Bare-Super edge detector (M26 Step 26)
+// ---------------------------------------------------------------------------
+
+/// Persistent state for `super_edge_step`.
+///
+/// Two flags suffice to recognize the bare-Super tap-and-release pattern:
+///   * `prev_super_pressed` — `true` after a Super press, until release.
+///   * `super_used_in_combo` — set when a non-Super key is pressed while
+///     Super is held; cleared on the next Super press.
+///
+/// Pure data so the kernel can keep it in two `AtomicBool`s and the host
+/// test suite can keep it in plain locals — `super_edge_step` reads it
+/// by value and returns the next state along with any action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SuperEdgeState {
+    pub prev_super_pressed: bool,
+    pub super_used_in_combo: bool,
+}
+
+impl SuperEdgeState {
+    /// Initial state — Super not held, no combo recorded.
+    pub const fn new() -> Self {
+        Self {
+            prev_super_pressed: false,
+            super_used_in_combo: false,
+        }
+    }
+}
+
+impl Default for SuperEdgeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Action emitted by `super_edge_step` on the bare-Super release edge.
+///
+/// Matches `HotkeyAction::ShowWorkspace` in `kernel/src/compositor/hotkey.rs`
+/// in spirit; the shared crate doesn't depend on the hotkey enum, so we
+/// just return a unit-style marker that the kernel maps over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuperEdgeAction {
+    /// Bare-Super was tapped and released without any other key in between.
+    ShowWorkspace,
+}
+
+/// Inspect a single keyboard event and update the edge-detection state.
+///
+/// Returns `(next_state, action)` — the updated state to store back into
+/// the persistent statics and the action to apply (if any) on this
+/// event. Pointer events should never reach this helper; the kernel
+/// hotkey filter pre-filters by `InputEvent` variant.
+///
+/// Behavior table:
+///
+/// | Event                              | prev_pressed | combo  | Action          | Next prev | Next combo |
+/// |------------------------------------|--------------|--------|-----------------|-----------|------------|
+/// | Super press                        | (any)        | (any)  | None            | true      | false      |
+/// | Super release, prev=true, combo=f  | true         | false  | ShowWorkspace   | false     | false      |
+/// | Super release, prev=true, combo=t  | true         | true   | None            | false     | false      |
+/// | Super release, prev=false          | false        | (any)  | None            | false     | (cleared)  |
+/// | Other key press, Super held        | true         | (any)  | None            | true      | true       |
+/// | Other key press, Super not held    | false        | (any)  | None            | false     | (unchanged)|
+/// | Repeat / other release             | (any)        | (any)  | None            | (unchanged)| (unchanged)|
+pub fn super_edge_step(
+    state: SuperEdgeState,
+    is_super_key: bool,
+    is_press: bool,
+    is_release: bool,
+) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+    if is_super_key {
+        if is_press {
+            return (
+                SuperEdgeState {
+                    prev_super_pressed: true,
+                    super_used_in_combo: false,
+                },
+                None,
+            );
+        }
+        if is_release {
+            let action = if state.prev_super_pressed && !state.super_used_in_combo {
+                Some(SuperEdgeAction::ShowWorkspace)
+            } else {
+                None
+            };
+            return (
+                SuperEdgeState {
+                    prev_super_pressed: false,
+                    super_used_in_combo: false,
+                },
+                action,
+            );
+        }
+        // Repeat — leave state alone.
+        return (state, None);
+    }
+
+    // Non-Super key: a press while Super is held marks this as a combo.
+    if is_press && state.prev_super_pressed {
+        return (
+            SuperEdgeState {
+                prev_super_pressed: true,
+                super_used_in_combo: true,
+            },
+            None,
+        );
+    }
+    (state, None)
+}
+
+/// Format a millisecond-since-boot value as 8 ASCII bytes `HH:MM:SS`.
+///
+/// Wraps modulo 24 hours (same convention as `format_hhmm`). The output
+/// is exactly 8 bytes — six digits and two literal colons at indices 2
+/// and 5. Used by the Workspace surface to display uptime.
+pub const fn format_hhmmss(elapsed_ms: u64) -> [u8; 8] {
+    const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
+    let wrapped = elapsed_ms % MS_PER_DAY;
+    let total_seconds = wrapped / 1000;
+    let hours = (total_seconds / 3600) as u32;
+    let minutes = ((total_seconds % 3600) / 60) as u32;
+    let seconds = (total_seconds % 60) as u32;
+    let mut out = [b'0'; 8];
+    out[0] = b'0' + (hours / 10) as u8;
+    out[1] = b'0' + (hours % 10) as u8;
+    out[2] = b':';
+    out[3] = b'0' + (minutes / 10) as u8;
+    out[4] = b'0' + (minutes % 10) as u8;
+    out[5] = b':';
+    out[6] = b'0' + (seconds / 10) as u8;
+    out[7] = b'0' + (seconds % 10) as u8;
+    out
+}
+
 /// Format an integer percent value (0..=99) as 2 ASCII digit bytes.
 ///
 /// Values at or above 100 saturate to `99` so the result is always exactly
@@ -2198,6 +2334,52 @@ mod tests {
     }
 
     #[test]
+    fn format_hhmmss_at_zero_is_midnight() {
+        assert_eq!(&format_hhmmss(0), b"00:00:00");
+    }
+
+    #[test]
+    fn format_hhmmss_one_second() {
+        assert_eq!(&format_hhmmss(1000), b"00:00:01");
+    }
+
+    #[test]
+    fn format_hhmmss_under_one_second_stays_at_zero() {
+        // 999 ms still rounds down to 0 s.
+        assert_eq!(&format_hhmmss(999), b"00:00:00");
+    }
+
+    #[test]
+    fn format_hhmmss_one_minute_exact() {
+        assert_eq!(&format_hhmmss(60_000), b"00:01:00");
+    }
+
+    #[test]
+    fn format_hhmmss_one_hour_exact() {
+        assert_eq!(&format_hhmmss(60 * 60 * 1000), b"01:00:00");
+    }
+
+    #[test]
+    fn format_hhmmss_combo() {
+        // 12h 34m 56s.
+        let ms = (12 * 3600 + 34 * 60 + 56) * 1000;
+        assert_eq!(&format_hhmmss(ms), b"12:34:56");
+    }
+
+    #[test]
+    fn format_hhmmss_end_of_day() {
+        // 23:59:59.999 — last millisecond before wrap.
+        let ms = 24 * 60 * 60 * 1000 - 1;
+        assert_eq!(&format_hhmmss(ms), b"23:59:59");
+    }
+
+    #[test]
+    fn format_hhmmss_wraps_at_one_day() {
+        let ms = 24 * 60 * 60 * 1000;
+        assert_eq!(&format_hhmmss(ms), b"00:00:00");
+    }
+
+    #[test]
     fn format_percent_2digits_zero() {
         assert_eq!(&format_percent_2digits(0), b"00");
     }
@@ -2357,5 +2539,144 @@ mod tests {
     #[test]
     fn taskbar_entry_truncate_empty_input() {
         assert_eq!(taskbar_entry_truncate(b"", 16), b"");
+    }
+
+    // ---- super_edge_step (M26 Step 26) ----
+
+    /// Convenience: simulate a press of a Super key from a given state.
+    fn super_press(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, true, true, false)
+    }
+
+    /// Convenience: simulate a release of a Super key from a given state.
+    fn super_release(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, true, false, true)
+    }
+
+    /// Convenience: simulate a press of a non-Super key.
+    fn other_press(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, false, true, false)
+    }
+
+    /// Convenience: simulate a release of a non-Super key.
+    fn other_release(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, false, false, true)
+    }
+
+    #[test]
+    fn super_edge_initial_state_no_action() {
+        let s = SuperEdgeState::new();
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_press_marks_held() {
+        let (s, action) = super_press(SuperEdgeState::new());
+        assert!(s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn super_edge_press_clears_combo_flag() {
+        // Stale combo from a previous bad release path — a fresh press
+        // must reset it so the next release can fire.
+        let stale = SuperEdgeState {
+            prev_super_pressed: false,
+            super_used_in_combo: true,
+        };
+        let (s, _) = super_press(stale);
+        assert!(s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_tap_release_fires_show_workspace() {
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, action) = super_release(s);
+        assert_eq!(action, Some(SuperEdgeAction::ShowWorkspace));
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_combo_press_then_release_does_not_fire() {
+        // Super held → other key pressed → Super released ⇒ no action.
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, _) = other_press(s);
+        assert!(s.super_used_in_combo);
+        let (s, action) = super_release(s);
+        assert_eq!(action, None);
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_other_press_without_super_does_not_set_combo() {
+        let (s, action) = other_press(SuperEdgeState::new());
+        assert_eq!(action, None);
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_other_release_is_a_noop() {
+        let held = SuperEdgeState {
+            prev_super_pressed: true,
+            super_used_in_combo: false,
+        };
+        let (s, action) = other_release(held);
+        assert_eq!(action, None);
+        // Non-Super release leaves Super state untouched.
+        assert_eq!(s, held);
+    }
+
+    #[test]
+    fn super_edge_release_without_press_does_not_fire() {
+        // Compositor came up with Super already physically released —
+        // a stray release event must not phantom-toggle the workspace.
+        let (s, action) = super_release(SuperEdgeState::new());
+        assert_eq!(action, None);
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_repeat_event_is_a_noop() {
+        let held = SuperEdgeState {
+            prev_super_pressed: true,
+            super_used_in_combo: false,
+        };
+        // A Repeat event for the Super key — neither press nor release.
+        let (s, action) = super_edge_step(held, true, false, false);
+        assert_eq!(action, None);
+        assert_eq!(s, held);
+    }
+
+    #[test]
+    fn super_edge_two_taps_in_a_row_each_fire() {
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, action1) = super_release(s);
+        assert_eq!(action1, Some(SuperEdgeAction::ShowWorkspace));
+        let (s, _) = super_press(s);
+        let (_, action2) = super_release(s);
+        assert_eq!(action2, Some(SuperEdgeAction::ShowWorkspace));
+    }
+
+    #[test]
+    fn super_edge_combo_then_clean_tap_fires() {
+        // First Super+Tab combo (no fire), then a clean Super tap (fires).
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, _) = other_press(s);
+        let (s, action_combo) = super_release(s);
+        assert_eq!(action_combo, None);
+        let (s, _) = super_press(s);
+        let (_, action_clean) = super_release(s);
+        assert_eq!(action_clean, Some(SuperEdgeAction::ShowWorkspace));
     }
 }

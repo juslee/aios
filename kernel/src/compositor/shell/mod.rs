@@ -6,15 +6,17 @@
 //! surface but never have IPC events delivered to them — `service::is_self_channel`
 //! suppresses self-deliveries to the compositor's well-known channel.
 //!
-//! Step 24 ships the Status Strip; Step 25 adds the Taskbar; Steps 26–27
-//! layer Workspace and shell input integration on the same scaffolding.
+//! Step 24 ships the Status Strip; Step 25 adds the Taskbar; Step 26
+//! adds the Workspace home view plus bare-Super edge-detected toggle;
+//! Step 27 layers shell input integration on the same scaffolding.
 //!
-//! Per docs/experience/experience.md §2 (Five Surfaces), §6 (Status
-//! Strip), and the M26 working plan in
+//! Per docs/experience/experience.md §2 (Five Surfaces), §3
+//! (Workspace), §6 (Status Strip), and the M26 working plan in
 //! `docs/knowledge/plans/phase-7-m26-desktop-shell.md`.
 
 pub mod status_strip;
 pub mod taskbar;
+pub mod workspace;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -55,6 +57,16 @@ pub fn init_shell_surfaces(display_width: u32, display_height: u32) -> Result<()
     }
     status_strip::init(display_width)?;
     taskbar::init(display_width, display_height)?;
+    // Workspace failure is non-fatal — the user keeps a usable desktop
+    // (Status Strip + Taskbar) even if storage's space_list is broken
+    // or the display is too narrow for the home view. Log and continue.
+    if let Err(e) = workspace::init(display_width, display_height) {
+        crate::kwarn!(
+            Compositor,
+            "shell: workspace init failed ({:?}); home view disabled",
+            e
+        );
+    }
     Ok(())
 }
 
@@ -68,4 +80,5 @@ pub fn init_shell_surfaces(display_width: u32, display_height: u32) -> Result<()
 pub fn tick(now_ms: u64) {
     status_strip::tick(now_ms);
     taskbar::tick(now_ms);
+    workspace::tick(now_ms);
 }
