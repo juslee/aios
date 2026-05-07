@@ -21,26 +21,32 @@ use super::surface::Surface;
 /// Compose all visible surfaces into a destination framebuffer.
 ///
 /// `dst` is the destination framebuffer in `B8G8R8A8` format (one `u32` per
-/// pixel). `src_pool` provides per-surface raw pixel slices indexed by their
-/// position in `surfaces`; the slot may be `None` for surfaces with no
-/// attached buffer (state < Active or `shmem_id` not yet resolved). The
-/// caller is responsible for sorting `surfaces` in render order — typically
-/// by `(SurfaceLayer, layer_seq)` ascending so background draws first.
+/// pixel). The caller is responsible for sorting `surfaces` in render order
+/// — typically by `(SurfaceLayer, layer_seq)` ascending so background
+/// draws first.
+///
+/// `resolve_src` resolves a surface to its source pixel slice, or returns
+/// `None` if the surface has no buffer attached yet (state < Active or
+/// `shmem_id` not yet resolved). The closure is allocation-free.
 ///
 /// Damaged regions are accumulated into `damage` for the caller to feed
 /// to the present path. When `clear_first` is true, the entire destination
 /// is cleared to `clear_color` before any surface is blitted (used for the
 /// first frame after handoff).
 #[allow(dead_code)] // Wired by Step 14 (composition loop) and Step 15 (self-test).
-pub fn compose_frame(
+#[allow(clippy::too_many_arguments)]
+pub fn compose_frame<F>(
     dst: &mut [u32],
     dst_width: u32,
     dst_height: u32,
-    surfaces: &[(&Surface, Option<&[u32]>)],
+    surfaces: &[Surface],
     damage: &mut DamageTracker,
     clear_first: bool,
     clear_color: u32,
-) {
+    mut resolve_src: F,
+) where
+    F: FnMut(&Surface) -> Option<&[u32]>,
+{
     if dst_width == 0 || dst_height == 0 || dst.is_empty() {
         return;
     }
@@ -50,9 +56,9 @@ pub fn compose_frame(
         damage.mark_full();
     }
 
-    for (surface, src) in surfaces {
-        let src = match src {
-            Some(s) => *s,
+    for surface in surfaces {
+        let src = match resolve_src(surface) {
+            Some(s) => s,
             None => continue,
         };
         if surface.width == 0 || surface.height == 0 {

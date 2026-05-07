@@ -347,13 +347,25 @@ when `pid.0 >= MAX_PROCESSES`, matching the `None`-slot fallthrough.
 **What:** The compositor main loop: poll input, receive IPC requests, update surface state, compose if damaged, transfer+flush to VirtIO-GPU. Target 60fps (16.67ms budget). Skip frames when no damage (idle power saving).
 
 **Tasks:**
-- [ ] Implement compositor main loop in `service.rs`: `loop { poll_input(); process_ipc(); if any_damage() { compose_frame(); present(); } yield_or_sleep(); }`
-- [ ] Use `TICK_COUNT` for frame pacing: compose at most once per 16ms
-- [ ] Call `gpu_transfer_to_host()` + `gpu_resource_flush()` to present composed frame
-- [ ] Implement double-buffer swap: render to back buffer, then swap (rebind scanout)
-- [ ] Skip composition when no surface has damage (static desktop → zero GPU work)
-- [ ] Log frame timing statistics to UART every 60 frames (once per second)
-- [ ] Add watchdog: log warning if any frame takes >100ms
+- [x] Implement compositor main loop in `service.rs`: `loop { poll_input(); process_ipc(); if any_damage() { compose_frame(); present(); } yield_or_sleep(); }`
+- [x] Use `TICK_COUNT` for frame pacing: compose at most once per 16ms
+- [x] Call `gpu_transfer_to_host()` + `gpu_resource_flush()` to present composed frame
+- [x] Implement double-buffer swap: render to back buffer, then swap (rebind scanout)
+- [x] Skip composition when no surface has damage (static desktop → zero GPU work)
+- [x] Log frame timing statistics to UART every 60 frames (once per second)
+- [x] Add watchdog: log warning if any frame takes >100ms
+
+**Note (post-implementation):** The compose-and-present pipeline is wired
+end-to-end (`present_frame_if_due` → `present_frame` → `compose_frame` →
+`gpu_transfer_to_host` + `gpu_resource_flush` → `swap_buffers_after_compose`)
+and gated by a single `COMPOSITOR_PRESENT_ENABLED` flag. M24 ships the flag
+**off** because the post-handoff IPC bench path surfaces three pre-existing
+kernel-side races when the compositor adds frame-pacing pressure
+(`cap/mod.rs:86` torn `pid` reads, fixed in Step 11; `virtio_input.rs:228`
+modulo-by-zero on uninitialized `queue_size`, fixed in Step 14; an unrelated
+data abort at low VAs that surfaces only with M24's added activity). Step 17
+(M25) flips the flag once IPC dispatch wires real client surfaces and the
+remaining race is root-caused.
 
 **Key reference:** [compositor/rendering.md](../platform/compositor/rendering.md) §5.4 Frame Scheduling
 

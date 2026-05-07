@@ -14,10 +14,14 @@
 
 use core::sync::atomic::Ordering;
 
+use shared::compositor::DamageTracker;
 use shared::gpu::{DisplayInfo, GpuBufferHandle, GpuError, VirtioGpuRect, AIOS_BLUE_B8G8R8A8};
 use shared::ipc::ChannelId;
 use spin::Mutex;
 
+use crate::arch::aarch64::timer::TICK_COUNT;
+use crate::compositor::render;
+use crate::compositor::surface::SURFACE_TABLE;
 use crate::drivers::virtio_gpu;
 use crate::ipc;
 use crate::service;
@@ -34,15 +38,24 @@ use crate::task::process::ProcessId;
 /// and the damage tracker arrive in Steps 12 and 13.
 struct CompositorState {
     /// IPC channel for this service.
-    #[allow(dead_code)] // Used by Step 14 when the loop dispatches commands.
+    #[allow(dead_code)] // Reserved for Step 17 (M25) input routing wire-up.
     channel: ChannelId,
     /// Display geometry as reported by the VirtIO-GPU driver.
     display: DisplayInfo,
     /// Front buffer — currently scanned out.
     front_buffer: Option<GpuBufferHandle>,
     /// Back buffer — render target for the next frame.
-    #[allow(dead_code)] // Used in Step 14 when the swap loop runs.
     back_buffer: Option<GpuBufferHandle>,
+    /// Tick at which the most recent frame was composed (for 60fps pacing).
+    last_frame_tick: u64,
+    /// Total frames composed since boot (for periodic stats logging).
+    frame_count: u64,
+    /// Sum of per-frame compose-time in milliseconds; resets every 60 frames.
+    frame_ms_accum: u64,
+    /// Per-frame screen-space damage accumulator.
+    damage: DamageTracker,
+    /// `true` until the first post-handoff frame is presented (forces a clear).
+    needs_initial_clear: bool,
 }
 
 impl CompositorState {
@@ -52,9 +65,22 @@ impl CompositorState {
             display,
             front_buffer: None,
             back_buffer: None,
+            last_frame_tick: 0,
+            frame_count: 0,
+            frame_ms_accum: 0,
+            damage: DamageTracker::new(),
+            needs_initial_clear: true,
         }
     }
 }
+
+/// Frame budget in 1 kHz ticks — 16 ticks ≈ 60fps.
+const FRAME_BUDGET_TICKS: u64 = 16;
+/// Watchdog threshold — log a warning if any frame's compose+present
+/// exceeds 100ms.
+const FRAME_WATCHDOG_MS: u64 = 100;
+/// How often to emit aggregated frame timing stats (in frames).
+const STATS_EVERY_FRAMES: u64 = 60;
 
 // ---------------------------------------------------------------------------
 // Compositor service thread entry
@@ -108,11 +134,17 @@ fn compositor_loop() -> ! {
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
+    // Short receive timeout (~1 frame budget) so the loop runs the compose
+    // step regularly even with no clients. Step 14 ships this as a
+    // poll-then-compose loop; Step 17 will switch to a proper
+    // ipc_select between the channel and a frame-due notification.
+    const RECV_TIMEOUT_TICKS: u64 = FRAME_BUDGET_TICKS;
+
     loop {
-        match ipc::ipc_recv(ch, &mut recv_buf, ipc::DEFAULT_TIMEOUT_TICKS) {
+        match ipc::ipc_recv(ch, &mut recv_buf, RECV_TIMEOUT_TICKS) {
             Ok((_len, _sender)) => {
-                // Step 12 will decode the CompositorRequest here. For now
-                // reply with a zero-length ack so the sender can unblock.
+                // Step 17 (M25 input routing) decodes CompositorRequest
+                // here. For M24 we ack so senders unblock.
                 let result = ipc::ipc_reply(ch, &[]);
                 if result < 0 {
                     crate::kwarn!(Compositor, "Compositor: reply failed with {}", result);
@@ -126,13 +158,17 @@ fn compositor_loop() -> ! {
                     );
                     break;
                 }
-                // Timeout is expected when no clients — fall through to
-                // run the composition step (added in Step 14) and continue.
+                // Etimedout is expected (no clients) — fall through.
                 if e != crate::syscall::IpcError::Etimedout as i64 {
                     crate::kwarn!(Compositor, "Compositor: recv error {}", e);
                 }
             }
         }
+
+        // Run a compose-and-present cycle if we're inside the 16ms cadence
+        // and at least one surface is damaged (or we still owe an initial
+        // clear). Idle periods skip composition entirely → 0 GPU work.
+        present_frame_if_due(&mut state);
     }
 
     // Mark ourselves dead and yield forever (matches GPU Service exit path).
@@ -147,6 +183,204 @@ fn compositor_loop() -> ! {
     loop {
         crate::sched::thread_yield();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Frame composition
+// ---------------------------------------------------------------------------
+
+/// Compose and present a new frame if we're inside the 60fps cadence and
+/// damage is pending. No-op when:
+///   * the compositor has no display (no front/back buffer)
+///   * the previous frame was less than `FRAME_BUDGET_TICKS` ago
+///   * no surface is damaged AND no initial clear is pending
+///
+/// The structural pacing — the `last_frame_tick`, `frame_count`,
+/// `frame_ms_accum`, watchdog, and 60-frame stats logging — is already
+/// wired here. M24 keeps the actual `present_frame()` body parked behind
+/// `COMPOSITOR_PRESENT_ENABLED` because the post-handoff IPC bench path
+/// surfaces several pre-existing kernel-side races (data aborts at low
+/// virtual addresses; cap-table torn reads; virtio_input modulo-by-zero
+/// — patched separately) when the compositor adds frame-pacing pressure.
+/// Step 17 (M25) re-enables the present path after wiring real client
+/// surfaces with attached buffers.
+fn present_frame_if_due(state: &mut CompositorState) {
+    if !COMPOSITOR_PRESENT_ENABLED {
+        return;
+    }
+
+    let now = TICK_COUNT.load(Ordering::Relaxed);
+    if now < state.last_frame_tick.saturating_add(FRAME_BUDGET_TICKS) {
+        return;
+    }
+    if state.front_buffer.is_none() || state.back_buffer.is_none() {
+        return;
+    }
+
+    let any_damage = state.needs_initial_clear || surface_table_has_damage();
+    if !any_damage {
+        return;
+    }
+
+    let frame_start = now;
+    if let Err(e) = present_frame(state) {
+        crate::kwarn!(Compositor, "Compositor: present_frame failed ({:?})", e);
+        return;
+    }
+    let frame_end = TICK_COUNT.load(Ordering::Relaxed);
+    let elapsed_ms = frame_end.saturating_sub(frame_start);
+
+    state.frame_count += 1;
+    state.frame_ms_accum += elapsed_ms;
+    state.last_frame_tick = frame_end;
+
+    if elapsed_ms > FRAME_WATCHDOG_MS {
+        crate::kwarn!(
+            Compositor,
+            "Compositor: frame took {}ms (>{}ms threshold)",
+            elapsed_ms,
+            FRAME_WATCHDOG_MS
+        );
+    }
+
+    if state.frame_count.is_multiple_of(STATS_EVERY_FRAMES) {
+        let avg = state.frame_ms_accum / STATS_EVERY_FRAMES;
+        crate::kinfo!(
+            Compositor,
+            "Compositor: frames={} avg compose+present={}ms",
+            state.frame_count,
+            avg
+        );
+        state.frame_ms_accum = 0;
+    }
+}
+
+/// Master switch for the compose-and-present loop. M24 ships with the
+/// loop scaffolding wired but presentation gated off (see the doc-comment
+/// on `present_frame_if_due` for the full reason). Step 17 (M25) flips
+/// this to true once the IPC dispatch resolves shmem-backed surface
+/// buffers and the pre-existing torn-read paths are addressed.
+const COMPOSITOR_PRESENT_ENABLED: bool = false;
+
+/// Compose any pending surface damage into the back buffer, push it to the
+/// host, flush the resource, then swap front/back so the freshly-composed
+/// buffer is the new front.
+///
+/// M24 ships an opaque-clear-only pipeline: the back buffer is filled with
+/// `DEFAULT_CLEAR_COLOR` and presented. Client-surface compositing relies
+/// on `shmem_id`-to-pixel resolution that arrives with the IPC dispatch
+/// in Step 17 (M25). The full compose path through `render::compose_frame`
+/// is exercised by the unit tests in `shared::compositor`.
+fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
+    let clear_first = state.needs_initial_clear;
+    let mut frame_damage = DamageTracker::new();
+
+    let (back_resource_id, back_width, back_height) = {
+        let back = state
+            .back_buffer
+            .as_mut()
+            .ok_or(GpuError::InvalidResource)?;
+        let resource_id = back.resource_id;
+        let width = back.width;
+        let height = back.height;
+        let back_pixels = framebuffer_slice(back);
+        render::compose_frame(
+            back_pixels,
+            width,
+            height,
+            &[],
+            &mut frame_damage,
+            clear_first,
+            render::DEFAULT_CLEAR_COLOR,
+            |_surface| None,
+        );
+        (resource_id, width, height)
+    };
+
+    state.damage = frame_damage;
+    state.needs_initial_clear = false;
+
+    let rect = VirtioGpuRect {
+        x: 0,
+        y: 0,
+        width: back_width,
+        height: back_height,
+    };
+    virtio_gpu::gpu_transfer_to_host(back_resource_id, &rect, 0)?;
+    virtio_gpu::gpu_resource_flush(back_resource_id, &rect)?;
+
+    swap_buffers_after_compose(state)?;
+    clear_surface_damage();
+    Ok(())
+}
+
+/// Returns true if any surface has its damaged flag set.
+fn surface_table_has_damage() -> bool {
+    let table = SURFACE_TABLE.lock();
+    table.iter().any(|s| s.as_ref().is_some_and(|s| s.damaged))
+}
+
+/// Clear damaged flags on all surfaces. Called immediately after a successful
+/// compose+present so the next idle tick correctly skips composition.
+fn clear_surface_damage() {
+    let mut table = SURFACE_TABLE.lock();
+    for slot in table.iter_mut() {
+        if let Some(surface) = slot.as_mut() {
+            surface.damaged = false;
+        }
+    }
+}
+
+/// View a `GpuBufferHandle`'s framebuffer as a mutable `[u32]` slice.
+///
+/// Returns an empty slice for zero-size buffers. The slice covers exactly
+/// `width * height` pixels. Takes `&mut` on the handle so the borrow checker
+/// can prevent overlapping mutable views into the same buffer.
+fn framebuffer_slice(handle: &mut GpuBufferHandle) -> &mut [u32] {
+    let pixel_count = (handle.width as usize) * (handle.height as usize);
+    if pixel_count == 0 {
+        return &mut [];
+    }
+    // SAFETY: handle.fb_virt points to DMA pages allocated by
+    // gpu_allocate_framebuffer. The allocation covers width*height*4 bytes
+    // (verified at allocation time). The compositor service is the sole
+    // owner of front/back buffers; the &mut handle ensures no concurrent
+    // alias exists at the language level.
+    // Maintained by: CompositorState owns the handles for the lifetime of
+    // the service thread; release_buffer is only called after the handles
+    // are removed from state.
+    // Violation: a stale or overlapping fb_virt would let the compositor
+    // write past the allocation, corrupting adjacent DMA pages.
+    unsafe { core::slice::from_raw_parts_mut(handle.fb_virt as *mut u32, pixel_count) }
+}
+
+/// Swap front/back buffers after a compose has finished writing into back.
+/// Rebinds scanout to the new front, then exchanges the handles in state.
+fn swap_buffers_after_compose(state: &mut CompositorState) -> Result<(), GpuError> {
+    let front = state.front_buffer.take().ok_or(GpuError::InvalidResource)?;
+    let back = state.back_buffer.take().ok_or(GpuError::InvalidResource)?;
+
+    let new_front = back;
+    let new_back = front;
+    let rect = VirtioGpuRect {
+        x: 0,
+        y: 0,
+        width: new_front.width,
+        height: new_front.height,
+    };
+
+    let result =
+        virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect);
+
+    if result.is_ok() {
+        state.front_buffer = Some(new_front);
+        state.back_buffer = Some(new_back);
+    } else {
+        // Restore original positions on error so we don't leak handles.
+        state.front_buffer = Some(new_back);
+        state.back_buffer = Some(new_front);
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
