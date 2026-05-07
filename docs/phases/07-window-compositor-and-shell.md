@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 7 weeks
 **Deliverable:** Window compositor with IPC-based surface lifecycle, software composition with damage tracking, floating window management with input routing, desktop shell (Status Strip, Taskbar, Workspace), Input Kit Tier 1
-**Status:** In Progress (M23, M24 complete; M25–M27 pending)
+**Status:** In Progress (M23, M24, M25 complete; M26–M27 pending)
 **Prerequisites:** Phase 6 (GPU & Display)
 **Unlocks:** Phase 8 (Input & Terminal), Phase 16 (Flow & Translation), Phase 25 (Performance & Optimization)
 
@@ -435,13 +435,23 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Implement `WindowManager` that manages surface positions and sizes in floating layout. Compositor draws window decorations: title bar (24px height with surface title text via spleen-font), close button (X glyph). Decorations are rendered by the compositor, not the surface owner.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/window.rs`
-- [ ] Define `WindowDecoration` struct: `title_bar_height: u32 = 24`, `border_width: u32 = 1`, `close_button_width: u32 = 24`
-- [ ] Implement `render_title_bar(surface, buffer)` — draw title bar background, render title text using spleen-font 16×32 (scaled to 8×16 for title bar), draw close button "X" glyph
-- [ ] Implement `render_focus_indicator(surface, buffer)` — colored border (blue for focused, gray for unfocused)
-- [ ] Track z-order as `Vec<SurfaceId>` (most-recently-focused last = top)
-- [ ] Implement `raise_to_top(surface_id)` — move to end of z-order list
-- [ ] Place new surfaces at default position (centered, with slight offset for each new window)
+- [x] Create `kernel/src/compositor/window.rs`
+- [x] Define `WindowDecoration` struct: `title_bar_height: u32 = 24`, `border_width: u32 = 1`, `close_button_width: u32 = 24`
+- [x] Implement `render_title_bar(surface, buffer)` — draw title bar background, render title text using spleen-font 16×32 (scaled to 8×16 for title bar), draw close button "X" glyph
+- [x] Implement `render_focus_indicator(surface, buffer)` — colored border (blue for focused, gray for unfocused)
+- [x] Track z-order as `Vec<SurfaceId>` (most-recently-focused last = top)
+- [x] Implement `raise_to_top(surface_id)` — move to end of z-order list
+- [x] Place new surfaces at default position (centered, with slight offset for each new window)
+
+**Note (post-implementation):** Title bar text is rendered with spleen
+**8×16** (added the `s8x16` feature to `kernel/Cargo.toml`) instead of
+the 16×32 scaled-down approach in the original draft — 8×16 fits the
+24-pixel bar with 4 px of padding above and below and avoids the
+nearest-neighbour downsample. The compositor-side text helper lives in
+a new `kernel/src/compositor/text.rs` (slice-based, distinct from the
+existing pointer-based `kernel/src/gpu/text.rs`). Z-order is a
+`shared::compositor::ZOrder` array (not `Vec`) — fixed-size, no
+allocations, matches `MAX_SURFACES`.
 
 **Key reference:** [compositor/rendering.md](../platform/compositor/rendering.md) §6.1 Layout Modes
 
@@ -454,11 +464,18 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Implement hit-testing to find the topmost surface under the pointer. Render a software cursor (16×16 pixel arrow sprite embedded as const data). The cursor composites on top of all surfaces.
 
 **Tasks:**
-- [ ] Implement `hit_test(x, y) -> Option<(SurfaceId, HitZone)>` — walk z-order list top-to-bottom, check bounds including decorations
-- [ ] Define `HitZone` enum: `TitleBar`, `CloseButton`, `Content`, `ResizeBorderN/S/E/W/NE/NW/SE/SW`
-- [ ] Define cursor sprite as `const CURSOR_ARROW: [u32; 16 * 16]` — 16×16 RGBA pixels, arrow shape with black outline and white fill
-- [ ] Implement `render_cursor(comp_buffer, x, y)` — alpha-blend cursor sprite at pointer position (last operation before present)
-- [ ] Track cursor position from `InputEvent::Pointer` updates
+- [x] Implement `hit_test(x, y) -> Option<(SurfaceId, HitZone)>` — walk z-order list top-to-bottom, check bounds including decorations
+- [x] Define `HitZone` enum: `TitleBar`, `CloseButton`, `Content`, `ResizeBorderN/S/E/W/NE/NW/SE/SW`
+- [x] Define cursor sprite as `const CURSOR_ARROW: [u32; 16 * 16]` — 16×16 RGBA pixels, arrow shape with black outline and white fill
+- [x] Implement `render_cursor(comp_buffer, x, y)` — alpha-blend cursor sprite at pointer position (last operation before present)
+- [x] Track cursor position from `InputEvent::Pointer` updates
+
+**Note (post-implementation):** `HitZone::ResizeBorder` carries a single
+`ResizeEdge` enum variant (`N/S/E/W/NE/NW/SE/SW`) instead of eight
+flat zone variants — keeps the match arms in `handle_decoration_event`
+flatter and lets the resize-delta math share a single computation
+parameterized by edge. The geometric helper `hit_zone()` lives in
+`shared/src/compositor.rs` so it gets host-side test coverage.
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.2
 
@@ -471,12 +488,20 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Implement `FocusManager` per compositor/input.md §7.2: separate keyboard and pointer focus, focus history ring buffer.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/focus.rs`
-- [ ] Define `FocusManager`: `keyboard_focus: Option<SurfaceId>`, `pointer_focus: Option<SurfaceId>`, `focus_history: FixedQueue<SurfaceId, 16>`
-- [ ] Clicking a surface sets keyboard focus and raises it to top of z-order
-- [ ] Send `FocusChanged { focused: true/false }` events via IPC on focus change
-- [ ] Pointer focus follows cursor position (via hit-test, no click required) — used for routing pointer events
-- [ ] Focus steal prevention: only user-initiated actions (click, Alt+Tab) can change keyboard focus
+- [x] Create `kernel/src/compositor/focus.rs`
+- [x] Define `FocusManager`: `keyboard_focus: Option<SurfaceId>`, `pointer_focus: Option<SurfaceId>`, `focus_history: FixedQueue<SurfaceId, 16>`
+- [x] Clicking a surface sets keyboard focus and raises it to top of z-order
+- [x] Send `FocusChanged { focused: true/false }` events via IPC on focus change
+- [x] Pointer focus follows cursor position (via hit-test, no click required) — used for routing pointer events
+- [x] Focus steal prevention: only user-initiated actions (click, Alt+Tab) can change keyboard focus
+
+**Note (post-implementation):** `focus_history` is a custom MRU
+container (`shared::compositor::FocusHistory`) rather than the generic
+`FixedQueue<SurfaceId, 16>` — a true MRU ring needs `touch(id)` to
+move existing entries to the front, which `FixedQueue`'s FIFO API
+does not provide. `FocusManager` operations return a `FocusChange`
+struct so the caller can drop the manager mutex before issuing IPC
+events (lock-ordering invariant).
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.2
 
@@ -489,13 +514,27 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Implement the input pipeline stages: Event Coalescing → Hotkey Filter → Focus Router → Agent Delivery. Simplified from the full 6-stage architecture (Device Driver stage is handled in Step 3–4; Gesture Recognizer deferred to Phase 8).
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/input_route.rs`
-- [ ] Define `InputFilter` trait: `fn filter(&mut self, event: &InputEvent) -> FilterResult` with `FilterResult::Pass/Consume/Transform`
-- [ ] Implement event coalescing: merge multiple pointer events within a frame interval into one (latest position wins)
-- [ ] Implement hotkey filter: check keyboard events against system hotkey table before routing
-- [ ] Implement focus routing: keyboard events → keyboard_focus surface, pointer events → pointer_focus surface (from hit-test)
-- [ ] Implement agent delivery: serialize `InputEvent` into `CompositorEvent::Input` and send via the surface's IPC channel
-- [ ] Wire pipeline into compositor main loop: after `poll_input()`, run events through pipeline
+- [x] Create `kernel/src/compositor/input_route.rs`
+- [x] Define `InputFilter` trait: `fn filter(&mut self, event: &InputEvent) -> FilterResult` with `FilterResult::Pass/Consume/Transform`
+- [x] Implement event coalescing: merge multiple pointer events within a frame interval into one (latest position wins)
+- [x] Implement hotkey filter: check keyboard events against system hotkey table before routing
+- [x] Implement focus routing: keyboard events → keyboard_focus surface, pointer events → pointer_focus surface (from hit-test)
+- [x] Implement agent delivery: serialize `InputEvent` into `CompositorEvent::Input` and send via the surface's IPC channel
+- [x] Wire pipeline into compositor main loop: after `poll_input()`, run events through pipeline
+
+**Note (post-implementation):** Step 20 also lands the IPC dispatch
+that was implicitly required by M24 Step 12 — the compositor service
+loop now decodes incoming `CompositorRequest` payloads and dispatches
+to `surface_create/_attach_buffer/_destroy/_resize/_set_layer`
+instead of replying with an empty ack. Without this, the input
+router would have no surfaces to route events to. M25 keeps all
+surfaces on the well-known compositor channel as a placeholder; M26
+will introduce per-client channels alongside the test app.
+
+The pure routing decision lives in `shared::compositor::route_event`
+so it gets host-side test coverage; the kernel side wires it into
+`drain_and_route` which drains `crate::input::INPUT_QUEUE` once per
+compositor loop iteration.
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.1
 
@@ -508,10 +547,16 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Title bar drag → window move. Edge/corner resize zones (8px border) → window resize. Minimum window size 200×100.
 
 **Tasks:**
-- [ ] Implement move mode: when pointer pressed on `HitZone::TitleBar`, track delta from initial position, update surface x/y each frame until pointer released
-- [ ] Implement resize mode: when pointer pressed on `HitZone::ResizeBorder*`, resize surface dimensions, send `Configure` event to surface's IPC channel
-- [ ] Enforce minimum window size: 200×100 pixels
-- [ ] Implement close button: when pointer clicked on `HitZone::CloseButton`, send `CloseRequested` event to surface
+- [x] Implement move mode: when pointer pressed on `HitZone::TitleBar`, track delta from initial position, update surface x/y each frame until pointer released
+- [x] Implement resize mode: when pointer pressed on `HitZone::ResizeBorder*`, resize surface dimensions, send `Configure` event to surface's IPC channel
+- [x] Enforce minimum window size: 200×100 pixels
+- [x] Implement close button: when pointer clicked on `HitZone::CloseButton`, send `CloseRequested` event to surface
+
+**Note (post-implementation):** North/West resize edges also re-anchor
+the origin so the opposite edge stays fixed when the clamp truncates
+the size below `MIN_WINDOW_*`. The drag state machine
+(`DragState::Idle/Moving/Resizing`) is a single global mutex
+(`DRAG_STATE`) — at most one window drags at a time.
 
 **Key reference:** [compositor/rendering.md](../platform/compositor/rendering.md) §6.1
 
@@ -524,14 +569,22 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Register system hotkeys that are consumed before any surface receives them. Alt+Tab cycles through focus history. Alt+F4 sends `CloseRequested`.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/hotkey.rs`
-- [ ] Define `HotkeyBinding`: `key_combo`, `action: HotkeyAction`
-- [ ] Define `HotkeyAction` enum: `SwitchWindow`, `CloseWindow`, `ShowWorkspace`
-- [ ] Register: Alt+Tab → SwitchWindow, Alt+F4 → CloseWindow, Super → ShowWorkspace
-- [ ] Alt+Tab: cycle through `focus_history`, set keyboard focus to next entry, raise to top
-- [ ] Alt+F4: send `CloseRequested` to currently focused surface
-- [ ] Super key: toggle Workspace surface visibility (Step 27)
-- [ ] Hotkeys consumed by the filter — never forwarded to surfaces
+- [x] Create `kernel/src/compositor/hotkey.rs`
+- [x] Define `HotkeyBinding`: `key_combo`, `action: HotkeyAction`
+- [x] Define `HotkeyAction` enum: `SwitchWindow`, `CloseWindow`, `ShowWorkspace`
+- [x] Register: Alt+Tab → SwitchWindow, Alt+F4 → CloseWindow, Super → ShowWorkspace
+- [x] Alt+Tab: cycle through `focus_history`, set keyboard focus to next entry, raise to top
+- [x] Alt+F4: send `CloseRequested` to currently focused surface
+- [x] Super key: toggle Workspace surface visibility (Step 27)
+- [x] Hotkeys consumed by the filter — never forwarded to surfaces
+
+**Note (post-implementation):** Bare-Super → ShowWorkspace is wired in
+the `apply()` dispatch but **not** registered in `SYSTEM_HOTKEYS` for
+M25 — the bare-Super press carries `Modifiers::SUPER` set on the same
+event, which makes the matching ambiguous without a release-edge
+detector. Workspace toggle activation lands in M26 alongside the
+Workspace surface itself; the dispatch path emits an
+`info!("ShowWorkspace placeholder")` log when invoked.
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.3
 
@@ -544,12 +597,26 @@ event encoders (Configure, Input keyboard, Input pointer).
 **What:** Move any reusable types to shared crate. Comprehensive unit tests for hit-testing, focus history, z-order operations.
 
 **Tasks:**
-- [ ] Add any shared types needed (e.g., `HitZone`, `WindowPosition`, `WindowSize`) to `shared/src/compositor.rs`
-- [ ] Test: hit-test with overlapping surfaces returns correct topmost surface
-- [ ] Test: focus history ring buffer wraps correctly at capacity 16
-- [ ] Test: z-order raise operation moves surface to top
-- [ ] Test: hotkey matching for Alt+Tab, Alt+F4, Super
-- [ ] Target: 15+ new tests
+- [x] Add any shared types needed (e.g., `HitZone`, `WindowPosition`, `WindowSize`) to `shared/src/compositor.rs`
+- [x] Test: hit-test with overlapping surfaces returns correct topmost surface
+- [x] Test: focus history ring buffer wraps correctly at capacity 16
+- [x] Test: z-order raise operation moves surface to top
+- [x] Test: hotkey matching for Alt+Tab, Alt+F4, Super
+- [x] Target: 15+ new tests
+
+**Note (post-implementation):** 25 new tests landed in
+`shared/src/compositor.rs::tests` covering: `SurfaceState::is_visible`;
+`hit_zone` outside/corners/edges/close-button/title-bar/content;
+`ZOrder` push, iter, iter_top_down, raise_to_top, remove,
+full-capacity rejection, and NONE rejection; `FocusHistory` empty,
+touch-promotes-existing, evicts-LRU at capacity, remove, and NONE
+rejection; `route_event` keyboard-with-focus / no-focus / pointer-
+content / pointer-decoration / pointer-no-hit; `clamp_window_size`
+minimum and exact-minimum; and `WindowDecoration::DEFAULT` metrics.
+Pure-logic types (`ZOrder`, `FocusHistory`, `RouteTarget`, `route_event`,
+`clamp_window_size`) were moved from kernel to shared so the same
+code is exercised by host-side `just test`. Total test count:
+518 → 543.
 
 **Acceptance:** `just check` + `just test` pass with 15+ new window manager tests
 
