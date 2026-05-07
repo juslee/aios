@@ -216,18 +216,18 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Define compositor protocol types in the shared crate. All message types must fit within MAX_MESSAGE_SIZE (256 bytes) — verified with compile-time assertions.
 
 **Tasks:**
-- [ ] Create `shared/src/compositor.rs` with `pub mod compositor;` in `shared/src/lib.rs`
-- [ ] Define `SurfaceId(u64)` — unique surface identifier
-- [ ] Define `SurfaceState` enum: `Created`, `Configured`, `Active`, `Suspended`, `Destroyed`
-- [ ] Define `SurfaceLayer` enum: `Background = 0`, `Normal = 1`, `TopLevel = 2`, `Overlay = 3`, `Panel = 4`
-- [ ] Define `SurfaceTitle` struct: `{ bytes: [u8; 64], len: u8 }` — UTF-8 encoded, similar to `ServiceName`
-- [ ] Define `SurfaceContentType` enum (simplified): `Document`, `Terminal`, `Browser`, `Game`, `Settings`, `SystemUI`, `Generic`
-- [ ] Define `DamageRegion` enum: `Rect { x: u32, y: u32, width: u32, height: u32 }`, `FullSurface`, `Empty`
-- [ ] Define `CompositorRequest` repr(C): `CreateSurface { width, height, title, content_type, layer }`, `AttachBuffer { surface_id, shmem_id, damage }`, `DestroySurface { surface_id }`, `Resize { surface_id, width, height }`, `SetLayer { surface_id, layer }`
-- [ ] Define `CompositorEvent` repr(C): `Configure { surface_id, width, height, scale_x100 }`, `FocusChanged { surface_id, focused }`, `CloseRequested { surface_id }`, `BufferReleased { shmem_id }`, `FramePresented { surface_id, timestamp_ticks }`, `Input { surface_id, event: InputEvent }`
-- [ ] Add `Compositor = 15` variant to `Subsystem` enum, update `COUNT` to 16, update `name()` and tests
-- [ ] Add compile-time size assertions: `CompositorRequest` ≤ 256 bytes, `CompositorEvent` ≤ 256 bytes
-- [ ] Write host-side tests: size assertions, SurfaceState ordering, SurfaceLayer ordering, SurfaceTitle construction and truncation
+- [x] Create `shared/src/compositor.rs` with `pub mod compositor;` in `shared/src/lib.rs`
+- [x] Define `SurfaceId(u64)` — unique surface identifier
+- [x] Define `SurfaceState` enum: `Created`, `Configured`, `Active`, `Suspended`, `Destroyed`
+- [x] Define `SurfaceLayer` enum: `Background = 0`, `Normal = 1`, `TopLevel = 2`, `Overlay = 3`, `Panel = 4`
+- [x] Define `SurfaceTitle` struct: `{ bytes: [u8; 64], len: u8 }` — UTF-8 encoded, similar to `ServiceName`
+- [x] Define `SurfaceContentType` enum (simplified): `Document`, `Terminal`, `Browser`, `Game`, `Settings`, `SystemUI`, `Generic`
+- [x] Define `DamageRegion` enum: `Rect { x: u32, y: u32, width: u32, height: u32 }`, `FullSurface`, `Empty`
+- [x] Define `CompositorRequest` repr(C): `CreateSurface { width, height, title, content_type, layer }`, `AttachBuffer { surface_id, shmem_id, damage }`, `DestroySurface { surface_id }`, `Resize { surface_id, width, height }`, `SetLayer { surface_id, layer }`
+- [x] Define `CompositorEvent` repr(C): `Configure { surface_id, width, height, scale_x100 }`, `FocusChanged { surface_id, focused }`, `CloseRequested { surface_id }`, `BufferReleased { shmem_id }`, `FramePresented { surface_id, timestamp_ticks }`, `Input { surface_id, event: InputEvent }`
+- [x] Add `Compositor = 15` variant to `Subsystem` enum, update `COUNT` to 16, update `name()` and tests
+- [x] Add compile-time size assertions: `CompositorRequest` ≤ 256 bytes, `CompositorEvent` ≤ 256 bytes
+- [x] Write host-side tests: size assertions, SurfaceState ordering, SurfaceLayer ordering, SurfaceTitle construction and truncation
 
 **Key reference:** [compositor/protocol.md](../platform/compositor/protocol.md) §3.1, §3.4
 
