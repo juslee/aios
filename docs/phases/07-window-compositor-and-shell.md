@@ -278,13 +278,21 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Note:** DMA pool budget: GPU Service uses ~8MB (2×4MB). Compositor allocates ~8MB more. Total ~16MB out of 64MB DMA pool. Client surface buffers use `Pool::Kernel` (not DMA) — only the compositor's final composition buffer needs DMA for VirtIO-GPU transfer.
 
 **Tasks:**
-- [ ] Implement `display_handoff()` in compositor service: get display info from `virtio_gpu::display_info()`
-- [ ] Allocate 2 DMA-backed composition buffers via `alloc_dma_pages()` (order-10 for 1280×800×4)
-- [ ] Create VirtIO-GPU resources for both buffers (`gpu_allocate_framebuffer()`)
-- [ ] Render initial frame (solid background color) to back buffer
-- [ ] Set compositor's buffer as scanout via `gpu_set_scanout()`
-- [ ] Signal GPU Service to stop its display loop (set a global `COMPOSITOR_ACTIVE: AtomicBool`)
-- [ ] Log handoff completion to UART
+- [x] Implement `display_handoff()` in compositor service: get display info from `virtio_gpu::display_info()`
+- [x] Allocate 2 DMA-backed composition buffers via `alloc_dma_pages()` (order-10 for 1280×800×4)
+- [x] Create VirtIO-GPU resources for both buffers (`gpu_allocate_framebuffer()`)
+- [x] Render initial frame (solid background color) to back buffer
+- [x] Set compositor's buffer as scanout via `gpu_set_scanout()`
+- [x] Signal GPU Service to stop its display loop (set a global `COMPOSITOR_ACTIVE: AtomicBool`)
+- [x] Log handoff completion to UART
+
+**Note (post-implementation):** Surfaced and fixed a pre-existing bounds-check
+gap in `cap/mod.rs` — `check_channel_create`, `check_channel_access`,
+`check_shared_memory_create`, and `check_shared_memory_access` indexed
+`PROCESS_TABLE` with `pid.0 as usize` without first verifying the index was in
+range, causing rare `index out of bounds` panics on garbage `pid` values
+returned from torn `Thread.owner_pid` reads. Each function now returns `Eperm`
+when `pid.0 >= MAX_PROCESSES`, matching the `None`-slot fallthrough.
 
 **Key reference:** `kernel/src/gpu/service.rs` (existing buffer allocation), [compositor.md](../platform/compositor.md) §2
 

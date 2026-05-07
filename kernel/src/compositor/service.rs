@@ -12,9 +12,13 @@
 //!
 //! Per docs/platform/compositor.md §2.
 
+use core::sync::atomic::Ordering;
+
+use shared::gpu::{DisplayInfo, GpuBufferHandle, GpuError, VirtioGpuRect, AIOS_BLUE_B8G8R8A8};
 use shared::ipc::ChannelId;
 use spin::Mutex;
 
+use crate::drivers::virtio_gpu;
 use crate::ipc;
 use crate::service;
 use crate::task::process::ProcessId;
@@ -25,17 +29,30 @@ use crate::task::process::ProcessId;
 
 /// Compositor service runtime state, held inside the service loop.
 ///
-/// M24 keeps the state minimal — surfaces, render targets, and damage
-/// tracking arrive in Steps 11-14.
+/// Step 11 adds the composition buffers and display info so the service
+/// owns its own front/back framebuffers post-handoff. Surface tracking
+/// and the damage tracker arrive in Steps 12 and 13.
 struct CompositorState {
     /// IPC channel for this service.
-    #[allow(dead_code)] // Filled out in Step 14 when the loop dispatches commands.
+    #[allow(dead_code)] // Used by Step 14 when the loop dispatches commands.
     channel: ChannelId,
+    /// Display geometry as reported by the VirtIO-GPU driver.
+    display: DisplayInfo,
+    /// Front buffer — currently scanned out.
+    front_buffer: Option<GpuBufferHandle>,
+    /// Back buffer — render target for the next frame.
+    #[allow(dead_code)] // Used in Step 14 when the swap loop runs.
+    back_buffer: Option<GpuBufferHandle>,
 }
 
 impl CompositorState {
-    fn new(channel: ChannelId) -> Self {
-        Self { channel }
+    fn new(channel: ChannelId, display: DisplayInfo) -> Self {
+        Self {
+            channel,
+            display,
+            front_buffer: None,
+            back_buffer: None,
+        }
     }
 }
 
@@ -70,7 +87,25 @@ fn compositor_loop() -> ! {
 
     crate::kinfo!(Compositor, "Compositor: started, channel={}", ch.0);
 
-    let _state = CompositorState::new(ch);
+    let display = virtio_gpu::display_info().unwrap_or_else(DisplayInfo::default);
+    let mut state = CompositorState::new(ch, display);
+
+    // Take ownership of the display from the GPU Service.
+    if display.width > 0 && display.height > 0 {
+        if let Err(e) = display_handoff(&mut state) {
+            crate::kerror!(
+                Compositor,
+                "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
+                e
+            );
+        }
+    } else {
+        crate::kwarn!(
+            Compositor,
+            "Compositor: no display reported; running headless"
+        );
+    }
+
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
 
     loop {
@@ -112,6 +147,121 @@ fn compositor_loop() -> ! {
     loop {
         crate::sched::thread_yield();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Display handoff
+// ---------------------------------------------------------------------------
+
+/// Take control of the display from the GPU Service.
+///
+/// Allocates two DMA-backed framebuffers (front + back), pre-fills the
+/// front with AIOS blue, binds it to scanout 0 via `gpu_set_scanout`,
+/// pushes a transfer + flush so the new content is visible, then sets
+/// `crate::compositor::COMPOSITOR_ACTIVE` to true. From this point the
+/// GPU Service stops driving the display (its own swap_buffers calls
+/// will check `COMPOSITOR_ACTIVE` and bail out — wired in this step).
+///
+/// If allocation fails partway through, any successfully allocated buffer
+/// is freed before returning. The compositor stays in the "headless"
+/// state and the GPU Service continues to drive the display.
+fn display_handoff(state: &mut CompositorState) -> Result<(), GpuError> {
+    let w = state.display.width;
+    let h = state.display.height;
+
+    let front = virtio_gpu::gpu_allocate_framebuffer(w, h)?;
+    let back = match virtio_gpu::gpu_allocate_framebuffer(w, h) {
+        Ok(handle) => handle,
+        Err(e) => {
+            release_buffer(&front);
+            return Err(e);
+        }
+    };
+
+    // Pre-fill front buffer with AIOS blue so the scanout swap shows
+    // a clean color, not whatever zeroed DMA pages happened to contain.
+    fill_buffer(&front, AIOS_BLUE_B8G8R8A8);
+
+    let rect = VirtioGpuRect {
+        x: 0,
+        y: 0,
+        width: w,
+        height: h,
+    };
+
+    // Bind front buffer to scanout 0 — this is where GPU Service ownership
+    // ends and compositor ownership begins. The VIRTIO_GPU mutex serializes
+    // any concurrent GPU Service activity, so we can't race even though
+    // both services are running.
+    let bind = (|| -> Result<(), GpuError> {
+        virtio_gpu::gpu_set_scanout(state.display.scanout_id, front.resource_id, &rect)?;
+        virtio_gpu::gpu_transfer_to_host(front.resource_id, &rect, 0)?;
+        virtio_gpu::gpu_resource_flush(front.resource_id, &rect)?;
+        Ok(())
+    })();
+
+    if let Err(e) = bind {
+        release_buffer(&front);
+        release_buffer(&back);
+        return Err(e);
+    }
+
+    state.front_buffer = Some(front);
+    state.back_buffer = Some(back);
+
+    // Publish the handoff so the GPU Service knows to stop driving the
+    // display. Release ordering ensures the buffer mutations above are
+    // visible before any other core observes the flag flip.
+    crate::compositor::COMPOSITOR_ACTIVE.store(true, Ordering::Release);
+
+    crate::kinfo!(
+        Compositor,
+        "Compositor: display handoff complete (scanout {} = front buffer resource={}, {}x{})",
+        state.display.scanout_id,
+        state
+            .front_buffer
+            .as_ref()
+            .map(|h| h.resource_id)
+            .unwrap_or(0),
+        w,
+        h
+    );
+
+    Ok(())
+}
+
+/// Fill an entire framebuffer with a single B8G8R8A8 pixel value.
+fn fill_buffer(handle: &GpuBufferHandle, color: u32) {
+    let pixel_count = (handle.width as usize) * (handle.height as usize);
+    if pixel_count == 0 {
+        return;
+    }
+    // SAFETY: handle.fb_virt points into a DMA allocation owned by this
+    // handle. `gpu_allocate_framebuffer` guarantees the allocation covers
+    // width*height*4 bytes; we write exactly pixel_count u32s.
+    // Maintained by: the buffer is held in the compositor service state and
+    // not yet reachable by any other thread.
+    // Violation: writing past the allocation would corrupt adjacent DMA
+    // pages.
+    unsafe {
+        let fb = handle.fb_virt as *mut u32;
+        let slice = core::slice::from_raw_parts_mut(fb, pixel_count);
+        slice.fill(color);
+    }
+}
+
+/// Release a framebuffer obtained from `gpu_allocate_framebuffer`: detach
+/// backing pages, unref the VirtIO resource, free the DMA pages.
+fn release_buffer(handle: &GpuBufferHandle) {
+    let _ = virtio_gpu::gpu_resource_detach_backing(handle.resource_id);
+    let _ = virtio_gpu::gpu_resource_unref(handle.resource_id);
+    // SAFETY: handle.fb_phys / handle.order were returned by alloc_dma_pages
+    // inside gpu_allocate_framebuffer. release_buffer is only called on
+    // handles that have not been stored elsewhere (allocation-failure path
+    // or shutdown path).
+    // Maintained by: callers that hand us the handle never retain a copy.
+    // Violation: a double-free would corrupt the buddy bitmap.
+    unsafe { crate::mm::frame::free_dma_pages(handle.fb_phys, handle.order) };
 }
 
 // ---------------------------------------------------------------------------

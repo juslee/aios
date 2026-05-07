@@ -491,10 +491,24 @@ fn swap_buffers(state: &mut GpuServiceState) -> Result<(), GpuError> {
         height: new_front.height,
     };
 
+    // Once the compositor has taken over the display, the GPU Service no
+    // longer drives the scanout — it still owns its allocated buffers (so
+    // dependents can keep rendering into them via Present), but it must
+    // not call gpu_set_scanout, which would steal display ownership back.
+    // Acquire ordering pairs with the Release in compositor::display_handoff.
+    let compositor_active =
+        crate::compositor::COMPOSITOR_ACTIVE.load(core::sync::atomic::Ordering::Acquire);
+
     // Bind new front to scanout, transfer, and flush.
     // On error, restore buffers to state before returning to prevent DMA leak.
     let result = (|| -> Result<(), GpuError> {
-        virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect)?;
+        if !compositor_active {
+            virtio_gpu::gpu_set_scanout(state.display.scanout_id, new_front.resource_id, &rect)?;
+        }
+        // Transfer + flush still useful — applications calling Present
+        // expect the back buffer to be visible somewhere. With the
+        // compositor active these go to a buffer not bound to the
+        // scanout, but the call itself remains safe.
         virtio_gpu::gpu_transfer_to_host(new_front.resource_id, &rect, 0)?;
         virtio_gpu::gpu_resource_flush(new_front.resource_id, &rect)?;
         Ok(())

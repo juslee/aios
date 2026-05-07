@@ -56,6 +56,11 @@ pub fn current_process_id() -> Option<ProcessId> {
 pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
+    if (pid.0 as usize) >= table.len() {
+        #[cfg(feature = "kernel-metrics")]
+        METRICS.ipc_cap_denied.inc();
+        return Err(IpcError::Eperm as i64);
+    }
     let proc = match &table[pid.0 as usize] {
         Some(p) => p,
         None => {
@@ -83,6 +88,11 @@ pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
 pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Result<(), i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
+    if (pid.0 as usize) >= table.len() {
+        #[cfg(feature = "kernel-metrics")]
+        METRICS.ipc_cap_denied.inc();
+        return Err(IpcError::Eperm as i64);
+    }
     let proc = match &table[pid.0 as usize] {
         Some(p) => p,
         None => {
@@ -109,6 +119,11 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
 pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
+    if (pid.0 as usize) >= table.len() {
+        #[cfg(feature = "kernel-metrics")]
+        METRICS.ipc_cap_denied.inc();
+        return Err(IpcError::Eperm as i64);
+    }
     let proc = match &table[pid.0 as usize] {
         Some(p) => p,
         None => {
@@ -136,6 +151,11 @@ pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i
 pub fn check_shared_memory_access(pid: ProcessId, region_id: u32) -> Result<(), i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
+    if (pid.0 as usize) >= table.len() {
+        #[cfg(feature = "kernel-metrics")]
+        METRICS.ipc_cap_denied.inc();
+        return Err(IpcError::Eperm as i64);
+    }
     let proc = match &table[pid.0 as usize] {
         Some(p) => p,
         None => {
