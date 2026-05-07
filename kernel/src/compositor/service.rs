@@ -541,13 +541,15 @@ pub static COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// is available. The compositor thread starts running when the scheduler
 /// begins.
 ///
-/// Lock ordering invariant introduced by M24: the compositor's surface
-/// table lives BELOW `BLOCK_ENGINE` and ABOVE the VirtIO leaf mutexes,
-/// extending the chain to
+/// Lock ordering (M25 chain — extends the M24 invariant with the
+/// window-manager mutexes):
 /// `PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE >
-/// CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > SURFACE_TABLE >
-/// {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`. Each declaration site
-/// documents its position with a `// Lock ordering:` comment.
+/// CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > WINDOW_Z_ORDER >
+/// DRAG_STATE > SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`.
+/// `FOCUS_MANAGER`, `CURSOR_POS`, and `TITLE_FONT` are leaf-independent
+/// (alongside `INPUT_QUEUE` / `PENDING_POINTER`) — never co-held with
+/// `SURFACE_TABLE` or any of the chain rungs above. Each declaration
+/// site documents its position with a `// Lock ordering:` comment.
 pub fn init_compositor() {
     use crate::cap;
     use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};

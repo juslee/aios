@@ -120,10 +120,12 @@ impl DragState {
 ///
 /// Lock ordering: ranks above `SURFACE_TABLE` (`handle_decoration_event`
 /// holds DRAG_STATE while reading surface geometry on pointer-down)
-/// and below `FOCUS_MANAGER`/`WINDOW_Z_ORDER` (drag never raises focus
-/// directly — that goes through `input_route::promote_to_focus` after
-/// `DRAG_STATE` is dropped). Never held across an IPC call — pointer-up
-/// flips state to `Idle` synchronously without IPC.
+/// and below `WINDOW_Z_ORDER` in the chain. `FOCUS_MANAGER` is
+/// leaf-independent and is never co-held with DRAG_STATE — drag never
+/// raises focus directly; that path runs through
+/// `input_route::promote_to_focus` after `DRAG_STATE` is dropped.
+/// Never held across an IPC call — pointer-up flips state to `Idle`
+/// synchronously without IPC.
 pub static DRAG_STATE: Mutex<DragState> = Mutex::new(DragState::Idle);
 
 // ---------------------------------------------------------------------------
@@ -578,8 +580,9 @@ pub fn handle_decoration_event(
                 }
                 DragState::Idle => None,
             };
-            // Drop the drag lock before touching SURFACE_TABLE / IPC to keep
-            // the lock-ordering invariant intact (DRAG_STATE is a leaf).
+            // Drop the drag lock before issuing IPC; DRAG_STATE may be
+            // re-acquired briefly on the next pointer event and we never
+            // hold it across an `ipc_send`.
             drop(drag);
             if let Some((id, nx, ny, dims)) = action {
                 let (w, h) = match dims {

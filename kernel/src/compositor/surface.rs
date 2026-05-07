@@ -81,9 +81,12 @@ pub struct Surface {
 
 /// System-wide table of compositor surfaces.
 ///
-/// Lock ordering: `... > BLOCK_ENGINE > SURFACE_TABLE > {VIRTIO_BLK,
-/// VIRTIO_GPU, VIRTIO_INPUT}`. Hold this lock briefly — never call into
-/// `virtio_*` drivers while holding it.
+/// Lock ordering (M25): `... > BLOCK_ENGINE > WINDOW_Z_ORDER >
+/// DRAG_STATE > SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`.
+/// The leaf-independent compositor mutexes (FOCUS_MANAGER, CURSOR_POS,
+/// TITLE_FONT) sit alongside INPUT_QUEUE/PENDING_POINTER and are never
+/// co-held with SURFACE_TABLE. Hold this lock briefly — never call into
+/// `virtio_*` drivers or issue IPC while holding it.
 pub static SURFACE_TABLE: Mutex<[Option<Surface>; MAX_SURFACES]> = {
     const NONE: Option<Surface> = None;
     Mutex::new([NONE; MAX_SURFACES])
