@@ -1040,6 +1040,200 @@ mod tests {
         );
     }
 
+    // ---------------------------------------------------------------------
+    // Multi-surface composition test (Phase 7 M24 Step 15)
+    //
+    // Exercises the same blit + z-order logic used by the kernel render
+    // module against a stack-allocated framebuffer. The test creates three
+    // surfaces at different layers and positions and verifies pixels at
+    // representative coordinates after composition.
+    // ---------------------------------------------------------------------
+
+    /// Inline copy of the kernel's `blit_opaque` for host-side testing.
+    /// Mirrors `kernel/src/compositor/render.rs::blit_opaque` byte-for-byte
+    /// — any divergence here is a bug.
+    fn host_blit_opaque(
+        src: &[u32],
+        src_w: u32,
+        src_h: u32,
+        dst: &mut [u32],
+        dst_w: u32,
+        dst_h: u32,
+        dst_x: i32,
+        dst_y: i32,
+    ) -> Option<DamageRect> {
+        if src_w == 0 || src_h == 0 {
+            return None;
+        }
+        let dst_x_start = (dst_x as i64).max(0);
+        let dst_y_start = (dst_y as i64).max(0);
+        let dst_x_end = ((dst_x as i64) + src_w as i64).min(dst_w as i64);
+        let dst_y_end = ((dst_y as i64) + src_h as i64).min(dst_h as i64);
+        if dst_x_end <= dst_x_start || dst_y_end <= dst_y_start {
+            return None;
+        }
+        let src_x = (dst_x_start - dst_x as i64) as usize;
+        let src_y = (dst_y_start - dst_y as i64) as usize;
+        let copy_w = (dst_x_end - dst_x_start) as usize;
+        let copy_h = (dst_y_end - dst_y_start) as usize;
+        for row in 0..copy_h {
+            let s = (src_y + row) * src_w as usize + src_x;
+            let d = (dst_y_start as usize + row) * dst_w as usize + dst_x_start as usize;
+            dst[d..d + copy_w].copy_from_slice(&src[s..s + copy_w]);
+        }
+        Some(DamageRect {
+            x: dst_x_start as u32,
+            y: dst_y_start as u32,
+            width: copy_w as u32,
+            height: copy_h as u32,
+        })
+    }
+
+    /// Test scene helper: a colored opaque rectangle.
+    struct TestSurface {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        layer: SurfaceLayer,
+        layer_seq: u64,
+        color: u32,
+    }
+
+    fn make_pixels(width: u32, height: u32, color: u32) -> alloc::vec::Vec<u32> {
+        alloc::vec![color; (width as usize) * (height as usize)]
+    }
+
+    #[test]
+    fn multi_surface_composition_z_order() {
+        // 64x32 framebuffer. Three surfaces:
+        //   * background — 64x32 layer Background, dark gray
+        //   * window     — 16x12 layer Normal at (10, 10), AIOS blue
+        //   * overlay    — 8x6  layer Overlay at (20, 14), yellow
+        const W: u32 = 64;
+        const H: u32 = 32;
+        const BG: u32 = 0xFF20_2020;
+        const WINDOW: u32 = 0xFF5B_8CFF;
+        const OVERLAY: u32 = 0xFFFF_D500;
+
+        let mut dst: alloc::vec::Vec<u32> = alloc::vec![0; (W * H) as usize];
+        let bg_pixels = make_pixels(W, H, BG);
+        let window_pixels = make_pixels(16, 12, WINDOW);
+        let overlay_pixels = make_pixels(8, 6, OVERLAY);
+
+        // Build the scene unsorted to verify the sorting step.
+        let mut scene = [
+            TestSurface {
+                x: 20,
+                y: 14,
+                width: 8,
+                height: 6,
+                layer: SurfaceLayer::Overlay,
+                layer_seq: 3,
+                color: OVERLAY,
+            },
+            TestSurface {
+                x: 0,
+                y: 0,
+                width: W,
+                height: H,
+                layer: SurfaceLayer::Background,
+                layer_seq: 1,
+                color: BG,
+            },
+            TestSurface {
+                x: 10,
+                y: 10,
+                width: 16,
+                height: 12,
+                layer: SurfaceLayer::Normal,
+                layer_seq: 2,
+                color: WINDOW,
+            },
+        ];
+
+        // Sort by (layer, layer_seq) ascending — same key the kernel uses.
+        scene.sort_by_key(|s| (s.layer as u8, s.layer_seq));
+
+        let mut damage = DamageTracker::new();
+        for surface in &scene {
+            let pixels = match surface.color {
+                BG => &bg_pixels,
+                WINDOW => &window_pixels,
+                OVERLAY => &overlay_pixels,
+                _ => continue,
+            };
+            if let Some(rect) = host_blit_opaque(
+                pixels,
+                surface.width,
+                surface.height,
+                &mut dst,
+                W,
+                H,
+                surface.x,
+                surface.y,
+            ) {
+                damage.union(rect);
+            }
+        }
+
+        // Verify damage tracker accumulated all three rectangles.
+        let bounds = damage.bounds().expect("damage bounds set");
+        assert_eq!(bounds.x, 0);
+        assert_eq!(bounds.y, 0);
+        assert_eq!(bounds.width, W);
+        assert_eq!(bounds.height, H);
+
+        // Pixel checks — corners and overlap regions.
+        let pixel = |x: u32, y: u32| dst[(y * W + x) as usize];
+
+        // Background fully visible at (0,0) and at (60, 30).
+        assert_eq!(pixel(0, 0), BG, "background top-left");
+        assert_eq!(pixel(60, 30), BG, "background bottom-right");
+
+        // Window covers (10,10) through (25, 21).
+        assert_eq!(pixel(10, 10), WINDOW, "window top-left");
+        assert_eq!(pixel(15, 12), WINDOW, "window interior");
+
+        // Overlay covers (20, 14) through (27, 19) — note this overlaps the
+        // window region. Overlay z-orders above, so its color wins.
+        assert_eq!(pixel(20, 14), OVERLAY, "overlay top-left (was window)");
+        assert_eq!(pixel(25, 17), OVERLAY, "overlay interior");
+
+        // Window x=10..26, y=10..22. Overlay x=20..28, y=14..20.
+        // (28, 14): right of overlay AND right of window — must be BG.
+        assert_eq!(pixel(28, 14), BG, "right-of-both edge falls to bg");
+        // (24, 21): below overlay (overlay ends at y=20 exclusive) but
+        // still inside window — must be WINDOW.
+        assert_eq!(pixel(24, 21), WINDOW, "below-overlay still inside window");
+    }
+
+    #[test]
+    fn blit_opaque_clips_left_edge() {
+        let mut dst = alloc::vec![0u32; 16];
+        let src = alloc::vec![0xFFFFFFFFu32; 4 * 1];
+        // Blit a 4x1 source at dst_x = -2, dst_y = 0 into a 4x4 dst.
+        let rect = host_blit_opaque(&src, 4, 1, &mut dst, 4, 4, -2, 0)
+            .expect("partial overlap");
+        assert_eq!(rect.x, 0);
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.width, 2);
+        assert_eq!(rect.height, 1);
+        assert_eq!(dst[0], 0xFFFFFFFF);
+        assert_eq!(dst[1], 0xFFFFFFFF);
+        assert_eq!(dst[2], 0);
+    }
+
+    #[test]
+    fn blit_opaque_off_screen_returns_none() {
+        let mut dst = alloc::vec![0u32; 16];
+        let src = alloc::vec![0xDEADBEEFu32; 4];
+        // Source entirely off the right edge.
+        assert!(host_blit_opaque(&src, 4, 1, &mut dst, 4, 4, 10, 0).is_none());
+        // Source entirely off the top.
+        assert!(host_blit_opaque(&src, 4, 1, &mut dst, 4, 4, 0, -5).is_none());
+    }
+
     #[test]
     fn compositor_event_input_pointer_encoded() {
         let original = InputEvent::Pointer {
