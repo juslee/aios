@@ -34,11 +34,28 @@ pub struct HotkeyBinding {
     pub action: HotkeyAction,
 }
 
-/// System hotkey table. Static `const` so M25 has no agent-registration
-/// path — system hotkeys cannot be overridden.
+/// System hotkey table.
 ///
-/// Step 22 populates this table.
-pub const SYSTEM_HOTKEYS: &[HotkeyBinding] = &[];
+/// Static `const` so M25 has no agent-registration path — system hotkeys
+/// cannot be overridden. Entries are matched on key+modifiers in
+/// `match_hotkey`; the first match wins.
+///
+/// `Modifiers(0)` would match a key press with NO modifiers, which is
+/// almost never what we want for system hotkeys. Bare-Super is therefore
+/// not in the table — workspace toggling lands in M26 alongside the
+/// Workspace surface.
+pub const SYSTEM_HOTKEYS: &[HotkeyBinding] = &[
+    HotkeyBinding {
+        key: KeyCode::Tab,
+        modifiers: Modifiers(Modifiers::ALT),
+        action: HotkeyAction::SwitchWindow,
+    },
+    HotkeyBinding {
+        key: KeyCode::F4,
+        modifiers: Modifiers(Modifiers::ALT),
+        action: HotkeyAction::CloseWindow,
+    },
+];
 
 // ---------------------------------------------------------------------------
 // Matching
@@ -66,14 +83,50 @@ pub fn apply(action: HotkeyAction) {
     }
 }
 
+/// Cycle keyboard focus to the next surface in the focus history (Alt+Tab).
+///
+/// Snapshots the FocusManager target, drops the lock, then issues the
+/// focus change so we never hold FOCUS_MANAGER across IPC. Also raises
+/// the new focus to the top of its layer in the z-order list.
 fn apply_switch_window() {
-    // Step 22 wires this to FocusManager.alt_tab_target().
+    let (target, change) = {
+        let mut fm = super::focus::FOCUS_MANAGER.lock();
+        let target = fm.alt_tab_target();
+        let change = fm.set_keyboard_focus(target);
+        (target, change)
+    };
+    if let Some(id) = target {
+        let mut z = super::window::WINDOW_Z_ORDER.lock();
+        z.raise_to_top(id);
+    }
+    super::input_route::notify_focus_change(change);
 }
 
+/// Send `CloseRequested` to the currently focused surface (Alt+F4).
 fn apply_close_window() {
-    // Step 22 wires this to send CloseRequested via IPC.
+    let focus = {
+        let fm = super::focus::FOCUS_MANAGER.lock();
+        fm.keyboard_focus()
+    };
+    let id = match focus {
+        Some(id) => id,
+        None => return,
+    };
+    let channel = {
+        let table = super::surface::SURFACE_TABLE.lock();
+        table.iter().find_map(|s| {
+            s.as_ref()
+                .filter(|surf| surf.id == id)
+                .map(|surf| surf.channel)
+        })
+    };
+    if let Some(ch) = channel {
+        let event = shared::compositor::CompositorEvent::close_requested(id);
+        super::input_route::send_event_bytes(ch, &event);
+    }
 }
 
 fn apply_show_workspace() {
     // M26 introduces the Workspace surface — this is a placeholder.
+    crate::kinfo!(Compositor, "Hotkey: ShowWorkspace (M26 placeholder)");
 }
