@@ -1213,8 +1213,7 @@ mod tests {
         let mut dst = alloc::vec![0u32; 16];
         let src = alloc::vec![0xFFFFFFFFu32; 4 * 1];
         // Blit a 4x1 source at dst_x = -2, dst_y = 0 into a 4x4 dst.
-        let rect = host_blit_opaque(&src, 4, 1, &mut dst, 4, 4, -2, 0)
-            .expect("partial overlap");
+        let rect = host_blit_opaque(&src, 4, 1, &mut dst, 4, 4, -2, 0).expect("partial overlap");
         assert_eq!(rect.x, 0);
         assert_eq!(rect.y, 0);
         assert_eq!(rect.width, 2);

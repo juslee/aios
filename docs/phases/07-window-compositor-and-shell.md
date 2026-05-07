@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 7 weeks
 **Deliverable:** Window compositor with IPC-based surface lifecycle, software composition with damage tracking, floating window management with input routing, desktop shell (Status Strip, Taskbar, Workspace), Input Kit Tier 1
-**Status:** In Progress (M23 complete; M24 in progress)
+**Status:** In Progress (M23, M24 complete; M25–M27 pending)
 **Prerequisites:** Phase 6 (GPU & Display)
 **Unlocks:** Phase 8 (Input & Terminal), Phase 16 (Flow & Translation), Phase 25 (Performance & Optimization)
 

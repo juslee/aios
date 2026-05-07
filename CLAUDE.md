@@ -481,7 +481,7 @@ Priority inheritance:         Transitive, bounded to MAX_INHERITANCE_DEPTH=8; st
 Capability table:             [Option<CapabilityToken>; 256] per process, O(1) handle lookup
 Capability enforcement:       channel_create→ChannelCreate, ipc_call/send/recv→ChannelAccess, ipc_reply→NONE (spec §9.1)
 Cascade revocation:           revoke token → mark children revoked → walk CHANNEL_TABLE → destroy channels with matching creation_cap
-Lock ordering (full M23):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} > {INPUT_QUEUE, PENDING_POINTER (leaf, independent)}
+Lock ordering (full M24):     PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} > {INPUT_QUEUE, PENDING_POINTER (leaf, independent)}
 Kernel IPC invocation:        Phase 3 threads are EL1; IPC via direct function call, NOT SVC. SVC path wired in parallel for future EL0.
 Shared memory:                MAX_SHARED_REGIONS=64, MAX_SHARED_MAPPINGS=8 per region, W^X enforced on flags
 Notifications:                MAX_NOTIFICATIONS=64, MAX_WAITERS_PER_NOTIFICATION=8, atomic OR into word + mask wake
@@ -561,6 +561,21 @@ Input thread:                 ThreadId(0xA00 label), SchedulerClass::Interactive
 Modifier tracking:            AtomicU8 bitmask (SHIFT=1, CTRL=2, ALT=4, SUPER=8)
 Pointer accumulation:         PENDING_POINTER flushed on SYN_REPORT (correct evdev atomic grouping)
 KEYMAP_US:                    128-entry const array, evdev keycode → (unshifted, shifted) Option<(char,char)>
+Compositor process:           ProcessId(10) "compositor", ThreadId(0xA10) label, SchedulerClass::Interactive
+Compositor IPC channel:       dynamically allocated via channel_create_unchecked, registered as "compositor"
+Compositor caps:              CompositorCreateSurface, CompositorFullscreen, CompositorOverlay, CompositorInputAccess (flat enum, Phase 18 promotes to DisplayCapability struct)
+COMPOSITOR_ACTIVE flag:       AtomicBool in kernel/src/compositor/mod.rs; gates GPU Service swap_buffers() after display handoff
+COMPOSITOR_PRESENT_ENABLED:   const false in M24; gates the compose+present loop pending Step 17 (M25) IPC dispatch and post-handoff race fix
+MAX_SURFACES:                 32 (shared::compositor)
+SurfaceId:                    u64 monotonic, never reused; SurfaceId::FIRST=1, NONE=0
+SurfaceLayer:                 repr(u8) Background=0 < Normal=1 < TopLevel=2 < Overlay=3 < Panel=4
+SurfaceState transitions:     Created → Configured → Active; Active ↔ Suspended; * → Destroyed (terminal)
+SurfaceTitle:                 [u8; 64] + len: u8, UTF-8-boundary-safe truncation
+DamageRegion:                 Rect | FullSurface | Empty
+FRAME_BUDGET_TICKS:           16 (1 kHz tick = 16ms ≈ 60fps)
+FRAME_WATCHDOG_MS:            100 (warn if compose+present > 100ms)
+Compositor frame stats:       Logged every 60 frames as "frames=N avg compose+present=Mms"
+Subsystem::Compositor = 15:   "Comp " name (5-char padding); Subsystem::COUNT bumped to 16 in M24
 ```
 
 ---
@@ -596,7 +611,7 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Current (post-Phase 7 M23 — VirtIO-Input Driver):
+Current (post-Phase 7 M24 — Compositor Core):
 
 ```text
 aios/
@@ -662,8 +677,13 @@ aios/
 │       │   └── mod.rs    Input subsystem: event translation, modifier tracking, coordinate conversion, polling thread, INPUT_QUEUE
 │       ├── gpu/
 │       │   ├── mod.rs    GPU subsystem module
-│       │   ├── service.rs GPU Service: IPC service, capability-gated buffer management, double-buffered display, FenceTracker
+│       │   ├── service.rs GPU Service: IPC service, capability-gated buffer management, double-buffered display, FenceTracker, COMPOSITOR_ACTIVE-aware swap_buffers
 │       │   └── text.rs   Boot log text rendering: PSF2 font, draw_boot_log(), FbInfo
+│       ├── compositor/
+│       │   ├── mod.rs    Compositor module root, COMPOSITOR_ACTIVE AtomicBool flag (display ownership)
+│       │   ├── service.rs Compositor service: ProcessId(10), IPC channel, display handoff (DMA front/back buffers, scanout swap), gated compose+present pipeline (COMPOSITOR_PRESENT_ENABLED), FRAME_BUDGET_TICKS=16
+│       │   ├── surface.rs Surface lifecycle: SURFACE_TABLE, NEXT_SURFACE_ID/NEXT_LAYER_SEQ, surface_create/attach_buffer/destroy/resize/set_layer
+│       │   └── render.rs Software compositor: compose_frame, blit_opaque (B8G8R8A8), blit_alpha_premultiplied (gated), z_order_key, ClipRect
 │       ├── storage/
 │       │   ├── mod.rs    Storage subsystem re-exports, BlockEngine init, self-tests (block, object, version, encryption, space, POSIX, compression, budget)
 │       │   ├── block_engine.rs BlockEngine: superblock, format/init, write_block/read_block, CRC-32C, SHA-256, LZ4 compression, encryption integration, ObjectIndex, SpaceTable
@@ -719,6 +739,7 @@ aios/
 │       ├── boot.rs       BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat
 │       ├── cap.rs        Capability enum, CapabilityHandle, CapabilityTokenId, MAX_CAPS_PER_PROCESS
 │       ├── collections.rs FixedQueue<T,N>, RingBuffer<T,N> with unit tests
+│       ├── compositor.rs Compositor protocol types: SurfaceId, SurfaceState, SurfaceLayer, SurfaceTitle (UTF-8 truncating), SurfaceContentType, DamageRegion, DamageTracker, DamageRect, CompositorCommand/Request, CompositorEventTag/Event, InputEventBytes, MAX_SURFACES=32
 │       ├── gpu.rs        VirtIO-GPU wire-format structs (repr(C)), GpuPixelFormat, DisplayInfo, GpuError, GpuBufferHandle, command/response constants
 │       ├── input.rs      VirtIO-input wire-format (VirtioInputEvent 8B, VirtioInputAbsInfo 20B), evdev constants, InputEvent, KeyCode, KeyState, Modifiers, MouseButton, ButtonState, KEYMAP_US, abs_to_display
 │       ├── ipc.rs        ChannelId, SharedMemoryId, NotificationId, RawMessage, ServiceName, SelectKind, IPC/shmem/notify constants
