@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 7 weeks
 **Deliverable:** Window compositor with IPC-based surface lifecycle, software composition with damage tracking, floating window management with input routing, desktop shell (Status Strip, Taskbar, Workspace), Input Kit Tier 1
-**Status:** Planned
+**Status:** In Progress (M23 complete; M24 in progress)
 **Prerequisites:** Phase 6 (GPU & Display)
 **Unlocks:** Phase 8 (Input & Terminal), Phase 16 (Flow & Translation), Phase 25 (Performance & Optimization)
 
@@ -70,17 +70,17 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Define VirtIO-input wire-format types and evdev constants in the shared crate. These are the on-wire types from VirtIO spec §5.8 and Linux evdev — distinct from the higher-level typed InputEvent used by the compositor.
 
 **Tasks:**
-- [ ] Create `shared/src/input.rs` with `pub mod input;` in `shared/src/lib.rs`
-- [ ] Define `VirtioInputEvent` — 8-byte `repr(C)` wire format: `event_type: u16`, `code: u16`, `value: u32`
-- [ ] Define evdev event type constants: `EV_SYN` (0x00), `EV_KEY` (0x01), `EV_REL` (0x02), `EV_ABS` (0x03), `SYN_REPORT` (0)
-- [ ] Define evdev key code constants: `KEY_A` (30) through `KEY_Z`, `KEY_ENTER` (28), `KEY_ESC` (1), `KEY_BACKSPACE` (14), `KEY_TAB` (15), `KEY_SPACE` (57), `KEY_LEFTSHIFT` (42), `KEY_LEFTCTRL` (29), `KEY_LEFTALT` (56), `KEY_LEFTMETA` (125), `KEY_F1`–`KEY_F12`
-- [ ] Define evdev button constants: `BTN_LEFT` (0x110), `BTN_RIGHT` (0x111), `BTN_MIDDLE` (0x112)
-- [ ] Define evdev absolute axis constants: `ABS_X` (0x00), `ABS_Y` (0x01)
-- [ ] Define VirtIO-input config select constants: `VIRTIO_INPUT_CFG_UNSET` (0x00), `VIRTIO_INPUT_CFG_ID_NAME` (0x01), `VIRTIO_INPUT_CFG_ID_SERIAL` (0x02), `VIRTIO_INPUT_CFG_ID_DEVIDS` (0x03), `VIRTIO_INPUT_CFG_PROP_BITS` (0x10), `VIRTIO_INPUT_CFG_EV_BITS` (0x11), `VIRTIO_INPUT_CFG_ABS_INFO` (0x12)
-- [ ] Define `VirtioInputAbsInfo` — `repr(C)`: `min: u32`, `max: u32`, `fuzz: u32`, `flat: u32`, `res: u32`
-- [ ] Define `InputDeviceId(u8)` for identifying input devices
-- [ ] Add `Input = 14` variant to `Subsystem` enum in `shared/src/observability.rs`, update `COUNT` to 15, update `name()` match arm and all unit tests
-- [ ] Write host-side tests: `VirtioInputEvent` is exactly 8 bytes `repr(C)`, key code constants compile, Subsystem tests pass
+- [x] Create `shared/src/input.rs` with `pub mod input;` in `shared/src/lib.rs`
+- [x] Define `VirtioInputEvent` — 8-byte `repr(C)` wire format: `event_type: u16`, `code: u16`, `value: u32`
+- [x] Define evdev event type constants: `EV_SYN` (0x00), `EV_KEY` (0x01), `EV_REL` (0x02), `EV_ABS` (0x03), `SYN_REPORT` (0)
+- [x] Define evdev key code constants: `KEY_A` (30) through `KEY_Z`, `KEY_ENTER` (28), `KEY_ESC` (1), `KEY_BACKSPACE` (14), `KEY_TAB` (15), `KEY_SPACE` (57), `KEY_LEFTSHIFT` (42), `KEY_LEFTCTRL` (29), `KEY_LEFTALT` (56), `KEY_LEFTMETA` (125), `KEY_F1`–`KEY_F12`
+- [x] Define evdev button constants: `BTN_LEFT` (0x110), `BTN_RIGHT` (0x111), `BTN_MIDDLE` (0x112)
+- [x] Define evdev absolute axis constants: `ABS_X` (0x00), `ABS_Y` (0x01)
+- [x] Define VirtIO-input config select constants: `VIRTIO_INPUT_CFG_UNSET` (0x00), `VIRTIO_INPUT_CFG_ID_NAME` (0x01), `VIRTIO_INPUT_CFG_ID_SERIAL` (0x02), `VIRTIO_INPUT_CFG_ID_DEVIDS` (0x03), `VIRTIO_INPUT_CFG_PROP_BITS` (0x10), `VIRTIO_INPUT_CFG_EV_BITS` (0x11), `VIRTIO_INPUT_CFG_ABS_INFO` (0x12)
+- [x] Define `VirtioInputAbsInfo` — `repr(C)`: `min: u32`, `max: u32`, `fuzz: u32`, `flat: u32`, `res: u32`
+- [x] Define `InputDeviceId(u8)` for identifying input devices
+- [x] Add `Input = 14` variant to `Subsystem` enum in `shared/src/observability.rs`, update `COUNT` to 15, update `name()` match arm and all unit tests
+- [x] Write host-side tests: `VirtioInputEvent` is exactly 8 bytes `repr(C)`, key code constants compile, Subsystem tests pass
 
 **Key reference:** [input/devices.md](../platform/input/devices.md) §3.4, VirtIO spec §5.8
 
@@ -95,14 +95,14 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **Note:** VirtIO-input config space uses a select/subsel/read pattern (VirtIO spec §5.8.2). Write `select` and `subsel` fields to config space, then read `size` and `u.string[]` or `u.bitmap[]`. This is needed to read device name and absolute axis info (min/max range for tablet coordinates).
 
 **Tasks:**
-- [ ] Create `kernel/src/drivers/virtio_input.rs`, add `pub mod virtio_input;` to `kernel/src/drivers/mod.rs`
-- [ ] Define `VirtioInputDevice` struct: `base: usize` (MMIO virt addr), `eventq` state (vq_phys, desc/avail/used offsets, queue_size), `device_id: InputDeviceId`, `name: [u8; 64]`
-- [ ] Define `MAX_INPUT_DEVICES: usize = 4` and `static INPUT_DEVICES: Mutex<[Option<VirtioInputDevice>; MAX_INPUT_DEVICES]>`
-- [ ] Implement `probe_all()` — scan DTB bases first, then brute-force MMIO slots; find ALL devices with `device_id=18`, not just the first
-- [ ] Implement `init_device(base)` — reset, acknowledge, negotiate features, read name via config select, set up eventq (queue size from QUEUE_NUM_MAX, pre-fill with empty event buffers), allocate statusq but don't use it (Phase 8 LED control), set DRIVER_OK
-- [ ] Implement `read_config_name(base)` — write `select=VIRTIO_INPUT_CFG_ID_NAME, subsel=0`, read `size` and `u.string[0..size]`
-- [ ] Implement `read_abs_info(base, axis)` — write `select=VIRTIO_INPUT_CFG_ABS_INFO, subsel=axis`, read `VirtioInputAbsInfo` for tablet coordinate range
-- [ ] Log device names and capabilities to UART
+- [x] Create `kernel/src/drivers/virtio_input.rs`, add `pub mod virtio_input;` to `kernel/src/drivers/mod.rs`
+- [x] Define `VirtioInputDevice` struct: `base: usize` (MMIO virt addr), `eventq` state (vq_phys, desc/avail/used offsets, queue_size), `device_id: InputDeviceId`, `name: [u8; 64]`
+- [x] Define `MAX_INPUT_DEVICES: usize = 4` and `static INPUT_DEVICES: Mutex<[Option<VirtioInputDevice>; MAX_INPUT_DEVICES]>`
+- [x] Implement `probe_all()` — scan DTB bases first, then brute-force MMIO slots; find ALL devices with `device_id=18`, not just the first
+- [x] Implement `init_device(base)` — reset, acknowledge, negotiate features, read name via config select, set up eventq (queue size from QUEUE_NUM_MAX, pre-fill with empty event buffers), allocate statusq but don't use it (Phase 8 LED control), set DRIVER_OK
+- [x] Implement `read_config_name(base)` — write `select=VIRTIO_INPUT_CFG_ID_NAME, subsel=0`, read `size` and `u.string[0..size]`
+- [x] Implement `read_abs_info(base, axis)` — write `select=VIRTIO_INPUT_CFG_ABS_INFO, subsel=axis`, read `VirtioInputAbsInfo` for tablet coordinate range
+- [x] Log device names and capabilities to UART
 
 **Key reference:** [input/devices.md](../platform/input/devices.md) §3.4 (driver implementation steps 1–7), VirtIO spec §5.8.2
 
@@ -115,10 +115,10 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Implement polled I/O event reading from the eventq virtqueue. Check used ring for completed buffers containing `VirtioInputEvent` structs. Recycle consumed buffers back to the available ring. Handle `EV_SYN/SYN_REPORT` grouping (batch events between SYN_REPORT into atomic groups). All existing VirtIO drivers use polled I/O — this matches the established pattern.
 
 **Tasks:**
-- [ ] Implement `poll_events(device_id) -> Option<VirtioInputEvent>` — check used ring, extract event, recycle buffer
-- [ ] Implement `poll_all_devices()` — iterate all initialized devices, collect events
-- [ ] Handle `SYN_REPORT` as event group boundary
-- [ ] Add virtqueue notify after recycling buffers to available ring
+- [x] Implement `poll_events(device_id) -> Option<VirtioInputEvent>` — check used ring, extract event, recycle buffer
+- [x] Implement `poll_all_devices()` — iterate all initialized devices, collect events
+- [x] Handle `SYN_REPORT` as event group boundary
+- [x] Add virtqueue notify after recycling buffers to available ring
 
 **Key reference:** [input/devices.md](../platform/input/devices.md) §3.4 (steps 8–10), VirtIO spec §2.7 (used ring processing)
 
@@ -131,18 +131,18 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Create the input subsystem module. Translate raw `VirtioInputEvent` (evdev format) into typed `InputEvent` enum. Track modifier state (shift, ctrl, alt, super). Convert absolute tablet coordinates (0–32767) to display coordinates (0–width, 0–height). Include a basic US-QWERTY keymap for scancode-to-character mapping.
 
 **Tasks:**
-- [ ] Create `kernel/src/input/mod.rs` with input subsystem
-- [ ] Define typed `InputEvent` enum in `shared/src/input.rs`: `Keyboard { key: KeyCode, state: KeyState, modifiers: Modifiers }`, `Pointer { x: u32, y: u32, button: Option<MouseButton>, state: Option<ButtonState> }`
-- [ ] Define `KeyCode` enum (A–Z, 0–9, Enter, Esc, Tab, Space, Backspace, F1–F12, arrows, modifiers)
-- [ ] Define `KeyState` enum: `Pressed`, `Released`, `Repeat`
-- [ ] Define `Modifiers` bitflags: `SHIFT`, `CTRL`, `ALT`, `SUPER`
-- [ ] Define `MouseButton` enum: `Left`, `Right`, `Middle`
-- [ ] Implement evdev keycode → `KeyCode` translation table
-- [ ] Implement US-QWERTY keymap: `const KEYMAP_US: [Option<(char, char)>; 128]` mapping keycode → (unshifted, shifted) ASCII characters
-- [ ] Implement modifier tracking: set/clear bits on modifier key press/release
-- [ ] Implement absolute → display coordinate conversion: `x_display = abs_x * display_width / 32768`
-- [ ] Define global input event queue: `static INPUT_QUEUE: Mutex<FixedQueue<InputEvent, 256>>`
-- [ ] Implement `process_raw_event(device_id, raw_event)` → push typed `InputEvent` to queue
+- [x] Create `kernel/src/input/mod.rs` with input subsystem
+- [x] Define typed `InputEvent` enum in `shared/src/input.rs`: `Keyboard { key: KeyCode, state: KeyState, modifiers: Modifiers }`, `Pointer { x: u32, y: u32, button: Option<MouseButton>, state: Option<ButtonState> }`
+- [x] Define `KeyCode` enum (A–Z, 0–9, Enter, Esc, Tab, Space, Backspace, F1–F12, arrows, modifiers)
+- [x] Define `KeyState` enum: `Pressed`, `Released`, `Repeat`
+- [x] Define `Modifiers` bitflags: `SHIFT`, `CTRL`, `ALT`, `SUPER`
+- [x] Define `MouseButton` enum: `Left`, `Right`, `Middle`
+- [x] Implement evdev keycode → `KeyCode` translation table
+- [x] Implement US-QWERTY keymap: `const KEYMAP_US: [Option<(char, char)>; 128]` mapping keycode → (unshifted, shifted) ASCII characters
+- [x] Implement modifier tracking: set/clear bits on modifier key press/release
+- [x] Implement absolute → display coordinate conversion: `x_display = abs_x * display_width / 32768`
+- [x] Define global input event queue: `static INPUT_QUEUE: Mutex<FixedQueue<InputEvent, 256>>`
+- [x] Implement `process_raw_event(device_id, raw_event)` → push typed `InputEvent` to queue
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.1 (InputEvent enum), [input/events.md](../platform/input/events.md) §4.1
 
@@ -155,11 +155,11 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Add `just run-input` recipe that includes VirtIO-input devices. Create a simple input demo thread that reads from the input queue and logs events to UART. Also update `run-gpu` to include input devices for future use.
 
 **Tasks:**
-- [ ] Add `run-input` recipe to justfile: same as `run-gpu` plus `-device virtio-keyboard-device -device virtio-tablet-device`
-- [ ] Update `run-gpu` recipe to also include `-device virtio-keyboard-device -device virtio-tablet-device`
-- [ ] Add `input::init()` call to `kernel/src/main.rs` after GPU init
-- [ ] Implement input polling in the timer tick or a dedicated polling loop (poll all devices every ~16ms)
-- [ ] Create input demo: log key name and pointer coordinates to UART on each event
+- [x] Add `run-input` recipe to justfile: same as `run-gpu` plus `-device virtio-keyboard-device -device virtio-tablet-device`
+- [x] Update `run-gpu` recipe to also include `-device virtio-keyboard-device -device virtio-tablet-device`
+- [x] Add `input::init()` call to `kernel/src/main.rs` after GPU init
+- [x] Implement input polling in the timer tick or a dedicated polling loop (poll all devices every ~16ms)
+- [x] Create input demo: log key name and pointer coordinates to UART on each event
 
 **Note:** QEMU GUI interaction: click into the QEMU window to capture keyboard/mouse input. `Ctrl+Alt+G` releases the mouse grab. UART output continues to the terminal via `-serial stdio` (the GPU/input recipes use `-serial stdio` with a graphical window, unlike `just run` which uses `-nographic`).
 
@@ -174,11 +174,13 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Add input-related boot phase tracking. Extend `EarlyBootPhase` enum with new variants for input and compositor readiness.
 
 **Tasks:**
-- [ ] Add `InputReady = 19` and `CompositorReady = 20` variants to `EarlyBootPhase` in `shared/src/boot.rs`
-- [ ] Update `Complete` variant to `= 21`
-- [ ] Ensure `EarlyBootPhase` logging works as expected (it derives `Debug`; there is no `name()` method to update)
-- [ ] Update `EARLY_BOOT_PHASE_COUNT` to 22, the "Total: N variants" comment in `shared/src/boot.rs`, and all unit tests that assert count or discriminant values
-- [ ] Call `advance_boot_phase(InputReady)` after input init in `kernel/src/main.rs`
+- [x] Add `InputReady = 18` and `CompositorReady = 19` variants to `EarlyBootPhase` in `shared/src/boot.rs`
+- [x] Update `Complete` variant to `= 20`
+- [x] Ensure `EarlyBootPhase` logging works as expected (it derives `Debug`; there is no `name()` method to update)
+- [x] Update `EARLY_BOOT_PHASE_COUNT` to 21, the "Total: N variants" comment in `shared/src/boot.rs`, and all unit tests that assert count or discriminant values
+- [x] Call `advance_boot_phase(InputReady)` after input init in `kernel/src/main.rs`
+
+**Note (post-implementation):** The pre-M23 enum had 18 variants (EntryPoint=0 through 17), so the new variants slotted in as 18/19/20 with COUNT=21, not 19/20/21 with COUNT=22 as initially drafted. Numbering above reflects what shipped.
 
 **Key reference:** `kernel/src/boot_phase.rs`, `shared/src/boot.rs`
 
@@ -191,15 +193,15 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Comprehensive host-side tests for all input types. Ensure all types are no_std compatible.
 
 **Tasks:**
-- [ ] Add `#[cfg(test)] mod tests` to `shared/src/input.rs`
-- [ ] Test: `VirtioInputEvent` is exactly 8 bytes repr(C)
-- [ ] Test: `KeyCode` round-trips through evdev keycode conversion
-- [ ] Test: `Modifiers` bitflags combine correctly
-- [ ] Test: US-QWERTY keymap maps KEY_A(30) → ('a', 'A')
-- [ ] Test: absolute→display coordinate conversion at boundaries (0, 16383, 32767)
-- [ ] Test: `InputEvent` enum variants construct correctly
-- [ ] Test: `KeyState` discrimination (Pressed/Released/Repeat)
-- [ ] Target: 20+ new tests in input module
+- [x] Add `#[cfg(test)] mod tests` to `shared/src/input.rs`
+- [x] Test: `VirtioInputEvent` is exactly 8 bytes repr(C)
+- [x] Test: `KeyCode` round-trips through evdev keycode conversion
+- [x] Test: `Modifiers` bitflags combine correctly
+- [x] Test: US-QWERTY keymap maps KEY_A(30) → ('a', 'A')
+- [x] Test: absolute→display coordinate conversion at boundaries (0, 16383, 32767)
+- [x] Test: `InputEvent` enum variants construct correctly
+- [x] Test: `KeyState` discrimination (Pressed/Released/Repeat)
+- [x] Target: 20+ new tests in input module
 
 **Acceptance:** `just check` + `just test` pass with 20+ new input tests
 
