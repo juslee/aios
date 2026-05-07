@@ -9,6 +9,7 @@ mod arch {
 mod bench;
 mod boot_phase;
 mod cap;
+mod compositor;
 mod drivers;
 mod dtb;
 mod framebuffer;
@@ -325,6 +326,18 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
         advance_boot_phase(EarlyBootPhase::InputReady);
     } else {
         kinfo!(Boot, "No VirtIO-input devices — input subsystem skipped");
+    }
+    observability::drain_logs();
+
+    // --- Step 7b4: Compositor Init ---
+    // The compositor takes ownership of the display from the GPU Service.
+    // Only initialize when a display is actually available — otherwise the
+    // service has nothing to drive. Display handoff (Step 11) happens later
+    // when the thread runs.
+    if drivers::virtio_gpu::display_info().is_some() {
+        compositor::service::init_compositor();
+    } else {
+        kinfo!(Boot, "No display — compositor service skipped");
     }
     observability::drain_logs();
 

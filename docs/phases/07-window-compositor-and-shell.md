@@ -256,12 +256,12 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Create the compositor service following the GPU Service pattern (`ProcessId(10)`, `SchedulerClass::Interactive`). Register IPC channel as "compositor". The compositor uses direct VirtIO-GPU driver access (not IPC to GPU Service) for frame submission — same trust level, no round-trip overhead.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/mod.rs` and `kernel/src/compositor/service.rs`
-- [ ] Define `COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>>`
-- [ ] Implement `init_compositor()` — create process (`ProcessId(10)`, name="compositor"), grant capabilities (`CompositorCreateSurface`, `GpuMmioAccess`, `ChannelCreate`, `DebugPrint`), create IPC channel, register service as "compositor", spawn compositor thread
-- [ ] Implement `compositor_entry()` — unmask IRQs, enter main loop
-- [ ] Add `compositor::init_compositor()` call to `kernel/src/main.rs` after GPU Service init
-- [ ] Document lock ordering: `... > BLOCK_ENGINE > SURFACE_TABLE > INPUT_EVENT_QUEUE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`
+- [x] Create `kernel/src/compositor/mod.rs` and `kernel/src/compositor/service.rs`
+- [x] Define `COMPOSITOR_CHANNEL: Mutex<Option<ChannelId>>`
+- [x] Implement `init_compositor()` — create process (`ProcessId(10)`, name="compositor"), grant capabilities (`CompositorCreateSurface`, `GpuMmioAccess`, `ChannelCreate`, `DebugPrint`), create IPC channel, register service as "compositor", spawn compositor thread
+- [x] Implement `compositor_entry()` — unmask IRQs, enter main loop
+- [x] Add `compositor::init_compositor()` call to `kernel/src/main.rs` after GPU Service init
+- [x] Document lock ordering: `... > BLOCK_ENGINE > SURFACE_TABLE > INPUT_EVENT_QUEUE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT}`
 
 **Note:** Lock ordering for compositor globals must be documented at each declaration site with `// Lock ordering:` comments, following the pattern in ipc/shmem.rs and ipc/notify.rs.
 
