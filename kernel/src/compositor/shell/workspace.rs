@@ -297,6 +297,27 @@ pub(super) fn init(display_width: u32, display_height: u32) -> Result<(), ShellE
 
 /// Flip the workspace's visibility.
 ///
+/// Returns the SurfaceId of the Workspace surface, or `None` before init.
+///
+/// Used by `super::route_pointer` to identify whether a pointer event
+/// targets the workspace surface.
+pub fn surface_id() -> Option<SurfaceId> {
+    if !INITIALIZED.load(Ordering::Acquire) {
+        return None;
+    }
+    WORKSPACE.lock().as_ref().map(|ws| ws.surface_id)
+}
+
+/// Handle a pointer event that resolved to the Workspace surface.
+///
+/// M26 placeholder: clicks on the Workspace are silently consumed.
+/// Layer 1 has no interactive elements on the home view itself —
+/// spaces and uptime are read-only. Layer 2 will add interactions
+/// (pinned files, agent affordances) but those land in later phases.
+pub fn handle_pointer(_event: &shared::input::InputEvent) {
+    // Intentionally empty — see doc-comment.
+}
+
 /// Wired to bare-Super tap-release via
 /// `compositor::hotkey::apply_show_workspace`. Updates both the local
 /// `WorkspaceState.visible` flag (used by the next `tick` to decide

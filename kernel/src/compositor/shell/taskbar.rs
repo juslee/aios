@@ -24,9 +24,11 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use shared::compositor::{
-    compute_taskbar_layout, taskbar_entry_truncate, DamageRegion, SurfaceContentType, SurfaceId,
-    SurfaceLayer, SurfaceTitle, TaskbarCell, TaskbarLayout, MAX_TASKBAR_ENTRIES,
+    compute_taskbar_layout, taskbar_entry_truncate, taskbar_pointer_action, DamageRegion,
+    SurfaceContentType, SurfaceId, SurfaceLayer, SurfaceTitle, TaskbarCell, TaskbarLayout,
+    TaskbarPointerAction, MAX_TASKBAR_ENTRIES,
 };
+use shared::input::{ButtonState, InputEvent, MouseButton};
 use shared::ipc::SharedMemoryId;
 use spin::Mutex;
 
@@ -523,4 +525,103 @@ fn render_count(buffer: &mut [u32], dst_w: u32, dst_h: u32, cell: &TaskbarCell, 
     draw_text_clipped(
         buffer, dst_w, dst_h, text_x, text_y, max_x, &text, TEXT_FG, TASKBAR_BG,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Input routing (M26 Step 27)
+// ---------------------------------------------------------------------------
+
+/// Returns the SurfaceId of the Taskbar surface, or `None` before init.
+///
+/// Used by `super::route_pointer` to identify whether a pointer event
+/// targets the taskbar surface.
+pub fn surface_id() -> Option<SurfaceId> {
+    if !INITIALIZED.load(Ordering::Acquire) {
+        return None;
+    }
+    TASKBAR.lock().as_ref().map(|tb| tb.surface_id)
+}
+
+/// Handle a pointer event that resolved to the Taskbar surface.
+///
+/// Only acts on **left-button press** transitions: a click on the
+/// workspace cell toggles the Workspace; a click on an entry cell
+/// focuses that surface and raises it to the top of `WINDOW_Z_ORDER`.
+/// Releases, motion, and right/middle clicks are silently consumed
+/// because the Taskbar is non-pass-through (Panel layer).
+///
+/// Lock sequence: `TASKBAR` (leaf) — snapshot layout + entries, drop —
+/// then call into `workspace::toggle_visibility` (which manages its own
+/// locks), or `set_keyboard_focus_safe` + `WINDOW_Z_ORDER` (kernel
+/// chain). No lock held across the toggle / focus call.
+pub fn handle_pointer(event: &InputEvent) {
+    let (px, py) = match event {
+        InputEvent::Pointer {
+            x,
+            y,
+            button: Some(MouseButton::Left),
+            state: Some(ButtonState::Pressed),
+        } => (*x as i32, *y as i32),
+        _ => return,
+    };
+
+    // Snapshot layout + entries under the leaf TASKBAR mutex.
+    let (layout, entry_ids) = {
+        let guard = TASKBAR.lock();
+        let tb = match guard.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+        let layout = compute_taskbar_layout(tb.width, tb.cached_snapshot.entry_count as usize);
+        let mut ids = [SurfaceId::NONE; MAX_TASKBAR_ENTRIES];
+        let count = tb.cached_snapshot.entry_count as usize;
+        for (slot, snap) in ids
+            .iter_mut()
+            .zip(tb.cached_snapshot.entries.iter())
+            .take(count)
+        {
+            *slot = snap.surface_id;
+        }
+        (layout, ids)
+    };
+
+    // Translate screen coords to surface-local coords. The taskbar's
+    // x is pinned to 0 (full display width), so local_x == screen x.
+    // local_y subtracts the surface's pinned screen-y (looked up under
+    // SURFACE_TABLE; never co-held with our leaf mutex above).
+    let surface_y = match lookup_surface_y() {
+        Some(y) => y,
+        None => return,
+    };
+    let local_x = px;
+    let local_y = py - surface_y;
+
+    let action = taskbar_pointer_action(&layout, &entry_ids, local_x, local_y);
+    match action {
+        Some(TaskbarPointerAction::WorkspaceToggle) => {
+            crate::compositor::shell::workspace::toggle_visibility();
+        }
+        Some(TaskbarPointerAction::FocusEntry(id)) => {
+            crate::kinfo!(Compositor, "taskbar: focus -> surface={}", id.0);
+            super::super::input_route::set_keyboard_focus_safe(Some(id));
+            // Raise the focused surface to the top of its layer.
+            let mut z = super::super::window::WINDOW_Z_ORDER.lock();
+            z.raise_to_top(id);
+        }
+        None => {}
+    }
+}
+
+/// Look up the Taskbar surface's screen `y` coordinate from
+/// `SURFACE_TABLE`. Returns `None` before init or if the surface has
+/// been destroyed (which never happens in M26 — there is no shell
+/// teardown path).
+fn lookup_surface_y() -> Option<i32> {
+    let id = surface_id()?;
+    let table = SURFACE_TABLE.lock();
+    table
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .find(|s| s.id == id)
+        .map(|s| s.y)
 }

@@ -82,3 +82,34 @@ pub fn tick(now_ms: u64) {
     taskbar::tick(now_ms);
     workspace::tick(now_ms);
 }
+
+// ---------------------------------------------------------------------------
+// Pointer dispatch (M26 Step 27)
+// ---------------------------------------------------------------------------
+
+/// Route a pointer event that resolved to a shell surface.
+///
+/// Called by the input router (`input_route::deliver_to_surface`)
+/// whenever a pointer event's target is a shell surface (per
+/// `surface::is_shell_id`). Dispatches based on which shell the id
+/// matches:
+///   * Status Strip — drop (non-interactive in M26 per phase doc).
+///   * Taskbar — `taskbar::handle_pointer` resolves a workspace-button
+///     or entry click to a focus / toggle action.
+///   * Workspace — `workspace::handle_pointer`, a silent no-op in M26
+///     (Layer 1 home view has no interactive cells).
+///   * Unknown shell-classified id — drop.
+///
+/// Returns silently in all cases — pointer events targeted at shells
+/// are never forwarded to client surfaces or to the decoration
+/// machinery.
+pub fn route_pointer(id: shared::compositor::SurfaceId, event: &shared::input::InputEvent) {
+    if Some(id) == taskbar::surface_id() {
+        taskbar::handle_pointer(event);
+    } else if Some(id) == workspace::surface_id() {
+        workspace::handle_pointer(event);
+    } else if Some(id) == status_strip::surface_id() {
+        // Drop — Status Strip is non-interactive in M26.
+    }
+    // Unknown shell-classified id (shouldn't happen): drop silently.
+}

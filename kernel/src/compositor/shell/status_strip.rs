@@ -221,6 +221,18 @@ pub(super) fn init(display_width: u32) -> Result<(), ShellError> {
     Ok(())
 }
 
+/// Returns the SurfaceId of the Status Strip surface, or `None` before init.
+///
+/// Used by `super::route_pointer` to identify whether a pointer event
+/// targets the status-strip surface (so the dispatcher can drop the
+/// click — Status Strip is non-interactive in M26 per phase doc).
+pub fn surface_id() -> Option<SurfaceId> {
+    if !INITIALIZED.load(Ordering::Acquire) {
+        return None;
+    }
+    STATUS_STRIP.lock().as_ref().map(|s| s.surface_id)
+}
+
 // ---------------------------------------------------------------------------
 // Tick — invoked once per compositor loop iteration
 // ---------------------------------------------------------------------------

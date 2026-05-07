@@ -93,20 +93,21 @@ pub fn apply(action: HotkeyAction) {
 /// Cycle keyboard focus to the next surface in the focus history (Alt+Tab).
 ///
 /// Snapshots the FocusManager target, drops the lock, then issues the
-/// focus change so we never hold FOCUS_MANAGER across IPC. Also raises
-/// the new focus to the top of its layer in the z-order list.
+/// focus change via the canonical `set_keyboard_focus_safe` entry point
+/// so shell surfaces are refused (defensive — `FocusHistory` should
+/// never contain them, but Step 27 makes the guard explicit at every
+/// focus mutation site). Also raises the new focus to the top of its
+/// layer in the z-order list.
 fn apply_switch_window() {
-    let (target, change) = {
-        let mut fm = super::focus::FOCUS_MANAGER.lock();
-        let target = fm.alt_tab_target();
-        let change = fm.set_keyboard_focus(target);
-        (target, change)
+    let target = {
+        let fm = super::focus::FOCUS_MANAGER.lock();
+        fm.alt_tab_target()
     };
+    let _ = super::input_route::set_keyboard_focus_safe(target);
     if let Some(id) = target {
         let mut z = super::window::WINDOW_Z_ORDER.lock();
         z.raise_to_top(id);
     }
-    super::input_route::notify_focus_change(change);
 }
 
 /// Send `CloseRequested` to the currently focused surface (Alt+F4).

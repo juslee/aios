@@ -377,3 +377,24 @@ pub fn mark_damaged(id: SurfaceId) {
         surface.damaged = true;
     }
 }
+
+/// Returns `true` when `id` names a compositor-internal shell surface
+/// (Status Strip, Taskbar, or Workspace).
+///
+/// Acquires `SURFACE_TABLE` briefly. Used by Step 27's input router as
+/// the canonical "is this a shell surface?" check — the predicate
+/// passed into `shared::compositor::route_event_with_shell` and the
+/// guard inside `set_keyboard_focus_safe`.
+///
+/// `SurfaceId::NONE` and unknown ids return `false` so callers don't
+/// have to special-case the sentinel.
+pub fn is_shell_id(id: SurfaceId) -> bool {
+    if id.is_none() {
+        return false;
+    }
+    let table = SURFACE_TABLE.lock();
+    table
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .any(|s| s.id == id && s.is_shell())
+}

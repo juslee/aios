@@ -382,15 +382,42 @@ pub enum RouteTarget {
 /// Decide where an `InputEvent` should be delivered.
 ///
 /// Pure logic split out so it can be tested host-side without locking
-/// any compositor globals.
+/// any compositor globals. Pre-M26 callers can keep using this entry
+/// point — it dispatches to `route_event_with_shell` with a "no shells"
+/// predicate, preserving the original behaviour.
 pub fn route_event(
     event: &crate::input::InputEvent,
     keyboard_focus: Option<SurfaceId>,
     pointer_hit: Option<(SurfaceId, HitZone)>,
 ) -> RouteTarget {
+    route_event_with_shell(event, keyboard_focus, pointer_hit, |_| false)
+}
+
+/// Like `route_event`, but the caller supplies an `is_shell` predicate
+/// that identifies compositor-internal shell surfaces (Status Strip,
+/// Taskbar, Workspace).
+///
+/// M26 Step 27 invariant: shell surfaces never receive **keyboard**
+/// events. Even if the focus manager somehow points at a shell
+/// surface, this router collapses that to `RouteTarget::None`. Pointer
+/// events targeted at a shell surface are still returned as
+/// `RouteTarget::Surface(id)` — the kernel-side dispatcher branches on
+/// `is_shell` again to route those into the shell's own pointer
+/// handlers (Taskbar entries focus their corresponding window;
+/// Workspace button toggles visibility; Status Strip drops).
+pub fn route_event_with_shell<F>(
+    event: &crate::input::InputEvent,
+    keyboard_focus: Option<SurfaceId>,
+    pointer_hit: Option<(SurfaceId, HitZone)>,
+    is_shell: F,
+) -> RouteTarget
+where
+    F: Fn(SurfaceId) -> bool,
+{
     use crate::input::InputEvent;
     match event {
         InputEvent::Keyboard { .. } => match keyboard_focus {
+            Some(id) if is_shell(id) => RouteTarget::None,
             Some(id) => RouteTarget::Surface(id),
             None => RouteTarget::None,
         },
@@ -1450,6 +1477,72 @@ pub fn taskbar_entry_truncate(title: &[u8], max_chars: usize) -> &[u8] {
         max_chars
     };
     &title[..cut]
+}
+
+/// Action a Taskbar pointer hit should produce.
+///
+/// `taskbar_pointer_action` resolves a click coordinate against a laid-out
+/// `TaskbarLayout` plus the snapshot of currently-visible entries
+/// (in the form of a parallel `SurfaceId` slice), returning what the
+/// caller should do. Pure logic — host-tested, kernel-globals-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskbarPointerAction {
+    /// User clicked the workspace button — toggle the Workspace surface.
+    WorkspaceToggle,
+    /// User clicked the Nth entry — focus that surface.
+    FocusEntry(SurfaceId),
+}
+
+/// Resolve a pointer click on the Taskbar surface to an action.
+///
+/// `(local_x, local_y)` is the click position in **surface-local** pixel
+/// coordinates (i.e., already translated by `(screen_x - surface.x,
+/// screen_y - surface.y)`). `entry_ids[i]` corresponds to
+/// `layout.entries[i]`; cells beyond `layout.visible_entries` and slots
+/// beyond `entry_ids.len()` are ignored.
+///
+/// Returns `None` when the click missed every interactive cell (e.g.,
+/// the count readout, dead space between cells, or out-of-bounds y).
+/// The caller decides whether `None` means "consume silently" or
+/// "forward to default handling" — Step 27 consumes silently because
+/// the Taskbar is a Panel-layer surface and pass-through doesn't make
+/// sense behind it.
+pub fn taskbar_pointer_action(
+    layout: &TaskbarLayout,
+    entry_ids: &[SurfaceId],
+    local_x: i32,
+    local_y: i32,
+) -> Option<TaskbarPointerAction> {
+    // Reject clicks outside the surface's vertical band — defensive
+    // against off-by-one routing where (local_y == surface.height) is
+    // actually below the surface.
+    if local_y < 0 {
+        return None;
+    }
+
+    if cell_contains(&layout.workspace_button, local_x) {
+        return Some(TaskbarPointerAction::WorkspaceToggle);
+    }
+
+    let visible = layout
+        .visible_entries
+        .min(MAX_TASKBAR_ENTRIES)
+        .min(entry_ids.len());
+    for (cell, id) in layout.entries.iter().zip(entry_ids.iter()).take(visible) {
+        if cell_contains(cell, local_x) {
+            if id.is_none() {
+                return None;
+            }
+            return Some(TaskbarPointerAction::FocusEntry(*id));
+        }
+    }
+
+    // count_cell is non-interactive in M26; clicks on it produce None.
+    None
+}
+
+const fn cell_contains(cell: &TaskbarCell, x: i32) -> bool {
+    x >= cell.x && x < cell.x + cell.width as i32
 }
 
 // ---------------------------------------------------------------------------
@@ -2678,5 +2771,162 @@ mod tests {
         let (s, _) = super_press(s);
         let (_, action_clean) = super_release(s);
         assert_eq!(action_clean, Some(SuperEdgeAction::ShowWorkspace));
+    }
+
+    // ---- route_event_with_shell (M26 Step 27) ----
+
+    #[test]
+    fn route_event_keyboard_shell_focus_drops() {
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        // SurfaceId(99) is "the shell" for this test.
+        let target =
+            route_event_with_shell(&event, Some(SurfaceId(99)), None, |id| id == SurfaceId(99));
+        assert_eq!(target, RouteTarget::None);
+    }
+
+    #[test]
+    fn route_event_keyboard_non_shell_focus_routes() {
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        let target =
+            route_event_with_shell(&event, Some(SurfaceId(7)), None, |id| id == SurfaceId(99));
+        assert_eq!(target, RouteTarget::Surface(SurfaceId(7)));
+    }
+
+    #[test]
+    fn route_event_pointer_on_shell_still_routes_to_surface() {
+        // Pointer-on-shell goes to RouteTarget::Surface(id); the kernel
+        // dispatcher branches on `is_shell` again to send it to the
+        // shell pointer handlers. The shared router doesn't second-guess.
+        let event = InputEvent::Pointer {
+            x: 10,
+            y: 10,
+            button: Some(MouseButton::Left),
+            state: Some(ButtonState::Pressed),
+        };
+        let hit = Some((SurfaceId(99), HitZone::Content));
+        let target = route_event_with_shell(&event, None, hit, |id| id == SurfaceId(99));
+        assert_eq!(target, RouteTarget::Surface(SurfaceId(99)));
+    }
+
+    #[test]
+    fn route_event_default_predicate_unchanged_keyboard() {
+        // Backward-compat: route_event() with no shell predicate behaves
+        // exactly like before (delivers to keyboard focus).
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        assert_eq!(
+            route_event(&event, Some(SurfaceId(7)), None),
+            RouteTarget::Surface(SurfaceId(7))
+        );
+    }
+
+    // ---- taskbar_pointer_action (M26 Step 27) ----
+
+    #[test]
+    fn taskbar_pointer_action_workspace_button() {
+        // Click within the workspace button cell (x in [0, 40)).
+        let layout = compute_taskbar_layout(1280, 0);
+        let action = taskbar_pointer_action(&layout, &[], 8, 20);
+        assert_eq!(action, Some(TaskbarPointerAction::WorkspaceToggle));
+    }
+
+    #[test]
+    fn taskbar_pointer_action_workspace_button_right_edge() {
+        // x = 39 is the last column inside the 40-px button.
+        let layout = compute_taskbar_layout(1280, 0);
+        let action = taskbar_pointer_action(&layout, &[], 39, 20);
+        assert_eq!(action, Some(TaskbarPointerAction::WorkspaceToggle));
+    }
+
+    #[test]
+    fn taskbar_pointer_action_workspace_button_just_past() {
+        // x = 40 is the first column of the entry strip — not button.
+        let layout = compute_taskbar_layout(1280, 1);
+        let action = taskbar_pointer_action(&layout, &[SurfaceId(5)], 40, 20);
+        assert_eq!(action, Some(TaskbarPointerAction::FocusEntry(SurfaceId(5))));
+    }
+
+    #[test]
+    fn taskbar_pointer_action_first_entry() {
+        let layout = compute_taskbar_layout(1280, 2);
+        let entries = [SurfaceId(11), SurfaceId(12)];
+        let action = taskbar_pointer_action(&layout, &entries, 100, 20);
+        assert_eq!(
+            action,
+            Some(TaskbarPointerAction::FocusEntry(SurfaceId(11)))
+        );
+    }
+
+    #[test]
+    fn taskbar_pointer_action_second_entry() {
+        let layout = compute_taskbar_layout(1280, 2);
+        let entries = [SurfaceId(11), SurfaceId(12)];
+        // First entry occupies x in [40, 240); second is [240, 440).
+        let action = taskbar_pointer_action(&layout, &entries, 300, 20);
+        assert_eq!(
+            action,
+            Some(TaskbarPointerAction::FocusEntry(SurfaceId(12)))
+        );
+    }
+
+    #[test]
+    fn taskbar_pointer_action_count_cell_returns_none() {
+        // Count cell is non-interactive — clicks produce no action.
+        let layout = compute_taskbar_layout(1280, 0);
+        let click_x = layout.count_cell.x + 8;
+        let action = taskbar_pointer_action(&layout, &[], click_x, 20);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_negative_y_drops() {
+        let layout = compute_taskbar_layout(1280, 1);
+        let action = taskbar_pointer_action(&layout, &[SurfaceId(5)], 8, -1);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_entry_beyond_visible_drops() {
+        // Layout shows 2 entries, but the click lands on a cell that
+        // would be entry index 3 — beyond visible_entries.
+        let layout = compute_taskbar_layout(1280, 2);
+        let entries = [SurfaceId(11), SurfaceId(12)];
+        // Third entry would be at x in [440, 640) — well past visible.
+        let action = taskbar_pointer_action(&layout, &entries, 500, 20);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_none_id_drops() {
+        // The snapshot's id slot is NONE (sentinel) — treat as no entry.
+        let layout = compute_taskbar_layout(1280, 1);
+        let action = taskbar_pointer_action(&layout, &[SurfaceId::NONE], 100, 20);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_short_entry_slice_caps_visible() {
+        // Layout claims 4 entries fit, but the caller only supplied 1
+        // SurfaceId. Clicks on cells 2-4 must not index past the slice.
+        let layout = compute_taskbar_layout(1280, 4);
+        let entries = [SurfaceId(11)];
+        // First entry cell — supplied → focus.
+        assert_eq!(
+            taskbar_pointer_action(&layout, &entries, 100, 20),
+            Some(TaskbarPointerAction::FocusEntry(SurfaceId(11)))
+        );
+        // Second entry cell — out of supplied slice → None (no panic).
+        assert_eq!(taskbar_pointer_action(&layout, &entries, 300, 20), None);
     }
 }
