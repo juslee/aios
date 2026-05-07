@@ -405,14 +405,22 @@ deterministic in the host environment.
 **What:** Comprehensive host-side tests for all compositor shared types. Move any pure data structures from kernel to shared.
 
 **Tasks:**
-- [ ] Add `#[cfg(test)] mod tests` to `shared/src/compositor.rs`
-- [ ] Test: `CompositorRequest` and `CompositorEvent` repr(C) size ≤ 256 bytes
-- [ ] Test: `SurfaceState` ordering and valid transitions
-- [ ] Test: `SurfaceLayer` ordering (Background < Normal < TopLevel < Overlay < Panel)
-- [ ] Test: `SurfaceTitle` construction, truncation at 64 bytes, UTF-8 preservation
-- [ ] Test: `DamageRegion::Rect` contains correct coordinates
-- [ ] Test: `SurfaceId` monotonic generation
-- [ ] Target: 15+ new tests
+- [x] Add `#[cfg(test)] mod tests` to `shared/src/compositor.rs`
+- [x] Test: `CompositorRequest` and `CompositorEvent` repr(C) size ≤ 256 bytes
+- [x] Test: `SurfaceState` ordering and valid transitions
+- [x] Test: `SurfaceLayer` ordering (Background < Normal < TopLevel < Overlay < Panel)
+- [x] Test: `SurfaceTitle` construction, truncation at 64 bytes, UTF-8 preservation
+- [x] Test: `DamageRegion::Rect` contains correct coordinates
+- [x] Test: `SurfaceId` monotonic generation
+- [x] Target: 15+ new tests
+
+**Note (post-implementation):** 31 tests landed in
+`shared/src/compositor.rs::tests` covering request/event size,
+SurfaceState transitions (forward, suspend, destroy-from-anywhere, and
+invalid), SurfaceLayer ordering, SurfaceTitle truncation (ASCII,
+multi-byte UTF-8 boundary safety), DamageRegion + DamageTracker, command
+round-trips, multi-surface composition + clip + off-screen, plus IPC
+event encoders (Configure, Input keyboard, Input pointer).
 
 **Acceptance:** `just check` + `just test` pass with 15+ new compositor tests
 
