@@ -240,10 +240,10 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 **What:** Add compositor-related capability variants to the existing flat `Capability` enum. Phase 7 uses the flat enum pattern (consistent with existing GPU capabilities). The rich `DisplayCapability` struct from security.md §10.1 is deferred to Phase 18.
 
 **Tasks:**
-- [ ] Add to `Capability` enum in `shared/src/cap.rs`: `CompositorCreateSurface`, `CompositorFullscreen`, `CompositorOverlay`, `CompositorInputAccess`
-- [ ] Update `Capability::permits()` match arms for new variants
-- [ ] Update capability unit tests
-- [ ] Document: Phase 7 uses flat capabilities; rich `DisplayCapability` struct deferred to Phase 18
+- [x] Add to `Capability` enum in `shared/src/cap.rs`: `CompositorCreateSurface`, `CompositorFullscreen`, `CompositorOverlay`, `CompositorInputAccess`
+- [x] Update `Capability::permits()` match arms for new variants
+- [x] Update capability unit tests
+- [x] Document: Phase 7 uses flat capabilities; rich `DisplayCapability` struct deferred to Phase 18
 
 **Key reference:** [compositor/security.md](../platform/compositor/security.md) §10.1, `shared/src/cap.rs`
 

@@ -57,6 +57,15 @@ pub enum Capability {
     GpuBufferAccess(u32),
     /// Permission to configure display scanout (mode setting, page flip).
     DisplayControl,
+    /// Permission to ask the compositor to create a surface (Phase 7 M24).
+    CompositorCreateSurface,
+    /// Permission to take fullscreen — bypasses windowed layout (Phase 7 M24).
+    CompositorFullscreen,
+    /// Permission to place a surface on the Overlay layer (Phase 7 M24).
+    CompositorOverlay,
+    /// Permission to receive raw input events from the compositor without focus
+    /// (used by the system shell and accessibility tools, Phase 7 M24).
+    CompositorInputAccess,
 }
 
 impl Capability {
@@ -82,6 +91,10 @@ impl Capability {
                 held == needed
             }
             (Capability::DisplayControl, Capability::DisplayControl) => true,
+            (Capability::CompositorCreateSurface, Capability::CompositorCreateSurface) => true,
+            (Capability::CompositorFullscreen, Capability::CompositorFullscreen) => true,
+            (Capability::CompositorOverlay, Capability::CompositorOverlay) => true,
+            (Capability::CompositorInputAccess, Capability::CompositorInputAccess) => true,
             _ => false,
         }
     }
@@ -1037,5 +1050,68 @@ mod tests {
             !Capability::GpuBufferCreate.can_attenuate_to(&Capability::ChannelAccess(ChannelId(0)))
         );
         assert!(!Capability::ChannelCreate.can_attenuate_to(&Capability::GpuBufferAccess(1)));
+    }
+
+    // --- Compositor capability tests (Phase 7 M24) ---
+    //
+    // M24 uses flat capability variants (no parameters, no creation→access
+    // narrowing). Phase 18 will introduce the rich `DisplayCapability` struct
+    // with per-surface scoping; until then identity attenuation is all we need.
+
+    #[test]
+    fn permits_compositor_create_surface() {
+        assert!(Capability::CompositorCreateSurface.permits(&Capability::CompositorCreateSurface));
+    }
+
+    #[test]
+    fn permits_compositor_fullscreen() {
+        assert!(Capability::CompositorFullscreen.permits(&Capability::CompositorFullscreen));
+    }
+
+    #[test]
+    fn permits_compositor_overlay() {
+        assert!(Capability::CompositorOverlay.permits(&Capability::CompositorOverlay));
+    }
+
+    #[test]
+    fn permits_compositor_input_access() {
+        assert!(Capability::CompositorInputAccess.permits(&Capability::CompositorInputAccess));
+    }
+
+    #[test]
+    fn denies_compositor_cross_variant() {
+        assert!(!Capability::CompositorCreateSurface.permits(&Capability::CompositorFullscreen));
+        assert!(!Capability::CompositorOverlay.permits(&Capability::CompositorInputAccess));
+        assert!(!Capability::CompositorInputAccess.permits(&Capability::CompositorCreateSurface));
+    }
+
+    #[test]
+    fn denies_compositor_versus_gpu() {
+        // Compositor and GPU caps are unrelated — neither implies the other.
+        assert!(!Capability::CompositorCreateSurface.permits(&Capability::GpuBufferCreate));
+        assert!(!Capability::GpuMmioAccess.permits(&Capability::CompositorCreateSurface));
+    }
+
+    #[test]
+    fn attenuate_compositor_identity() {
+        assert!(Capability::CompositorCreateSurface
+            .can_attenuate_to(&Capability::CompositorCreateSurface));
+        assert!(
+            Capability::CompositorFullscreen.can_attenuate_to(&Capability::CompositorFullscreen)
+        );
+        assert!(Capability::CompositorOverlay.can_attenuate_to(&Capability::CompositorOverlay));
+        assert!(
+            Capability::CompositorInputAccess.can_attenuate_to(&Capability::CompositorInputAccess)
+        );
+    }
+
+    #[test]
+    fn attenuate_compositor_denies_cross_domain() {
+        // No creation→access narrowing exists for compositor caps in M24.
+        assert!(!Capability::CompositorCreateSurface
+            .can_attenuate_to(&Capability::CompositorFullscreen));
+        assert!(!Capability::CompositorCreateSurface
+            .can_attenuate_to(&Capability::ChannelAccess(ChannelId(0))));
+        assert!(!Capability::ChannelCreate.can_attenuate_to(&Capability::CompositorCreateSurface));
     }
 }
