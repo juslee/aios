@@ -21,6 +21,156 @@ pub const MAX_SURFACES: usize = 32;
 pub const SURFACE_TITLE_MAX: usize = 64;
 
 // ---------------------------------------------------------------------------
+// Window decorations (M25)
+// ---------------------------------------------------------------------------
+
+/// Visual constants used by the compositor to render window chrome.
+///
+/// Decorations are rendered by the compositor on top of the client-supplied
+/// surface buffer. Apps cannot draw inside these regions — they only see the
+/// content rectangle (height − title bar; width − 2·border).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowDecoration {
+    /// Title bar height in pixels.
+    pub title_bar_height: u32,
+    /// Outer border thickness in pixels (drawn on all four sides).
+    pub border_width: u32,
+    /// Width of the close-button glyph cell inside the title bar.
+    pub close_button_width: u32,
+    /// Hit-test margin in pixels for the resize border (extends inward from the edge).
+    pub resize_margin: u32,
+}
+
+impl WindowDecoration {
+    /// Default decoration metrics for Layer 1 floating windows.
+    pub const DEFAULT: Self = Self {
+        title_bar_height: 24,
+        border_width: 1,
+        close_button_width: 24,
+        resize_margin: 8,
+    };
+}
+
+/// Minimum interior dimensions a window may be resized to.
+///
+/// The decorated window may be larger by `2 * border_width` and
+/// `border_width + title_bar_height` in width and height respectively, but the
+/// content surface itself must not shrink below this size.
+pub const MIN_WINDOW_WIDTH: u32 = 200;
+pub const MIN_WINDOW_HEIGHT: u32 = 100;
+
+// ---------------------------------------------------------------------------
+// Hit-test zones (M25)
+// ---------------------------------------------------------------------------
+
+/// A region of a window that pointer events can land in.
+///
+/// `hit_zone()` (declared lower in this file) maps a pointer position to one
+/// of these zones given the surface's geometry and decoration metrics. The
+/// compositor's pointer-down handler dispatches by zone:
+/// `TitleBar` → start drag; `ResizeBorder*` → start resize; `CloseButton` →
+/// send `CloseRequested`; `Content` → forward to the surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitZone {
+    /// Inside the title bar (drag-to-move).
+    TitleBar,
+    /// Inside the close-button glyph cell.
+    CloseButton,
+    /// Inside the surface content rectangle.
+    Content,
+    /// On a resize edge or corner. The variant identifies which.
+    ResizeBorder(ResizeEdge),
+}
+
+/// Edge or corner identifier for `HitZone::ResizeBorder`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+/// Compute which decoration zone a pointer at `(px, py)` lands in for a window
+/// whose decorated outer rectangle is `(x, y, width, height)`.
+///
+/// `(width, height)` are the decorated outer dimensions — i.e. the content
+/// surface plus the decoration metrics in `deco`. Returns `None` if the point
+/// lies entirely outside the window (the caller should walk to the next
+/// surface in z-order).
+///
+/// Resize zones take precedence over the title bar at the corners, and the
+/// close-button cell takes precedence over the title bar inside the title bar
+/// strip. Content covers the rest.
+pub fn hit_zone(
+    px: i32,
+    py: i32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    deco: &WindowDecoration,
+) -> Option<HitZone> {
+    let w = width as i32;
+    let h = height as i32;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let x_end = x.saturating_add(w);
+    let y_end = y.saturating_add(h);
+    if px < x || px >= x_end || py < y || py >= y_end {
+        return None;
+    }
+
+    let rm = deco.resize_margin as i32;
+    let on_left = px < x + rm;
+    let on_right = px >= x_end - rm;
+    let on_top = py < y + rm;
+    let on_bottom = py >= y_end - rm;
+
+    if on_top && on_left {
+        return Some(HitZone::ResizeBorder(ResizeEdge::NorthWest));
+    }
+    if on_top && on_right {
+        return Some(HitZone::ResizeBorder(ResizeEdge::NorthEast));
+    }
+    if on_bottom && on_left {
+        return Some(HitZone::ResizeBorder(ResizeEdge::SouthWest));
+    }
+    if on_bottom && on_right {
+        return Some(HitZone::ResizeBorder(ResizeEdge::SouthEast));
+    }
+    if on_top {
+        return Some(HitZone::ResizeBorder(ResizeEdge::North));
+    }
+    if on_bottom {
+        return Some(HitZone::ResizeBorder(ResizeEdge::South));
+    }
+    if on_left {
+        return Some(HitZone::ResizeBorder(ResizeEdge::West));
+    }
+    if on_right {
+        return Some(HitZone::ResizeBorder(ResizeEdge::East));
+    }
+
+    let title_bar_top = y + deco.border_width as i32;
+    let title_bar_bottom = title_bar_top + deco.title_bar_height as i32;
+    if py < title_bar_bottom {
+        let close_left = x_end - deco.border_width as i32 - deco.close_button_width as i32;
+        if px >= close_left {
+            return Some(HitZone::CloseButton);
+        }
+        return Some(HitZone::TitleBar);
+    }
+
+    Some(HitZone::Content)
+}
+
+// ---------------------------------------------------------------------------
 // Surface identity
 // ---------------------------------------------------------------------------
 
@@ -72,6 +222,15 @@ impl SurfaceState {
     /// Returns true if no further transitions out of this state are possible.
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Destroyed)
+    }
+
+    /// Returns true when the surface should appear in the composited frame.
+    ///
+    /// Layer 1 only renders surfaces that have an attached buffer
+    /// (`Active`). `Configured` surfaces are still being set up by the
+    /// client; `Created`/`Suspended`/`Destroyed` are not visible.
+    pub const fn is_visible(self) -> bool {
+        matches!(self, Self::Active)
     }
 
     /// Returns true if the state machine permits transitioning from `self` to `next`.
