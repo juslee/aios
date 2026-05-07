@@ -26,6 +26,7 @@ use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::compositor::focus::FOCUS_MANAGER;
 use crate::compositor::input_route;
 use crate::compositor::render;
+use crate::compositor::shell;
 use crate::compositor::surface::{self, SurfaceError, SURFACE_TABLE};
 use crate::compositor::window::WINDOW_Z_ORDER;
 use crate::drivers::virtio_gpu;
@@ -129,19 +130,36 @@ fn compositor_loop() -> ! {
     let mut state = CompositorState::new(ch, display);
 
     // Take ownership of the display from the GPU Service.
+    let mut display_owned = false;
     if display.width > 0 && display.height > 0 {
-        if let Err(e) = display_handoff(&mut state) {
-            crate::kerror!(
-                Compositor,
-                "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
-                e
-            );
+        match display_handoff(&mut state) {
+            Ok(()) => display_owned = true,
+            Err(e) => {
+                crate::kerror!(
+                    Compositor,
+                    "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
+                    e
+                );
+            }
         }
     } else {
         crate::kwarn!(
             Compositor,
             "Compositor: no display reported; running headless"
         );
+    }
+
+    // M26 Step 24: bring up the desktop shell surfaces (Status Strip
+    // first; Taskbar / Workspace land in subsequent steps). Skip when the
+    // handoff failed — there's no display to render onto.
+    if display_owned {
+        if let Err(e) = shell::init_shell_surfaces(display.width, display.height) {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: shell init failed ({:?}); continuing without shell chrome",
+                e
+            );
+        }
     }
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
@@ -176,6 +194,12 @@ fn compositor_loop() -> ! {
         // and route them through the M25 input pipeline (coalesce → hotkey
         // filter → focus router → IPC delivery).
         input_route::drain_and_route();
+
+        // M26 Step 24: drive the desktop shell tick. The shell decides
+        // internally whether each surface needs to redraw based on its
+        // own cadence (Status Strip = 1 Hz). Always cheap when nothing
+        // changed and the shell mutex is leaf-only.
+        shell::tick(TICK_COUNT.load(Ordering::Relaxed));
 
         // Run a compose-and-present cycle if we're inside the 16ms cadence
         // and at least one surface is damaged (or we still owe an initial
@@ -586,6 +610,11 @@ pub fn init_compositor() {
         false,
     );
     let _ = cap::grant_to_process(ProcessId(10), shared::Capability::DebugPrint, false);
+    // M26 Step 24: shell surfaces (Status Strip first) allocate their own
+    // backing buffers via `shared_memory_create`. Granting the create cap
+    // here keeps the shell as a normal capability-checked client of the
+    // shmem subsystem rather than a privileged shortcut.
+    let _ = cap::grant_to_process(ProcessId(10), shared::Capability::SharedMemoryCreate, false);
 
     // Create the compositor's IPC channel.
     let compositor_tid = ThreadId(0xA10); // Debug label for the compositor thread.

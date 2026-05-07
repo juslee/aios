@@ -22,6 +22,7 @@ pub mod hotkey;
 pub mod input_route;
 pub mod render;
 pub mod service;
+pub mod shell;
 pub mod surface;
 pub mod text;
 pub mod window;

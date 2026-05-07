@@ -1123,6 +1123,68 @@ pub struct SurfaceOwner {
 }
 
 // ---------------------------------------------------------------------------
+// Shell text formatting helpers (M26 Step 24)
+// ---------------------------------------------------------------------------
+
+/// Format a millisecond-since-boot value as 5 ASCII bytes `HH:MM`.
+///
+/// Wraps modulo 24 hours, so any input maps onto a valid wall-clock-style
+/// `HH:MM` string. The output is exactly 5 bytes (`b'0'..=b'9'` plus a
+/// literal colon at index 2). Used by the Status Strip surface to display
+/// the current time without pulling in `core::fmt`.
+pub const fn format_hhmm(elapsed_ms: u64) -> [u8; 5] {
+    const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
+    let wrapped = elapsed_ms % MS_PER_DAY;
+    let total_minutes = wrapped / 60_000;
+    let hours = (total_minutes / 60) as u32;
+    let minutes = (total_minutes % 60) as u32;
+    let mut out = [b'0'; 5];
+    out[0] = b'0' + (hours / 10) as u8;
+    out[1] = b'0' + (hours % 10) as u8;
+    out[2] = b':';
+    out[3] = b'0' + (minutes / 10) as u8;
+    out[4] = b'0' + (minutes % 10) as u8;
+    out
+}
+
+/// Format an integer percent value (0..=99) as 2 ASCII digit bytes.
+///
+/// Values at or above 100 saturate to `99` so the result is always exactly
+/// two digits. Used by the Status Strip for memory and CPU utilization
+/// readouts where the trailing `%` glyph is rendered separately.
+pub const fn format_percent_2digits(percent: u32) -> [u8; 2] {
+    let clamped = if percent > 99 { 99 } else { percent };
+    [b'0' + (clamped / 10) as u8, b'0' + (clamped % 10) as u8]
+}
+
+/// Format a small unsigned integer (0..=9999) as right-padded ASCII digits
+/// inside a fixed-width 4-byte buffer (left-aligned, space-padded).
+///
+/// Used by the Status Strip core count display and similar bounded counters
+/// where allocation-free integer formatting is required. Values above 9999
+/// saturate to `9999`.
+pub const fn format_u32_left4(value: u32) -> [u8; 4] {
+    let v = if value > 9999 { 9999 } else { value };
+    let mut out = [b' '; 4];
+    if v >= 1000 {
+        out[0] = b'0' + ((v / 1000) % 10) as u8;
+        out[1] = b'0' + ((v / 100) % 10) as u8;
+        out[2] = b'0' + ((v / 10) % 10) as u8;
+        out[3] = b'0' + (v % 10) as u8;
+    } else if v >= 100 {
+        out[0] = b'0' + ((v / 100) % 10) as u8;
+        out[1] = b'0' + ((v / 10) % 10) as u8;
+        out[2] = b'0' + (v % 10) as u8;
+    } else if v >= 10 {
+        out[0] = b'0' + ((v / 10) % 10) as u8;
+        out[1] = b'0' + (v % 10) as u8;
+    } else {
+        out[0] = b'0' + (v % 10) as u8;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Compile-time invariants
 // ---------------------------------------------------------------------------
 
@@ -1962,5 +2024,95 @@ mod tests {
         assert_eq!(d.border_width, 1);
         assert_eq!(d.close_button_width, 24);
         assert_eq!(d.resize_margin, 8);
+    }
+
+    // ---- Shell text formatting helpers (M26 Step 24) ----
+
+    #[test]
+    fn format_hhmm_at_zero_is_midnight() {
+        assert_eq!(&format_hhmm(0), b"00:00");
+    }
+
+    #[test]
+    fn format_hhmm_under_one_minute_stays_at_zero() {
+        // 59_999 ms = 59.999 s — still inside the 00:00 minute.
+        assert_eq!(&format_hhmm(59_999), b"00:00");
+    }
+
+    #[test]
+    fn format_hhmm_one_hour_exact() {
+        assert_eq!(&format_hhmm(60 * 60 * 1000), b"01:00");
+    }
+
+    #[test]
+    fn format_hhmm_end_of_day() {
+        // 23:59:59.999 — last millisecond before wrap.
+        let ms = 24 * 60 * 60 * 1000 - 1;
+        assert_eq!(&format_hhmm(ms), b"23:59");
+    }
+
+    #[test]
+    fn format_hhmm_wraps_at_one_day() {
+        // Exactly 24 h wraps back to 00:00.
+        let ms = 24 * 60 * 60 * 1000;
+        assert_eq!(&format_hhmm(ms), b"00:00");
+    }
+
+    #[test]
+    fn format_hhmm_wraps_after_ten_days() {
+        // 10 days plus 90 minutes — wrap should leave only 01:30.
+        let ms = 10 * 24 * 60 * 60 * 1000 + 90 * 60 * 1000;
+        assert_eq!(&format_hhmm(ms), b"01:30");
+    }
+
+    #[test]
+    fn format_percent_2digits_zero() {
+        assert_eq!(&format_percent_2digits(0), b"00");
+    }
+
+    #[test]
+    fn format_percent_2digits_single_digit_pads() {
+        assert_eq!(&format_percent_2digits(7), b"07");
+    }
+
+    #[test]
+    fn format_percent_2digits_two_digit() {
+        assert_eq!(&format_percent_2digits(42), b"42");
+    }
+
+    #[test]
+    fn format_percent_2digits_at_99() {
+        assert_eq!(&format_percent_2digits(99), b"99");
+    }
+
+    #[test]
+    fn format_percent_2digits_saturates_above_99() {
+        assert_eq!(&format_percent_2digits(100), b"99");
+        assert_eq!(&format_percent_2digits(u32::MAX), b"99");
+    }
+
+    #[test]
+    fn format_u32_left4_single_digit() {
+        assert_eq!(&format_u32_left4(4), b"4   ");
+    }
+
+    #[test]
+    fn format_u32_left4_two_digits() {
+        assert_eq!(&format_u32_left4(42), b"42  ");
+    }
+
+    #[test]
+    fn format_u32_left4_three_digits() {
+        assert_eq!(&format_u32_left4(987), b"987 ");
+    }
+
+    #[test]
+    fn format_u32_left4_four_digits() {
+        assert_eq!(&format_u32_left4(1234), b"1234");
+    }
+
+    #[test]
+    fn format_u32_left4_saturates() {
+        assert_eq!(&format_u32_left4(99_999), b"9999");
     }
 }
