@@ -14,18 +14,25 @@
 
 use core::sync::atomic::Ordering;
 
-use shared::compositor::DamageTracker;
+use shared::compositor::{
+    CompositorCommand, CompositorEvent, CompositorRequest, DamageTracker, SurfaceContentType,
+    SurfaceId, SurfaceLayer, SurfaceTitle,
+};
 use shared::gpu::{DisplayInfo, GpuBufferHandle, GpuError, VirtioGpuRect, AIOS_BLUE_B8G8R8A8};
-use shared::ipc::ChannelId;
+use shared::ipc::{ChannelId, SharedMemoryId};
 use spin::Mutex;
 
 use crate::arch::aarch64::timer::TICK_COUNT;
+use crate::compositor::focus::FOCUS_MANAGER;
+use crate::compositor::input_route;
 use crate::compositor::render;
-use crate::compositor::surface::SURFACE_TABLE;
+use crate::compositor::surface::{self, SurfaceError, SURFACE_TABLE};
+use crate::compositor::window::WINDOW_Z_ORDER;
 use crate::drivers::virtio_gpu;
 use crate::ipc;
 use crate::service;
 use crate::task::process::ProcessId;
+use crate::task::ThreadId;
 
 // ---------------------------------------------------------------------------
 // Compositor service state
@@ -142,13 +149,8 @@ fn compositor_loop() -> ! {
 
     loop {
         match ipc::ipc_recv(ch, &mut recv_buf, RECV_TIMEOUT_TICKS) {
-            Ok((_len, _sender)) => {
-                // Step 17 (M25 input routing) decodes CompositorRequest
-                // here. For M24 we ack so senders unblock.
-                let result = ipc::ipc_reply(ch, &[]);
-                if result < 0 {
-                    crate::kwarn!(Compositor, "Compositor: reply failed with {}", result);
-                }
+            Ok((len, sender_tid)) => {
+                process_request(&recv_buf[..len], sender_tid, ch);
             }
             Err(e) => {
                 if e == crate::syscall::IpcError::Epipe as i64 {
@@ -164,6 +166,11 @@ fn compositor_loop() -> ! {
                 }
             }
         }
+
+        // Step 20: drain typed input events from the kernel input queue
+        // and route them through the M25 input pipeline (coalesce → hotkey
+        // filter → focus router → IPC delivery).
+        input_route::drain_and_route();
 
         // Run a compose-and-present cycle if we're inside the 16ms cadence
         // and at least one surface is damaged (or we still owe an initial
@@ -600,5 +607,240 @@ pub fn init_compositor() {
         Compositor,
         "Compositor service initialized (pid=10, ch={})",
         ch.0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// IPC dispatch (Step 20)
+// ---------------------------------------------------------------------------
+
+/// Decode a `CompositorRequest` from a raw IPC payload.
+///
+/// Returns `None` if the payload is too short to hold a request — that
+/// typically indicates a protocol error or a misaddressed message; the
+/// caller responds with an error reply.
+fn decode_request(bytes: &[u8]) -> Option<CompositorRequest> {
+    if bytes.len() < core::mem::size_of::<CompositorRequest>() {
+        return None;
+    }
+    // SAFETY: CompositorRequest is repr(C) Copy with no padding-trap
+    // fields. We copy the bytes into a freshly-zeroed instance via
+    // ptr::read_unaligned to avoid relying on the source alignment.
+    // The recv buffer is at most MAX_MESSAGE_SIZE; the requested type
+    // size is bounded by the same const (compile-time asserted).
+    // Maintained by: the size check above ensures the read is in-bounds.
+    // Violation: a shorter slice would read past the buffer → UB.
+    let req = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const CompositorRequest) };
+    Some(req)
+}
+
+/// Process one `CompositorRequest` and reply with a `CompositorEvent`.
+///
+/// `sender_tid` identifies the calling thread; we resolve its owning
+/// process to record as the surface owner. `service_channel` is the
+/// compositor's well-known IPC channel — used as a placeholder
+/// `Surface.channel` until per-client channels arrive in M26.
+fn process_request(payload: &[u8], sender_tid: ThreadId, service_channel: ChannelId) {
+    let req = match decode_request(payload) {
+        Some(r) => r,
+        None => {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: short IPC payload ({} bytes); replying empty",
+                payload.len()
+            );
+            let _ = ipc::ipc_reply(service_channel, &[]);
+            return;
+        }
+    };
+
+    let owner_pid = match crate::cap::process_of_thread(sender_tid) {
+        Some(pid) => pid,
+        None => {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: sender tid={} has no owning pid",
+                sender_tid.0
+            );
+            let _ = ipc::ipc_reply(service_channel, &[]);
+            return;
+        }
+    };
+
+    let event = match CompositorCommand::from_u32(req.command) {
+        Some(CompositorCommand::CreateSurface) => {
+            handle_create_surface(&req, owner_pid, service_channel)
+        }
+        Some(CompositorCommand::AttachBuffer) => handle_attach_buffer(&req, owner_pid),
+        Some(CompositorCommand::DestroySurface) => handle_destroy_surface(&req, owner_pid),
+        Some(CompositorCommand::Resize) => handle_resize(&req, owner_pid),
+        Some(CompositorCommand::SetLayer) => handle_set_layer(&req, owner_pid),
+        None => {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: unknown command {} from pid={}",
+                req.command,
+                owner_pid.0
+            );
+            CompositorEvent::zeroed()
+        }
+    };
+
+    let bytes: &[u8] = unsafe {
+        // SAFETY: CompositorEvent is repr(C) Copy. We borrow its bytes
+        // for the duration of the synchronous ipc_reply call.
+        // Maintained by: `event` is on this stack frame; the borrow is
+        // consumed before we return.
+        // Violation: a longer-lived borrow would dangle.
+        core::slice::from_raw_parts(
+            (&event as *const CompositorEvent) as *const u8,
+            core::mem::size_of::<CompositorEvent>(),
+        )
+    };
+    let result = ipc::ipc_reply(service_channel, bytes);
+    if result < 0 {
+        crate::kwarn!(Compositor, "Compositor: reply failed with {}", result);
+    }
+}
+
+fn handle_create_surface(
+    req: &CompositorRequest,
+    owner_pid: ProcessId,
+    service_channel: ChannelId,
+) -> CompositorEvent {
+    let layer = match req.layer {
+        0 => SurfaceLayer::Background,
+        1 => SurfaceLayer::Normal,
+        2 => SurfaceLayer::TopLevel,
+        3 => SurfaceLayer::Overlay,
+        4 => SurfaceLayer::Panel,
+        _ => SurfaceLayer::Normal,
+    };
+    let content_type =
+        SurfaceContentType::from_u8(req.content_type).unwrap_or(SurfaceContentType::Generic);
+    let title_bytes = &req.title[..(req.title_len as usize).min(req.title.len())];
+    let title = SurfaceTitle::from_bytes(title_bytes);
+
+    match surface::surface_create(
+        owner_pid,
+        service_channel,
+        req.width,
+        req.height,
+        title,
+        content_type,
+        layer,
+    ) {
+        Ok(id) => {
+            // Register with the z-order list and the focus manager so the
+            // compositor knows where this surface stacks. Acquired in
+            // separate scopes to keep each lock hold tight.
+            {
+                let mut z = WINDOW_Z_ORDER.lock();
+                z.push(id);
+            }
+            // First created surface receives keyboard focus. Notify side
+            // effect runs after dropping locks so we don't IPC-recurse.
+            let change = {
+                let mut fm = FOCUS_MANAGER.lock();
+                if fm.keyboard_focus().is_none() {
+                    fm.set_keyboard_focus(Some(id))
+                } else {
+                    super::focus::FocusChange {
+                        lost: None,
+                        gained: None,
+                    }
+                }
+            };
+            input_route::notify_focus_change(change);
+            CompositorEvent::configure(id, req.width, req.height, 100)
+        }
+        Err(e) => {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: surface_create failed ({:?}) for pid={}",
+                e,
+                owner_pid.0
+            );
+            CompositorEvent::zeroed()
+        }
+    }
+}
+
+fn handle_attach_buffer(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
+    let id = SurfaceId(req.surface_id);
+    let damage = req.decode_damage();
+    let shmem = SharedMemoryId(req.shmem_id);
+    match surface::surface_attach_buffer(id, shmem, damage, owner_pid) {
+        Ok(()) => CompositorEvent::buffer_released(id, shmem),
+        Err(e) => {
+            log_surface_error("AttachBuffer", id, owner_pid, e);
+            CompositorEvent::zeroed()
+        }
+    }
+}
+
+fn handle_destroy_surface(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
+    let id = SurfaceId(req.surface_id);
+    match surface::surface_destroy(id, owner_pid) {
+        Ok(()) => {
+            // Remove from z-order and focus state. Notify if the destroy
+            // cleared the focused surface.
+            {
+                let mut z = WINDOW_Z_ORDER.lock();
+                z.remove(id);
+            }
+            let change = {
+                let mut fm = FOCUS_MANAGER.lock();
+                fm.surface_destroyed(id)
+            };
+            input_route::notify_focus_change(change);
+            CompositorEvent::close_requested(id)
+        }
+        Err(e) => {
+            log_surface_error("DestroySurface", id, owner_pid, e);
+            CompositorEvent::zeroed()
+        }
+    }
+}
+
+fn handle_resize(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
+    let id = SurfaceId(req.surface_id);
+    let (w, h) = crate::compositor::window::clamp_window_size(req.width, req.height);
+    match surface::surface_resize(id, w, h, owner_pid) {
+        Ok((width, height)) => CompositorEvent::configure(id, width, height, 100),
+        Err(e) => {
+            log_surface_error("Resize", id, owner_pid, e);
+            CompositorEvent::zeroed()
+        }
+    }
+}
+
+fn handle_set_layer(req: &CompositorRequest, owner_pid: ProcessId) -> CompositorEvent {
+    let id = SurfaceId(req.surface_id);
+    let layer = match req.layer {
+        0 => SurfaceLayer::Background,
+        1 => SurfaceLayer::Normal,
+        2 => SurfaceLayer::TopLevel,
+        3 => SurfaceLayer::Overlay,
+        4 => SurfaceLayer::Panel,
+        _ => SurfaceLayer::Normal,
+    };
+    match surface::surface_set_layer(id, layer, owner_pid) {
+        Ok(()) => CompositorEvent::configure(id, 0, 0, 100),
+        Err(e) => {
+            log_surface_error("SetLayer", id, owner_pid, e);
+            CompositorEvent::zeroed()
+        }
+    }
+}
+
+fn log_surface_error(op: &str, id: SurfaceId, owner_pid: ProcessId, err: SurfaceError) {
+    crate::kwarn!(
+        Compositor,
+        "Compositor: {} surface={} pid={} failed: {:?}",
+        op,
+        id.0,
+        owner_pid.0,
+        err
     );
 }

@@ -18,6 +18,8 @@ use core::sync::atomic::AtomicBool;
 
 pub mod cursor;
 pub mod focus;
+pub mod hotkey;
+pub mod input_route;
 pub mod render;
 pub mod service;
 pub mod surface;

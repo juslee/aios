@@ -456,6 +456,27 @@ pub fn hit_test_topmost(px: i32, py: i32, deco: &WindowDecoration) -> Option<(Su
 }
 
 // ---------------------------------------------------------------------------
+// Decoration event handling — invoked when input lands on a non-content zone
+// ---------------------------------------------------------------------------
+
+/// Dispatch an input event that landed on a window decoration.
+///
+/// `surface` is the surface owning the decoration; `zone` identifies which
+/// part of the chrome the pointer hit. Step 21 fills in the move/resize/
+/// close-button behaviour. M25 Step 20 calls this from the input router
+/// whenever `route_event` returns a `RouteTarget::Decoration` so the
+/// wiring is in place ahead of Step 21.
+pub fn handle_decoration_event(
+    surface: SurfaceId,
+    zone: HitZone,
+    event: &shared::input::InputEvent,
+) {
+    let _ = (surface, zone, event);
+    // Step 21: dispatch to drag/resize/close handlers based on `zone` and
+    // the event kind (pointer down/up/move).
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
