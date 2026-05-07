@@ -26,8 +26,8 @@
 #![allow(dead_code)]
 
 use shared::compositor::{
-    HitZone, ResizeEdge, SurfaceId, SurfaceLayer, WindowDecoration, MAX_SURFACES,
-    MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH,
+    HitZone, ResizeEdge, SurfaceId, SurfaceLayer, WindowDecoration, ZOrder, MIN_WINDOW_HEIGHT,
+    MIN_WINDOW_WIDTH,
 };
 use spin::Mutex;
 
@@ -36,80 +36,6 @@ use super::surface::{Surface, SURFACE_TABLE};
 // ---------------------------------------------------------------------------
 // Z-order tracking
 // ---------------------------------------------------------------------------
-
-/// Most-recently-focused-last z-order list within a single layer.
-///
-/// Sorting at composition time is `(layer as u8, position-in-this-list)`.
-/// The list stores `SurfaceId::NONE` in slots that have not yet been used,
-/// and never reorders — `raise_to_top` removes the entry then pushes it
-/// onto the end.
-#[derive(Clone, Copy)]
-pub struct ZOrder {
-    entries: [SurfaceId; MAX_SURFACES],
-    len: usize,
-}
-
-impl ZOrder {
-    pub const fn new() -> Self {
-        Self {
-            entries: [SurfaceId::NONE; MAX_SURFACES],
-            len: 0,
-        }
-    }
-
-    /// Append a newly-created surface to the top of its layer.
-    ///
-    /// Returns `true` on success. Returns `false` only if the table is
-    /// somehow full despite `MAX_SURFACES` headroom — that condition should
-    /// already have been rejected at surface-create time.
-    pub fn push(&mut self, id: SurfaceId) -> bool {
-        if self.len >= MAX_SURFACES || id.is_none() {
-            return false;
-        }
-        self.entries[self.len] = id;
-        self.len += 1;
-        true
-    }
-
-    /// Remove a surface from the z-order list (called on destroy).
-    pub fn remove(&mut self, id: SurfaceId) {
-        if let Some(pos) = self.entries[..self.len].iter().position(|&s| s == id) {
-            for i in pos..self.len - 1 {
-                self.entries[i] = self.entries[i + 1];
-            }
-            self.len -= 1;
-            self.entries[self.len] = SurfaceId::NONE;
-        }
-    }
-
-    /// Move a surface to the top of its layer (most-recently-focused last).
-    pub fn raise_to_top(&mut self, id: SurfaceId) {
-        if self.entries[..self.len].contains(&id) {
-            self.remove(id);
-            self.push(id);
-        }
-    }
-
-    /// Iterate over surface ids in order (bottom of stack first → top last).
-    pub fn iter(&self) -> impl Iterator<Item = SurfaceId> + '_ {
-        self.entries[..self.len].iter().copied()
-    }
-
-    /// Iterate from top of stack down — used by hit-testing.
-    pub fn iter_top_down(&self) -> impl Iterator<Item = SurfaceId> + '_ {
-        self.entries[..self.len].iter().rev().copied()
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-}
-
-impl Default for ZOrder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Global z-order list. Lock ordering: leaf — never held across IPC or
 /// VirtIO calls; specifically never held while `SURFACE_TABLE` is locked.
@@ -676,99 +602,9 @@ pub fn handle_decoration_event(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use shared::compositor::{SurfaceId, MAX_SURFACES};
-
-    #[test]
-    fn z_order_push_and_iter() {
-        let mut z = ZOrder::new();
-        assert!(z.push(SurfaceId(1)));
-        assert!(z.push(SurfaceId(2)));
-        assert!(z.push(SurfaceId(3)));
-        let collected: alloc::vec::Vec<_> = z.iter().collect();
-        assert_eq!(
-            collected,
-            alloc::vec![SurfaceId(1), SurfaceId(2), SurfaceId(3)]
-        );
-    }
-
-    #[test]
-    fn z_order_raise_to_top_moves_entry() {
-        let mut z = ZOrder::new();
-        z.push(SurfaceId(1));
-        z.push(SurfaceId(2));
-        z.push(SurfaceId(3));
-        z.raise_to_top(SurfaceId(1));
-        let collected: alloc::vec::Vec<_> = z.iter().collect();
-        assert_eq!(
-            collected,
-            alloc::vec![SurfaceId(2), SurfaceId(3), SurfaceId(1)]
-        );
-    }
-
-    #[test]
-    fn z_order_remove() {
-        let mut z = ZOrder::new();
-        z.push(SurfaceId(1));
-        z.push(SurfaceId(2));
-        z.push(SurfaceId(3));
-        z.remove(SurfaceId(2));
-        let collected: alloc::vec::Vec<_> = z.iter().collect();
-        assert_eq!(collected, alloc::vec![SurfaceId(1), SurfaceId(3)]);
-        assert_eq!(z.len(), 2);
-    }
-
-    #[test]
-    fn z_order_raise_unknown_is_noop() {
-        let mut z = ZOrder::new();
-        z.push(SurfaceId(1));
-        z.raise_to_top(SurfaceId(99));
-        let collected: alloc::vec::Vec<_> = z.iter().collect();
-        assert_eq!(collected, alloc::vec![SurfaceId(1)]);
-    }
-
-    #[test]
-    fn z_order_full_capacity_rejects_extra_push() {
-        let mut z = ZOrder::new();
-        for i in 1..=MAX_SURFACES as u64 {
-            assert!(z.push(SurfaceId(i)));
-        }
-        assert!(!z.push(SurfaceId(999)));
-    }
-
-    #[test]
-    fn default_position_centers_then_cascades() {
-        // 200x100 window in a 1280x800 display.
-        let (x0, y0) = default_position(200, 100, 1280, 800, 0);
-        assert_eq!((x0, y0), (540, 350));
-        // Sequence 1 cascades by CASCADE_STEP.
-        let (x1, y1) = default_position(200, 100, 1280, 800, 1);
-        assert_eq!((x1 - x0, y1 - y0), (CASCADE_STEP, CASCADE_STEP));
-    }
-
-    #[test]
-    fn clamp_window_size_enforces_minimum() {
-        assert_eq!(
-            clamp_window_size(50, 50),
-            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
-        );
-        assert_eq!(clamp_window_size(800, 600), (800, 600));
-    }
-
-    #[test]
-    fn fill_rect_clips_at_bounds() {
-        let mut dst = [0u32; 16];
-        // 4x4 framebuffer; fill from (-1, -1) size (3, 3) → only (0,0)..(2,2) drawn.
-        fill_rect(&mut dst, 4, 4, -1, -1, 3, 3, 0xAB);
-        // Pixels (0,0), (1,0), (0,1), (1,1) should be set.
-        assert_eq!(dst[0], 0xAB);
-        assert_eq!(dst[1], 0xAB);
-        assert_eq!(dst[4], 0xAB);
-        assert_eq!(dst[5], 0xAB);
-        // Pixel (2,2) untouched.
-        assert_eq!(dst[10], 0);
-    }
-}
+//
+// Pure-logic tests for `ZOrder`, `default_position`, `clamp_window_size`,
+// `fill_rect` clipping, and `hit_zone` live in
+// `shared::compositor::tests` so they execute under host-side
+// `just test`. The kernel-side render code is exercised end-to-end
+// through M26's test app.

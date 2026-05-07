@@ -109,28 +109,8 @@ pub fn render_cursor(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cursor_sprite_dimensions() {
-        assert_eq!(CURSOR_ARROW.len(), (CURSOR_WIDTH * CURSOR_HEIGHT) as usize);
-    }
-
-    #[test]
-    fn cursor_hot_spot_is_opaque() {
-        // Top-left pixel is the conventional cursor hot spot — must be the
-        // black outline (opaque), not transparent.
-        assert_eq!(CURSOR_ARROW[0], B);
-    }
-
-    #[test]
-    fn cursor_position_round_trip() {
-        set_position(123, 456);
-        assert_eq!(position(), (123, 456));
-        // Restore to a sane default so other tests aren't affected.
-        set_position(400, 300);
-    }
-}
+//
+// Cursor sprite shape tests live in `shared::compositor::tests`
+// (Step 23) where they execute under host-side `just test`. The
+// kernel `CURSOR_POS` mutex itself is exercised via the integration
+// path in M26.

@@ -171,6 +171,244 @@ pub fn hit_zone(
 }
 
 // ---------------------------------------------------------------------------
+// Z-order tracking (M25)
+// ---------------------------------------------------------------------------
+
+/// Most-recently-focused-last z-order list within a single layer.
+///
+/// The compositor sorts surfaces at composition time by `(SurfaceLayer as
+/// u8, position-in-this-list)`. `raise_to_top` removes an entry then
+/// pushes it onto the end so the topmost surface is always at the back of
+/// the array. The list stores `SurfaceId::NONE` in unused slots and never
+/// reorders entries except via the public mutators.
+///
+/// Layer 1 desktop fits comfortably in `MAX_SURFACES` slots; the
+/// container rejects `push` past capacity rather than panicking.
+#[derive(Clone, Copy)]
+pub struct ZOrder {
+    entries: [SurfaceId; MAX_SURFACES],
+    len: usize,
+}
+
+impl ZOrder {
+    pub const fn new() -> Self {
+        Self {
+            entries: [SurfaceId::NONE; MAX_SURFACES],
+            len: 0,
+        }
+    }
+
+    /// Append a newly-created surface to the top of the stack. Returns
+    /// `true` on success; `false` if the list is full or `id` is the
+    /// NONE sentinel.
+    pub fn push(&mut self, id: SurfaceId) -> bool {
+        if self.len >= MAX_SURFACES || id.is_none() {
+            return false;
+        }
+        self.entries[self.len] = id;
+        self.len += 1;
+        true
+    }
+
+    /// Remove `id` from the list (called when a surface is destroyed).
+    /// No-op if `id` is not present.
+    pub fn remove(&mut self, id: SurfaceId) {
+        if let Some(pos) = self.entries[..self.len].iter().position(|&s| s == id) {
+            for i in pos..self.len - 1 {
+                self.entries[i] = self.entries[i + 1];
+            }
+            self.len -= 1;
+            self.entries[self.len] = SurfaceId::NONE;
+        }
+    }
+
+    /// Move `id` to the top of the stack — most-recently-focused last.
+    /// No-op if `id` is not present.
+    pub fn raise_to_top(&mut self, id: SurfaceId) {
+        if self.entries[..self.len].contains(&id) {
+            self.remove(id);
+            self.push(id);
+        }
+    }
+
+    /// Iterate from bottom of stack (oldest) to top (most-recent).
+    pub fn iter(&self) -> impl Iterator<Item = SurfaceId> + '_ {
+        self.entries[..self.len].iter().copied()
+    }
+
+    /// Iterate from top of stack (most-recent) to bottom — used by hit-testing.
+    pub fn iter_top_down(&self) -> impl Iterator<Item = SurfaceId> + '_ {
+        self.entries[..self.len].iter().rev().copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl Default for ZOrder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Focus history (M25)
+// ---------------------------------------------------------------------------
+
+/// Maximum entries in the most-recently-used focus history.
+///
+/// Per docs/platform/compositor/input.md §7.2 — a 16-entry ring covers
+/// Alt+Tab cycling for the floating-window desktop comfortably.
+pub const FOCUS_HISTORY_CAPACITY: usize = 16;
+
+/// A bounded most-recently-used list of `SurfaceId`s.
+///
+/// The most-recently-focused id is always at index 0; older entries
+/// trail behind. `touch(id)` moves an existing entry (or inserts a new
+/// one) to the front; `remove(id)` deletes an entry (used when a
+/// surface is destroyed). At capacity, `touch` evicts the LRU entry.
+#[derive(Clone, Copy)]
+pub struct FocusHistory {
+    entries: [SurfaceId; FOCUS_HISTORY_CAPACITY],
+    len: usize,
+}
+
+impl FocusHistory {
+    pub const fn new() -> Self {
+        Self {
+            entries: [SurfaceId::NONE; FOCUS_HISTORY_CAPACITY],
+            len: 0,
+        }
+    }
+
+    /// Mark `id` as the most-recently-used. `SurfaceId::NONE` is rejected.
+    pub fn touch(&mut self, id: SurfaceId) {
+        if id.is_none() {
+            return;
+        }
+        if let Some(pos) = self.entries[..self.len].iter().position(|&s| s == id) {
+            for i in (1..=pos).rev() {
+                self.entries[i] = self.entries[i - 1];
+            }
+            self.entries[0] = id;
+            return;
+        }
+        let new_len = (self.len + 1).min(FOCUS_HISTORY_CAPACITY);
+        let shift_end = new_len.saturating_sub(1);
+        for i in (1..=shift_end).rev() {
+            self.entries[i] = self.entries[i - 1];
+        }
+        self.entries[0] = id;
+        self.len = new_len;
+        if self.len < FOCUS_HISTORY_CAPACITY {
+            self.entries[self.len] = SurfaceId::NONE;
+        }
+    }
+
+    /// Remove `id` from the history (called when a surface is destroyed).
+    /// No-op if `id` is not present.
+    pub fn remove(&mut self, id: SurfaceId) {
+        if let Some(pos) = self.entries[..self.len].iter().position(|&s| s == id) {
+            for i in pos..self.len - 1 {
+                self.entries[i] = self.entries[i + 1];
+            }
+            self.len -= 1;
+            self.entries[self.len] = SurfaceId::NONE;
+        }
+    }
+
+    /// Most-recently-used surface id, or `None` if the history is empty.
+    pub fn most_recent(&self) -> Option<SurfaceId> {
+        if self.len == 0 {
+            None
+        } else {
+            Some(self.entries[0])
+        }
+    }
+
+    /// The id at position `n` from MRU (0 = most recent).
+    pub fn nth(&self, n: usize) -> Option<SurfaceId> {
+        if n >= self.len {
+            None
+        } else {
+            Some(self.entries[n])
+        }
+    }
+
+    /// Iterate from MRU to LRU.
+    pub fn iter(&self) -> impl Iterator<Item = SurfaceId> + '_ {
+        self.entries[..self.len].iter().copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl Default for FocusHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Input routing — pure decision helpers (M25)
+// ---------------------------------------------------------------------------
+
+/// Where a routed input event should be delivered.
+///
+/// Pure data — the kernel-side router builds this from focus state and
+/// hit-test results, then dispatches accordingly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTarget {
+    /// Deliver to the surface (its IPC channel).
+    Surface(SurfaceId),
+    /// Pointer landed on a non-content decoration zone — handled by the
+    /// compositor itself (move/resize/close-button).
+    Decoration { surface: SurfaceId, zone: HitZone },
+    /// No target — drop the event (e.g. pointer over empty desktop).
+    None,
+}
+
+/// Decide where an `InputEvent` should be delivered.
+///
+/// Pure logic split out so it can be tested host-side without locking
+/// any compositor globals.
+pub fn route_event(
+    event: &crate::input::InputEvent,
+    keyboard_focus: Option<SurfaceId>,
+    pointer_hit: Option<(SurfaceId, HitZone)>,
+) -> RouteTarget {
+    use crate::input::InputEvent;
+    match event {
+        InputEvent::Keyboard { .. } => match keyboard_focus {
+            Some(id) => RouteTarget::Surface(id),
+            None => RouteTarget::None,
+        },
+        InputEvent::Pointer { .. } => match pointer_hit {
+            Some((id, HitZone::Content)) => RouteTarget::Surface(id),
+            Some((id, zone)) => RouteTarget::Decoration { surface: id, zone },
+            None => RouteTarget::None,
+        },
+    }
+}
+
+/// Clamp a candidate `(width, height)` resize to the minimum content
+/// dimensions. Returns the adjusted dimensions.
+pub fn clamp_window_size(width: u32, height: u32) -> (u32, u32) {
+    (width.max(MIN_WINDOW_WIDTH), height.max(MIN_WINDOW_HEIGHT))
+}
+
+// ---------------------------------------------------------------------------
 // Surface identity
 // ---------------------------------------------------------------------------
 
@@ -1407,5 +1645,307 @@ mod tests {
         // Button is encoded as +1 to leave 0 for "no button".
         assert_eq!(e.input.key_or_buttons, MouseButton::Left as u32 + 1);
         assert_eq!(e.input.button_state, ButtonState::Pressed as u32 + 1);
+    }
+
+    // -----------------------------------------------------------------
+    // M25 — hit-test geometry, z-order, focus history, route_event
+    // -----------------------------------------------------------------
+
+    fn deco() -> WindowDecoration {
+        WindowDecoration::DEFAULT
+    }
+
+    #[test]
+    fn surface_state_is_visible_only_for_active() {
+        assert!(SurfaceState::Active.is_visible());
+        assert!(!SurfaceState::Created.is_visible());
+        assert!(!SurfaceState::Configured.is_visible());
+        assert!(!SurfaceState::Suspended.is_visible());
+        assert!(!SurfaceState::Destroyed.is_visible());
+    }
+
+    #[test]
+    fn hit_zone_outside_returns_none() {
+        let z = hit_zone(-1, -1, 0, 0, 100, 100, &deco());
+        assert!(z.is_none());
+        let z = hit_zone(100, 50, 0, 0, 100, 100, &deco()); // x_end exclusive
+        assert!(z.is_none());
+    }
+
+    #[test]
+    fn hit_zone_corners_are_resize_zones() {
+        // 100x80 window at (10, 10), default decoration.
+        let d = deco();
+        let nw = hit_zone(10, 10, 10, 10, 100, 80, &d);
+        assert_eq!(nw, Some(HitZone::ResizeBorder(ResizeEdge::NorthWest)));
+        let ne = hit_zone(109, 10, 10, 10, 100, 80, &d);
+        assert_eq!(ne, Some(HitZone::ResizeBorder(ResizeEdge::NorthEast)));
+        let sw = hit_zone(10, 89, 10, 10, 100, 80, &d);
+        assert_eq!(sw, Some(HitZone::ResizeBorder(ResizeEdge::SouthWest)));
+        let se = hit_zone(109, 89, 10, 10, 100, 80, &d);
+        assert_eq!(se, Some(HitZone::ResizeBorder(ResizeEdge::SouthEast)));
+    }
+
+    #[test]
+    fn hit_zone_edges_distinguish_n_s_e_w() {
+        let d = deco();
+        // 200x120 window at (0,0); resize_margin=8 by default.
+        assert_eq!(
+            hit_zone(100, 2, 0, 0, 200, 120, &d),
+            Some(HitZone::ResizeBorder(ResizeEdge::North))
+        );
+        assert_eq!(
+            hit_zone(100, 117, 0, 0, 200, 120, &d),
+            Some(HitZone::ResizeBorder(ResizeEdge::South))
+        );
+        assert_eq!(
+            hit_zone(2, 60, 0, 0, 200, 120, &d),
+            Some(HitZone::ResizeBorder(ResizeEdge::West))
+        );
+        assert_eq!(
+            hit_zone(197, 60, 0, 0, 200, 120, &d),
+            Some(HitZone::ResizeBorder(ResizeEdge::East))
+        );
+    }
+
+    #[test]
+    fn hit_zone_close_button_takes_precedence_over_title_bar() {
+        let d = deco();
+        // 200x120 window at (0,0). Title bar is in the top strip; close
+        // button is the rightmost cell of the title bar (24 px wide).
+        // Pointer at (190, 12): inside title bar, inside close button.
+        let zone = hit_zone(190, 12, 0, 0, 200, 120, &d);
+        assert_eq!(zone, Some(HitZone::CloseButton));
+        // Pointer at (50, 12): inside title bar, NOT in close button.
+        let zone = hit_zone(50, 12, 0, 0, 200, 120, &d);
+        assert_eq!(zone, Some(HitZone::TitleBar));
+    }
+
+    #[test]
+    fn hit_zone_content_when_not_decoration() {
+        let d = deco();
+        // 200x120 window at (0,0). Pointer at (100, 60): inside content.
+        let zone = hit_zone(100, 60, 0, 0, 200, 120, &d);
+        assert_eq!(zone, Some(HitZone::Content));
+    }
+
+    // ---- ZOrder ----
+
+    #[test]
+    fn z_order_push_iter_in_order() {
+        let mut z = ZOrder::new();
+        assert!(z.push(SurfaceId(1)));
+        assert!(z.push(SurfaceId(2)));
+        assert!(z.push(SurfaceId(3)));
+        let collected: alloc::vec::Vec<_> = z.iter().collect();
+        assert_eq!(
+            collected,
+            alloc::vec![SurfaceId(1), SurfaceId(2), SurfaceId(3)]
+        );
+    }
+
+    #[test]
+    fn z_order_iter_top_down_reverses() {
+        let mut z = ZOrder::new();
+        z.push(SurfaceId(1));
+        z.push(SurfaceId(2));
+        z.push(SurfaceId(3));
+        let collected: alloc::vec::Vec<_> = z.iter_top_down().collect();
+        assert_eq!(
+            collected,
+            alloc::vec![SurfaceId(3), SurfaceId(2), SurfaceId(1)]
+        );
+    }
+
+    #[test]
+    fn z_order_raise_to_top_moves_existing_entry() {
+        let mut z = ZOrder::new();
+        z.push(SurfaceId(1));
+        z.push(SurfaceId(2));
+        z.push(SurfaceId(3));
+        z.raise_to_top(SurfaceId(1));
+        let collected: alloc::vec::Vec<_> = z.iter().collect();
+        assert_eq!(
+            collected,
+            alloc::vec![SurfaceId(2), SurfaceId(3), SurfaceId(1)]
+        );
+    }
+
+    #[test]
+    fn z_order_remove_existing() {
+        let mut z = ZOrder::new();
+        z.push(SurfaceId(1));
+        z.push(SurfaceId(2));
+        z.push(SurfaceId(3));
+        z.remove(SurfaceId(2));
+        let collected: alloc::vec::Vec<_> = z.iter().collect();
+        assert_eq!(collected, alloc::vec![SurfaceId(1), SurfaceId(3)]);
+        assert_eq!(z.len(), 2);
+    }
+
+    #[test]
+    fn z_order_full_capacity_rejects_extra_push() {
+        let mut z = ZOrder::new();
+        for i in 1..=MAX_SURFACES as u64 {
+            assert!(z.push(SurfaceId(i)));
+        }
+        assert!(!z.push(SurfaceId(999)));
+    }
+
+    #[test]
+    fn z_order_rejects_none_id() {
+        let mut z = ZOrder::new();
+        assert!(!z.push(SurfaceId::NONE));
+    }
+
+    // ---- FocusHistory ----
+
+    #[test]
+    fn focus_history_starts_empty() {
+        let h = FocusHistory::new();
+        assert!(h.is_empty());
+        assert!(h.most_recent().is_none());
+    }
+
+    #[test]
+    fn focus_history_touch_promotes_existing() {
+        let mut h = FocusHistory::new();
+        h.touch(SurfaceId(1));
+        h.touch(SurfaceId(2));
+        h.touch(SurfaceId(3));
+        h.touch(SurfaceId(1));
+        assert_eq!(h.most_recent(), Some(SurfaceId(1)));
+        assert_eq!(h.nth(1), Some(SurfaceId(3)));
+        assert_eq!(h.nth(2), Some(SurfaceId(2)));
+        assert_eq!(h.len(), 3);
+    }
+
+    #[test]
+    fn focus_history_evicts_lru_at_capacity() {
+        let mut h = FocusHistory::new();
+        for i in 1..=FOCUS_HISTORY_CAPACITY as u64 + 1 {
+            h.touch(SurfaceId(i));
+        }
+        assert_eq!(h.len(), FOCUS_HISTORY_CAPACITY);
+        assert!(!h.iter().any(|s| s == SurfaceId(1)));
+        assert_eq!(
+            h.most_recent(),
+            Some(SurfaceId(FOCUS_HISTORY_CAPACITY as u64 + 1))
+        );
+    }
+
+    #[test]
+    fn focus_history_remove_purges_entry() {
+        let mut h = FocusHistory::new();
+        h.touch(SurfaceId(1));
+        h.touch(SurfaceId(2));
+        h.remove(SurfaceId(1));
+        assert_eq!(h.len(), 1);
+        assert_eq!(h.most_recent(), Some(SurfaceId(2)));
+    }
+
+    #[test]
+    fn focus_history_rejects_none_id() {
+        let mut h = FocusHistory::new();
+        h.touch(SurfaceId::NONE);
+        assert!(h.is_empty());
+    }
+
+    // ---- route_event ----
+
+    #[test]
+    fn route_event_keyboard_to_keyboard_focus() {
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        let target = route_event(&event, Some(SurfaceId(7)), None);
+        assert_eq!(target, RouteTarget::Surface(SurfaceId(7)));
+    }
+
+    #[test]
+    fn route_event_keyboard_no_focus_dropped() {
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        let target = route_event(&event, None, None);
+        assert_eq!(target, RouteTarget::None);
+    }
+
+    #[test]
+    fn route_event_pointer_content_to_surface() {
+        let event = InputEvent::Pointer {
+            x: 100,
+            y: 100,
+            button: None,
+            state: None,
+        };
+        let hit = Some((SurfaceId(3), HitZone::Content));
+        assert_eq!(
+            route_event(&event, None, hit),
+            RouteTarget::Surface(SurfaceId(3))
+        );
+    }
+
+    #[test]
+    fn route_event_pointer_decoration_routes_locally() {
+        let event = InputEvent::Pointer {
+            x: 100,
+            y: 12,
+            button: Some(MouseButton::Left),
+            state: Some(ButtonState::Pressed),
+        };
+        let hit = Some((SurfaceId(3), HitZone::TitleBar));
+        assert_eq!(
+            route_event(&event, None, hit),
+            RouteTarget::Decoration {
+                surface: SurfaceId(3),
+                zone: HitZone::TitleBar
+            }
+        );
+    }
+
+    #[test]
+    fn route_event_pointer_no_hit_dropped() {
+        let event = InputEvent::Pointer {
+            x: 0,
+            y: 0,
+            button: None,
+            state: None,
+        };
+        assert_eq!(route_event(&event, None, None), RouteTarget::None);
+    }
+
+    // ---- clamp_window_size ----
+
+    #[test]
+    fn clamp_window_size_enforces_minimum() {
+        assert_eq!(
+            clamp_window_size(50, 50),
+            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        );
+        assert_eq!(clamp_window_size(800, 600), (800, 600));
+    }
+
+    #[test]
+    fn clamp_window_size_at_exact_minimum_is_unchanged() {
+        assert_eq!(
+            clamp_window_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT),
+            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        );
+    }
+
+    // ---- WindowDecoration::DEFAULT ----
+
+    #[test]
+    fn window_decoration_default_metrics() {
+        let d = WindowDecoration::DEFAULT;
+        assert_eq!(d.title_bar_height, 24);
+        assert_eq!(d.border_width, 1);
+        assert_eq!(d.close_button_width, 24);
+        assert_eq!(d.resize_margin, 8);
     }
 }
