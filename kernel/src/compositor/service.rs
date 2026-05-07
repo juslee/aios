@@ -45,7 +45,12 @@ use crate::task::ThreadId;
 /// and the damage tracker arrive in Steps 12 and 13.
 struct CompositorState {
     /// IPC channel for this service.
-    #[allow(dead_code)] // Reserved for Step 17 (M25) input routing wire-up.
+    ///
+    /// Owned by `CompositorState` so the service is self-contained;
+    /// `compositor_loop` uses the local `ch` binding from
+    /// `COMPOSITOR_CHANNEL` for the receive loop. Read by Step 17 input
+    /// routing once per-client channels arrive in M26.
+    #[allow(dead_code)]
     channel: ChannelId,
     /// Display geometry as reported by the VirtIO-GPU driver.
     display: DisplayInfo,
@@ -508,6 +513,20 @@ fn release_buffer(handle: &GpuBufferHandle) {
 // ---------------------------------------------------------------------------
 // Compositor service channel (set during boot init, read by service thread)
 // ---------------------------------------------------------------------------
+
+/// Returns `true` if `ch` is the compositor's own service channel.
+///
+/// M25 sets every `Surface.channel` to the well-known compositor channel
+/// (no per-client channels yet — that arrives in M26). The input router
+/// uses this predicate to suppress event delivery onto our own recv
+/// queue, which would otherwise round-trip the bytes back into
+/// `process_request`, fail the size check, and spam the log.
+pub fn is_self_channel(ch: ChannelId) -> bool {
+    match *COMPOSITOR_CHANNEL.lock() {
+        Some(self_ch) => self_ch == ch,
+        None => false,
+    }
+}
 
 /// Channel ID for the compositor service, set during boot init.
 ///

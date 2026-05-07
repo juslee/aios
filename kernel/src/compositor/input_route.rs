@@ -17,9 +17,7 @@
 // `HotkeyFilter`.
 #![allow(dead_code)]
 
-use shared::compositor::{
-    hit_zone, CompositorEvent, HitZone, ResizeEdge, SurfaceId, WindowDecoration,
-};
+use shared::compositor::{hit_zone, CompositorEvent, HitZone, SurfaceId, WindowDecoration};
 use shared::input::{InputEvent, MouseButton};
 
 use super::cursor;
@@ -327,21 +325,7 @@ fn deliver_to_surface(id: SurfaceId, event: &InputEvent) {
     }
 
     let payload = CompositorEvent::input(id, event);
-    let bytes: &[u8] = unsafe {
-        // SAFETY: CompositorEvent is repr(C) Copy with no padding-trap
-        // fields. We borrow its bytes for the duration of the IPC call.
-        // The slice does not outlive `payload`.
-        // Maintained by: payload is on this function's stack; the slice is
-        // consumed synchronously by ipc_send before payload goes out of scope.
-        // Violation: a longer-lived borrow would dangle when the stack frame
-        // exits.
-        core::slice::from_raw_parts(
-            (&payload as *const CompositorEvent) as *const u8,
-            core::mem::size_of::<CompositorEvent>(),
-        )
-    };
-
-    let _ = crate::ipc::ipc_send(channel, bytes);
+    send_event_bytes(channel, &payload);
 }
 
 /// Click-to-focus side effect. Updates focus state and z-order.
@@ -374,6 +358,8 @@ pub fn notify_focus_change(change: super::focus::FocusChange) {
     };
 
     if let (Some(id), Some(ch)) = (change.lost, lost_channel) {
+        // send_event_bytes() suppresses the self-channel case — see
+        // crate::compositor::service::is_self_channel.
         let event = CompositorEvent::focus_changed(id, false);
         send_event_bytes(ch, &event);
     }
@@ -384,8 +370,13 @@ pub fn notify_focus_change(change: super::focus::FocusChange) {
 }
 
 /// Internal helper: serialize a `CompositorEvent` to bytes and `ipc_send`
-/// it on the given channel. Best-effort.
+/// it on the given channel. Best-effort. Skips the send if `channel` is
+/// the compositor's own service channel — see
+/// `crate::compositor::service::is_self_channel`.
 pub fn send_event_bytes(channel: shared::ipc::ChannelId, event: &CompositorEvent) {
+    if super::service::is_self_channel(channel) {
+        return;
+    }
     let bytes: &[u8] = unsafe {
         // SAFETY: CompositorEvent is repr(C) Copy. We borrow its bytes for
         // the duration of the synchronous ipc_send call.
@@ -397,19 +388,6 @@ pub fn send_event_bytes(channel: shared::ipc::ChannelId, event: &CompositorEvent
         )
     };
     let _ = crate::ipc::ipc_send(channel, bytes);
-}
-
-// Helper used by the resize edge → cursor mapping (also referenced by
-// Step 21 move/resize handlers).
-#[allow(dead_code)]
-pub const fn edge_is_corner(edge: ResizeEdge) -> bool {
-    matches!(
-        edge,
-        ResizeEdge::NorthEast
-            | ResizeEdge::NorthWest
-            | ResizeEdge::SouthEast
-            | ResizeEdge::SouthWest
-    )
 }
 
 // ---------------------------------------------------------------------------

@@ -7,10 +7,13 @@
 //!     no IPC notification.
 //!   * Focus history is the most-recently-used order used by Alt+Tab cycling.
 //!
-//! The `FocusManager` is a leaf mutex — never held while issuing IPC calls
-//! or while holding `SURFACE_TABLE`/`WINDOW_Z_ORDER`. Callers snapshot the
-//! affected surface ids under the lock, then drop the lock before sending
-//! `FocusChanged` events.
+//! `FOCUS_MANAGER` is a leaf mutex — every public mutator returns the
+//! affected surfaces (a `FocusChange`) so callers can drop the lock
+//! before issuing IPC events or acquiring `SURFACE_TABLE` /
+//! `WINDOW_Z_ORDER`. The lock is never held across `ipc_send` /
+//! `ipc_reply`. The leaf-only invariant is enforced by inspection at
+//! every call site (Step 20's `notify_focus_change`, Step 22's
+//! `apply_switch_window`/`apply_close_window`).
 //
 // Mutators wired by Step 20 (input router routes click → set_keyboard_focus)
 // and Step 22 (Alt+Tab cycles focus history). The kernel-side IPC dispatch
@@ -141,10 +144,10 @@ impl Default for FocusManager {
 
 /// System-wide focus state.
 ///
-/// Lock ordering: leaf — never held while sending IPC events, locking
-/// `SURFACE_TABLE`, `WINDOW_Z_ORDER`, or `DRAG_STATE`. Every public
-/// operation returns enough information for the caller to drop this
-/// lock before performing follow-up work.
+/// Lock ordering: leaf — every public operation returns a `FocusChange`
+/// so the caller can drop this lock before sending IPC events or
+/// acquiring `SURFACE_TABLE`, `WINDOW_Z_ORDER`, or `DRAG_STATE`. Never
+/// nested inside any of those.
 pub static FOCUS_MANAGER: Mutex<FocusManager> = Mutex::new(FocusManager::new());
 
 // ---------------------------------------------------------------------------

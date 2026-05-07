@@ -10,11 +10,14 @@
 //!
 //! ## Lock ordering
 //!
-//! `WINDOW_Z_ORDER` and `DRAG_STATE` are leaf mutexes — never held while
-//! acquiring `SURFACE_TABLE`, the IPC table, or any VirtIO leaf. The
-//! z-order list is read by the compositor render path and mutated when a
-//! surface is created, focused, or destroyed; both happen in the compositor
-//! service thread, so contention is minimal.
+//! Both `WINDOW_Z_ORDER` and `DRAG_STATE` rank **above** `SURFACE_TABLE`
+//! in the global lock chain — `hit_test_topmost` walks the z-order list
+//! while holding `SURFACE_TABLE` open, and `handle_decoration_event`
+//! enters `DRAG_STATE` first then snapshots geometry from
+//! `SURFACE_TABLE`. Each is **below** the IPC tables (CHANNEL_TABLE,
+//! SHARED_REGION_TABLE) and is never held across an IPC call — callers
+//! snapshot the affected fields under the lock then drop it before
+//! `ipc_send`/`ipc_reply`. See `CLAUDE.md` for the full chain.
 //!
 //! See [shared::compositor] for the pure data types ([`HitZone`],
 //! [`ResizeEdge`], [`WindowDecoration`]) and the geometric `hit_zone()`
@@ -37,8 +40,11 @@ use super::surface::{Surface, SURFACE_TABLE};
 // Z-order tracking
 // ---------------------------------------------------------------------------
 
-/// Global z-order list. Lock ordering: leaf — never held across IPC or
-/// VirtIO calls; specifically never held while `SURFACE_TABLE` is locked.
+/// Global z-order list.
+///
+/// Lock ordering: ranks above `SURFACE_TABLE` (the hit-test walk locks Z
+/// first, then SURFACE_TABLE) and below the IPC tables. Never held
+/// across an `ipc_send`/`ipc_reply` call.
 pub static WINDOW_Z_ORDER: Mutex<ZOrder> = Mutex::new(ZOrder::new());
 
 // ---------------------------------------------------------------------------
@@ -110,8 +116,14 @@ impl DragState {
     }
 }
 
-/// Global drag state. Leaf mutex — never held while sending IPC events or
-/// holding `SURFACE_TABLE`/`FOCUS_MANAGER`.
+/// Global drag state.
+///
+/// Lock ordering: ranks above `SURFACE_TABLE` (`handle_decoration_event`
+/// holds DRAG_STATE while reading surface geometry on pointer-down)
+/// and below `FOCUS_MANAGER`/`WINDOW_Z_ORDER` (drag never raises focus
+/// directly — that goes through `input_route::promote_to_focus` after
+/// `DRAG_STATE` is dropped). Never held across an IPC call — pointer-up
+/// flips state to `Idle` synchronously without IPC.
 pub static DRAG_STATE: Mutex<DragState> = Mutex::new(DragState::Idle);
 
 // ---------------------------------------------------------------------------

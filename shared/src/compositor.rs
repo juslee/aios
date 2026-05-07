@@ -822,12 +822,17 @@ impl CompositorCommand {
 /// Compositor request — fixed-size, repr(C), serialized into RawMessage.data.
 ///
 /// All fields are always present; unused fields are zeroed. Discriminate via
-/// `command` and read only the fields relevant to that command.
+/// `command` and read only the fields relevant to that command. Explicit
+/// `_pad_*` fields make every byte named so the entire struct is fully
+/// initialized when serialized to bytes for IPC transport (no implicit
+/// padding to leak uninitialized memory).
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct CompositorRequest {
     /// Command discriminant (matches `CompositorCommand`).
     pub command: u32,
+    /// Explicit padding so `surface_id` lands at offset 8 (its natural u64 alignment).
+    pub _pad_command: [u8; 4],
     /// SurfaceId.0 (for AttachBuffer, DestroySurface, Resize, SetLayer; 0 on CreateSurface).
     pub surface_id: u64,
     /// Surface width (CreateSurface, Resize).
@@ -865,6 +870,7 @@ impl CompositorRequest {
     pub const fn zeroed() -> Self {
         Self {
             command: 0,
+            _pad_command: [0; 4],
             surface_id: 0,
             width: 0,
             height: 0,
@@ -935,6 +941,11 @@ impl CompositorEventTag {
 pub struct CompositorEvent {
     /// Event variant tag.
     pub tag: u32,
+    /// Explicit padding so `surface_id` lands at offset 8 (its natural u64
+    /// alignment). Together with the other `_pad_*` fields below, this
+    /// keeps the entire struct fully named so serializing it to bytes for
+    /// IPC transport never exposes uninitialized memory.
+    pub _pad_tag: [u8; 4],
     /// Surface id this event refers to (0 if not surface-bound).
     pub surface_id: u64,
     /// New surface width (Configure).
@@ -949,6 +960,8 @@ pub struct CompositorEvent {
     pub _pad: [u8; 3],
     /// Released shared memory region id (BufferReleased).
     pub shmem_id: u32,
+    /// Explicit padding so `timestamp_ticks` lands at its u64 alignment.
+    pub _pad_shmem: [u8; 4],
     /// Frame presentation timestamp in 1 kHz timer ticks (FramePresented).
     pub timestamp_ticks: u64,
     /// Embedded input event (Input). Other variants leave this zeroed.
@@ -1025,6 +1038,7 @@ impl CompositorEvent {
     pub const fn zeroed() -> Self {
         Self {
             tag: 0,
+            _pad_tag: [0; 4],
             surface_id: 0,
             width: 0,
             height: 0,
@@ -1032,6 +1046,7 @@ impl CompositorEvent {
             focused: 0,
             _pad: [0; 3],
             shmem_id: 0,
+            _pad_shmem: [0; 4],
             timestamp_ticks: 0,
             input: InputEventBytes::zeroed(),
         }

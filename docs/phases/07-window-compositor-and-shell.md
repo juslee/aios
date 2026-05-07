@@ -572,19 +572,22 @@ the size below `MIN_WINDOW_*`. The drag state machine
 - [x] Create `kernel/src/compositor/hotkey.rs`
 - [x] Define `HotkeyBinding`: `key_combo`, `action: HotkeyAction`
 - [x] Define `HotkeyAction` enum: `SwitchWindow`, `CloseWindow`, `ShowWorkspace`
-- [x] Register: Alt+Tab → SwitchWindow, Alt+F4 → CloseWindow, Super → ShowWorkspace
+- [x] Register: Alt+Tab → SwitchWindow, Alt+F4 → CloseWindow
+- [ ] ~~Register: Super → ShowWorkspace~~ — deferred to M26 (see note)
 - [x] Alt+Tab: cycle through `focus_history`, set keyboard focus to next entry, raise to top
 - [x] Alt+F4: send `CloseRequested` to currently focused surface
-- [x] Super key: toggle Workspace surface visibility (Step 27)
+- [ ] ~~Super key: toggle Workspace surface visibility (Step 26)~~ — deferred to M26 (see note)
 - [x] Hotkeys consumed by the filter — never forwarded to surfaces
 
-**Note (post-implementation):** Bare-Super → ShowWorkspace is wired in
-the `apply()` dispatch but **not** registered in `SYSTEM_HOTKEYS` for
-M25 — the bare-Super press carries `Modifiers::SUPER` set on the same
-event, which makes the matching ambiguous without a release-edge
-detector. Workspace toggle activation lands in M26 alongside the
-Workspace surface itself; the dispatch path emits an
-`info!("ShowWorkspace placeholder")` log when invoked.
+**Note (post-implementation):** The `HotkeyAction::ShowWorkspace`
+variant and `apply_show_workspace()` dispatch are defined, but
+bare-Super is **not** registered in `SYSTEM_HOTKEYS` for M25 — the
+bare-Super press carries `Modifiers::SUPER` set on the same event,
+which makes the matching ambiguous without a release-edge detector.
+Workspace toggle activation lands in M26 alongside the Workspace
+surface itself; if `apply_show_workspace()` is reached today (e.g.,
+through a future agent-registered binding) it logs
+`Hotkey: ShowWorkspace (M26 placeholder)` via `kinfo!` and returns.
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.3
 
