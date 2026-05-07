@@ -890,6 +890,19 @@ pub struct CompositorRequest {
     pub damage_w: u32,
     /// Damage rect height (AttachBuffer when damage_tag=2).
     pub damage_h: u32,
+    /// Explicit padding so `client_channel` lands at offset 120 (its
+    /// natural u64 alignment). Per M25's implicit-padding lesson, every
+    /// byte of a `repr(C)` IPC struct must be named so serializing it
+    /// to bytes never exposes uninitialized memory.
+    pub _pad_damage: [u8; 4],
+    /// M26 Step 28: per-client channel id. Set by `CreateSurface` to the
+    /// caller-owned `ChannelId.0` so the compositor delivers events
+    /// (Configure, Input, FocusChanged, BufferReleased, CloseRequested)
+    /// directly to the client's receive endpoint instead of the
+    /// well-known compositor channel. A value of `0` means "use the
+    /// service channel" — preserves backward-compat for shell-internal
+    /// surfaces that share the compositor's channel.
+    pub client_channel: u64,
 }
 
 impl CompositorRequest {
@@ -913,7 +926,80 @@ impl CompositorRequest {
             damage_y: 0,
             damage_w: 0,
             damage_h: 0,
+            _pad_damage: [0; 4],
+            client_channel: 0,
         }
+    }
+
+    /// Build a `CreateSurface` request.
+    ///
+    /// `client_channel` is the caller's per-client receive channel; the
+    /// compositor stores it on the new surface and delivers events
+    /// (Configure, Input, FocusChanged, …) to that channel. Pass `0` for
+    /// shell-internal callers (Status Strip, Taskbar, Workspace) where
+    /// the compositor is also the recipient — `0` is interpreted as
+    /// "use the service channel" to preserve M25's self-channel
+    /// suppression behaviour.
+    pub fn create_surface(
+        width: u32,
+        height: u32,
+        title: &[u8],
+        layer: SurfaceLayer,
+        content_type: SurfaceContentType,
+        client_channel: u64,
+    ) -> Self {
+        let mut r = Self::zeroed();
+        r.command = CompositorCommand::CreateSurface as u32;
+        r.width = width;
+        r.height = height;
+        r.layer = layer as u8;
+        r.content_type = content_type as u8;
+        let cut = title.len().min(SURFACE_TITLE_MAX);
+        r.title[..cut].copy_from_slice(&title[..cut]);
+        r.title_len = cut as u8;
+        r.client_channel = client_channel;
+        r
+    }
+
+    /// Build an `AttachBuffer` request.
+    pub fn attach_buffer(
+        surface_id: SurfaceId,
+        shmem_id: SharedMemoryId,
+        damage: DamageRegion,
+    ) -> Self {
+        let mut r = Self::zeroed();
+        r.command = CompositorCommand::AttachBuffer as u32;
+        r.surface_id = surface_id.0;
+        r.shmem_id = shmem_id.0;
+        match damage {
+            DamageRegion::Empty => {
+                r.damage_tag = 0;
+            }
+            DamageRegion::FullSurface => {
+                r.damage_tag = 1;
+            }
+            DamageRegion::Rect {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                r.damage_tag = 2;
+                r.damage_x = x;
+                r.damage_y = y;
+                r.damage_w = width;
+                r.damage_h = height;
+            }
+        }
+        r
+    }
+
+    /// Build a `DestroySurface` request.
+    pub fn destroy_surface(surface_id: SurfaceId) -> Self {
+        let mut r = Self::zeroed();
+        r.command = CompositorCommand::DestroySurface as u32;
+        r.surface_id = surface_id.0;
+        r
     }
 
     /// Decode the damage region carried by this request (only meaningful for AttachBuffer).
@@ -929,6 +1015,23 @@ impl CompositorRequest {
             },
             _ => DamageRegion::Empty,
         }
+    }
+}
+
+/// Resolve the per-surface channel id from a `CompositorRequest`.
+///
+/// When `req.client_channel == 0` the request was built by a
+/// shell-internal caller; the compositor stores the well-known service
+/// channel on the surface, preserving M25's `is_self_channel`-suppression
+/// behaviour. Otherwise the explicit per-client channel is used.
+///
+/// Pure function so the kernel-side IPC dispatcher and the host test
+/// suite share the same logic.
+pub const fn effective_channel(client_channel: u64, service_channel: ChannelId) -> ChannelId {
+    if client_channel == 0 {
+        service_channel
+    } else {
+        ChannelId(client_channel as u32)
     }
 }
 
@@ -1023,6 +1126,49 @@ impl InputEventBytes {
             y: 0,
             button_state: 0,
             _reserved: [0; 2],
+        }
+    }
+
+    /// Decode wire bytes back into an `InputEvent`.
+    ///
+    /// Returns `None` when the tag is unknown — the IPC framing
+    /// already validated the byte length, but the embedded discriminants
+    /// might still be garbage on a misframed message.
+    pub fn decode(&self) -> Option<InputEvent> {
+        use crate::input::{ButtonState, KeyState, Modifiers, MouseButton};
+        match self.tag {
+            1 => {
+                let key = crate::input::KeyCode::from_evdev(self.key_or_buttons as u16);
+                let state = KeyState::from_value(self.state_or_modifiers & 0xFF)?;
+                let modifiers = Modifiers((self.state_or_modifiers >> 8) as u8);
+                Some(InputEvent::Keyboard {
+                    key,
+                    state,
+                    modifiers,
+                })
+            }
+            2 => {
+                let button = match self.key_or_buttons {
+                    0 => None,
+                    1 => Some(MouseButton::Left),
+                    2 => Some(MouseButton::Right),
+                    3 => Some(MouseButton::Middle),
+                    _ => return None,
+                };
+                let bstate = match self.button_state {
+                    0 => None,
+                    1 => Some(ButtonState::Pressed),
+                    2 => Some(ButtonState::Released),
+                    _ => return None,
+                };
+                Some(InputEvent::Pointer {
+                    x: self.x,
+                    y: self.y,
+                    button,
+                    state: bstate,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -2928,5 +3074,157 @@ mod tests {
         );
         // Second entry cell — out of supplied slice → None (no panic).
         assert_eq!(taskbar_pointer_action(&layout, &entries, 300, 20), None);
+    }
+
+    // ---- CompositorRequest::create_surface and effective_channel (M26 Step 28) ----
+
+    #[test]
+    fn compositor_request_size_under_message_limit() {
+        // Adding `client_channel + _pad_damage` raises the size from the
+        // pre-Step-28 footprint, but it must still fit in MAX_MESSAGE_SIZE.
+        assert!(core::mem::size_of::<CompositorRequest>() <= MAX_MESSAGE_SIZE);
+    }
+
+    #[test]
+    fn compositor_request_size_is_eight_byte_aligned() {
+        // The struct's natural alignment is 8 (from u64 fields). Total
+        // size must be a multiple of 8 so an array of requests has no
+        // implicit gaps between elements.
+        assert_eq!(core::mem::size_of::<CompositorRequest>() % 8, 0);
+    }
+
+    #[test]
+    fn create_surface_factory_populates_fields() {
+        let req = CompositorRequest::create_surface(
+            400,
+            300,
+            b"test-app",
+            SurfaceLayer::Normal,
+            SurfaceContentType::Generic,
+            42,
+        );
+        assert_eq!(req.command, CompositorCommand::CreateSurface as u32);
+        assert_eq!(req.width, 400);
+        assert_eq!(req.height, 300);
+        assert_eq!(req.layer, SurfaceLayer::Normal as u8);
+        assert_eq!(req.content_type, SurfaceContentType::Generic as u8);
+        assert_eq!(&req.title[..req.title_len as usize], b"test-app");
+        assert_eq!(req.client_channel, 42);
+    }
+
+    #[test]
+    fn create_surface_factory_truncates_overlong_title() {
+        let long = [b'a'; SURFACE_TITLE_MAX + 16];
+        let req = CompositorRequest::create_surface(
+            100,
+            100,
+            &long,
+            SurfaceLayer::Normal,
+            SurfaceContentType::Generic,
+            0,
+        );
+        assert_eq!(req.title_len as usize, SURFACE_TITLE_MAX);
+    }
+
+    #[test]
+    fn create_surface_factory_zero_channel_for_shell() {
+        let req = CompositorRequest::create_surface(
+            1280,
+            32,
+            b"status-strip",
+            SurfaceLayer::Panel,
+            SurfaceContentType::SystemUI,
+            0,
+        );
+        assert_eq!(req.client_channel, 0);
+    }
+
+    #[test]
+    fn attach_buffer_factory_full_damage() {
+        let req = CompositorRequest::attach_buffer(
+            SurfaceId(7),
+            SharedMemoryId(3),
+            DamageRegion::FullSurface,
+        );
+        assert_eq!(req.command, CompositorCommand::AttachBuffer as u32);
+        assert_eq!(req.surface_id, 7);
+        assert_eq!(req.shmem_id, 3);
+        assert_eq!(req.damage_tag, 1);
+    }
+
+    #[test]
+    fn attach_buffer_factory_rect_damage_round_trips() {
+        let region = DamageRegion::Rect {
+            x: 5,
+            y: 10,
+            width: 100,
+            height: 50,
+        };
+        let req = CompositorRequest::attach_buffer(SurfaceId(7), SharedMemoryId(3), region);
+        assert_eq!(req.damage_tag, 2);
+        assert_eq!(req.decode_damage(), region);
+    }
+
+    #[test]
+    fn destroy_surface_factory() {
+        let req = CompositorRequest::destroy_surface(SurfaceId(9));
+        assert_eq!(req.command, CompositorCommand::DestroySurface as u32);
+        assert_eq!(req.surface_id, 9);
+    }
+
+    #[test]
+    fn effective_channel_zero_falls_back_to_service() {
+        let svc = ChannelId(1);
+        assert_eq!(effective_channel(0, svc), svc);
+    }
+
+    #[test]
+    fn effective_channel_nonzero_returns_client_channel() {
+        let svc = ChannelId(1);
+        assert_eq!(effective_channel(7, svc), ChannelId(7));
+    }
+
+    #[test]
+    fn effective_channel_truncates_high_bits() {
+        // Upper 32 bits of `client_channel` are reserved for future
+        // endpoint encoding; the current ChannelId is u32 so we narrow.
+        let svc = ChannelId(1);
+        assert_eq!(
+            effective_channel(0xFFFF_FFFF_0000_002A, svc),
+            ChannelId(0x0000_002A)
+        );
+    }
+
+    #[test]
+    fn compositor_request_round_trip_via_bytes() {
+        // Serialize → deserialize round-trip — exercises the M25
+        // padding-UB rule: every byte of the struct must be named so
+        // the bytes view is fully initialized.
+        let original = CompositorRequest::create_surface(
+            400,
+            300,
+            b"hello",
+            SurfaceLayer::Normal,
+            SurfaceContentType::Generic,
+            123,
+        );
+        let bytes: &[u8] = unsafe {
+            core::slice::from_raw_parts(
+                (&original as *const CompositorRequest) as *const u8,
+                core::mem::size_of::<CompositorRequest>(),
+            )
+        };
+        let mut copy = CompositorRequest::zeroed();
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                (&mut copy as *mut CompositorRequest) as *mut u8,
+                bytes.len(),
+            );
+        }
+        assert_eq!(copy.command, original.command);
+        assert_eq!(copy.width, original.width);
+        assert_eq!(copy.client_channel, original.client_channel);
+        assert_eq!(&copy.title[..copy.title_len as usize], b"hello");
     }
 }

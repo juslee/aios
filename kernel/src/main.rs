@@ -336,6 +336,11 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // when the thread runs.
     if drivers::virtio_gpu::display_info().is_some() {
         compositor::service::init_compositor();
+        // M26 Step 28: spawn the test app — first real client of the
+        // compositor's per-client channel surface lifecycle. The thread
+        // starts running once `sched::start()` brings secondaries online.
+        compositor::test_app::spawn_test_app();
+        advance_boot_phase(EarlyBootPhase::CompositorReady);
     } else {
         kinfo!(Boot, "No display — compositor service skipped");
     }

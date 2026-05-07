@@ -90,6 +90,28 @@ pub struct Surface {
 const COMPOSITOR_PROCESS_ID: ProcessId = ProcessId(10);
 
 impl Surface {
+    /// Zero-filled placeholder Surface used to initialize fixed-size
+    /// snapshot arrays in the compose path. NOT a valid surface — only
+    /// the `[..count]` prefix populated by `snapshot_visible_surfaces`
+    /// is meaningful.
+    pub const SENTINEL: Self = Self {
+        id: SurfaceId::NONE,
+        state: SurfaceState::Created,
+        layer: SurfaceLayer::Background,
+        title: SurfaceTitle::EMPTY,
+        content_type: SurfaceContentType::Generic,
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        shmem_id: None,
+        owner_pid: ProcessId(0),
+        channel: ChannelId(0),
+        layer_seq: 0,
+        damaged: false,
+        visible: false,
+    };
+
     /// Returns true when this surface is a compositor-internal "shell"
     /// surface (Status Strip, Taskbar, future Workspace).
     ///

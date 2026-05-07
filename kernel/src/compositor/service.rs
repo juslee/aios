@@ -291,11 +291,20 @@ fn present_frame_if_due(state: &mut CompositorState) {
     }
 }
 
-/// Master switch for the compose-and-present loop. M24 ships with the
-/// loop scaffolding wired but presentation gated off (see the doc-comment
-/// on `present_frame_if_due` for the full reason). Step 17 (M25) flips
-/// this to true once the IPC dispatch resolves shmem-backed surface
-/// buffers and the pre-existing torn-read paths are addressed.
+/// Master switch for the compose-and-present loop. M26 Step 28 wires
+/// per-client channels and the test app — the infrastructure needed to
+/// flip this to `true` for visible pixel output. The flip is **deferred
+/// for now** because investigation during Step 28 surfaced a
+/// pre-existing memory-corruption issue (manifests as
+/// `free_pages(addr, 192) — address not in any pool` panic mid-boot,
+/// followed by SURFACE_TABLE corruption that makes shell-surface
+/// AttachBuffer return NotFound on a fresh surface id).
+///
+/// The corruption is independent of the compose+present pipeline — it
+/// reproduces with the flag off too — but it currently prevents
+/// reliable visible output. Root-causing it is a separate workstream;
+/// see `docs/knowledge/lessons/2026-05-07-cl-phase-7-m26-step-28-shell-attach-corruption.md`
+/// for the captured evidence.
 const COMPOSITOR_PRESENT_ENABLED: bool = false;
 
 /// Compose any pending surface damage into the back buffer, push it to the
@@ -311,6 +320,13 @@ fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
     let clear_first = state.needs_initial_clear;
     let mut frame_damage = DamageTracker::new();
 
+    // Snapshot SURFACE_TABLE into a sorted stack-allocated array. Drop
+    // the lock before calling compose_frame so the resolver below is
+    // free to acquire SHARED_REGION_TABLE without violating lock
+    // ordering (compose_frame itself takes no global locks).
+    let mut snapshot_buf = [surface::Surface::SENTINEL; shared::compositor::MAX_SURFACES];
+    let surface_count = snapshot_visible_surfaces(&mut snapshot_buf);
+
     let (back_resource_id, back_width, back_height) = {
         let back = state
             .back_buffer
@@ -324,11 +340,11 @@ fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
             back_pixels,
             width,
             height,
-            &[],
+            &snapshot_buf[..surface_count],
             &mut frame_damage,
             clear_first,
             render::DEFAULT_CLEAR_COLOR,
-            |_surface| None,
+            resolve_surface_pixels,
         );
         (resource_id, width, height)
     };
@@ -348,6 +364,77 @@ fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
     swap_buffers_after_compose(state)?;
     clear_surface_damage();
     Ok(())
+}
+
+/// Snapshot the SURFACE_TABLE's visible (Active) surfaces into `buf`,
+/// sorted ascending by `(layer, layer_seq)` so `compose_frame` blits
+/// background-first, panel-last. Returns the populated count.
+///
+/// Acquires SURFACE_TABLE briefly; drops before any further work.
+fn snapshot_visible_surfaces(
+    buf: &mut [surface::Surface; shared::compositor::MAX_SURFACES],
+) -> usize {
+    let mut count = 0usize;
+    {
+        let table = SURFACE_TABLE.lock();
+        for slot in table.iter() {
+            if let Some(s) = slot.as_ref() {
+                if !s.state.is_visible() {
+                    continue;
+                }
+                if count >= buf.len() {
+                    break;
+                }
+                buf[count] = *s;
+                count += 1;
+            }
+        }
+    }
+    buf[..count].sort_by_key(|s| (s.layer as u8, s.layer_seq));
+    count
+}
+
+/// Resolve a surface's `shmem_id` to a direct-map pixel slice.
+///
+/// Used by `compose_frame` as the per-surface buffer accessor. Returns
+/// `None` when the surface has no buffer attached (still in `Created`/
+/// `Configured` state) or when the shmem region has been destroyed.
+///
+/// Acquires `SHARED_REGION_TABLE` briefly via `region_dmap_addr` /
+/// `region_size`. Lock ordering: `SHARED_REGION_TABLE` ranks above
+/// `SURFACE_TABLE`; the compose path drops `SURFACE_TABLE` (the
+/// snapshot loop) before reaching this resolver, so the order is
+/// honored.
+///
+/// The slice's lifetime is tied to the input `&Surface` borrow, but
+/// the underlying memory is the kernel's permanent direct map — which
+/// outlives every caller. The lifetime tightening is purely for
+/// compose_frame's signature.
+fn resolve_surface_pixels(s: &surface::Surface) -> Option<&[u32]> {
+    let id = s.shmem_id?;
+    let va = crate::ipc::shmem::region_dmap_addr(id)?;
+    let bytes = crate::ipc::shmem::region_size(id)?;
+    let pixels = bytes / 4;
+    let need = (s.width as usize) * (s.height as usize);
+    if pixels < need {
+        return None;
+    }
+    // SAFETY: `va` is the kernel direct-map address of the shmem
+    // region's backing pages. The direct map is RW+XN and permanent
+    // for the lifetime of the kernel; shmem regions are never
+    // physically freed once allocated (M26 has no shmem teardown
+    // path). The returned slice is valid until shmem-region teardown,
+    // which never happens in M26.
+    // Maintained by: shmem subsystem holds the pages until process
+    // teardown, which doesn't happen for kernel-side test app or
+    // shell surfaces in M26.
+    // Violation: a freed shmem id would yield a stale pointer; the
+    // dmap lookup above already returns None for unknown ids, so the
+    // primary invariant is that `region_id` not be reused while a
+    // surface still references it (shmem_id allocation is monotonic
+    // — never reused).
+    let slice = unsafe { core::slice::from_raw_parts(va as *const u32, pixels) };
+    Some(slice)
 }
 
 /// Returns true if any surface has its damaged flag set.
@@ -771,9 +858,17 @@ fn handle_create_surface(
     let title_bytes = &req.title[..(req.title_len as usize).min(req.title.len())];
     let title = SurfaceTitle::from_bytes(title_bytes);
 
+    // M26 Step 28: per-client channels. `client_channel == 0` means the
+    // caller is shell-internal (Status Strip, Taskbar, Workspace) and
+    // wants the well-known service channel — preserves M25's
+    // self-channel suppression behaviour. Non-zero values name the
+    // client's per-client receive endpoint.
+    let surface_channel =
+        shared::compositor::effective_channel(req.client_channel, service_channel);
+
     match surface::surface_create(
         owner_pid,
-        service_channel,
+        surface_channel,
         req.width,
         req.height,
         title,
@@ -788,20 +883,15 @@ fn handle_create_surface(
                 let mut z = WINDOW_Z_ORDER.lock();
                 z.push(id);
             }
-            // First created surface receives keyboard focus. Notify side
-            // effect runs after dropping locks so we don't IPC-recurse.
-            let change = {
-                let mut fm = FOCUS_MANAGER.lock();
-                if fm.keyboard_focus().is_none() {
-                    fm.set_keyboard_focus(Some(id))
-                } else {
-                    super::focus::FocusChange {
-                        lost: None,
-                        gained: None,
-                    }
-                }
-            };
-            input_route::notify_focus_change(change);
+            // First created surface receives keyboard focus. The shell
+            // surfaces (Status Strip, Taskbar) come up before any client
+            // and would otherwise grab focus — `set_keyboard_focus_safe`
+            // refuses shell ids, so this branch only ever lands focus on
+            // a real client surface.
+            let already_focused = FOCUS_MANAGER.lock().keyboard_focus().is_some();
+            if !already_focused {
+                let _ = input_route::set_keyboard_focus_safe(Some(id));
+            }
             CompositorEvent::configure(id, req.width, req.height, 100)
         }
         Err(e) => {
