@@ -15,6 +15,7 @@
 
 use core::sync::atomic::AtomicBool;
 
+pub mod render;
 pub mod service;
 pub mod surface;
 

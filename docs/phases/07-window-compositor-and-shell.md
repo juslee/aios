@@ -327,14 +327,14 @@ when `pid.0 >= MAX_PROCESSES`, matching the `None`-slot fallthrough.
 **Note:** Premultiplied alpha formula (for future transparent surfaces): `out = src + dst * (1 - src_alpha)`. Phase 7 shell surfaces use `Xrgb8888` (opaque, no blending needed).
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/render.rs`
-- [ ] Implement `compose_frame(surfaces, comp_buffer)` — iterate surfaces in z-order, blit visible regions to composition buffer
-- [ ] Implement `blit_opaque(src_ptr, dst_ptr, src_rect, dst_x, dst_y, stride)` — per-pixel copy for `Xrgb8888`
-- [ ] Implement `blit_alpha_premultiplied(src_ptr, dst_ptr, ...)` — premultiplied alpha blend for `Argb8888` (used by window decorations)
-- [ ] Implement `DamageTracker` — per-surface dirty flags, screen-space damage accumulation, union of all damage regions
-- [ ] Implement damage-driven composition: only redraw regions that changed since last frame
-- [ ] Clear background to AIOS blue (`#5B8CFF` = 0xFF5B8CFF in B8G8R8A8) in undamaged areas
-- [ ] Map pixel format: compositor internal `Xrgb8888` maps to VirtIO-GPU `B8G8R8A8Unorm`
+- [x] Create `kernel/src/compositor/render.rs`
+- [x] Implement `compose_frame(surfaces, comp_buffer)` — iterate surfaces in z-order, blit visible regions to composition buffer
+- [x] Implement `blit_opaque(src_ptr, dst_ptr, src_rect, dst_x, dst_y, stride)` — per-pixel copy for `Xrgb8888`
+- [x] Implement `blit_alpha_premultiplied(src_ptr, dst_ptr, ...)` — premultiplied alpha blend for `Argb8888` (used by window decorations)
+- [x] Implement `DamageTracker` — per-surface dirty flags, screen-space damage accumulation, union of all damage regions
+- [x] Implement damage-driven composition: only redraw regions that changed since last frame
+- [x] Clear background to AIOS blue (`#5B8CFF` = 0xFF5B8CFF in B8G8R8A8) in undamaged areas
+- [x] Map pixel format: compositor internal `Xrgb8888` maps to VirtIO-GPU `B8G8R8A8Unorm`
 
 **Key reference:** [compositor/rendering.md](../platform/compositor/rendering.md) §5.2 Frame Composition, §5.1 (simplified)
 
