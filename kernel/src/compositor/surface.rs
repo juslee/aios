@@ -123,10 +123,8 @@ impl Surface {
     /// layer (none planned, but the predicate stays robust).
     ///
     /// Used by the Taskbar to filter shell surfaces out of its window
-    /// list (Step 25), and by Step 27's input router to refuse keyboard
-    /// focus on shell surfaces.
-    #[allow(dead_code)] // First consumer is Step 25 taskbar; Step 27 adds
-                        // the input-routing call site.
+    /// list (Step 25), and by the input router to refuse keyboard
+    /// focus on shell surfaces (Step 27).
     pub fn is_shell(&self) -> bool {
         self.owner_pid.0 == COMPOSITOR_PROCESS_ID.0 && matches!(self.layer, SurfaceLayer::Panel)
     }
@@ -337,14 +335,11 @@ pub fn surface_set_layer(
 
 /// Reposition a surface in screen coordinates.
 ///
-/// Used by the compositor's window-move drag handler and by shell
-/// surfaces (Taskbar, Workspace) that need to lock to specific edges of
-/// the display. Marks the surface damaged so the next composition
-/// frame picks up the new position.
-#[allow(dead_code)] // First consumer is M26 Step 25 (taskbar bottom-edge
-                    // anchoring); the M25 drag handler still mutates
-                    // SURFACE_TABLE inline and will migrate to this
-                    // helper when the lock-ordering audit revisits it.
+/// Used by shell surfaces (Taskbar, Workspace) that need to lock to
+/// specific edges of the display. Marks the surface damaged so the next
+/// composition frame picks up the new position. The M25 drag handler
+/// still mutates `SURFACE_TABLE` inline and will migrate to this helper
+/// when the lock-ordering audit revisits it.
 pub fn surface_set_position(
     id: SurfaceId,
     x: i32,
@@ -372,8 +367,6 @@ pub fn surface_set_position(
 /// (Active/Suspended). Used by the Workspace surface (M26 Step 26) to
 /// toggle home view via Super. Marks the surface damaged so the next
 /// composition rebuilds the affected screen region.
-#[allow(dead_code)] // First consumer is M26 Step 26 (Workspace toggle);
-                    // future agent-backgrounding paths will reuse this.
 pub fn surface_set_visible(
     id: SurfaceId,
     visible: bool,
@@ -409,10 +402,12 @@ fn find_mut(table: &mut [Option<Surface>; MAX_SURFACES], id: SurfaceId) -> Optio
 ///
 /// Used when the compositor itself detects a reason to recomposite a surface
 /// (e.g., a focus change or a layer reshuffle).
-/// Used by the gated `COMPOSITOR_PRESENT_ENABLED` render loop (M26+) and
-/// future call sites that need to force a recomposite without owning the
-/// surface (e.g., focus indicator change).
-#[allow(dead_code)]
+/// Used by the shell surface tick paths (Status Strip, Taskbar,
+/// Workspace) to force a recomposite after re-rendering into the
+/// backing buffer without owning the surface through the standard
+/// AttachBuffer protocol path. Once the present flag flips, the
+/// composition loop reads `Surface.damaged` to decide which surfaces
+/// to blit.
 pub fn mark_damaged(id: SurfaceId) {
     let mut table = SURFACE_TABLE.lock();
     if let Some(surface) = find_mut(&mut table, id) {
