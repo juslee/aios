@@ -1716,6 +1716,56 @@ pub const fn should_redraw_shell(needs_first_render: bool, snapshot_changed: boo
 }
 
 // ---------------------------------------------------------------------------
+// Workspace spaces-list render decision (M26 Step 30)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of space rows the Workspace renders.
+///
+/// Mirrors the kernel-side `kernel/src/compositor/shell/workspace.rs`
+/// constant. Centralizing here lets host tests reason about the
+/// truncation boundary without crossing the kernel-host divide.
+pub const WORKSPACE_MAX_SPACES_RENDERED: u8 = 8;
+
+/// What the Workspace renderer should draw for the spaces list given
+/// the current snapshot. Captured as a small enum so the dispatch
+/// (header → entries vs header → "(no spaces)") is a host-testable
+/// pure function rather than a tangle of branches in the renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceRenderMode {
+    /// Surface is hidden; renderer skips the spaces list entirely.
+    Hidden,
+    /// `space_list()` failed or returned zero entries — render
+    /// `"(no spaces)"` placeholder.
+    NoSpaces,
+    /// Render `n` entries (always ≤ `WORKSPACE_MAX_SPACES_RENDERED`).
+    WithSpaces(u8),
+}
+
+/// Decide what the Workspace renderer should draw given snapshot
+/// inputs. Pure — host-testable, no kernel deps.
+///
+/// Truncates `raw_space_count` at `WORKSPACE_MAX_SPACES_RENDERED` so
+/// the renderer's fixed-size snapshot array is always in bounds.
+pub const fn workspace_render_mode(
+    visible: bool,
+    spaces_unavailable: bool,
+    raw_space_count: u8,
+) -> WorkspaceRenderMode {
+    if !visible {
+        return WorkspaceRenderMode::Hidden;
+    }
+    if spaces_unavailable || raw_space_count == 0 {
+        return WorkspaceRenderMode::NoSpaces;
+    }
+    let capped = if raw_space_count > WORKSPACE_MAX_SPACES_RENDERED {
+        WORKSPACE_MAX_SPACES_RENDERED
+    } else {
+        raw_space_count
+    };
+    WorkspaceRenderMode::WithSpaces(capped)
+}
+
+// ---------------------------------------------------------------------------
 // Frame-window summary formatting (M26 Step 29)
 // ---------------------------------------------------------------------------
 
@@ -3406,6 +3456,75 @@ mod tests {
     fn should_redraw_shell_changed_redraws() {
         // Cache differs from new snapshot → redraw.
         assert!(should_redraw_shell(false, true));
+    }
+
+    // ---- Workspace render mode (M26 Step 30) ----
+
+    #[test]
+    fn workspace_render_mode_hidden_dominates() {
+        // Even with spaces available, hidden short-circuits.
+        assert_eq!(
+            workspace_render_mode(false, false, 3),
+            WorkspaceRenderMode::Hidden
+        );
+        assert_eq!(
+            workspace_render_mode(false, true, 0),
+            WorkspaceRenderMode::Hidden
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_unavailable_renders_no_spaces() {
+        // space_list() failed.
+        assert_eq!(
+            workspace_render_mode(true, true, 0),
+            WorkspaceRenderMode::NoSpaces
+        );
+        // Even if a count survived, unavailable wins.
+        assert_eq!(
+            workspace_render_mode(true, true, 5),
+            WorkspaceRenderMode::NoSpaces
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_zero_spaces_renders_placeholder() {
+        // Storage returned an empty list.
+        assert_eq!(
+            workspace_render_mode(true, false, 0),
+            WorkspaceRenderMode::NoSpaces
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_with_spaces_under_cap() {
+        assert_eq!(
+            workspace_render_mode(true, false, 1),
+            WorkspaceRenderMode::WithSpaces(1)
+        );
+        assert_eq!(
+            workspace_render_mode(true, false, 4),
+            WorkspaceRenderMode::WithSpaces(4)
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_caps_at_max() {
+        // Right at the cap.
+        assert_eq!(
+            workspace_render_mode(true, false, WORKSPACE_MAX_SPACES_RENDERED),
+            WorkspaceRenderMode::WithSpaces(WORKSPACE_MAX_SPACES_RENDERED)
+        );
+        // Over the cap — truncated.
+        assert_eq!(
+            workspace_render_mode(true, false, WORKSPACE_MAX_SPACES_RENDERED + 1),
+            WorkspaceRenderMode::WithSpaces(WORKSPACE_MAX_SPACES_RENDERED)
+        );
+        // Way over the cap — still truncated.
+        assert_eq!(
+            workspace_render_mode(true, false, 255),
+            WorkspaceRenderMode::WithSpaces(WORKSPACE_MAX_SPACES_RENDERED)
+        );
     }
 
     // ---- Frame window summary (M26 Step 29) ----

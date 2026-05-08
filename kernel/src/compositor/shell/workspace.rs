@@ -526,7 +526,22 @@ fn render_frame(buffer: &mut [u32], width: u32, height: u32, snap: &WorkspaceSna
     );
     row_y += SPACES_LINE_HEIGHT;
 
-    if snap.spaces_unavailable || snap.space_count == 0 {
+    // Step 30: dispatch through the shared `workspace_render_mode`
+    // helper so kernel + host tests share one decision tree. Hidden
+    // surfaces never reach this path (the tick fast-path returns
+    // earlier) but we still pass `snap.visible` so the helper
+    // captures the full input space.
+    let mode = shared::compositor::workspace_render_mode(
+        snap.visible,
+        snap.spaces_unavailable,
+        snap.space_count,
+    );
+    let entries_to_render = match mode {
+        shared::compositor::WorkspaceRenderMode::Hidden
+        | shared::compositor::WorkspaceRenderMode::NoSpaces => 0,
+        shared::compositor::WorkspaceRenderMode::WithSpaces(n) => n as usize,
+    };
+    if entries_to_render == 0 {
         draw_text_clipped(
             buffer,
             width,
@@ -539,7 +554,7 @@ fn render_frame(buffer: &mut [u32], width: u32, height: u32, snap: &WorkspaceSna
             WORKSPACE_BG,
         );
     } else {
-        for i in 0..snap.space_count as usize {
+        for i in 0..entries_to_render {
             let entry = &snap.spaces[i];
             let name = &entry.name[..entry.name_len as usize];
             // Bullet marker so an empty name still has a visible row.
