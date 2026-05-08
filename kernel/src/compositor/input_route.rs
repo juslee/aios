@@ -17,13 +17,16 @@
 // `HotkeyFilter`.
 #![allow(dead_code)]
 
-use shared::compositor::{hit_zone, CompositorEvent, HitZone, SurfaceId, WindowDecoration};
+use shared::compositor::{
+    hit_zone, route_event_with_shell, CompositorEvent, HitZone, RouteTarget, SurfaceId,
+    WindowDecoration,
+};
 use shared::input::{InputEvent, MouseButton};
 
 use super::cursor;
 use super::focus::FOCUS_MANAGER;
 use super::hotkey;
-use super::surface::SURFACE_TABLE;
+use super::surface::{is_shell_id, SURFACE_TABLE};
 use super::window::{outer_rect, WINDOW_Z_ORDER};
 
 // ---------------------------------------------------------------------------
@@ -97,6 +100,19 @@ impl HotkeyFilter {
     }
 
     fn handle(&self, event: &InputEvent) -> FilterResult {
+        // M26 Step 26: feed every keyboard event into the bare-Super
+        // edge detector first. It returns `Some(ShowWorkspace)` only on
+        // a true tap-and-release of Super alone; Super-anything-else
+        // combos are silently absorbed. Super press/release events are
+        // always consumed so they never reach client surfaces.
+        if let Some(action) = hotkey::super_key_edge_detector(event) {
+            hotkey::apply(action);
+            return FilterResult::Consume;
+        }
+        if hotkey::is_super_event(event) {
+            return FilterResult::Consume;
+        }
+
         if let InputEvent::Keyboard {
             key,
             state,
@@ -127,39 +143,13 @@ impl InputFilter for HotkeyFilter {
 // ---------------------------------------------------------------------------
 // Stage 3: focus router — pick a target surface
 // ---------------------------------------------------------------------------
-
-/// Where a routed event should be delivered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouteTarget {
-    /// Deliver to the surface (its IPC channel).
-    Surface(SurfaceId),
-    /// Pointer landed on decoration that the compositor handles itself —
-    /// the move/resize/close-button machinery (Step 21).
-    Decoration { surface: SurfaceId, zone: HitZone },
-    /// No target — the event is dropped (e.g. pointer over empty desktop).
-    None,
-}
-
-/// Resolve the target for `event` given the current focus and z-order
-/// state. Pure logic given the shared inputs — split out so it can be
-/// tested without locking globals.
-pub fn route_event(
-    event: &InputEvent,
-    keyboard_focus: Option<SurfaceId>,
-    pointer_hit: Option<(SurfaceId, HitZone)>,
-) -> RouteTarget {
-    match event {
-        InputEvent::Keyboard { .. } => match keyboard_focus {
-            Some(id) => RouteTarget::Surface(id),
-            None => RouteTarget::None,
-        },
-        InputEvent::Pointer { .. } => match pointer_hit {
-            Some((id, HitZone::Content)) => RouteTarget::Surface(id),
-            Some((id, zone)) => RouteTarget::Decoration { surface: id, zone },
-            None => RouteTarget::None,
-        },
-    }
-}
+//
+// The pure routing decision lives in `shared::compositor::route_event_with_shell`.
+// The kernel-side pipeline calls it with the `is_shell_id` predicate so
+// keyboard events that somehow landed on a shell surface are dropped
+// at the routing layer. Pointer events that target a shell surface are
+// still returned as `Surface(id)` and handed off to `shell::route_pointer`
+// inside `deliver_to_surface`.
 
 /// Returns true when the pointer event represents a button transition
 /// (click or release), as opposed to bare motion. Coalescing only
@@ -244,7 +234,7 @@ fn run_through_stages(event: &InputEvent, hotkeys: &mut HotkeyFilter, deco: &Win
         fm.set_pointer_focus(pointer_hit.map(|(id, _)| id));
     }
 
-    let target = route_event(&event, kbd_focus, pointer_hit);
+    let target = route_event_with_shell(&event, kbd_focus, pointer_hit, is_shell_id);
     match target {
         RouteTarget::Surface(id) => deliver_to_surface(id, &event),
         RouteTarget::Decoration { surface, zone } => {
@@ -298,7 +288,27 @@ fn topmost_at(px: i32, py: i32, deco: &WindowDecoration) -> Option<(SurfaceId, H
 
 /// Send an `Input` event to the surface's IPC channel. Best-effort: the
 /// send is non-blocking and dropped on a full ring or dead channel.
+///
+/// M26 Step 27: when `id` names a shell surface, the event is handed to
+/// `shell::route_pointer` (pointer) or dropped (keyboard) — shell
+/// surfaces never receive IPC events, even via the self-channel
+/// suppression path, because they have no client to receive them.
 fn deliver_to_surface(id: SurfaceId, event: &InputEvent) {
+    // Step 27: shell surfaces are intercepted at the dispatch layer so
+    // pointer interactions go through the shell's own handlers
+    // (Taskbar entries focus their corresponding window; Workspace
+    // and Status Strip drop). Keyboard events targeted at shells are
+    // dropped — `route_event_with_shell` already collapses keyboard
+    // focus on a shell to `RouteTarget::None`, so this branch only
+    // ever sees pointer events; matching it explicitly keeps the
+    // dispatcher robust against future routing changes.
+    if is_shell_id(id) {
+        if matches!(event, InputEvent::Pointer { .. }) {
+            super::shell::route_pointer(id, event);
+        }
+        return;
+    }
+
     // Look up the surface's channel under SURFACE_TABLE; drop the lock
     // before issuing the IPC call so we don't hold SURFACE_TABLE across
     // the IPC subsystem.
@@ -328,17 +338,44 @@ fn deliver_to_surface(id: SurfaceId, event: &InputEvent) {
     send_event_bytes(channel, &payload);
 }
 
-/// Click-to-focus side effect. Updates focus state and z-order.
-fn promote_to_focus(id: SurfaceId) {
+/// Set keyboard focus, refusing the request when `id` names a shell
+/// surface. This is the canonical entry point for any code path that
+/// wants to change keyboard focus — `promote_to_focus` (click) and the
+/// taskbar's entry-click handler both call into here.
+///
+/// Returns the resulting `FocusChange` so callers can drop the
+/// `FOCUS_MANAGER` lock before issuing IPC notifications. When the
+/// requested `id` is a shell surface, returns the no-op change
+/// `(lost: None, gained: None)` and skips both the FOCUS_MANAGER
+/// mutation and the IPC notification — the existing focus is preserved.
+pub fn set_keyboard_focus_safe(id: Option<SurfaceId>) -> super::focus::FocusChange {
+    if let Some(target) = id {
+        if is_shell_id(target) {
+            return super::focus::FocusChange {
+                lost: None,
+                gained: None,
+            };
+        }
+    }
     let change = {
         let mut fm = FOCUS_MANAGER.lock();
-        fm.set_keyboard_focus(Some(id))
+        fm.set_keyboard_focus(id)
     };
-    {
-        let mut z = WINDOW_Z_ORDER.lock();
-        z.raise_to_top(id);
-    }
     notify_focus_change(change);
+    change
+}
+
+/// Click-to-focus side effect. Updates focus state and z-order.
+///
+/// `set_keyboard_focus_safe` is the canonical focus mutation — it
+/// refuses shell ids, takes/releases `FOCUS_MANAGER`, and emits the
+/// `FocusChanged` IPC events. After it returns, we always raise `id`
+/// to the top of `WINDOW_Z_ORDER` (matching pre-Step-27 click-to-raise
+/// behaviour even when focus was already on `id`).
+fn promote_to_focus(id: SurfaceId) {
+    let _ = set_keyboard_focus_safe(Some(id));
+    let mut z = WINDOW_Z_ORDER.lock();
+    z.raise_to_top(id);
 }
 
 /// Send `FocusChanged` IPC events to the gaining and losing surfaces.

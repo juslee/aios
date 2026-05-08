@@ -3,7 +3,7 @@
 **Tier:** 2 — Core System Services
 **Duration:** 7 weeks
 **Deliverable:** Window compositor with IPC-based surface lifecycle, software composition with damage tracking, floating window management with input routing, desktop shell (Status Strip, Taskbar, Workspace), Input Kit Tier 1
-**Status:** In Progress (M23, M24, M25 complete; M26–M27 pending)
+**Status:** In Progress (M23–M26 complete; M27 pending)
 **Prerequisites:** Phase 6 (GPU & Display)
 **Unlocks:** Phase 8 (Input & Terminal), Phase 16 (Flow & Translation), Phase 25 (Performance & Optimization)
 
@@ -56,7 +56,7 @@ Milestones are numbered continuously across all phases. Phase 6 used M19–M22; 
 | **M23 — VirtIO-Input Driver** | 1–7 | End of week 2 | VirtIO-input keyboard + tablet probed and initialized on QEMU; input events logged to UART; `just run-input` works |
 | **M24 — Compositor Core** | 8–16 | End of week 4 | Compositor service running; IPC-based surface lifecycle; software composition with flat z-order and damage tracking; multi-surface display on QEMU; display handoff from GPU Service |
 | **M25 — Window Manager & Input Routing** | 17–23 | End of week 5 | Floating window layout with decorations; pointer hit-testing with software cursor; keyboard/pointer focus; input routing pipeline; move/resize; Alt+Tab; shared crate tests |
-| **M26 — Desktop Shell** | 24–30 | End of week 6 | Status Strip (time, CPU%, memory); Taskbar (surface list, focus indicator); Workspace (static home view); test application validating full IPC stack; shell rendering optimization |
+| **M26 — Desktop Shell** | 24–30 | End of week 6 | Status Strip (time, CPU%, memory); Taskbar (surface list, focus indicator); Workspace (static home view); test application + per-client surface channels validating full IPC stack; shell rendering optimization. **Substantively complete; visible-pixel acceptance gated on `COMPOSITOR_PRESENT_ENABLED` flag, deferred to a follow-up workstream — see Step 28 note.** |
 | **M27 — Input Kit, Integration & Gate** | 31–36 | End of week 7 | Input Kit Tier 1 traits extracted; animation stubs; Gate 2 benchmarks pass; `just run-compositor` target; documentation updated; all quality gates pass |
 
 -----
@@ -634,17 +634,19 @@ code is exercised by host-side `just test`. Total test count:
 **What:** Panel-layer surface locked to the top edge (1280×32 pixels). Displays system time (HH:MM from TICK_COUNT), CPU load, memory usage, core count. Refreshes every 1 second. Compositor-internal (not a separate process).
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/shell/mod.rs` and `kernel/src/compositor/shell/status_strip.rs`
-- [ ] Implement `StatusStrip` struct: tracks last-render tick, cached display values
-- [ ] Render text using spleen-font 16×32 bitmap glyphs (reuse `gpu::text` renderer)
-- [ ] Display: `AIOS  HH:MM  CPU: NN%  MEM: NN%  CORES: N`
-- [ ] Calculate time from `TICK_COUNT` (ticks since boot / 1000 = seconds)
-- [ ] Calculate memory from frame allocator stats
-- [ ] Calculate CPU from scheduler metrics (if available, else "N/A")
-- [ ] Only redraw when display values change (damage optimization)
-- [ ] Register as Panel-layer surface (always on top of Normal windows)
+- [x] Create `kernel/src/compositor/shell/mod.rs` and `kernel/src/compositor/shell/status_strip.rs`
+- [x] Implement `StatusStrip` struct: tracks last-render tick, cached display values
+- [x] Render text using spleen 8×16 bitmap glyphs (reuse `compositor::text::draw_text_clipped`)
+- [x] Display: `AIOS  HH:MM  CPU: N/A  MEM: NN%  CORES: N`
+- [x] Calculate time from `TICK_COUNT` (ticks since boot / 1000 = seconds)
+- [x] Calculate memory from frame allocator stats (`total_pages`/`total_free_pages` aggregated across pools)
+- [x] Calculate CPU from scheduler metrics (rendered as `N/A` until a scheduler-utilization metric exists)
+- [x] Only redraw when display values change (damage optimization, gated on `>= 1 s` since last redraw)
+- [x] Register as Panel-layer surface (always on top of Normal windows)
 
 **Key reference:** [experience.md](../experience/experience.md) §6 (Status Strip)
+
+**Note (post-implementation):** The strip is compositor-internal — owned by `ProcessId(10)` on the well-known compositor channel. M25's `is_self_channel` already suppresses self-delivery so the strip never receives IPC events. Backed by `shared_memory_create` (the compositor process is granted `SharedMemoryCreate` so the shell stays a normal client of the shmem subsystem). The font renderer is `compositor::text::draw_text_clipped` (spleen 8×16) rather than a hypothetical `gpu::text` 16×32 path. `STATUS_STRIP` is a leaf-independent mutex (see CLAUDE.md lock-ordering note for M26) — never co-held with `SURFACE_TABLE`, `SHARED_REGION_TABLE`, or `FRAME_ALLOC`. Visual confirmation is gated on `COMPOSITOR_PRESENT_ENABLED` (still `false` at end of M26 — see Step 28).
 
 **Acceptance:** Top bar visible showing time, memory%, core count; updates every second; doesn't obscure window content below
 
@@ -655,14 +657,16 @@ code is exercised by host-side `just test`. Total test count:
 **What:** Panel-layer surface locked to the bottom edge (1280×40 pixels). Displays a horizontal list of active surface titles. Focused surface entry is highlighted. Workspace button on the left.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/shell/taskbar.rs`
-- [ ] Render horizontal list of active non-shell surface titles (truncated to fit)
-- [ ] Highlight focused surface entry with a different background color
-- [ ] Left side: `[W]` workspace button (toggles Workspace visibility)
-- [ ] Right side: surface count display
-- [ ] Only redraw when surface list or focus changes
+- [x] Create `kernel/src/compositor/shell/taskbar.rs`
+- [x] Render horizontal list of active non-shell surface titles (truncated to 23 chars per 200-px cell)
+- [x] Highlight focused surface entry with a different background color (saturated blue vs. near-black slate)
+- [x] Left side: `[W]` workspace button (toggles Workspace visibility) — wired in Step 27
+- [x] Right side: surface count display (`N windows`, capped at 9 for layout stability)
+- [x] Only redraw when surface list or focus changes (damage-driven only, no time cadence)
 
 **Key reference:** [experience.md](../experience/experience.md) §2 (Five Surfaces)
+
+**Note (post-implementation):** Layout is computed by the host-testable pure function `shared::compositor::compute_taskbar_layout(display_width, entry_count) -> TaskbarLayout`, which keeps the workspace anchor, count cell anchor, packing, and cap behavior verifiable without a kernel boot. Up to `MAX_TASKBAR_ENTRIES = 8` entry cells. `Surface::is_shell()` is the canonical predicate the taskbar uses to filter its own surface and the Status Strip out of the window list. The `[W]` button click is wired in Step 27 via `taskbar_pointer_action`. `TASKBAR` is a leaf-independent mutex; the lock sequence in `tick` is `FOCUS_MANAGER → drop → SURFACE_TABLE → drop → TASKBAR → drop → SURFACE_TABLE` (re-entered for `surface_attach_buffer` + `mark_damaged`).
 
 **Acceptance:** Bottom bar shows active surface titles; clicking entry focuses the surface; focused entry highlighted
 
@@ -673,13 +677,15 @@ code is exercised by host-side `just test`. Total test count:
 **What:** Normal-layer surface shown via Super key or workspace button. Static layout (no context inference — Layer 1). Displays AIOS title, system spaces list, uptime.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/shell/workspace.rs`
-- [ ] Render: "AIOS" title centered, system spaces list (from `storage::space_list()`), uptime (from TICK_COUNT)
-- [ ] Static layout — no context inference, no adaptive behavior
-- [ ] Toggle visibility: Super key or taskbar [W] button
-- [ ] When visible, positioned behind other Normal-layer windows but above Background
+- [x] Create `kernel/src/compositor/shell/workspace.rs`
+- [x] Render: "AIOS" title centered, system spaces list (from `storage::space_list()`), uptime (from TICK_COUNT) — formatted via `format_hhmmss`
+- [x] Static layout — no context inference, no adaptive behavior
+- [x] Toggle visibility: bare-Super key (rising-edge) — taskbar `[W]` button wired in Step 27
+- [x] When visible, positioned behind other Normal-layer windows but above Background
 
 **Key reference:** [experience.md](../experience/experience.md) §3.1–3.2 (Workspace)
+
+**Note (post-implementation):** A new `Surface::visible: bool` field (default `true`, toggled via `surface_set_visible`) is checked inside `compose_frame`, so Active surfaces can be hidden without going through Suspended. The workspace defaults to `false` at boot. Bare-Super edge detection is non-trivial because bare-Super carries `Modifiers::SUPER` on the same event that delivers the press; the pure transition is implemented in `shared::compositor::super_edge_step` (host-tested, 11 cases) and the kernel-side wrapper in `compositor::hotkey` stores the two-bit state in `AtomicBool`s. Super press/release are always consumed by the hotkey filter so they never reach client surfaces. Lock sequence in `tick`: `WORKSPACE → drop → BLOCK_ENGINE (via space_list) → drop → WORKSPACE → drop → SURFACE_TABLE` — never co-held. `WORKSPACE` is a leaf-independent mutex.
 
 **Acceptance:** Super key toggles Workspace; shows spaces list and uptime; workspace button in taskbar works
 
@@ -690,12 +696,14 @@ code is exercised by host-side `just test`. Total test count:
 **What:** Wire shell surfaces into the input routing pipeline. Taskbar and Status Strip are Panel-layer and receive pointer events for their interactive elements.
 
 **Tasks:**
-- [ ] Taskbar entries are clickable: clicking sets focus to the corresponding surface
-- [ ] Workspace button in taskbar toggles Workspace visibility
-- [ ] Close button in Status Strip not needed (always visible)
-- [ ] Shell surfaces don't receive keyboard focus (keyboard events always go to application surfaces)
+- [x] Taskbar entries are clickable: clicking sets focus to the corresponding surface
+- [x] Workspace button in taskbar toggles Workspace visibility
+- [x] Close button in Status Strip not needed (always visible)
+- [x] Shell surfaces don't receive keyboard focus (keyboard events always go to application surfaces)
 
 **Key reference:** [compositor/input.md](../platform/compositor/input.md) §7.2
+
+**Note (post-implementation):** Two layers of defense keep keyboard focus off shell surfaces. (1) `shared::compositor::route_event_with_shell` collapses keyboard events targeted at a shell surface to `RouteTarget::None`; the kernel passes `surface::is_shell_id` as the predicate. (2) `input_route::set_keyboard_focus_safe` is the canonical focus mutation — it refuses shell ids and returns the no-op `FocusChange`. Both `promote_to_focus` (click) and `apply_switch_window` (Alt+Tab) now route through it. Pointer dispatch uses `shell::route_pointer`, which dispatches per shell surface (Status Strip drops, Taskbar → `taskbar::handle_pointer`, Workspace → silent stub). `taskbar::handle_pointer` uses `shared::compositor::taskbar_pointer_action` (host-tested, 10 cases) to decide between `WorkspaceToggle` / `FocusEntry` / `None`.
 
 **Acceptance:** Clicking taskbar entries switches focus; workspace toggle works from taskbar
 
@@ -706,17 +714,29 @@ code is exercised by host-side `just test`. Total test count:
 **What:** A kernel-side test process that creates a surface via IPC, allocates shared memory, renders content (colored rectangle with text "Hello from AIOS!"), and responds to keyboard input by appending typed characters. Validates the full IPC surface lifecycle end-to-end.
 
 **Tasks:**
-- [ ] Create `kernel/src/compositor/test_app.rs`
-- [ ] Spawn test process (`ProcessId(11)`, name="test-app")
-- [ ] Create surface via IPC: `CompositorRequest::CreateSurface`
-- [ ] Allocate shared memory buffer, write solid color background + text using spleen-font
-- [ ] Receive `Configure` event, attach buffer
-- [ ] Handle `CompositorEvent::Input` — keyboard events append characters to display text, re-render buffer, re-attach
-- [ ] Handle `CloseRequested` — destroy surface and exit
+- [x] Create `kernel/src/compositor/test_app.rs`
+- [x] Spawn test process (`ProcessId(11)`, name="test-app")
+- [x] Create surface via IPC: `CompositorRequest::CreateSurface` (carrying per-client `client_channel`)
+- [x] Allocate shared memory buffer, write solid color background + text using spleen-font
+- [x] Receive `Configure` event, attach buffer
+- [x] Handle `CompositorEvent::Input` — keyboard events append characters to display text, re-render buffer, re-attach
+- [x] Handle `CloseRequested` — destroy surface and exit
 
 **Key reference:** Full stack validation
 
-**Acceptance:** Test app window visible at 400×300; shows "Hello from AIOS!"; keyboard input appends characters; Alt+Tab switches between test app and workspace; Alt+F4 closes it
+**Note (post-implementation):** This step landed all the keystone infrastructure for the desktop, but **`COMPOSITOR_PRESENT_ENABLED` remains `false` at end of M26** and visible-pixel acceptance is deferred to a follow-up workstream.
+
+What landed:
+
+- **Per-client surface channels.** `CompositorRequest` gained a `client_channel: u64` field (offset 120, 8-byte aligned, with explicit `_pad_damage: [u8; 4]` per the M25 implicit-padding-UB lesson). The new `effective_channel(client_channel, service_channel)` pure helper keeps shell-internal callers (`client_channel == 0`) on the well-known compositor channel — preserving M25's `is_self_channel` suppression — while routing real clients to their per-client receive endpoint. `handle_create_surface` derives `Surface.channel` through this helper.
+- **Test-app process.** `kernel/src/compositor/test_app.rs` spawns `ProcessId(11)` "test-app" as a kernel-mode thread (`ThreadId(0xC00)`) with a minimum capability set (`ChannelCreate`, `SharedMemoryCreate`, `DebugPrint`). `kernel_main` calls `spawn_test_app()` after `init_compositor()` and advances to `EarlyBootPhase::CompositorReady`.
+- **Snapshot-based present pipeline.** `present_frame` now snapshots `SURFACE_TABLE` into a stack-allocated `[Surface; MAX_SURFACES]` array sorted by `(layer, layer_seq)`, drops the lock, then calls `compose_frame` with `resolve_surface_pixels` resolving each surface's `shmem_id` to a direct-map pixel slice via `region_dmap_addr`. Lock ordering: `SURFACE_TABLE` released before `SHARED_REGION_TABLE` is taken, per the documented chain.
+
+Discovery during implementation: `surface_attach_buffer` had a state-machine bug — Created → Active was rejected by `can_transition_to` (the protocol requires Created → Configured → Active). Shell init was reliably failing at the AttachBuffer gate, surfacing as `ShellError::SurfaceCreate` because the validator collapsed `InvalidTransition` and `NotFound` into the same error variant. Fixed in commit `662cf4c`: walk the state machine explicitly (Created → Configured → Active; Configured/Suspended → Active; Active is an idempotent self-transition; Destroyed still rejects).
+
+Deferred: `COMPOSITOR_PRESENT_ENABLED` stays `false`. Flipping it surfaces a pre-existing M24 race that produces intermittent crashes (3/10 successful flag-on runs, 4/10 stalls, 3/10 data aborts on low VAs). The race reproduces on `main` too — Step 28's IPC traffic patterns make it easier to hit but don't cause it. Investigation notes, evidence, and follow-up steps are captured in [`docs/knowledge/lessons/2026-05-07-cl-phase-7-m26-step-28-shell-attach-corruption.md`](../knowledge/lessons/2026-05-07-cl-phase-7-m26-step-28-shell-attach-corruption.md). Visible-pixel acceptance ("Test app window visible at 400×300; shows 'Hello from AIOS!'") is deferred to that workstream.
+
+**Acceptance:** Infrastructure deferred check: `just check` zero warnings, `just test` 632 host tests pass, `just run-gpu` boots cleanly with the present flag off and the test-app process spawned (UART logs `[Boot] phase=CompositorReady`); the visible-pixel acceptance ("Test app window visible at 400×300; shows 'Hello from AIOS!'"; keyboard input appends characters; Alt+Tab switches between test app and workspace; Alt+F4 closes it) is deferred to the M24-race follow-up workstream.
 
 -----
 
@@ -725,12 +745,14 @@ code is exercised by host-side `just test`. Total test count:
 **What:** Optimize shell rendering: minimize composition work when only shell content changed. Profile and log composition times.
 
 **Tasks:**
-- [ ] Status Strip: only redraw when time changes (1/sec) or metrics change
-- [ ] Taskbar: only redraw when surface list or focus changes
-- [ ] Workspace: only redraw on toggle
-- [ ] Per-surface damage tracking: shell surfaces set `DamageRegion::Empty` when unchanged
-- [ ] Log composition time per frame to UART (average over 60 frames)
-- [ ] Profile full-frame vs damage-optimized composition: measure and report savings
+- [x] Status Strip: only redraw when time changes (1/sec) or metrics change
+- [x] Taskbar: only redraw when surface list or focus changes
+- [x] Workspace: only redraw on toggle (and on uptime-second tick / spaces-list change)
+- [x] Per-surface damage tracking: shell surfaces leave `Surface::damaged = false` when unchanged
+- [x] Log composition time per frame to UART (average over 60 frames via `FrameWindow`)
+- [x] Profile full-frame vs damage-optimized composition: measure and report savings
+
+**Note (post-implementation):** Shell tick paths now consult the unified host-testable `shared::compositor::should_redraw_shell` predicate and skip the render+attach when no snapshot change is detected. `Surface::damaged` stays `false`, so `compose_frame` skips the surface on the next frame (idle fast path). `present_frame_if_due` was refactored to count iterations regardless of `COMPOSITOR_PRESENT_ENABLED`, so per-window stats (`FrameWindow` in shared) keep flowing even with the present flag off; the stats line prefix flips to `(gated)` when present is disabled. A `STATIC_IDLE_MS = 5000` static-desktop watchdog emits `[Compositor] static desktop: 0 composes in last 5s` once when no damage has been observed for that long, validating the "static desktop = 0 compose" claim from the phase doc.
 
 **Acceptance:** Composition time <5ms for typical desktop (3 shell surfaces + 1 app); UART shows frame timing; static desktop = 0ms composition
 

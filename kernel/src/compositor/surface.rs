@@ -73,6 +73,61 @@ pub struct Surface {
     pub layer_seq: u64,
     /// True when the surface has produced damage since the last frame.
     pub damaged: bool,
+    /// True when this surface should be included in the composited frame.
+    ///
+    /// Distinct from `state == Active`: a surface can be Active (has a
+    /// buffer attached) yet hidden by the user (e.g., the Workspace
+    /// surface toggling via Super). `compose_frame` skips surfaces with
+    /// `visible == false`. Default `true`; toggled by
+    /// `surface_set_visible`. Per M26 Step 26.
+    pub visible: bool,
+}
+
+/// Process id used by every compositor-internal shell surface (Status
+/// Strip, Taskbar, Workspace). The compositor service registers itself
+/// as `ProcessId(10)` in `service::init_compositor`; the shell allocates
+/// its surfaces from inside that service so they all share this owner.
+const COMPOSITOR_PROCESS_ID: ProcessId = ProcessId(10);
+
+impl Surface {
+    /// Zero-filled placeholder Surface used to initialize fixed-size
+    /// snapshot arrays in the compose path. NOT a valid surface — only
+    /// the `[..count]` prefix populated by `snapshot_visible_surfaces`
+    /// is meaningful.
+    pub const SENTINEL: Self = Self {
+        id: SurfaceId::NONE,
+        state: SurfaceState::Created,
+        layer: SurfaceLayer::Background,
+        title: SurfaceTitle::EMPTY,
+        content_type: SurfaceContentType::Generic,
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        shmem_id: None,
+        owner_pid: ProcessId(0),
+        channel: ChannelId(0),
+        layer_seq: 0,
+        damaged: false,
+        visible: false,
+    };
+
+    /// Returns true when this surface is a compositor-internal "shell"
+    /// surface (Status Strip, Taskbar, future Workspace).
+    ///
+    /// Shell predicate is `(owner_pid == compositor) && (layer == Panel)`.
+    /// `Panel` is reserved for system chrome per `SurfaceLayer`'s docs;
+    /// only the compositor itself is allowed to publish on that layer in
+    /// Phase 7. The compound check is defense-in-depth against a future
+    /// kernel-internal surface that uses ProcessId(10) but a different
+    /// layer (none planned, but the predicate stays robust).
+    ///
+    /// Used by the Taskbar to filter shell surfaces out of its window
+    /// list (Step 25), and by the input router to refuse keyboard
+    /// focus on shell surfaces (Step 27).
+    pub fn is_shell(&self) -> bool {
+        self.owner_pid.0 == COMPOSITOR_PROCESS_ID.0 && matches!(self.layer, SurfaceLayer::Panel)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,14 +200,22 @@ pub fn surface_create(
         channel,
         layer_seq,
         damaged: true,
+        visible: true,
     });
 
     Ok(id)
 }
 
 /// Attach a shared memory buffer to a surface. Marks the surface as damaged
-/// according to `damage` and transitions Created/Configured → Active on the
-/// first attach.
+/// according to `damage` and transitions to `Active` on the first attach.
+///
+/// `surface_attach_buffer` is a compound operation: when the surface is in
+/// `Created`, this is logically "the compositor finished configuring (which it
+/// did atomically inside `surface_create`) and the client's first frame has
+/// arrived". The state machine path is therefore Created → Configured →
+/// Active, not the protocol-disallowed direct Created → Active jump. We walk
+/// each step explicitly so `can_transition_to` (the strict per-step
+/// invariant) accepts the move.
 pub fn surface_attach_buffer(
     id: SurfaceId,
     shmem_id: SharedMemoryId,
@@ -169,20 +232,33 @@ pub fn surface_attach_buffer(
         return Err(SurfaceError::InvalidTransition);
     }
 
-    let next_state = match surface.state {
-        // First buffer attach takes us through Configured → Active even if the
-        // client called AttachBuffer before processing its Configure event.
-        SurfaceState::Created | SurfaceState::Configured => SurfaceState::Active,
-        // Subsequent attaches keep us in Active (idempotent self-transition).
-        SurfaceState::Active | SurfaceState::Suspended => SurfaceState::Active,
+    // Determine the path through the state machine. `Created` requires an
+    // intermediate `Configured` step so each individual transition stays
+    // legal under `can_transition_to`.
+    match surface.state {
+        SurfaceState::Created => {
+            if !surface.state.can_transition_to(SurfaceState::Configured) {
+                return Err(SurfaceError::InvalidTransition);
+            }
+            surface.state = SurfaceState::Configured;
+            if !surface.state.can_transition_to(SurfaceState::Active) {
+                return Err(SurfaceError::InvalidTransition);
+            }
+            surface.state = SurfaceState::Active;
+        }
+        SurfaceState::Configured | SurfaceState::Suspended => {
+            if !surface.state.can_transition_to(SurfaceState::Active) {
+                return Err(SurfaceError::InvalidTransition);
+            }
+            surface.state = SurfaceState::Active;
+        }
+        SurfaceState::Active => {
+            // Idempotent self-transition for subsequent AttachBuffer calls.
+        }
         SurfaceState::Destroyed => return Err(SurfaceError::InvalidTransition),
-    };
-    if !surface.state.can_transition_to(next_state) {
-        return Err(SurfaceError::InvalidTransition);
     }
 
     surface.shmem_id = Some(shmem_id);
-    surface.state = next_state;
     if damage.has_damage() {
         surface.damaged = true;
     }
@@ -257,6 +333,60 @@ pub fn surface_set_layer(
     Ok(())
 }
 
+/// Reposition a surface in screen coordinates.
+///
+/// Used by shell surfaces (Taskbar, Workspace) that need to lock to
+/// specific edges of the display. Marks the surface damaged so the next
+/// composition frame picks up the new position. The M25 drag handler
+/// still mutates `SURFACE_TABLE` inline and will migrate to this helper
+/// when the lock-ordering audit revisits it.
+pub fn surface_set_position(
+    id: SurfaceId,
+    x: i32,
+    y: i32,
+    caller_pid: ProcessId,
+) -> Result<(), SurfaceError> {
+    let mut table = SURFACE_TABLE.lock();
+    let surface = find_mut(&mut table, id).ok_or(SurfaceError::NotFound)?;
+    if surface.owner_pid.0 != caller_pid.0 {
+        return Err(SurfaceError::NotOwner);
+    }
+    if surface.state.is_terminal() {
+        return Err(SurfaceError::InvalidTransition);
+    }
+    surface.x = x;
+    surface.y = y;
+    surface.damaged = true;
+    Ok(())
+}
+
+/// Toggle a surface's visibility flag.
+///
+/// `compose_frame` skips surfaces where `visible == false`, so flipping
+/// this hides/shows the surface without changing its `SurfaceState`
+/// (Active/Suspended). Used by the Workspace surface (M26 Step 26) to
+/// toggle home view via Super. Marks the surface damaged so the next
+/// composition rebuilds the affected screen region.
+pub fn surface_set_visible(
+    id: SurfaceId,
+    visible: bool,
+    caller_pid: ProcessId,
+) -> Result<(), SurfaceError> {
+    let mut table = SURFACE_TABLE.lock();
+    let surface = find_mut(&mut table, id).ok_or(SurfaceError::NotFound)?;
+    if surface.owner_pid.0 != caller_pid.0 {
+        return Err(SurfaceError::NotOwner);
+    }
+    if surface.state.is_terminal() {
+        return Err(SurfaceError::InvalidTransition);
+    }
+    if surface.visible != visible {
+        surface.visible = visible;
+        surface.damaged = true;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -272,13 +402,36 @@ fn find_mut(table: &mut [Option<Surface>; MAX_SURFACES], id: SurfaceId) -> Optio
 ///
 /// Used when the compositor itself detects a reason to recomposite a surface
 /// (e.g., a focus change or a layer reshuffle).
-/// Used by the gated `COMPOSITOR_PRESENT_ENABLED` render loop (M26+) and
-/// future call sites that need to force a recomposite without owning the
-/// surface (e.g., focus indicator change).
-#[allow(dead_code)]
+/// Used by the shell surface tick paths (Status Strip, Taskbar,
+/// Workspace) to force a recomposite after re-rendering into the
+/// backing buffer without owning the surface through the standard
+/// AttachBuffer protocol path. Once the present flag flips, the
+/// composition loop reads `Surface.damaged` to decide which surfaces
+/// to blit.
 pub fn mark_damaged(id: SurfaceId) {
     let mut table = SURFACE_TABLE.lock();
     if let Some(surface) = find_mut(&mut table, id) {
         surface.damaged = true;
     }
+}
+
+/// Returns `true` when `id` names a compositor-internal shell surface
+/// (Status Strip, Taskbar, or Workspace).
+///
+/// Acquires `SURFACE_TABLE` briefly. Used by Step 27's input router as
+/// the canonical "is this a shell surface?" check — the predicate
+/// passed into `shared::compositor::route_event_with_shell` and the
+/// guard inside `set_keyboard_focus_safe`.
+///
+/// `SurfaceId::NONE` and unknown ids return `false` so callers don't
+/// have to special-case the sentinel.
+pub fn is_shell_id(id: SurfaceId) -> bool {
+    if id.is_none() {
+        return false;
+    }
+    let table = SURFACE_TABLE.lock();
+    table
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .any(|s| s.id == id && s.is_shell())
 }
