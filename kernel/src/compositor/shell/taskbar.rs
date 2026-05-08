@@ -317,7 +317,13 @@ pub(super) fn tick(_now_ms: u64) {
         None => return,
     };
 
-    if !tb.needs_first_render && tb.cached_snapshot == snapshot {
+    // Step 29: route the cache-vs-snapshot comparison through the
+    // shared `should_redraw_shell` helper. When this returns false
+    // we skip rendering AND skip re-attaching, leaving the surface's
+    // `damaged` flag unset so `compose_frame` skips this surface
+    // entirely on the next frame (idle-frame fast path).
+    let snapshot_changed = tb.cached_snapshot != snapshot;
+    if !shared::compositor::should_redraw_shell(tb.needs_first_render, snapshot_changed) {
         return;
     }
 

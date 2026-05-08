@@ -15,8 +15,9 @@
 use core::sync::atomic::Ordering;
 
 use shared::compositor::{
-    CompositorCommand, CompositorEvent, CompositorRequest, DamageTracker, SurfaceContentType,
-    SurfaceId, SurfaceLayer, SurfaceTitle,
+    format_frame_window_summary, CompositorCommand, CompositorEvent, CompositorRequest,
+    DamageTracker, FrameWindow, SurfaceContentType, SurfaceId, SurfaceLayer, SurfaceTitle,
+    FRAME_WINDOW_SUMMARY_BUF,
 };
 use shared::gpu::{DisplayInfo, GpuBufferHandle, GpuError, VirtioGpuRect, AIOS_BLUE_B8G8R8A8};
 use shared::ipc::{ChannelId, SharedMemoryId};
@@ -61,14 +62,27 @@ struct CompositorState {
     back_buffer: Option<GpuBufferHandle>,
     /// Tick at which the most recent frame was composed (for 60fps pacing).
     last_frame_tick: u64,
-    /// Total frames composed since boot (for periodic stats logging).
-    frame_count: u64,
-    /// Sum of per-frame compose-time in milliseconds; resets every 60 frames.
-    frame_ms_accum: u64,
     /// Per-frame screen-space damage accumulator.
     damage: DamageTracker,
     /// `true` until the first post-handoff frame is presented (forces a clear).
     needs_initial_clear: bool,
+    /// Step 29: rolling per-window stats. Reset every
+    /// `STATS_EVERY_FRAMES` *considered* iterations (i.e., loop turns
+    /// past the 16ms cadence gate). Tracking is independent of
+    /// `COMPOSITOR_PRESENT_ENABLED` so the bookkeeping ticks even when
+    /// the present pipeline is gated off — the log line just changes
+    /// its prefix to `(gated)`.
+    frame_window: FrameWindow,
+    /// Cumulative count of presented frames since boot — informational
+    /// only; the per-window count lives inside `frame_window.composes`.
+    total_composes: u64,
+    /// Tick at which a damage-bearing frame was last observed. Used by
+    /// the static-desktop watchdog: if more than `STATIC_IDLE_MS`
+    /// elapse with no damage, log the "static desktop" line once.
+    last_active_tick: u64,
+    /// `true` once the static-desktop log fired for the current idle
+    /// stretch. Reset to `false` the next time damage shows up.
+    static_logged: bool,
 }
 
 impl CompositorState {
@@ -79,10 +93,12 @@ impl CompositorState {
             front_buffer: None,
             back_buffer: None,
             last_frame_tick: 0,
-            frame_count: 0,
-            frame_ms_accum: 0,
             damage: DamageTracker::new(),
             needs_initial_clear: true,
+            frame_window: FrameWindow::new(!COMPOSITOR_PRESENT_ENABLED),
+            total_composes: 0,
+            last_active_tick: 0,
+            static_logged: false,
         }
     }
 }
@@ -92,8 +108,14 @@ const FRAME_BUDGET_TICKS: u64 = 16;
 /// Watchdog threshold — log a warning if any frame's compose+present
 /// exceeds 100ms.
 const FRAME_WATCHDOG_MS: u64 = 100;
-/// How often to emit aggregated frame timing stats (in frames).
+/// How often to emit aggregated frame timing stats — every 60 cadence-
+/// gated iterations. With FRAME_BUDGET_TICKS = 16 ms this means roughly
+/// once per second of compositor activity.
 const STATS_EVERY_FRAMES: u64 = 60;
+/// Step 29 static-desktop watchdog: if this many milliseconds elapse
+/// with no surface damage, emit the "static desktop" log line once.
+/// Reset when damage reappears.
+const STATIC_IDLE_MS: u64 = 5_000;
 
 // ---------------------------------------------------------------------------
 // Compositor service thread entry
@@ -231,63 +253,97 @@ fn compositor_loop() -> ! {
 ///   * the previous frame was less than `FRAME_BUDGET_TICKS` ago
 ///   * no surface is damaged AND no initial clear is pending
 ///
-/// The structural pacing — the `last_frame_tick`, `frame_count`,
-/// `frame_ms_accum`, watchdog, and 60-frame stats logging — is already
-/// wired here. M24 keeps the actual `present_frame()` body parked behind
-/// `COMPOSITOR_PRESENT_ENABLED` because the post-handoff IPC bench path
-/// surfaces several pre-existing kernel-side races (data aborts at low
-/// virtual addresses; cap-table torn reads; virtio_input modulo-by-zero
-/// — patched separately) when the compositor adds frame-pacing pressure.
-/// Step 17 (M25) re-enables the present path after wiring real client
-/// surfaces with attached buffers.
+/// Step 29 refactor: the cadence + damage bookkeeping happens
+/// unconditionally so the loop counts iterations even when
+/// `COMPOSITOR_PRESENT_ENABLED` is `false`. The actual compose+present
+/// work is the only thing the flag gates. The 60-iteration stats line
+/// changes its prefix to `(gated)` while the flag is off so an
+/// observer can see the loop is alive without confusing it for
+/// already-flowing pixels.
 fn present_frame_if_due(state: &mut CompositorState) {
-    if !COMPOSITOR_PRESENT_ENABLED {
-        return;
-    }
-
     let now = TICK_COUNT.load(Ordering::Relaxed);
+    // Cadence gate — we count "considered" iterations only past this
+    // point so the per-window stats reflect real ~60 Hz opportunities,
+    // not every recv-timeout return (~1000 Hz).
     if now < state.last_frame_tick.saturating_add(FRAME_BUDGET_TICKS) {
         return;
     }
     if state.front_buffer.is_none() || state.back_buffer.is_none() {
+        // No display attached — bookkeeping is meaningless. Bail.
         return;
     }
+
+    state.frame_window.considered += 1;
+    state.last_frame_tick = now;
 
     let any_damage = state.needs_initial_clear || surface_table_has_damage();
-    if !any_damage {
-        return;
+    if any_damage {
+        state.last_active_tick = now;
+        // Damage cleared the static-desktop streak; the next idle
+        // stretch will need to retire fresh ground before logging
+        // again.
+        state.static_logged = false;
+
+        if COMPOSITOR_PRESENT_ENABLED {
+            let frame_start = now;
+            match present_frame(state) {
+                Ok(()) => {
+                    let frame_end = TICK_COUNT.load(Ordering::Relaxed);
+                    let elapsed_ms = frame_end.saturating_sub(frame_start);
+                    state.frame_window.composes += 1;
+                    state.frame_window.accum_ms += elapsed_ms;
+                    state.total_composes += 1;
+                    state.last_frame_tick = frame_end;
+                    if elapsed_ms > FRAME_WATCHDOG_MS {
+                        crate::kwarn!(
+                            Compositor,
+                            "Compositor: frame took {}ms (>{}ms threshold)",
+                            elapsed_ms,
+                            FRAME_WATCHDOG_MS
+                        );
+                    }
+                }
+                Err(e) => {
+                    crate::kwarn!(Compositor, "Compositor: present_frame failed ({:?})", e);
+                }
+            }
+        }
+        // When the flag is off we still ran the bookkeeping above —
+        // counted as "considered" but neither composed nor idle. The
+        // `(gated)` log line communicates that.
+    } else {
+        state.frame_window.idle += 1;
+        // Static-desktop watchdog: if no damage for STATIC_IDLE_MS
+        // and we haven't already logged, emit the line once.
+        let idle_for = now.saturating_sub(state.last_active_tick);
+        if !state.static_logged && idle_for >= STATIC_IDLE_MS {
+            crate::kinfo!(
+                Compositor,
+                "Compositor: static desktop — 0 composes in last {}ms",
+                idle_for
+            );
+            state.static_logged = true;
+        }
     }
 
-    let frame_start = now;
-    if let Err(e) = present_frame(state) {
-        crate::kwarn!(Compositor, "Compositor: present_frame failed ({:?})", e);
-        return;
-    }
-    let frame_end = TICK_COUNT.load(Ordering::Relaxed);
-    let elapsed_ms = frame_end.saturating_sub(frame_start);
-
-    state.frame_count += 1;
-    state.frame_ms_accum += elapsed_ms;
-    state.last_frame_tick = frame_end;
-
-    if elapsed_ms > FRAME_WATCHDOG_MS {
-        crate::kwarn!(
-            Compositor,
-            "Compositor: frame took {}ms (>{}ms threshold)",
-            elapsed_ms,
-            FRAME_WATCHDOG_MS
-        );
-    }
-
-    if state.frame_count.is_multiple_of(STATS_EVERY_FRAMES) {
-        let avg = state.frame_ms_accum / STATS_EVERY_FRAMES;
-        crate::kinfo!(
-            Compositor,
-            "Compositor: frames={} avg compose+present={}ms",
-            state.frame_count,
-            avg
-        );
-        state.frame_ms_accum = 0;
+    // 60-considered-frame stats line. Logged whether or not the
+    // present flag is on; the body inside `format_frame_window_summary`
+    // distinguishes the gated case.
+    if state.frame_window.considered >= STATS_EVERY_FRAMES {
+        let mut buf = [0u8; FRAME_WINDOW_SUMMARY_BUF];
+        let n = format_frame_window_summary(&state.frame_window, STATS_EVERY_FRAMES, &mut buf);
+        // SAFETY: format_frame_window_summary writes only ASCII bytes
+        // (digits + literal text). The returned length `n` is bounded
+        // by FRAME_WINDOW_SUMMARY_BUF.
+        // Maintained by: format_frame_window_summary's contract.
+        // Violation: a future change that emits non-ASCII would
+        // produce malformed UTF-8 for the kinfo! arg.
+        let summary = unsafe { core::str::from_utf8_unchecked(&buf[..n]) };
+        crate::kinfo!(Compositor, "Compositor: {}", summary);
+        // Reset window — preserve `gated` so the next window inherits
+        // the current present-flag state.
+        let gated = state.frame_window.gated;
+        state.frame_window = FrameWindow::new(gated);
     }
 }
 

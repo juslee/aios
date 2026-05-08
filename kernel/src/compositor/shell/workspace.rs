@@ -400,7 +400,12 @@ pub(super) fn tick(now_ms: u64) {
         None => return,
     };
 
-    if !ws.needs_first_render && ws.cached_snapshot == snapshot {
+    // Step 29: route the cache-vs-snapshot comparison through the
+    // shared `should_redraw_shell` helper. Skip the entire render
+    // path when nothing changed — the surface's `damaged` flag stays
+    // unset so `compose_frame` skips it on the next frame.
+    let snapshot_changed = ws.cached_snapshot != snapshot;
+    if !shared::compositor::should_redraw_shell(ws.needs_first_render, snapshot_changed) {
         return;
     }
 

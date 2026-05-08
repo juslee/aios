@@ -266,12 +266,18 @@ pub(super) fn tick(now_ms: u64) {
         return;
     }
 
-    let values_changed = strip.cached_time != time_bytes
+    // Step 29: route the cache-vs-snapshot comparison through the
+    // shared `should_redraw_shell` helper so the kernel and host
+    // tests share one source of truth.
+    let needs_first_render = strip.last_render_tick == 0;
+    let snapshot_changed = strip.cached_time != time_bytes
         || strip.cached_mem_pct != mem_pct
         || strip.cached_cores != cores;
-    if !values_changed && strip.last_render_tick != 0 {
+    if !shared::compositor::should_redraw_shell(needs_first_render, snapshot_changed) {
         // Nothing changed — keep the previous frame; bump the tick so the
-        // next redraw check is still cadence-limited.
+        // next redraw check is still cadence-limited. The Surface's
+        // `damaged` flag stays `false`, so `compose_frame` will skip
+        // this surface entirely (Step 29 idle-frame fast path).
         strip.last_render_tick = now_ms;
         return;
     }

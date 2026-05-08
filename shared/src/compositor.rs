@@ -1692,6 +1692,164 @@ const fn cell_contains(cell: &TaskbarCell, x: i32) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Shell redraw decision (M26 Step 29)
+// ---------------------------------------------------------------------------
+
+/// Universal shell-surface redraw predicate.
+///
+/// Each shell surface (Status Strip, Taskbar, Workspace) caches its last
+/// rendered snapshot and compares incoming snapshots against it on every
+/// tick. If the snapshot is unchanged AND the surface has already
+/// rendered at least one frame, the tick can short-circuit — no new
+/// pixel writes, no `surface_attach_buffer` IPC, no `mark_damaged`.
+/// `compose_frame` will then skip this surface entirely (its
+/// `Surface::damaged` flag stays `false`), giving us the
+/// "static desktop = 0 composes" property.
+///
+/// Pure function so the kernel-side tick code and host tests share the
+/// same logic.
+///
+/// Returns `true` when the surface MUST redraw, `false` when the tick
+/// can skip rendering and re-attaching.
+pub const fn should_redraw_shell(needs_first_render: bool, snapshot_changed: bool) -> bool {
+    needs_first_render || snapshot_changed
+}
+
+// ---------------------------------------------------------------------------
+// Frame-window summary formatting (M26 Step 29)
+// ---------------------------------------------------------------------------
+
+/// Capacity of the buffer returned by `format_frame_window_summary`.
+/// 64 bytes covers the worst-case payload — `frames=18446744073709551615
+/// considered=18446744073709551615 idle=18446744073709551615/60
+/// avg=18446744073709551615ms` is ~125 chars, but we cap displayed
+/// values to 9999 (4 digits) so the actual layout is much smaller.
+pub const FRAME_WINDOW_SUMMARY_BUF: usize = 64;
+
+/// One window's worth of compositor stats — what gets logged every
+/// `STATS_EVERY_FRAMES` (60) considered iterations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameWindow {
+    /// Number of loop iterations past the 16ms cadence gate in this
+    /// window. Equals `composes + idle` when the present flag is on;
+    /// equals `idle + would-have-composed` when the flag is gated.
+    pub considered: u64,
+    /// Number of frames actually pushed through compose+present.
+    /// Always 0 when `gated == true`.
+    pub composes: u64,
+    /// Number of frames that hit the cadence but had no damage (the
+    /// fast idle path).
+    pub idle: u64,
+    /// Sum of compose+present durations in milliseconds for this
+    /// window. Always 0 when `gated == true`.
+    pub accum_ms: u64,
+    /// `true` when `COMPOSITOR_PRESENT_ENABLED` was off for this
+    /// window — the log line gets a `(gated)` prefix and `avg=` is
+    /// suppressed because no presents ran.
+    pub gated: bool,
+}
+
+impl FrameWindow {
+    /// Empty / all-zero window — the initial state.
+    pub const fn new(gated: bool) -> Self {
+        Self {
+            considered: 0,
+            composes: 0,
+            idle: 0,
+            accum_ms: 0,
+            gated,
+        }
+    }
+
+    /// Average compose+present time per composed frame in milliseconds.
+    /// Returns `0` when no frames composed in this window.
+    pub const fn avg_compose_ms(&self) -> u64 {
+        match self.accum_ms.checked_div(self.composes) {
+            Some(avg) => avg,
+            None => 0,
+        }
+    }
+}
+
+/// Format `window` into a fixed-size byte buffer suitable for `kinfo!`.
+///
+/// Layout when `gated == false`:
+///   `frames=N considered=M idle=I/T avg=Ams`
+///
+/// Layout when `gated == true` (no compose ran):
+///   `(gated) considered=M idle=I/T`
+///
+/// The returned slice is a prefix of `out` containing valid ASCII; the
+/// caller passes it to `core::str::from_utf8_unchecked` (or the more
+/// defensive `from_utf8(...).unwrap_or("")`) when feeding `kinfo!`.
+/// Pure function with no allocation — host-testable.
+pub fn format_frame_window_summary(
+    window: &FrameWindow,
+    window_size: u64,
+    out: &mut [u8; FRAME_WINDOW_SUMMARY_BUF],
+) -> usize {
+    out.fill(0);
+    let mut pos = 0usize;
+    if window.gated {
+        pos += copy_into(out, pos, b"(gated) considered=");
+        pos += write_u64(out, pos, window.considered);
+        pos += copy_into(out, pos, b" idle=");
+        pos += write_u64(out, pos, window.idle);
+        pos += copy_into(out, pos, b"/");
+        pos += write_u64(out, pos, window_size);
+    } else {
+        pos += copy_into(out, pos, b"frames=");
+        pos += write_u64(out, pos, window.composes);
+        pos += copy_into(out, pos, b" considered=");
+        pos += write_u64(out, pos, window.considered);
+        pos += copy_into(out, pos, b" idle=");
+        pos += write_u64(out, pos, window.idle);
+        pos += copy_into(out, pos, b"/");
+        pos += write_u64(out, pos, window_size);
+        pos += copy_into(out, pos, b" avg=");
+        pos += write_u64(out, pos, window.avg_compose_ms());
+        pos += copy_into(out, pos, b"ms");
+    }
+    pos
+}
+
+/// Copy `src` into `dst[pos..]`, returning the number of bytes written.
+/// Truncates silently if the destination is too small (only relevant
+/// when the caller passed an undersized buffer; FRAME_WINDOW_SUMMARY_BUF
+/// is sized to fit the worst case).
+fn copy_into(dst: &mut [u8], pos: usize, src: &[u8]) -> usize {
+    let avail = dst.len().saturating_sub(pos);
+    let n = src.len().min(avail);
+    dst[pos..pos + n].copy_from_slice(&src[..n]);
+    n
+}
+
+/// Write `value` as decimal ASCII into `dst[pos..]`. Returns bytes
+/// written. Saturates digit count at 20 (max u64 = 20 digits).
+fn write_u64(dst: &mut [u8], pos: usize, value: u64) -> usize {
+    let mut digits = [0u8; 20];
+    let mut n = 0;
+    let mut v = value;
+    if v == 0 {
+        digits[0] = b'0';
+        n = 1;
+    } else {
+        while v > 0 && n < digits.len() {
+            digits[n] = b'0' + (v % 10) as u8;
+            v /= 10;
+            n += 1;
+        }
+    }
+    let avail = dst.len().saturating_sub(pos);
+    let to_copy = n.min(avail);
+    // Reverse — digits[] is least-significant first.
+    for i in 0..to_copy {
+        dst[pos + i] = digits[n - 1 - i];
+    }
+    to_copy
+}
+
+// ---------------------------------------------------------------------------
 // Compile-time invariants
 // ---------------------------------------------------------------------------
 
@@ -3226,5 +3384,119 @@ mod tests {
         assert_eq!(copy.width, original.width);
         assert_eq!(copy.client_channel, original.client_channel);
         assert_eq!(&copy.title[..copy.title_len as usize], b"hello");
+    }
+
+    // ---- Shell redraw decision (M26 Step 29) ----
+
+    #[test]
+    fn should_redraw_shell_first_render_forces_yes() {
+        // First render must always paint, even if the snapshot didn't
+        // change (the cache is the all-zero default vs a real snapshot).
+        assert!(should_redraw_shell(true, false));
+        assert!(should_redraw_shell(true, true));
+    }
+
+    #[test]
+    fn should_redraw_shell_unchanged_skips() {
+        // Steady state: cache matches new snapshot → skip.
+        assert!(!should_redraw_shell(false, false));
+    }
+
+    #[test]
+    fn should_redraw_shell_changed_redraws() {
+        // Cache differs from new snapshot → redraw.
+        assert!(should_redraw_shell(false, true));
+    }
+
+    // ---- Frame window summary (M26 Step 29) ----
+
+    fn summary_bytes(window: &FrameWindow, window_size: u64) -> alloc::string::String {
+        let mut buf = [0u8; FRAME_WINDOW_SUMMARY_BUF];
+        let n = format_frame_window_summary(window, window_size, &mut buf);
+        alloc::string::String::from_utf8(buf[..n].to_vec()).expect("valid utf8")
+    }
+
+    #[test]
+    fn frame_window_summary_active_with_composes() {
+        let w = FrameWindow {
+            considered: 60,
+            composes: 12,
+            idle: 48,
+            accum_ms: 24,
+            gated: false,
+        };
+        assert_eq!(
+            summary_bytes(&w, 60),
+            "frames=12 considered=60 idle=48/60 avg=2ms"
+        );
+    }
+
+    #[test]
+    fn frame_window_summary_active_zero_composes_avg_zero() {
+        // No composes → avg should be 0 (avoid div-by-zero).
+        let w = FrameWindow {
+            considered: 60,
+            composes: 0,
+            idle: 60,
+            accum_ms: 0,
+            gated: false,
+        };
+        assert_eq!(
+            summary_bytes(&w, 60),
+            "frames=0 considered=60 idle=60/60 avg=0ms"
+        );
+    }
+
+    #[test]
+    fn frame_window_summary_gated_omits_avg() {
+        let w = FrameWindow {
+            considered: 60,
+            composes: 0,
+            idle: 30,
+            accum_ms: 0,
+            gated: true,
+        };
+        assert_eq!(summary_bytes(&w, 60), "(gated) considered=60 idle=30/60");
+    }
+
+    #[test]
+    fn frame_window_avg_zero_composes_returns_zero() {
+        let w = FrameWindow {
+            considered: 0,
+            composes: 0,
+            idle: 0,
+            accum_ms: 0,
+            gated: false,
+        };
+        assert_eq!(w.avg_compose_ms(), 0);
+    }
+
+    #[test]
+    fn frame_window_avg_division() {
+        let w = FrameWindow {
+            considered: 60,
+            composes: 30,
+            idle: 30,
+            accum_ms: 90,
+            gated: false,
+        };
+        assert_eq!(w.avg_compose_ms(), 3);
+    }
+
+    #[test]
+    fn frame_window_summary_handles_large_counts() {
+        // Ensure write_u64 handles realistic mid-range values without
+        // truncation. ~one hour at 60Hz = 216000 considered.
+        let w = FrameWindow {
+            considered: 216_000,
+            composes: 1234,
+            idle: 214_766,
+            accum_ms: 5678,
+            gated: false,
+        };
+        assert_eq!(
+            summary_bytes(&w, 60),
+            "frames=1234 considered=216000 idle=214766/60 avg=4ms"
+        );
     }
 }
