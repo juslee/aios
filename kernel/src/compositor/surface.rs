@@ -209,8 +209,15 @@ pub fn surface_create(
 }
 
 /// Attach a shared memory buffer to a surface. Marks the surface as damaged
-/// according to `damage` and transitions Created/Configured → Active on the
-/// first attach.
+/// according to `damage` and transitions to `Active` on the first attach.
+///
+/// `surface_attach_buffer` is a compound operation: when the surface is in
+/// `Created`, this is logically "the compositor finished configuring (which it
+/// did atomically inside `surface_create`) and the client's first frame has
+/// arrived". The state machine path is therefore Created → Configured →
+/// Active, not the protocol-disallowed direct Created → Active jump. We walk
+/// each step explicitly so `can_transition_to` (the strict per-step
+/// invariant) accepts the move.
 pub fn surface_attach_buffer(
     id: SurfaceId,
     shmem_id: SharedMemoryId,
@@ -227,20 +234,33 @@ pub fn surface_attach_buffer(
         return Err(SurfaceError::InvalidTransition);
     }
 
-    let next_state = match surface.state {
-        // First buffer attach takes us through Configured → Active even if the
-        // client called AttachBuffer before processing its Configure event.
-        SurfaceState::Created | SurfaceState::Configured => SurfaceState::Active,
-        // Subsequent attaches keep us in Active (idempotent self-transition).
-        SurfaceState::Active | SurfaceState::Suspended => SurfaceState::Active,
+    // Determine the path through the state machine. `Created` requires an
+    // intermediate `Configured` step so each individual transition stays
+    // legal under `can_transition_to`.
+    match surface.state {
+        SurfaceState::Created => {
+            if !surface.state.can_transition_to(SurfaceState::Configured) {
+                return Err(SurfaceError::InvalidTransition);
+            }
+            surface.state = SurfaceState::Configured;
+            if !surface.state.can_transition_to(SurfaceState::Active) {
+                return Err(SurfaceError::InvalidTransition);
+            }
+            surface.state = SurfaceState::Active;
+        }
+        SurfaceState::Configured | SurfaceState::Suspended => {
+            if !surface.state.can_transition_to(SurfaceState::Active) {
+                return Err(SurfaceError::InvalidTransition);
+            }
+            surface.state = SurfaceState::Active;
+        }
+        SurfaceState::Active => {
+            // Idempotent self-transition for subsequent AttachBuffer calls.
+        }
         SurfaceState::Destroyed => return Err(SurfaceError::InvalidTransition),
-    };
-    if !surface.state.can_transition_to(next_state) {
-        return Err(SurfaceError::InvalidTransition);
     }
 
     surface.shmem_id = Some(shmem_id);
-    surface.state = next_state;
     if damage.has_damage() {
         surface.damaged = true;
     }
