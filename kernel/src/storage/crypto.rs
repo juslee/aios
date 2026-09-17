@@ -11,8 +11,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::{AeadInPlace, KeyInit};
+use aes_gcm::aead::{AeadInOut, KeyInit, Nonce, Tag};
 use aes_gcm::Aes256Gcm;
 use sha2::{Digest, Sha256};
 use shared::storage::{StorageError, ENCRYPTION_OVERHEAD};
@@ -43,10 +42,9 @@ impl DeviceKeyManager {
         let mut hasher = Sha256::new();
         hasher.update(passphrase);
         hasher.update(b"aios-device-key-salt");
+        // The SHA-256 digest (`Array<u8, U32>`) is directly usable as `Key<Aes256Gcm>`.
         let key_bytes = hasher.finalize();
-
-        let key = GenericArray::from_slice(&key_bytes);
-        let cipher = Aes256Gcm::new(key);
+        let cipher = Aes256Gcm::new(&key_bytes);
 
         // Advance counter by crash recovery gap to guarantee no nonce reuse.
         let safe_counter = initial_counter.saturating_add(CRASH_RECOVERY_GAP);
@@ -86,7 +84,7 @@ impl DeviceKeyManager {
         }
 
         let nonce_bytes = self.next_nonce();
-        let nonce = GenericArray::from_slice(&nonce_bytes);
+        let nonce = Nonce::<Aes256Gcm>::from(nonce_bytes);
 
         // Copy nonce to output.
         buf[..12].copy_from_slice(&nonce_bytes);
@@ -97,7 +95,7 @@ impl DeviceKeyManager {
         // Encrypt in-place (ciphertext replaces plaintext, tag appended).
         let tag = self
             .cipher
-            .encrypt_in_place_detached(nonce, b"", &mut buf[12..12 + plaintext.len()])
+            .encrypt_inout_detached(&nonce, b"", (&mut buf[12..12 + plaintext.len()]).into())
             .map_err(|_| StorageError::IoError)?;
 
         // Append tag after ciphertext.
@@ -121,17 +119,22 @@ impl DeviceKeyManager {
         // Copy nonce to local array to avoid conflicting borrows with mutable decrypt below.
         let mut nonce_bytes = [0u8; 12];
         nonce_bytes.copy_from_slice(&encrypted[..12]);
-        let nonce = GenericArray::from_slice(&nonce_bytes);
+        let nonce = Nonce::<Aes256Gcm>::from(nonce_bytes);
 
         // Extract tag from end.
         let tag_start = 12 + plaintext_len;
-        let mut tag = [0u8; 16];
-        tag.copy_from_slice(&encrypted[tag_start..tag_start + 16]);
-        let tag = GenericArray::from_slice(&tag);
+        let mut tag_bytes = [0u8; 16];
+        tag_bytes.copy_from_slice(&encrypted[tag_start..tag_start + 16]);
+        let tag = Tag::<Aes256Gcm>::from(tag_bytes);
 
         // Decrypt in-place.
         self.cipher
-            .decrypt_in_place_detached(nonce, b"", &mut encrypted[12..12 + plaintext_len], tag)
+            .decrypt_inout_detached(
+                &nonce,
+                b"",
+                (&mut encrypted[12..12 + plaintext_len]).into(),
+                &tag,
+            )
             .map_err(|_| StorageError::DecryptionFailed)?;
 
         Ok(plaintext_len)
