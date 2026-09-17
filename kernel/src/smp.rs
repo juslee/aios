@@ -99,7 +99,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
     }
 
     // Allocate stacks and populate SECONDARY_STACKS for each secondary core.
-    for i in 1..cpu_count {
+    // `i` is still needed alongside `core_info`: it selects the DTB MPIDR and the
+    // SECONDARY_STACKS slot that `_secondary_entry` reads for this core.
+    for (i, core_info) in sched.cores[..cpu_count].iter_mut().enumerate().skip(1) {
         let mpidr = dt.cpu_mpidr(i);
         // Allocate 16 KiB stack (buddy order 2 = 4 pages).
         // SAFETY: Identity map is active post-MMU init; buddy allocator is initialized.
@@ -118,9 +120,9 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
         let stack_size = 4096 * 4; // 16 KiB
         let stack_top = stack_phys + stack_size;
 
-        sched.cores[i].mpidr = mpidr;
-        sched.cores[i].stack_base = stack_phys;
-        sched.cores[i].stack_size = stack_size;
+        core_info.mpidr = mpidr;
+        core_info.stack_base = stack_phys;
+        core_info.stack_size = stack_size;
 
         // SAFETY: Single writer (boot CPU), secondaries not yet awake.
         unsafe {
