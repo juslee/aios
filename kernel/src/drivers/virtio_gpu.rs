@@ -148,8 +148,9 @@ pub fn display_test_frame() -> Result<(), GpuError> {
 /// Find a VirtIO GPU device. DTB first, then brute-force MMIO scan.
 fn probe(dt: &DeviceTree) -> Option<usize> {
     // Strategy 1: DTB-provided VirtIO MMIO bases.
-    for i in 0..dt.virtio_mmio_count {
-        let phys = dt.virtio_mmio_bases[i] as usize;
+    let dtb_bases = &dt.virtio_mmio_bases[..dt.virtio_mmio_count];
+    for (i, &base) in dtb_bases.iter().enumerate() {
+        let phys = base as usize;
         if let Some(p) = probe_slot(phys) {
             crate::kinfo!(Gpu, "VirtIO-GPU: DTB slot {}, phys {:#x}", i, p);
             return Some(p);
