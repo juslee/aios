@@ -102,12 +102,12 @@ pub fn init_all(dt: &DeviceTree) -> usize {
     let mut initialized_phys = [0usize; MAX_INPUT_DEVICES];
 
     // Strategy 1: DTB-provided VirtIO MMIO bases.
-    for i in 0..dt.virtio_mmio_count {
+    for &base in &dt.virtio_mmio_bases[..dt.virtio_mmio_count] {
         if count >= MAX_INPUT_DEVICES {
             crate::kwarn!(Input, "max input devices reached, stopping scan");
             return count;
         }
-        let phys = dt.virtio_mmio_bases[i] as usize;
+        let phys = base as usize;
         if probe_slot(phys) && try_init_device(phys, &mut count, &mut initialized_phys) {
             continue;
         }

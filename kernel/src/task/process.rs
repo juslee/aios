@@ -48,10 +48,8 @@ pub struct ProcessControl {
 // ---------------------------------------------------------------------------
 
 /// System-wide process table. BSS-allocated via `Option<ProcessControl>`.
-pub static PROCESS_TABLE: Mutex<[Option<ProcessControl>; MAX_PROCESSES]> = {
-    const NONE: Option<ProcessControl> = None;
-    Mutex::new([NONE; MAX_PROCESSES])
-};
+pub static PROCESS_TABLE: Mutex<[Option<ProcessControl>; MAX_PROCESSES]> =
+    Mutex::new([const { None }; MAX_PROCESSES]);
 
 // ---------------------------------------------------------------------------
 // Process wait infrastructure
