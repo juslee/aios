@@ -57,6 +57,12 @@ pub fn compose_frame<F>(
     }
 
     for surface in surfaces {
+        // M26 Step 26: skip hidden surfaces (e.g., Workspace toggled
+        // off via Super). `visible` is independent of `state` —
+        // surfaces with attached buffers can still be hidden.
+        if !surface.visible {
+            continue;
+        }
         let src = match resolve_src(surface) {
             Some(s) => s,
             None => continue,

@@ -95,11 +95,11 @@ swap) HANGS on Non-Cacheable Normal memory.
 Size classes: 5 (64, 128, 256, 512, 4096B); smaller rounds up to 64. Backed by frame allocator (kernel pool).
 
 # Concurrency / kernel correctness
-Lock ordering (full, M25):    PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE >
+Lock ordering (full, M26):    PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE >
                               SELECT_WAITERS > BLOCK_ENGINE > WINDOW_Z_ORDER > DRAG_STATE >
                               SURFACE_TABLE > {VIRTIO_BLK, VIRTIO_GPU, VIRTIO_INPUT (leaf)} >
                               {INPUT_QUEUE, PENDING_POINTER, FOCUS_MANAGER, CURSOR_POS,
-                               TITLE_FONT (leaf, independent)}
+                               TITLE_FONT, STATUS_STRIP, TASKBAR, WORKSPACE (leaf, independent)}
 Capability enforcement:       channel_create → ChannelCreate;
                               ipc_call/send/recv → ChannelAccess;
                               ipc_reply → NONE (spec §9.1).
@@ -109,6 +109,20 @@ Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op r
                               (hit-test walks Z then reads the table; drag handler enters
                               DRAG_STATE then snapshots geometry from the table). None of
                               the compositor mutexes is ever held across ipc_send / ipc_call.
+Compositor invariant (M26):   Shell surfaces (Status Strip, Taskbar, Workspace) are
+                              compositor-internal: owner_pid == ProcessId(10), channel ==
+                              COMPOSITOR_CHANNEL — M25's is_self_channel suppression keeps
+                              them off the recv ring. Surface::is_shell() is the canonical
+                              predicate; surface::is_shell_id is the kernel-side wrapper.
+                              Per-client channels: CompositorRequest carries client_channel;
+                              effective_channel(client, service) routes events back to the
+                              right endpoint. ProcessId(11) is reserved for the test-app.
+                              surface_attach_buffer walks Created → Configured → Active
+                              explicitly (each step gated by can_transition_to per protocol).
+                              COMPOSITOR_PRESENT_ENABLED is still false at end of M26 — a
+                              pre-existing M24 race produces intermittent crashes; see
+                              docs/knowledge/lessons/2026-05-07-cl-phase-7-m26-step-28-shell-
+                              attach-corruption.md for investigation notes.
 ```
 
 ---
@@ -171,8 +185,10 @@ aios/
 │   ├── gpu/              GPU Service, boot log text rendering
 │   ├── compositor/       Compositor service, surface lifecycle, decorations,
 │   │                     hit-test/cursor, focus, input routing + IPC dispatch,
-│   │                     window move/resize, system hotkeys (M25 adds
-│   │                     window/cursor/focus/input_route/hotkey/text)
+│   │                     window move/resize, system hotkeys, shell surfaces
+│   │                     (M25 adds window/cursor/focus/input_route/hotkey/text;
+│   │                     M26 adds shell/{status_strip,taskbar,workspace} +
+│   │                     test_app.rs — first kernel-mode IPC client)
 │   ├── storage/          BlockEngine, WAL, MemTable, object/version stores, crypto, posix bridge, budget
 │   ├── observability/    structured log, metrics, trace (feature-gated)
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
