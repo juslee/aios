@@ -20,7 +20,7 @@ The agent-loop tooling is Python and bash, written in September 2026:
 | `scripts/soak-qemu.sh` | 853 |
 | `.claude/hooks/precompact-save.sh` | 152 |
 
-The approved PR-loop design ([[2026-09-22-jl-justin-review-merge-loop]]) planned a Python orchestrator.
+The approved PR-loop design (`docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md`, on branch `claude/justin-review-merge-loop` until R2 merges) planned a Python orchestrator.
 
 The owner decided to move all of it to Rust. The main reasons:
 
@@ -169,7 +169,7 @@ All loop behaviour, prompts, config and evals are unchanged.
 
 ## References
 
-- [[2026-09-22-jl-justin-review-merge-loop]]: the approved PR-loop design this tooling implements.
+- `docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md` (branch `claude/justin-review-merge-loop`): the approved PR-loop design this tooling implements.
 - `docs/knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md` (PR #174): the crash-fix steps that use the soak harness.
 - PR #169: the Ubuntu 26.04 runner, blocked on GNU `timeout`.
 
