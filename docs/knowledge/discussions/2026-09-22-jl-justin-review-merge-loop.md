@@ -331,6 +331,19 @@ A drop in recall, or a rise in the false-positive rate, beyond one case against 
 4. **Stage 2.** The launchd runner, in a separate spec: a schedule, `resume-at`, the budget, and `claude -p "/justin:merge --all"`.
 5. **First `/justin:retro`** after 5 merged PRs.
 
+**Related self-improvement roadmap** (owner-approved 2026-09-22; each item gets its own spec). The implementation PR adds this list to `docs/project/agent-loop.md`:
+
+- **With this loop:** eval suites (section 4).
+- **Right after the crash fix:** soak-driven crash triage on `main`, with automatic `git bisect` over merged commits and a revert PR for the culprit.
+- **Cheap nightly jobs:**
+  - `cargo mutants` on `shared/`, where surviving mutants become test PRs;
+  - `cargo fuzz` on the DTB and ELF parsers, `can_attenuate_to`, and the storage WAL and crypto, where crashes become minimized failing tests plus fix PRs.
+- **Monthly:** a friction retro mined from session transcripts (permission denials, owner corrections, failed commands), proposing rule, allowlist and skill changes.
+- **Later:**
+  - benchmark-regression tracking from soak logs;
+  - knowledge-hive gardening (distil plans, graduate discussions, add links).
+- **Stage 3:** the autonomous phase pipeline: milestone → review loop → merge → next milestone.
+
 **Owner prerequisite:** extra usage switched off or capped in claude.ai, through `/usage-credits` or <https://claude.ai/settings/usage>. This is what makes unattended runs incur no overage.
 
 ## Open Questions
