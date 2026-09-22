@@ -34,8 +34,8 @@ Could TypeSafe's Jev model (a classifier that returns calibrated probabilities, 
 
 **Extra arms.** These ran on a 151-item subset: all 51 comments that led to no change, plus 100 random ones that did.
 
-- **File arm:** adds the file as it was at the commented commit, capped at 90,000 characters (20 of 151 files hit the cap).
-- **Policy arm:** adds the file (capped at 60,000 characters to leave room; 29 files hit the cap) and the PR description, which carries phase scope and deferrals. It asks four narrow questions alongside `needs_change` and `severity`: `claim_accurate`, `already_handled`, `intentional`, `out_of_scope`.
+- **File arm:** adds the file as it was at the commented commit, capped at 90,000 characters (the files for 20 of the 151 comments hit the cap).
+- **Policy arm:** adds the file (capped at 60,000 characters to leave room; the files for 29 comments hit it) and the PR description, which carries phase scope and deferrals. It asks four narrow questions alongside `needs_change` and `severity`: `claim_accurate`, `already_handled`, `intentional`, `out_of_scope`.
 
 The subset holds 15 of the 16 reviewer-wrong comments. The sixteenth led to a change, so it was not in the no-change sample.
 
