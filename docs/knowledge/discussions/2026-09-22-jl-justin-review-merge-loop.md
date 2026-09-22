@@ -257,6 +257,37 @@ The deterministic tag match is faster and reproducible. The MCP server remains t
 
 `/justin:brief` prints these on one line.
 
+**Evals: self-improvement must be measured, not assumed.** Two suites gate every change to the loop's own judgement.
+
+**1. Loop-stage evals.** `pr_loop.py eval` runs the review and verify stages against a fixture corpus in `scripts/agent/evals/`. It uses the same prompts and the same `loop-config.json` models as a real run. There are two kinds of case:
+
+- **Seeded-bug cases:** a real diff with one known defect, labelled with the expected file and category. The seed corpus comes from real findings of the 2026-09-22 review rounds, taken at their pre-fix commits:
+  - the unquoted scratch-path `rm` in `soak-qemu.sh`;
+  - the git option-abbreviation bypass in the settings proposal;
+  - the pause secret scan with no override;
+  - others from the same rounds.
+- **Clean cases:** merged PR diffs that converged and never escaped. They expect zero confirmed findings.
+
+It reports:
+
+- **recall:** the share of seeded bugs confirmed after verify;
+- **false-positive rate:** confirmed findings on clean cases;
+- **cost per case.**
+
+**2. Skill evals.** `claude plugin eval justin`, with cases in `.claude/skills/justin/evals/`, for example: "given this brief state, `/justin:start` proposes the right next action". It uses the built-in no-plugin baseline arm and `--max-cost-usd`.
+
+**The gate.** A PR that changes any of the following must include fresh scores in `scripts/agent/evals/scores.json`:
+
+- `scripts/agent/prompts/**`;
+- the model or escalation settings in `loop-config.json`;
+- `.claude/skills/justin/**`.
+
+A drop in recall, or a rise in the false-positive rate, beyond one case against main's recorded scores is a confirmed finding in the review loop. So a retro change to a prompt merges only if it measurably does not make the loop worse.
+
+**The corpus grows itself.** Every escape becomes a new seeded-bug case: the real bug, taken before its fix. Every category that verify often dismisses adds a clean case. Retro PRs add eval cases together with the checks they add.
+
+**Cost.** The suites run only when those files change, plus once a week, under `--max-cost-usd`.
+
 ### 5. Safety, failure handling, rollout
 
 **Main red.** This means CI failing on `main`, or a post-merge soak clearly below its baseline. The loop:
@@ -291,7 +322,9 @@ The deterministic tag match is faster and reproducible. The MCP server remains t
 1. **Build.** This spec, then a plan in `docs/knowledge/plans/`, then one PR on `claude/justin-review-merge-loop`:
    - `pr_loop.py`, `retro.py`, the prompts, the config and the three skills;
    - unit tests for the state machine with fake `gh`, `git` and `claude` executables;
-   - `--dry-run`.
+   - `--dry-run`;
+   - the eval suites with a seed corpus of about 10 seeded-bug and 5 clean cases, and the first recorded `scores.json`;
+   - a rewrite of rule 03 "Main Is User-Only". Agents still never push to `main` and never run `gh pr merge` themselves; the only merge path becomes GitHub auto-merge armed by `pr_loop.py` behind the required checks.
    It merges with the existing `/merge-and-cleanup`, then deletes that skill and `review-pr-comments`.
 2. **Review-only trial.** `/justin:review` on 2–3 real PRs, such as #170 and the skills-rename PR. Compare its findings with a manual read.
 3. **Switch GitHub.** Add the required `justin/review` status, the strict up-to-date policy, and the auto-merge repo settings. In this order only: requiring the status before the loop can post it would block every PR.
@@ -304,6 +337,7 @@ The deterministic tag match is faster and reproducible. The MCP server remains t
 
 - Does `claude -p` accept `--json-schema` for structured stage output on 2.1.278, or should stages print a fenced JSON block for `pr_loop.py` to parse? To be decided during the plan by a one-call check.
 - The exact GitHub status call and ruleset update payload. Verify with a read-only `gh api` dry-run before rollout step 3.
+- Where `pr_loop.py` should live. Rule 03 requires unattended pushers to live under `.claude/` and be trusted by the push guard. Moving the orchestrator to `.claude/agent/` would also protect its code from edits by the loop's own fix stage, because agent writes to `.claude/**` go to the owner, while leaving the prompts in `scripts/agent/prompts/` free for retro edits. To be decided in the plan.
 - Whether `/justin:start` should run `/justin:merge --all` itself or only propose it. This is decided in the skills-rename PR, which also moves the other 7 skills into the plugin.
 
 ## References
