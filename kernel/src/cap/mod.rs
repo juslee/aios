@@ -85,7 +85,15 @@ pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
 }
 
 /// Check that a process holds ChannelAccess(channel_id) capability.
+///
+/// Returns `Err(EINVAL)` for a channel id `>= MAX_CHANNELS` before touching
+/// any table. No channel can exist at such an id, and callers go on to look
+/// the id up in CHANNEL_TABLE.
 pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Result<(), i64> {
+    if channel.index().is_none() {
+        return Err(IpcError::Einval as i64);
+    }
+
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
     if (pid.0 as usize) >= table.len() {
@@ -389,7 +397,7 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
 /// Walk CHANNEL_TABLE and destroy channels whose creation_cap matches token_id.
 /// Wakes blocked threads with EPIPE.
 fn revoke_channels_for_cap(token_id: CapabilityTokenId) {
-    let mut channels_to_destroy = [None; 128];
+    let mut channels_to_destroy = [None; crate::ipc::MAX_CHANNELS];
     let mut count = 0;
 
     {
