@@ -272,6 +272,7 @@
     "commit-commands@claude-plugins-official": false,
     "gitkraken@claude-plugins-official": false,
     "gitkraken-hooks@gitkraken": false,
-    "manage-worktrees-skill@claude-skills-engineering": false
+    "manage-worktrees-skill@claude-skills-engineering": false,
+    "typesafe@typesafe-ai": false
   }
 }
