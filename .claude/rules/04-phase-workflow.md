@@ -20,7 +20,7 @@ When implementing Phase N:
    - Run `/audit-loop` — recursive triple audit until 0 issues. Fix all issues, commit.
 10. **FINAL GATE**: Run `/verify-phase` + `/audit-loop` one final time before PR — must be 0 issues
 11. **DISTILL**: Read working plan, extract lessons/decisions to knowledge hive, delete plan
-12. **PR**: Push branch, create PR, run `/review-pr-comments`, then `/merge-and-cleanup`
+12. **PR**: Push branch, create PR, run `/review-pr-comments`, then hand off: report the PR URL and check status and ask the user to run `/merge-and-cleanup` (user-invocable only; never merge yourself)
 
 **PLAN MODE**: If plan mode is active, the `/implement-phase` skill automatically restricts to research + planning only (no builds, commits, or worktree creation). The plan is written to the system plan file. After user approval, the execution path picks up from Phase 1 with the approved plan.
 

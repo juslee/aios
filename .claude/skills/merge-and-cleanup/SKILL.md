@@ -2,7 +2,9 @@
 name: merge-and-cleanup
 description: >
   Squash merge a PR, delete the remote and local branch, remove the worktree
-  (if working in one), and update main. Use after PR approval.
+  (if working in one), and update main. Run by the user after PR approval;
+  agents hand off instead of merging.
+disable-model-invocation: true
 ---
 
 # Merge and Cleanup
@@ -70,7 +72,13 @@ cd "$MAIN_REPO"
 git worktree remove "$WORKTREE_PATH"
 ```
 
-If `git worktree remove` fails because of uncommitted changes, use `--force` only if the PR was already merged (the changes are safe in main).
+If `git worktree remove` fails because of uncommitted changes, do not reach for `--force` on your own. Uncommitted and untracked files were never part of the PR, so merging it did not save them, and `--force` deletes them. Show what would be lost:
+
+```bash
+git -C "$WORKTREE_PATH" status --porcelain
+```
+
+If the output is not empty, show it to the user and ask before running `git worktree remove --force "$WORKTREE_PATH"`. If they want to keep something, stop and let them move it first.
 
 ## Step 6: Switch to main and pull
 
@@ -90,6 +98,8 @@ git branch -d <branch-name>
 ```
 
 If the branch doesn't exist (already cleaned up), ignore the error and continue.
+
+After a squash merge, `git branch -d` normally fails with "not fully merged", because the squash commit on main has a different SHA from the branch commits. In that case confirm the PR is merged (`gh pr view <number> --json state --jq .state` prints `MERGED`), then ask the user to confirm before running `git branch -D <branch-name>`. Never force-delete a branch whose PR is not merged.
 
 ## Step 8: Report
 

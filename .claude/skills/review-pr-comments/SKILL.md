@@ -142,8 +142,10 @@ Map each REST `comment_id` to a thread by matching against the `databaseId` fiel
 
 ## Step 8: Push
 
+Push the PR branch by its explicit name (the `branch` from Step 1, a `claude/*` branch), never a bare `git push`:
+
 ```bash
-git push
+git push origin <branch>
 ```
 
-Report final summary: how many comments addressed, commits pushed, threads resolved.
+Report final summary: how many comments addressed, commits pushed, threads resolved. Do not merge the PR; merging is user-only via `/merge-and-cleanup`.
