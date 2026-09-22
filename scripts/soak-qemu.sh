@@ -52,6 +52,9 @@ save each boot's serial log, and classify every boot as exactly one of:
                   kernel output, whatever QEMU's exit status (QEMU failed to
                   start, or the firmware never loaded the stub). On the first
                   boot of a soak this is a setup error instead (exit 2)
+                - QEMU was killed by a signal before the time limit (exit
+                  status above 128 other than the timeout's own 124/137, or
+                  137 before the limit) and no fatal report came first
                 - the symptoms of a WEDGE, but the run ended no more than
                   --stall-secs after the boot's last progress (kernel start,
                   heartbeat, bench start), so the boot was cut short rather
@@ -62,17 +65,19 @@ save each boot's serial log, and classify every boot as exactly one of:
                 GpuReady, InputReady and "display handoff complete" markers
                 were printed
 
-Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC/EXCEPTION >
-WEDGE/INCONCLUSIVE (cut short) > CLEAN. When a log holds several fatal reports,
-the earliest one decides the class (later ones are usually fallout, e.g. a data
-abort after a panic); the count is kept in the detail.
+Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC/EXCEPTION > QEMU
+killed by a signal (INCONCLUSIVE) > WEDGE/INCONCLUSIVE (cut short) > CLEAN.
+When a log holds several fatal reports, the earliest one decides the class
+(later ones are usually fallout, e.g. a data abort after a panic); the count
+is kept in the detail.
 
 Heartbeat timing comes from the harness: it polls the log every second and
 appends a "[soak] meta" line recording when the kernel started, when the first
 heartbeat and the Gate 1 bench header appeared, and when the heartbeat last
-advanced. A log without that line (not produced by this script) is classified
-log-only: a heartbeat that stops after tick 0 cannot be detected there, and a
-cut-short boot cannot be told apart from a wedge.
+advanced. Silence is measured to the planned end of the boot (--secs), not to
+QEMU's exit after the timeout. A log without that line (not produced by this
+script) is classified log-only: a heartbeat that stops after tick 0 cannot be
+detected there, and a cut-short boot cannot be told apart from a wedge.
 
 Options:
   --runs N           number of sequential boots (default 10)
@@ -154,6 +159,8 @@ function dash(s) { return s == "" ? "-" : s }
 function note(s) { notes = (notes == "") ? s : notes "; " s }
 # A footer time in seconds, or -1 when the footer lacks it (older footers).
 function secs_of(k) { return (k in meta) ? meta[k] + 0 : -1 }
+# Seconds from footer time t to the planned end of the boot, never negative.
+function since(t) { return (t >= run_end) ? 0 : run_end - t }
 BEGIN {
     hb = 0; tick = -1; hb_nr = 0; boots = 0; bench_nr = 0; stub = 0
     fatal = ""; first = ""; nfatal = 0; pend = 0; fatal_tick = -1; exwin = 0; edk2 = 0
@@ -242,21 +249,28 @@ END {
     timing = have_meta && ("elapsed" in meta) && ("hb_last_advance" in meta)
     stall = "-"
     early = 0
+    signaled = 0
+    sig_noted = 0
     missing = ""
     if (timing) {
-        # Silence is measured up to the planned end of the run, so a QEMU
-        # process that exits early counts as silent for the remaining time.
-        run_end = meta["elapsed"] + 0
-        if (meta["secs"] + 0 > run_end) run_end = meta["secs"] + 0
+        elapsed = meta["elapsed"] + 0
+        # Silence is measured up to the planned end of the run: not to QEMU's
+        # actual exit, which follows the timeout's SIGTERM by up to 10 s, and
+        # past an early exit, which counts as silent for the remaining time.
+        run_end = ("secs" in meta) ? meta["secs"] + 0 : elapsed
         adv = secs_of("hb_last_advance"); kst = secs_of("kstart")
         hbf = secs_of("hb_first"); bst = secs_of("bench_start")
         # Heartbeat silence runs from its last advance; before the first
         # heartbeat, from the kernel start, or failing that from QEMU start.
-        stall = run_end - ((adv >= 0) ? adv : ((kst >= 0) ? kst : 0))
+        stall = since((adv >= 0) ? adv : ((kst >= 0) ? kst : 0))
         limit = (limit_override != "") ? limit_override + 0 : meta["stall_limit"] + 0
+        # GNU timeout exits 124, or 137 once --kill-after fired, when the time
+        # limit ran out. Any other status, or 137 before the limit (a SIGKILL
+        # from outside, e.g. the OOM killer), means QEMU ended on its own; a
+        # status above 128 means a signal killed it.
         rc = meta["qemu_rc"]
-        early = (rc != "" && rc != "124" && rc != "137")
-        if (early) note("qemu exited before the time limit (rc=" rc ")")
+        early = (rc != "" && !((rc == "124" || rc == "137") && elapsed >= run_end))
+        signaled = (early && rc + 0 > 128)
         if (meta["mode"] == "gpu") {
             if (!gpu) missing = missing ",GpuReady"
             if (!input) missing = missing ",InputReady"
@@ -276,6 +290,12 @@ END {
         if (edk2) note("edk2-format report from the firmware or UEFI stub")
         note((fatal_tick < 0) ? "before the first heartbeat" : "after heartbeat tick " fatal_tick)
         if (nfatal > 1) note(nfatal " fatal reports")
+    } else if (signaled) {
+        # QEMU itself crashed or was killed; the silence that follows is not
+        # the kernel's doing.
+        class = "INCONCLUSIVE"
+        note("QEMU killed by signal " (rc - 128) " after " elapsed "s (rc=" rc "), not a boot result")
+        sig_noted = 1
     } else if (hb == 0) {
         if (boot) what = "no heartbeat after boot sequence complete"
         else if (boots) what = "no heartbeat; boot sequence incomplete"
@@ -308,9 +328,9 @@ END {
         # The bench gets --stall-secs to finish, counted from its header (or,
         # if it never printed one, from the first heartbeat).
         ref = (bst >= 0) ? bst : hbf
-        if (timing && ref >= 0 && run_end - ref <= limit) {
+        if (timing && ref >= 0 && since(ref) <= limit) {
             class = "INCONCLUSIVE"
-            note("cut short: " what ", only " (run_end - ref) "s since " ((bst >= 0) ? "the bench header" : "the first heartbeat") " (limit " limit "s)")
+            note("cut short: " what ", only " since(ref) "s since " ((bst >= 0) ? "the bench header" : "the first heartbeat") " (limit " limit "s)")
         } else {
             class = "WEDGE"
             note(what)
@@ -322,6 +342,7 @@ END {
         class = "CLEAN"
         if (!timing) note("log-only: no harness timing, a late heartbeat stall is undetectable")
     }
+    if (early && !sig_noted) note("qemu exited before the time limit (rc=" rc (signaled ? ", signal " (rc - 128) : "") ")")
     if (boots > 1) note("guest booted " boots " times")
 
     if (class == "CLEAN" || class == "INCONCLUSIVE" || i3 == "") lb = "-"
