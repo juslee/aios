@@ -88,13 +88,20 @@ jobs:
     name: QEMU boot soak (report-only)
     # Measures boot flakiness for the crash investigation (see `just soak`).
     # Report-only: crashes show up in the summary and artifacts, never block CI.
-    # One soak per pushed commit: the pull_request run of the same commit is
-    # skipped (same-repo PRs show the push run's result), and a newer push to
-    # the same ref cancels a soak still running.
-    if: github.event_name != 'pull_request'
+    # One soak per commit. claude/** branches get it from their push run, so
+    # their pull_request run skips it. Every other PR head (renovate/*, other
+    # same-repo branches, forks) has no push run and is soaked on the
+    # pull_request event.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !startsWith(github.head_ref, 'claude/')
+    # A newer push to a branch or PR cancels its soak still running. On main
+    # each commit has its own group and nothing is cancelled, so back-to-back
+    # merges each keep their soak (and their CI run is not marked cancelled).
     concurrency:
-      group: qemu-soak-${{ github.ref }}
-      cancel-in-progress: true
+      group: qemu-soak-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     # Pinned: the QEMU and edk2 versions come from the runner image, and soak
     # results are only comparable across runs on the same image.
     runs-on: ubuntu-24.04
