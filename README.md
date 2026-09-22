@@ -114,6 +114,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just run-display` | Boot with QEMU display window (for framebuffer visual verification) |
 | `just run-direct` | Boot kernel directly via QEMU `-kernel` (Phase 0 mode) |
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
+| `just soak` | Boot repeatedly under QEMU and classify each boot (`runs=N secs=T mode=text\|gpu`; logs in `target/soak/`) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
 

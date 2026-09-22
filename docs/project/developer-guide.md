@@ -1532,6 +1532,7 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just run-display` | Same as `run` but with a graphical window (for framebuffer testing) |
 | `just run-direct` | Phase 0 mode: direct `-kernel` boot, no UEFI (quick debugging) |
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
+| `just soak` | Boot N times in a row and classify each boot (PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN); see §5.6 |
 | `just test` | Run host-side unit tests (shared crate) |
 | `just clippy` | Run clippy on kernel and stub targets with `-D warnings` |
 | `just fmt` | Format code with `cargo fmt` |
@@ -1729,6 +1730,67 @@ mod tests {
 | `sched` | 18 | Thread state, scheduler class, CpuSet, resource limits, priority |
 | `syscall` | 15 | Syscall numbering, IpcError codes |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
+
+### 5.6 Boot Soak Testing (`just soak`)
+
+A single `just run` cannot tell you whether a change affects intermittent boot failures: a crash that hits 7 boots in 10 will still miss some boots. `just soak` (backed by `scripts/soak-qemu.sh`) builds the ESP once, boots it N times in a row with the same QEMU arguments as `just run` (text mode) or `just run-gpu` plus `-display none` (gpu mode), and classifies every boot. Use it to measure a failure rate before you change anything, and again after.
+
+```bash
+just soak                                  # 10 text-mode boots x 75 s
+just soak runs=20 secs=75                  # baseline-sized sample
+just soak mode=gpu runs=10                 # VirtIO-GPU + input devices
+just soak runs=5 secs=90 report_only=1     # exit 0 even if boots fail (used by CI)
+just soak --no-build --reuse-data          # boot the existing image on data.img
+scripts/soak-qemu.sh --help                # all options
+```
+
+Each boot runs under GNU `timeout` (`gtimeout` from Homebrew coreutils on macOS) in its own process group, so only that boot's QEMU is ever killed. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
+
+Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root.
+
+| File | Contents |
+|---|---|
+| `run-NN.log` | Raw serial output of boot NN, plus a trailing `[soak] meta` line with QEMU's exit status (`qemu_rc`), `elapsed` seconds, and the harness timing: seconds into the boot at which the kernel started (`kstart`), the first heartbeat (`hb_first`), the Gate 1 bench header (`bench_start`) and `=== Gate 1 Complete ===` (`g1done`) appeared, and the heartbeat last advanced (`hb_last_advance`); -1 means never. `hb_max_gap` is the longest wait between two heartbeat advances after the bench completed (-1 if it never did) |
+| `summary.tsv` | One row per boot: class, last heartbeat tick, stall, the timing above (`g1done_s`, `hb_max_gap_s`, ...), markers, first fatal line, last three kernel INFO lines, `lb_last` |
+| `summary.md` | Host/commit metadata, class counts, 95% Wilson interval for the CLEAN rate, per-boot table |
+| `build.log` | Output of `just disk` |
+
+**Classes.** Every boot gets exactly one class. The precedence is: UEFI stub never ran (`INCONCLUSIVE`) > `PCZERO` / `PANIC` / `EXCEPTION` > QEMU killed by a signal (`INCONCLUSIVE`) > `WEDGE` / cut short (`INCONCLUSIVE`) > `CLEAN`. So fatal reports take precedence over heartbeat state. If a log holds several fatal reports, the earliest decides the class, because later reports (for example a data abort after a panic) are usually fallout.
+
+| Class | Rule |
+|---|---|
+| `PCZERO` | An exception report with `ELR=0x0000000000000000`: the CPU jumped to address 0. The exception and panic handlers write without a lock, so output from other CPUs can split a report; the ELR is looked for up to 3 lines below the `EXCEPTION[CPU n]:` prefix. An instruction abort with FAR=0 (`EC=0x20`/`0x21` with `FAR=0x0000000000000000`, or `Instruction Abort at 0x0000000000000000`) is the same evidence |
+| `PANIC` | A `PANIC:` line from the kernel panic handler (the message on the next non-empty line is captured too) |
+| `EXCEPTION` | Any other exception report: `EXCEPTION[CPU n]:` (EL1), `DATA ABORT (EL0)`, `INST ABORT (EL0)`, `UNKNOWN EXCEPTION (EL0)`, or an edk2-format `Synchronous Exception at 0x...` report from the firmware or the UEFI stub. A report whose prefix was itself split by another CPU's output is still caught (detail: "report prefix split by other output"): by its register fields (`ESR=0x.. EC=0x..` or `EC=0x.. FAR=0x.. ELR=0x..` for EL1, `(EL0): FAR=0x` / `(EL0): EC=0x` for EL0), or by a `Data Abort at 0x` / `Instruction Abort at 0x` line with no EL1 report in the 4 lines above it |
+| `WEDGE` | No fatal report, the boot misses a `CLEAN` condition below, and it had more than `stall_secs` to meet it |
+| `INCONCLUSIVE` | Not a result about the kernel, so left out of the CLEAN rate. Either the UEFI stub never ran, QEMU was killed by a signal, or the boot was cut short (see below) |
+| `CLEAN` | No fatal report and every condition below holds |
+
+**Not a boot result.** Two cases are `INCONCLUSIVE` whatever the heartbeat shows:
+
+- *The UEFI stub never ran*: the log has no `AIOS UEFI stub` line and no kernel output, whatever QEMU's exit status. QEMU failed to start, or the firmware never loaded the stub (for example an `AIOS_EDK2_FW` that enforces Secure Boot and rejects the unsigned stub, a stale or corrupt `aios.img`, or the firmware dropping to the UEFI shell). A firmware exception in that phase is included. On the first boot of a soak this is a setup error instead: the harness stops with exit status 2, even with `report_only=1`. A stub that ran but never started the kernel (for example a stub panic) stays a `WEDGE`, "kernel never started".
+- *QEMU was killed by a signal* before the time limit, with no fatal report before it: exit status above 128 other than the timeout's own (124, or 137 once `--kill-after` fires at the limit), or 137 before the limit (a SIGKILL from outside, such as the OOM killer). The silence that follows is not the kernel's doing. An early exit with a status of 128 or below (QEMU ending on its own) is still judged by the rules below, with a "qemu exited before the time limit" note.
+
+**Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock times at which the kernel started, the first heartbeat, the bench header and `=== Gate 1 Complete ===` appeared, and a new heartbeat last appeared. A boot is `CLEAN` only if all of these hold:
+
+1. The heartbeat advanced past `tick=0`. The Gate 1 bench waits 500 ticks, prints its header, then runs its IPC loop with IRQs masked on whichever CPU runs the bench main and server threads (enqueued on CPU 0, but with all-CPU affinity). A heartbeat stuck at `tick=0` means CPU 0 took no timer interrupt after that point; when the bench header follows it, that fits the IRQ-masked loop hanging on CPU 0 ("heartbeat stuck at tick 0 after the Gate 1 bench started"). A heartbeat past `tick=0` does not show that the bench finished, hence rule 3.
+2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot (`secs`). Silence is measured to that planned end, not to QEMU's actual exit, which follows the timeout's SIGTERM by about 1 s (up to 10 s if `--kill-after` has to SIGKILL it). A QEMU process that exits early counts as silent for the rest of the planned time.
+3. The log contains `=== Gate 1 Complete ===`. The bench can hang while the timer keeps running (seen under TCG in CI, with heartbeats reaching tick 79000), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". `G1PASS` is not required, because the IPC latency threshold can legitimately fail on a slow or loaded host.
+4. In gpu mode, the log contains `GpuReady`, `InputReady` and `display handoff complete` (all printed before the bench); otherwise "gpu markers missing".
+
+**Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The script warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
+
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`) and the edk2 noise before the stub do not affect classification.
+
+**Re-classifying saved logs.** `scripts/soak-qemu.sh --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
+
+**Comparing before and after.** Boot failures are random, so treat every soak result as a sample:
+
+- Keep everything but the change fixed: same `mode`, `secs`, `stall_secs` and host. Check the load averages in `summary.md`, because host load changes TCG timing and therefore interleavings. Run the before and after soaks back to back, or alternate smaller batches.
+- Small samples have wide intervals. 6 CLEAN out of 20 gives a 95% interval of about 15–52%. Doubling that to 12/20 is *not* significant (two-sided Fisher exact test p ≈ 0.11), while 6/20 → 18/20 is (p ≈ 0.0002). Compare the Wilson intervals printed in `summary.md`, or run a Fisher exact test on the 2×2 CLEAN / not-CLEAN table, before claiming an improvement.
+- Zero failures is weak evidence. With no failures in n boots, the 95% upper bound on the failure rate is about 3/n (the rule of three): 20 clean boots only bound it below 15%, and you need about 60 to bound it below 5%.
+- Look at the class mix, not just the CLEAN count. A change that turns `PCZERO` boots into `WEDGE` boots has moved the bug, not fixed it.
+- CI results (`qemu-soak` job: 5 boots × 90 s, TCG on x86, Ubuntu 24.04 QEMU and edk2) are a smoke signal. Do not pool them with local arm64 soaks. The job runs once per commit: on the push event for `main` and `claude/**` branches (their pull_request run skips it), on the pull_request event for every other PR head (`renovate/*` and other branches, forks), and on a manual dispatch. A newer push to a branch or PR cancels its running soak; on `main` every commit keeps its own soak, so back-to-back merges do not cancel each other. The logs are written to `$RUNNER_TEMP/aios-soak`, outside the cached `target/`, and uploaded as the `qemu-soak-logs` artifact.
 
 ---
 

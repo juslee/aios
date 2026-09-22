@@ -128,6 +128,16 @@ run-direct: build
         -nographic \
         -kernel {{kernel_elf}}
 
+#   just soak                                  10 text boots x 75 s, logs under target/soak/
+#   just soak runs=20 secs=90 mode=gpu         key=value or --flags go to scripts/soak-qemu.sh
+#   just soak report_only=1                    exit 0 even if some boots are not CLEAN
+# Runs in the invocation directory ([no-cd]): relative out= and log paths resolve there.
+# Soak-test boots: N sequential QEMU boots, each classified PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN
+[no-cd]
+[positional-arguments]
+soak *args:
+    bash {{ quote(justfile_directory() / "scripts" / "soak-qemu.sh") }} "$@"
+
 # Run host-side unit tests (kernel is no_std, excluded from host tests)
 test:
     cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
