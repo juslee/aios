@@ -157,7 +157,7 @@ fn test_thread_entry() -> ! {
     // restore_context. restore_context restores callee-saved registers.
     unsafe { core::arch::asm!("mov {}, x19", out(reg) thread_idx) };
 
-    let names = [b'A', b'B', b'C', b'D'];
+    let names = *b"ABCD";
     let name = if (thread_idx as usize) < names.len() {
         names[thread_idx as usize]
     } else {
