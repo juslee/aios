@@ -480,16 +480,17 @@ fn ipc_timeout_entry() -> ! {
     // Out-of-range channel id → EINVAL, not an index-out-of-bounds panic.
     // recv and send are rejected by check_channel_access. reply has no
     // capability check, so it exercises the CHANNEL_TABLE lookup itself.
+    // Log messages are cut at 48 bytes, so keep them short.
     let einval = IpcError::Einval as i64;
     let recv_result = ipc_recv(ChannelId(MAX_CHANNELS as u32), &mut buf, 0);
     let send_result = ipc_send(ChannelId(MAX_CHANNELS as u32), b"BAD_ID");
     let reply_result = ipc_reply(ChannelId(u32::MAX), b"BAD_ID");
     if recv_result == Err(einval) && send_result == einval && reply_result == einval {
-        crate::kinfo!(Ipc, "Bad-id test: EINVAL as expected (recv, send, reply)");
+        crate::kinfo!(Ipc, "Bad-id test: EINVAL as expected");
     } else {
         crate::kwarn!(
             Ipc,
-            "Bad-id test: unexpected results recv={:?} send={} reply={}",
+            "Bad-id test: recv={:?} send={} reply={}",
             recv_result,
             send_result,
             reply_result
