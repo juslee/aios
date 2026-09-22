@@ -2237,7 +2237,7 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action from a fixed priority list ([agent-loop.md](agent-loop.md)) |
 | `/justin:brief` | Where the project stands | Summarises `scripts/agent/brief.sh`: git and worktrees, PRs with a merge-ready verdict, main CI, soak, handoff, needs-human issues, next phase-doc step, docs drift |
 | `/justin:doctor` | Docs/harness health check | `just docs-check --all` plus pointer-doctor and harness-tables, grouped by who fixes what; read-only (bare `/doctor` is Claude Code's built-in) |
-| `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch |
+| `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main |
