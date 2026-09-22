@@ -602,7 +602,13 @@ The analysis of every option, the rejected ones included, stays under "Decision 
 
 **Why 2B is acceptable.** It keeps the Phase 0 target decision (`docs/phases/00-foundation-and-tooling.md:63`), the hard-float ABI and the `CLAUDE.md` FPU-enable fact, and it adds no toolchain or target change. The price is the 528-byte save on every IRQ and every thread switch, two switches per IPC round trip, with a counter as the only tripwire. **Revisit** if the Gate 1 IPC latency budget (under 10 μs, `bench.rs`) regresses beyond its threshold in the soak's bench output. Step 4's acceptance checks this first, and 2A is the alternative on record.
 
-**Still open for the owner:** #165's soak threshold (A or B), the rule-04 freeze for the duration of the series, and the Gate 1 departure.
+**Owner confirmations (2026-09-22):**
+
+1. **EL0 FP.** 2B applies to every exception entry. Syscalls and IRQs taken from EL0 (the lower-EL entries in `trap.rs`) also save and restore the full 528-byte FP/SIMD state eagerly.
+2. **Gate 1 latency at step 4.** It is a gate only when both soak arms' mean load1 is below the load threshold. On a noisy host, re-run on a quiet host or in CI rather than fail the step.
+3. **Architecture docs.** Choosing 1C approves amending `scheduler.md` §10.3 and `deadlock-prevention.md` §9.2 and §12. Each fix step amends the architecture text it changes, in that step's PR.
+
+**Still open for the owner:** #165's soak threshold (A or B), and the rule-04 freeze for the duration of the series.
 
 The fixed foundation (F1–F8) and the delivery order did not depend on either choice. The choices set the contents of step 4 (2B) and step 8 (1C).
 
