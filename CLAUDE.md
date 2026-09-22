@@ -156,7 +156,8 @@ aios/
 │   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
 │                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup,
-│                         obsidian, start
+│                         obsidian, justin:start, justin:brief, justin:doctor, justin:pause
+│                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
 │   ├── arch/aarch64/     boot.S, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
 │   ├── platform/         Platform trait + per-board (qemu)
@@ -206,7 +207,10 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 | Skill | Trigger | Purpose |
 | --- | --- | --- |
-| `/start [brief\|doctor\|pause]` | Session start, health check, before a break | Deterministic brief + next action; docs/harness drift report; handoff + WIP checkpoint |
+| `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action |
+| `/justin:brief` | Where the project stands | Deterministic brief (`scripts/agent/brief.sh`): git, PRs + merge-ready, CI, soak, handoff, needs-human, next step, docs drift |
+| `/justin:doctor` | Docs/harness health check | Drift report from `just docs-check --all`, grouped by who fixes it; read-only (bare `/doctor` is Claude Code's own) |
+| `/justin:pause` | Before a break or `/clear` (user only) | Handoff + WIP checkpoint (`scripts/agent/checkpoint.sh`) |
 | `/build-team` | Start of autonomous session | Creates team, spawns agents |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
@@ -217,7 +221,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merge, delete branch, remove worktree, update main |
 
-**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, `/start`, pause/resume, where state lives, merge policy, staged rollout.
+**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 

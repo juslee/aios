@@ -2234,6 +2234,10 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` with shared crate refactoring step per milestone → `/audit-loop` (auto docs-only mode) → PR |
 | `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
 | `/audit-loop` | Before any PR | Auto-detects scope (docs-only or full), runs recursive two-level audit loop until clean (doc + code review + security/bug review) |
+| `/justin:start` | Session start (user only) | Runs `/justin:brief`, then proposes one next action from a fixed priority list ([agent-loop.md](agent-loop.md)) |
+| `/justin:brief` | Where the project stands | Summarises `scripts/agent/brief.sh`: git and worktrees, PRs with a merge-ready verdict, main CI, soak, handoff, needs-human issues, next phase-doc step, docs drift |
+| `/justin:doctor` | Docs/harness health check | `just docs-check --all` plus pointer-doctor and harness-tables, grouped by who fixes what; read-only (bare `/doctor` is Claude Code's built-in) |
+| `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main |
@@ -2344,6 +2348,7 @@ Agent teams and skills are configured in:
 - **`.claude/settings.json`** — hooks (SessionStart, PostToolUse), permissions, environment variables
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
+- **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
 - **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
 
 ---

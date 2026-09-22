@@ -6,26 +6,29 @@
 
 -----
 
-## What `/start` does today
+## Session skills today
 
-`/start` is a user-invoked skill ([SKILL.md](../../.claude/skills/start/SKILL.md)). Claude never triggers it on its own.
+Four skills in the `justin` plugin, one per job. The plugin is a project-scope skills-dir plugin: [plugin.json](../../.claude/skills/justin/.claude-plugin/plugin.json) plus `.claude/skills/justin/skills/<name>/SKILL.md`. Claude Code loads it in place as `justin@skills-dir` in a trusted workspace, with no marketplace or install step, so edits apply on the next run; `claude plugin list` shows it. The shared logic lives in the scripts, not in the skill text.
 
-| Command | What happens | Writes |
-|---|---|---|
-| `/start` or `/start brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq, python3; no LLM), then summarises it and proposes one next action | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs |
-| `/start doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing |
-| `/start pause` | Saves the `.remember` handoff, then runs [checkpoint.sh](../../scripts/agent/checkpoint.sh): a `wip:` commit on the current `claude/*` branch and a push of anything not on origin (never `main`, never forced), then a checkpoint line | `.remember/`, at most one `wip:` commit |
+| Command | What happens | Writes | Who invokes |
+|---|---|---|---|
+| `/justin:start` | Runs `/justin:brief`, then proposes exactly one next action from a fixed priority list and waits for you | as `/justin:brief` | you only |
+| `/justin:brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq, python3; no LLM) and summarises it; proposes nothing | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs | you or Claude (read-only) |
+| `/justin:doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing | you or Claude (read-only) |
+| `/justin:pause` | Saves the `.remember` handoff, then runs [checkpoint.sh](../../scripts/agent/checkpoint.sh): a `wip:` commit on the current `claude/*` branch and a push of anything not on origin (never `main`, never forced), then a checkpoint line | `.remember/`, at most one `wip:` commit | you only |
+
+A bare name such as `/pause` also resolves while no other skill or command shares it, but a built-in command wins a clash (bare `/doctor` is Claude Code's own health check) and another installed plugin can make a bare name ambiguous. Use the `/justin:` names.
 
 The brief covers: branch and worktree state (dirty, unpushed), open PRs with check status and a `merge-ready` verdict, main CI, the boot soak, the `.remember` handoff, knowledge notes changed since the last session, open `needs-human` issues, the next unchecked phase-doc step, and a one-line docs-check result.
 
-- **merge-ready** is `yes` only for a non-draft PR with at least one check and every check passed, GitHub mergeable with merge state `CLEAN`, no changes requested, no unresolved review threads, and no open `needs-human` issue naming it. When the gates or the review threads cannot be read, it is `no`. `/start` proposes merging only such PRs.
+- **merge-ready** is `yes` only for a non-draft PR with at least one check and every check passed, GitHub mergeable with merge state `CLEAN`, no changes requested, no unresolved review threads, and no open `needs-human` issue naming it. When the gates or the review threads cannot be read, it is `no`. `/justin:start` proposes merging only such PRs.
 - **claude-review** passing means the review ran, not that it found nothing: the job has `pull-requests: read`, so it cannot post comments. Read its log.
 - **Next phase-doc step** also names an open PR whose title carries that milestone (`Phase N MK:`), so work already in flight is not started twice.
 - **Soak** shows two lines. The main soak is the newest finished run of a commit on `origin/main` with no uncommitted changes. The newest other soak (a branch commit, a dirty tree, or a run still in progress without `summary.md`) is labelled as not main's state.
 
 **Pause safeguards.** checkpoint.sh commits nothing while a merge, cherry-pick, revert, rebase or bisect is in progress. It stops before committing, and restores the index, when a path new to the repo looks like a secret or an added line looks like a private key or token; that scan also covers local commits not yet on origin. It keeps `wip:` commits local while the branch has an open PR that is ready for review, because each push to such a PR runs CI and the Claude review on unfinished work; mark the PR draft if you want wip pushes.
 
-`work`, `loop`, `retro` and `setup` modes belong to later stages and do not exist yet.
+Work, loop, retro and setup skills belong to later stages and do not exist yet.
 
 -----
 
@@ -33,13 +36,13 @@ The brief covers: branch and worktree state (dirty, unpushed), open PRs with che
 
 **Context limit** (the session is getting long or slow):
 
-1. `/start pause`
+1. `/justin:pause`
 2. `/clear`
-3. `/start`
+3. `/justin:start`
 
-**Usage limit.** Policy (decided 2026-09-22): work resumes automatically after the usage limit resets, never on paid overage, so extra usage stays off or capped in the account settings. Stage 0 has no unattended runner, so today a usage limit simply ends the session: run `/start pause` if the session still responds, then `/start` after the reset. The automatic resume arrives with the local runner in a later stage.
+**Usage limit.** Policy (decided 2026-09-22): work resumes automatically after the usage limit resets, never on paid overage, so extra usage stays off or capped in the account settings. Stage 0 has no unattended runner, so today a usage limit simply ends the session: run `/justin:pause` if the session still responds, then `/justin:start` after the reset. The automatic resume arrives with the local runner in a later stage.
 
-**Stepping away** for any other reason: `/start pause`.
+**Stepping away** for any other reason: `/justin:pause`.
 
 -----
 
@@ -96,8 +99,8 @@ Press Esc to interrupt the current turn; close the terminal to end the session. 
 
 | Stage | What runs | Exit criteria | Status |
 |---|---|---|---|
-| 0 | `/start` brief, doctor and pause; docs-check (report-only CI); guard rails on permissions and `main`; `needs-human` issues for open decisions | `/start` gives an accurate brief | **current** |
-| 1 | `/start work`: attended single item, one issue = one milestone = one PR, docs and low-risk tiers | about 5 attended items merged with no guard-rail violations | planned |
+| 0 | `/justin:start`, `/justin:brief`, `/justin:doctor`, `/justin:pause`; docs-check (report-only CI); guard rails on permissions and `main`; `needs-human` issues for open decisions | `/justin:start` gives an accurate brief | **current** |
+| 1 | A `/justin:work` skill: attended single item, one issue = one milestone = one PR, docs and low-risk tiers | about 5 attended items merged with no guard-rail violations | planned |
 | 2 | Local tend-only loop on this Mac (own PRs: CI fixes, review replies); nightly soak of `main` | 2 weeks with no out-of-policy actions and stable spend | planned |
 | 3 | The loop may claim `agent-ready` docs and low-risk items (WIP = 1); kernel-core work stays attended. Requires the boot-crash fix and a required soak check | rework and escalation rates stable over 2 retros | planned |
 | 4 | Unattended local runner (launchd): one capped headless run per item, automatic resume after a usage reset; scheduled retro PR against rules and skills | stable spend and merge quality over a month | planned |
@@ -107,9 +110,9 @@ Press Esc to interrupt the current turn; close the terminal to end the session. 
 
 ## First 10 minutes back
 
-1. Open the repo in Claude Code and run `/start`. Read the brief.
+1. Open the repo in Claude Code and run `/justin:start`. Read the brief.
 2. Answer the open `needs-human` issues: comment your decision, then close or relabel the issue.
 3. Review and merge the PRs the brief marks `merge-ready: yes` once you are happy with them (`/merge-and-cleanup <PR>`); gated PRs wait for their `needs-human` issue.
 4. Check main CI and the main soak line in the brief; a red `main` comes first. The "newest other soak" line is an experiment, not main's state.
 5. Accept the proposed next action or name a different one.
-6. Before you leave: `/start pause`.
+6. Before you leave: `/justin:pause`.

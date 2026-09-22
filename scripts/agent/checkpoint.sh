@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/agent/checkpoint.sh - deterministic work-in-progress checkpoint for `/start pause`.
+# scripts/agent/checkpoint.sh - deterministic work-in-progress checkpoint for `/justin:pause`.
 #
 # Works on the current checkout (a linked worktree is fine):
 #  1. Commits only on a claude/* branch, never on main or a detached HEAD, and
@@ -142,7 +142,7 @@ else
         else
             files=$(git diff --cached --name-only | wc -l | tr -d ' ')
             if git commit -q -m "wip: checkpoint $branch" \
-                -m "Paused with /start pause; not a finished step." \
+                -m "Paused with /justin:pause; not a finished step." \
                 -m "Co-Authored-By: Claude <noreply@anthropic.com>" 2>"$TMP/commit.err"; then
                 wip="committed $files file(s)"
             else
@@ -182,12 +182,12 @@ echo "checkpoint: ${branch:-(detached)} @ $(git rev-parse --short HEAD 2>/dev/nu
 if [ "$stopped" = 3 ]; then
     echo "Stopped before committing: these look like secrets (the repository is public):"
     printf '%s\n' "$secrets" | sed 's/^/  - /'
-    echo "Nothing was committed or pushed and the index is as it was. Remove or gitignore them, or confirm they are safe, then run /start pause again."
+    echo "Nothing was committed or pushed and the index is as it was. Remove or gitignore them, or confirm they are safe, then run /justin:pause again."
     exit 3
 fi
 if [ "$dirty" = 0 ] && [ "$unpushed" = 0 ]; then
-    echo "Safe to /clear — run /start after"
+    echo "Safe to /clear — run /justin:start after"
     exit 0
 fi
-echo "Not fully saved: $dirty uncommitted file(s) and $unpushed commit(s) not on origin remain only in $ROOT. /clear keeps them on disk; run /start after."
+echo "Not fully saved: $dirty uncommitted file(s) and $unpushed commit(s) not on origin remain only in $ROOT. /clear keeps them on disk; run /justin:start after."
 exit 1
