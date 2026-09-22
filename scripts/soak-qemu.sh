@@ -6,16 +6,23 @@
 # changing anything. Each boot is a fresh QEMU process (same arguments as the
 # justfile's `run` / `run-gpu` recipes) bounded by GNU timeout. Its serial
 # output is saved and classified as exactly one of PCZERO, PANIC, EXCEPTION,
-# WEDGE or CLEAN -- see usage() below for the exact rules.
+# WEDGE, INCONCLUSIVE or CLEAN -- see usage() below for the exact rules.
 #
 # Portable across macOS (bash 3.2, BSD userland) and Linux (GNU userland):
 # no bash 4 features, POSIX awk only.
 
 set -euo pipefail
 export LC_ALL=C
+# An exported CDPATH makes `cd DIR` print DIR, which would corrupt every
+# $(cd ... && pwd) below.
+unset CDPATH
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CLASSES="PCZERO PANIC EXCEPTION WEDGE CLEAN"
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+CLASSES="PCZERO PANIC EXCEPTION WEDGE INCONCLUSIVE CLEAN"
+# QEMU start to the Gate 1 bench takes about 6-8 s on current hosts. A --secs
+# shorter than --stall-secs plus this budget mostly produces INCONCLUSIVE boots.
+BOOT_BUDGET_SECS=20
+ESC=$(printf '\033')
 
 usage() {
     cat <<'EOF'
@@ -25,27 +32,43 @@ Usage: scripts/soak-qemu.sh [options] [key=value ...]
 Boot AIOS N times under QEMU (same arguments as `just run` / `just run-gpu`),
 save each boot's serial log, and classify every boot as exactly one of:
 
-  PCZERO     an exception report with ELR=0x0000000000000000 (jump to PC 0)
-  PANIC      "PANIC: " from the kernel panic handler
-  EXCEPTION  any other exception report: "EXCEPTION[CPU n]:" (EL1), or
-             "DATA ABORT (EL0)", "INST ABORT (EL0)", "UNKNOWN EXCEPTION (EL0)"
-  WEDGE      no exception or panic, but the boot is not healthy at the end of
-             the run: the CPU 0 heartbeat never printed, is stuck at tick 0
-             (CPU 0 never left the Gate 1 bench's IRQ-masked window) or went
-             silent for more than --stall-secs before the run ended; or the
-             heartbeat kept running but the Gate 1 bench never completed
-  CLEAN      no exception or panic, the heartbeat advanced past tick 0, a new
-             heartbeat arrived within the last --stall-secs of the run, and
-             "=== Gate 1 Complete ===" was printed
+  PCZERO        an exception report with ELR=0x0000000000000000 (jump to PC 0).
+                Unlocked output from several CPUs can split a report, so the
+                ELR may be up to 3 lines below the "EXCEPTION[CPU n]:" prefix;
+                an instruction abort with FAR=0 (EC=0x20/0x21, or the line
+                "Instruction Abort at 0x0000000000000000") counts as well
+  PANIC         "PANIC: " from the kernel panic handler
+  EXCEPTION     any other exception report: "EXCEPTION[CPU n]:" (EL1),
+                "DATA ABORT (EL0)", "INST ABORT (EL0)", "UNKNOWN EXCEPTION
+                (EL0)", or an edk2-format "Synchronous Exception at 0x..."
+                report from the firmware or the UEFI stub
+  WEDGE         no fatal report, the boot is not healthy at the end of the run
+                (see CLEAN), and it had more than --stall-secs to get there:
+                the CPU 0 heartbeat never printed, stayed at tick 0, or stopped
+                advancing; or it kept running but the Gate 1 bench never
+                completed; or (gpu mode) a GPU marker is missing
+  INCONCLUSIVE  the symptoms of a WEDGE, but the run ended no more than
+                --stall-secs after the boot's last progress (kernel start,
+                heartbeat, bench start), so the boot was cut short rather than
+                shown to be stuck. Also a QEMU process that exits before the
+                UEFI stub runs, on any boot after the first
+  CLEAN         no fatal report; the heartbeat advanced past tick 0 and a new
+                heartbeat arrived within the last --stall-secs of the run;
+                "=== Gate 1 Complete ===" was printed; and in gpu mode the
+                GpuReady, InputReady and "display handoff complete" markers
+                were printed
 
-Precedence: PCZERO/PANIC/EXCEPTION > WEDGE > CLEAN. When a log holds several
-fatal reports, the earliest one decides the class (later ones are usually
-fallout, e.g. a data abort after a panic); the count is kept in the detail.
+Precedence: PCZERO/PANIC/EXCEPTION > WEDGE/INCONCLUSIVE > CLEAN. When a log
+holds several fatal reports, the earliest one decides the class (later ones are
+usually fallout, e.g. a data abort after a panic); the count is kept in the
+detail.
 
 Heartbeat timing comes from the harness: it polls the log every second and
-appends a "[soak] meta" line recording when the heartbeat last advanced. A
-log without that line (not produced by this script) is classified log-only:
-a heartbeat that stops after tick 0 cannot be detected there.
+appends a "[soak] meta" line recording when the kernel started, when the first
+heartbeat and the Gate 1 bench header appeared, and when the heartbeat last
+advanced. A log without that line (not produced by this script) is classified
+log-only: a heartbeat that stops after tick 0 cannot be detected there, and a
+cut-short boot cannot be told apart from a wedge.
 
 Options:
   --runs N           number of sequential boots (default 10)
@@ -53,7 +76,8 @@ Options:
   --mode text|gpu    text: `just run` devices (-nographic, ramfb)
                      gpu:  `just run-gpu` devices plus -display none
                      (default text)
-  --out DIR          output directory (default target/soak/<timestamp>-<mode>)
+  --out DIR          output directory; must be new or empty and must not be
+                     the repository root (default target/soak/<timestamp>-<mode>)
   --stall-secs S     heartbeat silence at the end that counts as a wedge
                      (default 15)
   --no-build         skip `just disk` and boot the existing ESP image
@@ -67,23 +91,32 @@ Options:
 key=value aliases (so `just soak runs=5 mode=gpu` works): runs=N secs=T
 mode=text|gpu out=DIR stall_secs=S report_only=1
 
+`just soak` runs this script from the directory you invoke just in, so
+relative out= and --classify paths resolve against that directory.
+
 Output directory: run-NN.log (raw serial output plus a trailing "[soak] meta"
 line), summary.tsv (one row per boot), summary.md (counts, 95% interval for
-the CLEAN rate, per-boot table) and build.log.
+the CLEAN rate, per-boot table) and build.log. The ESP snapshot and the fresh
+data disks live in a private .scratch.* subdirectory that is removed at exit.
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
 Requires GNU timeout (`timeout` or `gtimeout`), qemu-system-aarch64, just and
 mtools (for `just disk`).
 
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
-boot is not CLEAN, 2 on a usage or setup error (bad arguments, build failure,
-QEMU failing to start) -- setup errors exit 2 even with --report-only.
+boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
+build failure, QEMU failing to start on the first boot) -- setup errors exit 2
+even with --report-only. 130 on SIGINT, 143 on SIGTERM.
 EOF
 }
 
 die() {
     printf 'soak-qemu: error: %s\n' "$*" >&2
     exit 2
+}
+
+warn() {
+    printf 'soak-qemu: warning: %s\n' "$*" >&2
 }
 
 is_uint() {
@@ -104,24 +137,30 @@ truthy() {
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
-# Input: a serial log with NUL and CR bytes removed. Output: one tab-separated
-# line: class, last heartbeat tick, heartbeat count, stall seconds, markers,
-# lb_last, detail, first fatal line, last three kernel INFO lines. Empty
-# fields are printed as "-" so the line splits reliably on tabs.
+# Input: a serial log with NUL and CR bytes and ANSI escape sequences removed.
+# Output: one tab-separated line: class, last heartbeat tick, heartbeat count,
+# stall seconds, markers, lb_last, detail, first fatal line, last three kernel
+# INFO lines. Empty fields are printed as "-" so the line splits reliably on
+# tabs.
 CLASSIFY_AWK=$(
     cat <<'AWK'
 function trim(s) { gsub(/\t/, " ", s); sub(/^ +/, "", s); sub(/ +$/, "", s); return s }
 function clip(s, n) { return length(s) > n ? substr(s, 1, n) "..." : s }
 function dash(s) { return s == "" ? "-" : s }
 function note(s) { notes = (notes == "") ? s : notes "; " s }
+# A footer time in seconds, or -1 when the footer lacks it (older footers).
+function secs_of(k) { return (k in meta) ? meta[k] + 0 : -1 }
 BEGIN {
-    hb = 0; tick = -1; hb_nr = 0; boots = 0; bench_nr = 0
-    fatal = ""; first = ""; nfatal = 0; pend = 0; fatal_tick = -1
+    hb = 0; tick = -1; hb_nr = 0; boots = 0; bench_nr = 0; stub = 0
+    fatal = ""; first = ""; nfatal = 0; pend = 0; fatal_tick = -1; exwin = 0; edk2 = 0
     i1 = ""; i2 = ""; i3 = ""; notes = ""; have_meta = 0
     el1 = 0; boot = 0; g1pass = 0; g1done = 0; gpu = 0; input = 0; handoff = 0
+    run_end = 0; limit = 0; adv = -1; kst = -1; hbf = -1; bst = -1
 }
-# The panic message is printed on the line after "PANIC: panicked at <loc>:".
-pend { first = first " / " clip(trim($0), 160); pend = 0 }
+# The panic message follows "PANIC: panicked at <loc>:" on the next non-empty
+# line; if the panic was the last output, there is no message to attach.
+pend && /^\[soak\] meta / { pend = 0 }
+pend && !/^ *$/ { first = first " / " clip(trim($0), 160); pend = 0 }
 /^\[soak\] meta / {
     have_meta = 1
     for (i = 3; i <= NF; i++) {
@@ -137,6 +176,7 @@ pend { first = first " / " clip(trim($0), 160); pend = 0 }
         hb++
         hb_nr = NR
     }
+    if (line ~ /AIOS UEFI stub/) stub = 1
     if (line ~ /AIOS kernel booting/) boots++
     if (line ~ /Boot +EL: 1/) el1 = 1
     if (line ~ /Boot sequence complete/) boot = 1
@@ -149,17 +189,35 @@ pend { first = first " / " clip(trim($0), 160); pend = 0 }
 
     kind = ""
     if (match(line, /EXCEPTION\[CPU [0-9]+\]:|(DATA|INST) ABORT \(EL0\):|UNKNOWN EXCEPTION \(EL0\)/)) {
-        kind = (line ~ /ELR=0x0000000000000000/) ? "PCZERO" : "EXCEPTION"
+        pc0 = line ~ /ELR=0x0000000000000000/ || line ~ /EC=0x0*2[01] FAR=0x0000000000000000/
+        kind = pc0 ? "PCZERO" : "EXCEPTION"
+    } else if (match(line, /(Synchronous|IRQ|FIQ|SError) Exception at 0x[0-9A-Fa-f]+/)) {
+        kind = "EDK2"
     } else if (match(line, /PANIC: /)) {
         kind = "PANIC"
+    }
+    if (exwin > 0) {
+        # The first EL1 report was cut before its ELR by interleaved output:
+        # look for the ELR, or the "Instruction Abort at" line, just below it.
+        exwin--
+        if (kind == "" && (line ~ /ELR=0x0000000000000000/ || line ~ /Instruction Abort at 0x0000000000000000/)) {
+            fatal = "PCZERO"
+            first = first " / " clip(trim(line), 100)
+            exwin = 0
+        } else if (kind == "" && line ~ /ELR=0x|Instruction Abort at|Data Abort at/) {
+            if (line ~ /ELR=0x/) first = first " / " clip(trim(line), 100)
+            exwin = 0
+        }
     }
     if (kind != "") {
         nfatal++
         if (fatal == "") {
-            fatal = kind
+            fatal = (kind == "EDK2") ? "EXCEPTION" : kind
+            if (kind == "EDK2") edk2 = 1
             first = clip(trim(substr(line, RSTART)), 200)
             fatal_tick = tick
             if (kind == "PANIC") pend = 1
+            if (kind == "EXCEPTION" && line ~ /EXCEPTION\[CPU/ && line !~ /ELR=/) exwin = 3
         }
     } else if (fatal == "" && match(line, /\[ *[0-9]+\.[0-9]+\] \[[0-9]+\] INFO /)) {
         # Kernel INFO lines, frozen at the first fatal report.
@@ -179,44 +237,86 @@ END {
 
     timing = have_meta && ("elapsed" in meta) && ("hb_last_advance" in meta)
     stall = "-"
+    early = 0
+    missing = ""
     if (timing) {
         # Silence is measured up to the planned end of the run, so a QEMU
         # process that exits early counts as silent for the remaining time.
         run_end = meta["elapsed"] + 0
         if (meta["secs"] + 0 > run_end) run_end = meta["secs"] + 0
-        adv = meta["hb_last_advance"] + 0
-        stall = (adv < 0) ? run_end : run_end - adv
+        adv = secs_of("hb_last_advance"); kst = secs_of("kstart")
+        hbf = secs_of("hb_first"); bst = secs_of("bench_start")
+        # Heartbeat silence runs from its last advance; before the first
+        # heartbeat, from the kernel start, or failing that from QEMU start.
+        stall = run_end - ((adv >= 0) ? adv : ((kst >= 0) ? kst : 0))
         limit = (limit_override != "") ? limit_override + 0 : meta["stall_limit"] + 0
         rc = meta["qemu_rc"]
-        if (rc != "" && rc != "124" && rc != "137") note("qemu exited before the time limit (rc=" rc ")")
+        early = (rc != "" && rc != "124" && rc != "137")
+        if (early) note("qemu exited before the time limit (rc=" rc ")")
+        if (meta["mode"] == "gpu") {
+            if (!gpu) missing = missing ",GpuReady"
+            if (!input) missing = missing ",InputReady"
+            if (!handoff) missing = missing ",display handoff"
+        }
     }
 
-    if (fatal != "") {
+    if (timing && early && !stub) {
+        class = "INCONCLUSIVE"
+        note("QEMU failed before the UEFI stub ran, not a boot result")
+    } else if (fatal != "") {
         class = fatal
+        if (edk2) note("edk2-format report from the firmware or UEFI stub")
         note((fatal_tick < 0) ? "before the first heartbeat" : "after heartbeat tick " fatal_tick)
         if (nfatal > 1) note(nfatal " fatal reports")
     } else if (hb == 0) {
-        class = "WEDGE"
-        if (boot) note("no heartbeat after boot sequence complete")
-        else if (boots) note("no heartbeat; boot sequence incomplete")
-        else note("no heartbeat; kernel never started")
+        if (boot) what = "no heartbeat after boot sequence complete"
+        else if (boots) what = "no heartbeat; boot sequence incomplete"
+        else what = "no heartbeat; kernel never started"
+        if (timing && stall <= limit) {
+            class = "INCONCLUSIVE"
+            note("cut short: " what ", only " stall "s since " ((kst >= 0) ? "the kernel started" : "QEMU started") " (limit " limit "s)")
+        } else {
+            class = "WEDGE"
+            note(what)
+        }
     } else if (tick == 0) {
-        class = "WEDGE"
-        if (bench_nr > hb_nr && !g1done) note("heartbeat stuck at tick 0 inside the Gate 1 bench")
-        else note("heartbeat never advanced past tick 0")
+        # The bench prints its header 500 ticks after it starts, then runs an
+        # IRQ-masked IPC loop on the CPU that runs it (CPU 0 at first). No
+        # tick=1000 means CPU 0 took no timer IRQ after that point.
+        if (bench_nr > hb_nr && !g1done) what = "heartbeat stuck at tick 0 after the Gate 1 bench started"
+        else what = "heartbeat never advanced past tick 0"
+        if (timing && stall <= limit) {
+            class = "INCONCLUSIVE"
+            note("cut short: " what ", only " stall "s before the end (limit " limit "s)")
+        } else {
+            class = "WEDGE"
+            note(what)
+        }
     } else if (timing && stall > limit) {
         class = "WEDGE"
         note("heartbeat stopped at tick " tick ", silent " stall "s before the end (limit " limit "s)")
     } else if (!g1done) {
+        what = bench_nr ? "heartbeat alive but the Gate 1 bench never completed" : "heartbeat alive but the Gate 1 bench never started"
+        # The bench gets --stall-secs to finish, counted from its header (or,
+        # if it never printed one, from the first heartbeat).
+        ref = (bst >= 0) ? bst : hbf
+        if (timing && ref >= 0 && run_end - ref <= limit) {
+            class = "INCONCLUSIVE"
+            note("cut short: " what ", only " (run_end - ref) "s since " ((bst >= 0) ? "the bench header" : "the first heartbeat") " (limit " limit "s)")
+        } else {
+            class = "WEDGE"
+            note(what)
+        }
+    } else if (missing != "") {
         class = "WEDGE"
-        note("heartbeat alive but the Gate 1 bench never completed")
+        note("gpu markers missing: " substr(missing, 2))
     } else {
         class = "CLEAN"
         if (!timing) note("log-only: no harness timing, a late heartbeat stall is undetectable")
     }
     if (boots > 1) note("guest booted " boots " times")
 
-    if (class == "CLEAN" || i3 == "") lb = "-"
+    if (class == "CLEAN" || class == "INCONCLUSIVE" || i3 == "") lb = "-"
     else lb = (i3 ~ /Load balance: migrated/) ? "yes" : "no"
 
     print class, (tick < 0 ? "-" : tick), hb, stall, markers, lb, dash(notes), dash(first), dash(i1), dash(i2), dash(i3)
@@ -227,7 +327,8 @@ AWK
 # classify_log LOG [STALL_OVERRIDE] -- sets the C_* globals.
 classify_log() {
     local result
-    result=$(tr -d '\000\r' <"$1" | awk -v OFS='\t' -v limit_override="${2:-}" "$CLASSIFY_AWK")
+    result=$(tr -d '\000\r' <"$1" | sed "s/${ESC}\[[0-9;]*[A-Za-z]//g" |
+        awk -v OFS='\t' -v limit_override="${2:-}" "$CLASSIFY_AWK")
     IFS=$'\t' read -r C_CLASS C_TICK C_HB C_STALL C_MARKERS C_LB C_DETAIL C_FIRST C_I1 C_I2 C_I3 <<EOF
 $result
 EOF
@@ -238,7 +339,7 @@ format_result() {
     local label=$1 stall_disp="-" text
     [ "$C_STALL" = "-" ] || stall_disp="${C_STALL}s"
     case "$C_CLASS" in
-        CLEAN) text=$C_DETAIL ;;
+        CLEAN | INCONCLUSIVE) text=$C_DETAIL ;;
         WEDGE) text="lb_last=$C_LB  $C_DETAIL" ;;
         *) text="lb_last=$C_LB  $C_FIRST" ;;
     esac
@@ -247,7 +348,7 @@ format_result() {
     else
         text="  $text"
     fi
-    printf '%s  %-9s tick=%-6s stall=%-5s [%s]%s\n' \
+    printf '%s  %-12s tick=%-6s stall=%-5s [%s]%s\n' \
         "$label" "$C_CLASS" "$C_TICK" "$stall_disp" "$C_MARKERS" "$text"
 }
 
@@ -325,7 +426,7 @@ host_cpus() {
 # Soak
 # ---------------------------------------------------------------------------
 CUR_PID=""
-SCRATCH_FILES=""
+SCRATCH_DIR=""
 
 cleanup() {
     if [ -n "$CUR_PID" ]; then
@@ -335,16 +436,44 @@ cleanup() {
         wait "$CUR_PID" 2>/dev/null || true
         CUR_PID=""
     fi
-    if [ -n "$SCRATCH_FILES" ]; then
-        # shellcheck disable=SC2086  # intentional word splitting of the list
-        rm -f $SCRATCH_FILES
+    if [ -n "$SCRATCH_DIR" ]; then
+        # Created by mktemp -d below; holds only the ESP snapshot and the
+        # fresh data disk, never data.img.
+        rm -rf -- "$SCRATCH_DIR"
+        SCRATCH_DIR=""
+    fi
+}
+
+# Per-boot progress, updated by poll_log: heartbeat count, and the seconds
+# into the boot at which the heartbeat last grew, the kernel started, the
+# first heartbeat and the Gate 1 bench header appeared (-1: not yet).
+P_HB=0
+P_ADV=-1
+P_KERNEL=-1
+P_HB0=-1
+P_BENCH=-1
+
+# poll_log LOG T -- record the progress visible in LOG at T seconds.
+poll_log() {
+    local cnt
+    cnt=$(grep -a -c '\[heartbeat\] tick=' "$1" || true)
+    if [ "$cnt" -gt "$P_HB" ]; then
+        P_HB=$cnt
+        P_ADV=$2
+        [ "$P_HB0" -ge 0 ] || P_HB0=$2
+    fi
+    if [ "$P_KERNEL" -lt 0 ] && grep -a -q 'AIOS kernel booting' "$1"; then
+        P_KERNEL=$2
+    fi
+    if [ "$P_BENCH" -lt 0 ] && grep -a -q '=== Gate 1 Benchmark ===' "$1"; then
+        P_BENCH=$2
     fi
 }
 
 run_soak() {
     local timeout_bin fw disk_rel data_rel kernel_rel esp data qemu_ver git_rev kernel_sha
-    local load_start load_end width n idx log load1 start rc elapsed hb_count last_adv cnt
-    local non_clean=0 tsv md_rows="" c count pct stall_md tail_md
+    local esp_kernel load_start load_end width n idx log load1 start rc elapsed conclusive
+    local non_clean=0 tsv md_rows="" c count pct stall_md tail_md rate_note=""
 
     timeout_bin=$(find_gnu_timeout) ||
         die "GNU timeout not found (macOS: brew install coreutils; Linux: coreutils)"
@@ -357,23 +486,30 @@ run_soak() {
     kernel_rel=$(cd "$REPO_ROOT" && just --evaluate kernel_elf)
     [ -f "$fw" ] || die "UEFI firmware not found: $fw (set AIOS_EDK2_FW)"
 
+    # OUT must be new or empty: the harness writes run-NN.log, summary.* and
+    # build.log there and must never overwrite or delete anything it did not
+    # create.
     [ -n "$OUT" ] || OUT="$REPO_ROOT/target/soak/$(date +%Y%m%d-%H%M%S)-$MODE"
-    mkdir -p "$OUT" || die "cannot create output directory $OUT"
-    OUT=$(cd "$OUT" && pwd)
-    if [ -e "$OUT/summary.tsv" ] || ls "$OUT"/run-*.log >/dev/null 2>&1; then
-        die "$OUT already holds soak results; choose another --out"
+    if [ -e "$OUT" ] && [ ! -d "$OUT" ]; then
+        die "--out $OUT exists and is not a directory"
     fi
+    mkdir -p -- "$OUT" || die "cannot create output directory $OUT"
+    OUT=$(cd -- "$OUT" && pwd -P)
+    [ "$OUT" != "$REPO_ROOT" ] ||
+        die "--out must not be the repository root (default: target/soak/<timestamp>-<mode>)"
+    [ -z "$(ls -A -- "$OUT")" ] ||
+        die "--out $OUT is not empty; choose a new or empty directory"
 
-    esp="$OUT/esp.img"
-    SCRATCH_FILES="$esp"
+    trap cleanup EXIT
+    trap 'cleanup; exit 130' INT
+    trap 'cleanup; exit 143' TERM
+    SCRATCH_DIR=$(mktemp -d "$OUT/.scratch.XXXXXX") || die "cannot create a scratch directory in $OUT"
+    esp="$SCRATCH_DIR/esp.img"
     if [ "$FRESH_DATA" -eq 1 ]; then
-        data="$OUT/data.img"
-        SCRATCH_FILES="$SCRATCH_FILES $data"
+        data="$SCRATCH_DIR/data.img"
     else
         data="$REPO_ROOT/$data_rel"
     fi
-    trap cleanup EXIT
-    trap 'cleanup; exit 130' INT TERM
 
     if [ "$BUILD" -eq 1 ]; then
         echo "soak: building ESP image (just disk) -> $OUT/build.log"
@@ -394,13 +530,23 @@ run_soak() {
     if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
         git_rev="$git_rev-dirty"
     fi
-    kernel_sha="-"
-    [ -f "$REPO_ROOT/$kernel_rel" ] && kernel_sha=$(sha256_of "$REPO_ROOT/$kernel_rel" | cut -c1-16)
+    # Identify the bits under test: the kernel ELF inside the ESP snapshot,
+    # which can differ from target/ with --no-build.
+    esp_kernel="$SCRATCH_DIR/aios.elf"
+    if command -v mcopy >/dev/null 2>&1 && mcopy -n -i "$esp" ::/EFI/AIOS/aios.elf "$esp_kernel" 2>/dev/null; then
+        kernel_sha="kernel ELF sha256 \`$(sha256_of "$esp_kernel" | cut -c1-16)\`"
+        if [ ! -f "$REPO_ROOT/$kernel_rel" ] || ! cmp -s "$esp_kernel" "$REPO_ROOT/$kernel_rel"; then
+            warn "the kernel in $disk_rel differs from $kernel_rel; the soak boots the one in $disk_rel"
+        fi
+        rm -f -- "$esp_kernel"
+    else
+        kernel_sha="ESP image sha256 \`$(sha256_of "$esp" | cut -c1-16)\`, kernel not extracted (mcopy)"
+    fi
     qemu_ver=$(qemu-system-aarch64 --version | head -n 1)
     load_start=$(loadavg)
 
     tsv="$OUT/summary.tsv"
-    printf 'run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\n' >"$tsv"
+    printf 'run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\n' >"$tsv"
 
     echo "soak: $RUNS x ${SECS}s, mode=$MODE, commit=$git_rev, data=$([ "$FRESH_DATA" -eq 1 ] && echo fresh || echo reused)"
     echo "soak: firmware=$fw"
@@ -415,8 +561,10 @@ run_soak() {
         idx=$(printf "%0${width}d" "$n")
         log="$OUT/run-$idx.log"
         if [ "$FRESH_DATA" -eq 1 ]; then
-            rm -f "$data"
-            dd if=/dev/zero of="$data" bs=1M count=256 2>/dev/null || die "cannot create $data"
+            # Sparse 256 MiB of zeros: reads the same as create-data-disk's
+            # file without writing 256 MiB per boot.
+            rm -f -- "$data"
+            dd if=/dev/zero of="$data" bs=1048576 count=0 seek=256 2>/dev/null || die "cannot create $data"
         fi
 
         # Keep in sync with the justfile's run / run-gpu recipes.
@@ -436,37 +584,35 @@ run_soak() {
         fi
 
         load1=$(loadavg | cut -d' ' -f1)
+        P_HB=0
+        P_ADV=-1
+        P_KERNEL=-1
+        P_HB0=-1
+        P_BENCH=-1
         start=$SECONDS
         # stdin from /dev/null: QEMU's stdio serial must never touch the
         # terminal from timeout's own (background) process group.
         "$timeout_bin" --kill-after=10 "$SECS" qemu-system-aarch64 "$@" </dev/null >"$log" 2>&1 &
         CUR_PID=$!
 
-        hb_count=0
-        last_adv=-1
         while kill -0 "$CUR_PID" 2>/dev/null; do
             sleep 1
-            cnt=$(grep -a -c '\[heartbeat\] tick=' "$log" || true)
-            if [ "$cnt" -gt "$hb_count" ]; then
-                hb_count=$cnt
-                last_adv=$((SECONDS - start))
-            fi
+            poll_log "$log" "$((SECONDS - start))"
         done
         rc=0
         wait "$CUR_PID" || rc=$?
         CUR_PID=""
         elapsed=$((SECONDS - start))
-        cnt=$(grep -a -c '\[heartbeat\] tick=' "$log" || true)
-        if [ "$cnt" -gt "$hb_count" ]; then
-            hb_count=$cnt
-            last_adv=$elapsed
-        fi
-        printf '\n[soak] meta mode=%s secs=%s elapsed=%s qemu_rc=%s hb_count=%s hb_last_advance=%s stall_limit=%s load1=%s\n' \
-            "$MODE" "$SECS" "$elapsed" "$rc" "$hb_count" "$last_adv" "$STALL_SECS" "$load1" >>"$log"
+        poll_log "$log" "$elapsed"
+        printf '\n[soak] meta mode=%s secs=%s elapsed=%s qemu_rc=%s kstart=%s hb_first=%s bench_start=%s hb_count=%s hb_last_advance=%s stall_limit=%s load1=%s\n' \
+            "$MODE" "$SECS" "$elapsed" "$rc" "$P_KERNEL" "$P_HB0" "$P_BENCH" "$P_HB" "$P_ADV" "$STALL_SECS" "$load1" >>"$log"
 
-        if [ "$rc" -ne 124 ] && [ "$rc" -ne 137 ] && ! grep -a -q 'AIOS' "$log"; then
+        # A QEMU that dies before the stub on the first boot means the setup
+        # is broken; on later boots it is recorded (INCONCLUSIVE) and the soak
+        # goes on, so finished boots are not thrown away.
+        if [ "$n" -eq 1 ] && [ "$rc" -ne 124 ] && [ "$rc" -ne 137 ] && ! grep -a -q 'AIOS UEFI stub' "$log"; then
             tail -n 20 "$log" >&2
-            die "QEMU exited with status $rc before the kernel started; see $log"
+            die "QEMU exited with status $rc before the UEFI stub started; see $log"
         fi
 
         classify_log "$log" ""
@@ -474,29 +620,36 @@ run_soak() {
         eval "COUNT_$C_CLASS=\$((COUNT_$C_CLASS + 1))"
         [ "$C_CLASS" = CLEAN ] || non_clean=1
 
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$idx" "$MODE" "$C_CLASS" "$C_TICK" "$C_HB" "$C_STALL" "$elapsed" "$rc" "$load1" \
+            "$P_KERNEL" "$P_HB0" "$P_BENCH" \
             "$C_MARKERS" "$C_LB" "$C_DETAIL" "$C_FIRST" "$C_I1" "$C_I2" "$C_I3" "$(basename "$log")" >>"$tsv"
 
         stall_md="-"
         [ "$C_STALL" = "-" ] || stall_md="${C_STALL}s"
         case "$C_CLASS" in
-            CLEAN | WEDGE) tail_md=$C_DETAIL ;;
+            CLEAN | WEDGE | INCONCLUSIVE) tail_md=$C_DETAIL ;;
             *) tail_md=$C_FIRST ;;
         esac
         md_rows="$md_rows| $idx | $C_CLASS | $C_TICK | $stall_md | $C_MARKERS | $C_LB | $(md_cell "$tail_md") |
 "
         n=$((n + 1))
     done
-    cleanup # removes the ESP snapshot and the fresh data disk, never data.img
+    cleanup # removes the scratch directory (ESP snapshot, fresh data disk)
     load_end=$(loadavg)
+
+    # INCONCLUSIVE boots say nothing about the kernel, so they are left out
+    # of the CLEAN rate.
+    conclusive=$((RUNS - COUNT_INCONCLUSIVE))
+    [ "$COUNT_INCONCLUSIVE" -eq 0 ] ||
+        rate_note=" over $conclusive conclusive boots ($COUNT_INCONCLUSIVE INCONCLUSIVE left out)"
 
     {
         echo "## AIOS QEMU boot soak ($MODE mode)"
         echo
         echo "| Setting | Value |"
         echo "|---|---|"
-        echo "| Commit | \`$git_rev\` (kernel ELF sha256 \`$kernel_sha\`) |"
+        echo "| Commit | \`$git_rev\` ($kernel_sha) |"
         echo "| Boots | $RUNS x ${SECS}s, stall limit ${STALL_SECS}s, data disk $([ "$FRESH_DATA" -eq 1 ] && echo "fresh per boot" || echo "reused") |"
         echo "| QEMU | $qemu_ver |"
         echo "| Firmware | \`$fw\` |"
@@ -513,7 +666,7 @@ run_soak() {
         done
         echo "| **Total** | $RUNS | |"
         echo
-        echo "CLEAN rate: $(wilson "$COUNT_CLEAN" "$RUNS")"
+        echo "CLEAN rate: $(wilson "$COUNT_CLEAN" "$conclusive")$rate_note"
     } >"$OUT/summary.md"
 
     echo
@@ -589,6 +742,11 @@ fi
 is_uint "$RUNS" && [ "$RUNS" -ge 1 ] || die "--runs must be a positive integer"
 is_uint "$SECS" && [ "$SECS" -ge 1 ] || die "--secs must be a positive integer"
 [ "$STALL_SECS" -lt "$SECS" ] || die "--stall-secs ($STALL_SECS) must be smaller than --secs ($SECS)"
+if [ "$SECS" -lt $((STALL_SECS + BOOT_BUDGET_SECS)) ]; then
+    warn "--secs $SECS leaves under ${BOOT_BUDGET_SECS}s beyond --stall-secs $STALL_SECS for the boot itself" \
+        "(about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the" \
+        "last ${STALL_SECS}s of a boot is never seen"
+fi
 case "$MODE" in
     text | gpu) ;;
     *) die "--mode must be text or gpu, got '$MODE'" ;;
