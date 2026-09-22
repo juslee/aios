@@ -12,11 +12,16 @@
 
 | Command | What happens | Writes |
 |---|---|---|
-| `/start` or `/start brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq; no LLM), then summarises it and proposes one next action | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief` |
+| `/start` or `/start brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq, python3; no LLM), then summarises it and proposes one next action | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs |
 | `/start doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing |
-| `/start pause` | Saves the `.remember` handoff, makes a `wip:` commit on the current `claude/*` branch and pushes it (never `main`, never forced), prints a checkpoint line | `.remember/`, one `wip:` commit |
+| `/start pause` | Saves the `.remember` handoff, then runs [checkpoint.sh](../../scripts/agent/checkpoint.sh): a `wip:` commit on the current `claude/*` branch and a push of anything not on origin (never `main`, never forced), then a checkpoint line | `.remember/`, at most one `wip:` commit |
 
-The brief covers: branch and worktree state (dirty, unpushed), open PRs with check status and mergeability, main CI, the latest boot-soak summary, the `.remember` handoff, knowledge notes changed since the last session, open `needs-human` issues, the next unchecked phase-doc step, and a one-line docs-check result.
+The brief covers: branch and worktree state (dirty, unpushed), open PRs with check status and a `merge-ready` verdict, main CI, the boot soak, the `.remember` handoff, knowledge notes changed since the last session, open `needs-human` issues, the next unchecked phase-doc step, and a one-line docs-check result.
+
+- **merge-ready** is `yes` only for a non-draft PR with at least one check and every check passed, GitHub mergeable and `CLEAN`, no changes requested, and no open `needs-human` issue naming it. `/start` proposes merging only such PRs.
+- **Soak** shows two lines. The main soak is the newest finished run of a commit on `origin/main` with no uncommitted changes. The newest other soak (a branch commit, a dirty tree, or a run still in progress without `summary.md`) is labelled as not main's state.
+
+**Pause safeguards.** checkpoint.sh commits nothing while a merge, cherry-pick, revert, rebase or bisect is in progress. It stops before committing, and restores the index, when a path new to the repo looks like a secret or an added line looks like a private key or token; that scan also covers local commits not yet on origin. It keeps `wip:` commits local while the branch has an open PR that is ready for review, because each push to such a PR runs CI and the Claude review on unfinished work; mark the PR draft if you want wip pushes.
 
 `work`, `loop`, `retro` and `setup` modes belong to later stages and do not exist yet.
 
@@ -45,12 +50,14 @@ The brief covers: branch and worktree state (dirty, unpushed), open PRs with che
 | Work in flight | PRs from `claude/*` branches; worktrees under `.claude/worktrees/<name>` | PRs: anyone; worktrees: this Mac |
 | Working plans | `docs/knowledge/plans/` on the PR branch; distilled into lessons/decisions and deleted before the PR is ready | git |
 | Lessons and decisions | `docs/knowledge/lessons/`, `docs/knowledge/decisions/` | git |
-| Session handoff | `.remember/remember.md` and `.remember/now.md` in the main checkout (gitignored) | this Mac |
+| Session handoff | `.remember/remember.md` and `.remember/now.md` in the main checkout (gitignored in every checkout; pause never commits `.remember/`) | this Mac |
 | Personal auto-memory | `~/.claude/projects/<repo>/memory/MEMORY.md` | this Mac |
 | Accepted docs drift | [scripts/docs/baseline.json](../../scripts/docs/baseline.json) | git |
-| Boot soak results | `target/soak/*/summary.md` in whichever worktree ran the soak harness | this Mac |
+| Boot soak results | `target/soak/<run>/summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in whichever worktree ran the soak harness | this Mac |
 
 GitHub labels: `needs-human` (waiting for an owner decision; agents do not claim it or change the files it names), `agent-ready` (owner-approved and claimable; only the owner applies it), `agent-working` (claimed by an agent session), `agent` (opened by an agent, so agent work can be counted).
+
+**Holding a PR.** Open a `needs-human` issue whose title names the PR, for example `Gate: merge PR #149 ... only after ...`. The brief shows that PR as `merge-ready: no (gated by #N)` until the issue is closed. A PR named only in the body of a `needs-human` issue is also held back (`named in needs-human #N`).
 
 -----
 
@@ -70,7 +77,10 @@ Later (not enabled): GitHub auto-merge behind required status checks on a `main`
 | Architecture docs | owner approval only | separate, owner-approved PR |
 | CLAUDE.md policy prose, `.claude/rules/`, skills, agents | retro or harness PR | the human merges |
 
-`just docs-check` compares [check.py](../../scripts/docs/check.py) findings with the baseline and reports only new drift (exit 1). CI runs it report-only on every PR and push to `main` (the Docs workflow) and writes the table to the job summary. Accept drift you do not fix with `just docs-check --update-baseline` in the same PR, and say why in the PR body.
+`just docs-check` compares [check.py](../../scripts/docs/check.py) findings with the baseline and reports only new drift (exit 1). A finding is new when its key is not in the baseline or it now occurs on more lines than the baselined `count`. CI runs it report-only on every PR that targets `main` and on every push to `main` (the Docs workflow), and writes the table to the job summary. Accept drift you do not fix with `just docs-check --update-baseline` in the same PR, and say why in the PR body.
+
+- **New means not in the baseline, not introduced by this branch.** Drift that reaches `main` without a baseline update (for example a merged milestone whose status docs were not updated) shows as new on every later branch. Fix or baseline it in a dedicated docs PR; do not fold it into unrelated work.
+- **Confirmed false positives** get a `reason` field on their baseline entry. They are marked `~` in `--all` output, the reason survives `--update-baseline`, and backlog PRs must not "fix" them.
 
 -----
 
@@ -97,7 +107,7 @@ Press Esc to interrupt the current turn; close the terminal to end the session. 
 
 1. Open the repo in Claude Code and run `/start`. Read the brief.
 2. Answer the open `needs-human` issues: comment your decision, then close or relabel the issue.
-3. Review and merge green PRs you are happy with (`/merge-and-cleanup <PR>`).
-4. Check main CI and the latest soak summary in the brief; a red `main` comes first.
+3. Review and merge the PRs the brief marks `merge-ready: yes` once you are happy with them (`/merge-and-cleanup <PR>`); gated PRs wait for their `needs-human` issue.
+4. Check main CI and the main soak line in the brief; a red `main` comes first. The "newest other soak" line is an experiment, not main's state.
 5. Accept the proposed next action or name a different one.
 6. Before you leave: `/start pause`.
