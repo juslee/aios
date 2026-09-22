@@ -102,10 +102,11 @@ jobs:
           components: rust-src, llvm-tools
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
+      # ipxe-qemu provides efi-virtio.rom, the option ROM virtio-blk-pci needs.
       - name: Install QEMU, edk2 firmware and mtools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 mtools
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 ipxe-qemu mtools
           qemu-system-aarch64 --version
           dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
           test -f "$AIOS_EDK2_FW"
