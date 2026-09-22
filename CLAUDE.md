@@ -150,7 +150,7 @@ Cargo workspace, three members. Run `ls kernel/src` for current per-file breakdo
 aios/
 ├── Cargo.toml            workspace root (resolver = "2"; members: kernel, shared, uefi-stub)
 ├── rust-toolchain.toml   pinned nightly (aarch64-unknown-none + aarch64-unknown-uefi)
-├── justfile              build / build-stub / disk / run* / check / test / clean
+├── justfile              build / build-stub / disk / run* / soak / check / test / clean
 ├── .claude/
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
 │   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
@@ -181,6 +181,7 @@ aios/
 │   │                     kaslr, observability, collections, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, ExitBootServices, kernel jump
+├── scripts/              setup-dev-env.sh, soak-qemu.sh (`just soak` boot soak harness)
 └── docs/                 architecture, phase, knowledge docs
 ```
 
