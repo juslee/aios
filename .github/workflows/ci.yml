@@ -109,8 +109,11 @@ jobs:
     timeout-minutes: 30
     env:
       AIOS_EDK2_FW: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
-      SOAK_OUT: target/soak/ci
     steps:
+      # Outside target/, which rust-cache saves and restores: the harness
+      # refuses an output directory that is not new or empty.
+      - name: Choose the soak output directory
+        run: echo "SOAK_OUT=$RUNNER_TEMP/aios-soak" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
