@@ -75,7 +75,7 @@ Of the 783 labelled comments that have answers from both models, 732 (93.5%) led
 
 - **Jev ranks slightly better than chance, but its probabilities add almost nothing over the base rate.** Nearly every comment scores at or above 0.8, and its Brier score (0.060) is barely better than always guessing the 93.5% base rate (0.061). When the evidence doesn't separate the classes, that is what a calibrated model does.
 - **Jev's lead over Sonnet comes from the mix of file kinds.** Doc comments were changed 96% of the time and Rust comments 81%, so knowing the file kind alone gives AUC 0.69. Compared within file kind, Jev and Sonnet tie.
-- **Jev almost never says a comment is wrong.** It chose `contradicts` for 6 of 859 comments. The replies that pushed back cite evidence from other files ("Verified `kernel/src/arch/aarch64/linker.ld` line 73", "Verified `kernel/src/smp.rs` lines 208–214") or from phase plans ("deferred to Phase 4"). None of that is in the hunk.
+- **Jev almost never says a comment is wrong.** It chose `contradicts` for 6 of 859 comments. The replies that pushed back cite evidence from other files ("Verified `kernel/src/arch/aarch64/linker.ld` line 73", "Verified `kernel/src/smp.rs` lines 208–214") or from phase plans ("explicitly tracked as Phase 2 work"). None of that is in the hunk.
 
 ### More context does not help
 
@@ -91,7 +91,7 @@ AUC on the 151-item subset (51 no-change, 15 reviewer-wrong). The `needs_change`
 
 The narrow questions carry no signal. The likely reason is that a PR description seldom addresses the specific concern a reviewer later raises, and the counter-evidence sits in other files.
 
-Combining questions does no better than `needs_change` alone, and that holds on the full set too. Combining every Jev answer probability, `kind` and `category` included (22 features over all 783 labelled comments), reaches AUC 0.77 for wrong comments with item-level folds. With folds grouped by PR it falls to 0.47, against 0.70 for `needs_change` alone. The item-level gain came from comments in the same PR sharing features.
+Combining questions does no better than `needs_change` alone, and that holds on the full set too. Combining every Jev answer probability, `kind` and `category` included (22 features over the 783 labelled comments both models answered), reaches AUC 0.77 for wrong comments with item-level folds. With folds grouped by PR it falls to 0.47, against 0.70 for `needs_change` alone. The item-level gain came from comments in the same PR sharing features.
 
 ### Low Jev scores do not flag unnecessary fixes
 
