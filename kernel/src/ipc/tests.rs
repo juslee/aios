@@ -7,10 +7,10 @@
 use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::ThreadId;
-use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_MESSAGE_SIZE};
+use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE};
 use spin::Mutex;
 
-use super::channel::{ipc_call, ipc_recv, ipc_reply};
+use super::channel::{ipc_call, ipc_recv, ipc_reply, ipc_send};
 use super::{channel_create, channel_destroy, channel_set_peer, CHANNEL_TABLE};
 
 // ---------------------------------------------------------------------------
@@ -418,7 +418,9 @@ fn ipc_caller_entry() -> ! {
     }
 }
 
-/// IPC timeout test thread: calls IpcCall on a channel with no receiver.
+/// IPC timeout test thread: calls IpcCall on a channel with no receiver
+/// (expects ETIMEDOUT). It then checks EPIPE after channel destroy and EINVAL
+/// for out-of-range channel ids.
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
@@ -473,6 +475,25 @@ fn ipc_timeout_entry() -> ! {
         _ => {
             crate::kwarn!(Ipc, "Destroy test: unexpected result {:?}", result);
         }
+    }
+
+    // Out-of-range channel id → EINVAL, not an index-out-of-bounds panic.
+    // recv and send are rejected by check_channel_access. reply has no
+    // capability check, so it exercises the CHANNEL_TABLE lookup itself.
+    let einval = IpcError::Einval as i64;
+    let recv_result = ipc_recv(ChannelId(MAX_CHANNELS as u32), &mut buf, 0);
+    let send_result = ipc_send(ChannelId(MAX_CHANNELS as u32), b"BAD_ID");
+    let reply_result = ipc_reply(ChannelId(u32::MAX), b"BAD_ID");
+    if recv_result == Err(einval) && send_result == einval && reply_result == einval {
+        crate::kinfo!(Ipc, "Bad-id test: EINVAL as expected (recv, send, reply)");
+    } else {
+        crate::kwarn!(
+            Ipc,
+            "Bad-id test: unexpected results recv={:?} send={} reply={}",
+            recv_result,
+            send_result,
+            reply_result
+        );
     }
 
     loop {
