@@ -1,5 +1,5 @@
 {
-  "comment": "Accepted docs drift. Only findings not listed here are reported. Regenerate with: just docs-check --update-baseline",
+  "comment": "Accepted docs drift. A finding is new when its key is missing here or it occurs on more lines than 'count' (default 1). 'reason' marks an accepted false positive and survives regeneration. Regenerate with: just docs-check --update-baseline",
   "version": 1,
   "counts": {
     "md-links": 23,
@@ -12,7 +12,7 @@
     "milestone-status": 6,
     "phase-count": 1,
     "layout": 3,
-    "pointer-doctor": 13,
+    "pointer-doctor": 17,
     "knowledge-hygiene": 2
   },
   "findings": [
@@ -147,14 +147,16 @@
       "check": "md-links",
       "file": "docs/security/fuzzing/ai-native.md",
       "target": "static-analysis.md",
-      "message": "broken link -> static-analysis.md"
+      "message": "broken link -> static-analysis.md",
+      "count": 2
     },
     {
       "key": "md-links|docs/security/fuzzing/strategies.md|model.md",
       "check": "md-links",
       "file": "docs/security/fuzzing/strategies.md",
       "target": "model.md",
-      "message": "broken link -> model.md"
+      "message": "broken link -> model.md",
+      "count": 3
     },
     {
       "key": "md-links|docs/security/fuzzing/strategies.md|static-analysis.md",
@@ -175,7 +177,8 @@
       "check": "md-links",
       "file": "docs/security/model/hardening.md",
       "target": "static-analysis.md",
-      "message": "broken link -> static-analysis.md"
+      "message": "broken link -> static-analysis.md",
+      "count": 2
     },
     {
       "key": "section-refs|docs/intelligence/task-manager.md|../kernel/boot/lifecycle.md §4",
@@ -189,7 +192,8 @@
       "check": "section-refs",
       "file": "docs/intelligence/tool-manager/security.md",
       "target": "../airs.md §9.3",
-      "message": "no §9.3 heading in docs/intelligence/airs.md or its hub members"
+      "message": "no §9.3 heading in docs/intelligence/airs.md or its hub members",
+      "reason": "false positive: §9.3 means principle 3 ('Graceful degradation') of the numbered list under airs.md §9 Design Principles"
     },
     {
       "key": "section-refs|docs/kernel/boot/lifecycle.md|../../applications/agents.md §2.4",
@@ -252,7 +256,8 @@
       "check": "test-count",
       "file": "docs/project/developer-guide.md",
       "target": "claimed:364",
-      "message": "states 364 tests; shared/src has 543 #[test] functions"
+      "message": "states 364 tests; shared/src has 543 #[test] functions",
+      "count": 2
     },
     {
       "key": "lock-order|CLAUDE.md|unknown:VIRTIO_INPUT",
@@ -266,91 +271,91 @@
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:BOOT_LOG",
-      "message": "production lock BOOT_LOG (kernel/src/observability/mod.rs:352) is not in §3.3/§3.4"
+      "message": "production lock BOOT_LOG is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:COMPOSITOR_CHANNEL",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:COMPOSITOR_CHANNEL",
-      "message": "production lock COMPOSITOR_CHANNEL (kernel/src/compositor/service.rs:536) is not in §3.3/§3.4"
+      "message": "production lock COMPOSITOR_CHANNEL is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:CURSOR_POS",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:CURSOR_POS",
-      "message": "production lock CURSOR_POS (kernel/src/compositor/cursor.rs:68) is not in §3.3/§3.4"
+      "message": "production lock CURSOR_POS is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:DRAG_STATE",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:DRAG_STATE",
-      "message": "production lock DRAG_STATE (kernel/src/compositor/window.rs:129) is not in §3.3/§3.4"
+      "message": "production lock DRAG_STATE is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:FOCUS_MANAGER",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:FOCUS_MANAGER",
-      "message": "production lock FOCUS_MANAGER (kernel/src/compositor/focus.rs:151) is not in §3.3/§3.4"
+      "message": "production lock FOCUS_MANAGER is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:GPU_SERVICE_CHANNEL",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:GPU_SERVICE_CHANNEL",
-      "message": "production lock GPU_SERVICE_CHANNEL (kernel/src/gpu/service.rs:557) is not in §3.3/§3.4"
+      "message": "production lock GPU_SERVICE_CHANNEL is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:INPUT_DEVICES",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:INPUT_DEVICES",
-      "message": "production lock INPUT_DEVICES (kernel/src/drivers/virtio_input.rs:87) is not in §3.3/§3.4"
+      "message": "production lock INPUT_DEVICES is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:INPUT_QUEUE",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:INPUT_QUEUE",
-      "message": "production lock INPUT_QUEUE (kernel/src/input/mod.rs:20) is not in §3.3/§3.4"
+      "message": "production lock INPUT_QUEUE is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:PENDING_POINTER",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:PENDING_POINTER",
-      "message": "production lock PENDING_POINTER (kernel/src/input/mod.rs:29) is not in §3.3/§3.4"
+      "message": "production lock PENDING_POINTER is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:SURFACE_TABLE",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:SURFACE_TABLE",
-      "message": "production lock SURFACE_TABLE (kernel/src/compositor/surface.rs:90) is not in §3.3/§3.4"
+      "message": "production lock SURFACE_TABLE is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:TITLE_FONT",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:TITLE_FONT",
-      "message": "production lock TITLE_FONT (kernel/src/compositor/text.rs:29) is not in §3.3/§3.4"
+      "message": "production lock TITLE_FONT is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:VIRTIO_GPU",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:VIRTIO_GPU",
-      "message": "production lock VIRTIO_GPU (kernel/src/drivers/virtio_gpu.rs:28) is not in §3.3/§3.4"
+      "message": "production lock VIRTIO_GPU is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|docs/kernel/deadlock-prevention.md|undocumented:WINDOW_Z_ORDER",
       "check": "lock-order",
       "file": "docs/kernel/deadlock-prevention.md",
       "target": "undocumented:WINDOW_Z_ORDER",
-      "message": "production lock WINDOW_Z_ORDER (kernel/src/compositor/window.rs:48) is not in §3.3/§3.4"
+      "message": "production lock WINDOW_Z_ORDER is not in §3.3/§3.4"
     },
     {
       "key": "lock-order|kernel/src/compositor/service.rs|unknown:VIRTIO_INPUT",
@@ -472,6 +477,27 @@
       "message": "tools: lists unknown tool MultiEdit"
     },
     {
+      "key": "pointer-doctor|.claude/agents/team-lead.md|claude-md:Architecture Document Map",
+      "check": "pointer-doctor",
+      "file": ".claude/agents/team-lead.md",
+      "target": "claude-md:Architecture Document Map",
+      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
+    },
+    {
+      "key": "pointer-doctor|.claude/agents/team-lead.md|claude-md:Code Conventions",
+      "check": "pointer-doctor",
+      "file": ".claude/agents/team-lead.md",
+      "target": "claude-md:Code Conventions",
+      "message": "points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md"
+    },
+    {
+      "key": "pointer-doctor|.claude/agents/team-lead.md|claude-md:Quality Gates",
+      "check": "pointer-doctor",
+      "file": ".claude/agents/team-lead.md",
+      "target": "claude-md:Quality Gates",
+      "message": "points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md"
+    },
+    {
       "key": "pointer-doctor|.claude/agents/verifier.md|claude-md:Key Facts",
       "check": "pointer-doctor",
       "file": ".claude/agents/verifier.md",
@@ -504,7 +530,16 @@
       "check": "pointer-doctor",
       "file": ".claude/skills/implement-phase/SKILL.md",
       "target": "claude-md:Code Conventions",
-      "message": "points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md"
+      "message": "points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md",
+      "count": 2
+    },
+    {
+      "key": "pointer-doctor|.claude/skills/implement-phase/SKILL.md|claude-md:Quality Gates",
+      "check": "pointer-doctor",
+      "file": ".claude/skills/implement-phase/SKILL.md",
+      "target": "claude-md:Quality Gates",
+      "message": "points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md",
+      "count": 2
     },
     {
       "key": "pointer-doctor|.claude/skills/verify-phase/SKILL.md|claude-md:Quality Gates",
@@ -518,14 +553,16 @@
       "check": "pointer-doctor",
       "file": ".claude/skills/write-arch-doc/SKILL.md",
       "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
+      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now",
+      "count": 3
     },
     {
       "key": "pointer-doctor|.claude/skills/write-arch-doc/SKILL.md|path:docs/security/security.md",
       "check": "pointer-doctor",
       "file": ".claude/skills/write-arch-doc/SKILL.md",
       "target": "path:docs/security/security.md",
-      "message": "path does not exist: docs/security/security.md"
+      "message": "path does not exist: docs/security/security.md",
+      "reason": "false positive: the line cites docs/security/security.md on purpose as the hub name to avoid ('model.md instead of security.md')"
     },
     {
       "key": "knowledge-hygiene|docs/knowledge/research/2026-03-18-claude-inference-engine-techniques-survey.md|name",

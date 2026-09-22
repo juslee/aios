@@ -6,9 +6,15 @@ never with a filesystem walk, so linked worktrees under .claude/worktrees/ and
 build output under target/ are never scanned.
 
 Every finding has a stable key `check|file|target` that does not contain a line
-number. scripts/docs/baseline.json records the accepted findings; by default only
-findings whose key is not in the baseline are reported, and the exit status is 1
-when there is at least one such new finding.
+number, and an occurrence count (the number of distinct lines reporting that key).
+scripts/docs/baseline.json records the accepted findings. A finding is new when
+its key is not in the baseline or it occurs on more lines than the baselined
+`count` (default 1); only new findings are reported by default, and the exit
+status is 1 when there is at least one. A baseline entry with a `reason` is an
+accepted false positive: it is marked '~' and the reason survives
+--update-baseline. "New" is relative to the baseline file, not to the branch:
+drift that reached main without a baseline update shows as new on every branch
+until a docs PR fixes or baselines it.
 
 Usage:
   scripts/docs/check.py                   report new drift only (exit 1 if any)
@@ -111,22 +117,34 @@ CHECK_ORDER = list(CHECK_DESCRIPTIONS)
 
 @dataclass
 class Finding:
+    """One drift finding. `message` is stored in the baseline, so it must not
+    contain line numbers; volatile context (e.g. a source line) goes in `detail`."""
+
     check: str
     file: str
     target: str
     message: str
     line: int = 0
     also: tuple[int, ...] = ()
+    detail: str = ""
 
     @property
     def key(self) -> str:
         return f"{self.check}|{self.file}|{self.target}"
+
+    @property
+    def count(self) -> int:
+        """Occurrences: the number of distinct lines reporting this key (1 for file-level findings)."""
+        return 1 + len(self.also)
 
     def location(self) -> str:
         if not self.line:
             return self.file
         extra = f" (also {', '.join(map(str, self.also))})" if self.also else ""
         return f"{self.file}:{self.line}{extra}"
+
+    def text(self) -> str:
+        return f"{self.message} ({self.detail})" if self.detail else self.message
 
 
 class Skip(Exception):
@@ -200,14 +218,45 @@ def code_spans(line: str) -> list[str]:
     return spans
 
 
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->")
+LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def mask_html_comments(line: str) -> str:
+    """Replace single-line <!-- ... --> spans with spaces."""
+    return HTML_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), line)
+
+
+def mask_prose(line: str) -> str:
+    """Mask code spans and inline HTML comments, keeping column positions."""
+    return mask_html_comments(mask_code_spans(line))
+
+
+def is_escaped(s: str, i: int) -> bool:
+    """True when s[i] is preceded by an odd number of backslashes."""
+    n = 0
+    while i - n - 1 >= 0 and s[i - n - 1] == "\\":
+        n += 1
+    return n % 2 == 1
+
+
 def iter_prose_lines(text: str):
-    """Yield (lineno, line) for lines outside fenced code blocks and HTML comments."""
+    """Yield (lineno, line) for lines outside code blocks and multi-line HTML comments.
+
+    Skipped: fenced blocks at any indentation, multi-line <!-- --> comments, and
+    CommonMark indented code blocks (4+ columns after a blank line, outside a list).
+    Single-line comments stay in the line; callers mask them with mask_prose().
+    """
     fence = None
     in_comment = False
+    in_indented = False
+    in_list = False
+    prev_blank = True
     for lineno, line in enumerate(text.splitlines(), 1):
         m = FENCE_RE.match(line)
-        if fence is None and m:
+        if fence is None and m and not in_indented:
             fence = m.group(1)
+            prev_blank = False
             continue
         if fence is not None:
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and line.strip() == m.group(1):
@@ -220,6 +269,23 @@ def iter_prose_lines(text: str):
         if line.lstrip().startswith("<!--") and "-->" not in line:
             in_comment = True
             continue
+        blank = not line.strip()
+        expanded = line.expandtabs(4)
+        indent = len(expanded) - len(expanded.lstrip(" "))
+        if in_indented:
+            if blank or indent >= 4:
+                prev_blank = blank
+                continue
+            in_indented = False
+        elif not blank and indent >= 4 and prev_blank and not in_list:
+            in_indented = True
+            continue
+        if not blank:
+            if LIST_ITEM_RE.match(line):
+                in_list = True
+            elif indent == 0 and (prev_blank or line.startswith("#")):
+                in_list = False
+        prev_blank = blank
         yield lineno, line
 
 
@@ -481,11 +547,12 @@ def is_path_placeholder(path: str) -> bool:
 def iter_links(repo: Repo, rel: str):
     """Yield (lineno, target) for inline links and reference definitions outside code."""
     for lineno, line in iter_prose_lines(repo.text(rel)):
-        masked = mask_code_spans(line)
+        masked = mask_prose(line)
         for m in INLINE_LINK_RE.finditer(masked):
-            yield lineno, m.group(3)
+            if not is_escaped(masked, m.start(2) - 1):  # the '[' (an escaped '!' still leaves a link)
+                yield lineno, m.group(3)
         m = REF_DEF_RE.match(masked)
-        if m:
+        if m and not is_escaped(masked, masked.index("[")):
             yield lineno, m.group(2)
 
 
@@ -582,7 +649,10 @@ def check_section_refs(repo: Repo) -> list[Finding]:
     out = []
     for rel in repo.md_files:
         for lineno, line in iter_prose_lines(repo.text(rel)):
-            for m in SECTION_REF_RE.finditer(mask_code_spans(line)):
+            masked = mask_prose(line)
+            for m in SECTION_REF_RE.finditer(masked):
+                if is_escaped(masked, m.start()):
+                    continue
                 raw, num = m.group(1), m.group(3)
                 if is_placeholder(raw) or SCHEME_RE.match(raw):
                     continue
@@ -612,7 +682,10 @@ def check_wiki_links(repo: Repo) -> list[Finding]:
     out = []
     for rel in repo.md_files:
         for lineno, line in iter_prose_lines(repo.text(rel)):
-            for m in WIKI_RE.finditer(mask_code_spans(line)):
+            masked = mask_prose(line)
+            for m in WIKI_RE.finditer(masked):
+                if is_escaped(masked, m.start(2) - 2):
+                    continue
                 note = m.group(2).strip()
                 if not note:
                     continue  # [[#heading]] refers to the same note
@@ -782,23 +855,26 @@ def check_lock_order(repo: Repo) -> list[Finding]:
     for name in sorted(set(statics) - set(doc_locks)):
         f, ln = statics[name]
         out.append(Finding("lock-order", doc, f"undocumented:{name}",
-                           f"production lock {name} ({f}:{ln}) is not in §3.3/§3.4"))
+                           f"production lock {name} is not in §3.3/§3.4", detail=f"defined at {f}:{ln}"))
     for name in sorted(set(doc_locks) - set(statics)):
         out.append(Finding("lock-order", doc, f"stale:{name}",
                            f"§3.3/§3.4 lists {name}, which is not a Mutex static in kernel/src", doc_locks[name]))
     # CLAUDE.md lock ordering chain.
     claude = repo.text("CLAUDE.md").splitlines()
     chain_text = ""
-    chain_line = 0
+    name_line: dict[str, int] = {}  # first CLAUDE.md line naming each lock in the chain
     for i, line in enumerate(claude):
         m = re.match(r"^Lock ordering[^:]*:\s*(.*)$", line)
         if m:
-            chain_line = i + 1
-            chain_text = m.group(1)
-            for nxt in claude[i + 1:]:
+            chain = [(i + 1, m.group(1))]
+            for j, nxt in enumerate(claude[i + 1:], i + 2):
                 if not nxt.startswith("   ") or not nxt.strip():
                     break
-                chain_text += " " + nxt.strip()
+                chain.append((j, nxt.strip()))
+            for lineno, part in chain:
+                for name in LOCK_NAME_RE.findall(part):
+                    name_line.setdefault(name, lineno)
+            chain_text = " ".join(part for _, part in chain)
             break
     if chain_text:
         groups = [LOCK_NAME_RE.findall(part) for part in re.split(r">(?![^{]*})", chain_text)]
@@ -807,14 +883,16 @@ def check_lock_order(repo: Repo) -> list[Finding]:
             for name in g:
                 if name not in statics:
                     out.append(Finding("lock-order", "CLAUDE.md", f"unknown:{name}",
-                                       f"lock ordering names {name}, which is not a Mutex static in kernel/src", chain_line))
+                                       f"lock ordering names {name}, which is not a Mutex static in kernel/src",
+                                       name_line.get(name, 0)))
         for i, gi in enumerate(groups):
             for gj in groups[i + 1:]:
                 for a in gi:
                     for b in gj:
                         if a in ranks and b in ranks and ranks[a] > ranks[b]:
                             out.append(Finding("lock-order", "CLAUDE.md", f"order:{a}>{b}",
-                                               f"CLAUDE.md orders {a} before {b}, §3.3 ranks them {ranks[a]} and {ranks[b]}", chain_line))
+                                               f"CLAUDE.md orders {a} before {b}, §3.3 ranks them {ranks[a]} and {ranks[b]}",
+                                               name_line.get(b, 0)))
     # `Lock ordering` comment blocks in kernel code.
     for f in repo.files:
         if not (f.startswith("kernel/src/") and f.endswith(".rs")):
@@ -1093,26 +1171,49 @@ def rule_titles(repo: Repo) -> dict[str, str]:
 
 
 TITLE_WORD = r"[A-Z][A-Za-z0-9&/-]*"
+# A run of Title Case section names joined by commas, "and", or a parenthetical
+# aside: "Code Conventions (`.claude/rules/`) and Quality Gates".
+TITLE_LIST = r"(" + TITLE_WORD + r"(?:\s*\([^)]*\)|\s*,\s*|\s+and\s+|\s+|" + TITLE_WORD + r")*)"
 BEFORE_CLAUDE_RE = re.compile(
     r"((?:" + TITLE_WORD + r"\s+){0,6}" + TITLE_WORD + r")[\"'”*]*\s*\(?\s*(?:in|from)\s+`?CLAUDE\.md\b"
 )
-AFTER_CLAUDE_RE = re.compile(r"`?CLAUDE\.md`?\s*(:)?\s*[\"“]?((?:" + TITLE_WORD + r"[ ,]*){1,12})")
+AFTER_CLAUDE_RE = re.compile(r"`?CLAUDE\.md`?\s*(:)?\s*[\"“]?" + TITLE_LIST)
+# "2. Update: Workspace Layout, Key Technical Facts" under a heading that names CLAUDE.md.
+LABELLED_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?[A-Za-z][A-Za-z ]{0,30}?(?:\*\*)?:\s*" + TITLE_LIST)
 
 
-def section_candidates(line: str) -> list[str]:
+def split_title_list(text: str, all_parts: bool) -> list[list[str]]:
+    """Split a TITLE_LIST match into section-name word lists.
+
+    "and" and parenthetical asides always separate names. Commas separate names
+    only when all_parts is set (after a colon); otherwise the list ends at the
+    first comma, because prose such as "CLAUDE.md Workspace Layout, then ..."
+    continues with unrelated words.
+    """
+    chunks = text.split(",")
+    if not all_parts:
+        chunks = chunks[:1]
+    out = []
+    for chunk in chunks:
+        for part in re.split(r"\([^)]*\)|\band\b", chunk):
+            if part.split():
+                out.append(part.split())
+    return out
+
+
+def section_candidates(line: str) -> list[tuple[str, list[str]]]:
     phrases = []
     for m in BEFORE_CLAUDE_RE.finditer(line):
-        words = m.group(1).split()
-        phrases.append(("before", words))
+        phrases.append(("before", m.group(1).split()))
     for m in AFTER_CLAUDE_RE.finditer(line):
-        text = m.group(2)
-        if m.group(1):
-            for part in text.split(","):
-                if part.strip():
-                    phrases.append(("after", part.split()))
-        else:
-            phrases.append(("after", text.split(",")[0].split()))
+        for words in split_title_list(m.group(2), all_parts=bool(m.group(1))):
+            phrases.append(("after", words))
     return phrases
+
+
+def labelled_item_candidates(line: str) -> list[tuple[str, list[str]]]:
+    m = LABELLED_ITEM_RE.match(line)
+    return [("after", words) for words in split_title_list(m.group(1), all_parts=True)] if m else []
 
 
 def resolve_phrase(kind: str, words: list[str], sections: dict, rules: dict) -> tuple[str, str]:
@@ -1154,20 +1255,32 @@ def check_pointer_doctor(repo: Repo) -> list[Finding]:
                     for tool in [t.strip() for t in m.group(1).split(",") if t.strip()]:
                         if tool not in KNOWN_TOOLS and not tool.startswith("mcp__"):
                             out.append(Finding("pointer-doctor", rel, f"tool:{tool}", f"tools: lists unknown tool {tool}", i))
+        under_claude_heading = False
         for lineno, line in iter_prose_lines(text):
-            if "CLAUDE.md" in line:
-                for kind, words in section_candidates(line):
-                    status, name = resolve_phrase(kind, words, sections, rules)
-                    if status == "stub":
-                        out.append(Finding("pointer-doctor", rel, f"claude-md:{name}",
-                                           f"points to CLAUDE.md '{name}', which is only a pointer stub now", lineno))
-                    elif status == "moved":
-                        sec, where = name.split("|", 1)
-                        out.append(Finding("pointer-doctor", rel, f"claude-md:{sec}",
-                                           f"points to CLAUDE.md '{sec}', which now lives in {where}", lineno))
-                    elif status == "missing":
-                        out.append(Finding("pointer-doctor", rel, f"claude-md:{name}",
-                                           f"points to CLAUDE.md '{name}', which is not a section of CLAUDE.md", lineno))
+            hm = HEADING_RE.match(line)
+            if hm:
+                under_claude_heading = "CLAUDE.md" in hm.group(2)
+            phrases = section_candidates(line) if "CLAUDE.md" in line else []
+            if under_claude_heading and not hm:
+                phrases += labelled_item_candidates(line)
+            line_keys: set[str] = set()
+            for kind, words in phrases:
+                status, name = resolve_phrase(kind, words, sections, rules)
+                if status == "stub":
+                    f = Finding("pointer-doctor", rel, f"claude-md:{name}",
+                                f"points to CLAUDE.md '{name}', which is only a pointer stub now", lineno)
+                elif status == "moved":
+                    sec, where = name.split("|", 1)
+                    f = Finding("pointer-doctor", rel, f"claude-md:{sec}",
+                                f"points to CLAUDE.md '{sec}', which now lives in {where}", lineno)
+                elif status == "missing":
+                    f = Finding("pointer-doctor", rel, f"claude-md:{name}",
+                                f"points to CLAUDE.md '{name}', which is not a section of CLAUDE.md", lineno)
+                else:
+                    continue
+                if f.key not in line_keys:
+                    line_keys.add(f.key)
+                    out.append(f)
             for m in re.finditer(r"(?:\.claude/)?rules/(\d\d-[a-z0-9-]+\.md)", line):
                 if f".claude/rules/{m.group(1)}" not in repo.file_set:
                     out.append(Finding("pointer-doctor", rel, f"rules:{m.group(1)}", f"rule file {m.group(1)} does not exist", lineno))
@@ -1262,13 +1375,25 @@ def load_baseline(path: str) -> dict[str, dict]:
     return {e["key"]: e for e in data.get("findings", [])}
 
 
+def baseline_entry(f: Finding, old: dict | None) -> dict:
+    """Baseline record for a finding; keeps an accepted-false-positive reason across rewrites."""
+    entry = {"key": f.key, "check": f.check, "file": f.file, "target": f.target, "message": f.message}
+    if f.count > 1:
+        entry["count"] = f.count
+    if old and old.get("reason"):
+        entry["reason"] = old["reason"]
+    return entry
+
+
 def write_baseline(path: str, entries: dict[str, dict]) -> None:
     ordered = sorted(entries.values(), key=lambda e: (CHECK_ORDER.index(e["check"]) if e["check"] in CHECK_ORDER else 99, e["key"]))
     counts: dict[str, int] = {}
     for e in ordered:
         counts[e["check"]] = counts.get(e["check"], 0) + 1
     data = {
-        "comment": "Accepted docs drift. Only findings not listed here are reported. Regenerate with: just docs-check --update-baseline",
+        "comment": ("Accepted docs drift. A finding is new when its key is missing here or it occurs on more "
+                    "lines than 'count' (default 1). 'reason' marks an accepted false positive and survives "
+                    "regeneration. Regenerate with: just docs-check --update-baseline"),
         "version": 1,
         "counts": {c: counts[c] for c in CHECK_ORDER if c in counts},
         "findings": ordered,
@@ -1295,12 +1420,59 @@ def run_checks(repo: Repo, names: list[str]) -> tuple[list[Finding], dict[str, s
     return ordered, skipped
 
 
-def render_text(findings, new_keys, resolved, skipped, names, show_all, baseline_rel) -> str:
+@dataclass
+class Comparison:
+    new_keys: set[str]                   # key missing from the baseline, or more occurrences than baselined
+    grown: dict[str, int]                # key -> baselined count, for keys whose count increased
+    accepted: dict[str, str]             # key -> reason, for baselined false positives
+    resolved: list[str]                  # baselined keys (of checks that ran) that no longer occur
+    reduced: dict[str, tuple[int, int]]  # key -> (baselined count, current count), for keys that shrank
+
+
+def compare(findings: list[Finding], baseline: dict[str, dict], ran: set[str]) -> Comparison:
+    current = {f.key: f for f in findings}
+    cmp = Comparison(set(), {}, {}, [], {})
+    for key, f in current.items():
+        entry = baseline.get(key)
+        if entry is None:
+            cmp.new_keys.add(key)
+            continue
+        base_count = int(entry.get("count", 1))
+        if f.count > base_count:
+            cmp.new_keys.add(key)
+            cmp.grown[key] = base_count
+        elif f.count < base_count:
+            cmp.reduced[key] = (base_count, f.count)
+        if entry.get("reason"):
+            cmp.accepted[key] = entry["reason"]
+    cmp.resolved = sorted(k for k, e in baseline.items() if e.get("check") in ran and k not in current)
+    return cmp
+
+
+def describe(f: Finding, cmp: Comparison) -> str:
+    text = f.text()
+    if f.key in cmp.grown:
+        text += f" [{f.count} occurrences, baseline {cmp.grown[f.key]}]"
+    if f.key in cmp.accepted:
+        text += f" [accepted: {cmp.accepted[f.key]}]"
+    return text
+
+
+def prune_notes(cmp: Comparison, limit: int = 50) -> list[str]:
+    notes = [f"  - {key}" for key in cmp.resolved]
+    notes += [f"  - {key} ({b} -> {c} occurrences)" for key, (b, c) in sorted(cmp.reduced.items())]
+    if len(notes) > limit:
+        notes = notes[:limit] + [f"  ... and {len(notes) - limit} more"]
+    return notes
+
+
+def render_text(findings, cmp, skipped, names, show_all, baseline_rel) -> str:
     out = []
     total = len(findings)
-    new = [f for f in findings if f.key in new_keys]
+    new = [f for f in findings if f.key in cmp.new_keys]
     out.append(f"docs-check: {total} findings across {len(names) - len(skipped)} checks - "
-               f"{len(new)} new, {total - len(new)} baselined, {len(resolved)} resolved (baseline {baseline_rel})")
+               f"{len(new)} new, {total - len(new)} baselined ({len(cmp.accepted)} accepted false positives), "
+               f"{len(cmp.resolved)} resolved (baseline {baseline_rel})")
     out.append("")
     out.append(f"  {'check':<18} {'total':>5} {'new':>5}")
     for name in names:
@@ -1313,31 +1485,32 @@ def render_text(findings, new_keys, resolved, skipped, names, show_all, baseline
     shown = findings if show_all else new
     if shown:
         out.append("")
-        out.append("All findings ('+' = new since baseline):" if show_all else "New drift since baseline:")
+        out.append("All findings ('+' = new since baseline, '~' = accepted false positive):" if show_all
+                   else "New drift since baseline:")
         current = None
         for f in shown:
             if f.check != current:
                 current = f.check
                 out.append(f"\n[{current}]")
-            mark = "+" if f.key in new_keys else " "
-            out.append(f" {mark} {f.location()}: {f.message}")
+            mark = "+" if f.key in cmp.new_keys else "~" if f.key in cmp.accepted else " "
+            out.append(f" {mark} {f.location()}: {describe(f, cmp)}")
     elif not show_all:
         out.append("")
         out.append("No new drift since baseline.")
-    if resolved:
+    notes = prune_notes(cmp)
+    if notes:
         out.append("")
-        out.append(f"{len(resolved)} baselined finding(s) no longer occur; prune them with `just docs-check --update-baseline`:")
-        for key in resolved[:50]:
-            out.append(f"  - {key}")
-        if len(resolved) > 50:
-            out.append(f"  ... and {len(resolved) - 50} more")
+        out.append(f"{len(cmp.resolved) + len(cmp.reduced)} baselined finding(s) no longer occur or occur less often; "
+                   "prune them with `just docs-check --update-baseline`:")
+        out.extend(notes)
     return "\n".join(out)
 
 
-def render_markdown(findings, new_keys, resolved, skipped, names) -> str:
-    new = [f for f in findings if f.key in new_keys]
+def render_markdown(findings, cmp, skipped, names) -> str:
+    new = [f for f in findings if f.key in cmp.new_keys]
     out = ["## Docs drift check", ""]
-    out.append(f"**{len(new)} new** finding(s) since baseline; {len(findings)} total, {len(resolved)} resolved. "
+    out.append(f"**{len(new)} new** finding(s) since baseline; {len(findings)} total "
+               f"({len(cmp.accepted)} accepted false positives), {len(cmp.resolved)} resolved. "
                "Report-only: fix new drift in this PR, or accept it with `just docs-check --update-baseline`.")
     out.append("")
     out.append("| Check | Total | New |")
@@ -1354,12 +1527,13 @@ def render_markdown(findings, new_keys, resolved, skipped, names) -> str:
         out.append("### New findings")
         out.append("")
         for f in new[:100]:
-            out.append(f"- `{f.check}` {f.location()}: {f.message}")
+            out.append(f"- `{f.check}` {f.location()}: {describe(f, cmp)}")
         if len(new) > 100:
             out.append(f"- ... and {len(new) - 100} more")
-    if resolved:
+    if cmp.resolved or cmp.reduced:
         out.append("")
-        out.append(f"{len(resolved)} baselined finding(s) no longer occur (run `just docs-check --update-baseline`).")
+        out.append(f"{len(cmp.resolved) + len(cmp.reduced)} baselined finding(s) no longer occur or occur less often "
+                   "(run `just docs-check --update-baseline`).")
     return "\n".join(out) + "\n"
 
 
@@ -1372,13 +1546,14 @@ def repo_root() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Deterministic docs drift checker (see module docstring).")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--all", action="store_true", help="list every finding, not only new ones")
     ap.add_argument("--json", action="store_true", help="print JSON instead of text")
     ap.add_argument("--markdown", action="store_true", help="print a Markdown summary (for $GITHUB_STEP_SUMMARY)")
     ap.add_argument("--check", default="", help="comma-separated checks to run (default: all)")
     ap.add_argument("--baseline", default=None, help=f"baseline file (default: {BASELINE_REL})")
-    ap.add_argument("--update-baseline", action="store_true", help="rewrite the baseline from the current findings")
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="rewrite the baseline from the current findings (counts included; 'reason' on accepted false positives is kept)")
     ap.add_argument("--list-checks", action="store_true", help="list available checks")
     args = ap.parse_args(argv)
 
@@ -1406,44 +1581,48 @@ def main(argv: list[str] | None = None) -> int:
     if args.update_baseline:
         entries = {k: e for k, e in baseline.items() if e.get("check") not in ran}
         for f in findings:
-            entries[f.key] = {"key": f.key, "check": f.check, "file": f.file, "target": f.target, "message": f.message}
+            entries[f.key] = baseline_entry(f, baseline.get(f.key))
         write_baseline(baseline_path, entries)
         print(f"docs-check: wrote {len(entries)} findings to {baseline_rel}"
               + (f" (skipped: {', '.join(sorted(skipped))})" if skipped else ""))
         return 0
 
-    current = {f.key for f in findings}
-    new_keys = {k for k in current if k not in baseline}
-    resolved = sorted(k for k, e in baseline.items() if e.get("check") in ran and k not in current)
+    cmp = compare(findings, baseline, ran)
 
     if args.json:
         data = {
             "baseline": baseline_rel,
             "summary": {
                 "total": len(findings),
-                "new": len(new_keys),
-                "baselined": len(findings) - len(new_keys),
-                "resolved": len(resolved),
+                "new": len(cmp.new_keys),
+                "baselined": len(findings) - len(cmp.new_keys),
+                "accepted": len(cmp.accepted),
+                "resolved": len(cmp.resolved),
+                "reduced": len(cmp.reduced),
             },
             "checks": {
                 n: ({"skipped": skipped[n]} if n in skipped else {
                     "total": sum(1 for f in findings if f.check == n),
-                    "new": sum(1 for f in findings if f.check == n and f.key in new_keys),
+                    "new": sum(1 for f in findings if f.check == n and f.key in cmp.new_keys),
                 }) for n in names
             },
             "findings": [
                 {"key": f.key, "check": f.check, "file": f.file, "line": f.line, "also": list(f.also),
-                 "target": f.target, "message": f.message, "new": f.key in new_keys}
-                for f in findings if args.all or f.key in new_keys
+                 "count": f.count,
+                 "baseline_count": (None if f.key not in baseline else int(baseline[f.key].get("count", 1))),
+                 "target": f.target, "message": f.message, "detail": f.detail,
+                 "new": f.key in cmp.new_keys, "accepted": cmp.accepted.get(f.key)}
+                for f in findings if args.all or f.key in cmp.new_keys
             ],
-            "resolved": resolved,
+            "resolved": cmp.resolved,
+            "reduced": {k: {"baseline": b, "current": c} for k, (b, c) in sorted(cmp.reduced.items())},
         }
         print(json.dumps(data, indent=2, ensure_ascii=False))
     elif args.markdown:
-        sys.stdout.write(render_markdown(findings, new_keys, resolved, skipped, names))
+        sys.stdout.write(render_markdown(findings, cmp, skipped, names))
     else:
-        print(render_text(findings, new_keys, resolved, skipped, names, args.all, baseline_rel))
-    return 1 if new_keys else 0
+        print(render_text(findings, cmp, skipped, names, args.all, baseline_rel))
+    return 1 if cmp.new_keys else 0
 
 
 if __name__ == "__main__":
