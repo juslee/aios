@@ -5,6 +5,7 @@ on:
     branches: [main, "claude/**"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -85,9 +86,18 @@ jobs:
 
   qemu-soak:
     name: QEMU boot soak (report-only)
-    runs-on: ubuntu-latest
     # Measures boot flakiness for the crash investigation (see `just soak`).
     # Report-only: crashes show up in the summary and artifacts, never block CI.
+    # One soak per pushed commit: the pull_request run of the same commit is
+    # skipped (same-repo PRs show the push run's result), and a newer push to
+    # the same ref cancels a soak still running.
+    if: github.event_name != 'pull_request'
+    concurrency:
+      group: qemu-soak-${{ github.ref }}
+      cancel-in-progress: true
+    # Pinned: the QEMU and edk2 versions come from the runner image, and soak
+    # results are only comparable across runs on the same image.
+    runs-on: ubuntu-24.04
     continue-on-error: true
     timeout-minutes: 30
     env:
