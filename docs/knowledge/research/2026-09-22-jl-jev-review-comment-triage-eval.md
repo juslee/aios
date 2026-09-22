@@ -35,7 +35,7 @@ Could TypeSafe's Jev model (a classifier that returns calibrated probabilities, 
 **Extra arms.** These ran on a 151-item subset: all 51 comments that led to no change, plus 100 random ones that did.
 
 - **File arm:** adds the file as it was at the commented commit, capped at 90,000 characters (20 of 151 files hit the cap).
-- **Policy arm:** adds the file (capped at 60,000 characters to leave room; 29 files hit the cap) and the PR description, which carries phase scope and deferrals. It also splits `needs_change` into narrow questions: `claim_accurate`, `already_handled`, `intentional`, `out_of_scope`.
+- **Policy arm:** adds the file (capped at 60,000 characters to leave room; 29 files hit the cap) and the PR description, which carries phase scope and deferrals. It asks four narrow questions alongside `needs_change` and `severity`: `claim_accurate`, `already_handled`, `intentional`, `out_of_scope`.
 
 The subset holds 15 of the 16 reviewer-wrong comments. The sixteenth led to a change, so it was not in the no-change sample.
 
@@ -73,7 +73,7 @@ Of the 783 labelled comments that have answers from both models, 732 (93.5%) led
 | Reviewer-wrong AUC, `1 − comment_correct` | 0.67 | 0.60 |
 | Reviewer-wrong AUC, `claim_support = contradicts` | 0.50 | 0.50 |
 
-- **Jev ranks slightly better than chance, but its probabilities carry no information.** Nearly every comment scores above 0.8, and its Brier score matches always guessing the 93.5% base rate. When the evidence doesn't separate the classes, that is what a calibrated model does.
+- **Jev ranks slightly better than chance, but its probabilities add almost nothing over the base rate.** Nearly every comment scores at or above 0.8, and its Brier score (0.060) is barely better than always guessing the 93.5% base rate (0.061). When the evidence doesn't separate the classes, that is what a calibrated model does.
 - **Jev's lead over Sonnet comes from the mix of file kinds.** Doc comments were changed 96% of the time and Rust comments 81%, so knowing the file kind alone gives AUC 0.69. Compared within file kind, Jev and Sonnet tie.
 - **Jev almost never says a comment is wrong.** It chose `contradicts` for 6 of 858 comments. The replies that pushed back cite evidence from other files ("Verified `kernel/src/arch/aarch64/linker.ld` line 73", "Verified `kernel/src/smp.rs` lines 208–214") or from phase plans ("deferred to Phase 4"). None of that is in the hunk.
 
@@ -105,7 +105,7 @@ Jev's lowest-scored comments are slightly less often fully correct. The differen
 ### The signal that exists
 
 - **Routing.** Sending Jev's lowest-scored 30% of comments for a closer look catches 32 of 51 no-change and 11 of 16 wrong comments. Random routing would catch 15 and 5. That is real but modest, and in `/review-pr-comments` there is nothing to save by skipping the rest. Deciding whether to fix takes the same code reading as making the fix.
-- **Severity predicts deferral.** Mean `severity` was 2.68 for deferred comments and 2.49 for by-design ones, against 1.92 for fixed ones. Serious concerns tend to get postponed rather than fixed.
+- **Deferred comments skew serious.** Mean `severity` was 2.68 for deferred comments and 2.49 for by-design ones, against 1.92 for fixed ones. 10 of the 13 deferred comments were rated high. Most high-severity comments were still fixed (78 of 101), but 9.9% of them were deferred, against 0.5% or less at every lower level. As a detector of deferral versus fix, `severity` scores AUC 0.83.
 - **Category is consistent across models.** Jev and Sonnet agree on the 9-way category 84.5% of the time (κ 0.69). They also agree on `kind` 85% of the time, but κ is only 0.29, because Jev put 824 of 858 comments in `code_suggestion`. Neither has a reference label.
 
 ### Side findings on the review process
@@ -127,7 +127,7 @@ Cost and latency are not the obstacle.
 
 - **The ground truth is what the author did.** Replies were posted under the owner's account, and most read as agent-written by `/review-pr-comments` (`Fixed in <sha>. …`). They are not an independent judgment of correctness. The blind check covers only 30 items.
 - **Few minority cases.** There are only 16 wrong and 51 no-change comments, clustered in a few PRs. Results for the wrong-comment task have wide intervals.
-- **The Sonnet baseline was batched and had no repository access.** It is not the real per-comment pass, which reads the code; that pass produced the labels.
+- **The Sonnet baseline was batched and had no repository access.** It is not the real per-comment pass, which reads the code; that pass produced the outcomes the labels record. One batch (40 comments from PRs 1–9, only one of them labelled) judged hunks cut to their last 800 characters. Leaving it out keeps Sonnet's AUC at 0.585.
 - **Narrow scope.** One repository, one reviewer (Copilot), and 79% documentation comments.
 - **The harness was not kept.** It lived in a session scratchpad. A rerun needs the data fetch, the labelling prompts and the question set described in [Method](#method).
 
@@ -143,4 +143,4 @@ Cost and latency are not the obstacle.
 1. **Do not add Jev to `/review-pr-comments`.** The decision needs evidence from other files and phase plans, and the pass that makes the decision also makes the fix, so a filter saves nothing.
 2. **The review-merge loop's verify stage is the only place left to test.** Each finding there carries its own claim and evidence excerpt, which is the citation-check shape Jev is built for. Verify is one `claude -p` run per round that tries to refute every finding. A Jev pre-check could shrink the set that run has to refute, or let a round skip verify when Jev confirms every finding with high confidence. Test it against the loop's seeded-bug and clean eval cases once they exist, and pin the model version the thresholds are tuned on.
 3. **Loop design: consider a severity floor for convergence.** The spec converges on zero confirmed findings of any severity. Given how many review comments are cosmetic, that rule may keep the loop cycling on nits.
-4. **Loop design: consider a deferral path.** In the spec, a confirmed in-scope finding is either fixed, or declined and then re-judged and tie-broken. Its issue filing covers only pre-existing problems on lines the PR does not touch. Here, though, serious in-scope concerns were the ones most often deferred to a later phase. A "defer to a tracked issue" outcome would let the loop do the same without going to needs-human.
+4. **Loop design: consider a deferral path.** In the spec, a confirmed in-scope finding is either fixed, or declined and then re-judged and tie-broken. Its issue filing covers only pre-existing problems on lines the PR does not touch. Here, though, 13 in-scope concerns were deferred to a later phase, and 10 of them were rated high severity. A "defer to a tracked issue" outcome would let the loop do the same without going to needs-human.
