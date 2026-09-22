@@ -35,7 +35,7 @@ Owner decisions, 2026-09-22:
 | Scope | All of it: docs-check, the push guard, brief, checkpoint, precompact, soak, and the new PR loop, which is written in Rust from the start |
 | Build model | A prebuilt binary called through a checking shim that fails closed |
 | Dependencies | An ergonomic set: clap, anyhow, serde + serde_json, regex, time |
-| Order | Infrastructure via the docs-check port first, then the loop, the scripts, soak, and the guard last in shadow mode |
+| Order | Infrastructure via the docs-check port first (R1), then the soak port (R4) so the crash fix can start, then the loop (R2), the scripts (R3), and the guard last in shadow mode (R5, R5b). The owner moved the soak port to second on 2026-09-22 |
 | Location | `tools/` at the repository root, with the guard and loop sources protected by permission ask rules |
 | Soak vs crash fix | The soak port (R4) lands before crash-fix step 1a, so the harness is not changed twice |
 
@@ -144,7 +144,7 @@ Each port PR commits the curated subset it needs.
 
 ### 4. Sequence, related changes, interactions
 
-**Order:** R1 → R2 → R3 → R4 → R5 → R5b, one PR each. Crash-fix step 1a (ADR #174) waits for R4, so its harness changes are made once, in Rust.
+**Order:** R1 → R4 → R2 → R3 → R5 → R5b, one PR each. The owner moved the soak port to second on 2026-09-22. Crash-fix step 1a (ADR #174) waits for R4, so its harness changes are made once, in Rust, and the crash fix can start after two tooling PRs.
 
 **Loop spec amendments** (made in R2's first commit):
 
