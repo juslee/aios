@@ -2,15 +2,21 @@
 # scripts/agent/brief.sh - deterministic session briefing for `/start` (no LLM).
 #
 # Prints, as Markdown: git state (branch, dirty files, worktrees, unpushed
-# commits), open PRs with check status and mergeability, main CI, the latest
-# soak summary, the .remember handoff, knowledge notes changed since the last
-# session, open needs-human issues, the next unchecked step of the current
-# phase doc, and a one-line docs-check summary.
+# commits), open PRs with check status and a merge-ready verdict, main CI, the
+# newest soak of a main commit and the newest other soak, the .remember handoff,
+# knowledge notes changed since the last session, open needs-human issues, the
+# next unchecked step of the current phase doc, and a one-line docs-check summary.
+#
+# merge-ready is "yes" only for a non-draft PR with at least one check, every
+# check passed, GitHub mergeable/CLEAN, no changes requested, and no open
+# needs-human issue naming it (#N in the issue title gates the PR; #N in the
+# body also blocks it).
 #
 # Every section degrades to a one-line notice when git, gh, jq, python3 or the
 # network is unavailable. Text from GitHub (titles, branch names) is printed as
-# data with control characters replaced; it is never executed. Read-only apart from `git fetch` and a timestamp
-# marker in the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
+# data with control characters replaced; it is never executed. Side effects:
+# `git fetch --prune origin` (skip with --no-fetch) and a timestamp marker in
+# the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
 #
 # Usage: scripts/agent/brief.sh [--no-fetch]
 # Works with macOS bash 3.2 and GNU/Linux.
@@ -22,7 +28,7 @@ for arg in "$@"; do
     case "$arg" in
         --no-fetch) FETCH=0 ;;
         -h | --help)
-            sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -143,6 +149,16 @@ else
 fi
 gh_unavailable() { echo "- GitHub unavailable: ${GH_WHY:-unknown error}"; }
 
+# Open issues feed both the PR merge gates and the Needs human section.
+ISSUES_OK=0
+if [ "$GH_OK" = 1 ]; then
+    if gh issue list --state open --limit 100 --json number,title,body,labels,updatedAt \
+        >"$TMP/issues.json" 2>"$TMP/issues.err"; then
+        ISSUES_OK=1
+    fi
+fi
+[ "$ISSUES_OK" = 1 ] || echo '[]' >"$TMP/issues.json"
+
 # Pull requests ---------------------------------------------------------------
 
 section "Open pull requests"
@@ -150,19 +166,38 @@ if [ "$GH_OK" = 1 ]; then
     if gh pr list --state open --limit 30 \
         --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author \
         >"$TMP/prs.json" 2>"$TMP/prs.err"; then
-        jq -r '
+        jq -r --slurpfile iss "$TMP/issues.json" --argjson issues_ok "$ISSUES_OK" '
           def clean: tostring | gsub("[[:cntrl:]]"; "?");
-          if length == 0 then "- none" else .[] |
-            ([.statusCheckRollup[]? | {name: (.name // .context // "?"),
+          def refs: [(. // "") | scan("#([0-9]+)") | .[0] | tonumber] | unique;
+          def names($n): refs | any(.[]; . == $n);
+          ($iss[0] | map(select(any(.labels[]?; .name == "needs-human")))) as $nh
+          | if length == 0 then "- none" else .[] |
+            .number as $n
+            | ($nh | map(select(.title | names($n))) | map("#\(.number)")) as $gated
+            | ($nh | map(select((.title | names($n) | not) and (.body | names($n)))) | map("#\(.number)")) as $named
+            | ([.statusCheckRollup[]? | {name: (.name // .context // "?"),
                s: ((.conclusion // .state // .status // "") | ascii_upcase)}]) as $c
             | ($c | map(select(.s == "SUCCESS" or .s == "NEUTRAL" or .s == "SKIPPED")) | length) as $pass
             | ($c | map(select(.s == "FAILURE" or .s == "ERROR" or .s == "CANCELLED" or .s == "TIMED_OUT"
                                or .s == "ACTION_REQUIRED" or .s == "STARTUP_FAILURE"))) as $failed
             | (($c | length) - $pass - ($failed | length)) as $pend
+            | .mergeStateStatus as $state
+            | ([ (if .isDraft then "draft" else empty end),
+                 (if ($gated | length) > 0 then "gated by \($gated | join(", "))" else empty end),
+                 (if ($named | length) > 0 then "named in needs-human \($named | join(", "))" else empty end),
+                 (if $issues_ok == 0 then "needs-human gates unknown" else empty end),
+                 (if ($c | length) == 0 then "no checks reported" else empty end),
+                 (if ($failed | length) > 0 then "\($failed | length) failing" else empty end),
+                 (if $pend > 0 then "\($pend) pending" else empty end),
+                 (if .mergeable != "MERGEABLE" then "mergeable: \(.mergeable)" else empty end),
+                 (if ($state == "CLEAN" or $state == "UNSTABLE" or $state == "DRAFT") then empty else "merge state: \($state)" end),
+                 (if .reviewDecision == "CHANGES_REQUESTED" then "changes requested" else empty end)
+               ]) as $blockers
             | "- #\(.number) \(.title | clean) [`\(.headRefName | clean)`, \(.author.login // "?" | clean)]\(if .isDraft then " (draft)" else "" end)\n"
               + "  checks: \($pass) pass, \($failed | length) fail, \($pend) pending"
               + (if ($failed | length) > 0 then " (failing: \($failed | map(.name | clean) | unique | join(", ")))" else "" end)
-              + "; mergeable: \(.mergeable) / \(.mergeStateStatus); review: \(.reviewDecision // "" | if . == "" then "none" else . end)"
+              + "; mergeable: \(.mergeable) / \($state); review: \(.reviewDecision // "" | if . == "" then "none" else . end)\n"
+              + "  merge-ready: " + (if ($blockers | length) == 0 then "yes" else "no (\($blockers | join("; ")))" end)
           end' "$TMP/prs.json"
     else
         echo "- GitHub unavailable: $(head -n 1 "$TMP/prs.err")"
@@ -195,43 +230,111 @@ else
 fi
 
 # Soak ------------------------------------------------------------------------
+#
+# scripts/soak-qemu.sh writes summary.tsv row by row and summary.md (with the
+# commit, "<sha>" or "<sha>-dirty") when the run finishes. A run counts as a
+# main soak only when it finished and its commit is on origin/main with no
+# uncommitted changes; everything else (branch commits, dirty trees, runs still
+# in progress) is reported separately so it is never read as main's state.
 
-section "Latest soak"
-latest=""
-latest_m=0
+MAIN_TIP=$(git rev-parse -q --verify refs/remotes/origin/main 2>/dev/null || echo "")
+
+soak_commit() { # $1 = run dir
+    # shellcheck disable=SC2016 # the backticks are literal Markdown, not expansions
+    grep -m 1 '^| Commit |' "$1/summary.md" 2>/dev/null | sed -n 's/^| Commit | `\([^`]*\)`.*/\1/p'
+}
+
+soak_relation() { # $1 = recorded commit; prints its relation to origin/main, returns 0 for a clean main commit
+    local raw=$1 c full rel
+    c=${raw%-dirty}
+    if [ -z "$raw" ]; then
+        echo "commit not recorded"
+        return 1
+    fi
+    if ! full=$(git rev-parse -q --verify "$c^{commit}" 2>/dev/null); then
+        echo "commit not in this repository"
+        return 1
+    fi
+    if [ -z "$MAIN_TIP" ]; then
+        echo "origin/main unknown"
+        return 1
+    fi
+    if [ "$full" = "$MAIN_TIP" ]; then
+        rel="origin/main tip"
+    elif git merge-base --is-ancestor "$full" "$MAIN_TIP" 2>/dev/null; then
+        rel="on main, $(git rev-list --count "$full..$MAIN_TIP") commit(s) behind origin/main"
+    else
+        rel="not on main"
+    fi
+    if [ "$c" != "$raw" ]; then
+        echo "$rel, tree had uncommitted changes"
+        return 1
+    fi
+    echo "$rel"
+    [ "$rel" != "not on main" ]
+}
+
+print_soak() { # $1 = label, $2 = run dir, $3 = worktree, $4 = mtime
+    local d=$2 b commit rel boots
+    b=$(git -C "$3" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "(detached)")
+    if [ -f "$d/summary.md" ]; then
+        commit=$(soak_commit "$d")
+        rel=$(soak_relation "$commit")
+        boots=$(grep -m 1 '^| Boots |' "$d/summary.md" | sed 's/^| Boots | \(.*\) |$/\1/')
+        echo "- $1: $(rel_path "$d") (worktree on \`$b\`, $(fmt_epoch "$4" '+%Y-%m-%d %H:%M'))"
+        echo "  - commit ${commit:-?} ($rel); ${boots:-boots not recorded}"
+    else
+        echo "- $1: $(rel_path "$d") (worktree on \`$b\`, $(fmt_epoch "$4" '+%Y-%m-%d %H:%M'))"
+        echo "  - partial: no summary.md yet (run in progress or aborted); commit not recorded"
+    fi
+    if [ -f "$d/summary.tsv" ]; then
+        awk -F'\t' -v partial="$([ -f "$d/summary.md" ] || echo " so far")" '
+            NR > 1 { n++; c[$3]++; mode = $2 }
+            END {
+                if (n == 0) { print "  - summary.tsv has no rows yet"; exit }
+                printf "  - %s mode%s: CLEAN %d/%d, PCZERO %d, PANIC %d, EXCEPTION %d, WEDGE %d\n",
+                    mode, partial, c["CLEAN"], n, c["PCZERO"], c["PANIC"], c["EXCEPTION"], c["WEDGE"]
+            }' "$d/summary.tsv"
+    elif [ -f "$d/summary.md" ]; then
+        grep -m 1 '^CLEAN rate:' "$d/summary.md" | sed 's/^/  - /'
+    fi
+}
+
+section "Soak"
+main_dir="" main_wt="" main_m=0
+other_dir="" other_wt="" other_m=0
 while IFS= read -r wt; do
     [ -n "$wt" ] || continue
-    for f in "$wt"/target/soak/*/summary.tsv "$wt"/target/soak/*/summary.md; do
-        [ -f "$f" ] || continue
-        m=$(mtime "$f")
-        if [ "$m" -gt "$latest_m" ]; then
-            latest_m=$m
-            latest=$f
+    for d in "$wt"/target/soak/*/; do
+        d=${d%/}
+        if [ -f "$d/summary.md" ]; then
+            m=$(mtime "$d/summary.md")
+        elif [ -f "$d/summary.tsv" ]; then
+            m=$(mtime "$d/summary.tsv")
+        else
+            continue
+        fi
+        if [ -f "$d/summary.md" ] && soak_relation "$(soak_commit "$d")" >/dev/null; then
+            if [ "$m" -gt "$main_m" ]; then
+                main_m=$m main_dir=$d main_wt=$wt
+            fi
+        elif [ "$m" -gt "$other_m" ]; then
+            other_m=$m other_dir=$d other_wt=$wt
         fi
     done
 done <<EOF
 $WORKTREES
 EOF
-if [ -z "$latest" ]; then
-    echo "- no soak results (target/soak/*/summary.* in any worktree); run \`just soak\` once the harness is merged"
+if [ -z "$main_dir$other_dir" ]; then
+    echo "- no soak results (target/soak/*/summary.* in any worktree); run \`just soak\` on main once the harness is merged"
 else
-    dir=$(dirname "$latest")
-    echo "- $(rel_path "$dir") ($(fmt_epoch "$latest_m" '+%Y-%m-%d %H:%M'))"
-    if [ -f "$dir/summary.md" ]; then
-        # shellcheck disable=SC2016 # the backticks are literal Markdown, not expansions
-        commit=$(grep -m 1 '^| Commit |' "$dir/summary.md" | sed -n 's/^| Commit | `\([^`]*\)`.*/\1/p')
-        boots=$(grep -m 1 '^| Boots |' "$dir/summary.md" | sed 's/^| Boots | \(.*\) |$/\1/')
-        [ -n "$commit$boots" ] && echo "- commit ${commit:-?}; ${boots:-?}"
-    fi
-    if [ -f "$dir/summary.tsv" ]; then
-        awk -F'\t' 'NR > 1 { n++; c[$3]++; mode = $2 }
-            END {
-                if (n == 0) { print "- summary.tsv has no rows"; exit }
-                printf "- %s mode: CLEAN %d/%d, PCZERO %d, PANIC %d, EXCEPTION %d, WEDGE %d\n",
-                    mode, c["CLEAN"], n, c["PCZERO"], c["PANIC"], c["EXCEPTION"], c["WEDGE"]
-            }' "$dir/summary.tsv"
+    if [ -n "$main_dir" ]; then
+        print_soak "main soak" "$main_dir" "$main_wt" "$main_m"
     else
-        grep -m 1 '^CLEAN rate:' "$dir/summary.md" | sed 's/^/- /'
+        echo "- main soak: none (no finished run of a commit on origin/main without local changes)"
+    fi
+    if [ -n "$other_dir" ]; then
+        print_soak "newest other soak (not main's state)" "$other_dir" "$other_wt" "$other_m"
     fi
 fi
 
@@ -284,8 +387,7 @@ fi
 
 section "Needs human"
 if [ "$GH_OK" = 1 ]; then
-    if gh issue list --state open --limit 100 --json number,title,labels,updatedAt \
-        >"$TMP/issues.json" 2>"$TMP/issues.err"; then
+    if [ "$ISSUES_OK" = 1 ]; then
         jq -r '
           def has($l): any(.labels[]?; .name == $l);
           def clean: tostring | gsub("[[:cntrl:]]"; "?");
@@ -342,9 +444,9 @@ if [ -n "$DOCS_PID" ]; then
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
     if { [ "$rc" = 0 ] || [ "$rc" = 1 ]; } && command -v jq >/dev/null 2>&1 && jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
         jq -r '
-          "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, \(.summary.resolved) resolved)"
+          "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, of which \(.summary.accepted // 0) accepted false positives; \(.summary.resolved) resolved)"
           + (if .summary.new > 0 then "; new in: " + ([.checks | to_entries[] | select((.value.new // 0) > 0) | "\(.key) \(.value.new)"] | join(", ")) else "" end)
-          + (if .summary.resolved > 0 then "; run `just docs-check --update-baseline` to prune resolved entries" else "" end)
+          + (if (.summary.resolved + (.summary.reduced // 0)) > 0 then "; run `just docs-check --update-baseline` to prune resolved or reduced entries" else "" end)
         ' "$TMP/docs.json"
     else
         echo "- docs-check failed (exit $rc): $(head -n 1 "$TMP/docs.err" 2>/dev/null)"

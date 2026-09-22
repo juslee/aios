@@ -32,3 +32,9 @@ docs/.obsidian/
 # Claude Code worktrees and agent memory
 .claude/worktrees/**/*
 .claude/agent-memory/**/*
+
+# Session handoff (remember plugin; its fallback path in a worktree is <worktree>/.remember/)
+.remember/
+
+# Python bytecode (scripts/docs/check.py)
+__pycache__/

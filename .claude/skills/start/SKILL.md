@@ -48,17 +48,17 @@ The modes `work`, `loop`, `retro` and `setup` belong to later rollout stages (se
 
 2. Summarise in at most 12 lines, in this order:
    - **State**: branch, uncommitted or unpushed work in any worktree, main CI.
-   - **Red**: failing checks, a main CI failure, soak crashes, new docs drift.
-   - **Needs you**: open `needs-human` issues (number and title), PRs that are green and mergeable (the human merges them with `/merge-and-cleanup <PR>`).
+   - **Red**: failing checks, a main CI failure, crashes in the **main soak** line, new docs drift. The "newest other soak" line is an experiment on another commit: mention it as such, never as main's state.
+   - **Needs you**: open `needs-human` issues (number and title); PRs whose `merge-ready` is `yes` (the human merges them with `/merge-and-cleanup <PR>`); PRs held by a gate, with the gating issue.
    - **Next**: the next phase-doc step the script found.
 
 3. Propose exactly one next action with a one-line reason, using the first rule that applies:
    1. Uncommitted or unpushed work on a `claude/*` branch: continue it, or checkpoint it with `/start pause`.
    2. Main CI is red: fix main before anything else.
    3. An open PR from a `claude/*` branch has failing checks or unanswered review comments: tend that PR.
-   4. A PR is green and mergeable: ask the human to review and merge it. Do not merge.
-   5. A `needs-human` issue blocks the next step: ask for that decision and link the issue.
-   6. New docs drift since the baseline: fix it on the branch that introduced it.
+   4. A PR shows `merge-ready: yes`: ask the human to review and merge it. Do not merge. `merge-ready` is computed by the script; never propose merging a draft, a PR gated by a `needs-human` issue, or a PR the script marks `no` for any other reason.
+   5. A `needs-human` issue blocks the next step (a gate on a PR you would otherwise propose, or a decision the next phase-doc step depends on): ask for that decision and link the issue.
+   6. New docs drift since the baseline: if this branch introduced it, fix it here. If it came from `main` (it shows as new on every branch, including a fresh one from `origin/main`), propose a dedicated docs PR that fixes or baselines it; do not fold it into unrelated work.
    7. Otherwise: start the next phase-doc step (`/implement-phase N`, attended).
 
 4. End by asking whether to proceed with that action. Wait for the user.
@@ -82,7 +82,8 @@ The modes `work`, `loop`, `retro` and `setup` belong to later rollout stages (se
 3. Report:
    - One line per check with findings: total and new (the `new` column).
    - Every harness finding (stale CLAUDE.md pointers, sections that moved to `.claude/rules/`, unknown tools in agent frontmatter, skills or agents missing from the CLAUDE.md tables), each with file and line.
-   - Baselined entries that no longer occur (the "resolved" list): they are removed with `just docs-check --update-baseline` in a PR.
+   - Findings marked `~` carry an `[accepted: ...]` reason in the baseline: they are confirmed false positives. List them separately and never propose "fixing" them.
+   - Baselined entries that no longer occur or occur on fewer lines (the prune list): they are removed with `just docs-check --update-baseline` in a PR.
    - Who fixes what, per the docs policy in `docs/project/agent-loop.md`: status docs and CLAUDE.md fact tables in the same PR as the change; skills, agents, rules and CLAUDE.md policy prose in a harness or retro PR the human merges; architecture docs only with owner approval.
 
 4. Do not edit anything in doctor mode. Offer to open a branch that fixes a named subset, or a GitHub issue that records the backlog.
@@ -93,33 +94,29 @@ The modes `work`, `loop`, `retro` and `setup` belong to later rollout stages (se
 
 Checkpoint the session so the user can `/clear` (context limit) or stop (usage limit) without losing work.
 
-1. **Handoff.** Invoke the `remember:remember` skill with the Skill tool to write `.remember/remember.md`. If the skill is unavailable or fails, record "handoff not saved" and continue.
+1. **Handoff.** Invoke the `remember:remember` skill with the Skill tool to write `.remember/remember.md`. Note whether it succeeded; if the skill is unavailable or fails, continue.
 
-2. **Work-in-progress commit** in the current checkout:
+2. **Checkpoint.** Run the checkpoint script from the current checkout, passing the handoff result (`saved` or `not-saved`):
 
    ```bash
-   branch=$(git symbolic-ref --quiet --short HEAD)
-   git status --short
+   bash scripts/agent/checkpoint.sh --handoff saved
    ```
 
-   - If `branch` is empty (detached HEAD), is `main`, or does not start with `claude/`: do not commit. Report the uncommitted files and continue with step 3.
-   - If there is nothing to commit: note "clean" and continue with step 3.
-   - If any changed path looks like a secret (`.env`, `*.pem`, `*.key`, `id_rsa*`, `*credentials*`, `*secret*`): stop and ask the user; do not commit.
-   - Otherwise commit everything that is not gitignored and push to the same branch:
+   If this checkout predates the script, run the main checkout's copy (it still acts on the current checkout):
 
-     ```bash
-     git add -A
-     git commit -m "wip: checkpoint $branch" -m "Paused with /start pause; not a finished step." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
-     git push -u origin "$branch"
-     ```
-
-     Always name the branch in the push: a worktree created from `origin/main` tracks `origin/main`, so a bare `git push` could target `main`. Never pass `--force`, `--force-with-lease`, `--no-verify`, or a refspec that targets another branch. If the push is rejected, leave the commit local and report "pushed: no (rejected)"; do not pull, rebase or retry.
-
-3. **Checkpoint line.** Print one line, then the resume hint, and nothing else:
-
-   ```text
-   checkpoint: <branch> @ <short sha> | wip: <committed N files | clean | not committed (reason)> | pushed: <yes | no (reason)> | handoff: <saved | not saved>
-   Safe to /clear — run /start after
+   ```bash
+   bash "$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10); exit}')/scripts/agent/checkpoint.sh" --handoff saved
    ```
+
+   The script does all git work; do not run `git add`, `git commit` or `git push` yourself in this mode. It:
+   - commits only on a `claude/*` branch, never on `main` or a detached HEAD, and not while a merge, cherry-pick, revert, rebase or bisect is in progress;
+   - stages everything not gitignored except `.remember/`, then stops before committing if a path new to the repo looks like a secret (`.env`, `*.pem`, `*.key`, `id_rsa*`, `*credential*`, `*secret*`, ...) or an added line looks like a private key or access token, in the staged changes or in local commits not yet on origin; on a stop it restores the index exactly;
+   - commits `wip: checkpoint <branch>` when anything is staged;
+   - pushes the branch under its own name (`refs/heads/<branch>`, so a worktree that tracks `origin/main` cannot push to `main`) whenever it has commits not on origin, also when the tree was already clean; never forced, never `--no-verify`, no pull or retry after a rejection;
+   - keeps wip commits local while the branch has an open PR that is ready for review, because each push to it starts CI and the Claude review on unfinished work (mark the PR draft to allow wip pushes).
+
+3. **Report.** Print the script's output verbatim. Its first line is `checkpoint: <branch> @ <sha> | wip: ... | pushed: ... | handoff: ...`; its last line is either `Safe to /clear — run /start after` or says what remains only in this checkout.
+   - Exit status 0 or 1: add nothing. Status 1 means uncommitted files or commits not on origin remain; the `wip:` and `pushed:` fields say why. Do not work around it.
+   - Exit status 3: it stopped on a possible secret and listed the paths. Add one question asking the user how to proceed; do not delete, gitignore or commit those files yourself.
 
    On resume, `/start` shows the wip commit in the brief. Continue on top of it; squash merge removes it from `main`'s history, so never amend or force-push it.
