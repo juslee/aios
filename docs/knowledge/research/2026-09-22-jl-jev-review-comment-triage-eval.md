@@ -87,9 +87,11 @@ AUC on the 151-item subset (51 no-change, 15 reviewer-wrong). The `needs_change`
 | + file, `needs_change` | 0.70 (0.61–0.78) | 0.63 (0.48–0.75) |
 | + file and PR description, `needs_change` | 0.65 (0.57–0.74) | 0.59 (0.46–0.74) |
 | Narrow questions: `claim_accurate` / `already_handled` / `intentional` / `out_of_scope` | 0.58 / 0.46 / 0.47 / 0.54 | 0.58 / 0.50 / 0.53 / 0.43 |
-| Logistic combination of the arm's questions, 5-fold CV grouped by PR: hunk / file / policy | 0.70 / 0.66 / 0.56 | 0.53 / 0.40 / 0.43 |
+| Logistic combination, 5-fold CV grouped by PR (hunk and file arms: `needs_change`, `comment_correct`, `claim_support` probabilities, `severity`; policy arm: all six questions): hunk / file / policy | 0.70 / 0.66 / 0.56 | 0.53 / 0.40 / 0.43 |
 
-The narrow questions carry no signal, and combining questions does no better than `needs_change` alone. The likely reason is that a PR description seldom addresses the specific concern a reviewer later raises, and the counter-evidence sits in other files.
+The narrow questions carry no signal. The likely reason is that a PR description seldom addresses the specific concern a reviewer later raises, and the counter-evidence sits in other files.
+
+Combining questions does no better than `needs_change` alone, and that holds on the full set too. Combining every Jev answer probability, `kind` and `category` included (22 features over all 783 labelled comments), reaches AUC 0.76 for wrong comments with item-level folds. With folds grouped by PR it falls to 0.47, against 0.70 for `needs_change` alone. The item-level gain came from comments in the same PR sharing features.
 
 ### Low Jev scores do not flag unnecessary fixes
 
