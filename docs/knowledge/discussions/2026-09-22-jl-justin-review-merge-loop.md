@@ -22,7 +22,7 @@ This design replaces both skills with a loop. The loop reviews a PR, fixes what 
 The owner's decisions, all made on 2026-09-22:
 
 | Topic | Decision |
-|---|---|
+| --- | --- |
 | Merge mechanism | GitHub auto-merge |
 | Review gate | Required commit status `justin/review` in the main ruleset |
 | Fixing | The loop fixes anything a gate flags, automatically |
@@ -99,7 +99,8 @@ Each prompt carries a `version:` line, and every finding records the version tha
 - failing CI jobs, with the tail of each log;
 - `just docs-check --json`;
 - unresolved review threads;
-- needs-human gate issues that reference the PR.
+- needs-human gate issues that reference the PR;
+- relevant knowledge-hive notes (section 4, "Knowledge hive").
 
 Comments are handled by author:
 
@@ -150,7 +151,7 @@ The loop then posts `justin/review=success` on the head SHA.
 **Models** (from `loop-config.json`):
 
 | Stage | Default | Escalation |
-|---|---|---|
+| --- | --- | --- |
 | Review, 3 lenses | Sonnet 5; Opus 5 for the correctness and security lenses when the diff touches kernel core (`kernel/src/{arch,sched,ipc,mm}/**` or any `unsafe`) | — |
 | Verify | Opus 5 | Fable 5.1 for PRs labelled `hard` and in the final round |
 | Fix | Sonnet 5; Opus 5 from round 3 | Fable 5.1 in round 5 |
@@ -221,7 +222,29 @@ It is recorded against the original PR.
 
 For categories with a high verify dismissal rate, it adds "do not flag" guidance to the reviewer prompts.
 
-**Retro output:** one PR, which goes through the same loop and auto-merges, plus one note in `docs/knowledge/lessons/`.
+**Retro output:** one PR, which goes through the same loop and auto-merges, plus one note in `docs/knowledge/lessons/`. The note carries:
+
+- subsystem tags from the rule 08 tag list (e.g. `ipc`, `sched`, `memory`);
+- `[[wiki-links]]` to the related decision records, to earlier lessons, and to the discussion that spawned it;
+- a link to the PR.
+
+With these, Obsidian's graph shows how findings, lessons and fixes relate over time.
+
+**Knowledge hive: the loop reads what it writes.** Before each round, `pr_loop.py`:
+
+1. Maps the changed paths to subsystem tags, using a path-glob → tag table in `loop-config.json` (e.g. `kernel/src/ipc/**` → `ipc`).
+2. Selects the notes in `docs/knowledge/lessons/` and `docs/knowledge/decisions/` whose frontmatter `tags` intersect those tags. It prefers `status: final`, puts the newest first, and applies a size cap from `loop-config.json` (default 12 notes / 40 KB).
+3. Adds the selected notes to the review and fix prompts under a "Known lessons for this area" header.
+
+A lesson learned on one PR therefore becomes review context for the next PR that touches the same subsystem. That closes the self-improvement cycle. When a note has to be dropped because of the cap, the round's state file says so.
+
+Headless stages read the vault as plain files from the main checkout. They do not use the obsidian MCP server, which runs `npx … mcpvault@latest` and would:
+
+- fetch from npm on every `claude -p` call;
+- execute an unpinned package; and
+- need MCP approval in headless mode.
+
+The deterministic tag match is faster and reproducible. The MCP server remains the interactive way to browse and search the merged vault. It serves the main checkout's `docs/`, so work on a branch edits files in the worktree instead.
 
 **Guard against self-weakening:** a retro PR that removes or loosens a check must cite evidence in its body. The verify stage treats "weakens a safety check without evidence" as a finding.
 
@@ -248,7 +271,7 @@ For categories with a high verify dismissal rate, it adds "do not flag" guidance
 **Failure table:**
 
 | Event | Behaviour |
-|---|---|
+| --- | --- |
 | Stage error, timeout or empty output | Never counted as success. Retry once, then leave the PR `pending` |
 | Usage limit | Stop, save state, write `resume-at`. `/justin:start` reports it; the stage-2 runner resumes |
 | Permission denial in a stage | needs-human, with the denied command. Never retried with broader permissions |
@@ -275,7 +298,7 @@ For categories with a high verify dismissal rate, it adds "do not flag" guidance
 4. **Stage 2.** The launchd runner, in a separate spec: a schedule, `resume-at`, the budget, and `claude -p "/justin:merge --all"`.
 5. **First `/justin:retro`** after 5 merged PRs.
 
-**Owner prerequisite:** extra usage switched off or capped in claude.ai, through `/usage-credits` or https://claude.ai/settings/usage. This is what makes unattended runs incur no overage.
+**Owner prerequisite:** extra usage switched off or capped in claude.ai, through `/usage-credits` or <https://claude.ai/settings/usage>. This is what makes unattended runs incur no overage.
 
 ## Open Questions
 
@@ -295,4 +318,5 @@ For categories with a high verify dismissal rate, it adds "do not flag" guidance
 ## Outcome
 
 _Fill in when graduated or archived:_
+
 - Graduated to: `docs/project/agent-loop.md` (loop runbook section) when the implementation PR merges.
