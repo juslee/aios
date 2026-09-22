@@ -78,11 +78,14 @@ is kept in the detail.
 
 Heartbeat timing comes from the harness: it polls the log every second and
 appends a "[soak] meta" line recording when the kernel started, when the first
-heartbeat and the Gate 1 bench header appeared, and when the heartbeat last
-advanced. Silence is measured to the planned end of the boot (--secs), not to
-QEMU's exit after the timeout. A log without that line (not produced by this
-script) is classified log-only: a heartbeat that stops after tick 0 cannot be
-detected there, and a cut-short boot cannot be told apart from a wedge.
+heartbeat, the Gate 1 bench header and "=== Gate 1 Complete ===" appeared,
+when the heartbeat last advanced, and the longest gap between heartbeat
+advances after the bench completed (hb_max_gap; a trace only, reported in the
+detail when it exceeds --stall-secs). Silence is measured to the planned end
+of the boot (--secs), not to QEMU's exit after the timeout. A log without that
+line (not produced by this script) is classified log-only: a heartbeat that
+stops after tick 0 cannot be detected there, and a cut-short boot cannot be
+told apart from a wedge.
 
 Options:
   --runs N           number of sequential boots (default 10)
@@ -386,6 +389,10 @@ END {
         if (!timing) note("log-only: no harness timing, a late heartbeat stall is undetectable")
     }
     if (early && !sig_noted) note("qemu exited before the time limit (rc=" rc (signaled ? ", signal " (rc - 128) : "") ")")
+    # Informational only: CPU 0 went quiet for a while after the bench, then
+    # recovered (the footer's longest gap between heartbeat advances).
+    gap = secs_of("hb_max_gap")
+    if (gap > limit) note("heartbeat paused " gap "s after the bench completed")
     if (boots > 1) note("guest booted " boots " times")
 
     if (class == "CLEAN" || class == "INCONCLUSIVE" || i3 == "") lb = "-"
@@ -518,18 +525,26 @@ cleanup() {
 
 # Per-boot progress, updated by poll_log: heartbeat count, and the seconds
 # into the boot at which the heartbeat last grew, the kernel started, the
-# first heartbeat and the Gate 1 bench header appeared (-1: not yet).
+# first heartbeat, the Gate 1 bench header and "=== Gate 1 Complete ==="
+# appeared (-1: not yet). P_GAP is the longest wait between two heartbeat
+# advances after the bench completed (-1: it never completed); it is a trace
+# of CPU 0 stalls that recovered and does not affect the class.
 P_HB=0
 P_ADV=-1
 P_KERNEL=-1
 P_HB0=-1
 P_BENCH=-1
+P_G1=-1
+P_GAP=-1
 
 # poll_log LOG T -- record the progress visible in LOG at T seconds.
 poll_log() {
     local cnt
     cnt=$(grep -a -c '\[heartbeat\] tick=' "$1" || true)
     if [ "$cnt" -gt "$P_HB" ]; then
+        if [ "$P_G1" -ge 0 ] && [ "$P_ADV" -ge "$P_G1" ] && [ $(($2 - P_ADV)) -gt "$P_GAP" ]; then
+            P_GAP=$(($2 - P_ADV))
+        fi
         P_HB=$cnt
         P_ADV=$2
         [ "$P_HB0" -ge 0 ] || P_HB0=$2
@@ -539,6 +554,10 @@ poll_log() {
     fi
     if [ "$P_BENCH" -lt 0 ] && grep -a -q '=== Gate 1 Benchmark ===' "$1"; then
         P_BENCH=$2
+    fi
+    if [ "$P_G1" -lt 0 ] && grep -a -q '=== Gate 1 Complete ===' "$1"; then
+        P_G1=$2
+        P_GAP=0
     fi
 }
 
@@ -618,7 +637,7 @@ run_soak() {
     load_start=$(loadavg)
 
     tsv="$OUT/summary.tsv"
-    printf 'run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\n' >"$tsv"
+    printf 'run\tmode\tclass\tlast_tick\thb_count\tstall_s\telapsed_s\tqemu_rc\tload1\tkernel_s\thb_first_s\tbench_s\tg1done_s\thb_max_gap_s\tmarkers\tlb_last\tdetail\tfirst_fatal\tlast_info_1\tlast_info_2\tlast_info_3\tlog\n' >"$tsv"
 
     echo "soak: $RUNS x ${SECS}s, mode=$MODE, commit=$git_rev, data=$([ "$FRESH_DATA" -eq 1 ] && echo fresh || echo reused)"
     echo "soak: firmware=$fw"
@@ -661,6 +680,8 @@ run_soak() {
         P_KERNEL=-1
         P_HB0=-1
         P_BENCH=-1
+        P_G1=-1
+        P_GAP=-1
         start=$SECONDS
         # stdin from /dev/null: QEMU's stdio serial must never touch the
         # terminal from timeout's own (background) process group.
@@ -676,8 +697,8 @@ run_soak() {
         CUR_PID=""
         elapsed=$((SECONDS - start))
         poll_log "$log" "$elapsed"
-        printf '\n[soak] meta mode=%s secs=%s elapsed=%s qemu_rc=%s kstart=%s hb_first=%s bench_start=%s hb_count=%s hb_last_advance=%s stall_limit=%s load1=%s\n' \
-            "$MODE" "$SECS" "$elapsed" "$rc" "$P_KERNEL" "$P_HB0" "$P_BENCH" "$P_HB" "$P_ADV" "$STALL_SECS" "$load1" >>"$log"
+        printf '\n[soak] meta mode=%s secs=%s elapsed=%s qemu_rc=%s kstart=%s hb_first=%s bench_start=%s g1done=%s hb_count=%s hb_last_advance=%s hb_max_gap=%s stall_limit=%s load1=%s\n' \
+            "$MODE" "$SECS" "$elapsed" "$rc" "$P_KERNEL" "$P_HB0" "$P_BENCH" "$P_G1" "$P_HB" "$P_ADV" "$P_GAP" "$STALL_SECS" "$load1" >>"$log"
 
         # A boot on which the UEFI stub never ran says nothing about the
         # kernel (INCONCLUSIVE), whatever QEMU's exit status. On the first
@@ -697,9 +718,9 @@ run_soak() {
         eval "COUNT_$C_CLASS=\$((COUNT_$C_CLASS + 1))"
         [ "$C_CLASS" = CLEAN ] || non_clean=1
 
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$idx" "$MODE" "$C_CLASS" "$C_TICK" "$C_HB" "$C_STALL" "$elapsed" "$rc" "$load1" \
-            "$P_KERNEL" "$P_HB0" "$P_BENCH" \
+            "$P_KERNEL" "$P_HB0" "$P_BENCH" "$P_G1" "$P_GAP" \
             "$C_MARKERS" "$C_LB" "$C_DETAIL" "$C_FIRST" "$C_I1" "$C_I2" "$C_I3" "$(basename "$log")" >>"$tsv"
 
         stall_md="-"
