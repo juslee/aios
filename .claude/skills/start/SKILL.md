@@ -48,18 +48,18 @@ The modes `work`, `loop`, `retro` and `setup` belong to later rollout stages (se
 
 2. Summarise in at most 12 lines, in this order:
    - **State**: branch, uncommitted or unpushed work in any worktree, main CI.
-   - **Red**: failing checks, a main CI failure, crashes in the **main soak** line, new docs drift. The "newest other soak" line is an experiment on another commit: mention it as such, never as main's state.
+   - **Red**: failing checks, unresolved review threads, a main CI failure, crashes in the **main soak** line, new docs drift (from the Docs drift section; the Docs CI check never fails on drift). The "newest other soak" line is an experiment on another commit: mention it as such, never as main's state.
    - **Needs you**: open `needs-human` issues (number and title); PRs whose `merge-ready` is `yes` (the human merges them with `/merge-and-cleanup <PR>`); PRs held by a gate, with the gating issue.
-   - **Next**: the next phase-doc step the script found.
+   - **Next**: the next phase-doc step the script found, and the open PR for that milestone if the script names one.
 
 3. Propose exactly one next action with a one-line reason, using the first rule that applies:
    1. Uncommitted or unpushed work on a `claude/*` branch: continue it, or checkpoint it with `/start pause`.
    2. Main CI is red: fix main before anything else.
-   3. An open PR from a `claude/*` branch has failing checks or unanswered review comments: tend that PR.
+   3. An open PR from a `claude/*` branch has failing checks or unresolved review threads (the brief counts both per PR): tend that PR.
    4. A PR shows `merge-ready: yes`: ask the human to review and merge it. Do not merge. `merge-ready` is computed by the script; never propose merging a draft, a PR gated by a `needs-human` issue, or a PR the script marks `no` for any other reason.
    5. A `needs-human` issue blocks the next step (a gate on a PR you would otherwise propose, or a decision the next phase-doc step depends on): ask for that decision and link the issue.
    6. New docs drift since the baseline: if this branch introduced it, fix it here. If it came from `main` (it shows as new on every branch, including a fresh one from `origin/main`), propose a dedicated docs PR that fixes or baselines it; do not fold it into unrelated work.
-   7. Otherwise: start the next phase-doc step (`/implement-phase N`, attended).
+   7. Otherwise: start the next phase-doc step (`/implement-phase N`, attended). If the brief names an open PR for that milestone, the milestone is already in flight: propose continuing that PR instead, never a second implementation.
 
 4. End by asking whether to proceed with that action. Wait for the user.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/agent/brief.sh - deterministic session briefing for `/start` (no LLM).
+# scripts/agent/brief.sh - deterministic session briefing for `/justin:brief` (no LLM).
 #
 # Prints, as Markdown: git state (branch, dirty files, worktrees, unpushed
 # commits), open PRs with check status and a merge-ready verdict, main CI, the
@@ -8,9 +8,13 @@
 # next unchecked step of the current phase doc, and a one-line docs-check summary.
 #
 # merge-ready is "yes" only for a non-draft PR with at least one check, every
-# check passed, GitHub mergeable/CLEAN, no changes requested, and no open
-# needs-human issue naming it (#N in the issue title gates the PR; #N in the
-# body also blocks it).
+# check passed, GitHub mergeable with merge state CLEAN, no changes requested,
+# no unresolved review threads, and no open needs-human issue naming it (#N in
+# the issue title gates the PR; #N in the body also blocks it). When the gates
+# or the review threads cannot be read, the PR is not merge-ready. The Docs
+# check never fails on drift (.github/workflows/docs.yml), so a failing Docs
+# check is a checker error and counts like any other failing check; drift is
+# reported in the Docs drift section, from a local docs-check run.
 #
 # Every section degrades to a one-line notice when git, gh, jq, python3 or the
 # network is unavailable. Text from GitHub (titles, branch names) is printed as
@@ -149,30 +153,53 @@ else
 fi
 gh_unavailable() { echo "- GitHub unavailable: ${GH_WHY:-unknown error}"; }
 
-# Open issues feed both the PR merge gates and the Needs human section.
+# Open needs-human issues feed both the PR merge gates and the Needs human section.
 ISSUES_OK=0
 if [ "$GH_OK" = 1 ]; then
-    if gh issue list --state open --limit 100 --json number,title,body,labels,updatedAt \
+    if gh issue list --state open --label needs-human --limit 1000 --json number,title,body,updatedAt \
         >"$TMP/issues.json" 2>"$TMP/issues.err"; then
         ISSUES_OK=1
     fi
 fi
 [ "$ISSUES_OK" = 1 ] || echo '[]' >"$TMP/issues.json"
 
+# Unresolved review threads per open PR (number -> count), newest 50 PRs.
+THREADS_OK=0
+if [ "$GH_OK" = 1 ]; then
+    # shellcheck disable=SC2016 # $owner and $name are GraphQL variables, not shell expansions
+    if gh api graphql -F owner='{owner}' -F name='{repo}' -f query='
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            pullRequests(states: OPEN, first: 50, orderBy: {field: CREATED_AT, direction: DESC}) {
+              nodes { number reviewThreads(first: 100) { nodes { isResolved } } }
+            }
+          }
+        }' --jq '[.data.repository.pullRequests.nodes[]
+                  | {key: (.number | tostring), value: ([.reviewThreads.nodes[] | select(.isResolved | not)] | length)}]
+                 | from_entries' >"$TMP/threads.json" 2>"$TMP/threads.err"; then
+        THREADS_OK=1
+    fi
+fi
+[ "$THREADS_OK" = 1 ] || echo '{}' >"$TMP/threads.json"
+
 # Pull requests ---------------------------------------------------------------
 
 section "Open pull requests"
+PRS_OK=0
 if [ "$GH_OK" = 1 ]; then
     if gh pr list --state open --limit 30 \
         --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author \
         >"$TMP/prs.json" 2>"$TMP/prs.err"; then
-        jq -r --slurpfile iss "$TMP/issues.json" --argjson issues_ok "$ISSUES_OK" '
+        PRS_OK=1
+        jq -r --slurpfile iss "$TMP/issues.json" --argjson issues_ok "$ISSUES_OK" \
+            --slurpfile thr "$TMP/threads.json" --argjson threads_ok "$THREADS_OK" '
           def clean: tostring | gsub("[[:cntrl:]]"; "?");
           def refs: [(. // "") | scan("#([0-9]+)") | .[0] | tonumber] | unique;
           def names($n): refs | any(.[]; . == $n);
-          ($iss[0] | map(select(any(.labels[]?; .name == "needs-human")))) as $nh
+          $iss[0] as $nh
           | if length == 0 then "- none" else .[] |
             .number as $n
+            | (if $threads_ok == 1 then $thr[0][$n | tostring] else null end) as $open_threads
             | ($nh | map(select(.title | names($n))) | map("#\(.number)")) as $gated
             | ($nh | map(select((.title | names($n) | not) and (.body | names($n)))) | map("#\(.number)")) as $named
             | ([.statusCheckRollup[]? | {name: (.name // .context // "?"),
@@ -190,13 +217,16 @@ if [ "$GH_OK" = 1 ]; then
                  (if ($failed | length) > 0 then "\($failed | length) failing" else empty end),
                  (if $pend > 0 then "\($pend) pending" else empty end),
                  (if .mergeable != "MERGEABLE" then "mergeable: \(.mergeable)" else empty end),
-                 (if ($state == "CLEAN" or $state == "UNSTABLE" or $state == "DRAFT") then empty else "merge state: \($state)" end),
-                 (if .reviewDecision == "CHANGES_REQUESTED" then "changes requested" else empty end)
+                 (if ($state == "CLEAN" or $state == "DRAFT") then empty else "merge state: \($state)" end),
+                 (if .reviewDecision == "CHANGES_REQUESTED" then "changes requested" else empty end),
+                 (if $open_threads == null then "review threads unknown"
+                  elif $open_threads > 0 then "\($open_threads) unresolved review thread(s)" else empty end)
                ]) as $blockers
             | "- #\(.number) \(.title | clean) [`\(.headRefName | clean)`, \(.author.login // "?" | clean)]\(if .isDraft then " (draft)" else "" end)\n"
               + "  checks: \($pass) pass, \($failed | length) fail, \($pend) pending"
               + (if ($failed | length) > 0 then " (failing: \($failed | map(.name | clean) | unique | join(", ")))" else "" end)
-              + "; mergeable: \(.mergeable) / \($state); review: \(.reviewDecision // "" | if . == "" then "none" else . end)\n"
+              + "; mergeable: \(.mergeable) / \($state); review: \(.reviewDecision // "" | if . == "" then "none" else . end)"
+              + "; unresolved threads: \($open_threads // "unknown")\n"
               + "  merge-ready: " + (if ($blockers | length) == 0 then "yes" else "no (\($blockers | join("; ")))" end)
           end' "$TMP/prs.json"
     else
@@ -389,16 +419,16 @@ section "Needs human"
 if [ "$GH_OK" = 1 ]; then
     if [ "$ISSUES_OK" = 1 ]; then
         jq -r '
-          def has($l): any(.labels[]?; .name == $l);
           def clean: tostring | gsub("[[:cntrl:]]"; "?");
-          (map(select(has("needs-human")))) as $h
-          | (if ($h | length) == 0 then "- none" else
-              ($h | sort_by(.number) | .[] | "- #\(.number) \(.title | clean) (updated \(.updatedAt[0:10]))") end),
-            "- queue: \(map(select(has("agent-ready"))) | length) agent-ready, \(map(select(has("agent-working"))) | length) agent-working"
+          if length == 0 then "- none" else
+            sort_by(.number) | .[] | "- #\(.number) \(.title | clean) (updated \(.updatedAt[0:10]))" end
         ' "$TMP/issues.json"
     else
         echo "- GitHub unavailable: $(head -n 1 "$TMP/issues.err")"
     fi
+    ready=$(gh issue list --state open --label agent-ready --limit 1000 --json number --jq length 2>/dev/null || echo "?")
+    working=$(gh issue list --state open --label agent-working --limit 1000 --json number --jq length 2>/dev/null || echo "?")
+    echo "- queue: $ready agent-ready, $working agent-working"
 else
     gh_unavailable
 fi
@@ -424,7 +454,7 @@ if [ -z "$phase_doc" ]; then
 else
     status=$(grep -m 1 '^\*\*Status:\*\*' "$phase_doc" | sed 's/^\*\*Status:\*\* *//')
     echo "- $phase_doc: $status"
-    awk '
+    next=$(awk '
         /^## / { ms = substr($0, 4); step = "" }
         /^### Step / { step = substr($0, 5) }
         /^[[:space:]]*[-*] \[ \] / && $0 !~ /\[ \] ~~/ {
@@ -433,7 +463,22 @@ else
             found = 1; exit
         }
         END { if (!found) print "- every task box in this doc is checked" }
-    ' "$phase_doc"
+    ' "$phase_doc")
+    printf '%s\n' "$next"
+    ms_num=$(printf '%s\n' "$next" | sed -n 's/^- next: Milestone \([0-9][0-9]*\).*/\1/p')
+    if [ -n "$ms_num" ]; then
+        if [ "$PRS_OK" = 1 ]; then
+            # A "Phase N MK:" (or any "MK") PR title means that milestone is already in flight.
+            jq -r --arg m "$ms_num" '
+              def clean: tostring | gsub("[[:cntrl:]]"; "?");
+              [.[] | select(.title | test("(^|[^A-Za-z0-9])M" + $m + "([^0-9]|$)"))]
+              | if length == 0 then "- open PR for M\($m): none"
+                else .[] | "- open PR for M\($m): #\(.number) \(.title | clean) (its merge-ready line is under Open pull requests)" end
+            ' "$TMP/prs.json"
+        else
+            echo "- open PR for M$ms_num: unknown (GitHub unavailable)"
+        fi
+    fi
 fi
 
 # Docs drift -----------------------------------------------------------------------
@@ -442,14 +487,18 @@ section "Docs drift"
 if [ -n "$DOCS_PID" ]; then
     wait "$DOCS_PID" 2>/dev/null
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
-    if { [ "$rc" = 0 ] || [ "$rc" = 1 ]; } && command -v jq >/dev/null 2>&1 && jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
+    if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
+        echo "- docs-check failed (exit $rc, a checker error, not drift): $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+    elif ! command -v jq >/dev/null 2>&1; then
+        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`"
+    elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
+        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+    else
         jq -r '
           "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, of which \(.summary.accepted // 0) accepted false positives; \(.summary.resolved) resolved)"
           + (if .summary.new > 0 then "; new in: " + ([.checks | to_entries[] | select((.value.new // 0) > 0) | "\(.key) \(.value.new)"] | join(", ")) else "" end)
           + (if (.summary.resolved + (.summary.reduced // 0)) > 0 then "; run `just docs-check --update-baseline` to prune resolved or reduced entries" else "" end)
         ' "$TMP/docs.json"
-    else
-        echo "- docs-check failed (exit $rc): $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
     fi
 else
     echo "- docs-check unavailable (needs python3 and scripts/docs/check.py on this checkout)"

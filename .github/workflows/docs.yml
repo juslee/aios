@@ -1,8 +1,10 @@
 name: Docs
 
 # Deterministic docs drift check (scripts/docs/check.py, no LLM).
-# Report-only: new drift versus scripts/docs/baseline.json marks the job red
-# but never fails the workflow. The summary is written to the job summary page.
+# Report-only: drift never fails this check. New drift versus
+# scripts/docs/baseline.json goes to the job summary and a warning annotation.
+# The check fails only when check.py itself errors (exit 2: usage, git or
+# internal error); that is a broken checker and counts like any failing check.
 
 on:
   push:
@@ -21,7 +23,6 @@ jobs:
   docs-check:
     name: Docs drift (report-only)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,4 +31,12 @@ jobs:
       - uses: extractions/setup-just@v4
       - name: Check docs drift against baseline
         shell: bash
-        run: just docs-check --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          rc=0
+          just docs-check --markdown | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
+          if [ "$rc" = 1 ]; then
+            echo "::warning title=Docs drift::New docs drift versus scripts/docs/baseline.json; see the job summary. Report-only: drift does not fail this check."
+          elif [ "$rc" != 0 ]; then
+            echo "::error title=docs-check failed::scripts/docs/check.py exited $rc (checker error, not drift)"
+            exit "$rc"
+          fi
