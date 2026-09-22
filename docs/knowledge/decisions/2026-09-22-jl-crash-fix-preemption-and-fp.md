@@ -385,10 +385,7 @@ Why this order:
 
   The latency PASS stays a recorded marker only (`soak-qemu.sh:205`), because TCG timing depends on the host. Step 4 is the one exception: its acceptance compares the Gate 1 IPC figure between its two arms (see step 4 and "Gate 1").
 - **Tripwire line.** Kernel counters are printed on one fixed line, `[tripwire] k=v k=v ...`, at "Gate 1 Complete", with each heartbeat, and in the panic and exception dumps. The harness puts the last value of each key into `summary.tsv` columns and reports them per arm.
-- **Fixed instrument, and a departure from rule 04.** Rule 04's Session Start Checklist (`brew upgrade qemu just`, a nightly bump, `cargo update`) and `CLAUDE.md:15` ("updated to latest at session start") would change QEMU, the Homebrew edk2 firmware the soak boots (`justfile:8`), the toolchain and the dependencies between steps. For this series, from the re-baseline to step 7:
-  - pin QEMU (`brew pin qemu`);
-  - freeze `rust-toolchain.toml`, `Cargo.lock` and the CI runner image;
-  - hold Renovate PRs for them, with a `packageRules` entry or a hold label. `renovate.json` has only `config:recommended`, so Renovate will keep opening PRs like #161 and #169.
+- **No instrument freeze (owner decision, 2026-09-22).** Rule 04's Session Start Checklist stays in force during the series: `brew upgrade qemu just`, a nightly bump and `cargo update` may change QEMU, the Homebrew edk2 firmware (`justfile:8`), the toolchain and the dependencies between steps, and Renovate PRs (like #161 and #169) keep flowing. A freeze (pin QEMU; freeze `rust-toolchain.toml`, `Cargo.lock` and the CI runner image; hold Renovate) was considered and not taken. The consequence is that only within-pair comparisons are valid; any comparison across steps or with an older baseline must be re-measured as a fresh interleaved pair.
 
   The interleave mode refuses a pair whose arms report different QEMU versions (already recorded, `soak-qemu.sh:636`), firmware paths or toolchain channels. Interleaving protects each pair against drift, but not comparisons with older baselines.
 - **Load rule.** The harness logs the 1-minute load per boot (`soak-qemu.sh:677`; `summary.tsv` column 9), and run 167 ranged from 6.5 to 50. Do not start a pair while the load is above the host's CPU count. Report each arm's mean and maximum load, and redo the pair if the arm means differ by more than 25%. Consider moving the text-mode pairs to a `workflow_dispatch` CI matrix to free the Mac. CI arms are a different instrument (x86 TCG) with their own baseline, so a pair must never mix a CI arm with a local one.
@@ -608,7 +605,10 @@ The analysis of every option, the rejected ones included, stays under "Decision 
 2. **Gate 1 latency at step 4.** It is a gate only when both soak arms' mean load1 is below the load threshold. On a noisy host, re-run on a quiet host or in CI rather than fail the step.
 3. **Architecture docs.** Choosing 1C approves amending `scheduler.md` §10.3 and `deadlock-prevention.md` §9.2 and §12. Each fix step amends the architecture text it changes, in that step's PR.
 
-**Still open for the owner:** #165's soak threshold (A or B), and the rule-04 freeze for the duration of the series.
+4. **#165 soak threshold: B.** PR #149 may merge after the crash fix only when 20 text + 20 gpu boots are all CLEAN.
+5. **No instrument freeze.** Rule 04's session-start updates continue during the series; see "No instrument freeze" under the delivery plan.
+
+Nothing is left open for the owner.
 
 The fixed foundation (F1–F8) and the delivery order did not depend on either choice. The choices set the contents of step 4 (2B) and step 8 (1C).
 
