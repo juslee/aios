@@ -3,6 +3,7 @@ name: merge-and-cleanup
 description: >
   Squash merge a PR, delete the remote and local branch, remove the worktree
   (if working in one), and update main. Use after PR approval.
+disable-model-invocation: true
 ---
 
 # Merge and Cleanup
