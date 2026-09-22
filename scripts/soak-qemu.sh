@@ -29,12 +29,14 @@ save each boot's serial log, and classify every boot as exactly one of:
   PANIC      "PANIC: " from the kernel panic handler
   EXCEPTION  any other exception report: "EXCEPTION[CPU n]:" (EL1), or
              "DATA ABORT (EL0)", "INST ABORT (EL0)", "UNKNOWN EXCEPTION (EL0)"
-  WEDGE      no exception or panic, but the CPU 0 heartbeat is unhealthy at the
-             end of the run: never printed, stuck at tick 0 (CPU 0 never left
-             the Gate 1 bench's IRQ-masked window), or no new heartbeat for
-             more than --stall-secs before the run ended
-  CLEAN      no exception or panic, the heartbeat advanced past tick 0, and a
-             new heartbeat arrived within the last --stall-secs of the run
+  WEDGE      no exception or panic, but the boot is not healthy at the end of
+             the run: the CPU 0 heartbeat never printed, is stuck at tick 0
+             (CPU 0 never left the Gate 1 bench's IRQ-masked window) or went
+             silent for more than --stall-secs before the run ended; or the
+             heartbeat kept running but the Gate 1 bench never completed
+  CLEAN      no exception or panic, the heartbeat advanced past tick 0, a new
+             heartbeat arrived within the last --stall-secs of the run, and
+             "=== Gate 1 Complete ===" was printed
 
 Precedence: PCZERO/PANIC/EXCEPTION > WEDGE > CLEAN. When a log holds several
 fatal reports, the earliest one decides the class (later ones are usually
@@ -205,6 +207,9 @@ END {
     } else if (timing && stall > limit) {
         class = "WEDGE"
         note("heartbeat stopped at tick " tick ", silent " stall "s before the end (limit " limit "s)")
+    } else if (!g1done) {
+        class = "WEDGE"
+        note("heartbeat alive but the Gate 1 bench never completed")
     } else {
         class = "CLEAN"
         if (!timing) note("log-only: no harness timing, a late heartbeat stall is undetectable")

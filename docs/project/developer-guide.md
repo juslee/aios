@@ -1760,13 +1760,14 @@ Each boot runs under GNU `timeout` (`gtimeout` from Homebrew coreutils on macOS)
 | `PCZERO` | An exception report with `ELR=0x0000000000000000`: the CPU jumped to address 0 |
 | `PANIC` | A `PANIC:` line from the kernel panic handler (the message on the next line is captured too) |
 | `EXCEPTION` | Any other exception report: `EXCEPTION[CPU n]:` (EL1), or `DATA ABORT (EL0)`, `INST ABORT (EL0)`, `UNKNOWN EXCEPTION (EL0)` |
-| `WEDGE` | No fatal report, but the CPU 0 heartbeat is unhealthy at the end of the boot (see below) |
-| `CLEAN` | No fatal report, and the heartbeat is still advancing at the end of the boot |
+| `WEDGE` | No fatal report, but the CPU 0 heartbeat is unhealthy at the end of the boot, or the Gate 1 bench never completed (see below) |
+| `CLEAN` | No fatal report, the heartbeat is still advancing at the end of the boot, and the Gate 1 bench completed |
 
-**Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock time at which a new heartbeat last appeared. A boot is `CLEAN` only if both of these hold:
+**Heartbeat rule.** CPU 0 prints `[heartbeat] tick=N` every 1000 timer ticks. The tick count lags wall time when the host is loaded, so the harness does not compute an expected tick. Instead it polls the log once a second and records the wall-clock time at which a new heartbeat last appeared. A boot is `CLEAN` only if all of these hold:
 
 1. The heartbeat advanced past `tick=0`. The Gate 1 IPC benchmark masks IRQs on CPU 0 right after `tick=0`, so `tick=1000` shows that CPU 0 got through the bench. A boot stuck at `tick=0` is reported as "stuck at tick 0 inside the Gate 1 bench".
 2. A new heartbeat arrived within the last `stall_secs` (default 15 s) before the planned end of the boot. A QEMU process that exits early counts as silent for the rest of the planned time.
+3. The log contains `=== Gate 1 Complete ===`. The bench thread can hang while the timer keeps running (seen under TCG in CI), so a live heartbeat alone does not mean the boot is healthy. Such a boot is reported as "heartbeat alive but the Gate 1 bench never completed". `G1PASS` is not required, because the IPC latency threshold can legitimately fail on a slow or loaded host.
 
 The bench window therefore only matters if it never ends. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
