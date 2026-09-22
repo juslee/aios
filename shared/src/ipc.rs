@@ -47,6 +47,24 @@ pub const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelId(pub u32);
 
+impl ChannelId {
+    /// Slot index of this channel in the `MAX_CHANNELS`-entry channel table.
+    ///
+    /// Returns `None` when the id is `>= MAX_CHANNELS`. No channel can exist at
+    /// such an id. Always index the table through this method, never through
+    /// `self.0 as usize`: ids can come from untrusted callers, and a raw index
+    /// past the end of the table panics the kernel.
+    #[inline]
+    pub const fn index(self) -> Option<usize> {
+        let idx = self.0 as usize;
+        if idx < MAX_CHANNELS {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+}
+
 /// Unique shared memory region identifier (index into SHARED_REGION_TABLE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedMemoryId(pub u32);
@@ -336,6 +354,45 @@ mod tests {
     fn channel_id_max_valid() {
         let ch = ChannelId((MAX_CHANNELS - 1) as u32);
         assert_eq!(ch.0 as usize, MAX_CHANNELS - 1);
+    }
+
+    #[test]
+    fn channel_id_index_zero() {
+        assert_eq!(ChannelId(0).index(), Some(0));
+    }
+
+    #[test]
+    fn channel_id_index_last_valid() {
+        assert_eq!(
+            ChannelId((MAX_CHANNELS - 1) as u32).index(),
+            Some(MAX_CHANNELS - 1)
+        );
+    }
+
+    #[test]
+    fn channel_id_index_max_channels_is_out_of_range() {
+        assert_eq!(ChannelId(MAX_CHANNELS as u32).index(), None);
+    }
+
+    #[test]
+    fn channel_id_index_u32_max_is_out_of_range() {
+        assert_eq!(ChannelId(u32::MAX).index(), None);
+    }
+
+    #[test]
+    fn channel_id_index_in_range_ids_fit_the_table() {
+        // Every id that index() accepts must be a valid position in a
+        // MAX_CHANNELS-entry table, i.e. safe to index with.
+        let table = [(); MAX_CHANNELS];
+        for raw in 0..=(MAX_CHANNELS as u32) {
+            match ChannelId(raw).index() {
+                Some(idx) => {
+                    assert_eq!(idx, raw as usize);
+                    assert!(table.get(idx).is_some());
+                }
+                None => assert_eq!(raw as usize, MAX_CHANNELS),
+            }
+        }
     }
 
     // --- EndpointState tests ---
