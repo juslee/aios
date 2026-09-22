@@ -136,3 +136,5 @@ No GPL dependencies. All third-party crates must be BSD, MIT, Apache-2.0, or ISC
 ## Contributing
 
 This project follows conventions documented in [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+
+Development runs through Claude Code sessions; [docs/project/agent-loop.md](docs/project/agent-loop.md) describes the `/start` skill, pausing and resuming, and the merge policy.

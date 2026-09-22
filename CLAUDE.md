@@ -156,7 +156,7 @@ aios/
 │   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
 │                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup,
-│                         obsidian
+│                         obsidian, start
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
 │   ├── arch/aarch64/     boot.S, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
 │   ├── platform/         Platform trait + per-board (qemu)
@@ -215,6 +215,9 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merge, delete branch, remove worktree, update main |
 | `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
 | `/obsidian` | Knowledge-hive vault operations | Routes note, tag and frontmatter work across Obsidian MCP, app, and git |
+| `/start [brief\|doctor\|pause]` | Session start, health check, before a break | Deterministic brief + next action; docs/harness drift report; handoff + WIP checkpoint |
+
+**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, `/start`, pause/resume, where state lives, merge policy, staged rollout.
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
