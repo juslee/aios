@@ -116,6 +116,8 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just debug` | Launch QEMU with GDB stub on `tcp::1234` |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
+| `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
+| `just docs-check-all` | List every docs drift finding, baselined and new |
 
 ---
 
