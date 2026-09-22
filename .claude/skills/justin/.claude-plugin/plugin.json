@@ -1,0 +1,8 @@
+{
+  "name": "justin",
+  "version": "0.1.0",
+  "description": "Justin Lee's AIOS session skills: /justin:start, /justin:brief, /justin:doctor and /justin:pause. Loaded in place from this repository as a skills-dir plugin (justin@skills-dir).",
+  "author": {
+    "name": "Justin Lee"
+  }
+}

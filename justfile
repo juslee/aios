@@ -177,3 +177,19 @@ security-check: audit deny miri
 clean:
     cargo clean
     rm -f {{disk_img}} {{data_img}}
+
+# ---------------------------------------------------------------------------
+# Docs drift (scripts/docs/check.py: python3 stdlib, no LLM)
+# ---------------------------------------------------------------------------
+
+#   just docs-check                     new drift vs scripts/docs/baseline.json (exit 1 if any)
+#   just docs-check --all               every finding; new ones marked '+'
+#   just docs-check --update-baseline   accept the current findings as the new baseline
+# Report docs drift that is not in the baseline
+[positional-arguments]
+docs-check *args:
+    python3 scripts/docs/check.py "$@"
+
+# List every docs drift finding, baselined and new
+docs-check-all:
+    python3 scripts/docs/check.py --all

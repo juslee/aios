@@ -117,6 +117,8 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just soak` | Boot repeatedly under QEMU and classify each boot (`runs=N secs=T mode=text\|gpu`; logs in `target/soak/`) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
+| `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
+| `just docs-check-all` | List every docs drift finding, baselined and new |
 
 ---
 
@@ -135,3 +137,5 @@ No GPL dependencies. All third-party crates must be BSD, MIT, Apache-2.0, or ISC
 ## Contributing
 
 This project follows conventions documented in [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+
+Development runs through Claude Code sessions; [docs/project/agent-loop.md](docs/project/agent-loop.md) describes the `/justin:start` session skills, pausing and resuming, and the merge policy.

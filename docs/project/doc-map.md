@@ -346,4 +346,5 @@ Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `CL
 | Kit docs — Application layer | `docs/kits/application/{app,interface,browser,conversation,identity,notification,security}.md` | Kit API traits extracted inline per phase |
 | Kit cookbook | `docs/kits/cookbook.md` | SDK examples, Phase 26 |
 | Developer guide | `docs/project/developer-guide.md` | All (all phases) |
+| Agent loop runbook (`/justin:*` session skills, pause/resume, merge policy, rollout stages) | `docs/project/agent-loop.md` | All |
 | AI agent context | `docs/project/ai-agent-context.md` | All (all phases) |
