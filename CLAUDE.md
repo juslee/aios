@@ -206,16 +206,16 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 | Skill | Trigger | Purpose |
 | --- | --- | --- |
+| `/start [brief\|doctor\|pause]` | Session start, health check, before a break | Deterministic brief + next action; docs/harness drift report; handoff + WIP checkpoint |
 | `/build-team` | Start of autonomous session | Creates team, spawns agents |
 | `/implement-phase N` | Phase implementation request | Full phase implementation workflow |
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
+| `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
+| `/obsidian` | Knowledge-hive vault operations | Routes note, tag and frontmatter work across Obsidian MCP, app, and git |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 | `/merge-and-cleanup [PR]` | After PR approval | Squash merge, delete branch, remove worktree, update main |
-| `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
-| `/obsidian` | Knowledge-hive vault operations | Routes note, tag and frontmatter work across Obsidian MCP, app, and git |
-| `/start [brief\|doctor\|pause]` | Session start, health check, before a break | Deterministic brief + next action; docs/harness drift report; handoff + WIP checkpoint |
 
 **Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, `/start`, pause/resume, where state lives, merge policy, staged rollout.
 

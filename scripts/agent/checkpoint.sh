@@ -4,7 +4,9 @@
 # Works on the current checkout (a linked worktree is fine):
 #  1. Commits only on a claude/* branch, never on main or a detached HEAD, and
 #     not while a merge, cherry-pick, revert, rebase or bisect is in progress.
-#  2. Stages everything that is not gitignored, except .remember/. Before any
+#  2. Stages everything that is not gitignored, except .remember/ and
+#     __pycache__/ (excluded by pathspec, so this holds before .gitignore
+#     lists them). Before any
 #     commit it scans the staged changes and the local commits not yet on origin:
 #     a path new to the repo that looks like a secret (.env, *.pem, *.key,
 #     id_rsa*, *credential*, *secret*, ...) or an added line that looks like a
@@ -39,7 +41,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h | --help)
-            sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -63,7 +65,8 @@ trap 'rm -rf "$TMP"' EXIT
 SECRET_PATH_RE='(^|/)(\.env(\.[^/]*)?|\.netrc|\.npmrc|\.pypirc|id_(rsa|dsa|ecdsa|ed25519)[^/]*|[^/]*\.(pem|key|p12|pfx|jks|keystore)|[^/]*(credential|secret)[^/]*)$'
 # Matched against added lines: PEM private keys, GitHub, Anthropic, AWS and Slack tokens.
 SECRET_TEXT_RE='-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[abposr]-[A-Za-z0-9-]{10,}'
-PATHSPEC_EXCLUDE=':(exclude).remember'
+# Never committed, even where .gitignore does not list them yet.
+EXCLUDES=(':(exclude).remember' ':(exclude,glob)**/__pycache__/**')
 
 in_progress() { # prints the operation that blocks a commit, if any
     if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
@@ -101,7 +104,7 @@ secret_scan() { # prints one line per suspicious path; empty output means clean
     } | added_lines | grep -E -e "$SECRET_TEXT_RE" | cut -f1 | sed 's/$/ (key or token in an added line)/'
 }
 
-count_dirty() { git status --porcelain --untracked-files=all -- . "$PATHSPEC_EXCLUDE" 2>/dev/null | wc -l | tr -d ' '; }
+count_dirty() { git status --porcelain --untracked-files=all -- . "${EXCLUDES[@]}" 2>/dev/null | wc -l | tr -d ' '; }
 count_unpushed() { git rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0; }
 
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -127,7 +130,7 @@ else
         pushed="no (index error)"
         stopped=1
     else
-        git add -A -- . "$PATHSPEC_EXCLUDE"
+        git add -A -- . "${EXCLUDES[@]}"
         secrets=$(secret_scan | sort -u)
         if [ -n "$secrets" ]; then
             git read-tree "$pre_index"
