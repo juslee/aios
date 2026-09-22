@@ -16,10 +16,15 @@
 # Contract: never blocks or fails compaction. Every path exits 0, the plugin
 # hook detaches immediately, and this script returns in well under a second.
 # It is a no-op when python3 is missing, when the plugin is not installed for
-# this project, or when it is disabled via enabledPlugins.
+# this project, when it is disabled via enabledPlugins, or when the payload
+# has no usable session_id (the plugin would only log an error).
 #
 # Input (stdin): the PreCompact hook JSON (session_id, transcript_path, cwd,
-# hook_event_name, compaction_trigger or trigger, ...).
+# hook_event_name, trigger, custom_instructions).
+#
+# Lives under .claude/hooks/ on purpose: .claude/ is a protected path, so an
+# edit to this script goes through a prompt or the auto-mode classifier
+# instead of being auto-approved like other working-directory edits.
 
 set -u
 
@@ -27,8 +32,16 @@ set -u
 [ -n "${REMEMBER_NESTED_SUMMARIZER:-}" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
+# Bounded in time like the plugin's own hooks: an idle but open stdin costs
+# at most a second instead of holding compaction until the hook timeout.
 payload=""
-[ -t 0 ] || payload="$(cat)"
+if [ ! -t 0 ]; then
+    line=""
+    while IFS= read -r -t 1 line || [ -n "$line" ]; do
+        payload="$payload$line"
+        line=""
+    done
+fi
 
 # Resolve the active plugin install and tag the payload with a reason the
 # plugin logs (it validates `reason` against [A-Za-z0-9_]).
@@ -113,7 +126,14 @@ except ValueError:
     data = {}
 if not isinstance(data, dict):
     data = {}
-trigger = str(data.get("compaction_trigger") or data.get("trigger") or "unknown")
+# Same allowlist the plugin applies before `save-session.sh <id> --force`;
+# without a usable id it would only log "invalid session ID".
+session_id = data.get("session_id")
+if (not isinstance(session_id, str) or session_id in (".", "..")
+        or session_id.startswith("-")
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", session_id)):
+    raise SystemExit(1)
+trigger = str(data.get("trigger") or "unknown")
 data["reason"] = "precompact_" + re.sub(r"[^A-Za-z0-9_]", "_", trigger)
 print(root)
 print(json.dumps(data, separators=(",", ":")))
