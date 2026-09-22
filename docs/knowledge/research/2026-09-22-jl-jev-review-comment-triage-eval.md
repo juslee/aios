@@ -28,7 +28,7 @@ Could TypeSafe's Jev model (a classifier that returns calibrated probabilities, 
 | `claim_support` | Choice | Does the hunk support, contradict, or say too little about the comment's claim? (the shape of TypeSafe's citation-check cookbook) |
 | `kind` | Choice | Code suggestion, nit, question, or FYI (step 4 of `/review-pr-comments`) |
 | `category` | Choice | The review-merge loop's 9 finding categories |
-| `severity` | Score | Assuming the comment is right, how much harm would ignoring it cause? (4 levels) |
+| `severity` | Score | Assuming the comment is right, how much harm would ignoring it cause? (4 levels, scored 0–3; Jev's score is the probability-weighted level) |
 
 **Baseline.** Claude Sonnet answered the same six questions from the same inputs, 40 items per prompt, with no repository access. It returned answers for 858 of 859 comments; one batch repeated an id. Comparisons between the models use those 858.
 
