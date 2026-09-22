@@ -47,21 +47,25 @@ save each boot's serial log, and classify every boot as exactly one of:
                 the CPU 0 heartbeat never printed, stayed at tick 0, or stopped
                 advancing; or it kept running but the Gate 1 bench never
                 completed; or (gpu mode) a GPU marker is missing
-  INCONCLUSIVE  the symptoms of a WEDGE, but the run ended no more than
-                --stall-secs after the boot's last progress (kernel start,
-                heartbeat, bench start), so the boot was cut short rather than
-                shown to be stuck. Also a QEMU process that exits before the
-                UEFI stub runs, on any boot after the first
+  INCONCLUSIVE  not a result about the kernel:
+                - the UEFI stub never ran: no "AIOS UEFI stub" line and no
+                  kernel output, whatever QEMU's exit status (QEMU failed to
+                  start, or the firmware never loaded the stub). On the first
+                  boot of a soak this is a setup error instead (exit 2)
+                - the symptoms of a WEDGE, but the run ended no more than
+                  --stall-secs after the boot's last progress (kernel start,
+                  heartbeat, bench start), so the boot was cut short rather
+                  than shown to be stuck
   CLEAN         no fatal report; the heartbeat advanced past tick 0 and a new
                 heartbeat arrived within the last --stall-secs of the run;
                 "=== Gate 1 Complete ===" was printed; and in gpu mode the
                 GpuReady, InputReady and "display handoff complete" markers
                 were printed
 
-Precedence: PCZERO/PANIC/EXCEPTION > WEDGE/INCONCLUSIVE > CLEAN. When a log
-holds several fatal reports, the earliest one decides the class (later ones are
-usually fallout, e.g. a data abort after a panic); the count is kept in the
-detail.
+Precedence: stub never ran (INCONCLUSIVE) > PCZERO/PANIC/EXCEPTION >
+WEDGE/INCONCLUSIVE (cut short) > CLEAN. When a log holds several fatal reports,
+the earliest one decides the class (later ones are usually fallout, e.g. a data
+abort after a panic); the count is kept in the detail.
 
 Heartbeat timing comes from the harness: it polls the log every second and
 appends a "[soak] meta" line recording when the kernel started, when the first
@@ -105,8 +109,8 @@ mtools (for `just disk`).
 
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
 boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
-build failure, QEMU failing to start on the first boot) -- setup errors exit 2
-even with --report-only. 130 on SIGINT, 143 on SIGTERM.
+build failure, the UEFI stub never running on the first boot) -- setup errors
+exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM.
 EOF
 }
 
@@ -260,9 +264,13 @@ END {
         }
     }
 
-    if (timing && early && !stub) {
+    if (!stub && !boots && hb == 0 && (fatal == "" || edk2)) {
+        # Nothing from the stub or the kernel: QEMU failed to start, or the
+        # firmware never loaded the stub (wrong firmware, broken ESP image).
+        # A firmware exception in that phase says nothing about AIOS either.
         class = "INCONCLUSIVE"
-        note("QEMU failed before the UEFI stub ran, not a boot result")
+        note("UEFI stub never ran, not a boot result")
+        if (fatal != "") note("edk2-format report from the firmware")
     } else if (fatal != "") {
         class = fatal
         if (edk2) note("edk2-format report from the firmware or UEFI stub")
@@ -607,12 +615,17 @@ run_soak() {
         printf '\n[soak] meta mode=%s secs=%s elapsed=%s qemu_rc=%s kstart=%s hb_first=%s bench_start=%s hb_count=%s hb_last_advance=%s stall_limit=%s load1=%s\n' \
             "$MODE" "$SECS" "$elapsed" "$rc" "$P_KERNEL" "$P_HB0" "$P_BENCH" "$P_HB" "$P_ADV" "$STALL_SECS" "$load1" >>"$log"
 
-        # A QEMU that dies before the stub on the first boot means the setup
-        # is broken; on later boots it is recorded (INCONCLUSIVE) and the soak
-        # goes on, so finished boots are not thrown away.
-        if [ "$n" -eq 1 ] && [ "$rc" -ne 124 ] && [ "$rc" -ne 137 ] && ! grep -a -q 'AIOS UEFI stub' "$log"; then
+        # A boot on which the UEFI stub never ran says nothing about the
+        # kernel (INCONCLUSIVE), whatever QEMU's exit status. On the first
+        # boot it means the setup is broken -- QEMU failed to start, or the
+        # firmware never loaded the stub (wrong AIOS_EDK2_FW, broken ESP
+        # image) -- so stop rather than count every boot as a failure. On
+        # later boots it is recorded and the soak goes on, so finished boots
+        # are not thrown away.
+        if [ "$n" -eq 1 ] && ! grep -a -q 'AIOS UEFI stub' "$log"; then
             tail -n 20 "$log" >&2
-            die "QEMU exited with status $rc before the UEFI stub started; see $log"
+            die "the UEFI stub never ran on the first boot (QEMU exit status $rc after ${elapsed}s):" \
+                "check QEMU, the firmware ($fw) and the ESP image; see $log"
         fi
 
         classify_log "$log" ""
