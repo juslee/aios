@@ -125,9 +125,9 @@ Cost and latency are not the obstacle.
 
 ### Limitations
 
-- **The ground truth is what the author did.** Replies were posted under the owner's account, and most read as agent-written by `/review-pr-comments` (`Fixed in <sha>. …`). They are not an independent judgment of correctness. The blind check covers only 30 items.
+- **The ground truth is what the author did.** Replies were posted under the owner's account. 83% came after the `/review-pr-comments` skill was added (#36, 2026-03-12), and most read as agent-written (`Fixed in <sha>. …`). They are not an independent judgment of correctness. The blind check covers only 30 items.
 - **Few minority cases.** There are only 16 wrong and 51 no-change comments, clustered in a few PRs. Results for the wrong-comment task have wide intervals.
-- **The Sonnet baseline was batched and had no repository access.** It is not the real `/review-pr-comments` pass, which reads the code; that pass produced the outcomes the labels record. One batch (40 comments from PRs 1–9, only one of them labelled) judged hunks cut to their last 800 characters. Leaving it out keeps Sonnet's AUC at 0.58.
+- **The Sonnet baseline was batched and had no repository access.** It is not the author's real pass, which reads the code and produced the outcomes the labels record. One batch (40 comments from PRs 1–9, only one of them labelled) judged hunks cut to their last 800 characters. Leaving it out changes Sonnet's AUC by less than 0.001.
 - **Narrow scope.** One repository, one reviewer (Copilot), and 79% documentation comments.
 - **The harness was not kept.** It lived in a session scratchpad. A rerun needs the data fetch, the labelling prompts and the question set described in [Method](#method).
 
