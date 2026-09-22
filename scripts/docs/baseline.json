@@ -9,7 +9,7 @@
     "just-recipes": 1,
     "test-count": 1,
     "lock-order": 16,
-    "milestone-status": 6,
+    "milestone-status": 5,
     "phase-count": 1,
     "layout": 3,
     "pointer-doctor": 17,
@@ -391,13 +391,6 @@
       "file": "docs/phases/05-kit-foundation.md",
       "target": "M18:unchecked",
       "message": "merged milestone M18 still has 7 unchecked task(s)"
-    },
-    {
-      "key": "milestone-status|docs/phases/07-window-compositor-and-shell.md|M25:unchecked",
-      "check": "milestone-status",
-      "file": "docs/phases/07-window-compositor-and-shell.md",
-      "target": "M25:unchecked",
-      "message": "merged milestone M25 still has 2 unchecked task(s)"
     },
     {
       "key": "milestone-status|docs/project/development-plan.md|§8.1:M24",

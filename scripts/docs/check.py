@@ -10,7 +10,8 @@ number, and an occurrence count (the number of distinct lines reporting that key
 scripts/docs/baseline.json records the accepted findings. A finding is new when
 its key is not in the baseline or it occurs on more lines than the baselined
 `count` (default 1); only new findings are reported by default, and the exit
-status is 1 when there is at least one. A baseline entry with a `reason` is an
+status is 1 when there is at least one, and 2 when the checker itself fails
+(usage error, git failure, internal error). A baseline entry with a `reason` is an
 accepted false positive: it is marked '~' and the reason survives
 --update-baseline. "New" is relative to the baseline file, not to the branch:
 drift that reached main without a baseline update shows as new on every branch
@@ -35,6 +36,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from urllib.parse import unquote
 
@@ -104,7 +106,7 @@ CHECK_DESCRIPTIONS = {
     "milestone-status": "merged 'Phase N MK:' milestones vs phase docs, README, development-plan",
     "phase-count": "phase counts in prose match the development-plan §8 table",
     "layout": "kernel/src and shared/src modules vs CLAUDE.md layout and rule 05",
-    "harness-tables": "CLAUDE.md skills/agents tables and layout lists vs .claude/",
+    "harness-tables": "CLAUDE.md skills/agents tables and layout lists vs .claude/ (plugin skills as plugin:skill)",
     "pointer-doctor": "CLAUDE.md sections, rules, paths, skills, agents, tools named by .claude/",
     "knowledge-hygiene": "docs/knowledge naming, frontmatter, and an empty plans/ dir",
 }
@@ -944,7 +946,9 @@ def check_milestone_status(repo: Repo) -> list[Finding]:
         lines = repo.text(rel).splitlines()
         for num in sorted(done):
             lo, hi = sections[num]
-            unchecked = [n for n in range(lo, hi + 1) if re.match(r"^\s*[-*] \[ \]", lines[n - 1])]
+            # "- [ ] ~~task~~ — deferred to MK" is closed here, as in brief.sh.
+            unchecked = [n for n in range(lo, hi + 1)
+                         if re.match(r"^\s*[-*] \[ \] (?!~~)", lines[n - 1])]
             if unchecked:
                 out.append(Finding("milestone-status", rel, f"M{num}:unchecked",
                                    f"merged milestone M{num} still has {len(unchecked)} unchecked task(s)", unchecked[0]))
@@ -1078,6 +1082,10 @@ def check_layout(repo: Repo) -> list[Finding]:
     return out
 
 
+# A skill as a slash command without the slash: "name" or "plugin:name".
+SKILL_NAME = r"[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?"
+
+
 def claude_table_names(repo: Repo, marker: str, rx: str) -> set[str]:
     names: set[str] = set()
     for _, line in section_body(repo.text("CLAUDE.md"), re.escape(marker), r"^\*\*|^## "):
@@ -1099,21 +1107,46 @@ def layout_list(block: list[str], label: str) -> set[str] | None:
             m = re.search(r"──\s+" + re.escape(label) + r"/\s+(.*)$", line)
             if m:
                 found = True
-                names.update(re.findall(r"[a-z][a-z0-9-]*", m.group(1).split("(")[0]))
+                names.update(re.findall(SKILL_NAME, m.group(1).split("(")[0]))
         elif found:
-            names.update(re.findall(r"[a-z][a-z0-9-]*", re.sub(r"^[│\s]+", "", line).split("(")[0]))
+            names.update(re.findall(SKILL_NAME, re.sub(r"^[│\s]+", "", line).split("(")[0]))
     return names if found else None
 
 
-def check_harness_tables(repo: Repo) -> list[Finding]:
-    skills = set()
+def project_skills(repo: Repo) -> tuple[set[str], set[str]]:
+    """(skill names, plugin names) as slash commands without the slash.
+
+    `.claude/skills/<name>/SKILL.md` (or a symlink `.claude/skills/<name>`) is
+    `/<name>`. A skills-dir plugin, `.claude/skills/<dir>/.claude-plugin/plugin.json`
+    plus `.claude/skills/<dir>/skills/<skill>/SKILL.md`, contributes
+    `/<plugin>:<skill>`, where <plugin> is the plugin.json name (default <dir>).
+    """
+    plugins: dict[str, str] = {}
     for f in repo.files:
-        m = re.match(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?$", f)
+        m = re.match(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json$", f)
         if m:
+            try:
+                name = json.loads(repo.text(f)).get("name")
+            except (ValueError, AttributeError):
+                name = None
+            plugins[m.group(1)] = name if isinstance(name, str) and name else m.group(1)
+    skills: set[str] = set()
+    for f in repo.files:
+        m = re.match(r"^\.claude/skills/([^/]+)/skills/([^/]+)/SKILL\.md$", f)
+        if m and m.group(1) in plugins:
+            skills.add(f"{plugins[m.group(1)]}:{m.group(2)}")
+            continue
+        m = re.match(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?$", f)
+        if m and m.group(1) not in plugins:
             skills.add(m.group(1))
+    return skills, set(plugins.values())
+
+
+def check_harness_tables(repo: Repo) -> list[Finding]:
+    skills, _ = project_skills(repo)
     agents = {m.group(1) for f in repo.files if (m := re.match(r"^\.claude/agents/([^/]+)\.md$", f))}
     out = []
-    table_skills = claude_table_names(repo, "**Skills**", r"`/([a-z0-9-]+)")
+    table_skills = claude_table_names(repo, "**Skills**", r"`/(" + SKILL_NAME + ")")
     table_agents = claude_table_names(repo, "**Agents**", r"`([a-z0-9-]+)`")
     block = layout_block(repo)
     for kind, actual, listed, where in (
@@ -1241,7 +1274,7 @@ def check_pointer_doctor(repo: Repo) -> list[Finding]:
     harness = [f for f in repo.md_files if f.startswith((".claude/agents/", ".claude/skills/", ".claude/rules/"))]
     sections = claude_sections(repo)
     rules = rule_titles(repo)
-    skills = {m.group(1) for f in repo.files if (m := re.match(r"^\.claude/skills/([^/]+)", f))}
+    skills, plugins = project_skills(repo)
     agents = {m.group(1) for f in repo.files if (m := re.match(r"^\.claude/agents/([^/]+)\.md$", f))}
     out = []
     for rel in harness:
@@ -1289,8 +1322,10 @@ def check_pointer_doctor(repo: Repo) -> list[Finding]:
                     path = clean_repo_path(span.split()[0])
                     if not is_path_placeholder(path) and not repo.exists(path):
                         out.append(Finding("pointer-doctor", rel, f"path:{path}", f"path does not exist: {path}", lineno))
-                m = re.match(r"^/([a-z][a-z0-9-]*)(?:\s|$)", span)
-                if m and m.group(1) not in skills and m.group(1) not in BUILTIN_COMMANDS:
+                m = re.match(r"^/(" + SKILL_NAME + r")(?:\s|$)", span)
+                # /<plugin>:<skill> is checked only for this repo's plugins; others are installed per user.
+                if m and m.group(1) not in skills and m.group(1) not in BUILTIN_COMMANDS \
+                        and (":" not in m.group(1) or m.group(1).split(":")[0] in plugins):
                     out.append(Finding("pointer-doctor", rel, f"skill:/{m.group(1)}", f"/{m.group(1)} is not a project skill or built-in command", lineno))
             masked_agents = re.finditer(r"`([a-z][a-z0-9-]*)`\s+(?:agent|subagent)\b|subagent_type:\s*`?([A-Za-z][A-Za-z0-9-]*)", line)
             for m in masked_agents:
@@ -1371,7 +1406,8 @@ def load_baseline(path: str) -> dict[str, dict]:
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError) as exc:
-        sys.exit(f"docs-check: cannot read baseline {path}: {exc}")
+        print(f"docs-check: cannot read baseline {path}: {exc}", file=sys.stderr)
+        sys.exit(2)
     return {e["key"]: e for e in data.get("findings", [])}
 
 
@@ -1541,7 +1577,8 @@ def repo_root() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=here, capture_output=True, text=True)
     if r.returncode != 0:
-        sys.exit("docs-check: not inside a git repository")
+        print("docs-check: not inside a git repository", file=sys.stderr)
+        sys.exit(2)
     return r.stdout.strip()
 
 
@@ -1626,4 +1663,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:  # exit 1 means new drift; a crash must not look like drift
+        traceback.print_exc()
+        sys.exit(2)
