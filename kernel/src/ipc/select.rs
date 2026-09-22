@@ -55,7 +55,7 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     for entry in entries {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
-                if ch_id.0 as usize >= shared::MAX_CHANNELS {
+                if ch_id.index().is_none() {
                     return Err(IpcError::Einval as i64);
                 }
             }
@@ -138,8 +138,8 @@ fn scan_entries(entries: &[SelectEntry]) -> Option<(usize, u64)> {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 // Check if the channel has a pending message.
-                let table = super::CHANNEL_TABLE.lock();
-                if let Some(ch) = &table[ch_id.0 as usize] {
+                let mut table = super::CHANNEL_TABLE.lock();
+                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
                     if ch.ring.len > 0 {
                         return Some((i, 0));
                     }
@@ -179,7 +179,7 @@ fn register_on_sources(tid: ThreadId, entries: &[SelectEntry]) {
                 // For channels, set waiting_receiver if not already set.
                 // The channel's ipc_call/ipc_send code checks waiting_receiver.
                 let mut table = super::CHANNEL_TABLE.lock();
-                if let Some(ch) = &mut table[ch_id.0 as usize] {
+                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
                     if ch.waiting_receiver.is_none() {
                         ch.waiting_receiver = Some(tid);
                     }
@@ -207,7 +207,7 @@ fn unregister_from_sources(tid: ThreadId, entries: &[SelectEntry]) {
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 let mut table = super::CHANNEL_TABLE.lock();
-                if let Some(ch) = &mut table[ch_id.0 as usize] {
+                if let Ok(ch) = super::channel_mut(&mut table, ch_id) {
                     if ch.waiting_receiver == Some(tid) {
                         ch.waiting_receiver = None;
                     }

@@ -131,10 +131,38 @@ impl Channel {
 // Global channel table
 // ---------------------------------------------------------------------------
 
-pub(crate) static CHANNEL_TABLE: Mutex<[Option<Channel>; MAX_CHANNELS]> = {
+/// Backing array of `CHANNEL_TABLE`, indexed by `ChannelId::index()`.
+type ChannelTable = [Option<Channel>; MAX_CHANNELS];
+
+pub(crate) static CHANNEL_TABLE: Mutex<ChannelTable> = {
     const NONE: Option<Channel> = None;
     Mutex::new([NONE; MAX_CHANNELS])
 };
+
+/// Range-checked access to a channel's slot in a locked `CHANNEL_TABLE`.
+///
+/// Returns `Err(EINVAL)` when `id` is `>= MAX_CHANNELS`. No channel can exist
+/// at such an id, so a raw index would run past the end of the table and
+/// panic the kernel. Every channel lookup goes through this function.
+fn channel_slot_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Option<Channel>, i64> {
+    match id.index() {
+        // `index()` only returns ids below MAX_CHANNELS, the length of the
+        // table array, so this indexing cannot panic.
+        Some(idx) => Ok(&mut table[idx]),
+        None => Err(IpcError::Einval as i64),
+    }
+}
+
+/// Look up a live channel in a locked `CHANNEL_TABLE`.
+///
+/// Returns `Err(EINVAL)` when `id` is out of range (see `channel_slot_mut`)
+/// and `Err(EPIPE)` when the slot is empty, i.e. the channel was destroyed or
+/// never created.
+fn channel_mut(table: &mut ChannelTable, id: ChannelId) -> Result<&mut Channel, i64> {
+    channel_slot_mut(table, id)?
+        .as_mut()
+        .ok_or(IpcError::Epipe as i64)
+}
 
 // ---------------------------------------------------------------------------
 // Channel create / destroy
@@ -171,10 +199,7 @@ pub fn channel_create(creator: ThreadId) -> Result<ChannelId, i64> {
 /// Set the peer (endpoint B) owner of a channel.
 pub fn channel_set_peer(channel: ChannelId, peer: ThreadId) -> Result<(), i64> {
     let mut table = CHANNEL_TABLE.lock();
-    let ch = match &mut table[channel.0 as usize] {
-        Some(c) => c,
-        None => return Err(IpcError::Epipe as i64),
-    };
+    let ch = channel_mut(&mut table, channel)?;
     ch.owner_b = Some(peer);
     Ok(())
 }
@@ -194,11 +219,9 @@ pub fn channel_destroy(channel: ChannelId) -> Result<(), i64> {
 /// Used by cascade revocation (kernel-initiated teardown).
 pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
     let mut table = CHANNEL_TABLE.lock();
-    let idx = channel.0 as usize;
-    let ch = match table[idx].take() {
-        Some(c) => c,
-        None => return Err(IpcError::Epipe as i64),
-    };
+    let ch = channel_slot_mut(&mut table, channel)?
+        .take()
+        .ok_or(IpcError::Epipe as i64)?;
 
     // Wake any blocked threads with EPIPE (both receiver and caller).
     let wake_recv = ch.waiting_receiver;
@@ -211,7 +234,7 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
         timeout::wake_with_error(caller_tid, IpcError::Epipe as i64);
     }
 
-    crate::kinfo!(Ipc, "Channel {} destroyed", idx);
+    crate::kinfo!(Ipc, "Channel {} destroyed", channel.0);
     Ok(())
 }
 

@@ -17,7 +17,7 @@ use super::timeout::{
     clear_timeout, get_wakeup_error, wake_with_error, ReplySlot, TimeoutEntry, REPLY_SLOTS,
     TIMEOUT_QUEUE,
 };
-use super::{direct, CHANNEL_TABLE};
+use super::{channel_mut, direct, CHANNEL_TABLE};
 
 // ---------------------------------------------------------------------------
 // IpcCall — send request and block for reply (synchronous)
@@ -67,9 +67,9 @@ pub fn ipc_call(
     let direct_switch_target: Option<ThreadId>;
     {
         let mut table = CHANNEL_TABLE.lock();
-        let ch = match &mut table[channel.0 as usize] {
-            Some(c) => c,
-            None => return IpcError::Epipe as i64,
+        let ch = match channel_mut(&mut table, channel) {
+            Ok(c) => c,
+            Err(e) => return e,
         };
 
         // Check endpoint is active.
@@ -201,7 +201,7 @@ pub fn ipc_call(
     if error != 0 {
         // Clean up pending caller state.
         let mut table = CHANNEL_TABLE.lock();
-        if let Some(ch) = &mut table[channel.0 as usize] {
+        if let Ok(ch) = channel_mut(&mut table, channel) {
             if ch.pending_caller == Some(caller_tid) {
                 ch.pending_caller = None;
             }
@@ -246,10 +246,7 @@ pub fn ipc_recv(
     // Try to dequeue a message.
     {
         let mut table = CHANNEL_TABLE.lock();
-        let ch = match &mut table[channel.0 as usize] {
-            Some(c) => c,
-            None => return Err(IpcError::Epipe as i64),
-        };
+        let ch = channel_mut(&mut table, channel)?;
 
         if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
             return Err(IpcError::Epipe as i64);
@@ -303,7 +300,7 @@ pub fn ipc_recv(
     // Clear waiting_receiver.
     {
         let mut table = CHANNEL_TABLE.lock();
-        if let Some(ch) = &mut table[channel.0 as usize] {
+        if let Ok(ch) = channel_mut(&mut table, channel) {
             if ch.waiting_receiver == Some(receiver_tid) {
                 ch.waiting_receiver = None;
             }
@@ -322,10 +319,7 @@ pub fn ipc_recv(
 
     // Retry dequeue (message was enqueued while we were blocked).
     let mut table = CHANNEL_TABLE.lock();
-    let ch = match &mut table[channel.0 as usize] {
-        Some(c) => c,
-        None => return Err(IpcError::Epipe as i64),
-    };
+    let ch = channel_mut(&mut table, channel)?;
 
     if let Some(msg) = ch.ring.pop() {
         let copy_len = msg.len.min(recv_buf.len());
@@ -366,9 +360,9 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
     // Find and clear the pending caller.
     {
         let mut table = CHANNEL_TABLE.lock();
-        let ch = match &mut table[channel.0 as usize] {
-            Some(c) => c,
-            None => return IpcError::Epipe as i64,
+        let ch = match channel_mut(&mut table, channel) {
+            Ok(c) => c,
+            Err(e) => return e,
         };
 
         caller_tid = match ch.pending_caller.take() {
@@ -444,9 +438,9 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
     msg.data[..send_buf.len()].copy_from_slice(send_buf);
 
     let mut table = CHANNEL_TABLE.lock();
-    let ch = match &mut table[channel.0 as usize] {
-        Some(c) => c,
-        None => return IpcError::Epipe as i64,
+    let ch = match channel_mut(&mut table, channel) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
     if ch.state_a == EndpointState::Dead || ch.state_b == EndpointState::Dead {
@@ -491,9 +485,9 @@ pub fn ipc_cancel(channel: ChannelId) -> i64 {
     }
 
     let mut table = CHANNEL_TABLE.lock();
-    let ch = match &mut table[channel.0 as usize] {
-        Some(c) => c,
-        None => return IpcError::Epipe as i64,
+    let ch = match channel_mut(&mut table, channel) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
     let caller_tid = match ch.pending_caller.take() {
