@@ -2,12 +2,12 @@
 author: jl + claude
 date: 2026-09-22
 tags: [kernel, sched, smp, ipc, security]
-status: draft
+status: final
 ---
 
 # ADR: Boot-crash fix — preemption, lock discipline and FP/NEON policy
 
-Decisions are tracked in issue #164; the PR #149 merge gate is issue #165. The code was read at `main` f0b4169. `main` has since moved to e98e1ad through two commits that touch no kernel code: dd05a1e (#170, `.claude/settings.json`) and e98e1ad (#161, `rust-toolchain.toml` to nightly-2026-09-22). Every `path:line` citation below therefore still holds. Every code claim comes from reading the source, and none has been confirmed at runtime. Claims marked *(likely)* or *(inference)* were not traced end to end. The fatal-report lines quoted below were read from the soak logs in `target/soak/167`. Nothing was built or booted while this ADR was written.
+The owner decided issue #164 on 2026-09-22: 1C (typed lock classes) and 2B (hard-float kernel with eager FP/SIMD save). See "Decision". Implementation is tracked by #164; the PR #149 merge gate is issue #165. The code was read at `main` f0b4169. `main` has since moved to e98e1ad through two commits that touch no kernel code: dd05a1e (#170, `.claude/settings.json`) and e98e1ad (#161, `rust-toolchain.toml` to nightly-2026-09-22). Every `path:line` citation below therefore still holds. Every code claim comes from reading the source, and none has been confirmed at runtime. Claims marked *(likely)* or *(inference)* were not traced end to end. The fatal-report lines quoted below were read from the soak logs in `target/soak/167`. Nothing was built or booted while this ADR was written.
 
 -----
 
@@ -123,7 +123,7 @@ The design already asks for most of direction D; the code has drifted from it:
 - `scheduler.md` §10.3 (lines 1926-1951) and `docs/kernel/deadlock-prevention.md` §9.2 (lines 395-406) take spinlocks with `local_irq_disable() + spin_lock()`.
 - `deadlock-prevention.md` §12 rule 10 (line 513) says never spin on a lock from IRQ context. The code does.
 - `scheduler.md` §3.3 (lines 340-343) makes the reschedule flag per thread (`preemption_flag`), not per CPU.
-- `scheduler.md:472` specifies lazy FP save through a CPACR trap. It is not implemented, and it contradicts `docs/kernel/boot/kernel.md:95` ("Rust's codegen freely uses NEON").
+- `scheduler.md:472` specifies lazy FP save through a CPACR trap. It is not implemented, and it contradicts `docs/kernel/boot/kernel.md:95` ("Rust's codegen freely uses NEON"). Under Decision 2B the eager save replaces it (step 4), and `boot/kernel.md:95` stands.
 - `docs/phases/03-ipc-and-capability-system.md` ticks as done several items the code does not have: the ELR/SPSR save (lines 123, 166), the direct-switch CPACR trap (line 212) and lazy FP (line 377).
 - `docs/project/ai-agent-context.md:170-184` teaches the unconditional `DAIFSet`/`DAIFClr` pattern.
 - `deadlock-prevention.md` §3.3 lists `RUN_QUEUES` and `NOTIFY_DEADLINES` as leaf locks (lines 127-137). In the code, `try_load_balance` takes `THREAD_TABLE` while holding `RUN_QUEUES` (`init.rs:237-257`), and `check_notification_timeouts` calls `unblock` while holding `NOTIFY_DEADLINES` (`notify.rs:310-349`).
@@ -136,13 +136,13 @@ In `docs/knowledge/`, no ADR, lesson or discussion covers IRQ masking, preemptio
 
 Direction D is right in principle. These items are not up for decision. The list corrects D where the research disagrees with it and adds what D leaves out.
 
-**F1. Full exception frame on EL1 IRQ entry.** Save x0–x30, ELR_EL1 and SPSR_EL1 in the existing 272-byte `TrapFrame` layout (`trap.rs:23-35`), and restore all of it before `eret`. This is required by H1. The frame then travels with the thread's stack, which makes a switch inside the IRQ path correct.
+**F1. Full exception frame on EL1 IRQ entry.** Save x0–x30, ELR_EL1 and SPSR_EL1 in the existing 272-byte `TrapFrame` layout (`trap.rs:23-35`), and restore all of it before `eret`. This is required by H1. The frame then travels with the thread's stack, which makes a switch inside the IRQ path correct. Under Decision 2B, step 4 adds the 528-byte FP/SIMD area to this frame, for 800 bytes.
 
 **F2. One preemption point: `irq_exit`.**
 
 - `irq_handler_el1` no longer switches threads.
 - After EOI, which already comes before any switch (`gic.rs:255`), the stub calls `irq_exit(frame)`.
-- `irq_exit` calls `schedule()` only when the reschedule flag is set and the interrupted context is preemptible. Until a preempt count exists (step 9 under Decision 1 B or C), "preemptible" means only "not `IN_SCHEDULER` on this CPU" (`scheduler.rs:156-159`), so a holder of one of the 30 non-IRQ locks can still be preempted there, as today. Under A, every region that holds a lock runs with IRQs off, so the IRQ cannot interrupt it.
+- `irq_exit` calls `schedule()` only when the reschedule flag is set and the interrupted context is preemptible. Until the preempt count exists (step 8, Decision 1C), "preemptible" means only "not `IN_SCHEDULER` on this CPU" (`scheduler.rs:156-159`), so a holder of one of the 30 non-IRQ locks can still be preempted there, as today.
 - IRQs stay masked across the switch, and the resumed thread returns through its own frame.
 - Voluntary switches (`thread_yield`, `block_current`, the IPC direct switches) keep their entry points. F4 and F6 change their bodies.
 
@@ -150,7 +150,7 @@ Direction D is right in principle. These items are not up for decision. The list
 
 - Making the flag per-CPU is cheap but changes little (H4). What matters is when it is set: only when the current thread's time slice expires, or when a wakeup targets this CPU with a higher class. Setting it on every tick (`timer.rs:208`) is the bug.
 - Store it per thread, in the `ThreadInfo` block described under Decision 1. For the running thread that is the same as per-CPU. It also matches `scheduler.md` §3.3 and the inference preemption points (`scheduler.md:1087`).
-- A per-CPU array is the interim (step 6a) until `ThreadInfo` exists (step 9).
+- A per-CPU array is the interim (step 6a) until `ThreadInfo` exists (step 8).
 - Also refill the time slice when a thread is picked with 0 left. Zero-slice donations (`direct.rs:143`, `:276`) are why the bench threads are preempted from the IRQ path so often.
 
 **F4. `on_cpu` handshake on every path that publishes a thread, not only the load balancer.** Four paths make a thread visible to other CPUs before its context is saved:
@@ -162,9 +162,9 @@ Direction D is right in principle. These items are not up for decision. The list
 
 The mechanism:
 
-- Each thread gets an atomic `on_cpu`, kept outside `THREAD_TABLE`: a static per-thread-slot array at first, moved into `ThreadInfo` in step 9. The CPU that switches to a thread sets it.
+- Each thread gets an atomic `on_cpu`, kept outside `THREAD_TABLE`: a static per-thread-slot array at first, moved into `ThreadInfo` in step 8. The CPU that switches to a thread sets it.
 - `finish_switch()` runs on the incoming thread's stack once the outgoing save is complete, and clears the outgoing thread's `on_cpu` with Release ordering.
-- **Every resume point runs `finish_switch()`, including a new thread's first run.** Today a new thread starts at its entry function (`task/mod.rs:186`), so nothing would clear the previous thread's `on_cpu`, and every later restore of that thread would wait forever. New threads therefore start in a `ret_from_switch` trampoline that calls `finish_switch()` and then the entry function. Under Decision 1 B or C the trampoline also sets TPIDR_EL1 (step 9).
+- **Every resume point runs `finish_switch()`, including a new thread's first run.** Today a new thread starts at its entry function (`task/mod.rs:186`), so nothing would clear the previous thread's `on_cpu`, and every later restore of that thread would wait forever. New threads therefore start in a `ret_from_switch` trampoline that calls `finish_switch()` and then the entry function. Under Decision 1C the trampoline also sets TPIDR_EL1 (step 8).
 - **Where the wait happens.** Before a thread is restored or queued on another CPU, the waker waits with Acquire ordering until its `on_cpu` is 0. The waker must hold no lock that the switching CPU needs to finish its switch: `THREAD_TABLE`, `RUN_QUEUES` or `CURRENT_THREAD`. Linux's `try_to_wake_up` likewise waits on `on_cpu` before it takes the run-queue lock (prior art from the research pass, not re-read here). This matters because `unblock` holds `THREAD_TABLE` from `scheduler.rs:371` to `:396` and runs from IRQ context (`check_timeouts` → `wake_with_error` → `unblock`, `timeout.rs:105`, `:140`), while a thread that has just set Blocked still needs `THREAD_TABLE` (`scheduler.rs:168`, `:218`) before its save. A wait inside that critical section would deadlock both CPUs, with IRQs masked on the waiter. So `unblock` reads the state, drops `THREAD_TABLE`, waits, then re-takes the lock and re-checks.
 - **The wait is bounded.** After a fixed number of iterations it panics with the thread id, so a stuck `on_cpu` becomes a named PANIC, not a WEDGE.
 - The IPC direct switch does not wait; it falls back to the scheduler path.
@@ -217,11 +217,11 @@ Both reduce the blast radius of a failure, but neither is needed to fix the clas
   - `NOTIFY_DEADLINES` held across `THREAD_TABLE`, `NOTIFICATION_TABLE`, `SELECT_WAITERS` and `unblock`'s `THREAD_TABLE` and `RUN_QUEUES` (`notify.rs:310-349`).
 
   A candidate order is `NOTIFY_DEADLINES` > {`NOTIFICATION_TABLE`, `SELECT_WAITERS`} > `RUN_QUEUES` (ascending CPU) > `THREAD_TABLE` > `CURRENT_THREAD`, with `TIMEOUT_QUEUE`, `WAKEUP_ERRORS` and `BOOT_LOG` placed from their call sites. The step-2 PR derives the final order from the code, not from `CLAUDE.md:98-102`. That list puts the non-IRQ `CHANNEL_TABLE` below the IRQ-class `NOTIFICATION_TABLE`. Either that nesting does not occur in the code (check it), or `CHANNEL_TABLE` joins the IRQ class. A per-CPU held-rank check on the IRQ-class type arrives in step 2, not later, and stays on in release builds. The §3.3 table in `deadlock-prevention.md` is rebuilt in the same PR.
-- **`IrqSpinLock` masks IRQs itself.** It saves DAIF through a per-CPU IRQ-off nesting counter and restores it on the outermost release. A check that "an IRQ-class lock is taken with IRQs enabled" could therefore never fire. The checks are the held-rank order (step 2) and, from step 9, the class checks on `SpinLock` (Decision 1 C).
+- **`IrqSpinLock` masks IRQs itself.** It saves DAIF through a per-CPU IRQ-off nesting counter and restores it on the outermost release. A check that "an IRQ-class lock is taken with IRQs enabled" could therefore never fire. The checks are the held-rank order (step 2) and, from step 8, the class checks on `SpinLock` (Decision 1C).
 - **Rust guard pitfall.** A guard that stores its own saved DAIF breaks when guards are dropped out of order (Asterinas #1120 and #3896; the Rust-for-Linux `SpinLockIrq` discussion). Use a per-CPU IRQ-off nesting counter, which is safe to index while IRQs are off, or a closure API.
 - **Switch paths.** `scheduler.rs:247` and `direct.rs:157` and `:287` drop `THREAD_TABLE` before save/restore. With an IRQ-restoring guard, that drop would unmask IRQs before the switch. Each switch therefore needs one explicit IRQ-off span that ends only when the resumed thread restores its own state.
-- **New statics must choose a class.** Step 2 adds a `clippy.toml` with `disallowed-types = ["spin::Mutex"]` for `kernel/`, or an equivalent CI grep. The 30 existing declarations carry an explicit `allow` until step 9, so a new static, including PR #149's shell locks, fails lint until it picks a class.
-- **Step 2 is the same under A, B and C:** the IRQ class for the 9 statics, plus F6 and F8. It is the heartbeat-stuck WEDGE fix. The decision changes only how the other 30 statics are handled (step 9).
+- **New statics must choose a class.** Step 2 adds a `clippy.toml` with `disallowed-types = ["spin::Mutex"]` for `kernel/`, or an equivalent CI grep. The 30 existing declarations carry an explicit `allow` until step 8, so a new static, including PR #149's shell locks, fails lint until it picks a class.
+- **Step 2 is the same under A, B and C:** the IRQ class for the 9 statics, plus F6 and F8. It is the heartbeat-stuck WEDGE fix. The decision changes only how the other 30 statics are handled (step 8).
 
 **Blast radius** (counted at f0b4169):
 
@@ -242,7 +242,7 @@ Both reduce the blast radius of a failure, but neither is needed to fix the clas
 
 ### Decision 1 options
 
-Option A is #164's 1A, and option B is #164's 1B. Option C is added here.
+Option A is #164's 1A, and option B is #164's 1B. Option C is added here. The owner chose C (see "Decision"); A and B are kept as the analysis behind that choice.
 
 | | **A: IRQ-off spinlocks everywhere** | **B: preempt count; IRQ-off only for the IRQ-shared set** | **C: Linux-style, class in the type** |
 | --- | --- | --- | --- |
@@ -279,7 +279,7 @@ Where the preempt count lives matters for B and C. A per-CPU counter indexed by 
 - *Pros:* B's latency, with the class enforced by the type; the validator turns the rules into panics.
 - *Cons:* two types to choose between for every new static; the most code.
 
-### Recommendation: C, delivered as step 2 (common) and step 9 (after the crash-fix gate)
+### Recommendation (adopted): C, delivered as step 2 (common) and step 8 (after the crash-fix gate)
 
 1. Step 2 fixes the heartbeat-stuck WEDGE under every option, so choosing now puts nothing at risk.
 2. **Against A:** holding IRQs off across long holds on CPU 0 stops `TICK_COUNT` and every timeout, which trades a wedge for a stall. B and C only block preemption on that CPU.
@@ -290,9 +290,9 @@ Where the preempt count lives matters for B and C. A per-CPU counter indexed by 
    - the reschedule flag (F3);
    - `on_cpu` (F4), moved from its interim array.
 5. **Keep F2's single preemption point.** At first, `preempt_enable` reaching 0 does not reschedule, so a reschedule can wait at most one 1 ms tick. Make it a reschedule point later only if latency measurements call for it.
-6. **Step 9 comes after the crash-fix gate (step 8) and is not part of PR #149's gate.** No observed failure class maps to lock-holder preemption on the other 30 locks, and step 6a does not need `ThreadInfo`, because `on_cpu` starts in its own array. After step 2, no IRQ-off region takes one of the 30 locks, so preempting their holders cannot deadlock through IRQ context. It can still stall. With strict class priority (`sched/mod.rs:65-76`), a higher-class thread spinning on CPU c starves a preempted lower-class holder on the same CPU until the balancer moves it (N10). **Escalation rule:** if heartbeat-alive WEDGE persists after step 6b and step 1b's starvation scan is above 0, step 9 moves ahead of step 8.
+6. **Step 8 comes after the crash-fix gate (step 7) and is not part of PR #149's gate.** No observed failure class maps to lock-holder preemption on the other 30 locks, and step 6a does not need `ThreadInfo`, because `on_cpu` starts in its own array. After step 2, no IRQ-off region takes one of the 30 locks, so preempting their holders cannot deadlock through IRQ context. It can still stall. With strict class priority (`sched/mod.rs:65-76`), a higher-class thread spinning on CPU c starves a preempted lower-class holder on the same CPU until the balancer moves it (N10). **Escalation rule:** if heartbeat-alive WEDGE persists after step 6b and step 1b's starvation scan is above 0, step 8 moves ahead of step 7.
 
-The cost is amending `scheduler.md` §10.3 and `deadlock-prevention.md` §9.2 and §12, which needs owner approval per #164.
+The cost is amending `scheduler.md` §10.3 and `deadlock-prevention.md` §9.2 and §12. #164 required owner approval for that, and the owner's choice of 1C gives it.
 
 -----
 
@@ -310,17 +310,17 @@ The cost is amending `scheduler.md` §10.3 and `deadlock-prevention.md` §9.2 an
 
 ### Decision 2 options
 
-Option A is #164's 2A with a correction, option B is #164's 2B, and option C is added here.
+Option A is #164's 2A with a correction, option B is #164's 2B, and option C is added here. The owner chose B, in the form its column now shows: the full 528 bytes at every thread switch as well as at every EL1 IRQ entry (see "Decision"). A and C are kept as the analysis behind that choice.
 
 | | **A: softfloat kernel, EL0 FP later** | **B: hard-float, eager full save** | **C: hard-float + `kernel_neon_begin/end`** |
 | --- | --- | --- | --- |
-| Idea | The kernel never touches V registers. EL0 FP is handled when EL0 exists | Save q0–q31 plus FPCR/FPSR (528 B) at every EL1 IRQ entry, because the IRQ handler itself uses NEON. Add d8–d15 and FPCR (about 72 B) to `save_context` | Use NEON only inside explicit regions that first save the owner's state |
+| Idea | The kernel never touches V registers. EL0 FP is handled when EL0 exists | Save q0–q31 plus FPCR/FPSR (528 B) at every EL1 IRQ entry, because the IRQ handler itself uses NEON, and the same 528 B at every thread switch. The draft saved only d8–d15 and FPCR (about 72 B) at the switch; the owner chose the full save | Use NEON only inside explicit regions that first save the owner's state |
 | Viable here | Yes | Yes | **No** (see below) |
 | Cost per IRQ | None | 528 B stored and loaded on every tick on every CPU. seL4 measured about 120 cycles for an FP save and restore on a Cortex-A35 (RFC-18) | — |
-| Cost per voluntary switch | None today | About 72 B | — |
+| Cost per voluntary switch | None today | 528 B stored and loaded (about 72 B in the draft's form). An IPC round trip makes two switches | — |
 | With future EL0 | EL0 FP state survives syscalls and IRQs untouched; it is saved at switch-out, only for threads that use FP | Every syscall and IRQ from EL0 must save and restore all 528 B, because ordinary kernel paths dirty v0–v7 | — |
-| Build changes | Target string in `justfile:3-6`, `.cargo/config.toml:1`, `rust-toolchain.toml:3` and `.github/workflows/ci.yml:22,36,50,64,81,121`, plus the docs and agent files listed under "Docs to update". Add `--cfg aes_backend="soft"`, `polyval_backend="soft"` and `sha2_backend="soft"`: the crates' `#[target_feature(enable="aes")]` code paths are expected to fail to build on softfloat (inferred; a build will confirm) | None | None |
-| Effect on CLAUDE.md | `:9` "hard-float ABI", `:10` target, `:58-59` FPU enable, `:152` toolchain targets; rule `01-code-conventions.md:16` and `:32` | `:58-59` stays; add "every asynchronous entry saves full FP state" | — |
+| Build changes | Target string in `justfile:3-6`, `.cargo/config.toml:1`, `rust-toolchain.toml:3` and `.github/workflows/ci.yml:22,36,50,64,81,121`, plus the docs and agent files named at the end of "Docs to update" (unchanged under 2B). Add `--cfg aes_backend="soft"`, `polyval_backend="soft"` and `sha2_backend="soft"`: the crates' `#[target_feature(enable="aes")]` code paths are expected to fail to build on softfloat (inferred; a build will confirm) | None | None |
+| Effect on CLAUDE.md | `:9` "hard-float ABI", `:10` target, `:58-59` FPU enable, `:152` toolchain targets; rule `01-code-conventions.md:16` and `:32` | `:9-10` and `:58-59` stay; add "every EL1 IRQ entry and every thread switch saves the full FP/SIMD state (528 B)" | — |
 | Tripwire | Set CPACR_EL1.FPEN=0b00 at EL1, so any stray FP instruction traps with EC 0x07 and an exact ELR. Add a CI objdump gate: zero V-register instructions in the kernel ELF | A V-register clobber counter only; nothing structural stops a regression | — |
 | Intelligence workloads | AIRS is a userspace service (`docs/intelligence/airs.md:30`, `:113`) built for its own hard-float EL0 target, so it is unaffected, provided EL0 arrives before Phase 11. In-kernel NEON (the NEON memops in `docs/kernel/memory.md:103`; page zeroing in `docs/kernel/memory/hardening.md` §11.4) would have to be hand-written asm regions. DC ZVA zeroing does not use NEON | Kernel Rust may use NEON freely | — |
 | Main risk | A NEON-heavy service prototyped as an EL1 thread before EL0 exists cannot use NEON from Rust | The invariant is easy to break when a new entry path is added; the cost for AIOS is unmeasured | — |
@@ -335,13 +335,17 @@ Option A is #164's 2A with a correction, option B is #164's 2B, and option C is 
 
 This is the Linux arm64 model. seL4 moved to eager switching in RFC-18, citing information leaks and complexity, and CVE-2018-3665 (LazyFP) is the precedent for lazy restore leaking state.
 
-### Recommendation: A, with B's saves as an interim (step 4)
+This correction applies to 2A only. Under 2B, which the owner chose, every thread, EL0 threads included, has its full FP state saved at every switch. There is no first-use trap and no lazy restore.
+
+### Recommendation (not taken): A, with B's saves as an interim (step 4)
 
 - A removes the problem instead of paying for it on every IRQ, and it matches every surveyed kernel.
 - It costs nothing at runtime today: no code uses FP, and the crypto already runs in software.
 - It gives a deterministic tripwire (FPEN=0b00).
 - The EL0 FP design waits until EL0 exists (YAGNI), with the Phase 11 dependency recorded above.
-- H5 is a live candidate for the PANIC and EXCEPTION reports, so protection comes early. Step 4 adds B's saves (528 B at EL1 IRQ entry, d8–d15 and FPCR in `save_context`) right after the frame fix. It is a separate step so that H1 and H5 can be told apart. Step 7 switches the target and removes the interim saves. Under 2B, step 4 is the final policy and step 7 only adds tripwires.
+- H5 is a live candidate for the PANIC and EXCEPTION reports, so protection comes early. The draft had step 4 add B's saves as an interim (528 B at EL1 IRQ entry; d8–d15 and FPCR in `save_context`) right after the frame fix, and a later softfloat step switch the target and remove them.
+
+The owner chose 2B instead. Step 4 is now the permanent FP step, with the full 528 B at the thread switch as well, and the softfloat step is gone (see "Decision").
 
 -----
 
@@ -355,20 +359,19 @@ This is the Linux arm64 model. seL4 moved to eager switching in RFC-18, citing i
 | **1b** Tripwires | Detect-only counters and detectors; panic handler fix (N8); bench DAIF masking removed; V-register objdump | Measurement; decides H1 and H3 | 1a |
 | **2** IRQ-class locks | `IrqSpinLock` for the 9 statics with the held-rank order; `with_this_cpu`; F6; F8; lint for new statics | Heartbeat-stuck WEDGE | 1b confirms H3 |
 | **3** IRQ frame | F1 + F2 | PCZERO; the bench hijack; part of PANIC/EXCEPTION | 2 |
-| **4** Interim FP save | B's saves at IRQ entry and in `save_context` | H5 part of PANIC/EXCEPTION | 3 |
+| **4** FP/SIMD save | Decision 2B: the full 528-byte FP/SIMD state saved at EL1 IRQ entry and at every thread switch | H5: its part of PANIC/EXCEPTION, and the defect itself | 3 |
 | **5** Address spaces | F7 | N5, N9 | 1b |
 | **6a** `on_cpu` | F4, including the `ret_from_switch` trampoline, plus F3 with a per-CPU flag | H2; cross-CPU corruption | 3 |
 | **6b** Wake/block | F5 | Heartbeat-alive WEDGE; DEGRADED | 6a |
-| **7** FP policy | Decision 2 | H5 (structural) | 4 |
-| **8** Final gate | Remaining docs; ADR to `final` | All classes | 1a–7 |
-| **9** Lock classes | The rest of Decision 1 | Lock-holder preemption; per-CPU read races (for good) | 8, unless the escalation rule fires |
+| **7** Final gate | Remaining docs | All classes | 1a–6b |
+| **8** Lock classes | The rest of Decision 1C | Lock-holder preemption; per-CPU read races (for good) | 7, unless the escalation rule fires |
 
 Why this order:
 
 - **Step 2 comes before the frame fix.** WEDGE is the largest failure class on `main`: 9 of 30 boots in the baseline, 7 of 30 in run 167's `main` arm (6 of them heartbeat-stuck) and 5 of 30 in its #161 arm (4 stuck). Step 2 does not depend on F1 or F2: neither needs the new frame. Every class that ends a boot hides later ones, because the first failure decides the class. So while 20–30% of text-mode boots wedge at about 7 s, the PCZERO, PANIC and DEGRADED counts of every later comparison are censored and noisy. Removing WEDGE first makes each later comparison more sensitive. Step 2 proceeds only if step 1b's named-lock detector confirms H3.
 - **Step 4 is separate from step 3** so that the `frame.rs:51` PANIC (8 of 20 gpu boots) can be attributed to H1 or H5. If the owner prefers speed over attribution, steps 3 and 4 can share one PR.
 - **Steps 6a and 6b are separate** so that a fix of the heartbeat-alive WEDGE can be attributed to F4 or F5.
-- **Step 9 is after the gate** (Decision 1 recommendation, item 6).
+- **Step 8 is after the gate** (Decision 1 recommendation, item 6).
 
 ### Soak protocol (every soaked step)
 
@@ -378,9 +381,9 @@ Why this order:
   - DEGRADED: "=== Gate 1 Complete ===" printed but the IPC line reports fewer than `(10000 iters)` (`bench.rs:400-409`). CLEAN then requires 10000 iterations;
   - PANIC-LOCK: a panic from step 1b's lock detector, which prints `PANIC: lock re-entry: <LOCK> on CPU n`.
 
-  The latency PASS stays a recorded marker only (`soak-qemu.sh:205`), because TCG timing depends on the host.
+  The latency PASS stays a recorded marker only (`soak-qemu.sh:205`), because TCG timing depends on the host. Step 4 is the one exception: its acceptance compares the Gate 1 IPC figure between its two arms (see step 4 and "Gate 1").
 - **Tripwire line.** Kernel counters are printed on one fixed line, `[tripwire] k=v k=v ...`, at "Gate 1 Complete", with each heartbeat, and in the panic and exception dumps. The harness puts the last value of each key into `summary.tsv` columns and reports them per arm.
-- **Fixed instrument, and a departure from rule 04.** Rule 04's Session Start Checklist (`brew upgrade qemu just`, a nightly bump, `cargo update`) and `CLAUDE.md:15` ("updated to latest at session start") would change QEMU, the Homebrew edk2 firmware the soak boots (`justfile:8`), the toolchain and the dependencies between steps. For this series, from the re-baseline to step 8:
+- **Fixed instrument, and a departure from rule 04.** Rule 04's Session Start Checklist (`brew upgrade qemu just`, a nightly bump, `cargo update`) and `CLAUDE.md:15` ("updated to latest at session start") would change QEMU, the Homebrew edk2 firmware the soak boots (`justfile:8`), the toolchain and the dependencies between steps. For this series, from the re-baseline to step 7:
   - pin QEMU (`brew pin qemu`);
   - freeze `rust-toolchain.toml`, `Cargo.lock` and the CI runner image;
   - hold Renovate PRs for them, with a `packageRules` entry or a hold label. `renovate.json` has only `config:recommended`, so Renovate will keep opening PRs like #161 and #169.
@@ -446,11 +449,29 @@ Why this order:
   - PANIC and EXCEPTION counts are reported per report type, `frame.rs:51` separately.
   - Regression guard.
 
-**Step 4 — interim FP save** (Decision 2 B's saves).
+**Step 4 — FP/SIMD save** (Decision 2B; permanent).
 
-- q0–q31 and FPCR/FPSR at EL1 IRQ entry and exit (528 B); d8–d15 and FPCR in `save_context` and `restore_context`.
-- Counter: IRQs whose handler changed any V register, by comparing the saved and live registers before the restore.
-- **Acceptance:** the counter is above 0 (the handler does clobber V state). The `frame.rs:51` PANIC and EXCEPTION counts are compared with the step-3 arm; removal means Fisher p < 0.05. Regression guard. If the `frame.rs:51` PANIC disappears here but did not in step 3, H5 is confirmed as its cause.
+- **What is saved.** q0–q31 (512 B), FPCR and FPSR, in the existing `FpContext` layout: `#[repr(C, align(16))]`, 528 bytes, with a size assertion (`kernel/src/task/mod.rs`). Every thread gets this, EL1 threads now and EL0 threads when they exist. There is no first-use trap and no lazy restore, and CPACR_EL1.FPEN stays at 0b11 as `boot.S` sets it (`boot.S:83-89`, `:280-285`).
+- **Save point 1: the EL1 IRQ entry frame.**
+  - `irq_el1_entry` stores the 528 bytes after step 3's 272-byte `TrapFrame`, at frame offset 272. The exit restores them before `eret`.
+  - The frame grows from 272 to 800 bytes, on the interrupted thread's stack.
+- **Save point 2: the per-thread context switch.**
+  - `save_context` and `restore_context` store and load the same 528 bytes on every switch: `schedule()`, `thread_yield`, `block_current` and both IPC direct switches.
+  - The save area is a new `FpContext` field in `ThreadContext` (`task/mod.rs:76-84`). It replaces the always-`None` `Thread::fp_context: Option<FpContext>` (`task/mod.rs:139`, `:192`).
+  - With 8 bytes of padding after `timer_ctl`, the field sits at offset 0x130, and `ThreadContext` grows from 296 to 832 bytes. Its size assertion and the offsets `context_switch.S` uses change with it.
+  - A new thread starts with the area zeroed (FPCR = 0).
+- **Alignment: 16 bytes for every q-register `stp`/`ldp`.**
+  - The FP area in the IRQ frame starts at offset 272, and 272 and 800 are both multiples of 16. SP therefore stays 16-byte aligned, and every q-register pair lands on a 16-byte boundary.
+  - `FpContext`'s `align(16)` gives `ThreadContext`, and so `Thread`, 16-byte alignment. A compile-time assertion pins each offset the asm uses, as `trap.rs` and `task/mod.rs` already do for the sizes.
+- **Counter:** IRQs whose handler changed any V register, found by comparing the saved and live registers before the restore. It stays as a permanent tripwire, because 2B has no structural guard.
+- **Docs:** the `scheduler.md` FP text and the `CLAUDE.md` FP fact listed under "Docs to update".
+- **Acceptance:**
+  - The counter is above 0: the handler does clobber V state.
+  - The `frame.rs:51` PANIC and EXCEPTION counts are compared with the step-3 arm; removal means Fisher p < 0.05. If the `frame.rs:51` PANIC disappears here but did not in step 3, H5 is confirmed as its cause.
+  - **Gate 1 latency.** Take the mean of the per-boot IPC averages over each arm's CLEAN boots, per mode. The source is the bench output (`bench.rs:400-409`, and the `Gate 1: IPC < 10 us` line at `bench.rs:437-443`). The step-4 arm stays under the 10 µs threshold, and its mean is reported beside the step-3 arm's. Both arms run under the load rule.
+    - If the step-3 arm is under 10 µs and the step-4 arm is not, the step fails, and Decision 2 is revisited (see "Decision").
+    - If the step-3 arm is already at 10 µs or more, the Gate 1 escalation applies instead.
+  - Regression guard.
 
 **Step 5 — address spaces** (F7).
 
@@ -479,15 +500,9 @@ Why this order:
   - CI soak: all 5 boots CLEAN in each of 3 runs of the same commit (see "CI soak").
   - Regression guard.
 
-**Step 7 — FP policy** (Decision 2).
+**Step 7 — final gate.**
 
-- Under A: switch the target, use the soft crypto backends, set FPEN=0b00, add the CI objdump gate, and remove step 4's saves.
-- Under B: keep step 4's saves and keep the V-register counter as a permanent tripwire.
-- **Acceptance:** 0 FP traps (EC 0x07) in 30 boots; the objdump gate passes; regression guard.
-
-**Step 8 — final gate.**
-
-- Remaining doc updates; this ADR moves to `final`.
+- Remaining doc updates. The results are recorded on #164.
 - **Acceptance:**
   - Interleaved against a `main` arm, 20 text and 20 gpu boots per arm: CLEAN is higher in the new arm with Fisher p < 0.05 in each mode, and PCZERO, PANIC, EXCEPTION, WEDGE-STUCK, WEDGE-ALIVE and DEGRADED are all 0 in the new arm.
   - Then an unpaired, overnight absolute soak: at least 60 text boots and 30 gpu boots, all CLEAN. That bounds each mode's per-boot failure rate at 4.9% and 9.5%.
@@ -495,20 +510,19 @@ Why this order:
   - `just docs-check` reports no new drift.
   - Decide whether to drop `report_only` and `continue-on-error`, so the CI soak becomes a merge gate.
 
-**Step 9 — the rest of Decision 1** (after step 8, not part of PR #149's gate, unless the escalation rule moves it).
+**Step 8 — the rest of Decision 1C** (after step 7, not part of PR #149's gate, unless the escalation rule moves it).
 
-- Under C: `ThreadInfo` through TPIDR_EL1, with a per-CPU boot `ThreadInfo`; `SpinLock` for the 30 statics, with the release-build class checks; `on_cpu` and the reschedule flag moved into `ThreadInfo`; "sleeping while atomic" panics at `block_current` and `thread_yield`; panic on count underflow or overflow.
-- Under A: IRQ-off for the rest.
-- Under either: a sleeping lock or a yielding poll for `VIRTIO_GPU`.
+- `ThreadInfo` through TPIDR_EL1, with a per-CPU boot `ThreadInfo`; `SpinLock` for the 30 statics, with the release-build class checks; `on_cpu` and the reschedule flag moved into `ThreadInfo`; "sleeping while atomic" panics at `block_current` and `thread_yield`; panic on count underflow or overflow.
+- A sleeping lock or a yielding poll for `VIRTIO_GPU`.
 - **Acceptance:** no assertion fires in 30 boots; regression guard.
 
 ### Gate 1
 
 Gate 1 (IPC < 10 μs) is a project gate. `development-plan.md` records it as passed (`:217-247`), and that result rules out the hybrid-kernel fallback (`:181`, `:231`, `:507`). Its methodology assumes IRQs masked during measurement (`:247`). This series departs from that plan, and says so:
 
-- Gate 1 is re-measured and recorded at every step, but not gated.
+- Gate 1 is re-measured and recorded at every step. It is an acceptance item only at step 4. There the eager FP save lands on the IPC path, in two switches per round trip, and the owner revisits 2B if it pushes the IPC average past 10 µs (see "Decision").
 - The bench's masking is removed in step 1b. It was already ineffective after the first call (`bench.rs:237` vs `direct.rs:192`), so the recorded 4 μs was measured with IRQs mostly on.
-- **Escalation:** if the IPC average is 10 μs or more on an idle host (load below the CPU count) at step 3 or later, the owner decides before step 8 whether Gate 1 is re-run or reopened.
+- **Escalation:** if the IPC average is 10 μs or more on an idle host (load below the CPU count) at step 3 or later, the owner decides before step 7 whether Gate 1 is re-run or reopened.
 
 ### CI soak
 
@@ -529,30 +543,30 @@ Gate 1 (IPC < 10 μs) is a project gate. `development-plan.md` records it as pas
 
 ### Costs
 
-- The IRQ entry frame grows from 176 bytes to 192 in step 1b (the detect-only ELR/SPSR slots) and to 272 in step 3, plus 528 bytes from step 4 until step 7 under 2A.
-- Lock operations gain a DAIF save and restore for IRQ-class locks, and a count increment and decrement for `SpinLock` from step 9.
+- The IRQ entry frame grows from 176 bytes to 192 in step 1b (the detect-only ELR/SPSR slots), to 272 in step 3 and to 800 in step 4 (the 528-byte FP/SIMD area).
+- From step 4, every IRQ and every thread switch also stores and loads 528 bytes, and `ThreadContext` grows from 296 to 832 bytes. Each IPC round trip makes two switches, which step 4's Gate 1 check measures.
+- Under 2B, nothing structural guards the save. A new entry path that skips it corrupts FP state silently, and only the V-register counter would show it. An example is the lower-EL entries in `trap.rs` once EL0 exists.
+- Lock operations gain a DAIF save and restore for IRQ-class locks, and a count increment and decrement for `SpinLock` from step 8.
 - Gate 1's figures change (see "Gate 1").
-- Under 2A, kernel Rust cannot use NEON, so any in-kernel NEON has to be asm, and EL0 must exist before Phase 11.
-- Under 1C, every new static needs a class choice, which the lint enforces.
-- The series has 11 PRs (1a, 1b, 2, 3, 4, 5, 6a, 6b, 7, 8, then 9). Nine of them need a host-exclusive soak of 75–100 minutes, about 13–15 hours in total. On top of that come the overnight absolute soak in step 8, any reruns required by the load rule, and the re-baselines. No builds can run on the Mac during a soak.
+- Every new static needs a class choice (1C), which the lint enforces.
+- The series has 10 PRs (1a, 1b, 2, 3, 4, 5, 6a, 6b, 7, then 8). Eight of them need a host-exclusive soak of 75–100 minutes, about 12–14 hours in total. On top of that come the overnight absolute soak in step 7, any reruns required by the load rule, and the re-baselines. No builds can run on the Mac during a soak.
 
 ### Docs to update
 
 | Document | Change | Step |
 | --- | --- | --- |
-| `CLAUDE.md` Key Technical Facts | `:9-10` ABI and target, and `:58-59` FPU enable (2A: "FPEN=0b00 at EL1; the kernel emits no FP"). Add a preemption/IRQ block: the 272-byte IRQ frame, the single preemption point at `irq_exit`, the lock classes and the IRQ-shared set with its order, `on_cpu`/`finish_switch`, and when the reschedule flag is set. `:98-102`: lock order to include `THREAD_TABLE`, `RUN_QUEUES`, `CURRENT_THREAD`, `TIMEOUT_QUEUE`, `REPLY_SLOTS` and `WAKEUP_ERRORS` with their class. `:152`: toolchain targets | 2, 3, 7 |
-| `.claude/rules/01-code-conventions.md` | `:11` panic handler masks IRQs first; `:16` FPU rule and `:32` boot order starting with "FPU enable" (2A); add the lock-class rule and "no unconditional `DAIFClr`" | 1b, 2, 7 |
-| `.claude/rules/02-quality-gates.md:7`, `.claude/skills/verify-phase/SKILL.md:31`, `.claude/agents/code-reviewer.md:15`, `.claude/agents/kernel-dev.md:24`, `.claude/hooks/setup-dev-env.sh:131-133`, `README.md:79`, `:109` | Target string (2A) | 7 |
-| `docs/phases/00-foundation-and-tooling.md:63` | Record that 2A reverses this decision, with the EL0-before-Phase-11 dependency | 7 |
-| `docs/kernel/scheduler.md` | §3.3 reschedule-flag semantics (340-343); §4.1 saved state and FP policy (472); §4.2 direct switch (584: CPACR trap becomes the `on_cpu` check); §4.3 latency budget; §6.4 the CPACR sentence at 1095; §10.2 (1922); §10.3 lock classes | 3, 6a, 7, 9 |
+| `CLAUDE.md` Key Technical Facts | Add a preemption/IRQ block: the IRQ frame (272 bytes from step 3, 800 from step 4: the `TrapFrame` plus the 528-byte FP/SIMD area), the single preemption point at `irq_exit`, the lock classes and the IRQ-shared set with its order, `on_cpu`/`finish_switch`, and when the reschedule flag is set. Add the FP fact: every EL1 IRQ entry and every thread switch saves the full FP/SIMD state (528 B). `:98-102`: lock order to include `THREAD_TABLE`, `RUN_QUEUES`, `CURRENT_THREAD`, `TIMEOUT_QUEUE`, `REPLY_SLOTS` and `WAKEUP_ERRORS` with their class. The hard-float ABI and target (`:9-10`) and the FPU enable sequence (`:58-59`) stay as they are | 2, 3, 4 |
+| `.claude/rules/01-code-conventions.md` | `:11` panic handler masks IRQs first; add the lock-class rule and "no unconditional `DAIFClr`" | 1b, 2 |
+| `docs/kernel/scheduler.md` | §3.3 reschedule-flag semantics (340-343); §4.1 saved state (ELR and SPSR); §4.2 direct switch: add the `on_cpu` check; §10.2 (1922); §10.3 lock classes | 3, 6a, 8 |
+| `docs/kernel/scheduler.md`, FP text | The lazy FP save through a CPACR_EL1 trap is now wrong: the eager 528-byte save at EL1 IRQ entry and at every thread switch replaces it. Rewrite §4.1's "LAZY SAVE" diagram, its totals and the "Lazy FP save" paragraph (454, 467, 472), and the `FpContext` and `fp_context` comments (494, 511-512). Rewrite the lazy-FP CPACR trap in §4.2's direct switch (582-584). In §4.3's budget, the "with FP save/restore" line becomes the normal case. Also rewrite §6.4's CPACR sentence (1095) and "Lazy FP save/restore" in §14 (2407) | 4 |
 | `docs/kernel/deadlock-prevention.md` | Rebuild the §3.3 table: `RUN_QUEUES` and `NOTIFY_DEADLINES` are not leaves; place `THREAD_TABLE`, `CURRENT_THREAD` and `WAKEUP_ERRORS`; add the M25 locks, a class column and the IRQ-class order. §9.2; §12 rule 10 becomes the class rule; rule 8 lists `VIRTIO_GPU` as a known violation | 2 |
-| `docs/project/developer-guide.md` | `:2054` "`try_lock()` in IRQ context, never blocking lock" is reversed; `:1894` FP note (2A) | 2, 7 |
+| `docs/project/developer-guide.md` | `:2054` "`try_lock()` in IRQ context, never blocking lock" is reversed | 2 |
 | `docs/kernel/hal.md` §8.3 | Reschedule flag set on slice expiry; `irq_exit` | 3 |
 | `docs/project/ai-agent-context.md:170-184` | Replace the unconditional-unmask pattern | 2 |
-| `docs/kernel/boot/kernel.md:95` | FP note (2A) | 7 |
-| `docs/phases/03-ipc-and-capability-system.md` 123, 133, 166, 212, 377 | Un-tick or annotate the items that are not implemented, and point to this ADR | 8 |
-| `docs/kernel/memory.md:103`, `docs/kernel/memory/hardening.md` §11.4 | NEON memops become asm regions (2A) | 7 |
-| `docs/project/development-plan.md:181`, `:217-247`, `:507` | Gate 1 re-measured; the departure recorded | 8 |
+| `docs/phases/03-ipc-and-capability-system.md` 123, 133, 166, 212, 377 | Un-tick or annotate the items that are not implemented, and point to this ADR. The lazy-FP items (166, 212, 377) point to step 4's eager save | 7 |
+| `docs/project/development-plan.md:181`, `:217-247`, `:507` | Gate 1 re-measured; the departure recorded | 7 |
+
+Under 2B these stay as they are: `CLAUDE.md:9-10`, `:58-59` and `:152`; rule 01 `:16` and `:32`; `docs/phases/00-foundation-and-tooling.md:63`; `docs/project/developer-guide.md:1894`; `docs/kernel/boot/kernel.md:95`; `docs/kernel/memory.md:103`; `docs/kernel/memory/hardening.md` §11.4; and the target strings in rule 02, the verify-phase skill, the agent files, `setup-dev-env.sh` and `README.md`. The draft changed them only for softfloat (2A).
 
 ### PR #149 (M26)
 
@@ -560,9 +574,9 @@ Issue #165 gates this PR on the crash fix. Its state on 2026-09-22: open, mergea
 
 - **Open owner decision.** #165's soak threshold is still unanswered: A, all CLEAN in 10 text + 10 gpu boots, or B, 20 + 20. All CLEAN in 10 boots bounds the failure rate only at 25.9% per mode, and 20 boots at 13.9%. This ADR suggests B, run interleaved against `main` with the same protocol.
 - **Work still listed in #165:** rebase onto `main`; fix the clippy `needless_range_loop` at `kernel/src/compositor/shell/workspace.rs:557`; the doc fixes.
-- **Expected conflicts.** #149 touches `CLAUDE.md`, `docs/project/developer-guide.md`, `kernel/src/main.rs` and `kernel/src/compositor/service.rs`. Steps 2 (`compositor/service.rs:187-188`, `developer-guide.md:2054`), 5 (`main.rs`) and 8 (`CLAUDE.md`) edit the same files, so the merge after step 8 will conflict.
-- **New statics.** The shell locks (`STATUS_STRIP`, `TASKBAR`, `WORKSPACE`, per the PR description) must take the new lock type. Step 2's lint makes an unclassed static fail after the merge. Under 1C they are `SpinLock`, never taken from IRQ context. Add them to `deadlock-prevention.md` §3.3 and to the `CLAUDE.md` lock order.
-- After step 8 is on `main`, merge `main` into `claude/phase-7-m26-desktop-shell` and soak at the chosen threshold.
+- **Expected conflicts.** #149 touches `CLAUDE.md`, `docs/project/developer-guide.md`, `kernel/src/main.rs` and `kernel/src/compositor/service.rs`. Steps 2 (`compositor/service.rs:187-188`, `developer-guide.md:2054`), 5 (`main.rs`) and 7 (`CLAUDE.md`) edit the same files, so the merge after step 7 will conflict.
+- **New statics.** The shell locks (`STATUS_STRIP`, `TASKBAR`, `WORKSPACE`, per the PR description) must take the new lock type. Step 2's lint makes an unclassed static fail after the merge. Under 1C, as decided, they are `SpinLock`, never taken from IRQ context. Add them to `deadlock-prevention.md` §3.3 and to the `CLAUDE.md` lock order.
+- After step 7 is on `main`, merge `main` into `claude/phase-7-m26-desktop-shell` and soak at the chosen threshold.
 - Then re-run the present-on experiment (`COMPOSITOR_PRESENT_ENABLED`, see [the M24 present-gate ADR](2026-05-07-cl-phase-07-m24-compositor-present-gate.md)) as a separate soak. The low-VA data aborts that the M24 ADR left unexplained plausibly come from the same corruption; run 167's `FAR=0xa` write fits that pattern. The M24 workarounds (the torn-read bounds check and the `virtio_input` modulo guard) stay as defensive checks, each with a counter.
 
 ### Other PRs (#161, #169, #170)
@@ -575,16 +589,20 @@ Issue #165 gates this PR on the crash fix. Its state on 2026-09-22: open, mergea
 
 ## Decision
 
-**Pending owner decision (issue #164).**
+**Decided by the owner on 2026-09-22 (issue #164): 1C and 2B.**
 
-| Choice | Options | Recommendation |
-| --- | --- | --- |
-| Decision 1: lock discipline | A: IRQ-off spinlocks everywhere · B: preempt count, IRQ-off only for the IRQ-shared set · C: Linux-style, class in the type | **C.** Step 2 is the same under all three. The rest is step 9, after the crash-fix gate and outside PR #149's gate, unless the escalation rule moves it |
-| Decision 2: FP/NEON policy | A: softfloat kernel, EL0 FP later · B: hard-float, eager full save · C: hard-float with `kernel_neon_begin/end` (not viable on this target) | **A**, with B's saves as an interim in step 4. It reverses the Phase 0 target decision and needs EL0 before Phase 11 |
+| Choice | Decided | Rejected | This ADR's recommendation |
+| --- | --- | --- | --- |
+| Decision 1: lock discipline | **C: Linux-style, class in the type.** `IrqSpinLock` (IRQs and preemption off) for the 9 IRQ-shared statics, `SpinLock` (preempt count) for the other 30, and a validator that checks the split. Step 2 delivers the IRQ class. Step 8 delivers the rest, after the crash-fix gate and outside PR #149's gate, unless the escalation rule moves it | A: IRQ-off spinlocks everywhere · B: preempt count, IRQ-off only for the IRQ-shared set | C: taken |
+| Decision 2: FP/NEON policy | **B: hard-float kernel, eager full save.** The full FP/SIMD state (q0–q31, FPCR, FPSR; 528 B) is saved and restored at every EL1 IRQ entry and exit and at every thread switch, future EL0 threads included. Delivered by step 4 | A: softfloat kernel, EL0 FP later · C: hard-float with `kernel_neon_begin/end` (not viable on this target) | A, with B's saves as an interim: not taken |
 
-Also for the owner: #165's soak threshold (A or B), the rule-04 freeze for the duration of the series, and the Gate 1 departure.
+The analysis of every option, the rejected ones included, stays under "Decision 1" and "Decision 2" above.
 
-The fixed foundation (F1–F8) and the delivery order do not depend on either choice, except for the contents of steps 7 and 9. Record the picks on #164 (for example "1C, 2A"), and this ADR moves to `status: final`.
+**Why 2B is acceptable.** It keeps the Phase 0 target decision (`docs/phases/00-foundation-and-tooling.md:63`), the hard-float ABI and the `CLAUDE.md` FPU-enable fact, and it adds no toolchain or target change. The price is the 528-byte save on every IRQ and every thread switch, two switches per IPC round trip, with a counter as the only tripwire. **Revisit** if the Gate 1 IPC latency budget (under 10 µs, `bench.rs`) regresses beyond its threshold in the soak's bench output. Step 4's acceptance checks this first, and 2A is the alternative on record.
+
+**Still open for the owner:** #165's soak threshold (A or B), the rule-04 freeze for the duration of the series, and the Gate 1 departure.
+
+The fixed foundation (F1–F8) and the delivery order did not depend on either choice. The choices set the contents of step 4 (2B) and step 8 (1C).
 
 -----
 
@@ -593,7 +611,8 @@ The fixed foundation (F1–F8) and the delivery order do not depend on either ch
 - Every mechanism above comes from reading the code. None has been confirmed at runtime; step 1b exists to do that.
 - The fatal-report lines come from `target/soak/167`. The baseline run's logs (ELF 59e095c0) are no longer on disk. The ELR values in the reports have not been resolved to symbols, because that needs the matching ELF, and no tool was run on the ELFs.
 - The FP disassembly was done by a research pass on an older debug ELF and toolchain. Whether the zero-fill at `timeout.rs:89` and the `GpuBufferHandle` copies use V registers on nightly-2026-09-22 is unconfirmed, pending step 1b's listing.
-- Two claims about softfloat are inferred and need a build to confirm: that the crypto crates' hardware paths fail to build without the `*_backend="soft"` cfgs, and that the rustc target features behave as described.
+- Two claims about softfloat are inferred and need a build to confirm: that the crypto crates' hardware paths fail to build without the `*_backend="soft"` cfgs, and that the rustc target features behave as described. They bear only on the rejected option 2A.
+- The cost of 2B's 528-byte saves on AIOS is unmeasured. The seL4 figure is from another kernel and core, and step 4's Gate 1 comparison is the first measurement.
 - The heartbeat-alive WEDGE has five candidate mechanisms. Step 1b's counters are needed to pick between them.
 - That ubuntu-26.04's `timeout` is the Rust coreutils is inferred from the error message, not checked.
 - Prior-art citations (Linux, seL4, Zircon, Redox, Theseus, Asterinas) come from the research pass and were not re-read for this ADR.
@@ -603,7 +622,18 @@ The fixed foundation (F1–F8) and the delivery order do not depend on either ch
 
 ## Review notes
 
-This revision addresses two reviews (fable, 15 points; opus, 16 points). Each point was checked against the code at f0b4169, the `target/soak/167` logs and the GitHub state on 2026-09-22. Most were applied as proposed. These were rejected or changed:
+**Owner decision, 2026-09-22 (#164).**
+
+- The owner chose 1C, as this ADR recommended. The owner chose 2B, a hard-float kernel with eager full save, not the recommended 2A.
+- The owner's 2B saves the full 528 bytes at every thread switch as well as at every EL1 IRQ entry. The draft's B saved only d8–d15 and FPCR, about 72 B, at the switch.
+- What this revision changes:
+  - It records both decisions.
+  - Step 4 becomes the permanent FP step, with both save points, 16-byte alignment and a Gate 1 latency check.
+  - The softfloat step (the old step 7) is removed. The final gate is renumbered to step 7 and the lock classes to step 8.
+  - The doc changes that only softfloat needed are dropped.
+  - The ADR moves to `final`.
+
+**Earlier revision.** It addressed two reviews (fable, 15 points; opus, 16 points). Each point was checked against the code at f0b4169, the `target/soak/167` logs and the GitHub state on 2026-09-22. Most were applied as proposed. These were rejected or changed:
 
 - **fable, H5 re-rank: the PANIC fits H5 "at least as well as H1".** H5 is re-ranked as a live candidate, as asked. The claim itself is not adopted. The eight `frame.rs:51` reports on disk show a whole `GpuBufferHandle` wrong, with non-zero, pointer-like values. That fits a wrong frame at least as naturally as a torn copy. Step 3 against step 4 decides.
 - **fable, H5: cite the objdump before keeping the verdict.** Not done. This revision was limited to read-only investigation while a soak ran on the host. Instead, no verdict relies on the missing objdump, and the listing is step 1b's job.
@@ -612,8 +642,8 @@ This revision addresses two reviews (fable, 15 points; opus, 16 points). Each po
 - **fable, F7: set TCR_EL1.EPD0=1.** Rejected in favour of the other option in the same point, an all-invalid TTBR0 table, because `CLAUDE.md:72` forbids changing TCR with the MMU on.
 - **fable, fatal reports: "no non-PCZERO EXCEPTION or PANIC report was findable".** Outdated. The soak was still running when that review was written. Run 167 now holds 9 PANIC and 4 non-PCZERO EXCEPTION reports, and they are cited above. The resulting N5 verdict is "possible; not observed".
 - **fable, the H3 window "open from the first tick".** Adopted for gpu mode only. The GPU service, compositor and input threads exist only in gpu mode (`main.rs:303-341`), and all 9 text-mode heartbeat-stuck boots in run 167 stopped after the bench header.
-- **fable, reorder so step 4a comes first, and opus, move 4b off the critical path.** These two points ask for different orders. Both are adopted: step 2 (old 4a) comes first, and step 9 (old 4b) follows the gate. **opus's reason** is only partly adopted: "lock-holder preemption on those 30 cannot deadlock" holds for IRQ context. It is qualified, because strict class priority can starve a preempted lower-class holder (N10). Hence the escalation rule.
-- **opus, rules for every step: "the 4a check can never fire if the lock masks IRQs itself", and fable, "keep the validator in release".** Both adopted, and reconciled: `IrqSpinLock` masks IRQs itself, and the checks that remain (held rank, and from step 9 the class checks) stay on in release.
+- **fable, reorder so step 4a comes first, and opus, move 4b off the critical path.** These two points ask for different orders. Both are adopted: step 2 (old 4a) comes first, and step 8 (old 4b) follows the gate. **opus's reason** is only partly adopted: "lock-holder preemption on those 30 cannot deadlock" holds for IRQ context. It is qualified, because strict class priority can starve a preempted lower-class holder (N10). Hence the escalation rule.
+- **opus, rules for every step: "the 4a check can never fire if the lock masks IRQs itself", and fable, "keep the validator in release".** Both adopted, and reconciled: `IrqSpinLock` masks IRQs itself, and the checks that remain (held rank, and from step 8 the class checks) stay on in release.
 - **opus, CI soak: "its check is therefore always green".** Partly wrong. The check is green whenever the harness runs, but setup failures make it red, as on #169. The rest is adopted.
 - **opus, fixed instrument: `CLAUDE.md:13` and `justfile:7`.** The lines are `CLAUDE.md:15` and `justfile:8`; the substance is adopted.
 - **opus, other PRs: rebase `claude/crash-fix-adr` onto dd05a1e.** Done as a fast-forward, which by then also brought in e98e1ad (#161), a toolchain-only commit.
