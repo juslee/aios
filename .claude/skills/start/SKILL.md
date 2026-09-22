@@ -113,7 +113,7 @@ Checkpoint the session so the user can `/clear` (context limit) or stop (usage l
      git push -u origin "$branch"
      ```
 
-     Never pass `--force`, `--force-with-lease`, `--no-verify`, or a refspec that targets another branch. If the push is rejected, leave the commit local and report "pushed: no (rejected)"; do not pull, rebase or retry.
+     Always name the branch in the push: a worktree created from `origin/main` tracks `origin/main`, so a bare `git push` could target `main`. Never pass `--force`, `--force-with-lease`, `--no-verify`, or a refspec that targets another branch. If the push is rejected, leave the commit local and report "pushed: no (rejected)"; do not pull, rebase or retry.
 
 3. **Checkpoint line.** Print one line, then the resume hint, and nothing else:
 

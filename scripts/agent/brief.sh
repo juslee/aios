@@ -8,7 +8,8 @@
 # phase doc, and a one-line docs-check summary.
 #
 # Every section degrades to a one-line notice when git, gh, jq, python3 or the
-# network is unavailable. Read-only apart from `git fetch` and a timestamp
+# network is unavailable. Text from GitHub (titles, branch names) is printed as
+# data with control characters replaced; it is never executed. Read-only apart from `git fetch` and a timestamp
 # marker in the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
 #
 # Usage: scripts/agent/brief.sh [--no-fetch]
@@ -150,6 +151,7 @@ if [ "$GH_OK" = 1 ]; then
         --json number,title,headRefName,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,author \
         >"$TMP/prs.json" 2>"$TMP/prs.err"; then
         jq -r '
+          def clean: tostring | gsub("[[:cntrl:]]"; "?");
           if length == 0 then "- none" else .[] |
             ([.statusCheckRollup[]? | {name: (.name // .context // "?"),
                s: ((.conclusion // .state // .status // "") | ascii_upcase)}]) as $c
@@ -157,9 +159,9 @@ if [ "$GH_OK" = 1 ]; then
             | ($c | map(select(.s == "FAILURE" or .s == "ERROR" or .s == "CANCELLED" or .s == "TIMED_OUT"
                                or .s == "ACTION_REQUIRED" or .s == "STARTUP_FAILURE"))) as $failed
             | (($c | length) - $pass - ($failed | length)) as $pend
-            | "- #\(.number) \(.title) [`\(.headRefName)`, \(.author.login // "?")]\(if .isDraft then " (draft)" else "" end)\n"
+            | "- #\(.number) \(.title | clean) [`\(.headRefName | clean)`, \(.author.login // "?" | clean)]\(if .isDraft then " (draft)" else "" end)\n"
               + "  checks: \($pass) pass, \($failed | length) fail, \($pend) pending"
-              + (if ($failed | length) > 0 then " (failing: \($failed | map(.name) | unique | join(", ")))" else "" end)
+              + (if ($failed | length) > 0 then " (failing: \($failed | map(.name | clean) | unique | join(", ")))" else "" end)
               + "; mergeable: \(.mergeable) / \(.mergeStateStatus); review: \(.reviewDecision // "" | if . == "" then "none" else . end)"
           end' "$TMP/prs.json"
     else
@@ -286,9 +288,10 @@ if [ "$GH_OK" = 1 ]; then
         >"$TMP/issues.json" 2>"$TMP/issues.err"; then
         jq -r '
           def has($l): any(.labels[]?; .name == $l);
+          def clean: tostring | gsub("[[:cntrl:]]"; "?");
           (map(select(has("needs-human")))) as $h
           | (if ($h | length) == 0 then "- none" else
-              ($h | sort_by(.number) | .[] | "- #\(.number) \(.title) (updated \(.updatedAt[0:10]))") end),
+              ($h | sort_by(.number) | .[] | "- #\(.number) \(.title | clean) (updated \(.updatedAt[0:10]))") end),
             "- queue: \(map(select(has("agent-ready"))) | length) agent-ready, \(map(select(has("agent-working"))) | length) agent-working"
         ' "$TMP/issues.json"
     else

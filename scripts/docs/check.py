@@ -137,12 +137,13 @@ class Skip(Exception):
 # Markdown helpers
 # ---------------------------------------------------------------------------
 
-FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# Any indentation: fences nested in list items are indented past column 3.
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 INLINE_LINK_RE = re.compile(
     r"(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)"
 )
-REF_DEF_RE = re.compile(r"^ {0,3}\[([^\]]+)\]:\s*(\S+)")
+REF_DEF_RE = re.compile(r"^ {0,3}\[([^\]^][^\]]*)\]:\s*(\S+)")  # not footnotes ([^1]: ...)
 WIKI_RE = re.compile(r"(!?)\[\[([^\]|#]*)(?:#([^\]|]*))?(?:\|[^\]]*)?\]\]")
 SECTION_REF_RE = re.compile(
     r"\[[^\]]*\]\(([^)\s]+\.md)(#[^)]*)?\)\s*\**\s*§\s*([A-Z]?\d+(?:\.\d+)*)"
@@ -515,8 +516,14 @@ def check_md_links(repo: Repo) -> list[Finding]:
     return out
 
 
+_SLUG_CACHE: dict[str, set[str]] = {}
+
+
 def slug_set(repo: Repo, rel: str) -> set[str]:
+    if rel in _SLUG_CACHE:
+        return _SLUG_CACHE[rel]
     slugs: set[str] = set()
+    _SLUG_CACHE[rel] = slugs
     counts: dict[str, int] = {}
     for _, _, text in repo.headings(rel):
         s = gh_slug(text)
@@ -743,8 +750,8 @@ def code_mutex_statics(repo: Repo) -> dict[str, tuple[str, int]]:
         for i, line in enumerate(lines):
             if line.strip() == "#[cfg(test)]":
                 nxt = next((ln for ln in lines[i + 1:] if ln.strip()), "")
-                if re.match(r"\s*(?:pub\s+)?mod\s", nxt):
-                    break  # remainder of the file is the test module
+                if re.match(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{", nxt):
+                    break  # an inline test module runs to the end of the file by convention
             m = STATIC_RE.match(line)
             if m and re.search(r"\bMutex\s*<", m.group(2)) and m.group(1) not in TEST_LOCKS:
                 statics.setdefault(m.group(1), (f, i + 1))
