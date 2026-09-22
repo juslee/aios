@@ -82,3 +82,48 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
       - run: just miri
+
+  qemu-soak:
+    name: QEMU boot soak (report-only)
+    runs-on: ubuntu-latest
+    # Measures boot flakiness for the crash investigation (see `just soak`).
+    # Report-only: crashes show up in the summary and artifacts, never block CI.
+    continue-on-error: true
+    timeout-minutes: 30
+    env:
+      AIOS_EDK2_FW: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+      SOAK_OUT: target/soak/ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      - name: Install QEMU, edk2 firmware and mtools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 mtools
+          qemu-system-aarch64 --version
+          dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
+          test -f "$AIOS_EDK2_FW"
+      # TCG on x86 is slower than on the arm64 dev hosts, hence 90 s per boot.
+      - name: Soak (5 boots x 90 s)
+        run: just soak runs=5 secs=90 report_only=1 out="$SOAK_OUT"
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "$SOAK_OUT/summary.md" ]; then
+            cat "$SOAK_OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "QEMU soak produced no summary; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload soak logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qemu-soak-logs
+          path: ${{ env.SOAK_OUT }}
+          if-no-files-found: warn
