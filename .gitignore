@@ -32,3 +32,6 @@ docs/.obsidian/
 # Claude Code worktrees and agent memory
 .claude/worktrees/**/*
 .claude/agent-memory/**/*
+
+# Python bytecode from the Claude Code hook tests
+__pycache__/
