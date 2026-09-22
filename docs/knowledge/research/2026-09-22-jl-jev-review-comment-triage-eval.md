@@ -91,7 +91,7 @@ AUC on the 151-item subset (51 no-change, 15 reviewer-wrong). The `needs_change`
 
 The narrow questions carry no signal. The likely reason is that a PR description seldom addresses the specific concern a reviewer later raises, and the counter-evidence sits in other files.
 
-Combining questions does no better than `needs_change` alone, and that holds on the full set too. Combining every Jev answer probability, `kind` and `category` included (22 features over all 783 labelled comments), reaches AUC 0.76 for wrong comments with item-level folds. With folds grouped by PR it falls to 0.47, against 0.70 for `needs_change` alone. The item-level gain came from comments in the same PR sharing features.
+Combining questions does no better than `needs_change` alone, and that holds on the full set too. Combining every Jev answer probability, `kind` and `category` included (22 features over all 783 labelled comments), reaches AUC 0.77 for wrong comments with item-level folds. With folds grouped by PR it falls to 0.47, against 0.70 for `needs_change` alone. The item-level gain came from comments in the same PR sharing features.
 
 ### Low Jev scores do not flag unnecessary fixes
 
