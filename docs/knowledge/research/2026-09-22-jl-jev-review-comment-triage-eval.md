@@ -17,7 +17,7 @@ Could TypeSafe's Jev model (a classifier that returns calibrated probabilities, 
 
 **Data.** Every Copilot review thread in juslee/aios up to 2026-09-22, fetched with the GitHub GraphQL `reviewThreads` API: 859 threads, 784 of them with an author reply. 79% are on markdown docs (675), 20% on Rust or assembly (170), and 14 on tooling. The 75 unreplied threads were left out.
 
-**Ground truth.** Claude agents read each author reply and labelled the outcome: `fixed`, `reviewer_wrong`, `by_design`, `deferred`, `already_fixed`, `answered` or `other`. They also recorded whether the PR changed in response (`changed_in_pr`) and whether the comment was right (`comment_valid`). An independent second labeller relabelled 139 items: all non-"Fixed in" replies plus a random 84. They agreed on 98.6% of outcomes (Cohen's κ 0.97) and on 100% of `changed_in_pr`. An adjudicator settled the 8 disagreements.
+**Ground truth.** Claude agents read each author reply and labelled the outcome: `fixed`, `reviewer_wrong`, `by_design`, `deferred`, `already_fixed`, `answered` or `other`. They also recorded whether the PR changed in response (`changed_in_pr`) and whether the comment was right (`comment_valid`). An independent second labeller relabelled 139 items: 55 of the 56 replies that don't open with a fix-style word ("Fixed", "Addressed", "Updated" and similar; one id was mistyped), plus a random 84 that do. They agreed on 98.6% of outcomes (Cohen's κ 0.97), 100% of `changed_in_pr` and 95.7% of `comment_valid`. An adjudicator settled the 8 disagreements: 2 on outcome and 6 on `comment_valid`.
 
 **What Jev saw.** The same inputs a triager has before acting: PR title, file path, the diff hunk the comment was made on (the last 80 lines; 426 of 859 hunks hit that cap), and the comment. The author's reply was never sent. The model was pinned to `jev-1.13.0`. Six questions went in one request:
 
@@ -34,8 +34,10 @@ Could TypeSafe's Jev model (a classifier that returns calibrated probabilities, 
 
 **Extra arms.** These ran on a 151-item subset: all 51 comments that led to no change, plus 100 random ones that did.
 
-- **File arm:** adds the whole file as it was at the commented commit.
-- **Policy arm:** adds the file and the PR description, which carries phase scope and deferrals, and splits `needs_change` into narrow questions: `claim_accurate`, `already_handled`, `intentional`, `out_of_scope`.
+- **File arm:** adds the file as it was at the commented commit, capped at 90,000 characters (20 of 151 files hit the cap).
+- **Policy arm:** adds the file (capped at 60,000 characters to leave room; 29 files hit the cap) and the PR description, which carries phase scope and deferrals. It also splits `needs_change` into narrow questions: `claim_accurate`, `already_handled`, `intentional`, `out_of_scope`.
+
+The subset holds 15 of the 16 reviewer-wrong comments. The sixteenth led to a change, so it was not in the no-change sample.
 
 **Checks.**
 
@@ -64,10 +66,10 @@ Of the 783 labelled comments that have answers from both models, 732 (93.5%) led
 
 | Measure | Jev | Sonnet |
 | --- | --- | --- |
-| `needs_change` AUC, all | 0.72 (95% CI 0.65–0.80) | 0.59 |
+| `needs_change` AUC, all | 0.72 (95% CI 0.65–0.80) | 0.58 |
 | `needs_change` AUC, compared within file kind | 0.66 | 0.66 |
 | Brier score (always guessing the base rate scores 0.061) | 0.060 | 0.127 |
-| Items with `needs_change` above 0.8 | 752 of 783 | 211 of 783 |
+| Items with `needs_change` at or above 0.8 | 752 of 783 | 211 of 783 |
 | Reviewer-wrong AUC, `1 − comment_correct` | 0.67 | 0.60 |
 | Reviewer-wrong AUC, `claim_support = contradicts` | 0.50 | 0.50 |
 
@@ -77,13 +79,13 @@ Of the 783 labelled comments that have answers from both models, 732 (93.5%) led
 
 ### More context does not help
 
-AUC on the 151-item subset, with 95% PR-bootstrap intervals:
+AUC on the 151-item subset (51 no-change, 15 reviewer-wrong). The `needs_change` rows show 95% PR-bootstrap intervals:
 
 | Arm | Predicts no change | Predicts reviewer wrong |
 | --- | --- | --- |
-| Hunk only, `needs_change` | 0.71 (0.63–0.80) | 0.65 |
-| + whole file, `needs_change` | 0.70 (0.61–0.78) | 0.63 |
-| + file and PR description, `needs_change` | 0.65 | 0.59 |
+| Hunk only, `needs_change` | 0.71 (0.63–0.80) | 0.65 (0.51–0.85) |
+| + file, `needs_change` | 0.70 (0.61–0.78) | 0.63 (0.48–0.75) |
+| + file and PR description, `needs_change` | 0.65 (0.57–0.74) | 0.59 (0.46–0.74) |
 | Narrow questions: `claim_accurate` / `already_handled` / `intentional` / `out_of_scope` | 0.58 / 0.46 / 0.47 / 0.54 | 0.58 / 0.50 / 0.53 / 0.43 |
 | Logistic combination of the arm's questions, 5-fold CV grouped by PR: hunk / file / policy | 0.70 / 0.66 / 0.56 | 0.53 / 0.40 / 0.43 |
 
@@ -116,7 +118,7 @@ Jev's lowest-scored comments are slightly less often fully correct. The differen
 | Run | Result |
 | --- | --- |
 | 859 hunk-only requests | 1.79M input tokens (2,087 mean), $0.075 in total; latency median 0.94 s, p95 3.84 s; no retries or failures |
-| 151 whole-file requests | 11,190 tokens mean (up to 29,141), $0.071; median 1.37 s |
+| 151 file-arm requests | 11,190 tokens mean (up to 29,141), $0.071; median 1.37 s |
 | Pricing (TypeSafe docs, 2026-09-22) | $0.042 per million input tokens; output tokens free; limit 1,200 requests per minute |
 
 Cost and latency are not the obstacle.
@@ -132,13 +134,13 @@ Cost and latency are not the obstacle.
 ## References
 
 - TypeSafe docs: [HTTP API](https://docs.typesafe.ai/api.md), [Models, pricing and limits](https://docs.typesafe.ai/models.md), [Noul](https://docs.typesafe.ai/primitives/noul.md), [Citation-check cookbook](https://docs.typesafe.ai/cookbooks/citation_check.md), [Jev with coding agents](https://docs.typesafe.ai/introduction/coding-agents.md)
-- [`/review-pr-comments` skill](../../../.claude/skills/review-pr-comments/SKILL.md): step 4 categorizes comments, and steps 5–6 fix or reply
+- [`/review-pr-comments` skill](../../../.claude/skills/review-pr-comments/SKILL.md): step 4 categorizes comments, and steps 5–6 fix or reply. The review-merge loop spec plans to replace this skill.
 - The review-merge loop spec, `docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md` on branch `claude/justin-review-merge-loop`: verify stage, finding categories, seeded-bug evals
 - [PR #172](https://github.com/juslee/aios/pull/172): re-enabled the TypeSafe plugin in project settings
 
 ## Implications for AIOS
 
 1. **Do not add Jev to `/review-pr-comments`.** The decision needs evidence from other files and phase plans, and the pass that makes the decision also makes the fix, so a filter saves nothing.
-2. **The review-merge loop's verify stage is the only place left to test.** Each finding there carries its own claim and evidence excerpt. That is the citation-check shape Jev is built for, and a pre-filter could skip Opus calls on findings Jev confirms with high confidence. Test it against the loop's seeded-bug and clean eval cases once they exist, and pin the model version the thresholds are tuned on.
+2. **The review-merge loop's verify stage is the only place left to test.** Each finding there carries its own claim and evidence excerpt, which is the citation-check shape Jev is built for. Verify is one `claude -p` run per round that tries to refute every finding. A Jev pre-check could shrink the set that run has to refute, or let a round skip verify when Jev confirms every finding with high confidence. Test it against the loop's seeded-bug and clean eval cases once they exist, and pin the model version the thresholds are tuned on.
 3. **Loop design: consider a severity floor for convergence.** The spec converges on zero confirmed findings of any severity. Given how many review comments are cosmetic, that rule may keep the loop cycling on nits.
-4. **Loop design: turn deferrals into issues.** Serious comments are the ones most often deferred, so the loop's "file an out-of-scope issue" step matters most for them.
+4. **Loop design: consider a deferral path.** In the spec, a confirmed in-scope finding is either fixed, or declined and then re-judged and tie-broken. Its issue filing covers only pre-existing problems on lines the PR does not touch. Here, though, serious in-scope concerns were the ones most often deferred to a later phase. A "defer to a tracked issue" outcome would let the loop do the same without going to needs-human.
