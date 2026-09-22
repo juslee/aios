@@ -72,7 +72,13 @@ cd "$MAIN_REPO"
 git worktree remove "$WORKTREE_PATH"
 ```
 
-If `git worktree remove` fails because of uncommitted changes, use `--force` only if the PR was already merged (the changes are safe in main).
+If `git worktree remove` fails because of uncommitted changes, do not reach for `--force` on your own. Uncommitted and untracked files were never part of the PR, so merging it did not save them, and `--force` deletes them. Show what would be lost:
+
+```bash
+git -C "$WORKTREE_PATH" status --porcelain
+```
+
+If the output is not empty, show it to the user and ask before running `git worktree remove --force "$WORKTREE_PATH"`. If they want to keep something, stop and let them move it first.
 
 ## Step 6: Switch to main and pull
 
