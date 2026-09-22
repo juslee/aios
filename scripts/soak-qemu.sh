@@ -41,7 +41,12 @@ save each boot's serial log, and classify every boot as exactly one of:
   EXCEPTION     any other exception report: "EXCEPTION[CPU n]:" (EL1),
                 "DATA ABORT (EL0)", "INST ABORT (EL0)", "UNKNOWN EXCEPTION
                 (EL0)", or an edk2-format "Synchronous Exception at 0x..."
-                report from the firmware or the UEFI stub
+                report from the firmware or the UEFI stub. A report whose
+                prefix was split by another CPU's output is still caught by
+                its register fields ("ESR=0x.. EC=0x.." or "EC=0x.. FAR=0x..
+                ELR=0x.." on EL1, "(EL0): FAR=0x" / "(EL0): EC=0x" on EL0),
+                or by a "Data/Instruction Abort at 0x" line with no report
+                in the 4 lines above it
   WEDGE         no fatal report, the boot is not healthy at the end of the run
                 (see CLEAN), and it had more than --stall-secs to get there:
                 the CPU 0 heartbeat never printed, stayed at tick 0, or stopped
@@ -161,9 +166,12 @@ function note(s) { notes = (notes == "") ? s : notes "; " s }
 function secs_of(k) { return (k in meta) ? meta[k] + 0 : -1 }
 # Seconds from footer time t to the planned end of the boot, never negative.
 function since(t) { return (t >= run_end) ? 0 : run_end - t }
+# An EL1/EL0 exception report line that shows a jump to PC 0.
+function pc0_of(s) { return s ~ /ELR=0x0000000000000000/ || s ~ /EC=0x0*2[01] FAR=0x0000000000000000/ }
 BEGIN {
     hb = 0; tick = -1; hb_nr = 0; boots = 0; bench_nr = 0; stub = 0
-    fatal = ""; first = ""; nfatal = 0; pend = 0; fatal_tick = -1; exwin = 0; edk2 = 0
+    fatal = ""; first = ""; nfatal = 0; pend = 0; fatal_tick = -1; edk2 = 0; cutpfx = 0
+    exwin = 0; exfirst = 0; head_nr = -100
     i1 = ""; i2 = ""; i3 = ""; notes = ""; have_meta = 0
     el1 = 0; boot = 0; g1pass = 0; g1done = 0; gpu = 0; input = 0; handoff = 0
     run_end = 0; limit = 0; adv = -1; kst = -1; hbf = -1; bst = -1
@@ -198,26 +206,61 @@ pend && !/^ *$/ { first = first " / " clip(trim($0), 160); pend = 0 }
     if (line ~ /InputReady/) input = 1
     if (line ~ /display handoff complete/) handoff = 1
 
-    kind = ""
+    # Fatal reports. The exception and panic handlers print without a lock,
+    # so output from another CPU can split a report line anywhere.
+    kind = ""; start = 1; head = 0; cont = 0
     if (match(line, /EXCEPTION\[CPU [0-9]+\]:|(DATA|INST) ABORT \(EL0\):|UNKNOWN EXCEPTION \(EL0\)/)) {
-        pc0 = line ~ /ELR=0x0000000000000000/ || line ~ /EC=0x0*2[01] FAR=0x0000000000000000/
-        kind = pc0 ? "PCZERO" : "EXCEPTION"
+        kind = pc0_of(line) ? "PCZERO" : "EXCEPTION"
+        start = RSTART
+        head = (line ~ /EXCEPTION\[CPU/)
     } else if (match(line, /(Synchronous|IRQ|FIQ|SError) Exception at 0x[0-9A-Fa-f]+/)) {
         kind = "EDK2"
+        start = RSTART
     } else if (match(line, /PANIC: /)) {
         kind = "PANIC"
+        start = RSTART
+    } else if (line ~ /ESR=0x[0-9a-f]+ EC=0x|EC=0x[0-9a-f]+ FAR=0x[0-9a-f]+ ELR=0x|\(EL0\): (FAR|EC)=0x/) {
+        # The register fields of an EL1 report ("ESR=.. EC=.. FAR=.. ELR=..",
+        # in that order) or an EL0 one, without the prefix: either the rest
+        # of a report whose prefix line was cut (see exwin below), or a
+        # report whose prefix itself was split by another CPU's output.
+        if (exwin > 0) cont = 1
+        else {
+            kind = pc0_of(line) ? "PCZERO" : "EXCEPTION"
+            head = (line !~ /\(EL0\)/)
+            cutpfx = cutpfx || (fatal == "")
+        }
+    } else if (line ~ /(Data|Instruction) Abort at 0x/) {
+        # sync_exception_handler's second line. It belongs to the EL1 report
+        # printed just above it; with no report within 4 lines, that report's
+        # first line was lost to interleaving, and this line stands for it.
+        if (exwin > 0 || NR - head_nr <= 4) cont = 1
+        else {
+            kind = (line ~ /Instruction Abort at 0x0000000000000000/) ? "PCZERO" : "EXCEPTION"
+            cutpfx = cutpfx || (fatal == "")
+        }
     }
     if (exwin > 0) {
-        # The first EL1 report was cut before its ELR by interleaved output:
-        # look for the ELR, or the "Instruction Abort at" line, just below it.
+        # An EL1 report was cut before its ELR by interleaved output: look for
+        # the ELR, or the "Instruction Abort at" line, just below it.
         exwin--
         if (kind == "" && (line ~ /ELR=0x0000000000000000/ || line ~ /Instruction Abort at 0x0000000000000000/)) {
-            fatal = "PCZERO"
-            first = first " / " clip(trim(line), 100)
+            if (exfirst) {
+                fatal = "PCZERO"
+                first = first " / " clip(trim(line), 100)
+            }
             exwin = 0
         } else if (kind == "" && line ~ /ELR=0x|Instruction Abort at|Data Abort at/) {
-            if (line ~ /ELR=0x/) first = first " / " clip(trim(line), 100)
+            if (exfirst && line ~ /ELR=0x/) first = first " / " clip(trim(line), 100)
             exwin = 0
+        }
+    }
+    if (head) {
+        head_nr = NR
+        # A window still open for the first report keeps priority.
+        if (line !~ /ELR=/ && !(exwin > 0 && exfirst)) {
+            exwin = 3
+            exfirst = (fatal == "")
         }
     }
     if (kind != "") {
@@ -225,12 +268,11 @@ pend && !/^ *$/ { first = first " / " clip(trim($0), 160); pend = 0 }
         if (fatal == "") {
             fatal = (kind == "EDK2") ? "EXCEPTION" : kind
             if (kind == "EDK2") edk2 = 1
-            first = clip(trim(substr(line, RSTART)), 200)
+            first = clip(trim(substr(line, start)), 200)
             fatal_tick = tick
             if (kind == "PANIC") pend = 1
-            if (kind == "EXCEPTION" && line ~ /EXCEPTION\[CPU/ && line !~ /ELR=/) exwin = 3
         }
-    } else if (fatal == "" && match(line, /\[ *[0-9]+\.[0-9]+\] \[[0-9]+\] INFO /)) {
+    } else if (!cont && fatal == "" && match(line, /\[ *[0-9]+\.[0-9]+\] \[[0-9]+\] INFO /)) {
         # Kernel INFO lines, frozen at the first fatal report.
         i1 = i2; i2 = i3; i3 = clip(trim(substr(line, RSTART)), 160)
     }
@@ -287,6 +329,7 @@ END {
         if (fatal != "") note("edk2-format report from the firmware")
     } else if (fatal != "") {
         class = fatal
+        if (cutpfx) note("report prefix split by other output")
         if (edk2) note("edk2-format report from the firmware or UEFI stub")
         note((fatal_tick < 0) ? "before the first heartbeat" : "after heartbeat tick " fatal_tick)
         if (nfatal > 1) note(nfatal " fatal reports")
