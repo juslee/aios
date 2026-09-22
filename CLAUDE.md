@@ -153,6 +153,7 @@ aios/
 ├── justfile              build / build-stub / disk / run* / check / test / clean
 ├── .claude/
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
+│   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact), tests/
 │   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
 │                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup
@@ -211,7 +212,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/verify-phase N` | After implementation | Runs all quality gates |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
-| `/merge-and-cleanup [PR]` | After PR approval | Squash merge, delete branch, remove worktree, update main |
+| `/merge-and-cleanup [PR]` | User only, after PR approval | Squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 

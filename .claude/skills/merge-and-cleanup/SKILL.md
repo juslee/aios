@@ -2,7 +2,8 @@
 name: merge-and-cleanup
 description: >
   Squash merge a PR, delete the remote and local branch, remove the worktree
-  (if working in one), and update main. Use after PR approval.
+  (if working in one), and update main. Run by the user after PR approval;
+  agents hand off instead of merging.
 disable-model-invocation: true
 ---
 
@@ -91,6 +92,8 @@ git branch -d <branch-name>
 ```
 
 If the branch doesn't exist (already cleaned up), ignore the error and continue.
+
+After a squash merge, `git branch -d` normally fails with "not fully merged", because the squash commit on main has a different SHA from the branch commits. In that case confirm the PR is merged (`gh pr view <number> --json state --jq .state` prints `MERGED`), then ask the user to confirm before running `git branch -D <branch-name>`. Never force-delete a branch whose PR is not merged.
 
 ## Step 8: Report
 

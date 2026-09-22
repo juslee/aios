@@ -2228,13 +2228,13 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | Skill | Trigger | Purpose |
 |---|---|---|
 | `/build-team` | Start of autonomous session | Bootstraps the "aios-dev" team, spawns team-lead who spawns specialists as needed |
-| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, follows phase doc steps including shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review + merge |
+| `/implement-phase N` | Phase implementation request | 6-phase workflow: research & plan → reconcile phase doc → implement (per-step commit+push, follows phase doc steps including shared migration) → verify & audit (dead code cleanup, `/verify-phase`, `/audit-loop`) → knowledge distillation → PR + review → hand-off (the user merges) |
 | `/generate-phase-doc N` | Phase doc generation request | Reads development-plan.md + architecture docs → generates `docs/phases/0N-name.md` with shared crate refactoring step per milestone → `/audit-loop` (auto docs-only mode) → PR |
 | `/verify-phase N` | After implementation | Runs all quality gates: compile, check (fmt+clippy), test, QEMU boot, objdump section verification |
 | `/audit-loop` | Before any PR | Auto-detects scope (docs-only or full), runs recursive two-level audit loop until clean (doc + code review + security/bug review) |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | After PR approval | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main |
+| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main. Other skills stop at a hand-off instead of merging |
 
 #### Skill usage examples
 
@@ -2339,7 +2339,8 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 
 Agent teams and skills are configured in:
 
-- **`.claude/settings.json`** — hooks (SessionStart, PostToolUse), permissions, environment variables
+- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables
+- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash: denies pushes that update or delete `main`, plain force pushes and mirror pushes; asks for deletes, non-`claude/*` lease pushes and workflow changes; tests in `tests/`, run with `python3 -m unittest discover -s .claude/hooks/tests`) and `precompact-save.sh` (flushes Remember memory before compaction). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills

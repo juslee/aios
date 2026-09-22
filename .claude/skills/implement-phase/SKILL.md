@@ -90,7 +90,7 @@ git worktree add .claude/worktrees/phase-$ARGUMENTS -b claude/phase-$ARGUMENTS-M
 cd .claude/worktrees/phase-$ARGUMENTS
 ```
 
-**IMPORTANT**: From this point forward, every file read/write, git command, build command, and test command MUST be executed inside the worktree directory. Do NOT operate in the main repo directory until `/merge-and-cleanup` at the end.
+**IMPORTANT**: From this point forward, every file read/write, git command, build command, and test command MUST be executed inside the worktree directory. Do NOT operate in the main repo directory; the user returns to it when they run `/merge-and-cleanup` after the hand-off at the end.
 
 ### Phase 3: Planning
 
@@ -125,7 +125,8 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
 9. Commit the plan as the **first commit** on the feature branch:
     - `git add docs/knowledge/plans/phase-$ARGUMENTS-*.md`
     - Commit: `Phase $ARGUMENTS: working plan`
-    - Push: `git push -u origin HEAD`
+    - Push the branch by its explicit name (never a bare `git push` or `HEAD`): `git push -u origin claude/phase-$ARGUMENTS-MK-<short-description>`
+    - Every later "commit and push" in this skill uses the same explicit form: `git push origin claude/phase-$ARGUMENTS-MK-<short-description>`
 10. Compare the plan against the current phase doc (`docs/phases/`):
     - If planning reveals changes needed: update the phase doc, commit and push
     - If no changes needed: note "Phase doc verified — no updates required" and proceed
@@ -169,7 +170,7 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
     - Delete the working plan doc (`git rm docs/knowledge/plans/phase-$ARGUMENTS-*.md`)
     - Commit and push: `Phase $ARGUMENTS: knowledge distillation`
 
-### Phase 7: PR, Review & Merge
+### Phase 7: PR, Review & Hand-off
 
 19. Create PR to main using `gh pr create` with this structure:
 
@@ -191,9 +192,10 @@ EOF
 )"
 ```
 
-⛔ **GATE: Do NOT skip steps 20-21. The phase is NOT complete until merge.**
+⛔ **GATE: Do NOT skip steps 20-21. Your part of the phase is NOT complete until the hand-off.**
 
 20. Run `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
-21. Run `/merge-and-cleanup`: squash merge the PR, delete remote/local branch, remove worktree, fast-forward main.
-    - `/merge-and-cleanup` auto-detects the worktree, removes it, and returns to the main repo
-    - The phase is complete only after this step succeeds
+21. Hand off and stop. Merging is user-only (`/merge-and-cleanup` has `disable-model-invocation: true`; see `.claude/rules/03-git-workflow.md`):
+    - Report the PR URL and the output of `gh pr checks <number>`
+    - Ask the user to run `/merge-and-cleanup` once they approve; it squash merges, deletes the branches, removes the worktree and fast-forwards main
+    - Do not merge, push to `main`, or repeat those steps another way
