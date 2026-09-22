@@ -1,0 +1,33 @@
+name: Docs
+
+# Deterministic docs drift check (scripts/docs/check.py, no LLM).
+# Report-only: new drift versus scripts/docs/baseline.json marks the job red
+# but never fails the workflow. The summary is written to the job summary page.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-check:
+    name: Docs drift (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # milestone-status reads main's first-parent history.
+          fetch-depth: 0
+      - uses: extractions/setup-just@v4
+      - name: Check docs drift against baseline
+        shell: bash
+        run: just docs-check --markdown | tee -a "$GITHUB_STEP_SUMMARY"
