@@ -454,7 +454,7 @@ pub fn revoke_in_process(
 
 - **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
 
-- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require the pid to have a PROCESS_TABLE slot (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints of every channel its threads own Dead (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but a kernel caller that passes its pid to `check_*` or `grant_to_process()` still succeeds.
+- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints of every channel its threads own Dead (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
 
 - **CapabilityTable is per-process, max 256** (shared/src/cap.rs): Each process has `[Option<CapabilityToken>; 256]`. Handle allocation is O(n) scan for `None` slot. Don't assume constant-time allocation.
 
