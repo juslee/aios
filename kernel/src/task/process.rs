@@ -69,7 +69,8 @@ pub fn process_slot_mut(
     }
 }
 
-/// Look up a live process in a locked `PROCESS_TABLE`, mutably.
+/// Look up the process in `pid`'s occupied slot of a locked `PROCESS_TABLE`,
+/// mutably. An exited process keeps its slot (`process_exit` never clears it).
 ///
 /// Returns `Err(EINVAL)` when `pid` is out of range (see `process_slot_mut`)
 /// and `Err(EPERM)` when the slot is empty, i.e. no such process.
@@ -79,7 +80,8 @@ pub fn process_mut(table: &mut ProcessTable, pid: ProcessId) -> Result<&mut Proc
         .ok_or(IpcError::Eperm as i64)
 }
 
-/// Look up a live process in a locked `PROCESS_TABLE`.
+/// Look up the process in `pid`'s occupied slot of a locked `PROCESS_TABLE`.
+/// An exited process keeps its slot (`process_exit` never clears it).
 ///
 /// Returns `Err(EINVAL)` when `pid` is `>= MAX_PROCESSES` and `Err(EPERM)`
 /// when the slot is empty, i.e. no such process.

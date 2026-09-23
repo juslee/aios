@@ -9,8 +9,7 @@ use crate::task::process::{process_mut, process_ref, ProcessId, MAX_PROCESSES, P
 use crate::task::ThreadId;
 use shared::{Capability, CapabilityHandle, CapabilityTokenId, SharedMemoryId};
 
-/// The test process: the ipc-timeout thread belongs to process 1.
-const TEST_PID: ProcessId = ProcessId(1);
+use super::TEST_PID;
 
 /// Out-of-range pid on the SharedMemoryShare path → EINVAL, not an
 /// index-out-of-bounds panic on PROCESS_TABLE (#177).
@@ -71,8 +70,10 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
     let einval = IpcError::Einval as i64;
     let at_max = share(MAX_PROCESSES as u64);
     let at_u32_max = share(u32::MAX as u64);
-    // Truncated to pid 0 before #178.
-    let past_u32 = share(1 << 32);
+    // Bit 32 set above the last slot. Before #178 this truncated to pid 31,
+    // which no process uses, so a regression shows as EPERM (not EINVAL)
+    // without granting anything to a live process.
+    let past_u32 = share((1 << 32) | (MAX_PROCESSES - 1) as u64);
     // The last valid pid reaches the table; no process uses that slot → EPERM.
     let last_slot = share((MAX_PROCESSES - 1) as u64);
     // A live in-range pid (the caller itself) → success.

@@ -1027,14 +1027,14 @@ ipc/
   mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs              # Direct switch fast path, priority inheritance, reply switch
+  direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (698)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (157)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (158)  # IpcSelect capability self-test
-  notify.rs              # Notification objects (signal/wait)
-  select.rs              # IPC select (multi-wait)
-  shmem.rs               # Shared memory regions
+    mod.rs        (702)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
+    select_cap.rs (163)  # IpcSelect capability self-test
+  notify.rs       (376)  # Notification objects (signal/wait)
+  select.rs       (359)  # IPC select (multi-wait)
+  shmem.rs        (651)  # Shared memory regions
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:

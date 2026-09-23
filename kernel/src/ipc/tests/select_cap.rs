@@ -7,6 +7,8 @@ use crate::syscall::IpcError;
 use crate::task::ThreadId;
 use shared::{Capability, ChannelId, RawMessage, SelectEntry, SelectKind, MAX_CHANNELS};
 
+use super::TEST_PID;
+
 /// Short timeout for every select below. A regression that lets a select
 /// block fails its check with ETIMEDOUT (or at worst stalls this thread
 /// before the success line prints).
@@ -33,10 +35,13 @@ const SELECT_TIMEOUT_TICKS: u64 = 10;
 /// The three EPERM cases each log one expected `denied ChannelAccess`
 /// warning from the capability check.
 pub(super) fn select_cap_test(my_tid: ThreadId) {
+    // `my_tid` comes from current_thread_id(), which can name another CPU's
+    // thread if this one migrates mid-read: grant nothing unless it resolves
+    // to the ipc-test process.
     let pid = match crate::cap::process_of_thread(my_tid) {
-        Some(p) => p,
-        None => {
-            crate::kwarn!(Ipc, "Select-cap test: no owning process");
+        Some(p) if p == TEST_PID => p,
+        other => {
+            crate::kwarn!(Ipc, "Select-cap test: wrong owner {:?}", other.map(|p| p.0));
             return;
         }
     };

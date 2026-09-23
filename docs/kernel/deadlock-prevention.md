@@ -97,7 +97,7 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 - `shmem.rs:9` — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
 - `shmem.rs:158-159` — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
 - `shmem.rs:438` — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
-- `process.rs:145` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
+- `process.rs:147` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
 - `timeout.rs:88` — *"avoid lock ordering issues (TIMEOUT_QUEUE → THREAD_TABLE)."*

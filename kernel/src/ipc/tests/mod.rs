@@ -26,6 +26,10 @@ static TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 /// Channel ID for priority inheritance test threads.
 static PI_TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 
+/// Process 1 ("ipc-test") owns the IPC server, caller and timeout threads.
+/// The self-tests that grant or revoke capabilities check they run in it.
+const TEST_PID: shared::ProcessId = shared::ProcessId(1);
+
 /// Initialize processes, grant capabilities, create IPC test threads.
 ///
 /// Called from main.rs after sched::init() but before enter_scheduler().
