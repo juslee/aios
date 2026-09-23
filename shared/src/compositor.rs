@@ -382,15 +382,42 @@ pub enum RouteTarget {
 /// Decide where an `InputEvent` should be delivered.
 ///
 /// Pure logic split out so it can be tested host-side without locking
-/// any compositor globals.
+/// any compositor globals. Pre-M26 callers can keep using this entry
+/// point — it dispatches to `route_event_with_shell` with a "no shells"
+/// predicate, preserving the original behaviour.
 pub fn route_event(
     event: &crate::input::InputEvent,
     keyboard_focus: Option<SurfaceId>,
     pointer_hit: Option<(SurfaceId, HitZone)>,
 ) -> RouteTarget {
+    route_event_with_shell(event, keyboard_focus, pointer_hit, |_| false)
+}
+
+/// Like `route_event`, but the caller supplies an `is_shell` predicate
+/// that identifies compositor-internal shell surfaces (Status Strip,
+/// Taskbar, Workspace).
+///
+/// M26 Step 27 invariant: shell surfaces never receive **keyboard**
+/// events. Even if the focus manager somehow points at a shell
+/// surface, this router collapses that to `RouteTarget::None`. Pointer
+/// events targeted at a shell surface are still returned as
+/// `RouteTarget::Surface(id)` — the kernel-side dispatcher branches on
+/// `is_shell` again to route those into the shell's own pointer
+/// handlers (Taskbar entries focus their corresponding window;
+/// Workspace button toggles visibility; Status Strip drops).
+pub fn route_event_with_shell<F>(
+    event: &crate::input::InputEvent,
+    keyboard_focus: Option<SurfaceId>,
+    pointer_hit: Option<(SurfaceId, HitZone)>,
+    is_shell: F,
+) -> RouteTarget
+where
+    F: Fn(SurfaceId) -> bool,
+{
     use crate::input::InputEvent;
     match event {
         InputEvent::Keyboard { .. } => match keyboard_focus {
+            Some(id) if is_shell(id) => RouteTarget::None,
             Some(id) => RouteTarget::Surface(id),
             None => RouteTarget::None,
         },
@@ -863,6 +890,19 @@ pub struct CompositorRequest {
     pub damage_w: u32,
     /// Damage rect height (AttachBuffer when damage_tag=2).
     pub damage_h: u32,
+    /// Explicit padding so `client_channel` lands at offset 120 (its
+    /// natural u64 alignment). Per M25's implicit-padding lesson, every
+    /// byte of a `repr(C)` IPC struct must be named so serializing it
+    /// to bytes never exposes uninitialized memory.
+    pub _pad_damage: [u8; 4],
+    /// M26 Step 28: per-client channel id. Set by `CreateSurface` to the
+    /// caller-owned `ChannelId.0` so the compositor delivers events
+    /// (Configure, Input, FocusChanged, BufferReleased, CloseRequested)
+    /// directly to the client's receive endpoint instead of the
+    /// well-known compositor channel. A value of `0` means "use the
+    /// service channel" — preserves backward-compat for shell-internal
+    /// surfaces that share the compositor's channel.
+    pub client_channel: u64,
 }
 
 impl CompositorRequest {
@@ -886,7 +926,80 @@ impl CompositorRequest {
             damage_y: 0,
             damage_w: 0,
             damage_h: 0,
+            _pad_damage: [0; 4],
+            client_channel: 0,
         }
+    }
+
+    /// Build a `CreateSurface` request.
+    ///
+    /// `client_channel` is the caller's per-client receive channel; the
+    /// compositor stores it on the new surface and delivers events
+    /// (Configure, Input, FocusChanged, …) to that channel. Pass `0` for
+    /// shell-internal callers (Status Strip, Taskbar, Workspace) where
+    /// the compositor is also the recipient — `0` is interpreted as
+    /// "use the service channel" to preserve M25's self-channel
+    /// suppression behaviour.
+    pub fn create_surface(
+        width: u32,
+        height: u32,
+        title: &[u8],
+        layer: SurfaceLayer,
+        content_type: SurfaceContentType,
+        client_channel: u64,
+    ) -> Self {
+        let mut r = Self::zeroed();
+        r.command = CompositorCommand::CreateSurface as u32;
+        r.width = width;
+        r.height = height;
+        r.layer = layer as u8;
+        r.content_type = content_type as u8;
+        let cut = title.len().min(SURFACE_TITLE_MAX);
+        r.title[..cut].copy_from_slice(&title[..cut]);
+        r.title_len = cut as u8;
+        r.client_channel = client_channel;
+        r
+    }
+
+    /// Build an `AttachBuffer` request.
+    pub fn attach_buffer(
+        surface_id: SurfaceId,
+        shmem_id: SharedMemoryId,
+        damage: DamageRegion,
+    ) -> Self {
+        let mut r = Self::zeroed();
+        r.command = CompositorCommand::AttachBuffer as u32;
+        r.surface_id = surface_id.0;
+        r.shmem_id = shmem_id.0;
+        match damage {
+            DamageRegion::Empty => {
+                r.damage_tag = 0;
+            }
+            DamageRegion::FullSurface => {
+                r.damage_tag = 1;
+            }
+            DamageRegion::Rect {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                r.damage_tag = 2;
+                r.damage_x = x;
+                r.damage_y = y;
+                r.damage_w = width;
+                r.damage_h = height;
+            }
+        }
+        r
+    }
+
+    /// Build a `DestroySurface` request.
+    pub fn destroy_surface(surface_id: SurfaceId) -> Self {
+        let mut r = Self::zeroed();
+        r.command = CompositorCommand::DestroySurface as u32;
+        r.surface_id = surface_id.0;
+        r
     }
 
     /// Decode the damage region carried by this request (only meaningful for AttachBuffer).
@@ -902,6 +1015,23 @@ impl CompositorRequest {
             },
             _ => DamageRegion::Empty,
         }
+    }
+}
+
+/// Resolve the per-surface channel id from a `CompositorRequest`.
+///
+/// When `req.client_channel == 0` the request was built by a
+/// shell-internal caller; the compositor stores the well-known service
+/// channel on the surface, preserving M25's `is_self_channel`-suppression
+/// behaviour. Otherwise the explicit per-client channel is used.
+///
+/// Pure function so the kernel-side IPC dispatcher and the host test
+/// suite share the same logic.
+pub const fn effective_channel(client_channel: u64, service_channel: ChannelId) -> ChannelId {
+    if client_channel == 0 {
+        service_channel
+    } else {
+        ChannelId(client_channel as u32)
     }
 }
 
@@ -996,6 +1126,49 @@ impl InputEventBytes {
             y: 0,
             button_state: 0,
             _reserved: [0; 2],
+        }
+    }
+
+    /// Decode wire bytes back into an `InputEvent`.
+    ///
+    /// Returns `None` when the tag is unknown — the IPC framing
+    /// already validated the byte length, but the embedded discriminants
+    /// might still be garbage on a misframed message.
+    pub fn decode(&self) -> Option<InputEvent> {
+        use crate::input::{ButtonState, KeyState, Modifiers, MouseButton};
+        match self.tag {
+            1 => {
+                let key = crate::input::KeyCode::from_evdev(self.key_or_buttons as u16);
+                let state = KeyState::from_value(self.state_or_modifiers & 0xFF)?;
+                let modifiers = Modifiers((self.state_or_modifiers >> 8) as u8);
+                Some(InputEvent::Keyboard {
+                    key,
+                    state,
+                    modifiers,
+                })
+            }
+            2 => {
+                let button = match self.key_or_buttons {
+                    0 => None,
+                    1 => Some(MouseButton::Left),
+                    2 => Some(MouseButton::Right),
+                    3 => Some(MouseButton::Middle),
+                    _ => return None,
+                };
+                let bstate = match self.button_state {
+                    0 => None,
+                    1 => Some(ButtonState::Pressed),
+                    2 => Some(ButtonState::Released),
+                    _ => return None,
+                };
+                Some(InputEvent::Pointer {
+                    x: self.x,
+                    y: self.y,
+                    button,
+                    state: bstate,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -1120,6 +1293,610 @@ impl CompositorEvent {
 pub struct SurfaceOwner {
     pub pid: ProcessId,
     pub channel: ChannelId,
+}
+
+// ---------------------------------------------------------------------------
+// Shell text formatting helpers (M26 Step 24)
+// ---------------------------------------------------------------------------
+
+/// Format a millisecond-since-boot value as 5 ASCII bytes `HH:MM`.
+///
+/// Wraps modulo 24 hours, so any input maps onto a valid wall-clock-style
+/// `HH:MM` string. The output is exactly 5 bytes (`b'0'..=b'9'` plus a
+/// literal colon at index 2). Used by the Status Strip surface to display
+/// the current time without pulling in `core::fmt`.
+pub const fn format_hhmm(elapsed_ms: u64) -> [u8; 5] {
+    const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
+    let wrapped = elapsed_ms % MS_PER_DAY;
+    let total_minutes = wrapped / 60_000;
+    let hours = (total_minutes / 60) as u32;
+    let minutes = (total_minutes % 60) as u32;
+    let mut out = [b'0'; 5];
+    out[0] = b'0' + (hours / 10) as u8;
+    out[1] = b'0' + (hours % 10) as u8;
+    out[2] = b':';
+    out[3] = b'0' + (minutes / 10) as u8;
+    out[4] = b'0' + (minutes % 10) as u8;
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Bare-Super edge detector (M26 Step 26)
+// ---------------------------------------------------------------------------
+
+/// Persistent state for `super_edge_step`.
+///
+/// Two flags suffice to recognize the bare-Super tap-and-release pattern:
+///   * `prev_super_pressed` — `true` after a Super press, until release.
+///   * `super_used_in_combo` — set when a non-Super key is pressed while
+///     Super is held; cleared on the next Super press.
+///
+/// Pure data so the kernel can keep it in two `AtomicBool`s and the host
+/// test suite can keep it in plain locals — `super_edge_step` reads it
+/// by value and returns the next state along with any action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SuperEdgeState {
+    pub prev_super_pressed: bool,
+    pub super_used_in_combo: bool,
+}
+
+impl SuperEdgeState {
+    /// Initial state — Super not held, no combo recorded.
+    pub const fn new() -> Self {
+        Self {
+            prev_super_pressed: false,
+            super_used_in_combo: false,
+        }
+    }
+}
+
+impl Default for SuperEdgeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Action emitted by `super_edge_step` on the bare-Super release edge.
+///
+/// Matches `HotkeyAction::ShowWorkspace` in `kernel/src/compositor/hotkey.rs`
+/// in spirit; the shared crate doesn't depend on the hotkey enum, so we
+/// just return a unit-style marker that the kernel maps over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuperEdgeAction {
+    /// Bare-Super was tapped and released without any other key in between.
+    ShowWorkspace,
+}
+
+/// Inspect a single keyboard event and update the edge-detection state.
+///
+/// Returns `(next_state, action)` — the updated state to store back into
+/// the persistent statics and the action to apply (if any) on this
+/// event. Pointer events should never reach this helper; the kernel
+/// hotkey filter pre-filters by `InputEvent` variant.
+///
+/// Behavior table:
+///
+/// | Event                              | prev_pressed | combo  | Action          | Next prev | Next combo |
+/// |------------------------------------|--------------|--------|-----------------|-----------|------------|
+/// | Super press                        | (any)        | (any)  | None            | true      | false      |
+/// | Super release, prev=true, combo=f  | true         | false  | ShowWorkspace   | false     | false      |
+/// | Super release, prev=true, combo=t  | true         | true   | None            | false     | false      |
+/// | Super release, prev=false          | false        | (any)  | None            | false     | (cleared)  |
+/// | Other key press, Super held        | true         | (any)  | None            | true      | true       |
+/// | Other key press, Super not held    | false        | (any)  | None            | false     | (unchanged)|
+/// | Repeat / other release             | (any)        | (any)  | None            | (unchanged)| (unchanged)|
+pub fn super_edge_step(
+    state: SuperEdgeState,
+    is_super_key: bool,
+    is_press: bool,
+    is_release: bool,
+) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+    if is_super_key {
+        if is_press {
+            return (
+                SuperEdgeState {
+                    prev_super_pressed: true,
+                    super_used_in_combo: false,
+                },
+                None,
+            );
+        }
+        if is_release {
+            let action = if state.prev_super_pressed && !state.super_used_in_combo {
+                Some(SuperEdgeAction::ShowWorkspace)
+            } else {
+                None
+            };
+            return (
+                SuperEdgeState {
+                    prev_super_pressed: false,
+                    super_used_in_combo: false,
+                },
+                action,
+            );
+        }
+        // Repeat — leave state alone.
+        return (state, None);
+    }
+
+    // Non-Super key: a press while Super is held marks this as a combo.
+    if is_press && state.prev_super_pressed {
+        return (
+            SuperEdgeState {
+                prev_super_pressed: true,
+                super_used_in_combo: true,
+            },
+            None,
+        );
+    }
+    (state, None)
+}
+
+/// Format a millisecond-since-boot value as 8 ASCII bytes `HH:MM:SS`.
+///
+/// Wraps modulo 24 hours (same convention as `format_hhmm`). The output
+/// is exactly 8 bytes — six digits and two literal colons at indices 2
+/// and 5. Used by the Workspace surface to display uptime.
+pub const fn format_hhmmss(elapsed_ms: u64) -> [u8; 8] {
+    const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
+    let wrapped = elapsed_ms % MS_PER_DAY;
+    let total_seconds = wrapped / 1000;
+    let hours = (total_seconds / 3600) as u32;
+    let minutes = ((total_seconds % 3600) / 60) as u32;
+    let seconds = (total_seconds % 60) as u32;
+    let mut out = [b'0'; 8];
+    out[0] = b'0' + (hours / 10) as u8;
+    out[1] = b'0' + (hours % 10) as u8;
+    out[2] = b':';
+    out[3] = b'0' + (minutes / 10) as u8;
+    out[4] = b'0' + (minutes % 10) as u8;
+    out[5] = b':';
+    out[6] = b'0' + (seconds / 10) as u8;
+    out[7] = b'0' + (seconds % 10) as u8;
+    out
+}
+
+/// Format an integer percent value (0..=99) as 2 ASCII digit bytes.
+///
+/// Values at or above 100 saturate to `99` so the result is always exactly
+/// two digits. Used by the Status Strip for memory and CPU utilization
+/// readouts where the trailing `%` glyph is rendered separately.
+pub const fn format_percent_2digits(percent: u32) -> [u8; 2] {
+    let clamped = if percent > 99 { 99 } else { percent };
+    [b'0' + (clamped / 10) as u8, b'0' + (clamped % 10) as u8]
+}
+
+/// Format a small unsigned integer (0..=9999) as right-padded ASCII digits
+/// inside a fixed-width 4-byte buffer (left-aligned, space-padded).
+///
+/// Used by the Status Strip core count display and similar bounded counters
+/// where allocation-free integer formatting is required. Values above 9999
+/// saturate to `9999`.
+pub const fn format_u32_left4(value: u32) -> [u8; 4] {
+    let v = if value > 9999 { 9999 } else { value };
+    let mut out = [b' '; 4];
+    if v >= 1000 {
+        out[0] = b'0' + ((v / 1000) % 10) as u8;
+        out[1] = b'0' + ((v / 100) % 10) as u8;
+        out[2] = b'0' + ((v / 10) % 10) as u8;
+        out[3] = b'0' + (v % 10) as u8;
+    } else if v >= 100 {
+        out[0] = b'0' + ((v / 100) % 10) as u8;
+        out[1] = b'0' + ((v / 10) % 10) as u8;
+        out[2] = b'0' + (v % 10) as u8;
+    } else if v >= 10 {
+        out[0] = b'0' + ((v / 10) % 10) as u8;
+        out[1] = b'0' + (v % 10) as u8;
+    } else {
+        out[0] = b'0' + (v % 10) as u8;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Taskbar layout (M26 Step 25)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of taskbar entries laid out per frame. Layer 1 desktops
+/// rarely show more than ~4 windows; 8 leaves headroom while keeping the
+/// fixed-size array cheap to copy.
+pub const MAX_TASKBAR_ENTRIES: usize = 8;
+
+/// Width in pixels of the workspace button cell on the taskbar's left edge.
+pub const TASKBAR_WORKSPACE_BUTTON_WIDTH: u32 = 40;
+
+/// Default per-entry width before clipping. Each entry holds a truncated
+/// surface title. Wide enough for ~24 8px glyphs after edge padding.
+pub const TASKBAR_ENTRY_WIDTH: u32 = 200;
+
+/// Reserved horizontal space for the right-anchored "N windows" count
+/// readout. Wide enough for "8 windows" at the 8px cell width plus a small
+/// margin on each side.
+pub const TASKBAR_COUNT_RESERVED_WIDTH: u32 = 96;
+
+/// One laid-out cell on the taskbar. Coordinates are in surface-local
+/// pixels (origin at the taskbar's own top-left).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskbarCell {
+    /// Left edge of the cell in surface-local pixels.
+    pub x: i32,
+    /// Cell width in pixels.
+    pub width: u32,
+}
+
+/// Result of `compute_taskbar_layout` — fixed-capacity entry array plus
+/// auxiliary cells for the workspace button and surface-count readout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskbarLayout {
+    /// Cell occupied by the `[W]` workspace button.
+    pub workspace_button: TaskbarCell,
+    /// Per-entry cells. Only the first `visible_entries` slots are used.
+    pub entries: [TaskbarCell; MAX_TASKBAR_ENTRIES],
+    /// Number of `entries` slots that fit on this taskbar width.
+    pub visible_entries: usize,
+    /// Cell reserved for the right-anchored "N windows" count text.
+    pub count_cell: TaskbarCell,
+}
+
+/// Lay out the taskbar's interactive cells for a given display width and
+/// number of taskbar-eligible surfaces.
+///
+/// Pure function — no allocation, no dependence on kernel state — so it
+/// can be unit-tested host-side. Callers that have more surfaces than
+/// fit at the requested width receive a truncated layout (`visible_entries
+/// < entry_count`); the remainder of the array is zeroed.
+///
+/// Layout (left → right):
+///   * `workspace_button` at `x = 0`, fixed width
+///     `TASKBAR_WORKSPACE_BUTTON_WIDTH`.
+///   * Up to `MAX_TASKBAR_ENTRIES` entry cells starting at
+///     `TASKBAR_WORKSPACE_BUTTON_WIDTH`, each `TASKBAR_ENTRY_WIDTH` wide.
+///   * `count_cell` right-anchored at `display_width -
+///     TASKBAR_COUNT_RESERVED_WIDTH`, fixed width
+///     `TASKBAR_COUNT_RESERVED_WIDTH`.
+pub const fn compute_taskbar_layout(display_width: u32, entry_count: usize) -> TaskbarLayout {
+    let workspace_button = TaskbarCell {
+        x: 0,
+        width: TASKBAR_WORKSPACE_BUTTON_WIDTH,
+    };
+
+    // Right-anchored count cell: clamp at the workspace button's right edge
+    // if the display is impossibly narrow so we never produce a negative x.
+    let count_x = if display_width > TASKBAR_COUNT_RESERVED_WIDTH {
+        display_width - TASKBAR_COUNT_RESERVED_WIDTH
+    } else {
+        TASKBAR_WORKSPACE_BUTTON_WIDTH
+    };
+    let count_cell = TaskbarCell {
+        x: count_x as i32,
+        width: TASKBAR_COUNT_RESERVED_WIDTH,
+    };
+
+    // Available space between the workspace button and the count cell.
+    // Saturating: when the count cell sits at or before the workspace
+    // button's right edge (extreme-narrow display), no entries fit.
+    let entries_left = TASKBAR_WORKSPACE_BUTTON_WIDTH;
+    let entries_right_limit = count_x;
+    let available = entries_right_limit.saturating_sub(entries_left);
+    let max_fit = (available / TASKBAR_ENTRY_WIDTH) as usize;
+
+    // Visible entries: min(requested, fit, MAX).
+    let mut visible = entry_count;
+    if visible > max_fit {
+        visible = max_fit;
+    }
+    if visible > MAX_TASKBAR_ENTRIES {
+        visible = MAX_TASKBAR_ENTRIES;
+    }
+
+    let zero_cell = TaskbarCell { x: 0, width: 0 };
+    let mut entries = [zero_cell; MAX_TASKBAR_ENTRIES];
+    let mut i = 0;
+    while i < visible {
+        entries[i] = TaskbarCell {
+            x: (entries_left + (i as u32) * TASKBAR_ENTRY_WIDTH) as i32,
+            width: TASKBAR_ENTRY_WIDTH,
+        };
+        i += 1;
+    }
+
+    TaskbarLayout {
+        workspace_button,
+        entries,
+        visible_entries: visible,
+        count_cell,
+    }
+}
+
+/// Truncate `title` to at most `max_chars` ASCII bytes for taskbar display.
+///
+/// Returns the longest prefix of `title` that fits in `max_chars` bytes.
+/// Treats the title as opaque bytes (no UTF-8 boundary handling) — taskbar
+/// glyph cells are 1 byte = 1 column at the spleen 8×16 cell width, so
+/// the caller is responsible for passing ASCII-only titles. Non-ASCII
+/// bytes are still returned as-is; the renderer's `?` fallback handles
+/// them at the glyph level.
+pub fn taskbar_entry_truncate(title: &[u8], max_chars: usize) -> &[u8] {
+    let cut = if title.len() <= max_chars {
+        title.len()
+    } else {
+        max_chars
+    };
+    &title[..cut]
+}
+
+/// Action a Taskbar pointer hit should produce.
+///
+/// `taskbar_pointer_action` resolves a click coordinate against a laid-out
+/// `TaskbarLayout` plus the snapshot of currently-visible entries
+/// (in the form of a parallel `SurfaceId` slice), returning what the
+/// caller should do. Pure logic — host-tested, kernel-globals-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskbarPointerAction {
+    /// User clicked the workspace button — toggle the Workspace surface.
+    WorkspaceToggle,
+    /// User clicked the Nth entry — focus that surface.
+    FocusEntry(SurfaceId),
+}
+
+/// Resolve a pointer click on the Taskbar surface to an action.
+///
+/// `(local_x, local_y)` is the click position in **surface-local** pixel
+/// coordinates (i.e., already translated by `(screen_x - surface.x,
+/// screen_y - surface.y)`). `entry_ids[i]` corresponds to
+/// `layout.entries[i]`; cells beyond `layout.visible_entries` and slots
+/// beyond `entry_ids.len()` are ignored.
+///
+/// Returns `None` when the click missed every interactive cell (e.g.,
+/// the count readout, dead space between cells, or out-of-bounds y).
+/// The caller decides whether `None` means "consume silently" or
+/// "forward to default handling" — Step 27 consumes silently because
+/// the Taskbar is a Panel-layer surface and pass-through doesn't make
+/// sense behind it.
+pub fn taskbar_pointer_action(
+    layout: &TaskbarLayout,
+    entry_ids: &[SurfaceId],
+    local_x: i32,
+    local_y: i32,
+) -> Option<TaskbarPointerAction> {
+    // Reject clicks outside the surface's vertical band — defensive
+    // against off-by-one routing where (local_y == surface.height) is
+    // actually below the surface.
+    if local_y < 0 {
+        return None;
+    }
+
+    if cell_contains(&layout.workspace_button, local_x) {
+        return Some(TaskbarPointerAction::WorkspaceToggle);
+    }
+
+    let visible = layout
+        .visible_entries
+        .min(MAX_TASKBAR_ENTRIES)
+        .min(entry_ids.len());
+    for (cell, id) in layout.entries.iter().zip(entry_ids.iter()).take(visible) {
+        if cell_contains(cell, local_x) {
+            if id.is_none() {
+                return None;
+            }
+            return Some(TaskbarPointerAction::FocusEntry(*id));
+        }
+    }
+
+    // count_cell is non-interactive in M26; clicks on it produce None.
+    None
+}
+
+const fn cell_contains(cell: &TaskbarCell, x: i32) -> bool {
+    x >= cell.x && x < cell.x + cell.width as i32
+}
+
+// ---------------------------------------------------------------------------
+// Shell redraw decision (M26 Step 29)
+// ---------------------------------------------------------------------------
+
+/// Universal shell-surface redraw predicate.
+///
+/// Each shell surface (Status Strip, Taskbar, Workspace) caches its last
+/// rendered snapshot and compares incoming snapshots against it on every
+/// tick. If the snapshot is unchanged AND the surface has already
+/// rendered at least one frame, the tick can short-circuit — no new
+/// pixel writes, no `surface_attach_buffer` IPC, no `mark_damaged`.
+/// `compose_frame` will then skip this surface entirely (its
+/// `Surface::damaged` flag stays `false`), giving us the
+/// "static desktop = 0 composes" property.
+///
+/// Pure function so the kernel-side tick code and host tests share the
+/// same logic.
+///
+/// Returns `true` when the surface MUST redraw, `false` when the tick
+/// can skip rendering and re-attaching.
+pub const fn should_redraw_shell(needs_first_render: bool, snapshot_changed: bool) -> bool {
+    needs_first_render || snapshot_changed
+}
+
+// ---------------------------------------------------------------------------
+// Workspace spaces-list render decision (M26 Step 30)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of space rows the Workspace renders.
+///
+/// Mirrors the kernel-side `kernel/src/compositor/shell/workspace.rs`
+/// constant. Centralizing here lets host tests reason about the
+/// truncation boundary without crossing the kernel-host divide.
+pub const WORKSPACE_MAX_SPACES_RENDERED: u8 = 8;
+
+/// What the Workspace renderer should draw for the spaces list given
+/// the current snapshot. Captured as a small enum so the dispatch
+/// (header → entries vs header → "(no spaces)") is a host-testable
+/// pure function rather than a tangle of branches in the renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceRenderMode {
+    /// Surface is hidden; renderer skips the spaces list entirely.
+    Hidden,
+    /// `space_list()` failed or returned zero entries — render
+    /// `"(no spaces)"` placeholder.
+    NoSpaces,
+    /// Render `n` entries (always ≤ `WORKSPACE_MAX_SPACES_RENDERED`).
+    WithSpaces(u8),
+}
+
+/// Decide what the Workspace renderer should draw given snapshot
+/// inputs. Pure — host-testable, no kernel deps.
+///
+/// Truncates `raw_space_count` at `WORKSPACE_MAX_SPACES_RENDERED` so
+/// the renderer's fixed-size snapshot array is always in bounds.
+pub const fn workspace_render_mode(
+    visible: bool,
+    spaces_unavailable: bool,
+    raw_space_count: u8,
+) -> WorkspaceRenderMode {
+    if !visible {
+        return WorkspaceRenderMode::Hidden;
+    }
+    if spaces_unavailable || raw_space_count == 0 {
+        return WorkspaceRenderMode::NoSpaces;
+    }
+    let capped = if raw_space_count > WORKSPACE_MAX_SPACES_RENDERED {
+        WORKSPACE_MAX_SPACES_RENDERED
+    } else {
+        raw_space_count
+    };
+    WorkspaceRenderMode::WithSpaces(capped)
+}
+
+// ---------------------------------------------------------------------------
+// Frame-window summary formatting (M26 Step 29)
+// ---------------------------------------------------------------------------
+
+/// Capacity of the buffer returned by `format_frame_window_summary`.
+/// 64 bytes covers the worst-case payload — `frames=18446744073709551615
+/// considered=18446744073709551615 idle=18446744073709551615/60
+/// avg=18446744073709551615ms` is ~125 chars, but we cap displayed
+/// values to 9999 (4 digits) so the actual layout is much smaller.
+pub const FRAME_WINDOW_SUMMARY_BUF: usize = 64;
+
+/// One window's worth of compositor stats — what gets logged every
+/// `STATS_EVERY_FRAMES` (60) considered iterations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameWindow {
+    /// Number of loop iterations past the 16ms cadence gate in this
+    /// window. Equals `composes + idle` when the present flag is on;
+    /// equals `idle + would-have-composed` when the flag is gated.
+    pub considered: u64,
+    /// Number of frames actually pushed through compose+present.
+    /// Always 0 when `gated == true`.
+    pub composes: u64,
+    /// Number of frames that hit the cadence but had no damage (the
+    /// fast idle path).
+    pub idle: u64,
+    /// Sum of compose+present durations in milliseconds for this
+    /// window. Always 0 when `gated == true`.
+    pub accum_ms: u64,
+    /// `true` when `COMPOSITOR_PRESENT_ENABLED` was off for this
+    /// window — the log line gets a `(gated)` prefix and `avg=` is
+    /// suppressed because no presents ran.
+    pub gated: bool,
+}
+
+impl FrameWindow {
+    /// Empty / all-zero window — the initial state.
+    pub const fn new(gated: bool) -> Self {
+        Self {
+            considered: 0,
+            composes: 0,
+            idle: 0,
+            accum_ms: 0,
+            gated,
+        }
+    }
+
+    /// Average compose+present time per composed frame in milliseconds.
+    /// Returns `0` when no frames composed in this window.
+    pub const fn avg_compose_ms(&self) -> u64 {
+        match self.accum_ms.checked_div(self.composes) {
+            Some(avg) => avg,
+            None => 0,
+        }
+    }
+}
+
+/// Format `window` into a fixed-size byte buffer suitable for `kinfo!`.
+///
+/// Layout when `gated == false`:
+///   `frames=N considered=M idle=I/T avg=Ams`
+///
+/// Layout when `gated == true` (no compose ran):
+///   `(gated) considered=M idle=I/T`
+///
+/// The returned slice is a prefix of `out` containing valid ASCII; the
+/// caller passes it to `core::str::from_utf8_unchecked` (or the more
+/// defensive `from_utf8(...).unwrap_or("")`) when feeding `kinfo!`.
+/// Pure function with no allocation — host-testable.
+pub fn format_frame_window_summary(
+    window: &FrameWindow,
+    window_size: u64,
+    out: &mut [u8; FRAME_WINDOW_SUMMARY_BUF],
+) -> usize {
+    out.fill(0);
+    let mut pos = 0usize;
+    if window.gated {
+        pos += copy_into(out, pos, b"(gated) considered=");
+        pos += write_u64(out, pos, window.considered);
+        pos += copy_into(out, pos, b" idle=");
+        pos += write_u64(out, pos, window.idle);
+        pos += copy_into(out, pos, b"/");
+        pos += write_u64(out, pos, window_size);
+    } else {
+        pos += copy_into(out, pos, b"frames=");
+        pos += write_u64(out, pos, window.composes);
+        pos += copy_into(out, pos, b" considered=");
+        pos += write_u64(out, pos, window.considered);
+        pos += copy_into(out, pos, b" idle=");
+        pos += write_u64(out, pos, window.idle);
+        pos += copy_into(out, pos, b"/");
+        pos += write_u64(out, pos, window_size);
+        pos += copy_into(out, pos, b" avg=");
+        pos += write_u64(out, pos, window.avg_compose_ms());
+        pos += copy_into(out, pos, b"ms");
+    }
+    pos
+}
+
+/// Copy `src` into `dst[pos..]`, returning the number of bytes written.
+/// Truncates silently if the destination is too small (only relevant
+/// when the caller passed an undersized buffer; FRAME_WINDOW_SUMMARY_BUF
+/// is sized to fit the worst case).
+fn copy_into(dst: &mut [u8], pos: usize, src: &[u8]) -> usize {
+    let avail = dst.len().saturating_sub(pos);
+    let n = src.len().min(avail);
+    dst[pos..pos + n].copy_from_slice(&src[..n]);
+    n
+}
+
+/// Write `value` as decimal ASCII into `dst[pos..]`. Returns bytes
+/// written. Saturates digit count at 20 (max u64 = 20 digits).
+fn write_u64(dst: &mut [u8], pos: usize, value: u64) -> usize {
+    let mut digits = [0u8; 20];
+    let mut n = 0;
+    let mut v = value;
+    if v == 0 {
+        digits[0] = b'0';
+        n = 1;
+    } else {
+        while v > 0 && n < digits.len() {
+            digits[n] = b'0' + (v % 10) as u8;
+            v /= 10;
+            n += 1;
+        }
+    }
+    let avail = dst.len().saturating_sub(pos);
+    let to_copy = n.min(avail);
+    // Reverse — digits[] is least-significant first.
+    for i in 0..to_copy {
+        dst[pos + i] = digits[n - 1 - i];
+    }
+    to_copy
 }
 
 // ---------------------------------------------------------------------------
@@ -1962,5 +2739,883 @@ mod tests {
         assert_eq!(d.border_width, 1);
         assert_eq!(d.close_button_width, 24);
         assert_eq!(d.resize_margin, 8);
+    }
+
+    // ---- Shell text formatting helpers (M26 Step 24) ----
+
+    #[test]
+    fn format_hhmm_at_zero_is_midnight() {
+        assert_eq!(&format_hhmm(0), b"00:00");
+    }
+
+    #[test]
+    fn format_hhmm_under_one_minute_stays_at_zero() {
+        // 59_999 ms = 59.999 s — still inside the 00:00 minute.
+        assert_eq!(&format_hhmm(59_999), b"00:00");
+    }
+
+    #[test]
+    fn format_hhmm_one_hour_exact() {
+        assert_eq!(&format_hhmm(60 * 60 * 1000), b"01:00");
+    }
+
+    #[test]
+    fn format_hhmm_end_of_day() {
+        // 23:59:59.999 — last millisecond before wrap.
+        let ms = 24 * 60 * 60 * 1000 - 1;
+        assert_eq!(&format_hhmm(ms), b"23:59");
+    }
+
+    #[test]
+    fn format_hhmm_wraps_at_one_day() {
+        // Exactly 24 h wraps back to 00:00.
+        let ms = 24 * 60 * 60 * 1000;
+        assert_eq!(&format_hhmm(ms), b"00:00");
+    }
+
+    #[test]
+    fn format_hhmm_wraps_after_ten_days() {
+        // 10 days plus 90 minutes — wrap should leave only 01:30.
+        let ms = 10 * 24 * 60 * 60 * 1000 + 90 * 60 * 1000;
+        assert_eq!(&format_hhmm(ms), b"01:30");
+    }
+
+    #[test]
+    fn format_hhmmss_at_zero_is_midnight() {
+        assert_eq!(&format_hhmmss(0), b"00:00:00");
+    }
+
+    #[test]
+    fn format_hhmmss_one_second() {
+        assert_eq!(&format_hhmmss(1000), b"00:00:01");
+    }
+
+    #[test]
+    fn format_hhmmss_under_one_second_stays_at_zero() {
+        // 999 ms still rounds down to 0 s.
+        assert_eq!(&format_hhmmss(999), b"00:00:00");
+    }
+
+    #[test]
+    fn format_hhmmss_one_minute_exact() {
+        assert_eq!(&format_hhmmss(60_000), b"00:01:00");
+    }
+
+    #[test]
+    fn format_hhmmss_one_hour_exact() {
+        assert_eq!(&format_hhmmss(60 * 60 * 1000), b"01:00:00");
+    }
+
+    #[test]
+    fn format_hhmmss_combo() {
+        // 12h 34m 56s.
+        let ms = (12 * 3600 + 34 * 60 + 56) * 1000;
+        assert_eq!(&format_hhmmss(ms), b"12:34:56");
+    }
+
+    #[test]
+    fn format_hhmmss_end_of_day() {
+        // 23:59:59.999 — last millisecond before wrap.
+        let ms = 24 * 60 * 60 * 1000 - 1;
+        assert_eq!(&format_hhmmss(ms), b"23:59:59");
+    }
+
+    #[test]
+    fn format_hhmmss_wraps_at_one_day() {
+        let ms = 24 * 60 * 60 * 1000;
+        assert_eq!(&format_hhmmss(ms), b"00:00:00");
+    }
+
+    #[test]
+    fn format_percent_2digits_zero() {
+        assert_eq!(&format_percent_2digits(0), b"00");
+    }
+
+    #[test]
+    fn format_percent_2digits_single_digit_pads() {
+        assert_eq!(&format_percent_2digits(7), b"07");
+    }
+
+    #[test]
+    fn format_percent_2digits_two_digit() {
+        assert_eq!(&format_percent_2digits(42), b"42");
+    }
+
+    #[test]
+    fn format_percent_2digits_at_99() {
+        assert_eq!(&format_percent_2digits(99), b"99");
+    }
+
+    #[test]
+    fn format_percent_2digits_saturates_above_99() {
+        assert_eq!(&format_percent_2digits(100), b"99");
+        assert_eq!(&format_percent_2digits(u32::MAX), b"99");
+    }
+
+    #[test]
+    fn format_u32_left4_single_digit() {
+        assert_eq!(&format_u32_left4(4), b"4   ");
+    }
+
+    #[test]
+    fn format_u32_left4_two_digits() {
+        assert_eq!(&format_u32_left4(42), b"42  ");
+    }
+
+    #[test]
+    fn format_u32_left4_three_digits() {
+        assert_eq!(&format_u32_left4(987), b"987 ");
+    }
+
+    #[test]
+    fn format_u32_left4_four_digits() {
+        assert_eq!(&format_u32_left4(1234), b"1234");
+    }
+
+    #[test]
+    fn format_u32_left4_saturates() {
+        assert_eq!(&format_u32_left4(99_999), b"9999");
+    }
+
+    // ---- Taskbar layout (M26 Step 25) ----
+
+    #[test]
+    fn compute_taskbar_layout_workspace_button_always_first() {
+        let layout = compute_taskbar_layout(1280, 0);
+        assert_eq!(layout.workspace_button.x, 0);
+        assert_eq!(
+            layout.workspace_button.width,
+            TASKBAR_WORKSPACE_BUTTON_WIDTH
+        );
+    }
+
+    #[test]
+    fn compute_taskbar_layout_count_cell_right_anchored() {
+        let layout = compute_taskbar_layout(1280, 0);
+        assert_eq!(
+            layout.count_cell.x,
+            (1280 - TASKBAR_COUNT_RESERVED_WIDTH) as i32
+        );
+        assert_eq!(layout.count_cell.width, TASKBAR_COUNT_RESERVED_WIDTH);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_zero_entries() {
+        let layout = compute_taskbar_layout(1280, 0);
+        assert_eq!(layout.visible_entries, 0);
+        // Unused slots are zero-cells.
+        assert_eq!(layout.entries[0], TaskbarCell { x: 0, width: 0 });
+    }
+
+    #[test]
+    fn compute_taskbar_layout_one_entry_starts_after_workspace_button() {
+        let layout = compute_taskbar_layout(1280, 1);
+        assert_eq!(layout.visible_entries, 1);
+        assert_eq!(layout.entries[0].x, TASKBAR_WORKSPACE_BUTTON_WIDTH as i32);
+        assert_eq!(layout.entries[0].width, TASKBAR_ENTRY_WIDTH);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_packs_multiple_entries() {
+        let layout = compute_taskbar_layout(1280, 4);
+        assert_eq!(layout.visible_entries, 4);
+        for (i, cell) in layout.entries.iter().take(4).enumerate() {
+            let expected_x =
+                TASKBAR_WORKSPACE_BUTTON_WIDTH as i32 + (i as i32) * TASKBAR_ENTRY_WIDTH as i32;
+            assert_eq!(cell.x, expected_x);
+            assert_eq!(cell.width, TASKBAR_ENTRY_WIDTH);
+        }
+    }
+
+    #[test]
+    fn compute_taskbar_layout_truncates_when_too_many() {
+        // 1280 - 40 (button) - 96 (count) = 1144 → 5 entries fit at 200 wide.
+        let layout = compute_taskbar_layout(1280, 12);
+        assert_eq!(layout.visible_entries, 5);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_caps_at_max_entries() {
+        // 4000 px is wide enough for 18 entries but the array max is 8.
+        let layout = compute_taskbar_layout(4000, 100);
+        assert_eq!(layout.visible_entries, MAX_TASKBAR_ENTRIES);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_narrow_display_drops_all_entries() {
+        // Only just enough room for the workspace button + count cell.
+        let layout = compute_taskbar_layout(
+            TASKBAR_WORKSPACE_BUTTON_WIDTH + TASKBAR_COUNT_RESERVED_WIDTH,
+            5,
+        );
+        assert_eq!(layout.visible_entries, 0);
+    }
+
+    #[test]
+    fn compute_taskbar_layout_extreme_narrow_display_clamps_count_cell() {
+        // Display narrower than the count cell — count_cell is parked at
+        // the workspace button's right edge so x is never negative.
+        let layout = compute_taskbar_layout(20, 3);
+        assert_eq!(layout.visible_entries, 0);
+        assert_eq!(layout.count_cell.x, TASKBAR_WORKSPACE_BUTTON_WIDTH as i32);
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_short_title_unchanged() {
+        assert_eq!(taskbar_entry_truncate(b"app", 24), b"app");
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_exact_length() {
+        assert_eq!(taskbar_entry_truncate(b"abcdef", 6), b"abcdef");
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_cuts_to_limit() {
+        assert_eq!(
+            taskbar_entry_truncate(b"a-very-long-window-title", 8),
+            b"a-very-l"
+        );
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_zero_max_chars() {
+        assert_eq!(taskbar_entry_truncate(b"app", 0), b"");
+    }
+
+    #[test]
+    fn taskbar_entry_truncate_empty_input() {
+        assert_eq!(taskbar_entry_truncate(b"", 16), b"");
+    }
+
+    // ---- super_edge_step (M26 Step 26) ----
+
+    /// Convenience: simulate a press of a Super key from a given state.
+    fn super_press(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, true, true, false)
+    }
+
+    /// Convenience: simulate a release of a Super key from a given state.
+    fn super_release(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, true, false, true)
+    }
+
+    /// Convenience: simulate a press of a non-Super key.
+    fn other_press(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, false, true, false)
+    }
+
+    /// Convenience: simulate a release of a non-Super key.
+    fn other_release(state: SuperEdgeState) -> (SuperEdgeState, Option<SuperEdgeAction>) {
+        super_edge_step(state, false, false, true)
+    }
+
+    #[test]
+    fn super_edge_initial_state_no_action() {
+        let s = SuperEdgeState::new();
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_press_marks_held() {
+        let (s, action) = super_press(SuperEdgeState::new());
+        assert!(s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn super_edge_press_clears_combo_flag() {
+        // Stale combo from a previous bad release path — a fresh press
+        // must reset it so the next release can fire.
+        let stale = SuperEdgeState {
+            prev_super_pressed: false,
+            super_used_in_combo: true,
+        };
+        let (s, _) = super_press(stale);
+        assert!(s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_tap_release_fires_show_workspace() {
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, action) = super_release(s);
+        assert_eq!(action, Some(SuperEdgeAction::ShowWorkspace));
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_combo_press_then_release_does_not_fire() {
+        // Super held → other key pressed → Super released ⇒ no action.
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, _) = other_press(s);
+        assert!(s.super_used_in_combo);
+        let (s, action) = super_release(s);
+        assert_eq!(action, None);
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_other_press_without_super_does_not_set_combo() {
+        let (s, action) = other_press(SuperEdgeState::new());
+        assert_eq!(action, None);
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_other_release_is_a_noop() {
+        let held = SuperEdgeState {
+            prev_super_pressed: true,
+            super_used_in_combo: false,
+        };
+        let (s, action) = other_release(held);
+        assert_eq!(action, None);
+        // Non-Super release leaves Super state untouched.
+        assert_eq!(s, held);
+    }
+
+    #[test]
+    fn super_edge_release_without_press_does_not_fire() {
+        // Compositor came up with Super already physically released —
+        // a stray release event must not phantom-toggle the workspace.
+        let (s, action) = super_release(SuperEdgeState::new());
+        assert_eq!(action, None);
+        assert!(!s.prev_super_pressed);
+        assert!(!s.super_used_in_combo);
+    }
+
+    #[test]
+    fn super_edge_repeat_event_is_a_noop() {
+        let held = SuperEdgeState {
+            prev_super_pressed: true,
+            super_used_in_combo: false,
+        };
+        // A Repeat event for the Super key — neither press nor release.
+        let (s, action) = super_edge_step(held, true, false, false);
+        assert_eq!(action, None);
+        assert_eq!(s, held);
+    }
+
+    #[test]
+    fn super_edge_two_taps_in_a_row_each_fire() {
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, action1) = super_release(s);
+        assert_eq!(action1, Some(SuperEdgeAction::ShowWorkspace));
+        let (s, _) = super_press(s);
+        let (_, action2) = super_release(s);
+        assert_eq!(action2, Some(SuperEdgeAction::ShowWorkspace));
+    }
+
+    #[test]
+    fn super_edge_combo_then_clean_tap_fires() {
+        // First Super+Tab combo (no fire), then a clean Super tap (fires).
+        let s = SuperEdgeState::new();
+        let (s, _) = super_press(s);
+        let (s, _) = other_press(s);
+        let (s, action_combo) = super_release(s);
+        assert_eq!(action_combo, None);
+        let (s, _) = super_press(s);
+        let (_, action_clean) = super_release(s);
+        assert_eq!(action_clean, Some(SuperEdgeAction::ShowWorkspace));
+    }
+
+    // ---- route_event_with_shell (M26 Step 27) ----
+
+    #[test]
+    fn route_event_keyboard_shell_focus_drops() {
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        // SurfaceId(99) is "the shell" for this test.
+        let target =
+            route_event_with_shell(&event, Some(SurfaceId(99)), None, |id| id == SurfaceId(99));
+        assert_eq!(target, RouteTarget::None);
+    }
+
+    #[test]
+    fn route_event_keyboard_non_shell_focus_routes() {
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        let target =
+            route_event_with_shell(&event, Some(SurfaceId(7)), None, |id| id == SurfaceId(99));
+        assert_eq!(target, RouteTarget::Surface(SurfaceId(7)));
+    }
+
+    #[test]
+    fn route_event_pointer_on_shell_still_routes_to_surface() {
+        // Pointer-on-shell goes to RouteTarget::Surface(id); the kernel
+        // dispatcher branches on `is_shell` again to send it to the
+        // shell pointer handlers. The shared router doesn't second-guess.
+        let event = InputEvent::Pointer {
+            x: 10,
+            y: 10,
+            button: Some(MouseButton::Left),
+            state: Some(ButtonState::Pressed),
+        };
+        let hit = Some((SurfaceId(99), HitZone::Content));
+        let target = route_event_with_shell(&event, None, hit, |id| id == SurfaceId(99));
+        assert_eq!(target, RouteTarget::Surface(SurfaceId(99)));
+    }
+
+    #[test]
+    fn route_event_default_predicate_unchanged_keyboard() {
+        // Backward-compat: route_event() with no shell predicate behaves
+        // exactly like before (delivers to keyboard focus).
+        let event = InputEvent::Keyboard {
+            key: KeyCode::A,
+            state: KeyState::Pressed,
+            modifiers: Modifiers(0),
+        };
+        assert_eq!(
+            route_event(&event, Some(SurfaceId(7)), None),
+            RouteTarget::Surface(SurfaceId(7))
+        );
+    }
+
+    // ---- taskbar_pointer_action (M26 Step 27) ----
+
+    #[test]
+    fn taskbar_pointer_action_workspace_button() {
+        // Click within the workspace button cell (x in [0, 40)).
+        let layout = compute_taskbar_layout(1280, 0);
+        let action = taskbar_pointer_action(&layout, &[], 8, 20);
+        assert_eq!(action, Some(TaskbarPointerAction::WorkspaceToggle));
+    }
+
+    #[test]
+    fn taskbar_pointer_action_workspace_button_right_edge() {
+        // x = 39 is the last column inside the 40-px button.
+        let layout = compute_taskbar_layout(1280, 0);
+        let action = taskbar_pointer_action(&layout, &[], 39, 20);
+        assert_eq!(action, Some(TaskbarPointerAction::WorkspaceToggle));
+    }
+
+    #[test]
+    fn taskbar_pointer_action_workspace_button_just_past() {
+        // x = 40 is the first column of the entry strip — not button.
+        let layout = compute_taskbar_layout(1280, 1);
+        let action = taskbar_pointer_action(&layout, &[SurfaceId(5)], 40, 20);
+        assert_eq!(action, Some(TaskbarPointerAction::FocusEntry(SurfaceId(5))));
+    }
+
+    #[test]
+    fn taskbar_pointer_action_first_entry() {
+        let layout = compute_taskbar_layout(1280, 2);
+        let entries = [SurfaceId(11), SurfaceId(12)];
+        let action = taskbar_pointer_action(&layout, &entries, 100, 20);
+        assert_eq!(
+            action,
+            Some(TaskbarPointerAction::FocusEntry(SurfaceId(11)))
+        );
+    }
+
+    #[test]
+    fn taskbar_pointer_action_second_entry() {
+        let layout = compute_taskbar_layout(1280, 2);
+        let entries = [SurfaceId(11), SurfaceId(12)];
+        // First entry occupies x in [40, 240); second is [240, 440).
+        let action = taskbar_pointer_action(&layout, &entries, 300, 20);
+        assert_eq!(
+            action,
+            Some(TaskbarPointerAction::FocusEntry(SurfaceId(12)))
+        );
+    }
+
+    #[test]
+    fn taskbar_pointer_action_count_cell_returns_none() {
+        // Count cell is non-interactive — clicks produce no action.
+        let layout = compute_taskbar_layout(1280, 0);
+        let click_x = layout.count_cell.x + 8;
+        let action = taskbar_pointer_action(&layout, &[], click_x, 20);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_negative_y_drops() {
+        let layout = compute_taskbar_layout(1280, 1);
+        let action = taskbar_pointer_action(&layout, &[SurfaceId(5)], 8, -1);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_entry_beyond_visible_drops() {
+        // Layout shows 2 entries, but the click lands on a cell that
+        // would be entry index 3 — beyond visible_entries.
+        let layout = compute_taskbar_layout(1280, 2);
+        let entries = [SurfaceId(11), SurfaceId(12)];
+        // Third entry would be at x in [440, 640) — well past visible.
+        let action = taskbar_pointer_action(&layout, &entries, 500, 20);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_none_id_drops() {
+        // The snapshot's id slot is NONE (sentinel) — treat as no entry.
+        let layout = compute_taskbar_layout(1280, 1);
+        let action = taskbar_pointer_action(&layout, &[SurfaceId::NONE], 100, 20);
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn taskbar_pointer_action_short_entry_slice_caps_visible() {
+        // Layout claims 4 entries fit, but the caller only supplied 1
+        // SurfaceId. Clicks on cells 2-4 must not index past the slice.
+        let layout = compute_taskbar_layout(1280, 4);
+        let entries = [SurfaceId(11)];
+        // First entry cell — supplied → focus.
+        assert_eq!(
+            taskbar_pointer_action(&layout, &entries, 100, 20),
+            Some(TaskbarPointerAction::FocusEntry(SurfaceId(11)))
+        );
+        // Second entry cell — out of supplied slice → None (no panic).
+        assert_eq!(taskbar_pointer_action(&layout, &entries, 300, 20), None);
+    }
+
+    // ---- CompositorRequest::create_surface and effective_channel (M26 Step 28) ----
+
+    #[test]
+    fn compositor_request_size_under_message_limit() {
+        // Adding `client_channel + _pad_damage` raises the size from the
+        // pre-Step-28 footprint, but it must still fit in MAX_MESSAGE_SIZE.
+        assert!(core::mem::size_of::<CompositorRequest>() <= MAX_MESSAGE_SIZE);
+    }
+
+    #[test]
+    fn compositor_request_size_is_eight_byte_aligned() {
+        // The struct's natural alignment is 8 (from u64 fields). Total
+        // size must be a multiple of 8 so an array of requests has no
+        // implicit gaps between elements.
+        assert_eq!(core::mem::size_of::<CompositorRequest>() % 8, 0);
+    }
+
+    #[test]
+    fn create_surface_factory_populates_fields() {
+        let req = CompositorRequest::create_surface(
+            400,
+            300,
+            b"test-app",
+            SurfaceLayer::Normal,
+            SurfaceContentType::Generic,
+            42,
+        );
+        assert_eq!(req.command, CompositorCommand::CreateSurface as u32);
+        assert_eq!(req.width, 400);
+        assert_eq!(req.height, 300);
+        assert_eq!(req.layer, SurfaceLayer::Normal as u8);
+        assert_eq!(req.content_type, SurfaceContentType::Generic as u8);
+        assert_eq!(&req.title[..req.title_len as usize], b"test-app");
+        assert_eq!(req.client_channel, 42);
+    }
+
+    #[test]
+    fn create_surface_factory_truncates_overlong_title() {
+        let long = [b'a'; SURFACE_TITLE_MAX + 16];
+        let req = CompositorRequest::create_surface(
+            100,
+            100,
+            &long,
+            SurfaceLayer::Normal,
+            SurfaceContentType::Generic,
+            0,
+        );
+        assert_eq!(req.title_len as usize, SURFACE_TITLE_MAX);
+    }
+
+    #[test]
+    fn create_surface_factory_zero_channel_for_shell() {
+        let req = CompositorRequest::create_surface(
+            1280,
+            32,
+            b"status-strip",
+            SurfaceLayer::Panel,
+            SurfaceContentType::SystemUI,
+            0,
+        );
+        assert_eq!(req.client_channel, 0);
+    }
+
+    #[test]
+    fn attach_buffer_factory_full_damage() {
+        let req = CompositorRequest::attach_buffer(
+            SurfaceId(7),
+            SharedMemoryId(3),
+            DamageRegion::FullSurface,
+        );
+        assert_eq!(req.command, CompositorCommand::AttachBuffer as u32);
+        assert_eq!(req.surface_id, 7);
+        assert_eq!(req.shmem_id, 3);
+        assert_eq!(req.damage_tag, 1);
+    }
+
+    #[test]
+    fn attach_buffer_factory_rect_damage_round_trips() {
+        let region = DamageRegion::Rect {
+            x: 5,
+            y: 10,
+            width: 100,
+            height: 50,
+        };
+        let req = CompositorRequest::attach_buffer(SurfaceId(7), SharedMemoryId(3), region);
+        assert_eq!(req.damage_tag, 2);
+        assert_eq!(req.decode_damage(), region);
+    }
+
+    #[test]
+    fn destroy_surface_factory() {
+        let req = CompositorRequest::destroy_surface(SurfaceId(9));
+        assert_eq!(req.command, CompositorCommand::DestroySurface as u32);
+        assert_eq!(req.surface_id, 9);
+    }
+
+    #[test]
+    fn effective_channel_zero_falls_back_to_service() {
+        let svc = ChannelId(1);
+        assert_eq!(effective_channel(0, svc), svc);
+    }
+
+    #[test]
+    fn effective_channel_nonzero_returns_client_channel() {
+        let svc = ChannelId(1);
+        assert_eq!(effective_channel(7, svc), ChannelId(7));
+    }
+
+    #[test]
+    fn effective_channel_truncates_high_bits() {
+        // Upper 32 bits of `client_channel` are reserved for future
+        // endpoint encoding; the current ChannelId is u32 so we narrow.
+        let svc = ChannelId(1);
+        assert_eq!(
+            effective_channel(0xFFFF_FFFF_0000_002A, svc),
+            ChannelId(0x0000_002A)
+        );
+    }
+
+    #[test]
+    fn compositor_request_round_trip_via_bytes() {
+        // Serialize → deserialize round-trip — exercises the M25
+        // padding-UB rule: every byte of the struct must be named so
+        // the bytes view is fully initialized.
+        let original = CompositorRequest::create_surface(
+            400,
+            300,
+            b"hello",
+            SurfaceLayer::Normal,
+            SurfaceContentType::Generic,
+            123,
+        );
+        let bytes: &[u8] = unsafe {
+            core::slice::from_raw_parts(
+                (&original as *const CompositorRequest) as *const u8,
+                core::mem::size_of::<CompositorRequest>(),
+            )
+        };
+        let mut copy = CompositorRequest::zeroed();
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                (&mut copy as *mut CompositorRequest) as *mut u8,
+                bytes.len(),
+            );
+        }
+        assert_eq!(copy.command, original.command);
+        assert_eq!(copy.width, original.width);
+        assert_eq!(copy.client_channel, original.client_channel);
+        assert_eq!(&copy.title[..copy.title_len as usize], b"hello");
+    }
+
+    // ---- Shell redraw decision (M26 Step 29) ----
+
+    #[test]
+    fn should_redraw_shell_first_render_forces_yes() {
+        // First render must always paint, even if the snapshot didn't
+        // change (the cache is the all-zero default vs a real snapshot).
+        assert!(should_redraw_shell(true, false));
+        assert!(should_redraw_shell(true, true));
+    }
+
+    #[test]
+    fn should_redraw_shell_unchanged_skips() {
+        // Steady state: cache matches new snapshot → skip.
+        assert!(!should_redraw_shell(false, false));
+    }
+
+    #[test]
+    fn should_redraw_shell_changed_redraws() {
+        // Cache differs from new snapshot → redraw.
+        assert!(should_redraw_shell(false, true));
+    }
+
+    // ---- Workspace render mode (M26 Step 30) ----
+
+    #[test]
+    fn workspace_render_mode_hidden_dominates() {
+        // Even with spaces available, hidden short-circuits.
+        assert_eq!(
+            workspace_render_mode(false, false, 3),
+            WorkspaceRenderMode::Hidden
+        );
+        assert_eq!(
+            workspace_render_mode(false, true, 0),
+            WorkspaceRenderMode::Hidden
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_unavailable_renders_no_spaces() {
+        // space_list() failed.
+        assert_eq!(
+            workspace_render_mode(true, true, 0),
+            WorkspaceRenderMode::NoSpaces
+        );
+        // Even if a count survived, unavailable wins.
+        assert_eq!(
+            workspace_render_mode(true, true, 5),
+            WorkspaceRenderMode::NoSpaces
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_zero_spaces_renders_placeholder() {
+        // Storage returned an empty list.
+        assert_eq!(
+            workspace_render_mode(true, false, 0),
+            WorkspaceRenderMode::NoSpaces
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_with_spaces_under_cap() {
+        assert_eq!(
+            workspace_render_mode(true, false, 1),
+            WorkspaceRenderMode::WithSpaces(1)
+        );
+        assert_eq!(
+            workspace_render_mode(true, false, 4),
+            WorkspaceRenderMode::WithSpaces(4)
+        );
+    }
+
+    #[test]
+    fn workspace_render_mode_caps_at_max() {
+        // Right at the cap.
+        assert_eq!(
+            workspace_render_mode(true, false, WORKSPACE_MAX_SPACES_RENDERED),
+            WorkspaceRenderMode::WithSpaces(WORKSPACE_MAX_SPACES_RENDERED)
+        );
+        // Over the cap — truncated.
+        assert_eq!(
+            workspace_render_mode(true, false, WORKSPACE_MAX_SPACES_RENDERED + 1),
+            WorkspaceRenderMode::WithSpaces(WORKSPACE_MAX_SPACES_RENDERED)
+        );
+        // Way over the cap — still truncated.
+        assert_eq!(
+            workspace_render_mode(true, false, 255),
+            WorkspaceRenderMode::WithSpaces(WORKSPACE_MAX_SPACES_RENDERED)
+        );
+    }
+
+    // ---- Frame window summary (M26 Step 29) ----
+
+    fn summary_bytes(window: &FrameWindow, window_size: u64) -> alloc::string::String {
+        let mut buf = [0u8; FRAME_WINDOW_SUMMARY_BUF];
+        let n = format_frame_window_summary(window, window_size, &mut buf);
+        alloc::string::String::from_utf8(buf[..n].to_vec()).expect("valid utf8")
+    }
+
+    #[test]
+    fn frame_window_summary_active_with_composes() {
+        let w = FrameWindow {
+            considered: 60,
+            composes: 12,
+            idle: 48,
+            accum_ms: 24,
+            gated: false,
+        };
+        assert_eq!(
+            summary_bytes(&w, 60),
+            "frames=12 considered=60 idle=48/60 avg=2ms"
+        );
+    }
+
+    #[test]
+    fn frame_window_summary_active_zero_composes_avg_zero() {
+        // No composes → avg should be 0 (avoid div-by-zero).
+        let w = FrameWindow {
+            considered: 60,
+            composes: 0,
+            idle: 60,
+            accum_ms: 0,
+            gated: false,
+        };
+        assert_eq!(
+            summary_bytes(&w, 60),
+            "frames=0 considered=60 idle=60/60 avg=0ms"
+        );
+    }
+
+    #[test]
+    fn frame_window_summary_gated_omits_avg() {
+        let w = FrameWindow {
+            considered: 60,
+            composes: 0,
+            idle: 30,
+            accum_ms: 0,
+            gated: true,
+        };
+        assert_eq!(summary_bytes(&w, 60), "(gated) considered=60 idle=30/60");
+    }
+
+    #[test]
+    fn frame_window_avg_zero_composes_returns_zero() {
+        let w = FrameWindow {
+            considered: 0,
+            composes: 0,
+            idle: 0,
+            accum_ms: 0,
+            gated: false,
+        };
+        assert_eq!(w.avg_compose_ms(), 0);
+    }
+
+    #[test]
+    fn frame_window_avg_division() {
+        let w = FrameWindow {
+            considered: 60,
+            composes: 30,
+            idle: 30,
+            accum_ms: 90,
+            gated: false,
+        };
+        assert_eq!(w.avg_compose_ms(), 3);
+    }
+
+    #[test]
+    fn frame_window_summary_handles_large_counts() {
+        // Ensure write_u64 handles realistic mid-range values without
+        // truncation. ~one hour at 60Hz = 216000 considered.
+        let w = FrameWindow {
+            considered: 216_000,
+            composes: 1234,
+            idle: 214_766,
+            accum_ms: 5678,
+            gated: false,
+        };
+        assert_eq!(
+            summary_bytes(&w, 60),
+            "frames=1234 considered=216000 idle=214766/60 avg=4ms"
+        );
     }
 }

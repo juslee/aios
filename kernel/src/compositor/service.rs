@@ -15,8 +15,9 @@
 use core::sync::atomic::Ordering;
 
 use shared::compositor::{
-    CompositorCommand, CompositorEvent, CompositorRequest, DamageTracker, SurfaceContentType,
-    SurfaceId, SurfaceLayer, SurfaceTitle,
+    format_frame_window_summary, CompositorCommand, CompositorEvent, CompositorRequest,
+    DamageTracker, FrameWindow, SurfaceContentType, SurfaceId, SurfaceLayer, SurfaceTitle,
+    FRAME_WINDOW_SUMMARY_BUF,
 };
 use shared::gpu::{DisplayInfo, GpuBufferHandle, GpuError, VirtioGpuRect, AIOS_BLUE_B8G8R8A8};
 use shared::ipc::{ChannelId, SharedMemoryId};
@@ -26,6 +27,7 @@ use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::compositor::focus::FOCUS_MANAGER;
 use crate::compositor::input_route;
 use crate::compositor::render;
+use crate::compositor::shell;
 use crate::compositor::surface::{self, SurfaceError, SURFACE_TABLE};
 use crate::compositor::window::WINDOW_Z_ORDER;
 use crate::drivers::virtio_gpu;
@@ -60,14 +62,27 @@ struct CompositorState {
     back_buffer: Option<GpuBufferHandle>,
     /// Tick at which the most recent frame was composed (for 60fps pacing).
     last_frame_tick: u64,
-    /// Total frames composed since boot (for periodic stats logging).
-    frame_count: u64,
-    /// Sum of per-frame compose-time in milliseconds; resets every 60 frames.
-    frame_ms_accum: u64,
     /// Per-frame screen-space damage accumulator.
     damage: DamageTracker,
     /// `true` until the first post-handoff frame is presented (forces a clear).
     needs_initial_clear: bool,
+    /// Step 29: rolling per-window stats. Reset every
+    /// `STATS_EVERY_FRAMES` *considered* iterations (i.e., loop turns
+    /// past the 16ms cadence gate). Tracking is independent of
+    /// `COMPOSITOR_PRESENT_ENABLED` so the bookkeeping ticks even when
+    /// the present pipeline is gated off — the log line just changes
+    /// its prefix to `(gated)`.
+    frame_window: FrameWindow,
+    /// Cumulative count of presented frames since boot — informational
+    /// only; the per-window count lives inside `frame_window.composes`.
+    total_composes: u64,
+    /// Tick at which a damage-bearing frame was last observed. Used by
+    /// the static-desktop watchdog: if more than `STATIC_IDLE_MS`
+    /// elapse with no damage, log the "static desktop" line once.
+    last_active_tick: u64,
+    /// `true` once the static-desktop log fired for the current idle
+    /// stretch. Reset to `false` the next time damage shows up.
+    static_logged: bool,
 }
 
 impl CompositorState {
@@ -78,10 +93,12 @@ impl CompositorState {
             front_buffer: None,
             back_buffer: None,
             last_frame_tick: 0,
-            frame_count: 0,
-            frame_ms_accum: 0,
             damage: DamageTracker::new(),
             needs_initial_clear: true,
+            frame_window: FrameWindow::new(!COMPOSITOR_PRESENT_ENABLED),
+            total_composes: 0,
+            last_active_tick: 0,
+            static_logged: false,
         }
     }
 }
@@ -91,8 +108,14 @@ const FRAME_BUDGET_TICKS: u64 = 16;
 /// Watchdog threshold — log a warning if any frame's compose+present
 /// exceeds 100ms.
 const FRAME_WATCHDOG_MS: u64 = 100;
-/// How often to emit aggregated frame timing stats (in frames).
+/// How often to emit aggregated frame timing stats — every 60 cadence-
+/// gated iterations. With FRAME_BUDGET_TICKS = 16 ms this means roughly
+/// once per second of compositor activity.
 const STATS_EVERY_FRAMES: u64 = 60;
+/// Step 29 static-desktop watchdog: if this many milliseconds elapse
+/// with no surface damage, emit the "static desktop" log line once.
+/// Reset when damage reappears.
+const STATIC_IDLE_MS: u64 = 5_000;
 
 // ---------------------------------------------------------------------------
 // Compositor service thread entry
@@ -129,19 +152,36 @@ fn compositor_loop() -> ! {
     let mut state = CompositorState::new(ch, display);
 
     // Take ownership of the display from the GPU Service.
+    let mut display_owned = false;
     if display.width > 0 && display.height > 0 {
-        if let Err(e) = display_handoff(&mut state) {
-            crate::kerror!(
-                Compositor,
-                "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
-                e
-            );
+        match display_handoff(&mut state) {
+            Ok(()) => display_owned = true,
+            Err(e) => {
+                crate::kerror!(
+                    Compositor,
+                    "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
+                    e
+                );
+            }
         }
     } else {
         crate::kwarn!(
             Compositor,
             "Compositor: no display reported; running headless"
         );
+    }
+
+    // M26 Step 24: bring up the desktop shell surfaces (Status Strip
+    // first; Taskbar / Workspace land in subsequent steps). Skip when the
+    // handoff failed — there's no display to render onto.
+    if display_owned {
+        if let Err(e) = shell::init_shell_surfaces(display.width, display.height) {
+            crate::kwarn!(
+                Compositor,
+                "Compositor: shell init failed ({:?}); continuing without shell chrome",
+                e
+            );
+        }
     }
 
     let mut recv_buf = [0u8; ipc::MAX_MESSAGE_SIZE];
@@ -177,6 +217,12 @@ fn compositor_loop() -> ! {
         // filter → focus router → IPC delivery).
         input_route::drain_and_route();
 
+        // M26 Step 24: drive the desktop shell tick. The shell decides
+        // internally whether each surface needs to redraw based on its
+        // own cadence (Status Strip = 1 Hz). Always cheap when nothing
+        // changed and the shell mutex is leaf-only.
+        shell::tick(TICK_COUNT.load(Ordering::Relaxed));
+
         // Run a compose-and-present cycle if we're inside the 16ms cadence
         // and at least one surface is damaged (or we still owe an initial
         // clear). Idle periods skip composition entirely → 0 GPU work.
@@ -207,71 +253,114 @@ fn compositor_loop() -> ! {
 ///   * the previous frame was less than `FRAME_BUDGET_TICKS` ago
 ///   * no surface is damaged AND no initial clear is pending
 ///
-/// The structural pacing — the `last_frame_tick`, `frame_count`,
-/// `frame_ms_accum`, watchdog, and 60-frame stats logging — is already
-/// wired here. M24 keeps the actual `present_frame()` body parked behind
-/// `COMPOSITOR_PRESENT_ENABLED` because the post-handoff IPC bench path
-/// surfaces several pre-existing kernel-side races (data aborts at low
-/// virtual addresses; cap-table torn reads; virtio_input modulo-by-zero
-/// — patched separately) when the compositor adds frame-pacing pressure.
-/// Step 17 (M25) re-enables the present path after wiring real client
-/// surfaces with attached buffers.
+/// Step 29 refactor: the cadence + damage bookkeeping happens
+/// unconditionally so the loop counts iterations even when
+/// `COMPOSITOR_PRESENT_ENABLED` is `false`. The actual compose+present
+/// work is the only thing the flag gates. The 60-iteration stats line
+/// changes its prefix to `(gated)` while the flag is off so an
+/// observer can see the loop is alive without confusing it for
+/// already-flowing pixels.
 fn present_frame_if_due(state: &mut CompositorState) {
-    if !COMPOSITOR_PRESENT_ENABLED {
-        return;
-    }
-
     let now = TICK_COUNT.load(Ordering::Relaxed);
+    // Cadence gate — we count "considered" iterations only past this
+    // point so the per-window stats reflect real ~60 Hz opportunities,
+    // not every recv-timeout return (~1000 Hz).
     if now < state.last_frame_tick.saturating_add(FRAME_BUDGET_TICKS) {
         return;
     }
     if state.front_buffer.is_none() || state.back_buffer.is_none() {
+        // No display attached — bookkeeping is meaningless. Bail.
         return;
     }
+
+    state.frame_window.considered += 1;
+    state.last_frame_tick = now;
 
     let any_damage = state.needs_initial_clear || surface_table_has_damage();
-    if !any_damage {
-        return;
+    if any_damage {
+        state.last_active_tick = now;
+        // Damage cleared the static-desktop streak; the next idle
+        // stretch will need to retire fresh ground before logging
+        // again.
+        state.static_logged = false;
+
+        if COMPOSITOR_PRESENT_ENABLED {
+            let frame_start = now;
+            match present_frame(state) {
+                Ok(()) => {
+                    let frame_end = TICK_COUNT.load(Ordering::Relaxed);
+                    let elapsed_ms = frame_end.saturating_sub(frame_start);
+                    state.frame_window.composes += 1;
+                    state.frame_window.accum_ms += elapsed_ms;
+                    state.total_composes += 1;
+                    state.last_frame_tick = frame_end;
+                    if elapsed_ms > FRAME_WATCHDOG_MS {
+                        crate::kwarn!(
+                            Compositor,
+                            "Compositor: frame took {}ms (>{}ms threshold)",
+                            elapsed_ms,
+                            FRAME_WATCHDOG_MS
+                        );
+                    }
+                }
+                Err(e) => {
+                    crate::kwarn!(Compositor, "Compositor: present_frame failed ({:?})", e);
+                }
+            }
+        }
+        // When the flag is off we still ran the bookkeeping above —
+        // counted as "considered" but neither composed nor idle. The
+        // `(gated)` log line communicates that.
+    } else {
+        state.frame_window.idle += 1;
+        // Static-desktop watchdog: if no damage for STATIC_IDLE_MS
+        // and we haven't already logged, emit the line once.
+        let idle_for = now.saturating_sub(state.last_active_tick);
+        if !state.static_logged && idle_for >= STATIC_IDLE_MS {
+            crate::kinfo!(
+                Compositor,
+                "Compositor: static desktop — 0 composes in last {}ms",
+                idle_for
+            );
+            state.static_logged = true;
+        }
     }
 
-    let frame_start = now;
-    if let Err(e) = present_frame(state) {
-        crate::kwarn!(Compositor, "Compositor: present_frame failed ({:?})", e);
-        return;
-    }
-    let frame_end = TICK_COUNT.load(Ordering::Relaxed);
-    let elapsed_ms = frame_end.saturating_sub(frame_start);
-
-    state.frame_count += 1;
-    state.frame_ms_accum += elapsed_ms;
-    state.last_frame_tick = frame_end;
-
-    if elapsed_ms > FRAME_WATCHDOG_MS {
-        crate::kwarn!(
-            Compositor,
-            "Compositor: frame took {}ms (>{}ms threshold)",
-            elapsed_ms,
-            FRAME_WATCHDOG_MS
-        );
-    }
-
-    if state.frame_count.is_multiple_of(STATS_EVERY_FRAMES) {
-        let avg = state.frame_ms_accum / STATS_EVERY_FRAMES;
-        crate::kinfo!(
-            Compositor,
-            "Compositor: frames={} avg compose+present={}ms",
-            state.frame_count,
-            avg
-        );
-        state.frame_ms_accum = 0;
+    // 60-considered-frame stats line. Logged whether or not the
+    // present flag is on; the body inside `format_frame_window_summary`
+    // distinguishes the gated case.
+    if state.frame_window.considered >= STATS_EVERY_FRAMES {
+        let mut buf = [0u8; FRAME_WINDOW_SUMMARY_BUF];
+        let n = format_frame_window_summary(&state.frame_window, STATS_EVERY_FRAMES, &mut buf);
+        // SAFETY: format_frame_window_summary writes only ASCII bytes
+        // (digits + literal text). The returned length `n` is bounded
+        // by FRAME_WINDOW_SUMMARY_BUF.
+        // Maintained by: format_frame_window_summary's contract.
+        // Violation: a future change that emits non-ASCII would
+        // produce malformed UTF-8 for the kinfo! arg.
+        let summary = unsafe { core::str::from_utf8_unchecked(&buf[..n]) };
+        crate::kinfo!(Compositor, "Compositor: {}", summary);
+        // Reset window — preserve `gated` so the next window inherits
+        // the current present-flag state.
+        let gated = state.frame_window.gated;
+        state.frame_window = FrameWindow::new(gated);
     }
 }
 
-/// Master switch for the compose-and-present loop. M24 ships with the
-/// loop scaffolding wired but presentation gated off (see the doc-comment
-/// on `present_frame_if_due` for the full reason). Step 17 (M25) flips
-/// this to true once the IPC dispatch resolves shmem-backed surface
-/// buffers and the pre-existing torn-read paths are addressed.
+/// Master switch for the compose-and-present loop. M26 Step 28 wires
+/// per-client channels and the test app — the infrastructure needed to
+/// flip this to `true` for visible pixel output. The flip is **deferred
+/// for now** because investigation during Step 28 surfaced a
+/// pre-existing memory-corruption issue (manifests as
+/// `free_pages(addr, 192) — address not in any pool` panic mid-boot,
+/// followed by SURFACE_TABLE corruption that makes shell-surface
+/// AttachBuffer return NotFound on a fresh surface id).
+///
+/// The corruption is independent of the compose+present pipeline — it
+/// reproduces with the flag off too — but it currently prevents
+/// reliable visible output. Root-causing it is a separate workstream;
+/// see `docs/knowledge/lessons/2026-05-07-cl-phase-7-m26-step-28-shell-attach-corruption.md`
+/// for the captured evidence.
 const COMPOSITOR_PRESENT_ENABLED: bool = false;
 
 /// Compose any pending surface damage into the back buffer, push it to the
@@ -287,6 +376,13 @@ fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
     let clear_first = state.needs_initial_clear;
     let mut frame_damage = DamageTracker::new();
 
+    // Snapshot SURFACE_TABLE into a sorted stack-allocated array. Drop
+    // the lock before calling compose_frame so the resolver below is
+    // free to acquire SHARED_REGION_TABLE without violating lock
+    // ordering (compose_frame itself takes no global locks).
+    let mut snapshot_buf = [surface::Surface::SENTINEL; shared::compositor::MAX_SURFACES];
+    let surface_count = snapshot_visible_surfaces(&mut snapshot_buf);
+
     let (back_resource_id, back_width, back_height) = {
         let back = state
             .back_buffer
@@ -300,11 +396,11 @@ fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
             back_pixels,
             width,
             height,
-            &[],
+            &snapshot_buf[..surface_count],
             &mut frame_damage,
             clear_first,
             render::DEFAULT_CLEAR_COLOR,
-            |_surface| None,
+            resolve_surface_pixels,
         );
         (resource_id, width, height)
     };
@@ -324,6 +420,77 @@ fn present_frame(state: &mut CompositorState) -> Result<(), GpuError> {
     swap_buffers_after_compose(state)?;
     clear_surface_damage();
     Ok(())
+}
+
+/// Snapshot the SURFACE_TABLE's visible (Active) surfaces into `buf`,
+/// sorted ascending by `(layer, layer_seq)` so `compose_frame` blits
+/// background-first, panel-last. Returns the populated count.
+///
+/// Acquires SURFACE_TABLE briefly; drops before any further work.
+fn snapshot_visible_surfaces(
+    buf: &mut [surface::Surface; shared::compositor::MAX_SURFACES],
+) -> usize {
+    let mut count = 0usize;
+    {
+        let table = SURFACE_TABLE.lock();
+        for slot in table.iter() {
+            if let Some(s) = slot.as_ref() {
+                if !s.state.is_visible() {
+                    continue;
+                }
+                if count >= buf.len() {
+                    break;
+                }
+                buf[count] = *s;
+                count += 1;
+            }
+        }
+    }
+    buf[..count].sort_by_key(|s| (s.layer as u8, s.layer_seq));
+    count
+}
+
+/// Resolve a surface's `shmem_id` to a direct-map pixel slice.
+///
+/// Used by `compose_frame` as the per-surface buffer accessor. Returns
+/// `None` when the surface has no buffer attached (still in `Created`/
+/// `Configured` state) or when the shmem region has been destroyed.
+///
+/// Acquires `SHARED_REGION_TABLE` briefly via `region_dmap_addr` /
+/// `region_size`. Lock ordering: `SHARED_REGION_TABLE` ranks above
+/// `SURFACE_TABLE`; the compose path drops `SURFACE_TABLE` (the
+/// snapshot loop) before reaching this resolver, so the order is
+/// honored.
+///
+/// The slice's lifetime is tied to the input `&Surface` borrow, but
+/// the underlying memory is the kernel's permanent direct map — which
+/// outlives every caller. The lifetime tightening is purely for
+/// compose_frame's signature.
+fn resolve_surface_pixels(s: &surface::Surface) -> Option<&[u32]> {
+    let id = s.shmem_id?;
+    let va = crate::ipc::shmem::region_dmap_addr(id)?;
+    let bytes = crate::ipc::shmem::region_size(id)?;
+    let pixels = bytes / 4;
+    let need = (s.width as usize) * (s.height as usize);
+    if pixels < need {
+        return None;
+    }
+    // SAFETY: `va` is the kernel direct-map address of the shmem
+    // region's backing pages. The direct map is RW+XN and permanent
+    // for the lifetime of the kernel; shmem regions are never
+    // physically freed once allocated (M26 has no shmem teardown
+    // path). The returned slice is valid until shmem-region teardown,
+    // which never happens in M26.
+    // Maintained by: shmem subsystem holds the pages until process
+    // teardown, which doesn't happen for kernel-side test app or
+    // shell surfaces in M26.
+    // Violation: a freed shmem id would yield a stale pointer; the
+    // dmap lookup above already returns None for unknown ids, so the
+    // primary invariant is that `region_id` not be reused while a
+    // surface still references it (shmem_id allocation is monotonic
+    // — never reused).
+    let slice = unsafe { core::slice::from_raw_parts(va as *const u32, pixels) };
+    Some(slice)
 }
 
 /// Returns true if any surface has its damaged flag set.
@@ -586,6 +753,11 @@ pub fn init_compositor() {
         false,
     );
     let _ = cap::grant_to_process(ProcessId(10), shared::Capability::DebugPrint, false);
+    // M26 Step 24: shell surfaces (Status Strip first) allocate their own
+    // backing buffers via `shared_memory_create`. Granting the create cap
+    // here keeps the shell as a normal capability-checked client of the
+    // shmem subsystem rather than a privileged shortcut.
+    let _ = cap::grant_to_process(ProcessId(10), shared::Capability::SharedMemoryCreate, false);
 
     // Create the compositor's IPC channel.
     let compositor_tid = ThreadId(0xA10); // Debug label for the compositor thread.
@@ -742,9 +914,17 @@ fn handle_create_surface(
     let title_bytes = &req.title[..(req.title_len as usize).min(req.title.len())];
     let title = SurfaceTitle::from_bytes(title_bytes);
 
+    // M26 Step 28: per-client channels. `client_channel == 0` means the
+    // caller is shell-internal (Status Strip, Taskbar, Workspace) and
+    // wants the well-known service channel — preserves M25's
+    // self-channel suppression behaviour. Non-zero values name the
+    // client's per-client receive endpoint.
+    let surface_channel =
+        shared::compositor::effective_channel(req.client_channel, service_channel);
+
     match surface::surface_create(
         owner_pid,
-        service_channel,
+        surface_channel,
         req.width,
         req.height,
         title,
@@ -759,20 +939,15 @@ fn handle_create_surface(
                 let mut z = WINDOW_Z_ORDER.lock();
                 z.push(id);
             }
-            // First created surface receives keyboard focus. Notify side
-            // effect runs after dropping locks so we don't IPC-recurse.
-            let change = {
-                let mut fm = FOCUS_MANAGER.lock();
-                if fm.keyboard_focus().is_none() {
-                    fm.set_keyboard_focus(Some(id))
-                } else {
-                    super::focus::FocusChange {
-                        lost: None,
-                        gained: None,
-                    }
-                }
-            };
-            input_route::notify_focus_change(change);
+            // First created surface receives keyboard focus. The shell
+            // surfaces (Status Strip, Taskbar) come up before any client
+            // and would otherwise grab focus — `set_keyboard_focus_safe`
+            // refuses shell ids, so this branch only ever lands focus on
+            // a real client surface.
+            let already_focused = FOCUS_MANAGER.lock().keyboard_focus().is_some();
+            if !already_focused {
+                let _ = input_route::set_keyboard_focus_safe(Some(id));
+            }
             CompositorEvent::configure(id, req.width, req.height, 100)
         }
         Err(e) => {
