@@ -58,6 +58,8 @@ jobs:
     # Host-only crate tools/ (package aios-tools, binary aios): fmt, clippy and
     # tests, including the docs-check parity goldens. The real-repository goldens
     # replay a pinned main commit, so the checkout needs full history.
+    # Pinned: the shim's tests (tools/tests/shim.rs) assume `/bin/sh` is dash,
+    # verified on this image; `ubuntu-latest` could move to one where it is not.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -69,7 +71,7 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check -p aios-tools
-      - run: cargo clippy -p aios-tools -- -D warnings
+      - run: cargo clippy -p aios-tools --all-targets -- -D warnings
       - run: cargo test -p aios-tools
 
   security:
