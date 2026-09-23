@@ -85,7 +85,8 @@ tools/
     │   └── variants/<name>.txt    Appendix B (18 files)                                    (T13)
     └── golden/docs-check/
         ├── real/<case>.golden, real/update-baseline.baseline.json                         (T14)
-        └── fixture/<variant>/<case>.golden, fixture/{base,skip}/update-baseline.baseline.json (T14)
+        └── fixture/<variant>/<case>.golden, fixture/base/{update-baseline,baseline-elsewhere-update}.baseline.json,
+            fixture/skip/update-baseline.baseline.json                                        (T14)
 .claude/hooks/aios                 POSIX sh shim, mode 100755                               (T2)
 ```
 

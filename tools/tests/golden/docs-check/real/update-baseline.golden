@@ -1,0 +1,2 @@
+exit 0
+docs-check: wrote 78 findings to scripts/docs/baseline.json
