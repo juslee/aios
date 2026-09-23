@@ -6,6 +6,7 @@
 //! aarch64-unknown-none` never selects it.
 #![forbid(unsafe_code)]
 
+pub mod cmd;
 pub mod paths;
 pub mod proc;
 pub mod pystr;
