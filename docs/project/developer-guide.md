@@ -1010,7 +1010,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `smp.rs` (~218), `wal.rs` (~199), `space.rs` (~154), `object_store.rs` (~218) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~388), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~377) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~377) |
 | 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~740), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
@@ -1029,8 +1029,8 @@ ipc/
   timeout.rs  (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs          # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs     (695)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs (128)  # Out-of-range pid self-test on the SharedMemoryShare path
+    mod.rs     (695) # Test initialization, thread entries, test-only helpers
+    bad_pid.rs (157) # Out-of-range pid self-test on the SharedMemoryShare path
   notify.rs          # Notification objects (signal/wait)
   select.rs          # IPC select (multi-wait)
   shmem.rs           # Shared memory regions
@@ -1729,7 +1729,7 @@ mod tests {
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `ipc` | 53 | Channel IDs and `ChannelId::index`, message validation, select entries, service names, user VA checks |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `kits` | 40 | Kit trait dyn-compatibility, Kit error conversions and round trips (capability, IPC, memory, compute), storage re-exports |
+| `kits` | 40 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips, memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |

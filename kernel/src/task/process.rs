@@ -56,7 +56,7 @@ pub static PROCESS_TABLE: Mutex<ProcessTable> = Mutex::new([const { None }; MAX_
 /// Returns `Err(EINVAL)` when `pid` is `>= MAX_PROCESSES`. No process can
 /// exist at such a pid, so a raw index would run past the end of the table
 /// and panic the kernel. Use this (or `process_mut` / `process_ref`) for
-/// every pid-keyed table lookup.
+/// every PROCESS_TABLE lookup.
 pub fn process_slot_mut(
     table: &mut ProcessTable,
     pid: ProcessId,
@@ -119,7 +119,7 @@ static EXIT_CODES: [AtomicI32; MAX_PROCESSES] = {
 ///
 /// A pid `>= MAX_PROCESSES` names no process, so the call does nothing. The
 /// callers pass their own pid (the `ProcessExit` syscall) or a fixed kernel
-/// service pid, so there is no caller to report an error to.
+/// service pid, so an out-of-range pid never reaches here.
 pub fn process_exit(pid: ProcessId, exit_code: i32) {
     let Some(idx) = pid.index() else {
         return;

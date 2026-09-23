@@ -5,35 +5,46 @@ use crate::arch::aarch64::trap::TrapFrame;
 use crate::ipc::shmem;
 use crate::mm::pgtable::VmFlags;
 use crate::syscall::IpcError;
-use crate::task::process::{process_mut, ProcessId, MAX_PROCESSES, PROCESS_TABLE};
-use shared::Capability;
+use crate::task::process::{process_mut, process_ref, ProcessId, MAX_PROCESSES, PROCESS_TABLE};
+use crate::task::ThreadId;
+use shared::{Capability, CapabilityHandle, CapabilityTokenId, SharedMemoryId};
+
+/// The test process: the ipc-timeout thread belongs to process 1.
+const TEST_PID: ProcessId = ProcessId(1);
 
 /// Out-of-range pid on the SharedMemoryShare path → EINVAL, not an
 /// index-out-of-bounds panic on PROCESS_TABLE (#177).
 ///
-/// Runs in the ipc-timeout thread (process 1), which creates and owns the
-/// region it shares. The share calls go through `syscall_dispatch`, the path
-/// an EL0 caller takes, so they also cover the register decoding (#178).
+/// Runs in the ipc-timeout thread `my_tid`, which belongs to process 1 and
+/// creates and owns the region it shares. The share calls go through
+/// `syscall_dispatch`, the path an EL0 caller takes, so they also cover the
+/// register decoding (#178).
 ///
-/// The test leaves no capability behind. Process 1 holds SharedMemoryCreate
-/// only around the create call. The region's SharedMemoryAccess tokens (the
-/// creator grant and the self-share) are revoked before the unmap that frees
-/// the region, because region ids are reused.
-pub(super) fn shm_bad_pid_test() {
-    let pid = match crate::cap::current_process_id() {
-        Some(p) => p,
-        None => {
-            crate::kwarn!(Ipc, "Bad-pid test: no current process");
+/// The test changes no capability outside process 1 and leaves none behind.
+/// It checks that `my_tid` belongs to process 1 before it grants or revokes
+/// anything. It revokes the exact SharedMemoryCreate token it granted, right
+/// after the create call. It revokes the region's SharedMemoryAccess tokens
+/// (the creator grant and the self-share) before the unmap that frees the
+/// region, because region ids are reused.
+pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
+    let pid = match crate::cap::process_of_thread(my_tid) {
+        Some(p) if p == TEST_PID => p,
+        other => {
+            crate::kwarn!(Ipc, "Bad-pid test: wrong owner {:?}", other.map(|p| p.0));
             return;
         }
     };
     let flags = VmFlags::READ | VmFlags::WRITE;
 
-    let created = match crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false) {
-        Ok(_) => shmem::shared_memory_create(pid, 4096, flags),
-        Err(e) => Err(e),
+    let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
+        .ok()
+        .and_then(|handle| token_id(pid, handle));
+    let Some(create_token) = create_token else {
+        crate::kwarn!(Ipc, "Bad-pid test: grant failed");
+        return;
     };
-    revoke_all(pid, Capability::SharedMemoryCreate);
+    let created = shmem::shared_memory_create(pid, 4096, flags);
+    revoke_token(pid, create_token);
     let region = match created {
         Ok(r) => r,
         Err(e) => {
@@ -80,7 +91,7 @@ pub(super) fn shm_bad_pid_test() {
     // shared_memory_map needs SharedMemoryAccess and shared_memory_unmap does
     // not, so revoke in between: no token outlives the region.
     let mapped = shmem::shared_memory_map(pid, region, flags).is_ok();
-    revoke_all(pid, Capability::SharedMemoryAccess(region.0));
+    revoke_region_access(pid, region);
     if mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
@@ -92,26 +103,44 @@ pub(super) fn shm_bad_pid_test() {
         && last_slot == IpcError::Eperm as i64
         && live == 0
         && grant == einval
+        && mapped
     {
         crate::kinfo!(Ipc, "Bad-pid test: EINVAL as expected");
     } else {
         crate::kwarn!(
             Ipc,
-            "Bad-pid: {} {} {} {} {} {}",
+            "Bad-pid: {} {} {} {} {} {} {}",
             at_max,
             at_u32_max,
             past_u32,
             last_slot,
             live,
-            grant
+            grant,
+            mapped
         );
     }
 }
 
-/// Revoke every live token in `pid`'s capability table that grants exactly
-/// `cap`. Process 1 holds no SharedMemoryCreate or SharedMemoryAccess tokens
-/// besides the ones this test creates.
-fn revoke_all(pid: ProcessId, cap: Capability) {
+/// Id of the live token behind `handle` in `pid`'s capability table.
+fn token_id(pid: ProcessId, handle: CapabilityHandle) -> Option<CapabilityTokenId> {
+    let table = PROCESS_TABLE.lock();
+    let proc = process_ref(&table, pid).ok()?;
+    proc.cap_table.get(handle).map(|t| t.id)
+}
+
+/// Revoke the token `token_id` in `pid`'s capability table.
+fn revoke_token(pid: ProcessId, token_id: CapabilityTokenId) {
+    let mut table = PROCESS_TABLE.lock();
+    if let Ok(proc) = process_mut(&mut table, pid) {
+        proc.cap_table.revoke(token_id);
+    }
+}
+
+/// Revoke every live SharedMemoryAccess(`region`) token in `pid`'s capability
+/// table. Process 1 holds no other shared memory capability and `region` was
+/// created by this test, so every such token was granted during the test.
+fn revoke_region_access(pid: ProcessId, region: SharedMemoryId) {
+    let access = Capability::SharedMemoryAccess(region.0);
     let mut table = PROCESS_TABLE.lock();
     if let Ok(proc) = process_mut(&mut table, pid) {
         while let Some(token_id) = proc
@@ -119,7 +148,7 @@ fn revoke_all(pid: ProcessId, cap: Capability) {
             .tokens()
             .iter()
             .flatten()
-            .find(|t| t.capability == cap && !t.revoked)
+            .find(|t| t.capability == access && !t.revoked)
             .map(|t| t.id)
         {
             proc.cap_table.revoke(token_id);

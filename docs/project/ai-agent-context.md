@@ -83,13 +83,13 @@ When implementing kernel code, use these established patterns:
 | Lock ordering enforcement | Acquire in order per CLAUDE.md: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
-| Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:66-112` |
+| Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
 | Service registration | `service_register(name, pid, channel)` → name uniqueness check | `service/mod.rs:48-83` |
 | Lock-free audit logging | `audit_log(pid, event)` -- AtomicUsize ring head, Mutex ring body | `service/mod.rs:153-171` |
 | VirtIO-blk I/O | `read_sector(sector, buf)` / `write_sector(sector, buf)` polled | `drivers/virtio_blk.rs:112-132` |
 | Crash-safe block write | WAL append → data write → WAL commit | `storage/block_engine.rs:1-6` (module doc) |
 | Direct-map phys→virt | Add `DIRECT_MAP_BASE + phys` after TTBR1 enabled | `mm/slab.rs` (`convert_to_direct_map`) |
-| Cascade revocation | Drop PROCESS_TABLE lock *before* walking CHANNEL_TABLE | `cap/mod.rs:191-205` |
+| Cascade revocation | Drop PROCESS_TABLE lock *before* walking CHANNEL_TABLE | `cap/mod.rs:193-212` |
 
 -----
 
@@ -423,13 +423,13 @@ RIGHT: Use a buffer with lifetime that spans the entire blocking period
 // Check ChannelCreate capability. Returns authorizing token ID.
 pub fn check_channel_create(
     pid: ProcessId,
-) -> Result<CapabilityTokenId, i64>      // cap/mod.rs:68
+) -> Result<CapabilityTokenId, i64>      // cap/mod.rs:70
 
 // Check ChannelAccess(channel_id) capability. Fail-closed.
 pub fn check_channel_access(
     pid: ProcessId,
     channel: ChannelId,
-) -> Result<(), i64>                     // cap/mod.rs:92
+) -> Result<(), i64>                     // cap/mod.rs:94
 
 // Grant a capability token to a process.
 // EINVAL for pid >= MAX_PROCESSES, EPERM for an empty slot.
@@ -437,7 +437,7 @@ pub fn grant_to_process(
     pid: ProcessId,
     cap: Capability,
     delegatable: bool,
-) -> Result<CapabilityHandle, i64>       // cap/mod.rs:162
+) -> Result<CapabilityHandle, i64>       // cap/mod.rs:164
 
 // Revoke a token (and all children) from a process.
 // Cascades: destroys channels created under the revoked capability.
@@ -445,16 +445,16 @@ pub fn grant_to_process(
 pub fn revoke_in_process(
     pid: ProcessId,
     token_id: CapabilityTokenId,
-) -> Result<(), i64>                     // cap/mod.rs:191
+) -> Result<(), i64>                     // cap/mod.rs:193
 ```
 
 **Gotchas**:
 
-- **Token expiry** (cap/mod.rs:69, 97): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
+- **Token expiry** (cap/mod.rs:71, 99): All enforcement checks pass `TICK_COUNT.load()` as "now" to capability table methods. Tokens can have an optional `expires_at_tick`. An expired token fails the check even if present. Ensure tick counting is accurate across subsystems.
 
-- **Cascade revocation lock ordering** (cap/mod.rs:192-201): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
+- **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
 
-- **Process exit implicit revocation** (cap/mod.rs:54-64, 71): All cap checks validate the process exists in PROCESS_TABLE. When a process exits (slot becomes `None`), all its capabilities are implicitly void. No explicit revocation needed.
+- **Process exit implicit revocation** (cap/mod.rs:54-66, 73): All cap checks validate the process exists in PROCESS_TABLE. When a process exits (slot becomes `None`), all its capabilities are implicitly void. No explicit revocation needed.
 
 - **CapabilityTable is per-process, max 256** (shared/src/cap.rs): Each process has `[Option<CapabilityToken>; 256]`. Handle allocation is O(n) scan for `None` slot. Don't assume constant-time allocation.
 

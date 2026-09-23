@@ -4,6 +4,8 @@
 //! (server, caller, timeout, priority inheritance, capability enforcement).
 //! Called from main.rs after sched::init() but before enter_scheduler().
 
+mod bad_pid;
+
 use crate::sched;
 use crate::syscall::IpcError;
 use crate::task::ThreadId;
@@ -12,8 +14,6 @@ use spin::Mutex;
 
 use super::channel::{ipc_call, ipc_recv, ipc_reply, ipc_send};
 use super::{channel_create, channel_destroy, channel_set_peer, CHANNEL_TABLE};
-
-mod bad_pid;
 
 // ---------------------------------------------------------------------------
 // IPC test initialization
@@ -500,7 +500,7 @@ fn ipc_timeout_entry() -> ! {
         );
     }
 
-    bad_pid::shm_bad_pid_test();
+    bad_pid::shm_bad_pid_test(caller_tid);
 
     loop {
         sched::thread_yield();

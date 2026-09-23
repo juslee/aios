@@ -53,10 +53,12 @@ pub fn current_process_id() -> Option<ProcessId> {
 
 /// Error for a `check_*` function whose `process_ref` lookup failed.
 ///
-/// The pid a `check_*` function checks is the caller's own (from
-/// `current_process_id`), not an argument. An out-of-range pid (e.g. a torn
-/// `Thread.owner_pid` read) is therefore treated like a missing process: a
-/// denial, EPERM, counted in `ipc_cap_denied`. Neither case logs a warning.
+/// The pid a `check_*` function checks is never a syscall argument. It is the
+/// calling thread's `owner_pid` (via `current_process_id` or
+/// `process_of_thread`), or the pid a kernel caller passes to
+/// `shared_memory_create` / `shared_memory_map`. An out-of-range pid is
+/// therefore handled like a pid with no process: a denial, EPERM, counted in
+/// `ipc_cap_denied`. Neither case logs a warning.
 fn deny_missing_process(_lookup_err: i64) -> i64 {
     #[cfg(feature = "kernel-metrics")]
     METRICS.ipc_cap_denied.inc();
@@ -189,6 +191,11 @@ pub fn grant_to_process(
 /// destroying anything. For an in-range pid whose slot is empty, the cap-table
 /// step is skipped and the channel cascade still runs.
 pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) -> Result<(), i64> {
+    // Reject an out-of-range pid before taking any lock.
+    if pid.index().is_none() {
+        return Err(IpcError::Einval as i64);
+    }
+
     // First, revoke in the process's cap table.
     {
         let mut table = PROCESS_TABLE.lock();
