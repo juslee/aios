@@ -5,8 +5,10 @@
 //!
 //! `split_outside_braces` replaces check.py's `re.split(r">(?![^{]*})", ...)` (the regex
 //! crate has no lookaround). Accepted divergences: a rank cell counts only when it is ASCII
-//! digits that fit `u64` (Python's `isdigit()`/`int()` also accept other decimal digits and
-//! any size), and `\b`/`\w`/`\s` follow the regex crate's Unicode classes.
+//! digits that fit `u64`; Python's `isdigit()`/`int()` (check.py L854) also accept other
+//! Unicode decimal digits and any size, but for a cell where `isdigit()` is true and `int()`
+//! raises (for example `²`), check.py exits 2 with an uncaught `ValueError` while aios leaves
+//! the lock unranked. `\b`/`\w`/`\s` follow the regex crate's Unicode classes.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
