@@ -60,7 +60,7 @@ Work, loop, retro and setup skills belong to later stages and do not exist yet.
 | Session handoff | `.remember/remember.md` and `.remember/now.md` in the main checkout (gitignored in every checkout; pause never commits `.remember/`) | this Mac |
 | Personal auto-memory | `~/.claude/projects/<repo>/memory/MEMORY.md` | this Mac |
 | Accepted docs drift | [scripts/docs/baseline.json](../../scripts/docs/baseline.json) | git |
-| Boot soak results | `target/soak/<run>/summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in whichever worktree ran the soak harness | this Mac |
+| Boot soak results | `summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in a run directory under `target/soak/` (`<timestamp>-<mode>` by default; `out=` can nest it deeper, e.g. `167/main-text-r1`) in whichever worktree ran the soak harness | this Mac |
 
 GitHub labels: `needs-human` (waiting for an owner decision; agents do not claim it or change the files it names), `agent-ready` (owner-approved and claimable; only the owner applies it), `agent-working` (claimed by an agent session), `agent` (opened by an agent, so agent work can be counted).
 

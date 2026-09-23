@@ -334,9 +334,13 @@ section "Soak"
 main_dir="" main_wt="" main_m=0
 other_dir="" other_wt="" other_m=0
 while IFS= read -r wt; do
-    [ -n "$wt" ] || continue
-    for d in "$wt"/target/soak/*/; do
-        d=${d%/}
+    [ -n "$wt" ] && [ -d "$wt/target/soak" ] || continue
+    # A run is any directory under target/soak holding a summary: the default
+    # is target/soak/<timestamp>-<mode>/, but soak-qemu.sh's out= can nest
+    # runs deeper (e.g. target/soak/167/main-text-r1/).
+    find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv \) 2>/dev/null |
+        sed 's|/[^/]*$||' | sort -u >"$TMP/soak-dirs"
+    while IFS= read -r d; do
         if [ -f "$d/summary.md" ]; then
             m=$(mtime "$d/summary.md")
         elif [ -f "$d/summary.tsv" ]; then
@@ -351,12 +355,12 @@ while IFS= read -r wt; do
         elif [ "$m" -gt "$other_m" ]; then
             other_m=$m other_dir=$d other_wt=$wt
         fi
-    done
+    done <"$TMP/soak-dirs"
 done <<EOF
 $WORKTREES
 EOF
 if [ -z "$main_dir$other_dir" ]; then
-    echo "- no soak results (target/soak/*/summary.* in any worktree); run \`just soak\` on main once the harness is merged"
+    echo "- no soak results (no summary.* under target/soak/ in any worktree); run \`just soak\` on main once the harness is merged"
 else
     if [ -n "$main_dir" ]; then
         print_soak "main soak" "$main_dir" "$main_wt" "$main_m"
