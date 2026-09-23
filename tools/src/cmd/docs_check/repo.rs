@@ -55,9 +55,10 @@ type Merged = Result<Rc<BTreeMap<u64, u64>>, Skip>;
 /// R19 (check.py L458).
 static PHASE_SUBJECT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Phase ([0-9]+) M([0-9]+):").expect("valid regex"));
-/// R20 (check.py L467).
+/// R20 (check.py L467). `\n?$` matches Python's non-MULTILINE `$` on a
+/// tracked path ending in a trailing newline (fix round 1).
 static PHASE_DOC_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^docs/phases/([0-9]+)-[^/]+\.md$").expect("valid regex"));
+    LazyLock::new(|| Regex::new(r"^docs/phases/([0-9]+)-[^/]+\.md\n?$").expect("valid regex"));
 /// R21 (check.py L478, re.match).
 static MILESTONE_HEADING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Milestone ([0-9]+)\b").expect("valid regex"));
@@ -461,6 +462,17 @@ mod tests {
         for rx in all {
             LazyLock::force(rx);
         }
+    }
+
+    #[test]
+    fn phase_doc_re_matches_a_trailing_newline_path() {
+        // Python: re.match(r"^docs/phases/(\d+)-[^/]+\.md$",
+        //   "docs/phases/05-x.md\n").group(1) == "05" (non-MULTILINE $ matches
+        // just before a trailing newline too).
+        let caps = PHASE_DOC_RE
+            .captures("docs/phases/05-x.md\n")
+            .expect("a trailing-\\n path matches, as check.py's non-MULTILINE $ does");
+        assert_eq!(&caps[1], "05");
     }
 
     #[test]
