@@ -1,0 +1,19 @@
+[package]
+name = "aios-tools"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "AIOS host tooling: the aios binary (docs-check; agent-loop commands in later PRs)"
+
+[lib]
+name = "aios_tools"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+time = "0.3.55" # declared for the R2 PR loop; unused in R1
