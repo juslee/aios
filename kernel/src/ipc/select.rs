@@ -82,8 +82,8 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     // Lock order agrees: the scan and the registration below take
     // CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS, while the check
     // takes THREAD_TABLE (process_of_thread) and then PROCESS_TABLE
-    // (check_channel_access), which rank above all three, so none of them
-    // may be held here.
+    // (check_channel_access) one at a time; both rank above all three, so
+    // none of them may be held here.
     check_channel_entries(my_tid, entries)?;
 
     // --- Non-blocking scan: check each entry ---
@@ -154,8 +154,9 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
 /// Check that the process owning `tid` holds `ChannelAccess` for every
 /// channel entry in `entries`. Returns the first failure.
 ///
-/// Each id goes through `cap::check_channel_access`, the path the other IPC
-/// entry points use, so a denial counts toward `ipc_cap_denied` and logs the
+/// Each id goes through `cap::check_channel_access`, the path `ipc_call`,
+/// `ipc_send`, `ipc_recv`, `ipc_cancel` and `channel_destroy` use, so a
+/// denial counts toward `ipc_cap_denied` (with `kernel-metrics`) and logs the
 /// same warning. Notification entries are not capability-checked, matching
 /// `notify::notification_wait`. A set without channel entries skips the
 /// process lookup.

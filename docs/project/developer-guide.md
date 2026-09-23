@@ -1029,7 +1029,7 @@ ipc/
   timeout.rs           (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs                   # Direct switch fast path, priority inheritance, reply switch
   tests/mod.rs         (694)  # Test initialization, thread entries, test-only helpers
-  tests/select_cap.rs  (157)  # IpcSelect capability self-test
+  tests/select_cap.rs  (158)  # IpcSelect capability self-test
   notify.rs                   # Notification objects (signal/wait)
   select.rs                   # IPC select (multi-wait)
   shmem.rs                    # Shared memory regions

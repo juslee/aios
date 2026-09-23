@@ -1,13 +1,11 @@
-//! IpcSelect capability self-test (#179), run from the ipc-timeout thread.
+//! IpcSelect capability self-test, run from the ipc-timeout thread.
 
 use crate::ipc::channel::{ipc_recv, ipc_send};
 use crate::ipc::select::{ipc_select, SELECT_WAITERS};
-use crate::ipc::{channel_mut, CHANNEL_TABLE};
+use crate::ipc::{channel_create_unchecked, channel_mut, CHANNEL_TABLE};
 use crate::syscall::IpcError;
 use crate::task::ThreadId;
 use shared::{Capability, ChannelId, RawMessage, SelectEntry, SelectKind, MAX_CHANNELS};
-
-use super::channel_create_unchecked;
 
 /// Short timeout for every select below. A regression that lets a select
 /// block fails its check with ETIMEDOUT (or at worst stalls this thread
@@ -24,12 +22,13 @@ const SELECT_TIMEOUT_TICKS: u64 = 10;
 /// channels stay allocated for the rest of the boot, like the other test
 /// channels, so the grants never point at a reused channel slot.
 ///
-/// Each case pins one ordering regression:
+/// The denied and mixed cases each pin one ordering regression:
 /// - `denied` first holds a queued message, so a check that ran after the
 ///   non-blocking scan (or checked only the last entry) would report it
 ///   ready instead of returning EPERM.
 /// - With `denied` empty again, the mixed set puts the accessible channel
-///   first, so a check made while registering would leave a waiter behind.
+///   first, so a check made while registering would leave a waiter behind
+///   on it; neither channel's waiting_receiver may be set afterwards.
 ///
 /// The three EPERM cases each log one expected `denied ChannelAccess`
 /// warning from the capability check.
@@ -102,7 +101,9 @@ pub(super) fn select_cap_test(my_tid: ThreadId) {
     let mixed = ipc_select(&[chan(owned_a), chan(denied)], SELECT_TIMEOUT_TICKS);
     let on_channel = {
         let mut table = CHANNEL_TABLE.lock();
-        channel_mut(&mut table, owned_a).is_ok_and(|ch| ch.waiting_receiver.is_some())
+        [owned_a, denied]
+            .into_iter()
+            .any(|id| channel_mut(&mut table, id).is_ok_and(|ch| ch.waiting_receiver.is_some()))
     };
     let in_waiters = SELECT_WAITERS
         .lock()
