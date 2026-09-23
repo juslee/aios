@@ -11,7 +11,7 @@ status: draft
 
 AIOS's intelligence services keep asking a model small, closed questions. How urgent is this notification? Is this agent action consistent with its declared task? Which setting does this sentence mean? The AIRS spec answers them by generating text and parsing it, or with hand-written heuristics.
 
-A **typed judgment** answers them directly. The model reads a state (text or JSON) and one or more questions, and returns a probability distribution for each question from a single prefill. It generates no tokens. There are three question types, named as in TypeSafe's System One API and the open Decider models:
+A **typed judgment** answers them directly. The model reads a state (text or JSON) and one or more questions, and returns a probability distribution for each question from one shared prefill of the state. It generates no tokens. There are three question types, named as in TypeSafe's System One API and the open Decider models:
 
 - **Noul:** the probability that a yes/no condition holds. 0.5 means yes and no are equally likely, not "medium".
 - **Choice:** a distribution over a known, unordered set of options.
@@ -41,12 +41,12 @@ The mechanism works on any causal language model. A model trained for judgments 
 | Layer | Change | Today |
 | --- | --- | --- |
 | `InferenceRuntime` | No signature change when each option is one token. Options longer than one token need teacher-forced `forward` calls on a forked cache. New requirement: fork session state that is not a KV block (Open Question 2). | `forward` returns next-position logits (`airs/inference.md:1586-1592`). The KV cache is PagedAttention blocks with copy-on-write prefix sharing (`kernel/memory/ai.md:142`, `:185-196`). |
-| Engine session | Add a readout mode to `SessionConfig`. Make `max_tokens = 0` legal. Add a `Ready → Completed` transition. Reuse the `Choice` prefix tables and read `probs` without sampling. | `SessionConfig` is at `airs/inference.md:58-69`. `Ready` leads only to `Generating` (`:1143-1152`). |
+| Engine session | Add a readout mode to `SessionConfig`. Define `max_tokens = 0` as readout-only. Add a `Ready → Completed` transition. Reuse the `Choice` prefix tables and read `probs` without sampling. | `SessionConfig` is at `airs/inference.md:58-69`. `Ready` leads only to `Generating` (`:1143-1152`). |
 | Prefix sharing | Key shared prefixes on the state and the question set, not only the system prompt. Share only within one trust domain. | Keyed on "hashing the system prompt tokens" (`airs/inference.md:656`). |
-| Metering | Check prefill tokens before a session starts, not only predicted completion. A judgment generates no tokens, so today only the kernel's time budget would see its cost. | `TokenBudget` covers "prompt + completion" (`airs/inference.md:1013-1014`), but the pre-session check estimates only completion length (`:1243-1246`), and usage updates "On each token" (`:1093`). The kernel compute budget is time-based (`:1248-1249`; `kernel/compute/budget.md:45-52`), so it does charge prefill time. `InferenceBudget.max_tokens` is "Maximum tokens to generate" (`kits/kernel/compute.md:142-143`). |
+| Metering | Check prefill tokens before a session starts, not only predicted completion. A judgment generates no tokens, so today nothing charges its prefill on a CPU-only device. | `TokenBudget` covers "prompt + completion" (`airs/inference.md:1013-1014`), but the pre-session check estimates only completion length (`:1243-1246`), and usage updates "On each token" (`:1093`). The kernel compute budget is time-based (`:1248-1249`; `kernel/compute/budget.md:45-52`), but it covers only work on a "non-CPU device" (`kernel/compute/budget.md:10`). `InferenceBudget.max_tokens` is "Maximum tokens to generate" (`kits/kernel/compute.md:142-143`). |
 | AIRS Kit | Add `judge` and `judge_batch` beside `infer` and `embed`, gated on `InferenceAccess`. Define `InferenceResult`. Replace the free-text classifier example. | The trait is at `kits/intelligence/airs.md:42-57` and the capability table at `:338-342`. The example prompts "Classify activity" and reads back a string (`:306-313`). |
 | Principles | Add an explicit exception to "Streaming always… No blocking calls". A judgment has nothing to stream. | `intelligence/airs.md:142` |
-| Model registry | Add a judgment task type. Allow a second resident model only on 8 GB devices. | `TaskType` is at `airs/model-registry.md:71-90`, and the specialist slot at `:213`. |
+| Model registry | Add a judgment task type. Allow a second resident model only on devices with 8 GB or more. | `TaskType` is at `airs/model-registry.md:71-90`. Specialists fit alongside the primary model at 8 GB (`:213`) and at 16 GB and above (`:269-272`). |
 | Gate 2 and benchmarks | Add criteria for judgment latency and calibration. | Gate 2 measures throughput, first-token latency and memory (`development-plan.md:253-257`). Its "If NO" branch already says "Focus on embedding/classification" (`:259`). |
 
 **Ownership.** Phase 11 owns the runtime, the engine session and the Kit method; its row in the plan names "AIRS Kit (inference)" (`development-plan.md:428`). Phase 12, "AIRS Kit (services)" (`development-plan.md:429`), defines the service calls built on it. Each consumer phase owns its questions, thresholds and labelled calibration set.
@@ -92,10 +92,10 @@ Adopt first where the evidence is in the state and the call can be asynchronous.
 | # | Consumer | Site | Today | Judgment | Phase |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Behavioral Monitor Tier 2 | `behavioral-monitor/intelligence.md:206-225` | JSON-mode verdict with a self-reported confidence | Noul: is this flagged burst explained by what the user asked the agent to do? Asynchronous, 1–5 calls an hour (`behavioral-monitor/intelligence.md:237-239`). A signal only: a `FalsePositive` verdict can suppress enforcement (`:203`, `:215-216`), so Tier 1 hard limits stay in code. | 46 (arch doc: stale 41); see Open Question 10 |
-| 2 | Sensitivity labels | `security/privacy/data-lifecycle.md:62` | Keyword detection and pattern matching | One Noul per `ClassificationLabel` | 13 |
+| 2 | Sensitivity labels | `security/privacy/data-lifecycle.md:62` | Keyword detection and pattern matching | One Noul per `ClassificationLabel` in place of the keywords; the PII pattern matchers stay in code | 13 |
 | 3 | Alt-text quality | `experience/accessibility/testing.md:621-622` | Presence is checked; quality "requires manual review" | Noul: is this a real description, not a filename or placeholder? | 38 |
 | 4 | Flow content screening | `storage/flow/security.md:65-66` | An unspecified `AirsClassifier(String)` | One Noul per label the source names (passwords, credentials, PII) | 16 |
-| 5 | Attention content urgency | `intelligence/attention.md:203`, `:281`, `:341` | An urgency-marker list and a rule tree | Score (how soon), plus Nouls | 17, batch tier only |
+| 5 | Attention content urgency | `intelligence/attention.md:203`, `:281`, `:341` | An urgency-marker list and a rule tree | Score (how soon), plus Nouls, in place of the marker list; the rule tree's precedence stays in code | 17, batch tier only |
 | 6 | Preference NLU | `preferences/resolution.md:207` | `interpret_preference`, which is undefined | Choices: request type, setting, direction | 15 |
 | 7 | Privacy query routing | `security/privacy/intelligence.md:270` | An unspecified classifier | Choice over query types | 18 |
 | 8 | Inspector NL queries | `applications/inspector/intelligence.md:30-31` | A self-reported confidence gated at 0.8 (`applications/inspector/intelligence.md:54`) | Choices: intent, scope | none in §8 |
@@ -118,7 +118,7 @@ Adopt first where the evidence is in the state and the call can be asynchronous.
 **Why 260 sites were rejected:**
 
 - numeric control;
-- AIRS-down fallback paths;
+- AIRS-down fallback paths with no AIRS branch beside them;
 - synchronous budgets under 10 ms with no deferred path;
 - exact protocol lookups;
 - evidence that lies outside the state;
@@ -148,19 +148,19 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
    - a judgment model on an architecture candle supports (none is published yet).
 
    Either way, the risk register's "candle bridge integration is well-understood" (`development-plan.md:198`) needs updating.
-2. **Forking state that is not KV.** In decider-2b (Qwen3.5-2B), 18 of 24 layers carry Gated DeltaNet recurrent state, which PagedAttention's copy-on-write blocks cannot share. `InferenceRuntime` needs a snapshot-and-fork contract that covers both kinds of state.
+2. **Forking state that is not KV.** In decider-2b (Qwen3.5-2B), 18 of 24 layers carry Gated DeltaNet recurrent state, which PagedAttention's copy-on-write blocks cannot share. `InferenceRuntime` needs a snapshot-and-fork contract that covers both kinds of state; the Kit's `InferenceSession::fork` (`kits/intelligence/airs.md:81`) would sit on top of it.
 3. **Options longer than one token.** Either score them with teacher-forced passes, or require option labels that are a single token each.
-4. **Question layout.** Decider scores each question in its own row by default. Packing the questions into one row changes up to 12% of answers when their order is reversed (decider-2b model card). Default to independent rows.
+4. **Question layout.** Decider scores each question in its own row by default. Packing the questions into one row changes up to 12% of answers when their order is reversed (decider-2b model card). Default to independent rows. Prompt order also matters. The design in Key Idea 1 prefills the state first and forks per question, as Decider's own server does for long states ("long state: run it once, fork the cache per question", `decider/serve.py`). The ARM figures in Open Question 5 come from a third-party build that caches the question prefix instead, so the state-first layout is unmeasured on ARM. Whatever order AIOS picks must match the order the model was trained on.
 5. **Latency on target hardware.** The only ARM CPU figures are third-party, measured on a Neoverse-N1 with 4 threads, Q8_0 and decider-2b v8 weights:
    - about 0.55 s for a state under 64 tokens, with the question prefix cached;
    - about 4 s for a 200–400-token state;
    - 15–20 s for a cold question prefix;
    - about 3.2 GB resident.
 
-   None of these meets the latency budgets the docs set: < 50 ms for one attention item (`intelligence/attention.md:1139`), < 500 ms for a semantic query (`storage/spaces/query-engine.md:152`), < 10 ms for screening Tier 2, a stage that may defer (`adversarial-defense/screening.md:279`), and the Intent Verifier's < 10 ms LLM target, which assumes an NPU and allows 50–100 ms on CPU-only hardware (`intent-verifier/pipeline.md:456`). Measure on a Pi 5 before judgment criteria are added to Gate 2.
+   None of these meets the synchronous budgets the docs set for ranked consumers: < 50 ms for one attention item (`intelligence/attention.md:1139`), < 500 ms for a semantic query (`storage/spaces/query-engine.md:152`), < 10 ms for screening Tier 2, a stage that may defer (`adversarial-defense/screening.md:279`), and the Intent Verifier's < 10 ms LLM target, which assumes an NPU and allows 50–100 ms on CPU-only hardware (`intent-verifier/pipeline.md:456`). Measure on the Gate 2 target hardware, a Pi 4 (4GB) (`development-plan.md:255`), and on a Pi 5, before judgment criteria are added to Gate 2.
 6. **Calibration.** No AIOS labels exist yet.
    - decider-2b v10 reports ECE 0.037 in-task and 0.084 held-out.
-   - On the hard tier of JevBench, as reported on the Decider model cards, ECE is 0.30 for decider-2b, 0.29 for decider-4b and 0.15 for decider-35b-a3b.
+   - On the hard tier of JevBench, as reported by the Decider authors, ECE is 0.30 for decider-2b, 0.29 for decider-4b and 0.15 for decider-35b-a3b.
    - In our own eval, Jev scored a Brier of 0.060 against 0.061 for always guessing the base rate (`2026-09-22-jl-jev-review-comment-triage-eval.md:71`).
 
    Each consumer phase needs a labelled set before a threshold ships.
@@ -172,7 +172,7 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
 
    The request shape (a state plus typed questions, returning distributions) matches TypeSafe's hosted `/v1/systemone`. So it commits to nothing about where inference runs. Add no remote backend until this is decided.
 9. **Provenance.** Decider's author publishes safetensors only. The GGUF conversions are third-party, and none is validated for reading the answers, which needs a logits shim. AIOS would convert, measure and sign its own build into a `ModelManifest` (`secure-boot/intelligence.md:31`).
-10. **Behavioral Monitor Tier 2 phase.** The top-ranked consumer lands late. `behavioral-monitor.md:217-221` puts the core monitor with "AIRS Intelligence Services" (stale 10, now Phase 12) and Tier 2's semantic classifier (§13.1) with "AIRS Capability Intelligence" (stale 41, now Phase 46). The plan's §8.2 Intent Kit row names Phase 12 as extending it for the behavioral monitor (`development-plan.md:524`). Should the §13.1 classifier move up to Phase 12, alongside the core monitor, once Phase 11 has delivered the judgment session?
+10. **Behavioral Monitor Tier 2 phase.** The top-ranked consumer lands late. `behavioral-monitor.md:217-221` puts the core monitor with "AIRS Intelligence Services" (stale 10, now Phase 12) and Tier 2's semantic classifier (`behavioral-monitor/intelligence.md` §13.1) with "AIRS Capability Intelligence" (stale 41, now Phase 46). The plan's §8.2 Intent Kit row names Phase 12 as extending it for the behavioral monitor (`development-plan.md:524`). Should the §13.1 classifier move up to Phase 12, alongside the core monitor, once Phase 11 has delivered the judgment session?
 
 ## References
 
