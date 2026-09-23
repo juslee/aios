@@ -1,0 +1,4 @@
+@@@ append shared/src/lib.rs
+
+#[test]
+fn five() {}

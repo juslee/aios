@@ -1,0 +1,2 @@
+@@@ append CLAUDE.md
+| `/ghost` | Haunts the tables |

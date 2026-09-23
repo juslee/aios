@@ -1,0 +1,2 @@
+@@@ append docs/kernel/alpha.md
+Jump to [nowhere](#no-such-heading).

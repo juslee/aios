@@ -1,0 +1,4 @@
+@@@ file docs/kernel/gamma.md
+# Gamma
+
+A new architecture doc that doc-map.md does not list.
