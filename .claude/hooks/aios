@@ -1,0 +1,93 @@
+#!/bin/sh
+# .claude/hooks/aios - run the aios host tools binary built from tools/ (`just tools`).
+#
+# The binary comes from the MAIN checkout (the parent of git's common dir), so
+# hooks, skills and recipes run merged, reviewed code even when called from a PR
+# worktree. AIOS_TOOLS_BIN overrides it, to test a PR's own build explicitly.
+#
+# Fresh means newer than every file under the main checkout's tools/ and than
+# its Cargo.lock.
+#   aios guard ...    fresh: run. stale: run it and start one background
+#                     `just tools` (lock dir target/tools/.building). missing:
+#                     fail closed with a PreToolUse "ask" decision, exit 0.
+#   aios <other> ...  fresh: run. stale: rebuild in the foreground, then run.
+#                     missing: build, then run; exit 3 naming `just tools` if
+#                     the build fails.
+#   aios --prebuild   (SessionStart) start a background build when the binary
+#                     is missing or stale; always exits 0.
+# POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
+# never to stdout, so JSON on stdout stays parseable.
+
+set -u
+
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 3
+if common=$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    main=$(dirname -- "$common")
+else
+    main=$(CDPATH='' cd -- "$here/../.." && pwd -P) || exit 3
+fi
+bin="$main/target/tools/release/aios"
+lock="$main/target/tools/.building"
+log="$main/target/tools/build.log"
+ask='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"aios tools not built; run just tools"}}'
+
+is_stale() {
+    [ -n "$(find "$main/tools" "$main/Cargo.lock" -newer "$bin" -print 2>/dev/null | head -n 1)" ]
+}
+
+build_fg() {
+    (cd "$main" && just tools) >&2
+}
+
+build_bg() {
+    mkdir -p "$main/target/tools" 2>/dev/null || return 0
+    # A lock older than 30 minutes belongs to a build that died: take it over.
+    if [ -n "$(find "$lock" -prune -mmin +30 2>/dev/null)" ]; then
+        rmdir "$lock" 2>/dev/null
+    fi
+    mkdir "$lock" 2>/dev/null || return 0
+    (
+        cd "$main" && just tools >"$log" 2>&1
+        rmdir "$lock" 2>/dev/null
+    ) </dev/null >/dev/null 2>&1 &
+}
+
+if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
+    [ "${1:-}" = "--prebuild" ] && exit 0
+    [ -x "$AIOS_TOOLS_BIN" ] && exec "$AIOS_TOOLS_BIN" "$@"
+    if [ "${1:-}" = "guard" ]; then
+        printf '%s\n' "$ask"
+        exit 0
+    fi
+    echo "aios: AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not an executable file" >&2
+    exit 3
+fi
+
+case "${1:-}" in
+--prebuild)
+    if [ ! -x "$bin" ] || is_stale; then
+        build_bg
+    fi
+    exit 0
+    ;;
+guard)
+    if [ ! -x "$bin" ]; then
+        printf '%s\n' "$ask"
+        exit 0
+    fi
+    if is_stale; then
+        build_bg
+    fi
+    exec "$bin" "$@"
+    ;;
+esac
+
+if [ ! -x "$bin" ]; then
+    if ! build_fg || [ ! -x "$bin" ]; then
+        echo "aios: $bin is missing and the build failed; run: just tools" >&2
+        exit 3
+    fi
+elif is_stale; then
+    build_fg || echo "aios: rebuilding $bin failed; running the stale binary (run: just tools)" >&2
+fi
+exec "$bin" "$@"
