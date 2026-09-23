@@ -9,6 +9,12 @@
 //! caller's working directory through, so both tools check the same checkout in every
 //! supported invocation; the parity goldens run check.py from inside each materialized
 //! repository for the same reason.
+//!
+//! CLI parsing divergences (argparse vs clap; verified against check.py at 33c6b3d): a
+//! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),
+//! where clap accepts it as the end of options and `aios docs-check` runs normally; and
+//! `--help` prints argparse's text, not clap's. `--baseline`'s `allow_negative_numbers`
+//! below closes the third one (`--baseline -1` used to be rejected as an unknown flag).
 
 pub mod checks;
 pub mod markdown;
@@ -44,7 +50,7 @@ pub struct Args {
     #[arg(long, default_value = "", hide_default_value = true)]
     pub check: String,
     /// baseline file (default: scripts/docs/baseline.json)
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub baseline: Option<String>,
     /// rewrite the baseline from the current findings (counts included; 'reason' on accepted false positives is kept)
     #[arg(long)]
@@ -132,7 +138,12 @@ pub fn repo_root(cwd: &Path) -> anyhow::Result<String> {
 }
 
 /// The whole of check.py `main()` with the registered checks: writes stdout to
-/// `out`, returns the exit code (0, or 1 when there is new drift).
+/// `out`, returns the exit code (0, or 1 when there is new drift; the caller in
+/// `main.rs` maps an `Err` to 2). A Rust panic unwinds past this and exits the
+/// process with code 101, where check.py's `__main__` catches every crash and
+/// exits 2 instead; every consumer (`docs.yml`, `brief.sh`) already treats any
+/// exit other than 0 or 1 as a checker error, so this divergence is not
+/// observable as different behaviour outside the process.
 pub fn run(args: &Args, cwd: &Path, out: &mut dyn Write) -> anyhow::Result<u8> {
     run_with(args, cwd, checks::registry(), out)
 }
