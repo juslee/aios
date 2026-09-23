@@ -43,7 +43,8 @@ pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
 /// check `ipc_recv` makes. The whole set is validated before the thread is
 /// registered as a waiter on any source, so a rejected call leaves no
 /// partial registration: `EINVAL` if any id is out of range, otherwise
-/// `EPERM` if the caller lacks access to any channel in the set.
+/// `EPERM` if the caller lacks access to any channel in the set (or, for a
+/// set with a channel entry, if the calling thread has no owning process).
 ///
 /// Returns `(ready_index, matched_bits)` on success.
 /// `matched_bits` is non-zero only for notification entries.
@@ -75,8 +76,9 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
 
     // Capability enforcement: ChannelAccess for every channel in the set
     // (fail-closed). This runs before the scan and the registration below
-    // take CHANNEL_TABLE or SELECT_WAITERS. check_channel_access takes
-    // PROCESS_TABLE, which ranks above both, so neither may be held here.
+    // take CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS.
+    // check_channel_access takes PROCESS_TABLE, which ranks above all three,
+    // so none of them may be held here.
     check_channel_entries(my_tid, entries)?;
 
     // --- Non-blocking scan: check each entry ---

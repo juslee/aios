@@ -358,24 +358,24 @@ pub fn ipc_recv(
 pub fn ipc_reply(
     channel: ChannelId,
     reply_buf: &[u8],
-) -> i64                                 // channel.rs:355
+) -> i64                                 // channel.rs:349
 
 // Non-blocking send (fire and forget).
 pub fn ipc_send(
     channel: ChannelId,
     send_buf: &[u8],
-) -> i64                                 // channel.rs:421
+) -> i64                                 // channel.rs:415
 
 // Create a new IPC channel. Requires ChannelCreate capability.
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs:149
+) -> Result<ChannelId, i64>              // ipc/mod.rs:177
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
     entries: &[SelectEntry],
     timeout_ticks: u64,
-) -> Result<(usize, u64), i64>          // select.rs:44
+) -> Result<(usize, u64), i64>          // select.rs:51
 ```
 
 **Gotchas**:
@@ -390,7 +390,7 @@ pub fn ipc_select(
 
 - **Timeout registration before blocking** (channel.rs:118-126): Timeouts are registered in the TIMEOUT_QUEUE *before* the thread blocks. If direct switch fails and falls through to the scheduler, the timeout is still active. On timeout expiry, the timeout queue wakes the thread with an error code.
 
-- **ipc_reply() needs no capability** (channel.rs:355): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
+- **ipc_reply() needs no capability** (channel.rs:349): Per ipc.md §9.1, replying to a pending caller does not require a capability check. The caller already proved authorization when it initiated the call.
 
 **Lock ordering**:
 

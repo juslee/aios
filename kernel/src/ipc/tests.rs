@@ -509,8 +509,8 @@ fn ipc_timeout_entry() -> ! {
 /// channel before it registers a waiter on any source.
 ///
 /// Runs in the ipc-timeout thread (process 1). The three channels come from
-/// channel_create_unchecked, so creating them grants nothing. Process 1 is
-/// then granted ChannelAccess to `owned_a` and `owned_b` only. The channels
+/// channel_create_unchecked; creating a channel grants no ChannelAccess, so
+/// process 1 is granted ChannelAccess to `owned_a` and `owned_b` only. The channels
 /// stay allocated for the rest of the boot, like the other test channels, so
 /// the grants never point at a reused channel slot.
 ///
