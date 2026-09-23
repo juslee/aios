@@ -3,7 +3,9 @@
 //! L1379-1395 at 33c6b3d).
 
 pub mod doc_map;
+pub mod harness;
 pub mod just_recipes;
+pub mod layout;
 pub mod links;
 pub mod lock_order;
 pub mod milestones;
@@ -39,5 +41,7 @@ pub fn registry() -> Vec<Box<dyn Check>> {
         Box::new(lock_order::LockOrder),
         Box::new(milestones::MilestoneStatus),
         Box::new(milestones::PhaseCount),
+        Box::new(layout::Layout),
+        Box::new(harness::HarnessTables),
     ]
 }
