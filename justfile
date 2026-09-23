@@ -138,13 +138,15 @@ run-direct: build
 soak *args:
     bash {{ quote(justfile_directory() / "scripts" / "soak-qemu.sh") }} "$@"
 
-# Run host-side unit tests (kernel is no_std, excluded from host tests; the tools
-# crate runs `cargo test -p aios-tools` in CI's Tools (host) job, which has full history)
+# kernel is no_std and excluded; the tools crate is excluded too and tested
+# separately with `cargo test -p aios-tools` in CI's Tools (host) job, which has
+# full history.
+# Run host-side unit tests (shared crate)
 test:
     cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 
-# Build the host tools binary target/tools/release/aios (run through .claude/hooks/aios).
 # The touch marks a no-op build fresh for the shim's freshness check.
+# Build the host tools binary target/tools/release/aios (run through .claude/hooks/aios)
 tools:
     cargo build --release -p aios-tools --target-dir target/tools
     touch target/tools/release/aios
@@ -153,7 +155,7 @@ tools:
 clippy:
     cargo clippy --target {{target}} -- -D warnings
     cargo clippy -p uefi-stub --target {{uefi_target}} -- -D warnings
-    cargo clippy -p aios-tools -- -D warnings
+    cargo clippy -p aios-tools --all-targets -- -D warnings
 
 # Format code
 fmt:
