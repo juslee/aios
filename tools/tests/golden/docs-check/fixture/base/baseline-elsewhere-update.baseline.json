@@ -1,0 +1,32 @@
+{
+  "comment": "Accepted docs drift. A finding is new when its key is missing here or it occurs on more lines than 'count' (default 1). 'reason' marks an accepted false positive and survives regeneration. Regenerate with: just docs-check --update-baseline",
+  "version": 1,
+  "counts": {
+    "md-links": 2,
+    "pointer-doctor": 1
+  },
+  "findings": [
+    {
+      "key": "md-links|docs/kernel/alpha.md|old-spec.md",
+      "check": "md-links",
+      "file": "docs/kernel/alpha.md",
+      "target": "old-spec.md",
+      "message": "broken link -> old-spec.md",
+      "count": 2
+    },
+    {
+      "key": "md-links|docs/kernel/beta.md|older-spec.md",
+      "check": "md-links",
+      "file": "docs/kernel/beta.md",
+      "target": "older-spec.md",
+      "message": "broken link -> older-spec.md"
+    },
+    {
+      "key": "pointer-doctor|.claude/agents/worker.md|path:docs/retired/guide.md",
+      "check": "pointer-doctor",
+      "file": ".claude/agents/worker.md",
+      "target": "path:docs/retired/guide.md",
+      "message": "path does not exist: docs/retired/guide.md"
+    }
+  ]
+}

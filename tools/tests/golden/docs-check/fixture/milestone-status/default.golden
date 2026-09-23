@@ -1,0 +1,28 @@
+exit 1
+docs-check: 4 findings across 15 checks - 1 new, 3 baselined (1 accepted false positives), 1 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  md-links               2     0
+  section-refs           0     0
+  anchors                0     0
+  wiki-links             0     0
+  doc-map                0     0
+  repo-paths             0     0
+  just-recipes           0     0
+  test-count             0     0
+  lock-order             0     0
+  milestone-status       1     1
+  phase-count            0     0
+  layout                 0     0
+  harness-tables         0     0
+  pointer-doctor         1     0
+  knowledge-hygiene      0     0
+
+New drift since baseline:
+
+[milestone-status]
+ + docs/phases/01-memory.md:9: merged milestone M3 still has 1 unchecked task(s)
+
+2 baselined finding(s) no longer occur or occur less often; prune them with `just docs-check --update-baseline`:
+  - anchors|docs/kernel/alpha.md|#gone
+  - md-links|docs/kernel/beta.md|older-spec.md (2 -> 1 occurrences)

@@ -1,0 +1,2 @@
+exit 0
+docs-check: wrote 3 findings to scripts/docs/other-baseline.json

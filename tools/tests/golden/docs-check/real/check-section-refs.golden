@@ -1,0 +1,7 @@
+exit 0
+docs-check: 4 findings across 1 checks - 0 new, 4 baselined (1 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  section-refs           4     0
+
+No new drift since baseline.

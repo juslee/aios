@@ -1,0 +1,28 @@
+exit 1
+docs-check: 3 findings across 15 checks - 3 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/missing.json)
+
+  check              total   new
+  md-links               2     2
+  section-refs           0     0
+  anchors                0     0
+  wiki-links             0     0
+  doc-map                0     0
+  repo-paths             0     0
+  just-recipes           0     0
+  test-count             0     0
+  lock-order             0     0
+  milestone-status       0     0
+  phase-count            0     0
+  layout                 0     0
+  harness-tables         0     0
+  pointer-doctor         1     1
+  knowledge-hygiene      0     0
+
+New drift since baseline:
+
+[md-links]
+ + docs/kernel/alpha.md:12 (also 16): broken link -> old-spec.md
+ + docs/kernel/beta.md:7: broken link -> older-spec.md
+
+[pointer-doctor]
+ + .claude/agents/worker.md:10: path does not exist: docs/retired/guide.md

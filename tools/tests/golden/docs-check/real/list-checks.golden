@@ -1,0 +1,16 @@
+exit 0
+md-links           relative [text](path) links resolve to a tracked file or directory
+section-refs       [x.md](path) §N resolves to a numbered heading (hub subfolders included)
+anchors            #fragment links resolve to a GitHub-style heading slug
+wiki-links         [[Note]] links resolve to a note in the docs/ vault
+doc-map            doc-map.md paths exist and every architecture doc is listed
+repo-paths         backticked kernel/ shared/ uefi-stub/ scripts/ paths exist (current-state docs)
+just-recipes       backticked `just X` recipes exist; public recipes are documented
+test-count         stated host test counts match #[test] in shared/src
+lock-order         production Mutex statics vs deadlock-prevention.md §3.3-3.4 and CLAUDE.md
+milestone-status   merged 'Phase N MK:' milestones vs phase docs, README, development-plan
+phase-count        phase counts in prose match the development-plan §8 table
+layout             kernel/src and shared/src modules vs CLAUDE.md layout and rule 05
+harness-tables     CLAUDE.md skills/agents tables and layout lists vs .claude/ (plugin skills as plugin:skill)
+pointer-doctor     CLAUDE.md sections, rules, paths, skills, agents, tools named by .claude/
+knowledge-hygiene  docs/knowledge naming, frontmatter, and an empty plans/ dir

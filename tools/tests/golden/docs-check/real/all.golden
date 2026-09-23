@@ -1,0 +1,123 @@
+exit 0
+docs-check: 78 findings across 15 checks - 0 new, 78 baselined (2 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  md-links              23     0
+  section-refs           4     0
+  anchors                1     0
+  wiki-links             0     0
+  doc-map                4     0
+  repo-paths             0     0
+  just-recipes           1     0
+  test-count             1     0
+  lock-order            16     0
+  milestone-status       5     0
+  phase-count            1     0
+  layout                 3     0
+  harness-tables         0     0
+  pointer-doctor        17     0
+  knowledge-hygiene      2     0
+
+All findings ('+' = new since baseline, '~' = accepted false positive):
+
+[md-links]
+   docs/kernel/device-model/lifecycle.md:409: broken link -> ../../kernel/src/service/mod.rs
+   docs/kernel/memory/physical.md:604: broken link -> ./deadlock-prevention.md
+   docs/kernel/memory/virtual.md:4: broken link -> ./ipc.md
+   docs/kits/platform/network.md:512: broken link -> ./flow.md
+   docs/kits/platform/storage.md:25: broken link -> ../platform/flow.md
+   docs/kits/platform/storage.md:526: broken link -> ./flow.md
+   docs/kits/platform/thermal.md:448: broken link -> ../kernel/scheduler.md
+   docs/platform/bsp.md:3: broken link -> ../../project/architecture.md
+   docs/platform/bsp.md:4: broken link -> ../../kernel/boot/firmware.md
+   docs/platform/bsp.md:4: broken link -> ../../kernel/device-model.md
+   docs/platform/bsp.md:4: broken link -> ../../kernel/hal.md
+   docs/platform/bsp.md:4: broken link -> ../subsystem-framework.md
+   docs/platform/bsp.md:4: broken link -> ../thermal/platform-drivers.md
+   docs/platform/linux-compat/virtual-filesystems.md:514: broken link -> ../../kernel/task/process.rs
+   docs/platform/thermal/cooling.md:166: broken link -> ../device-model/lifecycle.md
+   docs/security/fuzzing/adoption-roadmap.md:137: broken link -> model.md
+   docs/security/fuzzing/adoption-roadmap.md:137: broken link -> static-analysis.md
+   docs/security/fuzzing/ai-native.md:89 (also 131): broken link -> static-analysis.md
+   docs/security/fuzzing/ai-native.md:119: broken link -> model.md
+   docs/security/fuzzing/strategies.md:43 (also 72, 92): broken link -> model.md
+   docs/security/fuzzing/strategies.md:110: broken link -> static-analysis.md
+   docs/security/model/hardening.md:268 (also 338): broken link -> static-analysis.md
+   docs/security/model/hardening.md:313: broken link -> fuzzing.md
+
+[section-refs]
+   docs/intelligence/task-manager.md:2503: no §4 heading in docs/kernel/boot/lifecycle.md or its hub members
+ ~ docs/intelligence/tool-manager/security.md:55: no §9.3 heading in docs/intelligence/airs.md or its hub members [accepted: false positive: §9.3 means principle 3 ('Graceful degradation') of the numbered list under airs.md §9 Design Principles]
+   docs/kernel/boot/lifecycle.md:68: no §2.4 heading in docs/applications/agents.md or its hub members
+   docs/kernel/boot/testing.md:94: no §2.4 heading in docs/applications/agents.md or its hub members
+
+[anchors]
+   docs/applications/inspector/views.md:143: no heading for anchor #57-airs-analysis-view-phase-41 in docs/applications/inspector/views.md
+
+[doc-map]
+   docs/experience/scriptable-protocol.md: docs/experience/scriptable-protocol.md is not listed in docs/project/doc-map.md
+   docs/kits/platform/content-type-registry.md: docs/kits/platform/content-type-registry.md is not listed in docs/project/doc-map.md
+   docs/kits/platform/package-format.md: docs/kits/platform/package-format.md is not listed in docs/project/doc-map.md
+   docs/project/ccc-integration-analysis.md: docs/project/ccc-integration-analysis.md is not listed in docs/project/doc-map.md
+
+[just-recipes]
+   justfile: public recipe `run-input` is missing from the README Build Commands and developer-guide §5.1 tables
+
+[test-count]
+   docs/project/developer-guide.md:1628 (also 1721): states 364 tests; shared/src has 543 #[test] functions
+
+[lock-order]
+   CLAUDE.md:100: lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src
+   docs/kernel/deadlock-prevention.md: production lock BOOT_LOG is not in §3.3/§3.4 (defined at kernel/src/observability/mod.rs:352)
+   docs/kernel/deadlock-prevention.md: production lock COMPOSITOR_CHANNEL is not in §3.3/§3.4 (defined at kernel/src/compositor/service.rs:536)
+   docs/kernel/deadlock-prevention.md: production lock CURSOR_POS is not in §3.3/§3.4 (defined at kernel/src/compositor/cursor.rs:68)
+   docs/kernel/deadlock-prevention.md: production lock DRAG_STATE is not in §3.3/§3.4 (defined at kernel/src/compositor/window.rs:129)
+   docs/kernel/deadlock-prevention.md: production lock FOCUS_MANAGER is not in §3.3/§3.4 (defined at kernel/src/compositor/focus.rs:151)
+   docs/kernel/deadlock-prevention.md: production lock GPU_SERVICE_CHANNEL is not in §3.3/§3.4 (defined at kernel/src/gpu/service.rs:557)
+   docs/kernel/deadlock-prevention.md: production lock INPUT_DEVICES is not in §3.3/§3.4 (defined at kernel/src/drivers/virtio_input.rs:87)
+   docs/kernel/deadlock-prevention.md: production lock INPUT_QUEUE is not in §3.3/§3.4 (defined at kernel/src/input/mod.rs:20)
+   docs/kernel/deadlock-prevention.md: production lock PENDING_POINTER is not in §3.3/§3.4 (defined at kernel/src/input/mod.rs:29)
+   docs/kernel/deadlock-prevention.md: production lock SURFACE_TABLE is not in §3.3/§3.4 (defined at kernel/src/compositor/surface.rs:90)
+   docs/kernel/deadlock-prevention.md: production lock TITLE_FONT is not in §3.3/§3.4 (defined at kernel/src/compositor/text.rs:29)
+   docs/kernel/deadlock-prevention.md: production lock VIRTIO_GPU is not in §3.3/§3.4 (defined at kernel/src/drivers/virtio_gpu.rs:28)
+   docs/kernel/deadlock-prevention.md: production lock WINDOW_Z_ORDER is not in §3.3/§3.4 (defined at kernel/src/compositor/window.rs:48)
+   kernel/src/compositor/service.rs:548: lock-ordering comment names VIRTIO_INPUT, which is not a Mutex static
+   kernel/src/compositor/surface.rs:85: lock-ordering comment names VIRTIO_INPUT, which is not a Mutex static
+
+[milestone-status]
+   README.md: README status does not mention the latest merged milestone M25
+   docs/phases/02-memory-management.md:136: merged milestone M8 still has 4 unchecked task(s)
+   docs/phases/05-kit-foundation.md:404: merged milestone M18 still has 7 unchecked task(s)
+   docs/project/development-plan.md: §8.1 Velocity Summary has no row covering merged milestone M24
+   docs/project/development-plan.md: §8.1 Velocity Summary has no row covering merged milestone M25
+
+[phase-count]
+   README.md:88: says 30 phases; development-plan §8 lists 47
+
+[layout]
+   .claude/rules/05-file-placement.md: rule 05 does not list kernel/src/compositor/
+   .claude/rules/05-file-placement.md: rule 05 does not list kernel/src/gpu/
+   .claude/rules/05-file-placement.md: rule 05 does not list kernel/src/input/
+
+[pointer-doctor]
+   .claude/agents/code-reviewer.md:14: points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md
+   .claude/agents/doc-writer.md:15: points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now
+   .claude/agents/doc-writer.md:16: points to CLAUDE.md 'Milestone Numbering', which is not a section of CLAUDE.md
+   .claude/agents/kernel-dev.md:6: tools: lists unknown tool MultiEdit
+   .claude/agents/kernel-dev.md:16: points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md
+   .claude/agents/team-lead.md:29: points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now
+   .claude/agents/team-lead.md:29: points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md
+   .claude/agents/team-lead.md:29: points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md
+   .claude/agents/verifier.md:21: points to CLAUDE.md 'Key Facts', which is not a section of CLAUDE.md
+   .claude/rules/04-phase-workflow.md:14: points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now
+   .claude/rules/08-knowledge-hive.md:26: points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now
+   .claude/skills/generate-phase-doc/SKILL.md:16: points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now
+   .claude/skills/implement-phase/SKILL.md:30 (also 109): points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md
+   .claude/skills/implement-phase/SKILL.md:30 (also 109): points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md
+   .claude/skills/verify-phase/SKILL.md:11: points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md
+   .claude/skills/write-arch-doc/SKILL.md:44 (also 254, 264): points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now
+ ~ .claude/skills/write-arch-doc/SKILL.md:222: path does not exist: docs/security/security.md [accepted: false positive: the line cites docs/security/security.md on purpose as the hub name to avoid ('model.md instead of security.md')]
+
+[knowledge-hygiene]
+   docs/knowledge/research/2026-03-18-claude-inference-engine-techniques-survey.md: file name is not YYYY-MM-DD-initials-short-description.md
+   docs/knowledge/research/2026-03-18-inference-integration-survey.md: file name is not YYYY-MM-DD-initials-short-description.md
