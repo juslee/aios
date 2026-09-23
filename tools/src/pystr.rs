@@ -10,9 +10,12 @@
 //! Accepted divergences (contract §1.9; no tracked file reaches them):
 //! `is_ascii_digits` and `parse_uint` accept ASCII digits only, where Python's
 //! `str.isdigit()` and `int()` also accept other Unicode decimal digits, and
-//! numbers that do not fit `u64` are treated as no match. The `regex` crate's
-//! `\s` lacks U+001C..U+001F, so ported code uses these helpers instead of a
-//! pattern wherever Python whitespace matters.
+//! numbers that do not fit `u64` are treated as no match. CPython 3.11+'s
+//! `int()` also raises past 4300 digits, so at every site ported through
+//! these helpers, check.py exits 2 where aios parses, saturates or treats the
+//! value as no match. The `regex` crate's `\s` lacks U+001C..U+001F, so
+//! ported code uses these helpers instead of a pattern wherever Python
+//! whitespace matters.
 
 /// `str.isspace()` for one character: Unicode whitespace plus U+001C..U+001F,
 /// which Python counts as whitespace and `char::is_whitespace` does not.
