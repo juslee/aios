@@ -529,7 +529,10 @@ if [ -n "$DOCS_PID" ]; then
     wait "$DOCS_PID" 2>/dev/null
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
     if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
-        echo "- docs-check failed (exit $rc, a checker error, not drift): $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        # Exit 3 means the shim itself failed (missing/unbuildable binary): its own
+        # "aios: ..." line is the useful one, not just's "cargo build ..." echo that
+        # may precede it in the same stream.
+        echo "- docs-check failed (exit $rc, a checker error, not drift): $(grep -m1 '^aios: ' "$TMP/docs.err" 2>/dev/null || head -n 1 "$TMP/docs.err" 2>/dev/null)"
     elif ! command -v jq >/dev/null 2>&1; then
         echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`"
     elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then

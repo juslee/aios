@@ -118,7 +118,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just soak` | Boot repeatedly under QEMU and classify each boot (`runs=N secs=T mode=text\|gpu`; logs in `target/soak/`) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
-| `just tools` | Build the host tools binary `aios` (`target/tools/release/aios`), which `.claude/hooks/aios` runs |
+| `just tools` | Build the host tools binary `aios` (`target/tools/release/aios`), which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios`) |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
 

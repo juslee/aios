@@ -12,7 +12,7 @@ description: >
 
 Report docs and harness drift. This skill edits nothing. Runbook for the human side, including the docs policy: `docs/project/agent-loop.md`.
 
-1. Run the full drift report (exit status 1 only means new drift exists, 2 means the checker itself failed; read the output either way):
+1. Run the full drift report (exit status 1 only means new drift exists; 2 or 3 means the checker itself failed; read the output either way):
 
    ```bash
    just docs-check --all
