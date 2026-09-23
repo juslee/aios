@@ -361,6 +361,26 @@ fn baseline_path_is_shown_relative_to_the_root() {
 }
 
 #[test]
+fn baseline_accepts_a_leading_dash_as_a_path_like_argparse() {
+    // check.py (argparse): `--baseline -1` takes "-1" as the path (verified with
+    // python3 against `git show 33c6b3d:scripts/docs/check.py` in a scratch
+    // repository: it runs normally, reporting against a baseline file named
+    // "-1" that does not exist). clap's default `--baseline -1` treats "-1" as
+    // an unrecognized flag instead; `allow_negative_numbers` on the `baseline`
+    // arg closes that divergence.
+    let repo = TestRepo::with_files("cli-baseline-dash", &[("README.md", "# R\n")]);
+    let run = run_aios(
+        repo.path(),
+        &["docs-check", "--baseline", "-1", "--check", ","],
+    );
+    assert_eq!(run.code, 0);
+    assert_eq!(
+        text(&run.stdout),
+        ZERO_TEXT.replace("scripts/docs/baseline.json", "-1")
+    );
+}
+
+#[test]
 fn unreadable_baseline_exits_2() {
     let repo = TestRepo::with_files("cli-bad-baseline", &[("other/bad.json", "{")]);
     let run = run_aios(
