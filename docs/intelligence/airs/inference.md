@@ -21,7 +21,7 @@ The inference engine runs behind Compute Kit Tier 3's `InferencePipeline` trait 
 ```rust
 pub struct InferenceEngine {
     /// The inference runtime — candle (pure Rust) by default, swappable via
-    /// the InferenceRuntime trait (§3.9.2). Initialized once at AIRS boot.
+    /// the InferenceRuntime trait (§3.9.3). Initialized once at AIRS boot.
     runtime: Box<dyn InferenceRuntime>,
 
     /// All active inference sessions, keyed by SessionId.
@@ -86,7 +86,7 @@ pub enum InferencePriority {
 
 #### 3.1.2 Bridge Architecture
 
-The inference engine uses the `InferenceRuntime` trait (§3.9.2) to abstract over backend implementations. The default backend is **candle** (pure Rust) — no FFI boundary, no unsafe code in the inference path, and panics are caught with `catch_unwind`. GGML can be wired as an alternative backend via FFI if hand-tuned NEON assembly performance is required on specific hardware.
+The inference engine uses the `InferenceRuntime` trait (§3.9.3) to abstract over backend implementations. The default backend is **candle** (pure Rust) — no FFI boundary, no unsafe code in the inference path, and panics are caught with `catch_unwind`. GGML can be wired as an alternative backend via FFI if hand-tuned NEON assembly performance is required on specific hardware.
 
 ```rust
 /// candle backend — the default inference bridge. Pure Rust, no FFI.
@@ -114,9 +114,9 @@ pub struct CandleBackend {
 - **No unsafe in the default path**: candle is pure Rust — the borrow checker enforces memory safety throughout. No FFI boundary, no raw pointers, no signal handlers.
 - **Ownership clarity**: `CandleBackend` owns the device context. `LoadedModel` owns the weight tensors. `KvCache` owns per-session state. Rust's borrow checker enforces these relationships.
 - **Panic containment**: A candle panic is caught with `catch_unwind` and converted to `InferenceError::RuntimePanic`. This replaces the signal handler + `longjmp` approach needed for C-based backends (§3.7.2).
-- **Backend swappable**: All AIRS code interacts with the `InferenceRuntime` trait (§3.9.2), not with candle or GGML APIs directly. Switching backends requires no changes to the inference engine, session management, or streaming pipeline.
+- **Backend swappable**: All AIRS code interacts with the `InferenceRuntime` trait (§3.9.3), not with candle or GGML APIs directly. Switching backends requires no changes to the inference engine, session management, or streaming pipeline.
 
-**GGML as alternative bridge:** If GGML is used, it requires an FFI safety layer (`ggml_sys` module) that confines all unsafe code to a single boundary. The `GgmlBackend` struct wraps the C library with RAII and adds crash containment via signal handlers (§3.7.2). See §3.9.1 for the full comparison.
+**GGML as alternative bridge:** If GGML is used, it requires an FFI safety layer (`ggml_sys` module) that confines all unsafe code to a single boundary. The `GgmlBackend` struct wraps the C library with RAII and adds crash containment via signal handlers (§3.7.2). See §3.9.2 for the full comparison.
 
 #### 3.1.3 Compute Graph Lifecycle
 
@@ -269,7 +269,7 @@ Scratch buffers       Runtime          Pool::Kernel         Graph build→free  
 - **Pure Cargo build** — no cmake, no C compiler, no system dependencies
 - Hugging Face ecosystem with rapid model format adoption
 
-**GGML as alternative bridge:** If candle's NEON performance proves insufficient on specific hardware, GGML can be wired as an alternative backend behind the same `InferenceRuntime` trait (§3.9.2). GGML's hand-tuned assembly kernels may offer 5-15% higher throughput on some operations, at the cost of an FFI boundary and C-code crash containment complexity.
+**GGML as alternative bridge:** If candle's NEON performance proves insufficient on specific hardware, GGML can be wired as an alternative backend behind the same `InferenceRuntime` trait (§3.9.3). GGML's hand-tuned assembly kernels may offer 5-15% higher throughput on some operations, at the cost of an FFI boundary and C-code crash containment complexity.
 
 -----
 
@@ -1804,6 +1804,7 @@ pub struct InferencePrefetcher {
 | Intelligence services that consume inference | [intelligence-services.md](./intelligence-services.md) §5 | Reference — covers session priority mapping |
 | Security path isolation, AIRS crash containment | [security.md](./security.md) §10 | Reference |
 | Custom Core, Open-Source Bridges principle | [discussions/2026-03-16-jl-platform-vision-custom-core.md](../../knowledge/discussions/2026-03-16-jl-platform-vision-custom-core.md) | Reference — informs §3.9 bridge architecture |
+| Typed judgments (probability readout over a shared state) | [discussions/2026-09-23-jl-typed-judgment-primitive.md](../../knowledge/discussions/2026-09-23-jl-typed-judgment-primitive.md) | Discussion (draft) — proposes a judgment readout touching §3.1, §3.3.4, §3.4.5, §3.5, §3.6 and §3.9; settle its open questions before the Phase 11 doc |
 | AIRS AI-native intelligence (kernel-internal ML, AIRS-dependent) | [ai-native.md](./ai-native.md) §13–14 | Reference — §3.10 is inference-specific subset |
 | AIRS Kit overview | [AIRS Kit](../../kits/intelligence/airs.md) | Reference — Kit API surface for AI Runtime Service |
 | Compute Kit Tier 3 (InferencePipeline trait) | [Compute Kit](../../kits/kernel/compute.md) | Reference — app-facing trait this engine implements |
