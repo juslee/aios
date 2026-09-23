@@ -39,7 +39,7 @@ pub struct CapabilityHandle(pub u32);
 pub enum Capability {
     /// Permission to create IPC channels.
     ChannelCreate,
-    /// Permission to call/send/recv on a specific channel.
+    /// Permission to call/send/recv/select on, cancel, or destroy a specific channel.
     ChannelAccess(ChannelId),
     /// Permission to create shared memory regions (placeholder for Phase 4+).
     SharedMemoryCreate,

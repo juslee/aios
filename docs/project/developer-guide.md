@@ -1024,14 +1024,15 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs      (216)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
-  channel.rs  (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
-  timeout.rs  (185)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs          # Direct switch fast path, priority inheritance, reply switch
-  tests.rs    (668)  # Test initialization, thread entries, test-only helpers
-  notify.rs          # Notification objects (signal/wait)
-  select.rs          # IPC select (multi-wait)
-  shmem.rs           # Shared memory regions
+  mod.rs               (216)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  channel.rs           (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
+  timeout.rs           (185)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs                   # Direct switch fast path, priority inheritance, reply switch
+  tests/mod.rs         (694)  # Test initialization, thread entries, test-only helpers
+  tests/select_cap.rs  (158)  # IpcSelect capability self-test
+  notify.rs                   # Notification objects (signal/wait)
+  select.rs                   # IPC select (multi-wait)
+  shmem.rs                    # Shared memory regions
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
