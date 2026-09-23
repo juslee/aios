@@ -82,6 +82,24 @@ fn bundle_parser_rejects_content_after_commit() {
 }
 
 #[test]
+#[should_panic(expected = "a bundle path must be a plain relative path")]
+fn bundle_parser_rejects_a_path_that_escapes_the_tree() {
+    parse_bundle("@@@ file ../x\n");
+}
+
+#[test]
+#[should_panic(expected = "a bundle path must be a plain relative path")]
+fn bundle_parser_rejects_an_absolute_path() {
+    parse_bundle("@@@ file /abs\n");
+}
+
+#[test]
+#[should_panic(expected = "needs a path, found none")]
+fn bundle_parser_rejects_an_empty_path() {
+    parse_bundle("@@@ file \n");
+}
+
+#[test]
 fn variants_cover_every_bundle_in_check_order() {
     let mut files: Vec<String> = fs::read_dir(fixtures_dir().join("variants"))
         .expect("variants directory is readable")

@@ -29,7 +29,7 @@ static DOCUMENTED_RE: LazyLock<Regex> =
 static JUST_SPAN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^just ([A-Za-z0-9_-]+)").expect("valid regex"));
 
-/// Recipes named as `` `just X`` in the table rows of the README "Build Commands" section and
+/// Recipes named as `` `just X` `` in the table rows of the README "Build Commands" section and
 /// the developer guide's section 5.1 (check.py `documented_recipes`, L751-764). A source file
 /// that is not in the repository listing is skipped.
 pub fn documented_recipes(repo: &Repo) -> BTreeSet<String> {
@@ -138,17 +138,18 @@ mod tests {
 
     #[test]
     fn regexes_compile() {
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
-        // bad pattern panics here, at test time, rather than in production.
-        for re in [
+        let all: [&LazyLock<Regex>; 6] = [
             &README_START,
             &README_STOP,
             &GUIDE_START,
             &GUIDE_STOP,
             &DOCUMENTED_RE,
             &JUST_SPAN_RE,
-        ] {
-            LazyLock::force(re);
+        ];
+        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // bad pattern panics here, at test time, rather than in production.
+        for rx in all {
+            LazyLock::force(rx);
         }
     }
 }

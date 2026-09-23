@@ -390,8 +390,7 @@ fn shallow_clone_skips_git_facts() {
     for _ in 0..2 {
         let err = r
             .merged_milestones()
-            .err()
-            .expect("a shallow clone has no merged milestones");
+            .expect_err("a shallow clone has no merged milestones");
         let skip = err.downcast_ref::<Skip>().expect("the error is a Skip");
         assert_eq!(
             skip.0,
