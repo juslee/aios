@@ -1,12 +1,17 @@
 //! Link checks, ported from check.py L549-698: `md-links`, `section-refs`, `anchors` and
 //! `wiki-links`.
 //!
-//! Every check walks `Repo::md_files` in order and reads prose lines only (`prose_lines`
-//! skips fenced and indented code and multi-line HTML comments); code spans and single-line
-//! HTML comments are masked with `mask_prose` before matching. Match offsets are byte
-//! offsets into the masked line and are only used on that same string (`is_escaped` looks
-//! for ASCII backslashes), so they agree with check.py's character offsets. Findings are
-//! returned in check.py's production order; `model::collate` merges and sorts them.
+//! Every check's own findings walk `Repo::md_files` in order and read prose lines
+//! (`prose_lines` skips fenced and indented code and multi-line HTML comments); code
+//! spans and single-line HTML comments are masked with `mask_prose` before matching.
+//! Two helpers differ: `hub_members` reads a sub-document's raw first 2,000 code
+//! points, not prose lines (check.py L641); and `wiki-links`' vault (the note names
+//! and paths it resolves against) is built from `Repo::files` — every tracked file
+//! under `docs/`, not only Markdown — while `wiki-links`' own findings still walk
+//! `Repo::md_files`. Match offsets are byte offsets into the masked line and are
+//! only used on that same string (`is_escaped` looks for ASCII backslashes), so
+//! they agree with check.py's character offsets. Findings are returned in
+//! check.py's production order; `model::collate` merges and sorts them.
 //!
 //! Accepted divergences from check.py (Unicode edge cases that no tracked file exercises):
 //! the shared link regexes and the hub marker `Part of:\s*[...]` use Rust's `\s`, which
