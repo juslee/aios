@@ -95,7 +95,7 @@ Adopt first where the evidence is in the state and the call can be asynchronous.
 | 2 | Sensitivity labels | `security/privacy/data-lifecycle.md:62` | Keyword detection and pattern matching | One Noul per `ClassificationLabel` in place of the keywords; the PII pattern matchers stay in code | 13 |
 | 3 | Alt-text quality | `experience/accessibility/testing.md:621-622` | Presence is checked; quality "requires manual review" | Noul: is this a real description, not a filename or placeholder? | 38 |
 | 4 | Flow content screening | `storage/flow/security.md:65-66` | An unspecified `AirsClassifier(String)` | One Noul per label the source names (passwords, credentials, PII) | 16 |
-| 5 | Attention content urgency | `intelligence/attention.md:203`, `:281`, `:341` | An urgency-marker list and a rule tree | Score (how soon), plus Nouls, in place of the marker list; the rule tree's precedence stays in code | 17, batch tier only |
+| 5 | Attention content urgency | `intelligence/attention.md:203`, `:281`, `:341` | An urgency-marker list and a rule tree | Score (how soon), plus Nouls, in place of the marker list; the rule tree's precedence stays in code | 17, batch path only (`intelligence/attention.md` §14.2) |
 | 6 | Preference NLU | `preferences/resolution.md:207` | `interpret_preference`, which is undefined | Choices: request type, setting, direction | 15 |
 | 7 | Privacy query routing | `security/privacy/intelligence.md:270` | An unspecified classifier | Choice over query types | 18 |
 | 8 | Inspector NL queries | `applications/inspector/intelligence.md:30-31` | A confidence score of unstated origin, gated at 0.8 (`applications/inspector/intelligence.md:54`) | Choices: intent, scope | none in §8 |
@@ -133,7 +133,7 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
 - **2 GB and under:** there is no local model (`kernel/memory/ai.md:33-35`, `:422`; `airs/model-registry.md:246-249`), so there are no judgments unless the cloud question is settled (Open Question 8). The two docs disagree about 2 GB devices: `airs/model-registry.md:251-252` gives 2–3.9 GB devices a 1 GB pool.
 - **2–3.9 GB, per the model registry:** a 1 GB pool for a 1B Q4 model (`airs/model-registry.md:251-252`). No second model fits.
 - **4 GB:** the model pool is 2 GB (`kernel/memory/ai.md:24`). "Only one small model (1-3B at Q4) fits at a time" (`kernel/memory/ai.md:424`). There is no second resident model, so judgments use the primary model's readout at its zero-shot calibration.
-- **8 GB:** a 1–2B specialist of "~500 MB-1 GB" may stay loaded (`airs/model-registry.md:213`). decider-0.8b does not fit that slot as released:
+- **8 GB:** a 1–2B specialist of "~500 MB-1 GB" may stay loaded (`airs/model-registry.md:213`). decider-0.8b does not suit that slot as released:
   - It is 1.4–1.5 GB in bf16.
   - It is a v1 recipe, with held-out accuracy 0.707 and ECE 0.096.
 
