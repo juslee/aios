@@ -5,8 +5,11 @@
 //! The count is textual, like check.py's `re.findall(r"#\[test\]")`: an attribute inside a
 //! comment counts too. Claims are matched on the raw prose line (code spans included). A
 //! claimed number is compared and printed as Python's `int()` would (`pystr::int_str`: leading
-//! zeros dropped, any length). Accepted divergences: `[0-9]` replaces Python's `\d`, and the
-//! regex crate's `\b` follows Unicode word characters that differ slightly from Python's.
+//! zeros dropped, any length). Accepted divergences: `[0-9]` replaces Python's `\d`; the
+//! regex crate's `\b` follows Unicode word characters that differ slightly from Python's; and
+//! the case-insensitive `(?i)` claim patterns do not fold `ı` (U+0131) or `İ` (U+0130) to `i`,
+//! as Python's `re.IGNORECASE` does, so a claim spelled with one of those characters (e.g.
+//! "unıt tests") is not reported.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -112,5 +115,17 @@ mod tests {
             first(2, "Current test distribution (5 tests)").as_deref(),
             Some("5")
         );
+    }
+
+    #[test]
+    fn case_folding_does_not_reach_turkish_dotted_and_dotless_i() {
+        // check.py's re.IGNORECASE folds ı (U+0131) and İ (U+0130) to plain ASCII `i`, so
+        // "unıt"/"dıstribution" still match; the regex crate's (?i) does not, so these claims
+        // go unreported (accepted divergence, documented above).
+        let first = |i: usize, line: &str| -> Option<String> {
+            CLAIM_RES[i].captures(line).map(|caps| caps[1].to_string())
+        };
+        assert_eq!(first(1, "Currently 12 unıt tests"), None);
+        assert_eq!(first(2, "Current test dıstribution (5 tests)"), None);
     }
 }
