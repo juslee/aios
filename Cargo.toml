@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "shared", "uefi-stub"]
+members = ["kernel", "shared", "uefi-stub", "tools"]
 default-members = ["kernel", "shared"]
 
 [workspace.package]

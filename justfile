@@ -138,14 +138,16 @@ run-direct: build
 soak *args:
     bash {{ quote(justfile_directory() / "scripts" / "soak-qemu.sh") }} "$@"
 
-# Run host-side unit tests (kernel is no_std, excluded from host tests)
+# Run host-side unit tests (kernel is no_std, excluded from host tests; the tools
+# crate runs `cargo test -p aios-tools` in CI's Tools (host) job, which has full history)
 test:
-    cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
+    cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 
-# Run clippy with deny warnings (both kernel and stub targets)
+# Run clippy with deny warnings (kernel and stub targets, plus the host tools crate)
 clippy:
     cargo clippy --target {{target}} -- -D warnings
     cargo clippy -p uefi-stub --target {{uefi_target}} -- -D warnings
+    cargo clippy -p aios-tools -- -D warnings
 
 # Format code
 fmt:
