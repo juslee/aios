@@ -9,12 +9,17 @@
 //! Accepted divergences (contract §1.9; no golden covers them): the `{exc}` text
 //! in `cannot read baseline {path}: {exc}` is Rust's `std::io::Error` or
 //! `serde_json::Error` message rather than CPython's, with the same prefix, path
-//! and exit code; a baselined `count` beyond `i64` is clamped to `i64::MAX`,
-//! where CPython compares the exact integer; and a non-string `reason` is
-//! rendered as compact JSON rather than a Python `repr`. Malformed baselines
-//! that make check.py raise (a top level that is not an object, a `findings`
-//! value that is not a list, an entry without a string `key` or `check`) are
-//! errors here: both exit 2.
+//! and exit code; a baselined `count` beyond `i64` — as a JSON number or a
+//! digit string — is saturated to `i64::MAX` or `i64::MIN` by sign, where
+//! CPython compares the exact integer; a `count` string of non-ASCII decimal
+//! digits (e.g. Arabic-Indic `"٣"`) is rejected here, where CPython's `int()`
+//! accepts them; a `count` string with a control separator (U+001C-U+001F)
+//! around its digits is accepted here, because `pystr::strip` treats those as
+//! whitespace before parsing, where CPython's `int()` does not strip them and
+//! rejects the string; and a non-string `reason` is rendered as compact JSON
+//! rather than a Python `repr`. Malformed baselines that make check.py raise (a
+//! top level that is not an object, a `findings` value that is not a list, an
+//! entry without a string `key` or `check`) are errors here: both exit 2.
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -295,7 +300,9 @@ pub fn baseline_count(entry: &Value) -> Result<i64> {
 }
 
 /// `int(s)` for the forms a baseline `count` string can take: an optional sign,
-/// ASCII digits, and single underscores between digits.
+/// ASCII digits, and single underscores between digits. A magnitude beyond
+/// `i64` saturates to `i64::MAX`/`i64::MIN` by sign rather than failing, to
+/// match the same clamp `baseline_count`'s numeric path already applies.
 fn python_int(s: &str) -> Option<i64> {
     let (sign, digits) = match s.strip_prefix('-') {
         Some(rest) => (-1i64, rest),
@@ -321,7 +328,31 @@ fn python_int(s: &str) -> Option<i64> {
         }
         clean.push(char::from(*b));
     }
-    clean.parse::<i64>().ok().map(|value| sign * value)
+    Some(saturating_magnitude(&clean, sign))
+}
+
+/// A run of ASCII digits, signed and saturated to `i64::MAX`/`i64::MIN`: the
+/// magnitude accumulates in `u128` with saturating arithmetic, so even a
+/// pathologically long digit string cannot overflow or panic before the
+/// final clamp is applied.
+fn saturating_magnitude(digits: &str, sign: i64) -> i64 {
+    let mut magnitude: u128 = 0;
+    for b in digits.bytes() {
+        let digit = u128::from(b - b'0');
+        magnitude = magnitude.saturating_mul(10).saturating_add(digit);
+    }
+    if sign < 0 {
+        let min_magnitude = i64::MIN.unsigned_abs() as u128;
+        if magnitude >= min_magnitude {
+            i64::MIN
+        } else {
+            -(magnitude as i64)
+        }
+    } else if magnitude > i64::MAX as u128 {
+        i64::MAX
+    } else {
+        magnitude as i64
+    }
 }
 
 /// `entry.get("check")` when it is a string (check.py L1484, L1619).
@@ -740,6 +771,21 @@ mod tests {
         assert!(baseline_count(&with_count(json!("x"))).is_err());
         assert!(baseline_count(&with_count(json!(null))).is_err());
         assert!(baseline_count(&with_count(json!([]))).is_err());
+        assert_eq!(
+            baseline_count(&with_count(json!("99999999999999999999"))).expect("string overflow"),
+            i64::MAX,
+            "a string count beyond i64::MAX saturates, like the JSON-number path"
+        );
+        assert_eq!(
+            baseline_count(&with_count(json!("-9223372036854775808"))).expect("string i64::MIN"),
+            i64::MIN,
+            "a string count at exactly i64::MIN parses exactly, not off by one"
+        );
+        assert_eq!(
+            baseline_count(&with_count(json!(u64::MAX))).expect("json number overflow"),
+            i64::MAX,
+            "a JSON number beyond i64::MAX is clamped by the existing numeric path"
+        );
     }
 
     #[test]
