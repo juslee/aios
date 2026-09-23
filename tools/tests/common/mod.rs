@@ -2,6 +2,8 @@
 //! Shared helpers for the aios-tools integration tests: a temp directory per
 //! test, an isolated git environment, and a throwaway repository.
 
+pub mod fixture;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
