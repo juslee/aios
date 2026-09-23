@@ -2,7 +2,10 @@
 //! [`registry`] lists the implemented checks in CHECK_ORDER (check.py `CHECK_FUNCS`,
 //! L1379-1395 at 33c6b3d).
 
+pub mod doc_map;
+pub mod just_recipes;
 pub mod links;
+pub mod repo_paths;
 
 use crate::cmd::docs_check::{model::Finding, repo::Repo};
 
@@ -26,5 +29,8 @@ pub fn registry() -> Vec<Box<dyn Check>> {
         Box::new(links::SectionRefs),
         Box::new(links::Anchors),
         Box::new(links::WikiLinks),
+        Box::new(doc_map::DocMap),
+        Box::new(repo_paths::RepoPaths),
+        Box::new(just_recipes::JustRecipes),
     ]
 }
