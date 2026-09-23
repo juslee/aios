@@ -1536,8 +1536,8 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just run-direct` | Phase 0 mode: direct `-kernel` boot, no UEFI (quick debugging) |
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
 | `just soak` | Boot N times in a row and classify each boot (PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN); see §5.6 |
-| `just test` | Run host-side unit tests (shared crate; the tools crate runs `cargo test -p aios-tools`) |
-| `just tools` | Build the host tools binary `target/tools/release/aios` (`cargo build --release -p aios-tools --target-dir target/tools`); `.claude/hooks/aios` runs it |
+| `just test` | Run host-side unit tests (shared crate only; excludes the tools crate, which is tested separately with `cargo test -p aios-tools`, CI's Tools (host) job) |
+| `just tools` | Build the host tools binary `target/tools/release/aios` (`cargo build --release -p aios-tools --target-dir target/tools`); `.claude/hooks/aios` runs it (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios`) |
 | `just clippy` | Run clippy on kernel and stub targets with `-D warnings`, plus host clippy on the tools crate |
 | `just fmt` | Format code with `cargo fmt` |
 | `just fmt-check` | Check formatting without modifying files (CI mode) |

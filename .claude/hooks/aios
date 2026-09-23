@@ -10,9 +10,10 @@
 #   aios guard ...    fresh: run. stale: run it and start one background
 #                     `just tools` (lock dir target/tools/.building). missing:
 #                     fail closed with a PreToolUse "ask" decision, exit 0.
-#   aios <other> ...  fresh: run. stale: rebuild in the foreground, then run.
-#                     missing: build, then run; exit 3 naming `just tools` if
-#                     the build fails.
+#   aios <other> ...  fresh: run. stale: rebuild in the foreground, then run
+#                     (a failed rebuild prints a warning and runs the stale
+#                     binary instead, see below). missing: build, then run;
+#                     exit 3 naming `just tools` if the build fails.
 #   aios --prebuild   (SessionStart) start a background build when the binary
 #                     is missing or stale; always exits 0.
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
