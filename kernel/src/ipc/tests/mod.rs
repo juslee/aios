@@ -13,6 +13,8 @@ use spin::Mutex;
 use super::channel::{ipc_call, ipc_recv, ipc_reply, ipc_send};
 use super::{channel_create, channel_destroy, channel_set_peer, CHANNEL_TABLE};
 
+mod bad_pid;
+
 // ---------------------------------------------------------------------------
 // IPC test initialization
 // ---------------------------------------------------------------------------
@@ -29,8 +31,7 @@ static PI_TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 ///
 /// Creates:
 /// - Process 0 ("kernel"): owns idle + scheduler test threads, all caps
-/// - Process 1 ("ipc-test"): owns IPC server/caller/timeout, IPC caps and
-///   SharedMemoryCreate (for the bad-pid shared memory test)
+/// - Process 1 ("ipc-test"): owns IPC server/caller/timeout, IPC caps
 /// - Process 2 ("pi-test"): owns PI server/caller, IPC caps
 /// - Process 3 ("cap-test-denied"): NO ChannelCreate cap (for enforcement test)
 pub fn init() {
@@ -86,8 +87,6 @@ pub fn init() {
     }
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::ChannelCreate, true);
     let _ = cap::grant_to_process(ProcessId(1), shared::Capability::DebugPrint, false);
-    // The ipc-timeout thread creates a region to share in shm_bad_pid_test.
-    let _ = cap::grant_to_process(ProcessId(1), shared::Capability::SharedMemoryCreate, false);
 
     // Process 2: PI test (priority inheritance server + caller).
     {
@@ -501,120 +500,10 @@ fn ipc_timeout_entry() -> ! {
         );
     }
 
-    shm_bad_pid_test();
+    bad_pid::shm_bad_pid_test();
 
     loop {
         sched::thread_yield();
-    }
-}
-
-/// Out-of-range pid on the SharedMemoryShare path → EINVAL, not an
-/// index-out-of-bounds panic on PROCESS_TABLE (#177).
-///
-/// Runs in process 1, which creates and owns the region it shares. The share
-/// calls go through `syscall_dispatch`, the path an EL0 caller takes, so they
-/// also cover the register decoding (#178). Afterwards the region is freed
-/// and the SharedMemoryAccess tokens the test left in process 1 are revoked.
-fn shm_bad_pid_test() {
-    use crate::arch::aarch64::trap::TrapFrame;
-    use crate::ipc::shmem;
-    use crate::mm::pgtable::VmFlags;
-    use crate::task::process::{process_mut, ProcessId, MAX_PROCESSES, PROCESS_TABLE};
-
-    let pid = match crate::cap::current_process_id() {
-        Some(p) => p,
-        None => {
-            crate::kwarn!(Ipc, "Bad-pid test: no current process");
-            return;
-        }
-    };
-    let flags = VmFlags::READ | VmFlags::WRITE;
-    let region = match shmem::shared_memory_create(pid, 4096, flags) {
-        Ok(r) => r,
-        Err(e) => {
-            crate::kwarn!(Ipc, "Bad-pid test: shm_create failed {}", e);
-            return;
-        }
-    };
-
-    // SharedMemoryShare: x8 = syscall number, x0 = region, x1 = target pid.
-    let share = |target_pid: u64| -> i64 {
-        let mut tf = TrapFrame {
-            x: [0; 31],
-            sp_el0: 0,
-            elr_el1: 0,
-            spsr_el1: 0,
-        };
-        tf.x[8] = shared::Syscall::SharedMemoryShare as u64;
-        tf.x[0] = region.0 as u64;
-        tf.x[1] = target_pid;
-        crate::syscall::syscall_dispatch(&mut tf);
-        tf.x[0] as i64
-    };
-
-    let einval = IpcError::Einval as i64;
-    let at_max = share(MAX_PROCESSES as u64);
-    let at_u32_max = share(u32::MAX as u64);
-    // Truncated to pid 0 before #178.
-    let past_u32 = share(1 << 32);
-    // The last valid pid reaches the table; no process uses that slot → EPERM.
-    let last_slot = share((MAX_PROCESSES - 1) as u64);
-    // A live in-range pid (the caller itself) → success.
-    let live = share(pid.0 as u64);
-    // The original panic site, called directly.
-    let grant = match crate::cap::grant_to_process(
-        ProcessId(MAX_PROCESSES as u32),
-        shared::Capability::SharedMemoryAccess(region.0),
-        false,
-    ) {
-        Ok(_) => 0,
-        Err(e) => e,
-    };
-
-    // Free the region: it is released when its last mapping goes away.
-    if shmem::shared_memory_map(pid, region, flags).is_ok() {
-        let _ = shmem::shared_memory_unmap(pid, region);
-    }
-    // Freeing a region does not revoke SharedMemoryAccess tokens, and region
-    // ids are reused. Revoke the creator grant and the self-share so process 1
-    // cannot map the next region created in this slot.
-    {
-        let mut table = PROCESS_TABLE.lock();
-        if let Ok(proc) = process_mut(&mut table, pid) {
-            let access = shared::Capability::SharedMemoryAccess(region.0);
-            while let Some(token_id) = proc
-                .cap_table
-                .tokens()
-                .iter()
-                .flatten()
-                .find(|t| t.capability == access && !t.revoked)
-                .map(|t| t.id)
-            {
-                proc.cap_table.revoke(token_id);
-            }
-        }
-    }
-
-    // Log messages are cut at 48 bytes, so keep them short.
-    if at_max == einval
-        && at_u32_max == einval
-        && past_u32 == einval
-        && last_slot == IpcError::Eperm as i64
-        && live == 0
-        && grant == einval
-    {
-        crate::kinfo!(Ipc, "Bad-pid test: EINVAL as expected");
-    } else {
-        crate::kwarn!(
-            Ipc,
-            "Bad-pid: {} {} {} {} {} {}",
-            at_max,
-            at_u32_max,
-            past_u32,
-            last_slot,
-            live,
-            grant
-        );
     }
 }
 

@@ -1009,9 +1009,9 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | Range | Interpretation | Examples |
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
-| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `cap/mod.rs` (~236), `smp.rs` (~218), `wal.rs` (~199), `space.rs` (~154), `object_store.rs` (~218) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~377) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~668), `shmem.rs` (~642), `block_engine.rs` (~740), `bench.rs` (~549) |
+| 100--300 lines | Typical module | `uart.rs` (~157), `timer.rs` (~211), `smp.rs` (~218), `wal.rs` (~199), `space.rs` (~154), `object_store.rs` (~218) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~388), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~490), `posix_bridge.rs` (~377) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~740), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1028,7 +1028,9 @@ ipc/
   channel.rs  (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs  (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs          # Direct switch fast path, priority inheritance, reply switch
-  tests.rs    (668)  # Test initialization, thread entries, test-only helpers
+  tests/
+    mod.rs     (695)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs (128)  # Out-of-range pid self-test on the SharedMemoryShare path
   notify.rs          # Notification objects (signal/wait)
   select.rs          # IPC select (multi-wait)
   shmem.rs           # Shared memory regions
@@ -1573,7 +1575,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 364+ host-side tests pass |
+| **Test** | `just test` | All 559+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1625,7 +1627,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
 ```
 
-Currently 364 tests across: `boot`, `cap`, `collections`, `ipc`, `kaslr`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 559 tests across: `boot`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1718,19 +1720,23 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (364 tests):**
+**Current test distribution (559 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
-| `cap` | 51 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `ipc` | 48 | Channel IDs, message validation, select entries, service names, user VA checks |
+| `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
+| `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
+| `ipc` | 53 | Channel IDs and `ChannelId::index`, message validation, select entries, service names, user VA checks |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
+| `kits` | 40 | Kit trait dyn-compatibility, Kit error conversions and round trips (capability, IPC, memory, compute), storage re-exports |
+| `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
+| `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
+| `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
+| `syscall` | 21 | Syscall numbering, IpcError codes, `id_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
 | `observability` | 18 | Log level ordering, subsystem tags |
-| `sched` | 18 | Thread state, scheduler class, CpuSet, resource limits, priority |
-| `syscall` | 15 | Syscall numbering, IpcError codes |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
 ### 5.6 Boot Soak Testing (`just soak`)

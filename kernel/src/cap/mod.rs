@@ -51,24 +51,24 @@ pub fn current_process_id() -> Option<ProcessId> {
     process_of_thread(tid)
 }
 
+/// Error for a `check_*` function whose `process_ref` lookup failed.
+///
+/// The pid a `check_*` function checks is the caller's own (from
+/// `current_process_id`), not an argument. An out-of-range pid (e.g. a torn
+/// `Thread.owner_pid` read) is therefore treated like a missing process: a
+/// denial, EPERM, counted in `ipc_cap_denied`. Neither case logs a warning.
+fn deny_missing_process(_lookup_err: i64) -> i64 {
+    #[cfg(feature = "kernel-metrics")]
+    METRICS.ipc_cap_denied.inc();
+    IpcError::Eperm as i64
+}
+
 /// Check that a process holds ChannelCreate capability.
 /// Returns the authorizing token ID on success (for recording in Channel.creation_cap).
 pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     match proc
         .cap_table
@@ -96,19 +96,7 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
 
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     if proc
         .cap_table
@@ -127,19 +115,7 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
 pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     match proc
         .cap_table
@@ -159,19 +135,7 @@ pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i
 pub fn check_shared_memory_access(pid: ProcessId, region_id: u32) -> Result<(), i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     if proc
         .cap_table
@@ -251,7 +215,7 @@ use shared::kits::capability::{self as capability_kit, CapabilityError};
 /// Kernel-side implementation of the Capability Kit's `CapabilityEnforcer` trait.
 ///
 /// This is a zero-sized unit struct that delegates to the global `PROCESS_TABLE`.
-/// A holder pid `>= MAX_PROCESSES` gets the same error as a pid with no
+/// A holder pid `>= MAX_PROCESSES` gets the same result as a pid with no
 /// process (`CapabilityError` has no invalid-argument variant).
 #[allow(dead_code)]
 pub struct KernelCapabilitySystem;

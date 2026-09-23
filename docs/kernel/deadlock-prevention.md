@@ -72,7 +72,7 @@ let mut rq_second = match RUN_QUEUES[second].try_lock() { /* ... */ };
 
 ### 3.3 Global Subsystem Lock Hierarchy
 
-Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. Every production subsystem `Mutex` in the kernel has a defined position in this hierarchy. Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests.rs`) are excluded — they run in single-threaded test contexts and do not interact with production lock paths. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
+Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. Every production subsystem `Mutex` in the kernel has a defined position in this hierarchy. Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests/mod.rs`) are excluded — they run in single-threaded test contexts and do not interact with production lock paths. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
 
 **Primary hierarchy** (locks must be acquired in increasing position order; never acquire a lower-numbered lock while holding a higher-numbered one):
 
@@ -96,8 +96,8 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 - `shmem.rs:9` — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
 - `shmem.rs:158-159` — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
-- `shmem.rs:429` — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
-- `process.rs:103` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
+- `shmem.rs:438` — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
+- `process.rs:145` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
 - `timeout.rs:88` — *"avoid lock ordering issues (TIMEOUT_QUEUE → THREAD_TABLE)."*

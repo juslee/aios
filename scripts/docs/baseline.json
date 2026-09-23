@@ -7,7 +7,6 @@
     "anchors": 1,
     "doc-map": 4,
     "just-recipes": 1,
-    "test-count": 1,
     "lock-order": 16,
     "milestone-status": 5,
     "phase-count": 1,
@@ -250,14 +249,6 @@
       "file": "justfile",
       "target": "undocumented:run-input",
       "message": "public recipe `run-input` is missing from the README Build Commands and developer-guide §5.1 tables"
-    },
-    {
-      "key": "test-count|docs/project/developer-guide.md|claimed:364",
-      "check": "test-count",
-      "file": "docs/project/developer-guide.md",
-      "target": "claimed:364",
-      "message": "states 364 tests; shared/src has 543 #[test] functions",
-      "count": 2
     },
     {
       "key": "lock-order|CLAUDE.md|unknown:VIRTIO_INPUT",
