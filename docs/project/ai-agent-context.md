@@ -375,7 +375,7 @@ pub fn channel_create(
 pub fn ipc_select(
     entries: &[SelectEntry],
     timeout_ticks: u64,
-) -> Result<(usize, u64), i64>          // select.rs:51
+) -> Result<(usize, u64), i64>          // select.rs:52
 ```
 
 **Gotchas**:

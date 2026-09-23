@@ -40,9 +40,10 @@ pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
 /// first ready source. `entries` is a slice of SelectEntry.
 ///
 /// Every channel entry requires `Capability::ChannelAccess(id)`, the same
-/// check `ipc_recv` makes. The whole set is validated before the thread is
-/// registered as a waiter on any source, so a rejected call leaves no
-/// partial registration: `EINVAL` if any id is out of range, otherwise
+/// check `ipc_recv` makes. The whole set is validated before the
+/// non-blocking scan and before the thread is registered as a waiter on any
+/// source, so a rejected call observes nothing and leaves no partial
+/// registration: `EINVAL` if any id is out of range, otherwise
 /// `EPERM` if the caller lacks access to any channel in the set (or, for a
 /// set with a channel entry, if the calling thread has no owning process).
 ///
@@ -75,8 +76,11 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     }
 
     // Capability enforcement: ChannelAccess for every channel in the set
-    // (fail-closed). This runs before the scan and the registration below
-    // take CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS.
+    // (fail-closed). It must run before the non-blocking scan, which reports
+    // whether a channel has a pending message and consumes notification bits:
+    // scanning first would leak traffic on channels the caller cannot access.
+    // Lock order agrees: the scan and the registration below take
+    // CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS, and
     // check_channel_access takes PROCESS_TABLE, which ranks above all three,
     // so none of them may be held here.
     check_channel_entries(my_tid, entries)?;
