@@ -70,6 +70,21 @@ pub enum IpcError {
 /// Number of defined IPC error codes.
 pub const IPC_ERROR_COUNT: usize = 13;
 
+/// Decode a 32-bit id (channel, region, notification, process, capability
+/// handle) from a 64-bit syscall argument register.
+///
+/// Returns `Err(IpcError::Einval as i64)` when `reg` does not fit in `u32`.
+/// Always decode ids through this function, never through `reg as u32`: the
+/// cast drops the upper 32 bits, so `0x1_0000_0005` would name object 5.
+#[inline]
+pub const fn id_arg(reg: u64) -> Result<u32, i64> {
+    if reg <= u32::MAX as u64 {
+        Ok(reg as u32)
+    } else {
+        Err(IpcError::Einval as i64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +225,39 @@ mod tests {
         let e = IpcError::Etimedout;
         let e2 = e;
         assert_eq!(e, e2);
+    }
+
+    // --- id_arg tests ---
+
+    #[test]
+    fn id_arg_zero() {
+        assert_eq!(id_arg(0), Ok(0));
+    }
+
+    #[test]
+    fn id_arg_u32_max_is_accepted() {
+        assert_eq!(id_arg(u32::MAX as u64), Ok(u32::MAX));
+    }
+
+    #[test]
+    fn id_arg_u32_max_plus_one_is_einval() {
+        assert_eq!(id_arg(u32::MAX as u64 + 1), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn id_arg_bit_32_set_is_einval() {
+        // 1 << 32 truncates to 0 under `as u32`; it must not name id 0.
+        assert_eq!(id_arg(1 << 32), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn id_arg_high_bits_do_not_alias_a_low_id() {
+        // The #178 example: `as u32` turned this into id 5.
+        assert_eq!(id_arg(0x1_0000_0005), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn id_arg_u64_max_is_einval() {
+        assert_eq!(id_arg(u64::MAX), Err(IpcError::Einval as i64));
     }
 }
