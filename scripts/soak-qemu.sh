@@ -4,7 +4,7 @@
 #
 # Step 0 of the boot-crash investigation: measure the failure rate before
 # changing anything. Each boot is a fresh QEMU process (same arguments as the
-# justfile's `run` / `run-gpu` recipes) bounded by GNU timeout. Its serial
+# justfile's `run` / `run-gpu` recipes) bounded by timeout(1). Its serial
 # output is saved and classified as exactly one of PCZERO, PANIC, EXCEPTION,
 # WEDGE, INCONCLUSIVE or CLEAN -- see usage() below for the exact rules.
 #
@@ -117,8 +117,10 @@ the CLEAN rate, per-boot table) and build.log. The ESP snapshot and the fresh
 data disks live in a private .scratch.* subdirectory that is removed at exit.
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
-Requires GNU timeout (`timeout` or `gtimeout`), qemu-system-aarch64, just and
-mtools (for `just disk`).
+Requires qemu-system-aarch64, just, mtools (for `just disk`) and a `timeout`
+or `gtimeout` that accepts --kill-after and exits 124 when it stops the
+command. It is checked by running it, not by vendor: GNU coreutils and
+uutils (Ubuntu 26.04's default) both qualify.
 
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
 boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
@@ -309,7 +311,7 @@ END {
         # heartbeat, from the kernel start, or failing that from QEMU start.
         stall = since((adv >= 0) ? adv : ((kst >= 0) ? kst : 0))
         limit = (limit_override != "") ? limit_override + 0 : meta["stall_limit"] + 0
-        # GNU timeout exits 124, or 137 once --kill-after fired, when the time
+        # timeout exits 124, or 137 once --kill-after fired, when the time
         # limit ran out. Any other status, or 137 before the limit (a SIGKILL
         # from outside, e.g. the OOM killer), means QEMU ended on its own; a
         # status above 128 means a signal killed it.
@@ -470,10 +472,20 @@ run_classify() {
 # ---------------------------------------------------------------------------
 # Host helpers
 # ---------------------------------------------------------------------------
-find_gnu_timeout() {
-    local c
+# find_timeout -- print the first of timeout / gtimeout that does what the
+# boot loop needs: accepts `--kill-after=N SECS CMD`, passes the status of a
+# command that finishes in time through, and exits 124 when it had to stop
+# the command. Checked by running it rather than by its --version text, so
+# GNU coreutils and uutils (Ubuntu 26.04's default timeout) both qualify.
+# Costs about one second.
+find_timeout() {
+    local c rc
     for c in timeout gtimeout; do
-        if command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -q 'GNU coreutils'; then
+        command -v "$c" >/dev/null 2>&1 || continue
+        "$c" --kill-after=1 5 true </dev/null >/dev/null 2>&1 || continue
+        rc=0
+        "$c" --kill-after=1 1 sleep 5 </dev/null >/dev/null 2>&1 || rc=$?
+        if [ "$rc" -eq 124 ]; then
             echo "$c"
             return 0
         fi
@@ -509,8 +521,9 @@ SCRATCH_DIR=""
 
 cleanup() {
     if [ -n "$CUR_PID" ]; then
-        # GNU timeout (without --foreground) leads its own process group, so
-        # this reaches exactly this run's timeout + QEMU and nothing else.
+        # timeout without --foreground leads its own process group (GNU
+        # coreutils and uutils both call setpgid(0, 0)), so this reaches
+        # exactly this run's timeout + QEMU and nothing else.
         kill -TERM -- "-$CUR_PID" 2>/dev/null || kill -TERM "$CUR_PID" 2>/dev/null || true
         wait "$CUR_PID" 2>/dev/null || true
         CUR_PID=""
@@ -566,8 +579,8 @@ run_soak() {
     local esp_kernel load_start load_end width n idx log load1 start rc elapsed conclusive
     local non_clean=0 tsv md_rows="" c count pct stall_md tail_md rate_note=""
 
-    timeout_bin=$(find_gnu_timeout) ||
-        die "GNU timeout not found (macOS: brew install coreutils; Linux: coreutils)"
+    timeout_bin=$(find_timeout) ||
+        die "no usable timeout: need timeout or gtimeout that accepts --kill-after and exits 124 on timeout (macOS: brew install coreutils; Linux: coreutils)"
     command -v qemu-system-aarch64 >/dev/null 2>&1 || die "qemu-system-aarch64 not found in PATH"
     command -v just >/dev/null 2>&1 || die "just not found in PATH"
 
