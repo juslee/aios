@@ -101,7 +101,9 @@ Lock ordering (full, M25):    PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION
                               {INPUT_QUEUE, PENDING_POINTER, FOCUS_MANAGER, CURSOR_POS,
                                TITLE_FONT (leaf, independent)}
 Capability enforcement:       channel_create → ChannelCreate;
-                              ipc_call/send/recv → ChannelAccess;
+                              ipc_call/send/recv/cancel, channel_destroy → ChannelAccess;
+                              ipc_select → ChannelAccess (every channel entry; notification
+                               entries unchecked);
                               ipc_reply → NONE (spec §9.1).
 Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op returns a
                               FocusChange so the caller drops it before issuing IPC.

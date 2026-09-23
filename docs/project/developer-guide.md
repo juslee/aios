@@ -1020,20 +1020,21 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 - Consider splitting at approximately 600 lines. Split by extracting a logical sub-concern into its own file within the same directory.
 - Kernel code runs approximately 50% larger than application code due to `// SAFETY:` comments and MMIO boilerplate. A 600-line kernel file is roughly equivalent to a 400-line application file in terms of logic density.
 
-**IPC as a split example:** The original 2035-line `ipc/mod.rs` was split by concern into focused submodules:
+**IPC as a split example:** The original 2035-line `ipc/mod.rs` was split by concern into focused submodules (current layout and line counts):
 
 ```text
 ipc/
-  mod.rs      (216)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
-  channel.rs  (507)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
-  timeout.rs  (185)  # Timeout queue, sleep helpers, wakeup error delivery
-  direct.rs          # Direct switch fast path, priority inheritance, reply switch
+  mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
+  timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
+  direct.rs              # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs     (695) # Test initialization, thread entries, test-only helpers
-    bad_pid.rs (157) # Out-of-range pid self-test on the SharedMemoryShare path
-  notify.rs          # Notification objects (signal/wait)
-  select.rs          # IPC select (multi-wait)
-  shmem.rs           # Shared memory regions
+    mod.rs        (698)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (157)  # Out-of-range pid self-test on the SharedMemoryShare path
+    select_cap.rs (158)  # IpcSelect capability self-test
+  notify.rs              # Notification objects (signal/wait)
+  select.rs              # IPC select (multi-wait)
+  shmem.rs               # Shared memory regions
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:

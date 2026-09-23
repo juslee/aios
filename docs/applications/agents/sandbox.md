@@ -188,7 +188,7 @@ For the full eight-layer deep dive, see [model/layers.md](../../security/model/l
 
 ### 7.1 Agent Syscalls
 
-Agents interact with the kernel through 17 syscalls organized into six categories. Each syscall is dispatched through `SVC #0` (from EL0), with the syscall number in `x8` and up to six arguments in `x0`-`x5`. The kernel validates every argument, checks the calling agent's capability table, and returns the result in `x0`.
+Agents interact with the kernel through 18 syscalls organized into six categories. Each syscall is dispatched through `SVC #0` (from EL0), with the syscall number in `x8` and up to six arguments in `x0`-`x5`. The kernel validates every argument, checks the calling agent's capability table, and returns the result in `x0`.
 
 ```rust
 /// Agent-facing syscalls. A subset of the 31 kernel syscalls,
@@ -199,7 +199,7 @@ Agents interact with the kernel through 17 syscalls organized into six categorie
 /// (shared/src/syscall.rs) and are subject to change as new phases add
 /// syscalls. Do not rely on specific numeric values here.
 pub enum AgentSyscall {
-    // ── IPC (4 syscalls) ──────────────────────────────────
+    // ── IPC (5 syscalls) ──────────────────────────────────
     /// Send a message and block until reply.
     /// Requires: ChannelAccess(channel_id)
     IpcCall,
@@ -209,6 +209,10 @@ pub enum AgentSyscall {
     /// Block until a message arrives on a channel.
     /// Requires: ChannelAccess(channel_id)
     IpcRecv,
+    /// Block until any channel or notification in a wait set is ready.
+    /// Requires: ChannelAccess(channel_id) for every channel entry
+    /// (notification entries are not capability-checked)
+    IpcSelect,
     /// Reply to a received call.
     /// Requires: none (reply token from IpcRecv)
     IpcReply,
