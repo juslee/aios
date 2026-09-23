@@ -5,7 +5,9 @@
 pub mod doc_map;
 pub mod just_recipes;
 pub mod links;
+pub mod lock_order;
 pub mod repo_paths;
+pub mod test_count;
 
 use crate::cmd::docs_check::{model::Finding, repo::Repo};
 
@@ -32,5 +34,7 @@ pub fn registry() -> Vec<Box<dyn Check>> {
         Box::new(doc_map::DocMap),
         Box::new(repo_paths::RepoPaths),
         Box::new(just_recipes::JustRecipes),
+        Box::new(test_count::TestCount),
+        Box::new(lock_order::LockOrder),
     ]
 }
