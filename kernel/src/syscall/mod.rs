@@ -353,9 +353,9 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     };
 
     let mut table = crate::task::process::PROCESS_TABLE.lock();
-    let proc = match &mut table[pid.0 as usize] {
-        Some(p) => p,
-        None => return IpcError::Eperm as i64,
+    let proc = match crate::task::process::process_mut(&mut table, pid) {
+        Ok(p) => p,
+        Err(e) => return e,
     };
 
     let new_id = crate::cap::new_token_id();
@@ -386,9 +386,9 @@ fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
     // Get the token ID before revoking.
     let token_id = {
         let table = crate::task::process::PROCESS_TABLE.lock();
-        let proc = match &table[pid.0 as usize] {
-            Some(p) => p,
-            None => return IpcError::Eperm as i64,
+        let proc = match crate::task::process::process_ref(&table, pid) {
+            Ok(p) => p,
+            Err(e) => return e,
         };
         match proc.cap_table.get(handle) {
             Some(token) => token.id,
@@ -396,8 +396,10 @@ fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
         }
     };
 
-    crate::cap::revoke_in_process(pid, token_id);
-    0
+    match crate::cap::revoke_in_process(pid, token_id) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
 }
 
 /// CapabilityList (nr=17): x0=buf_ptr, x1=max_count.
@@ -420,9 +422,9 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
     };
 
     let table = crate::task::process::PROCESS_TABLE.lock();
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => return IpcError::Eperm as i64,
+    let proc = match crate::task::process::process_ref(&table, pid) {
+        Ok(p) => p,
+        Err(e) => return e,
     };
 
     // Collect to kernel stack buffer (max 256 entries × 8 bytes = 2 KiB).
