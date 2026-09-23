@@ -270,9 +270,19 @@ fn a_stale_binary_is_rebuilt_in_the_foreground() {
 fn a_stale_guard_runs_at_once_and_rebuilds_in_the_background() {
     let sandbox = Sandbox::new("shim-stale-guard");
     sandbox.install_bin(false);
-    let out = sandbox.run(&["guard", "PreToolUse"]);
+    let started = Instant::now();
+    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("FAKE_JUST_DELAY", "3")]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+    assert!(stderr(&out).is_empty(), "{}", stderr(&out));
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "guard must not wait for the background build"
+    );
+    assert!(
+        sandbox.lock().exists(),
+        "a background build takes the lock before the shim returns"
+    );
     wait_for("the background build to log a line", || {
         sandbox.just_log().exists()
     });
@@ -287,11 +297,15 @@ fn a_stale_guard_runs_at_once_and_rebuilds_in_the_background() {
 fn prebuild_returns_at_once_and_builds_in_the_background() {
     let sandbox = Sandbox::new("shim-prebuild");
     let started = Instant::now();
-    let out = sandbox.run_env(&["--prebuild"], &[("FAKE_JUST_DELAY", "1")]);
+    let out = sandbox.run_env(&["--prebuild"], &[("FAKE_JUST_DELAY", "3")]);
     assert_eq!(code(&out), 0);
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(3),
         "--prebuild must not wait for the build"
+    );
+    assert!(
+        sandbox.lock().exists(),
+        "a background build takes the lock before the shim returns"
     );
     wait_for("the background build to produce the binary", || {
         sandbox.bin().exists()
