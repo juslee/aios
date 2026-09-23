@@ -237,18 +237,53 @@ else
 fi
 
 # Main CI ---------------------------------------------------------------------
+#
+# The newest push run of each workflow on main, merged from two sources:
+# - the workflow runs among the origin/main tip's check suites (GraphQL), so
+#   the tip's runs are found even when the run listing lags. On 2026-09-23
+#   `gh run list --branch main` intermittently returned a window without any
+#   run created since 2026-09-14, and the brief showed a May CI run instead of
+#   the green tip.
+# - `gh run list --event push` on main, for a workflow that has no run on the
+#   tip yet. Push runs only: other events also run workflows on main (Claude
+#   Code on every issue and comment), and those must not crowd the push runs
+#   out of the window.
+# On a tie (the same run from both sources) the tip's check suite wins.
 
 section "Main CI"
 if [ "$GH_OK" = 1 ]; then
     tip=$(git rev-parse -q --verify refs/remotes/origin/main 2>/dev/null || echo "")
-    if gh run list --branch main --limit 40 \
+    echo '{}' >"$TMP/tip-suites.json"
+    ci_ok=1
+    # shellcheck disable=SC2016 # $owner, $name and $oid are GraphQL variables, not shell expansions
+    if [ -n "$tip" ] && ! gh api graphql -F owner='{owner}' -F name='{repo}' -F oid="$tip" -f query='
+        query($owner: String!, $name: String!, $oid: GitObjectID!) {
+          repository(owner: $owner, name: $name) {
+            object(oid: $oid) {
+              ... on Commit {
+                checkSuites(first: 100) {
+                  nodes { status conclusion branch { name } workflowRun { event createdAt workflow { name } } }
+                }
+              }
+            }
+          }
+        }' >"$TMP/tip-suites.json" 2>"$TMP/runs.err"; then
+        ci_ok=0
+    fi
+    if [ "$ci_ok" = 1 ] && gh run list --branch main --event push --limit 40 \
         --json workflowName,status,conclusion,headSha,createdAt,event \
         >"$TMP/runs.json" 2>"$TMP/runs.err"; then
-        jq -r --arg tip "$tip" '
-          map(select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch"))
+        jq -r --arg tip "$tip" --slurpfile suites "$TMP/tip-suites.json" '
+          def clean: tostring | gsub("[[:cntrl:]]"; "?");
+          [$suites[0].data.repository.object.checkSuites.nodes[]?
+           | select(.workflowRun.event == "push" and .branch.name == "main")
+           | {workflowName: .workflowRun.workflow.name, status: (.status | ascii_downcase),
+              conclusion: ((.conclusion // "") | ascii_downcase), headSha: $tip,
+              createdAt: .workflowRun.createdAt, event: .workflowRun.event}] as $at_tip
+          | . + $at_tip
           | if length == 0 then "- no runs on main" else
             group_by(.workflowName) | map(max_by(.createdAt)) | sort_by(.workflowName) | .[]
-            | "- \(.workflowName): \(if .status == "completed" then .conclusion else .status end)"
+            | "- \(.workflowName | clean): \(if .status == "completed" then .conclusion else .status end)"
               + " @ \(.headSha[0:7]) (\(.event), \(.createdAt[0:16] | sub("T"; " ")) UTC)"
               + (if $tip != "" and .headSha != $tip then " - not the origin/main tip" else "" end)
           end' "$TMP/runs.json"
@@ -334,9 +369,13 @@ section "Soak"
 main_dir="" main_wt="" main_m=0
 other_dir="" other_wt="" other_m=0
 while IFS= read -r wt; do
-    [ -n "$wt" ] || continue
-    for d in "$wt"/target/soak/*/; do
-        d=${d%/}
+    [ -n "$wt" ] && [ -d "$wt/target/soak" ] || continue
+    # A run is any directory under target/soak holding a summary: the default
+    # is target/soak/<timestamp>-<mode>/, but soak-qemu.sh's out= can nest
+    # runs deeper (e.g. target/soak/167/main-text-r1/).
+    find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv \) 2>/dev/null |
+        sed 's|/[^/]*$||' | sort -u >"$TMP/soak-dirs"
+    while IFS= read -r d; do
         if [ -f "$d/summary.md" ]; then
             m=$(mtime "$d/summary.md")
         elif [ -f "$d/summary.tsv" ]; then
@@ -351,12 +390,12 @@ while IFS= read -r wt; do
         elif [ "$m" -gt "$other_m" ]; then
             other_m=$m other_dir=$d other_wt=$wt
         fi
-    done
+    done <"$TMP/soak-dirs"
 done <<EOF
 $WORKTREES
 EOF
 if [ -z "$main_dir$other_dir" ]; then
-    echo "- no soak results (target/soak/*/summary.* in any worktree); run \`just soak\` on main once the harness is merged"
+    echo "- no soak results (no summary.* under target/soak/ in any worktree); run \`just soak\` on main"
 else
     if [ -n "$main_dir" ]; then
         print_soak "main soak" "$main_dir" "$main_wt" "$main_m"
