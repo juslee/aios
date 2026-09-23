@@ -6,6 +6,7 @@ pub mod doc_map;
 pub mod just_recipes;
 pub mod links;
 pub mod lock_order;
+pub mod milestones;
 pub mod repo_paths;
 pub mod test_count;
 
@@ -36,5 +37,7 @@ pub fn registry() -> Vec<Box<dyn Check>> {
         Box::new(just_recipes::JustRecipes),
         Box::new(test_count::TestCount),
         Box::new(lock_order::LockOrder),
+        Box::new(milestones::MilestoneStatus),
+        Box::new(milestones::PhaseCount),
     ]
 }
