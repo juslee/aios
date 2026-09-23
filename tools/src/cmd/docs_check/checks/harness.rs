@@ -3,12 +3,14 @@
 //! Layout tree against `.claude/skills` and `.claude/agents`.
 //!
 //! Accepted divergences from check.py: a skills-dir `plugin.json` is parsed with
-//! `serde_json`, which rejects `NaN`/`Infinity` literals, lone surrogate escapes
-//! and nesting deeper than 128 levels that Python's `json` module accepts; such a
-//! file falls back to the directory name as the plugin name. No tracked
-//! plugin.json uses them. `layout_list`'s per-call `entry` regex, and the shared
-//! `TREE_PREFIX_RE` (defined in `layout.rs`), use `\s`, which here does not match
-//! U+001C..U+001F where Python's `\s` does; no tracked line reaches it.
+//! `serde_json`, which rejects `NaN`/`Infinity` literals, lone surrogate escapes,
+//! nesting deeper than 128 levels, and numbers whose magnitude exceeds f64's
+//! range (e.g. `1e400`, or an integer of 310+ digits), which Python parses as
+//! `inf` or an exact int; each of these falls back to the directory name as the
+//! plugin name. No tracked plugin.json uses them. `layout_list`'s per-call
+//! `entry` regex, and the shared `TREE_PREFIX_RE` (defined in `layout.rs`), use
+//! `\s`, which here does not match U+001C..U+001F where Python's `\s` does; no
+//! tracked line reaches it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
@@ -39,17 +41,19 @@ static AGENT_CELL_RE: LazyLock<Regex> =
 /// R55: a table section ends at the next bold label or `## ` heading.
 static TABLE_STOP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\*\*|^## ").expect("valid regex"));
-/// R59.
+/// R59. `\n?$` matches Python's non-MULTILINE `$` on a tracked path ending
+/// in a trailing newline (fix round 1); same for the three regexes below.
 static PLUGIN_JSON_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json$").expect("valid regex")
+    Regex::new(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json\n?$").expect("valid regex")
 });
 static PLUGIN_SKILL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\.claude/skills/([^/]+)/skills/([^/]+)/SKILL\.md$").expect("valid regex")
+    Regex::new(r"^\.claude/skills/([^/]+)/skills/([^/]+)/SKILL\.md\n?$").expect("valid regex")
 });
-static SKILL_FILE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?$").expect("valid regex"));
+static SKILL_FILE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?\n?$").expect("valid regex")
+});
 static AGENT_FILE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\.claude/agents/([^/]+)\.md$").expect("valid regex"));
+    LazyLock::new(|| Regex::new(r"^\.claude/agents/([^/]+)\.md\n?$").expect("valid regex"));
 
 /// CLAUDE.md skills/agents tables and layout lists vs .claude/.
 pub struct HarnessTables;
@@ -255,6 +259,51 @@ mod tests {
             plugin_name("{\"name\": \"a\", \"name\": \"b\"}\n"),
             Some("b".to_string())
         );
+        // Accepted divergence: serde_json (no arbitrary_precision) rejects a
+        // number whose magnitude exceeds f64's range; Python's json parses
+        // 1e400 as inf, so check.py would still read "name": "kit" here.
+        assert_eq!(plugin_name(r#"{"name": "kit", "v": 1e400}"#), None);
+    }
+
+    #[test]
+    fn plugin_json_re_matches_a_trailing_newline_path() {
+        // Python: re.match(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json$",
+        //   ".claude/skills/pack/.claude-plugin/plugin.json\n").group(1) == "pack".
+        let caps = PLUGIN_JSON_RE
+            .captures(".claude/skills/pack/.claude-plugin/plugin.json\n")
+            .expect("a trailing-\\n path matches, as check.py's non-MULTILINE $ does");
+        assert_eq!(&caps[1], "pack");
+    }
+
+    #[test]
+    fn plugin_skill_re_matches_a_trailing_newline_path() {
+        // Python: re.match(r"^\.claude/skills/([^/]+)/skills/([^/]+)/SKILL\.md$",
+        //   ".claude/skills/pack/skills/go/SKILL.md\n").groups() == ("pack", "go").
+        let caps = PLUGIN_SKILL_RE
+            .captures(".claude/skills/pack/skills/go/SKILL.md\n")
+            .expect("a trailing-\\n path matches, as check.py's non-MULTILINE $ does");
+        assert_eq!(&caps[1], "pack");
+        assert_eq!(&caps[2], "go");
+    }
+
+    #[test]
+    fn skill_file_re_matches_a_trailing_newline_path() {
+        // Python: re.match(r"^\.claude/skills/([^/]+)(?:/SKILL\.md)?$",
+        //   ".claude/skills/foo/SKILL.md\n").group(1) == "foo".
+        let caps = SKILL_FILE_RE
+            .captures(".claude/skills/foo/SKILL.md\n")
+            .expect("a trailing-\\n path matches, as check.py's non-MULTILINE $ does");
+        assert_eq!(&caps[1], "foo");
+    }
+
+    #[test]
+    fn agent_file_re_matches_a_trailing_newline_path() {
+        // Python: re.match(r"^\.claude/agents/([^/]+)\.md$",
+        //   ".claude/agents/x.md\n").group(1) == "x".
+        let caps = AGENT_FILE_RE
+            .captures(".claude/agents/x.md\n")
+            .expect("a trailing-\\n path matches, as check.py's non-MULTILINE $ does");
+        assert_eq!(&caps[1], "x");
     }
 
     #[test]
