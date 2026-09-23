@@ -399,12 +399,21 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 ///
 /// The caller must own the region (be the creator). The recipient receives
 /// a capability that lets them call `shared_memory_map`.
+///
+/// Returns `Err(EINVAL)` for a region id `>= MAX_SHARED_REGIONS` or a
+/// `target_pid >= MAX_PROCESSES`, before taking any lock.
 pub fn shared_memory_share(
     pid: ProcessId,
     region_id: SharedMemoryId,
     target_pid: ProcessId,
 ) -> Result<(), i64> {
     if region_id.0 as usize >= MAX_SHARED_REGIONS {
+        return Err(IpcError::Einval as i64);
+    }
+    // target_pid comes straight from the SharedMemoryShare syscall. Reject an
+    // out-of-range pid here, before SHARED_REGION_TABLE or PROCESS_TABLE is
+    // locked; grant_to_process would also return EINVAL for it.
+    if target_pid.index().is_none() {
         return Err(IpcError::Einval as i64);
     }
 

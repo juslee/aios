@@ -12,9 +12,30 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadId(pub u32);
 
+/// Maximum processes system-wide (length of the kernel's process table).
+pub const MAX_PROCESSES: usize = 32;
+
 /// Unique process identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessId(pub u32);
+
+impl ProcessId {
+    /// Slot index of this process in the `MAX_PROCESSES`-entry process table.
+    ///
+    /// Returns `None` when the pid is `>= MAX_PROCESSES`. No process can exist
+    /// at such a pid. Always index the table through this method, never
+    /// through `self.0 as usize`: pids can come from untrusted callers, and a
+    /// raw index past the end of the table panics the kernel.
+    #[inline]
+    pub const fn index(self) -> Option<usize> {
+        let idx = self.0 as usize;
+        if idx < MAX_PROCESSES {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Scheduler class (scheduler.md §3.1)
@@ -402,5 +423,46 @@ mod tests {
         let t = ThreadId(5);
         let t2 = t; // Copy
         assert_eq!(t, t2);
+    }
+
+    // ── ProcessId::index ────────────────────────────────────────────────
+
+    #[test]
+    fn process_id_index_zero() {
+        assert_eq!(ProcessId(0).index(), Some(0));
+    }
+
+    #[test]
+    fn process_id_index_last_valid() {
+        assert_eq!(
+            ProcessId((MAX_PROCESSES - 1) as u32).index(),
+            Some(MAX_PROCESSES - 1)
+        );
+    }
+
+    #[test]
+    fn process_id_index_max_processes_is_out_of_range() {
+        assert_eq!(ProcessId(MAX_PROCESSES as u32).index(), None);
+    }
+
+    #[test]
+    fn process_id_index_u32_max_is_out_of_range() {
+        assert_eq!(ProcessId(u32::MAX).index(), None);
+    }
+
+    #[test]
+    fn process_id_index_in_range_ids_fit_the_table() {
+        // Every pid that index() accepts must be a valid position in a
+        // MAX_PROCESSES-entry table, i.e. safe to index with.
+        let table = [(); MAX_PROCESSES];
+        for raw in 0..=(MAX_PROCESSES as u32) {
+            match ProcessId(raw).index() {
+                Some(idx) => {
+                    assert_eq!(idx, raw as usize);
+                    assert!(table.get(idx).is_some());
+                }
+                None => assert_eq!(raw as usize, MAX_PROCESSES),
+            }
+        }
     }
 }

@@ -4,6 +4,7 @@
 //! Per ipc.md §3.1–3.2.
 
 use crate::arch::aarch64::trap::TrapFrame;
+use shared::syscall::id_arg;
 
 // Re-export ABI types from shared crate.
 pub use shared::IpcError;
@@ -17,6 +18,10 @@ pub use shared::{Syscall, SYSCALL_COUNT};
 /// Main syscall dispatch. Called from `lower_el_sync_handler` on SVC trap.
 ///
 /// Convention: x8 = syscall number, x0-x5 = args, return in x0.
+///
+/// Id arguments (channel, shared memory region, notification, process,
+/// capability handle) are decoded with `id_arg`: a register value that does
+/// not fit in `u32` returns `EINVAL` rather than being truncated.
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let nr = tf.x[8];
 
@@ -153,7 +158,10 @@ fn sys_time_sleep(tf: &TrapFrame) -> i64 {
 
 /// IpcCall (nr=0): x0=channel, x1=send_ptr, x2=send_len, x3=recv_ptr, x4=recv_len, x5=timeout.
 fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
-    let channel = crate::ipc::ChannelId(tf.x[0] as u32);
+    let channel = match id_arg(tf.x[0]) {
+        Ok(id) => crate::ipc::ChannelId(id),
+        Err(e) => return e,
+    };
     let send_ptr = tf.x[1] as *const u8;
     let send_len = tf.x[2] as usize;
     let recv_ptr = tf.x[3] as *mut u8;
@@ -184,7 +192,10 @@ fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
 
 /// IpcSend (nr=1): x0=channel, x1=send_ptr, x2=send_len.
 fn sys_ipc_send(tf: &TrapFrame) -> i64 {
-    let channel = crate::ipc::ChannelId(tf.x[0] as u32);
+    let channel = match id_arg(tf.x[0]) {
+        Ok(id) => crate::ipc::ChannelId(id),
+        Err(e) => return e,
+    };
     let send_ptr = tf.x[1] as *const u8;
     let send_len = tf.x[2] as usize;
 
@@ -205,7 +216,10 @@ fn sys_ipc_send(tf: &TrapFrame) -> i64 {
 /// IpcRecv (nr=2): x0=channel, x1=recv_ptr, x2=recv_len, x3=timeout.
 /// Returns bytes_received in x0, sender_tid in x1.
 fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
-    let channel = crate::ipc::ChannelId(tf.x[0] as u32);
+    let channel = match id_arg(tf.x[0]) {
+        Ok(id) => crate::ipc::ChannelId(id),
+        Err(e) => return e,
+    };
     let recv_ptr = tf.x[1] as *mut u8;
     let recv_len = tf.x[2] as usize;
     let timeout = tf.x[3];
@@ -231,7 +245,10 @@ fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
 
 /// IpcReply (nr=3): x0=channel, x1=reply_ptr, x2=reply_len.
 fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
-    let channel = crate::ipc::ChannelId(tf.x[0] as u32);
+    let channel = match id_arg(tf.x[0]) {
+        Ok(id) => crate::ipc::ChannelId(id),
+        Err(e) => return e,
+    };
     let reply_ptr = tf.x[1] as *const u8;
     let reply_len = tf.x[2] as usize;
 
@@ -251,7 +268,10 @@ fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
 
 /// IpcCancel (nr=4): x0=channel.
 fn sys_ipc_cancel(tf: &TrapFrame) -> i64 {
-    let channel = crate::ipc::ChannelId(tf.x[0] as u32);
+    let channel = match id_arg(tf.x[0]) {
+        Ok(id) => crate::ipc::ChannelId(id),
+        Err(e) => return e,
+    };
     crate::ipc::ipc_cancel(channel)
 }
 
@@ -269,7 +289,10 @@ fn sys_channel_create(_tf: &TrapFrame) -> i64 {
 
 /// ChannelDestroy (nr=7): x0=channel_id.
 fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
-    let channel = crate::ipc::ChannelId(tf.x[0] as u32);
+    let channel = match id_arg(tf.x[0]) {
+        Ok(id) => crate::ipc::ChannelId(id),
+        Err(e) => return e,
+    };
     match crate::ipc::channel_destroy(channel) {
         Ok(()) => 0,
         Err(e) => e,
@@ -298,7 +321,10 @@ fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
 /// Create a narrower child capability from an existing one.
 /// x3 is required when new_cap_type is ChannelAccess(1) or SharedMemoryAccess(3).
 fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
-    let handle = shared::CapabilityHandle(tf.x[0] as u32);
+    let handle = match id_arg(tf.x[0]) {
+        Ok(h) => shared::CapabilityHandle(h),
+        Err(e) => return e,
+    };
     let new_cap_type = tf.x[1];
     let new_expiry = if tf.x[2] == 0 { None } else { Some(tf.x[2]) };
 
@@ -312,18 +338,24 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     //           3=ShmAccess(x3), 4=SpawnAgent, 5=DebugPrint
     let new_cap = match new_cap_type {
         0 => shared::Capability::ChannelCreate,
-        1 => shared::Capability::ChannelAccess(shared::ChannelId(tf.x[3] as u32)),
+        1 => match id_arg(tf.x[3]) {
+            Ok(id) => shared::Capability::ChannelAccess(shared::ChannelId(id)),
+            Err(e) => return e,
+        },
         2 => shared::Capability::SharedMemoryCreate,
-        3 => shared::Capability::SharedMemoryAccess(tf.x[3] as u32),
+        3 => match id_arg(tf.x[3]) {
+            Ok(id) => shared::Capability::SharedMemoryAccess(id),
+            Err(e) => return e,
+        },
         4 => shared::Capability::SpawnAgent,
         5 => shared::Capability::DebugPrint,
         _ => return IpcError::Eperm as i64,
     };
 
     let mut table = crate::task::process::PROCESS_TABLE.lock();
-    let proc = match &mut table[pid.0 as usize] {
-        Some(p) => p,
-        None => return IpcError::Eperm as i64,
+    let proc = match crate::task::process::process_mut(&mut table, pid) {
+        Ok(p) => p,
+        Err(e) => return e,
     };
 
     let new_id = crate::cap::new_token_id();
@@ -341,7 +373,10 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
 /// Revoke a capability and cascade to all children. Destroys channels
 /// created under the revoked capability.
 fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
-    let handle = shared::CapabilityHandle(tf.x[0] as u32);
+    let handle = match id_arg(tf.x[0]) {
+        Ok(h) => shared::CapabilityHandle(h),
+        Err(e) => return e,
+    };
 
     let pid = match crate::cap::current_process_id() {
         Some(p) => p,
@@ -351,9 +386,9 @@ fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
     // Get the token ID before revoking.
     let token_id = {
         let table = crate::task::process::PROCESS_TABLE.lock();
-        let proc = match &table[pid.0 as usize] {
-            Some(p) => p,
-            None => return IpcError::Eperm as i64,
+        let proc = match crate::task::process::process_ref(&table, pid) {
+            Ok(p) => p,
+            Err(e) => return e,
         };
         match proc.cap_table.get(handle) {
             Some(token) => token.id,
@@ -361,8 +396,10 @@ fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
         }
     };
 
-    crate::cap::revoke_in_process(pid, token_id);
-    0
+    match crate::cap::revoke_in_process(pid, token_id) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
 }
 
 /// CapabilityList (nr=17): x0=buf_ptr, x1=max_count.
@@ -385,9 +422,9 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
     };
 
     let table = crate::task::process::PROCESS_TABLE.lock();
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => return IpcError::Eperm as i64,
+    let proc = match crate::task::process::process_ref(&table, pid) {
+        Ok(p) => p,
+        Err(e) => return e,
     };
 
     // Collect to kernel stack buffer (max 256 entries × 8 bytes = 2 KiB).
@@ -468,7 +505,10 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
 ///
 /// Map a shared memory region into the caller's address space.
 fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
-    let region_id = shared::SharedMemoryId(tf.x[0] as u32);
+    let region_id = match id_arg(tf.x[0]) {
+        Ok(id) => shared::SharedMemoryId(id),
+        Err(e) => return e,
+    };
     let flags_raw = tf.x[1] as u32;
     let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
 
@@ -487,8 +527,14 @@ fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
 ///
 /// Share a region with another process by granting capability.
 fn sys_shared_memory_share(tf: &TrapFrame) -> i64 {
-    let region_id = shared::SharedMemoryId(tf.x[0] as u32);
-    let target_pid = crate::task::process::ProcessId(tf.x[1] as u32);
+    let region_id = match id_arg(tf.x[0]) {
+        Ok(id) => shared::SharedMemoryId(id),
+        Err(e) => return e,
+    };
+    let target_pid = match id_arg(tf.x[1]) {
+        Ok(pid) => crate::task::process::ProcessId(pid),
+        Err(e) => return e,
+    };
 
     let pid = match crate::cap::current_process_id() {
         Some(p) => p,
@@ -524,7 +570,10 @@ fn sys_notification_create(_tf: &TrapFrame) -> i64 {
 ///
 /// Atomically OR bits into the notification word and wake matching waiters.
 fn sys_notification_signal(tf: &TrapFrame) -> i64 {
-    let id = shared::NotificationId(tf.x[0] as u32);
+    let id = match id_arg(tf.x[0]) {
+        Ok(id) => shared::NotificationId(id),
+        Err(e) => return e,
+    };
     let bits = tf.x[1];
 
     crate::ipc::notify::notification_signal(id, bits);
@@ -535,7 +584,10 @@ fn sys_notification_signal(tf: &TrapFrame) -> i64 {
 ///
 /// Wait for matching bits. Returns matched bits or error.
 fn sys_notification_wait(tf: &TrapFrame) -> i64 {
-    let id = shared::NotificationId(tf.x[0] as u32);
+    let id = match id_arg(tf.x[0]) {
+        Ok(id) => shared::NotificationId(id),
+        Err(e) => return e,
+    };
     let mask = tf.x[1];
     let timeout = tf.x[2];
 
@@ -622,7 +674,10 @@ fn sys_process_exit(tf: &TrapFrame) -> i64 {
 ///
 /// Block until a child process exits, return its exit code.
 fn sys_process_wait(tf: &TrapFrame) -> i64 {
-    let child_pid = shared::ProcessId(tf.x[0] as u32);
+    let child_pid = match id_arg(tf.x[0]) {
+        Ok(pid) => shared::ProcessId(pid),
+        Err(e) => return e,
+    };
     let tid = match crate::ipc::current_thread_id() {
         Some(t) => t,
         None => return IpcError::Eperm as i64,

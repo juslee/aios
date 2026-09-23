@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::observability::metrics::METRICS;
 use crate::syscall::IpcError;
-use crate::task::process::{ProcessId, PROCESS_TABLE};
+use crate::task::process::{process_mut, process_ref, process_slot_mut, ProcessId, PROCESS_TABLE};
 use crate::task::{ThreadId, CURRENT_THREAD, THREAD_TABLE};
 
 // Re-export shared types for ergonomic kernel-side imports.
@@ -51,24 +51,26 @@ pub fn current_process_id() -> Option<ProcessId> {
     process_of_thread(tid)
 }
 
+/// Error for a `check_*` function whose `process_ref` lookup failed.
+///
+/// The pid a `check_*` function checks is never a syscall argument. It is the
+/// calling thread's `owner_pid` (via `current_process_id` or
+/// `process_of_thread`), or the pid a kernel caller passes to
+/// `shared_memory_create` / `shared_memory_map`. An out-of-range pid is
+/// therefore handled like a pid with no process: a denial, EPERM, counted in
+/// `ipc_cap_denied`. Neither case logs a warning.
+fn deny_missing_process(_lookup_err: i64) -> i64 {
+    #[cfg(feature = "kernel-metrics")]
+    METRICS.ipc_cap_denied.inc();
+    IpcError::Eperm as i64
+}
+
 /// Check that a process holds ChannelCreate capability.
 /// Returns the authorizing token ID on success (for recording in Channel.creation_cap).
 pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     match proc
         .cap_table
@@ -96,19 +98,7 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
 
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     if proc
         .cap_table
@@ -127,19 +117,7 @@ pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Resul
 pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     match proc
         .cap_table
@@ -159,19 +137,7 @@ pub fn check_shared_memory_create(pid: ProcessId) -> Result<CapabilityTokenId, i
 pub fn check_shared_memory_access(pid: ProcessId, region_id: u32) -> Result<(), i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let table = PROCESS_TABLE.lock();
-    if (pid.0 as usize) >= table.len() {
-        #[cfg(feature = "kernel-metrics")]
-        METRICS.ipc_cap_denied.inc();
-        return Err(IpcError::Eperm as i64);
-    }
-    let proc = match &table[pid.0 as usize] {
-        Some(p) => p,
-        None => {
-            #[cfg(feature = "kernel-metrics")]
-            METRICS.ipc_cap_denied.inc();
-            return Err(IpcError::Eperm as i64);
-        }
-    };
+    let proc = process_ref(&table, pid).map_err(deny_missing_process)?;
 
     if proc
         .cap_table
@@ -192,6 +158,9 @@ pub fn check_shared_memory_access(pid: ProcessId, region_id: u32) -> Result<(), 
 }
 
 /// Grant a capability to a process. Returns the handle.
+///
+/// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES` and `Err(EPERM)` when
+/// no such process exists.
 pub fn grant_to_process(
     pid: ProcessId,
     cap: Capability,
@@ -199,10 +168,7 @@ pub fn grant_to_process(
 ) -> Result<CapabilityHandle, i64> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
     let mut table = PROCESS_TABLE.lock();
-    let proc = match &mut table[pid.0 as usize] {
-        Some(p) => p,
-        None => return Err(IpcError::Eperm as i64),
-    };
+    let proc = process_mut(&mut table, pid)?;
 
     let token = CapabilityToken {
         id: new_token_id(),
@@ -220,11 +186,20 @@ pub fn grant_to_process(
 }
 
 /// Revoke a capability token in a process and destroy channels created under it.
-pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) {
+///
+/// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES`, before revoking or
+/// destroying anything. For an in-range pid whose slot is empty, the cap-table
+/// step is skipped and the channel cascade still runs.
+pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) -> Result<(), i64> {
+    // Reject an out-of-range pid before taking any lock.
+    if pid.index().is_none() {
+        return Err(IpcError::Einval as i64);
+    }
+
     // First, revoke in the process's cap table.
     {
         let mut table = PROCESS_TABLE.lock();
-        if let Some(proc) = &mut table[pid.0 as usize] {
+        if let Some(proc) = process_slot_mut(&mut table, pid)? {
             proc.cap_table.revoke(token_id);
         }
     }
@@ -233,6 +208,7 @@ pub fn revoke_in_process(pid: ProcessId, token_id: CapabilityTokenId) {
     revoke_channels_for_cap(token_id);
 
     crate::kinfo!(Cap, "pid={}: revoked token {}", pid.0, token_id.0);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +222,8 @@ use shared::kits::capability::{self as capability_kit, CapabilityError};
 /// Kernel-side implementation of the Capability Kit's `CapabilityEnforcer` trait.
 ///
 /// This is a zero-sized unit struct that delegates to the global `PROCESS_TABLE`.
+/// A holder pid `>= MAX_PROCESSES` gets the same result as a pid with no
+/// process (`CapabilityError` has no invalid-argument variant).
 #[allow(dead_code)]
 pub struct KernelCapabilitySystem;
 
@@ -257,9 +235,8 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
     ) -> Result<CapabilityHandle, CapabilityError> {
         let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
         let table = PROCESS_TABLE.lock();
-        let proc = table[holder.0 as usize]
-            .as_ref()
-            .ok_or(CapabilityError::NotGranted { requested: *action })?;
+        let proc = process_ref(&table, holder)
+            .map_err(|_| CapabilityError::NotGranted { requested: *action })?;
 
         // Find a token authorizing this action; convert token_id → handle.
         let token_id = proc
@@ -287,9 +264,8 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
     ) -> Result<CapabilityHandle, CapabilityError> {
         let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);
         let mut table = PROCESS_TABLE.lock();
-        let proc = table[holder.0 as usize]
-            .as_mut()
-            .ok_or(CapabilityError::NotGranted { requested: cap })?;
+        let proc = process_mut(&mut table, holder)
+            .map_err(|_| CapabilityError::NotGranted { requested: cap })?;
 
         let token = CapabilityToken {
             id: new_token_id(),
@@ -318,9 +294,8 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         handle: CapabilityHandle,
     ) -> Result<(), CapabilityError> {
         let mut table = PROCESS_TABLE.lock();
-        let proc = table[holder.0 as usize]
-            .as_mut()
-            .ok_or(CapabilityError::InvalidHandle { handle })?;
+        let proc = process_mut(&mut table, holder)
+            .map_err(|_| CapabilityError::InvalidHandle { handle })?;
 
         // Look up token ID from handle by inspecting the underlying slot.
         // We use tokens() instead of get() to distinguish:
@@ -359,9 +334,8 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
         narrowed: Capability,
     ) -> Result<CapabilityHandle, CapabilityError> {
         let mut table = PROCESS_TABLE.lock();
-        let proc = table[holder.0 as usize]
-            .as_mut()
-            .ok_or(CapabilityError::InvalidHandle { handle })?;
+        let proc = process_mut(&mut table, holder)
+            .map_err(|_| CapabilityError::InvalidHandle { handle })?;
 
         proc.cap_table
             .attenuate(handle, narrowed, None, holder, new_token_id())
@@ -372,9 +346,9 @@ impl capability_kit::CapabilityEnforcer for KernelCapabilitySystem {
 
     fn list_active(&self, holder: ProcessId) -> Vec<CapabilityToken> {
         let table = PROCESS_TABLE.lock();
-        let proc = match &table[holder.0 as usize] {
-            Some(p) => p,
-            None => return Vec::new(),
+        let proc = match process_ref(&table, holder) {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
         };
 
         let now = crate::arch::aarch64::timer::TICK_COUNT.load(Ordering::Relaxed);

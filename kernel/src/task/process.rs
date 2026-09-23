@@ -11,10 +11,11 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use super::{ThreadId, ThreadState, MAX_THREADS, THREAD_TABLE};
 use crate::cap::CapabilityTable;
 use crate::mm::uspace::UserAddressSpace;
+use crate::syscall::IpcError;
 use spin::Mutex;
 
 // Re-export shared types.
-pub use shared::{KernelResourceLimits, ProcessId};
+pub use shared::{KernelResourceLimits, ProcessId, MAX_PROCESSES};
 
 // ---------------------------------------------------------------------------
 // Process control block
@@ -22,9 +23,6 @@ pub use shared::{KernelResourceLimits, ProcessId};
 
 /// Maximum threads per process.
 const MAX_THREADS_PER_PROCESS: usize = 16;
-
-/// Maximum processes system-wide.
-pub const MAX_PROCESSES: usize = 32;
 
 /// Process control block — owns an address space and tracks its threads.
 #[allow(dead_code)]
@@ -47,9 +45,54 @@ pub struct ProcessControl {
 // Global process table
 // ---------------------------------------------------------------------------
 
+/// Backing array of `PROCESS_TABLE`, indexed by `ProcessId::index()`.
+pub type ProcessTable = [Option<ProcessControl>; MAX_PROCESSES];
+
 /// System-wide process table. BSS-allocated via `Option<ProcessControl>`.
-pub static PROCESS_TABLE: Mutex<[Option<ProcessControl>; MAX_PROCESSES]> =
-    Mutex::new([const { None }; MAX_PROCESSES]);
+pub static PROCESS_TABLE: Mutex<ProcessTable> = Mutex::new([const { None }; MAX_PROCESSES]);
+
+/// Range-checked access to a process's slot in a locked `PROCESS_TABLE`.
+///
+/// Returns `Err(EINVAL)` when `pid` is `>= MAX_PROCESSES`. No process can
+/// exist at such a pid, so a raw index would run past the end of the table
+/// and panic the kernel. Use this (or `process_mut` / `process_ref`) for
+/// every PROCESS_TABLE lookup.
+pub fn process_slot_mut(
+    table: &mut ProcessTable,
+    pid: ProcessId,
+) -> Result<&mut Option<ProcessControl>, i64> {
+    match pid.index() {
+        // `index()` only returns pids below MAX_PROCESSES, the length of the
+        // table array, so this indexing cannot panic.
+        Some(idx) => Ok(&mut table[idx]),
+        None => Err(IpcError::Einval as i64),
+    }
+}
+
+/// Look up the process in `pid`'s occupied slot of a locked `PROCESS_TABLE`,
+/// mutably. An exited process keeps its slot (`process_exit` never clears it).
+///
+/// Returns `Err(EINVAL)` when `pid` is out of range (see `process_slot_mut`)
+/// and `Err(EPERM)` when the slot is empty, i.e. no such process.
+pub fn process_mut(table: &mut ProcessTable, pid: ProcessId) -> Result<&mut ProcessControl, i64> {
+    process_slot_mut(table, pid)?
+        .as_mut()
+        .ok_or(IpcError::Eperm as i64)
+}
+
+/// Look up the process in `pid`'s occupied slot of a locked `PROCESS_TABLE`.
+/// An exited process keeps its slot (`process_exit` never clears it).
+///
+/// Returns `Err(EINVAL)` when `pid` is `>= MAX_PROCESSES` and `Err(EPERM)`
+/// when the slot is empty, i.e. no such process.
+pub fn process_ref(table: &ProcessTable, pid: ProcessId) -> Result<&ProcessControl, i64> {
+    match pid.index() {
+        // `index()` only returns pids below MAX_PROCESSES, the length of the
+        // table array, so this indexing cannot panic.
+        Some(idx) => table[idx].as_ref().ok_or(IpcError::Eperm as i64),
+        None => Err(IpcError::Einval as i64),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Process wait infrastructure
@@ -75,11 +118,14 @@ static EXIT_CODES: [AtomicI32; MAX_PROCESSES] = {
 
 /// Exit a process: mark all threads dead, clean up channels (set peer EPIPE),
 /// wake ProcessWait waiters, and notify the service manager.
+///
+/// A pid `>= MAX_PROCESSES` names no process, so the call does nothing. The
+/// callers pass their own pid (the `ProcessExit` syscall) or a fixed kernel
+/// service pid, so an out-of-range pid never reaches here.
 pub fn process_exit(pid: ProcessId, exit_code: i32) {
-    let idx = pid.0 as usize;
-    if idx >= MAX_PROCESSES {
+    let Some(idx) = pid.index() else {
         return;
-    }
+    };
 
     crate::kinfo!(Ipc, "process_exit: pid={} exit_code={}", pid.0, exit_code);
 
@@ -180,11 +226,14 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
 }
 
 /// Block the current thread until a child process exits. Returns the exit code.
+///
+/// Returns `Err(EINVAL)` for a pid `>= MAX_PROCESSES` (a bad argument: the
+/// pid comes from the `ProcessWait` syscall) and `Err(EPERM)` when no such
+/// process exists.
 pub fn process_wait(parent_tid: ThreadId, child_pid: ProcessId) -> Result<i32, i64> {
-    let idx = child_pid.0 as usize;
-    if idx >= MAX_PROCESSES {
-        return Err(crate::syscall::IpcError::Eperm as i64);
-    }
+    let Some(idx) = child_pid.index() else {
+        return Err(IpcError::Einval as i64);
+    };
 
     // Check if process already exited.
     let code = EXIT_CODES[idx].load(Ordering::Acquire);
@@ -192,12 +241,10 @@ pub fn process_wait(parent_tid: ThreadId, child_pid: ProcessId) -> Result<i32, i
         return Ok(code);
     }
 
-    // Check if child process exists.
+    // Check if child process exists (EPERM if not).
     {
         let procs = PROCESS_TABLE.lock();
-        if procs[idx].is_none() {
-            return Err(crate::syscall::IpcError::Eperm as i64);
-        }
+        process_ref(&procs, child_pid)?;
     }
 
     // Register as waiter.
@@ -216,6 +263,6 @@ pub fn process_wait(parent_tid: ThreadId, child_pid: ProcessId) -> Result<i32, i
     if code != i32::MIN {
         Ok(code)
     } else {
-        Err(crate::syscall::IpcError::Eperm as i64)
+        Err(IpcError::Eperm as i64)
     }
 }

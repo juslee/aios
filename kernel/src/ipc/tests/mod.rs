@@ -4,6 +4,7 @@
 //! (server, caller, timeout, priority inheritance, capability enforcement).
 //! Called from main.rs after sched::init() but before enter_scheduler().
 
+mod bad_pid;
 mod select_cap;
 
 use crate::sched;
@@ -24,6 +25,10 @@ static TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
 
 /// Channel ID for priority inheritance test threads.
 static PI_TEST_CHANNEL: Mutex<Option<ChannelId>> = Mutex::new(None);
+
+/// Process 1 ("ipc-test") owns the IPC server, caller and timeout threads.
+/// The self-tests that grant or revoke capabilities check they run in it.
+const TEST_PID: shared::ProcessId = shared::ProcessId(1);
 
 /// Initialize processes, grant capabilities, create IPC test threads.
 ///
@@ -422,7 +427,9 @@ fn ipc_caller_entry() -> ! {
 
 /// IPC timeout test thread: calls IpcCall on a channel with no receiver
 /// (expects ETIMEDOUT). It then checks EPIPE after channel destroy, EINVAL
-/// for out-of-range channel ids, and the IpcSelect capability check.
+/// for out-of-range channel ids, EINVAL for out-of-range pids on the
+/// SharedMemoryShare path (`shm_bad_pid_test`), and the IpcSelect capability
+/// check (`select_cap_test`).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
@@ -499,6 +506,7 @@ fn ipc_timeout_entry() -> ! {
         );
     }
 
+    bad_pid::shm_bad_pid_test(caller_tid);
     select_cap::select_cap_test(caller_tid);
 
     loop {
