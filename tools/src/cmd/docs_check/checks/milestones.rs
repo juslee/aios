@@ -10,18 +10,20 @@
 //! Accepted divergences from check.py (no tracked file exercises them): `\d` is
 //! `[0-9]` and `str.isdigit()` is ASCII-only, so non-ASCII decimal digits are not
 //! numbers here; `\s` and `\b` follow the `regex` crate's Unicode classes; a §8
-//! phase number that does not fit `u64` matches no phase doc or merged milestone
-//! (check.py compares arbitrary-precision ints), while its `§8:phase-N` target
-//! is still printed exactly (`int_str`). A §8 cell where Python's `isdigit()` is
-//! true but `int()` raises (for example `²`, L963) makes check.py exit 2 with an
-//! uncaught `ValueError` — the exception is not a `Skip`, so it propagates past
-//! `run_checks` and aborts the whole invocation, not just milestone-status;
-//! `is_ascii_digits` rejects such a cell already, so aios instead treats the row
-//! as having no digit first cell (like a header row) and skips it, and the run
-//! completes normally. The same cell also reaches phase-count's row count
-//! (L1000), which never calls `int()`: check.py counts it toward `actual`
-//! because `isdigit()` is true, while aios's ASCII-only count does not, so
-//! `actual` is one lower here for such input.
+//! phase number that does not fit `u64` matches no phase doc or merged milestone,
+//! while its `§8:phase-N` target is still printed exactly (`int_str`); past 4300
+//! digits CPython's `int()` raises instead (L965, and L1014 for a claim), so
+//! check.py exits 2 where aios reports the row or claim. A §8 row of 6 or more
+//! cells whose first cell is `isdigit()`-true but `int()` raises (for example
+//! `²`, L965) makes check.py's `int(cells[0])` raise; `run_checks` catches only
+//! `Skip`, so the exception reaches check.py's `__main__` guard (L1665-1670),
+//! which prints a traceback and exits 2. `is_ascii_digits` rejects `²` already,
+//! so aios instead treats that row as having no digit first cell (like a header
+//! row) and skips it, and the run completes normally. The same cell also
+//! reaches phase-count's row count (L1000), which never calls `int()`:
+//! check.py counts it toward `actual` because `isdigit()` is true, while
+//! aios's ASCII-only count does not, so `actual` is one lower here for such
+//! input.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
@@ -233,7 +235,9 @@ impl Check for MilestoneStatus {
 }
 
 /// check.py L1009-1016 for one source file: every `rx` claim on a prose line
-/// whose number differs from `actual` (a claim too large for u64 differs too).
+/// whose number differs from `actual`; a claim too large for `u64` differs too,
+/// and past 4300 digits check.py's `int()` (L1014) raises, so check.py exits 2
+/// where aios reports the claim.
 fn phase_claims(repo: &Repo, rel: &str, rx: &Regex, actual: usize, out: &mut Vec<Finding>) {
     if !repo.is_file(rel) {
         return;
