@@ -80,9 +80,10 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
     // whether a channel has a pending message and consumes notification bits:
     // scanning first would leak traffic on channels the caller cannot access.
     // Lock order agrees: the scan and the registration below take
-    // CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS, and
-    // check_channel_access takes PROCESS_TABLE, which ranks above all three,
-    // so none of them may be held here.
+    // CHANNEL_TABLE, NOTIFICATION_TABLE or SELECT_WAITERS, while the check
+    // takes THREAD_TABLE (process_of_thread) and then PROCESS_TABLE
+    // (check_channel_access), which rank above all three, so none of them
+    // may be held here.
     check_channel_entries(my_tid, entries)?;
 
     // --- Non-blocking scan: check each entry ---
