@@ -72,7 +72,7 @@ let mut rq_second = match RUN_QUEUES[second].try_lock() { /* ... */ };
 
 ### 3.3 Global Subsystem Lock Hierarchy
 
-Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. Every production subsystem `Mutex` in the kernel has a defined position in this hierarchy. Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests/mod.rs`) are excluded — they run in single-threaded test contexts and do not interact with production lock paths. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
+Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for subsystem-level locks. The tables below place the process, thread, service, IPC and storage locks; the compositor, GPU, input and observability (`BOOT_LOG`) locks are not listed here yet (`just docs-check` reports them as undocumented). Test-only locks (e.g., `TEST_CHANNEL`, `PI_TEST_CHANNEL` in `ipc/tests/mod.rs`) are excluded: each is written once in `ipc::tests::init()` before the scheduler starts, then only read by the test threads, and never held while another lock is taken. A thread that holds a lock at position N may only acquire locks at positions > N (increasing position number) — never at position ≤ N.
 
 **Primary hierarchy** (locks must be acquired in increasing position order; never acquire a lower-numbered lock while holding a higher-numbered one):
 
