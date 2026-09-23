@@ -116,7 +116,7 @@ pub struct CandleBackend {
 - **Panic containment**: A candle panic is caught with `catch_unwind` and converted to `InferenceError::RuntimePanic`. This replaces the signal handler + `longjmp` approach needed for C-based backends (§3.7.2).
 - **Backend swappable**: All AIRS code interacts with the `InferenceRuntime` trait (§3.9.3), not with candle or GGML APIs directly. Switching backends requires no changes to the inference engine, session management, or streaming pipeline.
 
-**GGML as alternative bridge:** If GGML is used, it requires an FFI safety layer (`ggml_sys` module) that confines all unsafe code to a single boundary. The `GgmlBackend` struct wraps the C library with RAII and adds crash containment via signal handlers (§3.7.2). See §3.9.1 for the full comparison.
+**GGML as alternative bridge:** If GGML is used, it requires an FFI safety layer (`ggml_sys` module) that confines all unsafe code to a single boundary. The `GgmlBackend` struct wraps the C library with RAII and adds crash containment via signal handlers (§3.7.2). See §3.9.2 for the full comparison.
 
 #### 3.1.3 Compute Graph Lifecycle
 
@@ -1804,7 +1804,7 @@ pub struct InferencePrefetcher {
 | Intelligence services that consume inference | [intelligence-services.md](./intelligence-services.md) §5 | Reference — covers session priority mapping |
 | Security path isolation, AIRS crash containment | [security.md](./security.md) §10 | Reference |
 | Custom Core, Open-Source Bridges principle | [discussions/2026-03-16-jl-platform-vision-custom-core.md](../../knowledge/discussions/2026-03-16-jl-platform-vision-custom-core.md) | Reference — informs §3.9 bridge architecture |
-| Typed judgments (probability readout over a shared state) | [discussions/2026-09-23-jl-typed-judgment-primitive.md](../../knowledge/discussions/2026-09-23-jl-typed-judgment-primitive.md) | Discussion (draft) — open questions for §3.4.5, §3.5 and §3.6 to settle before the Phase 11 doc |
+| Typed judgments (probability readout over a shared state) | [discussions/2026-09-23-jl-typed-judgment-primitive.md](../../knowledge/discussions/2026-09-23-jl-typed-judgment-primitive.md) | Discussion (draft) — proposes a judgment readout touching §3.1, §3.3.4, §3.4.5, §3.5, §3.6 and §3.9; settle its open questions before the Phase 11 doc |
 | AIRS AI-native intelligence (kernel-internal ML, AIRS-dependent) | [ai-native.md](./ai-native.md) §13–14 | Reference — §3.10 is inference-specific subset |
 | AIRS Kit overview | [AIRS Kit](../../kits/intelligence/airs.md) | Reference — Kit API surface for AI Runtime Service |
 | Compute Kit Tier 3 (InferencePipeline trait) | [Compute Kit](../../kits/kernel/compute.md) | Reference — app-facing trait this engine implements |
