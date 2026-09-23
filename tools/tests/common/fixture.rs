@@ -33,7 +33,8 @@ use std::sync::OnceLock;
 pub enum Op {
     /// `@@@ file <path>`: create or replace the file (parent directories created).
     File(String, String),
-    /// `@@@ append <path>`: append to the file (created when missing).
+    /// `@@@ append <path>`: append to the file (created when missing; its parent
+    /// directory must already exist, unlike `File`, which creates it).
     Append(String, String),
     /// `@@@ prepend <path>`: insert before the file's current content.
     Prepend(String, String),
@@ -138,10 +139,30 @@ pub fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/docs-check")
 }
 
+/// Rejects a bundle path that could reach outside the fixture's working tree
+/// (or otherwise confuse the line-based bundle format): empty, containing
+/// `\r`, or with any path component that is not `Component::Normal` (no `..`,
+/// no absolute root, no `.`, no Windows prefix).
+fn validate_bundle_path(kind: &str, path: &str) {
+    assert!(!path.is_empty(), "@@@ {kind} needs a path, found none");
+    assert!(
+        !path.contains('\r'),
+        "@@@ {kind} {path:?}: a bundle path cannot contain '\\r'"
+    );
+    assert!(
+        Path::new(path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_))),
+        "@@@ {kind} {path:?}: a bundle path must be a plain relative path \
+         (no '..', absolute or root components)"
+    );
+}
+
 /// Parse a bundle: strip one final `"\n"`, split on `"\n"`; content is the lines joined
 /// with `"\n"` plus a final `"\n"`, or `""` when a directive has no content lines.
 pub fn parse_bundle(text: &str) -> Vec<Op> {
     let body = text.strip_suffix('\n').unwrap_or(text);
+    assert!(!body.is_empty(), "bundle text is empty: no @@@ directives");
     let mut directives: Vec<(&str, &str, Vec<&str>)> = Vec::new();
     for line in body.split('\n') {
         if let Some(rest) = line.strip_prefix("@@@ ") {
@@ -163,9 +184,18 @@ pub fn parse_bundle(text: &str) -> Vec<Op> {
             };
             let arg = arg.to_string();
             match kind {
-                "file" => Op::File(arg, content),
-                "append" => Op::Append(arg, content),
-                "prepend" => Op::Prepend(arg, content),
+                "file" => {
+                    validate_bundle_path(kind, &arg);
+                    Op::File(arg, content)
+                }
+                "append" => {
+                    validate_bundle_path(kind, &arg);
+                    Op::Append(arg, content)
+                }
+                "prepend" => {
+                    validate_bundle_path(kind, &arg);
+                    Op::Prepend(arg, content)
+                }
                 "delete" | "commit" | "option" => {
                     assert!(
                         lines.is_empty(),
@@ -173,7 +203,10 @@ pub fn parse_bundle(text: &str) -> Vec<Op> {
                         lines.len()
                     );
                     match kind {
-                        "delete" => Op::Delete(arg),
+                        "delete" => {
+                            validate_bundle_path(kind, &arg);
+                            Op::Delete(arg)
+                        }
                         "commit" => Op::Commit(arg),
                         _ => Op::Flag(arg),
                     }
