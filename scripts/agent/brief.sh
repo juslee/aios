@@ -34,7 +34,7 @@ for arg in "$@"; do
     case "$arg" in
         --no-fetch) FETCH=0 ;;
         -h | --help)
-            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
