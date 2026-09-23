@@ -17,9 +17,22 @@
 //! around its digits is accepted here, because `pystr::strip` treats those as
 //! whitespace before parsing, where CPython's `int()` does not strip them and
 //! rejects the string; and a non-string `reason` is rendered as compact JSON
-//! rather than a Python `repr`. Malformed baselines that make check.py raise (a
-//! top level that is not an object, a `findings` value that is not a list, an
-//! entry without a string `key` or `check`) are errors here: both exit 2.
+//! rather than a Python `repr`.
+//!
+//! Malformed-baseline handling also diverges (verified with python3 against
+//! check.py at 33c6b3d): check.py loads a `"findings": {}` or `"findings": ""`
+//! (both iterate to nothing), an entry with a non-string integer `key`, and an
+//! out-of-`f64`-range number such as `1e400` (CPython's `json` module parses it
+//! as `float('inf')`) without error; `load_baseline` here rejects all of these,
+//! exit 2. A non-string `check` on an entry also passes check.py's
+//! `--update-baseline` (it is only ever compared with `!=`/`not in`), where
+//! `render_baseline` here requires every entry's `check` to be a string and
+//! exits 2 otherwise. And `--update-baseline` re-serialises every kept raw
+//! entry through serde_json (no `arbitrary_precision` feature), so a
+//! hand-edited number can change bytes on a rewrite even when check.py's own
+//! `json.dump` would not: `1e20` becomes `1e+20`, `1e-5` becomes `0.00001`, and
+//! a magnitude beyond `f64` precision such as `99999999999999999999` becomes
+//! `1e+20`, all silently.
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -34,7 +47,7 @@ use crate::pystr;
 /// The baseline path, relative to the repository root (check.py L47).
 pub const BASELINE_REL: &str = "scripts/docs/baseline.json";
 
-/// The baseline's `comment` field (check.py L1435-1437).
+/// The baseline's `comment` field (check.py L1430-1432).
 pub const BASELINE_COMMENT: &str = "Accepted docs drift. A finding is new when its key is missing here or it occurs on more lines than 'count' (default 1). 'reason' marks an accepted false positive and survives regeneration. Regenerate with: just docs-check --update-baseline";
 
 /// `(name, description)` for every check, in CHECK_ORDER (check.py L96-112).
@@ -240,7 +253,7 @@ pub fn collate(findings: Vec<Finding>) -> Vec<Finding> {
     order
 }
 
-/// Baseline entries by key, kept raw and in file order (check.py L1412).
+/// Baseline entries by key, kept raw and in file order (check.py L1411).
 pub type Baseline = Map<String, Value>;
 
 /// `load_baseline` (check.py L1402-1412). `display` is the path as the error
@@ -275,7 +288,7 @@ pub fn load_baseline(path: &Path, display: &str) -> Result<Baseline> {
     Ok(entries)
 }
 
-/// `int(entry.get("count", 1))` (check.py L1477).
+/// `int(entry.get("count", 1))` (check.py L1476).
 pub fn baseline_count(entry: &Value) -> Result<i64> {
     let Some(value) = entry.get("count") else {
         return Ok(1);
@@ -382,7 +395,7 @@ pub fn py_str(v: &Value) -> String {
 }
 
 /// The baseline record for a finding, keeping an accepted-false-positive
-/// `reason` across rewrites (check.py L1415-1422).
+/// `reason` across rewrites (check.py L1414-1421).
 pub fn baseline_entry(f: &Finding, old: Option<&Value>) -> Value {
     let mut entry = Map::new();
     entry.insert("key".to_string(), Value::String(f.key()));

@@ -5,11 +5,13 @@
 //! The count is textual, like check.py's `re.findall(r"#\[test\]")`: an attribute inside a
 //! comment counts too. Claims are matched on the raw prose line (code spans included). A
 //! claimed number is compared and printed as Python's `int()` would (`pystr::int_str`: leading
-//! zeros dropped, any length). Accepted divergences: `[0-9]` replaces Python's `\d`; the
-//! regex crate's `\b` follows Unicode word characters that differ slightly from Python's; and
-//! the case-insensitive `(?i)` claim patterns do not fold `ı` (U+0131) or `İ` (U+0130) to `i`,
-//! as Python's `re.IGNORECASE` does, so a claim spelled with one of those characters (e.g.
-//! "unıt tests") is not reported.
+//! zeros dropped, deferring to that helper's own note on CPython 3.11+'s 4300-digit limit).
+//! Accepted divergences: `[0-9]` replaces Python's `\d`; the `gen:test-count` pattern's `\s`
+//! (used three times) lacks U+001C..U+001F, which Python's `\s` has and which can survive
+//! `splitlines()` inside a prose line; the regex crate's `\b` follows Unicode word characters
+//! that differ slightly from Python's; and the case-insensitive `(?i)` claim patterns do not
+//! fold `ı` (U+0131) or `İ` (U+0130) to `i`, as Python's `re.IGNORECASE` does, so a claim
+//! spelled with one of those characters (e.g. "unıt tests") is not reported.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -127,5 +129,17 @@ mod tests {
         };
         assert_eq!(first(1, "Currently 12 unıt tests"), None);
         assert_eq!(first(2, "Current test dıstribution (5 tests)"), None);
+    }
+
+    #[test]
+    fn gen_test_count_pattern_does_not_reach_the_control_separators() {
+        // check.py's \s matches U+001C..U+001F, so
+        // "<!--\x1fgen:test-count-->12" reports a drifted claim there; the regex
+        // crate's \s does not, so this claim goes unmatched (accepted divergence,
+        // documented above).
+        let first = |i: usize, line: &str| -> Option<String> {
+            CLAIM_RES[i].captures(line).map(|caps| caps[1].to_string())
+        };
+        assert_eq!(first(0, "<!--\u{1f}gen:test-count-->12"), None);
     }
 }

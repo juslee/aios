@@ -8,17 +8,21 @@
 //! slugs and the merged milestones are cached per `Repo`.
 //!
 //! Accepted divergences (contract §1.9): `\d` is `[0-9]` in `PHASE_SUBJECT_RE`,
-//! `PHASE_DOC_RE` and `MILESTONE_HEADING_RE`, so a phase, milestone or recipe
-//! number written with a non-ASCII Unicode decimal digit does not match here,
-//! where Python's `\d` (and `int()`) would; `\b` (`MILESTONE_HEADING_RE`,
+//! `PHASE_DOC_RE` and `MILESTONE_HEADING_RE`, so a phase or milestone number
+//! written with a non-ASCII Unicode decimal digit does not match here, where
+//! Python's `\d` (and `int()`) would; `\b` (`MILESTONE_HEADING_RE`,
 //! `PRIVATE_ATTR_RE`, `RECIPE_RE`) and `\s` (`ANCHOR_ID_RE`) use the `regex`
 //! crate's Unicode word/space classes, differing from Python's `re` at the same
 //! edges markdown.rs documents. A `rel` with an embedded NUL makes `exists`
 //! treat the unresolvable component as simply missing, where CPython's
-//! `os.path.realpath` raises `ValueError` and check.py exits 2; non-UTF-8 `git`
-//! stderr is decoded lossily here, where CPython's `subprocess.run(text=True)`
-//! raises `UnicodeDecodeError` for either stream regardless of the command's
-//! exit status.
+//! `os.path.realpath` raises `ValueError` and check.py exits 2; `run_git`
+//! decodes `git`'s non-UTF-8 stderr lossily only when it builds the
+//! check-failure message (`check` true, non-zero exit). On success stderr is
+//! ignored outright, and so is every `git_unchecked` call's regardless of exit
+//! code — `git_unchecked` is where a non-zero exit itself can diverge, since
+//! `check=False` never raises on it — where CPython's
+//! `subprocess.run(text=True)` raises `UnicodeDecodeError` for either stream
+//! regardless of the command's exit status.
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

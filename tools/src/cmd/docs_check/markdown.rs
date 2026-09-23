@@ -12,11 +12,18 @@
 //! written as `[0-9]`.
 //!
 //! Accepted divergences from check.py (no tracked file and no fixture exercises
-//! them; the parity goldens prove the real inputs):
+//! them; the parity goldens prove the real inputs; verified with python3):
 //! - regex `\s` does not match U+001C..U+001F here (Python's does);
 //! - `\d` is `[0-9]`: non-ASCII decimal digits are not digits here;
-//! - regex `\w`/`\b` and `gh_slug` use Unicode `Alphabetic`/`Numeric`, Python uses
-//!   `str.isalnum()`; they differ for combining marks and a few numeric symbols;
+//! - `gh_slug` (`char::is_alphanumeric`) and the `regex` crate's `\w`/`\b` keep
+//!   combining marks (Mn/Mc), connector punctuation (Pc) and Join_Control
+//!   characters that Python's `str.isalnum()` and `\w` drop; `gh_slug` also
+//!   keeps letter-like Symbol-other (So) characters such as Ⓐ (U+24B6), which
+//!   Python drops too. Neither differs on numeric symbols (No, e.g. `²`): both
+//!   `gh_slug` and Python's `\w` keep them — though the `regex` crate's own
+//!   `\w` (used outside `gh_slug`, e.g. in `MILESTONE_RE`) lacks No digits,
+//!   where Python's `\w` has them. CPython 3.14's Unicode tables and the
+//!   `regex` crate's may also drift apart from each other over time;
 //! - milestone numbers that do not fit `u64` are ignored.
 
 use std::collections::{BTreeSet, HashMap};
@@ -454,7 +461,11 @@ pub fn is_path_placeholder(path: &str) -> bool {
 }
 
 /// check.py `clean_repo_path` (L727-730): drops a `::item` suffix, a
-/// `:line[-line][,line...]` suffix and trailing `.,;:)`.
+/// `:line[-line][,line...]` suffix and trailing `.,;:)`. `token` must contain
+/// no newline, so `LINE_SUFFIX_RE`'s `$` (the regex crate's, matching only the
+/// true end) lines up with check.py's non-MULTILINE `$`. Both call sites
+/// satisfy this: `pointer_doctor.rs` passes a `split_ws` token and
+/// `repo_paths.rs` a regex capture, neither of which can contain whitespace.
 pub fn clean_repo_path(token: &str) -> String {
     let head = token.split("::").next().unwrap_or(token);
     let without_lines = LINE_SUFFIX_RE.replace_all(head, "");

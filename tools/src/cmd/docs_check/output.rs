@@ -17,9 +17,10 @@ use crate::cmd::docs_check::model::{self, Baseline, Comparison, Finding};
 const PRUNE_LIMIT: usize = 50;
 /// New findings listed in the Markdown summary (check.py L1565).
 const MARKDOWN_LIMIT: usize = 100;
-/// Check-name column width in the text summary and `--list-checks` (check.py L1508, L1599).
+/// Check-name column width in the text summary and `--list-checks` (check.py L1513,
+/// L1516, L1520, L1599).
 const NAME_WIDTH: usize = 18;
-/// Total/new column width in the text summary (check.py L1508, L1512, L1514).
+/// Total/new column width in the text summary (check.py L1513, L1516, L1520).
 const COUNT_WIDTH: usize = 5;
 
 /// Everything one rendering needs.

@@ -6,9 +6,12 @@
 //! `[0-9]` in `KNOWLEDGE_NAME_RE`, so a file name written with a non-ASCII
 //! Unicode decimal digit does not match here, where Python's `\d` would.
 //!
-//! `KNOWLEDGE_NAME_RE` ends `\n?$`: Python's non-MULTILINE `$` also matches
-//! just before a final `\n`, while the regex crate's `$` is `\z`, and a
-//! tracked basename can end in `\n`.
+//! `KNOWLEDGE_NAME_RE` ends `\n?$`, mirroring Python's non-MULTILINE `$` (which
+//! also matches just before a final `\n`) per the path-anchor rule the other
+//! checks apply: the regex crate's own `$` is `\z` and would not. `md_files`
+//! yields only names ending `.md` (check.py L390), so no basename it produces
+//! can itself end in `\n`; the `\n?$` form is kept for consistency with the
+//! other path-matched regexes even though no input here reaches the difference.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;

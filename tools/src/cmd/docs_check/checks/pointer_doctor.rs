@@ -743,6 +743,10 @@ mod tests {
         // crate's (?i) does not, so this stub body goes undetected (accepted divergence,
         // documented above).
         assert!(!STUB_RE.is_match("content ıs ın here"));
+        // Same divergence, uppercase: check.py reports a stub for "CONTENT İS İN
+        // HERE" too (verified with python3 -c: re.IGNORECASE folds İ to i, so
+        // r"\b(...|is in|...)\b" matches "İS İN"); the regex crate's (?i) does not.
+        assert!(!STUB_RE.is_match("CONTENT İS İN HERE"));
     }
 
     #[test]
