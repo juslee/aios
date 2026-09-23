@@ -46,7 +46,7 @@ The mechanism works on any causal language model. A model trained for judgments 
 | Metering | Check prefill tokens before a session starts, not only predicted completion. Prompt tokens are counted after the fact. The admission check charges only a predicted completion length, and prompt length is just one input to that prediction, so a judgment's prefill is never checked against the budget before it runs. | `TokenUsage` counts "Cumulative prompt tokens processed" (`airs/inference.md:1001-1003`), and `TokenBudget` covers "prompt + completion" (`:1013-1014`). But the pre-session check charges an estimated completion length (`:1243-1246`), predicted from prompt length and other features (`:1104`, `:1118`), and usage updates "On each token" (`:1093`). The kernel compute budget (`:1248-1249`) tracks device time and power, not tokens (`kernel/compute/budget.md:17-20`), and covers only work on a "non-CPU device" (`kernel/compute/budget.md:10`). `InferenceBudget.max_tokens` is "Maximum tokens to generate" (`kits/kernel/compute.md:142-143`). |
 | AIRS Kit | Add `judge` and `judge_batch` beside `infer` and `embed`, gated on `InferenceAccess`. Define `InferenceResult`. Replace the free-text classifier example. | The trait is at `kits/intelligence/airs.md:42-57` and the capability table at `:338-342`. The example prompts "Classify activity" and reads back a string (`:306-313`). |
 | Principles | Add an explicit exception to "Streaming always… No blocking calls". A judgment has nothing to stream. | `intelligence/airs.md:142` |
-| Model registry | Add a judgment task type. Allow a second resident model only on devices with 8 GB or more. | `TaskType` is at `airs/model-registry.md:71-90`. Specialists fit alongside the primary model at 8 GB (`:213`) and at 16 GB and above (`:269-272`). |
+| Model registry | Add a judgment task type. Allow a second resident model only on devices with 8 GB or more (nominal RAM; the implemented sizing differs, see Key Idea 5). | `TaskType` is at `airs/model-registry.md:71-90`. Specialists fit alongside the primary model at 8 GB (`:213`) and at 16 GB and above (`:269-272`). |
 | Gate 2 and benchmarks | Add criteria for judgment latency and calibration. | Gate 2 measures throughput, first-token latency and memory (`development-plan.md:253-257`). Its "If NO" branch already says "Focus on embedding/classification" (`:259`). |
 
 **Ownership.** Phase 11 owns the runtime, the engine session and the Kit method; its row in the plan names "AIRS Kit (inference)" (`development-plan.md:428`). Phase 12, "AIRS Kit (services)" (`development-plan.md:429`), defines the service calls built on it. Each consumer phase owns its questions, thresholds and labelled calibration set.
@@ -113,7 +113,7 @@ Adopt first where the evidence is in the state and the call can be asynchronous.
 - **Role:** 114 feed a judgment into code policy as a signal, and 12 replace the heuristic outright. The other 3 cite rules that run only when AIRS is down; the judgment belongs in the AIRS branch beside them, and the rules stay.
 - **Question type:** 57 Noul, 32 bundles of several questions, 25 Choice and 15 Score.
 - **Latency:** 22 fit their stated budget, 49 are tight, and 58 state no budget.
-- **Where:** the docs with the most sites are the Behavioral Monitor (9), Intent Verifier (8), Task Manager (8) and Space Indexer (7). No site in `kernel/src` or `shared/src` survived.
+- **Where:** the docs with the most sites are the Behavioral Monitor (9), Intent Verifier (8), Task Manager (8) and Space Indexer (7). No site in the repo's `kernel/src` or `shared/src` survived.
 
 **Why 260 sites were rejected:**
 
@@ -129,7 +129,7 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
 
 ### 5. Degradation by device tier
 
-The tiers below follow the architecture docs. The implemented pool sizing puts every nominal board one tier lower. The kernel passes `PoolConfig::from_total_ram` only the UEFI map's usable memory, leaving out firmware and reserved regions (the repo's `kernel/src/mm/init.rs:60-62`, `:109`). So a 4 GB board lands under 4 GiB and gets no model pool (the repo's `shared/src/memory.rs:79-81`), and an 8 GB board gets the 2 GiB pool (`:82-83`). Issue #184 tracks this conflict (D22, D23).
+The tiers below follow the architecture docs. The implemented pool sizing gives each board of 4 GB or more a smaller model pool than these tiers do. The kernel passes `PoolConfig::from_total_ram` only the UEFI map's usable memory, leaving out firmware and reserved regions (the repo's `kernel/src/mm/init.rs:60-62`, `:109`). So a 4 GB board lands under 4 GiB and gets no model pool (the repo's `shared/src/memory.rs:79-81`), and an 8 GB board gets the 2 GiB pool (`:82-83`). Issue #184 tracks this conflict (D22, D23).
 
 - **AIRS down:** the rule-based fallbacks stay (`intelligence/airs.md:143`).
 - **2 GB and under:** there is no local model (`kernel/memory/ai.md:33-35`, `:422`; `airs/model-registry.md:246-249`), so there are no judgments unless the cloud question is settled (Open Question 8). The two docs disagree about 2 GB devices: `airs/model-registry.md:251-252` gives 2–3.9 GB devices a 1 GB pool.
