@@ -187,7 +187,7 @@ clean:
     rm -f {{disk_img}} {{data_img}}
 
 # ---------------------------------------------------------------------------
-# Docs drift (scripts/docs/check.py: python3 stdlib, no LLM)
+# Docs drift (aios docs-check from tools/, no LLM)
 # ---------------------------------------------------------------------------
 
 #   just docs-check                     new drift vs scripts/docs/baseline.json (exit 1 if any)
@@ -196,8 +196,8 @@ clean:
 # Report docs drift that is not in the baseline
 [positional-arguments]
 docs-check *args:
-    python3 scripts/docs/check.py "$@"
+    .claude/hooks/aios docs-check "$@"
 
 # List every docs drift finding, baselined and new
 docs-check-all:
-    python3 scripts/docs/check.py --all
+    .claude/hooks/aios docs-check --all

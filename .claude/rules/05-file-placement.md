@@ -16,6 +16,7 @@ kernel/src/storage/            Storage subsystem (Block Engine, WAL, Object Stor
 kernel/src/                    Platform-agnostic kernel logic
 shared/src/                    Types crossing kernel/stub boundary
 uefi-stub/src/                 UEFI stub code
+tools/                         Host tooling crate aios-tools (binary aios): src/cmd/<subcommand>/, tests/ (goldens, fixtures)
 docs/phases/                   Phase implementation docs (NN-name.md, flat, no subdirs)
 docs/knowledge/decisions/      Architecture Decision Records
 docs/knowledge/lessons/        Hard-won lessons and gotchas

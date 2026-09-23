@@ -21,7 +21,7 @@ Report docs and harness drift. This skill edits nothing. Runbook for the human s
 2. Run the harness checks on their own so their findings are not lost in the docs noise:
 
    ```bash
-   python3 scripts/docs/check.py --all --check pointer-doctor,harness-tables
+   just docs-check --all --check pointer-doctor,harness-tables
    ```
 
 3. Report:

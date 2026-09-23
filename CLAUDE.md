@@ -146,16 +146,17 @@ When generating a phase doc for Phase N:
 
 ## Workspace Layout
 
-Cargo workspace, three members. Run `ls kernel/src` for current per-file breakdown.
+Cargo workspace, four members (`tools` is host-only and not a default member). Run `ls kernel/src` for current per-file breakdown.
 
 ```text
 aios/
-├── Cargo.toml            workspace root (resolver = "2"; members: kernel, shared, uefi-stub)
+├── Cargo.toml            workspace root (resolver = "2"; members: kernel, shared, uefi-stub, tools; default: kernel, shared)
 ├── rust-toolchain.toml   pinned nightly (aarch64-unknown-none + aarch64-unknown-uefi)
-├── justfile              build / build-stub / disk / run* / soak / check / test / clean
+├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
 ├── .claude/
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
-│   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact), tests/
+│   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
+│   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
 │   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
 │                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup,
@@ -186,7 +187,10 @@ aios/
 │   │                     kaslr, observability, collections, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, ExitBootServices, kernel jump
-├── scripts/              setup-dev-env.sh, soak-qemu.sh (`just soak` boot soak harness)
+├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
+│                         src/cmd/docs_check/ (docs drift checker), tests/ (goldens, fixtures)
+├── scripts/              soak-qemu.sh (`just soak` boot soak harness), agent/ (brief, checkpoint),
+│                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```
 
