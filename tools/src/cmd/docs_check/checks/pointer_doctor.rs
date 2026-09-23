@@ -13,7 +13,11 @@
 //! `re.IGNORECASE` does (verified with `python3 -c`), so a CLAUDE.md section
 //! body containing one of those code points where "see"/"is in"/etc. would
 //! otherwise match is not detected as a pointer stub here; no tracked CLAUDE.md
-//! section body contains either code point.
+//! section body contains either code point; `\d` is `[0-9]` in `LABELLED_ITEM_RE`
+//! (check.py L1215) and `RULE_REF_RE` (check.py L1317), so a list item numbered,
+//! or a `rules/NN-` reference written, with non-ASCII Unicode decimal digits is
+//! not recognised here, where Python's `\d` would; no tracked harness file uses
+//! non-ASCII decimal digits in either position.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -739,5 +743,16 @@ mod tests {
         // crate's (?i) does not, so this stub body goes undetected (accepted divergence,
         // documented above).
         assert!(!STUB_RE.is_match("content ıs ın here"));
+    }
+
+    #[test]
+    fn ascii_only_digit_class_does_not_reach_non_ascii_decimal_digits() {
+        // check.py's \d matches any Unicode decimal digit, so LABELLED_ITEM_RE
+        // (L1215) treats "١. Update: ..." as a labelled item and RULE_REF_RE's
+        // finditer (L1317) matches "rules/٠١-x.md" (verified with python3 -c);
+        // [0-9] here does not, so both go unrecognised (accepted divergence,
+        // documented above).
+        assert!(labelled_item_candidates("١. Update: Arabic Digit Item").is_empty());
+        assert!(!RULE_REF_RE.is_match("rules/٠١-x.md"));
     }
 }
