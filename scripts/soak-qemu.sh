@@ -118,9 +118,10 @@ data disks live in a private .scratch.* subdirectory that is removed at exit.
 
 Environment: AIOS_EDK2_FW overrides the firmware path, as in the justfile.
 Requires qemu-system-aarch64, just, mtools (for `just disk`) and a `timeout`
-or `gtimeout` that accepts --kill-after and exits 124 when it stops the
-command. It is checked by running it, not by vendor: GNU coreutils and
-uutils (Ubuntu 26.04's default) both qualify.
+or `gtimeout` that accepts --kill-after, passes through the exit status of a
+command that finishes in time, and exits 124 when it stops the command. It
+is checked by running it, not by vendor: GNU coreutils and uutils (Ubuntu
+26.04's default) both qualify.
 
 Exit status: 0 when every boot is CLEAN (or with --report-only), 1 when some
 boot is not CLEAN, 2 on a usage or setup error (bad arguments, unusable --out,
@@ -582,7 +583,7 @@ run_soak() {
     local non_clean=0 tsv md_rows="" c count pct stall_md tail_md rate_note=""
 
     timeout_bin=$(find_timeout) ||
-        die "no usable timeout: need timeout or gtimeout that accepts --kill-after and exits 124 on timeout (macOS: brew install coreutils; Linux: coreutils)"
+        die "no usable timeout: need timeout or gtimeout that accepts --kill-after, passes through the exit status of a command that finishes in time, and exits 124 on timeout (macOS: brew install coreutils; Linux: coreutils)"
     command -v qemu-system-aarch64 >/dev/null 2>&1 || die "qemu-system-aarch64 not found in PATH"
     command -v just >/dev/null 2>&1 || die "just not found in PATH"
 
