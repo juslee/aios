@@ -482,7 +482,9 @@ find_timeout() {
     local c rc
     for c in timeout gtimeout; do
         command -v "$c" >/dev/null 2>&1 || continue
-        "$c" --kill-after=1 5 true </dev/null >/dev/null 2>&1 || continue
+        rc=0
+        "$c" --kill-after=1 5 sh -c 'exit 3' </dev/null >/dev/null 2>&1 || rc=$?
+        [ "$rc" -eq 3 ] || continue
         rc=0
         "$c" --kill-after=1 1 sleep 5 </dev/null >/dev/null 2>&1 || rc=$?
         if [ "$rc" -eq 124 ]; then

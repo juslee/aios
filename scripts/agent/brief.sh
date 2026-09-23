@@ -395,7 +395,7 @@ done <<EOF
 $WORKTREES
 EOF
 if [ -z "$main_dir$other_dir" ]; then
-    echo "- no soak results (no summary.* under target/soak/ in any worktree); run \`just soak\` on main once the harness is merged"
+    echo "- no soak results (no summary.* under target/soak/ in any worktree); run \`just soak\` on main"
 else
     if [ -n "$main_dir" ]; then
         print_soak "main soak" "$main_dir" "$main_wt" "$main_m"
