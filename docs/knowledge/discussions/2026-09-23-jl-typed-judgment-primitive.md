@@ -98,14 +98,14 @@ Adopt first where the evidence is in the state and the call can be asynchronous.
 | 5 | Attention content urgency | `intelligence/attention.md:203`, `:281`, `:341` | An urgency-marker list and a rule tree | Score (how soon), plus Nouls, in place of the marker list; the rule tree's precedence stays in code | 17, batch tier only |
 | 6 | Preference NLU | `preferences/resolution.md:207` | `interpret_preference`, which is undefined | Choices: request type, setting, direction | 15 |
 | 7 | Privacy query routing | `security/privacy/intelligence.md:270` | An unspecified classifier | Choice over query types | 18 |
-| 8 | Inspector NL queries | `applications/inspector/intelligence.md:30-31` | A self-reported confidence gated at 0.8 (`applications/inspector/intelligence.md:54`) | Choices: intent, scope | none in §8 |
-| 9 | Entity typing | `space-indexer/pipeline.md:183` | A confidence reported by the generating model | Choice over entity kind | 13 |
+| 8 | Inspector NL queries | `applications/inspector/intelligence.md:30-31` | A confidence score of unstated origin, gated at 0.8 (`applications/inspector/intelligence.md:54`) | Choices: intent, scope | none in §8 |
+| 9 | Entity typing | `space-indexer/pipeline.md:183` | A confidence reported by the extraction model | Choice over entity kind | 13 |
 | 10 | Answer relevance | `conversation-manager/streaming.md:337` | Embedding cosine | Noul: did the response answer the question? | 18 |
 | 11 | Semantic search re-rank | `storage/spaces/query-engine.md:35` | A cosine threshold | Noul per result, asynchronous or on a small top-N only; not inside the < 500 ms query (`storage/spaces/query-engine.md:152`) | 13 |
 | 12 | Intent Verifier LLM path | `intent-verifier/pipeline.md:262-280` | A rule-paragraph prompt and a parsed verdict | Noul: would this task need this action? Asynchronous only | 20 |
 | 13 | Manifest description check | `intent-verifier/specification.md:275` | "LLM-checked" | One Noul per declared purpose | 20 |
 | 14 | Browser phishing content | `applications/browser/intelligence.md:99` | "AIRS classifies urgency language, credential requests, suspicious forms" | Nouls feeding `content_score`; an asynchronous warning only | 35 |
-| 15 | Adversarial screening Tier 2 | `security/adversarial-defense/intelligence.md:315-336` | A prompt returning `injection_probability` and `confidence` | Noul, on deferred reads only | none in §8 |
+| 15 | Adversarial screening Tier 2 | `security/adversarial-defense/intelligence.md:315-336` | A prompt returning `injection_probability` and `confidence` | Noul, on non-destructive reads only, which Tier 2 may defer (`security/adversarial-defense/screening.md:213-214`) | none in §8 |
 | 16 | Tool ranking | `tool-manager/intelligence.md:57` | `semantic_match` from embedding cosine | Choice over the candidate tools, feeding `semantic_match` | none in §8 |
 
 **Across all 129 sites:**
@@ -157,7 +157,7 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
    - 15–20 s for a cold question prefix;
    - about 3.2 GB resident.
 
-   None of these meets the latency budgets the docs set for ranked consumers: < 50 ms for one attention item (`intelligence/attention.md:1139`), < 500 ms for a semantic query (`storage/spaces/query-engine.md:152`), < 10 ms for screening Tier 2, an asynchronous stage that can defer (`adversarial-defense/screening.md:279`), and the Intent Verifier's < 10 ms LLM target, which assumes an NPU and allows 50–100 ms on CPU-only hardware (`intent-verifier/pipeline.md:456`). Measure on the Gate 2 target hardware, a Pi 4 (4GB) (`development-plan.md:255`), and on a Pi 5, before judgment criteria are added to Gate 2.
+   None of these meets the latency budgets the docs set for ranked consumers: < 50 ms for one attention item (`intelligence/attention.md:1139`) and < 500 ms for a batch of 50 (`:1747`), so row 5 needs its batch budget revised, < 500 ms for a semantic query (`storage/spaces/query-engine.md:152`), < 10 ms for screening Tier 2, an asynchronous stage that can defer (`adversarial-defense/screening.md:279`), and the Intent Verifier's < 10 ms LLM target, which assumes an NPU and allows 50–100 ms on CPU-only hardware (`intent-verifier/pipeline.md:456`). Measure on the Gate 2 target hardware, a Pi 4 (4GB) (`development-plan.md:255`), and on a Pi 5, before judgment criteria are added to Gate 2.
 6. **Calibration.** No AIOS labels exist yet.
    - decider-2b v10 reports ECE 0.037 in-task and 0.084 held-out.
    - On the hard tier of JevBench, as reported by the Decider authors, ECE is 0.30 for decider-2b, 0.29 for decider-4b and 0.15 for decider-35b-a3b.
