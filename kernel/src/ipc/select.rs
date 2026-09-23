@@ -39,6 +39,12 @@ pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
 /// Perform IpcSelect: wait on multiple sources, return the index of the
 /// first ready source. `entries` is a slice of SelectEntry.
 ///
+/// Every channel entry requires `Capability::ChannelAccess(id)`, the same
+/// check `ipc_recv` makes. The whole set is validated before the thread is
+/// registered as a waiter on any source, so a rejected call leaves no
+/// partial registration: `EINVAL` if any id is out of range, otherwise
+/// `EPERM` if the caller lacks access to any channel in the set.
+///
 /// Returns `(ready_index, matched_bits)` on success.
 /// `matched_bits` is non-zero only for notification entries.
 pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize, u64), i64> {
@@ -66,6 +72,12 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
             }
         }
     }
+
+    // Capability enforcement: ChannelAccess for every channel in the set
+    // (fail-closed). This runs before the scan and the registration below
+    // take CHANNEL_TABLE or SELECT_WAITERS. check_channel_access takes
+    // PROCESS_TABLE, which ranks above both, so neither may be held here.
+    check_channel_entries(my_tid, entries)?;
 
     // --- Non-blocking scan: check each entry ---
     if let Some((idx, bits)) = scan_entries(entries) {
@@ -126,6 +138,36 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
         Some(idx) => Ok((idx, ready_bits)),
         None => Err(IpcError::Etimedout as i64),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Capability check
+// ---------------------------------------------------------------------------
+
+/// Check that the process owning `tid` holds `ChannelAccess` for every
+/// channel entry in `entries`. Returns the first failure.
+///
+/// Each id goes through `cap::check_channel_access`, the path the other IPC
+/// entry points use, so a denial counts toward `ipc_cap_denied` and logs the
+/// same warning. Notification entries are not capability-checked, matching
+/// `notify::notification_wait`. A set without channel entries skips the
+/// process lookup.
+fn check_channel_entries(tid: ThreadId, entries: &[SelectEntry]) -> Result<(), i64> {
+    use crate::syscall::IpcError;
+
+    let mut channels = entries
+        .iter()
+        .filter_map(|entry| match entry.kind {
+            SelectKind::Channel(ch_id) => Some(ch_id),
+            SelectKind::Notification(..) => None,
+        })
+        .peekable();
+    if channels.peek().is_none() {
+        return Ok(());
+    }
+
+    let pid = crate::cap::process_of_thread(tid).ok_or(IpcError::Eperm as i64)?;
+    channels.try_for_each(|ch_id| crate::cap::check_channel_access(pid, ch_id))
 }
 
 // ---------------------------------------------------------------------------
