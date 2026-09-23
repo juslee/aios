@@ -1536,8 +1536,9 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just run-direct` | Phase 0 mode: direct `-kernel` boot, no UEFI (quick debugging) |
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
 | `just soak` | Boot N times in a row and classify each boot (PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN); see §5.6 |
-| `just test` | Run host-side unit tests (shared crate) |
-| `just clippy` | Run clippy on kernel and stub targets with `-D warnings` |
+| `just test` | Run host-side unit tests (shared crate; the tools crate runs `cargo test -p aios-tools`) |
+| `just tools` | Build the host tools binary `target/tools/release/aios` (`cargo build --release -p aios-tools --target-dir target/tools`); `.claude/hooks/aios` runs it |
+| `just clippy` | Run clippy on kernel and stub targets with `-D warnings`, plus host clippy on the tools crate |
 | `just fmt` | Format code with `cargo fmt` |
 | `just fmt-check` | Check formatting without modifying files (CI mode) |
 | `just check` | **CI gate**: `fmt-check` + `clippy` + `build` + `build-stub` |
@@ -2415,7 +2416,7 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 Agent teams and skills are configured in:
 
 - **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables
-- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`) and `precompact-save.sh` (flushes Remember memory before compaction). They live under `.claude/` so edits to them are never auto-approved
+- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/release/aios` from the main checkout). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it

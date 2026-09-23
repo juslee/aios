@@ -16,11 +16,13 @@
 # check is a checker error and counts like any other failing check; drift is
 # reported in the Docs drift section, from a local docs-check run.
 #
-# Every section degrades to a one-line notice when git, gh, jq, python3 or the
-# network is unavailable. Text from GitHub (titles, branch names) is printed as
-# data with control characters replaced; it is never executed. Side effects:
-# `git fetch --prune origin` (skip with --no-fetch) and a timestamp marker in
-# the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
+# Every section degrades to a one-line notice when git, gh, jq or the network
+# is unavailable. The aios tools binary blocks in the foreground on a release
+# build when missing or stale (SessionStart's `aios --prebuild` is the
+# mitigation). Text from GitHub (titles, branch names) is printed as data with
+# control characters replaced; it is never executed. Side effects: `git fetch
+# --prune origin` (skip with --no-fetch) and a timestamp marker in the git
+# common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
 #
 # Usage: scripts/agent/brief.sh [--no-fetch]
 # Works with macOS bash 3.2 and GNU/Linux.
@@ -91,9 +93,9 @@ unpushed_desc() { # $1 = worktree path
 }
 
 # Start docs-check early; it is the slowest local step.
-if [ -f scripts/docs/check.py ] && command -v python3 >/dev/null 2>&1; then
+if [ -x .claude/hooks/aios ]; then
     (
-        python3 scripts/docs/check.py --json >"$TMP/docs.json" 2>"$TMP/docs.err"
+        .claude/hooks/aios docs-check --json >"$TMP/docs.json" 2>"$TMP/docs.err"
         echo $? >"$TMP/docs.rc"
     ) &
     DOCS_PID=$!
@@ -540,7 +542,7 @@ if [ -n "$DOCS_PID" ]; then
         ' "$TMP/docs.json"
     fi
 else
-    echo "- docs-check unavailable (needs python3 and scripts/docs/check.py on this checkout)"
+    echo "- docs-check unavailable (needs .claude/hooks/aios on this checkout)"
 fi
 
 mkdir -p "$MARKER_DIR" 2>/dev/null && touch "$MARKER" 2>/dev/null

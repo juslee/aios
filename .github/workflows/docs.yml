@@ -1,10 +1,12 @@
 name: Docs
 
-# Deterministic docs drift check (scripts/docs/check.py, no LLM).
+# Deterministic docs drift check (aios docs-check, built from tools/; no LLM).
 # Report-only: drift never fails this check. New drift versus
 # scripts/docs/baseline.json goes to the job summary and a warning annotation.
-# The check fails only when check.py itself errors (exit 2: usage, git or
-# internal error); that is a broken checker and counts like any failing check.
+# The check fails only when the checker itself fails: the tools build, or
+# aios docs-check exiting 2 (usage, git or internal error) or 3 (binary
+# missing and not buildable). That is a broken checker and counts like any
+# failing check.
 
 on:
   push:
@@ -28,7 +30,15 @@ jobs:
         with:
           # milestone-status reads main's first-parent history.
           fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/tools"
       - uses: extractions/setup-just@v4
+      - name: Build aios tools
+        run: just tools
       - name: Check docs drift against baseline
         shell: bash
         run: |
@@ -37,6 +47,6 @@ jobs:
           if [ "$rc" = 1 ]; then
             echo "::warning title=Docs drift::New docs drift versus scripts/docs/baseline.json; see the job summary. Report-only: drift does not fail this check."
           elif [ "$rc" != 0 ]; then
-            echo "::error title=docs-check failed::scripts/docs/check.py exited $rc (checker error, not drift)"
+            echo "::error title=docs-check failed::aios docs-check exited $rc (checker error, not drift)"
             exit "$rc"
           fi

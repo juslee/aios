@@ -35,6 +35,7 @@
 ## Crate & Dependency Rules
 
 - All kernel crates: `no_std`, `no_main`
-- All dependencies: must be `no_std` compatible
+- All dependencies of `kernel/`, `shared/` and `uefi-stub/`: must be `no_std` compatible
+- Host tools (`tools/`, package `aios-tools`, binary `aios`) are a std crate built for the host: the `no_std`/`no_main` rules and the `no_std` dependency rule do not apply there. Its dependencies are the fixed set clap, anyhow, serde, serde_json, regex and time, and it forbids `unsafe`.
 - License: MIT or Apache-2.0 preferred (BSD-2-Clause compatible). **No GPL in kernel/ or shared/**
 - `Cargo.lock`: committed (binary crate, reproducible builds)
