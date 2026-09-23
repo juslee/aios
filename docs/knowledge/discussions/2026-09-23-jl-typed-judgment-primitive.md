@@ -129,7 +129,7 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
 
 ### 5. Degradation by device tier
 
-The tiers below follow the architecture docs. The implemented pool sizing gives each board of 4 GB or more a smaller model pool than these tiers do. The kernel passes `PoolConfig::from_total_ram` only the UEFI map's usable memory, leaving out firmware and reserved regions (the repo's `kernel/src/mm/init.rs:60-62`, `:109`). So a 4 GB board lands under 4 GiB and gets no model pool (the repo's `shared/src/memory.rs:79-81`), and an 8 GB board gets the 2 GiB pool (`:82-83`). Issue #184 tracks this conflict (D22, D23).
+The tiers below follow the architecture docs. The implemented pool sizing gives a board of exactly 4, 8 or 16 GB a smaller model pool than these tiers do. The kernel passes `PoolConfig::from_total_ram` only the UEFI map's usable memory, leaving out firmware and reserved regions (the repo's `kernel/src/mm/init.rs:60-62`, `:109`), so such a board's usable memory falls just under the tier boundary. A 4 GB board gets no model pool (the repo's `shared/src/memory.rs:79-81`), and an 8 GB board gets a 2 GiB pool (`:82-83`). Issue #184 tracks this conflict (D22, D23).
 
 - **AIRS down:** the rule-based fallbacks stay (`intelligence/airs.md:143`).
 - **2 GB and under:** there is no local model (`kernel/memory/ai.md:33-35`, `:422`; `airs/model-registry.md:246-249`), so there are no judgments unless the cloud question is settled (Open Question 8). The two docs disagree about 2 GB devices: `airs/model-registry.md:251-252` gives 2–3.9 GB devices a 1 GB pool.
