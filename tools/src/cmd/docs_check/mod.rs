@@ -1,5 +1,204 @@
-//! `aios docs-check`: a byte-for-byte port of `scripts/docs/check.py`.
+//! `aios docs-check`: the deterministic docs drift checker, a port of
+//! `scripts/docs/check.py` at 33c6b3d. `run` is check.py `main()` (L1585-1662);
+//! `run_checks` is check.py `run_checks` (L1442-1456).
+//!
+//! Accepted divergence (contract §1.9): check.py resolves the repository from its own
+//! directory (L1576-1582, `os.path.dirname(os.path.abspath(__file__))`); `repo_root`
+//! resolves it from the process working directory, because the binary has no script
+//! directory. `just` runs recipes from the justfile's directory and the shim passes the
+//! caller's working directory through, so both tools check the same checkout in every
+//! supported invocation; the parity goldens run check.py from inside each materialized
+//! repository for the same reason.
 
+pub mod checks;
 pub mod markdown;
 pub mod model;
+pub mod output;
 pub mod repo;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::path::Path;
+
+use anyhow::{anyhow, bail, Context};
+
+use crate::{paths, proc, pystr};
+use checks::Check;
+use model::{Finding, Skip};
+use repo::Repo;
+
+// check.py's argparse options (L1586-1595). A plain comment, not a doc comment:
+// clap would show a doc comment here in `aios docs-check --help`.
+#[derive(clap::Args, Debug, Clone, Default, PartialEq, Eq)]
+pub struct Args {
+    /// list every finding, not only new ones
+    #[arg(long)]
+    pub all: bool,
+    /// print JSON instead of text
+    #[arg(long)]
+    pub json: bool,
+    /// print a Markdown summary (for $GITHUB_STEP_SUMMARY)
+    #[arg(long)]
+    pub markdown: bool,
+    /// comma-separated checks to run (default: all)
+    #[arg(long, default_value = "", hide_default_value = true)]
+    pub check: String,
+    /// baseline file (default: scripts/docs/baseline.json)
+    #[arg(long)]
+    pub baseline: Option<String>,
+    /// rewrite the baseline from the current findings (counts included; 'reason' on accepted false positives is kept)
+    #[arg(long)]
+    pub update_baseline: bool,
+    /// list available checks
+    #[arg(long)]
+    pub list_checks: bool,
+}
+
+/// The result of running the selected checks.
+pub struct CheckRun {
+    /// Collated: merged by key and sorted (`model::collate`).
+    pub findings: Vec<Finding>,
+    /// Skip message per check that could not run.
+    pub skipped: BTreeMap<&'static str, String>,
+}
+
+/// check.py L1602-1608 against `checks::registry()`.
+pub fn select_checks(check_arg: &str) -> anyhow::Result<Vec<Box<dyn Check>>> {
+    select_from(checks::registry(), check_arg)
+}
+
+/// check.py L1602-1608 against `available`: an empty `check_arg` selects every
+/// check; otherwise the comma-separated names (Python-stripped, empty parts
+/// dropped) select checks in `available` order, each once. Unknown names, in the
+/// order given and with repeats, are an error.
+pub fn select_from(
+    available: Vec<Box<dyn Check>>,
+    check_arg: &str,
+) -> anyhow::Result<Vec<Box<dyn Check>>> {
+    if check_arg.is_empty() {
+        return Ok(available);
+    }
+    let requested: Vec<&str> = check_arg
+        .split(',')
+        .map(pystr::strip)
+        .filter(|name| !name.is_empty())
+        .collect();
+    let unknown: Vec<&str> = requested
+        .iter()
+        .copied()
+        .filter(|name| !available.iter().any(|check| check.name() == *name))
+        .collect();
+    if !unknown.is_empty() {
+        bail!(
+            "unknown check(s): {} (see --list-checks)",
+            unknown.join(", ")
+        );
+    }
+    Ok(available
+        .into_iter()
+        .filter(|check| requested.contains(&check.name()))
+        .collect())
+}
+
+/// check.py `run_checks` (L1442-1456): runs each check in order; a `Skip` error
+/// records the check as skipped, any other error aborts the run.
+pub fn run_checks(repo: &Repo, checks: &[Box<dyn Check>]) -> anyhow::Result<CheckRun> {
+    let mut findings = Vec::new();
+    let mut skipped = BTreeMap::new();
+    for check in checks {
+        match check.run(repo) {
+            Ok(found) => findings.extend(found),
+            Err(err) => {
+                let skip = err.downcast::<Skip>()?;
+                skipped.insert(check.name(), skip.0);
+            }
+        }
+    }
+    Ok(CheckRun {
+        findings: model::collate(findings),
+        skipped,
+    })
+}
+
+/// check.py `repo_root` (L1576-1582), run in `cwd`.
+pub fn repo_root(cwd: &Path) -> anyhow::Result<String> {
+    let output = proc::capture("git", &["rev-parse", "--show-toplevel"], cwd)?;
+    if !output.status.success() {
+        bail!("not inside a git repository");
+    }
+    let stdout = std::str::from_utf8(&output.stdout)
+        .context("git rev-parse --show-toplevel printed output that is not valid UTF-8")?;
+    Ok(pystr::strip(stdout).to_string())
+}
+
+/// The whole of check.py `main()` with the registered checks: writes stdout to
+/// `out`, returns the exit code (0, or 1 when there is new drift).
+pub fn run(args: &Args, cwd: &Path, out: &mut dyn Write) -> anyhow::Result<u8> {
+    run_with(args, cwd, checks::registry(), out)
+}
+
+/// `run` with an explicit list of available checks (tests pass stand-in checks).
+pub fn run_with(
+    args: &Args,
+    cwd: &Path,
+    available: Vec<Box<dyn Check>>,
+    out: &mut dyn Write,
+) -> anyhow::Result<u8> {
+    if args.list_checks {
+        out.write_all(output::render_list_checks(&available).as_bytes())?;
+        return Ok(0);
+    }
+    let selected = select_from(available, &args.check)?;
+    let names: Vec<&'static str> = selected.iter().map(|check| check.name()).collect();
+    let root = repo_root(cwd)?;
+    let cwd_text = cwd
+        .to_str()
+        .ok_or_else(|| anyhow!("the current directory {} is not valid UTF-8", cwd.display()))?;
+    let baseline_path = match args.baseline.as_deref() {
+        Some(path) if !path.is_empty() => path.to_string(),
+        _ => paths::join(&root, model::BASELINE_REL),
+    };
+    let baseline_rel = paths::relpath(&baseline_path, &root, cwd_text);
+    let repo = Repo::open(&root)?;
+    let CheckRun { findings, skipped } = run_checks(&repo, &selected)?;
+    let ran: BTreeSet<&str> = names
+        .iter()
+        .copied()
+        .filter(|name| !skipped.contains_key(name))
+        .collect();
+    let baseline_file = cwd.join(&baseline_path);
+    let baseline = model::load_baseline(&baseline_file, &baseline_path)?;
+
+    if args.update_baseline {
+        let entries = model::updated_baseline(&findings, &baseline, &ran);
+        model::write_baseline(&baseline_file, &entries)?;
+        let mut message = format!(
+            "docs-check: wrote {} findings to {baseline_rel}",
+            entries.len()
+        );
+        if !skipped.is_empty() {
+            let skipped_names: Vec<&str> = skipped.keys().copied().collect();
+            message.push_str(&format!(" (skipped: {})", skipped_names.join(", ")));
+        }
+        writeln!(out, "{message}")?;
+        return Ok(0);
+    }
+
+    let cmp = model::compare(&findings, &baseline, &ran)?;
+    let report = output::Report {
+        findings: &findings,
+        cmp: &cmp,
+        skipped: &skipped,
+        names: &names,
+        baseline: &baseline,
+        baseline_rel: &baseline_rel,
+    };
+    if args.json {
+        writeln!(out, "{}", output::render_json(&report, args.all)?)?;
+    } else if args.markdown {
+        out.write_all(output::render_markdown(&report).as_bytes())?;
+    } else {
+        writeln!(out, "{}", output::render_text(&report, args.all))?;
+    }
+    Ok(if cmp.new_keys.is_empty() { 0 } else { 1 })
+}

@@ -121,3 +121,23 @@ impl Drop for TestRepo {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
+
+/// Exit code and output of one `aios` run.
+pub struct Run {
+    pub code: i32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+/// Runs the `aios` binary under test in `cwd` with `args` as given, in the
+/// isolated environment. A run killed by a signal reports code -1.
+pub fn run_aios(cwd: &std::path::Path, args: &[&str]) -> Run {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_aios"));
+    isolated(&mut cmd).current_dir(cwd).args(args);
+    let out = cmd.output().expect("run the aios binary");
+    Run {
+        code: out.status.code().unwrap_or(-1),
+        stdout: out.stdout,
+        stderr: out.stderr,
+    }
+}
