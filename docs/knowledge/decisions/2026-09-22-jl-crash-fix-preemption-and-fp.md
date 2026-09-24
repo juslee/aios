@@ -7,7 +7,7 @@ status: final
 
 # ADR: Boot-crash fix — preemption, lock discipline and FP/NEON policy
 
-The owner decided issue #164 on 2026-09-22: 1C (typed lock classes) and 2B (hard-float kernel with eager FP/SIMD save). See "Decision". Implementation is tracked by #164; the PR #149 merge gate is issue #165. The code was read at `main` f0b4169. `main` has since moved to 33c6b3d through four commits that touch no kernel code: dd05a1e (#170), bdbdded (#172) and 33c6b3d (#173) change only `.claude/settings.json`, and e98e1ad (#161) moves `rust-toolchain.toml` to nightly-2026-09-22. This branch is based on e98e1ad. Every `path:line` citation below therefore still holds. Every code claim comes from reading the source, and none has been confirmed at runtime. Claims marked *(likely)* or *(inference)* were not traced end to end. The fatal-report lines quoted below were read from the soak logs in `target/soak/167`. Nothing was built or booted while this ADR was written.
+The owner decided issue #164 on 2026-09-22: 1C (typed lock classes) and 2B (hard-float kernel with eager FP/SIMD save). See "Decision". Implementation is tracked by #164; the PR #149 merge gate is issue #165. The code was read at `main` f0b4169. `main` has since moved to 33c6b3d through four commits that touch no kernel code: dd05a1e (#170), bdbdded (#172) and 33c6b3d (#173) change only `.claude/settings.json`, and e98e1ad (#161) moves `rust-toolchain.toml` to nightly-2026-09-22. This branch is based on e98e1ad. Every `path:line` citation below therefore still holds. Every code claim comes from reading the source, and none has been confirmed at runtime. Claims marked *(likely)* or *(inference)* were not traced end to end. The fatal-report lines quoted below were read from the soak logs in `target/soak/167`. Nothing was built or booted while this ADR was written. On 2026-09-24 the owner amended the delivery plan (#185, #189); see the amendment under "Review notes".
 
 -----
 
@@ -176,8 +176,8 @@ The mechanism:
 **F5. Wake/block protocol (new; N1–N3, N7).** Neither the frame nor `on_cpu` fixes these:
 
 - **N1:** `try_direct_switch` marks the receiver Running. `schedule()` decides whether to queue the previous thread from "it was current and is not blocking", not from `state == Running`. This removes both N1 variants.
-- **N2 and N3:** a thread records "about to block" before it publishes itself as a waiter (in `pending_caller`, `waiting_receiver`, a timeout or a notification waiter). A waker that finds its target not yet blocked leaves a wake token, and `block_current` consumes the token instead of sleeping. Linux does the same by calling `set_current_state` before checking the condition. This is the register-then-block rule already stated in `docs/project/developer-guide.md:2053`.
-- **`notify.rs:317` and `:323`:** clear a deadline only after the wake succeeds. The issue goes away once that lock is IRQ-class and taken with a blocking lock.
+- **N2 and N3:** a thread records "about to block" before it publishes itself as a waiter (in `pending_caller`, `waiting_receiver`, a timeout or a notification waiter). A waker that finds its target not yet blocked leaves a wake token, and `block_current` consumes the token instead of sleeping. Linux does the same by calling `set_current_state` before checking the condition. This is the register-then-block rule already stated in `docs/project/developer-guide.md:2060`. Since the 2026-09-24 amendment, the capability-lifetime PR delivers this bullet at every blocking site, not step 6b (see "Review notes").
+- **`notify.rs:317` and `:323`:** clear a deadline only after the wake succeeds. The issue goes away once that lock is IRQ-class and taken with a blocking lock. Since the 2026-09-24 amendment, the capability-lifetime PR delivers this bullet, by that ADR's choice: `check_notification_timeouts` calls `unblock` only after releasing `NOTIFY_DEADLINES` and no longer drops a cleared deadline (see "Review notes").
 - **N7:** `unblock` prefers the thread's last CPU, recorded in its `SchedEntity` at switch time, unless affinity forbids it. Timeouts then no longer scatter Interactive threads across CPUs. The bench server's 100-tick receive timeout (`bench.rs:188`) is the knob that sets how often that happens on a slow host.
 - **N10, only if step 1b's starvation scan implicates it:** `bench-yield` blocks until the context-switch benchmark starts and exits after it, so it stops monopolising CPU 0.
 
@@ -364,15 +364,15 @@ The owner chose 2B instead. Step 4 is now the permanent FP step, with the full 5
 | **4** FP/SIMD save | Decision 2B: the full 528-byte FP/SIMD state saved at EL1 IRQ entry and at every thread switch | H5: its part of PANIC/EXCEPTION, and the defect itself | 3 |
 | **5** Address spaces | F7 | N5, N9 | 1b |
 | **6a** `on_cpu` | F4, including the `ret_from_switch` trampoline, plus F3 with a per-CPU flag | H2; cross-CPU corruption | 3 |
-| **6b** Wake/block | F5 | Heartbeat-alive WEDGE; DEGRADED | 6a |
+| **6b** Wake/block | F5 without the wake token: N1, N7, and N10 if implicated. The token, every blocking-site conversion and, by the capability-lifetime ADR's choice, the notification-deadline fix land in the capability-lifetime PR (2026-09-24 amendment) | Heartbeat-alive WEDGE; DEGRADED | 6a; the capability-lifetime PR |
 | **7** Final gate | Remaining docs | All classes | 1a–6b |
-| **8** Lock classes | The rest of Decision 1C | Lock-holder preemption; per-CPU read races (for good) | 7, unless the escalation rule fires |
+| **8** Lock classes | The rest of Decision 1C; the exit safe point (2026-09-24 amendment) | Lock-holder preemption; per-CPU read races (for good); a killed thread running on after `process_exit` | 7, unless the escalation rule fires |
 
 Why this order:
 
 - **Step 2 comes before the frame fix.** WEDGE is the largest failure class on `main` across the three arms, 21 of 90 boots against 14 PCZERO: 9 of 30 in the baseline, 7 of 30 in run 167's `main` arm (6 of them heartbeat-stuck) and 5 of 30 in its #161 arm (4 stuck), where PCZERO has 6. Step 2 does not depend on F1 or F2: neither needs the new frame. Every class that ends a boot hides later ones, because the first failure decides the class. So while 20–30% of text-mode boots wedge at about 7 s, the PCZERO, PANIC and DEGRADED counts of every later comparison are censored and noisy. Removing WEDGE first makes each later comparison more sensitive. Step 2 proceeds only if step 1b's named-lock detector confirms H3.
 - **Step 4 is separate from step 3** so that the `frame.rs:51` PANIC (8 of 20 gpu boots) can be attributed to H1 or H5. If the owner prefers speed over attribution, steps 3 and 4 can share one PR.
-- **Steps 6a and 6b are separate** so that a fix of the heartbeat-alive WEDGE can be attributed to F4 or F5.
+- **Steps 6a and 6b are separate** so that a fix of the heartbeat-alive WEDGE can be attributed to F4 or F5. Since the 2026-09-24 amendment, F5's wake token lands in the capability-lifetime PR, whose soak pair is attributed the same way (see "Review notes").
 - **Step 8 is after the gate** (Decision 1 recommendation, item 6).
 
 ### Soak protocol (every soaked step)
@@ -437,7 +437,7 @@ Why this order:
 
 - `IrqSpinLock` with masking on for the 9 statics, with the held-rank order and check. The IRQ path takes these locks blocking, replacing the `try_lock` skips.
 - `with_this_cpu` for the per-CPU arrays; F6; F8; the lint for new statics.
-- Rebuild `deadlock-prevention.md` §3.3; replace `developer-guide.md:2054` ("Use `try_lock()` in IRQ context, never blocking lock"), which this step reverses.
+- Rebuild `deadlock-prevention.md` §3.3; replace `developer-guide.md:2061` ("Use `try_lock()` in IRQ context, never blocking lock"), which this step reverses.
 - **Acceptance:** WEDGE-STUCK and PANIC-LOCK are removed (0, Fisher p < 0.05). No rank-check panic. Regression guard. Gate 1 is recorded (see below).
 
 **Step 3 — IRQ frame** (F1 + F2).
@@ -489,12 +489,12 @@ Why this order:
   - Regression guard.
   - WEDGE-ALIVE and PANIC/EXCEPTION counts reported.
 
-**Step 6b — wake/block** (F5).
+**Step 6b — wake/block** (F5 without the wake token: N1, N7, and N10 if implicated. The token, every blocking-site conversion and the notification-deadline fix land in the capability-lifetime PR; see the 2026-09-24 amendment under "Review notes").
 
 - **Acceptance:**
   - DEGRADED = 0 and WEDGE-ALIVE = 0 in the new arm.
   - The orphan and blocked-with-no-waker scans read 0.
-  - `unblock` skipping a Running target reads 0 from `ipc_reply`.
+  - `unblock` skipping a Running target reads 0 from `ipc_reply`. Since the 2026-09-24 amendment this item is reported, not gated (a capability-lifetime ADR choice): step 6b passes on the line above, the blocked-with-no-waker scan reading 0.
   - Cross-CPU `unblock` from `check_timeouts` reads 0 for Interactive threads.
   - CI soak: all 5 boots CLEAN in each of 3 runs of the same commit (see "CI soak").
   - Regression guard.
@@ -509,11 +509,11 @@ Why this order:
   - `just docs-check` reports no new drift.
   - Decide whether to drop `report_only` and `continue-on-error`, so the CI soak becomes a merge gate.
 
-**Step 8 — the rest of Decision 1C** (after step 7, not part of PR #149's gate, unless the escalation rule moves it).
+**Step 8 — the rest of Decision 1C, and the exit safe point** (after step 7, not part of PR #149's gate, unless the escalation rule moves it). The exit safe point was added on 2026-09-24; its scope is in the amendment under "Review notes".
 
 - `ThreadInfo` through TPIDR_EL1, with a per-CPU boot `ThreadInfo`; `SpinLock` for the 30 statics, with the release-build class checks; `on_cpu` and the reschedule flag moved into `ThreadInfo`; "sleeping while atomic" panics at `block_current` and `thread_yield`; panic on count underflow or overflow.
 - A sleeping lock or a yielding poll for `VIRTIO_GPU`.
-- **Acceptance:** no assertion fires in 30 boots; regression guard.
+- **Acceptance:** no assertion fires in 30 boots; regression guard; the exit safe point's added acceptance (2026-09-24 amendment, "Review notes").
 
 ### Gate 1
 
@@ -559,7 +559,7 @@ Gate 1 (IPC < 10 μs) is a project gate. `development-plan.md` records it as pas
 | `docs/kernel/scheduler.md` | §3.3 reschedule-flag semantics (340-343); §4.1 saved state (ELR and SPSR); §4.2 direct switch: add the `on_cpu` check; §10.2 (1922); §10.3 lock classes | 3, 6a, 8 |
 | `docs/kernel/scheduler.md`, FP text | The lazy FP save through a CPACR_EL1 trap is now wrong: the eager 528-byte save at EL1 IRQ entry and at every thread switch replaces it. Rewrite §4.1's "LAZY SAVE" diagram, its totals and the "Lazy FP save" paragraph (454, 467, 472), and the `FpContext` and `fp_context` comments (494, 511-512). Rewrite the lazy-FP CPACR trap in §4.2's direct switch (582-584). In §4.3's budget, the "with FP save/restore" line becomes the normal case. Also rewrite §6.4's CPACR sentence (1095) and "Lazy FP save/restore" in §14 (2407) | 4 |
 | `docs/kernel/deadlock-prevention.md` | Rebuild the §3.3 table: `RUN_QUEUES` and `NOTIFY_DEADLINES` are not leaves; place `THREAD_TABLE`, `CURRENT_THREAD` and `WAKEUP_ERRORS`; add the M25 locks, a class column and the IRQ-class order. §9.2; §12 rule 10 becomes the class rule; rule 8 lists `VIRTIO_GPU` as a known violation | 2 |
-| `docs/project/developer-guide.md` | `:2054` "`try_lock()` in IRQ context, never blocking lock" is reversed | 2 |
+| `docs/project/developer-guide.md` | `:2061` "`try_lock()` in IRQ context, never blocking lock" is reversed | 2 |
 | `docs/kernel/hal.md` §8.3 | Reschedule flag set on slice expiry; `irq_exit` | 3 |
 | `docs/project/ai-agent-context.md:170-184` | Replace the unconditional-unmask pattern | 2 |
 | `docs/phases/03-ipc-and-capability-system.md` 123, 133, 166, 212, 377 | Un-tick or annotate the items that are not implemented, and point to this ADR. The lazy-FP items (166, 212, 377) point to step 4's eager save | 7 |
@@ -573,7 +573,7 @@ Issue #165 gates this PR on the crash fix. Its state on 2026-09-22: open, mergea
 
 - **Open owner decision.** #165's soak threshold is still unanswered: A, all CLEAN in 10 text + 10 gpu boots, or B, 20 + 20. All CLEAN in 10 boots bounds the failure rate only at 25.9% per mode, and 20 boots at 13.9%. This ADR suggests B, run interleaved against `main` with the same protocol.
 - **Work still listed in #165:** rebase onto `main`; fix the clippy `needless_range_loop` at `kernel/src/compositor/shell/workspace.rs:557`; the doc fixes.
-- **Expected conflicts.** #149 touches `CLAUDE.md`, `docs/project/developer-guide.md`, `kernel/src/main.rs` and `kernel/src/compositor/service.rs`. Steps 1b (`main.rs`, the panic handler), 2 (`compositor/service.rs:187-188`, `developer-guide.md:2054`), 2–4 (`CLAUDE.md`, see "Docs to update") and 5 (`main.rs:271`) edit the same files, so the merge after step 7 will conflict.
+- **Expected conflicts.** #149 touches `CLAUDE.md`, `docs/project/developer-guide.md`, `kernel/src/main.rs` and `kernel/src/compositor/service.rs`. Steps 1b (`main.rs`, the panic handler), 2 (`compositor/service.rs:187-188`, `developer-guide.md:2061`), 2–4 (`CLAUDE.md`, see "Docs to update") and 5 (`main.rs:271`) edit the same files, so the merge after step 7 will conflict.
 - **New statics.** The shell locks (`STATUS_STRIP`, `TASKBAR`, `WORKSPACE`, per the PR description) must take the new lock type. Step 2's lint makes an unclassed static fail after the merge. Under 1C, as decided, they are `SpinLock`, never taken from IRQ context. Add them to `deadlock-prevention.md` §3.3 and to the `CLAUDE.md` lock order.
 - After step 7 is on `main`, merge `main` into `claude/phase-7-m26-desktop-shell` and soak at the chosen threshold.
 - Then re-run the present-on experiment (`COMPOSITOR_PRESENT_ENABLED`, see [the M24 present-gate ADR](2026-05-07-cl-phase-07-m24-compositor-present-gate.md)) as a separate soak. The low-VA data aborts that the M24 ADR left unexplained plausibly come from the same corruption; run 167's `FAR=0xa` write fits that pattern. The M24 workarounds (the torn-read bounds check and the `virtio_input` modulo guard) stay as defensive checks, each with a counter.
@@ -582,7 +582,7 @@ Issue #165 gates this PR on the crash fix. Its state on 2026-09-22: open, mergea
 
 - **#170: merged** 2026-09-22 11:19 UTC as dd05a1e. It changes only `.claude/settings.json`. No action; this branch was fast-forwarded onto it, per rule 03.
 - **#161: merged** 2026-09-22 12:10 UTC as e98e1ad. It changes only `rust-toolchain.toml` (nightly-2026-09-22). Its interleaved soak (`target/soak/167`) doubles as the local re-baseline (see "Soak evidence"). It changed codegen, so the V-register listing must be made from the post-#161 ELF (step 1b).
-- **#169: open, and it cannot merge as it is.** It moves the CI soak runner from `ubuntu-24.04` (`ci.yml:107`) to 26.04. On 26.04 the soak fails at setup with "soak-qemu: error: GNU timeout not found" (Actions run 35711014679). The harness requires `timeout --version` to mention "GNU coreutils" (`soak-qemu.sh:475-476`, `:569-570`), and 26.04's `timeout` does not. That is probably the Rust coreutils Ubuntu now ships (not verified). Merged as it is, CI would produce no soak data at all. The runner also brings QEMU 10.2.1, against 11.1.1 on the Mac. Order: step 1a fixes the check, then #169 merges, then the CI soak runs on `main` at least 3 times to set the 26.04 baseline, all before step 1b's comparison. Renovate holds on the runner image and the toolchain follow (see "Fixed instrument").
+- **#169: open.** It moves the CI soak runner from `ubuntu-24.04` (`ci.yml:107`) to 26.04. On 26.04 the soak failed at setup with "soak-qemu: error: GNU timeout not found" (Actions run 35711014679). The harness required `timeout --version` to mention "GNU coreutils" (`soak-qemu.sh:475-476`, `:569-570` at e98e1ad), and 26.04's `timeout` does not: it is the uutils (Rust) coreutils Ubuntu now ships, as #192 verified. Merged before #192, CI would have produced no soak data at all. The runner also brings QEMU 10.2.1, against 11.1.1 on the Mac. Order: #192 (aa1f128, merged 2026-09-23) fixed the check, which delivers step 1a's `timeout` item; then #169 merges, then the CI soak runs on `main` at least 3 times to set the 26.04 baseline, all before step 1b's comparison. Renovate holds on the runner image and the toolchain follow (see "Fixed instrument").
 
 -----
 
@@ -610,7 +610,7 @@ The analysis of every option, the rejected ones included, stays under "Decision 
 
 Nothing is left open for the owner.
 
-The fixed foundation (F1–F8) and the delivery order did not depend on either choice. The choices set the contents of step 4 (2B) and step 8 (1C).
+The fixed foundation (F1–F8) and the delivery order did not depend on either choice. The choices set the contents of step 4 (2B) and step 8 (1C). The 2026-09-24 amendment (#185, #189; see "Review notes") moves F5's wake token and the blocking-site conversions from step 6b to the capability-lifetime PR, which, by that ADR's choice, lands after step 1b, and adds the exit safe point to step 8.
 
 -----
 
@@ -629,6 +629,45 @@ The fixed foundation (F1–F8) and the delivery order did not depend on either c
 -----
 
 ## Review notes
+
+**Amendment, 2026-09-24 (#185, #189).**
+
+On 2026-09-24 the owner answered the open questions of [the capability-lifetime ADR](2026-09-24-jl-capability-lifetime.md) in two sets. First-set answer 3 (#185, #189) pulled F5's wake token out of step 6b and into that ADR's PR, so that the PR closes #189's window 2 in `process_wait`. Second-set answer 2 (#185) extended the token to every other blocking site and required step 1b's N2 measurement constraint to be resolved first. Second-set answer 3 (#185) added the exit safe point to step 8. Items marked *(capability-lifetime ADR choice)* are that ADR's choices, not owner decisions. Decisions 1C and 2B and owner confirmations 1–5 stay as they are. The fixed foundation (F1–F8) keeps its content: F5's two bullets and the last paragraph of "Decision" gain only a pointer to this note.
+
+- **The wake token moves to the capability-lifetime PR (first-set answer 3).** The plan gave step 6b the part of F5 that closes the register-then-block gaps. That PR now delivers:
+  - the per-thread wait word and its state machine, host-tested in `shared/` (the "wake-token state machine" under "Rules for every step PR");
+  - `prepare_block` and `cancel_block`, and the token rules in `unblock`, `block_current` and `try_direct_switch`;
+  - arm, re-check and loop in `process_wait` (#189's window 2).
+- **Every other blocking site converts in the same PR (second-set answer 2):** `ipc_call`, `ipc_recv`, `sleep_ticks`, `notification_wait` and `ipc_select`, which covers N2 and N3. With them the PR delivers F5's notification bullet *(capability-lifetime ADR choice)*. `check_notification_timeouts` clears expired deadlines under its `try_lock` and calls `unblock` only after releasing `NOTIFY_DEADLINES`, so no expiry is dropped (`notify.rs:317`, `:321-323`). `SELECT_WAITERS`, `try_wake_select`, `set_select_ready` and `NOTIFY_RESULTS` are deleted: a select registers on its sources, and wakers claim those registrations. The PR's rules for a waiting site replace the register-then-block rule that F5 cites (`developer-guide.md:2060`).
+- **Step 6b keeps the rest of F5:**
+  - N1: `try_direct_switch` marks the receiver Running, and `schedule()` requeues on "was current and not blocking". A Dead thread counts as blocking;
+  - N7: `unblock` prefers the thread's last CPU;
+  - N10, only if step 1b's starvation scan implicates it.
+
+  Step 6b now needs the capability-lifetime PR as well as 6a. Its acceptance does not change, except that its `ipc_reply` skip line becomes a reported count, not a gate: step 6b passes on the scan line above it, the blocked-with-no-waker scan reading 0 *(capability-lifetime ADR choice)*. The reason: from that PR on, "`unblock` skipping a Running target" means the `Skip` outcome only, and token outcomes are counted separately. Once every site arms, a `Skip` finds the waiter outside an armed window, between passes or after its wait (for example after a timeout that raced the reply). Its next pass re-checks after arming, so a `Skip` is stale, not lost, and the blocked-with-no-waker scan is the lost-wakeup signal.
+- **Step 1b lands first, so N2 is still seen before its fix.** "Gains" requires each mechanism's counter to be seen above 0 before its fix, and second-set answer 2 requires that constraint to be resolved first. To resolve it, step 1b merges before the capability-lifetime PR *(capability-lifetime ADR choice)*, and both arms of that PR's soak pair carry 1b's counters:
+  - the before arm, post-1b `main`, counts N2 and N3 as `unblock` skips by caller (`ipc_reply`, `ipc_send`, the `ipc_call` fallback, `check_timeouts`) on waits that are not yet converted;
+  - the after arm counts a wake that finds its target armed as `LeaveToken`, by caller.
+
+  This is a comparison within one pair, as "No instrument freeze" requires. A source that reads 0 in all 30 boots of the before arm is recorded as "not observed at n = 30"; its conversion then stands on the host model and its negative controls, and the result is recorded on #164. The capability-lifetime ADR's 1,084-line draft placed that PR between steps 1a and 1b. That order is dropped. Step 1b's content and acceptance do not change; that PR extends 1b's counters and scans for the outcomes and states it adds. The PR's pair also reports WEDGE-ALIVE and DEGRADED per arm, so the heartbeat-alive WEDGE can still be attributed to the token (that PR), to F4 (6a) or to the rest of F5 (6b). The series still has 10 PRs. That PR's pair is one extra soak.
+- **Step 2's inventory changes.** That PR takes `NOTIFICATION_TABLE` out of the IRQ path and deletes `SELECT_WAITERS`, so the IRQ-shared set under Decision 1 ("Common to all options") becomes 7 statics, and the `NOTIFY_DEADLINES` nesting listed there goes. It adds four IRQ-masked helpers with eight inline DAIF sites in `scheduler.rs`, 49 in total. One of them, `current_tid()`, is how every converted wait reads its own tid, because `prepare_block` must be given the caller's own tid and N4 makes today's unmasked read unsafe; `with_this_cpu` replaces it. The PR keeps "Use `try_lock()` in IRQ context, never blocking lock" in `developer-guide.md` (`:2061`) and only appends to it, so the replacement listed for step 2 still applies. Whichever of that PR and step 2 lands second adjusts the lock classes and the §3.3 rebuild.
+- **Step 8 gains the exit safe point (second-set answer 3).** `process_exit` can mark another process's threads Dead while one of them, a victim, is still running on another CPU. Step 8's preempt count keeps a victim on its CPU while it holds a `SpinLock`. It does not stop the victim from running on after that and re-publishing per-thread state that the exit has cleared: `waiting_receiver`, `pending_caller`, `REPLY_SLOTS`, a notification or select waiter record, a timeout or deadline, or an armed wait word. That is because `preempt_enable` reaching 0 does not reschedule (Decision 1 recommendation, item 5). Step 8's scope adds:
+  - an exit-pending flag per thread, set where `process_exit` marks the thread Dead;
+  - checks of the flag at `irq_exit`, at syscall return, and on entry to `prepare_block` and `block_current`. A flagged thread leaves the CPU as Dead, with its wait word reset, only where it holds no lock: at `irq_exit` where the context is preemptible, at syscall return, and on entry to `block_current`. `prepare_block` runs inside the critical section that publishes a waiter record, so there the check does not arm and never leaves the CPU; the thread leaves at its next `block_current` or syscall return *(capability-lifetime ADR choice)*;
+  - `process_exit`'s step C (channels and thread-keyed state, in the capability-lifetime ADR), deferred until every victim has reached a safe point, so that it also removes anything a victim published before then.
+
+  The checks need to read the current thread without a lock, and step 8's `ThreadInfo` provides that read. The item builds on the capability-lifetime PR's `prepare_block` and `process_exit`. Step 8 comes after that PR in either order, because 6b needs the PR and the escalation rule acts only after 6b. If the escalation rule moves step 8 ahead of step 7, the safe point moves with it. Until step 8 lands, the capability-lifetime ADR's interim rule holds: `process_exit` may target another process only if none of that process's threads can be on a CPU, and no new caller of that kind is added. Step 8 lifts the rule.
+  - **Added acceptance** *(capability-lifetime ADR choice)*: a boot self-test exits a process whose thread is running on another CPU. That thread reaches a safe point, and afterwards no waiter record of it remains. The capability-lifetime PR's wait-word count (`bw`: threads whose wait word is not Idle while their state is neither Running nor Runnable) leaves out Dead threads until the safe point exists. From step 8 it counts Dead threads too, and it reads 0.
+- **Other constraints.** Steps 2, 6a, 6b and 8 rewrite `thread_yield`, `block_current`, `unblock`, `schedule` and `direct.rs`; those rewrites keep the capability-lifetime PR's host-tested `may_become`, `wake_action` and `block_action` intact. The capability-lifetime ADR lists the other constraints its PR places on steps 1b, 2, 6a, 6b and 8.
+- What this amendment changes above. Each is an in-place edit, so citations of this ADR by line number still hold:
+  - the intro;
+  - F5's N2 and N3 bullet, and its notification bullet;
+  - the 6b and 8 rows of "Order and why", and its bullet on steps 6a and 6b;
+  - the step 6b heading, and step 6b's `ipc_reply` skip line;
+  - the step 8 heading, and step 8's acceptance line;
+  - the last paragraph of "Decision".
+
+  Separately from this amendment, the same change updates the `developer-guide.md` citations in F5's N2 and N3 bullet, step 2, "Docs to update" and "Expected conflicts" to their lines at b07d7e4 (`:2053` to `:2060`, `:2054` to `:2061`), and the #169 bullet under "Other PRs" now records that #192 delivered step 1a's `timeout` check. The ADR stays `final`.
 
 **Owner decision, 2026-09-22 (#164).**
 
