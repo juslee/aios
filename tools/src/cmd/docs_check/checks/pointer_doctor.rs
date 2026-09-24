@@ -136,7 +136,7 @@ fn title_list() -> String {
     .concat()
 }
 
-/// check.py `BEFORE_CLAUDE_RE` (L1210-1212): "<Title Words> in CLAUDE.md".
+/// check.py `BEFORE_CLAUDE_RE` (L1210-1212): `<Title Words> in CLAUDE.md`.
 static BEFORE_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [
         "((?:",
@@ -148,7 +148,7 @@ static BEFORE_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     .concat();
     Regex::new(&pattern).expect("valid regex")
 });
-/// check.py `AFTER_CLAUDE_RE` (L1213): "CLAUDE.md: <title list>".
+/// check.py `AFTER_CLAUDE_RE` (L1213): `CLAUDE.md: <title list>`.
 static AFTER_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [r#"`?CLAUDE\.md`?\s*(:)?\s*["“]?"#, title_list().as_str()].concat();
     Regex::new(&pattern).expect("valid regex")
@@ -195,8 +195,8 @@ static AGENT_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub struct PointerDoctor;
 
 /// A candidate CLAUDE.md section name, as words. `Before` came from
-/// "<words> in CLAUDE.md" (try dropping leading words), `After` from
-/// "CLAUDE.md <words>" or a labelled list item (try dropping trailing words).
+/// `<words> in CLAUDE.md` (try dropping leading words), `After` from
+/// `CLAUDE.md <words>` or a labelled list item (try dropping trailing words).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Phrase {
     Before(Vec<String>),

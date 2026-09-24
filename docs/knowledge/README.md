@@ -21,7 +21,7 @@ Shared knowledge base for the AIOS project. Every developer's Claude Code instan
 
 ### Naming
 
-```
+```text
 YYYY-MM-DD-initials-short-description.md
 ```
 

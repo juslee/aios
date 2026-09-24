@@ -7,10 +7,16 @@
 //! nesting 128 or more levels deep, and numbers whose magnitude exceeds f64's
 //! range (e.g. `1e400`, or an integer of 310+ digits), which Python parses as
 //! `inf` or an exact int; each of these falls back to the directory name as the
-//! plugin name. No tracked plugin.json uses them. `layout_list`'s per-call
-//! `entry` regex, and the shared `TREE_PREFIX_RE` (defined in `layout.rs`), use
-//! `\s`, which here does not match U+001C..U+001F where Python's `\s` does; no
-//! tracked line reaches it.
+//! plugin name. No tracked plugin.json uses them. Python parses deep nesting
+//! only up to CPython's C-stack limit (about 150,000 levels with CPython 3.14;
+//! the exact depth depends on the stack size). Past it, check.py's `json.loads`
+//! (L1129) raises RecursionError, which is not a ValueError, so L1130 does not
+//! catch it and check.py exits 2 through `__main__` (L1665-1670), where aios
+//! still falls back to the directory name and exits 0 or 1.
+//!
+//! `layout_list`'s per-call `entry` regex, and the shared `TREE_PREFIX_RE`
+//! (defined in `layout.rs`), use `\s`, which here does not match U+001C..U+001F
+//! where Python's `\s` does; no tracked line reaches it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;

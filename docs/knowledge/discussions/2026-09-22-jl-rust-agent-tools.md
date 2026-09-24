@@ -9,7 +9,7 @@ status: active
 
 ## Context
 
-The agent-loop tooling is Python and bash, written in September 2026:
+When this was written (2026-09-22, main at `33c6b3d`), the agent-loop tooling was Python and bash:
 
 | Tool | Lines |
 | --- | --- |
@@ -20,6 +20,8 @@ The agent-loop tooling is Python and bash, written in September 2026:
 | `scripts/soak-qemu.sh` | 853 |
 | `.claude/hooks/precompact-save.sh` | 152 |
 
+**Note (2026-09-24):** R1 replaced `scripts/docs/check.py` with `aios docs-check` and deleted it. The other line counts are as of `33c6b3d`.
+
 The approved PR-loop design (`docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md`, on branch `claude/justin-review-merge-loop` until R2 merges) planned a Python orchestrator.
 
 The owner decided to move all of it to Rust. The main reasons:
@@ -27,7 +29,7 @@ The owner decided to move all of it to Rust. The main reasons:
 - one language across the repository;
 - types and `cargo test` for a long-lived state machine and a security parser;
 - no dependency on `/usr/bin/python3` or on GNU `timeout`. The GNU `timeout` requirement is what blocks PR #169's Ubuntu 26.04 runner, which ships uutils.
-  - **Note (2026-09-24):** since #192 (`aa1f128`), `soak-qemu.sh` accepts any `timeout` that behaves correctly, uutils included, so #169 no longer waits on R4. Its failing soak check is from a run before #192.
+  - **Note (2026-09-24):** since #192 (`aa1f128`), `soak-qemu.sh` accepts any `timeout` that behaves correctly, uutils included, so #169 no longer waits on R4. #169 was rebased onto #192 (head `5285b16`), and its soak job now completes on ubuntu-26.04 with uutils `timeout`. The job is report-only and none of its boots is CLEAN: all 5 stop at a synchronous exception at the kernel load address (`0x4008_0000`) before any boot marker, unlike main's ubuntu-24.04 soak, whose boots reach EL1 and fail later.
 
 Owner decisions, 2026-09-22:
 
@@ -107,7 +109,7 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
 | State | `aios guard` (every shell command) | Other subcommands |
 | --- | --- | --- |
 | Fresh | runs | runs |
-| Stale (e.g. just after a pull) | Runs the stale binary, whose rules are merged and reviewed, and starts one background `just tools` (lock file `target/tools/.building`) | Rebuilds in the foreground (incremental, seconds), then runs |
+| Stale (e.g. just after a pull) | Runs the stale binary, whose rules are merged and reviewed, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs |
 | Missing | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Exits non-zero, naming `just tools` |
 
 **Other build and CI hooks:**
@@ -174,7 +176,7 @@ All loop behaviour, prompts, config and evals are unchanged.
 
 - `docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md` (branch `claude/justin-review-merge-loop`): the approved PR-loop design this tooling implements.
 - `docs/knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md` (PR #174): the crash-fix steps that use the soak harness.
-- PR #169: the Ubuntu 26.04 runner. Its soak failed on uutils `timeout` before #192; it needs a rebase or re-run, not R4.
+- PR #169: the Ubuntu 26.04 runner. Its soak failed on uutils `timeout` before #192; since the rebase onto #192 the soak job completes on 26.04, so it does not wait on R4 (its boots are not CLEAN; see the note under Context).
 
 ## Outcome
 

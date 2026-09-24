@@ -3,7 +3,8 @@
 //! `scripts/docs/check.py` runs on CPython, so the port must strip, split and
 //! slice text exactly as Python does: `str.isspace` (check.py's strips and
 //! `split()` calls), `str.splitlines()` (L257, L328, L457, L474, L512, L824,
-//! L865, L902, L939, L946, L1178, L1285, L1343), text-mode reading (L399-401),
+//! L865, L902, L939, L946, L1178, L1285, L1343), text-mode reading (`text=True`
+//! at L397, and `open(..., errors="replace")` with `read()` at L405-406),
 //! `str.expandtabs(4)` (L275), `str.isdigit()` (L854, L963, L1000), `int()` /
 //! `str(int())` and `urllib.parse.unquote` (L571, L617, L620, L661).
 //!

@@ -16,15 +16,23 @@
 //! them; the parity goldens prove the real inputs; verified with python3):
 //! - regex `\s` does not match U+001C..U+001F here (Python's does);
 //! - `\d` is `[0-9]`: non-ASCII decimal digits are not digits here;
-//! - `gh_slug` (`char::is_alphanumeric`) and the `regex` crate's `\w`/`\b` keep
-//!   combining marks (Mn/Mc), connector punctuation (Pc) and Join_Control
-//!   characters that Python's `str.isalnum()` and `\w` drop; `gh_slug` also
-//!   keeps letter-like Symbol-other (So) characters such as Ⓐ (U+24B6), which
-//!   Python drops too. Neither differs on numeric symbols (No, e.g. `²`): both
-//!   `gh_slug` and Python's `\w` keep them — though the `regex` crate's own
-//!   `\w` (used outside `gh_slug`, e.g. in `MILESTONE_RE`) lacks No digits,
-//!   where Python's `\w` has them. CPython 3.14's Unicode tables and the
-//!   `regex` crate's may also drift apart from each other over time;
+//! - `gh_slug` (`char::is_alphanumeric`, i.e. Unicode Alphabetic or Numeric
+//!   from Rust std's tables) keeps two kinds of character that check.py's
+//!   `[^\w\- ]` (Python's `str.isalnum()` plus `_`) drops: Other_Alphabetic
+//!   combining marks (Mn/Mc, e.g. U+0345, U+093E, U+0903) and letter-like
+//!   Symbol-other (So) characters such as Ⓐ (U+24B6). It drops the other
+//!   combining marks, connector punctuation (Pc) other than `_` and
+//!   Join_Control characters, as Python does, and both keep numeric symbols
+//!   (No, e.g. `²`). Rust std's tables are also a newer Unicode version than
+//!   CPython 3.14's (18.0 on nightly-2026-09-23, against 16.0), so `gh_slug`
+//!   already keeps letters and digits assigned after Unicode 16, which CPython
+//!   treats as unassigned and drops;
+//! - the `regex` crate's `\w`/`\b` (used outside `gh_slug`, e.g. in
+//!   `MILESTONE_RE`) include every combining mark (Mn/Mc/Me), all connector
+//!   punctuation (Pc), Join_Control and the same So letter-symbols, which
+//!   Python's `\w` lacks, and lack numeric symbols (No, e.g. `²`), which
+//!   Python's `\w` has. The crate's Unicode tables are versioned separately
+//!   from CPython's and Rust std's and can drift from either;
 //! - milestone numbers that do not fit `u64` are ignored;
 //! - `brace_expand` has no recursion limit here: at about 1,000 or more `{…}`
 //!   groups in one doc-map code span, check.py raises RecursionError (caught by

@@ -529,10 +529,16 @@ if [ -n "$DOCS_PID" ]; then
     wait "$DOCS_PID" 2>/dev/null
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
     if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
-        # Exit 3 means the shim itself failed (missing/unbuildable binary): its own
-        # "aios: ..." line is the useful one, not just's "cargo build ..." echo that
-        # may precede it in the same stream.
-        echo "- docs-check failed (exit $rc, a checker error, not drift): $(grep -m1 '^aios: ' "$TMP/docs.err" 2>/dev/null || head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        # A foreground rebuild's `just tools`/cargo output, and the shim's "aios:
+        # rebuilding ... failed" warning, can come before the real error in the same
+        # stream. Prefer the checker's own "docs-check: ..." line (exit 2), then the
+        # binary's panic header (exit 101), then the shim's "aios: ..." line (exit 3,
+        # the binary never ran), then the last line (e.g. sh's exec error).
+        docs_err=$(grep -m1 '^docs-check: ' "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(grep -m1 -E "^thread 'main'( \([0-9]+\))? panicked" "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(grep -m1 '^aios: ' "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(tail -n 1 "$TMP/docs.err" 2>/dev/null)
+        echo "- docs-check failed (exit $rc, a checker error, not drift): $docs_err"
     elif ! command -v jq >/dev/null 2>&1; then
         echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`"
     elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then

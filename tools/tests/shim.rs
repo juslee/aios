@@ -71,6 +71,25 @@ fn make_executable(path: &Path) {
     std::fs::set_permissions(path, perms).expect("chmod 755");
 }
 
+/// A `touch -t` stamp newer than every file a test repository holds.
+const FRESH_STAMP: &str = "209901010000";
+/// A `touch -t` stamp older than every file a test repository holds.
+const STALE_STAMP: &str = "200001010000";
+
+fn set_mtime(path: &Path, stamp: &str) {
+    let status = Command::new("touch")
+        .arg("-t")
+        .arg(stamp)
+        .arg(path)
+        .status()
+        .expect("run touch");
+    assert!(
+        status.success(),
+        "touch -t {stamp} {} failed",
+        path.display()
+    );
+}
+
 fn wait_for(label: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -142,18 +161,7 @@ impl Sandbox {
             .expect("create target/tools/release");
         std::fs::write(&bin, FAKE_BIN).expect("write the fake binary");
         make_executable(&bin);
-        let stamp = if fresh {
-            "209901010000"
-        } else {
-            "200001010000"
-        };
-        let status = Command::new("touch")
-            .arg("-t")
-            .arg(stamp)
-            .arg(&bin)
-            .status()
-            .expect("run touch");
-        assert!(status.success(), "touch -t {stamp} failed");
+        set_mtime(&bin, if fresh { FRESH_STAMP } else { STALE_STAMP });
     }
 
     fn run_at(&self, shim: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
@@ -421,7 +429,14 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), format!("{ASK_JSON}\n"));
 
-    let out = sandbox.run_at(&shim, &["--prebuild"], &[("PATH", &path)]);
+    // A stale worktree binary and a slow build: a shim that took the worktree
+    // for the main checkout would hold the worktree's build lock on return.
+    set_mtime(&other, STALE_STAMP);
+    let out = sandbox.run_at(
+        &shim,
+        &["--prebuild"],
+        &[("PATH", &path), ("FAKE_JUST_DELAY", "3")],
+    );
     assert_eq!(code(&out), 0);
     assert!(!sandbox.lock().exists());
     assert!(
