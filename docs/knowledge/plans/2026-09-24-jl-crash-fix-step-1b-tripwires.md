@@ -22,7 +22,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 
 ## Progress
 
-- [ ] S1: `FixedQueue::iter()` / `contains()` (shared, host tests)
+- [x] S1: `FixedQueue::iter()` / `contains()` (shared, host tests)
 - [ ] S2: `shared/src/lock.rs`: owner stamp, `classify`, `StampedLock`, `LockClass` (host tests, Miri)
 - [ ] S3: `shared/src/tripwire.rs`: key catalogue, `WakeSource`, `CpuCounters`, line writer, `classify_pc`, scan classification, two strikes (host tests)
 - [ ] K1: Bench DAIF masking removed
@@ -857,11 +857,11 @@ Whether the user merges before or after the soak is their call through `/merge-a
 
 ## Issues Encountered
 
-(to be filled during implementation)
+- S1: `just check` lints only the `aarch64-unknown-none` build, so test modules are never linted. `cargo clippy -p shared --tests -- -D warnings` on the host already fails on `main` in other modules' tests (`too_many_arguments`, `assertions_on_constants`, `needless_range_loop`, …). None of the failures is in `collections.rs`. S2/S3 should check their own files with that command, not expect it to exit 0.
 
 ## Decisions Made
 
-(to be filled during implementation)
+- S1: `iter()` returns a named `FixedQueueIter` (queue reference + logical position, two words) that yields copies. It is not an `impl Iterator` over two chained slices, which would be four words. `next()` uses `wrapping_*` index arithmetic and `buf.get()`, so the dev build adds no overflow-check or bounds-check panic paths. It skips a `None` slot rather than stopping, so `FusedIterator` holds unconditionally. `ExactSizeIterator` relies on the structural invariant that every slot in the live range is `Some`. `contains(&T)` needs `T: PartialEq` (as `VecDeque::contains` does). For K8: the iterator is 16 bytes, so consume it in a `for` loop in `RunQueue::for_each`, which lets SROA keep it in registers, and never store it or pass it by value; V1 checks for NEON. `FixedQueueIter` is not re-exported at the crate root (`shared::collections::FixedQueueIter`). Host tests: 559 → 564; Miri runs the 23 collections tests cleanly.
 
 ## Lessons Learned
 

@@ -1,4 +1,4 @@
-//! Generic collection types: FixedQueue, RingBuffer.
+//! Generic collection types: FixedQueue (with FixedQueueIter), RingBuffer.
 //!
 //! Used by scheduler run queues and IPC message rings.
 
@@ -65,7 +65,71 @@ impl<T: Copy, const N: usize> FixedQueue<T, N> {
     pub fn len(&self) -> usize {
         self.len
     }
+
+    /// Iterate over the queued elements from front (next to pop) to back,
+    /// without removing them.
+    ///
+    /// The iterator yields copies and never panics: it computes slot indices
+    /// with non-overflowing arithmetic and reads them through `get`. It is
+    /// meant for diagnostic scans that read a queue under its lock and must
+    /// not change the order.
+    pub fn iter(&self) -> FixedQueueIter<'_, T, N> {
+        FixedQueueIter {
+            queue: self,
+            pos: 0,
+        }
+    }
+
+    /// Returns true if an element equal to `val` is queued.
+    pub fn contains(&self, val: &T) -> bool
+    where
+        T: PartialEq,
+    {
+        self.iter().any(|queued| queued == *val)
+    }
 }
+
+/// Front-to-back iterator over a [`FixedQueue`], returned by
+/// [`FixedQueue::iter`].
+///
+/// It holds only the queue reference and a logical position, so it is two
+/// words wide.
+pub struct FixedQueueIter<'a, T: Copy, const N: usize> {
+    queue: &'a FixedQueue<T, N>,
+    /// Offset from `queue.head` of the next element to yield (0 = front).
+    pos: usize,
+}
+
+impl<T: Copy, const N: usize> Iterator for FixedQueueIter<'_, T, N> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        while self.pos < self.queue.len {
+            // head < N and pos < len <= N, so head + pos < 2N and one
+            // subtraction maps it back into the buffer. Neither step wraps;
+            // the wrapping forms keep overflow-check panics out of the code.
+            let raw = self.queue.head.wrapping_add(self.pos);
+            let slot = if raw >= N { raw.wrapping_sub(N) } else { raw };
+            self.pos = self.pos.wrapping_add(1);
+            // Every slot in the live range holds `Some`: `push_back` fills the
+            // tail slot and `pop_front` empties only the head slot. The loop
+            // therefore never skips, and `None` is returned only at the end.
+            if let Some(Some(val)) = self.queue.buf.get(slot) {
+                return Some(*val);
+            }
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.queue.len.saturating_sub(self.pos);
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T: Copy, const N: usize> ExactSizeIterator for FixedQueueIter<'_, T, N> {}
+
+impl<T: Copy, const N: usize> core::iter::FusedIterator for FixedQueueIter<'_, T, N> {}
 
 // ---------------------------------------------------------------------------
 // RingBuffer — Clone-based circular buffer (used by IPC message queues)
@@ -260,6 +324,142 @@ mod tests {
             }
             assert!(q.is_empty());
         }
+    }
+
+    // ── FixedQueue iter / contains tests ────────────────────────────────
+
+    fn queued<const N: usize>(q: &FixedQueue<u32, N>) -> alloc::vec::Vec<u32> {
+        q.iter().collect()
+    }
+
+    #[test]
+    fn queue_iter_empty() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        assert_eq!(q.iter().next(), None);
+        assert_eq!(q.iter().len(), 0);
+        assert!(!q.contains(&0));
+
+        // Empty again after a push and pop, with head no longer at slot 0.
+        assert!(q.push_back(7));
+        assert_eq!(q.pop_front(), Some(7));
+        assert_eq!(q.iter().next(), None);
+        assert_eq!(q.iter().len(), 0);
+        assert!(!q.contains(&7));
+    }
+
+    #[test]
+    fn queue_iter_fifo_after_wraparound() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        assert!(q.push_back(1));
+        assert!(q.push_back(2));
+        assert!(q.push_back(3));
+        assert_eq!(q.pop_front(), Some(1));
+        assert_eq!(q.pop_front(), Some(2));
+        // Slots now: [_, _, 3, _]; the next two pushes land in slot 3, then
+        // wrap to slot 0.
+        assert!(q.push_back(4));
+        assert!(q.push_back(5));
+        assert_eq!(queued(&q), alloc::vec![3, 4, 5]);
+
+        // Iterating does not consume: the queue still pops in the same order.
+        assert_eq!(q.len(), 3);
+        assert_eq!(q.pop_front(), Some(3));
+        assert_eq!(q.pop_front(), Some(4));
+        assert_eq!(q.pop_front(), Some(5));
+        assert!(q.is_empty());
+
+        // Every head position: iter order always equals pop order.
+        for round in 0..8u32 {
+            let base = round * 10;
+            assert!(q.push_back(base + 1));
+            assert!(q.push_back(base + 2));
+            assert!(q.push_back(base + 3));
+            assert_eq!(queued(&q), alloc::vec![base + 1, base + 2, base + 3]);
+            assert_eq!(q.pop_front(), Some(base + 1));
+            assert_eq!(queued(&q), alloc::vec![base + 2, base + 3]);
+            assert_eq!(q.pop_front(), Some(base + 2));
+            assert_eq!(q.pop_front(), Some(base + 3));
+        }
+    }
+
+    #[test]
+    fn queue_iter_full() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        for v in 1..=4 {
+            assert!(q.push_back(v));
+        }
+        // Full with head at slot 0 (head == tail).
+        assert_eq!(queued(&q), alloc::vec![1, 2, 3, 4]);
+        assert_eq!(q.iter().len(), 4);
+
+        // Full with head at slot 1: the back element sits in slot 0.
+        assert_eq!(q.pop_front(), Some(1));
+        assert!(q.push_back(5));
+        assert!(!q.push_back(6));
+        assert_eq!(queued(&q), alloc::vec![2, 3, 4, 5]);
+        assert_eq!(q.iter().len(), 4);
+        for v in 2..=5 {
+            assert!(q.contains(&v));
+        }
+        assert!(!q.contains(&1));
+        assert!(!q.contains(&6));
+
+        // Capacity 1: full and empty share the single slot.
+        let mut one = FixedQueue::<u32, 1>::new();
+        assert!(one.push_back(9));
+        assert_eq!(queued(&one), alloc::vec![9]);
+        assert_eq!(one.pop_front(), Some(9));
+        assert!(one.push_back(10));
+        assert_eq!(queued(&one), alloc::vec![10]);
+    }
+
+    #[test]
+    fn queue_contains_after_pop() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        assert!(q.push_back(10));
+        assert!(q.push_back(20));
+        assert!(q.push_back(30));
+        assert!(q.contains(&10));
+        assert!(q.contains(&20));
+        assert!(q.contains(&30));
+        assert!(!q.contains(&40));
+
+        assert_eq!(q.pop_front(), Some(10));
+        assert!(!q.contains(&10));
+        assert!(q.contains(&20));
+        assert!(q.contains(&30));
+
+        assert_eq!(q.pop_front(), Some(20));
+        assert_eq!(q.pop_front(), Some(30));
+        assert!(!q.contains(&20));
+        assert!(!q.contains(&30));
+
+        // Pushed after the queue drained: only the new element is found.
+        assert!(q.push_back(40));
+        assert!(q.push_back(50));
+        assert!(q.contains(&40));
+        assert!(q.contains(&50));
+        assert!(!q.contains(&10));
+        assert_eq!(q.pop_front(), Some(40));
+        assert!(!q.contains(&40));
+        assert!(q.contains(&50));
+    }
+
+    #[test]
+    fn queue_iter_len_tracks_progress_and_stays_exhausted() {
+        let mut q = FixedQueue::<u32, 4>::new();
+        assert!(q.push_back(1));
+        assert!(q.push_back(2));
+        assert!(q.push_back(3));
+        let mut it = q.iter();
+        assert_eq!(it.len(), 3);
+        assert_eq!(it.next(), Some(1));
+        assert_eq!(it.len(), 2);
+        assert_eq!(it.next(), Some(2));
+        assert_eq!(it.next(), Some(3));
+        assert_eq!(it.len(), 0);
+        assert_eq!(it.next(), None);
+        assert_eq!(it.next(), None);
     }
 
     // ── RingBuffer tests ────────────────────────────────────────────────
