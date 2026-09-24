@@ -2,7 +2,7 @@
 //!
 //! Builds kernel page tables and swaps TTBR0 to our identity map.
 //! Phase 1 uses edk2's existing MAIR/TCR configuration with 1 GB block
-//! descriptors. Per memory.md §3.
+//! descriptors. Per memory/virtual.md §3.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +17,7 @@ static BOOT_TCR: AtomicU64 = AtomicU64::new(0);
 #[no_mangle]
 static BOOT_SCTLR: AtomicU64 = AtomicU64::new(0);
 
-// Kernel virtual address space layout (memory.md §3.1)
+// Kernel virtual address space layout (memory/virtual.md §3.1)
 #[allow(dead_code)]
 pub const KERNEL_BASE: usize = 0xFFFF_0000_0000_0000;
 pub const DIRECT_MAP_BASE: usize = 0xFFFF_0001_0000_0000;

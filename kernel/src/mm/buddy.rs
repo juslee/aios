@@ -9,7 +9,7 @@
 //!   One bit per pair per order. Toggle on alloc/free. bit=0 after free → coalesce.
 //! - Security: double-free detection via bitmap, poison fill on free (0xDEAD_DEAD).
 //!
-//! Per memory.md §2.2 and fuzzing-and-hardening.md §3.3.
+//! Per memory/physical.md §2.2 and fuzzing/strategies.md §3.3.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use shared::MemoryDescriptor;

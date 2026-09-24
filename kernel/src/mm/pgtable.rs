@@ -3,7 +3,7 @@
 //! Provides `PageTableEntry`, `PageTable`, `VmFlags`, and address-space mapping
 //! helpers with W^X enforcement built into the PTE API.
 //!
-//! Per memory.md §3.2.
+//! Per memory/virtual.md §3.2.
 
 // ── Page table entry ────────────────────────────────────────────────────
 

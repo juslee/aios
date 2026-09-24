@@ -6,7 +6,7 @@
 //! - MMIO mapping at MMIO_BASE (2MB blocks, device memory)
 //!
 //! Called from kernel_main after pool initialization.
-//! Per memory.md §3.
+//! Per memory/virtual.md §3.
 
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};

@@ -8,7 +8,7 @@
 //! Page table pages are accessed via TTBR1 direct map (DIRECT_MAP_BASE + phys)
 //! since TTBR0 is switched between user address spaces.
 //!
-//! Per memory.md §5.1, §9.5.
+//! Per memory/virtual.md §5.1, memory/hardening.md §9.5.
 
 use core::ptr;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -22,7 +22,7 @@ use super::asid::{Asid, AsidAllocator};
 
 const PAGE_SIZE: usize = 4096;
 
-// ── User VA layout (per memory.md §9.5) ──────────────────────────────
+// ── User VA layout (per memory/hardening.md §9.5) ──────────────────────────────
 
 /// User code segment base address.
 #[allow(dead_code)]

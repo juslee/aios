@@ -4,7 +4,7 @@
 //! Regions are reference-counted and capability-gated. W^X is enforced at both
 //! creation and mapping time.
 //!
-//! Per ipc.md §4.4–4.6, memory.md §7.
+//! Per ipc.md §4.4–4.6, memory/virtual.md §7.
 //!
 //! Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE.
 
