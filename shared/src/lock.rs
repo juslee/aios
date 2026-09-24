@@ -986,10 +986,23 @@ mod tests {
 
     // -- Threads (and Miri) -------------------------------------------------
 
+    /// The Miri gate for the lock's orderings (`just miri`, one default seed).
+    ///
+    /// Weakening any of these makes this test fail under Miri:
+    /// - the `Acquire` CAS or the releasing `store(0, Release)`: a data race
+    ///   on `*g += 1`;
+    /// - the `Acquire` first word load or the `fence(Acquire)` in
+    ///   `consistent_snapshot`, the `Release` store in `restamp`, or the
+    ///   holder field's `Release` store: "fields of another holder".
+    ///
+    /// The second group needs many contended snapshots. With 25 iterations per
+    /// thread the fence, `restamp` and field-store mutations passed on the
+    /// default seed, so keep `ITERS` under Miri at 400 or more and re-run those
+    /// mutations when changing it.
     #[test]
     fn four_threads_exclude_each_other_and_snapshots_stay_consistent() {
         #[cfg(miri)]
-        const ITERS: u64 = 25;
+        const ITERS: u64 = 400;
         #[cfg(not(miri))]
         const ITERS: u64 = 20_000;
         const THREADS: u8 = 4;

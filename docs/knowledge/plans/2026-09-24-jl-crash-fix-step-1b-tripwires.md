@@ -859,6 +859,7 @@ Whether the user merges before or after the soak is their call through `/merge-a
 
 - S1: `just check` lints only the `aarch64-unknown-none` build, so test modules are never linted. `cargo clippy -p shared --tests -- -D warnings` on the host already fails on `main` in other modules' tests (`too_many_arguments`, `assertions_on_constants`, `needless_range_loop`, …). None of the failures is in `collections.rs`. S2/S3 should check their own files with that command, not expect it to exit 0.
 - S2: none. Host clippy on the tests reports 0 findings in `lock.rs`. Miri passes the 16 lock tests, and the threaded test also passes under `-Zmiri-many-seeds=0..16`. Two mutations each fail the model tests: Reentry ignoring the generation, and `read_stamp` without its second CPU read. A host run of the threaded test takes about 20,000 contended snapshots, about 28% of them with a published tid, and none is inconsistent. Host tests: 564 → 580.
+- S2 (review): with 25 iterations per thread under Miri, `just miri` (CI's Miri gate, one default seed) missed three ordering regressions in the threaded test. Removing the `fence(Acquire)` in `consistent_snapshot`, making `restamp` a Relaxed store, and making the test's holder-field store Relaxed all passed on the default seed. Only `-Zmiri-many-seeds` caught them.
 
 ## Decisions Made
 
@@ -872,6 +873,10 @@ Whether the user merges before or after the soak is their call through `/merge-a
 - S2: `OwnerStamp` wraps `NonZeroU64`, so `Option<OwnerStamp>` is 8 bytes. `new` is therefore a non-`const` fn (`NonZeroU64 | u64`) with no `unsafe` and no panic path. Compile-time `const _` asserts, checked on the kernel target too: the guard is 8 bytes and `Result<guard, u64>` is 16 (returned in x0/x1).
 - S2: `try_lock`/`try_lock_weak` return `Err(observed word)`, so the slow path can classify without another load. `Err(0)` from the weak CAS is a spurious failure. Guard operations are associated functions (`StampedGuard::restamp(&g, s)`) so they never shadow the data type's methods. The guard is `Sync` only for `T: Sync`.
 - S2: Added `SCALAR_INDEX = 0xFF` (§2.1's index for non-array locks) beside `LockClass`, so that S3 and K5 share one constant. There is no `lock()` spin loop in shared: the slow path's counters, CNTVCT reads and prints are K5's. `lock.rs` denies `clippy::arithmetic_side_effects` and `indexing_slicing` outside tests.
+- S2 (review): the Miri `ITERS` of the threaded test is now 400, not 25. The test's doc comment names the orderings it guards and says to re-run the mutations if `ITERS` changes. `just miri` stays unchanged. Running every shared test with `-Zmiri-many-seeds` would repeat the whole suite 16 times, while this change costs one test about 5 s. Six mutations were checked against the committed file on the default seed, and each one fails:
+  - `Acquire` CAS → Relaxed, and release `store(0)` → Relaxed: both give a Miri data race on `*g += 1`;
+  - first word load → Relaxed, no `fence(Acquire)`, `restamp` → Relaxed, and holder-field store → Relaxed: all give "fields of another holder".
+  With explicit seeds 0–9, the fence, `restamp` and first-load mutations fail on every seed, and the field-store mutation fails on 8 of the 10. The unmodified test passes `-Zmiri-many-seeds=0..16`. `just miri`: 580 tests pass in about 90 s.
 
 ## Lessons Learned
 
