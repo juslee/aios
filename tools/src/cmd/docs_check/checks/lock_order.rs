@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(split_outside_braces("{A > B"), ["{A ", " B"]);
         assert_eq!(split_outside_braces("A"), ["A"]);
         assert_eq!(split_outside_braces(""), [""]);
-        // Extra inputs checked against Python's re.split, beyond the brief's cases:
+        // Extra inputs checked against Python's re.split, beyond the cases above:
         // a stray `}` before the next `>`, and a `>` immediately inside `{...}`.
         assert_eq!(split_outside_braces("A > B} > C"), ["A > B} ", " C"]);
         assert_eq!(split_outside_braces("A>{B>C}>D"), ["A", "{B>C}", "D"]);

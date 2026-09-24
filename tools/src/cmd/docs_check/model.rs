@@ -6,7 +6,7 @@
 //! entries keep every field and its order, and re-inserting a key keeps its
 //! position (L1621).
 //!
-//! Accepted divergences (contract §1.9; no golden covers them): the `{exc}` text
+//! Accepted divergences (no golden covers them): the `{exc}` text
 //! in `cannot read baseline {path}: {exc}` is Rust's `std::io::Error` or
 //! `serde_json::Error` message rather than CPython's, with the same prefix, path
 //! and exit code; a baselined `count` beyond `i64` — as a JSON number or a
@@ -20,19 +20,35 @@
 //! rather than a Python `repr`.
 //!
 //! Malformed-baseline handling also diverges (verified with python3 against
-//! check.py at 33c6b3d): check.py loads a `"findings": {}` or `"findings": ""`
-//! (both iterate to nothing), an entry with a non-string integer `key`, and an
-//! out-of-`f64`-range number such as `1e400` (CPython's `json` module parses it
-//! as `float('inf')`) without error; `load_baseline` here rejects all of these,
-//! exit 2. A non-string `check` on an entry also passes check.py's
-//! `--update-baseline` (it is only ever compared with `!=`/`not in`), where
-//! `render_baseline` here requires every entry's `check` to be a string and
-//! exits 2 otherwise. And `--update-baseline` re-serialises every kept raw
-//! entry through serde_json (no `arbitrary_precision` feature), so a
-//! hand-edited number can change bytes on a rewrite even when check.py's own
-//! `json.dump` would not: `1e20` becomes `1e+20`, `1e-5` becomes `0.00001`, and
-//! a magnitude beyond `f64` precision such as `99999999999999999999` becomes
-//! `1e+20`, all silently.
+//! check.py at 33c6b3d):
+//!
+//! - check.py loads each of the following without error, and `load_baseline`
+//!   here rejects it, exit 2: `"findings": {}` or `"findings": ""` (both iterate
+//!   to nothing); a findings entry whose `key` is not a string (an integer,
+//!   float, bool or null: the L1411 dict comprehension takes any hashable key);
+//!   and JSON text that serde_json rejects but CPython's `json` accepts, namely
+//!   `NaN`, `Infinity` and `-Infinity` literals, lone-surrogate escapes such as
+//!   `\ud800`, nesting 128 or more levels deep, and numbers beyond f64's range
+//!   such as `1e400` (CPython parses it as `float('inf')`). `harness.rs` lists
+//!   the same serde_json set for plugin.json.
+//! - A hashable non-string `check` (a number, `true`/`false` or `null`) passes
+//!   check.py's `--update-baseline` (L1619 only tests `not in ran`), where
+//!   `render_baseline` here requires every entry's `check` to be a string and
+//!   exits 2 otherwise. Conversely, an array- or object-valued `check` is
+//!   unhashable, so check.py raises TypeError at L1484 (`in ran`) and L1619
+//!   (`not in ran`) and exits 2 in every mode. Here `entry_check` treats it as a
+//!   check that did not run: `compare` carries on, and the text, `--all`,
+//!   `--json` and `--markdown` runs exit 0 or 1. `--update-baseline` exits 2 in
+//!   both tools.
+//! - Baseline numbers are re-serialised through serde_json (no
+//!   `arbitrary_precision` feature), which writes different bytes from CPython's
+//!   `json` for some hand-edited values: `1e-5` becomes `0.00001` and `1e-7`
+//!   becomes `1e-7` (CPython: `1e-05`, `1e-07`); `-0` becomes `-0.0` (CPython:
+//!   `0`); and an integer outside the `i64`/`u64` range, such as
+//!   `99999999999999999999`, becomes `1e+20` (CPython keeps the exact integer).
+//!   This reaches every kept raw entry that `--update-baseline` writes back, a
+//!   numeric `reason` in `--json`'s per-finding `accepted` field, and the text
+//!   and Markdown `[accepted: …]` note.
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -922,5 +938,24 @@ mod tests {
             Some(&json!("known"))
         );
         assert_eq!(cmp.resolved, vec!["md-links|a.md|gone".to_string()]);
+    }
+
+    #[test]
+    fn model_compare_skips_an_unhashable_check_that_check_py_raises_on() {
+        // Accepted divergence (module doc): check.py's `e.get("check") in ran`
+        // (L1484) raises TypeError on a list or dict `check` and exits 2; here
+        // the entry belongs to no check that ran, so it is never resolved.
+        let mut baseline = Baseline::new();
+        baseline.insert(
+            "anchors|a.md|gone".to_string(),
+            json!({"check": ["anchors"]}),
+        );
+        baseline.insert(
+            "anchors|b.md|gone".to_string(),
+            json!({"check": {"anchors": 1}}),
+        );
+        let ran: BTreeSet<&str> = ["anchors"].into_iter().collect();
+        let cmp = compare(&[], &baseline, &ran).expect("compare");
+        assert!(cmp.resolved.is_empty(), "{:?}", cmp.resolved);
     }
 }

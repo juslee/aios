@@ -34,7 +34,7 @@ const KNOWLEDGE_STATUSES: [&str; 3] = ["draft", "in-progress", "final"];
 /// check.py L92: discussions are "draft or active", then "graduated".
 const DISCUSSION_STATUSES: [&str; 2] = ["active", "graduated"];
 
-/// R1 (check.py L94). `\n?$` matches Python's non-MULTILINE `$` on a tracked
+/// check.py L94. `\n?$` matches Python's non-MULTILINE `$` on a tracked
 /// basename ending in a trailing newline.
 static KNOWLEDGE_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z]{2,3}-[a-z0-9][a-z0-9-]*\.md\n?$")

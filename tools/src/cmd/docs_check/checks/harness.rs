@@ -4,7 +4,7 @@
 //!
 //! Accepted divergences from check.py: a skills-dir `plugin.json` is parsed with
 //! `serde_json`, which rejects `NaN`/`Infinity` literals, lone surrogate escapes,
-//! nesting deeper than 128 levels, and numbers whose magnitude exceeds f64's
+//! nesting 128 or more levels deep, and numbers whose magnitude exceeds f64's
 //! range (e.g. `1e400`, or an integer of 310+ digits), which Python parses as
 //! `inf` or an exact int; each of these falls back to the directory name as the
 //! plugin name. No tracked plugin.json uses them. `layout_list`'s per-call
@@ -27,22 +27,24 @@ use crate::pystr::{lstrip, strip};
 const CHECK: &str = "harness-tables";
 const CLAUDE_MD: &str = "CLAUDE.md";
 
-/// R54: a skill as a slash command without the slash: `name` or `plugin:name`.
+/// check.py `SKILL_NAME` (L1086): a skill as a slash command without the slash:
+/// `name` or `plugin:name`.
 pub const SKILL_NAME: &str = r"[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?";
 
 static SKILL_NAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(SKILL_NAME).expect("valid regex"));
-/// R56: first cell of a Skills table row (anchored, as check.py's `re.match`).
+/// check.py L1149: first cell of a Skills table row (anchored, as L1094's `re.match`).
 static SKILL_CELL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&["^`/(", SKILL_NAME, ")"].concat()).expect("valid regex"));
-/// R56: first cell of an Agents table row.
+/// check.py L1150: first cell of an Agents table row.
 static AGENT_CELL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^`([a-z0-9-]+)`").expect("valid regex"));
-/// R55: a table section ends at the next bold label or `## ` heading.
+/// check.py L1091: a table section ends at the next bold label or `## ` heading.
 static TABLE_STOP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\*\*|^## ").expect("valid regex"));
-/// R59. `\n?$` matches Python's non-MULTILINE `$` on a tracked path ending
-/// in a trailing newline (fix round 1); same for the three regexes below.
+/// check.py L1126. `\n?$` matches Python's non-MULTILINE `$` on a tracked path
+/// ending in a trailing newline; same for the three regexes below (L1135, L1139,
+/// L1147).
 static PLUGIN_JSON_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json\n?$").expect("valid regex")
 });

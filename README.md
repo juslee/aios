@@ -23,7 +23,7 @@ Phases 0–6 and Phase 7 milestones M23–M24 are complete. The kernel boots via
 
 ## Architecture
 
-```
+```text
 Experience Layer:  Workspace, Conversation Bar, Browser, Settings, Agents
 Services Layer:    AIRS (inference, context, agents), Storage, Compositor, Networking
 Subsystem Layer:   Universal hardware abstraction with capability gates
@@ -67,7 +67,7 @@ just run
 
 ## Project Structure
 
-```
+```text
 aios/
 ├── docs/
 │   ├── project/          # Vision, architecture, development plan

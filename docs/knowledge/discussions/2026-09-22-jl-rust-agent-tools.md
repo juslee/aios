@@ -27,6 +27,7 @@ The owner decided to move all of it to Rust. The main reasons:
 - one language across the repository;
 - types and `cargo test` for a long-lived state machine and a security parser;
 - no dependency on `/usr/bin/python3` or on GNU `timeout`. The GNU `timeout` requirement is what blocks PR #169's Ubuntu 26.04 runner, which ships uutils.
+  - **Note (2026-09-24):** since #192 (`aa1f128`), `soak-qemu.sh` accepts any `timeout` that behaves correctly, uutils included, so #169 no longer waits on R4. Its failing soak check is from a run before #192.
 
 Owner decisions, 2026-09-22:
 
@@ -114,7 +115,7 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
 - **Session start:** `.claude/hooks/setup-dev-env.sh` starts `just tools` in the background when the binary is missing or stale.
 - **CI:** a new job, "Tools (host)", runs:
   - `cargo fmt --check -p aios-tools`
-  - `cargo clippy -p aios-tools -- -D warnings`
+  - `cargo clippy -p aios-tools --all-targets -- -D warnings` (widened to `--all-targets` in R1 so test code is linted; `just clippy` runs the same command)
   - `cargo test -p aios-tools`, including the parity and golden tests
 
   It becomes a required check when R5b switches the guard.
@@ -129,7 +130,7 @@ Each port proves parity, records the old tool's output as golden files, switches
 | R1 | docs-check | Byte-identical stdout, exit code and written `baseline.json` against `check.py` in every mode. Test inputs: (a) the real repository, (b) a fixture repository with one injected drift per check (15), (c) a pure line-shift case | `just docs-check` calls `aios`; `check.py` is deleted; the baseline format is unchanged |
 | R2 | PR loop | New code: the loop spec's tests with fake `gh`/`claude`, plus the eval suites | — |
 | R3 | brief, checkpoint, precompact | The 15 checkpoint scenarios in temporary repos with a bare remote; a golden brief from recorded `gh` responses (the exact line format the skills parse); precompact's no-op and plugin-resolution cases | Skills call `aios`; the scripts are deleted |
-| R4 | soak | Classifier parity on committed fixtures: the 63 synthetic cases plus a curated set of real logs. Checked fields: class, markers, first fatal line, and the `summary.tsv`/`summary.md` formats. Process handling (timeout, kill-after, process group) is tested with a fake QEMU, then one real 2-boot soak | `soak-qemu.sh` is deleted; the GNU `timeout` dependency is gone, which unblocks #169, and the CI baseline is re-measured on the new image |
+| R4 | soak | Classifier parity on committed fixtures: the 63 synthetic cases plus a curated set of real logs. Checked fields: class, markers, first fatal line, and the `summary.tsv`/`summary.md` formats. Process handling (timeout, kill-after, process group) is tested with a fake QEMU, then one real 2-boot soak | `soak-qemu.sh` is deleted; there is no external `timeout` dependency, and the CI baseline is re-measured on the new image |
 | R5 | guard | The 55 unit tests ported as table tests. A committed adversarial corpus whose decisions must equal the Python guard's. The 3,502-command history replay is local-only, because raw transcript commands can contain secrets | **Shadow mode:** Python decides, Rust runs in parallel, and disagreements go to `.git/aios-agent/guard-shadow.jsonl` |
 | R5b | guard switch | 1,000 real calls with 0 disagreements | The Rust guard decides; the Python guard and its tests are deleted |
 
@@ -173,7 +174,7 @@ All loop behaviour, prompts, config and evals are unchanged.
 
 - `docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md` (branch `claude/justin-review-merge-loop`): the approved PR-loop design this tooling implements.
 - `docs/knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md` (PR #174): the crash-fix steps that use the soak harness.
-- PR #169: the Ubuntu 26.04 runner, blocked on GNU `timeout`.
+- PR #169: the Ubuntu 26.04 runner. Its soak failed on uutils `timeout` before #192; it needs a rebase or re-run, not R4.
 
 ## Outcome
 

@@ -1,4 +1,4 @@
-//! docs-check parity with scripts/docs/check.py (R1 contract, goldens and parity tests).
+//! docs-check parity with scripts/docs/check.py (R1 parity: goldens and parity tests).
 //!
 //! - `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
 //!   main at `SNAPSHOT_SHA`, 48 on the fixture repository) and compares `exit N\n` plus
@@ -9,8 +9,9 @@
 //!   before the switch-over deleted it.
 //! - `differential_against_check_py` runs check.py and aios side by side on every case
 //!   and on the live checkout while check.py exists, and returns early once it is gone
-//!   (Task 15 deletes it). That early return is deliberate, not a gap: once check.py is
-//!   gone, `goldens_match_aios` against the goldens recorded here is the parity gate.
+//!   (R1 deletes it when `just docs-check` switches to aios). That early return is
+//!   deliberate, not a gap: once check.py is gone, `goldens_match_aios` against the
+//!   goldens recorded here is the parity gate.
 //!   R2-R5 (the ports of the other host scripts) are expected to reuse this same
 //!   pattern — a differential against their own script while it still exists, goldens
 //!   recorded from it, then a golden-only gate after that script is deleted in turn.

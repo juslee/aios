@@ -1,4 +1,5 @@
-//! The docs-check fixture repository (R1 contract, fixture bundle format and variants).
+//! The docs-check fixture repository for R1 parity: the fixture bundle format and its
+//! drift variants.
 //!
 //! The fixture lives in text bundles under `tests/fixtures/docs-check/`: `base.txt`
 //! and one `variants/<name>.txt` per variant. A bundle line starting with `@@@ ` is a

@@ -7,7 +7,7 @@
 //! `str.expandtabs(4)` (L275), `str.isdigit()` (L854, L963, L1000), `int()` /
 //! `str(int())` and `urllib.parse.unquote` (L571, L617, L620, L661).
 //!
-//! Accepted divergences (contract §1.9; no tracked file reaches them):
+//! Accepted divergences (no tracked file reaches them):
 //! `is_ascii_digits` and `parse_uint` accept ASCII digits only, where Python's
 //! `str.isdigit()` and `int()` also accept other Unicode decimal digits, and
 //! numbers that do not fit `u64` are treated as no match. Python's `str.isdigit()`
@@ -116,7 +116,8 @@ pub fn indent_width(line: &str) -> usize {
     width
 }
 
-/// `str.isdigit()` restricted to ASCII digits (contract §1.9).
+/// `str.isdigit()` restricted to ASCII digits (an accepted divergence, listed in
+/// the module doc).
 pub fn is_ascii_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
