@@ -4,7 +4,7 @@
 //! definitions, and on-disk layout constants. Used by kernel storage
 //! subsystem and shared crate unit tests.
 //!
-//! Per spaces/data-structures.md §3.0 (primitive types), spaces/block-engine.md §4.1 (on-disk layout).
+//! Per spaces/data-structures.md §3.0 (primitive types), spaces/block-engine.md §4.1.
 
 // ---------------------------------------------------------------------------
 // Core storage types
@@ -347,7 +347,7 @@ impl core::fmt::Debug for Version {
 
 /// Provenance action type for tracking object lineage.
 ///
-/// Per spaces/data-structures.md §3.3. Tracks how an object was created or modified.
+/// Per spaces/versioning.md §5.1. Tracks how an object was created or modified.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 pub enum ProvenanceAction {
@@ -513,7 +513,7 @@ impl core::fmt::Debug for Space {
 
 /// Encryption state for a space or device.
 ///
-/// Per spaces/encryption.md §6.1. Phase 4 uses DeviceOnly for all spaces.
+/// Per spaces/data-structures.md §3.1, spaces/encryption.md §6.1. Phase 4: DeviceOnly everywhere.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 pub enum EncryptionState {
@@ -725,7 +725,7 @@ const _: () = assert!(core::mem::size_of::<SpaceQuota>() == 16);
 // M15 types: POSIX bridge, compression, storage budget
 // ---------------------------------------------------------------------------
 
-/// POSIX file-open flags (per spaces/posix.md §9.1).
+/// POSIX file-open flags (per spaces/posix.md §9.2).
 pub mod posix_flags {
     pub const O_RDONLY: u32 = 0;
     pub const O_WRONLY: u32 = 1;
@@ -878,7 +878,7 @@ pub struct MemTableEntry {
 /// Heap-allocated sorted array with binary search for O(log n) lookups.
 /// Capacity: configurable (default 65536 entries).
 ///
-/// Per spaces/block-engine.md §4.2.
+/// Per spaces/block-engine.md §4.1 (MemTable), §4.2 (write path).
 pub struct MemTable {
     entries: Vec<MemTableEntry>,
     capacity: usize,
