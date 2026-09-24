@@ -2,12 +2,16 @@
 # .claude/hooks/aios - run the aios host tools binary built from tools/ (`just tools`).
 #
 # The binary comes from the MAIN checkout (the parent of git's common dir), so
-# hooks, skills and recipes run merged, reviewed code even when called from a PR
-# worktree. AIOS_TOOLS_BIN overrides it, to test a PR's own build explicitly
-# (a bare name is taken relative to the current directory, not looked up on
-# PATH). When git cannot name the common dir from a linked worktree, the shim
-# fails closed rather than run the worktree's own build: guard asks,
-# --prebuild does nothing, other subcommands exit 3.
+# by default hooks, skills and recipes run main's code, not a PR's, even when
+# called from a PR worktree. That binary is an unprotected build artifact: a
+# session that writes the main checkout's target/tools can replace it, and the
+# mtime-only freshness test below does not notice (an R5 open question in
+# docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md). AIOS_TOOLS_BIN
+# overrides it, to test a PR's own build explicitly (a bare name is taken
+# relative to the current directory, not looked up on PATH). When git cannot
+# name the common dir from a linked worktree, the shim fails closed rather than
+# run the worktree's own build: guard asks, --prebuild does nothing, other
+# subcommands exit 3.
 #
 # Fresh means newer than every file under the main checkout's tools/ and than
 # its Cargo.lock. `just tools` stamps the binary with the time its build

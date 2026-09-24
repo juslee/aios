@@ -17,7 +17,10 @@
 //! (check.py L1215) and `RULE_REF_RE` (check.py L1317), so a list item numbered,
 //! or a `rules/NN-` reference written, with non-ASCII Unicode decimal digits is
 //! not recognised here, where Python's `\d` would; no tracked harness file uses
-//! non-ASCII decimal digits in either position.
+//! non-ASCII decimal digits in either position; and a `docs/` path whose last component
+//! contains a capital assigned after Unicode 16 (e.g. U+A7CE) is skipped as a
+//! placeholder by `is_path_placeholder` here, where check.py reports it (listed in the
+//! `markdown` module doc).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;

@@ -10,8 +10,12 @@
 //! in `cannot read baseline {path}: {exc}` is Rust's `std::io::Error` or
 //! `serde_json::Error` message rather than CPython's, with the same prefix, path
 //! and exit code; a baselined `count` beyond `i64` — as a JSON number or a
-//! digit string — is saturated to `i64::MAX` or `i64::MIN` by sign, where
-//! CPython compares the exact integer; a `count` string of non-ASCII decimal
+//! digit string — is saturated to `i64::MAX` or `i64::MIN` by sign, and the
+//! saturated value is both compared and printed: in the text prune note
+//! `(B -> C occurrences)`, the grown note `[N occurrences, baseline B]` (text,
+//! including `--all`, and `--markdown`), `--json`'s `reduced.<key>.baseline`
+//! and `--json`'s per-finding `baseline_count`, where CPython compares and
+//! prints the exact integer; a `count` string of non-ASCII decimal
 //! digits (e.g. Arabic-Indic `"٣"`) is rejected here, where CPython's `int()`
 //! accepts them; a `count` string with a control separator (U+001C-U+001F)
 //! around its digits is accepted here, because `pystr::strip` treats those as

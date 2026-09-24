@@ -99,7 +99,7 @@ The separate target directory means a tools build never waits on a kernel build'
 
 **Invocation.** Every caller goes through the POSIX `sh` shim `.claude/hooks/aios <subcommand> …`: hooks, skills, `just` recipes and `claude -p` stages.
 
-The shim resolves the binary from the **main checkout**: the parent of `git rev-parse --path-format=absolute --git-common-dir`, plus `/target/tools/release/aios`. This holds even when the caller is in a PR worktree. So the guard and the loop always run merged, reviewed code, which is the same "runs from main" rule as the loop spec.
+The shim resolves the binary from the **main checkout**: the parent of `git rev-parse --path-format=absolute --git-common-dir`, plus `/target/tools/release/aios`. This holds even when the caller is in a PR worktree. So by default the guard and the loop run the code merged on main rather than a PR's, which is the same "runs from main" rule as the loop spec. That binary is an unprotected build artifact, not a verified one: a session that writes `<main>/target/tools` (a `cargo build --target-dir`, `cp` or `touch`, all auto-allowed today) can replace it with a build of unreviewed code, and because the freshness test below compares mtimes only, a future-dated replacement survives later pulls. How R5 closes this is an open question (below).
 
 - `AIOS_TOOLS_BIN` overrides the binary path, so a PR's own build can be tested explicitly.
 - CI runs `cargo test` on every PR.
@@ -109,7 +109,7 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
 | State | `aios guard` (every shell command) | Other subcommands |
 | --- | --- | --- |
 | Fresh | runs | runs |
-| Stale (e.g. just after a pull) | Runs the stale binary, whose rules are merged and reviewed, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs |
+| Stale (e.g. just after a pull) | Runs the stale binary, built from an earlier main (unless a session replaced it, see above), and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs |
 | Missing | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Exits non-zero, naming `just tools` |
 
 **Other build and CI hooks:**
@@ -120,7 +120,7 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
   - `cargo clippy -p aios-tools --all-targets -- -D warnings` (widened to `--all-targets` in R1 so test code is linted; `just clippy` runs the same command)
   - `cargo test -p aios-tools`, including the parity and golden tests
 
-  It becomes a required check when R5b switches the guard.
+  It becomes a required check on `main` right after R1 merges (owner decision, 2026-09-24), not when R5b switches the guard, because once `check.py` is deleted, `goldens_match_aios` in this job is the only parity gate.
 - **`just check`:** gains the host clippy step for this crate.
 
 ### 3. Parity and switch-over
@@ -171,6 +171,7 @@ All loop behaviour, prompts, config and evals are unchanged.
   - **R1 answer (anchored form):** `Edit(/tools/src/cmd/guard/**)` and `Write(/tools/src/cmd/guard/**)` match, a leading `/` being relative to the project root (the directory that holds `.claude/`), and headless `claude -p` turns the ask into a refusal (probe: guarded file unchanged, one denial each for `Edit` and `Write`, an unguarded control edit applied). `.claude/settings.json` has these rules for `guard` and `loop`.
 - Whether `default-members` exclusion keeps `cargo build --target aarch64-unknown-none` and the kernel CI jobs from trying to build the host crate for the bare-metal target. To be verified in R1.
   - **R1 answer:** yes. With `default-members = ["kernel", "shared"]`, `cargo build --target aarch64-unknown-none -v` compiles nothing from `aios-tools`; the kernel CI jobs call recipes that build the default members or name a package with `-p`; `just test`, the only `--workspace` recipe, excludes `aios-tools`.
+- How R5 protects the main checkout's binary before the guard runs through the shim (§2 Invocation). Nothing stops a session from replacing `<main>/target/tools/release/aios`, and the shim's freshness test compares mtimes only. Candidates, for an owner decision in R5 alongside the shim's `[ -x ]` directory case: a sandbox or filesystem write-deny on `target/tools/**` (Bash-pattern ask rules are easy to get around with `CARGO_TARGET_DIR`, `ln`, `mv` or `install`), or a provenance stamp (`just tools` records `git rev-parse HEAD:tools` and a `Cargo.lock` hash beside the binary, and the shim treats a mismatch as stale or missing).
 
 ## References
 

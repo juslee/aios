@@ -359,3 +359,25 @@ fn registry_starts_with_the_link_checks() {
         ["md-links", "section-refs", "anchors", "wiki-links"]
     );
 }
+
+/// Accepted divergence (the `links` and `markdown` module docs): Rust std's Unicode 18.0
+/// case tables lowercase U+A7CE (assigned in Unicode 17) to U+A7CF, where CPython 3.14
+/// (Unicode 16.0) leaves both unchanged. So `#\u{A7CF}` resolves against
+/// `<a id="\u{A7CE}">` and `[[\u{A7CF}]]` against `docs/\u{A7CE}.md` here, where
+/// check.py reports one `anchors` and one `wiki-links` finding.
+#[test]
+fn newer_unicode_case_pairs_match_in_anchors_and_wiki_links() {
+    let t = TestRepo::with_files(
+        "links-unicode18",
+        &[
+            ("docs/\u{A7CE}.md", "# T\n\n<a id=\"\u{A7CE}\"></a>\n"),
+            (
+                "docs/a.md",
+                "# A\n\n[x](\u{A7CE}.md#\u{A7CF}) and [[\u{A7CF}]]\n",
+            ),
+        ],
+    );
+    let repo = open(&t);
+    assert_eq!(Anchors.run(&repo).expect("the check runs"), vec![]);
+    assert_eq!(WikiLinks.run(&repo).expect("the check runs"), vec![]);
+}
