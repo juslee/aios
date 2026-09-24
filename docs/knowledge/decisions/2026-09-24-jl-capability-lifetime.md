@@ -309,7 +309,7 @@ Crash-fix step 1b counts "`unblock` skipping a Running or Runnable target, by ca
 | --- | --- |
 | `CLAUDE.md:98-107`, Key Technical Facts | Lock order (new nestings, `PROCESS_WAITERS`; `SELECT_WAITERS` removed from `:99`); capability enforcement (minting, share, cascades); new facts: id layout, Dead is terminal, process slots never reused, every waiting site arms and `block_current` asserts it, region memory only under a borrow |
 | `docs/kernel/ipc.md` | Create ABIs; `ChannelId` encoding; `creation_cap` and `creator`; `ProcessExit`/`ProcessWait` (timeout not implemented); §4.5 and `:848`: a creator's death destroys its regions; `ipc_select` errors and lowest-index result; `notification_wait` EINVAL; `ipc_call` reply wins and 0 = no timeout; `SqEntry.channel_id` (`:1848`) must be `u32` |
-| `docs/kernel/deadlock-prevention.md` | §3.3: the new nestings; `PROCESS_WAITERS` is not a leaf; `SELECT_WAITERS` (`:87`, `:115`) and `NOTIFY_RESULTS` (`:132`) removed. §3.5: the new exit pattern |
+| `docs/kernel/deadlock-prevention.md` | §3.3: the new nestings; `PROCESS_WAITERS` moves from the leaf and utility table (`:130`) into the primary hierarchy directly below `PROCESS_TABLE`, and stays a leaf lock: nothing is taken under it and it is never held across `unblock`; `SELECT_WAITERS` (`:87`, `:115`) and `NOTIFY_RESULTS` (`:132`) removed. §3.5: the new exit pattern |
 | `docs/kernel/scheduler.md` | Dead is terminal; `exit_current`; the wake token; `sleep_ticks` uses `BlockedTimer` |
 | `docs/kernel/memory/virtual.md`, `docs/kits/kernel/memory.md` | Create returns a handle; share rules and the reserve; destruction by revoke, exit or destroy; no `MemoryRevoked` event |
 | `docs/security/model/capabilities.md`, `docs/kits/kernel/capability.md`, `docs/kits/kernel/ipc.md`, `shared/src/kits/ipc.rs:183-184` | No Create → Access; expiry clamp; minted children; cascades; Kit signatures, `grant` and `shmem_destroy` rules |
@@ -416,3 +416,7 @@ One PR on `claude/cap-lifetime`, one commit per step, named `Cap lifetime step N
 **Audit round 2, 2026-09-24.**
 
 - **fable, "§9 has no pre-arm scan, so the three-per-boot bound is unsupported".** Rejected: §9's table row and bullet place the arm before the check-and-register pass; they do not rule out the unarmed fast scan that comes first, which §9 names ("a scan that runs before the arm") and the plan's step 11 specifies. The select_cap `owned` call (`ipc/tests/select_cap.rs:131`) returns `Ok((1, 0))` from that scan, three calls return EPERM at `check_channel_entries` and two return EINVAL at the range check, so none reaches the exit take and the bound stands.
+
+**Audit round 3, 2026-09-24.**
+
+- **fable, "`(#186 item 2)` should be item 3".** Rejected: #186 has two numbered lists, "Findings" (1–5) and "Suggested fix" (1–6), and this ADR cites the Findings list. Finding 2 is the silently skipped registration (receiver slot taken, waiter list full), which EAGAIN and ENOMEM report; finding 3 is the empty or Dead channel, which §1's lookup errors report. Suggested-fix item 2 (clearing `WAKEUP_ERRORS` before publishing) is a different list's item, and "Alternatives considered" rejects it without contradiction.
