@@ -4,7 +4,7 @@
 //! pressure monitoring. Provides a global `FRAME_ALLOC` static for kernel-wide
 //! physical page allocation.
 //!
-//! Per memory.md §2.3.
+//! Per memory/physical.md §2.3.
 
 use shared::{MemoryPressure, Pool};
 use spin::Mutex;

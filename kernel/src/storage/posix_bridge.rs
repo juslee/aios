@@ -5,7 +5,7 @@
 //!   /home/user/            → user/home/ space
 //!   /tmp/                  → ephemeral/ space
 //!
-//! Per spaces.md §9.1 Path Mapping.
+//! Per spaces/posix.md §9.1 Path Mapping.
 
 use alloc::vec::Vec;
 

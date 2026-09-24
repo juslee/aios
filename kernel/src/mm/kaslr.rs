@@ -1,7 +1,7 @@
 //! Kernel Address Space Layout Randomization (KASLR).
 //!
 //! Wraps the pure computation from shared::kaslr with hardware entropy sources.
-//! Per memory.md §3.3.
+//! Per memory/virtual.md §3.3.
 
 // Re-export from shared crate.
 pub use shared::{compute_slide_from_entropy, KaslrConfig};

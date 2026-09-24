@@ -5,9 +5,9 @@
 //! against physical access to the storage medium.
 //!
 //! Nonce: [random_prefix(4B) | counter(8B)] — global monotonic counter
-//! persisted in superblock, advanced +1000 on crash recovery per §6.1.1.
+//! persisted in superblock, advanced +1000 on crash recovery per spaces/encryption.md §6.1.1.
 //!
-//! Per spaces.md §4.10 Device-Level Transparent Encryption.
+//! Per spaces/block-engine.md §4.10 Device-Level Transparent Encryption.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 

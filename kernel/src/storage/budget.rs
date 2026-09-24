@@ -4,7 +4,7 @@
 //! and WAL to provide a system-wide storage budget summary. Pressure
 //! levels guide admission control and back-pressure decisions.
 //!
-//! Per spaces.md §10.
+//! Per spaces/budget.md §10.
 
 use shared::storage::{PressureLevel, StorageBudget, SECTOR_SIZE};
 

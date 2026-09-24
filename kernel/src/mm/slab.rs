@@ -5,7 +5,7 @@
 //! fast-path allocation without touching the shared free list.
 //!
 //! Standard caches: 64, 128, 256, 512, 4096 bytes.
-//! Per memory.md §4.1.
+//! Per memory/physical.md §4.1.
 
 use core::alloc::Layout;
 
@@ -14,12 +14,12 @@ const PAGE_SIZE: usize = 4096;
 /// Number of standard size classes.
 const NUM_CACHES: usize = 5;
 
-/// Standard cache sizes (per memory.md §4.1).
+/// Standard cache sizes (per memory/physical.md §4.1).
 /// Smaller allocations round up to 64; 1024/2048 round up to 4096.
 const CACHE_SIZES: [usize; NUM_CACHES] = [64, 128, 256, 512, 4096];
 
 /// Red zone size in bytes — guard bytes placed before and after each object
-/// to detect buffer overflows (per fuzzing-and-hardening.md §3.3).
+/// to detect buffer overflows (per fuzzing/strategies.md §3.3).
 const RED_ZONE_SIZE: usize = 8;
 
 /// Red zone fill pattern.

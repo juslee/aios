@@ -1,7 +1,7 @@
 //! Kernel Address Space Layout Randomization (KASLR) configuration.
 //!
 //! Pure data types and computation — no hardware register access.
-//! Per memory.md §3.3.
+//! Per memory/virtual.md §3.3.
 
 /// KASLR configuration.
 pub struct KaslrConfig {

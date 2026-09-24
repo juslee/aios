@@ -23,7 +23,7 @@ pub enum Pool {
 
 /// Memory pressure level based on free page ratio in the user pool.
 ///
-/// Thresholds from memory.md §2.3:
+/// Thresholds from memory/physical.md §2.3:
 /// - Normal:   >20% free
 /// - Low:      11–20% free
 /// - Critical: 5–10% free
@@ -58,7 +58,7 @@ impl MemoryPressure {
 
 /// Per-pool byte budgets computed from total detected RAM.
 ///
-/// See memory.md §2.4 for the tier table.
+/// See memory/physical.md §2.4 for the tier table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolConfig {
     pub kernel: usize,
@@ -71,7 +71,7 @@ pub struct PoolConfig {
 impl PoolConfig {
     /// Compute pool sizes from total detected RAM.
     ///
-    /// Tiers (memory.md §2.4):
+    /// Tiers (memory/physical.md §2.4):
     /// - <4 GB:   kernel=128M, model=0,  dma=64M,  reserved=64M,  user=remainder
     /// - <8 GB:   kernel=256M, model=2G, dma=128M, reserved=128M, user=remainder
     /// - <16 GB:  kernel=256M, model=4G, dma=128M, reserved=128M, user=remainder

@@ -4,7 +4,7 @@
 //! The Block Engine manages: superblock (disk metadata), WAL (crash recovery),
 //! and data region (content-addressed blocks with CRC-32C integrity).
 //!
-//! Per spaces.md §4.
+//! Per spaces/block-engine.md §4.
 
 pub mod block_engine;
 pub mod budget;

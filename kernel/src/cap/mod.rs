@@ -4,7 +4,7 @@
 //! check capabilities before proceeding. Revocation cascades to child tokens
 //! and destroys channels created under the revoked capability.
 //!
-//! Per security.md §2.2, §3.1–3.5, ipc.md §8.1–8.3.
+//! Per model/layers.md §2.2, model/capabilities.md §3.1–3.5, ipc.md §8.1–8.3.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
