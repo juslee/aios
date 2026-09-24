@@ -17,6 +17,7 @@ pub mod observability;
 pub mod sched;
 pub mod storage;
 pub mod syscall;
+pub mod tripwire;
 
 /// Physical address type alias.
 pub type PhysAddr = u64;

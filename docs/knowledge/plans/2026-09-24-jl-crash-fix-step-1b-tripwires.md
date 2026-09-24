@@ -24,7 +24,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 
 - [x] S1: `FixedQueue::iter()` / `contains()` (shared, host tests)
 - [x] S2: `shared/src/lock.rs`: owner stamp, `classify`, `StampedLock`, `LockClass` (host tests, Miri)
-- [ ] S3: `shared/src/tripwire.rs`: key catalogue, `WakeSource`, `CpuCounters`, line writer, `classify_pc`, scan classification, two strikes (host tests)
+- [x] S3: `shared/src/tripwire.rs`: key catalogue, `WakeSource`, `CpuCounters`, line writer, `classify_pc`, scan classification, two strikes (host tests)
 - [ ] K1: Bench DAIF masking removed
 - [ ] K2: Tripwire runtime, per-CPU ticks, heartbeat and g1 lines
 - [ ] K3: Dispatch bookkeeping: switch generation, `CURRENT_TID`, `IRQ_CTX`, last CPU, `schedule(origin)`
@@ -876,6 +876,10 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - A frozen waiter stamp without the post-load check fails the same three. The reviewer's stale `(0, 101)` case is now its own test, and it fails too.
   - `read_stamp` without its second CPU read still fails three tests.
 - S2 (review 2): the exhaustive waiter test (2 × 7⁴ move sequences) takes about 40 s under Miri and 0.01 s on the host. The model is safe, single-threaded code, so Miri adds no checks there. Under `cfg(miri)`, each position uses at most one move (2 × 3⁴ sequences, about 2.4 s), following the threaded test's `cfg(miri)` sizing.
+- S3: `u64::count_ones` compiles to NEON (`fmov d, x` / `cnt v.8b` / `addv`) on `aarch64-unknown-none`, which has no FEAT_CSSC. `EdgeUpdate`'s counts used it on the scan path. A throwaway no_std staticlib in the scratchpad instantiated every IRQ-path generic (`write_line` with a volatile UART sink, `CpuCounters<8>::value`, `TwoStrike<8>::scan`, `EdgeCounter`, `classify_*`, masks, `put_dec`/`put_hex`) at opt-level 1, and `llvm-objdump` found the V-register sites. The fix is `count_tids`, which uses a 16-entry nibble table. The re-check at opt-level 1 (43 functions) and opt-level 3 (12) finds no V-register, NEON, `memcpy`/`memset` or `blr` site in any tripwire function. **For K8 and all kernel IRQ-path code: never call `count_ones`.** V1 would catch it, but only at the end.
+- S3: the `Full` line is longer than §4.3's estimate of about 700 B. With 4 CPUs and every value 0 it is 913 B (about 4.3 ms of UART at 4.7 µs/B), and 1829 B when every value has 5 digits. `MAX_LINE_LEN` (8 CPUs, every value `u64::MAX`) is 6039 B. `g1` prints once, and panic/exc lines are post-fatal, so only the timing estimates change.
+- S3: the worst-case re-entry message is `NOTIFICATION_TABLE` at 153 bytes, not `CURRENT_THREAD[7]` at 152, because the scalar name is one character longer. The test takes the maximum over all 9 classes. The longest `kernel/src` path today is `kernel/src/arch/aarch64/exceptions.rs` (37 bytes). A second test walks `kernel/src` and re-checks the bound against the live tree; it is ignored under Miri, because Miri isolates the file system.
+- S3: rendering the lines under Miri took about 88 s: 24 full renders in the hazard test and 60 single-key renders. That code is safe and single-threaded, so it is sized down under `cfg(miri)`: one line per mode, and one key per `Width`. The module's Miri tests now take about 37 s serially. `just miri` passes 621 tests with 1 ignored (the file-system walk) in 83 s of wall time. Host tests: 583 → 622.
 
 ## Decisions Made
 
@@ -900,6 +904,38 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - `classify` has a `compiler_fence(Acquire)` before its generation read, so the compiler keeps that read after the caller's word load. An IRQ between the two is exactly the case the check exists for. IRQs are taken precisely, so hardware reordering cannot matter, and the fence emits no instruction.
   - `read_stamp` has no fence: a compiler fence orders only memory accesses and cannot hold a `nomem` `asm!` in place. The `CpuView` contract carries the requirement instead (the reviewer's second item, accepted as written): `cpu()` is a fresh read and not `pure`, `nomem` or `readonly`, and `switch_gen()` is a fresh atomic load. K5's review checklist repeats it, together with the `lkself` tid caveat.
   - Not taken: Option 2 (re-read the CPU and generation around `classify`, and retry on a change). It is also sound if it compares generations, but it adds reads and a retry loop. Option 1 needs one generation read, as before.
+- S3: the line writer, with its API for K2:
+  - The call is `write_line(sink, src, mode, cpu, t, ncpu, |key, idx| value)`. The prefix values are scalar arguments.
+  - `twc`, `twn` and `twmax` are catalogue keys, always printed, and come through the same closure.
+  - The writers return nothing. `BufSink` counts its own bytes, and K2's UART sink can count too.
+  - `ncpu` is clamped to `1..=MAX_CPUS`.
+  - Iterated tables (`KEYS`, `SLOT_BASE`) are `static`, not `const`, so a loop never copies them to the stack.
+- S3: every key has `CpuCounters` slots: 202 per row, one 1664-byte row per CPU, which is 13 KiB for 8 CPUs.
+  - `value(key, idx)` reads row `idx` for a per-CPU key. Otherwise it takes the maximum over rows for a gauge and the sum for a counter.
+  - `twmax` counts as a gauge because it is a maximum. The gauges are `*_now`, `scanhold1`, `scanhold2` and `twmax`.
+  - Writers are `add`, `store` and `store_max` (load, compare, store). None of them is a read-modify-write.
+- S3: `MAX_CPUS = 8` and `MASK_TIDS = 64` are shared copies of the kernel's `MAX_CORES` and `MAX_THREADS`. K2 and K8 should const-assert that they are equal.
+- S3: `UnblockOutcome.kind` is a `#[repr(u8)] UnblockKind` rather than a raw `u8`. The struct is still 16 bytes (const-asserted).
+  - `UnblockKind::of(state)` encodes `unblock`'s current decision. Blocked Ipc, Notification, Select and ProcessWait give `Woke`. Dead, Suspended, BlockedTimer and BlockedIo give `Revived` (`ubdead`). The skips and `NoThread` complete the set.
+  - The phase constants are `PHASE_IDLE`, `PHASE_PUBLISHED` and `PHASE_ARMED` (0, 1, 2).
+- S3: `classify_reply` treats `Revived` like `Woke`, since both make the thread Runnable. Either is `misrep` unless the thread was armed in this call. `NoThread` is not counted, because `unblock`'s `ubnone`/`badtid` already cover it.
+  - Verdicts are `WakeVerdict::{NotCounted, N2(N2Kind), LateReply, Misrep}`, with `key() -> (Key, idx)`.
+  - `try_reply_switch`'s check is `classify_reply` with `UnblockKind::Woke` and the caller's phase.
+- S3: `classify_pc(pc, TextLayout { lo, hi }, virt_phys_offset)` takes the offset as an argument, so shared keeps no copy of `mmu::VIRT_PHYS_OFFSET`. `TextLayout` is 16 bytes, passed in two registers.
+  - `Null` means exactly 0. A misaligned PC is `Other` wherever it points.
+  - `Phys` means aligned and inside `[lo, hi)` minus the offset.
+- S3: the plan names `qbad` without a rule. It is now "queued and not Runnable".
+  - `classify_slot(state, flags, now, last_run)` takes a `SlotState` built with `SlotState::of(Option<&ThreadState>)` and a `SlotFlags(u8)` bitset.
+  - A Runnable or Blocked thread that is current is `Clear`.
+  - Scan A may call it before the waker flags exist and use only `Orphan`, `Starved` and `QueuedBad`.
+- S3: `mask_set` returns `MaskSet::{New, Dup, BadTid}`, so `dupq`/`dupcur` come from the same call that builds the mask.
+  - `TID_NONE` is `BadTid`, so the caller filters it first.
+  - `pop_lowest` walks set bits, and `count_tids` counts them without NEON.
+- S3: `TwoStrike<CPUS>` lives in atomics, so it can be a static. It keeps `armed`, a `LAST_RUN` snapshot per thread and a `tick` snapshot per CPU, all updated at each completed scan of its kind.
+  - The tick gate is evaluated only when a confirmation is pending.
+  - A stall changes nothing: the first strikes and snapshots are kept, and no new strike is added. The caller bumps `scanstall` and leaves the `EdgeCounter` alone.
+  - A thread flagged every scan stays confirmed, and `EdgeCounter` counts it once.
+- S3: `write_reentry_msg(sink, &ReentryReport { class, index, cpu, ctx, holder: Option<HolderSite>, owner: OwnerStamp, tid })` prints `holder_irqs` and `gen` from the observed stamp. The panic path is exempt from V1, so a struct argument is fine there. `Ctx::from_raw(IRQ_CTX[cpu], daif_i)` gives the label. The `IRQ_CTX_*` values (0, 1, 2) are shared constants for K3.
 
 ## Lessons Learned
 
