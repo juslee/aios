@@ -1,5 +1,6 @@
 //! `.claude/hooks/aios`: freshness, the guard branch, foreground and background
-//! builds, `AIOS_TOOLS_BIN` and linked worktrees, exercised with a fake `just`.
+//! builds, `AIOS_TOOLS_BIN` and linked worktrees (with and without a working
+//! git), exercised with a fake `just`.
 
 mod common;
 
@@ -375,4 +376,101 @@ fn a_linked_worktree_runs_the_main_checkouts_binary() {
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check\n");
     assert!(!sandbox.just_log().exists(), "the main binary is fresh");
+}
+
+#[test]
+fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
+    let sandbox = Sandbox::new("shim-worktree-nogit");
+    sandbox.install_bin(true);
+
+    let worktree = TestRepo::adopt(unique_dir("shim-worktree-nogit-linked"));
+    common::git(
+        sandbox.repo.path(),
+        &["worktree", "add", "-q", "--detach", worktree.path_str()],
+    );
+    let other = worktree.path().join("target/tools/release/aios");
+    std::fs::create_dir_all(other.parent().expect("the binary has a parent"))
+        .expect("create the worktree target directory");
+    std::fs::write(&other, "#!/bin/sh\nprintf 'worktree:%s\\n' \"$*\"\n")
+        .expect("write the worktree binary");
+    make_executable(&other);
+
+    // A `git` that always fails, first on PATH, ahead of the fake `just`.
+    let git_dir = TestRepo::adopt(unique_dir("shim-worktree-nogit-git"));
+    let fake_git = git_dir.path().join("git");
+    std::fs::write(&fake_git, "#!/bin/sh\nexit 128\n").expect("write the failing git");
+    make_executable(&fake_git);
+    let path = format!(
+        "{}:{}:{}",
+        git_dir.path().display(),
+        sandbox.bin_dir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let shim = worktree.path().join(".claude/hooks/aios");
+
+    let out = sandbox.run_at(&shim, &["docs-check"], &[("PATH", &path)]);
+    assert_eq!(code(&out), 3);
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("git cannot name the main checkout"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = sandbox.run_at(&shim, &["guard", "PreToolUse"], &[("PATH", &path)]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), format!("{ASK_JSON}\n"));
+
+    let out = sandbox.run_at(&shim, &["--prebuild"], &[("PATH", &path)]);
+    assert_eq!(code(&out), 0);
+    assert!(!sandbox.lock().exists());
+    assert!(
+        !worktree.path().join("target/tools/.building").exists(),
+        "--prebuild must not build the worktree's binary"
+    );
+
+    // An explicit override still works.
+    let out = sandbox.run_at(
+        &shim,
+        &["docs-check"],
+        &[
+            ("PATH", &path),
+            ("AIOS_TOOLS_BIN", other.to_str().expect("a UTF-8 path")),
+        ],
+    );
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "worktree:docs-check\n");
+
+    // The main checkout's own shim keeps the fallback: its .git is a directory.
+    let out = sandbox.run_at(&sandbox.shim(), &["docs-check"], &[("PATH", &path)]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "fake:docs-check\n");
+    assert!(!sandbox.just_log().exists(), "the main binary is fresh");
+}
+
+#[test]
+fn a_bare_override_names_a_file_in_the_current_directory() {
+    let sandbox = Sandbox::new("shim-override-bare");
+    // The same name in the current directory and on PATH: the shim must run
+    // the file its `-x` test checked, not the one exec would find on PATH.
+    let local = sandbox.repo.path().join("bare-aios");
+    std::fs::write(&local, "#!/bin/sh\nprintf 'cwd:%s\\n' \"$*\"\n").expect("write the cwd binary");
+    make_executable(&local);
+    let on_path = sandbox.bin_dir.path().join("bare-aios");
+    std::fs::write(&on_path, "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n")
+        .expect("write the PATH binary");
+    make_executable(&on_path);
+
+    let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", "bare-aios")]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "cwd:docs-check\n");
+
+    // A bare name found only on PATH is not an executable file here.
+    let path_only = sandbox.bin_dir.path().join("path-only-aios");
+    std::fs::write(&path_only, "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n")
+        .expect("write the PATH-only binary");
+    make_executable(&path_only);
+    let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", "path-only-aios")]);
+    assert_eq!(code(&out), 3);
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
 }

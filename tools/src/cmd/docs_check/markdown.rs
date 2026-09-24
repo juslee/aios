@@ -7,8 +7,9 @@
 //! the same characters because those characters are one byte in UTF-8.
 //!
 //! Python regex features the `regex` crate lacks are rewritten as code:
-//! `heading_number` (R8, a lookahead) and `has_placeholder_word` (R25, a
-//! lookbehind and a lookahead). Every other pattern is check.py's text with `\d`
+//! `heading_number` (`HEADING_NUM_RE`, L171, a lookahead) and
+//! `has_placeholder_word` (`PLACEHOLDER_WORD_RE`, L534, a lookbehind and a
+//! lookahead). Every other pattern is check.py's text with `\d`
 //! written as `[0-9]`.
 //!
 //! Accepted divergences from check.py (no tracked file and no fixture exercises
@@ -24,7 +25,10 @@
 //!   `\w` (used outside `gh_slug`, e.g. in `MILESTONE_RE`) lacks No digits,
 //!   where Python's `\w` has them. CPython 3.14's Unicode tables and the
 //!   `regex` crate's may also drift apart from each other over time;
-//! - milestone numbers that do not fit `u64` are ignored.
+//! - milestone numbers that do not fit `u64` are ignored;
+//! - `brace_expand` has no recursion limit here: at about 1,000 or more `{…}`
+//!   groups in one doc-map code span, check.py raises RecursionError (caught by
+//!   `__main__`, exit 2), where aios completes.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::LazyLock;
@@ -44,75 +48,76 @@ pub struct Heading {
     pub text: String,
 }
 
-/// R2 (check.py L161): an opening or closing fence at any indentation.
+/// check.py L161: an opening or closing fence at any indentation.
 pub static FENCE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(`{3,}|~{3,})").expect("valid regex"));
-/// R3 (check.py L162).
+/// check.py L162.
 pub static HEADING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.*?)\s*#*\s*$").expect("valid regex"));
-/// R4 (check.py L163-165): group 2 is the text, group 3 the target.
+/// check.py L163-165: group 2 is the text, group 3 the target.
 pub static INLINE_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)"#,
     )
     .expect("valid regex")
 });
-/// R5 (check.py L166): reference definitions, not footnotes (`^` escaped in the class).
+/// check.py L166: reference definitions, not footnotes (`^` escaped in the class).
 pub static REF_DEF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^ {0,3}\[([^\]\^][^\]]*)\]:\s*(\S+)").expect("valid regex"));
-/// R6 (check.py L167).
+/// check.py L167.
 pub static WIKI_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(!?)\[\[([^\]|#]*)(?:#([^\]|]*))?(?:\|[^\]]*)?\]\]").expect("valid regex")
 });
-/// R7 (check.py L168-170).
+/// check.py L168-170.
 pub static SECTION_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[[^\]]*\]\(([^)\s]+\.md)(#[^)]*)?\)\s*\**\s*§\s*([A-Z]?[0-9]+(?:\.[0-9]+)*)")
         .expect("valid regex")
 });
-/// R9 (check.py L172).
+/// check.py L172.
 pub static SCHEME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("valid regex"));
-/// R10 (check.py L223).
+/// check.py L223.
 pub static HTML_COMMENT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<!--.*?-->").expect("valid regex"));
-/// R11 (check.py L224).
+/// check.py L224.
 pub static LIST_ITEM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(?:[-*+]|[0-9]+[.)])\s+").expect("valid regex"));
 
 /// check.py L173.
 pub const PLACEHOLDER_CHARS: [&str; 11] = ["<", ">", "{", "}", "$", "*", "?", "…", "...", "[", "]"];
 
-/// R8 without its lookahead (see `heading_number`).
+/// check.py `HEADING_NUM_RE` (L171) without its lookahead (see `heading_number`).
 static HEADING_NUM_HEAD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?:§\s*)?([A-Z]?[0-9]+(?:\.[0-9]+)*)").expect("valid regex"));
-/// R25 rewritten: maximal runs of ASCII letters (see `has_placeholder_word`).
+/// check.py `PLACEHOLDER_WORD_RE` (L534) rewritten: maximal runs of ASCII letters
+/// (see `has_placeholder_word`).
 static ASCII_LETTERS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[A-Za-z]+").expect("valid regex"));
-/// R12 (check.py L295).
+/// check.py L295.
 static INLINE_MD_LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").expect("valid regex"));
-/// R13 (check.py L296).
+/// check.py L296.
 static HTML_TAG_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<[^>]+>").expect("valid regex"));
-/// R15 (check.py L317); the braces are escaped inside the class too.
+/// check.py L317; the braces are escaped inside the class too.
 static BRACE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{([^\{\}]*)\}").expect("valid regex"));
-/// R16 (check.py L349, fullmatch).
+/// check.py L349 (fullmatch).
 static SEPARATOR_CELL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?::?-{2,}:?)$").expect("valid regex"));
-/// R17 (check.py L358).
+/// check.py L358.
 static MILESTONE_RANGE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bM([0-9]+)\s*[–-]\s*M([0-9]+)\b").expect("valid regex"));
-/// R18 (check.py L362).
+/// check.py L362.
 static MILESTONE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bM([0-9]+)\b").expect("valid regex"));
-/// R29 (check.py L729).
+/// check.py L729.
 static LINE_SUFFIX_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r":[0-9]+(?:[-–][0-9]+)?(?:,[0-9]+)*$").expect("valid regex"));
-/// R69 (check.py L1339, re.S).
+/// check.py L1339 (re.S).
 static FRONTMATTER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^---\r?\n(.*?)\r?\n---\s*(?:\r?\n|$)").expect("valid regex"));
-/// R70 (check.py L1344).
+/// check.py L1344.
 static FRONTMATTER_KEY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Za-z_][\w\-]*):\s*(.*)$").expect("valid regex"));
 
@@ -302,8 +307,8 @@ pub fn strip_inline_md(text: &str) -> String {
     untagged.replace('`', "").replace("**", "").replace('*', "")
 }
 
-/// check.py `gh_slug` (L300-303): GitHub's heading anchor. R14 (`[^\w\- ]`) is
-/// the character filter below.
+/// check.py `gh_slug` (L300-303): GitHub's heading anchor. The L302 pattern
+/// (`[^\w\- ]`) is the character filter below.
 pub fn gh_slug(text: &str) -> String {
     let stripped = strip_inline_md(text);
     pystr::strip(&stripped)
@@ -330,21 +335,32 @@ pub fn headings(text: &str) -> Vec<Heading> {
 }
 
 /// check.py `brace_expand` (L316-323): expands the first `{a,b}` group, then
-/// recurses on each result (depth-first).
+/// expands each result the same way (depth-first, left to right). check.py
+/// recurses; this walks an explicit work stack, pushing each group's results in
+/// reverse so they pop in check.py's order, so no input can overflow the
+/// thread's stack (see the module doc for the resulting divergence).
 pub fn brace_expand(s: &str) -> Vec<String> {
-    let Some(caps) = BRACE_RE.captures(s) else {
-        return vec![s.to_string()];
-    };
-    let (Some(whole), Some(inner)) = (caps.get(0), caps.get(1)) else {
-        return vec![s.to_string()];
-    };
-    let prefix = &s[..whole.start()];
-    let suffix = &s[whole.end()..];
-    inner
-        .as_str()
-        .split(',')
-        .flat_map(|part| brace_expand(&format!("{prefix}{}{suffix}", pystr::strip(part))))
-        .collect()
+    let mut out = Vec::new();
+    let mut stack = vec![s.to_string()];
+    while let Some(item) = stack.pop() {
+        let Some(caps) = BRACE_RE.captures(&item) else {
+            out.push(item);
+            continue;
+        };
+        let (Some(whole), Some(inner)) = (caps.get(0), caps.get(1)) else {
+            out.push(item);
+            continue;
+        };
+        let prefix = &item[..whole.start()];
+        let suffix = &item[whole.end()..];
+        let expanded: Vec<String> = inner
+            .as_str()
+            .split(',')
+            .map(|part| format!("{prefix}{}{suffix}", pystr::strip(part)))
+            .collect();
+        stack.extend(expanded.into_iter().rev());
+    }
+    out
 }
 
 /// check.py `section_body` (L326-339): the lines after the first line where
@@ -414,7 +430,7 @@ pub fn milestone_tokens(text: &str) -> BTreeSet<u64> {
     out
 }
 
-/// R8, check.py `HEADING_NUM_RE.match(text).group(1)` (L171): the section number
+/// check.py `HEADING_NUM_RE.match(text).group(1)` (L171): the section number
 /// at the start of a heading. Python backtracks the greedy number when the
 /// lookahead `(?=[.:\s)]|$)` fails; the only shorter prefix that can pass is the
 /// one before the last `.`, whose next character is that `.`.
@@ -432,7 +448,7 @@ pub fn heading_number(text: &str) -> Option<String> {
     }
 }
 
-/// R25, check.py `PLACEHOLDER_WORD_RE.search(path)` (L534): a match needs a
+/// check.py `PLACEHOLDER_WORD_RE.search(path)` (L534): a match needs a
 /// non-letter (or an edge) on both sides of an all-letter word, so it exists
 /// exactly when some maximal ASCII-letter run equals one of the words.
 pub fn has_placeholder_word(path: &str) -> bool {
@@ -746,6 +762,23 @@ mod tests {
         for (s, want) in cases {
             assert_eq!(brace_expand(s), want, "{s:?}");
         }
+    }
+
+    #[test]
+    fn brace_expand_does_not_recurse_per_group() {
+        // Deep enough to overflow the stack if each `{...}` group took a frame.
+        let s = format!("docs/{}.md", "{a}".repeat(20_000));
+        let want = format!("docs/{}.md", "a".repeat(20_000));
+        assert_eq!(brace_expand(&s), vec![want]);
+        // Order and repeats as check.py's recursion yields them (python3).
+        assert_eq!(
+            brace_expand("{a,b}{c,{d,e}}"),
+            ["ac", "ad", "ac", "ae", "bc", "bd", "bc", "be"]
+        );
+        assert_eq!(
+            brace_expand("x{ p , {q,r}s}{t,u}"),
+            ["xpt", "xpu", "xqst", "xqsu", "xpt", "xpu", "xrst", "xrsu"]
+        );
     }
 
     const TABLE_DOC: &str = concat!(

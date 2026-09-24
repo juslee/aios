@@ -367,7 +367,8 @@ fn baseline_accepts_a_leading_dash_as_a_path_like_argparse() {
     // repository: it runs normally, reporting against a baseline file named
     // "-1" that does not exist). clap's default `--baseline -1` treats "-1" as
     // an unrecognized flag instead; `allow_negative_numbers` on the `baseline`
-    // arg closes that divergence.
+    // arg closes it for numeric values (see the docs_check module doc for the
+    // remaining leading-dash and non-UTF-8 cases).
     let repo = TestRepo::with_files("cli-baseline-dash", &[("README.md", "# R\n")]);
     let run = run_aios(
         repo.path(),
@@ -378,6 +379,15 @@ fn baseline_accepts_a_leading_dash_as_a_path_like_argparse() {
         text(&run.stdout),
         ZERO_TEXT.replace("scripts/docs/baseline.json", "-1")
     );
+
+    // Accepted divergence (listed in the docs_check module doc): argparse also
+    // takes a non-numeric `-<digit>` value as the path; clap exits 2.
+    let run = run_aios(
+        repo.path(),
+        &["docs-check", "--baseline", "-2x.json", "--check", ","],
+    );
+    assert_eq!(run.code, 2);
+    assert_eq!(text(&run.stdout), "");
 }
 
 #[test]

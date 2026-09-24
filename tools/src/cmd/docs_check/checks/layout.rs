@@ -23,21 +23,23 @@ const RULE_05: &str = ".claude/rules/05-file-placement.md";
 /// A tree entry line (`├── `, `└── `) contains this box-drawing run.
 const TREE_MARK: &str = "──";
 
-/// R49: the Workspace Layout section of CLAUDE.md.
+/// check.py L1021: the Workspace Layout section of CLAUDE.md.
 static LAYOUT_START_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^## Workspace Layout").expect("valid regex"));
 static LAYOUT_STOP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^## ").expect("valid regex"));
-/// R50: a directory entry `── name/`.
+/// check.py L1041: a directory entry `── name/`.
 static TREE_DIR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"──\s+([A-Za-z0-9_.-]+)/").expect("valid regex"));
-/// R51: module names after `(top-level)` and on its continuation lines.
+/// check.py L1047 and L1050: module names after `(top-level)` and on its
+/// continuation lines.
 static MODULE_NAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[a-z_][a-z0-9_.]*").expect("valid regex"));
-/// R52: the tree-drawing indent of a continuation line (also used by harness-tables).
+/// check.py L1049: the tree-drawing indent of a continuation line (also used by
+/// harness-tables, as check.py L1112).
 pub(crate) static TREE_PREFIX_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[│\s]+").expect("valid regex"));
-/// R53: `kernel/src/<dir>/` at the start of a line of rule 05.
+/// check.py L1077: `kernel/src/<dir>/` at the start of a line of rule 05.
 static RULE_DIR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^kernel/src/([a-z0-9_]+)/").expect("valid regex"));
 
@@ -93,7 +95,7 @@ pub fn tree_entries(
     (dirs, mods)
 }
 
-/// Every R51 name in `text`, with a trailing `.rs` removed.
+/// Every `MODULE_NAME_RE` match in `text`, with a trailing `.rs` removed.
 fn add_module_names(mods: &mut BTreeSet<String>, text: &str) {
     for m in MODULE_NAME_RE.find_iter(text) {
         let name = m.as_str();

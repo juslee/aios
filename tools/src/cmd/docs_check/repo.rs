@@ -7,7 +7,7 @@
 //! is strict UTF-8 with universal newlines (Python `text=True`). Texts, headings,
 //! slugs and the merged milestones are cached per `Repo`.
 //!
-//! Accepted divergences (contract §1.9): `\d` is `[0-9]` in `PHASE_SUBJECT_RE`,
+//! Accepted divergences: `\d` is `[0-9]` in `PHASE_SUBJECT_RE`,
 //! `PHASE_DOC_RE` and `MILESTONE_HEADING_RE`, so a phase or milestone number
 //! written with a non-ASCII Unicode decimal digit does not match here, where
 //! Python's `\d` (and `int()`) would; `\b` (`MILESTONE_HEADING_RE`,
@@ -56,27 +56,27 @@ const SHALLOW_SKIP: &str = "shallow clone: git history unavailable (use fetch-de
 /// Milestone number -> phase, or the reason git history is unavailable.
 type Merged = Result<Rc<BTreeMap<u64, u64>>, Skip>;
 
-/// R19 (check.py L458).
+/// check.py L458.
 static PHASE_SUBJECT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Phase ([0-9]+) M([0-9]+):").expect("valid regex"));
-/// R20 (check.py L467). `\n?$` matches Python's non-MULTILINE `$` on a
-/// tracked path ending in a trailing newline (fix round 1).
+/// check.py L467. `\n?$` matches Python's non-MULTILINE `$` on a
+/// tracked path ending in a trailing newline.
 static PHASE_DOC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^docs/phases/([0-9]+)-[^/]+\.md\n?$").expect("valid regex"));
-/// R21 (check.py L478, re.match).
+/// check.py L478 (re.match).
 static MILESTONE_HEADING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Milestone ([0-9]+)\b").expect("valid regex"));
-/// R22 (check.py L513).
+/// check.py L513.
 static PRIVATE_ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[.*\bprivate\b.*\]").expect("valid regex"));
-/// R24 without its negative lookahead (see `recipe_name`).
+/// check.py L518 without its negative lookahead (see `recipe_name`).
 static RECIPE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^@?([A-Za-z_][A-Za-z0-9_-]*)\b[^:=]*:").expect("valid regex"));
-/// R26 (check.py L602).
+/// check.py L602.
 static ANCHOR_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<a\s+(?:name|id)="([^"]+)""#).expect("valid regex"));
 
-/// R24, check.py L518 `^@?([A-Za-z_][A-Za-z0-9_-]*)\b[^:=]*:(?!=)`: the recipe name
+/// check.py L518 `^@?([A-Za-z_][A-Za-z0-9_-]*)\b[^:=]*:(?!=)`: the recipe name
 /// a justfile line defines. `[^:=]*` stops at the first `:` or `=` after the name
 /// however the name backtracks, so when that `:` is followed by `=` (an assignment)
 /// no other match exists.
@@ -203,6 +203,10 @@ impl Repo {
     }
 
     /// check.py `Repo.git(..., check=True)` (L396-400).
+    ///
+    /// No check in this crate calls it: check.py's only `check=True` call is in
+    /// `__init__`, which `open` ports by calling `run_git` directly because
+    /// `self` does not exist yet. It is kept as `Repo` API for later subcommands.
     pub fn git(&self, args: &[&str]) -> anyhow::Result<String> {
         run_git(&self.root, args, true)
     }

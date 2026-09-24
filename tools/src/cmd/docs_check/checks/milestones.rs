@@ -46,19 +46,19 @@ const CLAUDE_MD: &str = "CLAUDE.md";
 /// check.py L940.
 static STATUS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\*\*Status:\*\*\s*(.*)$").expect("valid regex"));
-/// R45 without its `(?!~~)` lookahead; [`is_unchecked_task`] applies it.
+/// check.py L951 without its `(?!~~)` lookahead; [`is_unchecked_task`] applies it.
 static UNCHECKED_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*[-*] \[ \] ").expect("valid regex"));
-/// R46: the development plan's §8 table.
+/// check.py L962 and L1000: the development plan's §8 table.
 static PLAN_START_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^## 8\. ").expect("valid regex"));
 static PLAN_STOP_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^## ").expect("valid regex"));
-/// R47: the §8.1 Velocity Summary table.
+/// check.py L970: the §8.1 Velocity Summary table.
 static VELOCITY_START_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^### Velocity Summary").expect("valid regex"));
 static VELOCITY_STOP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^#{2,3} ").expect("valid regex"));
-/// R48.
+/// check.py L1003-1004; `PHASES_RE` below is L1005-1006.
 static PHASES_ACROSS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b([0-9]+) phases across\b").expect("valid regex"));
 static PHASES_RE: LazyLock<Regex> =
@@ -70,7 +70,7 @@ pub struct MilestoneStatus;
 /// "N phases" claims vs the development plan's §8 table.
 pub struct PhaseCount;
 
-/// check.py L951, R45 `^\s*[-*] \[ \] (?!~~)`: an open task checkbox that is not a
+/// check.py L951 `^\s*[-*] \[ \] (?!~~)`: an open task checkbox that is not a
 /// struck-through ("deferred") item. `\s*` has no alternative that lets `[-*]`
 /// match elsewhere, so testing the text after the one possible match is exact.
 pub fn is_unchecked_task(line: &str) -> bool {

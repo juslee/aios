@@ -3,10 +3,10 @@
 //! sections (missing, reduced to a pointer stub, or moved into a rule file),
 //! rule files, `docs/` paths, `/skill` commands, agents and `tools:` entries.
 //!
-//! The section-name patterns (R62) are built from the same parts as check.py's
+//! The section-name patterns are built from the same parts as check.py's
 //! `TITLE_WORD`, `TITLE_LIST`, `BEFORE_CLAUDE_RE`, `AFTER_CLAUDE_RE` and
-//! `LABELLED_ITEM_RE`; the `regex` crate's leftmost-first semantics give the
-//! same matches and captures as Python's backtracking for them. Accepted
+//! `LABELLED_ITEM_RE` (L1206-1215); the `regex` crate's leftmost-first semantics
+//! give the same matches and captures as Python's backtracking for them. Accepted
 //! divergences: `\s` lacks U+001C..U+001F and `\b` uses the crate's Unicode word
 //! definition (no tracked harness file contains either difference); `STUB_RE`'s
 //! `(?i)` does not fold `ı` (U+0131) or `İ` (U+0130) to `i` as Python's
@@ -119,11 +119,12 @@ pub const BUILTIN_AGENTS: [&str; 5] = [
     "output-style-setup",
 ];
 
-/// R62 `TITLE_WORD`.
+/// check.py `TITLE_WORD` (L1206).
 const TITLE_WORD: &str = r"[A-Z][A-Za-z0-9&/-]*";
 
-/// R62 `TITLE_LIST`: a run of Title Case section names joined by commas, "and",
-/// or a parenthetical aside: "Code Conventions (`.claude/rules/`) and Quality Gates".
+/// check.py `TITLE_LIST` (L1209): a run of Title Case section names joined by
+/// commas, "and", or a parenthetical aside: "Code Conventions (`.claude/rules/`)
+/// and Quality Gates".
 fn title_list() -> String {
     [
         "(",
@@ -135,7 +136,7 @@ fn title_list() -> String {
     .concat()
 }
 
-/// R62 `BEFORE_CLAUDE_RE`: "<Title Words> in CLAUDE.md".
+/// check.py `BEFORE_CLAUDE_RE` (L1210-1212): "<Title Words> in CLAUDE.md".
 static BEFORE_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [
         "((?:",
@@ -147,12 +148,12 @@ static BEFORE_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     .concat();
     Regex::new(&pattern).expect("valid regex")
 });
-/// R62 `AFTER_CLAUDE_RE`: "CLAUDE.md: <title list>".
+/// check.py `AFTER_CLAUDE_RE` (L1213): "CLAUDE.md: <title list>".
 static AFTER_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [r#"`?CLAUDE\.md`?\s*(:)?\s*["“]?"#, title_list().as_str()].concat();
     Regex::new(&pattern).expect("valid regex")
 });
-/// R62 `LABELLED_ITEM_RE`: "2. Update: Workspace Layout, Key Technical Facts"
+/// check.py `LABELLED_ITEM_RE` (L1215): "2. Update: Workspace Layout, Key Technical Facts"
 /// under a heading that names CLAUDE.md.
 static LABELLED_ITEM_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [
@@ -162,27 +163,27 @@ static LABELLED_ITEM_RE: LazyLock<Regex> = LazyLock::new(|| {
     .concat();
     Regex::new(&pattern).expect("valid regex")
 });
-/// R63.
+/// check.py L1231 (`re.split`).
 static TITLE_SPLIT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\([^)]*\)|\band\b").expect("valid regex"));
-/// R61: a CLAUDE.md section body that only points elsewhere.
+/// check.py L1190: a CLAUDE.md section body that only points elsewhere.
 static STUB_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(lives in|moved to|are in|is in|see)\b").expect("valid regex")
 });
-/// R64: the frontmatter block (LF only, as check.py L1283).
+/// check.py L1283: the frontmatter block (LF only).
 static FRONTMATTER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n---").expect("valid regex"));
-/// R65.
+/// check.py L1286.
 static TOOLS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^tools:\s*(.*)$").expect("valid regex"));
-/// R66.
+/// check.py L1317.
 static RULE_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:\.claude/)?rules/([0-9]{2}-[a-z0-9-]+\.md)").expect("valid regex")
 });
-/// R67: a code span that is a slash command.
+/// check.py L1325: a code span that is a slash command.
 static SKILL_SPAN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&["^/(", SKILL_NAME, r")(?:\s|$)"].concat()).expect("valid regex"));
-/// R68: "`name` agent", "`name` subagent" or "subagent_type: name".
+/// check.py L1330: "`name` agent", "`name` subagent" or "subagent_type: name".
 static AGENT_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"`([a-z][a-z0-9-]*)`\s+(?:agent|subagent)\b|subagent_type:\s*`?([A-Za-z][A-Za-z0-9-]*)",

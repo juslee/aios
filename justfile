@@ -145,11 +145,13 @@ soak *args:
 test:
     cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 
-# The touch marks a no-op build fresh for the shim's freshness check.
+# The binary takes the build's start time: a no-op build is marked fresh for the
+# shim, and a file edited during the build stays newer, so the next call rebuilds.
 # Build the host tools binary target/tools/release/aios (run through .claude/hooks/aios)
 tools:
+    mkdir -p target/tools && touch target/tools/.build-start
     cargo build --release -p aios-tools --target-dir target/tools
-    touch target/tools/release/aios
+    touch -r target/tools/.build-start target/tools/release/aios
 
 # Run clippy with deny warnings (kernel and stub targets, plus the host tools crate)
 clippy:

@@ -7,7 +7,7 @@
 //! Every function works on `/`-separated strings, never on `std::path`
 //! components, because check.py's paths are repository-relative POSIX paths.
 //!
-//! Accepted divergences (contract §1.9): a symlink target that is not valid
+//! Accepted divergences: a symlink target that is not valid
 //! UTF-8 goes through `to_string_lossy` where CPython uses surrogate escapes,
 //! and `relpath` treats an empty `path` as the current directory where Python
 //! raises `ValueError` (docs-check never passes one: `--baseline ""` counts as

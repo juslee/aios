@@ -1,6 +1,6 @@
 ---
 author: jl + claude
-date: 2026-09-22
+date: 2026-09-24
 tags: [tooling, agent-loop]
 status: final
 ---
@@ -30,7 +30,7 @@ Every task passed a per-task review. Even so, reviews of five of the fifteen tas
 - **Integer parsing.** Python `str.isdigit()` is true for non-decimal digits such as `²`, and `int()` then raises. CPython 3.11 and later also raises in `int()` past 4300 digits.
 - **JSON numbers.** `serde_json` without `arbitrary_precision` rejects numbers beyond the f64 range, such as `1e400`, which Python's `json` accepts.
 - **The shim's freshness test.** A `cargo build` with nothing to do leaves the binary's mtime unchanged. A `find -newer` freshness test then reports the binary as stale after every edit that does not change it, for example an edit under `tools/tests/`, and the shim rebuilds on every call.
-- **Which binary the shim runs.** The shim runs the main checkout's binary on purpose, so a PR that adds or changes a subcommand cannot run its own build through the shim until it merges.
+- **Which binary the shim runs.** The shim runs the main checkout's binary on purpose, so by default a PR that adds or changes a subcommand gets main's build through the shim, not its own, until it merges. Set `AIOS_TOOLS_BIN` to run the PR's own build (see below).
 - **Unused dependencies.** The pinned nightly's Cargo has a native `unused_dependencies` manifest lint. `clippy -- -D warnings` does not escalate it, so a dependency declared before its first use prints a warning in every `just check` without failing it.
 - **Version-manager shims.** A version-manager shim for `python3` (asdf here) needs the real `HOME`. Under a test's isolated `HOME` it exits 126, which would have made the golden recorder fail and the differential test pass without comparing anything.
 
@@ -51,12 +51,14 @@ Every task passed a per-task review. Even so, reviews of five of the fifteen tas
 
 ## How to avoid next time
 
-- `just tools` ends with `touch target/tools/release/aios`, so a no-op build still makes the binary fresh.
+- `just tools` stamps `target/tools/release/aios` with the time the build started (`touch -r target/tools/.build-start`). A no-op build still makes the binary fresh, and a file edited during the build stays newer than the binary, so the next shim call rebuilds.
 - Test a PR's own build with `AIOS_TOOLS_BIN="$PWD/target/tools/release/aios"`.
-- Add a dependency in the PR that first uses it. `time` joins in R2.
+- Add a dependency in the PR that first uses it; `time` is approved but not yet declared.
 - Before R2-R5 reuse `pystr` and `markdown`, reconsider the "`\d` is `[0-9]`" constraint and the use of the crate's plain `\s`. `\p{Nd}` and `[\s\x1c-\x1f]` match Python's `str`-pattern classes exactly, and these two choices produced about half of the listed divergences.
-- Later ports (R4, R2, R3, R5) follow the same order:
+- Later ports with an old tool (R4, R3, R5) follow the same order:
   1. the fixture bundle and drift variants;
   2. an ignored recorder test;
   3. a differential test;
   4. the switch-over and the deletion, in the same PR.
+
+  R5 is the exception to step 4: it switches to shadow mode, and the Python guard is deleted in R5b. R2 is new code: it gets the loop spec's tests with fake `gh`/`claude` and the eval suites, but no recorder, differential or deletion.

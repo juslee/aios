@@ -1619,14 +1619,14 @@ Match the string patterns (literal text), not exact hex addresses (which may var
 
 ### 5.4 Host-Side Tests
 
-The kernel crate is `no_std` and cannot run host tests directly. All testable logic lives in the `shared` crate, which compiles for both the kernel target and the host:
+The kernel crate is `no_std` and cannot run host tests directly. All testable logic lives in the `shared` crate, which compiles for both the kernel target and the host. The host-only tools crate is tested separately with `cargo test -p aios-tools` (CI's Tools (host) job, which needs full git history):
 
 ```bash
 # Run all shared crate tests
 just test
 
 # Equivalent manual command:
-cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
+cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
 Currently 559 tests across: `boot`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.

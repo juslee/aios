@@ -2,7 +2,7 @@
 //! `scripts/docs/check.py` at 33c6b3d. `run` is check.py `main()` (L1585-1662);
 //! `run_checks` is check.py `run_checks` (L1442-1456).
 //!
-//! Accepted divergence (contract §1.9): check.py resolves the repository from its own
+//! Accepted divergence: check.py resolves the repository from its own
 //! directory (L1576-1582, `os.path.dirname(os.path.abspath(__file__))`); `repo_root`
 //! resolves it from the process working directory, because the binary has no script
 //! directory. `just` runs recipes from the justfile's directory and the shim passes the
@@ -14,7 +14,16 @@
 //! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),
 //! where clap accepts it as the end of options and `aios docs-check` runs normally; and
 //! `--help` prints argparse's text, not clap's. `--baseline`'s `allow_negative_numbers`
-//! below closes the third one (`--baseline -1` used to be rejected as an unknown flag).
+//! below narrows a third one: it makes aios take a value clap parses as a number
+//! (`-1`, `-1.5`, `-1e5`, `-1.`) as the path, as argparse does, where `--baseline -1`
+//! used to be rejected as an unknown flag. CPython 3.14's argparse also takes as the
+//! path any value that starts with `-<digit>` or `-.<digit>` (`-.5`, `-1e`, `-2x.json`),
+//! or that starts with `-` and contains a space (`-x y`); aios rejects those as an
+//! unexpected argument and exits 2 where check.py runs and exits 0 or 1. A non-UTF-8
+//! `--baseline` value is the same: check.py takes it through surrogateescape and runs,
+//! clap exits 2. The `--baseline=<value>` form behaves the same in both tools.
+//! (`allow_hyphen_values` would close the dash cases but also accept `--baseline --all`,
+//! which argparse rejects.)
 
 pub mod checks;
 pub mod markdown;
@@ -66,11 +75,6 @@ pub struct CheckRun {
     pub findings: Vec<Finding>,
     /// Skip message per check that could not run.
     pub skipped: BTreeMap<&'static str, String>,
-}
-
-/// check.py L1602-1608 against `checks::registry()`.
-pub fn select_checks(check_arg: &str) -> anyhow::Result<Vec<Box<dyn Check>>> {
-    select_from(checks::registry(), check_arg)
 }
 
 /// check.py L1602-1608 against `available`: an empty `check_arg` selects every

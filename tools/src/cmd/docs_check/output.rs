@@ -4,6 +4,8 @@
 //!
 //! Each renderer returns check.py's bytes. `render_text` and `render_json` return
 //! them without the final newline that Python's `print` adds; the caller adds it.
+//! The exception is a non-string `reason` from a hand-edited baseline: its
+//! rendering follows serde_json, not Python (listed in the `model` module doc).
 
 use std::collections::BTreeMap;
 

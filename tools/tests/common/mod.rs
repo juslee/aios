@@ -73,7 +73,7 @@ impl TestRepo {
         let root = unique_dir(label);
         git(&root, &["init", "-q", "-b", "main"]);
         // `isolated()` only reaches the commands these helpers spawn; the in-process
-        // `Repo::open` of Tasks 5-12 runs git with the test process's environment.
+        // `Repo::open` the check tests call runs git with the test process's environment.
         // Pin the excludes file in the repository's own config, which outranks the
         // developer's `~/.gitconfig` and `~/.config/git/ignore`, so a global ignore
         // rule can never hide a fixture file from

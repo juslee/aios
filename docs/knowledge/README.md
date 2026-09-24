@@ -46,7 +46,7 @@ status: draft | in-progress | final
 
 Use these tags for consistent search across the hive:
 
-`kernel`, `memory`, `ipc`, `sched`, `storage`, `platform`, `security`, `intelligence`, `boot`, `mmu`, `smp`, `drivers`, `compositor`, `gpu`, `audio`, `usb`, `networking`, `input`, `wireless`, `camera`, `media`
+`kernel`, `memory`, `ipc`, `sched`, `storage`, `platform`, `security`, `intelligence`, `boot`, `mmu`, `smp`, `drivers`, `compositor`, `gpu`, `audio`, `usb`, `networking`, `input`, `wireless`, `camera`, `media`, `tooling`
 
 ### Write-once preference
 

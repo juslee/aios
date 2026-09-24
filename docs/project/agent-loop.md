@@ -2,7 +2,7 @@
 
 **Audience:** the owner, returning after a break
 **Current stage:** Stage 0 (no autonomy: Claude works only inside a session you are attending)
-**Last updated:** 2026-09-22
+**Last updated:** 2026-09-24
 
 -----
 

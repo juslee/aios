@@ -3,10 +3,15 @@
 #
 # The binary comes from the MAIN checkout (the parent of git's common dir), so
 # hooks, skills and recipes run merged, reviewed code even when called from a PR
-# worktree. AIOS_TOOLS_BIN overrides it, to test a PR's own build explicitly.
+# worktree. AIOS_TOOLS_BIN overrides it, to test a PR's own build explicitly
+# (a bare name is taken relative to the current directory, not looked up on
+# PATH). When git cannot name the common dir from a linked worktree, the shim
+# fails closed rather than run the worktree's own build: guard asks,
+# --prebuild does nothing, other subcommands exit 3.
 #
 # Fresh means newer than every file under the main checkout's tools/ and than
-# its Cargo.lock.
+# its Cargo.lock. `just tools` stamps the binary with the time its build
+# started, so an edit made during a build still counts as newer.
 #   aios guard ...    fresh: run. stale: run it and start one background
 #                     `just tools` (lock dir target/tools/.building). missing:
 #                     fail closed with a PreToolUse "ask" decision, exit 0.
@@ -22,10 +27,14 @@
 set -u
 
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 3
+unresolved=
 if common=$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
     main=$(dirname -- "$common")
 else
     main=$(CDPATH='' cd -- "$here/../.." && pwd -P) || exit 3
+    # A linked worktree's .git is a `gitdir:` file, and its root is not the
+    # main checkout: acted on after the AIOS_TOOLS_BIN override below.
+    [ -f "$main/.git" ] && unresolved=1
 fi
 bin="$main/target/tools/release/aios"
 lock="$main/target/tools/.building"
@@ -55,12 +64,30 @@ build_bg() {
 
 if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
     [ "${1:-}" = "--prebuild" ] && exit 0
+    # `[ -x ]` tests a bare name relative to the cwd but exec searches PATH:
+    # make both name the same file.
+    case $AIOS_TOOLS_BIN in
+    */*) ;;
+    *) AIOS_TOOLS_BIN=./$AIOS_TOOLS_BIN ;;
+    esac
     [ -x "$AIOS_TOOLS_BIN" ] && exec "$AIOS_TOOLS_BIN" "$@"
     if [ "${1:-}" = "guard" ]; then
         printf '%s\n' "$ask"
         exit 0
     fi
     echo "aios: AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not an executable file" >&2
+    exit 3
+fi
+
+if [ -n "$unresolved" ]; then
+    case "${1:-}" in
+    --prebuild) exit 0 ;;
+    guard)
+        printf '%s\n' "$ask"
+        exit 0
+        ;;
+    esac
+    echo "aios: git cannot name the main checkout of the linked worktree $main (git rev-parse --git-common-dir failed); fix git or set AIOS_TOOLS_BIN" >&2
     exit 3
 fi
 
