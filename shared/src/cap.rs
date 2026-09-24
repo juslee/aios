@@ -2,7 +2,7 @@
 //!
 //! Defines the Capability enum (Phase 3 subset), token/handle identifiers,
 //! the `permits()` matching logic, and the CapabilityTable data structure.
-//! Per security.md §2.2, §3.1–3.5.
+//! Per model/layers.md §2.2, model/capabilities.md §3.1–3.5.
 
 use crate::ipc::ChannelId;
 use crate::sched::ProcessId;
@@ -12,7 +12,7 @@ use crate::syscall::IpcError;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Maximum capabilities per process (security.md §3.1).
+/// Maximum capabilities per process (model/capabilities.md §3.2).
 pub const MAX_CAPS_PER_PROCESS: usize = 256;
 
 // ---------------------------------------------------------------------------

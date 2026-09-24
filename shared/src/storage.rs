@@ -4,7 +4,7 @@
 //! definitions, and on-disk layout constants. Used by kernel storage
 //! subsystem and shared crate unit tests.
 //!
-//! Per spaces.md §3.0 (primitive types), §4.1 (on-disk layout).
+//! Per spaces/data-structures.md §3.0 (primitive types), spaces/block-engine.md §4.1 (on-disk layout).
 
 // ---------------------------------------------------------------------------
 // Core storage types
@@ -70,7 +70,7 @@ impl Timestamp {
 
 /// Content type classification for stored objects.
 ///
-/// Per spaces.md §3.3 — all 18 variants from architecture doc.
+/// Per spaces/data-structures.md §3.3 — all 18 variants from architecture doc.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 pub enum ContentType {
@@ -96,7 +96,7 @@ pub enum ContentType {
 
 /// Security zone classification.
 ///
-/// Per spaces.md §3.1. Simplified for M13 — `Collaborative` is a plain
+/// Per spaces/data-structures.md §3.1. Simplified for M13 — `Collaborative` is a plain
 /// variant (no `Vec<IdentityId>` member) for `Copy + repr(u8)` compatibility.
 /// Full struct variant added when identity system provides `IdentityId`.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -111,7 +111,7 @@ pub enum SecurityZone {
 
 /// Storage temperature tier for block placement.
 ///
-/// Per spaces.md §4.7 — determines compression level and zone placement.
+/// Per spaces/block-engine.md §4.7 — determines compression level and zone placement.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 pub enum StorageTier {
@@ -122,7 +122,7 @@ pub enum StorageTier {
 
 /// Location of a data block on disk.
 ///
-/// Per spaces.md §3.0 — byte offset (NOT sector offset). Refcount is
+/// Per spaces/data-structures.md §3.0 — byte offset (NOT sector offset). Refcount is
 /// tracked separately in the MemTable entry, not in BlockLocation.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(C)]
@@ -193,7 +193,7 @@ pub const ENCRYPTION_OVERHEAD: usize = 28;
 
 /// Compact object metadata (512 bytes, repr(C)).
 ///
-/// Per spaces.md §3.3.1. Fixed-size on-disk metadata record for each stored
+/// Per spaces/data-structures.md §3.3.1. Fixed-size on-disk metadata record for each stored
 /// object. Fields ordered for alignment: byte arrays first, then u64, u32, u8.
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -281,7 +281,7 @@ impl core::fmt::Debug for CompactObject {
 
 /// Version node in the Merkle DAG (256 bytes, repr(C)).
 ///
-/// Per spaces.md §5.1. Each object modification creates a new version
+/// Per spaces/versioning.md §5.1. Each object modification creates a new version
 /// linked to its parent by hash. The chain forms a Merkle DAG.
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -347,7 +347,7 @@ impl core::fmt::Debug for Version {
 
 /// Provenance action type for tracking object lineage.
 ///
-/// Per spaces.md §3.3. Tracks how an object was created or modified.
+/// Per spaces/data-structures.md §3.3. Tracks how an object was created or modified.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 pub enum ProvenanceAction {
@@ -424,7 +424,7 @@ impl Default for SpaceQuota {
 
 /// Space metadata (128 bytes, repr(C)).
 ///
-/// Per spaces.md §3.1. Spaces organize objects into security zones
+/// Per spaces/data-structures.md §3.1. Spaces organize objects into security zones
 /// with quotas and hierarchical structure.
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -513,7 +513,7 @@ impl core::fmt::Debug for Space {
 
 /// Encryption state for a space or device.
 ///
-/// Per spaces.md §6.1. Phase 4 uses DeviceOnly for all spaces.
+/// Per spaces/encryption.md §6.1. Phase 4 uses DeviceOnly for all spaces.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 pub enum EncryptionState {
@@ -531,7 +531,7 @@ pub struct ObjectIndexEntry {
 
 /// Compute a version hash from its components using SHA-256.
 ///
-/// Per spaces.md §5.1: hash = SHA-256(parent || content_hash || timestamp || object_id).
+/// Per spaces/versioning.md §5.1: hash = SHA-256(parent || content_hash || timestamp || object_id).
 /// This creates the Merkle DAG linkage — each version's hash depends on its parent.
 pub fn compute_version_hash(
     parent: &ContentHash,
@@ -725,7 +725,7 @@ const _: () = assert!(core::mem::size_of::<SpaceQuota>() == 16);
 // M15 types: POSIX bridge, compression, storage budget
 // ---------------------------------------------------------------------------
 
-/// POSIX file-open flags (per spaces.md §9.1).
+/// POSIX file-open flags (per spaces/posix.md §9.1).
 pub mod posix_flags {
     pub const O_RDONLY: u32 = 0;
     pub const O_WRONLY: u32 = 1;
@@ -878,7 +878,7 @@ pub struct MemTableEntry {
 /// Heap-allocated sorted array with binary search for O(log n) lookups.
 /// Capacity: configurable (default 65536 entries).
 ///
-/// Per spaces.md §4.2.
+/// Per spaces/block-engine.md §4.2.
 pub struct MemTable {
     entries: Vec<MemTableEntry>,
     capacity: usize,

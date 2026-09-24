@@ -33,7 +33,7 @@ pub struct ProcessControl {
     pub address_space: Option<UserAddressSpace>,
     /// Kernel resource limits for this process.
     pub resource_limits: KernelResourceLimits,
-    /// Per-process capability table (security.md §3.1).
+    /// Per-process capability table (model/capabilities.md §3.2).
     pub cap_table: CapabilityTable,
     /// Thread IDs belonging to this process.
     pub thread_ids: [Option<ThreadId>; MAX_THREADS_PER_PROCESS],

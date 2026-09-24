@@ -4,7 +4,7 @@
 //! in the Block Engine. Deduplication is automatic: storing identical content
 //! increments a refcount instead of writing a duplicate block.
 //!
-//! Per spaces.md §3.3 Objects, §3.3.1 Compact vs Full Objects, §4.2 Write Path.
+//! Per spaces/data-structures.md §3.3 Objects, §3.3.1 Compact vs Full Objects; spaces/block-engine.md §4.2 Write Path.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 

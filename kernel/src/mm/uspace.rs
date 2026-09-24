@@ -22,7 +22,7 @@ use super::asid::{Asid, AsidAllocator};
 
 const PAGE_SIZE: usize = 4096;
 
-// ── User VA layout (per memory/hardening.md §9.5) ──────────────────────────────
+// ── User VA layout (per memory/virtual.md §3.1) ──────────────────────
 
 /// User code segment base address.
 #[allow(dead_code)]

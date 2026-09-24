@@ -3,7 +3,7 @@
 //! Spaces organize objects into security zones with metadata and quotas.
 //! Three system spaces are created at boot: system/, user/home/, ephemeral/.
 //!
-//! Per spaces.md §3.1 Spaces, §3.2 System Spaces.
+//! Per spaces/data-structures.md §3.1 Spaces, §3.2 System Spaces.
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -100,7 +100,7 @@ pub fn space_delete(id: &SpaceId) -> Result<(), StorageError> {
 // System space initialization
 // ---------------------------------------------------------------------------
 
-/// Create the three system spaces at boot (per spaces.md §3.2).
+/// Create the three system spaces at boot (per spaces/data-structures.md §3.2).
 ///
 /// - `system/`      — Core zone (kernel config, audit, credentials)
 /// - `user/home/`   — Personal zone (default personal space)
