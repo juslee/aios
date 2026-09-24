@@ -248,26 +248,35 @@ The same-thread re-pick at `scheduler.rs:210` also stamps `LAST_RUN`.
 
 For `src ∈ {reply}`, `unblock` also snapshots `CALL_PHASE[tid]`/`CALL_CHAN[tid]` **under THREAD_TABLE** into the outcome. For `src ∈ {call, send}` it snapshots `RECV_PHASE`/`RECV_CHAN`. The skip-or-wake decision and the phase are then read at the same instant.
 
-**N2 phase protocol (SCAN-2, UBRUN-REPLY-AMBIGUOUS).** Each thread writes only its own slots, with plain Release stores:
+**N2 phase protocol (SCAN-2, UBRUN-REPLY-AMBIGUOUS, S3 review).** Each thread writes only its own slots, with plain Release stores. The phase values come from `shared::tripwire::wait_phase(step, timed)`: step 1 (`PHASE_PUBLISHED`) or 2 (`PHASE_ARMED`), with the flag `PHASE_UNTIMED` (0x80) set when the wait has no timeout. A call is timed when `timeout_ticks > 0`, and a receive when `timeout_ticks < u64::MAX`.
 
 | Store | Where |
 |---|---|
-| `CALL_CHAN = channel`, then `CALL_PHASE = 1` | `channel.rs:91`, right after `pending_caller = Some` |
-| `CALL_PHASE = 2` | **Inside** the TIMEOUT_QUEUE critical section at `:120-125` and `:162-167`, before the guard drops; or at the same point when `timeout_ticks == 0`. Phase 2 therefore means "my timeout is registered (or none was requested)". A replier whose `clear_timeout` acquired TIMEOUT_QUEUE after that registration also sees phase 2. |
+| `CALL_CHAN = channel`, then `CALL_PHASE = wait_phase(1, timed)` | `channel.rs:91`, right after `pending_caller = Some` |
+| `CALL_PHASE = wait_phase(2, timed)` | **Inside** the TIMEOUT_QUEUE critical section at `:120-125` and `:162-167`, before the guard drops; or at the same point when `timeout_ticks == 0` (untimed). Timed phase 2 therefore means "my timeout is registered". A replier whose `clear_timeout` acquired TIMEOUT_QUEUE after that registration also sees phase 2. |
 | `CALL_PHASE = 0` | `:180` |
-| `RECV_CHAN`/`RECV_PHASE = 1` | `channel.rs:275` |
-| `RECV_PHASE = 2` | Inside `:281-286`, or after `:276` when `timeout_ticks == u64::MAX` |
+| `RECV_CHAN`/`RECV_PHASE = wait_phase(1, timed)` | `channel.rs:275` |
+| `RECV_PHASE = wait_phase(2, timed)` | Inside `:281-286`, or after `:276` when `timeout_ticks == u64::MAX` (untimed) |
 | `RECV_PHASE = 0` | `:294` |
 
-**Classification**, with `bump()` in thread context:
-- `ipc_reply` fallback (`:403`), on outcome skip (Running or Runnable):
-  - `CALL_CHAN == channel` and phase 1 → `n2[0]` (`rpre`: reply before the caller's timeout registration; the caller heals with ETIMEDOUT later);
-  - `CALL_CHAN == channel` and phase 2 → `n2[1]` (`rblk`: the reply removed a registered timeout and the caller will block with no waker. **This is the exact N2 wedge precursor**);
-  - otherwise → `latereply` (the caller had already left the call, usually woken by its timeout).
-- `ipc_reply` fallback, on outcome woke with phase ≠ 2 or chan ≠ channel → `misrep` (the reply woke a thread blocked in some other wait).
-- `try_reply_switch`, after validation at `:243`: under THREAD_TABLE, the caller's `CALL_PHASE ≠ 2` or `CALL_CHAN ≠ channel` → `misrep` (`bump_masked`). The caller is Blocked there, so its phase is stable.
-- `ipc_send` (`:460`) and `ipc_call` (`:139`) fallback, on outcome skip with `RECV_CHAN == channel`: phase 1 → `n2[2]` (`vpre`), phase 2 → `n2[3]` (`vblk`: the receive-side analogue; the send removed the receiver's timeout and the receiver blocks with no waker). Receive-side misdirected wakes are not counted (see §6 SCAN-2).
-- `clear_timeout` returns `ClearResult { Removed, Absent, Busy }`, and callers ignore it except for `Busy` → `ctbusy` (a stale timeout left behind).
+**Phase alone is not enough (S3 review).** Two interleavings leave a timed waiter at phase 2 although it heals:
+- *Late reply after a timeout wake:* `check_timeouts` removes the entry and `wake_with_error` makes the caller Runnable. Its phase stays 2 until it runs to `:180`, and `pending_caller` stays set until about `:204`, so a reply in that window takes the caller, finds no entry to clear, fails `try_reply_switch` (the caller is not BlockedIpc) and skips it. The caller returns ETIMEDOUT.
+- *Early reply seen armed:* the reply's `clear_timeout` (`:392`) runs before the caller registers, and the caller stores phase 2 before the reply's `unblock` (`:403`). The registered timeout heals the caller.
+- The receive side has the same two cases: the receiver's phase stays 2 until `:294`, and `ipc_send` clears at `:457` before `unblock` at `:460`.
+
+Only a skipped wake that leaves **no timeout** is a wedge precursor: the waker's own `clear_timeout` returned `Removed`, or the wait is untimed (then phase 1 is a wedge precursor too, since nothing registers later). `clear_timeout` returns `ClearResult { Removed, Absent, Busy }`, and the reply, send and call wakers pass their own result into the classifier.
+
+**Classification** (`classify_reply(outcome, channel, clear)`, `classify_send(outcome, channel, clear)`), with `bump()` in thread context:
+- `ipc_reply` fallback (`:403`), on outcome skip (Running or Runnable) with `CALL_CHAN == channel`:
+  - untimed, phase 1 or 2 → `n2[1]` (`rblk`);
+  - timed, phase 2, `clear == Removed` → `n2[1]` (`rblk`: the reply removed the registered timeout and the caller will block with no waker. **This is the exact N2 wedge precursor**);
+  - timed, phase 1 → `n2[0]` (`rpre`: reply before the caller's timeout registration; the caller heals with ETIMEDOUT later);
+  - timed, phase 2, `clear` Absent or Busy → `latereply` (the timeout fired already, was registered after the reply's clear, or was left by a busy clear; it heals the caller).
+- `ipc_reply` fallback, on outcome skip with phase 0 or `CALL_CHAN ≠ channel` → `latereply` (the caller had already left the call, usually woken by its timeout).
+- `ipc_reply` fallback, on outcome woke with step ≠ 2 or chan ≠ channel → `misrep` (the reply woke a thread blocked in some other wait).
+- `try_reply_switch`, after validation at `:243`: under THREAD_TABLE, `classify_reply` with `UnblockKind::Woke`, the caller's phase and the reply's `ClearResult`; step ≠ 2 or `CALL_CHAN ≠ channel` → `misrep` (`bump_masked`). The caller is Blocked there, so its phase is stable.
+- `ipc_send` (`:460`) and `ipc_call` (`:139`) fallback, on outcome skip with `RECV_CHAN == channel`: untimed phase 1 or 2, or timed phase 2 with `clear == Removed` → `n2[3]` (`vblk`: the receive-side analogue; the receiver blocks with no waker); timed phase 1 → `n2[2]` (`vpre`); timed phase 2 with `clear` Absent or Busy → not counted (the timeout heals the receiver). Receive-side misdirected wakes are not counted (see §6 SCAN-2).
+- `ClearResult::Busy` also bumps `ctbusy` (a stale timeout left behind).
 
 `ubrun`/`ubrbl` by source stay as the ADR specifies. `n2`, `latereply` and `misrep` split them. Caveat for `src=to`: `ctbusy` > 0 explains some `ubrun`/`ubrbl[to]`.
 
@@ -498,7 +507,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - `mask_set` with tid = 63, 64, 0x8000_0000 and `u32::MAX`: no panic, and `badtid` counted.
   - `TwoStrike`: single; two in a row; three; flag–clear–flag; bits independent; **flag(B) → A-only scan with a dispatch between → flag(B) does not confirm**; the tick-advance gate withholds confirmation.
   - `EdgeCounter`: a persistent flag counts once; drop then re-flag counts twice; the gauge follows the popcount.
-  - `classify_reply`/`classify_send`: every (outcome, phase, chan match) cell.
+  - `classify_reply`/`classify_send`: every (outcome, phase step, timed, `ClearResult`, chan match) cell, plus the named kernel interleavings (S3 review).
   - `CpuCounters` row isolation and wrap.
 
 **K1. Bench DAIF removal** (independent)
@@ -555,7 +564,8 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - `timeout.rs` (`wake_with_error` src, `clear_timeout -> ClearResult` + `ctbusy`, marker at `:97`);
   - `select.rs:293`;
   - the 18 call sites;
-  - `channel.rs`: `CALL_*`/`RECV_*` phase stores at `:91`, `:120-125`, `:162-167`, `:180`, `:275`, `:281-286`, `:294`; markers at `:94`, `:368`, `:455`, `:493`; `classify_reply` at `:403`; `classify_send` at `:139`, `:460`;
+  - `channel.rs`: `CALL_*`/`RECV_*` phase stores at `:91`, `:120-125`, `:162-167`, `:180`, `:275`, `:281-286`, `:294`, with the values from `wait_phase(step, timed)`; markers at `:94`, `:368`, `:455`, `:493`; `classify_reply` at `:403`; `classify_send` at `:139`, `:460`;
+  - **the waker's own `ClearResult` must reach the classifier (S3 review):** keep the result of `clear_timeout` at `:100` until the `:139` fallback (across `try_direct_switch`), at `:392` until `try_reply_switch` and the `:403` fallback, and at `:457` until the `:460` fallback. `try_reply_switch` therefore also takes the `ClearResult`;
   - `direct.rs` (`channel` parameter, `misrep` after `:243`);
   - `ipc/mod.rs:227-228`, `process.rs:192`/`:198`, `notify.rs:124`/`:317`/`:323` (markers);
   - `lb` at `init.rs:263-264`; `enqfull` at `sched/mod.rs:56-61`;
@@ -643,7 +653,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - the 15-source unblock list;
   - SELECT_WAITERS not a waker, NOTIFY_DEADLINES scoped, sleep = `BlockedIpc{MAX}`;
   - transit windows (`:386`; add `:192-244`, `:73-84` and creation; drop `:174-177`), and the waker-in-transit split (`wakefl`);
-  - N2 measured by `n2[rblk]`/`n2[vblk]` (phase counters), and `ubrun[reply]` also counting late replies;
+  - N2 measured by `n2[rblk]`/`n2[vblk]` (phase counters plus the waker's own `ClearResult`, §2.4), and `ubrun[reply]` also counting late replies;
   - `channel.rs` line shifts (`278→275`, `293→290`, `361→355`, `374→368`, `398→392`, `409→403`);
   - `channel.rs:249` gone (→ `badchan`, 3 sites);
   - the ELR compare placement;
@@ -735,6 +745,8 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
 13. **N2 phase caveats.**
    - A caller that re-enters `ipc_call` on the **same** channel after a timeout, with a reply from the previous call still in flight, classifies as N2 rather than `latereply`. No sequence number is kept, because the Channel struct shape stays unchanged. This is rare, and the PR states it.
    - Receive-side misdirected wakes are not counted.
+   - **`rblk`/`vblk` need the waker's `ClearResult` (S3 review).** Phase 2 alone also covers a caller its timeout already woke (phase and `pending_caller` are cleared only when it runs) and a reply whose clear ran before the caller registered. Both heal, so a timed skip at phase 2 counts as `rblk`/`vblk` only when the waker's own clear returned `Removed`. Untimed waits (call timeout 0, recv `u64::MAX`; no in-kernel site uses them today, but the Kit and syscall paths pass caller values) count at phase 1 or 2, because no timeout can heal them.
+   - Residuals of that rule: an early reply seen after the caller armed counts as `latereply`, not `rpre`, because it cannot be told apart from a late reply. A stale entry left by an earlier `Busy` clear (`ctbusy`) can make an already-woken caller's entry look `Removed` and give a false `rblk`; `ctbusy` > 0 flags that. If the timeout's own wake is also skipped (the entry was taken by `check_timeouts` just before the reply's clear), the reply counts `latereply` and the wedge shows as `ubrun[to]`/`ubrbl[to]` and `nowaker`.
 
 ---
 
@@ -754,10 +766,10 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
 - Per-boot extraction of the last valid `[tripwire]` line (recipe in B1), tabulated per mode and class: `ubrun[reply]`, `ubrbl[reply]`, `n2`, `latereply`, `misrep`, `nowaker`, `wakefl`, `orphan`, `n1`.
 - It is descriptive. It makes no claim about `main` and does not replace the interleaved acceptance. The design supports reading N2 wedges from it because they keep CPU 0's heartbeat alive (ADR N2), so the last `hb` line is current.
 - **What each counter means:**
-  - `n2[rblk]` or `n2[vblk]` > 0 is a direct observation of the N2 race.
+  - `n2[rblk]` or `n2[vblk]` > 0 is a direct observation of the N2 race: a skipped wake that left the waiter no timeout (the waker's own `clear_timeout` removed it, or the wait is untimed). Timed skips at phase 2 whose timeout the waker did not remove are not counted there (§4.13).
   - `nowaker` > 0 is the resulting wedge.
   - `wakefl` separates starved wakers.
-  - `latereply` separates benign late replies from N2.
+  - `latereply` separates reply skips that heal by the caller's timeout (mostly late replies) from N2.
 
 **What single boots show (PR evidence):**
 - one text and one gpu `runs=1` log with `src=hb` after every heartbeat, one `src=g1`, one `[smp]` line per online CPU, all `tick` > 0, and `rsthold` = 0;
@@ -863,7 +875,7 @@ Whether the user merges before or after the soak is their call through `/merge-a
 - **BADCHAN-COVERAGE — ACCEPTED.** Verified: `cap/mod.rs:95-96` and `select.rs:66` reject first on the recv, send, call and select paths. `badchan` is now 3-wide (cap, select, slot), with a per-site self-test baseline recorded at K6.
 - **UBRUN-REPLY-AMBIGUOUS — ACCEPTED, merged with SCAN-2.**
   - The phase counters (stored under the TIMEOUT_QUEUE lock) separate `n2[rblk]`, the exact wedge precursor, from `latereply`.
-  - `clear_timeout` now returns `ClearResult`, used for `ctbusy` (a timeout left live, so the caller heals).
+  - `clear_timeout` now returns `ClearResult`, used for `ctbusy` (a timeout left live, so the caller heals) and, since the S3 review, passed into `classify_reply`/`classify_send` (§2.4).
   - The reviewer's `ubrun_live` key is not added, because `n2[rblk]` carries the same information more precisely.
 
 ## Issues Encountered
@@ -880,6 +892,7 @@ Whether the user merges before or after the soak is their call through `/merge-a
 - S3: the `Full` line is longer than §4.3's estimate of about 700 B. With 4 CPUs and every value 0 it is 913 B (about 4.3 ms of UART at 4.7 µs/B), and 1829 B when every value has 5 digits. `MAX_LINE_LEN` (8 CPUs, every value `u64::MAX`) is 6039 B. `g1` prints once, and panic/exc lines are post-fatal, so only the timing estimates change.
 - S3: the worst-case re-entry message is `NOTIFICATION_TABLE` at 153 bytes, not `CURRENT_THREAD[7]` at 152, because the scalar name is one character longer. The test takes the maximum over all 9 classes. The longest `kernel/src` path today is `kernel/src/arch/aarch64/exceptions.rs` (37 bytes). A second test walks `kernel/src` and re-checks the bound against the live tree; it is ignored under Miri, because Miri isolates the file system.
 - S3: rendering the lines under Miri took about 88 s: 24 full renders in the hazard test and 60 single-key renders. That code is safe and single-threaded, so it is sized down under `cfg(miri)`: one line per mode, and one key per `Width`. The module's Miri tests now take about 37 s serially. `just miri` passes 621 tests with 1 ignored (the file-system walk) in 83 s of wall time. Host tests: 583 → 622.
+- S3 (review): the §2.4 N2 table classified on (kind, phase, chan) alone, so two healing interleavings counted as `rblk` (and `vblk` on the receive side). In the first, a late reply reaches a caller its timeout already woke: the phase stays 2 and `pending_caller` stays set until the caller runs. In the second, the reply's `clear_timeout` runs before the caller registers, and the caller arms before the reply's `unblock`. Both were checked against `channel.rs`, `timeout.rs` and `direct.rs`. Untimed waits were also wrong: `rpre`/`vpre` counted them as healing. Process exit and channel destroy take `pending_caller`/`waiting_receiver` exclusively, so once a reply or send holds the reference, an untimed waiter has no other waker. Four mutations each fail the new tests: ignoring `clear` (the old rule), dropping the untimed arm, treating `Busy` as removed, and a `misrep` check blind to the untimed flag. A scratch staticlib (opt-level 1 and 3) shows no V-register, NEON, `memcpy`/`memset` or `blr` site in `classify_reply`, `classify_send`, `skip_fate` or `wait_phase`. Host tests: 622 → 624. `just miri`: 623 pass, 1 ignored.
 
 ## Decisions Made
 
@@ -936,6 +949,11 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - A stall changes nothing: the first strikes and snapshots are kept, and no new strike is added. The caller bumps `scanstall` and leaves the `EdgeCounter` alone.
   - A thread flagged every scan stays confirmed, and `EdgeCounter` counts it once.
 - S3: `write_reentry_msg(sink, &ReentryReport { class, index, cpu, ctx, holder: Option<HolderSite>, owner: OwnerStamp, tid })` prints `holder_irqs` and `gen` from the observed stamp. The panic path is exempt from V1, so a struct argument is fine there. `Ctx::from_raw(IRQ_CTX[cpu], daif_i)` gives the label. The `IRQ_CTX_*` values (0, 1, 2) are shared constants for K3.
+- S3 (review): took the reviewer's fix. `classify_reply(outcome, channel, clear)` and `classify_send(outcome, channel, clear)` take the waker's own `ClearResult`. This supersedes the S3 bullet above that fixed the phase constants at 0, 1 and 2. The details:
+  - **Timed-ness goes in the phase byte:** a flag `PHASE_UNTIMED = 0x80` is set with both steps, and `wait_phase(step, timed)` builds the values. The reviewer's `PHASE_ARMED_UNTIMED = 3` alone would miss an untimed wait at phase 1, which is also a wedge precursor. A separate `timed: bool` would need another per-thread array and a second store that is not read together with the phase. With the flag, one byte, snapshot under THREAD_TABLE, carries both.
+  - **Rule:** a skipped wake of a waiter in this wait is `rblk`/`vblk` when no timeout is left (untimed at step 1 or 2, or timed at step 2 with `Removed`), and `rpre`/`vpre` when a timed waiter is at step 1. A timed waiter at step 2 with `Absent` or `Busy` heals: the reply counts `latereply` and the send nothing. `misrep` compares the step, ignoring the flag. A private `SkipFate` enum shared by both classifiers encodes it.
+  - **Bucket for timed step 2 without `Removed`:** `latereply` rather than `rpre` or a new key. That cell is mostly late replies (the reviewer's first case). The early-reply-seen-armed case cannot be told apart there, and a new key would change schema v1 for a count that means "heals" either way. The residual is stated in §4.13.
+  - **For K6:** keep each waker's `ClearResult` until its classifier runs (`:100` → `:139`, `:392` → `try_reply_switch` and `:403`, `:457` → `:460`), and store phases with `wait_phase` (§2.4, §3 K6).
 
 ## Lessons Learned
 

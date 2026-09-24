@@ -108,13 +108,32 @@ pub const IRQ_CTX_EXIT: u8 = 2;
 
 /// `CALL_PHASE`/`RECV_PHASE` value: not in a call (or a receive).
 pub const PHASE_IDLE: u8 = 0;
-/// `CALL_PHASE`/`RECV_PHASE` value: published as the channel's pending caller
+/// `CALL_PHASE`/`RECV_PHASE` step: published as the channel's pending caller
 /// (or waiting receiver), with no timeout registered yet.
 pub const PHASE_PUBLISHED: u8 = 1;
-/// `CALL_PHASE`/`RECV_PHASE` value: the timeout is registered, or none was
-/// requested. Stored inside the TIMEOUT_QUEUE critical section, so a waker
-/// whose `clear_timeout` came later sees it.
+/// `CALL_PHASE`/`RECV_PHASE` step: the timeout is registered. Stored inside
+/// the TIMEOUT_QUEUE critical section, so a waker whose `clear_timeout` came
+/// later sees it. An untimed wait stores it at the point where it would
+/// register.
 pub const PHASE_ARMED: u8 = 2;
+/// `CALL_PHASE`/`RECV_PHASE` flag, set with both steps of a wait that has no
+/// timeout: `ipc_call` with timeout 0 or `ipc_recv` with `u64::MAX`. No
+/// timeout can heal such a waiter, so every skipped wake of it counts as a
+/// wedge precursor ([`N2Kind::Rblk`], [`N2Kind::Vblk`]). Build the stored
+/// values with [`wait_phase`].
+pub const PHASE_UNTIMED: u8 = 0x80;
+
+/// The `CALL_PHASE`/`RECV_PHASE` value a waiter stores at `step`
+/// ([`PHASE_PUBLISHED`] or [`PHASE_ARMED`]), flagged [`PHASE_UNTIMED`] when
+/// the wait has no timeout.
+#[inline]
+pub const fn wait_phase(step: u8, timed: bool) -> u8 {
+    if timed {
+        step
+    } else {
+        step | PHASE_UNTIMED
+    }
+}
 
 const _: () = assert!(SchedulerClass::RealTime as usize + 1 == CLASS_COUNT);
 
@@ -225,20 +244,27 @@ impl WakeSource {
 }
 
 /// The four N2 phase counters (index order of the `n2` key).
+///
+/// A skipped wake counts as a wedge precursor (`rblk`, `vblk`) only when no
+/// timeout is left to wake the waiter: the waker's own `clear_timeout`
+/// removed the registered one ([`ClearResult::Removed`]), or the wait is
+/// untimed ([`PHASE_UNTIMED`]). A timed waiter whose timeout the waker did
+/// not remove heals by that timeout.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum N2Kind {
-    /// A reply skipped a caller that had published the call but not yet
-    /// registered its timeout. The caller heals with ETIMEDOUT later.
+    /// A reply skipped a timed caller that had published the call but not
+    /// yet registered its timeout. The caller registers it later and heals
+    /// with ETIMEDOUT.
     Rpre,
-    /// A reply skipped a caller whose timeout was registered: the reply
-    /// removed that timeout, and the caller blocks with no waker. The exact
-    /// N2 wedge precursor.
+    /// A reply skipped a caller that has no timeout left: the reply's
+    /// `clear_timeout` removed the registered one, or the call is untimed.
+    /// The caller blocks with no waker. The exact N2 wedge precursor.
     Rblk,
-    /// A send (or call) skipped a receiver that had published its wait but
-    /// not yet registered its timeout.
+    /// A send (or call) skipped a timed receiver that had published its wait
+    /// but not yet registered its timeout; it heals with ETIMEDOUT.
     Vpre,
-    /// A send (or call) skipped a receiver whose timeout was registered: the
+    /// A send (or call) skipped a receiver that has no timeout left: the
     /// receive-side analogue of [`N2Kind::Rblk`].
     Vblk,
 }
@@ -391,7 +417,8 @@ pub enum Key {
     Pcother,
     /// Saved SPs outside the thread's stack.
     Spbad,
-    /// Reply fallbacks that found the caller no longer in that call.
+    /// Reply fallbacks that skipped a caller its timeout wakes: a caller no
+    /// longer in that call, or armed with a timeout the reply did not remove.
     Latereply,
     /// Replies that woke a thread not blocked in that call.
     Misrep,
@@ -1847,7 +1874,8 @@ impl UnblockKind {
 pub struct UnblockOutcome {
     /// What `unblock` did.
     pub kind: UnblockKind,
-    /// The target's phase ([`PHASE_IDLE`], [`PHASE_PUBLISHED`] or [`PHASE_ARMED`]).
+    /// The target's phase: [`PHASE_IDLE`], or a [`wait_phase`] value
+    /// ([`PHASE_PUBLISHED`] or [`PHASE_ARMED`], maybe with [`PHASE_UNTIMED`]).
     pub phase: u8,
     /// The channel the target's phase belongs to.
     pub chan: u64,
@@ -1856,11 +1884,16 @@ pub struct UnblockOutcome {
 const _: () = assert!(core::mem::size_of::<UnblockOutcome>() == 16);
 
 /// What `clear_timeout` found.
+///
+/// A reply, send or call passes the result of its own `clear_timeout` on the
+/// target to [`classify_reply`] or [`classify_send`]: only a removed entry
+/// can leave a timed waiter with no waker.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ClearResult {
     /// The entry was removed.
     Removed,
-    /// There was no entry.
+    /// There was no entry: the timeout had fired, was not yet registered, or
+    /// the wait is untimed.
     Absent,
     /// TIMEOUT_QUEUE was busy, so the entry (if any) is still there
     /// (`ctbusy`).
@@ -1874,7 +1907,8 @@ pub enum WakeVerdict {
     NotCounted,
     /// One of the four `n2` counters.
     N2(N2Kind),
-    /// `latereply`: the reply skipped a caller that had left that call.
+    /// `latereply`: the reply skipped a caller that its timeout wakes, or has
+    /// already woken.
     LateReply,
     /// `misrep`: the reply woke a thread that was not waiting for it.
     Misrep,
@@ -1892,44 +1926,93 @@ impl WakeVerdict {
     }
 }
 
+/// What a skipped wake leaves the waiter, given its phase on the waker's
+/// channel and the waker's own [`ClearResult`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SkipFate {
+    /// Not in a wait on this channel: idle, another channel, or an invalid
+    /// phase.
+    NotInWait,
+    /// Timed and published, timeout not yet registered: the waiter registers
+    /// it later and heals with ETIMEDOUT.
+    HealsBeforeArm,
+    /// Timed and armed, and the waker's clear did not remove the entry: the
+    /// timeout had fired already, was registered after the clear, or was left
+    /// by a busy clear. That timeout wakes the waiter.
+    HealsArmed,
+    /// No timeout is left: the waker's clear removed it, or the wait is
+    /// untimed. The waiter blocks with no waker.
+    NoWaker,
+}
+
+/// The fate of a waiter whose wake `unblock` skipped.
+const fn skip_fate(outcome: UnblockOutcome, channel: u64, clear: ClearResult) -> SkipFate {
+    if outcome.chan != channel {
+        return SkipFate::NotInWait;
+    }
+    let untimed = (outcome.phase & PHASE_UNTIMED) != 0;
+    match outcome.phase & !PHASE_UNTIMED {
+        PHASE_PUBLISHED | PHASE_ARMED if untimed => SkipFate::NoWaker,
+        PHASE_PUBLISHED => SkipFate::HealsBeforeArm,
+        PHASE_ARMED if matches!(clear, ClearResult::Removed) => SkipFate::NoWaker,
+        PHASE_ARMED => SkipFate::HealsArmed,
+        _ => SkipFate::NotInWait,
+    }
+}
+
 /// Classify a reply's wake of its caller (`ipc_reply`'s `unblock` fallback,
 /// or `try_reply_switch` with [`UnblockKind::Woke`] and the caller's phase).
+/// `clear` is the reply's own `clear_timeout` result for the caller.
 ///
-/// - Skipped (Running or Runnable), caller still in this call: phase
-///   [`PHASE_PUBLISHED`] is `rpre`, [`PHASE_ARMED`] is `rblk`.
-/// - Skipped otherwise: `latereply`, since the caller has left the call
-///   (usually woken by its timeout).
+/// - Skipped (Running or Runnable), caller in this call with no timeout left
+///   (untimed, or the reply's clear [`ClearResult::Removed`] it while armed):
+///   `rblk`.
+/// - Skipped, timed caller published but not armed: `rpre`.
+/// - Skipped otherwise: `latereply`. The caller has left the call, or its
+///   timeout (fired, registered after the reply's clear, or left by a busy
+///   clear) wakes it.
 /// - Made Runnable, unless the caller was armed in this call: `misrep`.
 /// - Anything else: not counted.
-pub const fn classify_reply(outcome: UnblockOutcome, channel: u64) -> WakeVerdict {
-    let in_call = outcome.chan == channel;
+pub const fn classify_reply(
+    outcome: UnblockOutcome,
+    channel: u64,
+    clear: ClearResult,
+) -> WakeVerdict {
     if outcome.kind.skipped() {
-        return match outcome.phase {
-            PHASE_PUBLISHED if in_call => WakeVerdict::N2(N2Kind::Rpre),
-            PHASE_ARMED if in_call => WakeVerdict::N2(N2Kind::Rblk),
-            _ => WakeVerdict::LateReply,
+        return match skip_fate(outcome, channel, clear) {
+            SkipFate::NoWaker => WakeVerdict::N2(N2Kind::Rblk),
+            SkipFate::HealsBeforeArm => WakeVerdict::N2(N2Kind::Rpre),
+            SkipFate::HealsArmed | SkipFate::NotInWait => WakeVerdict::LateReply,
         };
     }
-    if outcome.kind.made_runnable() && !(in_call && outcome.phase == PHASE_ARMED) {
+    let armed_here = outcome.chan == channel && (outcome.phase & !PHASE_UNTIMED) == PHASE_ARMED;
+    if outcome.kind.made_runnable() && !armed_here {
         return WakeVerdict::Misrep;
     }
     WakeVerdict::NotCounted
 }
 
-/// Classify a send's (or call's) wake of the waiting receiver.
+/// Classify a send's (or call's) wake of the waiting receiver. `clear` is
+/// the waker's own `clear_timeout` result for the receiver.
 ///
-/// Skipped (Running or Runnable) with the receiver still in a receive on
-/// this channel: phase [`PHASE_PUBLISHED`] is `vpre`, [`PHASE_ARMED`] is
-/// `vblk`. Anything else is not counted; misdirected receive-side wakes are
-/// out of scope.
-pub const fn classify_send(outcome: UnblockOutcome, channel: u64) -> WakeVerdict {
-    if !outcome.kind.skipped() || outcome.chan != channel {
+/// Skipped (Running or Runnable) with the receiver in a receive on this
+/// channel: `vblk` when no timeout is left (untimed, or the waker's clear
+/// [`ClearResult::Removed`] it while armed), `vpre` when a timed receiver
+/// was published but not armed. Anything else is not counted: an armed
+/// receiver whose timeout the waker did not remove heals by it, and
+/// misdirected receive-side wakes are out of scope.
+pub const fn classify_send(
+    outcome: UnblockOutcome,
+    channel: u64,
+    clear: ClearResult,
+) -> WakeVerdict {
+    if !outcome.kind.skipped() {
         return WakeVerdict::NotCounted;
     }
-    match outcome.phase {
-        PHASE_PUBLISHED => WakeVerdict::N2(N2Kind::Vpre),
-        PHASE_ARMED => WakeVerdict::N2(N2Kind::Vblk),
-        _ => WakeVerdict::NotCounted,
+    match skip_fate(outcome, channel, clear) {
+        SkipFate::NoWaker => WakeVerdict::N2(N2Kind::Vblk),
+        SkipFate::HealsBeforeArm => WakeVerdict::N2(N2Kind::Vpre),
+        SkipFate::HealsArmed | SkipFate::NotInWait => WakeVerdict::NotCounted,
     }
 }
 
@@ -3251,6 +3334,8 @@ mod tests {
 
     const CHAN: u64 = 7;
 
+    const CLEARS: [ClearResult; 3] = [ClearResult::Removed, ClearResult::Absent, ClearResult::Busy];
+
     fn outcome(kind: UnblockKind, phase: u8, same_chan: bool) -> UnblockOutcome {
         UnblockOutcome {
             kind,
@@ -3259,8 +3344,63 @@ mod tests {
         }
     }
 
+    /// The phase byte for `step` (0 idle, 1 published, 2 armed, 3 invalid),
+    /// flagged untimed with the literal bit so the tables do not depend on
+    /// [`wait_phase`].
+    fn phase_byte(step: usize, timed: bool) -> u8 {
+        let step = u8::try_from(step).unwrap();
+        if timed {
+            step
+        } else {
+            step | 0x80
+        }
+    }
+
+    /// Run `classify` over every (kind, channel match, timed, clear, step)
+    /// cell and compare it with `want(kind, same_chan, timed, clear)`, whose
+    /// columns are steps 0 to 3. Returns the number of cells checked.
+    fn check_every_cell(
+        classify: fn(UnblockOutcome, u64, ClearResult) -> WakeVerdict,
+        want: impl Fn(UnblockKind, bool, bool, ClearResult) -> [WakeVerdict; 4],
+    ) -> usize {
+        let mut cells = 0;
+        for kind in UnblockKind::ALL {
+            for same in [true, false] {
+                for timed in [true, false] {
+                    for clear in CLEARS {
+                        let row = want(kind, same, timed, clear);
+                        for (step, expect) in row.iter().enumerate() {
+                            let o = outcome(kind, phase_byte(step, timed), same);
+                            assert_eq!(
+                                classify(o, CHAN, clear),
+                                *expect,
+                                "{kind:?} same_chan={same} timed={timed} {clear:?} step={step}"
+                            );
+                            cells += 1;
+                        }
+                    }
+                }
+            }
+        }
+        cells
+    }
+
+    #[test]
+    fn wait_phase_encoding() {
+        assert_eq!(PHASE_IDLE, 0);
+        assert_eq!((PHASE_PUBLISHED, PHASE_ARMED), (1, 2));
+        assert_eq!(wait_phase(PHASE_PUBLISHED, true), 1);
+        assert_eq!(wait_phase(PHASE_ARMED, true), 2);
+        assert_eq!(wait_phase(PHASE_PUBLISHED, false), 0x81);
+        assert_eq!(wait_phase(PHASE_ARMED, false), 0x82);
+        for step in [PHASE_IDLE, PHASE_PUBLISHED, PHASE_ARMED] {
+            assert_eq!(step & PHASE_UNTIMED, 0, "the flag is outside every step");
+        }
+    }
+
     #[test]
     fn classify_reply_every_cell() {
+        use ClearResult as C;
         use UnblockKind as K;
         use WakeVerdict as W;
         const RPRE: W = W::N2(N2Kind::Rpre);
@@ -3268,67 +3408,123 @@ mod tests {
         const LATE: W = W::LateReply;
         const MIS: W = W::Misrep;
         const NC: W = W::NotCounted;
-        // Columns: phase 0, 1 (published), 2 (armed), 3 (invalid).
-        let table: [(K, bool, [W; 4]); 10] = [
-            (K::SkipRunning, true, [LATE, RPRE, RBLK, LATE]),
-            (K::SkipRunning, false, [LATE; 4]),
-            (K::SkipRunnable, true, [LATE, RPRE, RBLK, LATE]),
-            (K::SkipRunnable, false, [LATE; 4]),
-            (K::Woke, true, [MIS, MIS, NC, MIS]),
-            (K::Woke, false, [MIS; 4]),
-            (K::Revived, true, [MIS, MIS, NC, MIS]),
-            (K::Revived, false, [MIS; 4]),
-            (K::NoThread, true, [NC; 4]),
-            (K::NoThread, false, [NC; 4]),
+        // A skipped caller in this call, per (timed, clear). Columns: step 0
+        // (idle), 1 (published), 2 (armed), 3 (invalid).
+        let skipped_in_call: [(bool, C, [W; 4]); 6] = [
+            (true, C::Removed, [LATE, RPRE, RBLK, LATE]),
+            (true, C::Absent, [LATE, RPRE, LATE, LATE]),
+            (true, C::Busy, [LATE, RPRE, LATE, LATE]),
+            (false, C::Removed, [LATE, RBLK, RBLK, LATE]),
+            (false, C::Absent, [LATE, RBLK, RBLK, LATE]),
+            (false, C::Busy, [LATE, RBLK, RBLK, LATE]),
         ];
-        for kind in K::ALL {
-            assert_eq!(
-                table.iter().filter(|r| r.0 == kind).count(),
-                2,
-                "{kind:?} covered"
-            );
-        }
-        for (kind, same, row) in table {
-            for (phase, want) in row.iter().enumerate() {
-                let o = outcome(kind, phase as u8, same);
-                assert_eq!(
-                    classify_reply(o, CHAN),
-                    *want,
-                    "{kind:?} same_chan={same} phase={phase}"
-                );
+        let cells = check_every_cell(classify_reply, |kind, same, timed, clear| {
+            match (kind, same) {
+                (K::SkipRunning | K::SkipRunnable, true) => {
+                    let row = skipped_in_call
+                        .iter()
+                        .find(|r| r.0 == timed && r.1 == clear);
+                    row.unwrap().2
+                }
+                (K::SkipRunning | K::SkipRunnable, false) => [LATE; 4],
+                (K::Woke | K::Revived, true) => [MIS, MIS, NC, MIS],
+                (K::Woke | K::Revived, false) => [MIS; 4],
+                (K::NoThread, _) => [NC; 4],
             }
-        }
+        });
+        assert_eq!(cells, 5 * 2 * 2 * 3 * 4);
     }
 
     #[test]
     fn classify_send_every_cell() {
-        use UnblockKind as K;
+        use ClearResult as C;
         use WakeVerdict as W;
         const VPRE: W = W::N2(N2Kind::Vpre);
         const VBLK: W = W::N2(N2Kind::Vblk);
         const NC: W = W::NotCounted;
-        let table: [(K, bool, [W; 4]); 10] = [
-            (K::SkipRunning, true, [NC, VPRE, VBLK, NC]),
-            (K::SkipRunning, false, [NC; 4]),
-            (K::SkipRunnable, true, [NC, VPRE, VBLK, NC]),
-            (K::SkipRunnable, false, [NC; 4]),
-            (K::Woke, true, [NC; 4]),
-            (K::Woke, false, [NC; 4]),
-            (K::Revived, true, [NC; 4]),
-            (K::Revived, false, [NC; 4]),
-            (K::NoThread, true, [NC; 4]),
-            (K::NoThread, false, [NC; 4]),
+        // A skipped receiver in a receive on this channel, per (timed,
+        // clear). Columns as in the reply table.
+        let skipped_in_recv: [(bool, C, [W; 4]); 6] = [
+            (true, C::Removed, [NC, VPRE, VBLK, NC]),
+            (true, C::Absent, [NC, VPRE, NC, NC]),
+            (true, C::Busy, [NC, VPRE, NC, NC]),
+            (false, C::Removed, [NC, VBLK, VBLK, NC]),
+            (false, C::Absent, [NC, VBLK, VBLK, NC]),
+            (false, C::Busy, [NC, VBLK, VBLK, NC]),
         ];
-        for (kind, same, row) in table {
-            for (phase, want) in row.iter().enumerate() {
-                let o = outcome(kind, phase as u8, same);
-                assert_eq!(
-                    classify_send(o, CHAN),
-                    *want,
-                    "{kind:?} same_chan={same} phase={phase}"
-                );
+        let cells = check_every_cell(classify_send, |kind, same, timed, clear| {
+            if kind.skipped() && same {
+                let row = skipped_in_recv
+                    .iter()
+                    .find(|r| r.0 == timed && r.1 == clear);
+                row.unwrap().2
+            } else {
+                [NC; 4]
             }
+        });
+        assert_eq!(cells, 5 * 2 * 2 * 3 * 4);
+    }
+
+    /// The kernel interleavings the N2 table has to separate (S3 review).
+    #[test]
+    fn n2_interleavings() {
+        use ClearResult as C;
+        use UnblockKind as K;
+        use WakeVerdict as W;
+        let armed = wait_phase(PHASE_ARMED, true);
+        let published = wait_phase(PHASE_PUBLISHED, true);
+        let reply = |kind, phase, clear| classify_reply(outcome(kind, phase, true), CHAN, clear);
+        let send = |kind, phase, clear| classify_send(outcome(kind, phase, true), CHAN, clear);
+
+        // N2: the reply removes the registered timeout of a caller that has
+        // not blocked yet (Running), or was preempted before blocking
+        // (Runnable). The caller then blocks with no waker.
+        assert_eq!(
+            reply(K::SkipRunning, armed, C::Removed),
+            W::N2(N2Kind::Rblk)
+        );
+        assert_eq!(
+            reply(K::SkipRunnable, armed, C::Removed),
+            W::N2(N2Kind::Rblk)
+        );
+        // Late reply: the caller's timeout fired and woke it. `ipc_call`
+        // clears its phase only once it runs again, and `pending_caller`
+        // later still, so the reply still sees phase armed, finds no entry
+        // to clear, and skips a caller that returns ETIMEDOUT.
+        assert_eq!(reply(K::SkipRunnable, armed, C::Absent), W::LateReply);
+        // Early reply seen armed: the reply's clear ran before the caller
+        // registered its timeout, and the caller armed before the reply's
+        // `unblock`. The registered timeout heals it.
+        assert_eq!(reply(K::SkipRunning, armed, C::Absent), W::LateReply);
+        // The same early reply seen before the caller armed.
+        assert_eq!(
+            reply(K::SkipRunning, published, C::Absent),
+            W::N2(N2Kind::Rpre)
+        );
+        // A busy clear left the entry in place, so the timeout still fires.
+        assert_eq!(reply(K::SkipRunning, armed, C::Busy), W::LateReply);
+        // An untimed call has no timeout to heal it, at either step.
+        for step in [PHASE_PUBLISHED, PHASE_ARMED] {
+            let phase = wait_phase(step, false);
+            assert_eq!(reply(K::SkipRunning, phase, C::Absent), W::N2(N2Kind::Rblk));
+            assert_eq!(send(K::SkipRunning, phase, C::Absent), W::N2(N2Kind::Vblk));
         }
+        // The normal reply wake of an untimed caller is not misdirected.
+        let untimed_armed = wait_phase(PHASE_ARMED, false);
+        assert_eq!(reply(K::Woke, untimed_armed, C::Absent), W::NotCounted);
+
+        // Receive side: the send removes a receiver's registered timeout
+        // before it blocks.
+        assert_eq!(send(K::SkipRunning, armed, C::Removed), W::N2(N2Kind::Vblk));
+        // The receiver's timeout already woke it (its phase stays armed
+        // until it runs), or the send cleared before the receiver
+        // registered: not counted.
+        assert_eq!(send(K::SkipRunnable, armed, C::Absent), W::NotCounted);
+        assert_eq!(send(K::SkipRunning, armed, C::Absent), W::NotCounted);
+        assert_eq!(
+            send(K::SkipRunning, published, C::Absent),
+            W::N2(N2Kind::Vpre)
+        );
     }
 
     #[test]
@@ -3340,8 +3536,5 @@ mod tests {
         }
         assert_eq!(WakeVerdict::LateReply.key(), Some((Key::Latereply, 0)));
         assert_eq!(WakeVerdict::Misrep.key(), Some((Key::Misrep, 0)));
-        assert_eq!(PHASE_IDLE, 0);
-        assert_eq!((PHASE_PUBLISHED, PHASE_ARMED), (1, 2));
-        assert_ne!(ClearResult::Busy, ClearResult::Absent);
     }
 }
