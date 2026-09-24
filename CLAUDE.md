@@ -68,6 +68,9 @@ Syscall ABI:                  SVC #0 from EL0; x8 = number, x0-x5 = args, x0 = r
 # MMU strategy (do not get this wrong)
 edk2 state post-EBS:          MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
 edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr3=WB)
+Kernel image UEFI type:       PF_X segment = EfiLoaderCode, other segments = EfiLoaderData (uefi-stub elf.rs).
+                              Strict-NX edk2 (upstream ArmVirt, Ubuntu 26.04) maps LoaderData execute-never in
+                              the TTBR0 map boot.S runs on; Homebrew/QEMU builds do not, so local boots miss it.
 Phase 1 MMU strategy:         TTBR0-only swap, reuse edk2 MAIR/TCR.
                               Changing MAIR/TCR while MMU on is CONSTRAINED UNPREDICTABLE — do not.
 Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1.
