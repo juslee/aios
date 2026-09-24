@@ -3,8 +3,10 @@
 //! an existing path.
 //!
 //! Like check.py, code spans are read from the raw prose line (HTML comments are not
-//! masked). Accepted divergence: `\S` in `REPO_PATH_RE` is Rust's, which treats
-//! U+001C..U+001F as non-space.
+//! masked). Accepted divergences: `\S` in `REPO_PATH_RE` is Rust's, which treats
+//! U+001C..U+001F as non-space; and `is_path_placeholder` counts a capital assigned
+//! after Unicode 16 (e.g. U+A7CE) as uppercase, so such a path is skipped here where
+//! check.py reports it (listed in the `markdown` module doc).
 
 use std::sync::LazyLock;
 

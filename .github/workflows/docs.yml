@@ -4,9 +4,9 @@ name: Docs
 # Report-only: drift never fails this check. New drift versus
 # scripts/docs/baseline.json goes to the job summary and a warning annotation.
 # The check fails only when the checker itself fails: the tools build, or
-# aios docs-check exiting 2 (usage, git or internal error) or 3 (binary
-# missing and not buildable). That is a broken checker and counts like any
-# failing check.
+# aios docs-check exiting with anything other than 0 or 1 (2: usage, git or
+# internal error; 3: binary missing and not buildable; 101: a panic). That is
+# a broken checker and counts like any failing check.
 
 on:
   push:

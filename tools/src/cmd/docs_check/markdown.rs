@@ -27,6 +27,20 @@
 //!   CPython 3.14's (18.0 on nightly-2026-09-23, against 16.0), so `gh_slug`
 //!   already keeps letters and digits assigned after Unicode 16, which CPython
 //!   treats as unassigned and drops;
+//! - the same Rust std Unicode 18.0 tables drive `char::is_uppercase` and
+//!   `str::to_lowercase`. 48 code points assigned in Unicode 17 or 18 (U+A7CE,
+//!   U+A7D2, U+A7D4, U+A7DD, U+A7E2, U+AB6C, U+AB6D, U+16EA0..U+16EB8 and 16
+//!   in U+1DF40..U+1DF7E) are uppercase letters with a lowercase mapping here,
+//!   and unassigned, uncased code points in CPython 3.14. So
+//!   `is_path_placeholder` treats a last path component containing one as a
+//!   type-name placeholder and skips a path that check.py reports as missing
+//!   (`repo-paths`, `pointer-doctor`'s `docs/` paths); and the lowercasing in
+//!   `anchors` (the fragment in `checks/links.rs`, the `<a name|id>` ids in
+//!   `Repo::slug_set`) and `wiki-links` (note keys, vault names and paths)
+//!   matches across such a case pair (U+A7CE and U+A7CF) where check.py
+//!   reports a finding. The other `to_lowercase` sites compare only against
+//!   ASCII text or map non-ASCII to a space, and every one of these mappings
+//!   produces a non-ASCII character, so they cannot change a result;
 //! - the `regex` crate's `\w`/`\b` (used outside `gh_slug`, e.g. in
 //!   `MILESTONE_RE`) include every combining mark (Mn/Mc/Me), all connector
 //!   punctuation (Pc), Join_Control and the same So letter-symbols, which
@@ -475,6 +489,9 @@ pub fn is_placeholder(target: &str) -> bool {
 
 /// check.py `is_path_placeholder` (L541-546): template paths
 /// (`docs/phases/NN-name.md`) and type names (`shared/BootInfo`) are not paths.
+/// `char::is_uppercase` reads Rust std's Unicode 18.0 tables, so a capital
+/// assigned after Unicode 16 (e.g. U+A7CE) makes a type name here where
+/// CPython 3.14's `str.isupper()` is false (listed in the module doc).
 pub fn is_path_placeholder(path: &str) -> bool {
     if is_placeholder(path) || has_placeholder_word(path) {
         return true;
@@ -866,6 +883,17 @@ mod tests {
             assert_eq!(is_placeholder(path), placeholder, "{path:?}");
             assert_eq!(is_path_placeholder(path), path_placeholder, "{path:?}");
         }
+    }
+
+    /// Accepted divergence (module doc): Rust std's Unicode 18.0 tables make U+A7CE
+    /// (assigned in Unicode 17) an uppercase letter whose lowercase is U+A7CF, where
+    /// CPython 3.14 (Unicode 16.0) treats both as unassigned and uncased. check.py's
+    /// `is_path_placeholder` is false for both paths below, so check.py checks them as paths.
+    #[test]
+    fn capitals_newer_than_unicode_16_make_type_names() {
+        assert!(is_path_placeholder("scripts/\u{A7CE}"));
+        assert!(is_path_placeholder("kernel/src/a\u{A7CE}b"));
+        assert_eq!("\u{A7CE}".to_lowercase(), "\u{A7CF}");
     }
 
     #[test]

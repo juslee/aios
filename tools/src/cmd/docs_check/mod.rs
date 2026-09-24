@@ -29,11 +29,11 @@
 //! used to be rejected as an unknown flag. CPython 3.14's argparse also takes as the
 //! path any value that starts with `-<digit>` or `-.<digit>` (`-.5`, `-1e`, `-2x.json`),
 //! or that starts with `-` and contains a space (`-x y`); aios rejects those as an
-//! unexpected argument and exits 2 where check.py runs and exits 0 or 1. A non-UTF-8
-//! `--baseline` value is the same: check.py takes it through surrogateescape and runs,
-//! clap exits 2. The `--baseline=<value>` form behaves the same in both tools.
-//! (`allow_hyphen_values` would close the dash cases but also accept `--baseline --all`,
-//! which argparse rejects.)
+//! unexpected argument and exits 2 where check.py runs and exits 0 or 1; the
+//! `--baseline=<value>` form accepts every dash-leading value in both tools. A non-UTF-8
+//! `--baseline` value diverges in either form: check.py takes it through surrogateescape
+//! and runs, clap exits 2. (`allow_hyphen_values` would close the dash cases but also
+//! accept `--baseline --all`, which argparse rejects.)
 
 pub mod checks;
 pub mod markdown;

@@ -13,7 +13,12 @@
 //! Python's `\d` (and `int()`) would; `\b` (`MILESTONE_HEADING_RE`,
 //! `PRIVATE_ATTR_RE`, `RECIPE_RE`) and `\s` (`ANCHOR_ID_RE`) use the `regex`
 //! crate's Unicode word/space classes, differing from Python's `re` at the same
-//! edges markdown.rs documents. A `rel` with an embedded NUL makes `exists`
+//! edges markdown.rs documents. `slug_set` lowercases `<a name|id>` ids with
+//! `str::to_lowercase`, which reads Rust std's Unicode 18.0 case tables (CPython
+//! 3.14: 16.0), so an id containing a capital assigned after Unicode 16 (for
+//! example U+A7CE) also answers its lowercase (U+A7CF) here, where check.py's
+//! `str.lower()` leaves it unchanged; markdown.rs lists the affected code
+//! points. A `rel` with an embedded NUL makes `exists`
 //! treat the unresolvable component as simply missing, where CPython's
 //! `os.path.realpath` raises `ValueError` and check.py exits 2; `run_git`
 //! decodes `git`'s non-UTF-8 stderr lossily only when it builds the

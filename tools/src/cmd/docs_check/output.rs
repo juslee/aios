@@ -4,8 +4,11 @@
 //!
 //! Each renderer returns check.py's bytes. `render_text` and `render_json` return
 //! them without the final newline that Python's `print` adds; the caller adds it.
-//! The exception is a non-string `reason` from a hand-edited baseline: its
-//! rendering follows serde_json, not Python (listed in the `model` module doc).
+//! The exceptions come from a hand-edited baseline, and the `model` module doc
+//! lists both: a non-string `reason`, whose rendering follows serde_json, not
+//! Python; and a baselined `count` beyond `i64`, printed saturated to
+//! `i64::MAX` or `i64::MIN` in the prune and grown notes and in `--json`'s
+//! `baseline` and `baseline_count` fields, where Python prints the exact integer.
 
 use std::collections::BTreeMap;
 

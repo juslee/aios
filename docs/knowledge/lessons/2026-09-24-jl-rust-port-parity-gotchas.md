@@ -16,7 +16,7 @@ The checks themselves took little effort. The effort went into three places:
 - Regex features that the Rust `regex` crate lacks or treats differently.
 - The shim's freshness test.
 
-Every task passed a per-task review. Even so, reviews of five of the fifteen tasks each found a divergence from `check.py` that was reachable in practice but not listed in the module docs, and a whole-branch review found three more.
+Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-task review. Even so, reviews of five of them each found a divergence from `check.py` that was reachable in practice but not listed in the module docs, and a whole-branch review found three more.
 
 ## Why it happened
 

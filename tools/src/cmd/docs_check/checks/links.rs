@@ -16,6 +16,11 @@
 //! Accepted divergences from check.py (Unicode edge cases that no tracked file exercises):
 //! the shared link regexes and the hub marker `Part of:\s*[...]` use Rust's `\s`, which
 //! lacks U+001C..U+001F, and `[0-9]` where Python's `\d` also accepts non-ASCII digits.
+//! `anchors`' fragment and `wiki-links`' note keys, vault names and vault paths are
+//! lowercased with `str::to_lowercase`, which reads Rust std's Unicode 18.0 case tables
+//! (CPython 3.14: 16.0), so they match across a case pair assigned after Unicode 16 (for
+//! example U+A7CE and U+A7CF) where check.py reports a finding; the `markdown` module doc
+//! lists the 48 affected code points.
 
 use std::collections::{BTreeSet, HashSet};
 
