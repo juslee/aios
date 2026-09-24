@@ -165,7 +165,9 @@ All loop behaviour, prompts, config and evals are unchanged.
 ## Open Questions
 
 - The exact permission-rule syntax that anchors `Edit(...)`/`Write(...)` ask rules to `tools/src/cmd/guard/**` in the project settings, and whether headless `claude -p` turns those asks into refusals. To be verified in R1 with a one-call check.
+  - **R1 answer (anchored form):** `Edit(/tools/src/cmd/guard/**)` and `Write(/tools/src/cmd/guard/**)` match, a leading `/` being relative to the project root (the directory that holds `.claude/`), and headless `claude -p` turns the ask into a refusal (probe: guarded file unchanged, one denial each for `Edit` and `Write`, an unguarded control edit applied). `.claude/settings.json` has these rules for `guard` and `loop`.
 - Whether `default-members` exclusion keeps `cargo build --target aarch64-unknown-none` and the kernel CI jobs from trying to build the host crate for the bare-metal target. To be verified in R1.
+  - **R1 answer:** yes. With `default-members = ["kernel", "shared"]`, `cargo build --target aarch64-unknown-none -v` compiles nothing from `aios-tools`; the kernel CI jobs call recipes that build the default members or name a package with `-p`; `just test`, the only `--workspace` recipe, excludes `aios-tools`.
 
 ## References
 
