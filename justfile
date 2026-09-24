@@ -147,11 +147,17 @@ test:
 
 # The binary takes the build's start time: a no-op build is marked fresh for the
 # shim, and a file edited during the build stays newer, so the next call rebuilds.
+# Each build has its own stamp file, so overlapping builds (a background prebuild
+# and a foreground rebuild) never give one binary the other build's start time.
 # Build the host tools binary target/tools/release/aios (run through .claude/hooks/aios)
 tools:
-    mkdir -p target/tools && touch target/tools/.build-start
+    #!/bin/sh
+    set -eu
+    mkdir -p target/tools
+    stamp=$(mktemp target/tools/.build-start.XXXXXX)
+    trap 'rm -f "$stamp"' EXIT
     cargo build --release -p aios-tools --target-dir target/tools
-    touch -r target/tools/.build-start target/tools/release/aios
+    touch -r "$stamp" target/tools/release/aios
 
 # Run clippy with deny warnings (kernel and stub targets, plus the host tools crate)
 clippy:

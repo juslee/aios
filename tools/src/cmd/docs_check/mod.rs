@@ -10,6 +10,16 @@
 //! supported invocation; the parity goldens run check.py from inside each materialized
 //! repository for the same reason.
 //!
+//! Two more divergences need unusual directory names. check.py decodes
+//! `git rev-parse --show-toplevel` with `text=True` (L1578), whose universal-newline
+//! translation turns a carriage return inside the root's path into a newline: for such
+//! a root check.py builds a path that does not exist and exits 2, where `repo_root`
+//! keeps the bytes and aios checks the real root (exit 0 or 1). And `run_with` needs the
+//! working directory's path as UTF-8 (for `paths::relpath`) and exits 2 when it is not,
+//! where check.py does not read the working directory in the default case (the root
+//! comes from `__file__`, L1577, and L1612's `relpath` of two absolute paths does not
+//! consult it) and runs.
+//!
 //! CLI parsing divergences (argparse vs clap; verified against check.py at 33c6b3d): a
 //! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),
 //! where clap accepts it as the end of options and `aios docs-check` runs normally; and

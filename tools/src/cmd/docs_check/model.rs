@@ -28,9 +28,12 @@
 //!   float, bool or null: the L1411 dict comprehension takes any hashable key);
 //!   and JSON text that serde_json rejects but CPython's `json` accepts, namely
 //!   `NaN`, `Infinity` and `-Infinity` literals, lone-surrogate escapes such as
-//!   `\ud800`, nesting 128 or more levels deep, and numbers beyond f64's range
-//!   such as `1e400` (CPython parses it as `float('inf')`). `harness.rs` lists
-//!   the same serde_json set for plugin.json.
+//!   `\ud800`, nesting from 128 levels up to CPython's C-stack limit (about
+//!   150,000 levels with CPython 3.14), and numbers beyond f64's range such as
+//!   `1e400` (CPython parses it as `float('inf')`). `harness.rs` lists the same
+//!   serde_json set for plugin.json. Past that nesting limit, CPython's
+//!   `json.load` (L1405) raises RecursionError, which L1408 does not catch, so
+//!   check.py also exits 2, through `__main__`; only the stderr differs.
 //! - A hashable non-string `check` (a number, `true`/`false` or `null`) passes
 //!   check.py's `--update-baseline` (L1619 only tests `not in ran`), where
 //!   `render_baseline` here requires every entry's `check` to be a string and
