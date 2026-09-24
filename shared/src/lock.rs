@@ -8,7 +8,8 @@
 //!   beside a spin flag cannot be kept consistent: clearing it before the
 //!   unlock lets a tick see "held, no owner", and clearing it after the unlock
 //!   can leave a stale owner behind another CPU's acquisition.
-//! - [`classify`]: what a contended acquirer learns from the stamp.
+//! - [`classify`]: what a contended acquirer (the waiter) learns from the
+//!   holder's stamp and its own.
 //! - [`read_stamp`]: a `(cpu, switch generation)` pair taken without masking IRQs.
 //! - [`StampedLock`] / [`StampedGuard`]: the lock itself, with a [`PreRelease`]
 //!   hook so the kernel clears its diagnostic holder fields before the unlock.
@@ -30,22 +31,59 @@
 //!
 //! # What the stamp proves
 //!
-//! The kernel keeps a per-CPU switch generation, `SWITCH_GEN[c]`. [`classify`]
-//! reports [`Contention::Reentry`] only when the owner CPU is the caller's CPU
-//! and the owner generation equals `SWITCH_GEN[caller cpu]`. That verdict has
-//! no false positives provided the kernel keeps two rules:
+//! The kernel keeps a per-CPU switch generation, `SWITCH_GEN[c]`, bumped each
+//! time CPU c dispatches a thread. A generation `(c, g)` names one stream: the
+//! thread dispatched on c in generation g, with the IRQ handlers nested on its
+//! stack.
+//!
+//! The waiter passes [`classify`] the lock word and its own stamp `(c, g)`,
+//! the one its failed CAS used. [`classify`] reports [`Contention::Reentry`]
+//! only when the word holds a stamp for the same `(c, g)` and `SWITCH_GEN[c]`,
+//! read after the word was loaded, still equals g. That verdict has no false
+//! positives provided the kernel keeps three rules:
 //!
 //! - (a) every `restore_context` on CPU c is preceded, on c with IRQs masked,
 //!   by a bump of `SWITCH_GEN[c]` (c read from MPIDR);
 //! - (b) the dispatching stream releases every guard it took after that bump
-//!   before it calls `restore_context`.
+//!   before it calls `restore_context`;
+//! - (c) a thread's execution is ordered across a switch: everything the CPU
+//!   that switched it out did before the switch, including the bump in (a),
+//!   happens before the thread's next instruction on any CPU. The scheduler
+//!   needs this anyway to resume a thread from its saved context. Until the
+//!   crash fix adds the `on_cpu` handshake (crash-fix ADR, F4), a thread
+//!   published before its save completes can resume from a stale context,
+//!   and then no invariant of that thread holds, this one included.
 //!
-//! Under (a) a thread that leaves CPU c, for any reason, leaves `SWITCH_GEN[c]`
-//! changed behind it, and so does a thread that comes back to c. A stamp that
-//! still matches therefore names the stream running on c now. A stale stamp
-//! (taken before a switch the stamping code did not see) only ever errs
-//! towards [`Contention::PreemptedHolder`] or [`Contention::OtherCpuSwitched`],
-//! which are counted and never panic.
+//! The argument:
+//!
+//! 1. Under (a), a stream that leaves CPU c, for any reason, leaves
+//!    `SWITCH_GEN[c]` changed behind it, and so does a thread that comes back
+//!    to c. A generation never recurs (up to the 54-bit wrap).
+//! 2. A stamp from [`read_stamp`], or from MPIDR and `SWITCH_GEN` with IRQs
+//!    masked, names either the stamping stream's own current generation or
+//!    one that had already ended when the stamp was taken. This holds for the
+//!    holder's stamp and for the waiter's.
+//! 3. The waiter's own stamp alone is not enough: with IRQs on it can be
+//!    switched out or moved to another CPU at any instruction, after which
+//!    another stream owns c. The check of `SWITCH_GEN[c]` after the word load
+//!    catches this. A waiter still on c reads its own CPU's latest bump, and
+//!    under (c) a waiter that moved sees the bump its old CPU made when it
+//!    left. So if the check passes, the waiter is still the stream of
+//!    `(c, g)`.
+//! 4. A holder stamp for a generation that ended before the holder stored it
+//!    cannot match a generation the waiter is still in when it loads that
+//!    store. So the holder is the waiter's own stream: its own thread earlier
+//!    in the same generation, or the thread an IRQ waiter interrupted. The
+//!    only other code that runs on c in generation g is the dispatch that
+//!    started it, which (b) makes release its guards first.
+//!
+//! Stale stamps, on either side, only ever produce
+//! [`Contention::PreemptedHolder`], [`Contention::OtherCpu`] or
+//! [`Contention::OtherCpuSwitched`], which are counted and never panic. A
+//! waiter whose own generation has ended gets one of the other-CPU verdicts:
+//! it has been switched out or moved since it stamped, so the CPU in its
+//! stamp says nothing about where it runs now. Only a waiter with IRQs on can
+//! be in that state; with IRQs masked its stamp stays current.
 //!
 //! # Holder fields (the kernel's [`PreRelease`] hook)
 //!
@@ -67,7 +105,7 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
 use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{fence, AtomicU64, Ordering};
+use core::sync::atomic::{compiler_fence, fence, AtomicU64, Ordering};
 
 /// "No thread" in thread-id fields.
 ///
@@ -164,6 +202,25 @@ impl OwnerStamp {
 ///
 /// The kernel reads MPIDR_EL1 Aff0 and its per-CPU `SWITCH_GEN` array; tests
 /// supply scripted models. Neither method may panic, for any argument.
+///
+/// [`read_stamp`] and [`classify`] are sound only if every call reads the
+/// machine afresh, in the program order the caller issues the calls:
+///
+/// - `cpu()` must read the CPU on every call. The kernel's MPIDR `asm!` must
+///   use none of `options(pure)`, `nomem` or `readonly`. `pure` lets the
+///   compiler merge the two CPU reads in [`read_stamp`] into one, and `nomem`
+///   or `readonly` let it move the generation load across a CPU read. Without
+///   them the `asm!` may access any memory, so it is a compiler barrier that
+///   keeps the three reads in order. The kernel's existing `core_id()` is
+///   `nomem` and does not qualify.
+/// - `switch_gen()` must be a fresh atomic load of `SWITCH_GEN[cpu]` on every
+///   call, never a cached value.
+///
+/// The hardware may still execute these reads out of order. That is harmless,
+/// because a running thread moves between CPUs only through an IRQ, and an IRQ
+/// is taken precisely: every read after it in program order sees the machine
+/// as it is after the IRQ. The compiler does not see IRQs, so it is the
+/// compiler that must keep the reads in order.
 pub trait CpuView {
     /// The CPU the caller runs on now.
     fn cpu(&self) -> u8;
@@ -176,49 +233,85 @@ pub trait CpuView {
 pub enum Contention {
     /// The word is 0: nobody holds the lock.
     Free,
-    /// Another CPU's stamp, and that CPU has not dispatched since: the holder
-    /// is most likely running there.
+    /// Another CPU's stamp (or the waiter has left the generation it
+    /// stamped), and the holder's CPU has not dispatched since the holder
+    /// stamped: the holder is most likely running there.
     OtherCpu,
-    /// Another CPU's stamp, and that CPU has dispatched since: the holder was
-    /// switched out and may be running anywhere, including on this CPU.
+    /// As [`Contention::OtherCpu`], but the holder's CPU has dispatched since:
+    /// the holder was switched out and may be running anywhere, including on
+    /// the waiter's CPU.
     OtherCpuSwitched,
-    /// This CPU's stamp and generation: the holder is the stream this CPU is
-    /// running now, so waiting can never succeed.
+    /// The holder's stamp is the waiter's own CPU and generation, and that
+    /// generation is still current: the holder is the stream the waiter runs
+    /// in, so waiting can never succeed.
     Reentry,
-    /// This CPU's stamp from an earlier generation: the holder was switched
-    /// out on this CPU. It may have been resumed since, here or elsewhere.
+    /// The holder stamped the waiter's CPU in an earlier generation, and the
+    /// waiter is still in its own: the holder was switched out on this CPU.
+    /// It may have been resumed since, here or elsewhere.
     PreemptedHolder,
 }
 
-/// Classify an observed lock word for a caller on `cpu`.
+/// Classify an observed lock word for a waiter whose own stamp is `me`.
 ///
-/// IRQS_ON is ignored. Only [`Contention::Reentry`] is proof of a same-stream
-/// deadlock (see the module documentation for the kernel rules it rests on).
-/// The Reentry test reads only the word and `v.switch_gen(cpu)`; the other
-/// CPU's generation read in the other-CPU arms only splits a count.
+/// `me` is the stamp the waiter took before it loaded `observed`, usually the
+/// one its failed CAS used: from [`read_stamp`] with IRQs on, or from MPIDR
+/// and `SWITCH_GEN` with IRQs masked. A waiter with IRQs on can be switched
+/// out or moved at any instruction, so it takes a fresh stamp before each
+/// word load it classifies. IRQS_ON is ignored in both stamps.
+///
+/// Reads `v.switch_gen(owner cpu)` once, after `observed` was loaded:
+///
+/// - The owner's CPU is `me`'s, and `me`'s generation is still current there
+///   (the waiter has not left it): [`Contention::Reentry`] if the owner's
+///   generation is `me`'s too, otherwise [`Contention::PreemptedHolder`].
+/// - Otherwise (another CPU, or a waiter that has left the generation it
+///   stamped): [`Contention::OtherCpu`] if the owner's CPU is still in the
+///   generation the owner stamped, otherwise [`Contention::OtherCpuSwitched`].
+///
+/// Only Reentry is proof of a same-stream deadlock. The module documentation
+/// gives the kernel rules it rests on.
 #[inline]
-pub fn classify(observed: u64, cpu: u8, v: &impl CpuView) -> Contention {
+pub fn classify(observed: u64, me: OwnerStamp, v: &impl CpuView) -> Contention {
     let Some(owner) = OwnerStamp::from_word(observed) else {
         return Contention::Free;
     };
+    // The generation must be read after the caller's load of `observed`: if
+    // the waiter is switched out between the two, a read placed before the
+    // load could still show the generation the waiter has left. The hardware
+    // cannot reorder the two across the IRQ that switches it (IRQs are taken
+    // precisely), so only the compiler has to be stopped, and this fence
+    // emits no instruction.
+    compiler_fence(Ordering::Acquire);
     let owner_cpu = owner.cpu();
-    let unswitched = owner.gen_matches(v.switch_gen(owner_cpu));
-    match (owner_cpu == cpu, unswitched) {
-        (true, true) => Contention::Reentry,
-        (true, false) => Contention::PreemptedHolder,
-        (false, true) => Contention::OtherCpu,
-        (false, false) => Contention::OtherCpuSwitched,
+    let now = v.switch_gen(owner_cpu);
+    let owner_current = owner.gen_matches(now);
+    if owner_cpu == me.cpu() && me.gen_matches(now) {
+        if owner_current {
+            Contention::Reentry
+        } else {
+            Contention::PreemptedHolder
+        }
+    } else if owner_current {
+        Contention::OtherCpu
+    } else {
+        Contention::OtherCpuSwitched
     }
 }
 
 /// Read `(cpu, SWITCH_GEN[cpu])` without masking IRQs.
 ///
 /// Reads the CPU, that CPU's generation, then the CPU again, and retries until
-/// both CPU reads agree. If the thread was switched between the generation
-/// read and the second CPU read, it came back to the same CPU through a
-/// dispatch that bumped the generation, so the pair is stale and can only
-/// classify [`Contention::PreemptedHolder`] or [`Contention::OtherCpuSwitched`],
-/// never [`Contention::Reentry`].
+/// both CPU reads agree. The three reads must stay in that program order, and
+/// each must read the machine afresh (see [`CpuView`]). Merging or dropping
+/// the second CPU read, or moving the generation read after it, loses the
+/// check.
+///
+/// The pair names either the caller's own current generation or one that had
+/// already ended by the second CPU read. If the caller left the CPU after the
+/// generation read, or made that read while away, the dispatch that brought
+/// it back bumped the generation after the read. A stale pair never
+/// classifies [`Contention::Reentry`], neither as a holder's stamp nor as a
+/// waiter's (see [`classify`]).
 #[inline]
 pub fn read_stamp(v: &impl CpuView) -> (u8, u64) {
     loop {
@@ -530,6 +623,12 @@ mod tests {
         }
     }
 
+    /// The stamp of a waiter on `cpu` with IRQs masked (an IRQ handler, say).
+    /// It cannot be switched while it classifies, so its stamp is current.
+    fn masked_stamp(cpu: u8, gens: [u64; 2]) -> OwnerStamp {
+        OwnerStamp::new(cpu, gens[usize::from(cpu)], false)
+    }
+
     /// Kernel-style holder fields: a thread id cleared before release.
     struct Holder {
         tid: AtomicU32,
@@ -624,34 +723,46 @@ mod tests {
     fn classify_table() {
         use Contention::*;
         let gens = [10, 20, 30, OwnerStamp::GEN_MASK + 1 + 40];
-        // (owner cpu, owner gen, caller cpu, expected)
-        let rows: [(u8, u64, u8, Contention); 10] = [
-            (1, 20, 1, Reentry),
-            (1, 19, 1, PreemptedHolder),
-            (1, 21, 1, PreemptedHolder),
-            (2, 30, 1, OtherCpu),
-            (2, 29, 1, OtherCpuSwitched),
-            (0, 10, 3, OtherCpu),
+        // (owner cpu, owner gen, waiter cpu, waiter gen, expected)
+        let rows: [(u8, u64, u8, u64, Contention); 16] = [
+            // A waiter still in the generation it stamped.
+            (1, 20, 1, 20, Reentry),
+            (1, 19, 1, 20, PreemptedHolder),
+            (1, 21, 1, 20, PreemptedHolder),
+            (2, 30, 1, 20, OtherCpu),
+            (2, 29, 1, 20, OtherCpuSwitched),
+            (0, 10, 3, 40, OtherCpu),
             // Generations compare after truncation to 54 bits.
-            (3, 40, 3, Reentry),
-            (3, 40, 0, OtherCpu),
+            (3, 40, 3, 40, Reentry),
+            (3, 40, 0, 10, OtherCpu),
             // An owner CPU the view has no generation for.
-            (200, 0, 1, OtherCpuSwitched),
-            (0, 11, 0, PreemptedHolder),
+            (200, 0, 1, 20, OtherCpuSwitched),
+            (0, 11, 0, 10, PreemptedHolder),
+            // A waiter that stamped generation 19 on CPU 1 and has left it
+            // (switched out, or moved): never a same-CPU verdict. The first
+            // row is a holder that CPU 1 runs now, after the waiter left.
+            (1, 20, 1, 19, OtherCpu),
+            (1, 19, 1, 19, OtherCpuSwitched),
+            (1, 18, 1, 19, OtherCpuSwitched),
+            (2, 30, 1, 19, OtherCpu),
+            (2, 29, 1, 19, OtherCpuSwitched),
+            (200, 0, 200, 0, OtherCpuSwitched),
         ];
-        for (owner_cpu, owner_gen, caller, expected) in rows {
+        for (owner_cpu, owner_gen, me_cpu, me_gen, expected) in rows {
             for irqs_on in [false, true] {
                 let word = OwnerStamp::new(owner_cpu, owner_gen, irqs_on).word();
-                let v = FixedView { cpu: caller, gens };
+                let me = OwnerStamp::new(me_cpu, me_gen, !irqs_on);
+                let v = FixedView { cpu: me_cpu, gens };
                 assert_eq!(
-                    classify(word, caller, &v),
+                    classify(word, me, &v),
                     expected,
-                    "owner ({owner_cpu}, {owner_gen}) irqs_on={irqs_on} caller {caller}"
+                    "owner ({owner_cpu}, {owner_gen}) waiter ({me_cpu}, {me_gen}) irqs_on={irqs_on}"
                 );
             }
         }
-        for caller in 0..4 {
-            assert_eq!(classify(0, caller, &FixedView { cpu: caller, gens }), Free);
+        for cpu in 0..4u8 {
+            let me = OwnerStamp::new(cpu, gens[usize::from(cpu)], false);
+            assert_eq!(classify(0, me, &FixedView { cpu, gens }), Free);
         }
     }
 
@@ -659,20 +770,36 @@ mod tests {
     fn classify_ignores_irqs_on() {
         let v = view(0, [5, 6]);
         for (cpu, gen) in [(0u8, 5u64), (0, 4), (1, 6), (1, 7)] {
-            let off = OwnerStamp::new(cpu, gen, false).word();
-            let on = OwnerStamp::new(cpu, gen, true).word();
-            assert_eq!(classify(off, 0, &v), classify(on, 0, &v));
+            for (me_cpu, me_gen) in [(0u8, 5u64), (0, 4), (1, 6)] {
+                let base = classify(
+                    OwnerStamp::new(cpu, gen, false).word(),
+                    OwnerStamp::new(me_cpu, me_gen, false),
+                    &v,
+                );
+                for (owner_on, me_on) in [(false, true), (true, false), (true, true)] {
+                    let verdict = classify(
+                        OwnerStamp::new(cpu, gen, owner_on).word(),
+                        OwnerStamp::new(me_cpu, me_gen, me_on),
+                        &v,
+                    );
+                    assert_eq!(
+                        verdict, base,
+                        "owner ({cpu}, {gen}) waiter ({me_cpu}, {me_gen})"
+                    );
+                }
+            }
         }
     }
 
-    // -- read_stamp, exhaustive over 2 CPUs x 0-2 switch events ---------------
+    // -- read_stamp and classify, exhaustive over 2 CPUs x 0-2 switch events --
 
     /// One thread on a 2-CPU machine, moved by switch events scripted by read
     /// number (read 0: first CPU read, 1: generation read, 2: second CPU read).
     ///
     /// A switch follows kernel rule (a): when the thread leaves CPU `old`,
     /// `old` dispatches another thread (`SWITCH_GEN[old] += 1`), and when the
-    /// thread resumes on `to`, `to` dispatches it (`SWITCH_GEN[to] += 1`).
+    /// thread resumes on `to`, `to` dispatches it (`SWITCH_GEN[to] += 1`). So
+    /// the thread's current generation is always `SWITCH_GEN[on]`.
     struct Machine {
         on: Cell<u8>,
         gens: [Cell<u64>; 2],
@@ -682,11 +809,14 @@ mod tests {
         switches_at_gen_read: Cell<u32>,
     }
 
+    /// The generations a [`Machine`] starts with.
+    const START_GENS: [u64; 2] = [100, 200];
+
     impl Machine {
         fn new(start: u8, script: [&'static [u8]; 3]) -> Self {
             Self {
                 on: Cell::new(start),
-                gens: [Cell::new(100), Cell::new(200)],
+                gens: START_GENS.map(Cell::new),
                 switches: Cell::new(0),
                 reads: Cell::new(0),
                 script,
@@ -733,6 +863,9 @@ mod tests {
 
     const SEQS: [&[u8]; 7] = [&[], &[0], &[1], &[0, 0], &[0, 1], &[1, 0], &[1, 1]];
 
+    /// Holder side: a thread takes its stamp with `read_stamp` while being
+    /// moved, keeps moving, and IRQ waiters (IRQs masked) on either CPU judge
+    /// the stamp.
     #[test]
     fn read_stamp_is_reentry_only_while_unswitched_on_its_cpu() {
         let mut cases = 0;
@@ -754,11 +887,12 @@ mod tests {
                         // that read_stamp returned.
                         let switched = m.switches.get() - m.switches_at_gen_read.get();
                         let here = m.on.get();
+                        let gens = m.gens_now();
                         for irqs_on in [false, true] {
                             let word = OwnerStamp::new(cpu, gen, irqs_on).word();
                             for observer in 0..2u8 {
-                                let verdict =
-                                    classify(word, observer, &view(observer, m.gens_now()));
+                                let me = masked_stamp(observer, gens);
+                                let verdict = classify(word, me, &view(observer, gens));
                                 // The stream on `here` is the holder itself
                                 // (an IRQ interrupting it); any other CPU runs
                                 // another stream.
@@ -787,7 +921,110 @@ mod tests {
         assert!(retried > 0, "the CPU-mismatch retry path was never taken");
     }
 
-    // -- Interleaving model: preemption and migration of a holder -----------
+    /// Waiter side: a waiter with IRQs on takes its stamp with `read_stamp`
+    /// while being moved, may be moved again before it loads the word and
+    /// again before `classify` reads the generation, and meanwhile any stream
+    /// on either CPU may have stamped the lock, including the thread that
+    /// runs on the CPU the waiter left.
+    ///
+    /// The waiter's own stream is the thread on `here` in generation
+    /// `gens[here]`. Only a stamp naming that stream may classify Reentry, and
+    /// a waiter that was never moved must see it as Reentry. A stamp from the
+    /// waiter's own earlier generation is not Reentry either: it cannot be
+    /// told from another thread's stale stamp, and the kernel's holder-tid
+    /// check covers that case. A stamp from another CPU than the one the
+    /// waiter is on now must get the other-CPU verdict its generation calls
+    /// for.
+    #[test]
+    fn waiter_that_moved_is_never_reentry() {
+        use Contention::*;
+        // Every sequence in every position on the host. Miri adds no check to
+        // this safe, single-threaded model and runs it thousands of times
+        // slower, so under Miri each position moves the waiter at most once.
+        #[cfg(not(miri))]
+        const MOVES: [&[u8]; 7] = SEQS;
+        #[cfg(miri)]
+        const MOVES: [&[u8]; 3] = [&[], &[0], &[1]];
+
+        let mut cases = 0usize;
+        let mut reentries = 0usize;
+        let mut left_behind = 0usize;
+        for start in 0..2u8 {
+            for before_gen in MOVES {
+                for before_cpu2 in MOVES {
+                    for before_load in MOVES {
+                        for before_check in MOVES {
+                            let m = Machine::new(start, [&[], before_gen, before_cpu2]);
+                            let (cpu, gen) = read_stamp(&m);
+                            let me = OwnerStamp::new(cpu, gen, true);
+                            for &to in before_load {
+                                m.switch_to(to);
+                            }
+                            // The waiter loads the word here. A holder can have
+                            // stamped any generation of either CPU up to now;
+                            // one more stands for a generation not yet begun.
+                            let at_load = m.gens_now();
+                            for &to in before_check {
+                                m.switch_to(to);
+                            }
+                            // classify reads the generation here.
+                            let (here, gens) = (m.on.get(), m.gens_now());
+                            let never_moved = before_gen.is_empty()
+                                && before_cpu2.is_empty()
+                                && before_load.is_empty()
+                                && before_check.is_empty();
+                            for owner_cpu in 0..2u8 {
+                                let k = usize::from(owner_cpu);
+                                for owner_gen in START_GENS[k] - 1..=at_load[k] + 1 {
+                                    let word = OwnerStamp::new(owner_cpu, owner_gen, true).word();
+                                    let verdict = classify(word, me, &view(here, gens));
+                                    let current = owner_gen == gens[k];
+                                    let names_waiter = owner_cpu == here && current;
+                                    let ctx = (
+                                        start,
+                                        before_gen,
+                                        before_cpu2,
+                                        before_load,
+                                        before_check,
+                                        owner_cpu,
+                                        owner_gen,
+                                    );
+                                    if verdict == Reentry {
+                                        assert!(names_waiter, "false Reentry: {ctx:?}");
+                                        reentries += 1;
+                                    }
+                                    if owner_cpu != here {
+                                        let expected =
+                                            if current { OtherCpu } else { OtherCpuSwitched };
+                                        assert_eq!(verdict, expected, "{ctx:?}");
+                                        if owner_cpu == cpu && current {
+                                            // The waiter stamped on this CPU
+                                            // and left it; the stream there
+                                            // now holds the lock.
+                                            left_behind += 1;
+                                        }
+                                    } else if never_moved {
+                                        let expected =
+                                            if current { Reentry } else { PreemptedHolder };
+                                        assert_eq!(verdict, expected, "missed: {ctx:?}");
+                                    }
+                                    cases += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases >= 2 * MOVES.len().pow(4) * 6, "cases: {cases}");
+        assert!(reentries > 0, "no stamp ever classified Reentry");
+        assert!(
+            left_behind > 0,
+            "no waiter left a holder behind on its old CPU"
+        );
+    }
+
+    // -- Interleaving models ----------------------------------------------
 
     #[test]
     fn preempted_holder_migrated_to_other_cpu_is_never_reentry() {
@@ -799,32 +1036,103 @@ mod tests {
         let (cpu, gen) = read_stamp(&view(c, gens));
         let s = OwnerStamp::new(cpu, gen, true).word();
         // An IRQ on c interrupting H re-enters: Reentry.
-        assert_eq!(classify(s, c, &view(c, gens)), Reentry);
-        assert_eq!(classify(s, d, &view(d, gens)), OtherCpu);
+        assert_eq!(classify(s, masked_stamp(c, gens), &view(c, gens)), Reentry);
+        assert_eq!(classify(s, masked_stamp(d, gens), &view(d, gens)), OtherCpu);
 
         // A tick on c preempts H: c dispatches another thread.
         gens[0] += 1;
-        assert_eq!(classify(s, c, &view(c, gens)), PreemptedHolder);
-        assert_eq!(classify(s, d, &view(d, gens)), OtherCpuSwitched);
+        assert_eq!(
+            classify(s, masked_stamp(c, gens), &view(c, gens)),
+            PreemptedHolder
+        );
+        assert_eq!(
+            classify(s, masked_stamp(d, gens), &view(d, gens)),
+            OtherCpuSwitched
+        );
 
         // The balancer migrates H to d, and d dispatches it. H still holds
         // the lock. An IRQ on d that interrupts H and re-enters sees a stamp
         // naming c, which has switched since: OtherCpuSwitched, never Reentry.
         gens[1] += 1;
-        assert_eq!(classify(s, d, &view(d, gens)), OtherCpuSwitched);
+        assert_eq!(
+            classify(s, masked_stamp(d, gens), &view(d, gens)),
+            OtherCpuSwitched
+        );
         for _ in 0..3 {
             gens[0] += 1;
             gens[1] += 1;
-            assert_eq!(classify(s, d, &view(d, gens)), OtherCpuSwitched);
-            assert_eq!(classify(s, c, &view(c, gens)), PreemptedHolder);
+            assert_eq!(
+                classify(s, masked_stamp(d, gens), &view(d, gens)),
+                OtherCpuSwitched
+            );
+            assert_eq!(
+                classify(s, masked_stamp(c, gens), &view(c, gens)),
+                PreemptedHolder
+            );
         }
 
         // Re-stamping on d (the IRQs-on second read_stamp) makes H's own IRQ
         // on d a Reentry again.
         let (cpu, gen) = read_stamp(&view(d, gens));
         let s2 = OwnerStamp::new(cpu, gen, true).word();
-        assert_eq!(classify(s2, d, &view(d, gens)), Reentry);
-        assert_eq!(classify(s2, c, &view(c, gens)), OtherCpu);
+        assert_eq!(classify(s2, masked_stamp(d, gens), &view(d, gens)), Reentry);
+        assert_eq!(
+            classify(s2, masked_stamp(c, gens), &view(c, gens)),
+            OtherCpu
+        );
+    }
+
+    #[test]
+    fn waiter_moved_off_the_holders_cpu_is_other_cpu() {
+        use Contention::*;
+        let mut gens = [7u64, 3];
+
+        // Thread T on CPU 0 takes its stamp and fails to get the lock.
+        let (cpu, gen) = read_stamp(&view(0, gens));
+        let t = OwnerStamp::new(cpu, gen, true);
+        // T is preempted and moved: CPU 0 dispatches H, CPU 1 dispatches T.
+        gens[0] += 1;
+        gens[1] += 1;
+        // H takes the lock on CPU 0. T, now on CPU 1, loads the word and
+        // classifies it with the stamp it took on CPU 0. H is running on
+        // CPU 0: OtherCpu, not Reentry.
+        let h = OwnerStamp::new(0, gens[0], true).word();
+        assert_eq!(classify(h, t, &view(1, gens)), OtherCpu);
+        // A fresh stamp on CPU 1 gives the same verdict.
+        let (cpu, gen) = read_stamp(&view(1, gens));
+        let fresh = OwnerStamp::new(cpu, gen, true);
+        assert_eq!(classify(h, fresh, &view(1, gens)), OtherCpu);
+        // H is preempted on CPU 0: OtherCpuSwitched with either stamp.
+        gens[0] += 1;
+        assert_eq!(classify(h, t, &view(1, gens)), OtherCpuSwitched);
+        assert_eq!(classify(h, fresh, &view(1, gens)), OtherCpuSwitched);
+    }
+
+    #[test]
+    fn stale_waiter_stamp_matching_a_preempted_holder_is_not_reentry() {
+        use Contention::*;
+        // The waiter W starts on CPU 0 in generation 100. It moves to CPU 1
+        // before its generation read, which then returns 101: the generation
+        // of thread X, which CPU 0 dispatched when W left. W moves back to
+        // CPU 0 (generation 102) before its second CPU read, so read_stamp
+        // returns the stale pair (0, 101).
+        let m = Machine::new(0, [&[], &[1], &[0]]);
+        let (cpu, gen) = read_stamp(&m);
+        assert_eq!((cpu, gen), (0, 101));
+        assert_eq!(m.gens_now()[0], 102);
+        let w = OwnerStamp::new(cpu, gen, true);
+        // X took the lock during generation 101 and was preempted when W
+        // came back. Its stamp equals W's stale one, but generation 101 has
+        // ended: not Reentry.
+        let x = OwnerStamp::new(0, 101, true).word();
+        let v = view(0, m.gens_now());
+        assert_eq!(classify(x, w, &v), OtherCpuSwitched);
+        // W's next stamp is current, and names X as a preempted holder.
+        let (cpu, gen) = read_stamp(&v);
+        assert_eq!(
+            classify(x, OwnerStamp::new(cpu, gen, true), &v),
+            PreemptedHolder
+        );
     }
 
     #[test]
@@ -836,7 +1144,10 @@ mod tests {
         let mut gens = [40u64, 0];
         let s = OwnerStamp::new(0, gens[0], false).word();
         gens[0] += 2;
-        assert_eq!(classify(s, 0, &view(0, gens)), Contention::PreemptedHolder);
+        assert_eq!(
+            classify(s, masked_stamp(0, gens), &view(0, gens)),
+            Contention::PreemptedHolder
+        );
     }
 
     // -- StampedLock ---------------------------------------------------------

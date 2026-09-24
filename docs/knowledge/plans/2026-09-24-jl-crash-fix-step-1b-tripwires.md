@@ -94,19 +94,22 @@ I read these ADR sections myself: F1–F8 (lines 137–207), Decision 1 (209–2
 // bit 63 HELD | bit 62 IRQS_ON (DAIF.I clear at acquisition) | bits 54..=61 cpu | bits 0..=53 switch gen
 pub struct OwnerStamp(u64);                      // never 0
 pub enum Contention { Free, OtherCpu, OtherCpuSwitched, Reentry, PreemptedHolder }
-pub fn classify(observed: u64, cpu: u8, v: &impl CpuView) -> Contention; // ignores IRQS_ON
-//   Reentry:          owner cpu == cpu && owner gen == v.switch_gen(cpu)
-//   PreemptedHolder:  owner cpu == cpu && owner gen != v.switch_gen(cpu)
-//   OtherCpu:         owner cpu != cpu && owner gen == v.switch_gen(owner cpu)   (Relaxed; count only)
-//   OtherCpuSwitched: owner cpu != cpu && owner gen != v.switch_gen(owner cpu)
-pub trait CpuView { fn cpu(&self) -> u8; fn switch_gen(&self, cpu: u8) -> u64; }
+pub fn classify(observed: u64, me: OwnerStamp, v: &impl CpuView) -> Contention; // ignores IRQS_ON
+//   me = the waiter's own stamp, taken before `observed` was loaded (the stamp its failed CAS used)
+//   now = v.switch_gen(owner cpu), read once, after the word load
+//   waiter still in its generation: owner cpu == me.cpu && me.gen == now
+//   Reentry:          waiter still in its generation && owner gen == now (so owner == me)
+//   PreemptedHolder:  waiter still in its generation && owner gen != now
+//   OtherCpu:         otherwise, owner gen == now   (count only)
+//   OtherCpuSwitched: otherwise, owner gen != now
+pub trait CpuView { fn cpu(&self) -> u8; fn switch_gen(&self, cpu: u8) -> u64; } // fresh reads, see S2 review
 pub fn read_stamp(v: &impl CpuView) -> (u8, u64); // cpu, gen[cpu], cpu again; retry until equal
 pub struct StampedLock<T> { word: AtomicU64, data: UnsafeCell<T> }
 pub enum LockClass { ThreadTable, CurrentThread, RunQueues, WakeupErrors, TimeoutQueue,
                      NotifyDeadlines, NotificationTable, SelectWaiters, BootLog } // COUNT=9
 pub const TID_NONE: u32 = u32::MAX;
 ```
-One CAS takes the word from 0 to the stamp, and the unlock stores 0 with Release. This is the same read-modify-write and orderings as spin 0.12.3 (`mutex/spin.rs:233-240`), with the same test-and-test-and-set spin, `core::hint::spin_loop()`, and no fairness. The Reentry decision uses only the word and `SWITCH_GEN[this cpu]`. The cross-CPU `switch_gen` read in the other arms only splits a count.
+One CAS takes the word from 0 to the stamp, and the unlock stores 0 with Release. This is the same read-modify-write and orderings as spin 0.12.3 (`mutex/spin.rs:233-240`), with the same test-and-test-and-set spin, `core::hint::spin_loop()`, and no fairness. The Reentry decision uses the word, the waiter's own stamp and `SWITCH_GEN[stamp cpu]` read after the word load. A waiter with IRQs on can be moved between taking its stamp and classifying, so its CPU alone proves nothing (S2 review). The cross-CPU `switch_gen` read in the other arms only splits a count.
 
 **Kernel wrapper fields:**
 - `inner: StampedLock<T>`
@@ -127,14 +130,15 @@ One CAS takes the word from 0 to the stamp, and the unlock stores 0 with Release
 
 **Stamp accuracy without masking:**
 - *IRQ context or IRQs masked:* read MPIDR Aff0, then `SWITCH_GEN[cpu]`.
-- *IRQs on:* `read_stamp`, then CAS, then store the fields, then `read_stamp` again and `restamp` if it differs. A stale stamp can only err towards PreemptedHolder or OtherCpuSwitched, never towards Reentry.
+- *IRQs on:* `read_stamp`, then CAS, then store the fields, then `read_stamp` again and `restamp` if it differs. A stale stamp, the holder's or the waiter's, can only err towards PreemptedHolder, OtherCpu or OtherCpuSwitched, never towards Reentry.
+- *Waiting with IRQs on:* take a fresh stamp before each word load that is classified, and pass it to `classify`.
 
 **`lock()` (`#[track_caller]`):**
 ```text
 s = stamp_now(); if weak CAS ok → set holder fields → (IRQs on: re-stamp) → guard
 loop:
   w = owner_word(); if w == 0 → retry CAS
-  match classify(w, cpu, gen):
+  match classify(w, s, v):                            // s: the stamp taken before this w was loaded
     Reentry          → reentry_panic(self, w, ctx)      // #[cold] #[inline(never)] #[track_caller] -> !
     PreemptedHolder  → once per call: bump lkph (DAIF.I set) or lkpho (IRQs on) [class];
                        snap = consistent_holder();
@@ -166,11 +170,12 @@ lock re-entry: CURRENT_THREAD[0] on CPU 0 ctx=irq-exit holder=kernel/src/ipc/tim
 - Drop the `const RQ`/`const NONE` items and their `allow`s.
 - Remove `use spin::Mutex;` at `task/mod.rs:10`, `sched/mod.rs:16` and `select.rs:11`. Keep it at `timeout.rs:12` and `notify.rs:13`.
 
-**Soundness statement, documented on the type (L4):** The Reentry test is free of false positives because:
+**Soundness statement, documented on the type (L4, S2 review):** Reentry means the word holds the waiter's own stamp `(c, g)` and `SWITCH_GEN[c]`, read after the word load, is still g. The test is free of false positives because:
 - (a) every `restore_context` on CPU c is preceded, on c with IRQs masked, by `note_dispatch` bumping `SWITCH_GEN[c]`, with c read from MPIDR (5 restores ← 4 commits: `scheduler.rs:84→94`, `:244→280/286`, `direct.rs:153→186`, `:285→312`);
-- (b) the dispatching stream releases every guard it took after that bump before `restore_context`. Those are the temporaries at `scheduler.rs:267`, `direct.rs:178`, `:290` (`enqueue_on_cpu`) and `:305`.
+- (b) the dispatching stream releases every guard it took after that bump before `restore_context`. Those are the temporaries at `scheduler.rs:267`, `direct.rs:178`, `:290` (`enqueue_on_cpu`) and `:305`;
+- (c) a thread's execution is ordered across a switch: whatever the CPU that switched it out did first, including the bump in (a), happens before the thread's next instruction on any CPU. The scheduler needs this anyway to resume a thread from its saved context. A thread resumed before its context was saved (the missing `on_cpu` handshake, ADR H2/F4) breaks this and every other invariant with it.
 
-Guards held by a preempted thread across a switch are expected; they classify PreemptedHolder or OtherCpuSwitched.
+Under (c), a waiter that was switched out or moved after stamping sees `SWITCH_GEN[c]` changed, so the post-load check rules out another thread that now runs on the waiter's old CPU. A waiter whose own generation has ended gets the other-CPU verdicts. Guards held by a preempted thread across a switch are expected; they classify PreemptedHolder, OtherCpu or OtherCpuSwitched.
 
 **(b) is checked at run time, count-only:** `held_by_stream(cpu)` walks the 23 lock words through `for_each_lock_word(|w| …)`. That function takes references to the statics, which are only dereferenced, never compared or published. Any word stamped `(cpu, SWITCH_GEN[cpu])` found immediately before each of the 5 `restore_context` calls bumps `rsthold[cpu]`. Expected: 0. It is not a `debug_assert!`, because the soak build is a dev build and an assert would add a PANIC class.
 
@@ -464,6 +469,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - Codec round-trip.
   - The classify table, including OtherCpu versus OtherCpuSwitched and IRQS_ON ignored.
   - `read_stamp`, exhaustive for 2 CPUs × 0–2 switch events. No stamp can classify Reentry unless the thread is still on c with gen unchanged.
+  - The waiter side, exhaustive (S2 review): the waiter is also moved 0–2 times before its word load and before `classify`'s generation read, against holder stamps for every generation of either CPU, including the thread that now runs on the CPU the waiter left. No false Reentry, no missed Reentry for a waiter that never moved, and exact other-CPU verdicts.
   - An interleaving model of "holder preempted, migrated to d, IRQ on d re-enters": it must classify OtherCpuSwitched, never Reentry.
   - The consistent-snapshot helper (`w1 == w2` rule).
   - A threaded test (4 threads, small N under `cfg(miri)`).
@@ -537,6 +543,11 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - `lktry` > 0 is allowed (the H3 near-miss rate).
   - `llvm-objdump -h` shows the expected layout, and `llvm-nm` shows the image end inside the boot TTBR1's 4×2 MiB.
 - **Docs:** `deadlock-prevention.md` §3.3 note (detect-only type, and the heartbeat CHANNEL_TABLE try-lock exception); CLAUDE.md (Workspace Layout `sync/`, Concurrency); rule 05.
+- **Review checklist (the `shared::lock` contract, S2 review):**
+  - `CpuView::cpu` reads MPIDR with an `asm!` that uses none of `pure`, `nomem` or `readonly`. It is not `exceptions::core_id()`, which is `nomem`. Without those options the `asm!` is a compiler barrier, which keeps the CPU, generation, CPU reads of `read_stamp` fresh and in order.
+  - `CpuView::switch_gen` is a fresh atomic load of `SWITCH_GEN[cpu]`.
+  - `classify(w, s, v)` gets the waiter's own stamp `s`, taken before `w` was loaded: the stamp of the CAS that failed, or with IRQs on a new `read_stamp` after each spin, before the next word load.
+  - The `lkself` compare needs the waiter's own tid. `CURRENT_TID[s.cpu()]` is that tid only while `s` is current, so re-check `SWITCH_GEN[s.cpu()]` after reading it, or skip the compare. After an OtherCpu or OtherCpuSwitched verdict, `s` may already be stale.
 
 **K6. Wake attribution and N2 counters** (depends on S3 and K3; **not** on K5)
 - **Files:**
@@ -860,6 +871,11 @@ Whether the user merges before or after the soak is their call through `/merge-a
 - S1: `just check` lints only the `aarch64-unknown-none` build, so test modules are never linted. `cargo clippy -p shared --tests -- -D warnings` on the host already fails on `main` in other modules' tests (`too_many_arguments`, `assertions_on_constants`, `needless_range_loop`, …). None of the failures is in `collections.rs`. S2/S3 should check their own files with that command, not expect it to exit 0.
 - S2: none. Host clippy on the tests reports 0 findings in `lock.rs`. Miri passes the 16 lock tests, and the threaded test also passes under `-Zmiri-many-seeds=0..16`. Two mutations each fail the model tests: Reentry ignoring the generation, and `read_stamp` without its second CPU read. A host run of the threaded test takes about 20,000 contended snapshots, about 28% of them with a published tid, and none is inconsistent. Host tests: 564 → 580.
 - S2 (review): with 25 iterations per thread under Miri, `just miri` (CI's Miri gate, one default seed) missed three ordering regressions in the threaded test. Removing the `fence(Acquire)` in `consistent_snapshot`, making `restamp` a Relaxed store, and making the test's holder-field store Relaxed all passed on the default seed. Only `-Zmiri-many-seeds` caught them.
+- S2 (review 2): `classify(observed, cpu, v)` could report a false Reentry for a waiter with IRQs on. In the failing sequence, the waiter reads CPU 0 and is then moved to CPU 1. CPU 0's new thread takes the lock, and the waiter matches that thread's current stamp against its stale CPU. No test moved the waiter after its CPU read. The fix is in `shared` (see Decisions Made). Three mutations were run against the new tests:
+  - The old rule (CPU match plus current owner generation) fails the new exhaustive waiter test, the table and the regression test.
+  - A frozen waiter stamp without the post-load check fails the same three. The reviewer's stale `(0, 101)` case is now its own test, and it fails too.
+  - `read_stamp` without its second CPU read still fails three tests.
+- S2 (review 2): the exhaustive waiter test (2 × 7⁴ move sequences) takes about 40 s under Miri and 0.01 s on the host. The model is safe, single-threaded code, so Miri adds no checks there. Under `cfg(miri)`, each position uses at most one move (2 × 3⁴ sequences, about 2.4 s), following the threaded test's `cfg(miri)` sizing.
 
 ## Decisions Made
 
@@ -877,6 +893,13 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - `Acquire` CAS → Relaxed, and release `store(0)` → Relaxed: both give a Miri data race on `*g += 1`;
   - first word load → Relaxed, no `fence(Acquire)`, `restamp` → Relaxed, and holder-field store → Relaxed: all give "fields of another holder".
   With explicit seeds 0–9, the fence, `restamp` and first-load mutations fail on every seed, and the field-store mutation fails on 8 of the 10. The unmodified test passes `-Zmiri-many-seeds=0..16`. `just miri`: 580 tests pass in about 90 s.
+- S2 (review 2): took the reviewer's Option 1. The details:
+  - `classify(observed, me: OwnerStamp, v)` takes the waiter's own stamp as an `OwnerStamp`: one register, and the same stamp its failed CAS used. The reviewer's `(u8, u64)` tuple would be 16 bytes. The Reentry test is exactly Option 1: the owner's CPU is `me`'s, and both generations equal `v.switch_gen(me.cpu)`, read once after the word load.
+  - A waiter whose own generation has ended (`me.gen != now`) gets OtherCpu or OtherCpuSwitched, chosen by the owner's generation, instead of PreemptedHolder. Its stamped CPU no longer says where it runs. In the reviewer's sequence this turns the false Reentry into OtherCpu, which is the truth: the holder runs on CPU 0. It also limits K5's PreemptedHolder arm (`lkph`, and the `kind=self` compare against `CURRENT_TID[cpu]`) to waiters that were still in their generation at the check.
+  - Added rule (c) to the soundness statement (module doc and §2.1): a thread's execution is ordered across a switch. The bump that ended its generation happens before its next instruction. Both the waiter-side argument and the holder-side `read_stamp` argument need it. The missing `on_cpu` handshake (ADR H2/F4: a thread published before its save completes) breaks it, and with it the thread's own program order. The module doc says so.
+  - `classify` has a `compiler_fence(Acquire)` before its generation read, so the compiler keeps that read after the caller's word load. An IRQ between the two is exactly the case the check exists for. IRQs are taken precisely, so hardware reordering cannot matter, and the fence emits no instruction.
+  - `read_stamp` has no fence: a compiler fence orders only memory accesses and cannot hold a `nomem` `asm!` in place. The `CpuView` contract carries the requirement instead (the reviewer's second item, accepted as written): `cpu()` is a fresh read and not `pure`, `nomem` or `readonly`, and `switch_gen()` is a fresh atomic load. K5's review checklist repeats it, together with the `lkself` tid caveat.
+  - Not taken: Option 2 (re-read the CPU and generation around `classify`, and retry on a change). It is also sound if it compares generations, but it adds reads and a retry loop. Option 1 needs one generation read, as before.
 
 ## Lessons Learned
 
