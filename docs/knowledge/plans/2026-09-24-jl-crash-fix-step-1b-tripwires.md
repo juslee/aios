@@ -23,7 +23,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 ## Progress
 
 - [x] S1: `FixedQueue::iter()` / `contains()` (shared, host tests)
-- [ ] S2: `shared/src/lock.rs`: owner stamp, `classify`, `StampedLock`, `LockClass` (host tests, Miri)
+- [x] S2: `shared/src/lock.rs`: owner stamp, `classify`, `StampedLock`, `LockClass` (host tests, Miri)
 - [ ] S3: `shared/src/tripwire.rs`: key catalogue, `WakeSource`, `CpuCounters`, line writer, `classify_pc`, scan classification, two strikes (host tests)
 - [ ] K1: Bench DAIF masking removed
 - [ ] K2: Tripwire runtime, per-CPU ticks, heartbeat and g1 lines
@@ -858,10 +858,20 @@ Whether the user merges before or after the soak is their call through `/merge-a
 ## Issues Encountered
 
 - S1: `just check` lints only the `aarch64-unknown-none` build, so test modules are never linted. `cargo clippy -p shared --tests -- -D warnings` on the host already fails on `main` in other modules' tests (`too_many_arguments`, `assertions_on_constants`, `needless_range_loop`, …). None of the failures is in `collections.rs`. S2/S3 should check their own files with that command, not expect it to exit 0.
+- S2: none. Host clippy on the tests reports 0 findings in `lock.rs`. Miri passes the 16 lock tests, and the threaded test also passes under `-Zmiri-many-seeds=0..16`. Two mutations each fail the model tests: Reentry ignoring the generation, and `read_stamp` without its second CPU read. A host run of the threaded test takes about 20,000 contended snapshots, about 28% of them with a published tid, and none is inconsistent. Host tests: 564 → 580.
 
 ## Decisions Made
 
 - S1: `iter()` returns a named `FixedQueueIter` (queue reference + logical position, two words) that yields copies. It is not an `impl Iterator` over two chained slices, which would be four words. `next()` uses `wrapping_*` index arithmetic and `buf.get()`, so the dev build adds no overflow-check or bounds-check panic paths. It skips a `None` slot rather than stopping, so `FusedIterator` holds unconditionally. `ExactSizeIterator` relies on the structural invariant that every slot in the live range is `Some`. `contains(&T)` needs `T: PartialEq` (as `VecDeque::contains` does). For K8: the iterator is 16 bytes, so consume it in a `for` loop in `RunQueue::for_each`, which lets SROA keep it in registers, and never store it or pass it by value; V1 checks for NEON. `FixedQueueIter` is not re-exported at the crate root (`shared::collections::FixedQueueIter`). Host tests: 559 → 564; Miri runs the 23 collections tests cleanly.
+- S2: The pre-release hook is a type parameter stored in the lock, `StampedLock<T, H: PreRelease = ()>`. It is not a function pointer (V1 bans `blr`) and not a wrapper guard (16 bytes). The guard stays one pointer, and drop order runs `pre_release` before `store(0, Release)`. **For K5:** put `holder_site`/`holder_tid` in the hook type (`StampedLock<T, HolderFields>`) and keep `class`/`index` on the wrapper. This changes §2.1's field layout, not its protocol.
+- S2: The orderings behind the L1 snapshot:
+  - holder fields are stored with `Release` right after the CAS, and cleared in `pre_release`;
+  - `restamp` is a `Release` store (a Relaxed one would end the CAS's release sequence);
+  - `consistent_snapshot(|stamp, hook| ..)` loads the word with `Acquire`, runs the closure, issues `fence(Acquire)`, reloads the word, and returns `None` if the lock was free or the two words differ.
+  Together these rule out both an earlier holder's fields and a later holder's.
+- S2: `OwnerStamp` wraps `NonZeroU64`, so `Option<OwnerStamp>` is 8 bytes. `new` is therefore a non-`const` fn (`NonZeroU64 | u64`) with no `unsafe` and no panic path. Compile-time `const _` asserts, checked on the kernel target too: the guard is 8 bytes and `Result<guard, u64>` is 16 (returned in x0/x1).
+- S2: `try_lock`/`try_lock_weak` return `Err(observed word)`, so the slow path can classify without another load. `Err(0)` from the weak CAS is a spurious failure. Guard operations are associated functions (`StampedGuard::restamp(&g, s)`) so they never shadow the data type's methods. The guard is `Sync` only for `T: Sync`.
+- S2: Added `SCALAR_INDEX = 0xFF` (§2.1's index for non-array locks) beside `LockClass`, so that S3 and K5 share one constant. There is no `lock()` spin loop in shared: the slow path's counters, CNTVCT reads and prints are K5's. `lock.rs` denies `clippy::arithmetic_side_effects` and `indexing_slicing` outside tests.
 
 ## Lessons Learned
 

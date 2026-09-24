@@ -11,6 +11,7 @@ pub mod input;
 pub mod ipc;
 pub mod kaslr;
 pub mod kits;
+pub mod lock;
 pub mod memory;
 pub mod observability;
 pub mod sched;
