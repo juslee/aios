@@ -94,9 +94,15 @@ fn main() -> Status {
     uart_puts("\r\n");
 
     // --- Jump to kernel ---
-    // SAFETY: entry_point is the kernel's _start address (validated by ELF loader).
-    // boot_info_addr is a page-aligned physical address of a valid BootInfo struct.
-    // After this, the UEFI stub never returns.
+    // SAFETY: entry_point is the physical address of the kernel's _start, inside
+    // a PF_X segment that load_elf allocated as EfiLoaderCode, so edk2's identity
+    // map (still live in TTBR0 after ExitBootServices) maps it executable;
+    // boot_info_addr is the page-aligned physical address of a valid BootInfo.
+    // load_elf (which rejects an entry point outside every PF_X segment) and
+    // allocate_boot_info maintain this; the stub never returns.
+    // If the entry page were execute-never (e.g. allocated as EfiLoaderData under
+    // edk2's strict NX policy), the first fetch would take a synchronous
+    // instruction abort into the firmware's vectors and the boot would hang.
     unsafe {
         core::arch::asm!(
             "br {entry}",
