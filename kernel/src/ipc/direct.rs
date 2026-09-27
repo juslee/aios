@@ -23,6 +23,7 @@
 
 use crate::arch::aarch64::exceptions;
 use crate::observability::metrics::METRICS;
+use crate::observability::tripwire::{self, DispatchSite};
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
 
 // Re-export from shared crate so kernel code can use `direct::MAX_INHERITANCE_DEPTH`.
@@ -149,8 +150,11 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     let sender_ctx_ptr = &mut table[sender_idx].as_mut().unwrap().context as *mut ThreadContext;
     let receiver_ctx_ptr = &table[receiver_idx].as_ref().unwrap().context as *const ThreadContext;
 
-    // Update CURRENT_THREAD to receiver.
+    // Update CURRENT_THREAD to receiver. `cpu` was read before the mask, so
+    // the tripwire counts n4 if this thread has moved since; it also counts
+    // xdir/xnever from the receiver's last CPU.
     *CURRENT_THREAD[cpu].lock() = Some(receiver_tid);
+    tripwire::note_dispatch(cpu, receiver_tid, DispatchSite::Direct);
 
     // Drop table lock before context switch — the receiver will need
     // to acquire it when it runs.
@@ -281,8 +285,11 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
 
     let replier_class = table[replier_idx].as_ref().unwrap().sched.effective_class;
 
-    // Update CURRENT_THREAD to caller.
+    // Update CURRENT_THREAD to caller. `cpu` was read before the mask, so
+    // the tripwire counts n4 if this thread has moved since; it also counts
+    // xrep/xnever from the caller's last CPU.
     *CURRENT_THREAD[cpu].lock() = Some(caller_tid);
+    tripwire::note_dispatch(cpu, caller_tid, DispatchSite::Reply);
 
     drop(table);
 

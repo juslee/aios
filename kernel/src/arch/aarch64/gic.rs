@@ -3,6 +3,8 @@
 //! Initializes the GICv3 distributor, redistributor, and CPU interface
 //! for the boot CPU. Per hal.md §4.1.
 
+use crate::observability::tripwire;
+
 /// GICv3 interrupt controller state.
 pub struct InterruptController {
     gicd_base: usize,
@@ -233,10 +235,15 @@ fn write_icc_eoir1_el1(intid: u32) {
 /// instance — uses direct system register access.
 #[no_mangle]
 extern "C" fn irq_handler_el1() {
+    // Label this CPU IRQ context for the tripwire (counts `nest` if it was
+    // not in thread context).
+    tripwire::irq_enter();
+
     let intid = read_icc_iar1_el1();
 
     // Spurious interrupt (no pending IRQ).
     if intid >= 1020 {
+        tripwire::irq_leave();
         return;
     }
 
@@ -254,10 +261,19 @@ extern "C" fn irq_handler_el1() {
 
     write_icc_eoir1_el1(intid);
 
-    // Check if preemption is needed after handling the IRQ.
-    // This enables timer-driven preemption: when NEED_RESCHED is set by
-    // the timer tick, schedule() runs before eret returns to the
-    // interrupted thread. Each thread's stack preserves the IRQ entry
-    // frame, so context-switch + unwind works correctly.
+    // Timer-driven preemption: when the tick set NEED_RESCHED,
+    // check_preemption() calls schedule() here, after EOIR and before the
+    // entry stub's eret, and schedule() may switch to another thread. The
+    // interrupted thread keeps its IRQ entry frame on its own stack and
+    // comes back through this path when it is resumed, possibly on another
+    // CPU. That frame holds x0-x18, x29 and x30 only. ELR_EL1 and SPSR_EL1
+    // stay in the system registers, so the stub's eret uses whatever the
+    // last exception on the resuming CPU left there: the interrupted
+    // thread's values only if no other exception was taken on that CPU in
+    // between (crash-fix ADR, H1).
+    tripwire::irq_preempt_check();
     crate::sched::check_preemption();
+
+    // Back to thread context, on the CPU this thread returns on.
+    tripwire::irq_leave();
 }

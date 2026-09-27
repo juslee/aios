@@ -113,10 +113,14 @@ static SCHED_READY: AtomicBool = AtomicBool::new(false);
 // ---------------------------------------------------------------------------
 
 /// Allocate a thread slot in the global THREAD_TABLE. Returns the index.
+///
+/// Resets the slot's tripwire stamps (last CPU, last run, wake in flight)
+/// under THREAD_TABLE before it fills the slot.
 pub fn allocate_thread(thread: Thread) -> Option<usize> {
     let mut table = crate::task::THREAD_TABLE.lock();
     for (i, slot) in table.iter_mut().enumerate() {
         if slot.is_none() {
+            crate::observability::tripwire::reset_thread_stamps(i);
             *slot = Some(thread);
             return Some(i);
         }

@@ -114,6 +114,13 @@ Compositor invariant (M25):   FOCUS_MANAGER is a true leaf — every public op r
                               (hit-test walks Z then reads the table; drag handler enters
                               DRAG_STATE then snapshots geometry from the table). None of
                               the compositor mutexes is ever held across ipc_send / ipc_call.
+Dispatch bookkeeping (1b):    tripwire::note_dispatch runs at the 4 CURRENT_THREAD commit sites
+                              (enter_scheduler, schedule, try_direct_switch, try_reply_switch),
+                              right after the write, THREAD_TABLE held, IRQs masked. It bumps
+                              the per-CPU switch generation (SWITCH_GEN[MPIDR cpu]) and writes
+                              CURRENT_TID, the lock-free CURRENT_THREAD mirror (TID_NONE = none).
+                              CURRENT_TID is written only there, under THREAD_TABLE, so it
+                              equals CURRENT_THREAD while THREAD_TABLE is held.
 ```
 
 ---

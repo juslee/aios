@@ -5,9 +5,12 @@
 
 use core::sync::atomic::Ordering;
 
+use shared::tripwire::Key;
+
 use crate::arch::aarch64::exceptions;
 use crate::arch::aarch64::timer::NEED_RESCHED;
 use crate::observability::metrics::METRICS;
+use crate::observability::tripwire::{self, DispatchSite};
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
 
 use super::{default_slice, IN_SCHEDULER, MAX_CORES, NS_PER_TICK, RUN_QUEUES, SCHED_READY};
@@ -82,6 +85,7 @@ pub fn enter_scheduler() -> ! {
                 thread.sched.state = ThreadState::Running;
                 // Set this thread as current on this CPU.
                 *CURRENT_THREAD[cpu].lock() = Some(tid);
+                tripwire::note_dispatch(cpu, tid, DispatchSite::Enter);
                 let ctx_ptr = &thread.context as *const ThreadContext;
                 drop(table);
 
@@ -144,19 +148,37 @@ pub fn timer_tick(cpu: usize) {
 // schedule() — the core scheduling function
 // ---------------------------------------------------------------------------
 
-/// Main scheduling function. Called from:
-/// - Timer tick return path (preemption)
-/// - thread_yield() (voluntary)
-/// - block_current() (blocking IPC/sleep)
+/// Which path called `schedule()`. Instrumentation only: the tripwire
+/// counts switches committed from the IRQ return path (`irqsw`, `irqsw0`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// The IRQ return path (`check_preemption`, timer-driven preemption).
+    Irq,
+    /// `thread_yield()`.
+    Yield,
+    /// `block_current()`.
+    Block,
+}
+
+/// Main scheduling function. Called from (`origin`):
+/// - Timer tick return path (preemption), [`Origin::Irq`]
+/// - thread_yield() (voluntary), [`Origin::Yield`]
+/// - block_current() (blocking IPC/sleep), [`Origin::Block`]
 ///
 /// Must be called with IRQs masked (DAIF.I set).
-pub fn schedule() {
+pub fn schedule(origin: Origin) {
     let cpu = exceptions::core_id() as usize;
 
     // Re-entrancy guard: skip if already in scheduler on this CPU.
     if IN_SCHEDULER[cpu].swap(true, Ordering::Acquire) {
+        tripwire::bump_masked(Key::Insched, 0);
         return;
     }
+
+    // The caller's context label (thread, or the IRQ handler's preemption
+    // check). A switch below relabels this CPU for the next thread; when this
+    // thread is resumed, it restores its own label on the CPU it resumes on.
+    let irq_ctx = tripwire::irq_ctx(cpu);
 
     // Clear preemption flag.
     NEED_RESCHED.store(false, Ordering::Relaxed);
@@ -180,7 +202,11 @@ pub fn schedule() {
                 IN_SCHEDULER[cpu].store(false, Ordering::Release);
                 return;
             } else {
-                // Thread blocked or dead — don't re-enqueue.
+                // Thread blocked or dead — don't re-enqueue. A Runnable
+                // current thread is left unqueued here too (N1).
+                if thread.sched.state == ThreadState::Runnable {
+                    tripwire::bump_masked(Key::N1, 0);
+                }
                 drop(table);
             }
         } else {
@@ -208,6 +234,7 @@ pub fn schedule() {
         let mut table = THREAD_TABLE.lock();
         if let Some(thread) = &mut table[next_tid.0 as usize] {
             thread.sched.state = ThreadState::Running;
+            tripwire::note_repick(next_tid);
         }
         IN_SCHEDULER[cpu].store(false, Ordering::Release);
         return;
@@ -242,6 +269,17 @@ pub fn schedule() {
 
         // Update current thread tracking.
         *CURRENT_THREAD[cpu].lock() = Some(next_tid);
+        tripwire::note_dispatch(cpu, next_tid, DispatchSite::Schedule);
+        if origin == Origin::Irq {
+            // A switch from the IRQ return path; irqsw0 when this CPU had no
+            // current thread to save.
+            let key = if old_ctx_ptr.is_null() {
+                Key::Irqsw0
+            } else {
+                Key::Irqsw
+            };
+            tripwire::bump_masked(key, 0);
+        }
 
         // Drop table lock before the actual context switch.
         drop(table);
@@ -267,6 +305,7 @@ pub fn schedule() {
             let current_now = { *CURRENT_THREAD[actual_cpu].lock() };
             if current_now != Some(next_tid) {
                 // We were restored as the old thread — schedule() is done for us.
+                tripwire::set_irq_ctx(actual_cpu, irq_ctx);
                 IN_SCHEDULER[actual_cpu].store(false, Ordering::Release);
                 return;
             }
@@ -311,7 +350,7 @@ pub fn thread_yield() {
         drop(table);
     }
 
-    schedule();
+    schedule(Origin::Yield);
 
     // Unmask IRQs after returning from schedule.
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
@@ -340,7 +379,7 @@ pub fn block_current(new_state: ThreadState) {
         drop(table);
     }
 
-    schedule();
+    schedule(Origin::Block);
 
     // Unmask IRQs after being unblocked and re-scheduled.
     // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
@@ -426,7 +465,8 @@ pub fn check_preemption() {
         return;
     }
     if IN_SCHEDULER[cpu].load(Ordering::Relaxed) {
+        tripwire::bump_masked(Key::Insched, 0);
         return;
     }
-    schedule();
+    schedule(Origin::Irq);
 }
