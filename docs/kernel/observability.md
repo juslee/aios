@@ -809,6 +809,39 @@ pub enum Scope {
 
 This allows Inspector to query both security provenance and operational metrics through the same capability-gated API, while keeping the underlying storage separate.
 
+### 6.5 Tripwire Line (crash-fix step 1b)
+
+The boot-crash fix ([ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md), step 1b) adds detect-only counters, which the kernel prints to the UART as one-line `[tripwire]` records. The format and the key catalogue are in `shared/src/tripwire.rs`, where host tests pin them; `Key::ALL` is the print order. The kernel runtime (the counter table, the UART printer and the print schedule) is `kernel/src/observability/tripwire.rs`.
+
+```text
+[tripwire] v=1 src=hb cpu=0 t=12001 ncpu=4 tick=12001,0,0,0 twc=655500 twn=13 twmax=210312 n=9
+```
+
+**Format (schema `v=1`).**
+
+- After `[tripwire]`, every token is `key=value`. The prefix comes first: `v` (the schema version), `src`, `cpu` (the printing CPU), `t` (`TICK_COUNT`) and `ncpu` (the online CPUs). The counter keys follow in `Key::ALL` order, and `n` closes the line.
+- Keys are lowercase. Values match `^[0-9,]+$`, except `src` (`hb`, `g1`, `panic` or `exc`). A key with several values prints them comma-separated in index order: per CPU (`ncpu` values), per wake source, per lock class, per scheduler class, per N2 kind or per bad-channel site.
+- `n` is the number of `key=value` tokens before it, the prefix included.
+- `NonZero` mode omits every key whose values are all 0, except the prefix, `twc`, `twn`, `twmax` and `n`. `Full` mode prints every key.
+- A line never contains `[heartbeat]`, `PANIC:` followed by a space, or the uppercase exception fields (`ESR=`, `ELR=`, `EC=0x`, `FAR=`) that the soak classifier matches.
+
+**Parser contract: use the last complete line of a log.** A line is complete when its token count equals `n`, and a key missing from a complete line is 0. Most keys count events and never decrease. The gauges (`orphan_now`, `nowaker_now`, `wakefl_now`, `scanhold1`, `scanhold2`, `twmax`) are levels or maxima, and the `*_now` gauges fall when a flag clears. A parser that keeps the last value seen per key across lines is therefore wrong for gauges.
+
+**When lines print.**
+
+| `src` | Mode | When |
+|---|---|---|
+| `hb` | `NonZero` | Once per `[heartbeat] tick=N` line, before the next heartbeat |
+| `g1` | `Full` | Once, after `[bench] === Gate 1 Complete ===` |
+
+The schema reserves `panic` and `exc` for lines printed by the fatal-dump paths.
+
+Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler`, after the tick's own work (time slice, IPC timeouts, load balance, `NEED_RESCHED`). The UART has no lock, so a line waits while a thread holds the console: the Gate 1 bench marks it busy from its header to `=== Gate 1 Complete ===`. After 256 ticks of waiting the line prints anyway, and `hbdefer` counts it. That cap is below the 1000 ticks between heartbeats. At most one line prints per tick, the heartbeat's first.
+
+**Counters.** `CpuCounters` keeps one row of counters per CPU. Only that CPU writes its row, with IRQs masked, using `Relaxed` load and store only (no atomic read-modify-write). A per-CPU key prints each CPU's own row; any other key prints the sum over the rows, or the maximum for a gauge. `tick` counts each CPU's own timer IRQs, while `t` (`TICK_COUNT`) advances on CPU 0 only.
+
+**Cost.** The printer uses `putc` only, with no `core::fmt`, no lock and no buffer, and runs with IRQs masked. `twc` is the cumulative CNTVCT time spent printing lines, `twn` the number of lines, and `twmax` the longest single line. A line's own cost is added after it prints, so the next line reports it.
+
 -----
 
 ## 7. I/O Observability

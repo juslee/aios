@@ -5,7 +5,10 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use shared::tripwire::Key;
+
 use crate::arch::aarch64::gic::InterruptController;
+use crate::observability::tripwire;
 
 /// ARM Generic Timer state.
 #[allow(dead_code)]
@@ -108,7 +111,9 @@ impl Timer {
 /// Tick interval in timer counts (set during init, read by all cores).
 static TICK_INTERVAL: AtomicU64 = AtomicU64::new(0);
 
-/// Monotonic tick counter (incremented every 1ms on each core).
+/// System tick counter: advanced once per timer tick on CPU 0 only, so it
+/// counts CPU 0's ticks (1 ms apart nominally; fewer per second when CPU 0's
+/// ticks run late). Every CPU's own tick count is the tripwire `tick` key.
 pub static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Preemption needed flag (checked by scheduler return path in M11).
@@ -140,12 +145,22 @@ pub fn init_timer_secondary() {
     }
 }
 
-/// Timer tick handler. Called from `irq_handler_el1` on PPI 30.
+/// Timer tick handler. Called from `irq_handler_el1` on PPI 30, on each CPU
+/// that takes that interrupt, with IRQs masked.
 ///
-/// 1. Rearm timer (must happen before EOIR to prevent immediate re-fire)
-/// 2. Increment tick counter
-/// 3. Drain log ring buffers to UART
-/// 4. Set preemption flag (checked by scheduler in M11)
+/// 1. Rearm the timer (before EOIR, so the level-sensitive PPI does not fire
+///    again at once), then count the tick in this CPU's tripwire `tick`.
+/// 2. CPU 0 only: advance `TICK_COUNT`; every 1000th tick, print the
+///    heartbeat and mark its tripwire line due.
+/// 3. CPU 0 only, every 4th tick: drain the log rings to the UART.
+/// 4. Scheduler tick: charge the current thread's time slice.
+/// 5. Expire IPC timeouts.
+/// 6. Every 4th tick: load balance.
+/// 7. CPU 0 only, every 16th tick: signal input polling.
+/// 8. Set `NEED_RESCHED`, which `check_preemption` reads after EOIR.
+/// 9. Count the IRQ in the metrics (`kernel-metrics`).
+/// 10. CPU 0 only: print a due tripwire line (`tripwire::end_of_tick`), last,
+///     so the steps above keep their timing.
 ///
 /// MUST NOT call klog! — this is called from IRQ context and drain_logs()
 /// would deadlock or cause re-entrancy issues.
@@ -165,14 +180,18 @@ pub fn timer_tick_handler() {
             core::arch::asm!("isb");
         }
     }
+    // Count this CPU's tick (IRQ context, so IRQs are masked).
+    tripwire::bump_masked(Key::Tick, 0);
 
-    // 2-3. CPU 0 only: increment global tick counter and drain log ring buffers.
-    // TICK_COUNT is a system-wide monotonic counter — only one core should advance it.
-    // drain_logs() pops from SPSC ring buffers — only safe with a single consumer.
-    // Rate-limited to every 4th tick to keep total handler time < 1ms (the tick
-    // interval). At 115200 baud, each log entry (~80 chars) takes ~7ms, so we
-    // can only safely drain ~1 entry per 8 ticks. Draining every 4th tick with
-    // the per-call limit in drain_logs keeps us within budget.
+    // 2-3. CPU 0 only: advance the system tick counter, drain the log rings
+    // and print the heartbeat. TICK_COUNT is system-wide, so only one core
+    // advances it. The log rings have a single consumer, so the tick drains
+    // them on CPU 0 only. Draining runs on every 4th tick and prints up to
+    // DRAIN_BATCH_SIZE (16) entries per call, straight to the UART with IRQs
+    // masked. A full batch takes longer than one tick (on a real 115200-baud
+    // PL011 an 80-character line alone takes about 7 ms), so a log burst
+    // delays CPU 0's following ticks; the rate limit bounds how often that
+    // happens, not how long one drain takes.
     let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
     if cpu == 0 {
         let tick = TICK_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -184,6 +203,7 @@ pub fn timer_tick_handler() {
             use core::fmt::Write;
             let mut w = crate::arch::aarch64::uart::UartWriter;
             let _ = writeln!(w, "[heartbeat] tick={}", tick);
+            tripwire::note_heartbeat();
         }
     }
 
@@ -212,5 +232,10 @@ pub fn timer_tick_handler() {
     {
         crate::observability::metrics::METRICS.irq_total.inc();
         crate::observability::metrics::METRICS.irq_timer.inc();
+    }
+
+    // 10. CPU 0 only: print a due tripwire line (heartbeat or Gate 1).
+    if cpu == 0 {
+        tripwire::end_of_tick();
     }
 }

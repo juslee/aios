@@ -26,7 +26,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 - [x] S2: `shared/src/lock.rs`: owner stamp, `classify`, `StampedLock`, `LockClass` (host tests, Miri)
 - [x] S3: `shared/src/tripwire.rs`: key catalogue, `WakeSource`, `CpuCounters`, line writer, `classify_pc`, scan classification, two strikes (host tests)
 - [x] K1: Bench DAIF masking removed
-- [ ] K2: Tripwire runtime, per-CPU ticks, heartbeat and g1 lines
+- [x] K2: Tripwire runtime, per-CPU ticks, heartbeat and g1 lines
 - [ ] K3: Dispatch bookkeeping: switch generation, `CURRENT_TID`, `IRQ_CTX`, last CPU, `schedule(origin)`
 - [ ] K4: IRQ frame ELR/SPSR snapshot and mismatch counter (192-byte frame)
 - [ ] K5: `IrqSpinLock` (detect-only) on the 9 IRQ-shared statics
@@ -904,6 +904,22 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - The fix-round gpu boot (`target/soak/20260928-061425-gpu`) was again `frame.rs:51` (`0xffff0000000d7170`), `server ready`, a stall, then `ELR=FAR=0x2_0000_0000` at tick 2000. That makes 4 of 4 K1 gpu boots with this exact signature, against 1 of 6 `main`-kernel `frame.rs:51` boots with any post-panic exception, at a different ELR.
   - So K1 probably changes the post-panic fallout. It removes only two `msr DAIFSet`, so it cannot branch to 0x2_0000_0000 itself. With IRQs on, the bench threads keep being preempted after the panic. That likely steers a pre-existing context corruption into this form: the `c1ce1a2` boot also resumed a bench thread with a corrupted callee-saved register.
   - The fix-round text boot (`target/soak/20260928-061250-text`, load 24) met K1's acceptance: `IPC round-trip (same core): avg=4 us, p99=9 us, … (10000 iters)` and `=== Gate 1 Complete ===`, then PCZERO at tick 23000 (a `main` signature). Both hazard greps are empty (no `[tripwire` lines yet).
+- K2: **CPUs 1–3 take no timer IRQs on this host.** Every K2 line shows `tick=N,0,0,0`. Two checks independent of the counter confirm it:
+  - A QEMU boot of the K2 image with `-d int` logged 1069 IRQ exceptions, all on CPU 0 and none on CPUs 1–3 after they unmasked IRQs in `enter_scheduler`.
+  - The QEMU monitor (`xp`) at heartbeat 2000 shows the cause. `GICR_IGROUPR0` is `0xffffffff` on CPU 0 and `0x00000000` on CPUs 1–3. `GICR_ISENABLER0` and `GICR_ISPENDR0` have bit 30 set on all four. edk2 set up only CPU 0's redistributor, and `init_gicv3_secondary` (`gic.rs:112-154`) enables PPI 30 but never sets its group. PPI 30 therefore stays in Group 0, which the kernel never enables (it sets only `ICC_IGRPEN1_EL1` and `GICD_CTLR.EnableGrp1NS`), so the timer interrupt stays pending on CPUs 1–3 for the whole boot.
+  - Host: QEMU 11.1.1 with Homebrew's `edk2-aarch64-code.fd`. CI's Ubuntu QEMU and edk2 are not checked.
+  - Not fixed (detect-only). What it means for the rest of the plan:
+    - K2's acceptance "all four `tick` values > 0" cannot hold here (see Decisions Made).
+    - On this host, CPUs 1–3 never run `timer_tick_handler`, `check_timeouts`, the balancer or `check_preemption` from IRQ context, and the timer never preempts their threads. They switch only by yielding or blocking. The physical-alias IRQ path (§2.11) and IRQ-context switches do not occur on them, so K3's "`irqsw` > 0 on all CPUs" and K7's "`pcphys` > 0 on CPUs 1–3" will fail here too.
+    - K8's two-strike gate needs every online CPU's `tick` to advance by ≥ 100, so it would never confirm a flag while CPUs 1–3 stay at 0. K8 needs a decision (for example, gate on the CPUs whose `tick` advances) before it is written.
+    - The ADR hypotheses that need IRQs on CPUs 1–3 cannot fire on this host. Check whether the ADR's evidence came from a QEMU or firmware that groups the secondaries' PPIs.
+- K2: print cost (CNTVCT ticks), from the `twc` deltas of the two boots below:
+  - A 95-byte `hb` line costs a median of 29,000 (text) and 28,125 (gpu), about 0.46 ms or 4.9 µs per byte, as §4.3's model predicts. The minimum is 22,750 (text) and 21,313 (gpu).
+  - The first `hb` line (`t=1`, 76 bytes, right after the boot's log drain) costs 129,562 (text) and 118,312 (gpu).
+  - The `g1` `Full` line (922 bytes) costs 210,312 (text) and 172,562 (gpu), which is 2.8–3.4 ms.
+  - **K8's bound `twmax` < 187,500 would fail on the text boot because of the `g1` line**, since `twmax` is the maximum over all lines. K8's bound should apply to `hb` lines, or K8 should record the `g1` cost separately.
+- K2: boots. Text `target/soak/20260928-063511-text` (load 15) and gpu `target/soak/20260928-064257-gpu` (load 5) are both CLEAN. Each has 46 heartbeats, and each heartbeat is followed by exactly one `src=hb` line before the next. Each has one `src=g1` line after `=== Gate 1 Complete ===` (text 4 lines later, gpu on the next line), `hbdefer=0` on every line, no `src=hb` line inside the bench block, and all 47 lines complete (token count equals `n`). The hazard grep is empty. IPC round-trip avg is 5 us in both. The gpu log has a `drain_logs` line splitting a bench line (`[bench] Shared[   6.774872] [0] INFO  Mm …`). `CONSOLE_BUSY` holds back only tripwire lines, so that interleave is `main`'s.
+- K2: `llvm-objdump` of the K2 ELF finds no V-register, NEON, `memcpy`/`memset` or `blr` site in `print_line`, `bump_masked`, `end_of_tick`, `write_line::<UartSink, …>`, `print_line::{closure#0}` or `timer_tick_handler`.
 
 ## Decisions Made
 
@@ -970,6 +986,15 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - The `ELR=FAR=0x2_0000_0000` exception is recorded, not treated as a K1 regression. In every boot that shows it, the first fatal report is `main`'s `frame.rs:51` PANIC, and the ADR (N8) treats later symptoms in a PANIC boot as fallout. Two follow-ups:
     - K9's exception report (SP, TTBR0_EL1, VBAR_EL1, current thread) should name the thread that branches there.
     - If the signature appears in a boot with no earlier PANIC, it is a new signature, and it must be explained before 1b merges.
+- K2: the acceptance "one `src=g1` line with all four `tick` values > 0" is amended: CPU 0's `tick` is > 0, and CPUs 1–3 show the timer IRQs they actually take, which is 0 on this host (Issues Encountered). The counter is right, as two separate checks show. Fixing the GIC grouping would change scheduling, which detect-only 1b must not do, so it is reported, not fixed.
+- K2: no `held_by_stream` stub. `end_of_tick` defers on `CONSOLE_BUSY` alone, and K5 adds `|| held_by_stream(0)` at that test. Until K5 no IRQ-class lock carries a stamp, so a stub could only ever return false.
+- K2: the module exposes functions, not public statics: `note_heartbeat()`, `request_g1_line()`, `set_console_busy(bool)`, `end_of_tick()`, `print_line(src, mode)`, `bump_masked(key, idx)` and `bump(key, idx)`. A per-CPU key takes idx 0, and both bumps pick the row from MPIDR.
+  - `bump` has no caller yet and carries `#[expect(dead_code, reason = …)]`. Its first caller (K5 or K6) must delete the attribute, because an unfulfilled `expect` fails `just check`.
+  - `cpu_here()` reads MPIDR without `nomem`, so in `bump` the read stays after the `msr DAIFSet`.
+  - `bump_masked`'s `debug_assert!` has no message, so its failing branch calls `core::panicking::panic(&str)` and builds no `fmt::Arguments` on the stack.
+- K2: at most one line prints per tick, the `hb` line before `g1`. `DEFERRED_TICKS` counts consecutive held-back ticks. After 256 of them the next busy tick prints anyway and bumps `hbdefer`, once per forced line.
+- K2: `end_of_tick` is the last statement of `timer_tick_handler` (step 10, after the metrics step 9), which satisfies "after step 8".
+- K2: the timer comments now say that `TICK_COUNT` advances on CPU 0 only, list all ten handler steps, and correct the drain comment. The old one claimed that draining every 4th tick kept the handler within 1 ms, but `DRAIN_BATCH_SIZE` is 16.
 
 ## Lessons Learned
 

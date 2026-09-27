@@ -5,6 +5,7 @@
 
 pub mod metrics;
 pub mod trace;
+pub mod tripwire;
 
 use core::cell::UnsafeCell;
 use core::fmt;

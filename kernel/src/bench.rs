@@ -13,6 +13,7 @@ use crate::arch::aarch64::timer;
 use crate::arch::aarch64::uart::UartWriter;
 use crate::cap;
 use crate::ipc::{self, ChannelId};
+use crate::observability::tripwire;
 use crate::sched;
 use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
 use crate::task::{CpuSet, SchedulerClass, Thread, ThreadId};
@@ -348,6 +349,11 @@ pub fn bench_main_entry() -> ! {
         }
     }
 
+    // The bench prints its block straight to the UART, which has no lock.
+    // Hold CPU 0's tripwire lines back until the block is done, so the two
+    // do not interleave byte by byte.
+    tripwire::set_console_busy(true);
+
     let mut w = UartWriter;
     let _ = writeln!(w, "\n[bench] === Gate 1 Benchmark ===");
 
@@ -438,6 +444,10 @@ pub fn bench_main_entry() -> ! {
         if ctx_pass { "PASS" } else { "FAIL" }
     );
     let _ = writeln!(w, "[bench] === Gate 1 Complete ===");
+
+    // Ask CPU 0 for the full tripwire line, then free the console for it.
+    tripwire::request_g1_line();
+    tripwire::set_console_busy(false);
 
     // Signal server to exit.
     BENCH_SERVER_EXIT.store(true, Ordering::Release);
