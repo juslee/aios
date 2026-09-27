@@ -104,7 +104,7 @@ jobs:
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     # Pinned: the QEMU and edk2 versions come from the runner image, and soak
     # results are only comparable across runs on the same image.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     continue-on-error: true
     timeout-minutes: 30
     env:
