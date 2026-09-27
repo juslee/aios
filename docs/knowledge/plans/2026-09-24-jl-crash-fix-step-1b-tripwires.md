@@ -366,7 +366,7 @@ Then the lock-free `WAKE_PENDING[t]` for each Blocked candidate.
 
 **Two strikes, per kind (SCAN-4).**
 - Separate `(flag mask, LAST_RUN snapshot, per-CPU tick snapshot)` triples for A-orphan, A-starved, B-nowaker and B-wakefl, each updated only when its own phase completes.
-- A flag is **confirmed** when the thread is flagged in two consecutive completed scans of that kind, with `LAST_RUN` unchanged, **and** every online CPU's per-CPU `tick` has advanced by ≥ 100 since the first strike. If not, bump `scanstall` and keep the first strike. This covers a vCPU stalled mid-window.
+- A flag is **confirmed** when the thread is flagged in two consecutive completed scans of that kind, with `LAST_RUN` unchanged, **and** every online CPU whose per-CPU `tick` has ever advanced has advanced by ≥ 100 since the first strike (owner, 2026-09-28: CPU 0 only on this kernel, all four once #200 is fixed). If not, bump `scanstall` and keep the first strike. This covers a vCPU stalled mid-window on a ticking CPU. Stall detection for a CPU that never ticks is a documented residual.
 - Two strikes removes the scan-A transit windows (all masked, thread-side). Scan-B waker-in-transit windows are removed by the `WAKE_PENDING` split, not by two strikes.
 
 **Counting semantics (SCAN-5).** Keep a `CONFIRMED` mask per kind. The event key (`orphan`, `nowaker`, `wakefl`, `starved[c]`) is bumped **only when a tid enters** the confirmed set, and the bit is cleared when the flag drops. The `*_now` gauges hold the current popcount.
@@ -533,7 +533,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - `direct.rs`: commits, `n4`, `xdir`/`xrep`/`xnever` from the returned old `LAST_CPU`;
   - `gic.rs`: `IRQ_CTX` and `nest`;
   - `sched/mod.rs`: stamp reset in `allocate_thread`.
-- **Boot acceptance:** `irqsw` > 0 on all CPUs; `nest`, `insched`, `n4` and `irqsw0` expected 0 or small.
+- **Boot acceptance:** `irqsw` > 0 on CPU 0, and on every CPU that takes timer IRQs (CPUs 1–3 take none until #200 is fixed, so their `irqsw` reads 0 on this kernel); `nest`, `insched`, `n4` and `irqsw0` expected 0 or small.
 - **Docs:** fix the `gic.rs:257-261` comment. CLAUDE.md Concurrency: "per-CPU switch generation bumped at the 4 `CURRENT_THREAD` commit sites; `CURRENT_TID` written only there, under THREAD_TABLE".
 
 **K4. IRQ frame ELR/SPSR check**
@@ -588,7 +588,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - SP within `[phys_to_virt(stack_phys), +STACK_SIZE]`.
   - A context whose **returned old `LAST_CPU`** is `NEVER` is exempt from the SP check if its `sp` is the physical default (`task/mod.rs:185`).
   - Count only.
-- **Boot acceptance:** `pcphys` > 0 on CPUs 1–3 (IRQ-path switches); `pcother` = 0 in CLEAN boots.
+- **Boot acceptance:** `pcother` = 0 in CLEAN boots. `pcphys` counts IRQ-path switches on CPUs 1–3, which take no IRQs until #200 is fixed, so `pcphys` = 0 is expected on this kernel.
 
 **K8. Heartbeat scans** (depends on S1, S3, K3, K5 and K6)
 - **Files:**
@@ -645,6 +645,7 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
 - `vreg-by-symbol.txt` and the parity diff go in the PR body; the per-site TSV is attached. Both are written outside the repository. Annotate `aes::backends::aarch64_aes` and `polyval` as runtime-gated.
 
 **D1. Docs sweep and ADR errata**
+- ADR amendment for #200 (owner, 2026-09-28): CPUs 1–3 take no timer IRQs because `init_gicv3_secondary` never sets `GICR_IGROUPR0`, so the H1 IRQ-path switch occurs only on CPU 0 (fits every PCZERO and EXCEPTION in run 167), N5 cannot fire, N7's timeouts-on-every-CPU reasoning does not hold, and a thread moved to CPU 1–3 runs until it yields or blocks. The fix is its own crash-fix step, the first behaviour change after step 1a, A/B-measured; the N2 baseline (B1) is re-taken after it.
 - CLAUDE.md: Workspace Layout; Key Facts (192-B frame, `IrqSpinLock` detect-only, `CURRENT_TID` invariant, IRQ-path address rule §2.11); a note that the NC limitation does not apply to kernel statics after boot.
 - Rules 01 and 05; `kernel-dev.md`; `developer-guide.md` (test counts `:1579`, `:1631`, `:1724`; panic pattern); `deadlock-prevention.md`; `observability.md`.
 - The three places that still describe the IRQ-masked bench loop K1 removed:
@@ -923,6 +924,7 @@ Whether the user merges before or after the soak is their call through `/merge-a
 
 ## Decisions Made
 
+- Owner, 2026-09-28 (#200): CPUs 1–3 never take timer IRQs on this kernel (found by K2's `tick` counter; confirmed by QEMU `-d int`, the GIC state and the code). Step 1b stays detect-only and does not fix it; B1 measures the kernel as it is; the GIC fix is its own later step, and N2 is re-baselined after it. K8's two strikes gate only on CPUs whose `tick` has ever advanced; K3's and K7's acceptance items that need IRQs on CPUs 1–3 are amended above.
 - S1: `iter()` returns a named `FixedQueueIter` (queue reference + logical position, two words) that yields copies. It is not an `impl Iterator` over two chained slices, which would be four words. `next()` uses `wrapping_*` index arithmetic and `buf.get()`, so the dev build adds no overflow-check or bounds-check panic paths. It skips a `None` slot rather than stopping, so `FusedIterator` holds unconditionally. `ExactSizeIterator` relies on the structural invariant that every slot in the live range is `Some`. `contains(&T)` needs `T: PartialEq` (as `VecDeque::contains` does). For K8: the iterator is 16 bytes, so consume it in a `for` loop in `RunQueue::for_each`, which lets SROA keep it in registers, and never store it or pass it by value; V1 checks for NEON. `FixedQueueIter` is not re-exported at the crate root (`shared::collections::FixedQueueIter`). Host tests: 559 → 564; Miri runs the 23 collections tests cleanly.
 - S2: The pre-release hook is a type parameter stored in the lock, `StampedLock<T, H: PreRelease = ()>`. It is not a function pointer (V1 bans `blr`) and not a wrapper guard (16 bytes). The guard stays one pointer, and drop order runs `pre_release` before `store(0, Release)`. **For K5:** put `holder_site`/`holder_tid` in the hook type (`StampedLock<T, HolderFields>`) and keep `class`/`index` on the wrapper. This changes §2.1's field layout, not its protocol.
 - S2: The orderings behind the L1 snapshot:
