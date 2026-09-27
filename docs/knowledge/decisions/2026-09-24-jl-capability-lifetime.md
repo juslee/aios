@@ -40,7 +40,7 @@ None is exploitable while all threads run at EL1 and `ProcessCreate` and `Capabi
 
 This comment is not headed as an owner decision. Its notes were adopted:
 
-- #189 is fixed in the same PR, because reaping in `process_wait` makes the missing parent check worse. The owner's first-set answer 3 later made this the owner's decision and extended it to window 2.
+- #189 is fixed in the same PR, because reaping in `process_wait` makes the missing parent check worse. The owner's first-set answer 3 later made this the owner's decision and stated that it includes window 2, which the first draft had left to crash-fix step 6b.
 - `ipc_select` must propagate the new generation-mismatch error (#186 item 3).
 
 ### Owner answers, 2026-09-24, first set (#185, #189)
@@ -420,3 +420,8 @@ One PR on `claude/cap-lifetime`, one commit per step, named `Cap lifetime step N
 **Audit round 3, 2026-09-24.**
 
 - **fable, "`(#186 item 2)` should be item 3".** Rejected: #186 has two numbered lists, "Findings" (1–5) and "Suggested fix" (1–6), and this ADR cites the Findings list. Finding 2 is the silently skipped registration (receiver slot taken, waiter list full), which EAGAIN and ENOMEM report; finding 3 is the empty or Dead channel, which §1's lookup errors report. Suggested-fix item 2 (clearing `WAKEUP_ERRORS` before publishing) is a different list's item, and "Alternatives considered" rejects it without contradiction.
+
+**Second audit, round 1, 2026-09-27.**
+
+- **fable, the interim exit rule names only "another process" (raised again).** Rejected: stale. It quotes wording that audit round 1 of 2026-09-24 replaced; §7 and the crash-fix amendment's step-8 bullet already include the caller's sibling threads in a self-exit.
+- **fable, "`ipc_select` has no boot user" (raised again).** Rejected: stale. §9 no longer says so since audit round 1 of 2026-09-24; it bounds the H3 growth by select's exit take, which on a boot path only the `Select-loop` self-test reaches.
