@@ -45,6 +45,7 @@ flowchart TD
 |---|---|
 | Exception Level | EL1 (QEMU delivers directly; real hardware may enter at EL2 if UEFI ran at EL2) |
 | MMU | ON — edk2 leaves MMU enabled after ExitBootServices |
+| Kernel image mapping | edk2's identity map in TTBR0, with permissions set by UEFI memory type. The stub allocates the executable PT_LOAD segment as `EfiLoaderCode` (RW+X) and the others as `EfiLoaderData`, which strict-NX edk2 builds (upstream ArmVirt default since edk2-stable202211, Ubuntu 26.04's `QEMU_EFI.fd`) map execute-never |
 | SCTLR_EL1 | `0x30d0198d` |
 | TCR_EL1 | T0SZ=20 (44-bit VA for TTBR0), T1SZ not yet set |
 | MAIR_EL1 | `0xffbb4400` — Attr0=Device-nGnRnE, Attr1=NC Normal, Attr2=WT Normal, Attr3=WB Normal |

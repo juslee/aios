@@ -7,6 +7,10 @@ const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1;
 const EM_AARCH64: u16 = 0xB7;
 const PT_LOAD: u32 = 1;
+/// `p_flags` bit: the segment is executable.
+const PF_X: u32 = 1;
+/// UEFI page size; `allocate_pages` counts in these units.
+const PAGE_SIZE: u64 = 0x1000;
 
 #[repr(C)]
 struct Elf64Header {
@@ -69,7 +73,14 @@ fn get_phdr(
 
 /// Load an ELF64 aarch64 kernel from a file buffer into physical memory.
 ///
-/// Uses UEFI boot services to allocate pages at each segment's physical address.
+/// Each PT_LOAD segment gets its own UEFI page allocation at its physical
+/// address. Executable segments (`PF_X`) are allocated as `EfiLoaderCode`, all
+/// others as `EfiLoaderData`. edk2 built with the strict NX policy (the
+/// upstream ArmVirt default since edk2-stable202211, shipped by Ubuntu 26.04)
+/// maps `EfiLoaderData` execute-never, and its identity map is still live in
+/// TTBR0 when boot.S runs the kernel text at its physical address. Segments
+/// must start on a page boundary, so no page holds both code and data.
+///
 /// Returns the entry point and kernel extent information.
 pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
     if file_data.len() < core::mem::size_of::<Elf64Header>() {
@@ -107,10 +118,13 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
     // (needed after Phase 2 M8 virtual linking: e_entry is a virtual address).
     // All PT_LOAD segments must share the same vaddr-paddr delta (constant
     // VMA-LMA offset from linker.ld). Assert this to catch malformed ELFs.
+    // Every segment must start on a page boundary, and the entry point must lie
+    // in an executable segment (the only memory the firmware maps executable).
     let mut lowest_paddr: u64 = u64::MAX;
     let mut lowest_vaddr: u64 = u64::MAX;
     let mut highest_end: u64 = 0;
     let mut virt_phys_delta: Option<u64> = None;
+    let mut entry_in_exec_segment = false;
 
     for i in 0..e_phnum as usize {
         let phdr = get_phdr(file_data, e_phoff, e_phentsize, i)?;
@@ -119,6 +133,9 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
         }
         if phdr.p_filesz > phdr.p_memsz {
             return Err("PT_LOAD filesz > memsz");
+        }
+        if !phdr.p_paddr.is_multiple_of(PAGE_SIZE) {
+            return Err("PT_LOAD segment not page-aligned");
         }
         let delta = phdr.p_vaddr.wrapping_sub(phdr.p_paddr);
         match virt_phys_delta {
@@ -136,34 +153,27 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
         if end > highest_end {
             highest_end = end;
         }
+        if phdr.p_flags & PF_X != 0
+            && e_entry >= phdr.p_vaddr
+            && e_entry - phdr.p_vaddr < phdr.p_memsz
+        {
+            entry_in_exec_segment = true;
+        }
     }
 
     if lowest_paddr == u64::MAX {
         return Err("No PT_LOAD segments found");
     }
-
-    // Allocate the entire kernel range in one shot (page-aligned base).
-    let alloc_base = lowest_paddr & !0xFFF;
-    let alloc_end = highest_end.div_ceil(0x1000) * 0x1000;
-    let total_pages = ((alloc_end - alloc_base) / 0x1000) as usize;
-
-    let status = uefi::boot::allocate_pages(
-        uefi::boot::AllocateType::Address(alloc_base),
-        uefi::boot::MemoryType::LOADER_DATA,
-        total_pages,
-    );
-    if status.is_err() {
-        return Err("Failed to allocate pages for kernel");
+    if !entry_in_exec_segment {
+        return Err("Entry point is not in an executable PT_LOAD segment");
     }
 
-    // Zero the entire allocated region so BSS is clean.
-    // SAFETY: We just allocated total_pages at alloc_base.
-    unsafe { ptr::write_bytes(alloc_base as *mut u8, 0, total_pages * 0x1000) };
-
-    // Pass 2: Copy PT_LOAD segment file data into physical memory.
+    // Pass 2: allocate each PT_LOAD segment at its physical address, typed by
+    // its permissions (see the doc comment), zero it so BSS is clean, and copy
+    // its file data in.
     for i in 0..e_phnum as usize {
         let phdr = get_phdr(file_data, e_phoff, e_phentsize, i)?;
-        if phdr.p_type != PT_LOAD {
+        if phdr.p_type != PT_LOAD || phdr.p_memsz == 0 {
             continue;
         }
 
@@ -172,11 +182,42 @@ pub fn load_elf(file_data: &[u8]) -> Result<LoadedKernel, &'static str> {
             return Err("PT_LOAD segment data out of bounds");
         }
 
-        // SAFETY: Destination is within our allocated region; source is within file buffer.
+        // Pass 1 checked that p_paddr is page-aligned and that
+        // p_paddr + p_memsz does not overflow.
+        let seg_base = phdr.p_paddr;
+        let seg_end = (seg_base + phdr.p_memsz)
+            .checked_next_multiple_of(PAGE_SIZE)
+            .ok_or("overflow")?;
+        let seg_bytes = seg_end - seg_base;
+        let memory_type = if phdr.p_flags & PF_X != 0 {
+            uefi::boot::MemoryType::LOADER_CODE
+        } else {
+            uefi::boot::MemoryType::LOADER_DATA
+        };
+        // AllocateType::Address fails unless every page in the range is free,
+        // so a segment that overlaps another one is rejected here.
+        uefi::boot::allocate_pages(
+            uefi::boot::AllocateType::Address(seg_base),
+            memory_type,
+            (seg_bytes / PAGE_SIZE) as usize,
+        )
+        .map_err(|_| "Failed to allocate pages for kernel segment")?;
+
+        // SAFETY: allocate_pages just gave this loader the seg_bytes bytes at
+        // seg_base, identity-mapped and writable while boot services run, and
+        // [p_offset, file_end) lies inside file_data (checked above).
+        // load_elf maintains this: p_filesz <= p_memsz (pass 1) and p_memsz <=
+        // seg_bytes (rounded up above), so neither write leaves this segment's
+        // own allocation.
+        // If violated, the writes would corrupt firmware or stub memory before
+        // ExitBootServices and the boot would fail unpredictably.
         unsafe {
-            let src = file_data.as_ptr().add(phdr.p_offset as usize);
-            let dst = phdr.p_paddr as *mut u8;
-            ptr::copy_nonoverlapping(src, dst, phdr.p_filesz as usize);
+            ptr::write_bytes(seg_base as *mut u8, 0, seg_bytes as usize);
+            ptr::copy_nonoverlapping(
+                file_data.as_ptr().add(phdr.p_offset as usize),
+                seg_base as *mut u8,
+                phdr.p_filesz as usize,
+            );
         }
     }
 
