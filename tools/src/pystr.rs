@@ -132,6 +132,8 @@ pub fn parse_uint(s: &str) -> Option<u64> {
 }
 
 /// `str(int(digits))` for a run of ASCII digits of any length: leading zeros go.
+/// CPython 3.11+'s `int()` raises past 4300 digits instead (check.py exits 2);
+/// see the module doc.
 pub fn int_str(digits: &str) -> String {
     let trimmed = digits.trim_start_matches('0');
     if trimmed.is_empty() {

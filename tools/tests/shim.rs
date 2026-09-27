@@ -75,6 +75,8 @@ fn make_executable(path: &Path) {
 const FRESH_STAMP: &str = "209901010000";
 /// A `touch -t` stamp older than every file a test repository holds.
 const STALE_STAMP: &str = "200001010000";
+/// A `touch -t` stamp newer than `FRESH_STAMP`.
+const NEWER_STAMP: &str = "209912310000";
 
 fn set_mtime(path: &Path, stamp: &str) {
     let status = Command::new("touch")
@@ -273,6 +275,39 @@ fn a_stale_binary_is_rebuilt_in_the_foreground() {
         "build\n"
     );
     assert!(!sandbox.lock().exists(), "a foreground build takes no lock");
+}
+
+#[test]
+fn a_newer_toolchain_pin_or_workspace_manifest_makes_the_binary_stale() {
+    // A pull that only bumps the pinned nightly (or the workspace manifest)
+    // touches nothing under tools/ and not Cargo.lock, yet changes the build.
+    for (label, input) in [
+        ("shim-stale-toolchain", "rust-toolchain.toml"),
+        ("shim-stale-manifest", "Cargo.toml"),
+    ] {
+        let sandbox = Sandbox::new(label);
+        sandbox.install_bin(true);
+        sandbox
+            .repo
+            .write(input, "# a build input of the aios binary\n");
+
+        let out = sandbox.run(&["docs-check"]);
+        assert_eq!(code(&out), 0);
+        assert!(
+            !sandbox.just_log().exists(),
+            "an older {input} must not rebuild"
+        );
+
+        set_mtime(&sandbox.repo.path().join(input), NEWER_STAMP);
+        let out = sandbox.run(&["docs-check"]);
+        assert_eq!(code(&out), 0);
+        assert_eq!(stdout(&out), "fake:docs-check\n");
+        assert_eq!(
+            std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
+            "build\n",
+            "a {input} newer than the binary must rebuild it"
+        );
+    }
 }
 
 #[test]

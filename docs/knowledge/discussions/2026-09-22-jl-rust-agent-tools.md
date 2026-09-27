@@ -28,8 +28,9 @@ The owner decided to move all of it to Rust. The main reasons:
 
 - one language across the repository;
 - types and `cargo test` for a long-lived state machine and a security parser;
-- no dependency on `/usr/bin/python3` or on GNU `timeout`. The GNU `timeout` requirement is what blocks PR #169's Ubuntu 26.04 runner, which ships uutils.
-  - **Note (2026-09-24):** since #192 (`aa1f128`), `soak-qemu.sh` accepts any `timeout` that behaves correctly, uutils included, so #169 no longer waits on R4. #169 was rebased onto #192 (head `5285b16`), and its soak job now completes on ubuntu-26.04 with uutils `timeout`. The job is report-only and none of its boots is CLEAN: all 5 stop at a synchronous exception at the kernel load address (`0x4008_0000`) before any boot marker, unlike main's ubuntu-24.04 soak, whose boots reach EL1 and fail later.
+- no dependency on `/usr/bin/python3` or on GNU `timeout`. The GNU `timeout` requirement blocked PR #169's Ubuntu 26.04 runner, which ships uutils.
+  - **Note (2026-09-24, before #196):** since #192 (`aa1f128`), `soak-qemu.sh` accepts any `timeout` that behaves correctly, uutils included, so #169 no longer waited on R4. Rebased onto #192 (head `5285b16`), #169's soak job completed on ubuntu-26.04 with uutils `timeout`, but none of its boots was CLEAN: all 5 stopped at a synchronous exception at the kernel load address (`0x4008_0000`) before any boot marker, while main's soak, then on ubuntu-24.04, reached EL1 and failed later.
+  - **Update (2026-09-28):** #196 (`7167d40`) fixed that fault. Ubuntu 26.04's strict-NX edk2 maps EfiLoaderData execute-never, and the stub now loads `PF_X` segments as `LOADER_CODE`. #169's final head (`8ad88aa`, on `7167d40`) reached EL1 in all 5 soak boots (1 CLEAN, 3 EXCEPTION at kernel virtual addresses, 1 WEDGE). #169 merged on 2026-09-27 as `96b569a`, so main's soak now runs on ubuntu-26.04.
 
 Owner decisions, 2026-09-22:
 
@@ -83,7 +84,7 @@ Owner decisions, 2026-09-22:
 - Interactive edits of those paths prompt the owner.
 - The loop's headless fix stage gets a refusal instead, so it cannot silently change its own guard or merge logic, and such a PR ends at needs-human.
 - The rest of `tools/` is freely editable.
-- R1 must verify the exact rule syntax: path anchoring relative to the settings file.
+- R1 verified the rule syntax with a headless probe (see Open Questions): a leading `/` anchors at the project root, the directory that holds `.claude/`, not at the settings file. `.claude/settings.json` has the four ask rules (`Edit` and `Write` on `/tools/src/cmd/guard/**` and `/tools/src/cmd/loop/**`).
 
 **What stays out of the crate.** Retro-editable material stays in `scripts/agent/`: prompts, `loop-config.json` and eval cases.
 
@@ -104,7 +105,7 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
 - `AIOS_TOOLS_BIN` overrides the binary path, so a PR's own build can be tested explicitly.
 - CI runs `cargo test` on every PR.
 
-**Freshness.** The binary must be newer than every file under the main checkout's `tools/` and than `Cargo.lock`. The shim checks this with a `find -newer` test, which takes a few milliseconds.
+**Freshness.** The binary must be newer than every file under the main checkout's `tools/` and than its `Cargo.lock`, `Cargo.toml` and `rust-toolchain.toml`, so a pull that only bumps the pinned nightly still rebuilds it. The shim checks this with a `find -newer` test, which takes a few milliseconds.
 
 | State | `aios guard` (every shell command) | Other subcommands |
 | --- | --- | --- |
@@ -183,7 +184,7 @@ All loop behaviour, prompts, config and evals are unchanged.
 
 - `docs/knowledge/discussions/2026-09-22-jl-justin-review-merge-loop.md` (branch `claude/justin-review-merge-loop`): the approved PR-loop design this tooling implements.
 - `docs/knowledge/decisions/2026-09-22-jl-crash-fix-preemption-and-fp.md` (PR #174): the crash-fix steps that use the soak harness.
-- PR #169: the Ubuntu 26.04 runner. Its soak failed on uutils `timeout` before #192; since the rebase onto #192 the soak job completes on 26.04, so it does not wait on R4 (its boots are not CLEAN; see the note under Context).
+- PR #169: the Ubuntu 26.04 runner. Its soak failed on uutils `timeout` before #192 and at the kernel load address before #196. It merged on 2026-09-27 (`96b569a`), so main's soak runs on ubuntu-26.04 and R4 does not gate it (see the notes under Context).
 
 ## Outcome
 

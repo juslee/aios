@@ -58,8 +58,9 @@ jobs:
     # Host-only crate tools/ (package aios-tools, binary aios): fmt, clippy and
     # tests, including the docs-check parity goldens. The real-repository goldens
     # replay a pinned main commit, so the checkout needs full history.
-    # Pinned: the shim's tests (tools/tests/shim.rs) assume `/bin/sh` is dash,
-    # verified on this image; `ubuntu-latest` could move to one where it is not.
+    # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in
+    # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
+    # no longer prove the shim is POSIX.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

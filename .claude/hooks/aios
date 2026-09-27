@@ -14,8 +14,9 @@
 # subcommands exit 3.
 #
 # Fresh means newer than every file under the main checkout's tools/ and than
-# its Cargo.lock. `just tools` stamps the binary with the time its build
-# started, so an edit made during a build still counts as newer.
+# its Cargo.lock, Cargo.toml and rust-toolchain.toml, so a pull that only bumps
+# the pinned nightly still rebuilds. `just tools` stamps the binary with the
+# time its build started, so an edit made during a build still counts as newer.
 #   aios guard ...    fresh: run. stale: run it and start one background
 #                     `just tools` (lock dir target/tools/.building). missing:
 #                     fail closed with a PreToolUse "ask" decision, exit 0.
@@ -46,7 +47,7 @@ log="$main/target/tools/build.log"
 ask='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"aios tools not built; run just tools"}}'
 
 is_stale() {
-    [ -n "$(find "$main/tools" "$main/Cargo.lock" -newer "$bin" -print 2>/dev/null | head -n 1)" ]
+    [ -n "$(find "$main/tools" "$main/Cargo.lock" "$main/Cargo.toml" "$main/rust-toolchain.toml" -newer "$bin" -print 2>/dev/null | head -n 1)" ]
 }
 
 build_fg() {
