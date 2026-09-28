@@ -140,7 +140,7 @@ This closes today's check-then-insert window (`check_channel_create`, `cap/mod.r
 ### 3. Attenuation and grants (#163)
 
 - Delete `shared/src/cap.rs:110`, `:112` and `:114`. `can_attenuate_to` reduces to `permits`. SVC 15 types 1 and 3 work only from an Access token for the same full id, and return EPERM from a Create token.
-- **Expiry clamp.** `attenuate` takes `now_tick`, returns EPERM when the parent has expired, and gives the child the earlier of the parent's and the requested expiry (`docs/security/model/capabilities.md` §3.3). Today an identity child of an expiring token can be made never to expire.
+- **Expiry never grows.** `attenuate` takes `now_tick` and returns EPERM when the parent has expired or when the requested expiry is later than the parent's. A request with no expiry (`None`, x2 = 0 at SVC 15) gives the child the parent's expiry, and a parent that never expires allows any requested expiry (`docs/security/model/capabilities.md` §3.3, `ExpiryExpansion`; `docs/kits/kernel/capability.md` §2, `reduce_expiry`). Today an identity child of an expiring token can be made never to expire.
 - **Kit `grant` (ADR choice)** refuses `ChannelAccess`, `SharedMemoryAccess` and `GpuBufferAccess` with `NotGranted`. Object-bound tokens come only from minting (§2) or delegation (§4).
 
 ### 4. Delegation and object-bound checks
@@ -297,7 +297,7 @@ Crash-fix step 1b counts "`unblock` skipping a Running or Runnable target, by ca
 
 - **Ids** are opaque: raw = `slot | generation << 8`, so no valid id is below 256. Syscall decoding does not change.
 - **`ChannelCreate` (6), `SharedMemoryCreate` (20):** the minted handle comes back in x1.
-- **`CapabilityAttenuate` (15):** Create → Access returns EPERM; an expired parent returns EPERM; the child's expiry is clamped to the parent's.
+- **`CapabilityAttenuate` (15):** Create → Access returns EPERM; an expired parent, or an x2 expiry later than the parent's, returns EPERM; x2 = 0 gives the child the parent's expiry, not none.
 - **`CapabilityRevoke` (16):** revoking a Create token destroys the channels or regions created under it or under a same-table descendant. A caller that is not Alive gets EPERM.
 - **`MemoryUnmap` (19) on a region's window VA, `SharedMemoryMap` (21):** EPIPE for a destroyed, draining or stale region. Map needs a live token and an Alive caller.
 - **`SharedMemoryShare` (22):** needs a live token for the full id, delegatable unless the target is the caller. A repeat share is a no-op. ENOSPC at the foreign reserve.
@@ -330,7 +330,7 @@ Crash-fix step 1b counts "`unblock` skipping a Running or Runnable target, by ca
 | `docs/kernel/deadlock-prevention.md` | §3.3: the new nestings; `PROCESS_WAITERS` moves from the leaf and utility table (`:130`) into the primary hierarchy directly below `PROCESS_TABLE`, and stays a leaf lock: nothing is taken under it and it is never held across `unblock`; `SELECT_WAITERS` (`:87`, `:115`) and `NOTIFY_RESULTS` (`:132`) removed. §3.5: the new exit pattern. §4.2: `ipc_call`'s 0 and `u64::MAX` are unbounded, an exception to "no API to block indefinitely" (§9) |
 | `docs/kernel/scheduler.md` | Dead is terminal; `exit_current`; the wake token; `sleep_ticks` uses `BlockedTimer` |
 | `docs/kernel/memory/virtual.md`, `docs/kits/kernel/memory.md` | Create returns a handle; share rules and the reserve; destruction by revoke, exit or destroy; no `MemoryRevoked` event |
-| `docs/security/model/capabilities.md`, `docs/kits/kernel/capability.md`, `docs/kits/kernel/ipc.md`, `shared/src/kits/ipc.rs:183-184` | No Create → Access; expiry clamp; minted children; cascades; Kit signatures, `grant` and `shmem_destroy` rules |
+| `docs/security/model/capabilities.md`, `docs/kits/kernel/capability.md`, `docs/kits/kernel/ipc.md`, `shared/src/kits/ipc.rs:183-184` | No Create → Access; minted children; cascades; Kit signatures, `grant` and `shmem_destroy` rules |
 | `docs/project/developer-guide.md` | `:597` example; ipc and sched file trees; test totals; `:1792` expected warnings; `:2060` replaced by §8's rules; `:2061` keeps "Use `try_lock()` in IRQ context, never blocking lock", which crash-fix step 2 reverses (`:440`), and gains "call `unblock` only after releasing the lock" |
 | `docs/project/ai-agent-context.md`, `docs/phases/03-ipc-and-capability-system.md:189`, `docs/phases/05-kit-foundation.md:248`, `docs/platform/posix.md:655-656`, `:705-720` | Scheduler API; create signatures; `ProcessWait` no longer serves `pthread_join` or `waitpid(-1)` |
 | `kernel/src/ipc/channel.rs:30` | `timeout_ticks` doc comment: 0 means no timeout, not non-blocking (§9) (step 11 fixes the lock-order comment at `compositor/service.rs:547`) |
@@ -368,7 +368,7 @@ One PR on `claude/cap-lifetime`, one commit per step, named `Cap lifetime step N
 | --- | --- | --- |
 | 1 | Id layout and API; `SharedMemoryAccess(SharedMemoryId)` | `just test` id tests pass; `just run` prints the Bad-id, Bad-pid and Select-cap lines, and `grep -Ec 'Channel [0-9]+\.1 created'` is at least 1 |
 | 2 | Per-slot generations, identity checks, `region_mut`, select propagates lookup errors; stale-id tests | `just run` prints `Stale-id test: EPIPE as expected` and `Stale-shm test: EPIPE as expected` |
-| 3 | `mint_child`, `free_slots`, `is_revoked`, `revoke_all`, `clear`; the three arms removed; expiry clamp; Kit `grant` refusal | `just test`: the three denial tests, the clamp tests and the minting tests pass |
+| 3 | `mint_child`, `free_slots`, `is_revoked`, `revoke_all`, `clear`; the three arms removed; expiry checks; Kit `grant` refusal | `just test`: the three denial tests, the expiry tests and the minting tests pass |
 | 4 | ipc-timeout thread pinned to CPU 2; Timeout test moved last | `just run`: step-3 lines unchanged and the Timeout-last check passes |
 | 5 | `create_with_access`; minting for channels and regions; x1 ABI; channel cascade; Create-ABI test | `just run` prints `Create-ABI test: x0/x1 as expected`, `Destroy test: EPIPE as expected` and `Timeout test: ETIMEDOUT as expected`; `grep -c 'denied ChannelAccess'` is 3 |
 | 6 | Region cascade, `region_detach`, `RegionBorrow`, deferred free; Shm-cascade test | `rg -n -e region_dmap_addr -e region_size kernel/src` prints nothing; `just run` prints `Shm-cascade test: EPIPE as expected`, and `grep -c 'shm_cascade: pid=1 destroyed 1'` is 3 |
@@ -508,7 +508,7 @@ One PR on `claude/cap-lifetime`, one commit per step, named `Cap lifetime step N
 
 **#200, 2026-09-28.**
 
-- **CPUs 1–3 take no timer IRQs.** Crash-fix step 1b's per-CPU tick counter found that `init_gicv3_secondary` (`gic.rs:112-154`) never moves the secondary CPUs' PPIs out of Group 0, so only CPU 0 is ever preempted by the timer (#200). The owner decided on 2026-09-28 that the fix is its own crash-fix step, the first behaviour change after step 1a, with N2 re-baselined after it. §7's tick claims held only for CPU 0. §7 now says a victim running on CPUs 1–3 today is never preempted, and that whichever switch next takes it off its CPU revives it, that the exit wait's one-tick term and so step 8 rely on #200's fix step (which lands before step 8), and that the echo server is exposed to the lost lock on CPU 0 today. The amendment's step-8 bullet says the same. "Soak" notes that #200's fix step shifts every baseline. Round 14 (below) scopes "Risks" and "Not covered" the same way, records the decision in "Decisions" and puts #200's fix step before this PR.
+- **CPUs 1–3 take no timer IRQs.** Crash-fix step 1b's per-CPU tick counter found that `init_gicv3_secondary` (`gic.rs:112-154`) never moves the secondary CPUs' PPIs out of Group 0, so only CPU 0 is ever preempted by the timer (#200). The owner decided on 2026-09-28 that the fix is its own crash-fix step, the first behaviour change after step 1a, with N2 re-baselined after it. §7's tick claims held only for CPU 0. §7 now says a victim running on CPUs 1–3 today is never preempted, and that whichever switch next takes it off its CPU revives it, that the exit wait's one-tick term and so step 8 rely on #200's fix step (which lands before step 8), and that the echo server is exposed to the lost lock on CPU 0 today. The amendment's step-8 bullet says the same for CPUs 1–3, the exit wait and a CPU 0 victim's lost lock, but does not name the echo server; that exception stays in §7 and "Risks". "Soak" notes that #200's fix step shifts every baseline. Round 14 (below) scopes "Risks" and "Not covered" the same way, records the decision in "Decisions" and puts #200's fix step before this PR.
 
 **Third audit, round 14, 2026-09-28.**
 
@@ -526,3 +526,8 @@ One PR on `claude/cap-lifetime`, one commit per step, named `Cap lifetime step N
 - **accuracy, §11's unchecked callers.** Adopted. §11 named only the select_cap test's inaccessible channel, but all three of its channels stay on `channel_create_unchecked` (`select_cap.rs:49-51`), and the two accessible ones keep their self-test grants (`:53`), as the plan counts them. §11 now names all three.
 - **fidelity, the amendment's step-2 tid reads.** Adopted. The amendment said two of the four helpers read the caller's tid, but `kill_process_threads` also does after masking (§6 B), and "Constraints on the crash-fix steps" has `with_this_cpu` replace every such read. It now says three.
 - **conventions, a branch-only hash in round 14's note.** Adopted. The note cited a commit that the squash merge leaves off `main`; it now points to the #200 note.
+
+**Third audit, round 16, 2026-09-28.**
+
+- **conventions and fidelity, the #200 note said the amendment "says the same".** Adopted. Of the three things the note lists, the amendment's step-8 bullet says the first two (a victim on CPUs 1–3 and the exit wait's one-tick term) but never names the echo server. The note now says so, and the echo-server exception stays in §7 and "Risks"; the amendment is not widened.
+- **accuracy, the expiry clamp against `capabilities.md` §3.3.** Adopted, as the verifier preferred: follow §3.3. §3 credited §3.3 with giving the child the earlier of the parent's and the requested expiry, but §3.3 refuses a later request (`ExpiryExpansion`, "1 hour → 1 year is DENIED") and the Kit's `reduce_expiry` "must be earlier than the original". No owner decision covers expiry, and the architecture docs are the source of truth (rule 04), so §3 and the SVC 15 ABI now return EPERM for a later request, and `None` (x2 = 0) inherits the parent's expiry. The step-15 docs row drops "expiry clamp", since §3.3 already says this, and step 3's row names expiry checks and tests. Rejected: keeping the clamp as an ADR choice, which would rewrite §3.3's rule without a reason beyond the plan's wording. The plan's step-3 text and checks and its `capabilities.md` row still say clamp, for `claude/cap-lifetime` to fix.
