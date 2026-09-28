@@ -39,6 +39,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 - [ ] V1: V-register listing: differential gate over the IRQ call graph (no repository file)
 - [ ] D1: Docs sweep and ADR errata
 - [ ] B1: Single-arm N2 baseline soak on the final 1b head (owner gate; host-exclusive, coordinated with aios-b9)
+  - **Owner decision before B1 (K5 review 2):** accept the K5 lock's cost for B1 and the A/B soak (the Gate 1 IPC round trip about doubles, and Gate 1's `IPC < 10 us` fails in most boots), or first cut the stamp reads that cause it. Evidence and the measured split: Issues Encountered, K5 (review 2).
 
 Every task: one commit `Crash fix step 1b: <description>`, `just check` with zero warnings, `just test`, and for kernel tasks one text and one gpu boot (`just soak runs=1 secs=75 report_only=1`, then `mode=gpu`) with the task's boot acceptance from Design §3.
 
@@ -718,6 +719,10 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
    - V1's differential source-line parity gate over the IRQ call graph enforces it, including inlining and `memset`/`memcpy`.
 5. **Things that could change scheduling behaviour** (all listed in the PR):
    - **Lock fast path:** an MPIDR read, a DAIF read, a generation load, a second stamp read, the holder-field stores after acquire and **clears before release**, and the `#[track_caller]` argument. This changes the Gate 1 IPC figure.
+     - **Measured (K5 review 2):** the IPC round trip goes from avg 4–7 us (min 3.0–5.0 us) with K4's `spin::Mutex` to avg 10–13 us (min 7.0–11.0 us) with the K5 lock, in interleaved boots at load 7–13. The context switch goes from avg 1–4 us to 4–8 us.
+     - Gate 1's `IPC < 10 us` passes in 17 of 18 K1–K4 boots and in 1 of 14 K5 boots. `Context switch < 20 us` still passes.
+     - Nearly all of it is the stamp reads: per `lock()`, 1 DAIF and 4 MPIDR reads, 4 loads and a re-stamp store (`whoami`, `current_stamp_or`). The holder fields, the 64-bit word and the contended-path bookkeeping cost nothing measurable.
+     - Accepting this or cutting the stamp reads is an owner decision before B1 (Progress).
    - **Phase 1 of the scan** holds all 8 RUN_QUEUES and THREAD_TABLE for ≤ 100 µs (measured by `scanhold1`). Effects:
      - other CPUs' `timer_tick` try-locks skip a slice decrement;
      - a balancer overlapping the ascending acquisition may decide on a **subset** of queues;
@@ -971,7 +976,7 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - `hbdefer=0`;
   - 46 heartbeats with 46 `src=hb` lines;
   - a `g1` `Full` line with `n=65`;
-  - IPC round-trip avg 10 us and 9 us.
+  - IPC round-trip avg 10 us and 9 us, about twice K4's (K5 (review 2) below).
   In all 13 K5 logs the hazard grep is empty, every `[tripwire]` line is complete, and `rsthold` is 0.
 - K5: `llvm-objdump` of the final ELF: the only new V-register or `memset`/`memcpy` site is `bl memset` in `reentry_panic` (its `BufSink`; exempt, halt-terminal). The per-symbol V-site counts equal K4's for `irq_handler_el1`, `timer_tick_handler`, `drain_logs` (3 in both), `sched::timer_tick`, `unblock`, `check_timeouts`, `wake_with_error`, `try_load_balance`, `check_notification_timeouts`, `irq_frame_check`, `end_of_tick`, `note_dispatch` and the switch functions. Every `irq_spin_lock` symbol, `lock_contended::<T>` and `irq_lock_words::<..>` has 0, and there is no `blr`.
 - K5: layout. `.text` grows by 25 KiB (the inlined lock paths). `.data` grows by 60 KiB, because the 9 statics moved from `.bss` to `.data`: `HolderFields::tid` starts at `TID_NONE`, and the lock id is non-zero. `__kernel_end` is `0xFFFF_0000_002C_C000` (K4: `…2C_5000`), inside the boot TTBR1's 4 × 2 MiB.
@@ -983,9 +988,33 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - The 4 PCZEROs come after the bench start. Each boot that ran past `t=1001` shows `elrmm=spsrmm=1,0,0,0`, K4's pattern. K5's PANIC-LOCKs had censored this class.
   - The EXCEPTION (`20260928-135549-text` run 04) is `EC=0x25 ESR=0x96000006 FAR=0x5a8`, a read at bench start from `ipc_reply+444`: REPLY_SLOTS's `spin::Mutex` spin (`channel.rs:376`), with the lock pointer register holding 0x5a8. REPLY_SLOTS is not an IRQ-class lock and no K5 code runs there. It has the shape of run 167's `main` gpu r2 #03 (`EC=0x25`, `FAR=0xa`, a valid kernel PC, tick 0), so it is not a new class. It is the first text-mode one on this branch; fewer PANIC-LOCKs at the bench start leave more boots to reach it.
   - The 2 text WEDGEs and the gpu WEDGE have heartbeats alive and the bench stalled after `server ready`, with `hbdefer` equal to the line count: the known heartbeat-alive hang.
-  - The CLEAN boot (`20260928-140136-text` run 03) meets K5's acceptance: no `lock re-entry:` and no `[tripwire-ev]` line, a `g1` `Full` line with `n=65` and `rsthold=0,0,0,0`, `lktry[TIMEOUT_QUEUE]=2`, `hbdefer=0`, and 53 heartbeats with 53 `src=hb` lines. IPC avg 19 us at load 13.
+  - The CLEAN boot (`20260928-140136-text` run 03) meets K5's acceptance: no `lock re-entry:` and no `[tripwire-ev]` line, a `g1` `Full` line with `n=65` and `rsthold=0,0,0,0`, `lktry[TIMEOUT_QUEUE]=2`, `hbdefer=0`, and 53 heartbeats with 53 `src=hb` lines. IPC avg 19 us at load 13 (K5 (review 2) below).
   - In all 12 logs the hazard grep is empty, every `[tripwire]` line is complete, and `rsthold` is 0.
 - K5 (review 1): `llvm-objdump` of the new ELF: every symbol's V-register, `memset`/`memcpy` and `blr` count equals the K5 ELF's (the only site on the lock path is still `reentry_panic`'s `bl memset`). `.text` is 26.8 KiB above K4 (K5: 25 KiB), and `__kernel_end` is `0xFFFF_0000_002C_D000`, inside the boot TTBR1's 4 × 2 MiB.
+- K5 (review 2): **the K5 lock about doubles the Gate 1 IPC round trip, and Gate 1's `IPC < 10 us` now fails in most boots.** The K5 entries above gave IPC figures with no baseline. From every soak log on this host that has a round-trip line (avg and min in us; load is the boot's 1-minute average):
+  - `main`, run 167 (`f0b4169`): 16 boots (15 text, 1 gpu), avg 3–6, min 2.0–4.0, all PASS, load 6.5–24.
+  - K1–K4 (ELFs `e3822af6` to `590fbe38`): 13 boots (9 text, 4 gpu), avg 4–10 (4–7 at load 5–12), min 2.0–5.0, 12 PASS. The one FAIL is K1's avg 10 at load 33.
+  - K5 (ELFs `ac38b5c1`, `5becf0f7`, `128cbb0e`): 9 text boots (the 6 above, this round's gate boot, and 2 from `20260928-145827-text`), avg 9–13 with one 19 at load 12, min 6.0–11.0, 1 PASS (avg 9). No K5 gpu boot reached the round trip.
+  - The minimum is the steadiest signal, because load inflates avg and p99 far more than the best round trip. Every K5 minimum but one is 6,992 ns or more; every `main` and K1–K4 minimum is 4,992 ns or less.
+  - The context switch moves the same way: avg 1–4 us and min 1.0–2.0 us before K5, avg 4–8 us and min 3.0–5.0 us with it. Its 20 us Gate 1 limit still passes.
+- K5 (review 2): **where the cost comes from, measured.** Four kernels, 8 rounds, one short text boot per kernel per round, interleaved (`secs=30`, load 7–16). The kernels are scratch builds of `git archive` trees in the session scratchpad, not committed:
+  - `head`: this commit (its `.text` is byte-identical to `128cbb0e`'s);
+  - `k4`: K4 (`43fc8d5`);
+  - `g`: `head` with `lock_contended` cut to spin-and-retry (no classify, snapshot, `bump` or event line), stamps unchanged;
+  - `fg`: `g` with a constant never-current stamp and `TID_NONE` from an inlined `whoami`, and no re-stamp in `hold`. Its fast path is K4's plus the two holder-field stores after the CAS, their two clears before the release, and a 64-bit word.
+  - Results (IPC avg; IPC min; Gate 1 IPC; context-switch avg):
+    - `head`, 5 figures: 10, 10, 13, 13, 13; 7.0–11.0; 0 PASS; 4–8.
+    - `g`, 4 figures: 11, 11, 14, 15; 6.0–11.0; 0 PASS; 4–8.
+    - `fg`, 4 figures: 5, 6, 6, 8; 3.0–4.0; 4 PASS; 2–9.
+    - `k4`, 5 figures: 4, 5, 6, 6, 7; 3.0–5.0; 5 PASS; 1–4.
+  - `g` matches `head` and `fg` matches `k4`. Nearly the whole cost is the stamp reads on the fast path:
+    - `whoami`: a call, 1 DAIF and 2 MPIDR reads, 2 `SWITCH_GEN` loads, a `CURRENT_TID` load and about 7 branches with the `ret`;
+    - the re-stamp inside the hold (`current_stamp_or`): 2 MPIDR reads, 1 load and 1 `stlr`.
+  - The contended-path bookkeeping and the holder fields cost nothing these boots resolve, although `lkoxp[THREAD_TABLE]` reaches 41,000–250,000 by `g1`. Not measured: why a few system-register reads per `lock()` cost microseconds per round trip under TCG, and how many IRQ-class `lock()` calls one round trip makes.
+  - The other 14 boots stopped before the round trip, each in a way its kernel shows elsewhere: tick-0 WEDGE in `k4`, `g` and `fg` (their contended path spins where `head` panics), 2 PANIC-LOCK in `head`, the EC=0x25 near-null abort at bench start in `head`, `g` and `fg`, and one heartbeat-alive bench stall in `fg`. Classes from 30-second boots say nothing about rates.
+- K5 (review 2): **a PC equal to an owner stamp.** The first attempt at the measurement above, discarded because its `fg` build had a bug, included a `head` boot that stalled after `server ready` with its heartbeat alive, then took `EXCEPTION[CPU 0]: ESR=0x8a000000 EC=0x22 FAR=ELR=0xc000000000034f51` at tick 9000 (load 11), with no earlier PANIC. That value decodes as an `IrqSpinLock` word: HELD, IRQS_ON, CPU 0, generation 216,913, in the range of CPU 0's generation at the bench (the re-entry messages show 159,928–264,124). So a branch or return most likely took a lock word as its target. The 1b lock words are the only data known to hold values of this shape, so the signature is new in value. It belongs to the family of EC=0x22 jumps to data values after a bench stall (the direct-map PCs in K5's gpu boots and run 167's gpu logs). **The log was deleted with that attempt's output directory, so only the classifier's line above survives.** Eight more `head` text boots (`20260928-145827-text`, `secs=40`) did not repeat it: 3 PANIC-LOCK, 2 EC=0x25 aborts (`ipc_recv`, FAR 0x12 and 0x679), 2 CLEAN and 1 heartbeat-alive stall. By K1 (review)'s rule for `0x2_0000_0000`, a new signature in a boot with no earlier PANIC must be explained before 1b merges.
+- K5 (review 2): the survivor data point the same way as the IPC figures, but load confounds them. Of the 7 text boots of the current ELF that got past tick 0 in 75-second soaks (K5 review 1 and this round's gate boot), 2 are CLEAN, 3 are PCZERO after `g1` and 2 are heartbeat-alive bench stalls. `main` run 167 has 12 CLEAN of 15 (one-sided Fisher p ≈ 0.03; 0.014 for review 1's 1 of 6), but at load 6.5–24 against K5's 10–55. None of run 167's 20 text boots is a heartbeat-alive stall; K5 has 2 in 12 such boots.
+- K5 (review 2): gates. `just check` clean; `just test` 624 passed. Text boot `20260928-145402-text` (ELF `128cbb0e`, load 13): CLEAN, 54 heartbeats with 54 `src=hb` lines, `g1` with `n=65`, `rsthold=0,0,0,0` and `hbdefer=0`, no `lock re-entry:` and no `[tripwire-ev]` line, IPC avg 12 us and min 9.0 us (Gate 1 IPC FAIL), `elrmm=1,0,0,0` after `g1` (K4's pattern). Gpu boot `20260928-145534-gpu` (load 11): `main`'s `frame.rs:51` PANIC after tick 0, the bench stalled after `server ready`, and the post-panic `ELR=FAR=0x2_0000_0000` exception at tick 44000 (K1 (review)); 45 heartbeats with 45 `src=hb` lines, every line after the first held back the full 256 ticks (`hbdefer=44`). The hazard grep is empty and every `[tripwire]` line is complete in both.
 
 ## Decisions Made
 
@@ -1090,6 +1119,10 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - Also: `current_process_id` (`cap/mod.rs`, outside K5's list) splits `{ *CURRENT_THREAD[cpu].lock() }?` into two statements. In edition 2021 a block's tail temporaries live to the end of the statement, so the `?` test ran inside the hold. K4's compiler hoisted its one-store release above that branch, but it does not hoist the three-store release. Behaviour is unchanged.
   - Review item 2 accepted: `site_ref`'s SAFETY comment names `IrqSpinLock::hold` as the writer.
   - Gates: `just check` clean, `just test` 624 passed, and Miri on the 19 `lock::` tests is clean. The threaded Miri test still fails on the default seed when `try_lock_weak`'s `Acquire` is weakened to `Relaxed` (data race).
+- K5 (review 2): accepted the review item, with no code change. Its figures check out against the soak logs; `lkoxp[THREAD_TABLE]` reaches 250,000 in the first K5 build, and the Gate 1 FAILs span all three K5 ELFs. The plan now records the IPC cost and its baseline (Issues Encountered), states the measured size in §4.5 for the PR, and puts the choice under B1 in Progress as an owner decision: accept the cost for B1 and the A/B soak, or cut the stamp reads first.
+  - Also ran the split the review names as a reduction's first step, so that the owner decides with it: the stamp reads are the cost, and the contended path and holder fields are not (Issues Encountered). The two variants are measurement arms, not candidate fixes. `g` loses the re-entry panic, the contention counters and the event lines; `fg` also loses the stamps.
+  - Not done: any reduction. That is the owner's call, and a reduction must keep the in-hold TB-start counts that `2cb77eb` restored. The measurement does not separate `whoami` from the in-hold re-stamp (`current_stamp_or`, 2 MPIDR reads). Dropping the re-stamp alone would be the next arm to boot. A stale holder stamp can only hide a re-entry, never invent one (§2.1).
+  - The PC-equals-stamp exception (Issues Encountered) is reported, not diagnosed: its log is lost, and 8 more boots did not repeat it.
 
 ## Lessons Learned
 
