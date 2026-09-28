@@ -420,25 +420,48 @@ impl<T, H> StampedLock<T, H> {
 }
 
 impl<T, H: PreRelease> StampedLock<T, H> {
-    /// One strong CAS from 0 to `stamp`.
+    /// One strong CAS from 0 to `stamp`. `None` if the lock is held.
     ///
-    /// On failure returns the word observed by the CAS, which is never 0.
+    /// A failure reports no word. A caller that classifies the holder loads
+    /// it with [`Self::owner_word`] after the failure: `stamp` was taken
+    /// before that load, which is what [`classify`] requires. The word may by
+    /// then be 0 (the holder has released) or another holder's.
+    ///
+    /// Returning only success keeps the kernel's critical sections short.
+    /// When the result also carried the observed word, the compiler (at the
+    /// kernel's opt-level 1) merged the guard and the word into one value and
+    /// tested the CAS outcome a second time after the store-exclusive, which
+    /// put a branch inside the critical section. Under QEMU TCG every branch
+    /// there is one more point where a pending IRQ is taken while the lock is
+    /// held.
     #[inline]
-    pub fn try_lock(&self, stamp: OwnerStamp) -> Result<StampedGuard<'_, T, H>, u64> {
-        self.word
+    pub fn try_lock(&self, stamp: OwnerStamp) -> Option<StampedGuard<'_, T, H>> {
+        if self
+            .word
             .compare_exchange(0, stamp.word(), Ordering::Acquire, Ordering::Relaxed)
-            .map(|_| StampedGuard::new(self))
+            .is_ok()
+        {
+            Some(StampedGuard::new(self))
+        } else {
+            None
+        }
     }
 
-    /// One weak CAS from 0 to `stamp`, for use in a retry loop.
+    /// One weak CAS from 0 to `stamp`, for use in a retry loop. `None` if the
+    /// lock is held, or spuriously while it is free; retry.
     ///
-    /// On failure returns the word observed by the CAS. `Err(0)` is a spurious
-    /// failure of a free lock; retry.
+    /// As [`Self::try_lock`], a failure reports no word.
     #[inline]
-    pub fn try_lock_weak(&self, stamp: OwnerStamp) -> Result<StampedGuard<'_, T, H>, u64> {
-        self.word
+    pub fn try_lock_weak(&self, stamp: OwnerStamp) -> Option<StampedGuard<'_, T, H>> {
+        if self
+            .word
             .compare_exchange_weak(0, stamp.word(), Ordering::Acquire, Ordering::Relaxed)
-            .map(|_| StampedGuard::new(self))
+            .is_ok()
+        {
+            Some(StampedGuard::new(self))
+        } else {
+            None
+        }
     }
 }
 
@@ -509,14 +532,13 @@ impl<T, H: PreRelease> Drop for StampedGuard<'_, T, H> {
 }
 
 // The IRQ entry saves no V registers, so values on the IRQ path stay in
-// general registers: the guard and a decoded stamp are one word, and a
-// try_lock result is two (returned in x0/x1).
+// general registers: the guard, a try_lock result and a decoded stamp are
+// one word each.
 const _: () = assert!(core::mem::size_of::<Option<OwnerStamp>>() == 8);
 const _: () =
     assert!(core::mem::size_of::<StampedGuard<'static, u64>>() == core::mem::size_of::<usize>());
 const _: () = assert!(
-    core::mem::size_of::<Result<StampedGuard<'static, u64>, u64>>()
-        == 2 * core::mem::size_of::<usize>()
+    core::mem::size_of::<Option<StampedGuard<'static, u64>>>() == core::mem::size_of::<usize>()
 );
 
 // ---------------------------------------------------------------------------
@@ -1153,15 +1175,17 @@ mod tests {
     // -- StampedLock ---------------------------------------------------------
 
     #[test]
-    fn try_lock_takes_a_free_lock_and_reports_the_owner_word() {
+    fn try_lock_takes_a_free_lock_and_leaves_a_held_one_alone() {
         let lock = StampedLock::new(5u32);
         let a = OwnerStamp::new(1, 7, true);
         let b = OwnerStamp::new(2, 9, false);
         {
             let mut g = lock.try_lock(a).unwrap();
             assert_eq!(lock.owner_word(), a.word());
-            assert_eq!(lock.try_lock(b).err(), Some(a.word()));
-            assert_eq!(lock.try_lock(a).err(), Some(a.word()));
+            assert!(lock.try_lock(b).is_none());
+            assert!(lock.try_lock(a).is_none());
+            // A failed CAS does not touch the word the waiter then loads.
+            assert_eq!(lock.owner_word(), a.word());
             *g += 1;
         }
         assert_eq!(lock.owner_word(), 0);
@@ -1175,15 +1199,16 @@ mod tests {
         let lock = StampedLock::new(0u32);
         let a = OwnerStamp::new(0, 1, false);
         let g = loop {
-            match lock.try_lock_weak(a) {
-                Ok(g) => break g,
-                // Spurious failure of a free lock.
-                Err(w) => assert_eq!(w, 0),
+            if let Some(g) = lock.try_lock_weak(a) {
+                break g;
             }
+            // Spurious failure of a free lock.
+            assert_eq!(lock.owner_word(), 0);
         };
         let b = OwnerStamp::new(1, 1, false);
         for _ in 0..8 {
-            assert_eq!(lock.try_lock_weak(b).err(), Some(a.word()));
+            assert!(lock.try_lock_weak(b).is_none());
+            assert_eq!(lock.owner_word(), a.word());
         }
         drop(g);
         assert_eq!(lock.owner_word(), 0);
@@ -1197,7 +1222,8 @@ mod tests {
         let g = lock.try_lock(a).unwrap();
         StampedGuard::restamp(&g, b);
         assert_eq!(lock.owner_word(), b.word());
-        assert_eq!(lock.try_lock(a).err(), Some(b.word()));
+        assert!(lock.try_lock(a).is_none());
+        assert_eq!(lock.owner_word(), b.word());
         drop(g);
         assert_eq!(lock.owner_word(), 0);
     }
@@ -1229,8 +1255,8 @@ mod tests {
         let b = OwnerStamp::new(5, 55, true);
         let g = PROBED.try_lock(a).unwrap();
         // A failed acquisition does not run the hook.
-        assert!(PROBED.try_lock(b).is_err());
-        assert!(PROBED.try_lock_weak(b).is_err());
+        assert!(PROBED.try_lock(b).is_none());
+        assert!(PROBED.try_lock_weak(b).is_none());
         assert_eq!(PROBED.hook().calls.load(Ordering::Relaxed), 0);
         drop(g);
         assert_eq!(PROBED.hook().calls.load(Ordering::Relaxed), 1);
@@ -1329,20 +1355,18 @@ mod tests {
                         // never be fooled by a reused word.
                         let stamp = OwnerStamp::new(t, 2 * i + 1, i % 2 == 0);
                         let mut g = loop {
-                            match lock.try_lock_weak(stamp) {
-                                Ok(g) => break g,
-                                Err(_) => {
-                                    if let Some((owner, tid)) = read_tid(lock) {
-                                        assert!(
-                                            tid == TID_NONE || tid == u32::from(owner.cpu()),
-                                            "fields of another holder: stamp cpu {} tid {tid}",
-                                            owner.cpu()
-                                        );
-                                    }
-                                    while lock.owner_word() != 0 {
-                                        core::hint::spin_loop();
-                                    }
-                                }
+                            if let Some(g) = lock.try_lock_weak(stamp) {
+                                break g;
+                            }
+                            if let Some((owner, tid)) = read_tid(lock) {
+                                assert!(
+                                    tid == TID_NONE || tid == u32::from(owner.cpu()),
+                                    "fields of another holder: stamp cpu {} tid {tid}",
+                                    owner.cpu()
+                                );
+                            }
+                            while lock.owner_word() != 0 {
+                                core::hint::spin_loop();
                             }
                         };
                         lock.hook().tid.store(u32::from(t), Ordering::Release);

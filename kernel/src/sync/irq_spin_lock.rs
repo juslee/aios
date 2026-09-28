@@ -59,13 +59,16 @@
 //!
 //! # Holder fields
 //!
-//! Stored with `Release` right after the CAS, before an IRQs-on holder
-//! re-stamps, and cleared by the guard before its releasing store
-//! ([`PreRelease`]). A waiter reads them only through
-//! `StampedLock::consistent_snapshot`, and only if the snapshot's word is the
-//! word it classified, so it never pairs one holder's fields with another's
-//! stamp. An IRQ between the CAS and the field stores, or between the clears
-//! and the release, sees `?` fields and still decides correctly.
+//! Stored with `Release` right after the CAS, before the holder re-stamps,
+//! and cleared by the guard before its releasing store ([`PreRelease`]). A
+//! waiter reads them only through `StampedLock::consistent_snapshot`, and
+//! only if the snapshot's word is the word it classified, so it never pairs
+//! one holder's fields with another's stamp. An IRQ between the CAS and the
+//! field stores, or between the clears and the release, sees `?` fields and
+//! still decides correctly. In a short critical section with no branch of
+//! its own, the only point where QEMU takes an IRQ is right after the CAS,
+//! before the field stores (see IRQ-path rules), so an IRQ that interrupts
+//! such a holder sees `?` fields.
 //!
 //! The call site is stored as a kernel virtual address. CPUs 1-3 run the
 //! IRQ path at physical-alias PCs, so `Location::caller()` computed there is
@@ -80,13 +83,16 @@
 //! no stack arrays and no copies of aggregates of 16 bytes or more. Its
 //! helpers are `#[inline(never)]`, so a disassembly attributes their
 //! instructions to them, except the holder bookkeeping that runs inside the
-//! critical section ([`stamp_is_current`] and the field stores), which is
-//! inline and straight-line so that it adds as few QEMU translation-block
-//! starts (the only points where TCG takes a pending IRQ) to IRQs-on holds
-//! as it can. Counters use `tripwire::bump`, which masks IRQs for its load
-//! and store; there is no atomic read-modify-write besides the lock's own
-//! CAS. The one exception to these rules is [`reentry_panic`], which ends in
-//! the panic handler and never returns to the interrupted code.
+//! critical section (`IrqSpinLock::hold`: the field stores and
+//! [`current_stamp_or`]), which is inline and branch-free. QEMU TCG takes a
+//! pending IRQ only where a translation block starts, and every branch or
+//! call starts one, so a branch there would widen the window in which the
+//! timer IRQ interrupts an IRQs-on holder. The fast paths leave one such
+//! point, right after the CAS, as `spin::Mutex` does. Counters use
+//! `tripwire::bump`, which masks IRQs for its load and store; there is no
+//! atomic read-modify-write besides the lock's own CAS. The one exception to
+//! these rules is [`reentry_panic`], which ends in the panic handler and
+//! never returns to the interrupted code.
 
 #![deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 
@@ -210,38 +216,44 @@ impl<T> IrqSpinLock<T> {
 
     /// Acquire the lock, spinning while another stream holds it.
     ///
+    /// Always inlined, as `spin::Mutex::lock` was at every site: a call
+    /// would put its return, one more translation-block start, inside the
+    /// caller's critical section (see `Self::hold`).
+    ///
     /// # Panics
     ///
     /// If the holder is the calling stream itself (a wait that could never
     /// end), with a `lock re-entry:` message located at the caller.
-    #[inline]
+    #[inline(always)]
     #[track_caller]
     pub fn lock(&self) -> IrqSpinLockGuard<'_, T> {
         let (stamp, tid) = whoami();
         match self.inner.try_lock_weak(stamp) {
-            Ok(guard) => {
+            Some(guard) => {
                 self.hold(&guard, stamp, tid, Location::caller());
                 guard
             }
-            Err(observed) => self.lock_contended(stamp, tid, observed),
+            None => self.lock_contended(stamp, tid),
         }
     }
 
     /// Acquire the lock if it is free. Never waits and never panics.
     ///
     /// A failure counts `lktry` if the holder is the calling stream, or
-    /// `lktph` if it is a thread switched out on this CPU.
-    #[inline]
+    /// `lktph` if it is a thread switched out on this CPU. Always inlined,
+    /// as [`Self::lock`].
+    #[inline(always)]
     #[track_caller]
     pub fn try_lock(&self) -> Option<IrqSpinLockGuard<'_, T>> {
         let (stamp, tid) = whoami();
         match self.inner.try_lock(stamp) {
-            Ok(guard) => {
+            Some(guard) => {
                 self.hold(&guard, stamp, tid, Location::caller());
                 Some(guard)
             }
-            Err(observed) => {
-                note_try_failed(self.id.class, stamp, observed);
+            None => {
+                // `stamp` was taken before this load, as `classify` needs.
+                note_try_failed(self.id.class, stamp, self.inner.owner_word());
                 None
             }
         }
@@ -253,25 +265,27 @@ impl<T> IrqSpinLock<T> {
         dead_code,
         reason = "the heartbeat scans (step-1b task K8) are the callers"
     )]
-    #[inline]
+    #[inline(always)]
     #[track_caller]
     pub fn try_lock_quiet(&self) -> Option<IrqSpinLockGuard<'_, T>> {
         let (stamp, tid) = whoami();
-        let guard = self.inner.try_lock(stamp).ok()?;
+        let guard = self.inner.try_lock(stamp)?;
         self.hold(&guard, stamp, tid, Location::caller());
         Some(guard)
     }
 
     /// Record the new holder, right after its CAS: store the holder fields
-    /// (`Release`), then re-stamp if the holder was switched between its
-    /// stamp and now (possible only with IRQs on).
+    /// (`Release`), then store the holder's stamp as it is now, which differs
+    /// from `stamp` only if the holder was switched between its stamp and
+    /// the CAS (possible only with IRQs on).
     ///
-    /// This runs inside the critical section, so it is inline and has one
-    /// conditional branch on its usual path. QEMU TCG takes a pending IRQ
-    /// only where a translation block starts, and every branch or call
-    /// starts one. Each extra one inside an IRQs-on hold widens the window in
-    /// which the timer IRQ can interrupt the holder, which is the re-entry
-    /// hazard this lock exists to report (step-1b plan, K5 decisions).
+    /// This runs inside the critical section, so it is inline and has no
+    /// branch or call: the re-stamp is a select and an unconditional store.
+    /// QEMU TCG takes a pending IRQ only where a translation block starts,
+    /// and every branch or call starts one. Each one inside an IRQs-on hold
+    /// widens the window in which the timer IRQ can interrupt the holder,
+    /// which is the re-entry hazard this lock exists to report (step-1b
+    /// plan, K5 decisions).
     #[inline(always)]
     fn hold(
         &self,
@@ -283,9 +297,7 @@ impl<T> IrqSpinLock<T> {
         let fields = self.inner.hook();
         fields.tid.store(tid, Ordering::Release);
         fields.site.store(kva_of(site), Ordering::Release);
-        if !stamp_is_current(stamp) {
-            StampedGuard::restamp(guard, fresh_stamp(stamp.irqs_on()));
-        }
+        StampedGuard::restamp(guard, current_stamp_or(stamp));
     }
 
     /// The holder fields of the holder whose word is `expect`, or
@@ -308,20 +320,18 @@ impl<T> IrqSpinLock<T> {
     /// The contended path of [`Self::lock`]: classify, count once per call,
     /// spin until the word is 0, and retry.
     ///
-    /// `stamp` is the stamp the failed CAS used and `observed` the word it
-    /// saw (0 for a spurious failure). A waiter with IRQs on takes a fresh
-    /// stamp after each spin, before the CAS whose word it classifies next.
+    /// `stamp` is the stamp the failed CAS used. Each round classifies the
+    /// word loaded after that CAS failed, so the stamp was taken before the
+    /// load, as `classify` requires; the word is 0 if the holder has released
+    /// since or the weak CAS failed spuriously. A waiter with IRQs on takes a
+    /// fresh stamp after each spin, before its next CAS.
     #[inline(never)]
     #[track_caller]
-    fn lock_contended(
-        &self,
-        mut stamp: OwnerStamp,
-        mut tid: u32,
-        mut observed: u64,
-    ) -> IrqSpinLockGuard<'_, T> {
+    fn lock_contended(&self, mut stamp: OwnerStamp, mut tid: u32) -> IrqSpinLockGuard<'_, T> {
         let start = timer::read_counter();
         let mut noted: u8 = 0;
         loop {
+            let observed = self.inner.owner_word();
             if observed != 0 {
                 match classify(observed, stamp, &KernelView) {
                     Contention::Reentry => {
@@ -363,12 +373,9 @@ impl<T> IrqSpinLock<T> {
                     (stamp, tid) = whoami();
                 }
             }
-            match self.inner.try_lock_weak(stamp) {
-                Ok(guard) => {
-                    self.hold(&guard, stamp, tid, Location::caller());
-                    return guard;
-                }
-                Err(word) => observed = word,
+            if let Some(guard) = self.inner.try_lock_weak(stamp) {
+                self.hold(&guard, stamp, tid, Location::caller());
+                return guard;
             }
         }
     }
@@ -443,33 +450,35 @@ fn kva_of(site: &'static Location<'static>) -> *mut Location<'static> {
     })
 }
 
-/// Whether `stamp` still names the calling stream: this CPU is the stamp's
-/// CPU, and that CPU's generation has not moved since the stamp.
+/// The calling stream's stamp now, for a holder right after its CAS, with
+/// `stamp`'s IRQS_ON bit; `stamp` itself if the caller moved during the
+/// reads.
 ///
-/// Reads MPIDR, then `SWITCH_GEN[stamp cpu]` (the MPIDR `asm!` is a compiler
-/// barrier, so the load stays after it). If the caller was switched away
-/// after the stamp, the generation it reads has moved: the switch away bumps
-/// it (rule (a)), and under rule (c) the caller sees that bump wherever it
-/// runs next, and a switch back bumps it again. So `true` means the caller
-/// stayed in the stamp's generation from the stamp to the load. Always
-/// `true` with IRQs masked. Straight-line: `switch_gen_masked` needs no
-/// bounds branch, and both tests fold into one compare with 0.
+/// One round of `read_stamp` without its retry: MPIDR, `SWITCH_GEN[cpu]`,
+/// MPIDR again (each MPIDR `asm!` is a compiler barrier, so the load stays
+/// between them). If both CPU reads agree, the pair is what `read_stamp`
+/// would return, so it names the caller's current generation or one that
+/// had already ended. Otherwise `stamp`, which came from `read_stamp` in
+/// [`whoami`], has the same property. That is all the re-entry verdict
+/// needs from a holder's word: an ended generation never matches a waiter
+/// that is still in its own, so a stale word can only hide a re-entry,
+/// never invent one. With IRQs masked nothing can move the caller or bump
+/// its CPU's generation, so the result equals `stamp`.
+///
+/// Branch-free, because it runs inside the critical section: the index of
+/// `switch_gen_masked` needs no bounds branch, and the choice is a select.
+/// `select_unpredictable` is used for its codegen (a `csel`), not because
+/// the choice is hard to predict.
 #[inline(always)]
-fn stamp_is_current(stamp: OwnerStamp) -> bool {
+fn current_stamp_or(stamp: OwnerStamp) -> OwnerStamp {
     let cpu = cpu_here();
-    let gen = switch_gen_masked(stamp.cpu());
-    let cpu_diff = u64::from(cpu ^ stamp.cpu());
-    let gen_diff = (gen ^ stamp.gen()) & OwnerStamp::GEN_MASK;
-    cpu_diff | gen_diff == 0
-}
-
-/// A fresh stamp for a holder that was switched between its stamp and its
-/// CAS: `read_stamp` now, with the IRQS_ON bit the holder stamped with.
-#[cold]
-#[inline(never)]
-fn fresh_stamp(irqs_on: bool) -> OwnerStamp {
-    let (cpu, gen) = read_stamp(&KernelView);
-    OwnerStamp::new(cpu, gen, irqs_on)
+    let gen = switch_gen_masked(cpu);
+    let again = cpu_here();
+    core::hint::select_unpredictable(
+        cpu == again,
+        OwnerStamp::new(cpu, gen, stamp.irqs_on()),
+        stamp,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +486,8 @@ fn fresh_stamp(irqs_on: bool) -> OwnerStamp {
 // ---------------------------------------------------------------------------
 
 /// A `try_lock()` found the lock held: count a re-entry (`lktry`) or a
-/// holder switched out on this CPU (`lktph`).
+/// holder switched out on this CPU (`lktph`). `observed` is the word loaded
+/// after the failed CAS; 0 (released since) counts nothing.
 #[inline(never)]
 fn note_try_failed(class: LockClass, me: OwnerStamp, observed: u64) {
     let key = match classify(observed, me, &KernelView) {
@@ -647,12 +657,12 @@ impl EventKind {
 /// The call site behind a holder-field value, `None` for null.
 #[inline(always)]
 fn site_ref(site: *const Location<'static>) -> Option<&'static Location<'static>> {
-    // SAFETY: HolderFields::site is written only by note_acquired, with
-    // `kva_of(Location::caller())`, and by pre_release, with null. A non-null
-    // value is therefore the kernel virtual address of a `'static Location`
-    // in the kernel image's .rodata, which TTBR1 maps read-only on every CPU
-    // for the kernel's lifetime (kmap). A value from anywhere else would
-    // make this read fault or print garbage.
+    // SAFETY: HolderFields::site is written only by IrqSpinLock::hold, with
+    // `kva_of(Location::caller())` right after the CAS, and by pre_release,
+    // with null. A non-null value is therefore the kernel virtual address of
+    // a `'static Location` in the kernel image's .rodata, which TTBR1 maps
+    // read-only on every CPU for the kernel's lifetime (kmap). A value from
+    // anywhere else would make this read fault or print garbage.
     unsafe { site.as_ref() }
 }
 
