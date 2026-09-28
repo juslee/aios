@@ -8,7 +8,8 @@
 //! lists both: a non-string `reason`, whose rendering follows serde_json, not
 //! Python; and a baselined `count` beyond `i64`, printed saturated to
 //! `i64::MAX` or `i64::MIN` in the prune and grown notes and in `--json`'s
-//! `baseline` and `baseline_count` fields, where Python prints the exact integer.
+//! `baseline` and `baseline_count` fields, where Python prints the exact integer
+//! (up to 4300 digits; past that check.py exits 2, see the `model` module doc).
 
 use std::collections::BTreeMap;
 

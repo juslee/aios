@@ -15,13 +15,23 @@
 //! `(B -> C occurrences)`, the grown note `[N occurrences, baseline B]` (text,
 //! including `--all`, and `--markdown`), `--json`'s `reduced.<key>.baseline`
 //! and `--json`'s per-finding `baseline_count`, where CPython compares and
-//! prints the exact integer; a `count` string of non-ASCII decimal
+//! prints the exact integer (for a digit string, only up to 4300 digits: see
+//! the next paragraph); a `count` string of non-ASCII decimal
 //! digits (e.g. Arabic-Indic `"٣"`) is rejected here, where CPython's `int()`
 //! accepts them; a `count` string with a control separator (U+001C-U+001F)
 //! around its digits is accepted here, because `pystr::strip` treats those as
 //! whitespace before parsing, where CPython's `int()` does not strip them and
 //! rejects the string; and a non-string `reason` is rendered as compact JSON
 //! rather than a Python `repr`.
+//!
+//! A baselined `count` digit string of more than 4300 digits (leading zeros
+//! count; a sign and underscores do not) diverges in exit code instead. When
+//! its key matches a current finding, CPython 3.11+'s `int()` raises
+//! ValueError at L1476, in `compare`, which `main` calls (L1627) before any
+//! renderer, so check.py exits 2 through `__main__` (L1665-1670) in the text,
+//! `--all`, `--json` and `--markdown` modes, where aios saturates it as above
+//! and exits 0 or 1. `--update-baseline` never converts a baselined count, so
+//! both tools exit 0 there.
 //!
 //! Malformed-baseline handling also diverges (verified with python3 against
 //! check.py at 33c6b3d):
@@ -34,10 +44,13 @@
 //!   `NaN`, `Infinity` and `-Infinity` literals, lone-surrogate escapes such as
 //!   `\ud800`, nesting from 128 levels up to CPython's C-stack limit (about
 //!   150,000 levels with CPython 3.14), and numbers beyond f64's range such as
-//!   `1e400` (CPython parses it as `float('inf')`). `harness.rs` lists the same
-//!   serde_json set for plugin.json. Past that nesting limit, CPython's
-//!   `json.load` (L1405) raises RecursionError, which L1408 does not catch, so
-//!   check.py also exits 2, through `__main__`; only the stderr differs.
+//!   `1e400` (CPython parses it as `float('inf')`) or an integer of up to 4300
+//!   digits (CPython keeps it exact). `harness.rs` lists the same serde_json
+//!   set for plugin.json. Past that nesting limit, CPython's `json.load`
+//!   (L1405) raises RecursionError, and past 4300 digits it raises ValueError
+//!   (CPython 3.11+'s `int()` limit, not a JSONDecodeError); L1408 catches
+//!   neither, so check.py also exits 2, through `__main__`; only the stderr
+//!   differs.
 //! - A hashable non-string `check` (a number, `true`/`false` or `null`) passes
 //!   check.py's `--update-baseline` (L1619 only tests `not in ran`), where
 //!   `render_baseline` here requires every entry's `check` to be a string and
@@ -338,7 +351,9 @@ pub fn baseline_count(entry: &Value) -> Result<i64> {
 /// `int(s)` for the forms a baseline `count` string can take: an optional sign,
 /// ASCII digits, and single underscores between digits. A magnitude beyond
 /// `i64` saturates to `i64::MAX`/`i64::MIN` by sign rather than failing, to
-/// match the same clamp `baseline_count`'s numeric path already applies.
+/// match the same clamp `baseline_count`'s numeric path already applies. That
+/// includes a run of more than 4300 digits, where CPython 3.11+'s `int()`
+/// raises ValueError instead and check.py exits 2 (see the module doc).
 fn python_int(s: &str) -> Option<i64> {
     let (sign, digits) = match s.strip_prefix('-') {
         Some(rest) => (-1i64, rest),

@@ -5,9 +5,12 @@
 //! Accepted divergences from check.py: a skills-dir `plugin.json` is parsed with
 //! `serde_json`, which rejects `NaN`/`Infinity` literals, lone surrogate escapes,
 //! nesting 128 or more levels deep, and numbers whose magnitude exceeds f64's
-//! range (e.g. `1e400`, or an integer of 310+ digits), which Python parses as
-//! `inf` or an exact int; each of these falls back to the directory name as the
-//! plugin name. No tracked plugin.json uses them. Python parses deep nesting
+//! range (e.g. `1e400`, or an integer of that magnitude, 309 digits or more, up
+//! to 4300 digits), which Python parses as `inf` or an exact int; each of these
+//! falls back to the directory name as the plugin name. No tracked plugin.json
+//! uses them. Past 4300 digits, CPython 3.11+'s `json.loads` (L1129) raises
+//! ValueError, which L1130 catches, so both tools fall back to the directory
+//! name and there is no divergence. Python parses deep nesting
 //! only up to CPython's C-stack limit (about 150,000 levels with CPython 3.14;
 //! the exact depth depends on the stack size). Past it, check.py's `json.loads`
 //! (L1129) raises RecursionError, which is not a ValueError, so L1130 does not
