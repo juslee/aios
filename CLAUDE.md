@@ -64,6 +64,11 @@ PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry to physic
 Boot CPU SP virt conversion:  boot.S adds VIRT_PHYS_OFFSET to SP before branching to virtual kernel_main.
 Syscall ABI:                  SVC #0 from EL0; x8 = number, x0-x5 = args, x0 = return.
                               Phase 3 threads run at EL1 → IPC is a direct call, NOT SVC. SVC path wired for future EL0.
+EL1 IRQ entry frame (1b):     irq_el1_entry pushes 192 B onto the interrupted stack: x0-x18, x29,
+                              x30, an xzr pad, and ELR_EL1/SPSR_EL1 as taken at entry (lowest pair).
+                              It restores the GPRs only. irq_frame_check counts an ELR/SPSR that
+                              changed across irq_handler_el1 (elrmm/spsrmm) and restores nothing.
+                              SP at both bl's (interrupted SP - 192, - 176) stays 16-byte aligned.
 
 # MMU strategy (do not get this wrong)
 edk2 state post-EBS:          MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)

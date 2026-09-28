@@ -266,11 +266,12 @@ extern "C" fn irq_handler_el1() {
     // entry stub's eret, and schedule() may switch to another thread. The
     // interrupted thread keeps its IRQ entry frame on its own stack and
     // comes back through this path when it is resumed, possibly on another
-    // CPU. That frame holds x0-x18, x29 and x30 only. ELR_EL1 and SPSR_EL1
-    // stay in the system registers, so the stub's eret uses whatever the
-    // last exception on the resuming CPU left there: the interrupted
-    // thread's values only if no other exception was taken on that CPU in
-    // between (crash-fix ADR, H1).
+    // CPU. The stub restores x0-x18, x29 and x30 only. It keeps a copy of
+    // ELR_EL1 and SPSR_EL1 from entry just to count a difference
+    // (`irq_frame_check`: `elrmm`, `spsrmm`); the eret uses whatever the
+    // last exception on the resuming CPU left in the system registers: the
+    // interrupted thread's values only if no other exception was taken on
+    // that CPU in between (crash-fix ADR, H1).
     tripwire::irq_preempt_check();
     crate::sched::check_preemption();
 

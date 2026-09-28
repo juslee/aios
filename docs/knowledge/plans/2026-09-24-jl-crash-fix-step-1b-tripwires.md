@@ -28,7 +28,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 - [x] K1: Bench DAIF masking removed
 - [x] K2: Tripwire runtime, per-CPU ticks, heartbeat and g1 lines
 - [x] K3: Dispatch bookkeeping: switch generation, `CURRENT_TID`, `IRQ_CTX`, last CPU, `schedule(origin)`
-- [ ] K4: IRQ frame ELR/SPSR snapshot and mismatch counter (192-byte frame)
+- [x] K4: IRQ frame ELR/SPSR snapshot and mismatch counter (192-byte frame)
 - [ ] K5: `IrqSpinLock` (detect-only) on the 9 IRQ-shared statics
 - [ ] K6: Wake attribution and the N2 counters (`unblock`/`wake_with_error`/`try_wake_select` sources, call phase)
 - [ ] K7: Restore-site PC/SP checks (N5)
@@ -933,6 +933,15 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - text `target/soak/20260928-075548-text` (load 11): PCZERO at heartbeat 6000, after `g1`, the `main` signature (`EXCEPTION[CPU 0]`, EC=0x21, ELR=FAR=0). `g1` at `t=580`: `irqsw=6,0,0,0`, the other K3 keys 0.
   - gpu `target/soak/20260928-075715-gpu` (load 10): PCZERO at heartbeat 1000, after `g1`, same signature. `g1` at `t=637`: `irqsw=12,0,0,0` and `irqsw0=1,0,0,0`: one IRQ-path switch on CPU 0 had no current thread to save. The other K3 keys are 0.
   - text `target/soak/20260928-075841-text` (load 12): CLEAN. `g1` at `t=593`: `irqsw=4,0,0,0`, the other K3 keys 0. The last `hb` line (`t=45001`) has `irqsw=2096,0,0,0`. 46 heartbeats, 46 `src=hb` lines; IPC round-trip avg 5 us.
+- K4: **`elrmm` = `spsrmm` = 1 on CPU 0 in every boot that ran past `t=1001`** (5 of 5). Each is 0 at `g1` (`t` ≈ 600), 1 by `t=1001`, and never rises after, while `irqsw` reaches 1600–1985. `nest` is 0, and only the unreached lower-EL stubs write ELR_EL1/SPSR_EL1. So once per boot, an IRQ return on CPU 0 erets with another stream's ELR and SPSR: H1's mechanism, seen directly.
+  - One reading fits the counts but is unproven. After Gate 1, `bench_main` idles in `loop { wfe }` and the idle thread in its own `wfe` loop. The first IRQ-path resume after the other thread's IRQ moves one thread into the other's loop. Neither loop depends on its registers, so nothing breaks. From then on both threads share a PC, so no later mismatch shows.
+  - For D1 and the owner: §5's rule "H1 refuted if `elrmm` = 0 in all 30 boots" cannot be met on this kernel. It needs restating, for example as a rate compared between arms.
+- K4: boots. The hazard grep is empty in all of them.
+  - gpu `target/soak/20260928-081501-gpu` (load 7): CLEAN. 46 heartbeats, 46 `src=hb` lines, and all 47 lines complete. `g1` has `elrmm=0,0,0,0 spsrmm=0,0,0,0`.
+  - text, 8 boots: 3 CLEAN, 4 WEDGE ("heartbeat stuck at tick 0 after the Gate 1 bench started"), and 1 PCZERO at tick 16000, after `g1`. The runs are `target/soak/20260928-081329-text`, `-081709-text`, `-081903-text` and `-082121-text` (3 runs), plus 2 in the session scratchpad.
+  - The first three text boots were WEDGEs in a row. So 3 boots of the K3 head (`c619738`, built from `git archive` in the scratchpad) were interleaved with the last 2 K4 boots. K3 gave CLEAN, PCZERO (tick 9000) and CLEAN; K4 gave CLEAN and CLEAN.
+  - Tick-0 WEDGE is a `main` signature (5–6 of 20 in the #167 and #168 `main` soaks). With these counts, K4's rate cannot be told apart from `main`'s; the A/B soak will decide.
+- K4: `llvm-objdump` of the K4 ELF: the stub is §2.8's sequence. `irq_frame_check` is `mrs`, `cmp`, and `bl`/`b` to `bump_masked`, and saves only x19 and x30. There is no V-register, NEON, `memcpy`/`memset` or `blr` site.
 
 ## Decisions Made
 
@@ -1015,6 +1024,9 @@ Whether the user merges before or after the soak is their call through `/merge-a
 - K3: `IRQ_CTX`: `irq_enter` is the first call in `irq_handler_el1` (before the IAR read, so the spurious path is labelled too), `irq_preempt_check` comes before `check_preemption`, and `irq_leave` after it and on the spurious return. All three read the CPU with the tripwire's `cpu_here()` (no `nomem`), not `exceptions::core_id()`. `schedule()` saves `IRQ_CTX[cpu]` right after its re-entrancy guard. The one-store accessors `irq_ctx`/`set_irq_ctx` are `#[inline(never)]` too, like every new IRQ-path helper.
 - K3: the `gic.rs` comment now says what the IRQ entry frame lacks: ELR_EL1 and SPSR_EL1 stay in the system registers across a switch in `check_preemption`, so the stub's `eret` uses whatever the last exception on the resuming CPU left there (H1).
 - K3 (review 1): `n1` counts only when `origin == Origin::Irq`. Only there is a Runnable current thread the N1 orphan: a direct-switch receiver that is current and not queued. With `Origin::Block` it is F4(3). A waker on another CPU saw the Blocked state between `block_current`'s store and `schedule()`'s `THREAD_TABLE` lock. Either `unblock` queued the thread, or `try_direct_switch` is already running it there. `Origin::Yield` never reaches the branch, because `thread_yield` stores Running. Counting all origins would have left B1 unable to attribute a non-zero `n1`. Schema v1 is unchanged, and so is every scheduling decision; the `Key::N1` doc now says "on the IRQ return path". Open for D1 and the owner: whether F4(3) gets its own key in a later schema.
+- K4: `irq_frame_check` sits in `exceptions.rs`, beside the stub. It reads ELR_EL1 and SPSR_EL1 itself, through the private `read_elr_el1` and `read_spsr_el1`, and counts with `bump_masked`. That is safe because IRQs are always masked there. Exception entry sets PSTATE.I, and every dispatch that can resume an IRQ-path thread runs masked (`schedule()`, `enter_scheduler`, and the direct and reply switches), so the DAIF.I `debug_assert!` holds.
+- K4: also fixed K3's `gic.rs` comment ("That frame holds x0-x18, x29 and x30 only"), which the 192-byte frame made wrong. That file is outside §3 K4's list; the change is to one comment.
+- K4: the CLAUDE.md fact is "EL1 IRQ entry frame (1b)" under Boot invariants, after the syscall ABI.
 
 ## Lessons Learned
 
