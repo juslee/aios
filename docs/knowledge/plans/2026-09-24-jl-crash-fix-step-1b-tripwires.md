@@ -929,6 +929,10 @@ Whether the user merges before or after the soak is their call through `/merge-a
   - gpu `target/soak/20260928-073931-gpu` (load 12): WEDGE, "heartbeat alive but the Gate 1 bench never completed" (a `main` signature: run 167 `main-gpu-r1` run 05). The bench stalled after `server ready`, with no round-trip line. CPU 0 kept committing IRQ-path switches through the hang (`irqsw` 38 at `t=1257`, 2475 at `t=44257`, about 55 per second). `hbdefer` equals the line count: the hung bench never clears `CONSOLE_BUSY`, so every `hb` line waits the full 256 ticks (K2's cap, as designed).
   - gpu `target/soak/20260928-074112-gpu` (load 14): PCZERO at heartbeat 3000, after `=== Gate 1 Complete ===` (a `main` signature: run 167 `main-gpu-r2` run 02, at 4000). `g1` at `t=628`: `irqsw=5,0,0,0`, the other K3 keys 0.
   - `xdir`, `xrep` and `xnever` stay 0: the bench's direct and reply switches are same-core, and a direct or reply target is always BlockedIpc, so it has been dispatched before.
+- K3 (review 1): boots after the `n1` origin fix (three, because the first two failed; the hazard grep is empty in all three):
+  - text `target/soak/20260928-075548-text` (load 11): PCZERO at heartbeat 6000, after `g1`, the `main` signature (`EXCEPTION[CPU 0]`, EC=0x21, ELR=FAR=0). `g1` at `t=580`: `irqsw=6,0,0,0`, the other K3 keys 0.
+  - gpu `target/soak/20260928-075715-gpu` (load 10): PCZERO at heartbeat 1000, after `g1`, same signature. `g1` at `t=637`: `irqsw=12,0,0,0` and `irqsw0=1,0,0,0`: one IRQ-path switch on CPU 0 had no current thread to save. The other K3 keys are 0.
+  - text `target/soak/20260928-075841-text` (load 12): CLEAN. `g1` at `t=593`: `irqsw=4,0,0,0`, the other K3 keys 0. The last `hb` line (`t=45001`) has `irqsw=2096,0,0,0`. 46 heartbeats, 46 `src=hb` lines; IPC round-trip avg 5 us.
 
 ## Decisions Made
 
@@ -1010,6 +1014,7 @@ Whether the user merges before or after the soak is their call through `/merge-a
 - K3: `WAKE_AT` is reset to 0 with the other stamps in `allocate_thread`, which is its only use until K6. §2.3's reset list omits it; resetting it with `WAKE_PENDING` keeps the pair consistent.
 - K3: `IRQ_CTX`: `irq_enter` is the first call in `irq_handler_el1` (before the IAR read, so the spurious path is labelled too), `irq_preempt_check` comes before `check_preemption`, and `irq_leave` after it and on the spurious return. All three read the CPU with the tripwire's `cpu_here()` (no `nomem`), not `exceptions::core_id()`. `schedule()` saves `IRQ_CTX[cpu]` right after its re-entrancy guard. The one-store accessors `irq_ctx`/`set_irq_ctx` are `#[inline(never)]` too, like every new IRQ-path helper.
 - K3: the `gic.rs` comment now says what the IRQ entry frame lacks: ELR_EL1 and SPSR_EL1 stay in the system registers across a switch in `check_preemption`, so the stub's `eret` uses whatever the last exception on the resuming CPU left there (H1).
+- K3 (review 1): `n1` counts only when `origin == Origin::Irq`. Only there is a Runnable current thread the N1 orphan: a direct-switch receiver that is current and not queued. With `Origin::Block` it is F4(3). A waker on another CPU saw the Blocked state between `block_current`'s store and `schedule()`'s `THREAD_TABLE` lock. Either `unblock` queued the thread, or `try_direct_switch` is already running it there. `Origin::Yield` never reaches the branch, because `thread_yield` stores Running. Counting all origins would have left B1 unable to attribute a non-zero `n1`. Schema v1 is unchanged, and so is every scheduling decision; the `Key::N1` doc now says "on the IRQ return path". Open for D1 and the owner: whether F4(3) gets its own key in a later schema.
 
 ## Lessons Learned
 

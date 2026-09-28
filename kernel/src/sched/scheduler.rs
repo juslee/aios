@@ -203,8 +203,14 @@ pub fn schedule(origin: Origin) {
                 return;
             } else {
                 // Thread blocked or dead — don't re-enqueue. A Runnable
-                // current thread is left unqueued here too (N1).
-                if thread.sched.state == ThreadState::Runnable {
+                // current thread is left unqueued here too. From the IRQ
+                // path that is the N1 orphan (a direct-switch receiver that
+                // nothing queued), so only Origin::Irq counts n1. From
+                // Origin::Block it is F4(3): a waker on another CPU saw the
+                // Blocked state inside block_current's window and queued or
+                // ran the thread, so it is not orphaned. Origin::Yield never
+                // gets here (thread_yield stores Running).
+                if origin == Origin::Irq && thread.sched.state == ThreadState::Runnable {
                     tripwire::bump_masked(Key::N1, 0);
                 }
                 drop(table);

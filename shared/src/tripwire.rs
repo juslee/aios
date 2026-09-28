@@ -407,7 +407,8 @@ pub enum Key {
     Xrep,
     /// Direct or reply switches to a thread never dispatched before.
     Xnever,
-    /// `schedule()` found its current thread Runnable and left it unqueued (N1).
+    /// `schedule()` on the IRQ return path found its current thread Runnable
+    /// and left it unqueued (N1).
     N1,
     /// Saved PCs of 0 at a restore site.
     Pcnull,
