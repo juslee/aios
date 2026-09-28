@@ -237,10 +237,10 @@
       "mcp__*__delete_file",
       "mcp__*__git_push",
       "mcp__plugin_gitkraken_gitkraken__app_tool_box",
-      "Edit(/tools/src/cmd/guard/**)",
-      "Write(/tools/src/cmd/guard/**)",
-      "Edit(/tools/src/cmd/loop/**)",
-      "Write(/tools/src/cmd/loop/**)"
+      "Edit(**/tools/src/cmd/guard/**)",
+      "Write(**/tools/src/cmd/guard/**)",
+      "Edit(**/tools/src/cmd/loop/**)",
+      "Write(**/tools/src/cmd/loop/**)"
     ],
     "deny": [
       "Bash(rm -rf /)",

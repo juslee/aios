@@ -46,7 +46,10 @@ Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-
 
   Keep a differential test that runs both tools while the old one exists, and prove it is not vacuous: capture the old tool's actual invocations, and check that a mutated port fails both the golden test and the differential.
 - Resolve an external interpreter to its absolute path (`sys.executable`) outside the test's isolated environment, then run that path inside it.
-- Settle permission-rule syntax with a one-call headless probe instead of reading it off the docs. Let the probe `Read` the file before it edits: `Edit` requires a prior read, and an edit that fails that precondition says nothing about whether the ask rule matched. The anchored `Edit(/tools/src/cmd/guard/**)` form works. The answer is recorded under Open Questions in `docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md`.
+- Settle permission-rule syntax with a one-call headless probe instead of reading it off the docs. Let the probe `Read` the file before it edits: `Edit` requires a prior read, and an edit that fails that precondition says nothing about whether the ask rule matched.
+  - Probe every path shape the rule must cover, not only the obvious one. The anchored `Edit(/tools/src/cmd/guard/**)` form passed a root-path probe but does not match the same paths under `.claude/worktrees/*/`, where the work actually happens. The `**/` form covers both.
+  - Ask rules on `Edit` and `Write` do not stop an allowed Bash command such as `sed -i` from rewriting the file. A protection promise needs a check on the PR's changed paths, not only a permission rule.
+  - The answers are recorded under Open Questions in `docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md`.
 - In subagent-driven execution, forbid `git stash` in every dispatch, because the stash stack is shared across worktrees and sessions. Also forbid working around a refused command with another command, and forbid touching credentials. One implementer did each of these.
 
 ## How to avoid next time

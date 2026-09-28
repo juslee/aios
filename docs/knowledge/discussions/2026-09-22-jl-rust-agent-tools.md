@@ -81,10 +81,11 @@ Owner decisions, 2026-09-22:
 
 **Protection.** `.claude/settings.json` gets ask rules for `Edit` and `Write` on `tools/src/cmd/guard/**` and `tools/src/cmd/loop/**`.
 
-- Interactive edits of those paths prompt the owner.
-- The loop's headless fix stage gets a refusal instead, so it cannot silently change its own guard or merge logic, and such a PR ends at needs-human.
+- Interactive `Edit` and `Write` calls on those paths prompt the owner.
+- The loop's headless fix stage gets a refusal for those calls instead.
 - The rest of `tools/` is freely editable.
-- R1 verified the rule syntax with a headless probe (see Open Questions): a leading `/` anchors at the project root, the directory that holds `.claude/`, not at the settings file. `.claude/settings.json` has the four ask rules (`Edit` and `Write` on `/tools/src/cmd/guard/**` and `/tools/src/cmd/loop/**`).
+- R1 verified the rule syntax with headless probes (see Open Questions). The rules use the `**/` form (`Edit` and `Write` on `**/tools/src/cmd/guard/**` and `**/tools/src/cmd/loop/**`), because a leading `/` anchors at the project root of the session's checkout and does not match the same paths under `.claude/worktrees/*/`, where rule 03 puts all work.
+- The ask rules cover the `Edit` and `Write` tools only. An allowed Bash command (`sed`, `awk`, `cp`, `echo` are in the allow list) can still rewrite those sources without a prompt, even headless; an R1 probe confirmed a `sed -i` rewrite. So the ask rules are a speed bump, not the guarantee. **The guarantee is R2's changed-paths gate:** the loop sends any PR whose diff touches `tools/src/cmd/guard/**` or `tools/src/cmd/loop/**` to needs-human instead of merging it, whichever tool made the change (owner decision, 2026-09-28).
 
 **What stays out of the crate.** Retro-editable material stays in `scripts/agent/`: prompts, `loop-config.json` and eval cases.
 
@@ -171,7 +172,11 @@ All loop behaviour, prompts, config and evals are unchanged.
 ## Open Questions
 
 - The exact permission-rule syntax that anchors `Edit(...)`/`Write(...)` ask rules to `tools/src/cmd/guard/**` in the project settings, and whether headless `claude -p` turns those asks into refusals. To be verified in R1 with a one-call check.
-  - **R1 answer (anchored form):** `Edit(/tools/src/cmd/guard/**)` and `Write(/tools/src/cmd/guard/**)` match, a leading `/` being relative to the project root (the directory that holds `.claude/`), and headless `claude -p` turns the ask into a refusal (probe: guarded file unchanged, one denial each for `Edit` and `Write`, an unguarded control edit applied). `.claude/settings.json` has these rules for `guard` and `loop`.
+  - **R1 answer (`**/` form):** headless `claude -p` turns these ask rules into refusals, checked with probes on Claude Code 2.1.280.
+    - The anchored `Edit(/tools/src/cmd/guard/**)` and `Write(/tools/src/cmd/guard/**)` match at the root of the session's checkout, the directory that holds `.claude/`. They do not match the same paths under `.claude/worktrees/*/`: a nested edit was applied with no denial.
+    - `Edit(**/tools/src/cmd/guard/**)` and `Write(**/tools/src/cmd/guard/**)` match both places. The probe got denials for a root `Edit`, a nested worktree `Edit` and a nested `Write`, and an unguarded control edit was applied.
+    - `.claude/settings.json` has the `**/` rules for `guard` and `loop`.
+    - The rules do not cover Bash. An allowed `sed -i` rewrote a guarded file. A `Bash(*tools/src/cmd/guard*)` ask rule does override that allow, but the owner chose not to add Bash patterns. R2's changed-paths gate is the guarantee (§1 Protection).
 - Whether `default-members` exclusion keeps `cargo build --target aarch64-unknown-none` and the kernel CI jobs from trying to build the host crate for the bare-metal target. To be verified in R1.
   - **R1 answer:** yes. With `default-members = ["kernel", "shared"]`, `cargo build --target aarch64-unknown-none -v` compiles nothing from `aios-tools`; the kernel CI jobs call recipes that build the default members or name a package with `-p`; `just test`, the only `--workspace` recipe, excludes `aios-tools`.
 - How R5 protects the main checkout's binary before the guard runs through the shim (§2 Invocation). Nothing stops a session from replacing `<main>/target/tools/release/aios`, and the shim's freshness test compares mtimes only. Candidates, for an owner decision in R5 alongside the guard branch's fail-open exits (next question): a sandbox or filesystem write-deny on `target/tools/**` (Bash-pattern ask rules are easy to get around with `CARGO_TARGET_DIR`, `ln`, `mv` or `install`), or a provenance stamp (`just tools` records `git rev-parse HEAD:tools` and a `Cargo.lock` hash beside the binary, and the shim treats a mismatch as stale or missing).
