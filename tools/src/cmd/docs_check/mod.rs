@@ -20,6 +20,17 @@
 //! comes from `__file__`, L1577, and L1612's `relpath` of two absolute paths does not
 //! consult it) and runs.
 //!
+//! Locale divergence: check.py decodes git output (`text=True`, L397 and L1578) and
+//! encodes stdout and stderr (`print`) in the locale's preferred encoding, where aios
+//! always decodes and writes UTF-8. That encoding is UTF-8 in every supported
+//! environment: macOS and CI use UTF-8 locales, and PEP 538 and 540 switch the C and
+//! POSIX locales to UTF-8. Under an explicit non-UTF-8 locale such as
+//! `en_US.ISO8859-1` without `PYTHONUTF8`, check.py mis-decodes non-ASCII paths from
+//! `git ls-files`, so links and paths that name those files can be reported as broken;
+//! it writes locale-encoded bytes (`§` as 0xA7); and it exits 2 with
+//! `UnicodeEncodeError` on an output character the locale cannot encode. The goldens
+//! and the differential test run check.py with `PYTHONUTF8=1` (`tests/common/mod.rs`).
+//!
 //! CLI parsing divergences (argparse vs clap; verified against check.py at 33c6b3d): a
 //! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),
 //! where clap accepts it as the end of options and `aios docs-check` runs normally; and

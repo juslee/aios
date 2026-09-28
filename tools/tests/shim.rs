@@ -277,6 +277,33 @@ fn a_stale_binary_is_rebuilt_in_the_foreground() {
     assert!(!sandbox.lock().exists(), "a foreground build takes no lock");
 }
 
+/// The fallback spec §2 records for other subcommands, and the warning
+/// `scripts/agent/brief.sh` greps for (`^aios: rebuilding .* failed; running
+/// the stale binary`) to flag a drift summary from the stale binary.
+#[test]
+fn a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
+    let sandbox = Sandbox::new("shim-stale-build-fails");
+    sandbox.install_bin(false);
+    let out = sandbox.run_env(
+        &["docs-check", "--json"],
+        &[("FAKE_JUST_FAIL", "1"), ("FAKE_EXIT", "1")],
+    );
+    assert_eq!(code(&out), 1, "the stale binary's own status passes on");
+    assert_eq!(stdout(&out), "fake:docs-check --json\n");
+    let err = stderr(&out);
+    assert!(
+        err.lines().any(|line| line.starts_with("aios: rebuilding ")
+            && line.ends_with(
+                "/target/tools/release/aios failed; running the stale binary (run: just tools)"
+            )),
+        "missing the stale-binary warning: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
+        "build\n"
+    );
+}
+
 #[test]
 fn a_newer_toolchain_pin_or_workspace_manifest_makes_the_binary_stale() {
     // A pull that only bumps the pinned nightly (or the workspace manifest)

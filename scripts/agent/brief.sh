@@ -19,7 +19,8 @@
 # Every section degrades to a one-line notice when git, gh, jq or the network
 # is unavailable. The aios tools binary blocks in the foreground on a release
 # build when missing or stale (SessionStart's `aios --prebuild` is the
-# mitigation). Text from GitHub (titles, branch names) is printed as data with
+# mitigation); a drift summary from a stale binary whose rebuild failed is
+# flagged. Text from GitHub (titles, branch names) is printed as data with
 # control characters replaced; it is never executed. Side effects: `git fetch
 # --prune origin` (skip with --no-fetch) and a timestamp marker in the git
 # common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
@@ -528,6 +529,12 @@ section "Docs drift"
 if [ -n "$DOCS_PID" ]; then
     wait "$DOCS_PID" 2>/dev/null
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
+    # When a stale binary's foreground rebuild fails, the shim warns on stderr and
+    # runs the stale binary, whose exit 0 or 1 and JSON look current: flag it.
+    stale_note=""
+    if grep -q '^aios: rebuilding .* failed; running the stale binary' "$TMP/docs.err" 2>/dev/null; then
+        stale_note=" (from a stale aios binary whose rebuild failed; run \`just tools\`)"
+    fi
     if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
         # A foreground rebuild's `just tools`/cargo output, and the shim's "aios:
         # rebuilding ... failed" warning, can come before the real error in the same
@@ -540,14 +547,15 @@ if [ -n "$DOCS_PID" ]; then
         [ -n "$docs_err" ] || docs_err=$(tail -n 1 "$TMP/docs.err" 2>/dev/null)
         echo "- docs-check failed (exit $rc, a checker error, not drift): $docs_err"
     elif ! command -v jq >/dev/null 2>&1; then
-        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`"
+        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`$stale_note"
     elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
-        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(head -n 1 "$TMP/docs.err" 2>/dev/null)$stale_note"
     else
-        jq -r '
+        jq -r --arg note "$stale_note" '
           "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, of which \(.summary.accepted // 0) accepted false positives; \(.summary.resolved) resolved)"
           + (if .summary.new > 0 then "; new in: " + ([.checks | to_entries[] | select((.value.new // 0) > 0) | "\(.key) \(.value.new)"] | join(", ")) else "" end)
           + (if (.summary.resolved + (.summary.reduced // 0)) > 0 then "; run `just docs-check --update-baseline` to prune resolved or reduced entries" else "" end)
+          + $note
         ' "$TMP/docs.json"
     fi
 else

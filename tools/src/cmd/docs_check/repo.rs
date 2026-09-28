@@ -4,8 +4,9 @@
 //! Files come from `git ls-files` (tracked plus untracked-but-not-ignored), never
 //! from a filesystem walk, so linked worktrees and build output are never scanned.
 //! File text is lossy UTF-8 with universal newlines (Python text mode); git output
-//! is strict UTF-8 with universal newlines (Python `text=True`). Texts, headings,
-//! slugs and the merged milestones are cached per `Repo`.
+//! is strict UTF-8 with universal newlines (Python `text=True` under a UTF-8
+//! locale; mod.rs lists the non-UTF-8 locale divergence). Texts, headings, slugs
+//! and the merged milestones are cached per `Repo`.
 //!
 //! Accepted divergences: `\d` is `[0-9]` in `PHASE_SUBJECT_RE`,
 //! `PHASE_DOC_RE` and `MILESTONE_HEADING_RE`, so a phase or milestone number
@@ -25,9 +26,9 @@
 //! check-failure message (`check` true, non-zero exit). On success stderr is
 //! ignored outright, and so is every `git_unchecked` call's regardless of exit
 //! code — `git_unchecked` is where a non-zero exit itself can diverge, since
-//! `check=False` never raises on it — where CPython's
-//! `subprocess.run(text=True)` raises `UnicodeDecodeError` for either stream
-//! regardless of the command's exit status.
+//! `check=False` never raises on it — where, under a UTF-8 locale (mod.rs),
+//! CPython's `subprocess.run(text=True)` raises `UnicodeDecodeError` for either
+//! stream regardless of the command's exit status.
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

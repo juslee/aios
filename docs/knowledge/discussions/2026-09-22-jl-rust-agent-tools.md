@@ -110,8 +110,10 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
 | State | `aios guard` (every shell command) | Other subcommands |
 | --- | --- | --- |
 | Fresh | runs | runs |
-| Stale (e.g. just after a pull) | Runs the stale binary, built from an earlier main (unless a session replaced it, see above), and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs |
-| Missing | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Exits non-zero, naming `just tools` |
+| Stale (e.g. just after a pull) | Runs the stale binary, built from an earlier main (unless a session replaced it, see above), and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary |
+| Missing | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Builds in the foreground (a full release build), then runs; exits 3 naming `just tools` if the build fails |
+
+**R1 deviation (Missing, other subcommands).** The original design exited non-zero, naming `just tools`, without a build. R1's shim builds instead, which the final review accepted because it is friendlier. The cost: a caller such as `scripts/agent/brief.sh` blocks on a full release build on a fresh checkout. SessionStart's `aios --prebuild` (below) is the mitigation.
 
 **Other build and CI hooks:**
 
@@ -179,6 +181,7 @@ All loop behaviour, prompts, config and evals are unchanged.
   - **Pre-dispatch `exit 3`.** The shim exits 3 before it looks at the subcommand when the shell cannot enter the hook's directory, or, when git cannot name the common dir, its parent's parent. This is close to unreachable, but it applies to `guard` too.
 
   Candidates: dispatch on `guard` before those exits and print the ask there; run the binary instead of `exec`ing it, and map 126, 127 or a binary that has vanished to the ask (or retry once); or have `just tools` install the binary with an atomic rename (a copy, then `mv -f`) to the path the shim runs, so that path never goes missing.
+- Whether R2's `aios loop` subcommands (merge, review) must exit 3 when a stale binary's foreground rebuild fails, instead of running the stale binary (§2 Freshness, Stale row). For `docs-check` the fallback costs only a report from an earlier checker; for the loop it would run an earlier main's merge logic. If yes, R2 changes the shim's stale branch for those subcommands, updates the shim header, and adds a shim test.
 
 ## References
 

@@ -7,11 +7,12 @@
 //! claimed number is compared and printed as Python's `int()` would (`pystr::int_str`: leading
 //! zeros dropped, deferring to that helper's own note on CPython 3.11+'s 4300-digit limit).
 //! Accepted divergences: `[0-9]` replaces Python's `\d`; the `gen:test-count` pattern's `\s`
-//! (used three times) lacks U+001C..U+001F, which Python's `\s` has and which can survive
-//! `splitlines()` inside a prose line; the regex crate's `\b` follows Unicode word characters
-//! that differ slightly from Python's; and the case-insensitive `(?i)` claim patterns do not
-//! fold `ı` (U+0131) or `İ` (U+0130) to `i`, as Python's `re.IGNORECASE` does, so a claim
-//! spelled with one of those characters (e.g. "unıt tests") is not reported.
+//! (used three times) lacks U+001C..U+001F, which Python's `\s` has; `splitlines()` breaks at
+//! U+001C..U+001E, so only U+001F can appear inside a prose line and reach this pattern; the
+//! regex crate's `\b` follows Unicode word characters that differ slightly from Python's; and
+//! the case-insensitive `(?i)` claim patterns do not fold `ı` (U+0131) or `İ` (U+0130) to `i`,
+//! as Python's `re.IGNORECASE` does, so a claim spelled with one of those characters (e.g.
+//! "unıt tests") is not reported.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
