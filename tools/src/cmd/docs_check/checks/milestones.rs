@@ -12,8 +12,12 @@
 //! numbers here; `\s` and `\b` follow the `regex` crate's Unicode classes; a §8
 //! phase number that does not fit `u64` matches no phase doc or merged milestone,
 //! while its `§8:phase-N` target is still printed exactly (`int_str`); past 4300
-//! digits CPython's `int()` raises instead (L965, and L1014 for a claim), so
-//! check.py exits 2 where aios reports the row or claim. A §8 row of 6 or more
+//! digits (leading zeros count) CPython's `int()` raises instead (L965, and L1014
+//! for a claim), so check.py exits 2 where aios completes the run. aios compares a
+//! zero-padded value that fits `u64` as that number. A row that does not fit `u64`
+//! has no milestones, so it yields a finding only when its status starts with
+//! "complete" (case-insensitive). A claim that does not fit `u64` is always
+//! reported. A §8 row of 6 or more
 //! cells whose first cell is `isdigit()`-true but `int()` raises (for example
 //! `²`, L965) makes check.py's `int(cells[0])` raise; `run_checks` catches only
 //! `Skip`, so the exception reaches check.py's `__main__` guard (L1665-1670),
@@ -235,9 +239,10 @@ impl Check for MilestoneStatus {
 }
 
 /// check.py L1009-1016 for one source file: every `rx` claim on a prose line
-/// whose number differs from `actual`; a claim too large for `u64` differs too,
-/// and past 4300 digits check.py's `int()` (L1014) raises, so check.py exits 2
-/// where aios reports the claim.
+/// whose number differs from `actual`; a claim too large for `u64` differs too.
+/// Past 4300 digits (leading zeros count) check.py's `int()` (L1014) raises and
+/// check.py exits 2, where aios compares the parsed value, so it does not report
+/// a zero-padded claim equal to `actual`.
 fn phase_claims(repo: &Repo, rel: &str, rx: &Regex, actual: usize, out: &mut Vec<Finding>) {
     if !repo.is_file(rel) {
         return;

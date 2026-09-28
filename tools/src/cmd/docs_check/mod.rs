@@ -42,9 +42,18 @@
 //! or that starts with `-` and contains a space (`-x y`); aios rejects those as an
 //! unexpected argument and exits 2 where check.py runs and exits 0 or 1; the
 //! `--baseline=<value>` form accepts every dash-leading value in both tools. A non-UTF-8
-//! `--baseline` value diverges in either form: check.py takes it through surrogateescape
-//! and runs, clap exits 2. (`allow_hyphen_values` would close the dash cases but also
-//! accept `--baseline --all`, which argparse rejects.)
+//! `--baseline` value, in either form, makes clap exit 2. check.py takes it through
+//! surrogateescape, and `--list-checks` and `--markdown`, which never print the path, run
+//! (exit 0 or 1) in every locale. The text, `--all` and `--json` modes print it, so they
+//! run only where CPython's stdout error handler is surrogateescape: UTF-8 mode as in the
+//! goldens, or a C, POSIX or C.UTF-8 locale. Under e.g. `en_US.UTF-8` without
+//! `PYTHONUTF8` the handler is strict, printing the path raises `UnicodeEncodeError`, and
+//! those modes exit 2 like aios. With `--update-baseline`, a filesystem that rejects
+//! non-UTF-8 names (macOS APFS, `EILSEQ`) makes check.py exit 2 as well; elsewhere
+//! check.py writes the file, which aios never does, and then (the print at L1623 follows
+//! the write) exits 0 under a surrogateescape handler or 2 under a strict one.
+//! (`allow_hyphen_values` would close the dash cases but also accept `--baseline --all`,
+//! which argparse rejects.)
 
 pub mod checks;
 pub mod markdown;
@@ -168,7 +177,15 @@ pub fn repo_root(cwd: &Path) -> anyhow::Result<String> {
 /// process with code 101, where check.py's `__main__` catches every crash and
 /// exits 2 instead; every consumer (`docs.yml`, `brief.sh`) already treats any
 /// exit other than 0 or 1 as a checker error, so this divergence is not
-/// observable as different behaviour outside the process.
+/// observable as different behaviour outside the process. A failed write to
+/// stdout is a second one, for example EPIPE when the reader closes the pipe
+/// before the output is written (with `just docs-check --all | head` it depends
+/// on timing): CPython cannot flush `sys.stdout` at shutdown, so check.py exits
+/// 120 in every mode, even after `__main__`'s `sys.exit(2)`, including
+/// `--list-checks` and after `--update-baseline` has written the file, while
+/// `main.rs` maps the io error to exit 2 (`docs-check: Broken pipe (os error 32)`).
+/// Both codes read as a checker error to every consumer. A closed stdout (`>&-`)
+/// does not diverge: both tools exit 0 or 1.
 pub fn run(args: &Args, cwd: &Path, out: &mut dyn Write) -> anyhow::Result<u8> {
     run_with(args, cwd, checks::registry(), out)
 }

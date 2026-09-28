@@ -13,8 +13,8 @@ Four skills in the `justin` plugin, one per job. The plugin is a project-scope s
 | Command | What happens | Writes | Who invokes |
 |---|---|---|---|
 | `/justin:start` | Runs `/justin:brief`, then proposes exactly one next action from a fixed priority list and waits for you | as `/justin:brief` | you only |
-| `/justin:brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq and the `aios` tools binary; no LLM) and summarises it; proposes nothing | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs | you or Claude (read-only) |
-| `/justin:doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing | you or Claude (read-only) |
+| `/justin:brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq and the `aios` tools binary; no LLM) and summarises it; proposes nothing | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs; when the main checkout's `aios` binary is missing or stale, a foreground `just tools` build of `target/tools/` in the main checkout | you or Claude (read-only) |
+| `/justin:doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing, except that foreground `just tools` build of `target/tools/` in the main checkout when the `aios` binary is missing or stale | you or Claude (read-only) |
 | `/justin:pause` | Saves the `.remember` handoff, then runs [checkpoint.sh](../../scripts/agent/checkpoint.sh): a `wip:` commit on the current `claude/*` branch and a push of anything not on origin (never `main`, never forced), then a checkpoint line | `.remember/`, at most one `wip:` commit | you only |
 
 A bare name such as `/pause` also resolves while no other skill or command shares it, but a built-in command wins a clash (bare `/doctor` is Claude Code's own health check) and another installed plugin can make a bare name ambiguous. Use the `/justin:` names.

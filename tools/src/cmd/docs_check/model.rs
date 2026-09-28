@@ -29,8 +29,9 @@
 //! its key matches a current finding, CPython 3.11+'s `int()` raises
 //! ValueError at L1476, in `compare`, which `main` calls (L1627) before any
 //! renderer, so check.py exits 2 through `__main__` (L1665-1670) in the text,
-//! `--all`, `--json` and `--markdown` modes, where aios saturates it as above
-//! and exits 0 or 1. `--update-baseline` never converts a baselined count, so
+//! `--all`, `--json` and `--markdown` modes, where aios parses it (exactly,
+//! with leading zeros dropped, when the value fits `i64`; saturated as above
+//! otherwise) and exits 0 or 1. `--update-baseline` never converts a baselined count, so
 //! both tools exit 0 there.
 //!
 //! Malformed-baseline handling also diverges (verified with python3 against
@@ -351,9 +352,10 @@ pub fn baseline_count(entry: &Value) -> Result<i64> {
 /// `int(s)` for the forms a baseline `count` string can take: an optional sign,
 /// ASCII digits, and single underscores between digits. A magnitude beyond
 /// `i64` saturates to `i64::MAX`/`i64::MIN` by sign rather than failing, to
-/// match the same clamp `baseline_count`'s numeric path already applies. That
-/// includes a run of more than 4300 digits, where CPython 3.11+'s `int()`
-/// raises ValueError instead and check.py exits 2 (see the module doc).
+/// match the same clamp `baseline_count`'s numeric path already applies. A run
+/// of more than 4300 digits, where CPython 3.11+'s `int()` raises ValueError and
+/// check.py exits 2 (see the module doc), is parsed here like any other: exactly
+/// if its value fits `i64`, saturated otherwise.
 fn python_int(s: &str) -> Option<i64> {
     let (sign, digits) = match s.strip_prefix('-') {
         Some(rest) => (-1i64, rest),
@@ -831,6 +833,11 @@ mod tests {
             baseline_count(&with_count(json!("-9223372036854775808"))).expect("string i64::MIN"),
             i64::MIN,
             "a string count at exactly i64::MIN parses exactly, not off by one"
+        );
+        assert_eq!(
+            baseline_count(&with_count(json!("0".repeat(4400) + "2"))).expect("zero-padded"),
+            2,
+            "a zero-padded count past CPython's 4300-digit limit parses exactly, not saturated"
         );
         assert_eq!(
             baseline_count(&with_count(json!(u64::MAX))).expect("json number overflow"),
