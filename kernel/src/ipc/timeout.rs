@@ -8,7 +8,9 @@ use core::sync::atomic::Ordering;
 
 use crate::arch::aarch64::timer::TICK_COUNT;
 use crate::sched;
+use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use shared::lock::LockClass;
 use spin::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -22,10 +24,10 @@ pub(super) struct TimeoutEntry {
     pub(super) error_code: i64,
 }
 
-pub(super) static TIMEOUT_QUEUE: Mutex<[Option<TimeoutEntry>; MAX_THREADS]> = {
-    const NONE: Option<TimeoutEntry> = None;
-    Mutex::new([NONE; MAX_THREADS])
-};
+/// Pending IPC and sleep deadlines, by thread slot. An IRQ-class lock
+/// (`sync::IrqSpinLock`): `check_timeouts` takes it from the timer IRQ.
+pub(super) static TIMEOUT_QUEUE: IrqSpinLock<[Option<TimeoutEntry>; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::TimeoutQueue, [const { None }; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
 // Reply slots
@@ -62,8 +64,18 @@ pub(super) static REPLY_SLOTS: Mutex<[Option<ReplySlot>; MAX_THREADS]> = {
 // ---------------------------------------------------------------------------
 
 /// Per-thread wakeup error codes. Set by wake_with_error(), read by
-/// the woken thread to distinguish normal wakeup from error wakeup.
-static WAKEUP_ERRORS: Mutex<[i64; MAX_THREADS]> = Mutex::new([0; MAX_THREADS]);
+/// the woken thread to distinguish normal wakeup from error wakeup. An
+/// IRQ-class lock (`sync::IrqSpinLock`): `check_timeouts` wakes threads with
+/// errors from the timer IRQ.
+static WAKEUP_ERRORS: IrqSpinLock<[i64; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::WakeupErrors, [0; MAX_THREADS]);
+
+/// Visit the lock words of TIMEOUT_QUEUE and WAKEUP_ERRORS, for
+/// `sync::held_by_stream`.
+pub(super) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    f(TIMEOUT_QUEUE.owner_word());
+    f(WAKEUP_ERRORS.owner_word());
+}
 
 // ---------------------------------------------------------------------------
 // Timeout checking — called from timer tick handler

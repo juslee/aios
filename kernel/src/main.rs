@@ -23,6 +23,7 @@ mod sched;
 mod service;
 mod smp;
 mod storage;
+mod sync;
 mod syscall;
 mod task;
 

@@ -126,6 +126,13 @@ Dispatch bookkeeping (1b):    tripwire::note_dispatch runs at the 4 CURRENT_THRE
                               CURRENT_TID, the lock-free CURRENT_THREAD mirror (TID_NONE = none).
                               CURRENT_TID is written only there, under THREAD_TABLE, so it
                               equals CURRENT_THREAD while THREAD_TABLE is held.
+IRQ-class locks (1b):         THREAD_TABLE, CURRENT_THREAD[N], RUN_QUEUES[N], WAKEUP_ERRORS,
+                              TIMEOUT_QUEUE, NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS
+                              and BOOT_LOG are sync::IrqSpinLock (detect-only): spin::Mutex
+                              exclusion, word = owner stamp (cpu, SWITCH_GEN). A lock() by the
+                              holder's own stream panics "lock re-entry:" (in main it would spin
+                              forever); other contention only counts (tripwire lk* keys).
+                              Positions in deadlock-prevention.md §3.3 are unchanged.
 ```
 
 ---
@@ -195,6 +202,7 @@ aios/
 │   │                     window/cursor/focus/input_route/hotkey/text)
 │   ├── storage/          BlockEngine, WAL, MemTable, object/version stores, crypto, posix bridge, budget
 │   ├── observability/    structured log, metrics, trace (feature-gated)
+│   ├── sync/             IrqSpinLock (detect-only lock of the 9 IRQ-shared statics)
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
 ├── shared/src/           types crossing kernel/stub boundary (no_std)
 │   ├── (top-level)       boot, cap, ipc, sched, memory, storage, gpu, input, compositor, syscall,

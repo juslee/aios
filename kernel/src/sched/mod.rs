@@ -11,9 +11,10 @@ use core::sync::atomic::AtomicBool;
 
 use crate::mm::buddy::PAGE_SIZE;
 use crate::smp::MAX_CORES;
+use crate::sync::IrqSpinLock;
 use crate::task::{SchedulerClass, Thread, ThreadId, MAX_THREADS};
+use shared::lock::LockClass;
 use shared::FixedQueue;
-use spin::Mutex;
 
 // Re-export public API from submodules.
 pub use init::{init, start, try_load_balance};
@@ -84,12 +85,25 @@ impl RunQueue {
 // Global scheduler state
 // ---------------------------------------------------------------------------
 
-/// Per-CPU run queues. Lock ordering: ascending CPU index.
-static RUN_QUEUES: [Mutex<RunQueue>; MAX_CORES] = {
-    #[allow(clippy::declare_interior_mutable_const)]
-    const RQ: Mutex<RunQueue> = Mutex::new(RunQueue::new());
-    [RQ; MAX_CORES]
+/// Per-CPU run queues. Lock ordering: ascending CPU index. Each entry is an
+/// IRQ-class lock (`sync::IrqSpinLock`) that reports its CPU as its index.
+static RUN_QUEUES: [IrqSpinLock<RunQueue>; MAX_CORES] = {
+    let mut queues = [const { IrqSpinLock::new(LockClass::RunQueues, RunQueue::new()) }; MAX_CORES];
+    let mut cpu = 0;
+    while cpu < MAX_CORES {
+        queues[cpu].set_index(cpu as u8);
+        cpu += 1;
+    }
+    queues
 };
+
+/// Visit the lock words of the per-CPU run queues, for
+/// `sync::held_by_stream`.
+pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    for queue in RUN_QUEUES.iter() {
+        f(queue.owner_word());
+    }
+}
 
 /// Enqueue a thread on a specific CPU's run queue.
 pub fn enqueue_on_cpu(cpu: usize, tid: ThreadId, class: SchedulerClass) {

@@ -8,7 +8,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::observability::metrics::METRICS;
 use crate::sched;
+use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use shared::lock::LockClass;
 use shared::{NotificationId, MAX_NOTIFICATIONS, MAX_WAITERS_PER_NOTIFICATION};
 use spin::Mutex;
 
@@ -54,8 +56,13 @@ impl NotificationObject {
 
 /// System-wide notification table. Lock ordering: after SHARED_REGION_TABLE,
 /// before CHANNEL_TABLE (per deadlock-prevention §3).
-pub(super) static NOTIFICATION_TABLE: Mutex<[Option<NotificationObject>; MAX_NOTIFICATIONS]> =
-    Mutex::new([const { None }; MAX_NOTIFICATIONS]);
+/// An IRQ-class lock (`sync::IrqSpinLock`): the notification timeout scan
+/// try-locks it from the timer IRQ.
+pub(super) static NOTIFICATION_TABLE: IrqSpinLock<[Option<NotificationObject>; MAX_NOTIFICATIONS]> =
+    IrqSpinLock::new(
+        LockClass::NotificationTable,
+        [const { None }; MAX_NOTIFICATIONS],
+    );
 
 /// Per-thread result slot: stores the matched bits for a thread woken from
 /// notification_wait or IpcSelect. Indexed by ThreadId.0.
@@ -290,8 +297,17 @@ pub fn notification_destroy(id: NotificationId) {
 // ---------------------------------------------------------------------------
 
 /// Deadline storage for notification waits (indexed by tid).
-/// The timeout checker in the timer tick handler reads this.
-static NOTIFY_DEADLINES: Mutex<[u64; MAX_THREADS]> = Mutex::new([u64::MAX; MAX_THREADS]);
+/// The timeout checker in the timer tick handler reads this, so it is an
+/// IRQ-class lock (`sync::IrqSpinLock`).
+static NOTIFY_DEADLINES: IrqSpinLock<[u64; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::NotifyDeadlines, [u64::MAX; MAX_THREADS]);
+
+/// Visit the lock words of NOTIFY_DEADLINES and NOTIFICATION_TABLE, for
+/// `sync::held_by_stream`.
+pub(super) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    f(NOTIFY_DEADLINES.owner_word());
+    f(NOTIFICATION_TABLE.owner_word());
+}
 
 fn set_thread_deadline(tid: ThreadId, deadline: u64) {
     let mut deadlines = NOTIFY_DEADLINES.lock();

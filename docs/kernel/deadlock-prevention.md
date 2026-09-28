@@ -79,15 +79,15 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 | Pos | Lock | Location | Type | Notes |
 |---|---|---|---|---|
 | 1 | `PROCESS_TABLE` | `task/process.rs` | `Mutex<[Option<ProcessControl>; 32]>` | Top of hierarchy |
-| 2 | `THREAD_TABLE` | `task/mod.rs` | `Mutex<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
+| 2 | `THREAD_TABLE` | `task/mod.rs` | `IrqSpinLock<[Option<Thread>; 64]>` | Snapshot under lock, release before acting |
 | 3 | `SERVICE_MANAGER` | `service/mod.rs` | `Mutex<ServiceManager>` | Released before `AUDIT_RING` |
 | 4 | `SHARED_REGION_TABLE` | `ipc/shmem.rs` | `Mutex<[Option<SharedMemoryRegion>; 64]>` | Released before `PROCESS_TABLE` re-acquire |
-| 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `Mutex<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
+| 5 | `NOTIFICATION_TABLE` | `ipc/notify.rs` | `IrqSpinLock<[Option<NotificationObject>; 64]>` | After `SHARED_REGION_TABLE` |
 | 6 | `CHANNEL_TABLE` | `ipc/mod.rs` | `Mutex<[Option<Channel>; 128]>` | After `THREAD_TABLE` |
-| 7 | `SELECT_WAITERS` | `ipc/select.rs` | `Mutex<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
-| 8 | `TIMEOUT_QUEUE` | `ipc/timeout.rs` | `Mutex<[Option<TimeoutEntry>; 64]>` | Collect expired, wake outside lock |
+| 7 | `SELECT_WAITERS` | `ipc/select.rs` | `IrqSpinLock<[Option<SelectWaiter>; 64]>` | After `NOTIFICATION_TABLE` and `CHANNEL_TABLE` |
+| 8 | `TIMEOUT_QUEUE` | `ipc/timeout.rs` | `IrqSpinLock<[Option<TimeoutEntry>; 64]>` | Collect expired, wake outside lock |
 | 9 | `REPLY_SLOTS` | `ipc/timeout.rs` | `Mutex<[Option<ReplySlot>; 64]>` | Per-thread reply buffer |
-| 10 | `WAKEUP_ERRORS` | `ipc/timeout.rs` | `Mutex<[i64; 64]>` | Leaf lock, short hold |
+| 10 | `WAKEUP_ERRORS` | `ipc/timeout.rs` | `IrqSpinLock<[i64; 64]>` | Leaf lock, short hold |
 | 11 | `BLOCK_ENGINE` | `storage/block_engine.rs` | `Mutex<Option<BlockEngine>>` | Calls VirtIO internally |
 | 12 | `VIRTIO_BLK` | `drivers/virtio_blk.rs` | `Mutex<Option<VirtioBlk>>` | Bottom of storage stack |
 | 13 | `AUDIT_RING` | `service/mod.rs` | `Mutex<[AuditEntry; 256]>` | Leaf lock, acquired after `SERVICE_MANAGER` release |
@@ -135,6 +135,10 @@ graph TD
 | `SAMPLE_BUF` | `bench.rs` | Benchmark data collection, leaf |
 | `ASID_ALLOC` | `mm/uspace.rs` | ASID allocation, leaf |
 | `RUN_QUEUES[N]` | `sched/mod.rs` | Per-CPU, ascending CPU ID order (§3.2) |
+
+**IRQ-class locks (crash-fix step 1b).** The timer IRQ path shares 9 lock statics with thread code: `THREAD_TABLE`, `CURRENT_THREAD[N]`, `RUN_QUEUES[N]`, `WAKEUP_ERRORS`, `TIMEOUT_QUEUE`, `NOTIFY_DEADLINES`, `NOTIFICATION_TABLE`, `SELECT_WAITERS` and `BOOT_LOG`. They are `IrqSpinLock` (`kernel/src/sync/irq_spin_lock.rs`), not `spin::Mutex`. It is a detect-only type: it excludes exactly as `spin::Mutex` does and keeps every position and rule above. Its lock word is the holder's owner stamp (CPU and per-CPU switch generation, `shared::lock`). A `lock()` whose word holds its own stream's stamp can never succeed; for example, a timer IRQ that takes `THREAD_TABLE` while the thread it interrupted holds it with IRQs on. Such a `lock()` panics with a one-line `lock re-entry:` message instead of spinning forever. Other contention is counted in the tripwire's per-lock `lk*` keys (see [observability.md](./observability.md) §6.5). The type reports this same-CPU deadlock; it does not prevent it. A thread that holds one of these locks with IRQs on can still meet its own CPU's timer IRQ. Masking IRQs around such holds is a later crash-fix step.
+
+**IRQ-context exception for `CHANNEL_TABLE` (crash-fix step 1b).** The IRQ path takes only IRQ-class locks, with one exception. The heartbeat scans that CPU 0's timer tick runs take `CHANNEL_TABLE`, a `spin::Mutex`, but only with `try_lock`, alone, and release it before the next table. A try-lock never waits, so it cannot deadlock: when the table is busy, the scan is skipped and counted (`skipb`). Heartbeat scans take the IRQ-class locks with `try_lock_quiet` only.
 
 ### 3.4 Memory Allocator Locks
 

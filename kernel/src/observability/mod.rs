@@ -12,6 +12,8 @@ use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::smp::MAX_CORES;
+use crate::sync::IrqSpinLock;
+use shared::lock::LockClass;
 
 // Re-export observability types from shared crate.
 pub use shared::{LogEntry, LogLevel, Subsystem};
@@ -350,7 +352,15 @@ impl BootLogBuffer {
     }
 }
 
-static BOOT_LOG: spin::Mutex<BootLogBuffer> = spin::Mutex::new(BootLogBuffer::new());
+/// Captured boot log lines for the GPU text renderer. An IRQ-class lock
+/// (`sync::IrqSpinLock`): CPU 0's timer tick drains the log rings into it.
+static BOOT_LOG: IrqSpinLock<BootLogBuffer> =
+    IrqSpinLock::new(LockClass::BootLog, BootLogBuffer::new());
+
+/// Visit the BOOT_LOG lock word, for `sync::held_by_stream`.
+pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    f(BOOT_LOG.owner_word());
+}
 
 /// When true, `drain_logs()` and `early_boot_log()` capture formatted lines
 /// to `BOOT_LOG`. Set to false by `take_boot_log()` once the GPU Service reads

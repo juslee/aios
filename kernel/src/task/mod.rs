@@ -7,7 +7,8 @@ pub mod process;
 
 use crate::mm::buddy::PAGE_SIZE;
 use crate::smp::MAX_CORES;
-use spin::Mutex;
+use crate::sync::IrqSpinLock;
+use shared::lock::LockClass;
 
 // Re-export shared types used throughout the kernel.
 pub use shared::{CpuSet, SchedulerClass, ThreadId, ThreadState};
@@ -202,14 +203,14 @@ impl Thread {
 // Global thread table
 // ---------------------------------------------------------------------------
 
-/// System-wide thread table. BSS-allocated via `Option<Thread>`.
+/// System-wide thread table, statically allocated as `Option<Thread>` slots
+/// (in `.data`: the lock's holder fields start non-zero).
 ///
-/// Protected by a spinlock. In Phase 3 M11, individual thread access
+/// Protected by the detect-only IRQ-class spinlock (`sync::IrqSpinLock`):
+/// the timer IRQ path takes it too. In Phase 3 M11, individual thread access
 /// will be optimized with per-thread locks or lock-free techniques.
-pub static THREAD_TABLE: Mutex<[Option<Thread>; MAX_THREADS]> = {
-    const NONE: Option<Thread> = None;
-    Mutex::new([NONE; MAX_THREADS])
-};
+pub static THREAD_TABLE: IrqSpinLock<[Option<Thread>; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::ThreadTable, [const { None }; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
 // Per-CPU current thread tracking
@@ -217,8 +218,13 @@ pub static THREAD_TABLE: Mutex<[Option<Thread>; MAX_THREADS]> = {
 
 /// Per-CPU currently running thread ID. Used by the scheduler to know
 /// which thread is active on each core without locking the thread table.
-pub static CURRENT_THREAD: [Mutex<Option<ThreadId>>; MAX_CORES] = {
-    #[allow(clippy::declare_interior_mutable_const)]
-    const NONE: Mutex<Option<ThreadId>> = Mutex::new(None);
-    [NONE; MAX_CORES]
+/// Each entry is an IRQ-class lock that reports its CPU as its index.
+pub static CURRENT_THREAD: [IrqSpinLock<Option<ThreadId>>; MAX_CORES] = {
+    let mut locks = [const { IrqSpinLock::new(LockClass::CurrentThread, None) }; MAX_CORES];
+    let mut cpu = 0;
+    while cpu < MAX_CORES {
+        locks[cpu].set_index(cpu as u8);
+        cpu += 1;
+    }
+    locks
 };

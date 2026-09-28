@@ -182,6 +182,9 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
     let current_now = { *CURRENT_THREAD[actual_cpu].lock() };
 
     if current_now == Some(receiver_tid) {
+        // Count rsthold if this stream still holds a lock stamped with the
+        // generation note_dispatch started.
+        crate::sync::note_restore();
         // First time through — switch to receiver.
         // SAFETY: receiver_ctx_ptr points to the receiver's ThreadContext.
         // restore_context loads callee-saved regs, SP, and branches to
@@ -312,6 +315,9 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
     let current_now = { *CURRENT_THREAD[actual_cpu].lock() };
 
     if current_now == Some(caller_tid) {
+        // Count rsthold if this stream still holds a lock stamped with the
+        // generation note_dispatch started.
+        crate::sync::note_restore();
         // First time through — switch to caller.
         // SAFETY: caller_ctx_ptr points to caller's ThreadContext.
         // restore_context resumes the caller where it called save_context

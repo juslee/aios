@@ -836,9 +836,17 @@ The boot-crash fix ([ADR](../knowledge/decisions/2026-09-22-jl-crash-fix-preempt
 
 The schema reserves `panic` and `exc` for lines printed by the fatal-dump paths.
 
-Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler`, after the tick's own work (time slice, IPC timeouts, load balance, `NEED_RESCHED`). The UART has no lock, so a line waits while a thread holds the console: the Gate 1 bench marks it busy from its header to `=== Gate 1 Complete ===`. After 256 ticks of waiting the line prints anyway, and `hbdefer` counts it. That cap is below the 1000 ticks between heartbeats. At most one line prints per tick, the heartbeat's first.
+Both lines print from CPU 0's timer IRQ, as the last step of `timer_tick_handler`, after the tick's own work (time slice, IPC timeouts, load balance, `NEED_RESCHED`). The UART has no lock, so a line waits while a thread holds the console: the Gate 1 bench marks it busy from its header to `=== Gate 1 Complete ===`. A line also waits while the thread CPU 0 interrupted holds one of the IRQ-class locks (`sync::held_by_stream(0)`, [deadlock-prevention.md](./deadlock-prevention.md) §3.3), so that the print does not stretch that hold while other CPUs spin on it. After 256 ticks of waiting the line prints anyway, and `hbdefer` counts it. That cap is below the 1000 ticks between heartbeats. At most one line prints per tick, the heartbeat's first.
 
 **Counters.** `CpuCounters` keeps one row of counters per CPU. Only that CPU writes its row, with IRQs masked, using `Relaxed` load and store only (no atomic read-modify-write). A per-CPU key prints each CPU's own row; any other key prints the sum over the rows, or the maximum for a gauge. `tick` counts each CPU's own timer IRQs, while `t` (`TICK_COUNT`) advances on CPU 0 only.
+
+**Lock event lines.** The IRQ-class lock (`kernel/src/sync/irq_spin_lock.rs`) prints rare contention events as `[tripwire-ev]` lines, from the waiting CPU, straight to the UART with IRQs masked:
+
+```text
+[tripwire-ev] kind=ph cpu=0 lock=THREAD_TABLE idx=- ctx=irq owner_cpu=0 owner_gen=4711 holder_tid=12 cur_tid=3 holder_running=none holder=kernel/src/cap/mod.rs:39
+```
+
+`kind` is `ph` (a holder switched out on this CPU and not current elsewhere, met with IRQs masked; not by itself evidence of a wedge), `self` (the holder is the waiter's own thread, a same-stream deadlock the stamp cannot see) or `stuck` (one `lock()` has waited more than 2 s). `idx` is the per-CPU array index, or `-` for a scalar static; `ctx` is `thread`, `thread-off`, `irq` or `irq-exit`; `owner_cpu` and `owner_gen` decode the lock word the waiter saw; `holder_running` is the CPU the holder is current on, `none` or `?`. Unknown values print `?`. The same events are counted in the `lk*` keys, which the `[tripwire]` line carries. They are not `[tripwire]` lines and have no `n`.
 
 **Cost.** The printer uses `putc` only, with no `core::fmt`, no lock and no buffer, and runs with IRQs masked. `twc` is the cumulative CNTVCT time spent printing lines, `twn` the number of lines, and `twmax` the longest single line. A line's own cost is added after it prints, so the next line reports it.
 

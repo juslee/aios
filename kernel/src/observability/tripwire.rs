@@ -28,7 +28,9 @@
 //! (time slice, IPC timeouts, load balance, `NEED_RESCHED`), so that work
 //! keeps its timing. A line waits while a thread holds the console
 //! ([`set_console_busy`]): the UART has no lock, and two writers would
-//! interleave byte by byte. After [`MAX_DEFER_TICKS`] ticks of waiting the
+//! interleave byte by byte. It also waits while CPU 0's interrupted stream
+//! holds an IRQ-class lock (`sync::held_by_stream`), so that the print does
+//! not stretch that hold. After [`MAX_DEFER_TICKS`] ticks of waiting the
 //! line prints anyway and `hbdefer` counts it. That cap is far below the 1000
 //! ticks between heartbeats, so every heartbeat gets its line before the next
 //! heartbeat. At most one line prints per tick; the heartbeat's goes first.
@@ -63,9 +65,14 @@ const _: () = assert!(tripwire::MAX_CPUS == MAX_CORES);
 const _: () = assert!(tripwire::MASK_TIDS as usize == MAX_THREADS);
 
 /// DAIF.I, the IRQ mask bit.
-const DAIF_I: u64 = 1 << 7;
+pub(crate) const DAIF_I: u64 = 1 << 7;
 
-/// Ticks CPU 0 holds a pending line back while the console is busy.
+/// Masks a CPU id into `0..MAX_CORES` ([`switch_gen_masked`]).
+const CPU_INDEX_MASK: usize = MAX_CORES - 1;
+const _: () = assert!(MAX_CORES.is_power_of_two());
+
+/// Ticks CPU 0 holds a pending line back while it must wait (the console is
+/// busy, or CPU 0's interrupted stream holds an IRQ-class lock).
 pub const MAX_DEFER_TICKS: u64 = 256;
 
 /// The tripwire counters: one row per CPU.
@@ -91,11 +98,13 @@ static DEFERRED_TICKS: AtomicU64 = AtomicU64::new(0);
 
 /// This CPU's id, MPIDR_EL1 Aff0.
 ///
-/// The `asm!` has no `nomem` option, so it is also a compiler barrier: the
-/// read stays after an earlier `msr DAIFSet`, and the id cannot come from
-/// before an IRQ mask that pins the thread to this CPU.
+/// The `asm!` has none of the `pure`, `nomem` or `readonly` options, so every
+/// call reads the register afresh and is a compiler barrier: the read stays
+/// after an earlier `msr DAIFSet`, and the id cannot come from before an IRQ
+/// mask that pins the thread to this CPU. That also makes it the `cpu()` that
+/// `shared::lock::CpuView` requires (`sync::irq_spin_lock`).
 #[inline(always)]
-fn cpu_here() -> u8 {
+pub(crate) fn cpu_here() -> u8 {
     let mpidr: u64;
     // SAFETY: MPIDR_EL1 is readable at EL1 and reading it has no side
     // effects. All kernel code runs at EL1, which the boot path establishes;
@@ -109,7 +118,7 @@ fn cpu_here() -> u8 {
 
 /// DAIF as it is now.
 #[inline(always)]
-fn read_daif() -> u64 {
+pub(crate) fn read_daif() -> u64 {
     let daif: u64;
     // SAFETY: DAIF is readable at EL1 and reading it has no side effects.
     // The asm has no memory operand. A read at the wrong point would only
@@ -143,10 +152,6 @@ pub fn bump_masked(key: Key, idx: usize) {
 ///
 /// Masks IRQs for the update and restores the caller's mask state after it,
 /// so the update cannot be interrupted or moved to another CPU half done.
-#[expect(
-    dead_code,
-    reason = "the lock slow path and the IPC fallbacks are the callers that run with IRQs on"
-)]
 #[inline(never)]
 pub fn bump(key: Key, idx: usize) {
     let daif = read_daif();
@@ -171,7 +176,8 @@ pub fn bump(key: Key, idx: usize) {
 // ---------------------------------------------------------------------------
 
 /// The PL011 UART as a tripwire sink: `putc` per byte, `\n` sent as `\r\n`.
-struct UartSink;
+/// The lock's `[tripwire-ev]` lines use it too.
+pub(crate) struct UartSink;
 
 impl Sink for UartSink {
     #[inline]
@@ -233,17 +239,19 @@ pub fn set_console_busy(busy: bool) {
     CONSOLE_BUSY.store(busy, Ordering::Release);
 }
 
-/// CPU 0's last step in each timer tick: print a pending line, unless the
-/// console is busy and the line has waited fewer than [`MAX_DEFER_TICKS`]
-/// ticks. Prints at most one line per tick, the heartbeat's first. IRQ
-/// context, CPU 0 only.
+/// CPU 0's last step in each timer tick: print a pending line, unless it must
+/// wait and has waited fewer than [`MAX_DEFER_TICKS`] ticks. It waits while
+/// the console is busy, or while CPU 0's interrupted stream holds one of the
+/// IRQ-class locks (`sync::held_by_stream`): the other CPUs may be spinning
+/// on that lock, and the print would hold them for its whole length. Prints
+/// at most one line per tick, the heartbeat's first. IRQ context, CPU 0 only.
 #[inline(never)]
 pub fn end_of_tick() {
     let hb = HB_PENDING.load(Ordering::Relaxed);
     if !hb && !G1_PENDING.load(Ordering::Acquire) {
         return;
     }
-    if CONSOLE_BUSY.load(Ordering::Acquire) {
+    if CONSOLE_BUSY.load(Ordering::Acquire) || crate::sync::held_by_stream(0) {
         let deferred = DEFERRED_TICKS.load(Ordering::Relaxed);
         if deferred < MAX_DEFER_TICKS {
             DEFERRED_TICKS.store(deferred.wrapping_add(1), Ordering::Relaxed);
@@ -313,6 +321,35 @@ pub enum DispatchSite {
     Direct,
     /// `try_reply_switch`: a replier hands its CPU back to the caller.
     Reply,
+}
+
+/// `SWITCH_GEN[cpu]`, loaded afresh (`Relaxed`) on every call, as
+/// `shared::lock::CpuView::switch_gen` requires. 0 for an out-of-range `cpu`.
+#[inline(always)]
+pub(crate) fn switch_gen(cpu: u8) -> u64 {
+    SWITCH_GEN
+        .get(usize::from(cpu))
+        .map_or(0, |gen| gen.load(Ordering::Relaxed))
+}
+
+/// `SWITCH_GEN[cpu]` indexed modulo [`MAX_CORES`], so that the load needs
+/// no bounds branch: for the check the IRQ-class lock makes inside its
+/// critical section (`sync::irq_spin_lock`). Every CPU `smp` brings up has
+/// an MPIDR Aff0 below `MAX_CORES`, and for those it equals [`switch_gen`].
+#[inline(always)]
+pub(crate) fn switch_gen_masked(cpu: u8) -> u64 {
+    SWITCH_GEN
+        .get(usize::from(cpu) & CPU_INDEX_MASK)
+        .map_or(0, |gen| gen.load(Ordering::Relaxed))
+}
+
+/// `CURRENT_TID[cpu]`: the slot of CPU `cpu`'s current thread, or
+/// [`TID_NONE`] before its first dispatch (and for an out-of-range `cpu`).
+#[inline(always)]
+pub(crate) fn current_tid(cpu: u8) -> u32 {
+    CURRENT_TID
+        .get(usize::from(cpu))
+        .map_or(TID_NONE, |tid| tid.load(Ordering::Relaxed))
 }
 
 /// Store `ctx` in `IRQ_CTX[cpu]`. An out-of-range `cpu` is ignored.

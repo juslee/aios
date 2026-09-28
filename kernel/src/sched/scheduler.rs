@@ -90,6 +90,9 @@ pub fn enter_scheduler() -> ! {
                 drop(table);
 
                 assert_valid_ctx(ctx_ptr, tid);
+                // Count rsthold if this stream still holds a lock stamped
+                // with the generation note_dispatch just started.
+                crate::sync::note_restore();
 
                 // SAFETY: The ThreadContext was set up by Thread::new_kernel with
                 // a valid entry point and stack. restore_context will load callee-saved
@@ -322,12 +325,14 @@ pub fn schedule(origin: Origin) {
             // restore_context loads callee-saved regs, SP, and branches to
             // the saved PC. This never returns.
             assert_valid_ctx(next_ctx_ptr, next_tid);
+            crate::sync::note_restore();
             unsafe { restore_context(next_ctx_ptr) };
         } else {
             // No current thread (first schedule on this CPU).
             IN_SCHEDULER[cpu].store(false, Ordering::Release);
             // SAFETY: next_ctx_ptr is valid (checked above).
             assert_valid_ctx(next_ctx_ptr, next_tid);
+            crate::sync::note_restore();
             unsafe { restore_context(next_ctx_ptr) };
         }
     }

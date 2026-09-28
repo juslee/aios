@@ -6,9 +6,10 @@
 //! Per ipc.md §5.
 
 use crate::sched;
+use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use shared::lock::LockClass;
 use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
-use spin::Mutex;
 
 /// Per-thread select registration: what sources a BlockedSelect thread is
 /// waiting on, and which one fired.
@@ -29,8 +30,10 @@ pub(super) struct SelectWaiter {
 
 /// Per-thread select waiters. Lock ordering: after NOTIFICATION_TABLE,
 /// after CHANNEL_TABLE (per deadlock-prevention §3).
-pub(super) static SELECT_WAITERS: Mutex<[Option<SelectWaiter>; MAX_THREADS]> =
-    Mutex::new([const { None }; MAX_THREADS]);
+/// An IRQ-class lock (`sync::IrqSpinLock`): the notification timeout scan
+/// try-locks it from the timer IRQ.
+pub(super) static SELECT_WAITERS: IrqSpinLock<[Option<SelectWaiter>; MAX_THREADS]> =
+    IrqSpinLock::new(LockClass::SelectWaiters, [const { None }; MAX_THREADS]);
 
 // ---------------------------------------------------------------------------
 // API

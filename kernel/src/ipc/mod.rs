@@ -32,6 +32,15 @@ pub use tests::init;
 pub(crate) use timeout::wake_with_error;
 pub use timeout::{check_timeouts, current_thread_id, sleep_ticks};
 
+/// Visit the lock words of the IPC's IRQ-class locks (TIMEOUT_QUEUE,
+/// WAKEUP_ERRORS, NOTIFY_DEADLINES, NOTIFICATION_TABLE, SELECT_WAITERS), for
+/// `sync::held_by_stream`.
+pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
+    timeout::irq_lock_words(f);
+    notify::irq_lock_words(f);
+    f(select::SELECT_WAITERS.owner_word());
+}
+
 // ---------------------------------------------------------------------------
 // Message ring buffer
 // ---------------------------------------------------------------------------
