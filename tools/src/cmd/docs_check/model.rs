@@ -70,6 +70,25 @@
 //!   This reaches every kept raw entry that `--update-baseline` writes back, a
 //!   numeric `reason` in `--json`'s per-finding `accepted` field, and the text
 //!   and Markdown `[accepted: …]` note.
+//! - Baseline floats are also parsed differently. serde_json is built without
+//!   its `float_roundtrip` feature (the pinned feature set is `preserve_order`
+//!   only), so its float parser is not correctly rounded, where CPython's `json`
+//!   is. A long float literal, even the shortest repr of a double, can parse one
+//!   ULP off or to 0.0: `1.9999999999999998` and `1.99999999999999988` parse as
+//!   `2.0` (CPython: `1.9999999999999998`), `9007199254740993.0` as
+//!   `9007199254740994.0` (CPython: `9007199254740992.0`), and
+//!   `2.4703282292062328e-324` as `0.0` (CPython: `5e-324`). For a `count`, the
+//!   `int()` at L1476 and L1649 then differs (CPython 1, aios 2 for the first
+//!   two), so a finding on 2 lines is new drift in check.py (exit 1) and within
+//!   its baseline here (exit 0) in the text, `--all`, `--json` and `--markdown`
+//!   modes, and the grown and prune notes and `--json`'s `baseline_count` and
+//!   `reduced` values can differ. For a `reason`, the Python truthiness can flip
+//!   (`2.4703282292062328e-324` marks the finding accepted in check.py, not
+//!   here), which changes the `~` mark, the `[accepted: …]` note, `--json`'s
+//!   `accepted` fields and whether `--update-baseline` keeps the reason; a
+//!   truthy misparsed `reason` is printed and written as the misparsed value.
+//!   Kept raw entries that `--update-baseline` writes back carry the misparsed
+//!   value too (`2.0` for `1.9999999999999998`).
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -638,7 +657,7 @@ mod tests {
     }
 
     /// The bytes check.py's write_baseline produces for the entries built in
-    /// `updated_baseline_keeps_unrelated_and_accepted_entries` (recorded).
+    /// `model_updated_baseline_keeps_unrelated_and_accepted_entries` (recorded).
     const EXPECTED_BASELINE: &str = r##"{
   "comment": "Accepted docs drift. A finding is new when its key is missing here or it occurs on more lines than 'count' (default 1). 'reason' marks an accepted false positive and survives regeneration. Regenerate with: just docs-check --update-baseline",
   "version": 1,
@@ -844,6 +863,16 @@ mod tests {
             i64::MAX,
             "a JSON number beyond i64::MAX is clamped by the existing numeric path"
         );
+        // Accepted divergence (module doc): serde_json without `float_roundtrip`
+        // is not correctly rounded. CPython reads both literals as
+        // 1.9999999999999998, so its int() is 1.
+        for text in [
+            r#"{"count": 1.9999999999999998}"#,
+            r#"{"count": 1.99999999999999988}"#,
+        ] {
+            let entry: Value = serde_json::from_str(text).expect("valid JSON");
+            assert_eq!(baseline_count(&entry).expect("long float"), 2, "{text}");
+        }
     }
 
     #[test]
@@ -856,6 +885,10 @@ mod tests {
         assert!(!py_truthy(&json!({})));
         assert!(py_truthy(&json!("x")));
         assert!(py_truthy(&json!(1)));
+        // Accepted divergence (module doc): CPython reads this literal as 5e-324
+        // (truthy); serde_json without `float_roundtrip` reads it as 0.0.
+        let tiny: Value = serde_json::from_str("2.4703282292062328e-324").expect("valid JSON");
+        assert!(!py_truthy(&tiny));
         assert_eq!(py_str(&json!("plain text")), "plain text");
         assert_eq!(py_str(&json!({"a": 1})), "{\"a\":1}");
     }

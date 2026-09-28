@@ -308,6 +308,17 @@ fn clap_usage_errors_exit_2() {
     let run = run_aios(repo.path(), &["docs-check", "--no-such-flag"]);
     assert_eq!(run.code, 2);
     assert!(run.stdout.is_empty());
+    // Accepted divergence (docs_check module doc): argparse defers an argument it
+    // cannot place and prints help for a later `-h`/`--help` (exit 0); clap stops
+    // at the first unexpected argument.
+    for args in [
+        ["docs-check", "--bogus", "-h"],
+        ["docs-check", "foo", "--help"],
+    ] {
+        let run = run_aios(repo.path(), &args);
+        assert_eq!(run.code, 2, "{args:?}");
+        assert!(run.stdout.is_empty(), "{args:?}");
+    }
 }
 
 #[test]

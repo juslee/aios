@@ -40,7 +40,7 @@ Owner decisions, 2026-09-22:
 | Build model | A prebuilt binary called through a checking shim that fails closed |
 | Dependencies | An ergonomic set: clap, anyhow, serde + serde_json, regex, time |
 | Order | Infrastructure via the docs-check port first (R1), then the soak port (R4) so the crash fix can start, then the loop (R2), the scripts (R3), and the guard last in shadow mode (R5, R5b). The owner moved the soak port to second on 2026-09-22 |
-| Location | `tools/` at the repository root, with the guard and loop sources protected by permission ask rules |
+| Location | `tools/` at the repository root, with the guard and loop sources protected by permission ask rules. On 2026-09-28 the owner made R2's changed-paths gate the guarantee, because the ask rules cover `Edit` and `Write` only and an allowed Bash command can bypass them (§1 Protection) |
 | Soak vs crash fix | The soak port (R4) lands before crash-fix step 1a, so the harness is not changed twice |
 
 ## Design
@@ -73,7 +73,7 @@ Owner decisions, 2026-09-22:
 
 **Source layout:**
 
-- Shared modules in `tools/src/`: `gh`, `git`, `proc` (subprocess, timeout, process groups), `json`, `config`, `paths`.
+- Shared modules in `tools/src/`: `gh`, `git`, `proc` (subprocess, timeout, process groups), `json`, `config`, `paths`, `pystr` (Python `str` semantics for ports: whitespace, `splitlines`, `isdigit`/`int`, text decoding, `unquote`; added in R1).
 - One directory per subcommand in `tools/src/cmd/<name>/`.
 - Tests in `tools/tests/`.
 - Golden files in `tools/tests/golden/`.
@@ -158,8 +158,9 @@ Each port PR commits the curated subset it needs.
 - `scripts/agent/pr_loop.py` becomes `tools/src/cmd/loop/`, invoked as `.claude/hooks/aios loop …`.
 - The Python 3.9 standard-library constraint becomes the crate constraints above.
 - The fake-executable tests become test binaries.
+- The merge stage sends any PR whose diff touches `tools/src/cmd/guard/**` or `tools/src/cmd/loop/**` to needs-human instead of merging it (§1 Protection; owner decision, 2026-09-28). This narrows the loop spec's auto-merge scope, which is "Everything".
 
-All loop behaviour, prompts, config and evals are unchanged.
+Apart from that gate, all loop behaviour, prompts, config and evals are unchanged.
 
 **Documentation and rules, updated in the PR that changes them:**
 
@@ -182,7 +183,7 @@ All loop behaviour, prompts, config and evals are unchanged.
 - How R5 protects the main checkout's binary before the guard runs through the shim (§2 Invocation). Nothing stops a session from replacing `<main>/target/tools/release/aios`, and the shim's freshness test compares mtimes only. Candidates, for an owner decision in R5 alongside the guard branch's fail-open exits (next question): a sandbox or filesystem write-deny on `target/tools/**` (Bash-pattern ask rules are easy to get around with `CARGO_TARGET_DIR`, `ln`, `mv` or `install`), or a provenance stamp (`just tools` records `git rev-parse HEAD:tools` and a `Cargo.lock` hash beside the binary, and the shim treats a mismatch as stale or missing).
 - How R5 closes the shim's `guard` exits that fail open, before `aios guard` is wired as the PreToolUse hook. Claude Code treats a PreToolUse exit other than 0 or 2 as a non-blocking error and runs the tool, so each of these breaks §2's promise that `aios guard` fails closed:
   - **Directory case.** `[ -x ]` is true for a directory, so `AIOS_TOOLS_BIN=<dir> aios guard` passes the test and `exec` exits 126 with empty stdout. The fix is `[ -f ] && [ -x ]`.
-  - **Rebuild window.** The stale branch tests `[ -x "$bin" ]`, starts a background `just tools`, and only then runs `exec "$bin"`. Cargo's uplift removes the old `target/tools/release/aios` before it links (Linux) or copies (macOS) the new one, and it re-creates the file (a new inode) on every build, a no-op build included. A guard call in that window finds no binary, or a half-written one, at `exec`, and exits with empty stdout: 126 or 127, and under macOS `/bin/sh` (bash 3.2) also 1 (bash's "Undefined error: 0" path) or 137 (SIGKILL from AppleSystemPolicy on a half-written file). Every guard call made while the shim's own background build runs can hit it. The other subcommands share the window when callers run at the same time; for `docs-check`, an exit 1 with empty stdout reads as new drift.
+  - **Rebuild window.** The stale branch tests `[ -x "$bin" ]`, starts a background `just tools`, and only then runs `exec "$bin"`. Cargo's uplift removes the old `target/tools/release/aios` before it links (Linux) or copies (macOS) the new one. On macOS it does this on every build, a no-op build included, so the file is re-created (a new inode) each time. On Linux the file is a hard link to the deps artifact, which cargo leaves in place when every unit is fresh, so there the window opens only on builds that relink. That includes the build after one that recompiled the `aios_tools` lib, because `just tools`'s `touch -r` also moves the shared inode's mtime back before the lib's rlib. On Linux the link is atomic, so the window only leaves the file missing, never half-written. A guard call in that window finds no binary, or (macOS) a half-written one, at `exec`, and exits with empty stdout: 126 or 127, and under macOS `/bin/sh` (bash 3.2) also 1 (bash's "Undefined error: 0" path) or 137 (SIGKILL from AppleSystemPolicy on a half-written file). On macOS, every guard call made while the shim's own background build runs can hit it; on Linux, only calls made during a build that relinks can. The other subcommands share the window when callers run at the same time; for `docs-check`, an exit 1 with empty stdout reads as new drift.
   - **Pre-dispatch `exit 3`.** The shim exits 3 before it looks at the subcommand when the shell cannot enter the hook's directory, or, when git cannot name the common dir, its parent's parent. This is close to unreachable, but it applies to `guard` too.
 
   Candidates: dispatch on `guard` before those exits and print the ask there; run the binary instead of `exec`ing it and map its failure to the ask, where mapping (or retrying on) 126, 127 or a binary that has vanished does not close exits 1 and 137, because by then the binary exists again, and only treating every exit other than 0 or 2 with empty stdout as the ask does; or have `just tools` install the binary with an atomic rename (a copy to a temporary name, then `mv -f`) to a path cargo never writes, such as `target/tools/bin/aios`, and have the shim run that path, so it never goes missing or half-written. Renaming into `target/tools/release/aios` keeps the window, because cargo re-creates that file on every build.

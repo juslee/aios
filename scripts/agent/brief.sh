@@ -22,8 +22,10 @@
 # mitigation); a drift summary from a stale binary whose rebuild failed is
 # flagged. Text from GitHub (titles, branch names) is printed as data with
 # control characters replaced; it is never executed. Side effects: `git fetch
-# --prune origin` (skip with --no-fetch) and a timestamp marker in the git
-# common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
+# --prune origin` (skip with --no-fetch), a timestamp marker in the git common
+# dir ($GIT_COMMON_DIR/aios-agent/last-brief) and, when the main checkout's aios
+# binary is missing or stale, a foreground `just tools` build of target/tools/
+# in the main checkout.
 #
 # Usage: scripts/agent/brief.sh [--no-fetch]
 # Works with macOS bash 3.2 and GNU/Linux.
@@ -549,7 +551,10 @@ if [ -n "$DOCS_PID" ]; then
     elif ! command -v jq >/dev/null 2>&1; then
         echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`$stale_note"
     elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
-        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(head -n 1 "$TMP/docs.err" 2>/dev/null)$stale_note"
+        # A foreground rebuild's cargo output comes first here too, so show the last
+        # stderr line (e.g. sh's exec error when the binary vanished mid-rebuild). The
+        # shim's stale-rebuild warning is not picked: $stale_note already reports it.
+        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(tail -n 1 "$TMP/docs.err" 2>/dev/null)$stale_note"
     else
         jq -r --arg note "$stale_note" '
           "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, of which \(.summary.accepted // 0) accepted false positives; \(.summary.resolved) resolved)"

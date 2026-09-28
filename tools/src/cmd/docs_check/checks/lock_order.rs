@@ -8,11 +8,12 @@
 //! digits that fit `u64`; Python's `isdigit()` (check.py L854) and `int()` (L855) also accept
 //! other Unicode decimal digits and values too large for `u64`, but for a cell where
 //! `isdigit()` is true and `int()` raises (for example `²`, or more digits than CPython
-//! 3.11+'s 4300-digit `int()` limit; see `pystr`), check.py exits 2 with an uncaught
-//! `ValueError` while aios leaves the lock unranked, unless the cell is ASCII digits whose
-//! value fits `u64` once its leading zeros are dropped (for example 4400 zeros then `2`), in
-//! which case aios ranks the lock with that value. `\b`/`\w`/`\s` follow the regex crate's
-//! Unicode classes.
+//! 3.11+'s 4300-digit `int()` limit; see `pystr`), check.py's `int(cells[0])` (L855) raises
+//! `ValueError`; `run_checks` catches only `Skip`, so it reaches check.py's `__main__` guard
+//! (L1665-1670), which prints a traceback and exits 2, while aios leaves the lock unranked,
+//! unless the cell is ASCII digits whose value fits `u64` once its leading zeros are dropped
+//! (for example 4400 zeros then `2`), in which case aios ranks the lock with that value.
+//! `\b`/`\w`/`\s` follow the regex crate's Unicode classes.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;

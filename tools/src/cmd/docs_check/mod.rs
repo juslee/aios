@@ -34,13 +34,18 @@
 //! CLI parsing divergences (argparse vs clap; verified against check.py at 33c6b3d): a
 //! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),
 //! where clap accepts it as the end of options and `aios docs-check` runs normally; and
-//! `--help` prints argparse's text, not clap's. `--baseline`'s `allow_negative_numbers`
-//! below narrows a third one: it makes aios take a value clap parses as a number
-//! (`-1`, `-1.5`, `-1e5`, `-1.`) as the path, as argparse does, where `--baseline -1`
-//! used to be rejected as an unknown flag. CPython 3.14's argparse also takes as the
-//! path any value that starts with `-<digit>` or `-.<digit>` (`-.5`, `-1e`, `-2x.json`),
-//! or that starts with `-` and contains a space (`-x y`); aios rejects those as an
-//! unexpected argument and exits 2 where check.py runs and exits 0 or 1; the
+//! `--help` prints argparse's text, not clap's. After an argument argparse cannot place,
+//! `-h`/`--help` also differs in exit code: argparse sets an unknown option or a stray
+//! positional aside until parsing ends, so check.py prints its help to stdout and exits 0,
+//! where clap rejects the earlier argument and aios exits 2 with empty stdout (e.g.
+//! `--bogus -h`, `--bogus=1 -h`, `foo --help`, `-.5 -h`); with `-h` first, both print help
+//! and exit 0. `--baseline`'s `allow_negative_numbers` below narrows a third one: it makes
+//! aios take a value clap parses as a number (`-1`, `-1.5`, `-1e5`, `-1.`) as the path,
+//! as argparse does, where `--baseline -1` used to be rejected as an unknown flag.
+//! CPython 3.14's argparse also takes as the path any value that starts with `-<digit>`
+//! or `-.<digit>` (`-.5`, `-1e`, `-2x.json`), or that starts with `-` and contains a
+//! space (`-x y`); aios rejects those as an unexpected argument and exits 2 where
+//! check.py runs and exits 0 or 1; the
 //! `--baseline=<value>` form accepts every dash-leading value in both tools. A non-UTF-8
 //! `--baseline` value, in either form, makes clap exit 2. check.py takes it through
 //! surrogateescape, and `--list-checks` and `--markdown`, which never print the path, run
