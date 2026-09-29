@@ -34,7 +34,7 @@ flowchart TD
     STUB --> GOP["Locate GOP — acquire framebuffer"]
     STUB --> CFG["LocateConfigTable() — find DTB or ACPI RSDP"]
     STUB --> RNG["EFI_RNG_PROTOCOL — get 32-byte seed"]
-    STUB --> ELF["Load kernel ELF from ESP<br/>(uefi-stub/src/elf.rs)"]
+    STUB --> ELF["Load kernel ELF from ESP, sync I/D caches over its text<br/>(uefi-stub/src/elf.rs, cache.rs)"]
     ELF --> EBS["ExitBootServices() — point of no return"]
     EBS --> JUMP["Jump to kernel entry point<br/>x0 = BootInfo pointer (physical)"]
 ```
@@ -46,6 +46,7 @@ flowchart TD
 | Exception Level | EL1 (QEMU delivers directly; real hardware may enter at EL2 if UEFI ran at EL2) |
 | MMU | ON — edk2 leaves MMU enabled after ExitBootServices |
 | Kernel image mapping | edk2's identity map in TTBR0, with permissions set by UEFI memory type. The stub allocates the executable PT_LOAD segment as `EfiLoaderCode` (RW+X) and the others as `EfiLoaderData`, which strict-NX edk2 builds (upstream ArmVirt default since edk2-stable202211, Ubuntu 26.04's `QEMU_EFI.fd`) map execute-never |
+| Kernel text in the caches | Cleaned to the Point of Unification, I-cache invalidated. Right after copying the PF_X segment, the stub runs `DC CVAU` on every data cache line of it (skipped when `CTR_EL0.IDC` = 1), `DSB ISH`, `IC IALLUIS` (skipped when `CTR_EL0.DIC` = 1), then `DSB ISH; ISB`, the sequence of Linux's arm64 EFI stub. Nothing is cleaned to the Point of Coherency, so it does not cover code or data that a core reads with its MMU off, such as a secondary core running `_secondary_entry`. QEMU TCG does not model caches, so a missing step never shows there |
 | SCTLR_EL1 | `0x30d0198d` |
 | TCR_EL1 | T0SZ=20 (44-bit VA for TTBR0), T1SZ not yet set |
 | MAIR_EL1 | `0xffbb4400` — Attr0=Device-nGnRnE, Attr1=NC Normal, Attr2=WT Normal, Attr3=WB Normal |

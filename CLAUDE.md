@@ -74,6 +74,9 @@ edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr
 Kernel image UEFI type:       PF_X segment = EfiLoaderCode, other segments = EfiLoaderData (uefi-stub elf.rs).
                               Strict-NX edk2 (upstream ArmVirt, Ubuntu 26.04) maps LoaderData execute-never in
                               the TTBR0 map boot.S runs on; Homebrew/QEMU builds do not, so local boots miss it.
+Kernel text cache sync:       stub cleans the PF_X segment to PoU only (DC CVAU, IC IALLUIS; per CTR_EL0.IDC/DIC).
+                              Nothing reaches PoC, so code or data read with the MMU off (_secondary_entry)
+                              is not covered. QEMU TCG models no caches, so missing maintenance never shows there.
 Phase 1 MMU strategy:         TTBR0-only swap, reuse edk2 MAIR/TCR.
                               Changing MAIR/TCR while MMU on is CONSTRAINED UNPREDICTABLE — do not.
 Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1.
@@ -190,9 +193,9 @@ aios/
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
 ├── shared/src/           types crossing kernel/stub boundary (no_std)
 │   ├── (top-level)       boot, cap, ipc, sched, memory, storage, gpu, input, compositor, syscall,
-│   │                     kaslr, observability, collections, lib
+│   │                     kaslr, cache, observability, collections, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
-├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, ExitBootServices, kernel jump
+├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
 │                         src/cmd/docs_check/ (docs drift checker), tests/ (goldens, fixtures)
 ├── scripts/              soak-qemu.sh (`just soak` boot soak harness), agent/ (brief, checkpoint),
