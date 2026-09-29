@@ -129,11 +129,12 @@ The Context Engine was rejected outright. It is a feature-vector classifier, "no
 
 ### 5. Degradation by device tier
 
-The tiers below follow the architecture docs. The implemented pool sizing gives some boards a smaller model pool than the architecture docs do. The kernel passes `PoolConfig::from_total_ram` only the UEFI map's usable memory, leaving out firmware and reserved regions (the repo's `kernel/src/mm/init.rs:60-62`, `:109`). So a board of exactly 4, 8 or 16 GB falls just under a tier boundary: a 4 GB board gets no model pool (the repo's `shared/src/memory.rs:79-81`), and an 8 GB board gets a 2 GiB pool (`:82-83`). Separately, every board with under 4 GiB usable gets no model pool (`:80-81`), so a 2–3.9 GB board gets none where the model registry gives it 1 GB. A board with no model pool has no judgments unless the cloud question is settled (Open Question 8). Issue #184 tracks both conflicts (D22, D23).
+The tiers below follow the architecture docs. The implemented pool sizing gives some boards a smaller model pool than the architecture docs do. The kernel passes `PoolConfig::from_total_ram` only the UEFI map's usable memory, leaving out firmware and reserved regions (the repo's `kernel/src/mm/init.rs:60-62`, `:109`). So a board of exactly 4, 8 or 16 GB falls just under a tier boundary: a 4 GB board gets no model pool (the repo's `shared/src/memory.rs:79-81`), and an 8 GB board gets a 2 GiB pool (`:82-83`). Separately, every board with under 4 GiB usable gets no model pool (`:80-81`). A board with no model pool has no judgments unless the cloud question is settled (Open Question 8). Issue #184 tracks the usable-RAM conflict (D23).
+
+> **Update 2026-09-29:** #184 D22 aligned the model registry with the code. It gave 2–3.9 GB devices a 1 GB pool for a 1B Q4 model; it now gives them no model pool (`airs/model-registry.md` §4.3, §4.6), so that tier has no local judgments either. The tier list below reflects the change.
 
 - **AIRS down:** the rule-based fallbacks stay (`intelligence/airs.md:143`).
-- **2 GB and under:** there is no local model (`kernel/memory/ai.md:33-35`, `:422`; `airs/model-registry.md:246-249`), so there are no judgments unless the cloud question is settled (Open Question 8). The two docs disagree about 2 GB devices: `airs/model-registry.md:251-252` gives 2–3.9 GB devices a 1 GB pool.
-- **2–3.9 GB, per the model registry:** a 1 GB pool for a 1B Q4 model (`airs/model-registry.md:251-252`). No second model fits.
+- **Under 4 GiB:** there is no local model (`kernel/memory/ai.md:33-35`, `:422`; `airs/model-registry.md` §4.6), so there are no judgments unless the cloud question is settled (Open Question 8).
 - **4 GB:** the model pool is 2 GB (`kernel/memory/ai.md:24`). "Only one small model (1-3B at Q4) fits at a time" (`kernel/memory/ai.md:424`). There is no second resident model, so judgments use the primary model's readout at its zero-shot calibration.
 - **8 GB:** a 1–2B specialist of "~500 MB-1 GB" may stay loaded (`airs/model-registry.md:213`). decider-0.8b does not suit that slot as released:
   - It is 1.4–1.5 GB in bf16.

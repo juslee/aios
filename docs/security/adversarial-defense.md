@@ -50,6 +50,8 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 
 ## §16 Implementation Order
 
+Phase numbers follow development-plan.md §8. Rows without a phase name have no row there yet; their numbers predate it.
+
 ### Preparatory Work (Phases 3–12)
 
 | Phase | Adversarial Defense Preparatory | Dependency |
@@ -59,13 +61,13 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 | 5 | Security zones (Layer 4) and blast radius (Layer 8) | Spaces + capabilities |
 | 12 (AIRS Intelligence Services) | AIRS intelligence services framework | AIRS inference engine |
 
-### Phase 14: Agent Framework
+### Agent Security Layers
 
-| Sub-phase | Steps | Dependency | Observable Result |
+| Phase | Steps | Dependency | Observable Result |
 |---|---|---|---|
-| 14a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 12 (AIRS Intelligence Services) | Agent actions verified against declared intent; behavioral baselines established |
-| **14b** | **Adversarial Defense + hint screening (Layer 5)** | **Phase 14a** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
-| 14c | Tool Manager + Agent Lifecycle | Phase 14b | Full agent framework operational with adversarial protection |
+| 12 (AIRS Intelligence Services), 20 (Intent Verification) | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 11 (AIRS Inference Engine) | Agent actions verified against declared intent; behavioral baselines established |
+| **14b** | **Adversarial Defense + hint screening (Layer 5)** | **Intent Verifier + Behavioral Monitor** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
+| 12 (AIRS Intelligence Services) | Tool Manager + Agent Lifecycle | Phase 10 (Agent Framework) | Full agent framework operational; adversarial protection follows 14b |
 
 ### Phase 14b Milestones
 

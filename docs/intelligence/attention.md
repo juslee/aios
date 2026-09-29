@@ -318,7 +318,12 @@ impl AttentionManager {
             }
         }
 
-        // 6. Compute final urgency from signals
+        // 6. Source agent trust (system agents rank higher), from the agent registry
+        signals.push(UrgencySignal::AgentTrustLevel {
+            trust: self.agent_registry.trust_level(item.source),
+        });
+
+        // 7. Compute final urgency from signals
         let urgency = self.compute_urgency(&signals);
         let confidence = Self::compute_confidence(&signals);
 
@@ -1378,6 +1383,7 @@ Development plan phases (see development-plan.md §8 — not to be confused with
 | 18 (Conversation Manager) | Conversational configuration | Conversation Bar integration |
 | 17 (Attention, Task Manager & Notification) | Break detection | idle-based NextBreak delivery |
 | 17 (Attention, Task Manager & Notification) | Pattern analysis | AIRS learns from engagement |
+| 17 (Attention, Task Manager & Notification) | Content-aware urgency model (quantized DistilBERT or TinyBERT, Tier 3; [context-engine/learning.md](./context-engine/learning.md) §13.4) | urgency read from notification content |
 | 42 (Multi-Device Sync & Pairing) | Cross-device attention sync | Space Mesh attention state |
 | 17 (Attention, Task Manager & Notification) | Attention analytics | queryable history, trends |
 
@@ -1694,7 +1700,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 
 | Component | Test category | Key assertions |
 | --- | --- | --- |
-| `UrgencyAssessment` | Signal scoring | InherentUrgency always → Interrupt; family + urgency markers → Interrupt; default → Digest |
+| `UrgencyAssessment` | Signal scoring | Weighted score ≥ `interrupt_threshold` → Interrupt; at `interrupt_rate_limit` interrupts in the last hour → NextBreak instead; score between `digest_threshold` and `next_break_threshold` → Digest; below `digest_threshold` → Silent |
 | `ContextFilter` | Threshold logic | Focus mode blocks NextBreak; Work mode passes NextBreak; suppress_all blocks Interrupt |
 | `AttentionGroup` | Grouping keys | Same channel → one group; same agent → one group; mixed → separate groups |
 | `RateLimiter` | Token bucket | At limit → Throttled; after window reset → Allowed; burst within window → partial accept |

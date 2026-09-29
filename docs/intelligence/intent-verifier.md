@@ -68,9 +68,10 @@ Intent verification is implemented incrementally across multiple phases, buildin
 
 | Phase | Component | Dependencies | Deliverable |
 |---|---|---|---|
-| **Phase 20a** (Intent Verification) | Core IntentVerifier + Behavioral Monitor | Phase 11 (AIRS Inference Engine), Phase 14 (Context Engine) | `IntentVerifier` struct, `DeclaredIntent`, `VerificationResult`, security path IPC, synchronous/async verification modes, `BehavioralMonitor` with baseline learning |
+| **Phase 12** (AIRS Intelligence Services) | Behavioral Monitor core | Phase 11 (AIRS Inference Engine) | `BehavioralMonitor` with baseline learning ([behavioral-monitor.md §14](./behavioral-monitor.md)) |
+| **Phase 20a** (Intent Verification) | Core IntentVerifier | Phase 12 (AIRS Intelligence Services), Phase 14 (Context Engine) | `IntentVerifier` struct, `DeclaredIntent`, `VerificationResult`, security path IPC, synchronous/async verification modes |
 | **Phase 20b** (Intent Verification) | Structured Intent Specs + Algorithmic Pre-Check | Phase 20a | `StructuredIntent`, `IntentPurpose` enum, algorithmic pre-filter (no LLM for ~80% of checks), `TemporalSpec` formulas |
-| **Phase 20c** (Intent Verification) | Adversarial Defense integration | Phase 20a | `InjectionClassifier`, control/data separation enforcement, multi-round adversarial self-testing for high-risk actions |
+| **Phase 20c** (Intent Verification) | Multi-round adversarial self-testing | Phase 20a | Multi-round adversarial self-testing for high-risk actions ([pipeline.md §4.6](./intent-verifier/pipeline.md)). The `InjectionClassifier` and control/data separation belong to adversarial defense sub-phase 14b, which has no development-plan.md §8 row yet ([adversarial-defense.md §16](../security/adversarial-defense.md)). |
 | **Phase 20+** (Intent Verification) | IPC Taint Labels | Phase 3 (IPC), Phase 20a | `LabelSet` on IPC messages, kernel-enforced DIFC, declassification protocol |
 | **Phase 20+** (Intent Verification) | MTL Evaluator | Phase 20b | Compact in-kernel temporal logic evaluator, rules loaded from agent manifests |
 | **Phase 21+** (Security Architecture) | Capability Flow Graph | Phase 3 (capabilities) | Periodic delegation chain analysis, confused deputy detection, escalation path detection |
@@ -79,12 +80,12 @@ Intent verification is implemented incrementally across multiple phases, buildin
 ### Dependency Chain
 
 ```text
-Phase 3 (IPC + Caps) ──→ Phase 11 (AIRS) ──→ Phase 20a (Core Verifier)
-                                              ├──→ Phase 20b (Structured Intent)
-                                              ├──→ Phase 20c (Adversarial Defense)
-                                              ├──→ Phase 20+ (Taint Labels, MTL)
-                                              ├──→ Phase 21+ (Cap Flow Graph)
-                                              └──→ Phase 46 (Capability Intelligence)
+Phase 3 (IPC + Caps) ──→ Phase 11 (AIRS) ──→ Phase 12 (Behavioral Monitor core) ──→ Phase 20a (Core Verifier)
+                                                                                    ├──→ Phase 20b (Structured Intent)
+                                                                                    ├──→ Phase 20c (Multi-Round Self-Testing)
+                                                                                    ├──→ Phase 20+ (Taint Labels, MTL)
+                                                                                    ├──→ Phase 21+ (Cap Flow Graph)
+                                                                                    └──→ Phase 46 (Capability Intelligence)
 ```
 
 ---
@@ -99,7 +100,7 @@ Phase 3 (IPC + Caps) ──→ Phase 11 (AIRS) ──→ Phase 20a (Core Verifie
 
 4. **Defense in depth.** Intent verification is necessary but not sufficient. It operates alongside capability enforcement (algorithmic, always-on), behavioral monitoring (statistical, always-on), resource limits, injection defense, audit trails, and cryptographic integrity. Each layer catches threats the others miss.
 
-5. **Separation of security and resource paths.** Intent verification runs on a dedicated security code path within AIRS, isolated from resource optimization operations. A prefetch or compression operation never delays or influences an intent verification check. The security path has a hard <10ms SLA.
+5. **Separation of security and resource paths.** Intent verification runs on a dedicated security code path within AIRS, isolated from resource optimization operations. A prefetch or compression operation never delays or influences an intent verification check. The security path holds each verification path to its own hard deadline: <10ms for single-round verification on NPU hardware, with the multi-round and CPU-only deadlines in [pipeline.md](./intent-verifier/pipeline.md) §10.2.
 
 6. **Provenance over permission.** Beyond checking whether an action is permitted, the system tracks *where data came from* and *where it flows*. IPC taint labels enable the kernel to enforce information flow policies that capability checks alone cannot express — preventing cross-agent data exfiltration even when each individual agent's actions are capability-permitted.
 

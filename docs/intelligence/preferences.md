@@ -148,7 +148,8 @@ Phase 15:  Preference System (basic)
            └── Audit logging (Changed, AccessDenied events)
 
 Phase 15:  Conversational preferences (Preference System)
-           ├── NLU resolver (Conversation Bar → preference changes)
+           ├── NLU resolver (Conversation Bar → preference changes; the Conversation Bar
+           │   hookup follows Phase 18, Conversation Manager)
            ├── Preference history (change records, explain(), undo)
            ├── Conflict resolution (source precedence, tradeoff dialogs)
            ├── Enterprise policy (EnterpriseLocked/Recommended, signature verification)
@@ -165,7 +166,8 @@ Phase 34:  Context and Settings UI (Interface Kit)
            ├── Context Rule Engine (time-of-day, location, activity, device-presence)
            ├── Conversational rule creation ("dark mode after sunset")
            ├── Settings UI (visual preference browser, enterprise indicators)
-           ├── Cross-device sync (universal vs per-device, Space Mesh integration)
+           ├── Cross-device sync (universal vs per-device, Space Mesh integration;
+           │   follows Phase 42, Multi-Device Sync & Pairing)
            └── Preference analytics (usage patterns, recommendation engine)
 
 Phase 30:  Full NLU coverage

@@ -526,7 +526,7 @@ At Tier 3, the full AIRS inference engine can generate natural language descript
 | Kalman filter smoothing | 1 | <0.1ms | N/A (algorithm) | No |
 | GRU prediction | 2 | <10ms | ~200KB | No (kernel ML) |
 | HMM transitions | 1 | <0.1ms | <1KB | No |
-| Content-aware urgency | 3 | <100ms | ~50MB (quantized) | Yes |
+| Content-aware urgency (Attention Manager deliverable, see §13.4) | 3 | <100ms | ~50MB (quantized) | Yes |
 | Sender importance | 2 | <1ms | <10KB | No (kernel ML) |
 | Attention budget | 1 | <0.1ms | N/A (counter) | No |
 | Breakpoint detection | 1 | <0.1ms | N/A (heuristic) | No |

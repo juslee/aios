@@ -62,11 +62,11 @@ The Behavioral Monitor is Layer 3 in the eight-layer defense model:
 
 | Layer | Component | What It Checks | Latency |
 |---|---|---|---|
-| 1 | Intent Verifier | Is this action consistent with the user's request? | ~50ms (LLM) |
+| 1 | Intent Verifier | Is this action consistent with the user's request? | <10ms (LLM, NPU); 50–100ms CPU-only ([pipeline.md §10.1](./intent-verifier/pipeline.md)) |
 | 2 | Capability System | Does the agent hold a valid capability token? | ~1μs (kernel) |
 | **3** | **Behavioral Monitor** | **Is this action consistent with how the agent normally behaves?** | **~10μs (statistical) / ~5ms (AIRS)** |
 | 4 | Security Zones | Is the data in a zone the agent can access? | ~1μs (kernel) |
-| 5 | Adversarial Defense | Is the input a prompt injection attempt? | ~20ms (classifier) |
+| 5 | Adversarial Defense | Is the input a prompt injection attempt? | <2ms sync; Tier 2 <10ms async ([screening.md §5.5](../security/adversarial-defense/screening.md)) |
 | 6 | Content Screening | Does the output contain harmful content? | ~30ms (classifier) |
 | 7 | Provenance Chain | Is there an immutable audit trail? | ~5μs (append) |
 | 8 | User Override | Can the user always intervene? | 0 (always available) |
@@ -215,17 +215,17 @@ The Behavioral Monitor spans multiple development phases, reflecting its depende
 | Phase | Deliverable |
 |---|---|
 | **12** (AIRS Intelligence Services) | Core Behavioral Monitor: `BehavioralMonitor` struct, `BehavioralBaseline`, `BehavioralPolicy`, hard limits, z-score detection, basic escalation, audit logging. Tier 1 fully operational. |
-| **10** (Agent Framework) | Agent profiling pipeline: observation collection, predicted vs. observed comparison (§8), cold start via Agent Capability Intelligence priors. |
 | **21** (Security Architecture) | Security integration: behavioral state byte in IPC fast path (§3.6, §6.4), zero trust behavioral gate, AIRS self-monitoring (§10), provenance chain integration (§7). |
 | **34** (Secure Boot & Updates) | Formal verification of hard limit invariants ("hard limits are always enforced", "escalation terminates"). |
+| **46** (AIRS Capability Intelligence) | Agent profiling pipeline: observation collection, predicted vs. observed comparison (§8), cold start via Agent Capability Intelligence priors. Until then, Agent Framework (Phase 10) agents start under hard limits and trust-level defaults ([detection.md §5.4](./behavioral-monitor/detection.md)). |
 | **46** (AIRS Capability Intelligence) | AIRS-dependent intelligence: semantic sequence analysis (§13.1), RAG behavioral lookup (§13.2), LoRA fine-tuning (§13.3), cross-agent correlation (§13.4). Full Tier 2 operational. |
 
 ### Dependencies
 
 ```text
 Phase 11 (AIRS Inference Engine) ──► Phase 12 (AIRS Intelligence Services: Behavioral Monitor core)
-Phase 12 ──► Phase 10 (Agent Framework: agent profiling)
 Phase 12 ──► Phase 21 (Security Architecture: security integration)
+Phase 12 + Phase 46 (AIRS Capability Intelligence: behavioral predictions) ──► agent profiling
 Phase 11 + Phase 46 (AIRS Capability Intelligence) ──► Tier 2 intelligence
 ```
 
@@ -233,7 +233,7 @@ Phase 11 + Phase 46 (AIRS Capability Intelligence) ──► Tier 2 intelligence
 
 - **After Phase 12** (AIRS Intelligence Services): Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Audit trail exists. Users see anomalies in Inspector.
 - **After Phase 21** (Security Architecture): Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof.
-- **After Phase 46** (AIRS Capability Intelligence): Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
+- **After Phase 46** (AIRS Capability Intelligence): Agent profiling compares predicted with observed behavior. Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
 
 -----
 

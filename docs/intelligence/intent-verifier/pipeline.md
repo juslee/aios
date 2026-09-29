@@ -479,7 +479,7 @@ The verification pipeline is designed to sustain high throughput without degradi
 **Kernel-side timeout** prevents indefinite blocking:
 
 - Each verification path has its own deadline for synchronous responses, so no path is held to one it cannot meet. On NPU hardware: 10ms for single-round verification (pre-check, cache and single-round LLM) and 30ms for multi-round adversarial verification (§4.6). On CPU-only hardware: 100ms and 300ms, the top of the 50-100ms CPU-only LLM range (§10.1) and three rounds of it.
-- The kernel picks the deadline when it forwards the observation. The multi-round criteria (§4.6: object count, payload size, capability trust level, target zone) are checkable in the kernel, and AIRS reports whether its verification model runs on an NPU or on the CPU when it opens the security channel.
+- The kernel picks the deadline when it forwards the observation. The multi-round criteria (§4.6: object count, payload size, capability trust level, target zone) are checkable in the kernel. The hardware tier comes from the kernel's own ComputeRegistry, never from AIRS: the NPU deadlines apply when `query_devices(Some(ComputeClass::Npu))` returns a device, and the CPU-only deadlines apply otherwise ([registry.md](../../kernel/compute/registry.md) §5.3). If AIRS runs its verification model on the CPU while an NPU is present, it misses the NPU deadline and the fallback policy applies.
 - If AIRS does not respond within the deadline, the kernel applies the agent's fallback policy.
 - The timeout is enforced by the kernel's timer subsystem, not by AIRS. A hung AIRS thread cannot hold a kernel-side syscall indefinitely.
 - Timeout events are logged and contribute to the `AirsDirectiveMonitor` health assessment.

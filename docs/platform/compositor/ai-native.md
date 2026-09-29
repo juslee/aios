@@ -178,7 +178,7 @@ AIRS determines the optimal moment to deliver notifications based on the user's 
 
 **Delivery strategies by context:**
 
-- **Focused work** (high cognitive load detected): batch non-urgent notifications and deliver them during natural break points — when the user switches windows, pauses typing for > 10 seconds, or explicitly checks notifications.
+- **Focused work** (high cognitive load detected): batch non-urgent notifications and deliver them during natural break points — when the user switches windows, pauses typing for the break threshold (30 seconds by default, the `attention.break_threshold` preference; [attention.md](../../intelligence/attention.md) §5.2), or explicitly checks notifications.
 - **Meeting context** (calendar integration): suppress all notifications below High urgency. Critical notifications (system alerts, security events) still break through.
 - **Gaming context:** raise the urgency threshold — only High and Critical notifications are shown. Normal and Low are batched until the gaming session ends.
 - **Idle/browsing** (low cognitive load): deliver notifications immediately with standard visual and audio cues.

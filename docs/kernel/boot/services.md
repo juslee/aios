@@ -441,7 +441,7 @@ AIRS startup:
      >= 16 GB RAM: load 8B Q5_K_M  (~4.5 GB, higher quality)
      >= 8 GB RAM:  load 8B Q4_K_M  (~4.5 GB)
      >= 4 GB RAM:  load 3B Q4_K_M  (~2.0 GB)
-     >= 2 GB RAM:  no local model (no model pool below 4 GiB)
+     >= 2 GB RAM:  no local model (no model pool below 4 GiB; as < 2 GB)
       < 2 GB RAM:  no local model (cloud-only or degraded)
   3. Memory-map model weights (mmap, lazy page-in)
   4. Initialize candle runtime + NEON SIMD

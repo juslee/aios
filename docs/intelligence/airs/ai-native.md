@@ -23,7 +23,7 @@ Transformer decode is memory-bandwidth-bound on ARM hardware — the bottleneck 
 tokens/second ≈ memory_bandwidth_GB/s / model_size_GB
 ```
 
-On a Cortex-A76 (Pi 5) with ~18 GB/s sustained LPDDR4X bandwidth, a 7B Q4_K_M model (~3.5 GB effective) yields ~5 tok/s. This simple formula is within 20% of measured llama.cpp performance. It is a first-order figure; the per-platform estimates AIRS plans against are in [inference.md §3.8.2](./inference.md).
+On a Cortex-A76 (Pi 5), sustained LPDDR4X bandwidth is ~18 GB/s, so the decode ceiling for a model is that bandwidth divided by the model's size in RAM. The formula is a first-order bound, not a throughput estimate; the per-platform estimates AIRS plans against are in [inference.md §3.8.2](./inference.md), and Phase 11 (AIRS Inference Engine) measures them.
 
 AIRS maintains a runtime-calibrated predictor that corrects the roofline estimate using an EWMA (exponentially weighted moving average) of observed inference latency. The `roofline_tps` value is initially populated from the device's `ComputeCapabilityDescriptor` ([compute/classification.md](../../kernel/compute/classification.md) §4), which includes theoretical peak throughput, memory bandwidth, and supported precision formats. For multi-accelerator scenarios, the platform's `DeviceCostModel` ([accelerators/intelligence.md](../../platform/accelerators/intelligence.md) §12.3) provides per-device cost estimates that feed into placement decisions:
 
@@ -715,7 +715,7 @@ pub enum ModalityFallback {
 | Whisper base | 74M | ~74 MB | ~5x realtime | Better speech-to-text |
 | Whisper small | 244M | ~244 MB | ~2x realtime | Good speech-to-text |
 
-**Practical deployment:** On 16 GB devices (8 GB model pool), a vision-language model cannot coexist with the 8B text model in RAM — one must be evicted. Below 16 GB the model pool (4 GB or less) is smaller than LLaVA 1.5 7B (~4.5 GB), which is why the summary table (§14.11) gives vision a 16 GB minimum. Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
+**Practical deployment:** On 16 GB devices (8 GB model pool), a vision-language model cannot coexist with the 8B text model in RAM — one must be evicted. Below 16 GB the model pool (4 GB or less) is smaller than LLaVA 1.5 7B (~4.5 GB), which is why the summary table (§14.11) gives vision a 16 GB minimum. Vision stays resident beside the primary model from the 32 GB tier (16 GB pool; [scaling.md §11.1](./scaling.md)). Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
 
 **GGUF multimodal support:** The GGUF format supports vision-language models (LLaVA adapter + CLIP vision encoder packaged alongside the language model). llama.cpp's `llava` example demonstrates the inference pipeline. Integration requires the image preprocessor (CLIP-style patch encoding) to run before the language model forward pass.
 

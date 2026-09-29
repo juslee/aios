@@ -50,20 +50,18 @@ if context.work_engagement > 0.8 {
 
 ### 9.2 Posting Attention Items
 
-Agents post attention items through the Attention Manager. The agent declares the content and an initial urgency hint. AIRS always determines the final urgency — the agent's hint is advisory only and may be overridden based on actual content analysis and current context (see [attention.md](../attention.md) for the authoritative urgency assignment model).
+Agents post attention items through the Attention Manager with the same `AttentionRequest` as [attention.md](../attention.md) §9.1. The agent describes the content only; it has no way to declare urgency. The Attention Manager assesses urgency from the content, sender, context and history (attention.md §4.3 is the authoritative urgency assignment model).
 
 ```rust
-ctx.attention().post(AttentionItem {
+ctx.attention().post(AttentionRequest {
     content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
-    urgency: Urgency::NextBreak,  // hint only; AIRS determines final urgency
-    relevance: 0.8,
-    auto_actionable: Some(ProposedAction::OpenCalendar),
-    group: Some(GroupId::from("calendar-reminders")),
+    // No urgency field: the Attention Manager assesses urgency (attention.md §4.3)
+    auto_action: Some(ProposedAction::OpenCalendar),
     ..Default::default()
 }).await?;
 ```
 
-The agent's declared `urgency` is a hint. AIRS may upgrade or downgrade it. An email agent that declares every message as `Interrupt` will find its messages consistently downgraded to `Digest` by AIRS. An agent that accurately declares urgency builds a better track record and its declarations are trusted more over time.
+Because the post carries no urgency, an agent cannot inflate its own priority. An email agent that wants every message to interrupt the user cannot ask for that; each message is assessed on its content, and the agent never learns which urgency was assigned.
 
 ### 9.3 Subscribing to Context Changes
 

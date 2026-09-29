@@ -1497,6 +1497,8 @@ Apple M2 (32 GB)     13B      Q4_K_M    ~300ms    ~20-30    32K        16 GB
 Apple M3+ (64 GB)    70B      Q4_K_M    ~500ms    ~15-25    128K       32 GB
 ```
 
+The Pi 5 row is above the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md) (~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s), so Phase 11 checks it first.
+
 **Target invariants:**
 
 - Interactive TTFT < 500ms on target hardware (Pi 5+)
