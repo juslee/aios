@@ -409,12 +409,16 @@ dependent Kits degrade to their non-AI fallbacks.
 
 **Hardware scaling:**
 
-| Platform | Compute Path | Typical Throughput | Notes |
-| --- | --- | --- | --- |
-| QEMU virt | CPU (emulated NEON) | ~2 tok/s | Testing only; Q2_K models |
-| Raspberry Pi 4 | CPU (Cortex-A72 NEON) | ~5-8 tok/s | Q4_K_M 1-3B models |
-| Raspberry Pi 5 | CPU (Cortex-A76 NEON) | ~10-15 tok/s | Q4_K_M 3-7B models |
-| Apple Silicon | CPU + GPU + ANE | ~30-80 tok/s | Q5_K_M 7-13B models |
+| Platform | Compute Path |
+| --- | --- |
+| QEMU virt (testing only) | CPU (emulated NEON) |
+| Raspberry Pi 4 | CPU (Cortex-A72 NEON) |
+| Raspberry Pi 5 | CPU (Cortex-A76 NEON) |
+| Apple Silicon | CPU + GPU + ANE |
+
+Models and throughput per platform are in the AIRS performance targets
+([inference.md §3.8.2](../../intelligence/airs/inference.md)): pre-benchmark estimates, measured
+in Phase 11 (AIRS Inference Engine).
 
 **Feature availability:**
 

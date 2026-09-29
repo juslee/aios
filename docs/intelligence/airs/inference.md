@@ -1484,7 +1484,7 @@ pub struct InferenceMetrics {
 
 #### 3.8.2 Performance Targets by Hardware Tier
 
-These targets assume single-session inference with a 7B parameter model:
+These are pre-benchmark estimates for single-session inference with the model named in each row (3B to 70B). They are derived from published GGML (llama.cpp) figures for comparable hardware, not measured with candle, which may run 5-15% slower on ARM (§3.9.1). Phase 11 (AIRS Inference Engine) measures them with the benchmark suite (§3.8.3) and replaces these estimates. This is the only AIRS throughput table; other docs refer to it.
 
 ```text
 Hardware Tier        Model     Quant     TTFT      tok/s     Context    Memory

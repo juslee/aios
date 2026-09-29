@@ -78,7 +78,7 @@ Longer context windows reduce the need for context compression (§5.8 in [intell
 Future SBCs increasingly include Neural Processing Units (NPUs) and dedicated ML accelerators. AIRS's compute scheduler is already designed for heterogeneous compute:
 
 ```text
-Current (Pi 5):       CPU (NEON SIMD) — 4-8 tok/s for 8B model
+Current (Pi 5):       CPU (NEON SIMD) — see inference.md §3.8.2 (pre-benchmark)
 Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s
 Future:               CPU + NPU + GPU compute — 40-100+ tok/s
 ```
