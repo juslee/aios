@@ -20,7 +20,7 @@ const DIC_BIT: u64 = 1 << 29;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CacheType {
     /// Smallest data or unified cache line, in bytes. Always a power of two
-    /// from 4 to 128 KiB.
+    /// from 4 bytes to 128 KiB.
     dcache_line_bytes: u64,
     idc: bool,
     dic: bool,

@@ -103,7 +103,7 @@ pub struct BootInfo {
 }
 ```
 
-The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. The UEFI stub populates every available field except the memory map before calling `ExitBootServices()`, then records the memory map that `ExitBootServices()` returns.
+The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. Before calling `ExitBootServices()`, the UEFI stub fills in `magic` and the kernel extent (`kernel_phys_base`, `kernel_size`), and, where the firmware provides them, the GOP framebuffer fields (`framebuffer`, `fb_*`), the `device_tree` and `acpi_rsdp` addresses and the `rng_seed`. It then records the memory map that `ExitBootServices()` returns (`memory_map_*`). It leaves `runtime_services`, `initramfs_*` and `cmdline_*` at 0.
 
 **Memory descriptors** follow the EFI_MEMORY_DESCRIPTOR layout with a 4-byte padding field for alignment:
 
