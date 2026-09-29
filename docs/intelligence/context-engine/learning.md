@@ -415,7 +415,7 @@ pub enum PredictiveAction {
 
 The Attention Manager (§6.2) filters notifications against the context threshold. AI-native intelligence makes this smarter:
 
-**Content-aware urgency.** A quantized DistilBERT or TinyBERT model (Tier 3) reads the notification content and assesses urgency independently of the sender's declaration. "Server is on fire" in a Slack message is genuinely urgent. "Check out this meme" from the same channel is not. The model learns to distinguish content patterns that predict user engagement.
+**Content-aware urgency (Attention Manager).** Reading notification content is the Attention Manager's job, not the Context Engine's, which never sees content (§12 principle 4 of [context-engine.md](../context-engine.md)). The Attention Manager assesses urgency from the content ([attention.md](../attention.md) §4.2), and the quantized DistilBERT or TinyBERT model (Tier 3) that reads it is an Attention Manager deliverable. "Server is on fire" in a Slack message is genuinely urgent. "Check out this meme" from the same channel is not. The model learns to distinguish content patterns that predict user engagement.
 
 **Sender relationship graph.** The strongest predictor of notification urgency is the sender's relationship to the user. A message from the user's manager during work hours is almost always worth interrupting for. A message from a marketing bot is almost never worth interrupting for. The Context Engine maintains a sender importance graph:
 
