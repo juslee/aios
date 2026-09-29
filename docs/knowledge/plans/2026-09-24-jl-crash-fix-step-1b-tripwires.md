@@ -30,6 +30,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 - [x] K3: Dispatch bookkeeping: switch generation, `CURRENT_TID`, `IRQ_CTX`, last CPU, `schedule(origin)`
 - [x] K4: IRQ frame ELR/SPSR snapshot and mismatch counter (192-byte frame)
 - [x] K5: `IrqSpinLock` (detect-only) on the 9 IRQ-shared statics
+- [ ] K5b: stamp CPU id from `TPIDR_EL1` (variant T), its cross-checks, the Gate 1 zero-iteration guard, and the run-08 evidence
 - [ ] K6: Wake attribution and the N2 counters (`unblock`/`wake_with_error`/`try_wake_select` sources, call phase)
 - [ ] K7: Restore-site PC/SP checks (N5)
 - [ ] K8: Heartbeat scans: orphan, no-waker, starved (two strikes, wake-pending markers)
@@ -559,6 +560,18 @@ That all-failed case is reachable only while the phase-1 scan holds all 8 queues
   - `classify(w, s, v)` gets the waiter's own stamp `s`, taken before `w` was loaded: the stamp of the CAS that failed, or with IRQs on a new `read_stamp` after each spin, before the next word load.
   - The `lkself` compare needs the waiter's own tid. `CURRENT_TID[s.cpu()]` is that tid only while `s` is current, so re-check `SWITCH_GEN[s.cpu()]` after reading it, or skip the compare. After an OtherCpu or OtherCpuSwitched verdict, `s` may already be stale.
 
+**K5b. Stamp CPU id from `TPIDR_EL1` (variant T), Gate 1 guard, run-08 evidence** (owner, 2026-09-29; depends on K5)
+- **Why:** under QEMU TCG each `MPIDR_EL1` read is two C helper calls with a full guest-register spill, while a `TPIDR_EL1` read is one inline load. K5's stamp does about 135 MPIDR reads per Gate 1 round trip (33 lock acquisitions). Variant T recovered about 2.8 us of K5's ~6.5 us IPC cost in the 2026-09-29 paired experiment, with Gate 1 passing 9/10 against head's 2/4; TW gave no measurable extra gain. Evidence: the worktree's `target/dig/a1/` (anatomy, microbenchmarks, plugin counts) and `target/dig/a2/report/` (paired rounds).
+- **Change (base it on `target/dig/a1/diffs/T.diff`):**
+  - `boot.S`: write `TPIDR_EL1 = MPIDR_EL1 & 0xff` once per CPU before any Rust code, on the boot CPU path and the secondary entry path.
+  - `observability/tripwire.rs`: `cpu_tpidr()`, with the same contract as `cpu_here()` (fresh read, compiler barrier, no `pure`/`nomem`/`readonly`).
+  - `sync/irq_spin_lock.rs`: the stamp's CPU reads (`read_stamp`'s double read, the re-stamp) use `cpu_tpidr()`. Every S2 soundness rule stays; the in-hold instructions change only in the system-register operand, so translation-block parity with K4 (K5 review 1) must still hold — recheck it.
+  - Cross-checks that `TPIDR_EL1` matches `MPIDR_EL1` Aff0, count-only (never panic, detect-only): at `kernel_main` entry, at `secondary_main` entry, and in `note_dispatch`. A new tripwire key, for example `tpidrbad`, expected 0.
+- **Gate 1 zero-iteration guard:** `bench.rs:82-86` returns an average of 0 when `iterations == 0`, and the Gate 1 line (`:433-438`) then prints PASS. Make a zero-iteration run report FAIL (or `n/a`), and note it in the plan; seen in two plugin boots.
+- **run-08 evidence (K5 review 3's should-fix):** add a K5 Issues Encountered entry for `target/soak/20260928-145827-text/run-08.log`: the two `[tripwire-ev] kind=stuck lock=TIMEOUT_QUEUE ... owner_gen=272869 holder_tid=?` lines, `lktph[TIMEOUT_QUEUE]` rising by 1 per tick from tick 576 (`:196`), `lkstk`=2, `elrmm` 15→826 against `irqsw` 65→1557, and the 2026-09-29 deep-dive reading: H1 resumed the lock holder at the other bench thread's PC, and none of K6–K8's scans would have named it.
+- **Boot acceptance:** text and gpu boots; IPC avg in the text boot recorded next to K5's; `tpidrbad` = 0; no new class; the hazard grep empty.
+- **Docs:** CLAUDE.md Key Technical Facts: "`TPIDR_EL1` = MPIDR Aff0, written by boot.S on every CPU; the IRQ-class lock stamps with it".
+
 **K6. Wake attribution and N2 counters** (depends on S3 and K3; **not** on K5)
 - **Files:**
   - `scheduler.rs` (`unblock(tid, src) -> UnblockOutcome`, outcome counters, phase snapshot, `WAKE_PENDING` clear);
@@ -1018,6 +1031,11 @@ Whether the user merges before or after the soak is their call through `/merge-a
 
 ## Decisions Made
 
+- Owner, 2026-09-29, after the K5 deep dive:
+  - Apply variant T (task K5b) and the Gate 1 zero-iteration guard, then continue K6–K10 as planned, scans included; no extra H1 tripwires.
+  - The lock-word PC signature (EC=0x22 with ELR equal to an `IrqSpinLock` word, log lost) is explained by inference: H1 resumes a thread at a foreign ELR and a stale epilogue slot holding a lock-word copy becomes the return address. The PR and the ADR errata record it as inferred; merge does not wait for a reproduction. D1 adds a decoding note so a recurrence is recognised on sight (HELD bit, IRQS_ON bit, CPU, generation).
+  - Rate-settling soak, base vs K4 vs the merging kernel (T), about 30 boots per arm, interleaved: both on a CI `workflow_dispatch` matrix (its own baseline, never mixed with local numbers) and later on a clean local host.
+  - #198 (boot stack outside every PT_LOAD) is ruled out as the `frame.rs:51` cause: the kernel allocator already excluded the stack, and BootInfo is at 0xbcb40000 in all 101 logged boots.
 - Owner, 2026-09-28 (#200): CPUs 1–3 never take timer IRQs on this kernel (found by K2's `tick` counter; confirmed by QEMU `-d int`, the GIC state and the code). Step 1b stays detect-only and does not fix it; B1 measures the kernel as it is; the GIC fix is its own later step, and N2 is re-baselined after it. K8's two strikes gate only on CPUs whose `tick` has ever advanced; K3's and K7's acceptance items that need IRQs on CPUs 1–3 are amended above.
 - S1: `iter()` returns a named `FixedQueueIter` (queue reference + logical position, two words) that yields copies. It is not an `impl Iterator` over two chained slices, which would be four words. `next()` uses `wrapping_*` index arithmetic and `buf.get()`, so the dev build adds no overflow-check or bounds-check panic paths. It skips a `None` slot rather than stopping, so `FusedIterator` holds unconditionally. `ExactSizeIterator` relies on the structural invariant that every slot in the live range is `Some`. `contains(&T)` needs `T: PartialEq` (as `VecDeque::contains` does). For K8: the iterator is 16 bytes, so consume it in a `for` loop in `RunQueue::for_each`, which lets SROA keep it in registers, and never store it or pass it by value; V1 checks for NEON. `FixedQueueIter` is not re-exported at the crate root (`shared::collections::FixedQueueIter`). Host tests: 559 → 564; Miri runs the 23 collections tests cleanly.
 - S2: The pre-release hook is a type parameter stored in the lock, `StampedLock<T, H: PreRelease = ()>`. It is not a function pointer (V1 bans `blr`) and not a wrapper guard (16 bytes). The guard stays one pointer, and drop order runs `pre_release` before `store(0, Release)`. **For K5:** put `holder_site`/`holder_tid` in the hook type (`StampedLock<T, HolderFields>`) and keep `class`/`index` on the wrapper. This changes §2.1's field layout, not its protocol.
