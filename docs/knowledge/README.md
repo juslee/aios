@@ -38,7 +38,7 @@ Every note must have YAML frontmatter:
 author: <name>
 date: YYYY-MM-DD
 tags: [<tag1>, <tag2>]
-status: draft | in-progress | final
+status: draft | in-progress | final   # discussions/ may also use active, then graduated
 ---
 ```
 
