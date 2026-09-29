@@ -163,13 +163,17 @@ pub trait SelectOps {
 pub trait SharedMemoryOps {
     /// Create a new shared memory region of the specified size.
     ///
-    /// `flags` encodes permission bits (bit 0 = read, bit 1 = write,
-    /// bit 2 = execute, bit 3 = user). W^X is enforced.
+    /// `flags` encodes the region's maximum permissions: bit 0 = read,
+    /// bit 1 = write, bit 2 = execute (`crate::syscall::MEMORY_FLAGS_MASK`).
+    /// Any other bit is an error, including bit 3 (user), which the kernel
+    /// sets itself on every user mapping. W^X is enforced.
     fn shmem_create(&mut self, size: usize, flags: u64) -> Result<SharedMemoryId, IpcKitError>;
 
     /// Map a shared memory region into the caller's address space.
     ///
-    /// `vaddr` is a hint (the kernel may choose the actual address).
+    /// `vaddr` is a hint (the kernel may choose the actual address). `flags`
+    /// takes the same bits as `shmem_create` and must be a subset of the
+    /// region's maximum permissions.
     fn shmem_map(
         &mut self,
         id: SharedMemoryId,

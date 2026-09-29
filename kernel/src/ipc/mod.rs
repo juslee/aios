@@ -435,7 +435,11 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
             required: shared::Capability::SharedMemoryCreate,
         })?;
-        let vm_flags = crate::mm::pgtable::VmFlags::from_bits(flags as u32);
+        let vm_flags = crate::mm::pgtable::VmFlags::from_caller_bits(flags).map_err(|_| {
+            IpcKitError::SharedMemoryError {
+                reason: "undefined flag bits",
+            }
+        })?;
         shmem::shared_memory_create(pid, size, vm_flags).map_err(i64_to_kit_err)
     }
 
@@ -448,7 +452,11 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
             required: shared::Capability::SharedMemoryCreate,
         })?;
-        let vm_flags = crate::mm::pgtable::VmFlags::from_bits(flags as u32);
+        let vm_flags = crate::mm::pgtable::VmFlags::from_caller_bits(flags).map_err(|_| {
+            IpcKitError::SharedMemoryError {
+                reason: "undefined flag bits",
+            }
+        })?;
         shmem::shared_memory_map(pid, id, vm_flags)
             .map(|_va| ())
             .map_err(i64_to_kit_err)

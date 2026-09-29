@@ -231,11 +231,12 @@ pub enum Syscall {
 
     // === Memory Management ===
 
-    /// Allocate virtual memory
+    /// Allocate private memory.
+    /// Raw syscall ABI: x0=size, x1=flags. The kernel chooses the address;
+    /// there is no address hint. Returns: x0=address or negative error.
     MemoryMap {
-        addr: Option<usize>,           // hint or NULL for kernel choice
         size: usize,
-        flags: MemoryFlags,            // Read, Write, Execute (W^X enforced)
+        flags: MemoryFlags,            // see "Memory flags" below (W^X enforced)
     },
 
     /// Free virtual memory
@@ -244,15 +245,18 @@ pub enum Syscall {
         size: usize,
     },
 
-    /// Create a shared memory region
+    /// Create a shared memory region.
+    /// Raw syscall ABI: x0=size, x1=flags. Returns: x0=region id or negative error.
     SharedMemoryCreate {
         size: usize,
+        flags: MemoryFlags,            // the region's maximum permissions (W^X enforced)
     },
 
-    /// Map a shared memory region into this address space
+    /// Map a shared memory region into this address space.
+    /// Raw syscall ABI: x0=region, x1=flags. Returns: x0=address or negative error.
     SharedMemoryMap {
         region: SharedMemoryId,
-        flags: MemoryFlags,
+        flags: MemoryFlags,            // must be a subset of the region's maximum
     },
 
     /// Transfer shared memory access to another agent via IPC
@@ -382,6 +386,12 @@ Syscall convention (aarch64):
   x0:  result (0 = success, negative = error code)
   x1:  secondary return value (e.g., bytes transferred)
 ```
+
+**Argument decoding.** Arguments are decoded from the full 64-bit register, never by truncation:
+
+- Ids (channel, region, notification, process, capability handle) go through `shared::syscall::id_arg`: a value above `u32::MAX` is `EINVAL`.
+- Memory flags (`MemoryMap`, `SharedMemoryCreate` and `SharedMemoryMap`, all in x1) go through `shared::syscall::flags_arg` and `VmFlags::from_caller_bits`. The caller may set only READ (bit 0), WRITE (bit 1) and EXECUTE (bit 2), `MEMORY_FLAGS_MASK`; any other bit, bits 32-63 included, is `EINVAL`. `VmFlags::USER` (bit 3) is not caller-settable: every user mapping is user-accessible, so the kernel adds USER itself.
+- User buffers are checked with `validate_user_va` (§8.1) and copied through `copy_from_user` / `copy_to_user` in `kernel/src/syscall/mod.rs`, with no lock held. A null, page-0, kernel-half or overflowing range is `EINVAL`.
 
 ### 3.3 Kernel Resource Limits
 
@@ -981,10 +991,13 @@ The POSIX layer is a userspace library (part of musl libc). It translates POSIX 
 ### 8.1 Syscall Validation
 
 Every syscall parameter is validated:
-- Pointers checked: is the address in user space (TTBR0 range)?
-- Lengths checked: does buffer + length overflow?
-- Capabilities checked: does the caller hold the required capability?
+- Pointers checked: does the whole buffer lie in user space (TTBR0 range, below `USER_VA_LIMIT`) and outside page 0 (at or above `USER_VA_MIN`, so null is rejected at any length)? `EINVAL` otherwise.
+- Lengths checked: does buffer + length overflow? `EINVAL` if so.
+- Ids and flags checked: decoded from the full register (§3.2); a truncated id or an undefined flag bit is `EINVAL`.
+- Capabilities checked: does the caller hold the required capability? `EPERM` if not.
 - All validation happens before any kernel state is modified
+
+The range check does not prove that the pages are mapped. User memory is copied only through `copy_from_user` and `copy_to_user` (`kernel/src/syscall/mod.rs`), into or out of kernel buffers, and never while a lock is held. There is no fault recovery and PAN is not enabled yet, so an unmapped user page takes an EL1 data abort, which halts the CPU; fault recovery belongs in those two functions before the first EL0 process runs.
 
 ### 8.2 IPC Audit
 

@@ -85,6 +85,31 @@ pub const fn id_arg(reg: u64) -> Result<u32, i64> {
     }
 }
 
+/// Memory permission bits a caller may set in a flags argument: bit 0 READ,
+/// bit 1 WRITE, bit 2 EXECUTE, the same values as the kernel's `VmFlags`.
+///
+/// Used by MemoryMap (x1), SharedMemoryCreate (x1), SharedMemoryMap (x1) and
+/// the IPC Kit's `shmem_create` / `shmem_map`. `VmFlags::USER` (bit 3) is not
+/// in the mask: every user mapping is user-accessible, so the kernel sets
+/// USER itself and a caller that passes it gets EINVAL.
+pub const MEMORY_FLAGS_MASK: u64 = 0b0111;
+
+/// Decode a memory flags argument from a 64-bit register or Kit argument.
+///
+/// Returns `Err(IpcError::Einval as i64)` when any bit outside
+/// [`MEMORY_FLAGS_MASK`] is set, bits 32-63 included. Always decode flags
+/// through this function, never through `reg as u32` or a masking
+/// conversion: those drop unknown bits without an error, so junk would be
+/// accepted and a flag added later would be ignored by an older kernel.
+#[inline]
+pub const fn flags_arg(reg: u64) -> Result<u32, i64> {
+    if reg & !MEMORY_FLAGS_MASK == 0 {
+        Ok(reg as u32)
+    } else {
+        Err(IpcError::Einval as i64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +284,39 @@ mod tests {
     #[test]
     fn id_arg_u64_max_is_einval() {
         assert_eq!(id_arg(u64::MAX), Err(IpcError::Einval as i64));
+    }
+
+    // --- flags_arg tests ---
+
+    #[test]
+    fn flags_arg_accepts_every_defined_combination() {
+        for bits in 0..=MEMORY_FLAGS_MASK {
+            assert_eq!(flags_arg(bits), Ok(bits as u32));
+        }
+    }
+
+    #[test]
+    fn flags_arg_high_bits_do_not_alias_low_flags() {
+        // `as u32` turned this into WRITE.
+        assert_eq!(flags_arg(0x1_0000_0002), Err(IpcError::Einval as i64));
+        assert_eq!(flags_arg(1 << 32), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn flags_arg_undefined_low_bit_is_einval() {
+        // VmFlags::from_bits masked this to empty flags.
+        assert_eq!(flags_arg(0x10), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn flags_arg_user_bit_is_einval() {
+        // USER is set by the kernel, never by the caller.
+        assert_eq!(flags_arg(0x8), Err(IpcError::Einval as i64));
+        assert_eq!(flags_arg(0x8 | 0x3), Err(IpcError::Einval as i64));
+    }
+
+    #[test]
+    fn flags_arg_u64_max_is_einval() {
+        assert_eq!(flags_arg(u64::MAX), Err(IpcError::Einval as i64));
     }
 }

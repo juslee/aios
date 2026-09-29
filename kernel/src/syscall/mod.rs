@@ -520,11 +520,15 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
 
 /// MemoryMap (nr=18): x0=size, x1=flags.
 ///
-/// Allocate private pages from Pool::User.
+/// Allocate private pages from Pool::User. `flags` is decoded with
+/// `VmFlags::from_caller_bits`: READ, WRITE and EXECUTE only, EINVAL for any
+/// other bit (USER included).
 fn sys_memory_map(tf: &TrapFrame) -> i64 {
     let size = tf.x[0] as usize;
-    let flags_raw = tf.x[1] as u32;
-    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+    let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
 
     let pid = match crate::cap::current_process_id() {
         Some(p) => p,
@@ -557,11 +561,15 @@ fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
 
 /// SharedMemoryCreate (nr=20): x0=size, x1=flags.
 ///
-/// Create a new shared memory region.
+/// Create a new shared memory region. `flags` (the region's maximum
+/// permissions) is decoded with `VmFlags::from_caller_bits`: READ, WRITE and
+/// EXECUTE only, EINVAL for any other bit (USER included).
 fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
     let size = tf.x[0] as usize;
-    let flags_raw = tf.x[1] as u32;
-    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+    let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
 
     let pid = match crate::cap::current_process_id() {
         Some(p) => p,
@@ -576,14 +584,18 @@ fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
 
 /// SharedMemoryMap (nr=21): x0=region_id, x1=flags.
 ///
-/// Map a shared memory region into the caller's address space.
+/// Map a shared memory region into the caller's address space. `flags` is
+/// decoded with `VmFlags::from_caller_bits`: READ, WRITE and EXECUTE only,
+/// EINVAL for any other bit (USER included).
 fn sys_shared_memory_map(tf: &TrapFrame) -> i64 {
     let region_id = match id_arg(tf.x[0]) {
         Ok(id) => shared::SharedMemoryId(id),
         Err(e) => return e,
     };
-    let flags_raw = tf.x[1] as u32;
-    let flags = crate::mm::pgtable::VmFlags::from_bits(flags_raw);
+    let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
 
     let pid = match crate::cap::current_process_id() {
         Some(p) => p,
