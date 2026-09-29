@@ -114,8 +114,10 @@ fn sys_time_get(_tf: &TrapFrame) -> i64 {
     // effects, and is always permitted at EL1 (CNTKCTL_EL1 gates only EL0).
     // The architecture guarantees both registers (the generic timer is
     // mandatory in ARMv8-A), and syscall_dispatch runs only at EL1.
-    // Executed at EL0 with CNTKCTL_EL1 denying access, the MRS would trap as
-    // an undefined instruction and halt the CPU; no memory is touched either way.
+    // Executed at EL0 with CNTKCTL_EL1 denying access, the MRS would trap to
+    // EL1 as a trapped system-register access (ESR EC 0x18), which
+    // lower_el_sync_handler reports as an unknown EL0 exception before
+    // halting the CPU; no memory is touched either way.
     unsafe {
         core::arch::asm!("mrs {}, CNTVCT_EL0", out(reg) ticks, options(nomem, nostack, preserves_flags));
         core::arch::asm!("mrs {}, CNTFRQ_EL0", out(reg) freq, options(nomem, nostack, preserves_flags));

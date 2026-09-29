@@ -36,8 +36,12 @@ const PAGE_SIZE: usize = 4096;
 /// Each region gets a unique VA slot to avoid collisions.
 const SHM_VA_BASE: usize = crate::mm::uspace::USER_HEAP_BASE;
 
-/// Spacing between shared memory region VA slots (1 MiB).
-const SHM_VA_STRIDE: usize = 0x0010_0000; // 1 MiB
+/// Spacing between shared memory region VA slots: the largest buddy block
+/// (`2^MAX_ORDER` pages, 4 MiB). A region is one buddy block, so every
+/// region fits its slot and the shared memory window,
+/// `[SHM_VA_BASE, SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE)`, holds
+/// them all without reaching the private window above it.
+const SHM_VA_STRIDE: usize = (1 << crate::mm::buddy::MAX_ORDER) * PAGE_SIZE;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -484,7 +488,6 @@ pub fn shared_memory_share(
 // ---------------------------------------------------------------------------
 
 /// Clean up all shared memory mappings for a process (called on process exit).
-#[allow(dead_code)]
 pub fn process_cleanup_shared_memory(pid: ProcessId) {
     let mut table = SHARED_REGION_TABLE.lock();
 
@@ -549,12 +552,18 @@ const MAX_PRIVATE_PAGES: usize = 64;
 const MAX_PRIVATE_ALLOCATIONS: usize = 64;
 
 /// Base of the private-memory VA window, directly after the shared memory
-/// window (`SHM_VA_BASE` + 64 regions × 1 MiB). Slot `i` of
+/// window (`SHM_VA_BASE` + 64 regions × 4 MiB). Slot `i` of
 /// `PRIVATE_ALLOC_TABLE` owns `[PRIVATE_VA_BASE + i * PRIVATE_VA_STRIDE, +stride)`.
 const PRIVATE_VA_BASE: usize = SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE;
 
 /// VA spacing between private allocation slots: room for the largest request.
 const PRIVATE_VA_STRIDE: usize = MAX_PRIVATE_PAGES * PAGE_SIZE;
+
+// Both windows end below the user stack.
+const _: () = assert!(
+    PRIVATE_VA_BASE + MAX_PRIVATE_ALLOCATIONS * PRIVATE_VA_STRIDE
+        <= crate::mm::uspace::USER_STACK_BASE
+);
 
 /// One MemoryMap allocation: a physically contiguous buddy block from
 /// Pool::User, owned by one process.
@@ -587,13 +596,15 @@ static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCA
 /// records it for `pid` in a free slot of `PRIVATE_ALLOC_TABLE`. Returns the
 /// slot's address in the private VA window, a user address that stands for
 /// the whole allocation: it is the key MemoryUnmap takes, and because the
-/// block is contiguous, `[va, va + pages)` maps onto it with one range.
+/// block is contiguous, `[va, va + pages * PAGE_SIZE)` maps onto it with one
+/// range.
 ///
 /// This follows `shared_memory_map`, which returns its region's window VA:
 /// no path installs user page tables yet (every process has
 /// `address_space: None`), so nothing is mapped into TTBR0 here either. EL1
 /// code would reach the block through the direct map (`DIRECT_MAP_BASE` +
-/// `base_phys`); no EL1 code calls MemoryMap. ipc.md §4.7.
+/// `base_phys`); no EL1 code uses the memory MemoryMap allocates (the #188
+/// boot self-test only maps and unmaps it). ipc.md §4.7.
 ///
 /// Errors: EINVAL for W^X (WRITE | EXECUTE); ENOSPC above `MAX_PRIVATE_PAGES`
 /// pages or when `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has
@@ -667,8 +678,11 @@ fn private_slot(va: usize) -> Option<usize> {
 /// removed from `PRIVATE_ALLOC_TABLE` and its block freed. Anything else
 /// returns EINVAL and frees nothing: another process's allocation, an address
 /// inside or past an allocation, a different size, a direct-map or other
-/// kernel address. EINVAL rather than EPERM for another process's
-/// allocation, so a caller cannot learn which addresses other processes hold.
+/// kernel address. Another process's allocation is EINVAL, not EPERM: a
+/// private address names an allocation only for the process MemoryMap
+/// returned it to, so for any other caller it is like any address that is not
+/// one of its allocations. (It is not hidden: slots are system-wide, so
+/// MemoryMap's own result shows which lower slots are in use.)
 pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
     // Check if this VA belongs to a shared region.
     if (SHM_VA_BASE..SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE).contains(&va) {

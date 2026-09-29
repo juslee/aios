@@ -418,6 +418,11 @@ impl ipc_kit::ChannelOps for KernelIpc {
             Ok(IpcError::Eperm) => IpcKitError::InvalidArgument {
                 reason: "no current thread",
             },
+            // ipc_reply's EPROTO is a reply on a channel with no pending
+            // call. NoReply, the table's default, is the caller's side.
+            Ok(IpcError::Eproto) => IpcKitError::InvalidArgument {
+                reason: "no pending call",
+            },
             _ => channel_kit_err(id, code),
         })
     }

@@ -25,9 +25,11 @@ pub use crate::ipc::{
 ///
 /// `From<IpcError>` (and [`IpcKitError::from_code`], which decodes a raw
 /// code first) maps each errno to the least specific variant that is correct
-/// for every kernel path returning it. A Kit wrapper that knows more, the
-/// channel id, which capability the kernel checked, or what an errno means
-/// for its operation, overrides that default (docs/kits/kernel/ipc.md §6).
+/// for every kernel path returning it, except EPIPE, ENOSPC and EPROTO,
+/// for which no variant is correct on every path (see `From<IpcError>`). A
+/// Kit wrapper that knows more, the channel id, which capability the kernel
+/// checked, or what an errno means for its operation, overrides that default
+/// (docs/kits/kernel/ipc.md §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcKitError {
     /// The channel does not exist or has been destroyed.
@@ -118,10 +120,24 @@ impl From<IpcError> for IpcKitError {
     ///   maps to `WouldBlock`; `send` overrides it to `ChannelFull`.
     /// - EINVAL comes from every subsystem, so it maps to `InvalidArgument`;
     ///   channel wrappers override it to `InvalidChannel { id }`.
-    /// - EPIPE maps to `InvalidChannel`, the common case; shared memory
-    ///   wrappers override it to `SharedMemoryError`.
     /// - EEXIST maps to `SharedMemoryError`: among IPC Kit paths only
     ///   `shared_memory_map` returns it.
+    ///
+    /// Three codes have no variant that is correct for every path, so the
+    /// table's variant is wrong for some paths, and wrappers for those paths
+    /// must override it:
+    /// - EPIPE maps to `InvalidChannel`, but the shared memory paths
+    ///   (SharedMemoryMap, SharedMemoryUnmap, SharedMemoryShare, and
+    ///   MemoryUnmap of a shared window address) return it for a missing
+    ///   region. The shared memory wrappers override it to
+    ///   `SharedMemoryError`; SharedMemoryShare has no Kit wrapper, so a
+    ///   plain decode of its EPIPE reads as `InvalidChannel`.
+    /// - ENOSPC maps to `ResourceExhausted`, but the message paths also
+    ///   return it for a payload above `MAX_MESSAGE_SIZE`. Kit wrappers
+    ///   reject such a payload as `MessageTooLarge` before the call.
+    /// - EPROTO maps to `NoReply`, but its only kernel path today is
+    ///   `ipc_reply` with no pending call, the replier's side; `reply`
+    ///   overrides it to `InvalidArgument`.
     fn from(e: IpcError) -> IpcKitError {
         match e {
             IpcError::Etimedout => IpcKitError::Timeout { elapsed_ticks: 0 },

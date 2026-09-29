@@ -601,6 +601,10 @@ mod tests {
         assert!(!validate_user_va(usize::MAX, 1));
         assert!(!validate_user_va(usize::MAX - 10, 100));
         assert!(!validate_user_va(1, usize::MAX));
+        // A valid start whose end wraps: only the overflow check rejects
+        // these. A wrapped end (0xFFF, 0x3F_EFFF) would pass the limit test.
+        assert!(!validate_user_va(USER_VA_MIN, usize::MAX));
+        assert!(!validate_user_va(0x40_0000, usize::MAX - 0x1000));
     }
 
     #[test]
