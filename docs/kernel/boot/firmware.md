@@ -24,13 +24,13 @@ DRAM training, PCI enumeration`"]
     LOAD_STUB --> STUB["`AIOS UEFI stub
 (runs in UEFI Boot Services, EL1)`"]
     STUB --> PARSE["Parse UEFI memory map"]
-    PARSE --> LOAD_ELF["`Locate and load kernel ELF from ESP
-(clean its text to PoU, invalidate I-cache)`"]
+    PARSE --> LOAD_ELF["`Locate and load kernel ELF from ESP:
+allocate each PT_LOAD segment at its physical address,
+copy it, clean its text to PoU, invalidate I-cache`"]
     LOAD_ELF --> GOP["Acquire framebuffer via GOP"]
     GOP --> DTB["Acquire device tree or ACPI tables"]
     DTB --> RNG["Request RNG seed from UEFI for KASLR"]
-    RNG --> ALLOC["Allocate contiguous region for kernel"]
-    ALLOC --> EBS["ExitBootServices() -- point of no return"]
+    RNG --> EBS["ExitBootServices() -- point of no return"]
 
     EBS --> KERNEL["`Jump to kernel entry point
 (all UEFI Boot Services gone)`"]

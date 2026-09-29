@@ -52,7 +52,7 @@ impl CacheType {
     }
 
     /// `CTR_EL0.DIC`: when set, invalidating the instruction cache to the
-    /// Point of Unification is not required for instruction-to-data coherence.
+    /// Point of Unification is not required for data-to-instruction coherence.
     pub const fn dic(self) -> bool {
         self.dic
     }
@@ -97,19 +97,34 @@ mod tests {
         assert!(!ct.dic());
     }
 
+    // The next two tests use literal register values, not the module's field
+    // constants, so a wrong bit position in the decoder fails them.
+
     #[test]
     fn decodes_idc_and_dic_independently() {
-        let idc = CacheType::from_ctr_el0(CORTEX_A72_CTR | IDC_BIT);
+        // 0x8444_C004 with bit 28 (IDC) set.
+        let idc = CacheType::from_ctr_el0(0x9444_C004);
         assert!(idc.idc());
         assert!(!idc.dic());
 
-        let dic = CacheType::from_ctr_el0(CORTEX_A72_CTR | DIC_BIT);
+        // 0x8444_C004 with bit 29 (DIC) set.
+        let dic = CacheType::from_ctr_el0(0xA444_C004);
         assert!(!dic.idc());
         assert!(dic.dic());
 
-        let both = CacheType::from_ctr_el0(CORTEX_A72_CTR | IDC_BIT | DIC_BIT);
+        let both = CacheType::from_ctr_el0(0xB444_C004);
         assert!(both.idc() && both.dic());
         assert_eq!(both.dcache_line_bytes(), 64);
+    }
+
+    #[test]
+    fn dminline_is_read_from_bits_19_16() {
+        // CWG = 5, ERG = 6, DminLine = 3, L1Ip = PIPT, IminLine = 2: every
+        // size field differs, so decoding any other one gives another size.
+        let ct = CacheType::from_ctr_el0(0x8563_C002);
+        assert_eq!(ct.dcache_line_bytes(), 32);
+        assert!(!ct.idc());
+        assert!(!ct.dic());
     }
 
     #[test]

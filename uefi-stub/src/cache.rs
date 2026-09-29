@@ -8,11 +8,20 @@
 //! Pi 4, for one) set neither. QEMU TCG does not model caches, so a missing
 //! sync never shows there.
 //!
-//! [`sync_icache`] follows Linux's arm64 EFI stub (`efi_cache_sync_image` in
-//! `drivers/firmware/efi/libstub/arm64.c`). It cleans to the Point of
-//! Unification only. That is enough for fetches through the stub's own
-//! cacheable mapping, but not for code or data that a core reads with its MMU
-//! off, which needs a clean to the Point of Coherency.
+//! [`sync_icache`] uses the Arm ARM's sequence for making written instructions
+//! fetchable (`DC CVAU`, `DSB`, `IC`, `DSB`, `ISB`), skipping the clean when
+//! `CTR_EL0.IDC` is set and the invalidate when `CTR_EL0.DIC` is set. It is
+//! based on Linux's arm64 EFI stub (`efi_cache_sync_image` in
+//! `drivers/firmware/efi/libstub/arm64.c`), which issues no `DSB` before its
+//! `IC IALLUIS` and never skips it. Linux cleans with `DC CVAU` only in builds
+//! without `CONFIG_ARM64_WORKAROUND_CLEAN_CACHE`; its default build enables
+//! that Cortex-A53 errata workaround and uses `DC CIVAC`, which reaches the
+//! Point of Coherency.
+//!
+//! This stub cleans to the Point of Unification only, on purpose. That is
+//! enough for fetches through the stub's own cacheable mapping, but not for
+//! code or data that a core reads with its MMU off (secondary core bring-up);
+//! the kernel has to clean those to the Point of Coherency itself.
 
 use core::arch::asm;
 use core::ops::Range;
