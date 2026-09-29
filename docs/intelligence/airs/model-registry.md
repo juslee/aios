@@ -105,7 +105,7 @@ Different hardware tiers require different model quantization levels. AIRS selec
 RAM Tier            Model Pool   Quantization   Model Size    Quality       Notes
 ─────────────────   ──────────   ────────────   ──────────    ────────      ─────
 < 2 GB Degraded        0 MB      N/A            N/A          Cloud-only    No local inference
-2-4 GB Minimal         1 GB      Q4_K_M         1B params    Minimal       Simple completions
+2-4 GB Minimal         0 MB      N/A            N/A          None          No model pool below 4 GiB
 4-8 GB Constrained     2 GB      Q4_K_M         3B params    Basic         Limited reasoning
 8-16 GB Recommended    4 GB      Q4_K_M         8B params    Good          Target experience
 ≥ 16 GB Comfortable    8 GB      Q5_K_M         8B params    High          Best local quality
@@ -248,12 +248,10 @@ Available RAM        Model Pool Alloc    Default Model Selection
                                           that require inference are disabled.
                                           Rule-based fallbacks active.
 
-2 GB – 3.9 GB        1 GB                1B parameter model, Q4_K_M quantization.
-                                          ~600 MB on disk, ~900 MB in RAM.
-                                          Sufficient for: context inference,
-                                          intent verification, metadata generation.
-                                          Insufficient for: extended conversation,
-                                          complex summarization.
+2 GB – 3.9 GB        0 MB                No local model: there is no model pool
+                                          below 4 GiB. Intelligence services
+                                          that require inference are disabled.
+                                          Rule-based fallbacks active.
 
 4 GB – 7.9 GB        2 GB                3B parameter model, Q4_K_M quantization.
                                           ~1.7 GB on disk, ~2 GB in RAM.
@@ -314,9 +312,9 @@ impl BootModelSelector {
     }
 
     fn compute_model_pool(&self) -> usize {
+        // Same tiers as PoolConfig::from_total_ram (shared/src/memory.rs)
         match self.available_ram {
-            r if r < 2 * GB => 0,
-            r if r < 4 * GB => 1 * GB,
+            r if r < 4 * GB => 0,
             r if r < 8 * GB => 2 * GB,
             r if r < 16 * GB => 4 * GB,
             _ => 8 * GB,
