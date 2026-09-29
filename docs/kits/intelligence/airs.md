@@ -387,7 +387,7 @@ pub enum AirsError {
     /// The AIRS service is not running (early boot or disabled).
     ServiceUnavailable,
 
-    /// Internal inference error (GGML runtime failure).
+    /// Internal inference error (candle runtime failure).
     InternalError(String),
 }
 ```

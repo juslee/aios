@@ -444,7 +444,7 @@ AIRS startup:
      >= 2 GB RAM:  load 1B Q4_K_M  (~0.9 GB)
       < 2 GB RAM:  no local model (cloud-only or degraded)
   3. Memory-map model weights (mmap, lazy page-in)
-  4. Initialize GGML runtime + NEON SIMD
+  4. Initialize candle runtime + NEON SIMD
   5. Warm up: run a short inference to fault in hot pages
   6. Report healthy to Service Manager
 ```

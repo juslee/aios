@@ -375,7 +375,7 @@ pub struct CachedPrefix {
     prompt_hash: u64,
     /// Number of tokens in the cached prefix
     token_count: u32,
-    /// Serialized KV cache state (loadable by GGML)
+    /// Serialized KV cache state (loadable by the candle runtime)
     kv_state: Vec<u8>,
     /// Last used timestamp for LRU eviction
     last_used: Timestamp,

@@ -36,7 +36,7 @@ flowchart TD
 (per-model)`"]
             CS["`Compute Scheduler
 (CPU/GPU/NPU routing)`"]
-            GR["`GGML Runtime
+            GR["`candle Runtime
 (NEON SIMD)`"]
             KV["`KV Cache
 (per-session)`"]
@@ -121,7 +121,7 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 | Document | Sections | Content |
 |---|---|---|
 | **This file** | §1, §2, §9, §12 | Overview, architecture, design principles, implementation order |
-| [inference.md](./airs/inference.md) | §3, §3.1–§3.11 | GGML runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence, cross-references |
+| [inference.md](./airs/inference.md) | §3, §3.1–§3.11 | candle runtime, compute scheduler, KV cache, streaming output, inference metering, session lifecycle, error handling, benchmarking, technology alternatives, AIRS-dependent intelligence, cross-references |
 | [model-registry.md](./airs/model-registry.md) | §4 | Model storage, profiles, quantization, LRU eviction, boot selection |
 | [intelligence-services.md](./airs/intelligence-services.md) | §5 | Space Indexer, Context Engine, Attention Manager, Intent Verifier (summary), Behavioral Monitor, Adversarial Defense, Tool Manager, Conversation Manager, Agent Capability Intelligence |
 | [space-indexer.md](./space-indexer.md) | §1–§15 | **Standalone doc:** Full Space Indexer architecture — indexing pipeline, selective policy, HNSW embedding index, full-text index, relationship graph, search integration, security, performance budgets, AI-native intelligence |
@@ -155,7 +155,7 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 Development plan phases (see development-plan.md — not to be confused with boot phases):
 
 ```text
-Dev Phase 10a:  GGML integration + model loading          → inference works
+Dev Phase 10a:  candle integration + model loading        → inference works
 Dev Phase 10b:  Compute scheduler + KV cache management   → concurrent sessions
 Dev Phase 10c:  Streaming output + conversation manager   → conversation bar works
 Dev Phase 10d:  Model registry + LRU eviction             → multiple models supported
