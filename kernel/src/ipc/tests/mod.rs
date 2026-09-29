@@ -493,7 +493,8 @@ fn ipc_timeout_entry() -> ! {
     // Out-of-range channel id → EINVAL, not an index-out-of-bounds panic.
     // recv and send are rejected by check_channel_access. reply has no
     // capability check, so it exercises the CHANNEL_TABLE lookup itself.
-    // Log messages are cut at 48 bytes, so keep them short.
+    // A log message keeps at most 96 bytes (two ring entries); longer text
+    // is cut and marked with `~`, so keep these lines short.
     let einval = IpcError::Einval as i64;
     let recv_result = ipc_recv(ChannelId(MAX_CHANNELS as u32), &mut buf, 0);
     let send_result = ipc_send(ChannelId(MAX_CHANNELS as u32), b"BAD_ID");

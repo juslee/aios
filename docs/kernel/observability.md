@@ -180,7 +180,7 @@ pub struct LogEntry {
 const _: () = assert!(core::mem::size_of::<LogEntry>() == 64);
 ```
 
-The 48-byte inline message covers most kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 35 bytes. A longer message takes two entries, 96 bytes of message in all:
+The 48-byte inline message covers most kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 32 bytes. A longer message takes two entries, 96 bytes of message in all:
 
 - The **head** entry has flags bit 0 set and holds the first 48 bytes. The **continuation** entry, the next entry of the same ring, has bit 1 set, holds the rest, and repeats the head's timestamp, core, level and subsystem.
 - Each part ends on a UTF-8 character boundary. A character that would straddle byte 48 moves whole into the continuation, so the head can hold fewer than 48 bytes.
@@ -207,6 +207,8 @@ pub struct LogRing {
     tail: AtomicU32,
     /// Messages dropped because the ring was full (producer only).
     dropped: AtomicU32,
+    /// Ring position of the latest drop: `head` when it happened (producer only).
+    drop_pos: AtomicU32,
     /// `dropped` as of the drain's last report (consumer only).
     dropped_reported: AtomicU32,
 }
@@ -216,7 +218,7 @@ pub struct LogRing {
 static LOG_RINGS: [LogRing; MAX_CORES] = [const { LogRing::INIT }; MAX_CORES];
 ```
 
-When the ring has no room for a new message (one entry, or two for a head and its continuation), the new message is **dropped** and counted in `dropped`; the entries already in the ring are kept. Log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock). Dropping rather than overwriting the oldest entries keeps the single-producer/single-consumer split: the producer never writes `tail` or a slot the drain may be reading, because it loads `tail` with Acquire (pairing with the drain's Release store) and writes only slots the drain has finished with. The drain prints the count (§2.7).
+When the ring has no room for a new message (one entry, or two for a head and its continuation), the new message is **dropped**, counted in `dropped`, and its position (the current `head`) kept in `drop_pos`; the entries already in the ring are kept. Log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock). Dropping rather than overwriting the oldest entries keeps the single-producer/single-consumer split: the producer never writes `tail` or a slot the drain may be reading, because it loads `tail` with Acquire (pairing with the drain's Release store) and writes only slots the drain has finished with. The drain prints the count (§2.7).
 
 `log_impl` formats the message before masking IRQs, in whatever IRQ state its caller has, then masks IRQs (saving and restoring DAIF, so a caller that is already masked stays masked) while it reads the core ID and pushes to that core's ring. Masking keeps the owning core the only producer: an IRQ-context log call on the same core, such as the load balancer's, cannot run in the middle of a push, and the thread cannot migrate between reading the core ID and pushing. A head entry and its continuation are written first and then published together by one Release store of `head`, so the drain sees both or neither, and a full ring drops the whole message, never half of it.
 
@@ -266,9 +268,9 @@ The format is: `[seconds.micros] [core] LEVEL Subsys Message`. The timestamp is 
 
 The drain joins a head entry with its continuation into one line. The producer never splits a pair, but a second drain call popping the same ring at the same time can take part of one (`drain_logs` has thread-context callers besides the CPU 0 timer tick). If the entry after a head is not its continuation (same timestamp and core, bit 1 set), the drain prints the head followed by `~<lost>` and then prints the other entry on its own. A continuation read without its head prints as `<lost>~` followed by its text.
 
-Messages dropped because a ring was full are not lost silently either: before draining a ring, the drain prints one `[log] core N: K messages dropped (ring full)` line for the drops since its last report.
+Messages dropped because a ring was full are not lost silently either. The drain prints one `[log] core N: K messages dropped (ring full)` line where the loss happened: when its read position in the ring reaches `drop_pos`, after the entries logged before the drop and before those logged after it. The report line has no timestamp of its own; its place in the log gives the gap. If a ring drops messages at more than one position before the drain reaches the first, the one report comes at the latest position and counts them all.
 
-One drain call prints at most 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus an entry left pending by a missing continuation and one dropped-messages line per ring that dropped messages. The bound is on lines per call, which keeps the CPU 0 timer tick short; the UART itself has no lock.
+One drain call prints at most 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus an entry left pending by a missing continuation and one dropped-messages line per ring whose drop position it reaches. The bound is on lines per call, which keeps the CPU 0 timer tick short; the UART itself has no lock.
 
 ### 2.8 Early Boot Fallback
 

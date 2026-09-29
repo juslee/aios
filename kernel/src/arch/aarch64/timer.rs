@@ -169,10 +169,13 @@ pub fn timer_tick_handler() {
     // 2-3. CPU 0 only: increment global tick counter and drain log ring buffers.
     // TICK_COUNT is a system-wide monotonic counter — only one core should advance it.
     // drain_logs() pops from SPSC ring buffers — only safe with a single consumer.
-    // Rate-limited to every 4th tick to keep total handler time < 1ms (the tick
-    // interval). At 115200 baud, each log entry (~80 chars) takes ~7ms, so we
-    // can only safely drain ~1 entry per 8 ticks. Draining every 4th tick with
-    // the per-call limit in drain_logs keeps us within budget.
+    // The drain runs every 4th tick. One call prints at most DRAIN_BATCH_SIZE
+    // (16) lines, plus an entry left pending by a missing continuation and one
+    // dropped-messages line per ring (observability/mod.rs). A line joins a
+    // head entry with its continuation, so it can reach ~130 characters: ~11ms
+    // on a 115200-baud UART, where a full batch holds this handler for well
+    // over its 1ms tick interval. That cost of draining from the tick is a
+    // known limit; the batch size bounds it rather than fitting it in a tick.
     let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
     if cpu == 0 {
         let tick = TICK_COUNT.fetch_add(1, Ordering::Relaxed);

@@ -32,9 +32,10 @@ const LOG_RING_MASK: u32 = (LOG_RING_SIZE as u32) - 1;
 
 /// Lock-free per-core log ring buffer.
 /// Single-producer (owning core) / single-consumer (drain function). The
-/// producer writes `head`, `dropped` and the free slots; the consumer writes
-/// `tail` and `dropped_reported`. A message that does not fit is dropped and
-/// counted rather than overwriting entries the drain may be reading.
+/// producer writes `head`, `dropped`, `drop_pos` and the free slots; the
+/// consumer writes `tail` and `dropped_reported`. A message that does not fit
+/// is dropped and counted rather than overwriting entries the drain may be
+/// reading, and the drain reports the count where the loss happened (`pop`).
 /// Uses `UnsafeCell` for interior mutability of entries (required by Rust's
 /// aliasing rules — `&self` methods that write need `UnsafeCell`).
 pub struct LogRing {
@@ -43,8 +44,21 @@ pub struct LogRing {
     tail: AtomicU32,
     /// Messages dropped because the ring was full. Producer only.
     dropped: AtomicU32,
+    /// Ring position of the latest drop: the value of `head` when it
+    /// happened, so the entries before it were logged before the drop.
+    /// Producer only.
+    drop_pos: AtomicU32,
     /// Value of `dropped` at the drain's last report. Consumer only.
     dropped_reported: AtomicU32,
+}
+
+/// What the drain reads next from a ring (`LogRing::pop`).
+enum RingItem {
+    /// The next entry.
+    Entry(LogEntry),
+    /// This many messages were dropped at the drain's position: after the
+    /// entries it has read and before the next one.
+    Dropped(u32),
 }
 
 impl LogRing {
@@ -54,13 +68,15 @@ impl LogRing {
         head: AtomicU32::new(0),
         tail: AtomicU32::new(0),
         dropped: AtomicU32::new(0),
+        drop_pos: AtomicU32::new(0),
         dropped_reported: AtomicU32::new(0),
     };
 
     /// Push one message: a head entry and, when the message is longer than
     /// one entry, its continuation. When the ring has no room for the whole
-    /// message, the message is dropped and counted in `dropped`; entries
-    /// already in the ring are never overwritten.
+    /// message, the message is dropped, counted in `dropped` and its ring
+    /// position kept in `drop_pos`; entries already in the ring are never
+    /// overwritten.
     ///
     /// Both entries are written before `head` moves, and `head` moves past
     /// both with one Release store, so the drain sees the pair whole or not
@@ -76,11 +92,14 @@ impl LogRing {
         // be written again.
         let tail = self.tail.load(Ordering::Acquire);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            // Full. Only this producer writes `dropped`, so a load and a
-            // store count the drop without an atomic read-modify-write.
+            // Full. Record where the message was lost, then count it. Only
+            // this producer writes `drop_pos` and `dropped`, so a load and a
+            // store count the drop without an atomic read-modify-write. The
+            // Release store of `dropped` publishes `drop_pos` with it.
+            self.drop_pos.store(head, Ordering::Relaxed);
             let dropped = self.dropped.load(Ordering::Relaxed);
             self.dropped
-                .store(dropped.wrapping_add(1), Ordering::Relaxed);
+                .store(dropped.wrapping_add(1), Ordering::Release);
             return;
         }
 
@@ -114,10 +133,30 @@ impl LogRing {
         }
     }
 
-    /// Pop the next entry for the drain consumer. Returns None if empty.
-    fn pop(&self) -> Option<LogEntry> {
+    /// Pop the next item for the drain consumer, or None if the ring is
+    /// empty. Messages dropped at the drain's position come first, as one
+    /// `Dropped` count, so the drain reports them after the entries logged
+    /// before them and before the entries logged after them. If the ring
+    /// drops messages at more than one position before the drain reaches the
+    /// first, the one count comes at the latest position and covers them all.
+    fn pop(&self) -> Option<RingItem> {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
+
+        // A message dropped at `tail` was dropped before the entry at `tail`
+        // was pushed. If that entry is published, the Acquire load of `head`
+        // above makes the drop visible here, so it is reported before the
+        // entry; if the ring is empty, a later call sees it, still at `tail`.
+        // The Acquire load of `dropped` pairs with its Release store in
+        // `push`, so `drop_pos` is at least as new as the count: every drop
+        // counted happened at or before `drop_pos`, and the count is never
+        // reported ahead of an entry logged before one of its drops.
+        let dropped = self.dropped.load(Ordering::Acquire);
+        let reported = self.dropped_reported.load(Ordering::Relaxed);
+        if dropped != reported && self.drop_pos.load(Ordering::Relaxed) == tail {
+            self.dropped_reported.store(dropped, Ordering::Relaxed);
+            return Some(RingItem::Dropped(dropped.wrapping_sub(reported)));
+        }
 
         if tail == head {
             return None;
@@ -136,29 +175,23 @@ impl LogRing {
         };
 
         self.tail.store(tail.wrapping_add(1), Ordering::Release);
-        Some(entry)
-    }
-
-    /// Messages dropped since the last call. Consumer only.
-    fn take_dropped(&self) -> u32 {
-        let dropped = self.dropped.load(Ordering::Relaxed);
-        let reported = self.dropped_reported.load(Ordering::Relaxed);
-        self.dropped_reported.store(dropped, Ordering::Relaxed);
-        dropped.wrapping_sub(reported)
+        Some(RingItem::Entry(entry))
     }
 }
 
 // SAFETY: Each field of a ring has one writer. The producer is `log_impl` on
 // the owning core, with IRQs masked for the whole push: it writes `head`,
-// `dropped` and the slots from `head` up to before `tail + LOG_RING_SIZE`.
-// The consumer is `drain_logs`: it writes `tail` and `dropped_reported` and
-// reads the slots from `tail` up to before `head`. The Release stores and
-// Acquire loads of `head` and `tail` hand each slot from one side to the
-// other, so no slot is read and written at once. A second producer, or two
-// consumers popping one ring at once, would break this and tear, repeat or
-// lose entries. `drain_logs` also has thread-context callers besides the
-// CPU 0 timer tick, and one can overlap the tick's drain: a known gap in
-// this protocol, which shows as lost marks when it splits a pair.
+// `dropped`, `drop_pos` and the slots from `head` up to before
+// `tail + LOG_RING_SIZE`. The consumer is `drain_logs`: it writes `tail` and
+// `dropped_reported` and reads the slots from `tail` up to before `head`.
+// The Release stores and Acquire loads of `head` and `tail` hand each slot
+// from one side to the other, so no slot is read and written at once. A
+// second producer, or two consumers popping one ring at once, would break
+// this and tear, repeat or lose entries. `drain_logs` also has thread-context
+// callers besides the CPU 0 timer tick, and one can overlap the tick's
+// drain: a known gap in this protocol, which shows as lost marks when it
+// splits a pair, and can repeat a drop report or hold it back until the
+// ring's next drop.
 unsafe impl Sync for LogRing {}
 
 /// Global log rings, one per core. BSS-allocated.
@@ -284,7 +317,9 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 /// Maximum log lines printed per `drain_logs` call; a head entry joined with
 /// its continuation counts as one line. A call can print a few more: an
 /// entry left pending by a missing continuation is printed past the limit,
-/// and each ring that dropped messages adds one report line. The limit keeps
+/// and a ring adds one report line when the drain reaches where it dropped
+/// messages (a second report from that ring needs the ring to fill again
+/// first, far more entries than one call reads). The limit keeps
 /// each call short for the CPU 0 timer tick, which drains every 4th tick.
 /// The boot sequence calls `drain_logs` directly as well, to flush bursts.
 const DRAIN_BATCH_SIZE: usize = 16;
@@ -298,8 +333,9 @@ const DRAIN_BATCH_SIZE: usize = 16;
 /// splits a pair, so a head without its continuation, or a continuation
 /// without its head, means another consumer popped part of the pair; those
 /// print with LOG_LOST_TAIL_MARK or LOG_LOST_HEAD_MARK (see `next_log_line`).
-/// Messages a full ring dropped since the last call are reported first, as
-/// one `[log] core N: K messages dropped (ring full)` line for that ring.
+/// Messages a full ring dropped are reported where they were lost, as one
+/// `[log] core N: K messages dropped (ring full)` line between the entries
+/// logged before the drop and those logged after it (`LogRing::pop`).
 pub fn drain_logs() {
     use crate::arch::aarch64::uart::UartWriter;
     use core::fmt::Write;
@@ -310,26 +346,12 @@ pub fn drain_logs() {
 
     // Round-robin across all cores.
     for (core, ring) in LOG_RINGS.iter().enumerate() {
-        // Report the messages this ring dropped since the last call.
-        let dropped = ring.take_dropped();
-        if dropped != 0 {
-            let mut line_storage = [0u8; MAX_LINE_LEN];
-            let mut lb = LineBuf::new(&mut line_storage);
-            let _ = write!(
-                lb,
-                "[log] core {}: {} messages dropped (ring full)",
-                core, dropped
-            );
-            let line_len = lb.len();
-            emit_drained_line(&mut w, &line_storage[..line_len]);
-        }
-
         // An entry popped while looking for a continuation that was not
         // there. It is printed next, even past the batch limit, because it
         // cannot be put back.
         let mut pending = None;
         while drained < DRAIN_BATCH_SIZE || pending.is_some() {
-            let Some(line) = next_log_line(&mut pending, || ring.pop()) else {
+            let Some(line) = next_log_line(&mut pending, || pop_entry(ring, core)) else {
                 break;
             };
             let entry = &line.first;
@@ -354,6 +376,36 @@ pub fn drain_logs() {
             drained += 1;
         }
     }
+}
+
+/// Pop the next entry of `ring`, the ring of core `core`. When the ring
+/// dropped messages at this point, their count comes first and is printed
+/// here, before the entry, where the loss happened in the log.
+fn pop_entry(ring: &LogRing, core: usize) -> Option<LogEntry> {
+    loop {
+        match ring.pop()? {
+            RingItem::Entry(entry) => return Some(entry),
+            RingItem::Dropped(count) => report_dropped(core, count),
+        }
+    }
+}
+
+/// Print the `[log] core N: K messages dropped (ring full)` line.
+fn report_dropped(core: usize, count: u32) {
+    use core::fmt::Write;
+
+    let mut line_storage = [0u8; MAX_LINE_LEN];
+    let mut lb = LineBuf::new(&mut line_storage);
+    let _ = write!(
+        lb,
+        "[log] core {}: {} messages dropped (ring full)",
+        core, count
+    );
+    let line_len = lb.len();
+    emit_drained_line(
+        &mut crate::arch::aarch64::uart::UartWriter,
+        &line_storage[..line_len],
+    );
 }
 
 /// Write one formatted drain line to the UART, then capture it to the boot
