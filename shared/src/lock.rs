@@ -59,10 +59,10 @@
 //! 1. Under (a), a stream that leaves CPU c, for any reason, leaves
 //!    `SWITCH_GEN[c]` changed behind it, and so does a thread that comes back
 //!    to c. A generation never recurs (up to the 54-bit wrap).
-//! 2. A stamp from [`read_stamp`], or from MPIDR and `SWITCH_GEN` with IRQs
-//!    masked, names either the stamping stream's own current generation or
-//!    one that had already ended when the stamp was taken. This holds for the
-//!    holder's stamp and for the waiter's.
+//! 2. A stamp from [`read_stamp`], or from the CPU id and `SWITCH_GEN` with
+//!    IRQs masked, names either the stamping stream's own current generation
+//!    or one that had already ended when the stamp was taken. This holds for
+//!    the holder's stamp and for the waiter's.
 //! 3. The waiter's own stamp alone is not enough: with IRQs on it can be
 //!    switched out or moved to another CPU at any instruction, after which
 //!    another stream owns c. The check of `SWITCH_GEN[c]` after the word load
@@ -200,19 +200,21 @@ impl OwnerStamp {
 
 /// The CPU and switch-generation state a stamp is taken and judged against.
 ///
-/// The kernel reads MPIDR_EL1 Aff0 and its per-CPU `SWITCH_GEN` array; tests
-/// supply scripted models. Neither method may panic, for any argument.
+/// The kernel reads its CPU id from TPIDR_EL1 (`tripwire::cpu_tpidr`), which
+/// boot.S sets to MPIDR_EL1 Aff0, the index rule (a)'s bump uses, and the
+/// generation from its per-CPU `SWITCH_GEN` array; tests supply scripted
+/// models. Neither method may panic, for any argument.
 ///
 /// [`read_stamp`] and [`classify`] are sound only if every call reads the
 /// machine afresh, in the program order the caller issues the calls:
 ///
-/// - `cpu()` must read the CPU on every call. The kernel's MPIDR `asm!` must
-///   use none of `options(pure)`, `nomem` or `readonly`. `pure` lets the
-///   compiler merge the two CPU reads in [`read_stamp`] into one, and `nomem`
-///   or `readonly` let it move the generation load across a CPU read. Without
-///   them the `asm!` may access any memory, so it is a compiler barrier that
-///   keeps the three reads in order. The kernel's existing `core_id()` is
-///   `nomem` and does not qualify.
+/// - `cpu()` must read the CPU on every call. The kernel's CPU-id `asm!` (the
+///   TPIDR_EL1 read) must use none of `options(pure)`, `nomem` or `readonly`.
+///   `pure` lets the compiler merge the two CPU reads in [`read_stamp`] into
+///   one, and `nomem` or `readonly` let it move the generation load across a
+///   CPU read. Without them the `asm!` may access any memory, so it is a
+///   compiler barrier that keeps the three reads in order. The kernel's
+///   existing `core_id()` is `nomem` and does not qualify.
 /// - `switch_gen()` must be a fresh atomic load of `SWITCH_GEN[cpu]` on every
 ///   call, never a cached value.
 ///
@@ -254,10 +256,10 @@ pub enum Contention {
 /// Classify an observed lock word for a waiter whose own stamp is `me`.
 ///
 /// `me` is the stamp the waiter took before it loaded `observed`, usually the
-/// one its failed CAS used: from [`read_stamp`] with IRQs on, or from MPIDR
-/// and `SWITCH_GEN` with IRQs masked. A waiter with IRQs on can be switched
-/// out or moved at any instruction, so it takes a fresh stamp before each
-/// word load it classifies. IRQS_ON is ignored in both stamps.
+/// one its failed CAS used: from [`read_stamp`] with IRQs on, or from the CPU
+/// id and `SWITCH_GEN` with IRQs masked. A waiter with IRQs on can be
+/// switched out or moved at any instruction, so it takes a fresh stamp before
+/// each word load it classifies. IRQS_ON is ignored in both stamps.
 ///
 /// Reads `v.switch_gen(owner cpu)` once, after `observed` was loaded:
 ///
