@@ -125,7 +125,7 @@ pub enum AttentionCategory {
 pub enum Urgency {
     /// Show immediately as an interrupt overlay. Reserved for critical items.
     Interrupt,
-    /// Show as a toast when the user next takes a break (input idle > 3s).
+    /// Show as a toast when the user next takes a break (input idle > 30s).
     NextBreak,
     /// Batch into a digest summary delivered at context transitions.
     Digest,

@@ -464,7 +464,7 @@ impl BreakDetector {
 }
 ```
 
-When the user pauses (30 seconds of no input), queued `NextBreak` items appear as subtle toasts — visible but not blocking.
+When the user pauses (30 seconds of no input), queued `NextBreak` items appear as subtle toasts — visible but not blocking. The 30-second default is the `attention.break_threshold` preference. `BreakDetector` also treats the breakpoints that the Context Engine's `BreakpointDetector` reports through `context_engine` (such as an app switch or a build start; [learning.md](./context-engine/learning.md) §13.4) as breaks; the two share this idle threshold.
 
 ### 5.3 Context Transition Flush
 

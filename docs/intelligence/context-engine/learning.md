@@ -444,7 +444,7 @@ pub enum SenderCategory {
 
 **Attention as finite budget.** Research (Gloria Mark, UC Irvine) shows that context switches cost ~23 minutes of recovery time. The Context Engine tracks an **attention budget** — a finite daily interruption capacity. Each interrupt costs attention budget. When the budget is depleted, the threshold automatically tightens. This prevents notification fatigue even when individual notifications pass the urgency threshold.
 
-**Breakpoint detection.** The engine identifies natural breakpoints in the user's activity — moments when an interruption is least costly. Typing pauses, app switches, scrolling stops, and compile waits are breakpoints. Notifications marked `NextBreak` are delivered at the next detected breakpoint rather than at an arbitrary time.
+**Breakpoint detection.** The engine identifies natural breakpoints in the user's activity — moments when an interruption is least costly. Typing pauses, app switches, scrolling stops, and compile waits are breakpoints. Notifications marked `NextBreak` are delivered at the next detected breakpoint rather than at an arbitrary time. The engine reports breakpoints; the Attention Manager's `BreakDetector` ([attention.md](../attention.md) §5.2) consumes them and does the delivery. Both use the same idle threshold, 30 seconds by default (the `attention.break_threshold` preference).
 
 ```rust
 pub struct AttentionBudget {
@@ -458,7 +458,7 @@ pub struct AttentionBudget {
 
 pub struct BreakpointDetector {
     /// Input velocity threshold for detecting pauses
-    idle_threshold: Duration,       // default: 3 seconds
+    idle_threshold: Duration,       // default: 30 seconds (attention.break_threshold)
     /// App switch as breakpoint
     app_switch_window: Duration,    // default: 2 seconds after switch
     /// Compile/build as breakpoint

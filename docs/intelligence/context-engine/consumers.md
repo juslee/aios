@@ -122,7 +122,7 @@ Step 3: Grouping
 Step 4: Route to display
   │  Compositor shows notification via overlay surface
   │  For Interrupt: immediate, with sound
-  │  For NextBreak: queued, shown when user pauses (idle > 10s)
+  │  For NextBreak: queued, shown when user pauses (idle > 30s)
   │
   ▼
 Step 5: Auto-action
