@@ -657,6 +657,7 @@ fn sys_notification_create(_tf: &TrapFrame) -> i64 {
 /// NotificationSignal (nr=11): x0=notification_id, x1=bits.
 ///
 /// Atomically OR bits into the notification word and wake matching waiters.
+/// EINVAL for an out-of-range id or a notification that does not exist.
 fn sys_notification_signal(tf: &TrapFrame) -> i64 {
     let id = match id_arg(tf.x[0]) {
         Ok(id) => shared::NotificationId(id),
@@ -664,8 +665,10 @@ fn sys_notification_signal(tf: &TrapFrame) -> i64 {
     };
     let bits = tf.x[1];
 
-    crate::ipc::notify::notification_signal(id, bits);
-    0
+    match crate::ipc::notify::notification_signal(id, bits) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
 }
 
 /// NotificationWait (nr=12): x0=notification_id, x1=mask, x2=timeout_ticks.

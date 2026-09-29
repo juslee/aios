@@ -402,8 +402,7 @@ impl ipc_kit::NotificationOps for KernelIpc {
     }
 
     fn signal(&self, id: shared::NotificationId, bits: u64) -> Result<(), IpcKitError> {
-        notify::notification_signal(id, bits);
-        Ok(())
+        notify::notification_signal(id, bits).map_err(i64_to_kit_err)
     }
 
     fn wait(

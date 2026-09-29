@@ -918,7 +918,7 @@ const MAX_NOTIFICATIONS: usize = 64;
 const MAX_WAITERS_PER_NOTIFICATION: usize = 8;
 ```
 
-**Signaling** (`NotificationSignal`): Acquires the `NOTIFICATION_TABLE` Mutex, atomically ORs `bits` into the notification word, then wakes any waiters whose mask intersects the new value. The matched bits are atomically cleared before the waiter is woken. The Mutex acquisition dominates cost; the atomic OR itself is cheap but the lock + waiter scan makes this roughly comparable to other locked IPC operations.
+**Signaling** (`NotificationSignal`): Acquires the `NOTIFICATION_TABLE` Mutex, atomically ORs `bits` into the notification word, then wakes any waiters whose mask intersects the new value. The matched bits are atomically cleared before the waiter is woken. An id `>= MAX_NOTIFICATIONS` or a notification that does not exist returns `EINVAL` and signals nothing, the same errors `NotificationWait` returns. The Mutex acquisition dominates cost; the atomic OR itself is cheap but the lock + waiter scan makes this roughly comparable to other locked IPC operations.
 
 **Waiting** (`NotificationWait`): If any bits matching `mask` are already set, returns+clears them immediately (fast path). Otherwise blocks until signaled or timeout expires. Double-checks after re-acquiring the table lock to prevent races.
 
