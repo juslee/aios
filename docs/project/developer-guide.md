@@ -2043,7 +2043,7 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 | Cause | Diagnosis | Fix |
 |---|---|---|
 | Missing VBAR_EL1 setup | First exception causes jump to address 0x0 | Set VBAR_EL1 in boot.S before any Rust code runs |
-| Stack pointer misaligned | SP not 16-byte aligned causes fault | Ensure `.balign 16` on stack symbols in linker script |
+| Stack pointer misaligned | SP not 16-byte aligned causes fault | Keep `ALIGN(16)` on the `.stack` output section in `linker.ld` (boot.S loads `__stack_top` from it) |
 | FPU not enabled | First NEON instruction faults | Enable FPU in boot.S: `orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb` |
 
 **QEMU prints exception info then halts:**
