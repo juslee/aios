@@ -548,6 +548,14 @@ const MAX_PRIVATE_PAGES: usize = 64;
 /// Maximum live MemoryMap allocations system-wide.
 const MAX_PRIVATE_ALLOCATIONS: usize = 64;
 
+/// Base of the private-memory VA window, directly after the shared memory
+/// window (`SHM_VA_BASE` + 64 regions × 1 MiB). Slot `i` of
+/// `PRIVATE_ALLOC_TABLE` owns `[PRIVATE_VA_BASE + i * PRIVATE_VA_STRIDE, +stride)`.
+const PRIVATE_VA_BASE: usize = SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE;
+
+/// VA spacing between private allocation slots: room for the largest request.
+const PRIVATE_VA_STRIDE: usize = MAX_PRIVATE_PAGES * PAGE_SIZE;
+
 /// One MemoryMap allocation: a physically contiguous buddy block from
 /// Pool::User, owned by one process.
 #[derive(Clone, Copy)]
@@ -562,10 +570,10 @@ struct PrivateAllocation {
     pages: usize,
 }
 
-/// Every live MemoryMap allocation. MemoryUnmap frees only an entry that
-/// matches exactly and belongs to the caller, so it can never return a page
-/// it did not hand out (a kernel page, a region's frames, another process's
-/// block) to the buddy allocator.
+/// Every live MemoryMap allocation, indexed by VA slot. MemoryUnmap frees
+/// only an entry that matches exactly and belongs to the caller, so it can
+/// never return a page it did not hand out (a kernel page, a region's frames,
+/// another process's block) to the buddy allocator.
 ///
 /// Leaf lock: nothing else is taken while it is held. Blocks are allocated
 /// before it is taken and freed after it is released.
@@ -575,17 +583,17 @@ static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCA
 /// MemoryMap: allocate private memory for process `pid`.
 ///
 /// Rounds `size` up to whole pages (at least one) and allocates them as one
-/// physically contiguous buddy block from Pool::User, zeroes the block,
-/// records it for `pid` in `PRIVATE_ALLOC_TABLE` and returns its direct-map
-/// address. Because the block is contiguous, the whole allocation is
-/// reachable through that one address.
+/// physically contiguous buddy block from Pool::User, zeroes the block, and
+/// records it for `pid` in a free slot of `PRIVATE_ALLOC_TABLE`. Returns the
+/// slot's address in the private VA window, a user address that stands for
+/// the whole allocation: it is the key MemoryUnmap takes, and because the
+/// block is contiguous, `[va, va + pages)` maps onto it with one range.
 ///
-/// No path installs user page tables yet (every process has
-/// `address_space: None`), so, like `shared_memory_map`, this maps nothing
-/// into TTBR0. The returned address is the block's direct-map (TTBR1) address,
-/// usable by EL1 code, and it is the key MemoryUnmap takes. Once processes
-/// have address spaces, MemoryMap maps the block at a user VA and returns
-/// that instead (ipc.md §4.7).
+/// This follows `shared_memory_map`, which returns its region's window VA:
+/// no path installs user page tables yet (every process has
+/// `address_space: None`), so nothing is mapped into TTBR0 here either. EL1
+/// code would reach the block through the direct map (`DIRECT_MAP_BASE` +
+/// `base_phys`); no EL1 code calls MemoryMap. ipc.md §4.7.
 ///
 /// Errors: EINVAL for W^X (WRITE | EXECUTE); ENOSPC above `MAX_PRIVATE_PAGES`
 /// pages or when `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has
@@ -603,33 +611,31 @@ pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, 
     let order = order_for_pages(pages);
 
     let base_phys = crate::mm::frame::alloc_user_pages(order).ok_or(IpcError::Enomem as i64)?;
-    let va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + base_phys;
+    let dmap_va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + base_phys;
 
     // SAFETY: base_phys is a block of 2^order pages that alloc_user_pages has
     // just handed out, so nothing else references it, and the direct map
-    // covers all RAM read-write, so [va, va + 2^order pages) is valid.
+    // covers all RAM read-write, so [dmap_va, dmap_va + 2^order pages) is valid.
     // The buddy allocator hands each block out once; kmap.rs maintains the
     // direct map.
     // A write past the block would corrupt a neighbouring allocation; an
     // unmapped VA would take an EL1 data abort and halt the CPU.
-    unsafe { core::ptr::write_bytes(va as *mut u8, 0, (1 << order) * PAGE_SIZE) };
+    unsafe { core::ptr::write_bytes(dmap_va as *mut u8, 0, (1 << order) * PAGE_SIZE) };
 
-    let recorded = {
+    let slot_idx = {
         let mut table = PRIVATE_ALLOC_TABLE.lock();
-        match table.iter_mut().find(|slot| slot.is_none()) {
-            Some(slot) => {
-                *slot = Some(PrivateAllocation {
-                    owner: pid,
-                    base_phys,
-                    order,
-                    pages,
-                });
-                true
-            }
-            None => false,
+        let idx = table.iter().position(|slot| slot.is_none());
+        if let Some(i) = idx {
+            table[i] = Some(PrivateAllocation {
+                owner: pid,
+                base_phys,
+                order,
+                pages,
+            });
         }
+        idx
     };
-    if !recorded {
+    let Some(slot_idx) = slot_idx else {
         // SAFETY: base_phys was allocated above with this order and was never
         // recorded or returned, so this is its only free.
         // This function owns the block until it is recorded.
@@ -637,10 +643,18 @@ pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, 
         unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
         crate::kwarn!(Mm, "memory_map: table full pid={}", pid.0);
         return Err(IpcError::Enospc as i64);
-    }
+    };
 
     crate::kinfo!(Mm, "memory_map: pid={} pages={}", pid.0, pages);
-    Ok(va)
+    Ok(PRIVATE_VA_BASE + slot_idx * PRIVATE_VA_STRIDE)
+}
+
+/// Slot index of `va` in the private VA window, if `va` is exactly a slot's
+/// base address.
+fn private_slot(va: usize) -> Option<usize> {
+    let offset = va.checked_sub(PRIVATE_VA_BASE)?;
+    let idx = offset / PRIVATE_VA_STRIDE;
+    (offset % PRIVATE_VA_STRIDE == 0 && idx < MAX_PRIVATE_ALLOCATIONS).then_some(idx)
 }
 
 /// MemoryUnmap: release memory that process `pid` mapped.
@@ -652,7 +666,7 @@ pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, 
 /// with a `size` that rounds up to the same page count; that allocation is
 /// removed from `PRIVATE_ALLOC_TABLE` and its block freed. Anything else
 /// returns EINVAL and frees nothing: another process's allocation, an address
-/// inside or past an allocation, a different size, a region's frames or any
+/// inside or past an allocation, a different size, a direct-map or other
 /// kernel address. EINVAL rather than EPERM for another process's
 /// allocation, so a caller cannot learn which addresses other processes hold.
 pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
@@ -664,20 +678,17 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
         }
     }
 
-    // Private unmap: find the caller's exact allocation.
+    // Private unmap: the caller's exact allocation in that slot, or nothing.
     let pages = size.div_ceil(PAGE_SIZE).max(1);
-    let base_phys = va.checked_sub(crate::arch::aarch64::mmu::DIRECT_MAP_BASE);
-    let alloc = {
+    let alloc = private_slot(va).and_then(|idx| {
         let mut table = PRIVATE_ALLOC_TABLE.lock();
-        table
-            .iter_mut()
-            .find(|slot| {
-                slot.is_some_and(|a| {
-                    a.owner == pid && Some(a.base_phys) == base_phys && a.pages == pages
-                })
-            })
-            .and_then(Option::take)
-    };
+        let slot = &mut table[idx];
+        if slot.is_some_and(|a| a.owner == pid && a.pages == pages) {
+            slot.take()
+        } else {
+            None
+        }
+    });
     let Some(alloc) = alloc else {
         return Err(IpcError::Einval as i64);
     };
