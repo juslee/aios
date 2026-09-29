@@ -207,7 +207,7 @@ Security Layer 1. Compares an agent's observed actions against its declared inte
 **Key concepts:**
 
 - **Algorithmic pre-check** handles ~80% of verifications without LLM inference using machine-checkable StructuredIntent specifications (IntentPurpose enum, TemporalSpec formulas, DataFlowSpec, ResourceBounds)
-- **LLM semantic verification** via AIRS security path (<10ms SLA) for ambiguous cases requiring semantic understanding
+- **LLM semantic verification** via AIRS security path (<10ms single-round SLA on NPU hardware; each path's deadline is in [pipeline.md §10.2](../intent-verifier/pipeline.md)) for ambiguous cases requiring semantic understanding
 - **Multi-round adversarial self-testing** for high-risk actions (destructive writes, large data transfers)
 - **IPC taint labels** (DIFC) track data provenance across agent boundaries, preventing cross-agent exfiltration even when individual actions are capability-permitted
 - **Graceful degradation** — configurable fallback policies (Skip/ReadOnly/BlockAll) per trust level when AIRS is unavailable; Layers 2–8 remain active

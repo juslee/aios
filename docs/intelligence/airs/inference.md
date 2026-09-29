@@ -1500,7 +1500,7 @@ Apple M3+ (64 GB)    70B      Q4_K_M    ~500ms    ~15-25    128K       32 GB
 **Target invariants:**
 
 - Interactive TTFT < 500ms on target hardware (Pi 5+)
-- System inference (intent verification) < 200ms for 50-token response
+- System inference (intent verification) < 10ms single-round on NPU hardware, 50-100ms CPU-only, with a verification-optimized model ([intent-verifier/pipeline.md](../intent-verifier/pipeline.md) §10.1)
 - Background inference uses ≤ 15% of compute when interactive sessions are active
 - KV cache efficiency > 90% (PagedAttention minimizes fragmentation)
 
