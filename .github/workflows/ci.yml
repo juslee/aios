@@ -57,7 +57,10 @@ jobs:
     name: Tools (host)
     # Host-only crate tools/ (package aios-tools, binary aios): fmt, clippy and
     # tests, including the docs-check parity goldens. The real-repository goldens
-    # replay a pinned main commit, so the checkout needs full history.
+    # replay a pinned main commit, so the checkout needs full history. The same
+    # history holds the deleted scripts/docs/check.py, which the differential
+    # test runs with the image's python3; AIOS_REQUIRE_CHECK_PY makes that test
+    # fail rather than skip if python3 or the history is ever missing here.
     # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in
     # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
     # no longer prove the shim is POSIX.
@@ -74,6 +77,8 @@ jobs:
       - run: cargo fmt --check -p aios-tools
       - run: cargo clippy -p aios-tools --all-targets -- -D warnings
       - run: cargo test -p aios-tools
+        env:
+          AIOS_REQUIRE_CHECK_PY: "1"
 
   security:
     name: Security (audit + deny)

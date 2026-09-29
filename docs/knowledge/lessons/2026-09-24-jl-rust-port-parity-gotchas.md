@@ -44,7 +44,7 @@ Each of the fifteen porting tasks (Tasks 1-15 of the 16-task plan) passed a per-
   - A pinned commit: `git clone --shared`, a detached checkout, and every ref deleted, so the history base is the pinned commit.
   - A fixture repository with exactly one injected drift per check.
 
-  Keep a differential test that runs both tools while the old one exists, and prove it is not vacuous: capture the old tool's actual invocations, and check that a mutated port fails both the golden test and the differential.
+  Keep a differential test that runs both tools, and prove it is not vacuous: capture the old tool's actual invocations, and check that a mutated port fails both the golden test and the differential. Deleting the old tool need not end the differential: since #206, docs-check's test materialises `check.py` from git history and keeps running it wherever `python3` exists.
 - Resolve an external interpreter to its absolute path (`sys.executable`) outside the test's isolated environment, then run that path inside it.
 - Settle permission-rule syntax with a one-call headless probe instead of reading it off the docs. Let the probe `Read` the file before it edits: `Edit` requires a prior read, and an edit that fails that precondition says nothing about whether the ask rule matched.
   - Probe every path shape the rule must cover, not only the obvious one. The anchored `Edit(/tools/src/cmd/guard/**)` form passed a root-path probe but does not match the same paths under `.claude/worktrees/*/`, where the work actually happens. The `**/` form covers both.

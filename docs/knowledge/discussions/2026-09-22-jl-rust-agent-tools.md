@@ -122,14 +122,16 @@ The shim resolves the binary from the **main checkout**: the parent of `git rev-
 - **CI:** a new job, "Tools (host)", runs:
   - `cargo fmt --check -p aios-tools`
   - `cargo clippy -p aios-tools --all-targets -- -D warnings` (widened to `--all-targets` in R1 so test code is linted; `just clippy` runs the same command)
-  - `cargo test -p aios-tools`, including the parity and golden tests
+  - `cargo test -p aios-tools`, including the parity and golden tests, with `AIOS_REQUIRE_CHECK_PY=1` (#206, below)
 
-  It becomes a required check on `main` right after R1 merges (owner decision, 2026-09-24), not when R5b switches the guard, because once `check.py` is deleted, `goldens_match_aios` in this job is the only parity gate.
+  It becomes a required check on `main` right after R1 merges (owner decision, 2026-09-24), not when R5b switches the guard, because once `check.py` is deleted, this job's `goldens_match_aios` and the check.py differential are the parity gates.
 - **`just check`:** gains the host clippy step for this crate.
 
 ### 3. Parity and switch-over
 
 Each port proves parity, records the old tool's output as golden files, switches the call sites, and deletes the old script, all in the same PR. The goldens keep the parity tests alive after the old tool is gone.
+
+**The old tool as an oracle after deletion (#206).** R1's differential test stopped comparing once `check.py` was deleted. It now materialises `check.py` from git history (`git cat-file blob 33c6b3d:scripts/docs/check.py`, the last version on main and the one the goldens were recorded against) and runs it next to `aios` on every golden case and on the live checkout, wherever `python3` exists. The ignored golden recorder uses the same copy. The test skips, printing the reason, without `python3` or without that commit (a shallow clone). CI's Tools (host) job has both (`fetch-depth: 0`, the image's `python3`) and sets `AIOS_REQUIRE_CHECK_PY=1`, which turns the skip into a failure there. R2-R5 can keep their own differential the same way after deleting their script. `.gitattributes` marks `tools/tests/fixtures/**` and `tools/tests/golden/**` `-text`, so a checkout with `core.autocrlf=true` cannot rewrite these byte-compared files.
 
 | PR | Port | Parity proof | Switch-over |
 | --- | --- | --- | --- |

@@ -10,8 +10,10 @@
 //! throwaway git repository (removed when the returned `TestRepo` drops).
 //!
 //! The parity half adds the real-repository snapshot at `SNAPSHOT_SHA`, the case list
-//! replayed by `tests/docs_check_parity.rs`, the golden file paths, and helpers that
-//! run scripts/docs/check.py while it still exists.
+//! replayed by `tests/docs_check_parity.rs`, the golden file paths, and the check.py
+//! oracle: R1 deleted scripts/docs/check.py, so `check_py` materialises it from git
+//! history (`git cat-file blob <SNAPSHOT_SHA>:scripts/docs/check.py`) into
+//! `CARGO_TARGET_TMPDIR`, and `run_check_py` runs it against any repository.
 //!
 //! `python3` is often an asdf (or pyenv) shim: under the isolated test `HOME`
 //! (`common::isolated`), such a shim exits 126 before it ever reaches CPython, which
@@ -580,38 +582,104 @@ pub fn materialize(source: Source) -> TestRepo {
     }
 }
 
-/// `materialize`, plus (for fixtures) this repository's scripts/docs/check.py copied to
-/// `scripts/docs/check.py` and listed in `.git/info/exclude`, so that
-/// `git ls-files --others --exclude-standard` never sees it. The real snapshot tracks
-/// its own check.py.
-pub fn materialize_with_check_py(source: Source) -> TestRepo {
-    let repo = materialize(source);
-    if let Source::Fixture(_) = source {
-        let script = check_py_source().expect("scripts/docs/check.py exists in this repository");
-        let dest = repo.path().join("scripts/docs/check.py");
-        fs::create_dir_all(dest.parent().expect("scripts/docs has a parent"))
-            .expect("create scripts/docs");
-        fs::copy(&script, &dest).unwrap_or_else(|e| panic!("cannot copy check.py: {e}"));
-        let info = repo.path().join(".git/info");
-        fs::create_dir_all(&info).expect("create .git/info");
-        let mut exclude = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(info.join("exclude"))
-            .expect("open .git/info/exclude");
-        exclude
-            .write_all(b"\nscripts/docs/check.py\n")
-            .expect("exclude check.py");
-    }
-    repo
+/// The last `scripts/docs/check.py` on main, as a git object: `SNAPSHOT_SHA`'s copy.
+/// faf6d20 (#166) added the file, no later commit on main changed it (the blob is
+/// 6cea366 at faf6d20, at `SNAPSHOT_SHA` and at 201af49, the parent of the deletion),
+/// and 212df62 (#207, R1) deleted it. The goldens were recorded against this version.
+pub fn check_py_object() -> String {
+    format!("{SNAPSHOT_SHA}:scripts/docs/check.py")
 }
 
-/// This repository's scripts/docs/check.py, while it exists (it is deleted by the
-/// switch-over; the goldens keep parity afterwards).
-pub fn check_py_source() -> Option<PathBuf> {
-    let path = repo_root().join("scripts/docs/check.py");
-    path.is_file().then_some(path)
+/// The differential oracle: check.py materialised from git history, and the
+/// interpreter that runs it.
+pub struct CheckPy {
+    /// The absolute path of the resolved `python3` (see `python3_interpreter`).
+    pub interpreter: PathBuf,
+    /// `python3 --version`, for the test log.
+    pub version: String,
+    /// check.py's bytes, written under `CARGO_TARGET_TMPDIR/check-py/`.
+    pub script: PathBuf,
 }
+
+/// check.py materialised from `check_py_object()` and a working `python3`, resolved
+/// once per test process. `Err` is the reason the oracle is unavailable, for the caller
+/// to print when it skips: no usable `python3` on `PATH`, or no such git object (a
+/// shallow clone; CI's Tools (host) job checks out with `fetch-depth: 0`).
+pub fn check_py() -> Result<&'static CheckPy, &'static str> {
+    static ORACLE: OnceLock<Result<CheckPy, String>> = OnceLock::new();
+    ORACLE
+        .get_or_init(materialize_check_py)
+        .as_ref()
+        .map_err(String::as_str)
+}
+
+fn materialize_check_py() -> Result<CheckPy, String> {
+    let interpreter = python3_interpreter()
+        .ok_or("python3 is not available (not on PATH, or it does not run)")?
+        .clone();
+    let version = isolated(Command::new(&interpreter).arg("--version"))
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .ok_or_else(|| {
+            format!(
+                "{} --version fails in the isolated test environment",
+                interpreter.display()
+            )
+        })?;
+    let object = check_py_object();
+    let out = isolated(Command::new("git").arg("-C").arg(repo_root()).args([
+        "cat-file",
+        "blob",
+        object.as_str(),
+    ]))
+    .output()
+    .map_err(|e| format!("cannot run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git cannot read {object} (a shallow clone? the oracle needs history back to \
+             {SNAPSHOT_SHA}): {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    // Written to a per-process temporary name, then renamed over the shared path, so
+    // test processes that materialise it at the same time never read a partial file.
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("check-py");
+    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let script = dir.join("check.py");
+    let partial = dir.join(format!("check.py.{}.tmp", std::process::id()));
+    fs::write(&partial, &out.stdout)
+        .and_then(|()| fs::rename(&partial, &script))
+        .map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+    Ok(CheckPy {
+        interpreter,
+        version,
+        script,
+    })
+}
+
+/// Runs the script named by `argv[1]` as `__main__` with `__file__` = `argv[2]` and
+/// `sys.argv` = `[argv[2]] + argv[3:]`, as `python3 <argv[2]> <args>` would if check.py
+/// sat at `argv[2]`. check.py reads `__file__` only in `repo_root()` (L1576-1582), to
+/// find its repository with `git rev-parse --show-toplevel` in the script's directory,
+/// so `run_check_py` points it at `<root>/check.py`. `sys.path[0]` is the directory of
+/// the materialised script (it holds nothing else that imports could pick up), as when
+/// a script runs directly.
+const CHECK_PY_BOOTSTRAP: &str = "\
+import sys
+def _run(script, fake, args):
+    import __main__, os
+    sys.argv[:] = [fake] + args
+    sys.path[0] = os.path.dirname(os.path.abspath(script))
+    with open(script, 'rb') as f:
+        code = compile(f.read(), fake, 'exec', dont_inherit=True)
+    namespace = __main__.__dict__
+    del namespace['_run']
+    namespace['__file__'] = fake
+    exec(code, namespace)
+_run(sys.argv[1], sys.argv[2], sys.argv[3:])
+";
 
 /// The absolute path of the ambient `python3` interpreter, resolved once outside
 /// `isolated()` (see the module doc: a version-manager shim breaks under the isolated
@@ -642,28 +710,20 @@ fn python3_interpreter() -> Option<&'static PathBuf> {
         .as_ref()
 }
 
-/// The resolved interpreter runs `--version` under the isolated environment.
-pub fn python3_available() -> bool {
-    let Some(interpreter) = python3_interpreter() else {
-        return false;
-    };
-    isolated(Command::new(interpreter).arg("--version"))
-        .output()
-        .is_ok_and(|out| out.status.success())
-}
-
-/// `<resolved python3> <root>/scripts/docs/check.py <args>` with `cwd` as the working
-/// directory (isolated environment; the interpreter itself is the absolute path
-/// resolved by `python3_interpreter`, not the ambient `python3` shim). check.py finds
-/// its repository from the script's own directory, so `root` must contain the script;
+/// check.py `<args>` on the repository at `root`, with `cwd` as the working directory:
+/// the materialised script (`check_py`) run by the resolved interpreter (not the ambient
+/// `python3` shim) in the isolated environment, through `CHECK_PY_BOOTSTRAP`, so that
+/// check.py takes `root` as its repository without a copy of the script inside it.
 /// `cwd` only changes the paths check.py resolves itself, such as a relative
-/// `--baseline`.
+/// `--baseline`. Panics when the oracle is unavailable; callers check `check_py` first.
 pub fn run_check_py(root: &Path, cwd: &Path, args: &[&str]) -> Run {
-    let interpreter = python3_interpreter()
-        .unwrap_or_else(|| panic!("python3 could not be resolved to an absolute path"));
+    let oracle = check_py().unwrap_or_else(|reason| panic!("check.py is unavailable: {reason}"));
     let out = isolated(
-        Command::new(interpreter)
-            .arg(root.join("scripts/docs/check.py"))
+        Command::new(&oracle.interpreter)
+            .arg("-c")
+            .arg(CHECK_PY_BOOTSTRAP)
+            .arg(&oracle.script)
+            .arg(root.join("check.py"))
             .args(args)
             .current_dir(cwd),
     )
@@ -671,7 +731,7 @@ pub fn run_check_py(root: &Path, cwd: &Path, args: &[&str]) -> Run {
     .unwrap_or_else(|e| {
         panic!(
             "cannot run {} in {}: {e}",
-            interpreter.display(),
+            oracle.interpreter.display(),
             cwd.display()
         )
     });
