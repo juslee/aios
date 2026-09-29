@@ -759,7 +759,7 @@ macro_rules! kinfo {
 Key design decisions:
 
 - The `const _LEVEL` binding makes the level comparison a compile-time constant. When `MIN_LOG_LEVEL` is `Info` and the call is `kdebug!(...)`, the entire macro expands to nothing -- zero runtime cost.
-- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 96-byte stack buffer (`LogMessageBuf`) inside `log_impl()`, which fills one 48-byte `LogEntry`, or a head entry and a continuation for a longer message (observability.md §2.4).
+- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 96-byte stack buffer (`LogMessageBuf`) inside `log_impl()`, which fills the 48-byte message of one `LogEntry`, or a head entry and a continuation for a longer message (observability.md §2.4).
 - `#[macro_export]` places the macro at the crate root, so it is invoked as `crate::kinfo!()` from within the kernel crate.
 
 **Feature-gated trace macro** (from `observability/trace.rs`):
@@ -1843,7 +1843,7 @@ kdebug!(Sched, "Context switch: {} -> {}", from_tid, to_tid);
 
 **Available log levels:** `Trace`, `Debug`, `Info`, `Warn`, `Error`. In debug builds, all levels from `Debug` up are emitted. In release builds, only `Info` and above.
 
-**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by the timer tick handler every 1 ms. This means early boot messages appear immediately, while later messages may be slightly delayed.
+**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by CPU 0's timer tick handler every 4th 1 ms tick (and by boot-time flushes). This means early boot messages appear immediately, while later messages may be slightly delayed.
 
 **Exception handler note:** Exception vector stubs use direct `putc()` calls, not `klog!`. This prevents recursive faults when TTBR0 is switched away from the identity map (which would make the logging format string inaccessible).
 

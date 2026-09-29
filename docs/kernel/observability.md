@@ -254,7 +254,7 @@ macro_rules! ktrace { ($subsys:ident, $($arg:tt)*) => { klog!(Trace, $subsys, $(
 
 ### 2.7 UART Drain
 
-A drain function, called periodically from the timer tick handler or idle loop, reads all per-core rings and writes formatted entries to the UART:
+A drain function, called from the CPU 0 timer tick handler (every 4th 1 ms tick) and from the boot sequence, reads all per-core rings and writes formatted entries to the UART:
 
 ```text
 [   0.003142] [0] INFO  Mm   Pool init: 32768 pages in Kernel
