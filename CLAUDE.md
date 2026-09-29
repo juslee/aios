@@ -62,6 +62,8 @@ Vector table:                 ALIGN(2048) in linker.ld + .balign 128 per entry i
 PSCI CPU_ON (64-bit):         0xC400_0003 — hvc on QEMU, smc on Pi 4/5
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry to physical before CPU_ON.
 Boot CPU SP virt conversion:  boot.S adds VIRT_PHYS_OFFSET to SP before branching to virtual kernel_main.
+Boot stack:                   128 KiB `.stack (NOLOAD)` section after .bss, inside the RW PT_LOAD segment.
+                              The stub reserves only PT_LOAD memsz: RAM outside every output section is never reserved.
 Syscall ABI:                  SVC #0 from EL0; x8 = number, x0-x5 = args, x0 = return.
                               Phase 3 threads run at EL1 → IPC is a direct call, NOT SVC. SVC path wired for future EL0.
 
