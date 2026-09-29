@@ -240,7 +240,23 @@
       "Edit(**/tools/src/cmd/guard/**)",
       "Write(**/tools/src/cmd/guard/**)",
       "Edit(**/tools/src/cmd/loop/**)",
-      "Write(**/tools/src/cmd/loop/**)"
+      "Write(**/tools/src/cmd/loop/**)",
+      "Bash(cp *target/tools/*)",
+      "Bash(mv *target/tools/*)",
+      "Bash(ln *target/tools/*)",
+      "Bash(install *target/tools/*)",
+      "Bash(tee *target/tools/*)",
+      "Bash(dd *target/tools/*)",
+      "Bash(rm *target/tools/*)",
+      "Bash(touch *target/tools/*)",
+      "Bash(sed *-i*target/tools/*)",
+      "Bash(sed *--in-place*target/tools/*)",
+      "Bash(*>*target/tools/*)",
+      "Bash(just -f*)",
+      "Bash(just --justfile*)",
+      "Bash(just -d*)",
+      "Bash(just --working-directory*)",
+      "Bash(just *--dotenv*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -268,7 +284,9 @@
       "Bash(git -C * push *heads/main*)",
       "Bash(gh pr merge --admin*)",
       "Bash(gh pr merge *--admin*)",
-      "mcp__*__delete_repository"
+      "mcp__*__delete_repository",
+      "Edit(**/target/tools/**)",
+      "Write(**/target/tools/**)"
     ]
   },
   "enabledMcpjsonServers": [
