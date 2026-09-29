@@ -105,7 +105,7 @@ pub struct BootInfo {
 }
 ```
 
-The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. Before calling `ExitBootServices()`, the UEFI stub fills in `magic` and the kernel extent (`kernel_phys_base`, `kernel_size`), and, where the firmware provides them, the GOP framebuffer fields (`framebuffer`, `fb_*`), the `device_tree` and `acpi_rsdp` addresses and the `rng_seed`. It then records the final memory map (`memory_map_*`): uefi-rs's `exit_boot_services` fetches it with `GetMemoryMap()` just before calling `ExitBootServices()`, which needs that call's map key. It leaves `runtime_services`, `initramfs_*` and `cmdline_*` at 0.
+The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. Before calling `ExitBootServices()`, the UEFI stub fills in `magic` and the kernel extent (`kernel_phys_base`, `kernel_size`), and, where the firmware provides them, the GOP framebuffer fields (`framebuffer`, `fb_*`), the `device_tree` and `acpi_rsdp` addresses and the `rng_seed`. It then records the final memory map (`memory_map_*`): uefi-rs's `exit_boot_services` fetches it with `GetMemoryMap()` just before calling `ExitBootServices()`, which needs that call's map key. The stub does not fill `runtime_services`, `initramfs_*` or `cmdline_*` yet, so they stay 0: the command line (§2.3) and the initramfs and `boot.cfg` on the ESP (§2.4) are designed but not yet implemented.
 
 **Memory descriptors** follow the EFI_MEMORY_DESCRIPTOR layout with a 4-byte padding field for alignment:
 
