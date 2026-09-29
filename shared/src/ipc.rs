@@ -199,18 +199,29 @@ impl RawMessage {
 /// space (TTBR0), addresses at or above belong to kernel space (TTBR1).
 pub const USER_VA_LIMIT: usize = 0x0000_8000_0000_0000;
 
+/// Lowest address a user buffer may start at (inclusive).
+///
+/// Page 0 is never mapped in a user address space, so a pointer into it,
+/// null included, is always a caller error. Rejecting it here also keeps a
+/// null pointer away from `core::ptr::copy_nonoverlapping` and
+/// `core::slice::from_raw_parts`, which require a non-null pointer.
+pub const USER_VA_MIN: usize = 0x1000;
+
 /// Validate that a (ptr, len) range lies entirely within user VA space.
 ///
 /// Returns false if:
+/// - `ptr` is in page 0 (`ptr < USER_VA_MIN`), null included, at any `len`
 /// - `ptr + len` overflows
 /// - `ptr` is in kernel space (>= USER_VA_LIMIT)
 /// - `ptr + len` extends into kernel space (> USER_VA_LIMIT)
+///
+/// A zero-length range at a user address outside page 0 is valid.
 pub fn validate_user_va(ptr: usize, len: usize) -> bool {
     let end = match ptr.checked_add(len) {
         Some(e) => e,
         None => return false,
     };
-    ptr < USER_VA_LIMIT && end <= USER_VA_LIMIT
+    (USER_VA_MIN..USER_VA_LIMIT).contains(&ptr) && end <= USER_VA_LIMIT
 }
 
 #[cfg(test)]
@@ -453,15 +464,32 @@ mod tests {
     #[test]
     fn user_va_valid_range() {
         assert!(validate_user_va(0x400000, 4096));
-        assert!(validate_user_va(0, 256));
+        assert!(validate_user_va(USER_VA_MIN, 256));
         assert!(validate_user_va(USER_VA_LIMIT - 1, 1));
     }
 
     #[test]
     fn user_va_zero_len() {
-        assert!(validate_user_va(0, 0));
-        assert!(validate_user_va(0x1000, 0));
+        assert!(validate_user_va(USER_VA_MIN, 0));
+        assert!(validate_user_va(0x40_0000, 0));
         assert!(validate_user_va(USER_VA_LIMIT - 1, 0));
+    }
+
+    #[test]
+    fn user_va_null_is_rejected_at_any_len() {
+        assert!(!validate_user_va(0, 0));
+        assert!(!validate_user_va(0, 1));
+        assert!(!validate_user_va(0, 256));
+        assert!(!validate_user_va(0, USER_VA_LIMIT));
+    }
+
+    #[test]
+    fn user_va_page_zero_is_rejected() {
+        assert!(!validate_user_va(1, 0));
+        assert!(!validate_user_va(USER_VA_MIN - 1, 1));
+        assert!(!validate_user_va(USER_VA_MIN - 1, 2));
+        // The first byte of page 1 is the lowest valid start.
+        assert!(validate_user_va(USER_VA_MIN, 1));
     }
 
     #[test]
@@ -491,8 +519,16 @@ mod tests {
 
     #[test]
     fn user_va_large_valid() {
-        assert!(validate_user_va(0, USER_VA_LIMIT));
-        assert!(validate_user_va(0, USER_VA_LIMIT - 1));
+        // The whole user range above page 0 is one valid buffer.
+        assert!(validate_user_va(USER_VA_MIN, USER_VA_LIMIT - USER_VA_MIN));
+        assert!(validate_user_va(
+            USER_VA_MIN,
+            USER_VA_LIMIT - USER_VA_MIN - 1
+        ));
+        assert!(!validate_user_va(
+            USER_VA_MIN,
+            USER_VA_LIMIT - USER_VA_MIN + 1
+        ));
     }
 
     // --- SelectKind / SelectEntry tests ---

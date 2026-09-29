@@ -71,8 +71,8 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
 
 /// DebugPrint syscall: x0 = ptr, x1 = len.
 ///
-/// Validates pointer is in user VA range (< 0x0000_8000_0000_0000)
-/// and len ≤ 256. Copies message to kernel stack buffer before printing.
+/// Validates len ≤ 256 and the range with `validate_user_ptr` (user VA,
+/// outside page 0). Copies message to kernel stack buffer before printing.
 fn sys_debug_print(tf: &TrapFrame) -> i64 {
     let ptr = tf.x[0] as usize;
     let len = tf.x[1] as usize;
@@ -82,14 +82,7 @@ fn sys_debug_print(tf: &TrapFrame) -> i64 {
         return IpcError::Enospc as i64;
     }
 
-    // Validate pointer is in user VA range.
-    // Use checked_add to reject overflow (defense-in-depth; the first check
-    // already catches all kernel-range pointers).
-    let end = match ptr.checked_add(len) {
-        Some(e) => e,
-        None => return IpcError::Eperm as i64,
-    };
-    if ptr >= 0x0000_8000_0000_0000 || end > 0x0000_8000_0000_0000 {
+    if !validate_user_ptr(ptr, len) {
         return IpcError::Eperm as i64;
     }
 
@@ -299,7 +292,8 @@ fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
     }
 }
 
-/// Validate a user-space pointer is within the valid user VA range.
+/// Validate that a user buffer `[ptr, ptr + len)` lies in the user VA range
+/// and outside page 0 (`shared::validate_user_va`). Null fails at any length.
 fn validate_user_ptr(ptr: usize, len: usize) -> bool {
     shared::validate_user_va(ptr, len)
 }
