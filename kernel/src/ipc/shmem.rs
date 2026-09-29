@@ -459,7 +459,6 @@ pub fn shared_memory_share(
 // ---------------------------------------------------------------------------
 
 /// Clean up all shared memory mappings for a process (called on process exit).
-#[allow(dead_code)]
 pub fn process_cleanup_shared_memory(pid: ProcessId) {
     let mut table = SHARED_REGION_TABLE.lock();
 
@@ -618,7 +617,6 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
 ///
 /// For Phase 3 kernel threads, this is how processes access shared memory
 /// (no user address space to map into).
-#[allow(dead_code)]
 pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
     if region_id.0 as usize >= MAX_SHARED_REGIONS {
         return None;
