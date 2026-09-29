@@ -67,11 +67,20 @@ SECTIONS
     /* Boot stack: 128 KiB, 16-byte aligned (ABI requirement).
        ipc::init() alone uses ~62 KiB (ProcessControl temporaries +
        Thread construction) and nested calls (channel_create ~4.5 KiB)
-       push total past 64 KiB. 128 KiB gives ample headroom. */
-    . = ALIGN(16);
-    __stack_bottom = .;
-    . += 131072;
-    __stack_top = .;
+       push total past 64 KiB. 128 KiB gives ample headroom.
+
+       The stack is an output section, not a bare location-counter
+       advance, so it falls inside the RW PT_LOAD segment's memsz. The
+       UEFI stub allocates pages per PT_LOAD segment and derives
+       BootInfo.kernel_size from them; a stack outside every segment
+       would sit on pages the firmware still reports free (#198).
+       NOLOAD makes it SHT_NOBITS: no file bytes. The stub zero-fills
+       the segment; boot.S does not zero it (it lies past __bss_end). */
+    .stack (NOLOAD) : ALIGN(16) {
+        __stack_bottom = .;
+        . += 131072;
+        __stack_top = .;
+    }
 
     . = ALIGN(4096);
     __data_end = .;
