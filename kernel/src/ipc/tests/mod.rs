@@ -323,7 +323,15 @@ pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
 /// IPC server thread: receives requests and sends replies.
 fn ipc_server_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
@@ -375,7 +383,15 @@ fn ipc_server_entry() -> ! {
 /// IPC caller thread: sends requests and receives replies.
 fn ipc_caller_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
@@ -432,7 +448,15 @@ fn ipc_caller_entry() -> ! {
 /// check (`select_cap_test`).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     // Create a channel with no server — timeout is guaranteed.
@@ -521,7 +545,15 @@ fn ipc_timeout_entry() -> ! {
 /// PI server: Normal-class server that checks if it was elevated to
 /// Interactive during request processing (via priority inheritance).
 fn pi_server_entry() -> ! {
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
@@ -613,7 +645,15 @@ fn pi_server_entry() -> ! {
 /// Capability enforcement test: thread in process 3 (no ChannelCreate cap)
 /// attempts to create a channel. Should get EPERM.
 fn cap_denied_entry() -> ! {
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     // Small delay to let other threads initialize.
@@ -653,7 +693,15 @@ fn cap_denied_entry() -> ! {
 
 /// PI caller: Interactive-class caller that exercises priority inheritance.
 fn pi_caller_entry() -> ! {
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
