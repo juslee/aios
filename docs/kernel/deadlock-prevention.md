@@ -134,6 +134,7 @@ graph TD
 | `ECHO_CHANNEL` | `service/mod.rs` | Test infrastructure, leaf |
 | `SAMPLE_BUF` | `bench.rs` | Benchmark data collection, leaf |
 | `ASID_ALLOC` | `mm/uspace.rs` | ASID allocation, leaf |
+| `PRIVATE_ALLOC_TABLE` | `ipc/shmem.rs` | MemoryMap allocation records, leaf: blocks are allocated before and freed after the hold |
 | `RUN_QUEUES[N]` | `sched/mod.rs` | Per-CPU, ascending CPU ID order (§3.2) |
 
 ### 3.4 Memory Allocator Locks

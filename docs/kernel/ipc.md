@@ -239,7 +239,11 @@ pub enum Syscall {
         flags: MemoryFlags,            // see "Memory flags" below (W^X enforced)
     },
 
-    /// Free virtual memory
+    /// Free memory this process mapped.
+    /// Raw syscall ABI: x0=addr, x1=size. An address in the shared memory
+    /// window unmaps that region; any other address must be exactly one a
+    /// MemoryMap by this process returned, with the same size in pages,
+    /// or the call returns EINVAL and frees nothing (§4.7).
     MemoryUnmap {
         addr: usize,
         size: usize,
@@ -698,6 +702,16 @@ fn transfer_capability(channel: ChannelId, cap: CapabilityTokenId) -> Result<()>
 ```
 
 **Move vs. clone:** By default, capability transfer is a **move** — the sender no longer holds the capability. For capabilities marked `delegatable: true`, the sender can choose to clone (both hold a copy). This prevents capability amplification.
+
+### 4.7 Private Memory (MemoryMap / MemoryUnmap)
+
+`MemoryMap` allocates memory private to the calling process; `MemoryUnmap` gives it back. As implemented in `kernel/src/ipc/shmem.rs`:
+
+- **Allocation.** `size` is rounded up to whole pages (at least one, at most `MAX_PRIVATE_PAGES` = 64, otherwise `ENOSPC`) and allocated as **one physically contiguous buddy block** from `Pool::User` (order `order_for_pages(pages)`), zeroed. `ENOMEM` if the pool has no free block of that order.
+- **Record.** Each allocation is recorded in `PRIVATE_ALLOC_TABLE` (`MAX_PRIVATE_ALLOCATIONS` = 64 entries system-wide, `ENOSPC` when full) as owner pid, physical base, buddy order and requested page count. The table is a leaf lock: blocks are allocated before it is taken and freed after it is released.
+- **Address returned.** No path installs user page tables yet: every process has `address_space: None`, and `SharedMemoryMap` also only records its window VA (§4.5). `MemoryMap` follows the same model and maps nothing into TTBR0. It returns the block's **direct-map (TTBR1) address**, through which EL1 code reaches the whole allocation, because the block is contiguous. That address is also the key `MemoryUnmap` takes. When processes get address spaces, `MemoryMap` will map the block at a user VA and return that instead; the per-process record stays the authority for what may be freed.
+- **Free.** `MemoryUnmap(addr, size)` with `addr` in the shared memory window (`USER_HEAP_BASE` + region × 1 MiB) unmaps that region (`size` unused). Otherwise it frees only an allocation that matches exactly: owned by the caller, `addr` equal to the address `MemoryMap` returned, and `size` rounding up to the same page count. Anything else returns `EINVAL` and frees nothing, including another process's allocation (`EINVAL`, not `EPERM`, so a caller cannot probe which addresses other processes hold), an address inside or past an allocation, a region's frames and any kernel address. `MemoryUnmap` can therefore never return a page it did not hand out to the buddy allocator.
+- **Not yet.** Process exit does not free a process's private allocations, as it does not free its shared regions (`process_cleanup_shared_memory` has no caller); the process lifecycle work does both.
 
 -----
 

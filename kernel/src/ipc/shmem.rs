@@ -1,10 +1,11 @@
-//! Shared memory lifecycle — create, map, share, unmap.
+//! Shared memory lifecycle — create, map, share, unmap — and private memory
+//! (MemoryMap / MemoryUnmap).
 //!
 //! Provides zero-copy data transfer between processes via shared physical pages.
 //! Regions are reference-counted and capability-gated. W^X is enforced at both
 //! creation and mapping time.
 //!
-//! Per ipc.md §4.4–4.6, memory/virtual.md §7.
+//! Per ipc.md §4.4–4.7, memory/virtual.md §7.
 //!
 //! Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE.
 
@@ -515,70 +516,123 @@ pub fn process_cleanup_shared_memory(pid: ProcessId) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory map (private allocation for user heap)
+// Private memory (MemoryMap / MemoryUnmap)
 // ---------------------------------------------------------------------------
 
-/// MemoryMap: allocate private pages for a process (user heap growth).
+/// Largest MemoryMap request, in pages (256 KiB).
+const MAX_PRIVATE_PAGES: usize = 64;
+
+/// Maximum live MemoryMap allocations system-wide.
+const MAX_PRIVATE_ALLOCATIONS: usize = 64;
+
+/// One MemoryMap allocation: a physically contiguous buddy block from
+/// Pool::User, owned by one process.
+#[derive(Clone, Copy)]
+struct PrivateAllocation {
+    /// Process that called MemoryMap; only it may unmap the block.
+    owner: ProcessId,
+    /// Physical base of the `2^order`-page block.
+    base_phys: usize,
+    /// Buddy order the block was allocated with.
+    order: usize,
+    /// Pages the caller asked for (`<= 2^order`); MemoryUnmap must match it.
+    pages: usize,
+}
+
+/// Every live MemoryMap allocation. MemoryUnmap frees only an entry that
+/// matches exactly and belongs to the caller, so it can never return a page
+/// it did not hand out (a kernel page, a region's frames, another process's
+/// block) to the buddy allocator.
 ///
-/// Allocates from Pool::User, maps into the caller's address space at the
-/// next available VA in the USER_HEAP_BASE region.
+/// Leaf lock: nothing else is taken while it is held. Blocks are allocated
+/// before it is taken and freed after it is released.
+static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCATIONS]> =
+    Mutex::new([None; MAX_PRIVATE_ALLOCATIONS]);
+
+/// MemoryMap: allocate private memory for process `pid`.
+///
+/// Rounds `size` up to whole pages (at least one) and allocates them as one
+/// physically contiguous buddy block from Pool::User, zeroes the block,
+/// records it for `pid` in `PRIVATE_ALLOC_TABLE` and returns its direct-map
+/// address. Because the block is contiguous, the whole allocation is
+/// reachable through that one address.
+///
+/// No path installs user page tables yet (every process has
+/// `address_space: None`), so, like `shared_memory_map`, this maps nothing
+/// into TTBR0. The returned address is the block's direct-map (TTBR1) address,
+/// usable by EL1 code, and it is the key MemoryUnmap takes. Once processes
+/// have address spaces, MemoryMap maps the block at a user VA and returns
+/// that instead (ipc.md §4.7).
+///
+/// Errors: EPERM for W^X (WRITE | EXECUTE); ENOSPC above `MAX_PRIVATE_PAGES`
+/// pages or when `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has
+/// no free block of the needed order.
 pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, i64> {
     // W^X enforcement.
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
         return Err(IpcError::Eperm as i64);
     }
 
-    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
+    let pages = size.div_ceil(PAGE_SIZE).max(1);
+    if pages > MAX_PRIVATE_PAGES {
+        return Err(IpcError::Enospc as i64);
+    }
+    let order = order_for_pages(pages);
 
-    // For Phase 3 kernel threads, we allocate pages and return the direct-map VA.
-    // Full user-space VA management comes in Phase 4.
-    let mut allocated: [usize; 64] = [0; 64];
-    if size_pages > 64 {
+    let base_phys = crate::mm::frame::alloc_user_pages(order).ok_or(IpcError::Enomem as i64)?;
+    let va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + base_phys;
+
+    // SAFETY: base_phys is a block of 2^order pages that alloc_user_pages has
+    // just handed out, so nothing else references it, and the direct map
+    // covers all RAM read-write, so [va, va + 2^order pages) is valid.
+    // The buddy allocator hands each block out once; kmap.rs maintains the
+    // direct map.
+    // A write past the block would corrupt a neighbouring allocation; an
+    // unmapped VA would take an EL1 data abort and halt the CPU.
+    unsafe { core::ptr::write_bytes(va as *mut u8, 0, (1 << order) * PAGE_SIZE) };
+
+    let recorded = {
+        let mut table = PRIVATE_ALLOC_TABLE.lock();
+        match table.iter_mut().find(|slot| slot.is_none()) {
+            Some(slot) => {
+                *slot = Some(PrivateAllocation {
+                    owner: pid,
+                    base_phys,
+                    order,
+                    pages,
+                });
+                true
+            }
+            None => false,
+        }
+    };
+    if !recorded {
+        // SAFETY: base_phys was allocated above with this order and was never
+        // recorded or returned, so this is its only free.
+        // This function owns the block until it is recorded.
+        // A second free of the block would corrupt the buddy free lists.
+        unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
+        crate::kwarn!(Mm, "memory_map: table full pid={}", pid.0);
         return Err(IpcError::Enospc as i64);
     }
 
-    for i in 0..size_pages {
-        match crate::mm::frame::alloc_user_page() {
-            Some(pa) => {
-                // Zero the page.
-                let dmap_va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + pa;
-                // SAFETY: pa is a freshly allocated page, direct map covers all RAM.
-                unsafe {
-                    core::ptr::write_bytes(dmap_va as *mut u8, 0, PAGE_SIZE);
-                }
-                allocated[i] = pa;
-            }
-            None => {
-                // OOM — free what we allocated so far.
-                for &pa in &allocated[..i] {
-                    // SAFETY: pa was allocated by alloc_user_page above.
-                    unsafe { crate::mm::frame::free_user_page(pa) };
-                }
-                return Err(IpcError::Enospc as i64);
-            }
-        }
-    }
-
-    // For kernel threads: return base PA accessible via direct map.
-    let va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + allocated[0];
-
-    crate::kinfo!(
-        Mm,
-        "memory_map: {} pages at va={:#x} pid={}",
-        size_pages,
-        va,
-        pid.0
-    );
-
+    crate::kinfo!(Mm, "memory_map: pid={} pages={}", pid.0, pages);
     Ok(va)
 }
 
-/// MemoryUnmap: free private pages.
+/// MemoryUnmap: release memory that process `pid` mapped.
 ///
-/// For Phase 3: accepts a direct-map VA, converts to physical, frees.
+/// An address in the shared memory window unmaps that region through
+/// `shared_memory_unmap`; `size` is not used there.
+///
+/// Any other address must be exactly an address MemoryMap returned to `pid`,
+/// with a `size` that rounds up to the same page count; that allocation is
+/// removed from `PRIVATE_ALLOC_TABLE` and its block freed. Anything else
+/// returns EINVAL and frees nothing: another process's allocation, an address
+/// inside or past an allocation, a different size, a region's frames or any
+/// kernel address. EINVAL rather than EPERM for another process's
+/// allocation, so a caller cannot learn which addresses other processes hold.
 pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
-    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
-
     // Check if this VA belongs to a shared region.
     if (SHM_VA_BASE..SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE).contains(&va) {
         let region_idx = (va - SHM_VA_BASE) / SHM_VA_STRIDE;
@@ -587,26 +641,35 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
         }
     }
 
-    // Private unmap — convert direct-map VA to physical.
-    let dmap_base = crate::arch::aarch64::mmu::DIRECT_MAP_BASE;
-    if va < dmap_base {
-        return Err(IpcError::Eperm as i64);
-    }
-    let base_pa = va - dmap_base;
+    // Private unmap: find the caller's exact allocation.
+    let pages = size.div_ceil(PAGE_SIZE).max(1);
+    let base_phys = va.checked_sub(crate::arch::aarch64::mmu::DIRECT_MAP_BASE);
+    let alloc = {
+        let mut table = PRIVATE_ALLOC_TABLE.lock();
+        table
+            .iter_mut()
+            .find(|slot| {
+                slot.is_some_and(|a| {
+                    a.owner == pid && Some(a.base_phys) == base_phys && a.pages == pages
+                })
+            })
+            .and_then(Option::take)
+    };
+    let Some(alloc) = alloc else {
+        return Err(IpcError::Einval as i64);
+    };
 
-    for i in 0..size_pages {
-        let pa = base_pa + i * PAGE_SIZE;
-        // SAFETY: pa was allocated by memory_map via alloc_user_page.
-        unsafe { crate::mm::frame::free_user_page(pa) };
-    }
+    // SAFETY: alloc was recorded by memory_map for a block that
+    // alloc_user_pages returned at base_phys with this order, and it has just
+    // been taken out of PRIVATE_ALLOC_TABLE under its lock, so this is the
+    // block's only free.
+    // memory_map and memory_unmap are the only code that inserts or removes
+    // table entries.
+    // Freeing a block twice, or one the allocator never handed out, would
+    // corrupt the buddy free lists and hand out pages still in use.
+    unsafe { crate::mm::frame::free_user_pages(alloc.base_phys, alloc.order) };
 
-    crate::kinfo!(
-        Mm,
-        "memory_unmap: {} pages at va={:#x} pid={}",
-        size_pages,
-        va,
-        pid.0
-    );
+    crate::kinfo!(Mm, "memory_unmap: pid={} pages={}", pid.0, alloc.pages);
 
     Ok(())
 }
