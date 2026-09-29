@@ -6,18 +6,16 @@
 //! The section-name patterns are built from the same parts as check.py's
 //! `TITLE_WORD`, `TITLE_LIST`, `BEFORE_CLAUDE_RE`, `AFTER_CLAUDE_RE` and
 //! `LABELLED_ITEM_RE` (L1206-1215); the `regex` crate's leftmost-first semantics
-//! give the same matches and captures as Python's backtracking for them. Accepted
-//! divergences: `\s` lacks U+001C..U+001F and `\b` uses the crate's Unicode word
-//! definition (no tracked harness file contains either difference); `STUB_RE`'s
+//! give the same matches and captures as Python's backtracking for them. Every
+//! pattern is compiled with `crate::pyre::compile`, so `\s` includes U+001C..U+001F
+//! and `\d` (`LABELLED_ITEM_RE`, L1215; `RULE_REF_RE`, L1317) takes any Unicode
+//! decimal digit, as in Python. Accepted divergences: `\b` uses the crate's Unicode
+//! word definition (no tracked harness file contains the difference); `STUB_RE`'s
 //! `(?i)` does not fold `ı` (U+0131) or `İ` (U+0130) to `i` as Python's
 //! `re.IGNORECASE` does (verified with `python3 -c`), so a CLAUDE.md section
 //! body containing one of those code points where "see"/"is in"/etc. would
 //! otherwise match is not detected as a pointer stub here; no tracked CLAUDE.md
-//! section body contains either code point; `\d` is `[0-9]` in `LABELLED_ITEM_RE`
-//! (check.py L1215) and `RULE_REF_RE` (check.py L1317), so a list item numbered,
-//! or a `rules/NN-` reference written, with non-ASCII Unicode decimal digits is
-//! not recognised here, where Python's `\d` would; no tracked harness file uses
-//! non-ASCII decimal digits in either position; and a `docs/` path whose last component
+//! section body contains either code point; and a `docs/` path whose last component
 //! contains a capital assigned after Unicode 16 (e.g. U+A7CE) is skipped as a
 //! placeholder by `is_path_placeholder` here, where check.py reports it (listed in the
 //! `markdown` module doc).
@@ -34,6 +32,7 @@ use crate::cmd::docs_check::markdown::{
 };
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::Repo;
+use crate::pyre;
 use crate::pystr::{split_ws, splitlines, strip};
 
 const CHECK: &str = "pointer-doctor";
@@ -149,46 +148,47 @@ static BEFORE_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
         r#")["'”*]*\s*\(?\s*(?:in|from)\s+`?CLAUDE\.md\b"#,
     ]
     .concat();
-    Regex::new(&pattern).expect("valid regex")
+    pyre::compile(&pattern).expect("valid regex")
 });
 /// check.py `AFTER_CLAUDE_RE` (L1213): `CLAUDE.md: <title list>`.
 static AFTER_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [r#"`?CLAUDE\.md`?\s*(:)?\s*["“]?"#, title_list().as_str()].concat();
-    Regex::new(&pattern).expect("valid regex")
+    pyre::compile(&pattern).expect("valid regex")
 });
 /// check.py `LABELLED_ITEM_RE` (L1215): "2. Update: Workspace Layout, Key Technical Facts"
 /// under a heading that names CLAUDE.md.
 static LABELLED_ITEM_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [
-        r"^\s*(?:[-*+]|[0-9]+[.)])\s+(?:\*\*)?[A-Za-z][A-Za-z ]{0,30}?(?:\*\*)?:\s*",
+        r"^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?[A-Za-z][A-Za-z ]{0,30}?(?:\*\*)?:\s*",
         title_list().as_str(),
     ]
     .concat();
-    Regex::new(&pattern).expect("valid regex")
+    pyre::compile(&pattern).expect("valid regex")
 });
 /// check.py L1231 (`re.split`).
 static TITLE_SPLIT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\([^)]*\)|\band\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\([^)]*\)|\band\b").expect("valid regex"));
 /// check.py L1190: a CLAUDE.md section body that only points elsewhere.
 static STUB_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(lives in|moved to|are in|is in|see)\b").expect("valid regex")
+    pyre::compile(r"(?i)\b(lives in|moved to|are in|is in|see)\b").expect("valid regex")
 });
 /// check.py L1283: the frontmatter block (LF only).
 static FRONTMATTER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n---").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"(?s)^---\n(.*?)\n---").expect("valid regex"));
 /// check.py L1286.
 static TOOLS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^tools:\s*(.*)$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^tools:\s*(.*)$").expect("valid regex"));
 /// check.py L1317.
 static RULE_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:\.claude/)?rules/([0-9]{2}-[a-z0-9-]+\.md)").expect("valid regex")
+    pyre::compile(r"(?:\.claude/)?rules/(\d\d-[a-z0-9-]+\.md)").expect("valid regex")
 });
 /// check.py L1325: a code span that is a slash command.
-static SKILL_SPAN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&["^/(", SKILL_NAME, r")(?:\s|$)"].concat()).expect("valid regex"));
+static SKILL_SPAN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    pyre::compile(&["^/(", SKILL_NAME, r")(?:\s|$)"].concat()).expect("valid regex")
+});
 /// check.py L1330: "`name` agent", "`name` subagent" or "subagent_type: name".
 static AGENT_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
+    pyre::compile(
         r"`([a-z][a-z0-9-]*)`\s+(?:agent|subagent)\b|subagent_type:\s*`?([A-Za-z][A-Za-z0-9-]*)",
     )
     .expect("valid regex")
@@ -586,7 +586,7 @@ mod tests {
             &SKILL_SPAN_RE,
             &AGENT_REF_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);
@@ -754,13 +754,17 @@ mod tests {
     }
 
     #[test]
-    fn ascii_only_digit_class_does_not_reach_non_ascii_decimal_digits() {
-        // check.py's \d matches any Unicode decimal digit, so LABELLED_ITEM_RE
-        // (L1215) treats "١. Update: ..." as a labelled item and RULE_REF_RE's
-        // finditer (L1317) matches "rules/٠١-x.md" (verified with python3 -c);
-        // [0-9] here does not, so both go unrecognised (accepted divergence,
-        // documented above).
-        assert!(labelled_item_candidates("١. Update: Arabic Digit Item").is_empty());
-        assert!(!RULE_REF_RE.is_match("rules/٠١-x.md"));
+    fn unicode_decimal_digits_reach_labelled_items_and_rule_refs() {
+        // check.py's \d matches any Unicode decimal digit: LABELLED_ITEM_RE (L1215)
+        // treats "١. Update: ..." as a labelled item, and RULE_REF_RE's finditer
+        // (L1317) captures "٠١-x.md" (both run against check.py at 33c6b3d).
+        assert_eq!(
+            labelled_item_candidates("١. Update: Arabic Digit Item"),
+            vec![after(&["Arabic", "Digit", "Item"])]
+        );
+        let caps = RULE_REF_RE
+            .captures("see rules/٠١-x.md")
+            .expect("a rule ref");
+        assert_eq!(&caps[1], "٠١-x.md");
     }
 }

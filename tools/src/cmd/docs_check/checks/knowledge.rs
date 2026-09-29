@@ -2,9 +2,8 @@
 //! (`YYYY-MM-DD-initials-short-description.md`), YAML frontmatter keys and
 //! status values, and an empty `plans/` directory.
 //!
-//! Accepted divergence from check.py (no tracked file reaches it): `\d` is
-//! `[0-9]` in `KNOWLEDGE_NAME_RE`, so a file name written with a non-ASCII
-//! Unicode decimal digit does not match here, where Python's `\d` would.
+//! `KNOWLEDGE_NAME_RE` is check.py's pattern, compiled with `crate::pyre::compile`,
+//! so its `\d` accepts any Unicode decimal digit, as Python's does.
 //!
 //! `KNOWLEDGE_NAME_RE` ends `\n?$`, mirroring Python's non-MULTILINE `$` (which
 //! also matches just before a final `\n`) per the path-anchor rule the other
@@ -23,6 +22,7 @@ use crate::cmd::docs_check::markdown::parse_frontmatter;
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::Repo;
 use crate::paths::basename;
+use crate::pyre;
 
 const CHECK: &str = "knowledge-hygiene";
 const KNOWLEDGE_DIR: &str = "docs/knowledge/";
@@ -37,8 +37,7 @@ const DISCUSSION_STATUSES: [&str; 2] = ["active", "graduated"];
 /// check.py L94. `\n?$` matches Python's non-MULTILINE `$` on a tracked
 /// basename ending in a trailing newline.
 static KNOWLEDGE_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z]{2,3}-[a-z0-9][a-z0-9-]*\.md\n?$")
-        .expect("valid regex")
+    pyre::compile(r"^\d{4}-\d{2}-\d{2}-[a-z]{2,3}-[a-z0-9][a-z0-9-]*\.md\n?$").expect("valid regex")
 });
 
 /// docs/knowledge naming, frontmatter, and an empty plans/ dir.
@@ -126,7 +125,7 @@ mod tests {
 
     #[test]
     fn regexes_compile() {
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         LazyLock::force(&KNOWLEDGE_NAME_RE);
     }

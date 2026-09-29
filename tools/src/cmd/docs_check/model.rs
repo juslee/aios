@@ -16,13 +16,11 @@
 //! including `--all`, and `--markdown`), `--json`'s `reduced.<key>.baseline`
 //! and `--json`'s per-finding `baseline_count`, where CPython compares and
 //! prints the exact integer (for a digit string, only up to 4300 digits: see
-//! the next paragraph); a `count` string of non-ASCII decimal
-//! digits (e.g. Arabic-Indic `"٣"`) is rejected here, where CPython's `int()`
-//! accepts them; a `count` string with a control separator (U+001C-U+001F)
-//! around its digits is accepted here, because `pystr::strip` treats those as
-//! whitespace before parsing, where CPython's `int()` does not strip them and
-//! rejects the string; and a non-string `reason` is rendered as compact JSON
-//! rather than a Python `repr`.
+//! the next paragraph); and a non-string `reason` is rendered as compact JSON
+//! rather than a Python `repr`. A `count` string follows `int()`: any Unicode
+//! decimal digits (Arabic-Indic `"٣"` is 3), and only the whitespace `int()`
+//! strips (`pystr::int_strip`), so U+001C-U+001F around the digits make it
+//! invalid, as in CPython.
 //!
 //! A baselined `count` digit string of more than 4300 digits (leading zeros
 //! count; a sign and underscores do not) diverges in exit code instead. When
@@ -362,19 +360,20 @@ pub fn baseline_count(entry: &Value) -> Result<i64> {
             }
         }
         Value::Bool(b) => Ok(i64::from(*b)),
-        Value::String(s) => python_int(pystr::strip(s))
+        Value::String(s) => python_int(pystr::int_strip(s))
             .ok_or_else(|| anyhow!("baseline count {value} is not an integer")),
         _ => Err(anyhow!("baseline count {value} is not an integer")),
     }
 }
 
-/// `int(s)` for the forms a baseline `count` string can take: an optional sign,
-/// ASCII digits, and single underscores between digits. A magnitude beyond
-/// `i64` saturates to `i64::MAX`/`i64::MIN` by sign rather than failing, to
-/// match the same clamp `baseline_count`'s numeric path already applies. A run
-/// of more than 4300 digits, where CPython 3.11+'s `int()` raises ValueError and
-/// check.py exits 2 (see the module doc), is parsed here like any other: exactly
-/// if its value fits `i64`, saturated otherwise.
+/// `int(s)` for the forms a baseline `count` string can take once `int()`'s
+/// surrounding whitespace is gone (`pystr::int_strip`): an optional sign, decimal
+/// digits (any Unicode Nd, as `int()` accepts), and single underscores between
+/// digits. A magnitude beyond `i64` saturates to `i64::MAX`/`i64::MIN` by sign
+/// rather than failing, to match the same clamp `baseline_count`'s numeric path
+/// already applies. A run of more than 4300 digits, where CPython 3.11+'s `int()`
+/// raises ValueError and check.py exits 2 (see the module doc), is parsed here like
+/// any other: exactly if its value fits `i64`, saturated otherwise.
 fn python_int(s: &str) -> Option<i64> {
     let (sign, digits) = match s.strip_prefix('-') {
         Some(rest) => (-1i64, rest),
@@ -383,22 +382,23 @@ fn python_int(s: &str) -> Option<i64> {
     if digits.is_empty() {
         return None;
     }
-    let bytes = digits.as_bytes();
-    let mut clean = String::with_capacity(digits.len());
-    for (i, b) in bytes.iter().enumerate() {
-        if *b == b'_' {
-            let between = i > 0
-                && bytes[i - 1].is_ascii_digit()
-                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit);
-            if !between {
+    let chars: Vec<char> = digits.chars().collect();
+    let is_digit = |i: usize| {
+        chars
+            .get(i)
+            .copied()
+            .and_then(pystr::decimal_value)
+            .is_some()
+    };
+    let mut clean = String::with_capacity(chars.len());
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '_' {
+            if !(i > 0 && is_digit(i - 1) && is_digit(i + 1)) {
                 return None;
             }
             continue;
         }
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        clean.push(char::from(*b));
+        clean.push(char::from_digit(pystr::decimal_value(c)?, 10)?);
     }
     Some(saturating_magnitude(&clean, sign))
 }
@@ -841,6 +841,29 @@ mod tests {
             10
         );
         assert!(baseline_count(&with_count(json!("x"))).is_err());
+        // CPython 3.14's int(): Unicode decimal digits parse, with underscores and a
+        // sign; the whitespace it strips is White_Space, so U+2003 and U+0085 go and
+        // U+001C/U+001F (which str.isspace() counts) make the string invalid.
+        for (text, want) in [
+            ("٣", 3),
+            ("١_٢", 12),
+            ("３２", 32),
+            ("-٣", -3),
+            ("\u{2003}٣\u{3000}", 3),
+            ("\u{85} 7", 7),
+        ] {
+            assert_eq!(
+                baseline_count(&with_count(json!(text))).expect("a Python int"),
+                want,
+                "{text:?}"
+            );
+        }
+        for text in ["\u{1c}3", "3\u{1f}", "²", "1__2", "_1", "1_", "- 3"] {
+            assert!(
+                baseline_count(&with_count(json!(text))).is_err(),
+                "int({text:?}) raises in Python"
+            );
+        }
         assert!(baseline_count(&with_count(json!(null))).is_err());
         assert!(baseline_count(&with_count(json!([]))).is_err());
         assert_eq!(

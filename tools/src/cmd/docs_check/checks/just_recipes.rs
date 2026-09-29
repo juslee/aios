@@ -12,22 +12,23 @@ use super::Check;
 use crate::cmd::docs_check::markdown::{code_spans, prose_lines, section_body};
 use crate::cmd::docs_check::model::{Finding, Skip};
 use crate::cmd::docs_check::repo::Repo;
-use crate::pystr;
+use crate::{pyre, pystr};
 
 /// check.py L754-755: the README and developer-guide sections that document recipes.
 static README_START: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^## Build Commands").expect("valid regex"));
-static README_STOP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^## ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^## Build Commands").expect("valid regex"));
+static README_STOP: LazyLock<Regex> =
+    LazyLock::new(|| pyre::compile(r"^## ").expect("valid regex"));
 static GUIDE_START: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^### 5\.1 ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^### 5\.1 ").expect("valid regex"));
 static GUIDE_STOP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^#{2,3} ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^#{2,3} ").expect("valid regex"));
 /// check.py L762 (`re.finditer` over a table row).
 static DOCUMENTED_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"`just ([A-Za-z0-9_-]+)").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"`just ([A-Za-z0-9_-]+)").expect("valid regex"));
 /// check.py L777 (`re.match` on a code span).
 static JUST_SPAN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^just ([A-Za-z0-9_-]+)").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^just ([A-Za-z0-9_-]+)").expect("valid regex"));
 
 /// Recipes named as `` `just X` `` in the table rows of the README "Build Commands" section and
 /// the developer guide's section 5.1 (check.py `documented_recipes`, L751-764). A source file
@@ -146,7 +147,7 @@ mod tests {
             &DOCUMENTED_RE,
             &JUST_SPAN_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);

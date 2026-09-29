@@ -2,9 +2,8 @@
 //! and top-level modules against the CLAUDE.md Workspace Layout tree and the
 //! `kernel/src/<dir>/` lines of rule 05.
 //!
-//! Accepted divergence from check.py (no tracked file reaches it): regex `\s`
-//! (`TREE_DIR_RE`, `TREE_PREFIX_RE`) does not match U+001C..U+001F here, where
-//! Python's `\s` does.
+//! The patterns are check.py's, compiled with `crate::pyre::compile`, so the `\s` in
+//! `TREE_DIR_RE` and `TREE_PREFIX_RE` matches U+001C..U+001F as Python's does.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
@@ -16,6 +15,7 @@ use crate::cmd::docs_check::markdown::section_body;
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::Repo;
 use crate::paths::basename;
+use crate::pyre;
 
 const CHECK: &str = "layout";
 const CLAUDE_MD: &str = "CLAUDE.md";
@@ -25,23 +25,23 @@ const TREE_MARK: &str = "──";
 
 /// check.py L1021: the Workspace Layout section of CLAUDE.md.
 static LAYOUT_START_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^## Workspace Layout").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^## Workspace Layout").expect("valid regex"));
 static LAYOUT_STOP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^## ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^## ").expect("valid regex"));
 /// check.py L1041: a directory entry `── name/`.
 static TREE_DIR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"──\s+([A-Za-z0-9_.-]+)/").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"──\s+([A-Za-z0-9_.-]+)/").expect("valid regex"));
 /// check.py L1047 and L1050: module names after `(top-level)` and on its
 /// continuation lines.
 static MODULE_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[a-z_][a-z0-9_.]*").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"[a-z_][a-z0-9_.]*").expect("valid regex"));
 /// check.py L1049: the tree-drawing indent of a continuation line (also used by
 /// harness-tables, as check.py L1112).
 pub(crate) static TREE_PREFIX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[│\s]+").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^[│\s]+").expect("valid regex"));
 /// check.py L1077: `kernel/src/<dir>/` at the start of a line of rule 05.
 static RULE_DIR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^kernel/src/([a-z0-9_]+)/").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"(?m)^kernel/src/([a-z0-9_]+)/").expect("valid regex"));
 
 /// kernel/src and shared/src modules vs CLAUDE.md layout and rule 05.
 pub struct Layout;
@@ -213,7 +213,7 @@ mod tests {
             &TREE_PREFIX_RE,
             &RULE_DIR_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);

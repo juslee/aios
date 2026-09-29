@@ -9,13 +9,12 @@
 //! Python regex features the `regex` crate lacks are rewritten as code:
 //! `heading_number` (`HEADING_NUM_RE`, L171, a lookahead) and
 //! `has_placeholder_word` (`PLACEHOLDER_WORD_RE`, L534, a lookbehind and a
-//! lookahead). Every other pattern is check.py's text with `\d`
-//! written as `[0-9]`.
+//! lookahead). Every other pattern is check.py's text, compiled with
+//! `crate::pyre::compile`, so its `\d` and `\s` match exactly what Python's do
+//! (every Unicode decimal digit; Unicode whitespace plus U+001C..U+001F).
 //!
 //! Accepted divergences from check.py (no tracked file and no fixture exercises
 //! them; the parity goldens prove the real inputs; verified with python3):
-//! - regex `\s` does not match U+001C..U+001F here (Python's does);
-//! - `\d` is `[0-9]`: non-ASCII decimal digits are not digits here;
 //! - `gh_slug` (`char::is_alphanumeric`, i.e. Unicode Alphabetic or Numeric
 //!   from Rust std's tables) keeps two kinds of character that check.py's
 //!   `[^\w\- ]` (Python's `str.isalnum()` plus `_`) drops: Other_Alphabetic
@@ -57,7 +56,7 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use crate::pystr;
+use crate::{pyre, pystr};
 
 /// An ATX heading outside code blocks (check.py `headings`, L306-313).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,76 +71,77 @@ pub struct Heading {
 
 /// check.py L161: an opening or closing fence at any indentation.
 pub static FENCE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(`{3,}|~{3,})").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\s*(`{3,}|~{3,})").expect("valid regex"));
 /// check.py L162.
 pub static HEADING_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.*?)\s*#*\s*$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$").expect("valid regex"));
 /// check.py L163-165: group 2 is the text, group 3 the target.
 pub static INLINE_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
+    pyre::compile(
         r#"(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)"#,
     )
     .expect("valid regex")
 });
 /// check.py L166: reference definitions, not footnotes (`^` escaped in the class).
 pub static REF_DEF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^ {0,3}\[([^\]\^][^\]]*)\]:\s*(\S+)").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^ {0,3}\[([^\]\^][^\]]*)\]:\s*(\S+)").expect("valid regex"));
 /// check.py L167.
 pub static WIKI_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(!?)\[\[([^\]|#]*)(?:#([^\]|]*))?(?:\|[^\]]*)?\]\]").expect("valid regex")
+    pyre::compile(r"(!?)\[\[([^\]|#]*)(?:#([^\]|]*))?(?:\|[^\]]*)?\]\]").expect("valid regex")
 });
 /// check.py L168-170.
 pub static SECTION_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[[^\]]*\]\(([^)\s]+\.md)(#[^)]*)?\)\s*\**\s*§\s*([A-Z]?[0-9]+(?:\.[0-9]+)*)")
+    pyre::compile(r"\[[^\]]*\]\(([^)\s]+\.md)(#[^)]*)?\)\s*\**\s*§\s*([A-Z]?\d+(?:\.\d+)*)")
         .expect("valid regex")
 });
 /// check.py L172.
 pub static SCHEME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("valid regex"));
 /// check.py L223.
 pub static HTML_COMMENT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<!--.*?-->").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"<!--.*?-->").expect("valid regex"));
 /// check.py L224.
 pub static LIST_ITEM_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(?:[-*+]|[0-9]+[.)])\s+").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\s*(?:[-*+]|\d+[.)])\s+").expect("valid regex"));
 
 /// check.py L173.
 pub const PLACEHOLDER_CHARS: [&str; 11] = ["<", ">", "{", "}", "$", "*", "?", "…", "...", "[", "]"];
 
 /// check.py `HEADING_NUM_RE` (L171) without its lookahead (see `heading_number`).
 static HEADING_NUM_HEAD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:§\s*)?([A-Z]?[0-9]+(?:\.[0-9]+)*)").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^(?:§\s*)?([A-Z]?\d+(?:\.\d+)*)").expect("valid regex"));
 /// check.py `PLACEHOLDER_WORD_RE` (L534) rewritten: maximal runs of ASCII letters
 /// (see `has_placeholder_word`).
 static ASCII_LETTERS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z]+").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"[A-Za-z]+").expect("valid regex"));
 /// check.py L295.
 static INLINE_MD_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"!?\[([^\]]*)\]\([^)]*\)").expect("valid regex"));
 /// check.py L296.
 static HTML_TAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<[^>]+>").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"<[^>]+>").expect("valid regex"));
 /// check.py L317; the braces are escaped inside the class too.
 static BRACE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\{([^\{\}]*)\}").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\{([^\{\}]*)\}").expect("valid regex"));
 /// check.py L349 (fullmatch).
 static SEPARATOR_CELL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?::?-{2,}:?)$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^(?::?-{2,}:?)$").expect("valid regex"));
 /// check.py L358.
 static MILESTONE_RANGE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bM([0-9]+)\s*[–-]\s*M([0-9]+)\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\bM(\d+)\s*[–-]\s*M(\d+)\b").expect("valid regex"));
 /// check.py L362.
 static MILESTONE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bM([0-9]+)\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\bM(\d+)\b").expect("valid regex"));
 /// check.py L729.
 static LINE_SUFFIX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r":[0-9]+(?:[-–][0-9]+)?(?:,[0-9]+)*$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r":\d+(?:[-–]\d+)?(?:,\d+)*$").expect("valid regex"));
 /// check.py L1339 (re.S).
-static FRONTMATTER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^---\r?\n(.*?)\r?\n---\s*(?:\r?\n|$)").expect("valid regex"));
+static FRONTMATTER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    pyre::compile(r"(?s)^---\r?\n(.*?)\r?\n---\s*(?:\r?\n|$)").expect("valid regex")
+});
 /// check.py L1344.
 static FRONTMATTER_KEY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([A-Za-z_][\w\-]*):\s*(.*)$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^([A-Za-z_][\w\-]*):\s*(.*)$").expect("valid regex"));
 
 /// Byte index just past the run of backticks that starts at `start`.
 fn backtick_run_end(bytes: &[u8], start: usize) -> usize {
@@ -579,7 +579,7 @@ mod tests {
             &FRONTMATTER_RE,
             &FRONTMATTER_KEY_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);

@@ -8,13 +8,13 @@
 //! locale; mod.rs lists the non-UTF-8 locale divergence). Texts, headings, slugs
 //! and the merged milestones are cached per `Repo`.
 //!
-//! Accepted divergences: `\d` is `[0-9]` in `PHASE_SUBJECT_RE`,
-//! `PHASE_DOC_RE` and `MILESTONE_HEADING_RE`, so a phase or milestone number
-//! written with a non-ASCII Unicode decimal digit does not match here, where
-//! Python's `\d` (and `int()`) would; `\b` (`MILESTONE_HEADING_RE`,
-//! `PRIVATE_ATTR_RE`, `RECIPE_RE`) and `\s` (`ANCHOR_ID_RE`) use the `regex`
-//! crate's Unicode word/space classes, differing from Python's `re` at the same
-//! edges markdown.rs documents. `slug_set` lowercases `<a name|id>` ids with
+//! The patterns are check.py's, compiled with `crate::pyre::compile`, so `\d` and
+//! `\s` are Python's classes: a phase or milestone number written with any Unicode
+//! decimal digit matches and parses (`pystr::parse_uint`) as `int()` does.
+//!
+//! Accepted divergences: `\b` (`MILESTONE_HEADING_RE`, `PRIVATE_ATTR_RE`,
+//! `RECIPE_RE`) uses the `regex` crate's Unicode word class, differing from
+//! Python's `re` at the edges markdown.rs documents. `slug_set` lowercases `<a name|id>` ids with
 //! `str::to_lowercase`, which reads Rust std's Unicode 18.0 case tables (CPython
 //! 3.14: 16.0), so an id containing a capital assigned after Unicode 16 (for
 //! example U+A7CE) also answers its lowercase (U+A7CF) here, where check.py's
@@ -41,7 +41,7 @@ use regex::Regex;
 
 use crate::cmd::docs_check::markdown::{self, Heading};
 use crate::cmd::docs_check::model::Skip;
-use crate::{paths, proc, pystr};
+use crate::{paths, proc, pyre, pystr};
 
 /// Docs that describe the current state of the repository (check.py L52-58).
 pub const CURRENT_STATE_DOCS: [&str; 5] = [
@@ -64,23 +64,23 @@ type Merged = Result<Rc<BTreeMap<u64, u64>>, Skip>;
 
 /// check.py L458.
 static PHASE_SUBJECT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^Phase ([0-9]+) M([0-9]+):").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^Phase (\d+) M(\d+):").expect("valid regex"));
 /// check.py L467. `\n?$` matches Python's non-MULTILINE `$` on a
 /// tracked path ending in a trailing newline.
 static PHASE_DOC_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^docs/phases/([0-9]+)-[^/]+\.md\n?$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^docs/phases/(\d+)-[^/]+\.md\n?$").expect("valid regex"));
 /// check.py L478 (re.match).
 static MILESTONE_HEADING_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^Milestone ([0-9]+)\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^Milestone (\d+)\b").expect("valid regex"));
 /// check.py L513.
 static PRIVATE_ATTR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[.*\bprivate\b.*\]").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\[.*\bprivate\b.*\]").expect("valid regex"));
 /// check.py L518 without its negative lookahead (see `recipe_name`).
 static RECIPE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^@?([A-Za-z_][A-Za-z0-9_-]*)\b[^:=]*:").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^@?([A-Za-z_][A-Za-z0-9_-]*)\b[^:=]*:").expect("valid regex"));
 /// check.py L602.
 static ANCHOR_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<a\s+(?:name|id)="([^"]+)""#).expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r#"<a\s+(?:name|id)="([^"]+)""#).expect("valid regex"));
 
 /// check.py L518 `^@?([A-Za-z_][A-Za-z0-9_-]*)\b[^:=]*:(?!=)`: the recipe name
 /// a justfile line defines. `[^:=]*` stops at the first `:` or `=` after the name
@@ -471,7 +471,7 @@ mod tests {
             &RECIPE_RE,
             &ANCHOR_ID_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);

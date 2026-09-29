@@ -73,7 +73,8 @@ Owner decisions, 2026-09-22:
 
 **Source layout:**
 
-- Shared modules in `tools/src/`: `gh`, `git`, `proc` (subprocess, timeout, process groups), `json`, `config`, `paths`, `pystr` (Python `str` semantics for ports: whitespace, `splitlines`, `isdigit`/`int`, text decoding, `unquote`; added in R1).
+- Shared modules in `tools/src/`: `gh`, `git`, `proc` (subprocess, timeout, process groups), `json`, `config`, `paths`, `pystr` (Python `str` semantics for ports: whitespace, `splitlines`, `isdigit`/`int`, text decoding, `unquote`; added in R1), `pyre` (compiles a Python `str` pattern so that `\d` and `\s` match exactly what CPython's `re` matches; added in #205).
+  - **Exact classes (#205, owner decision 2026-09-29).** R1 first ported `\d` as `[0-9]` and used the `regex` crate's plain `\s`, which lacks U+001C..U+001F; those two choices produced about half of R1's listed divergences. Every docs-check pattern is now check.py's text compiled with `pyre::compile`: the crate's Unicode `\d` is `\p{Nd}`, Python's `\d`, and `\s`/`\S` become `[\s\x1c-\x1f]`/`[^\s\x1c-\x1f]`. `pystr`'s digit helpers take any Unicode decimal digit, as `int()` does. R2-R5 compile their ported patterns the same way. What remains is listed in the module docs: `\w`/`\b` word classes, `(?i)` folding of `ı`/`İ`, `str.isdigit()` on non-decimal digits such as `²`, integers beyond `u64`, and the 4300-digit `int()` limit.
 - One directory per subcommand in `tools/src/cmd/<name>/`.
 - Tests in `tools/tests/`.
 - Golden files in `tools/tests/golden/`.

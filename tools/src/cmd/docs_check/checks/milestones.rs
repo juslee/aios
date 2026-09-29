@@ -7,9 +7,13 @@
 //! development plan's §8 and §8.1 tables. phase-count compares "N phases" claims
 //! in prose with the number of §8 table rows.
 //!
-//! Accepted divergences from check.py (no tracked file exercises them): `\d` is
-//! `[0-9]` and `str.isdigit()` is ASCII-only, so non-ASCII decimal digits are not
-//! numbers here; `\s` and `\b` follow the `regex` crate's Unicode classes; a §8
+//! The patterns are check.py's, compiled with `crate::pyre::compile`, so `\d` and
+//! `\s` are Python's classes; numbers are Python's decimal digits (any Unicode
+//! Nd, through `pystr::parse_uint` and `pystr::int_str`), and check.py's
+//! `str.isdigit()` on a §8 cell (L963, L1000) is `pystr::is_decimal`.
+//!
+//! Accepted divergences from check.py (no tracked file exercises them): `\b`
+//! follows the `regex` crate's Unicode word class; a §8
 //! phase number that does not fit `u64` matches no phase doc or merged milestone,
 //! while its `§8:phase-N` target is still printed exactly (`int_str`); past 4300
 //! digits (leading zeros count) CPython's `int()` raises instead (L965, and L1014
@@ -18,15 +22,15 @@
 //! has no milestones, so it yields a finding only when its status starts with
 //! "complete" (case-insensitive). A claim that does not fit `u64` is always
 //! reported. A §8 row of 6 or more
-//! cells whose first cell is `isdigit()`-true but `int()` raises (for example
-//! `²`, L965) makes check.py's `int(cells[0])` raise; `run_checks` catches only
-//! `Skip`, so the exception reaches check.py's `__main__` guard (L1665-1670),
-//! which prints a traceback and exits 2. `is_ascii_digits` rejects `²` already,
+//! cells whose first cell is `isdigit()`-true but not decimal (for example
+//! `²`, L965; see `pystr`) makes check.py's `int(cells[0])` raise; `run_checks`
+//! catches only `Skip`, so the exception reaches check.py's `__main__` guard
+//! (L1665-1670), which prints a traceback and exits 2. `is_decimal` rejects `²`,
 //! so aios instead treats that row as having no digit first cell (like a header
 //! row) and skips it, and the run completes normally. The same cell also
 //! reaches phase-count's row count (L1000), which never calls `int()`:
 //! check.py counts it toward `actual` because `isdigit()` is true, while
-//! aios's ASCII-only count does not, so `actual` is one lower here for such
+//! aios's decimal-only count does not, so `actual` is one lower here for such
 //! input.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,7 +42,8 @@ use super::Check;
 use crate::cmd::docs_check::markdown::{milestone_tokens, prose_lines, section_body, table_rows};
 use crate::cmd::docs_check::model::{Finding, Skip};
 use crate::cmd::docs_check::repo::Repo;
-use crate::pystr::{int_str, is_ascii_digits, parse_uint, splitlines, strip};
+use crate::pyre;
+use crate::pystr::{int_str, is_decimal, parse_uint, splitlines, strip};
 
 const MILESTONE_STATUS: &str = "milestone-status";
 const PHASE_COUNT: &str = "phase-count";
@@ -49,24 +54,25 @@ const CLAUDE_MD: &str = "CLAUDE.md";
 
 /// check.py L940.
 static STATUS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\*\*Status:\*\*\s*(.*)$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\*\*Status:\*\*\s*(.*)$").expect("valid regex"));
 /// check.py L951 without its `(?!~~)` lookahead; [`is_unchecked_task`] applies it.
 static UNCHECKED_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*[-*] \[ \] ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^\s*[-*] \[ \] ").expect("valid regex"));
 /// check.py L962 and L1000: the development plan's §8 table.
 static PLAN_START_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^## 8\. ").expect("valid regex"));
-static PLAN_STOP_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^## ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^## 8\. ").expect("valid regex"));
+static PLAN_STOP_RE: LazyLock<Regex> =
+    LazyLock::new(|| pyre::compile(r"^## ").expect("valid regex"));
 /// check.py L970: the §8.1 Velocity Summary table.
 static VELOCITY_START_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^### Velocity Summary").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^### Velocity Summary").expect("valid regex"));
 static VELOCITY_STOP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^#{2,3} ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^#{2,3} ").expect("valid regex"));
 /// check.py L1003-1004; `PHASES_RE` below is L1005-1006.
 static PHASES_ACROSS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b([0-9]+) phases across\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\b(\d+) phases across\b").expect("valid regex"));
 static PHASES_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b([0-9]+) phases\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\b(\d+) phases\b").expect("valid regex"));
 
 /// Merged `Phase N MK:` milestones vs phase docs, README and development plan.
 pub struct MilestoneStatus;
@@ -193,7 +199,7 @@ impl Check for MilestoneStatus {
         if repo.is_file(PLAN) {
             let text = repo.text(PLAN);
             for (lineno, cells) in table_rows(&section_body(&text, &PLAN_START_RE, &PLAN_STOP_RE)) {
-                if cells.len() < 6 || !is_ascii_digits(&cells[0]) {
+                if cells.len() < 6 || !is_decimal(&cells[0]) {
                     continue;
                 }
                 // check.py: `phase_ms.get(phase) or {m for m, p in merged.items() if p == phase}`.
@@ -276,7 +282,7 @@ impl Check for PhaseCount {
         let plan = repo.text(PLAN);
         let actual = table_rows(&section_body(&plan, &PLAN_START_RE, &PLAN_STOP_RE))
             .iter()
-            .filter(|(_, cells)| cells.first().is_some_and(|c| is_ascii_digits(c)))
+            .filter(|(_, cells)| cells.first().is_some_and(|c| is_decimal(c)))
             .count();
         let mut out = Vec::new();
         phase_claims(repo, PLAN, &PHASES_ACROSS_RE, actual, &mut out);
@@ -307,7 +313,7 @@ mod tests {
             &PHASES_ACROSS_RE,
             &PHASES_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);
