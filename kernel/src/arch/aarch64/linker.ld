@@ -7,7 +7,7 @@
  * the VMA-LMA delta 2MB-aligned so that boot.S can map the kernel with
  * 2MB block descriptors:
  *   L2[0..3] → PA 0x40000000-0x40800000 (8 MiB), covering the kernel image.
- * The ASSERT at the end of SECTIONS enforces the fit.
+ * The ASSERT after __kernel_end enforces the fit.
  *
  * PC-relative ADRP+ADD instructions resolve correctly in both physical
  * execution (before TTBR1) and virtual execution (after TTBR1) because
@@ -92,9 +92,37 @@ SECTIONS
     /* Until kmap.rs installs the full TTBR1, boot.S's minimal TTBR1 maps
        only VA [KERNEL_VIRT, KERNEL_VIRT + 8 MiB) (4 x 2 MiB L2 blocks at
        PA 0x40000000). kernel_main runs on the boot stack through that
-       map, so the whole image, stack included, must fit inside it. */
+       map, so the whole image, stack included, must fit inside it.
+       The ASSERT sees only the sections named above. lld places a
+       section this script does not name (an orphan) by heuristics, and
+       an allocatable one can land past __kernel_end, outside the check.
+       build.rs therefore passes --orphan-handling=error: a new section
+       fails the link until this script names it, an allocatable one
+       before __kernel_end. */
     ASSERT(__kernel_end <= KERNEL_VIRT + 0x800000,
            "kernel image (incl. boot stack) exceeds boot.S's 8 MiB TTBR1 map")
+
+    /* ── Non-allocated sections (no VA, not loaded) ──
+       Named only so that --orphan-handling=error accepts them: the
+       DWARF 4 and DWARF 5 sections rustc emits, then the linker's own
+       symbol tables. A debug section a later toolchain adds fails the
+       link the same way; list it here. */
+    .debug_abbrev      0 : { *(.debug_abbrev) }
+    .debug_info        0 : { *(.debug_info) }
+    .debug_aranges     0 : { *(.debug_aranges) }
+    .debug_line        0 : { *(.debug_line) }
+    .debug_line_str    0 : { *(.debug_line_str) }
+    .debug_str         0 : { *(.debug_str) }
+    .debug_str_offsets 0 : { *(.debug_str_offsets) }
+    .debug_addr        0 : { *(.debug_addr) }
+    .debug_loc         0 : { *(.debug_loc) }
+    .debug_loclists    0 : { *(.debug_loclists) }
+    .debug_ranges      0 : { *(.debug_ranges) }
+    .debug_rnglists    0 : { *(.debug_rnglists) }
+    .debug_names       0 : { *(.debug_names) }
+    .symtab            0 : { *(.symtab) }
+    .strtab            0 : { *(.strtab) }
+    .shstrtab          0 : { *(.shstrtab) }
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

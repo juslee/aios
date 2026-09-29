@@ -14,7 +14,7 @@ Build system:   just + cargo
 License:        BSD-2-Clause
 Toolchain:      Rust nightly (updated to latest at session start, pinned in rust-toolchain.toml)
 Workspace:      resolver = "2", edition = "2021"
-Linker script:  emitted via build.rs (not .cargo/config.toml)
+Linker script:  emitted via build.rs (not .cargo/config.toml), with --orphan-handling=error
 Relocation:     static (relocation-model=static throughout all phases)
 QEMU machine:   virt, cpu=cortex-a72, -smp 4 -m 2G
 UART:           PL011 at 0x0900_0000 (QEMU); DTB-sourced Phase 1+
