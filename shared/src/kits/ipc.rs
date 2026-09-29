@@ -25,11 +25,11 @@ pub use crate::ipc::{
 ///
 /// `From<IpcError>` (and [`IpcKitError::from_code`], which decodes a raw
 /// code first) maps each errno to the least specific variant that is correct
-/// for every kernel path returning it, except EPIPE, ENOSPC and EPROTO,
-/// for which no variant is correct on every path (see `From<IpcError>`). A
-/// Kit wrapper that knows more, the channel id, which capability the kernel
-/// checked, or what an errno means for its operation, overrides that default
-/// (docs/kits/kernel/ipc.md §6).
+/// for every kernel path returning it, except EPERM, EPIPE and ENOSPC, for
+/// which no variant is correct on every path, and EPROTO, whose default is
+/// kept by choice (see `From<IpcError>`). A Kit wrapper that knows more, the
+/// channel id, which capability the kernel checked, or what an errno means
+/// for its operation, overrides that default (docs/kits/kernel/ipc.md §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcKitError {
     /// The channel does not exist or has been destroyed.
@@ -113,9 +113,9 @@ impl From<IpcError> for IpcKitError {
     ///
     /// Each errno maps to the least specific variant that is correct for
     /// every kernel path that returns it:
-    /// - EPERM is the missing-capability code (docs/kernel/ipc.md §3.1), so
-    ///   it maps to `CapabilityDenied`; EACCES is the behavioral gate's
-    ///   SUSPENDED code, a different condition, so it maps to `Suspended`.
+    /// - EACCES is the behavioral gate's SUSPENDED code, so it maps to
+    ///   `Suspended`, not to `CapabilityDenied`: a suspended agent may still
+    ///   hold every capability.
     /// - EAGAIN is "would block" (a full ring on send is one case), so it
     ///   maps to `WouldBlock`; `send` overrides it to `ChannelFull`.
     /// - EINVAL comes from every subsystem, so it maps to `InvalidArgument`;
@@ -126,18 +126,37 @@ impl From<IpcError> for IpcKitError {
     /// Three codes have no variant that is correct for every path, so the
     /// table's variant is wrong for some paths, and wrappers for those paths
     /// must override it:
+    /// - EPERM maps to `CapabilityDenied`, since every capability check
+    ///   returns it (docs/kernel/ipc.md §3.2), but some EPERMs are not a
+    ///   missing capability: IpcReply with no current thread,
+    ///   NotificationCreate with no process, SharedMemoryUnmap or MemoryUnmap
+    ///   of a region the caller has not mapped, and SharedMemoryShare from a
+    ///   caller that is not the region's creator or to a target pid with no
+    ///   process. `reply`, `notification_create` and `shmem_unmap` override
+    ///   it; SharedMemoryShare and MemoryUnmap have no Kit wrapper, so a
+    ///   plain decode of their EPERM reads as `CapabilityDenied`.
     /// - EPIPE maps to `InvalidChannel`, but the shared memory paths
     ///   (SharedMemoryMap, SharedMemoryUnmap, SharedMemoryShare, and
     ///   MemoryUnmap of a shared window address) return it for a missing
     ///   region. The shared memory wrappers override it to
     ///   `SharedMemoryError`; SharedMemoryShare has no Kit wrapper, so a
     ///   plain decode of its EPIPE reads as `InvalidChannel`.
-    /// - ENOSPC maps to `ResourceExhausted`, but the message paths also
-    ///   return it for a payload above `MAX_MESSAGE_SIZE`. Kit wrappers
-    ///   reject such a payload as `MessageTooLarge` before the call.
-    /// - EPROTO maps to `NoReply`, but its only kernel path today is
-    ///   `ipc_reply` with no pending call, the replier's side; `reply`
-    ///   overrides it to `InvalidArgument`.
+    /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
+    ///   a request above a fixed limit, which releasing objects or retrying
+    ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
+    ///   IpcReply), an IpcCall or IpcRecv receive length above it, a
+    ///   MemoryMap above 64 pages, a DebugPrint above 256 bytes and an
+    ///   AuditLog event above 48 bytes. Kit wrappers reject an oversized
+    ///   payload as `MessageTooLarge` before the call and never pass a longer
+    ///   receive length; MemoryMap, DebugPrint and AuditLog have no Kit
+    ///   wrapper, so a plain decode of their ENOSPC reads as
+    ///   `ResourceExhausted`.
+    ///
+    /// EPROTO is kept as `NoReply` by choice. Its only kernel path today is
+    /// `ipc_reply` with no pending call, the replier's side, where
+    /// `InvalidArgument` would be correct; `NoReply` stays the default so
+    /// that it survives the round trip through EPROTO, and `reply`
+    /// overrides it to `InvalidArgument`.
     fn from(e: IpcError) -> IpcKitError {
         match e {
             IpcError::Etimedout => IpcKitError::Timeout { elapsed_ticks: 0 },

@@ -105,7 +105,8 @@ pub struct Notification {
 
 impl Notification {
     /// Signal specific bits (atomic OR into the notification word).
-    pub fn signal(&self, bits: u64);
+    /// A missing notification is `InvalidArgument` (the kernel's EINVAL).
+    pub fn signal(&self, bits: u64) -> Result<(), IpcKitError>;
 
     /// Wait until any bit in mask is set. Returns the matched bits
     /// and atomically clears them.
@@ -411,20 +412,20 @@ pub enum IpcKitError {
 
 ### Mapping kernel error codes
 
-The kernel returns the syscall-level codes of [`docs/kernel/ipc.md` §3.1](../../kernel/ipc.md) (`IpcError`, negative `i64`). The Kit decodes them through one table, `IpcKitError::from_code` in `shared/src/kits/ipc.rs`: `IpcError::try_from(i64)`, then `From<IpcError>`. The kernel's `KernelIpc` and a future EL0 Kit share it, so the two cannot drift. The table maps each code to the least specific variant that is correct for every kernel path returning it. `EPIPE`, `ENOSPC` and `EPROTO` have no such variant, so their default is wrong for some paths, which their rows below name. Each wrapper then overrides with what it knows (the lesson in `docs/knowledge/lessons/2026-03-24-cl-phase-5-m17-lossy-error-conversions.md`).
+The kernel returns the syscall-level codes of [`docs/kernel/ipc.md` §3.1](../../kernel/ipc.md) (`IpcError`, negative `i64`). The Kit decodes them through one table, `IpcKitError::from_code` in `shared/src/kits/ipc.rs`: `IpcError::try_from(i64)`, then `From<IpcError>`. The kernel's `KernelIpc` and a future EL0 Kit share it, so the two cannot drift. The table maps each code to the least specific variant that is correct for every kernel path returning it. `EPERM`, `EPIPE` and `ENOSPC` have no such variant, so their default is wrong for some paths, which their rows below name; a syscall on such a path with no Kit wrapper decodes to the wrong variant. `EPROTO` is a deliberate exception: its only kernel path today, `ipc_reply` with no pending call, would fit `InvalidArgument`, but the default stays `NoReply` so that `NoReply` survives the round trip through `EPROTO`, and `reply` overrides it. Each wrapper then overrides with what it knows (the lesson in `docs/knowledge/lessons/2026-03-24-cl-phase-5-m17-lossy-error-conversions.md`).
 
 | Code | Default variant | Wrapper overrides |
 |---|---|---|
-| `EPERM` (missing capability) | `CapabilityDenied` (placeholder capability) | Every wrapper names the capability the kernel checks: `ChannelCreate` (`channel_create`), `ChannelAccess(id)` (`channel_destroy`, `send`, `recv`, `call`; `select` names the first channel entry the caller lacks), `SharedMemoryCreate` (`shmem_create`), `SharedMemoryAccess(id)` (`shmem_map`). Where the kernel checks none: `reply` → `InvalidArgument` (no current thread), `notification_create` → `InvalidArgument` (no current process), `shmem_unmap` → `SharedMemoryError` (not mapped) |
+| `EPERM` (missing capability or right) | `CapabilityDenied` (placeholder capability) | Every wrapper names the capability the kernel checks: `ChannelCreate` (`channel_create`), `ChannelAccess(id)` (`channel_destroy`, `send`, `recv`, `call`; `select` names the first channel entry the caller lacks), `SharedMemoryCreate` (`shmem_create`), `SharedMemoryAccess(id)` (`shmem_map`). Where the kernel checks none: `reply` → `InvalidArgument` (no current thread), `notification_create` → `InvalidArgument` (no current process), `shmem_unmap` → `SharedMemoryError` (not mapped). The default is wrong wherever the `EPERM` is not a missing capability: `IpcReply` with no current thread, `NotificationCreate` with no process, `SharedMemoryUnmap` or `MemoryUnmap` of a region the caller has not mapped, and `SharedMemoryShare` from a caller that is not the region's creator or to a target pid whose slot holds no process. `SharedMemoryShare` and `MemoryUnmap` have no Kit wrapper, so nothing overrides their `EPERM` |
 | `EACCES` (SUSPENDED) | `Suspended` | — |
 | `EINVAL` | `InvalidArgument` | Channel wrappers → `InvalidChannel { id }` (an out-of-range id) |
 | `EPIPE` | `InvalidChannel` (placeholder id) | Channel wrappers use the real `id`; shared memory wrappers → `SharedMemoryError` (region not found). The default is wrong for every region path: `SharedMemoryMap`, `SharedMemoryUnmap`, `SharedMemoryShare` and `MemoryUnmap` of a shared window address. `SharedMemoryShare` has no Kit wrapper, so nothing overrides its `EPIPE` |
 | `EAGAIN` | `WouldBlock` | `send` → `ChannelFull { id }` (its EAGAIN is a full ring) |
-| `ENOSPC` | `ResourceExhausted` | The default is wrong for a payload above `MAX_MESSAGE_SIZE`, which the message paths also reject with `ENOSPC`: `send`, `call`, `reply` → `MessageTooLarge` for an oversized payload (checked before the call); `call` → `ChannelFull { id }` for a full ring; `channel_create` → `ResourceExhausted` ("channel table full") |
+| `ENOSPC` | `ResourceExhausted` | The default is wrong wherever `ENOSPC` rejects a request above a fixed limit, where releasing objects or retrying cannot help: a payload above `MAX_MESSAGE_SIZE` (`IpcSend`, `IpcCall`, `IpcReply`), an `IpcCall` or `IpcRecv` receive length above `MAX_MESSAGE_SIZE`, a `MemoryMap` above 64 pages (`MAX_PRIVATE_PAGES`, [`docs/kernel/ipc.md` §4.7](../../kernel/ipc.md)), a `DebugPrint` above 256 bytes and an `AuditLog` event above 48 bytes. `send`, `call`, `reply` → `MessageTooLarge` for an oversized payload (checked before the call); `recv` and `call` receive into a `MAX_MESSAGE_SIZE` buffer, so they never pass a longer receive length. `MemoryMap`, `DebugPrint` and `AuditLog` have no Kit wrapper, so a plain decode of their fixed-limit `ENOSPC` reads as `ResourceExhausted`. `call` → `ChannelFull { id }` for a full ring; `channel_create` → `ResourceExhausted` ("channel table full") |
 | `ENOMEM` | `ResourceExhausted` | `notification_create` → "notification table full" |
 | `ETIMEDOUT` | `Timeout` | — |
 | `ECANCELED` | `Cancelled` | — |
-| `EPROTO` | `NoReply` | `reply` → `InvalidArgument` (no call is pending on the channel). That is the only kernel path that returns `EPROTO` today, and it is the replier's side, so the default is wrong for it |
+| `EPROTO` | `NoReply` | `reply` → `InvalidArgument` (no call is pending on the channel). That is the only kernel path that returns `EPROTO` today, the replier's side, where `InvalidArgument` is correct. The default is kept as `NoReply` by choice, so that `NoReply` survives the round trip, and `reply`'s override corrects it on that path |
 | `ENOTSUP` | `Unsupported` | — |
 | `ECAPDORMANT` | `CapabilityDenied` | — |
 | `EEXIST` | `SharedMemoryError` (only `shmem_map` returns it) | — |
@@ -465,6 +466,12 @@ pub enum MyKitMessage {
     Subscribe = 3,
 }
 
+/// Reply codes of your Kit's protocol (not kernel errnos).
+#[repr(u8)]
+pub enum MyKitReply {
+    UnknownMessage = 0xFF,
+}
+
 /// 2. Your Kit's service loop receives raw IPC messages,
 ///    deserializes, validates capabilities, then dispatches.
 fn service_loop(channel: ChannelId) {
@@ -481,7 +488,7 @@ fn service_loop(channel: ChannelId) {
                 let status = query_status();
                 ipc_reply(&status).unwrap();
             }
-            _ => ipc_reply(&[IpcError::UnknownMessage as u8]).unwrap(),
+            _ => ipc_reply(&[MyKitReply::UnknownMessage as u8]).unwrap(),
         }
     }
 }

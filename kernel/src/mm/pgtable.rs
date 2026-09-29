@@ -201,10 +201,10 @@ impl VmFlags {
     /// register (MemoryMap, SharedMemoryCreate, SharedMemoryMap) or the IPC
     /// Kit's `flags: u64`.
     ///
-    /// Returns `Err(EINVAL)` if any bit outside `shared::MEMORY_FLAGS_MASK`
-    /// (READ | WRITE | EXECUTE) is set: bits 32-63, undefined bits, and USER,
-    /// which the kernel adds itself to every user mapping. W^X is checked by
-    /// the operation, not here.
+    /// Returns `Err(EINVAL)` if any bit outside
+    /// `shared::syscall::MEMORY_FLAGS_MASK` (READ | WRITE | EXECUTE) is set:
+    /// bits 32-63, undefined bits, and USER, which the kernel adds itself to
+    /// every user mapping. W^X is checked by the operation, not here.
     pub const fn from_caller_bits(reg: u64) -> Result<Self, i64> {
         match shared::syscall::flags_arg(reg) {
             Ok(bits) => Ok(Self(bits)),

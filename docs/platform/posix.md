@@ -1304,7 +1304,7 @@ fn translate_munmap(addr: *mut c_void, length: usize) -> Result<()> {
 }
 ```
 
-**Current `MemoryMap` limits:** as implemented (see [ipc.md](../kernel/ipc.md) §4.7), `MemoryMap` allocates one physically contiguous block of at most 64 pages (256 KiB), and `MemoryUnmap` frees only a whole allocation at the exact address `MemoryMap` returned. The 2 MiB default pthread stack (§7.6), anonymous mappings above 256 KiB and a partial `munmap` therefore fail with `ENOSPC` or `EINVAL` until `MemoryMap` can allocate more than one block and defines what a partial unmap does.
+**Current `MemoryMap` limits:** as implemented (see [ipc.md](../kernel/ipc.md) §4.7), `MemoryMap` allocates one physically contiguous block of at most 64 pages (256 KiB), and `MemoryUnmap` frees only a whole allocation at the exact address `MemoryMap` returned. The 2 MiB default pthread stack (§7.6), anonymous and private file-backed (`MAP_PRIVATE`) mappings above 256 KiB, which `translate_mmap` above sends to `MemoryMap`, and a partial `munmap` therefore fail with `ENOSPC` or `EINVAL` until `MemoryMap` can allocate more than one block and defines what a partial unmap does.
 
 **Demand paging:** Private file-backed mappings use demand paging — pages are not loaded from the Space Service until first accessed. The page fault handler (see [memory/virtual.md](../kernel/memory/virtual.md) §7.2) catches the fault, fetches the content block from the Space Service, and maps the page. Subsequent accesses hit the local page with no IPC overhead.
 

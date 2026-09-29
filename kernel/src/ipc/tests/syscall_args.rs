@@ -42,19 +42,25 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// missing capability.
 ///
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
-/// no state and grant nothing. Checks 0-20 (#188) log no warning; checks
-/// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
-/// warnings. The one MemoryMap allocation is freed by the test's own exact
-/// unmap, and the one shared region by its unmap once the test has revoked
-/// every capability it granted.
+/// no state and grant nothing. Checks 0-20 and 26 (#188) log no warning;
+/// checks 21-25 (#190) log the kernel's usual W^X, max_flags and
+/// denied-capability warnings. The one MemoryMap allocation is freed by the
+/// test's own exact unmap, and the one shared region by its unmap once the
+/// test has revoked every capability it granted.
 ///
 /// DebugPrint, IpcSelect and CapabilityList get this thread's stack buffers
-/// as kernel addresses; before #188 they were accepted (IpcSelect read
-/// them). MemoryUnmap, which freed direct-map addresses before #188, gets
-/// the direct-map address of physical page 0 instead: that page is in no
-/// allocator pool, so a regression that freed it would reach the frame
-/// allocator's pool check, not hand this thread's stack to the buddy
-/// allocator.
+/// as kernel addresses. Before #188 IpcSelect accepted them and read them
+/// (check 3); DebugPrint and CapabilityList already rejected them, but with
+/// EPERM, so checks 1 and 5 pin the EINVAL. Check 26 is a SharedMemoryCreate
+/// of 2^50 bytes while SharedMemoryCreate is held: before the size bound its
+/// out-of-memory warning overflowed a shift and panicked the kernel in a
+/// build with overflow checks.
+///
+/// MemoryUnmap, which freed direct-map addresses before #188, gets the
+/// direct-map address of physical page 0 instead of a stack buffer: that
+/// page is in no allocator pool, so a regression that freed it would reach
+/// the frame allocator's pool check, not hand this thread's stack to the
+/// buddy allocator.
 ///
 /// Logs one line: the success text, or the bitmask of failed checks (bit n
 /// is check n below).
@@ -88,7 +94,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
         .position(Option::is_none)
         .unwrap_or(MAX_NOTIFICATIONS) as u64;
 
-    let mut checks = [false; 26];
+    let mut checks = [false; 27];
 
     // User pointers: null, page 0 and kernel addresses are EINVAL.
     checks[0] = svc(Syscall::DebugPrint, &[0, 4]) == einval;
@@ -130,10 +136,11 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     // SharedMemoryCreate and for SharedMemoryMap of any in-range id.
     checks[21] = svc(Syscall::SharedMemoryCreate, &[PAGE, WRITE_EXECUTE]) == einval;
     checks[22] = svc(Syscall::SharedMemoryMap, &[0, WRITE_EXECUTE]) == einval;
-    let [beyond_max, mapped, denied] = shm_rights_checks(TEST_PID);
+    let [beyond_max, mapped, denied, oversize] = shm_rights_checks(TEST_PID);
     checks[23] = beyond_max;
     checks[24] = mapped;
     checks[25] = denied;
+    checks[26] = oversize;
 
     let failed = checks
         .iter()
@@ -148,25 +155,31 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     }
 }
 
-/// On a READ-only region that process `pid` creates: SharedMemoryMap with
-/// WRITE, beyond the region's `max_flags`, is EINVAL; a READ map succeeds;
-/// and once SharedMemoryAccess is revoked the same map is EPERM.
+/// On a READ-only region that process `pid` (the calling thread's process)
+/// creates: SharedMemoryMap with WRITE, beyond the region's `max_flags`, is
+/// EINVAL; a READ map succeeds; and once SharedMemoryAccess is revoked the
+/// same map is EPERM. While SharedMemoryCreate is held, a SharedMemoryCreate
+/// of 2^50 bytes, above the largest region (4 MiB), is EINVAL.
 ///
-/// Returns `[beyond_max, mapped, denied]`, one flag per check, all false if
-/// the region could not be created. Like `shm_bad_pid_test`, it revokes the
+/// Returns `[beyond_max, mapped, denied, oversize]`, one flag per check, all
+/// false if the grant fails and the first three false if the region could
+/// not be created. Like `shm_bad_pid_test`, it revokes the
 /// SharedMemoryCreate token it granted right after the create, and every
 /// SharedMemoryAccess token of the region before the unmap that frees it.
-fn shm_rights_checks(pid: ProcessId) -> [bool; 3] {
+fn shm_rights_checks(pid: ProcessId) -> [bool; 4] {
     let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
         .ok()
         .and_then(|handle| token_id(pid, handle));
     let Some(create_token) = create_token else {
-        return [false; 3];
+        return [false; 4];
     };
+    // The size is checked before the capability, but with the capability
+    // held a missing bound would reach the allocation and its warning.
+    let oversize = svc(Syscall::SharedMemoryCreate, &[1 << 50, READ]) == IpcError::Einval as i64;
     let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ);
     revoke_token(pid, create_token);
     let Ok(region) = created else {
-        return [false; 3];
+        return [false, false, false, oversize];
     };
 
     let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[region.0 as u64, flags]);
@@ -182,5 +195,5 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 3] {
     if mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
-    [beyond_max, mapped, denied]
+    [beyond_max, mapped, denied, oversize]
 }

@@ -11,10 +11,12 @@
 //!
 //! Errno policy (ipc.md §3.2): EINVAL for a request that no caller could
 //! make (an out-of-range id, WRITE | EXECUTE, flags beyond the region's
-//! `max_flags`, a private address that is not the caller's allocation);
-//! EPERM only when the caller lacks a right the request needs (a
-//! capability, a mapping of the region, being its creator); EPIPE when the
-//! region is gone.
+//! `max_flags`, a region size above 4 MiB, a private address that is not
+//! the caller's allocation); EPERM when the caller lacks a right the request
+//! needs (a capability, a mapping of the region, being its creator); EPIPE
+//! when the region is gone. One EPERM is not a missing right: a
+//! SharedMemoryShare target pid whose slot holds no process, which the
+//! process accessors report as EPERM today (ipc.md §3.2).
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -34,14 +36,23 @@ const PAGE_SIZE: usize = 4096;
 
 /// User heap base — shared memory regions are mapped starting here.
 /// Each region gets a unique VA slot to avoid collisions.
+///
+/// Interim layout: memory/virtual.md §3.1 puts shared memory at
+/// `0x1_0000_0000` and the agent heap here. The shared memory and private
+/// windows move when processes get user address spaces (ipc.md §4.7).
 const SHM_VA_BASE: usize = crate::mm::uspace::USER_HEAP_BASE;
 
-/// Spacing between shared memory region VA slots: the largest buddy block
-/// (`2^MAX_ORDER` pages, 4 MiB). A region is one buddy block, so every
-/// region fits its slot and the shared memory window,
+/// Largest SharedMemoryCreate request, in pages: the largest buddy block
+/// (`2^MAX_ORDER` pages, 4 MiB). A region is one buddy block, so a larger
+/// size could never be allocated or fit its VA slot; it is EINVAL.
+const MAX_SHARED_REGION_PAGES: usize = 1 << crate::mm::buddy::MAX_ORDER;
+
+/// Spacing between shared memory region VA slots: the largest region
+/// (`MAX_SHARED_REGION_PAGES`, 4 MiB). Every region fits its slot and the
+/// shared memory window,
 /// `[SHM_VA_BASE, SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE)`, holds
 /// them all without reaching the private window above it.
-const SHM_VA_STRIDE: usize = (1 << crate::mm::buddy::MAX_ORDER) * PAGE_SIZE;
+const SHM_VA_STRIDE: usize = MAX_SHARED_REGION_PAGES * PAGE_SIZE;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -104,9 +115,10 @@ pub static SHARED_REGION_TABLE: Mutex<[Option<SharedMemoryRegion>; MAX_SHARED_RE
 /// Allocates physically contiguous pages from Pool::User, enforces W^X on
 /// `flags`, and records the region in the global table.
 ///
-/// Returns the region ID on success. Errors: EINVAL for WRITE | EXECUTE;
-/// EPERM without `SharedMemoryCreate`; ENOMEM when Pool::User has no block
-/// of the needed order; ENOSPC when the region table is full.
+/// Returns the region ID on success. Errors: EINVAL for WRITE | EXECUTE or
+/// a size above `MAX_SHARED_REGION_PAGES` pages (4 MiB); EPERM without
+/// `SharedMemoryCreate`; ENOMEM when Pool::User has no block of the needed
+/// order; ENOSPC when the region table is full.
 pub fn shared_memory_create(
     pid: ProcessId,
     size: usize,
@@ -119,11 +131,17 @@ pub fn shared_memory_create(
         return Err(IpcError::Einval as i64);
     }
 
+    // Round size up to page granularity. `size` comes straight from x0, so
+    // bound it before the capability check and the allocation: a region
+    // above MAX_SHARED_REGION_PAGES can never be created (EINVAL, like
+    // W^X), and the bound keeps `order` at or below MAX_ORDER.
+    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
+    if size_pages > MAX_SHARED_REGION_PAGES {
+        return Err(IpcError::Einval as i64);
+    }
+
     // Capability check (requires SharedMemoryCreate).
     let cap_token = crate::cap::check_shared_memory_create(pid)?;
-
-    // Round size up to page granularity.
-    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
 
     // Compute buddy order: smallest 2^order >= size_pages.
     let order = order_for_pages(size_pages);
@@ -133,7 +151,7 @@ pub fn shared_memory_create(
         crate::kwarn!(
             Mm,
             "shm_create: OOM allocating {} pages (pid={})",
-            1 << order,
+            1usize << order,
             pid.0
         );
         IpcError::Enomem as i64
@@ -196,7 +214,7 @@ pub fn shared_memory_create(
         "shm_create: id={} size={:#x} pages={} order={} phys={:#x} pid={}",
         idx,
         size_pages * PAGE_SIZE,
-        1 << order,
+        1usize << order,
         order,
         base_phys,
         pid.0
@@ -429,7 +447,11 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 /// Returns `Err(EINVAL)` for a region id `>= MAX_SHARED_REGIONS` or a
 /// `target_pid >= MAX_PROCESSES`, before taking any lock; EPIPE if the
 /// region does not exist; EPERM if `pid` is not the region's creator (a
-/// right the caller lacks) or the target process does not exist.
+/// right the caller lacks) or the target process does not exist. The
+/// second EPERM is not a missing right: it is the empty-slot code of the
+/// process accessors (`process_mut`) today (ipc.md §3.2). SharedMemoryShare
+/// has no Kit wrapper, so a plain `IpcKitError::from_code` decode of either
+/// EPERM reads as `CapabilityDenied`, which fits neither.
 pub fn shared_memory_share(
     pid: ProcessId,
     region_id: SharedMemoryId,
@@ -600,7 +622,7 @@ static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCA
 /// range.
 ///
 /// This follows `shared_memory_map`, which returns its region's window VA:
-/// no path installs user page tables yet (every process has
+/// no process has a user address space yet (every process has
 /// `address_space: None`), so nothing is mapped into TTBR0 here either. EL1
 /// code would reach the block through the direct map (`DIRECT_MAP_BASE` +
 /// `base_phys`); no EL1 code uses the memory MemoryMap allocates (the #188

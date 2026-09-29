@@ -512,7 +512,9 @@ fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
 ///
 /// Create a new shared memory region. `flags` (the region's maximum
 /// permissions) is decoded with `VmFlags::from_caller_bits`: READ, WRITE and
-/// EXECUTE only, EINVAL for any other bit (USER included).
+/// EXECUTE only, EINVAL for any other bit (USER included). `size` is passed
+/// through unchanged; `shmem::shared_memory_create` bounds it (EINVAL above
+/// 4 MiB, ipc.md §4.7).
 fn sys_shared_memory_create(tf: &TrapFrame) -> i64 {
     let size = tf.x[0] as usize;
     let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
