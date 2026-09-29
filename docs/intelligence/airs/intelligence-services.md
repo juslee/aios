@@ -98,16 +98,17 @@ pub struct SignalCollector {
 }
 
 pub struct ContextModel {
-    /// When AIRS is available: LLM-based inference
+    /// When AIRS is available: small classifier model (not an LLM)
     /// When AIRS is unavailable: rule-based heuristic
     mode: ContextModelMode,
 }
 
 pub enum ContextModelMode {
-    /// LLM classifies signals into context state
-    LlmBased {
+    /// Small classifier maps a fixed-length signal feature vector to a
+    /// context state (context-engine/inference.md §4.1)
+    Classifier {
         model: ModelHandle,
-        prompt_template: String,
+        feature_extractor: FeatureExtractor,
     },
     /// Simple rules: time of day + active space + media state
     RuleBased {
@@ -116,7 +117,9 @@ pub enum ContextModelMode {
 }
 ```
 
-**How context inference works (LLM mode):**
+**How context inference works (classifier mode):**
+
+The classifier is a small model, not a full LLM and not generative. It runs in under 1 ms on CPU; see [context-engine/inference.md §4.1](../context-engine/inference.md).
 
 ```text
 Signals: {
@@ -128,10 +131,9 @@ Signals: {
     media: "none"
 }
 
-LLM prompt: "Given these signals, classify the user's context:
-  work_engagement (0.0-1.0), suggested AI tier, notification threshold"
+Feature vector: signals encoded as a fixed-length vector
 
-LLM output: {
+Classifier output: {
     work_engagement: 0.9,
     ai_engagement: Available,
     notification_threshold: NextBreak
