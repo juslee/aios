@@ -30,8 +30,10 @@ copy it, clean its text to PoU, invalidate I-cache`"]
     BOOTINFO --> GOP["Acquire framebuffer via GOP"]
     GOP --> DTB["Acquire device tree or ACPI tables"]
     DTB --> RNG["Request RNG seed from UEFI for KASLR"]
-    RNG --> EBS["`ExitBootServices() -- point of no return,
-returns the final memory map, recorded in BootInfo`"]
+    RNG --> EBS["`uefi::boot::exit_boot_services:
+GetMemoryMap() for the final map and its key,
+then ExitBootServices() -- point of no return,
+map recorded in BootInfo`"]
 
     EBS --> KERNEL["`Jump to kernel entry point
 (all UEFI Boot Services gone)`"]
@@ -103,7 +105,7 @@ pub struct BootInfo {
 }
 ```
 
-The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. Before calling `ExitBootServices()`, the UEFI stub fills in `magic` and the kernel extent (`kernel_phys_base`, `kernel_size`), and, where the firmware provides them, the GOP framebuffer fields (`framebuffer`, `fb_*`), the `device_tree` and `acpi_rsdp` addresses and the `rng_seed`. It then records the memory map that `ExitBootServices()` returns (`memory_map_*`). It leaves `runtime_services`, `initramfs_*` and `cmdline_*` at 0.
+The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. Before calling `ExitBootServices()`, the UEFI stub fills in `magic` and the kernel extent (`kernel_phys_base`, `kernel_size`), and, where the firmware provides them, the GOP framebuffer fields (`framebuffer`, `fb_*`), the `device_tree` and `acpi_rsdp` addresses and the `rng_seed`. It then records the final memory map (`memory_map_*`): uefi-rs's `exit_boot_services` fetches it with `GetMemoryMap()` just before calling `ExitBootServices()`, which needs that call's map key. It leaves `runtime_services`, `initramfs_*` and `cmdline_*` at 0.
 
 **Memory descriptors** follow the EFI_MEMORY_DESCRIPTOR layout with a 4-byte padding field for alignment:
 

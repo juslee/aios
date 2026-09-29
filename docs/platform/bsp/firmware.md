@@ -35,7 +35,7 @@ flowchart TD
     BI --> GOP["Locate GOP — acquire framebuffer"]
     GOP --> CFG["Scan UEFI config tables — find DTB and ACPI RSDP"]
     CFG --> RNG["EFI_RNG_PROTOCOL — get 32-byte seed"]
-    RNG --> EBS["ExitBootServices() — point of no return<br/>returns the final memory map, recorded in BootInfo"]
+    RNG --> EBS["uefi::boot::exit_boot_services: GetMemoryMap() for the final map and its key,<br/>then ExitBootServices() — point of no return<br/>map recorded in BootInfo"]
     EBS --> JUMP["Jump to kernel entry point<br/>x0 = BootInfo pointer (physical)"]
 ```
 
@@ -241,11 +241,13 @@ pub struct BootInfo {
 | `framebuffer` | GOP `FrameBufferBase` | VideoCore mailbox tag `0x00040001` | DCP framebuffer from FDT |
 | `device_tree` | UEFI config table (DTB GUID) | `x0` register at kernel entry | `x0` register at kernel entry |
 | `acpi_rsdp` | UEFI config table (ACPI GUID) | `0` (no ACPI on Pi) | `0` (no ACPI on Apple SoC) |
-| `runtime_services` | UEFI Runtime Services table | `0` | `0` |
+| `runtime_services` | `0` (not set by the stub yet) | `0` | `0` |
 | `rng_seed` | `EFI_RNG_PROTOCOL` | DTB `/chosen/rng-seed` | FDT `/chosen/rng-seed` |
 | `kernel_phys_base` | ELF load address (from `elf.rs`) | Passed by shim from `Image` header | Passed by shim from `Image` header |
-| `cmdline_addr` | UEFI load options string | DTB `/chosen/bootargs` | FDT `/chosen/bootargs` |
+| `cmdline_addr` | `0` (not set by the stub yet) | DTB `/chosen/bootargs` | FDT `/chosen/bootargs` |
 | `fb_width/height/stride` | GOP `ModeInfo` fields | VideoCore mailbox query | DCP display info from FDT |
+
+The UEFI stub currently leaves `runtime_services`, `initramfs_*` and `cmdline_*` at 0 (see [../../kernel/boot/firmware.md](../../kernel/boot/firmware.md) §2.2).
 
 **UEFI path — native construction:** `uefi-stub/src/main.rs` calls UEFI protocols directly during Boot Services, assembles `BootInfo` into a UEFI-allocated page, calls `ExitBootServices()`, then jumps to the kernel entry point with the physical `BootInfo` address in `x0`.
 
