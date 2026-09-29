@@ -340,7 +340,7 @@ pub enum IpcError {
     Eagain       = -3,  // queue full (IpcSend) or would block
     Ecanceled    = -4,  // IpcCancel aborted the call
     Eacces       = -5,  // behavioral gate SUSPENDED
-    Eperm        = -6,  // missing capability
+    Eperm        = -6,  // missing capability or right (§3.2)
     Enospc       = -7,  // subscriber list full
     Eproto       = -8,  // message_type not in channel protocol
     Enotsup      = -9,  // operation not available (e.g., AIRS offline)

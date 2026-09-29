@@ -464,9 +464,10 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
 
 /// MemoryMap (nr=18): x0=size, x1=flags.
 ///
-/// Allocate private pages from Pool::User. `flags` is decoded with
-/// `VmFlags::from_caller_bits`: READ, WRITE and EXECUTE only, EINVAL for any
-/// other bit (USER included).
+/// Allocate private pages from Pool::User and return their address in the
+/// private VA window (`shmem::memory_map`, ipc.md §4.7). `flags` is decoded
+/// with `VmFlags::from_caller_bits`: READ, WRITE and EXECUTE only, EINVAL for
+/// any other bit (USER included).
 fn sys_memory_map(tf: &TrapFrame) -> i64 {
     let size = tf.x[0] as usize;
     let flags = match crate::mm::pgtable::VmFlags::from_caller_bits(tf.x[1]) {
@@ -487,7 +488,9 @@ fn sys_memory_map(tf: &TrapFrame) -> i64 {
 
 /// MemoryUnmap (nr=19): x0=va, x1=size.
 ///
-/// Handles both private and shared memory unmap.
+/// Handles both private and shared memory unmap. A private unmap frees only
+/// the caller's own MemoryMap allocation at exactly `va` with the same page
+/// count; anything else is EINVAL (`shmem::memory_unmap`, ipc.md §4.7).
 fn sys_memory_unmap(tf: &TrapFrame) -> i64 {
     let va = tf.x[0] as usize;
     let size = tf.x[1] as usize;
