@@ -395,7 +395,7 @@ Syscall convention (aarch64):
 
 - Ids (channel, region, notification, process, capability handle) go through `shared::syscall::id_arg`: a value above `u32::MAX` is `EINVAL`.
 - Memory flags (`MemoryMap`, `SharedMemoryCreate` and `SharedMemoryMap`, all in x1) go through `shared::syscall::flags_arg` and `VmFlags::from_caller_bits`. The caller may set only READ (bit 0), WRITE (bit 1) and EXECUTE (bit 2), `MEMORY_FLAGS_MASK`; any other bit, bits 32-63 included, is `EINVAL`. `VmFlags::USER` (bit 3) is not caller-settable: every user mapping is user-accessible, so the kernel adds USER itself. WRITE together with EXECUTE is a W^X violation and is also `EINVAL`.
-- User buffers are checked with `validate_user_va` (§8.1) and copied through `copy_from_user` / `copy_to_user` in `kernel/src/syscall/mod.rs`, with no lock held. A null, page-0, kernel-half or overflowing range is `EINVAL`.
+- User buffers are checked with `validate_user_va` (§8.1) and copied through `copy_from_user` / `copy_to_user` in `kernel/src/syscall/user.rs`, with no lock held. A null, page-0, kernel-half or overflowing range is `EINVAL`.
 
 **Errno policy: `EINVAL` versus `EPERM`.** `EPERM` means the caller lacks a right the request needs; `EINVAL` means the request is malformed for every caller. The IPC Kit decodes `EPERM` as `CapabilityDenied` (Kit doc §6), so a malformed request must never return it.
 
@@ -1020,7 +1020,7 @@ Every syscall parameter is validated:
 - Capabilities checked: does the caller hold the required capability? `EPERM` if not.
 - All validation happens before any kernel state is modified
 
-The range check does not prove that the pages are mapped. User memory is copied only through `copy_from_user` and `copy_to_user` (`kernel/src/syscall/mod.rs`), into or out of kernel buffers, and never while a lock is held. There is no fault recovery and PAN is not enabled yet, so an unmapped user page takes an EL1 data abort, which halts the CPU; fault recovery belongs in those two functions before the first EL0 process runs.
+The range check does not prove that the pages are mapped. User memory is copied only through `copy_from_user` and `copy_to_user` (`kernel/src/syscall/user.rs`), into or out of kernel buffers, and never while a lock is held. There is no fault recovery and PAN is not enabled yet, so an unmapped user page takes an EL1 data abort, which halts the CPU; fault recovery belongs in those two functions before the first EL0 process runs.
 
 ### 8.2 IPC Audit
 
