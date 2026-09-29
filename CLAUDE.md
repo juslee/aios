@@ -14,7 +14,7 @@ Build system:   just + cargo
 License:        BSD-2-Clause
 Toolchain:      Rust nightly (updated to latest at session start, pinned in rust-toolchain.toml)
 Workspace:      resolver = "2", edition = "2021"
-Linker script:  emitted via build.rs (not .cargo/config.toml)
+Linker script:  emitted via build.rs (not .cargo/config.toml), with --orphan-handling=error
 Relocation:     static (relocation-model=static throughout all phases)
 QEMU machine:   virt, cpu=cortex-a72, -smp 4 -m 2G
 UART:           PL011 at 0x0900_0000 (QEMU); DTB-sourced Phase 1+
@@ -62,6 +62,9 @@ Vector table:                 ALIGN(2048) in linker.ld + .balign 128 per entry i
 PSCI CPU_ON (64-bit):         0xC400_0003 — hvc on QEMU, smc on Pi 4/5
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry to physical before CPU_ON.
 Boot CPU SP virt conversion:  boot.S adds VIRT_PHYS_OFFSET to SP before branching to virtual kernel_main.
+Boot stack:                   128 KiB `.stack (NOLOAD)` section after .bss, inside the RW PT_LOAD segment.
+                              The stub reserves only each PT_LOAD's [p_paddr, p_paddr + memsz), rounded up to pages.
+                              A bare `. +=` after a segment's last output section is in no PT_LOAD: never reserved.
 Syscall ABI:                  SVC #0 from EL0; x8 = number, x0-x5 = args, x0 = return.
                               Phase 3 threads run at EL1 → IPC is a direct call, NOT SVC. SVC path wired for future EL0.
 

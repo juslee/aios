@@ -37,4 +37,4 @@ The stub allocated the whole kernel image as `EfiLoaderData`. DxeCore applies `P
 - To test against strict NX locally, extract `usr/share/qemu-efi-aarch64/QEMU_EFI.fd` from `qemu-efi-aarch64_2025.11-3ubuntu7.2_all.deb` on archive.ubuntu.com and run `AIOS_EDK2_FW=<path> just run`.
 - Known follow-ups:
   - The stub does no I/D cache maintenance after copying the kernel text. TCG does not model caches, but KVM and real Cortex-A cores need it.
-  - linker.ld places the 128 KiB boot stack outside every PT_LOAD segment, so the firmware never reserves it.
+  - linker.ld placed the 128 KiB boot stack outside every PT_LOAD segment, so the firmware never reserved it. Fixed by #198: the stack is now a `.stack (NOLOAD)` section inside the RW segment.
