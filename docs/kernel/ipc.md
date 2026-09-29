@@ -394,8 +394,16 @@ Syscall convention (aarch64):
 **Argument decoding.** Arguments are decoded from the full 64-bit register, never by truncation:
 
 - Ids (channel, region, notification, process, capability handle) go through `shared::syscall::id_arg`: a value above `u32::MAX` is `EINVAL`.
-- Memory flags (`MemoryMap`, `SharedMemoryCreate` and `SharedMemoryMap`, all in x1) go through `shared::syscall::flags_arg` and `VmFlags::from_caller_bits`. The caller may set only READ (bit 0), WRITE (bit 1) and EXECUTE (bit 2), `MEMORY_FLAGS_MASK`; any other bit, bits 32-63 included, is `EINVAL`. `VmFlags::USER` (bit 3) is not caller-settable: every user mapping is user-accessible, so the kernel adds USER itself.
+- Memory flags (`MemoryMap`, `SharedMemoryCreate` and `SharedMemoryMap`, all in x1) go through `shared::syscall::flags_arg` and `VmFlags::from_caller_bits`. The caller may set only READ (bit 0), WRITE (bit 1) and EXECUTE (bit 2), `MEMORY_FLAGS_MASK`; any other bit, bits 32-63 included, is `EINVAL`. `VmFlags::USER` (bit 3) is not caller-settable: every user mapping is user-accessible, so the kernel adds USER itself. WRITE together with EXECUTE is a W^X violation and is also `EINVAL`.
 - User buffers are checked with `validate_user_va` (§8.1) and copied through `copy_from_user` / `copy_to_user` in `kernel/src/syscall/mod.rs`, with no lock held. A null, page-0, kernel-half or overflowing range is `EINVAL`.
+
+**Errno policy: `EINVAL` versus `EPERM`.** `EPERM` means the caller lacks a right the request needs; `EINVAL` means the request is malformed for every caller. The IPC Kit decodes `EPERM` as `CapabilityDenied` (Kit doc §6), so a malformed request must never return it.
+
+| Code | Returned for |
+|---|---|
+| `EINVAL` | An id out of range or above `u32::MAX`; an undefined flag bit, USER included; WRITE together with EXECUTE (W^X) in `MemoryMap`, `SharedMemoryCreate` or `SharedMemoryMap`; `SharedMemoryMap` flags beyond the region's `max_flags`; a bad user buffer; an unknown `CapabilityAttenuate` type or `IpcSelect` entry kind; a `MemoryUnmap` address that is not exactly one of the caller's `MemoryMap` allocations (§4.7); a notification that does not exist |
+| `EPERM` | A missing capability (`ChannelCreate`, `ChannelAccess`, `SharedMemoryCreate`, `SharedMemoryAccess`); a caller or target with no process; a `SharedMemoryShare` caller that is not the region's creator; a `SharedMemoryUnmap`/`MemoryUnmap` of a region the caller has not mapped (holding the mapping is the right to remove it) |
+| `EACCES` | Reserved for the behavioral gate's SUSPENDED state (§9.1); no kernel path returns it yet |
 
 ### 3.3 Kernel Resource Limits
 
@@ -1005,6 +1013,7 @@ The POSIX layer is a userspace library (part of musl libc). It translates POSIX 
 ### 8.1 Syscall Validation
 
 Every syscall parameter is validated:
+
 - Pointers checked: does the whole buffer lie in user space (TTBR0 range, below `USER_VA_LIMIT`) and outside page 0 (at or above `USER_VA_MIN`, so null is rejected at any length)? `EINVAL` otherwise.
 - Lengths checked: does buffer + length overflow? `EINVAL` if so.
 - Ids and flags checked: decoded from the full register (§3.2); a truncated id or an undefined flag bit is `EINVAL`.

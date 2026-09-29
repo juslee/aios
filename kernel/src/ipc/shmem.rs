@@ -8,6 +8,13 @@
 //! Per ipc.md §4.4–4.7, memory/virtual.md §7.
 //!
 //! Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE.
+//!
+//! Errno policy (ipc.md §3.2): EINVAL for a request that no caller could
+//! make (an out-of-range id, WRITE | EXECUTE, flags beyond the region's
+//! `max_flags`, a private address that is not the caller's allocation);
+//! EPERM only when the caller lacks a right the request needs (a
+//! capability, a mapping of the region, being its creator); EPIPE when the
+//! region is gone.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -93,16 +100,19 @@ pub static SHARED_REGION_TABLE: Mutex<[Option<SharedMemoryRegion>; MAX_SHARED_RE
 /// Allocates physically contiguous pages from Pool::User, enforces W^X on
 /// `flags`, and records the region in the global table.
 ///
-/// Returns the region ID on success.
+/// Returns the region ID on success. Errors: EINVAL for WRITE | EXECUTE;
+/// EPERM without `SharedMemoryCreate`; ENOMEM when Pool::User has no block
+/// of the needed order; ENOSPC when the region table is full.
 pub fn shared_memory_create(
     pid: ProcessId,
     size: usize,
     flags: VmFlags,
 ) -> Result<SharedMemoryId, i64> {
-    // W^X enforcement: reject WRITE+EXECUTE.
+    // W^X enforcement: reject WRITE+EXECUTE. No caller may ask for it, so
+    // it is a malformed request (EINVAL), not a permission denial.
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
         crate::kwarn!(Mm, "shm_create: W^X violation (pid={})", pid.0);
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
     }
 
     // Capability check (requires SharedMemoryCreate).
@@ -199,6 +209,11 @@ pub fn shared_memory_create(
 ///
 /// `flags` must be a subset of the region's `max_flags`. Returns the
 /// virtual address where the region was mapped.
+///
+/// Errors: EINVAL for an out-of-range id, WRITE | EXECUTE, or flags beyond
+/// the region's `max_flags`; EPERM without `SharedMemoryAccess(id)`; EPIPE if
+/// the region does not exist; EEXIST if `pid` already maps it; ENOSPC if the
+/// region has `MAX_SHARED_MAPPINGS` mappings.
 pub fn shared_memory_map(
     pid: ProcessId,
     region_id: SharedMemoryId,
@@ -208,9 +223,9 @@ pub fn shared_memory_map(
         return Err(IpcError::Einval as i64);
     }
 
-    // W^X enforcement.
+    // W^X enforcement (EINVAL, as in shared_memory_create).
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
     }
 
     // Capability check (SharedMemoryAccess).
@@ -221,7 +236,8 @@ pub fn shared_memory_map(
         .as_mut()
         .ok_or(IpcError::Epipe as i64)?;
 
-    // Verify flags are a subset of max_flags.
+    // Verify flags are a subset of max_flags. The limit belongs to the
+    // region, not to the caller, so asking for more is EINVAL for everyone.
     if !region.max_flags.contains(flags) {
         crate::kwarn!(
             Mm,
@@ -229,7 +245,7 @@ pub fn shared_memory_map(
             pid.0,
             region_id.0
         );
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
     }
 
     // Check for duplicate mapping.
@@ -302,6 +318,11 @@ pub fn shared_memory_map(
 ///
 /// Decrements the reference count. If ref_count reaches 0, frees the
 /// backing pages.
+///
+/// Errors: EINVAL for an out-of-range id (or a ref_count already 0); EPIPE
+/// if the region does not exist; EPERM if `pid` has no mapping of it, a
+/// right the caller lacks, like a missing capability. No capability is
+/// checked: holding the mapping is the authority to remove it.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
     if region_id.0 as usize >= MAX_SHARED_REGIONS {
         return Err(IpcError::Einval as i64);
@@ -402,7 +423,9 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 /// a capability that lets them call `shared_memory_map`.
 ///
 /// Returns `Err(EINVAL)` for a region id `>= MAX_SHARED_REGIONS` or a
-/// `target_pid >= MAX_PROCESSES`, before taking any lock.
+/// `target_pid >= MAX_PROCESSES`, before taking any lock; EPIPE if the
+/// region does not exist; EPERM if `pid` is not the region's creator (a
+/// right the caller lacks) or the target process does not exist.
 pub fn shared_memory_share(
     pid: ProcessId,
     region_id: SharedMemoryId,
@@ -564,13 +587,13 @@ static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCA
 /// have address spaces, MemoryMap maps the block at a user VA and returns
 /// that instead (ipc.md §4.7).
 ///
-/// Errors: EPERM for W^X (WRITE | EXECUTE); ENOSPC above `MAX_PRIVATE_PAGES`
+/// Errors: EINVAL for W^X (WRITE | EXECUTE); ENOSPC above `MAX_PRIVATE_PAGES`
 /// pages or when `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has
 /// no free block of the needed order.
 pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, i64> {
-    // W^X enforcement.
+    // W^X enforcement (EINVAL, as in shared_memory_create).
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
     }
 
     let pages = size.div_ceil(PAGE_SIZE).max(1);
