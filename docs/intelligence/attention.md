@@ -319,58 +319,41 @@ impl AttentionManager {
         }
 
         // 6. Compute final urgency from signals
-        let urgency = Self::compute_urgency(&signals);
+        let urgency = self.compute_urgency(&signals);
         let confidence = Self::compute_confidence(&signals);
 
         UrgencyAssessment { urgency, confidence, signals }
     }
 
-    fn compute_urgency(signals: &[UrgencySignal]) -> Urgency {
-        // Any inherent urgency signal → Interrupt
-        if signals.iter().any(|s| matches!(s, UrgencySignal::InherentUrgency { .. })) {
-            return Urgency::Interrupt;
-        }
+    /// Scores every signal with the per-user `AttentionModel` (§4.1.1) and maps
+    /// the total onto its thresholds. Sentiment and agent trust count like any
+    /// other signal, through their learned weights.
+    fn compute_urgency(&self, signals: &[UrgencySignal]) -> Urgency {
+        let model = &self.model;
+        let score: f32 = signals
+            .iter()
+            .map(|signal| {
+                let weight = model.signal_weights.get(&signal.kind()).copied().unwrap_or(0.0);
+                // intensity(): the signal's strength in 0.0–1.0 (trust level, marker
+                // count, sentiment confidence, deadline proximity, event severity)
+                weight * signal.intensity()
+            })
+            .sum();
 
-        // Family + urgency markers → Interrupt
-        let has_family = signals.iter().any(|s| matches!(s,
-            UrgencySignal::RelationshipPriority { trust: TrustLevel::Trusted, .. }
-        ));
-        let has_urgency_markers = signals.iter().any(|s| matches!(s,
-            UrgencySignal::ContentUrgencyMarkers { .. }
-        ));
-        if has_family && has_urgency_markers {
-            return Urgency::Interrupt;
-        }
-
-        // Time-sensitive → NextBreak (or Interrupt if < 5 min)
-        if let Some(UrgencySignal::TimeSensitivity { deadline }) =
-            signals.iter().find(|s| matches!(s, UrgencySignal::TimeSensitivity { .. }))
-        {
-            let until = deadline.duration_since(SystemTime::now()).unwrap_or_default();
-            if until < Duration::from_secs(300) {
-                return Urgency::Interrupt;
+        if score >= model.interrupt_threshold {
+            // Auto-dampening: past the hourly interrupt budget, wait for a break
+            if self.interrupts_in_last_hour() >= model.interrupt_rate_limit {
+                Urgency::NextBreak
+            } else {
+                Urgency::Interrupt
             }
-            return Urgency::NextBreak;
+        } else if score >= model.next_break_threshold {
+            Urgency::NextBreak
+        } else if score >= model.digest_threshold {
+            Urgency::Digest
+        } else {
+            Urgency::Silent
         }
-
-        // Known person with fast historical response → NextBreak
-        let has_known_person = signals.iter().any(|s| matches!(s,
-            UrgencySignal::RelationshipPriority { .. }
-        ));
-        let fast_response = signals.iter().any(|s| matches!(s,
-            UrgencySignal::HistoricalEngagement { .. }
-        ));
-        if has_known_person && fast_response {
-            return Urgency::NextBreak;
-        }
-
-        // Default for known persons
-        if has_known_person {
-            return Urgency::NextBreak;
-        }
-
-        // Everything else → Digest
-        Urgency::Digest
     }
 }
 ```
