@@ -1,0 +1,2 @@
+@@@ append docs/kernel/alpha.md
+A new [missing](missing.md) link.

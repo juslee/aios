@@ -16,11 +16,16 @@
 # check is a checker error and counts like any other failing check; drift is
 # reported in the Docs drift section, from a local docs-check run.
 #
-# Every section degrades to a one-line notice when git, gh, jq, python3 or the
-# network is unavailable. Text from GitHub (titles, branch names) is printed as
-# data with control characters replaced; it is never executed. Side effects:
-# `git fetch --prune origin` (skip with --no-fetch) and a timestamp marker in
-# the git common dir ($GIT_COMMON_DIR/aios-agent/last-brief).
+# Every section degrades to a one-line notice when git, gh, jq or the network
+# is unavailable. The aios tools binary blocks in the foreground on a release
+# build when missing or stale (SessionStart's `aios --prebuild` is the
+# mitigation); a drift summary from a stale binary whose rebuild failed is
+# flagged. Text from GitHub (titles, branch names) is printed as data with
+# control characters replaced; it is never executed. Side effects: `git fetch
+# --prune origin` (skip with --no-fetch), a timestamp marker in the git common
+# dir ($GIT_COMMON_DIR/aios-agent/last-brief) and, when the main checkout's aios
+# binary is missing or stale, a foreground `just tools` build of target/tools/
+# in the main checkout.
 #
 # Usage: scripts/agent/brief.sh [--no-fetch]
 # Works with macOS bash 3.2 and GNU/Linux.
@@ -32,7 +37,7 @@ for arg in "$@"; do
     case "$arg" in
         --no-fetch) FETCH=0 ;;
         -h | --help)
-            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -91,9 +96,9 @@ unpushed_desc() { # $1 = worktree path
 }
 
 # Start docs-check early; it is the slowest local step.
-if [ -f scripts/docs/check.py ] && command -v python3 >/dev/null 2>&1; then
+if [ -x .claude/hooks/aios ]; then
     (
-        python3 scripts/docs/check.py --json >"$TMP/docs.json" 2>"$TMP/docs.err"
+        .claude/hooks/aios docs-check --json >"$TMP/docs.json" 2>"$TMP/docs.err"
         echo $? >"$TMP/docs.rc"
     ) &
     DOCS_PID=$!
@@ -526,21 +531,40 @@ section "Docs drift"
 if [ -n "$DOCS_PID" ]; then
     wait "$DOCS_PID" 2>/dev/null
     rc=$(cat "$TMP/docs.rc" 2>/dev/null || echo "?")
+    # When a stale binary's foreground rebuild fails, the shim warns on stderr and
+    # runs the stale binary, whose exit 0 or 1 and JSON look current: flag it.
+    stale_note=""
+    if grep -q '^aios: rebuilding .* failed; running the stale binary' "$TMP/docs.err" 2>/dev/null; then
+        stale_note=" (from a stale aios binary whose rebuild failed; run \`just tools\`)"
+    fi
     if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
-        echo "- docs-check failed (exit $rc, a checker error, not drift): $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        # A foreground rebuild's `just tools`/cargo output, and the shim's "aios:
+        # rebuilding ... failed" warning, can come before the real error in the same
+        # stream. Prefer the checker's own "docs-check: ..." line (exit 2), then the
+        # binary's panic header (exit 101), then the shim's "aios: ..." line (exit 3,
+        # the binary never ran), then the last line (e.g. sh's exec error).
+        docs_err=$(grep -m1 '^docs-check: ' "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(grep -m1 -E "^thread 'main'( \([0-9]+\))? panicked" "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(grep -m1 '^aios: ' "$TMP/docs.err" 2>/dev/null)
+        [ -n "$docs_err" ] || docs_err=$(tail -n 1 "$TMP/docs.err" 2>/dev/null)
+        echo "- docs-check failed (exit $rc, a checker error, not drift): $docs_err"
     elif ! command -v jq >/dev/null 2>&1; then
-        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`"
+        echo "- docs-check ran ($([ "$rc" = 0 ] && echo "exit 0: no new drift" || echo "exit 1: new drift")) but jq is not installed to summarise it; run \`just docs-check\`$stale_note"
     elif ! jq -e . "$TMP/docs.json" >/dev/null 2>&1; then
-        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(head -n 1 "$TMP/docs.err" 2>/dev/null)"
+        # A foreground rebuild's cargo output comes first here too, so show the last
+        # stderr line (e.g. sh's exec error when the binary vanished mid-rebuild). The
+        # shim's stale-rebuild warning is not picked: $stale_note already reports it.
+        echo "- docs-check ran (exit $rc) but its JSON output is unreadable: $(tail -n 1 "$TMP/docs.err" 2>/dev/null)$stale_note"
     else
-        jq -r '
+        jq -r --arg note "$stale_note" '
           "- docs-check: \(.summary.new) new vs baseline, \(.summary.total) total (\(.summary.baselined) baselined, of which \(.summary.accepted // 0) accepted false positives; \(.summary.resolved) resolved)"
           + (if .summary.new > 0 then "; new in: " + ([.checks | to_entries[] | select((.value.new // 0) > 0) | "\(.key) \(.value.new)"] | join(", ")) else "" end)
           + (if (.summary.resolved + (.summary.reduced // 0)) > 0 then "; run `just docs-check --update-baseline` to prune resolved or reduced entries" else "" end)
+          + $note
         ' "$TMP/docs.json"
     fi
 else
-    echo "- docs-check unavailable (needs python3 and scripts/docs/check.py on this checkout)"
+    echo "- docs-check unavailable (needs .claude/hooks/aios on this checkout)"
 fi
 
 mkdir -p "$MARKER_DIR" 2>/dev/null && touch "$MARKER" 2>/dev/null

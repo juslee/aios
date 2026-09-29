@@ -1,0 +1,7 @@
+exit 0
+docs-check: 1 findings across 1 checks - 0 new, 1 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  phase-count            1     0
+
+No new drift since baseline.

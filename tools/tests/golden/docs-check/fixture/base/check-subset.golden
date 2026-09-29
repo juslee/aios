@@ -1,0 +1,12 @@
+exit 0
+docs-check: 2 findings across 2 checks - 0 new, 2 baselined (0 accepted false positives), 1 resolved (baseline scripts/docs/baseline.json)
+
+  check              total   new
+  md-links               2     0
+  anchors                0     0
+
+No new drift since baseline.
+
+2 baselined finding(s) no longer occur or occur less often; prune them with `just docs-check --update-baseline`:
+  - anchors|docs/kernel/alpha.md|#gone
+  - md-links|docs/kernel/beta.md|older-spec.md (2 -> 1 occurrences)

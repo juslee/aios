@@ -1,0 +1,370 @@
+@@@ commit Phase 0 M1: Step 1 — boot stub
+@@@ commit Phase 0 M2: Step 2 — uart console
+@@@ commit Phase 1 M3: Step 1 — buddy allocator
+@@@ file CLAUDE.md
+# Fixture Project
+
+## Workspace Layout
+
+```text
+fixture/
+├── .claude/
+│   ├── agents/           worker
+│   └── skills/           build, team:start
+├── kernel/src/           fixture kernel
+│   ├── sync/             locks
+│   └── (top-level)       main.rs
+├── shared/src/           shared types
+│   └── (top-level)       lib
+├── uefi-stub/            boot stub
+└── docs/                 architecture, phase, knowledge docs
+```
+
+## Key Technical Facts
+
+```text
+Lock ordering (full):         ALPHA_LOCK > BETA_LOCK
+```
+
+## Architecture Document Map
+
+Topic index lives in `docs/project/doc-map.md`.
+
+## Team
+
+**Agents** (defined in `.claude/agents/`):
+
+| Agent | Role |
+| --- | --- |
+| `worker` | Does the work |
+
+**Skills** (defined in `.claude/skills/`):
+
+| Skill | Purpose |
+| --- | --- |
+| `/build` | Builds the fixture |
+| `/team:start` | Starts a session |
+@@@ file README.md
+# Fixture
+
+Status: Phase 1 M3 is complete.
+
+3 phases across 1 tier.
+
+## Build Commands
+
+| Command | Description |
+|---|---|
+| `just build` | Build |
+| `just check` | Check |
+| `just test` | Test |
+| `just docs-check` | Docs drift |
+@@@ file justfile
+# Fixture justfile
+
+default: build
+
+build:
+    echo build
+
+check: build
+    echo check
+
+test:
+    echo test
+
+[private]
+helper:
+    echo helper
+
+_hidden:
+    echo hidden
+
+[positional-arguments]
+docs-check *args:
+    echo docs-check "$@"
+@@@ file .claude/agents/worker.md
+---
+name: worker
+description: Fixture agent.
+tools: Read, Edit, Bash
+---
+
+# Worker
+
+Follow the Workspace Layout in CLAUDE.md and the rules in `.claude/rules/01-code.md`.
+The old guide `docs/retired/guide.md` is cited on purpose.
+Ask the `worker` agent for help, or run `/build`.
+@@@ file .claude/skills/build/SKILL.md
+---
+name: build
+description: Fixture skill that builds.
+---
+
+# Build
+
+Run `just build`, then `just check`.
+@@@ file .claude/skills/team/.claude-plugin/plugin.json
+{"name": "team"}
+@@@ file .claude/skills/team/skills/start/SKILL.md
+---
+name: start
+description: Fixture plugin skill.
+---
+
+# Start
+
+Read `docs/project/doc-map.md` first.
+@@@ file .claude/rules/01-code.md
+# Code Conventions
+
+- Keep modules small.
+@@@ file .claude/rules/05-file-placement.md
+# File Placement Rules
+
+```
+kernel/src/sync/               Locks
+kernel/src/                    Kernel entry
+```
+@@@ file docs/project/developer-guide.md
+# Developer Guide
+
+## 5. Build
+
+### 5.1 Just Commands
+
+| Command | What it does |
+|---|---|
+| `just build` | Build |
+| `just check` | Check |
+
+### 5.2 Tests
+
+Host test count: <!-- gen:test-count --> 4
+@@@ file docs/project/doc-map.md
+# Doc Map
+
+| Topic | Doc |
+|---|---|
+| Kernel | `docs/kernel/{alpha,beta,deadlock-prevention}.md` |
+| Kernel hub member | `docs/kernel/beta/detail.md` |
+| Plan | `docs/project/development-plan.md` |
+| Guide | `docs/project/developer-guide.md` |
+@@@ file docs/project/development-plan.md
+# Development Plan
+
+## 8. Phase Detail Reference
+
+| Phase | Name | Tier | Weeks | Deliverable | Status |
+|---|---|---|---|---|---|
+| 0 | Foundation | 1 | 2 | Boots | Complete |
+| 1 | Memory | 1 | 2 | Allocates | Complete |
+| 2 | Next | 1 | 2 | Something | Planned |
+
+3 phases across 1 tier.
+
+## 8.1 Actual Progress
+
+### Velocity Summary
+
+| Phase | Planned | Actual | Speedup | Milestones |
+|---|---|---|---|---|
+| 0 (Foundation) | 2 weeks | 1 day | 10x | M1–M2 |
+| 1 (Memory) | 2 weeks | 1 day | 10x | M3 |
+@@@ file docs/phases/00-foundation.md
+# Phase 0: Foundation
+
+**Status:** Complete
+
+## Milestones
+
+| Milestone | Steps |
+|---|---|
+| **M1 — Boot** | 1 |
+| **M2 — UART** | 2 |
+
+## Milestone 1 — Boot
+
+- [x] Write the entry stub
+- [x] Print a banner
+
+## Milestone 2 — UART
+
+- [x] Drive the UART
+- [ ] ~~Legacy console~~ — deferred to M4
+@@@ file docs/phases/01-memory.md
+# Phase 1: Memory
+
+**Status:** Complete
+
+## Milestone 3 — Allocator
+
+- [x] Buddy allocator
+- [x] Slab allocator
+@@@ file docs/kernel/alpha.md
+# Alpha
+
+## 1. Overview
+
+Alpha depends on [beta](beta.md) and the [lock rules](deadlock-prevention.md#33-lock-hierarchy).
+See [deadlock](deadlock-prevention.md) §3.3 and the [beta detail](beta.md) §2.1.
+The notes [[beta]] and [[kernel/deadlock-prevention|locks]] are wiki links.
+
+### 1.2 Details
+
+Jump to [details](#12-details) or [the overview](#1-overview).
+The retired spec is [old](old-spec.md).
+
+## 2. History
+
+The retired spec is still [old](old-spec.md) here.
+@@@ file docs/kernel/beta.md
+# Beta
+
+Beta is a hub; its sections live in [beta/detail.md](beta/detail.md).
+
+## 1. Scope
+
+Beta once linked [older](older-spec.md).
+@@@ file docs/kernel/beta/detail.md
+# Beta Detail
+
+Part of: [beta.md](../beta.md)
+
+## 2. Detail
+
+### 2.1 Detail
+
+Back to [alpha](../alpha.md).
+@@@ file docs/kernel/deadlock-prevention.md
+# Deadlock Prevention
+
+## 3. Locks
+
+### 3.3 Lock Hierarchy
+
+| Rank | Lock | Purpose |
+|---|---|---|
+| 1 | `ALPHA_LOCK` | First |
+| 2 | `BETA_LOCK` | Second |
+
+### 3.4 Test Locks
+
+`TEST_CHANNEL` is excluded.
+
+### 3.5 Notes
+
+Nothing else.
+@@@ file docs/knowledge/README.md
+# Knowledge
+
+Notes live here.
+@@@ file docs/knowledge/plans/_template.md
+---
+author: claude
+date: YYYY-MM-DD
+tags: []
+status: in-progress
+---
+
+# Plan: template
+@@@ file docs/knowledge/decisions/2026-01-01-ab-example.md
+---
+author: ab
+date: 2026-01-01
+tags: [kernel]
+status: final
+---
+
+# Decision: Example
+
+We chose the example.
+@@@ file kernel/src/main.rs
+//! Fixture kernel entry.
+
+mod sync;
+
+fn main() {}
+@@@ file kernel/src/sync/mod.rs
+//! Fixture locks.
+
+use spin::Mutex;
+
+// Lock ordering: ALPHA_LOCK before BETA_LOCK.
+// Never take BETA_LOCK first.
+
+pub static ALPHA_LOCK: Mutex<u32> = Mutex::new(0);
+pub(crate) static BETA_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+static COUNTER: u32 = 0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    static TEST_ONLY_LOCK: Mutex<u8> = Mutex::new(0);
+}
+@@@ file shared/src/lib.rs
+//! Fixture shared crate.
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn one() {}
+
+    #[test]
+    fn two() {}
+
+    #[test]
+    fn three() {}
+
+    #[test]
+    fn four() {}
+}
+@@@ file uefi-stub/src/main.rs
+fn main() {}
+@@@ file scripts/docs/baseline.json
+{
+  "comment": "Fixture baseline, hand-ordered so that --update-baseline re-sorts it.",
+  "version": 1,
+  "counts": {},
+  "findings": [
+    {
+      "key": "retired-check|README.md|legacy",
+      "check": "retired-check",
+      "file": "README.md",
+      "target": "legacy",
+      "message": "kept verbatim: this check no longer exists",
+      "note": "extra fields survive --update-baseline"
+    },
+    {
+      "key": "pointer-doctor|.claude/agents/worker.md|path:docs/retired/guide.md",
+      "check": "pointer-doctor",
+      "file": ".claude/agents/worker.md",
+      "target": "path:docs/retired/guide.md",
+      "message": "path does not exist: docs/retired/guide.md",
+      "reason": "false positive: the agent cites the retired guide on purpose"
+    },
+    {
+      "key": "anchors|docs/kernel/alpha.md|#gone",
+      "check": "anchors",
+      "file": "docs/kernel/alpha.md",
+      "target": "#gone",
+      "message": "no heading for anchor #gone in docs/kernel/alpha.md"
+    },
+    {
+      "key": "md-links|docs/kernel/beta.md|older-spec.md",
+      "check": "md-links",
+      "file": "docs/kernel/beta.md",
+      "target": "older-spec.md",
+      "message": "broken link -> older-spec.md",
+      "count": 2
+    },
+    {
+      "key": "md-links|docs/kernel/alpha.md|old-spec.md",
+      "check": "md-links",
+      "file": "docs/kernel/alpha.md",
+      "target": "old-spec.md",
+      "message": "broken link -> old-spec.md",
+      "count": 2
+    }
+  ]
+}

@@ -23,7 +23,7 @@ Phases 0–6 and Phase 7 milestones M23–M24 are complete. The kernel boots via
 
 ## Architecture
 
-```
+```text
 Experience Layer:  Workspace, Conversation Bar, Browser, Settings, Agents
 Services Layer:    AIRS (inference, context, agents), Storage, Compositor, Networking
 Subsystem Layer:   Universal hardware abstraction with capability gates
@@ -67,7 +67,7 @@ just run
 
 ## Project Structure
 
-```
+```text
 aios/
 ├── docs/
 │   ├── project/          # Vision, architecture, development plan
@@ -78,7 +78,8 @@ aios/
 │   └── skills/           # Reusable skill scripts
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
-└── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
+├── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
+└── tools/                # Host tools crate: the aios binary (docs-check), built with just tools
 ```
 
 ---
@@ -117,6 +118,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just soak` | Boot repeatedly under QEMU and classify each boot (`runs=N secs=T mode=text\|gpu`; logs in `target/soak/`) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
+| `just tools` | Build the host tools binary `aios` (`target/tools/release/aios`), which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios`) |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
 

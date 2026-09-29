@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# aios host tools (tools/, `just tools`): start a background build in the main
+# checkout when target/tools/release/aios is missing or stale. Runs in local and
+# remote sessions and returns at once (build log: target/tools/build.log).
+"$(dirname "$0")/aios" --prebuild || true
+
 # Only run in remote/web environments
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ] && [ -z "${FORCE_SETUP:-}" ]; then
     echo "[setup] Local environment detected, skipping. Set FORCE_SETUP=1 to override."

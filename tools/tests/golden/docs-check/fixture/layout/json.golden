@@ -1,0 +1,99 @@
+exit 1
+{
+  "baseline": "scripts/docs/baseline.json",
+  "summary": {
+    "total": 4,
+    "new": 1,
+    "baselined": 3,
+    "accepted": 1,
+    "resolved": 1,
+    "reduced": 1
+  },
+  "checks": {
+    "md-links": {
+      "total": 2,
+      "new": 0
+    },
+    "section-refs": {
+      "total": 0,
+      "new": 0
+    },
+    "anchors": {
+      "total": 0,
+      "new": 0
+    },
+    "wiki-links": {
+      "total": 0,
+      "new": 0
+    },
+    "doc-map": {
+      "total": 0,
+      "new": 0
+    },
+    "repo-paths": {
+      "total": 0,
+      "new": 0
+    },
+    "just-recipes": {
+      "total": 0,
+      "new": 0
+    },
+    "test-count": {
+      "total": 0,
+      "new": 0
+    },
+    "lock-order": {
+      "total": 0,
+      "new": 0
+    },
+    "milestone-status": {
+      "total": 0,
+      "new": 0
+    },
+    "phase-count": {
+      "total": 0,
+      "new": 0
+    },
+    "layout": {
+      "total": 1,
+      "new": 1
+    },
+    "harness-tables": {
+      "total": 0,
+      "new": 0
+    },
+    "pointer-doctor": {
+      "total": 1,
+      "new": 0
+    },
+    "knowledge-hygiene": {
+      "total": 0,
+      "new": 0
+    }
+  },
+  "findings": [
+    {
+      "key": "layout|CLAUDE.md|missing:kernel/src/extra.rs",
+      "check": "layout",
+      "file": "CLAUDE.md",
+      "line": 0,
+      "also": [],
+      "count": 1,
+      "baseline_count": null,
+      "target": "missing:kernel/src/extra.rs",
+      "message": "Workspace Layout does not list kernel module kernel/src/extra.rs",
+      "detail": "",
+      "new": true,
+      "accepted": null
+    }
+  ],
+  "resolved": [
+    "anchors|docs/kernel/alpha.md|#gone"
+  ],
+  "reduced": {
+    "md-links|docs/kernel/beta.md|older-spec.md": {
+      "baseline": 2,
+      "current": 1
+    }
+  }
+}

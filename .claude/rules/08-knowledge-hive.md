@@ -15,8 +15,8 @@ After significant sessions, write insights to `docs/knowledge/`:
 ## Conventions
 
 - Naming: `YYYY-MM-DD-initials-short-description.md`
-- Required frontmatter: author, date, tags, status (draft/in-progress/final)
-- Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media
+- Required frontmatter: author, date, tags, status (draft/in-progress/final; `discussions/` may also use active, then graduated — see `docs/knowledge/README.md`)
+- Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media, tooling
 
 ## CLAUDE.md Self-Maintenance
 

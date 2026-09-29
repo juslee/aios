@@ -138,14 +138,32 @@ run-direct: build
 soak *args:
     bash {{ quote(justfile_directory() / "scripts" / "soak-qemu.sh") }} "$@"
 
-# Run host-side unit tests (kernel is no_std, excluded from host tests)
+# kernel is no_std and excluded; the tools crate is excluded too and tested
+# separately with `cargo test -p aios-tools` in CI's Tools (host) job, which has
+# full history.
+# Run host-side unit tests (shared crate)
 test:
-    cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
+    cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 
-# Run clippy with deny warnings (both kernel and stub targets)
+# The binary takes the build's start time: a no-op build is marked fresh for the
+# shim, and a file edited during the build stays newer, so the next call rebuilds.
+# Each build has its own stamp file, so overlapping builds (a background prebuild
+# and a foreground rebuild) never give one binary the other build's start time.
+# Build the host tools binary target/tools/release/aios (run through .claude/hooks/aios)
+tools:
+    #!/bin/sh
+    set -eu
+    mkdir -p target/tools
+    stamp=$(mktemp target/tools/.build-start.XXXXXX)
+    trap 'rm -f "$stamp"' EXIT
+    cargo build --release -p aios-tools --target-dir target/tools
+    touch -r "$stamp" target/tools/release/aios
+
+# Run clippy with deny warnings (kernel and stub targets, plus the host tools crate)
 clippy:
     cargo clippy --target {{target}} -- -D warnings
     cargo clippy -p uefi-stub --target {{uefi_target}} -- -D warnings
+    cargo clippy -p aios-tools --all-targets -- -D warnings
 
 # Format code
 fmt:
@@ -179,7 +197,7 @@ clean:
     rm -f {{disk_img}} {{data_img}}
 
 # ---------------------------------------------------------------------------
-# Docs drift (scripts/docs/check.py: python3 stdlib, no LLM)
+# Docs drift (aios docs-check from tools/, no LLM)
 # ---------------------------------------------------------------------------
 
 #   just docs-check                     new drift vs scripts/docs/baseline.json (exit 1 if any)
@@ -188,8 +206,8 @@ clean:
 # Report docs drift that is not in the baseline
 [positional-arguments]
 docs-check *args:
-    python3 scripts/docs/check.py "$@"
+    .claude/hooks/aios docs-check "$@"
 
 # List every docs drift finding, baselined and new
 docs-check-all:
-    python3 scripts/docs/check.py --all
+    .claude/hooks/aios docs-check --all

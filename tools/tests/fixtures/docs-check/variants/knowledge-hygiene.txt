@@ -1,0 +1,9 @@
+@@@ file docs/knowledge/lessons/bad-name.md
+---
+author: ab
+date: 2026-01-02
+tags: [kernel]
+status: final
+---
+
+# Lesson with a bad file name

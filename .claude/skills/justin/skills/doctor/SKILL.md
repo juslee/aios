@@ -12,7 +12,7 @@ description: >
 
 Report docs and harness drift. This skill edits nothing. Runbook for the human side, including the docs policy: `docs/project/agent-loop.md`.
 
-1. Run the full drift report (exit status 1 only means new drift exists, 2 means the checker itself failed; read the output either way):
+1. Run the full drift report (exit status 0 means no new drift and 1 means new drift exists; any other status means the checker itself failed: 2 for a usage, git or internal error, 3 from the `.claude/hooks/aios` shim when it cannot build or find the binary, 101 for a panic; read the output either way):
 
    ```bash
    just docs-check --all
@@ -21,7 +21,7 @@ Report docs and harness drift. This skill edits nothing. Runbook for the human s
 2. Run the harness checks on their own so their findings are not lost in the docs noise:
 
    ```bash
-   python3 scripts/docs/check.py --all --check pointer-doctor,harness-tables
+   just docs-check --all --check pointer-doctor,harness-tables
    ```
 
 3. Report:
