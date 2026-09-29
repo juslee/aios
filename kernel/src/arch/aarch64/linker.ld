@@ -3,9 +3,11 @@
  * VMA: kernel code/data lives at virtual addresses starting near KERNEL_VIRT.
  * LMA: physical load address remains at KERNEL_PHYS (set by AT clause).
  *
- * The VMA is offset by the intra-2MB position of KERNEL_PHYS so that
- * boot.S can use a single 2MB block descriptor to map the kernel:
- *   L2[0] → PA 0x40000000 (2MB-aligned), covering the kernel image.
+ * The VMA is offset by the intra-2MB position of KERNEL_PHYS, which keeps
+ * the VMA-LMA delta 2MB-aligned so that boot.S can map the kernel with
+ * 2MB block descriptors:
+ *   L2[0..3] → PA 0x40000000-0x40800000 (8 MiB), covering the kernel image.
+ * The ASSERT at the end of SECTIONS enforces the fit.
  *
  * PC-relative ADRP+ADD instructions resolve correctly in both physical
  * execution (before TTBR1) and virtual execution (after TTBR1) because
