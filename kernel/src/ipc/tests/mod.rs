@@ -6,6 +6,7 @@
 
 mod bad_pid;
 mod select_cap;
+mod syscall_args;
 
 use crate::sched;
 use crate::syscall::IpcError;
@@ -444,8 +445,9 @@ fn ipc_caller_entry() -> ! {
 /// IPC timeout test thread: calls IpcCall on a channel with no receiver
 /// (expects ETIMEDOUT). It then checks EPIPE after channel destroy, EINVAL
 /// for out-of-range channel ids, EINVAL for out-of-range pids on the
-/// SharedMemoryShare path (`shm_bad_pid_test`), and the IpcSelect capability
-/// check (`select_cap_test`).
+/// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
+/// check (`select_cap_test`), and EINVAL for hostile syscall arguments and
+/// MemoryUnmap ownership (`syscall_args_test`).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -532,6 +534,7 @@ fn ipc_timeout_entry() -> ! {
 
     bad_pid::shm_bad_pid_test(caller_tid);
     select_cap::select_cap_test(caller_tid);
+    syscall_args::syscall_args_test(caller_tid);
 
     loop {
         sched::thread_yield();
