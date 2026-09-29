@@ -388,17 +388,17 @@ impl ComputeScheduler {
     /// Score a device for a given inference request.
     fn score_device(
         &self,
-        device: &ComputeCapabilityDescriptor,
+        device: &dyn ComputeDevice,
         request: &InferenceRequest,
     ) -> DeviceScore {
-        let format_support = if device.quant_formats.contains(request.quant_format) {
+        let format_support = if device.capabilities().quant_formats.contains(request.quant_format) {
             1.0
         } else {
             0.0  // Hard disqualification
         };
 
         let availability = 1.0 - device.utilization();
-        let thermal = device.thermal_headroom();
+        let thermal = Self::thermal_headroom(device.thermal_state());
         let memory_fit = self.compute_memory_fit(device, request);
         let throughput = self.estimate_throughput(device, request);
         let latency = self.estimate_latency(device, request);
@@ -413,7 +413,7 @@ impl ComputeScheduler {
         };
 
         let total = format_support.min(memory_fit) * (  // Hard gates
-            weights[1] * utilization +
+            weights[1] * availability +
             weights[2] * thermal +
             weights[4] * throughput +
             weights[5] * latency
@@ -422,9 +422,20 @@ impl ComputeScheduler {
         DeviceScore {
             total,
             components: ScoreComponents {
-                format_support, utilization, thermal,
+                format_support, availability, thermal,
                 memory_fit, throughput, latency,
             },
+        }
+    }
+
+    /// Thermal headroom for scoring (1.0 = cool, 0.0 = critical), from the
+    /// kernel thermal state the device reports (`ComputeDevice::thermal_state`).
+    fn thermal_headroom(state: ThermalState) -> f32 {
+        match state {
+            ThermalState::Normal => 1.0,
+            ThermalState::Warm => 0.5,
+            ThermalState::Throttled { .. } => 0.25,
+            ThermalState::Critical => 0.0,
         }
     }
 }
