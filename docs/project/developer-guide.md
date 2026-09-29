@@ -1629,7 +1629,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 573 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 590 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1722,7 +1722,7 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (573 tests):**
+**Current test distribution (590 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
@@ -1733,12 +1733,12 @@ mod tests {
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
 | `kits` | 40 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips, memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
+| `observability` | 35 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining and lost-entry marks |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
 | `syscall` | 21 | Syscall numbering, IpcError codes, `id_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
-| `observability` | 18 | Log level ordering, subsystem tags |
 | `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
