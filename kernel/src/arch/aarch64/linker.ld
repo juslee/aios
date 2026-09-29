@@ -87,5 +87,12 @@ SECTIONS
 
     __kernel_end = .;
 
+    /* Until kmap.rs installs the full TTBR1, boot.S's minimal TTBR1 maps
+       only VA [KERNEL_VIRT, KERNEL_VIRT + 8 MiB) (4 x 2 MiB L2 blocks at
+       PA 0x40000000). kernel_main runs on the boot stack through that
+       map, so the whole image, stack included, must fit inside it. */
+    ASSERT(__kernel_end <= KERNEL_VIRT + 0x800000,
+           "kernel image (incl. boot stack) exceeds boot.S's 8 MiB TTBR1 map")
+
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }
