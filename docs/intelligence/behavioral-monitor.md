@@ -212,28 +212,28 @@ flowchart TD
 
 The Behavioral Monitor spans multiple development phases, reflecting its dependency on the AIRS inference engine and security architecture.
 
-| Phase | Milestone | Deliverable |
-|---|---|---|
-| **10** (AIRS Intelligence Services) | M30–M32 | Core Behavioral Monitor: `BehavioralMonitor` struct, `BehavioralBaseline`, `BehavioralPolicy`, hard limits, z-score detection, basic escalation, audit logging. Tier 1 fully operational. |
-| **13** (Agent Framework) | M39–M41 | Agent profiling pipeline: observation collection, predicted vs. observed comparison (§8), cold start via Agent Capability Intelligence priors. |
-| **17** (Security Architecture) | M51–M53 | Security integration: behavioral state byte in IPC fast path (§3.6, §6.4), zero trust behavioral gate, AIRS self-monitoring (§10), provenance chain integration (§7). |
-| **34** (Secure Boot & Updates) | — | Formal verification of hard limit invariants ("hard limits are always enforced", "escalation terminates"). |
-| **41** (AIRS Capability Intelligence) | M124–M126 | AIRS-dependent intelligence: semantic sequence analysis (§13.1), RAG behavioral lookup (§13.2), LoRA fine-tuning (§13.3), cross-agent correlation (§13.4). Full Tier 2 operational. |
+| Phase | Deliverable |
+|---|---|
+| **12** (AIRS Intelligence Services) | Core Behavioral Monitor: `BehavioralMonitor` struct, `BehavioralBaseline`, `BehavioralPolicy`, hard limits, z-score detection, basic escalation, audit logging. Tier 1 fully operational. |
+| **10** (Agent Framework) | Agent profiling pipeline: observation collection, predicted vs. observed comparison (§8), cold start via Agent Capability Intelligence priors. |
+| **21** (Security Architecture) | Security integration: behavioral state byte in IPC fast path (§3.6, §6.4), zero trust behavioral gate, AIRS self-monitoring (§10), provenance chain integration (§7). |
+| **34** (Secure Boot & Updates) | Formal verification of hard limit invariants ("hard limits are always enforced", "escalation terminates"). |
+| **46** (AIRS Capability Intelligence) | AIRS-dependent intelligence: semantic sequence analysis (§13.1), RAG behavioral lookup (§13.2), LoRA fine-tuning (§13.3), cross-agent correlation (§13.4). Full Tier 2 operational. |
 
 ### Dependencies
 
 ```text
-Phase 10 (AIRS Inference Engine) ──► Phase 11 (Behavioral Monitor core)
-Phase 11 ──► Phase 14 (Agent profiling)
-Phase 11 ──► Phase 18 (Security integration)
-Phase 10 + Phase 42 ──► Tier 2 intelligence
+Phase 11 (AIRS Inference Engine) ──► Phase 12 (AIRS Intelligence Services: Behavioral Monitor core)
+Phase 12 ──► Phase 10 (Agent Framework: agent profiling)
+Phase 12 ──► Phase 21 (Security Architecture: security integration)
+Phase 11 + Phase 46 (AIRS Capability Intelligence) ──► Tier 2 intelligence
 ```
 
 ### What Ships When
 
-- **After Phase 11**: Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Audit trail exists. Users see anomalies in Inspector.
-- **After Phase 18**: Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof.
-- **After Phase 42**: Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
+- **After Phase 12** (AIRS Intelligence Services): Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Audit trail exists. Users see anomalies in Inspector.
+- **After Phase 21** (Security Architecture): Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof.
+- **After Phase 46** (AIRS Capability Intelligence): Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
 
 -----
 

@@ -40,3 +40,7 @@ Performance comparison (candle vs GGML on ARM NEON for 7B Q4) deferred to AIRS K
 - Performance must be validated when AIRS Kit is implemented (Phase 9+)
 - Compute Kit Tier 3 (Inference Pipeline) abstracts the runtime — swapping is an implementation detail
 - `docs/intelligence/airs/inference.md` needs updating (GGML -> candle)
+
+## Amendment, 2026-09-29 (#184)
+
+"Phase 9+" under Consequences uses the numbering of the 2026-03-16 development plan, where Phase 9 was the AIRS Inference Engine. In the current plan (`docs/project/development-plan.md` §8) that phase is Phase 11 (AIRS Inference Engine), so the candle performance validation belongs to Phase 11. The decision itself is unchanged.

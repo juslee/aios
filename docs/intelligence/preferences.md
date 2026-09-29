@@ -138,7 +138,7 @@ flowchart TD
 Development plan phases (see [development-plan.md](../project/development-plan.md)):
 
 ```text
-Phase 6:   Preference System (basic)
+Phase 15:  Preference System (basic)
            ├── Preference data model (PreferenceId, PreferenceValue, PreferenceSource)
            ├── Schema registry and validation
            ├── Preference Store (get/set/persist in user/preferences/ space)
@@ -147,7 +147,7 @@ Phase 6:   Preference System (basic)
            ├── Capability gate (PreferenceRead, PreferenceSystemWrite, PreferenceAgentWrite)
            └── Audit logging (Changed, AccessDenied events)
 
-Phase 13:  Conversational preferences
+Phase 15:  Conversational preferences (Preference System)
            ├── NLU resolver (Conversation Bar → preference changes)
            ├── Preference history (change records, explain(), undo)
            ├── Conflict resolution (source precedence, tradeoff dialogs)
@@ -161,7 +161,7 @@ Phase 18:  Behavioral intelligence
            ├── Agent preferences (manifest declaration, scoped storage)
            └── Rate limiting and anomaly detection
 
-Phase 24:  Context and Settings UI
+Phase 34:  Context and Settings UI (Interface Kit)
            ├── Context Rule Engine (time-of-day, location, activity, device-presence)
            ├── Conversational rule creation ("dark mode after sunset")
            ├── Settings UI (visual preference browser, enterprise indicators)
@@ -174,7 +174,7 @@ Phase 30:  Full NLU coverage
            ├── Cross-preference dependency suggestions (AIRS §16.3)
            └── Contextual bandits for preference learning (§16.1)
 
-Phase 34:  Accessibility preferences
+Phase 38:  Accessibility preferences (Accessibility & Internationalization)
            ├── Screen reader integration
            ├── High contrast mode
            ├── Reduced motion

@@ -152,28 +152,28 @@ This separation is why the damage ceiling for a compromised AIRS resource orches
 
 ## 12. Implementation Order
 
-Development plan phases (see development-plan.md — not to be confused with boot phases):
+Development plan phases (see development-plan.md §8 — not to be confused with boot phases):
 
-```text
-Dev Phase 10a:  candle integration + model loading        → inference works
-Dev Phase 10b:  Compute scheduler + KV cache management   → concurrent sessions
-Dev Phase 10c:  Streaming output + conversation manager   → conversation bar works
-Dev Phase 10d:  Model registry + LRU eviction             → multiple models supported
-Dev Phase 10e:  Quantization selector + hardware tier      → auto-select best model for device
-Dev Phase 11a: Space Indexer + selective embedding         → semantic search (promoted objects)
-Dev Phase 11b: Context Engine + Attention Manager         → context-aware behavior
-Dev Phase 11c: Conversation bar UI integration            → user-facing AI ready
-Dev Phase 14a: Intent Verifier + Behavioral Monitor       → security layers 1 + 3
-Dev Phase 14b: Adversarial Defense + hint screening        → security layer 5 + hint input vector
-Dev Phase 14c: Tool Manager + Agent Lifecycle             → full agent framework
-Dev Phase 22a: Model residency policy + switching opt     → minimize model swap latency
-Dev Phase 22b: Dynamic model pool (grow/shrink on demand) → efficient RAM use
-Dev Phase 22b+: Resource orchestration security            → kernel AIRS monitor, fallback mode,
-                (security/resource path isolation,            resource directive provenance,
-                 agent hint screening, allocation opacity)    damage ceiling: DoS only, not breach
-Dev Phase 22c: Multi-model ensemble routing               → specialist routing (16+ GB)
-Dev Phase 22d: NPU integration via subsystem framework    → hardware-accelerated inference
-```
+| Dev phase | Work | Result |
+|---|---|---|
+| 11a (AIRS Inference Engine) | candle integration + model loading | inference works |
+| 11b (AIRS Inference Engine) | Compute scheduler + KV cache management | concurrent sessions |
+| 11c (AIRS Inference Engine), 18 (Conversation Manager) | Streaming output + conversation manager | conversation bar works |
+| 11d (AIRS Inference Engine) | Model registry + LRU eviction | multiple models supported |
+| 11e (AIRS Inference Engine) | Quantization selector + hardware tier | auto-select best model for device |
+| 13 (Space Indexer & Search) | Space Indexer + selective embedding | semantic search (promoted objects) |
+| 14 (Context Engine), 17 (Attention, Task Manager & Notification) | Context Engine + Attention Manager | context-aware behavior |
+| 18 (Conversation Manager) | Conversation bar UI integration | user-facing AI ready |
+| 12 (AIRS Intelligence Services), 20 (Intent Verification) | Intent Verifier + Behavioral Monitor | security layers 1 + 3 |
+| 14b | Adversarial Defense + hint screening | security layer 5 + hint input vector |
+| 12 (AIRS Intelligence Services) | Tool Manager + Agent Lifecycle | full agent framework |
+| 22a | Model residency policy + switching opt | minimize model swap latency |
+| 22b | Dynamic model pool (grow/shrink on demand) | efficient RAM use |
+| 22b+ | Resource orchestration security (security/resource path isolation, agent hint screening, allocation opacity) | kernel AIRS monitor, fallback mode, resource directive provenance, damage ceiling: DoS only, not breach |
+| 22c | Multi-model ensemble routing | specialist routing (16+ GB) |
+| 24 (GPU Compute & Accelerator Drivers) | NPU integration via subsystem framework | hardware-accelerated inference |
+
+Rows without a phase name (14b, 22a–22c) have no row in development-plan.md §8 yet; their numbers predate it.
 
 -----
 

@@ -50,39 +50,41 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 
 ## §16 Implementation Order
 
-### Preparatory Work (Phases 3–10)
+### Preparatory Work (Phases 3–12)
 
 | Phase | Adversarial Defense Preparatory | Dependency |
 |---|---|---|
-| 3 | Capability system (Layer 2 enforcement) | IPC complete |
-| 4 | Space storage with provenance chain (Layer 7) | Block engine |
+| 3 (IPC & Capability System) | Capability system (Layer 2 enforcement) | IPC complete |
+| 4 (Block Storage & Object Store) | Space storage with provenance chain (Layer 7) | Block engine |
 | 5 | Security zones (Layer 4) and blast radius (Layer 8) | Spaces + capabilities |
-| 10 | AIRS intelligence services framework | AIRS inference engine |
+| 12 (AIRS Intelligence Services) | AIRS intelligence services framework | AIRS inference engine |
 
 ### Phase 14: Agent Framework
 
 | Sub-phase | Steps | Dependency | Observable Result |
 |---|---|---|---|
-| 14a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 11 | Agent actions verified against declared intent; behavioral baselines established |
+| 14a | Intent Verifier + Behavioral Monitor (Layers 1, 3) | Phase 12 (AIRS Intelligence Services) | Agent actions verified against declared intent; behavioral baselines established |
 | **14b** | **Adversarial Defense + hint screening (Layer 5)** | **Phase 14a** | **Input screening pipeline operational; control/data separation enforced; hint screening active** |
 | 14c | Tool Manager + Agent Lifecycle | Phase 14b | Full agent framework operational with adversarial protection |
 
 ### Phase 14b Milestones
 
+Milestone IDs are assigned when the phase doc is written; the rows are in order.
+
 | Milestone | Steps | Target | Observable Result |
 |---|---|---|---|
-| M40 | ConstraintStore + ControlDataSeparator + data labeling | Week 1 | Agent instructions kernel-only; data labeled at IPC boundary |
-| M41 | InputScreener + InjectionDetector + ML classifier stub | Week 2 | Pattern-based injection detection; screening responses enforced |
-| M42 | OutputValidator + HintScreener + forensic logging | Week 3 | Exfiltration detection; hint screening active; full audit trail |
+| 1 | ConstraintStore + ControlDataSeparator + data labeling | Week 1 | Agent instructions kernel-only; data labeled at IPC boundary |
+| 2 | InputScreener + InjectionDetector + ML classifier stub | Week 2 | Pattern-based injection detection; screening responses enforced |
+| 3 | OutputValidator + HintScreener + forensic logging | Week 3 | Exfiltration detection; hint screening active; full audit trail |
 
 ### Post-Phase 14b
 
 | Phase | Enhancement |
 |---|---|
 | 14 | AIRS-dependent semantic injection detection (§11.1) |
-| 17 | Inspector adversarial event dashboard |
+| 21 (Security Architecture) | Inspector adversarial event dashboard |
 | 39 | Formal verification of control/data separation invariants (§13.4) |
-| 41 | AIRS adversarial red-teaming and adaptive pattern updates (§11.3, §11.5) |
+| 46 (AIRS Capability Intelligence) | AIRS adversarial red-teaming and adaptive pattern updates (§11.3, §11.5) |
 
 ---
 

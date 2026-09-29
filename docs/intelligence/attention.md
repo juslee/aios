@@ -1377,29 +1377,26 @@ pub enum PresentationCommand {
 
 ## 16. Implementation Order
 
-Development plan phases (see development-plan.md — not to be confused with boot phases):
+Development plan phases (see development-plan.md §8 — not to be confused with boot phases):
 
-```text
-Dev Phase 12a:  Attention Manager service          → intake queue, audit log
-Dev Phase 12b:  AIRS urgency assessment            → basic content analysis
-Dev Phase 12c:  Context filtering                  → context-aware thresholds
-Dev Phase 12d:  Status Strip badge                 → unseen count visible
-
-Dev Phase 16a:  Attention Panel UI                 → digest view with grouping
-Dev Phase 16b:  Interrupt overlay                  → urgent items break through
-Dev Phase 16c:  Toast notifications                → NextBreak delivery
-Dev Phase 16d:  Grouping and summarization         → AI-generated summaries
-
-Dev Phase 22a:  Auto-actionable items              → one-click actions
-Dev Phase 22b:  Relationship-aware priority        → identity integration
-Dev Phase 22c:  User controls                      → per-agent, per-person settings
-Dev Phase 22d:  Conversational configuration       → Conversation Bar integration
-
-Dev Phase 25:   Break detection                    → idle-based NextBreak delivery
-Dev Phase 28:   Pattern analysis                   → AIRS learns from engagement
-Dev Phase 31:   Cross-device attention sync        → Space Mesh attention state
-Dev Phase 35:   Attention analytics                → queryable history, trends
-```
+| Dev phase | Work | Result |
+|---|---|---|
+| 17 (Attention, Task Manager & Notification) | Attention Manager service | intake queue, audit log |
+| 17 (Attention, Task Manager & Notification) | AIRS urgency assessment | basic content analysis |
+| 17 (Attention, Task Manager & Notification) | Context filtering | context-aware thresholds |
+| 17 (Attention, Task Manager & Notification) | Status Strip badge | unseen count visible |
+| 17 (Attention, Task Manager & Notification) | Attention Panel UI | digest view with grouping |
+| 17 (Attention, Task Manager & Notification) | Interrupt overlay | urgent items break through |
+| 17 (Attention, Task Manager & Notification) | Toast notifications | NextBreak delivery |
+| 17 (Attention, Task Manager & Notification) | Grouping and summarization | AI-generated summaries |
+| 17 (Attention, Task Manager & Notification) | Auto-actionable items | one-click actions |
+| 19 (Identity & Credentials) | Relationship-aware priority | identity integration |
+| 17 (Attention, Task Manager & Notification) | User controls | per-agent, per-person settings |
+| 18 (Conversation Manager) | Conversational configuration | Conversation Bar integration |
+| 17 (Attention, Task Manager & Notification) | Break detection | idle-based NextBreak delivery |
+| 17 (Attention, Task Manager & Notification) | Pattern analysis | AIRS learns from engagement |
+| 42 (Multi-Device Sync & Pairing) | Cross-device attention sync | Space Mesh attention state |
+| 17 (Attention, Task Manager & Notification) | Attention analytics | queryable history, trends |
 
 -----
 

@@ -64,27 +64,27 @@ Intent verification and behavioral monitoring operate in tandem: Layer 1 checks 
 
 ## §14 Implementation Order
 
-Intent verification is implemented incrementally across multiple phases, building on the capability system (Phase 3) and AIRS inference engine (Phase 10).
+Intent verification is implemented incrementally across multiple phases, building on the capability system (Phase 3) and AIRS inference engine (Phase 11).
 
 | Phase | Component | Dependencies | Deliverable |
 |---|---|---|---|
-| **Phase 14a** | Core IntentVerifier + Behavioral Monitor | Phase 10 (AIRS inference), Phase 11 (context engine) | `IntentVerifier` struct, `DeclaredIntent`, `VerificationResult`, security path IPC, synchronous/async verification modes, `BehavioralMonitor` with baseline learning |
-| **Phase 14b** | Structured Intent Specs + Algorithmic Pre-Check | Phase 14a | `StructuredIntent`, `IntentPurpose` enum, algorithmic pre-filter (no LLM for ~80% of checks), `TemporalSpec` formulas |
-| **Phase 14c** | Adversarial Defense integration | Phase 14a | `InjectionClassifier`, control/data separation enforcement, multi-round adversarial self-testing for high-risk actions |
-| **Phase 16+** | IPC Taint Labels | Phase 3 (IPC), Phase 14a | `LabelSet` on IPC messages, kernel-enforced DIFC, declassification protocol |
-| **Phase 16+** | MTL Evaluator | Phase 14b | Compact in-kernel temporal logic evaluator, rules loaded from agent manifests |
-| **Phase 17+** | Capability Flow Graph | Phase 3 (capabilities) | Periodic delegation chain analysis, confused deputy detection, escalation path detection |
-| **Phase 42** | Agent Capability Intelligence | Phase 14a, Phase 41 (capability profiles) | 5-stage analysis pipeline, behavioral prediction, corpus comparison, profile suggestion |
+| **Phase 20a** (Intent Verification) | Core IntentVerifier + Behavioral Monitor | Phase 11 (AIRS Inference Engine), Phase 14 (Context Engine) | `IntentVerifier` struct, `DeclaredIntent`, `VerificationResult`, security path IPC, synchronous/async verification modes, `BehavioralMonitor` with baseline learning |
+| **Phase 20b** (Intent Verification) | Structured Intent Specs + Algorithmic Pre-Check | Phase 20a | `StructuredIntent`, `IntentPurpose` enum, algorithmic pre-filter (no LLM for ~80% of checks), `TemporalSpec` formulas |
+| **Phase 20c** (Intent Verification) | Adversarial Defense integration | Phase 20a | `InjectionClassifier`, control/data separation enforcement, multi-round adversarial self-testing for high-risk actions |
+| **Phase 20+** (Intent Verification) | IPC Taint Labels | Phase 3 (IPC), Phase 20a | `LabelSet` on IPC messages, kernel-enforced DIFC, declassification protocol |
+| **Phase 20+** (Intent Verification) | MTL Evaluator | Phase 20b | Compact in-kernel temporal logic evaluator, rules loaded from agent manifests |
+| **Phase 21+** (Security Architecture) | Capability Flow Graph | Phase 3 (capabilities) | Periodic delegation chain analysis, confused deputy detection, escalation path detection |
+| **Phase 46** (AIRS Capability Intelligence) | Agent Capability Intelligence | Phase 20a, Phase 45 (Composable Capability Profiles) | 5-stage analysis pipeline, behavioral prediction, corpus comparison, profile suggestion |
 
 ### Dependency Chain
 
 ```text
-Phase 3 (IPC + Caps) ──→ Phase 10 (AIRS) ──→ Phase 14a (Core Verifier)
-                                              ├──→ Phase 14b (Structured Intent)
-                                              ├──→ Phase 14c (Adversarial Defense)
-                                              ├──→ Phase 16+ (Taint Labels, MTL)
-                                              ├──→ Phase 17+ (Cap Flow Graph)
-                                              └──→ Phase 42 (Capability Intelligence)
+Phase 3 (IPC + Caps) ──→ Phase 11 (AIRS) ──→ Phase 20a (Core Verifier)
+                                              ├──→ Phase 20b (Structured Intent)
+                                              ├──→ Phase 20c (Adversarial Defense)
+                                              ├──→ Phase 20+ (Taint Labels, MTL)
+                                              ├──→ Phase 21+ (Cap Flow Graph)
+                                              └──→ Phase 46 (Capability Intelligence)
 ```
 
 ---
