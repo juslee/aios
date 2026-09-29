@@ -727,22 +727,38 @@ These two streams share the same **access interface** (`AuditRead` syscall, capa
 
 ### 6.2 UART Drain (Phase 3)
 
-The primary export path during development. The drain function is called from the timer tick handler (every 1 ms) or the idle loop:
+The primary export path during development. The drain function is called from the CPU 0 timer tick handler (every 4th 1 ms tick) and from the boot sequence to flush bursts. Abridged from `drain_logs` in `kernel/src/observability/mod.rs`:
 
 ```rust
-/// Drain log messages from all per-core rings to the UART.
-/// Prints up to `max_lines` lines per call to keep each call short; a head
-/// entry and its continuation print as one line (§2.7).
-pub fn drain_logs_to_uart(max_lines: usize) {
-    for core in 0..core_count() {
-        let ring = &LOG_RINGS[core];
-        let mut drained = 0;
-        while let Some(line) = ring.try_read_line() {
-            uart_format_line(&line);
-            drained += 1;
-            if drained >= max_lines {
+/// Drain the per-core log rings to the UART. One call prints at most
+/// DRAIN_BATCH_SIZE (16) lines across all rings, plus a pending entry and
+/// dropped-messages lines (§2.7), to keep each call short. A head entry and
+/// its continuation print as one line.
+pub fn drain_logs() {
+    let freq = read_cntfrq();
+    let mut w = UartWriter;
+    let mut drained = 0;
+    for (core, ring) in LOG_RINGS.iter().enumerate() {
+        // An entry popped while looking for a continuation that was not
+        // there. It cannot be put back, so it prints next, even past the limit.
+        let mut pending = None;
+        while drained < DRAIN_BATCH_SIZE || pending.is_some() {
+            // pop_entry prints the `[log] core N: K messages dropped` line
+            // first when the read position reaches the ring's drop_pos.
+            let Some(line) = next_log_line(&mut pending, || pop_entry(ring, core)) else {
                 break;
-            }
+            };
+            let entry = &line.first;
+            let (secs, micros) = timestamp_to_secs_micros(entry.timestamp, freq);
+            let mut line_storage = [0u8; MAX_LINE_LEN];
+            let mut lb = LineBuf::new(&mut line_storage);
+            let _ = write!(lb, "[{:4}.{:06}] [{}] {} {} ", secs, micros,
+                entry.core_id, entry.level.name(), entry.subsystem.name());
+            // Joined text, with `~<lost>` / `<lost>~` for a missing half.
+            let _ = line.write_message(&mut lb);
+            let line_len = lb.len();
+            emit_drained_line(&mut w, &line_storage[..line_len]);
+            drained += 1;
         }
     }
 }

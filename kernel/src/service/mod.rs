@@ -371,7 +371,8 @@ fn echo_client_entry() -> ! {
     crate::kinfo!(Ipc, "Echo client: triggering process_exit for pid=7");
     crate::task::process::process_exit(ProcessId(7), 0);
 
-    // After process exit, try the channel — it should fail or return stale data.
+    // After process exit, try the channel. process_exit marked both of its
+    // endpoints Dead (process 7 owns them), so the call returns EPIPE.
     let mut buf = [0u8; 64];
     let result2 = ipc::ipc_call(svc_ch, b"dead", &mut buf, 100);
     if result2 < 0 {
@@ -381,9 +382,9 @@ fn echo_client_entry() -> ! {
             result2
         );
     } else {
-        crate::kinfo!(
+        crate::kwarn!(
             Ipc,
-            "Echo client: stale reply ({} bytes) after death, channel draining",
+            "Echo client: unexpected reply ({} bytes) after service death",
             result2
         );
     }

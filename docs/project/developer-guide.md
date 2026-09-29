@@ -1022,7 +1022,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~404), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~405), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
 | 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~648), `block_engine.rs` (~783), `bench.rs` (~546) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
@@ -1041,8 +1041,8 @@ ipc/
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (706)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
+    mod.rs        (707)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (163)  # IpcSelect capability self-test
   notify.rs       (376)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
