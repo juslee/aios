@@ -60,7 +60,8 @@ jobs:
     # replay a pinned main commit, so the checkout needs full history.
     # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in
     # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
-    # no longer prove the shim is POSIX.
+    # no longer prove the shim is POSIX. The shim tests build through the real
+    # justfile `tools` recipe (with a fake cargo), so they need `just`.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -71,6 +72,7 @@ jobs:
           toolchain: nightly
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
       - run: cargo fmt --check -p aios-tools
       - run: cargo clippy -p aios-tools --all-targets -- -D warnings
       - run: cargo test -p aios-tools
