@@ -163,14 +163,16 @@ pub struct LogEntry {
     pub level: LogLevel,         // 1 byte
     /// Originating subsystem.
     pub subsystem: Subsystem,    // 1 byte
-    /// Flags: bit 0 = continuation (message truncated, next entry continues it).
+    /// Flags: bit 0 = continued (the next entry of the same ring continues
+    /// this message); bit 1 = continuation (this entry continues the
+    /// message of the entry before it).
     pub flags: u8,               // 1 byte
     /// Length of valid bytes in `message` (0..=48).
     pub msg_len: u8,             // 1 byte
     /// Reserved for future use.
     pub _reserved: [u8; 3],      // 3 bytes
-    /// Inline message buffer. Messages longer than 48 bytes are truncated
-    /// (with the continuation flag set if a second entry follows).
+    /// Inline message buffer. A message longer than 48 bytes continues in a
+    /// second entry (bits 0 and 1 of `flags`).
     /// UTF-8 encoded. Not null-terminated.
     pub message: [u8; 48],       // 48 bytes
 }                                // Total: 64 bytes
@@ -178,7 +180,13 @@ pub struct LogEntry {
 const _: () = assert!(core::mem::size_of::<LogEntry>() == 64);
 ```
 
-The 48-byte inline message covers the vast majority of kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 35 bytes. For the rare longer message, the continuation flag allows chaining two entries (96 bytes of message), which is sufficient for any kernel diagnostic.
+The 48-byte inline message covers most kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 35 bytes. A longer message takes two entries, 96 bytes of message in all:
+
+- The **head** entry has flags bit 0 set and holds the first 48 bytes. The **continuation** entry, the next entry of the same ring, has bit 1 set, holds the rest, and repeats the head's timestamp, core, level and subsystem.
+- Each part ends on a UTF-8 character boundary. A character that would straddle byte 48 moves whole into the continuation, so the head can hold fewer than 48 bytes.
+- A message longer than two entries keeps the first 95 bytes or fewer (again cut on a character boundary) and ends with `~`, which marks the dropped text.
+
+The splitting and joining logic is host-tested in `shared/src/observability.rs`: `LogMessageBuf` formats a message and builds its entries, and `next_log_line` joins them again on the drain side (§2.7).
 
 ### 2.5 Per-Core Ring Buffer
 
@@ -186,9 +194,10 @@ The 48-byte inline message covers the vast majority of kernel log messages. A ty
 /// Lock-free per-core log ring buffer.
 ///
 /// One instance per CPU core, indexed by core ID. The owning core is the
-/// sole producer (writes to `head`). The UART drain function is the sole
-/// consumer (reads from `tail`). This single-producer/single-consumer
-/// design requires no locks or atomic RMW — only Release/Acquire ordering.
+/// sole producer (writes to `head`), with IRQs masked for the whole push.
+/// The UART drain function is the sole consumer (reads from `tail`). This
+/// single-producer/single-consumer design requires no locks or atomic RMW —
+/// only Release/Acquire ordering.
 pub struct LogRing {
     /// Fixed-size entry array. Power-of-2 count for efficient masking.
     entries: [LogEntry; 256],       // 256 * 64 = 16 KiB per core
@@ -204,6 +213,8 @@ static LOG_RINGS: [LogRing; MAX_CORES] = [const { LogRing::INIT }; MAX_CORES];
 ```
 
 When the ring is full (head catches tail), new entries **overwrite** the oldest entries. This is intentional — log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock).
+
+`log_impl` formats the message with IRQs enabled, then masks IRQs (saving and restoring DAIF, so a caller that is already masked stays masked) while it reads the core ID and pushes to that core's ring. Masking keeps the owning core the only producer: an IRQ-context log call on the same core, such as the load balancer's, cannot run in the middle of a push, and the thread cannot migrate between reading the core ID and pushing. A head entry and its continuation are written first and then published together by one Release store of `head`, so the drain sees both or neither. An overwrite can still discard a head and keep its continuation, or leave a head without its continuation; the drain marks both cases (§2.7).
 
 ### 2.6 Logging Macros
 
@@ -249,7 +260,9 @@ A drain function, called periodically from the timer tick handler or idle loop, 
 
 The format is: `[seconds.micros] [core] LEVEL Subsys Message`. The timestamp is converted from CNTVCT_EL0 ticks to seconds using the timer frequency (62.5 MHz on QEMU).
 
-The drain function holds the UART lock for the duration of one batch (up to 16 entries per drain call). This bounds the maximum time the UART is held, preventing log storms from blocking other cores.
+The drain joins a head entry with its continuation into one line. If the entry after a head is not its continuation (same timestamp and core, bit 1 set), the continuation was overwritten: the drain prints the head followed by `~<lost>` and then prints the other entry on its own. A continuation whose head was overwritten prints as `<lost>~` followed by its text. No entry is dropped silently.
+
+The drain function holds the UART lock for the duration of one batch (up to 16 lines per drain call; a joined pair counts as one line). This bounds the maximum time the UART is held, preventing log storms from blocking other cores.
 
 ### 2.8 Early Boot Fallback
 
@@ -924,7 +937,7 @@ Phase 3 is the natural landing point for most infrastructure because the schedul
 | Decision | Options Considered | Chosen | Rationale |
 |---|---|---|---|
 | **Log ring topology** | (a) Global ring with spinlock; (b) Per-core lock-free rings | Per-core lock-free | No contention on hot path. UART drain reads all cores sequentially — latency is bounded by drain batch size, not ring contention. |
-| **Log message format** | (a) Binary structured fields; (b) Inline string in fixed-size entry | Inline string (48 bytes) in 64-byte entry | Strings are human-readable on UART without a decoder. Fixed-size entries avoid heap allocation and allow simple ring buffer indexing. 48 bytes covers 95%+ of kernel messages. |
+| **Log message format** | (a) Binary structured fields; (b) Inline string in fixed-size entry | Inline string (48 bytes) in 64-byte entry, with one continuation entry for longer messages | Strings are human-readable on UART without a decoder. Fixed-size entries avoid heap allocation and allow simple ring buffer indexing. 48 bytes covers most kernel messages; the continuation carries the rest up to 96 bytes. |
 | **Metric sharding** | (a) Single atomic per counter (contention under SMP); (b) Per-core sharded atomics | Per-core sharded for Counters; single atomic for Gauges | Counters are write-heavy (every alloc increments). Per-core sharding eliminates cache-line bouncing. Gauges are write-infrequent and represent a single system-wide value, so sharding adds complexity without benefit. |
 | **Trace record size** | (a) 16 bytes (minimal); (b) 32 bytes (comfortable); (c) 64 bytes (rich) | 32 bytes | Two per cache line. Enough for 8-byte timestamp + 1-byte core ID + 17-byte event payload + 6 bytes padding. 4096 entries per core = 128 KiB, fits comfortably alongside the 16 KiB log ring. |
 | **Userspace export** | (a) Syscall per metric read; (b) Shared memory page with seqlock | Shared memory page | Zero-syscall reads for Inspector. Kernel updates on timer tick (1 ms). Inspector polls at UI rate (1 Hz). The seqlock pattern is proven (Linux vDSO) and requires no kernel entry on the read path. |

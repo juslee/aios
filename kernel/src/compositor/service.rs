@@ -133,7 +133,7 @@ fn compositor_loop() -> ! {
         if let Err(e) = display_handoff(&mut state) {
             crate::kerror!(
                 Compositor,
-                "Compositor: display handoff failed ({:?}); display will remain owned by GPU Service",
+                "Compositor: display handoff failed ({:?}); GPU Service keeps display",
                 e
             );
         }

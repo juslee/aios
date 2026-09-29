@@ -279,7 +279,7 @@ Understanding what AIOS does *not* use helps set expectations:
 - **`std::` anything** -- No filesystem, no networking, no threads library, no `println!`. The kernel provides these services; it cannot depend on them. (This restriction applies to *kernel code only*; application developers will have full `std` access via AIOS runtimes in later phases.)
 - **`async`/`await`** -- The kernel scheduler is cooperative/preemptive at the thread level, not at the Rust async task level. There is no executor.
 - **Dynamic dispatch (mostly)** -- Outside the `Platform` trait, AIOS uses monomorphization (generics) rather than trait objects. This avoids vtable indirection on hot paths.
-- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `MsgBuf` with a 48-byte stack buffer).
+- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `LogMessageBuf` with a 96-byte stack buffer).
 - **`#[derive(Debug)]` on kernel structs** -- Debug formatting pulls in formatting machinery that increases binary size. Kernel structs implement display manually where needed.
 
 ### Recommended Reading
@@ -747,7 +747,7 @@ macro_rules! kinfo {
 Key design decisions:
 
 - The `const _LEVEL` binding makes the level comparison a compile-time constant. When `MIN_LOG_LEVEL` is `Info` and the call is `kdebug!(...)`, the entire macro expands to nothing -- zero runtime cost.
-- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 48-byte stack buffer inside `log_impl()`.
+- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 96-byte stack buffer (`LogMessageBuf`) inside `log_impl()`, which fills one 48-byte `LogEntry`, or a head entry and a continuation for a longer message (observability.md §2.4).
 - `#[macro_export]` places the macro at the crate root, so it is invoked as `crate::kinfo!()` from within the kernel crate.
 
 **Feature-gated trace macro** (from `observability/trace.rs`):

@@ -634,15 +634,15 @@ fn cap_denied_entry() -> ! {
         Ok(ch) => {
             crate::kwarn!(
                 Cap,
-                "Cap: UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
+                "UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
                 ch.0
             );
         }
         Err(e) if e == crate::syscall::IpcError::Eperm as i64 => {
-            crate::kinfo!(Cap, "Cap: unauthorized ChannelCreate -> EPERM (expected)");
+            crate::kinfo!(Cap, "unauthorized ChannelCreate -> EPERM (expected)");
         }
         Err(e) => {
-            crate::kwarn!(Cap, "Cap: unexpected error {} on ChannelCreate", e);
+            crate::kwarn!(Cap, "unexpected error {} on ChannelCreate", e);
         }
     }
 

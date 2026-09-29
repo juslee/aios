@@ -178,10 +178,9 @@ pub fn shared_memory_create(
 
     crate::kinfo!(
         Mm,
-        "shm_create: id={} size={:#x} pages={} order={} phys={:#x} pid={}",
+        "shm_create: id={} size={:#x} order={} phys={:#x} pid={}",
         idx,
         size_pages * PAGE_SIZE,
-        1 << order,
         order,
         base_phys,
         pid.0

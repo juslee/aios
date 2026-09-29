@@ -172,7 +172,7 @@ aios/
 │                         obsidian, justin:start, justin:brief, justin:doctor, justin:pause
 │                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
-│   ├── arch/aarch64/     boot.S, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
+│   ├── arch/aarch64/     boot.S, daif, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
 │   ├── platform/         Platform trait + per-board (qemu)
 │   ├── mm/               buddy / slab / pools / page tables / kmap / kaslr / asid / tlb / heap / uspace
 │   ├── sched/            scheduler, run queues, load balancer

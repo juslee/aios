@@ -10,7 +10,9 @@ use core::cell::UnsafeCell;
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::arch::aarch64::daif::with_irqs_masked;
 use crate::smp::MAX_CORES;
+use shared::observability::{next_log_line, LogMessageBuf};
 
 // Re-export observability types from shared crate.
 pub use shared::{LogEntry, LogLevel, Subsystem};
@@ -46,28 +48,54 @@ impl LogRing {
         tail: AtomicU32::new(0),
     };
 
-    /// Push a log entry. Overwrites oldest on full (advances tail).
-    fn push(&self, entry: LogEntry) {
+    /// Push one message: a head entry and, when the message is longer than
+    /// one entry, its continuation. Overwrites the oldest entries when full
+    /// (advances tail).
+    ///
+    /// Both entries are written before `head` moves, and `head` moves past
+    /// both with one Release store, so the drain sees the pair whole or not
+    /// at all. The caller masks IRQs (`log_impl`), so no other producer on
+    /// this core runs between the two writes.
+    fn push(&self, entry: LogEntry, continuation: Option<LogEntry>) {
+        let count = if continuation.is_some() { 2 } else { 1 };
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = head.wrapping_add(1);
+        let next_head = head.wrapping_add(count);
 
-        // If the ring is full, advance tail to discard the oldest entry.
+        // If the ring is full, advance tail to discard the oldest entries. A
+        // continuation left at the new tail without its head reaches the
+        // drain alone, which prints it with LOG_LOST_HEAD_MARK.
         let tail = self.tail.load(Ordering::Relaxed);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+            self.tail.store(
+                next_head.wrapping_sub(LOG_RING_SIZE as u32),
+                Ordering::Relaxed,
+            );
         }
 
-        let idx = (head & LOG_RING_MASK) as usize;
+        self.write_slot(head, entry);
+        if let Some(continuation) = continuation {
+            self.write_slot(head.wrapping_add(1), continuation);
+        }
 
-        // SAFETY: Single producer (owning core). UnsafeCell provides interior
-        // mutability. No concurrent writes to this index because head is only
-        // advanced by the owning core.
+        self.head.store(next_head, Ordering::Release);
+    }
+
+    /// Write `entry` into the slot for ring position `pos`. Producer only.
+    fn write_slot(&self, pos: u32, entry: LogEntry) {
+        let idx = (pos & LOG_RING_MASK) as usize;
+
+        // SAFETY: `idx` is masked to LOG_RING_SIZE, so the slot is in
+        // bounds, and the slot is not yet published (`head` has not moved
+        // past it), so the drain does not read it. `log_impl` keeps this
+        // core the ring's only writer: it pushes only to its own core's ring
+        // and masks IRQs for the whole push. UnsafeCell provides the
+        // interior mutability. A second writer on the ring (an unmasked IRQ
+        // producer, or a thread that migrated mid-push) would tear or lose
+        // entries.
         unsafe {
             let slot = (*self.entries.get()).as_mut_ptr().add(idx);
             core::ptr::write(slot, entry);
         }
-
-        self.head.store(next_head, Ordering::Release);
     }
 
     /// Pop the next entry for the drain consumer. Returns None if empty.
@@ -93,8 +121,11 @@ impl LogRing {
     }
 }
 
-// SAFETY: LogRing is accessed per-core (producer) and by drain (consumer).
-// The SPSC protocol ensures no data races.
+// SAFETY: LogRing is accessed per-core (producer: the owning core, with IRQs
+// masked by `log_impl`) and by drain (consumer). The SPSC protocol ensures
+// no data races: an entry is written before a Release store of `head`
+// publishes it. `log_impl` and `drain_logs` maintain this; a second
+// producer or consumer on one ring would tear or lose entries.
 unsafe impl Sync for LogRing {}
 
 /// Global log rings, one per core. BSS-allocated.
@@ -133,36 +164,12 @@ pub fn current_core_id() -> usize {
     (mpidr & 0xFF) as usize
 }
 
-/// Helper that formats into a fixed 48-byte buffer.
-struct MsgBuf {
-    buf: [u8; 48],
-    pos: usize,
-}
-
-impl MsgBuf {
-    fn new() -> Self {
-        Self {
-            buf: [0; 48],
-            pos: 0,
-        }
-    }
-}
-
-impl fmt::Write for MsgBuf {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let bytes = s.as_bytes();
-        let avail = 48 - self.pos;
-        let copy_len = bytes.len().min(avail);
-        self.buf[self.pos..self.pos + copy_len].copy_from_slice(&bytes[..copy_len]);
-        self.pos += copy_len;
-        Ok(())
-    }
-}
-
 /// Core logging function. Called by klog! macro.
 ///
 /// Before LogRingsReady: writes directly to UART (synchronous).
-/// After LogRingsReady: writes to per-core ring buffer (non-blocking).
+/// After LogRingsReady: writes to per-core ring buffer (non-blocking). A
+/// message longer than one entry takes a head entry and a continuation, and
+/// text past two entries is dropped and marked (observability.md §2.4).
 pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     use crate::boot_phase::{current_boot_phase, EarlyBootPhase};
 
@@ -175,25 +182,22 @@ pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
         return;
     }
 
-    // Write to per-core ring buffer.
-    let core = current_core_id().min(MAX_CORES - 1);
     let timestamp = read_cntvct();
 
-    let mut msg = MsgBuf::new();
+    // Format before masking IRQs: formatting is the slow part.
+    let mut msg = LogMessageBuf::new();
     let _ = fmt::write(&mut msg, args);
 
-    let entry = LogEntry {
-        timestamp,
-        core_id: core as u8,
-        level,
-        subsystem,
-        flags: 0,
-        msg_len: msg.pos as u8,
-        _reserved: [0; 3],
-        message: msg.buf,
-    };
-
-    LOG_RINGS[core].push(entry);
+    // Pick the ring and push with IRQs masked. An IRQ-context producer on
+    // this core (the load balancer, crash-fix ADR N6) then cannot run
+    // between the head entry and its continuation or tear either one, and
+    // the thread cannot migrate between reading the core id and pushing to
+    // that core's ring.
+    with_irqs_masked(|| {
+        let core = current_core_id().min(MAX_CORES - 1);
+        let (entry, continuation) = msg.entries(timestamp, core as u8, level, subsystem);
+        LOG_RINGS[core].push(entry, continuation);
+    });
 }
 
 /// Early boot log: format directly to UART, synchronous.
@@ -254,6 +258,10 @@ const DRAIN_BATCH_SIZE: usize = 16;
 /// Drain all per-core log rings and write formatted entries to UART.
 /// Also captures to BootLogBuffer for GPU text rendering when capture is enabled.
 /// Called from timer tick handler and boot-time flush. Must NOT call klog! (re-entrancy).
+///
+/// A head entry and its continuation print as one line and count as one
+/// against DRAIN_BATCH_SIZE. An entry of a message lost to a ring overwrite
+/// prints with LOG_LOST_TAIL_MARK or LOG_LOST_HEAD_MARK (see `next_log_line`).
 pub fn drain_logs() {
     use crate::arch::aarch64::uart::UartWriter;
     use core::fmt::Write;
@@ -264,46 +272,47 @@ pub fn drain_logs() {
 
     // Round-robin across all cores.
     for ring in LOG_RINGS.iter() {
-        while drained < DRAIN_BATCH_SIZE {
-            if let Some(entry) = ring.pop() {
-                let (secs, micros) = shared::timestamp_to_secs_micros(entry.timestamp, freq);
-
-                let msg_len = (entry.msg_len as usize).min(48);
-                let msg = core::str::from_utf8(&entry.message[..msg_len]).unwrap_or("<invalid>");
-
-                // Format to stack buffer for dual output (UART + boot log capture).
-                let mut line_storage = [0u8; MAX_LINE_LEN];
-                let mut lb = LineBuf::new(&mut line_storage);
-                let _ = write!(
-                    lb,
-                    "[{:4}.{:06}] [{}] {} {} {}",
-                    secs,
-                    micros,
-                    entry.core_id,
-                    entry.level.name(),
-                    entry.subsystem.name(),
-                    msg,
-                );
-                let line_len = lb.len();
-
-                // Write to UART. Use valid_up_to() on truncated UTF-8.
-                let line_str = match core::str::from_utf8(&line_storage[..line_len]) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // SAFETY: valid_up_to() is on a UTF-8 boundary per Utf8Error contract.
-                        unsafe { core::str::from_utf8_unchecked(&line_storage[..e.valid_up_to()]) }
-                    }
-                };
-                let _ = w.write_str(line_str);
-                let _ = w.write_str("\n");
-
-                // Capture to boot log buffer.
-                capture_to_boot_log(&line_storage[..line_len]);
-
-                drained += 1;
-            } else {
+        // An entry popped while looking for a continuation that was not
+        // there. It is printed next, even past the batch limit, because it
+        // cannot be put back.
+        let mut pending = None;
+        while drained < DRAIN_BATCH_SIZE || pending.is_some() {
+            let Some(line) = next_log_line(&mut pending, || ring.pop()) else {
                 break;
-            }
+            };
+            let entry = &line.first;
+            let (secs, micros) = shared::timestamp_to_secs_micros(entry.timestamp, freq);
+
+            // Format to stack buffer for dual output (UART + boot log capture).
+            let mut line_storage = [0u8; MAX_LINE_LEN];
+            let mut lb = LineBuf::new(&mut line_storage);
+            let _ = write!(
+                lb,
+                "[{:4}.{:06}] [{}] {} {} ",
+                secs,
+                micros,
+                entry.core_id,
+                entry.level.name(),
+                entry.subsystem.name(),
+            );
+            let _ = line.write_message(&mut lb);
+            let line_len = lb.len();
+
+            // Write to UART. A line cut at MAX_LINE_LEN inside a character
+            // prints up to the last whole character.
+            let line_str = match core::str::from_utf8(&line_storage[..line_len]) {
+                Ok(s) => s,
+                Err(e) => {
+                    core::str::from_utf8(&line_storage[..e.valid_up_to()]).unwrap_or_default()
+                }
+            };
+            let _ = w.write_str(line_str);
+            let _ = w.write_str("\n");
+
+            // Capture to boot log buffer.
+            capture_to_boot_log(&line_storage[..line_len]);
+
+            drained += 1;
         }
     }
 }

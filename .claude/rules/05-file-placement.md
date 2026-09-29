@@ -1,7 +1,7 @@
 # File Placement Rules
 
 ```text
-kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, trap, boot.S, linker.ld)
+kernel/src/arch/aarch64/       aarch64-specific code (uart, daif, exceptions, gic, timer, mmu, psci, trap, boot.S, linker.ld)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
 kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, pgtable, kmap, etc.)
 kernel/src/observability/      Structured logging, metrics, trace points
