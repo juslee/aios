@@ -30,12 +30,12 @@ flowchart TD
     FW["Platform firmware (edk2)"] --> POST["POST: DRAM init, PCI enumeration"]
     POST --> ESP_LOAD["Load BOOTAA64.EFI from ESP"]
     ESP_LOAD --> STUB["UEFI stub (uefi-stub/src/main.rs)<br/>runs in Boot Services, EL1"]
-    STUB --> MEM["GetMemoryMap() — enumerate RAM"]
-    STUB --> GOP["Locate GOP — acquire framebuffer"]
-    STUB --> CFG["LocateConfigTable() — find DTB or ACPI RSDP"]
-    STUB --> RNG["EFI_RNG_PROTOCOL — get 32-byte seed"]
     STUB --> ELF["Load kernel ELF from ESP, sync I/D caches over its text<br/>(uefi-stub/src/elf.rs, uefi-stub/src/cache.rs)"]
-    ELF --> EBS["ExitBootServices() — point of no return"]
+    ELF --> BI["Allocate and zero the BootInfo page"]
+    BI --> GOP["Locate GOP — acquire framebuffer"]
+    GOP --> CFG["Scan UEFI config tables — find DTB and ACPI RSDP"]
+    CFG --> RNG["EFI_RNG_PROTOCOL — get 32-byte seed"]
+    RNG --> EBS["ExitBootServices() — point of no return<br/>returns the final memory map, recorded in BootInfo"]
     EBS --> JUMP["Jump to kernel entry point<br/>x0 = BootInfo pointer (physical)"]
 ```
 
