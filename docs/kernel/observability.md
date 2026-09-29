@@ -205,6 +205,10 @@ pub struct LogRing {
     head: AtomicU32,
     /// Next read position (consumer, drain task only).
     tail: AtomicU32,
+    /// Messages dropped because the ring was full (producer only).
+    dropped: AtomicU32,
+    /// `dropped` as of the drain's last report (consumer only).
+    dropped_reported: AtomicU32,
 }
 
 /// Global log rings, one per core. BSS-allocated (zero-initialized at boot).
@@ -212,9 +216,9 @@ pub struct LogRing {
 static LOG_RINGS: [LogRing; MAX_CORES] = [const { LogRing::INIT }; MAX_CORES];
 ```
 
-When the ring is full (head catches tail), new entries **overwrite** the oldest entries. This is intentional — log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock).
+When the ring has no room for a new message (one entry, or two for a head and its continuation), the new message is **dropped** and counted in `dropped`; the entries already in the ring are kept. Log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock). Dropping rather than overwriting the oldest entries keeps the single-producer/single-consumer split: the producer never writes `tail` or a slot the drain may be reading, because it loads `tail` with Acquire (pairing with the drain's Release store) and writes only slots the drain has finished with. The drain prints the count (§2.7).
 
-`log_impl` formats the message with IRQs enabled, then masks IRQs (saving and restoring DAIF, so a caller that is already masked stays masked) while it reads the core ID and pushes to that core's ring. Masking keeps the owning core the only producer: an IRQ-context log call on the same core, such as the load balancer's, cannot run in the middle of a push, and the thread cannot migrate between reading the core ID and pushing. A head entry and its continuation are written first and then published together by one Release store of `head`, so the drain sees both or neither. An overwrite can still discard a head and keep its continuation, or leave a head without its continuation; the drain marks both cases (§2.7).
+`log_impl` formats the message before masking IRQs, in whatever IRQ state its caller has, then masks IRQs (saving and restoring DAIF, so a caller that is already masked stays masked) while it reads the core ID and pushes to that core's ring. Masking keeps the owning core the only producer: an IRQ-context log call on the same core, such as the load balancer's, cannot run in the middle of a push, and the thread cannot migrate between reading the core ID and pushing. A head entry and its continuation are written first and then published together by one Release store of `head`, so the drain sees both or neither, and a full ring drops the whole message, never half of it.
 
 ### 2.6 Logging Macros
 
@@ -260,9 +264,11 @@ A drain function, called periodically from the timer tick handler or idle loop, 
 
 The format is: `[seconds.micros] [core] LEVEL Subsys Message`. The timestamp is converted from CNTVCT_EL0 ticks to seconds using the timer frequency (62.5 MHz on QEMU).
 
-The drain joins a head entry with its continuation into one line. If the entry after a head is not its continuation (same timestamp and core, bit 1 set), the continuation was overwritten: the drain prints the head followed by `~<lost>` and then prints the other entry on its own. A continuation whose head was overwritten prints as `<lost>~` followed by its text. No entry is dropped silently.
+The drain joins a head entry with its continuation into one line. The producer never splits a pair, but a second drain call popping the same ring at the same time can take part of one (`drain_logs` has thread-context callers besides the CPU 0 timer tick). If the entry after a head is not its continuation (same timestamp and core, bit 1 set), the drain prints the head followed by `~<lost>` and then prints the other entry on its own. A continuation read without its head prints as `<lost>~` followed by its text.
 
-The drain function holds the UART lock for the duration of one batch (up to 16 lines per drain call; a joined pair counts as one line). This bounds the maximum time the UART is held, preventing log storms from blocking other cores.
+Messages dropped because a ring was full are not lost silently either: before draining a ring, the drain prints one `[log] core N: K messages dropped (ring full)` line for the drops since its last report.
+
+One drain call prints at most 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus an entry left pending by a missing continuation and one dropped-messages line per ring that dropped messages. The bound is on lines per call, which keeps the CPU 0 timer tick short; the UART itself has no lock.
 
 ### 2.8 Early Boot Fallback
 
@@ -722,16 +728,17 @@ These two streams share the same **access interface** (`AuditRead` syscall, capa
 The primary export path during development. The drain function is called from the timer tick handler (every 1 ms) or the idle loop:
 
 ```rust
-/// Drain log entries from all per-core rings to the UART.
-/// Reads up to `max_entries` per call to bound UART hold time.
-pub fn drain_logs_to_uart(max_entries: usize) {
+/// Drain log messages from all per-core rings to the UART.
+/// Prints up to `max_lines` lines per call to keep each call short; a head
+/// entry and its continuation print as one line (§2.7).
+pub fn drain_logs_to_uart(max_lines: usize) {
     for core in 0..core_count() {
         let ring = &LOG_RINGS[core];
         let mut drained = 0;
-        while let Some(entry) = ring.try_read() {
-            uart_format_entry(&entry);
+        while let Some(line) = ring.try_read_line() {
+            uart_format_line(&line);
             drained += 1;
-            if drained >= max_entries {
+            if drained >= max_lines {
                 break;
             }
         }
@@ -739,7 +746,7 @@ pub fn drain_logs_to_uart(max_entries: usize) {
 }
 ```
 
-The drain function formats each entry as a human-readable line (see §2.7) and writes it to the UART. Under normal load, the drain keeps up with log production. Under burst load, the ring buffer absorbs the burst and the drain catches up over subsequent ticks.
+The drain function formats each message (a single entry, or a head entry joined with its continuation) as a human-readable line (see §2.7) and writes it to the UART. Under normal load, the drain keeps up with log production. Under burst load, the ring buffer absorbs the burst and the drain catches up over subsequent ticks; a burst larger than the ring is dropped and counted (§2.5).
 
 ### 6.3 Kernel Info Page (Phase 3)
 
@@ -1034,13 +1041,13 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 ### 10.6 Semantic Log Compression
 
-**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, important log entries are overwritten within seconds. The log ring treats all entries as equally important — a routine "timer tick" entry displaces a diagnostic "IPC timeout on channel 7" entry.
+**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, the ring fills within seconds and important log entries are dropped. The log ring treats all entries as equally important — a routine "timer tick" entry takes the slot that a later diagnostic "IPC timeout on channel 7" entry needed.
 
 **AI solution.** AIRS learns normal log patterns from historical data. Common sequences — such as "IPC blocked on channel X" followed by "IPC unblocked on channel X" — are compressed to a single summary entry. Deviations from learned patterns are flagged and preserved at higher priority: "IPC blocked on channel 7 but unblocked by TIMEOUT instead of reply" is more informative than the two routine entries it replaces.
 
 **Effect.** 10× more effective use of fixed-size log rings. The ring holds 10× as many semantically distinct events because routine patterns are compressed. Anomalous entries are never displaced by routine entries.
 
-**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, overwrite-on-full, no pattern awareness.
+**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, drop-on-full, no pattern awareness.
 
 **Research.** KernelAGI [R6] proposes pattern-aware kernel logging as part of its ML subsystem. eBPF [R10] enables in-kernel log filtering and aggregation, which AIOS extends with learned pattern recognition.
 

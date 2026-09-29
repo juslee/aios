@@ -15,12 +15,16 @@
 #[inline]
 pub fn with_irqs_masked<R>(f: impl FnOnce() -> R) -> R {
     let saved: u64;
-    // SAFETY: Reading DAIF and setting DAIF.I are permitted at EL1, where all
-    // kernel code runs; the kernel never runs at EL0. Masking IRQs cannot
-    // break an invariant another context relies on. The asm is not marked
-    // `nomem`, so it is a compiler barrier: memory accesses in `f` cannot be
-    // moved before the mask. If this ran at EL0 the MRS/MSR would trap as an
-    // undefined instruction.
+    // SAFETY: Reading DAIF and setting DAIF.I are permitted at EL1. Only
+    // kernel code calls this, and all kernel code runs at EL1: EL0 code
+    // enters the kernel only through the exception vectors, which run at
+    // EL1. Masking IRQs cannot break an invariant another context relies on.
+    // The asm is not marked `nomem`, so it is a compiler barrier: memory
+    // accesses in `f` cannot be moved before the mask. At EL0 with
+    // SCTLR_EL1.UMA = 0 (edk2's value, which the kernel keeps) the MRS/MSR
+    // would trap to EL1 as a system-register access (EC 0x18), which
+    // `lower_el_sync_handler` reports as an unknown EL0 exception before
+    // halting the CPU.
     unsafe {
         core::arch::asm!(
             "mrs {saved}, DAIF",

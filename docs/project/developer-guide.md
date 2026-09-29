@@ -236,6 +236,8 @@ impl LogRing {
         entries: UnsafeCell::new([LogEntry::ZERO; LOG_RING_SIZE]),
         head: AtomicU32::new(0),
         tail: AtomicU32::new(0),
+        dropped: AtomicU32::new(0),
+        dropped_reported: AtomicU32::new(0),
     };
 }
 
@@ -396,52 +398,58 @@ const PTE_UXN: u64 = 1 << 54;        // Unprivileged execute-never
 
 ### 2.3 Unsafe Pattern: Lock-free SPSC Rings
 
-Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking:
+Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking. Abridged from `kernel/src/observability/mod.rs`, which has the full `// SAFETY:` comments:
 
 ```rust
 pub struct LogRing {
     entries: UnsafeCell<[LogEntry; LOG_RING_SIZE]>,
     head: AtomicU32,
     tail: AtomicU32,
+    dropped: AtomicU32,          // producer only
+    dropped_reported: AtomicU32, // consumer only
 }
 
 impl LogRing {
-    fn push(&self, entry: LogEntry) {
+    /// Push a head entry and, for a message longer than one entry, its
+    /// continuation. `log_impl` calls this inside `with_irqs_masked`.
+    fn push(&self, entry: LogEntry, continuation: Option<LogEntry>) {
+        let count = if continuation.is_some() { 2 } else { 1 };
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = head.wrapping_add(1);
+        let next_head = head.wrapping_add(count);
 
-        // If the ring is full, advance tail to discard the oldest entry.
-        let tail = self.tail.load(Ordering::Relaxed);
+        // Acquire pairs with the Release store of `tail` in `pop`.
+        let tail = self.tail.load(Ordering::Acquire);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+            // Full: drop the message and count it; never overwrite.
+            let dropped = self.dropped.load(Ordering::Relaxed);
+            self.dropped.store(dropped.wrapping_add(1), Ordering::Relaxed);
+            return;
         }
 
-        let idx = (head & LOG_RING_MASK) as usize;
-
-        // SAFETY: Single producer (owning core). UnsafeCell provides interior
-        // mutability. No concurrent writes to this index because head is only
-        // advanced by the owning core.
-        unsafe {
-            let slot = (*self.entries.get()).as_mut_ptr().add(idx);
-            core::ptr::write(slot, entry);
+        // write_slot is the unsafe slot write (SAFETY comment in the source).
+        self.write_slot(head, entry);
+        if let Some(continuation) = continuation {
+            self.write_slot(head.wrapping_add(1), continuation);
         }
 
+        // One Release store publishes the head entry and its continuation.
         self.head.store(next_head, Ordering::Release);
     }
 }
 
-// SAFETY: LogRing is accessed per-core (producer) and by drain (consumer).
-// The SPSC protocol ensures no data races.
+// SAFETY (abridged): each field has one writer. The producer (`log_impl` on
+// the owning core, IRQs masked) writes `head`, `dropped` and the free slots;
+// the consumer (`drain_logs`) writes `tail` and `dropped_reported`.
 unsafe impl Sync for LogRing {}
 ```
 
 **Key design decisions:**
 
-- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array. The producer (logging code on the owning core) never races with other producers -- there is exactly one writer per ring.
+- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array, and there is exactly one writer per ring. That holds because `log_impl` reads the core ID and pushes inside `with_irqs_masked`: an IRQ-context log call on the same core (such as the load balancer's, crash-fix ADR N6) would otherwise be a second producer, and a thread could migrate between reading its core ID and pushing.
 
-- **Overwrite-on-full**: When the ring fills, the oldest entry is discarded (tail advanced). This prevents logging from blocking kernel execution. Losing old log entries is acceptable; blocking the scheduler is not.
+- **Drop-on-full**: When the ring has no room for a message (one entry, or two for a head and its continuation), the message is dropped and counted, and the next `drain_logs` call prints the count. Dropping instead of overwriting keeps the producer off `tail` and off slots the drain may be reading, and logging still never blocks kernel execution.
 
-- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`. This guarantees the entry data written before the head advance is visible to the consumer when it reads the new head value.
+- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`, so the entries written before the head advance are visible to the consumer when it reads the new head value. `tail.store(Release)` in `pop` pairs with `tail.load(Acquire)` in `push`, so the producer reuses a slot only after the consumer has finished reading it.
 
 - **No lock needed**: The SPSC invariant (one producer, one consumer) eliminates the need for a mutex. Contrast this with `MessageRing` in `ipc/mod.rs`, which uses `spin::Mutex` because multiple threads may send to the same channel.
 
@@ -1010,9 +1018,9 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~783), `bench.rs` (~549) |
-| > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~404), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~648), `block_engine.rs` (~783), `bench.rs` (~546) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
 
@@ -1024,17 +1032,17 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  mod.rs          (509)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (702)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (706)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (163)  # IpcSelect capability self-test
   notify.rs       (376)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (651)  # Shared memory regions
+  shmem.rs        (648)  # Shared memory regions
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1052,6 +1060,7 @@ sched/
 
 ```rust
 // From kernel/src/arch/aarch64/mod.rs
+pub mod daif;
 pub mod exceptions;
 pub mod gic;
 pub mod mmu;
@@ -1577,7 +1586,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 573+ host-side tests pass |
+| **Test** | `just test` | All 590+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |

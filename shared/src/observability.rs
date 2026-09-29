@@ -96,12 +96,12 @@ pub const LOG_FLAG_CONTINUATION: u8 = 1 << 1;
 /// bytes: the text after it was dropped.
 pub const LOG_OVERFLOW_MARK: u8 = b'~';
 
-/// Printed after a head entry whose continuation was lost (overwritten in a
-/// full ring before the drain read it).
+/// Printed after a head entry whose continuation was not the next entry the
+/// drain read (for example, another drain call popped it).
 pub const LOG_LOST_TAIL_MARK: &str = "~<lost>";
 
-/// Printed before a continuation whose head entry was lost (overwritten in a
-/// full ring before the drain read it).
+/// Printed before a continuation that the drain read without its head entry
+/// (for example, another drain call popped the head).
 pub const LOG_LOST_HEAD_MARK: &str = "<lost>~";
 
 /// A single log entry in the kernel ring buffer.
@@ -340,11 +340,10 @@ impl core::fmt::Write for LogMessageBuf {
 pub enum LogLineStatus {
     /// A single entry, or a head joined with its continuation.
     Whole,
-    /// A head entry whose continuation was not the next entry of the ring:
-    /// it was overwritten before the drain read it.
+    /// A head entry whose continuation was not the next entry the drain
+    /// read.
     TailLost,
-    /// A continuation whose head entry was overwritten before the drain
-    /// read it.
+    /// A continuation that the drain read without its head entry.
     HeadLost,
 }
 
@@ -827,7 +826,7 @@ mod tests {
     }
 
     #[test]
-    fn drain_marks_a_continuation_whose_head_was_overwritten() {
+    fn drain_marks_a_continuation_whose_head_is_missing() {
         let mut ring = ring_entries(&ascii(60));
         ring.remove(0);
         ring.extend(ring_entries("next"));

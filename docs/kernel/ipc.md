@@ -423,9 +423,10 @@ IPC channels are the communication primitive. A channel is a bidirectional pipe 
 /// `waiting_receiver` and `pending_caller` below.
 pub struct Channel {
     id: ChannelId,
-    /// State of each endpoint. When a process dies, the kernel sets its
-    /// endpoint to Dead. Any IpcCall/IpcSend/IpcRecv on the peer endpoint
-    /// returns EPIPE. Any blocked IpcCall on the peer unblocks with EPIPE.
+    /// State of each endpoint. When a process dies, `process_exit` sets
+    /// both endpoints of each channel it owns an endpoint of to Dead, and
+    /// wakes the channel's blocked receiver and pending caller with EPIPE.
+    /// Any later IpcCall/IpcSend/IpcRecv on the channel returns EPIPE.
     /// This is the IPC equivalent of TCP RST — immediate, unambiguous.
     state_a: EndpointState,
     state_b: EndpointState,
