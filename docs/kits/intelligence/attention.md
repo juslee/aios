@@ -31,7 +31,7 @@ messaging (use IPC channels) or for persistent data storage (use the
 use aios_attention::{
     AttentionManager, AttentionItem, AttentionContent,
     NotificationFilter, FocusSession, AttentionBudget,
-    DeliveryMode, Urgency,
+    Urgency,
 };
 use aios_capability::CapabilityHandle;
 
@@ -75,9 +75,9 @@ pub trait AttentionManager {
         cap: &CapabilityHandle,
     ) -> Result<(), AttentionError>;
 
-    /// Query the current delivery mode that would be applied to a
+    /// Query the delivery mode (urgency) that would be applied to a
     /// hypothetical item. Useful for deciding whether to post at all.
-    fn current_delivery_mode(&self) -> DeliveryMode;
+    fn current_delivery_mode(&self) -> Urgency;
 
     /// Query whether the user is currently in a focus session.
     fn is_focus_active(&self) -> bool;
@@ -119,8 +119,10 @@ pub enum AttentionCategory {
     Social { interaction_type: String },
 }
 
-/// How the Attention Manager delivers an item to the user.
-pub enum DeliveryMode {
+/// AI-assessed urgency (set by AIRS, never by the posting agent). The
+/// urgency is also how the Attention Manager delivers the item to the user
+/// (attention.md §3.1).
+pub enum Urgency {
     /// Show immediately as an interrupt overlay. Reserved for critical items.
     Interrupt,
     /// Show as a toast when the user next takes a break (input idle > 3s).
@@ -129,18 +131,6 @@ pub enum DeliveryMode {
     Digest,
     /// Log silently. Visible in the Attention Panel but no notification.
     Silent,
-}
-
-/// AI-assessed urgency level (set by AIRS, never by the posting agent).
-pub enum Urgency {
-    /// Life-safety, system failure, or critical-person message.
-    Critical,
-    /// Important but not emergency. Timely delivery expected.
-    High,
-    /// Standard notification. Delivery can wait for a natural break.
-    Medium,
-    /// Low importance. Batch into digest or log silently.
-    Low,
 }
 
 /// Per-agent and system-wide notification filter rules.
@@ -263,7 +253,7 @@ fn notify_new_message(
 ### Checking focus state before posting
 
 ```rust
-use aios_attention::{AttentionManager, DeliveryMode};
+use aios_attention::{AttentionManager, Urgency};
 
 fn post_if_appropriate(
     attention: &dyn AttentionManager,
@@ -272,7 +262,7 @@ fn post_if_appropriate(
 ) -> Result<Option<AttentionId>, AttentionError> {
     // Check if notifications would even be shown right now
     match attention.current_delivery_mode() {
-        DeliveryMode::Silent => {
+        Urgency::Silent => {
             // User is in deep focus -- skip low-importance items entirely
             Ok(None)
         }
@@ -296,7 +286,7 @@ fn start_coding_session(
 ) -> Result<FocusId, AttentionError> {
     focus.start(
         FocusConfig {
-            breakthrough_threshold: Urgency::Critical,
+            breakthrough_threshold: Urgency::Interrupt,
             duration: Some(core::time::Duration::from_secs(2 * 3600)),
             allowed_agents: vec![], // Only critical items break through
             label: "Coding session".into(),
@@ -328,7 +318,7 @@ fn auto_focus_on_deep_work(
                 // Auto-enter focus when deep work is detected
                 let _ = focus.start(
                     FocusConfig {
-                        breakthrough_threshold: Urgency::High,
+                        breakthrough_threshold: Urgency::NextBreak,
                         duration: None, // Ends when context transitions
                         allowed_agents: vec![],
                         label: "Auto-focus (deep work detected)".into(),
@@ -359,10 +349,10 @@ fn assess_urgency(
     if !airs_available {
         // Fallback: use category-based heuristics
         return match &content.category {
-            AttentionCategory::Alert { severity: AlertSeverity::Critical } => Urgency::Critical,
-            AttentionCategory::Alert { .. } => Urgency::High,
-            AttentionCategory::Reminder { .. } => Urgency::Medium,
-            _ => Urgency::Low,
+            AttentionCategory::Alert { severity: AlertSeverity::Critical } => Urgency::Interrupt,
+            AttentionCategory::Alert { .. } => Urgency::NextBreak,
+            AttentionCategory::Reminder { .. } => Urgency::NextBreak,
+            _ => Urgency::Digest,
         };
     }
 
@@ -372,7 +362,7 @@ fn assess_urgency(
     // - Does the content mention deadlines, emergencies, or action items?
     // - Is this related to the user's current task?
     // This logic runs inside the Attention Manager, not in agent code.
-    Urgency::Medium // placeholder
+    Urgency::NextBreak // placeholder
 }
 ```
 
@@ -447,8 +437,8 @@ The Attention Kit operates in two modes depending on AIRS availability:
 
 **Without AIRS (heuristic fallback):**
 
-- Category-based urgency: `Alert(Critical)` maps to `Urgency::Critical`, messages
-  default to `Urgency::Medium`, social items default to `Urgency::Low`.
+- Category-based urgency: `Alert(Critical)` maps to `Urgency::Interrupt`, messages
+  default to `Urgency::NextBreak`, social items default to `Urgency::Digest`.
 - Simple grouping: items from the same agent with the same category are grouped by
   count. No AI summarization.
 - No relationship scoring: all senders are treated equally.
@@ -464,7 +454,7 @@ fn has_ai_triage(attention: &dyn AttentionManager) -> bool {
     // Without AIRS, the manager falls back to category-based heuristics.
     // There is no explicit API to check; agents should always post and
     // let the Attention Manager decide. This check is informational only.
-    attention.current_delivery_mode() != DeliveryMode::Silent
+    attention.current_delivery_mode() != Urgency::Silent
         || attention.is_focus_active()
 }
 ```

@@ -238,8 +238,8 @@ fn should_deliver_notification(
     // During deep work with low interruptibility, only urgent items
     // break through. During idle, everything is delivered.
     match state.interruptibility {
-        i if i < 0.2 => item.urgency == Urgency::Critical,
-        i if i < 0.5 => item.urgency >= Urgency::High,
+        i if i < 0.2 => item.urgency == Urgency::Interrupt,
+        i if i < 0.5 => matches!(item.urgency, Urgency::Interrupt | Urgency::NextBreak),
         _ => true,
     }
 }
