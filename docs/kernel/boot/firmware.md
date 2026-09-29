@@ -28,7 +28,7 @@ allocate each PT_LOAD segment at its physical address,
 copy it, clean its text to PoU, invalidate I-cache`"]
     LOAD_ELF --> BOOTINFO["Allocate and zero the BootInfo page"]
     BOOTINFO --> GOP["Acquire framebuffer via GOP"]
-    GOP --> DTB["Acquire device tree or ACPI tables"]
+    GOP --> DTB["Scan UEFI config tables for the device tree and ACPI RSDP"]
     DTB --> RNG["Request RNG seed from UEFI for KASLR"]
     RNG --> EBS["`uefi::boot::exit_boot_services:
 GetMemoryMap() for the final map and its key,

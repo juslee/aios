@@ -36,5 +36,5 @@ The stub allocated the whole kernel image as `EfiLoaderData`. DxeCore applies `P
 - `uefi-stub/src/elf.rs` gives each PT_LOAD segment its own allocation. PF_X segments are `LOADER_CODE` and all others `LOADER_DATA`. Segments must be page-aligned, and the entry point must be in a PF_X segment. Keep linker.ld's `ALIGN(4096)` boundaries between text, rodata and data.
 - To test against strict NX locally, extract `usr/share/qemu-efi-aarch64/QEMU_EFI.fd` from `qemu-efi-aarch64_2025.11-3ubuntu7.2_all.deb` on archive.ubuntu.com and run `AIOS_EDK2_FW=<path> just run`.
 - Known follow-ups:
-  - Fixed in #197: the stub did no I/D cache maintenance after copying the kernel text. TCG does not model caches, but KVM and real Cortex-A cores need it. `uefi-stub/src/cache.rs` now cleans the text to the Point of Unification and invalidates the I-cache before the jump.
+  - The stub did no I/D cache maintenance after copying the kernel text. TCG does not model caches, but KVM and real Cortex-A cores need it. Fixed by #197: `uefi-stub/src/cache.rs` now cleans the text to the Point of Unification and invalidates the I-cache before the jump.
   - linker.ld placed the 128 KiB boot stack outside every PT_LOAD segment, so the firmware never reserved it. Fixed by #198: the stack is now a `.stack (NOLOAD)` section inside the RW segment.
