@@ -30,7 +30,7 @@ As RAM grows, AIRS evolves from single-model switching to multi-model concurrenc
 The current design. One primary model loaded at a time. Specialist tasks require eviction and reload. Acceptable on 8 GB, limiting on 4 GB.
 
 **Phase 2 (16 GB) — Primary + specialists:**
-Primary model stays resident. 1-2 small specialists (code, embedding) loaded alongside. Most tasks are handled without any model switching. Vision is the exception: LLaVA 1.5 7B (~4.5 GB) does not fit next to the primary model in the 8 GB pool, so a vision task still swaps with the primary model ([model-registry.md §4.4](./model-registry.md)) until the 32 GB tier. AIRS routes based on task type.
+Primary model stays resident. 1-2 small specialists (code, embedding) loaded alongside. Most tasks are handled without any model switching. Vision is the exception: LLaVA 1.5 7B (~4.5 GB) does not fit next to the primary model in the 8 GB pool, so a vision task still swaps with the primary model ([model-registry.md §4.4](./model-registry.md)) until the model pool grows past its current 8 GB cap, as §11.1 projects for 32 GB devices. AIRS routes based on task type.
 
 **Phase 3 (32+ GB) — Model ensemble:**
 Multiple full-size models loaded simultaneously. AIRS routes each request to the best specialist. Intent verification uses a dedicated security model. Code generation uses a code-tuned model. Vision tasks use a multimodal model. Conversation uses a general-purpose model. Zero switching latency for any task type.
@@ -71,7 +71,7 @@ More RAM directly enables longer conversations and richer context:
 | 16 GB | 32K-128K tokens | Extended conversations, full documents, rich system context |
 | 32 GB+ | 128K-256K+ tokens | Entire codebases in context, book-length documents, persistent agent memory |
 
-Longer context windows reduce the need for context compression (§5.8 in [intelligence-services.md](./intelligence-services.md)) and allow system services (intent verifier, behavioral monitor, context engine) to maintain richer working memory, improving their accuracy.
+Longer context windows reduce the need for context compression (§5.8 in [intelligence-services.md](./intelligence-services.md)) and allow system services (intent verifier, behavioral monitor) to maintain richer working memory, improving their accuracy.
 
 ### 11.4 NPU and Accelerator Integration
 

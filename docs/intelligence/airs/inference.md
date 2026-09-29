@@ -297,6 +297,10 @@ pub struct ComputeScheduler {
     /// Scheduling policy configuration.
     policy: SchedulingPolicy,
 
+    /// The AIRS model registry (model-registry.md §4.1). Device scoring reads
+    /// the requested model's `ModelEntry` for its quantization format.
+    models: ModelRegistryHandle,
+
     /// Device scoring cache — refreshed every scheduling cycle.
     /// Avoids repeated registry queries within a single scheduling decision.
     device_scores: Vec<(ComputeDeviceId, DeviceScore)>,
@@ -391,7 +395,10 @@ impl ComputeScheduler {
         device: &dyn ComputeDevice,
         request: &InferenceRequest,
     ) -> DeviceScore {
-        let format_support = if device.capabilities().quant_formats.contains(request.quant_format) {
+        // The requested model's format, from its registry entry
+        // (`request.model` is None for the default model).
+        let quant = self.models.resolve(request.model).quantization;
+        let format_support = if device.capabilities().quant_formats.contains(QuantFormatSet::from(quant)) {
             1.0
         } else {
             0.0  // Hard disqualification
@@ -659,7 +666,6 @@ When multiple sessions use the same system prompt (common for AIRS intelligence 
 ```text
 Session A (Intent Verifier):  [shared system prompt KV | session-specific KV]
 Session B (Behavioral Mon):   [shared system prompt KV | session-specific KV]
-Session C (Context Engine):   [shared system prompt KV | session-specific KV]
                                        ↑
                               One copy in memory (COW)
 ```

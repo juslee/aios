@@ -22,7 +22,8 @@ Agent action (syscall)
   |       Result: Allowed / Denied
   |       If Denied --> EPERM (Layer 1 never invoked)
   |
-  +---> Layer 1: Intent Verification (AIRS, <10ms)
+  +---> Layer 1: Intent Verification (AIRS, <10ms single-round on NPU;
+  |       per-path deadlines in pipeline.md §10.2)
   |       Result: Aligned / Suspicious / Violation
   |
   +---> Combined enforcement:

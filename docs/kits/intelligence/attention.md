@@ -318,7 +318,9 @@ fn auto_focus_on_deep_work(
                 // Auto-enter focus when deep work is detected
                 let _ = focus.start(
                     FocusConfig {
-                        breakthrough_threshold: Urgency::NextBreak,
+                        // Deep work: only Interrupt breaks through, as in
+                        // Focus mode (intelligence/attention.md §5.1)
+                        breakthrough_threshold: Urgency::Interrupt,
                         duration: None, // Ends when context transitions
                         allowed_agents: vec![],
                         label: "Auto-focus (deep work detected)".into(),

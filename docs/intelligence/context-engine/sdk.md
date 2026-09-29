@@ -53,11 +53,23 @@ if context.work_engagement > 0.8 {
 Agents post attention items through the Attention Manager with the same `AttentionRequest` as [attention.md](../attention.md) §9.1. The agent describes the content only; it has no way to declare urgency. The Attention Manager assesses urgency from the content, sender, context and history (attention.md §4.3 is the authoritative urgency assignment model).
 
 ```rust
+let standup = SystemTime::now() + Duration::from_secs(5 * 60);
 ctx.attention().post(AttentionRequest {
-    content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
+    content: AttentionContent::Schedule {
+        event_name: "Team Standup".into(),
+        time: standup,
+        change: None,
+    },
     // No urgency field: the Attention Manager assesses urgency (attention.md §4.3)
-    auto_action: Some(ProposedAction::OpenCalendar),
-    ..Default::default()
+    expiry: Some(standup),
+    auto_action: Some(ProposedAction {
+        description: "Open Team Standup in Calendar".into(),
+        action: ActionType::Open {
+            target: OpenTarget::Space("calendar/team-standup".into()),
+        },
+        required_capabilities: vec![],
+        reversible: true,
+    }),
 }).await?;
 ```
 

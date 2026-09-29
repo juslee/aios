@@ -231,8 +231,8 @@ Phase 11 + Phase 46 (AIRS Capability Intelligence) ──► Tier 2 intelligence
 
 ### What Ships When
 
-- **After Phase 12** (AIRS Intelligence Services): Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Audit trail exists. Users see anomalies in Inspector.
-- **After Phase 21** (Security Architecture): Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof.
+- **After Phase 12** (AIRS Intelligence Services): Agents are behaviorally monitored with statistical detection. Hard limits enforced. Escalation works. Anomalies are recorded in the audit trail.
+- **After Phase 21** (Security Architecture): Behavioral state byte integrated into IPC fast path. Zero trust enforcement stack complete. AIRS self-monitoring active. Provenance chain tamper-proof. Users see anomalies in the Inspector, which ships in this phase ([inspector.md](../applications/inspector.md) §16).
 - **After Phase 46** (AIRS Capability Intelligence): Agent profiling compares predicted with observed behavior. Full semantic analysis. Cross-agent correlation catches coordinated attacks. LoRA adaptation personalizes detection to the deployment.
 
 -----

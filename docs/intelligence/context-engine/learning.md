@@ -415,7 +415,7 @@ pub enum PredictiveAction {
 
 The Attention Manager (§6.2) filters notifications against the context threshold. AI-native intelligence makes this smarter:
 
-**Content-aware urgency (Attention Manager).** Reading notification content is the Attention Manager's job, not the Context Engine's, which never sees content (§12 principle 4 of [context-engine.md](../context-engine.md)). The Attention Manager assesses urgency from the content ([attention.md](../attention.md) §4.2), and the quantized DistilBERT or TinyBERT model (Tier 3) that reads it is an Attention Manager deliverable. "Server is on fire" in a Slack message is genuinely urgent. "Check out this meme" from the same channel is not. The model learns to distinguish content patterns that predict user engagement.
+**Content-aware urgency (Attention Manager).** Reading notification content is the Attention Manager's job, not the Context Engine's, which never sees content (§12 principle 4 of [context-engine.md](../context-engine.md)). The Attention Manager assesses urgency from the content ([attention.md](../attention.md) §4.2), and the quantized DistilBERT or TinyBERT model (Tier 3) that reads it is an Attention Manager deliverable. It runs inside the Attention Manager's < 50 ms per-item urgency assessment ([attention.md](../attention.md) §14.1). "Server is on fire" in a Slack message is genuinely urgent. "Check out this meme" from the same channel is not. The model learns to distinguish content patterns that predict user engagement.
 
 **Sender relationship graph.** The strongest predictor of notification urgency is the sender's relationship to the user. A message from the user's manager during work hours is almost always worth interrupting for. A message from a marketing bot is almost never worth interrupting for. The Context Engine maintains a sender importance graph:
 
@@ -513,7 +513,7 @@ At Tier 3, the full AIRS inference engine can generate natural language descript
 
 **Conversational context queries.** "What was I doing when I got that email?" AIRS searches the context history, correlates the timestamp, and answers: "You were in deep work mode, coding in the research space. The email arrived during a natural typing pause and was delivered as a NextBreak notification."
 
-**Cross-app semantic grouping.** For notification summarization, AIRS uses entity extraction to group related notifications: "5 messages about the deployment (3 from #engineering, 2 from CI bot)" rather than "5 new notifications." This requires Tier 3 because entity extraction and semantic similarity are compute-intensive.
+**Cross-app semantic grouping (Attention Manager).** Grouping reads notification content, so like content-aware urgency (§13.4) it is an Attention Manager deliverable, not a Context Engine one: it extends the Attention Manager's grouping and summarization ([attention.md](../attention.md) §6.1, §6.2). For notification summarization, AIRS uses entity extraction to group related notifications: "5 messages about the deployment (3 from #engineering, 2 from CI bot)" rather than "5 new notifications." This requires Tier 3 because entity extraction and semantic similarity are compute-intensive.
 
 ### 13.7 Summary
 
@@ -526,14 +526,14 @@ At Tier 3, the full AIRS inference engine can generate natural language descript
 | Kalman filter smoothing | 1 | <0.1ms | N/A (algorithm) | No |
 | GRU prediction | 2 | <10ms | ~200KB | No (kernel ML) |
 | HMM transitions | 1 | <0.1ms | <1KB | No |
-| Content-aware urgency (Attention Manager deliverable, see §13.4) | 3 | <100ms | ~50MB (quantized) | Yes |
+| Content-aware urgency (Attention Manager deliverable, see §13.4) | 3 | <50ms (attention.md §14.1) | ~50MB (quantized) | Yes |
 | Sender importance | 2 | <1ms | <10KB | No (kernel ML) |
 | Attention budget | 1 | <0.1ms | N/A (counter) | No |
 | Breakpoint detection | 1 | <0.1ms | N/A (heuristic) | No |
 | Cross-device BLE | 1 | N/A | N/A (protocol) | No |
 | CRDT sync | 1 | <1ms | N/A (algorithm) | No |
 | LLM narration | 3 | <1s | ~2GB | Yes |
-| Semantic grouping | 3 | <100ms | ~50MB | Yes |
+| Semantic grouping (Attention Manager deliverable, see §13.6) | 3 | <100ms | ~50MB | Yes |
 
 -----
 

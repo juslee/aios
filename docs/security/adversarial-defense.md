@@ -50,16 +50,16 @@ AIOS implements this through eight security layers (see [model.md](./model.md)),
 
 ## §16 Implementation Order
 
-Phase numbers follow development-plan.md §8. Rows without a phase name have no row there yet; their numbers predate it.
+Phase numbers follow development-plan.md §8. The rows without a phase name (14b, 14 and 39) hold work that §8 does not schedule yet; their numbers predate it and do not refer to the §8 phases with the same number.
 
-### Preparatory Work (Phases 3–12)
+### Preparatory Work (Phases 3–21)
 
 | Phase | Adversarial Defense Preparatory | Dependency |
 |---|---|---|
 | 3 (IPC & Capability System) | Capability system (Layer 2 enforcement) | IPC complete |
 | 4 (Block Storage & Object Store) | Space storage with provenance chain (Layer 7) | Block engine |
-| 5 | Security zones (Layer 4) and blast radius (Layer 8) | Spaces + capabilities |
 | 12 (AIRS Intelligence Services) | AIRS intelligence services framework | AIRS inference engine |
+| 21 (Security Architecture) | Security zones (Layer 4) and blast radius (Layer 8) | Spaces + capabilities |
 
 ### Agent Security Layers
 

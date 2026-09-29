@@ -161,7 +161,7 @@ impl QuantizationSelector {
 
 ### 4.4 LRU Model Eviction
 
-Below the 32 GB tier the model pool cannot hold the primary model and a vision model at once, even on a 16 GB device. The registry manages loading/unloading:
+The model pool is 8 GB at most (§4.3), so it cannot hold the primary model and a vision model at once on any device, even one of 16 GB or more. The registry manages loading/unloading:
 
 ```text
 RAM Budget: 8 GB available for models (16 GB device)
@@ -219,15 +219,18 @@ Task: "Generate embedding for this document"
 Ideal model: embedding-model (loaded as companion)
   → Route to companion. No switch needed.
 
-Task: "Classify this image"
+Task: "Classify this image" (user request)
 Ideal model: vision-model (not loaded)
 Primary model: llama-8b (loaded, no vision capability)
   → Cannot route to primary. Must switch.
   → Check: any queued vision tasks? Batch them.
-  → Evict least-recently-used non-primary model.
+  → Evict the primary model: no model pool holds it beside the vision
+    model (§4.4). This is an InteractiveTaskNeeds eviction, so it waits
+    until the primary model has no active sessions.
   → Load vision model, process all queued vision tasks.
-  → Keep vision model loaded for specialist_ttl (5 min).
-  → If no more vision tasks: evict, reclaim memory.
+  → Keep vision model loaded for specialist_ttl (5 min), or until the
+    primary model is needed again.
+  → Then evict the vision model and reload the primary model.
 ```
 
 **4. Predictive pre-loading (future):** Based on user behavior patterns (Context Engine signals), AIRS can predict which model will be needed next and begin loading it in the background before the user requests it. Example: user opens a photo space → AIRS begins loading the vision model in a background thread while the user browses thumbnails.

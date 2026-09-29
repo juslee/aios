@@ -137,6 +137,8 @@ flowchart TD
 
 Development plan phases (see [development-plan.md](../project/development-plan.md)):
 
+Phase 18 (Behavioral intelligence) and Phase 30 (Full NLU coverage) have no row in development-plan.md §8 yet; their numbers predate it. In §8, Phase 18 is the Conversation Manager and Phase 30 the WiFi Stack.
+
 ```text
 Phase 15:  Preference System (basic)
            ├── Preference data model (PreferenceId, PreferenceValue, PreferenceSource)

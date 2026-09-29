@@ -234,6 +234,7 @@ pub struct AttentionModel {
     /// Decay factor for historical engagement influence
     pub engagement_decay: f32,
     /// Maximum number of interrupts per hour before auto-dampening
+    /// (system errors and security alerts are exempt, §4.2)
     pub interrupt_rate_limit: u32,
 }
 
@@ -330,10 +331,19 @@ impl AttentionManager {
         UrgencyAssessment { urgency, confidence, signals }
     }
 
-    /// Scores every signal with the per-user `AttentionModel` (§4.1.1) and maps
-    /// the total onto its thresholds. Sentiment and agent trust count like any
-    /// other signal, through their learned weights.
+    /// System errors and security alerts always interrupt. Every other item is
+    /// scored with the per-user `AttentionModel` (§4.1.1), and the total is mapped
+    /// onto its thresholds. Sentiment and agent trust count like any other
+    /// signal, through their learned weights.
     fn compute_urgency(&self, signals: &[UrgencySignal]) -> Urgency {
+        // InherentUrgency (SystemEventType::Error or SecurityAlert) is never
+        // scored or dampened, so another agent's interrupts cannot use up the
+        // hourly budget and push a security alert back to NextBreak (§18.1).
+        // Content screening lets only system agents post security alerts (§18.5).
+        if signals.iter().any(|s| matches!(s, UrgencySignal::InherentUrgency { .. })) {
+            return Urgency::Interrupt;
+        }
+
         let model = &self.model;
         let score: f32 = signals
             .iter()
@@ -1700,7 +1710,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 
 | Component | Test category | Key assertions |
 | --- | --- | --- |
-| `UrgencyAssessment` | Signal scoring | Weighted score ≥ `interrupt_threshold` → Interrupt; at `interrupt_rate_limit` interrupts in the last hour → NextBreak instead; score between `digest_threshold` and `next_break_threshold` → Digest; below `digest_threshold` → Silent |
+| `UrgencyAssessment` | Signal scoring | Weighted score ≥ `interrupt_threshold` → Interrupt; at `interrupt_rate_limit` interrupts in the last hour → NextBreak instead; InherentUrgency (SecurityAlert or Error) → Interrupt at any score, even past `interrupt_rate_limit`; score between `digest_threshold` and `next_break_threshold` → Digest; below `digest_threshold` → Silent |
 | `ContextFilter` | Threshold logic | Focus mode blocks NextBreak; Work mode passes NextBreak; suppress_all blocks Interrupt |
 | `AttentionGroup` | Grouping keys | Same channel → one group; same agent → one group; mixed → separate groups |
 | `RateLimiter` | Token bucket | At limit → Throttled; after window reset → Allowed; burst within window → partial accept |
