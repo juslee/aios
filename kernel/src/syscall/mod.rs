@@ -22,6 +22,10 @@ pub use shared::{Syscall, SYSCALL_COUNT};
 /// Id arguments (channel, shared memory region, notification, process,
 /// capability handle) are decoded with `id_arg`: a register value that does
 /// not fit in `u32` returns `EINVAL` rather than being truncated.
+///
+/// User buffers are range-checked with `validate_user_ptr` and read or written
+/// only through `copy_from_user` / `copy_to_user`: a null, page-0, kernel or
+/// overflowing range returns `EINVAL`.
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let nr = tf.x[8];
 
@@ -71,8 +75,8 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
 
 /// DebugPrint syscall: x0 = ptr, x1 = len.
 ///
-/// Validates len ≤ 256 and the range with `validate_user_ptr` (user VA,
-/// outside page 0). Copies message to kernel stack buffer before printing.
+/// ENOSPC if len > 256; EINVAL unless the range passes `validate_user_ptr`.
+/// Copies the message to a kernel stack buffer before printing.
 fn sys_debug_print(tf: &TrapFrame) -> i64 {
     let ptr = tf.x[0] as usize;
     let len = tf.x[1] as usize;
@@ -82,18 +86,9 @@ fn sys_debug_print(tf: &TrapFrame) -> i64 {
         return IpcError::Enospc as i64;
     }
 
-    if !validate_user_ptr(ptr, len) {
-        return IpcError::Eperm as i64;
-    }
-
-    // Copy message to kernel stack buffer.
     let mut buf = [0u8; 256];
-    // SAFETY: ptr has been validated to be in the user VA range.
-    // The user address space is mapped via TTBR0. If the page is
-    // unmapped, a data abort will occur (handled by the exception
-    // framework, not here). The copy is bounded by `len ≤ 256`.
-    unsafe {
-        core::ptr::copy_nonoverlapping(ptr as *const u8, buf.as_mut_ptr(), len);
+    if let Err(e) = copy_from_user(&mut buf[..len], ptr) {
+        return e;
     }
 
     let msg = core::str::from_utf8(&buf[..len]).unwrap_or("<invalid utf8>");
@@ -112,7 +107,12 @@ fn sys_debug_print(tf: &TrapFrame) -> i64 {
 fn sys_time_get(_tf: &TrapFrame) -> i64 {
     let ticks: u64;
     let freq: u64;
-    // SAFETY: CNTVCT_EL0 and CNTFRQ_EL0 are always readable at EL1.
+    // SAFETY: MRS of CNTVCT_EL0 and CNTFRQ_EL0 reads no memory, has no side
+    // effects, and is always permitted at EL1 (CNTKCTL_EL1 gates only EL0).
+    // The architecture guarantees both registers (the generic timer is
+    // mandatory in ARMv8-A), and syscall_dispatch runs only at EL1.
+    // Executed at EL0 with CNTKCTL_EL1 denying access, the MRS would trap as
+    // an undefined instruction and halt the CPU; no memory is touched either way.
     unsafe {
         core::arch::asm!("mrs {}, CNTVCT_EL0", out(reg) ticks, options(nomem, nostack, preserves_flags));
         core::arch::asm!("mrs {}, CNTFRQ_EL0", out(reg) freq, options(nomem, nostack, preserves_flags));
@@ -150,37 +150,51 @@ fn sys_time_sleep(tf: &TrapFrame) -> i64 {
 // ---------------------------------------------------------------------------
 
 /// IpcCall (nr=0): x0=channel, x1=send_ptr, x2=send_len, x3=recv_ptr, x4=recv_len, x5=timeout.
+///
+/// Both buffers are validated before the call starts, so a bad reply buffer
+/// fails with EINVAL before anything is sent. The reply is received into a
+/// kernel stack buffer and copied out after the call returns: the replier
+/// writes the reply from its own thread, possibly on another CPU, through the
+/// pointer in `REPLY_SLOTS`, so that pointer must be a kernel address.
 fn sys_ipc_call(tf: &mut TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
         Ok(id) => crate::ipc::ChannelId(id),
         Err(e) => return e,
     };
-    let send_ptr = tf.x[1] as *const u8;
+    let send_ptr = tf.x[1] as usize;
     let send_len = tf.x[2] as usize;
-    let recv_ptr = tf.x[3] as *mut u8;
+    let recv_ptr = tf.x[3] as usize;
     let recv_len = tf.x[4] as usize;
     let timeout = tf.x[5];
 
     if send_len > crate::ipc::MAX_MESSAGE_SIZE || recv_len > crate::ipc::MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
-
-    // Validate user pointers.
-    if !validate_user_ptr(send_ptr as usize, send_len)
-        || !validate_user_ptr(recv_ptr as usize, recv_len)
-    {
-        return IpcError::Eperm as i64;
+    if !validate_user_ptr(send_ptr, send_len) || !validate_user_ptr(recv_ptr, recv_len) {
+        return IpcError::Einval as i64;
     }
 
-    // Copy send data to kernel stack.
     let mut send_buf = [0u8; crate::ipc::MAX_MESSAGE_SIZE];
-    // SAFETY: send_ptr validated to be in user VA range, bounded by send_len.
-    unsafe { core::ptr::copy_nonoverlapping(send_ptr, send_buf.as_mut_ptr(), send_len) };
+    if let Err(e) = copy_from_user(&mut send_buf[..send_len], send_ptr) {
+        return e;
+    }
 
-    // SAFETY: recv_ptr validated to be in user VA range, bounded by recv_len.
-    let recv_slice = unsafe { core::slice::from_raw_parts_mut(recv_ptr, recv_len) };
-
-    crate::ipc::ipc_call(channel, &send_buf[..send_len], recv_slice, timeout)
+    let mut recv_buf = [0u8; crate::ipc::MAX_MESSAGE_SIZE];
+    let result = crate::ipc::ipc_call(
+        channel,
+        &send_buf[..send_len],
+        &mut recv_buf[..recv_len],
+        timeout,
+    );
+    if result < 0 {
+        return result;
+    }
+    // ipc_call returns the reply length, which never exceeds recv_len.
+    let reply_len = (result as usize).min(recv_len);
+    match copy_to_user(recv_ptr, &recv_buf[..reply_len]) {
+        Ok(()) => reply_len as i64,
+        Err(e) => e,
+    }
 }
 
 /// IpcSend (nr=1): x0=channel, x1=send_ptr, x2=send_len.
@@ -189,46 +203,50 @@ fn sys_ipc_send(tf: &TrapFrame) -> i64 {
         Ok(id) => crate::ipc::ChannelId(id),
         Err(e) => return e,
     };
-    let send_ptr = tf.x[1] as *const u8;
+    let send_ptr = tf.x[1] as usize;
     let send_len = tf.x[2] as usize;
 
     if send_len > crate::ipc::MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
-    if !validate_user_ptr(send_ptr as usize, send_len) {
-        return IpcError::Eperm as i64;
-    }
 
     let mut send_buf = [0u8; crate::ipc::MAX_MESSAGE_SIZE];
-    // SAFETY: send_ptr validated in user VA range.
-    unsafe { core::ptr::copy_nonoverlapping(send_ptr, send_buf.as_mut_ptr(), send_len) };
+    if let Err(e) = copy_from_user(&mut send_buf[..send_len], send_ptr) {
+        return e;
+    }
 
     crate::ipc::ipc_send(channel, &send_buf[..send_len])
 }
 
 /// IpcRecv (nr=2): x0=channel, x1=recv_ptr, x2=recv_len, x3=timeout.
 /// Returns bytes_received in x0, sender_tid in x1.
+///
+/// The buffer is validated before the receive, so a bad buffer fails with
+/// EINVAL without consuming a message. The message is received into a
+/// kernel stack buffer and copied out after `ipc_recv` has released
+/// `CHANNEL_TABLE`.
 fn sys_ipc_recv(tf: &mut TrapFrame) -> i64 {
     let channel = match id_arg(tf.x[0]) {
         Ok(id) => crate::ipc::ChannelId(id),
         Err(e) => return e,
     };
-    let recv_ptr = tf.x[1] as *mut u8;
+    let recv_ptr = tf.x[1] as usize;
     let recv_len = tf.x[2] as usize;
     let timeout = tf.x[3];
 
     if recv_len > crate::ipc::MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
-    if !validate_user_ptr(recv_ptr as usize, recv_len) {
-        return IpcError::Eperm as i64;
+    if !validate_user_ptr(recv_ptr, recv_len) {
+        return IpcError::Einval as i64;
     }
 
-    // SAFETY: recv_ptr validated in user VA range.
-    let recv_slice = unsafe { core::slice::from_raw_parts_mut(recv_ptr, recv_len) };
-
-    match crate::ipc::ipc_recv(channel, recv_slice, timeout) {
+    let mut recv_buf = [0u8; crate::ipc::MAX_MESSAGE_SIZE];
+    match crate::ipc::ipc_recv(channel, &mut recv_buf[..recv_len], timeout) {
         Ok((bytes, sender)) => {
+            if let Err(e) = copy_to_user(recv_ptr, &recv_buf[..bytes]) {
+                return e;
+            }
             tf.x[1] = sender.0 as u64; // Return sender_tid in x1.
             bytes as i64
         }
@@ -242,19 +260,17 @@ fn sys_ipc_reply(tf: &TrapFrame) -> i64 {
         Ok(id) => crate::ipc::ChannelId(id),
         Err(e) => return e,
     };
-    let reply_ptr = tf.x[1] as *const u8;
+    let reply_ptr = tf.x[1] as usize;
     let reply_len = tf.x[2] as usize;
 
     if reply_len > crate::ipc::MAX_MESSAGE_SIZE {
         return IpcError::Enospc as i64;
     }
-    if !validate_user_ptr(reply_ptr as usize, reply_len) {
-        return IpcError::Eperm as i64;
-    }
 
     let mut reply_buf = [0u8; crate::ipc::MAX_MESSAGE_SIZE];
-    // SAFETY: reply_ptr validated in user VA range.
-    unsafe { core::ptr::copy_nonoverlapping(reply_ptr, reply_buf.as_mut_ptr(), reply_len) };
+    if let Err(e) = copy_from_user(&mut reply_buf[..reply_len], reply_ptr) {
+        return e;
+    }
 
     crate::ipc::ipc_reply(channel, &reply_buf[..reply_len])
 }
@@ -292,10 +308,66 @@ fn sys_channel_destroy(tf: &TrapFrame) -> i64 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// User memory access
+// ---------------------------------------------------------------------------
+//
+// Handlers read and write user memory only through `copy_from_user` and
+// `copy_to_user`, and only with no lock held. A handler that must reject a
+// bad buffer before it has side effects (IpcCall, IpcRecv, CapabilityList)
+// also calls `validate_user_ptr` up front. A bad range is EINVAL: it is a
+// malformed argument, not a missing capability (EPERM).
+//
+// The range check does not prove the pages are mapped. Nothing recovers from
+// a fault yet, and PAN is not configured: an unmapped or inaccessible user
+// page takes an EL1 data abort, which halts the CPU (the current-EL
+// synchronous vector in `arch/aarch64/exceptions.rs` ends in `b .`). Fault
+// recovery, when it exists, belongs in these two functions.
+
 /// Validate that a user buffer `[ptr, ptr + len)` lies in the user VA range
 /// and outside page 0 (`shared::validate_user_va`). Null fails at any length.
 fn validate_user_ptr(ptr: usize, len: usize) -> bool {
     shared::validate_user_va(ptr, len)
+}
+
+/// Copy `dst.len()` bytes from the user buffer at `src` into the kernel
+/// buffer `dst`. Returns EINVAL, before touching memory, unless the whole
+/// source range passes `validate_user_ptr`.
+///
+/// The copy is a snapshot: callers decode and check `dst`, never the user
+/// bytes again, so a concurrent EL0 write cannot change what was checked.
+fn copy_from_user(dst: &mut [u8], src: usize) -> Result<(), i64> {
+    if !validate_user_ptr(src, dst.len()) {
+        return Err(IpcError::Einval as i64);
+    }
+    // SAFETY: [src, src + dst.len()) is non-null and lies wholly below
+    // USER_VA_LIMIT, so it cannot overlap `dst`, a kernel buffer in the TTBR1
+    // half, and a byte copy has no alignment requirement.
+    // The validate_user_ptr check above establishes this; whether the range is
+    // mapped is up to EL0 and is not checked.
+    // Without the check an EL0 caller could make the kernel copy out kernel
+    // memory; an unmapped user page takes an EL1 data abort and halts the CPU.
+    unsafe { core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len()) };
+    Ok(())
+}
+
+/// Copy the kernel buffer `src` to the user buffer at `dst`. Returns EINVAL,
+/// before touching memory, unless the whole destination range passes
+/// `validate_user_ptr`.
+fn copy_to_user(dst: usize, src: &[u8]) -> Result<(), i64> {
+    if !validate_user_ptr(dst, src.len()) {
+        return Err(IpcError::Einval as i64);
+    }
+    // SAFETY: [dst, dst + src.len()) is non-null and lies wholly below
+    // USER_VA_LIMIT, so it cannot overlap `src`, a kernel buffer in the TTBR1
+    // half, and a byte copy has no alignment requirement.
+    // The validate_user_ptr check above establishes this; whether the range is
+    // mapped and writable is up to EL0 and is not checked.
+    // Without the check an EL0 caller could make the kernel overwrite kernel
+    // memory; an unmapped or read-only user page takes an EL1 data abort and
+    // halts the CPU.
+    unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len()) };
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -400,14 +472,18 @@ fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
 ///
 /// List non-revoked capability token IDs into a user buffer.
 /// Returns number of token IDs written.
+///
+/// Each id is written as a native-endian u64. EINVAL unless the whole buffer,
+/// `max_count` ids, passes `validate_user_ptr`.
 fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
+    const ID_BYTES: usize = core::mem::size_of::<u64>();
+
     let buf_ptr = tf.x[0] as usize;
     let max_count = tf.x[1] as usize;
 
-    // Each token ID is u64 = 8 bytes.
-    let byte_len = max_count.saturating_mul(8);
+    let byte_len = max_count.saturating_mul(ID_BYTES);
     if !validate_user_ptr(buf_ptr, byte_len) {
-        return IpcError::Eperm as i64;
+        return IpcError::Einval as i64;
     }
 
     let pid = match crate::cap::current_process_id() {
@@ -415,21 +491,24 @@ fn sys_capability_list(tf: &mut TrapFrame) -> i64 {
         None => return IpcError::Eperm as i64,
     };
 
-    let table = crate::task::process::PROCESS_TABLE.lock();
-    let proc = match crate::task::process::process_ref(&table, pid) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
     // Collect to kernel stack buffer (max 256 entries × 8 bytes = 2 KiB).
     let capped = max_count.min(shared::MAX_CAPS_PER_PROCESS);
-    let mut ids = [shared::CapabilityTokenId(0); 256];
-    let count = proc.cap_table.list(&mut ids, capped);
+    let mut ids = [shared::CapabilityTokenId(0); shared::MAX_CAPS_PER_PROCESS];
+    let count = {
+        let table = crate::task::process::PROCESS_TABLE.lock();
+        let proc = match crate::task::process::process_ref(&table, pid) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+        proc.cap_table.list(&mut ids, capped)
+    };
 
-    // Copy to user buffer.
-    // SAFETY: buf_ptr validated in user VA range, bounded by count × 8 bytes.
-    unsafe {
-        core::ptr::copy_nonoverlapping(ids.as_ptr() as *const u8, buf_ptr as *mut u8, count * 8);
+    // PROCESS_TABLE is released: a fault on the user page must not halt this
+    // CPU with the top lock held, which would stall every capability check.
+    for (i, id) in ids[..count].iter().enumerate() {
+        if let Err(e) = copy_to_user(buf_ptr + i * ID_BYTES, &id.0.to_ne_bytes()) {
+            return e;
+        }
     }
 
     count as i64
@@ -697,20 +776,15 @@ fn sys_audit_log(tf: &TrapFrame) -> i64 {
         return IpcError::Enospc as i64;
     }
 
-    if !validate_user_ptr(ptr, len) {
-        return IpcError::Eperm as i64;
+    let mut buf = [0u8; 48];
+    if let Err(e) = copy_from_user(&mut buf[..len], ptr) {
+        return e;
     }
 
     let pid = match crate::cap::current_process_id() {
         Some(p) => p,
         None => return IpcError::Eperm as i64,
     };
-
-    let mut buf = [0u8; 48];
-    // SAFETY: ptr validated in user VA range, bounded by len <= 48.
-    unsafe {
-        core::ptr::copy_nonoverlapping(ptr as *const u8, buf.as_mut_ptr(), len);
-    }
 
     crate::service::audit_log(pid, &buf[..len]);
     0
