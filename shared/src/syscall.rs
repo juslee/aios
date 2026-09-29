@@ -70,6 +70,44 @@ pub enum IpcError {
 /// Number of defined IPC error codes.
 pub const IPC_ERROR_COUNT: usize = 13;
 
+impl IpcError {
+    /// Every error code, in discriminant order (-1 down to -13).
+    pub const ALL: [IpcError; IPC_ERROR_COUNT] = [
+        IpcError::Etimedout,
+        IpcError::Epipe,
+        IpcError::Eagain,
+        IpcError::Ecanceled,
+        IpcError::Eacces,
+        IpcError::Eperm,
+        IpcError::Enospc,
+        IpcError::Eproto,
+        IpcError::Enotsup,
+        IpcError::EcapDormant,
+        IpcError::Eexist,
+        IpcError::Einval,
+        IpcError::Enomem,
+    ];
+}
+
+impl TryFrom<i64> for IpcError {
+    type Error = i64;
+
+    /// Decode a raw return code (x0 of a syscall, or the `i64` error of a
+    /// kernel IPC function) into its `IpcError`.
+    ///
+    /// Returns `Err(code)` for any value that is not one of the codes above:
+    /// 0, positive values and negative values outside `-1..=-13`. This is the
+    /// only errno decoder; the IPC Kit's `IpcKitError::from_code` builds on it,
+    /// so the kernel and user-space tables cannot drift apart.
+    fn try_from(code: i64) -> Result<Self, i64> {
+        IpcError::ALL
+            .iter()
+            .copied()
+            .find(|e| *e as i64 == code)
+            .ok_or(code)
+    }
+}
+
 /// Decode a 32-bit id (channel, region, notification, process, capability
 /// handle) from a 64-bit syscall argument register.
 ///
@@ -243,6 +281,29 @@ mod tests {
         assert_eq!(IPC_ERROR_COUNT, 13);
         // Enomem is the last at -13.
         assert_eq!(-(IpcError::Enomem as i64) as usize, IPC_ERROR_COUNT);
+    }
+
+    #[test]
+    fn ipc_error_all_lists_every_code_once_in_order() {
+        for (i, e) in IpcError::ALL.iter().enumerate() {
+            assert_eq!(*e as i64, -(i as i64) - 1);
+        }
+    }
+
+    #[test]
+    fn ipc_error_try_from_decodes_every_code() {
+        for e in IpcError::ALL {
+            assert_eq!(IpcError::try_from(e as i64), Ok(e));
+        }
+        assert_eq!(IpcError::try_from(-6), Ok(IpcError::Eperm));
+        assert_eq!(IpcError::try_from(-5), Ok(IpcError::Eacces));
+    }
+
+    #[test]
+    fn ipc_error_try_from_rejects_other_values() {
+        for code in [0, 1, 256, -14, -4001, i64::MIN, i64::MAX] {
+            assert_eq!(IpcError::try_from(code), Err(code));
+        }
     }
 
     #[test]
