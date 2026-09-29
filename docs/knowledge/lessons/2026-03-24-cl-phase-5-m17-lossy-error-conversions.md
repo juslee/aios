@@ -16,3 +16,7 @@ The fix: each Kit trait method wrapper (`send`, `call`, `channel_create`) applie
 ## How to apply
 
 For any future Kit where the kernel reuses the same error code for different failure modes, design the Kit wrapper to disambiguate at the call site rather than in the generic conversion. The `From<IpcError>` should map to the least-specific correct variant, and callers should override when they have context.
+
+## Update (2026-09-29, #190)
+
+The rule held, but it was applied only to `ENOSPC`. `EPERM`, the code every capability check returns, had no override and mapped to `SharedMemoryError`, while `CapabilityDenied` came only from `EACCES`, which the kernel never returns; and the kernel kept its own copy of the table (`i64_to_kit_err`), which drifted from `From<IpcError>`. Now there is one table, `IpcKitError::from_code` (decode with `IpcError::try_from`, then `From<IpcError>`), and "least specific correct" needed generic variants (`WouldBlock`, `InvalidArgument`, `ResourceExhausted`, `Suspended`, `Unsupported`), because no domain variant was correct for `EAGAIN`, `EINVAL`, `ENOSPC`, `ENOMEM`, `EACCES` or `ENOTSUP` on every path. The mapping and each wrapper's overrides are in `docs/kits/kernel/ipc.md` §6. When a kernel errno gains a new meaning, check the table row and every wrapper override, not just the wrapper at hand.

@@ -243,64 +243,136 @@ pub(crate) fn channel_destroy_unchecked(channel: ChannelId) -> Result<(), i64> {
 // ---------------------------------------------------------------------------
 
 use shared::kits::ipc::{self as ipc_kit, IpcKitError};
+use shared::{Capability, SelectEntry, SelectKind};
 
 /// Kernel-side implementation of the IPC Kit traits.
 ///
 /// A zero-sized unit struct that delegates to the global IPC subsystem
 /// (CHANNEL_TABLE, NOTIFICATION_TABLE, SHARED_REGION_TABLE, etc.).
+///
+/// Errors go through the one errno table, `IpcKitError::from_code`, and each
+/// wrapper then overrides what it knows better (docs/kits/kernel/ipc.md §6):
+/// the real channel id, the capability the kernel actually checked, and what
+/// an errno means for its operation. Where the kernel checks no capability,
+/// no wrapper reports `CapabilityDenied`.
 #[allow(dead_code)]
 pub struct KernelIpc;
+
+/// Kit error for a failed operation on channel `id`.
+///
+/// A channel operation's only capability check is `ChannelAccess(id)`
+/// (`channel_destroy`, `ipc_send`, `ipc_recv`, `ipc_call`), so its EPERM
+/// names that capability; EINVAL (an out-of-range id) and EPIPE (destroyed or
+/// dead) both mean channel `id` does not exist. Everything else, EAGAIN
+/// included (`WouldBlock`), comes from the errno table.
+#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
+fn channel_kit_err(id: ChannelId, code: i64) -> IpcKitError {
+    match IpcError::try_from(code) {
+        Ok(IpcError::Eperm) => IpcKitError::CapabilityDenied {
+            required: Capability::ChannelAccess(id),
+        },
+        Ok(IpcError::Einval | IpcError::Epipe) => IpcKitError::InvalidChannel { id },
+        _ => IpcKitError::from_code(code),
+    }
+}
+
+/// Kit error for a failed shared memory operation.
+///
+/// `checked` is the capability the kernel checks for the operation, or
+/// `None` for `shared_memory_unmap`, which checks none: there EPERM means the
+/// caller has no mapping of the region. EPIPE means the region does not
+/// exist, not a channel.
+#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
+fn shm_kit_err(code: i64, checked: Option<Capability>) -> IpcKitError {
+    match IpcError::try_from(code) {
+        Ok(IpcError::Eperm) => match checked {
+            Some(required) => IpcKitError::CapabilityDenied { required },
+            None => IpcKitError::SharedMemoryError {
+                reason: "not mapped",
+            },
+        },
+        Ok(IpcError::Epipe) => IpcKitError::SharedMemoryError {
+            reason: "region not found",
+        },
+        _ => IpcKitError::from_code(code),
+    }
+}
+
+/// The payload of `msg`, or `MessageTooLarge` if its `len` exceeds the
+/// inline limit (slicing `data` by such a `len` would panic).
+#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
+fn msg_payload(msg: &RawMessage) -> Result<&[u8], IpcKitError> {
+    msg.data.get(..msg.len).ok_or(IpcKitError::MessageTooLarge {
+        size: msg.len,
+        max: MAX_MESSAGE_SIZE,
+    })
+}
+
+/// The first channel entry in `entries` whose `ChannelAccess` the calling
+/// thread's process does not hold, looked up without logging a denial (the
+/// `ipc_select` call that failed already logged it).
+#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
+fn first_denied_channel(entries: &[SelectEntry]) -> Option<ChannelId> {
+    let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    let pid = crate::cap::current_process_id();
+    let table = crate::task::process::PROCESS_TABLE.lock();
+    let proc = pid.and_then(|p| crate::task::process::process_ref(&table, p).ok());
+    entries.iter().find_map(|entry| match entry.kind {
+        SelectKind::Channel(ch)
+            if !proc.is_some_and(|p| {
+                p.cap_table
+                    .has_capability(&Capability::ChannelAccess(ch), now)
+            }) =>
+        {
+            Some(ch)
+        }
+        _ => None,
+    })
+}
 
 impl ipc_kit::ChannelOps for KernelIpc {
     fn channel_create(&mut self) -> Result<ChannelId, IpcKitError> {
         let tid = current_thread_id().ok_or(IpcKitError::CapabilityDenied {
-            required: shared::Capability::ChannelCreate,
+            required: Capability::ChannelCreate,
         })?;
-        channel_create(tid).map_err(|code| {
-            // Enospc from channel_create means "table full", not "message too large".
-            if code == IpcError::Enospc as i64 {
-                IpcKitError::ChannelFull {
-                    id: ChannelId(0),
-                    capacity: MAX_CHANNELS,
-                }
-            } else {
-                IpcKitError::from_code(code)
-            }
+        channel_create(tid).map_err(|code| match IpcError::try_from(code) {
+            Ok(IpcError::Eperm) => IpcKitError::CapabilityDenied {
+                required: Capability::ChannelCreate,
+            },
+            // ENOSPC from channel_create is a full channel table; there is no
+            // channel yet, so ChannelFull (a full ring) does not apply.
+            Ok(IpcError::Enospc) => IpcKitError::ResourceExhausted {
+                reason: "channel table full",
+            },
+            _ => IpcKitError::from_code(code),
         })
     }
 
     fn channel_destroy(&mut self, id: ChannelId) -> Result<(), IpcKitError> {
-        channel_destroy(id).map_err(IpcKitError::from_code)
+        channel_destroy(id).map_err(|code| channel_kit_err(id, code))
     }
 
     fn send(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError> {
-        let code = ipc_send(id, &msg.data[..msg.len]);
-        if code < 0 {
-            let err = if code == IpcError::Enospc as i64 {
-                if msg.len > MAX_MESSAGE_SIZE {
-                    IpcKitError::MessageTooLarge {
-                        size: msg.len,
-                        max: MAX_MESSAGE_SIZE,
-                    }
-                } else {
-                    IpcKitError::ChannelFull {
-                        id,
-                        capacity: RING_CAPACITY,
-                    }
-                }
-            } else {
-                IpcKitError::from_code(code)
-            };
-            Err(err)
-        } else {
-            Ok(())
+        let code = ipc_send(id, msg_payload(msg)?);
+        if code >= 0 {
+            return Ok(());
         }
+        Err(match IpcError::try_from(code) {
+            // ipc_send returns EAGAIN when the ring is full.
+            Ok(IpcError::Eagain) => IpcKitError::ChannelFull {
+                id,
+                capacity: RING_CAPACITY,
+            },
+            _ => channel_kit_err(id, code),
+        })
     }
 
     fn recv(&self, id: ChannelId, timeout_ticks: u64) -> Result<RawMessage, IpcKitError> {
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
+        // EAGAIN here is an empty non-blocking poll or a receiver already
+        // waiting: WouldBlock, from the table, not ChannelFull.
         let (bytes, sender) =
-            ipc_recv(id, &mut buf, timeout_ticks).map_err(IpcKitError::from_code)?;
+            ipc_recv(id, &mut buf, timeout_ticks).map_err(|code| channel_kit_err(id, code))?;
         let mut msg = RawMessage::EMPTY;
         msg.sender = sender;
         msg.len = bytes;
@@ -315,56 +387,56 @@ impl ipc_kit::ChannelOps for KernelIpc {
         timeout_ticks: u64,
     ) -> Result<RawMessage, IpcKitError> {
         let mut recv_buf = [0u8; MAX_MESSAGE_SIZE];
-        let code = ipc_call(
-            id,
-            &request.data[..request.len],
-            &mut recv_buf,
-            timeout_ticks,
-        );
+        let code = ipc_call(id, msg_payload(request)?, &mut recv_buf, timeout_ticks);
         if code < 0 {
-            // Enospc from ipc_call: "message too large" if request exceeds limit,
-            // "channel full" (ring push failure) otherwise.
-            let err = if code == IpcError::Enospc as i64 {
-                if request.len > MAX_MESSAGE_SIZE {
-                    IpcKitError::MessageTooLarge {
-                        size: request.len,
-                        max: MAX_MESSAGE_SIZE,
-                    }
-                } else {
-                    IpcKitError::ChannelFull {
-                        id,
-                        capacity: RING_CAPACITY,
-                    }
-                }
-            } else {
-                IpcKitError::from_code(code)
-            };
-            Err(err)
-        } else {
-            let bytes = code as usize;
-            let mut msg = RawMessage::EMPTY;
-            msg.len = bytes;
-            msg.data[..bytes].copy_from_slice(&recv_buf[..bytes]);
-            Ok(msg)
+            return Err(match IpcError::try_from(code) {
+                // The request fits (msg_payload checked it), so ENOSPC from
+                // ipc_call is a full ring. Its EAGAIN is another caller
+                // already pending on the channel: WouldBlock, from the table.
+                Ok(IpcError::Enospc) => IpcKitError::ChannelFull {
+                    id,
+                    capacity: RING_CAPACITY,
+                },
+                _ => channel_kit_err(id, code),
+            });
         }
+        let bytes = code as usize;
+        let mut msg = RawMessage::EMPTY;
+        msg.len = bytes;
+        msg.data[..bytes].copy_from_slice(&recv_buf[..bytes]);
+        Ok(msg)
     }
 
     fn reply(&self, id: ChannelId, msg: &RawMessage) -> Result<(), IpcKitError> {
-        let code = ipc_reply(id, &msg.data[..msg.len]);
-        if code < 0 {
-            Err(IpcKitError::from_code(code))
-        } else {
-            Ok(())
+        let code = ipc_reply(id, msg_payload(msg)?);
+        if code >= 0 {
+            return Ok(());
         }
+        Err(match IpcError::try_from(code) {
+            // ipc_reply checks no capability (ipc.md §9.1); its only EPERM is
+            // a caller with no current thread.
+            Ok(IpcError::Eperm) => IpcKitError::InvalidArgument {
+                reason: "no current thread",
+            },
+            _ => channel_kit_err(id, code),
+        })
     }
 }
 
 impl ipc_kit::NotificationOps for KernelIpc {
     fn notification_create(&mut self) -> Result<shared::NotificationId, IpcKitError> {
-        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
-            required: shared::Capability::ChannelCreate,
+        // notification_create checks no capability, so a caller with no
+        // process is not a capability denial.
+        let pid = crate::cap::current_process_id().ok_or(IpcKitError::InvalidArgument {
+            reason: "no current process",
         })?;
-        notify::notification_create(pid).map_err(IpcKitError::from_code)
+        notify::notification_create(pid).map_err(|code| match IpcError::try_from(code) {
+            // notification_create's only ENOMEM is a full notification table.
+            Ok(IpcError::Enomem) => IpcKitError::ResourceExhausted {
+                reason: "notification table full",
+            },
+            _ => IpcKitError::from_code(code),
+        })
     }
 
     fn signal(&self, id: shared::NotificationId, bits: u64) -> Result<(), IpcKitError> {
@@ -384,10 +456,20 @@ impl ipc_kit::NotificationOps for KernelIpc {
 impl ipc_kit::SelectOps for KernelIpc {
     fn select(
         &self,
-        entries: &[shared::SelectEntry],
+        entries: &[SelectEntry],
         timeout_ticks: u64,
     ) -> Result<(usize, u64), IpcKitError> {
-        select::ipc_select(entries, timeout_ticks).map_err(IpcKitError::from_code)
+        select::ipc_select(entries, timeout_ticks).map_err(|code| match IpcError::try_from(code) {
+            // ipc_select checks ChannelAccess for every channel entry and
+            // reports only EPERM; name the channel the caller lacks.
+            Ok(IpcError::Eperm) => match first_denied_channel(entries) {
+                Some(ch) => IpcKitError::CapabilityDenied {
+                    required: Capability::ChannelAccess(ch),
+                },
+                None => IpcKitError::from_code(code),
+            },
+            _ => IpcKitError::from_code(code),
+        })
     }
 }
 
@@ -398,14 +480,15 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         flags: u64,
     ) -> Result<shared::SharedMemoryId, IpcKitError> {
         let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
-            required: shared::Capability::SharedMemoryCreate,
+            required: Capability::SharedMemoryCreate,
         })?;
         let vm_flags = crate::mm::pgtable::VmFlags::from_caller_bits(flags).map_err(|_| {
-            IpcKitError::SharedMemoryError {
+            IpcKitError::InvalidArgument {
                 reason: "undefined flag bits",
             }
         })?;
-        shmem::shared_memory_create(pid, size, vm_flags).map_err(IpcKitError::from_code)
+        shmem::shared_memory_create(pid, size, vm_flags)
+            .map_err(|code| shm_kit_err(code, Some(Capability::SharedMemoryCreate)))
     }
 
     fn shmem_map(
@@ -414,24 +497,26 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         _vaddr: shared::VirtAddr,
         flags: u64,
     ) -> Result<(), IpcKitError> {
-        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
-            required: shared::Capability::SharedMemoryCreate,
-        })?;
+        // shared_memory_map checks SharedMemoryAccess(id).
+        let required = Capability::SharedMemoryAccess(id.0);
+        let pid =
+            crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied { required })?;
         let vm_flags = crate::mm::pgtable::VmFlags::from_caller_bits(flags).map_err(|_| {
-            IpcKitError::SharedMemoryError {
+            IpcKitError::InvalidArgument {
                 reason: "undefined flag bits",
             }
         })?;
         shmem::shared_memory_map(pid, id, vm_flags)
             .map(|_va| ())
-            .map_err(IpcKitError::from_code)
+            .map_err(|code| shm_kit_err(code, Some(required)))
     }
 
     fn shmem_unmap(&mut self, id: shared::SharedMemoryId) -> Result<(), IpcKitError> {
-        let pid = crate::cap::current_process_id().ok_or(IpcKitError::CapabilityDenied {
-            required: shared::Capability::SharedMemoryCreate,
+        // shared_memory_unmap checks no capability.
+        let pid = crate::cap::current_process_id().ok_or(IpcKitError::SharedMemoryError {
+            reason: "no current process",
         })?;
-        shmem::shared_memory_unmap(pid, id).map_err(IpcKitError::from_code)
+        shmem::shared_memory_unmap(pid, id).map_err(|code| shm_kit_err(code, None))
     }
 
     fn shmem_destroy(&mut self, id: shared::SharedMemoryId) -> Result<(), IpcKitError> {
@@ -463,7 +548,7 @@ impl ipc_kit::SharedMemoryOps for KernelIpc {
         for pid in pids_to_unmap {
             if let Err(code) = shmem::shared_memory_unmap(pid, id) {
                 if first_err.is_none() {
-                    first_err = Some(IpcKitError::from_code(code));
+                    first_err = Some(shm_kit_err(code, None));
                 }
             }
         }

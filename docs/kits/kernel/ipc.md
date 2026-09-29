@@ -371,8 +371,9 @@ pub enum IpcError {
     /// Recovery: request the capability or degrade gracefully.
     CapabilityDenied,
 
-    /// The shared memory region does not exist or access is denied.
-    /// Recovery: verify the region ID and permissions.
+    /// A shared memory operation failed: the region does not exist, the
+    /// caller has no mapping of it, or it is already mapped.
+    /// Recovery: verify the region ID and the mapping state.
     SharedMemoryError,
 
     /// The message exceeds the 256-byte inline limit.
@@ -382,8 +383,53 @@ pub enum IpcError {
     /// No reply was received (server did not call ipc_reply).
     /// Recovery: the service may have crashed — check service health.
     NoReply,
+
+    /// The operation would have to block: a non-blocking receive found no
+    /// message, or another thread is already receiving on or calling
+    /// through the channel.
+    /// Recovery: retry later, or wait with a timeout.
+    WouldBlock,
+
+    /// The agent is SUSPENDED by the behavioral gate. It may still hold
+    /// every capability; requesting more does not help.
+    /// Recovery: none from the agent; the gate is lifted by AIRS or the user.
+    Suspended,
+
+    /// An argument is invalid: an out-of-range id, an undefined flag bit,
+    /// a W^X request, a bad buffer or an unknown select entry kind.
+    /// Recovery: fix the call; retrying unchanged fails the same way.
+    InvalidArgument,
+
+    /// A table, queue or memory pool is full.
+    /// Recovery: release objects the agent no longer needs, or retry later.
+    ResourceExhausted,
+
+    /// The operation is not available.
+    Unsupported,
 }
 ```
+
+### Mapping kernel error codes
+
+The kernel returns the syscall-level codes of [`docs/kernel/ipc.md` §3.1](../../kernel/ipc.md) (`IpcError`, negative `i64`). The Kit decodes them through one table, `IpcKitError::from_code` in `shared/src/kits/ipc.rs`: `IpcError::try_from(i64)`, then `From<IpcError>`. The kernel's `KernelIpc` and a future EL0 Kit share it, so the two cannot drift. The table maps each code to the least specific variant that is correct for every kernel path returning it; each wrapper then overrides with what it knows (the lesson in `docs/knowledge/lessons/2026-03-24-cl-phase-5-m17-lossy-error-conversions.md`).
+
+| Code | Default variant | Wrapper overrides |
+|---|---|---|
+| `EPERM` (missing capability) | `CapabilityDenied` (placeholder capability) | Every wrapper names the capability the kernel checks: `ChannelCreate` (`channel_create`), `ChannelAccess(id)` (`channel_destroy`, `send`, `recv`, `call`; `select` names the first channel entry the caller lacks), `SharedMemoryCreate` (`shmem_create`), `SharedMemoryAccess(id)` (`shmem_map`). Where the kernel checks none: `reply` → `InvalidArgument` (no current thread), `shmem_unmap` → `SharedMemoryError` (not mapped) |
+| `EACCES` (SUSPENDED) | `Suspended` | — |
+| `EINVAL` | `InvalidArgument` | Channel wrappers → `InvalidChannel { id }` (an out-of-range id) |
+| `EPIPE` | `InvalidChannel` (placeholder id) | Channel wrappers use the real `id`; shared memory wrappers → `SharedMemoryError` (region not found) |
+| `EAGAIN` | `WouldBlock` | `send` → `ChannelFull { id }` (its EAGAIN is a full ring) |
+| `ENOSPC` | `ResourceExhausted` | `send`, `call`, `reply` → `MessageTooLarge` for an oversized payload (checked before the call); `call` → `ChannelFull { id }` for a full ring; `channel_create` → `ResourceExhausted` ("channel table full") |
+| `ENOMEM` | `ResourceExhausted` | `notification_create` → "notification table full" |
+| `ETIMEDOUT` | `Timeout` | — |
+| `ECANCELED` | `Cancelled` | — |
+| `EPROTO` | `NoReply` | — |
+| `ENOTSUP` | `Unsupported` | — |
+| `ECAPDORMANT` | `CapabilityDenied` | — |
+| `EEXIST` | `SharedMemoryError` (only `shmem_map` returns it) | — |
+
+A wrapper whose calling thread has no process reports what the kernel would: `CapabilityDenied` for the capability the operation checks, `InvalidArgument` for `notification_create` and `SharedMemoryError` for `shmem_unmap`, which check none. The reverse conversion, `From<IpcKitError> for IpcError`, maps `CapabilityDenied` to `EPERM`, `Suspended` to `EACCES` and `SharedMemoryError` to `EINVAL`; `ChannelFull`, `MessageTooLarge` and `SharedMemoryError` do not survive a round trip, because their codes decode to the less specific `WouldBlock`, `ResourceExhausted` and `InvalidArgument`.
 
 ## 7. Platform & AI Availability
 
