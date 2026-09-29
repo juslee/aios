@@ -206,8 +206,9 @@ pub fn init() {
     let echo_server_tid = ThreadId(0x700);
     let echo_client_tid = ThreadId(0x701);
 
-    let ch = ipc::channel_create_unchecked(echo_server_tid);
-    ipc::channel_set_peer(ch, echo_client_tid).expect("Failed to set echo channel peer");
+    // Both endpoints belong to process 7 (the echo server and client).
+    let ch = ipc::channel_create_unchecked(ProcessId(7));
+    ipc::channel_set_peer(ch, ProcessId(7)).expect("Failed to set echo channel peer");
     *ECHO_CHANNEL.lock() = Some(ch);
 
     // Grant ChannelAccess for the echo channel to process 7.

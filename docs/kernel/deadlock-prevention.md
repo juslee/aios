@@ -160,7 +160,7 @@ A recurring pattern in the AIOS kernel avoids lock ordering violations when an o
 
 Examples in the codebase:
 
-- **`process_exit`** (`task/process.rs`): Snapshots thread IDs and channel IDs under `THREAD_TABLE`, releases the lock, then wakes blocked threads and destroys channels (which acquire `CHANNEL_TABLE`, `WAKEUP_ERRORS`, and scheduler locks).
+- **`process_exit`** (`task/process.rs`): Marks its threads Dead under `THREAD_TABLE` and releases it, then marks Dead the channels with an endpoint owned by the process and collects their blocked threads under `CHANNEL_TABLE`, releases it, and only then wakes those threads with EPIPE (which acquires `WAKEUP_ERRORS` and scheduler locks).
 
 - **`check_timeouts`** (`ipc/timeout.rs`): Collects expired entries under `TIMEOUT_QUEUE`, releases the lock, then wakes threads (which acquire `THREAD_TABLE` and scheduler locks).
 

@@ -589,7 +589,7 @@ pub fn init_compositor() {
 
     // Create the compositor's IPC channel.
     let compositor_tid = ThreadId(0xA10); // Debug label for the compositor thread.
-    let ch = ipc::channel_create_unchecked(compositor_tid);
+    let ch = ipc::channel_create_unchecked(ProcessId(10));
 
     // Grant ChannelAccess to the compositor process and the kernel process so
     // kernel-side test apps can call us during M24 bring-up.

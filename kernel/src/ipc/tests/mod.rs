@@ -9,6 +9,7 @@ mod select_cap;
 
 use crate::sched;
 use crate::syscall::IpcError;
+use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE};
 use spin::Mutex;
@@ -41,7 +42,7 @@ const TEST_PID: shared::ProcessId = shared::ProcessId(1);
 /// - Process 3 ("cap-test-denied"): NO ChannelCreate cap (for enforcement test)
 pub fn init() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
+    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
     use crate::task::{CpuSet, SchedulerClass, Thread, THREAD_TABLE};
 
     // --- Create processes ---
@@ -139,8 +140,9 @@ pub fn init() {
     let caller_tid = ThreadId(0x200);
     let server_tid = ThreadId(0x201);
 
-    let ch = channel_create_unchecked(caller_tid);
-    channel_set_peer(ch, server_tid).expect("Failed to set IPC channel peer");
+    // Both endpoints belong to process 1 (the caller and server threads).
+    let ch = channel_create_unchecked(ProcessId(1));
+    channel_set_peer(ch, ProcessId(1)).expect("Failed to set IPC channel peer");
     *TEST_CHANNEL.lock() = Some(ch);
 
     // Grant ChannelAccess for the test channel to process 1.
@@ -214,8 +216,9 @@ pub fn init() {
         let pi_caller_tid = ThreadId(0x300);
         let pi_server_tid = ThreadId(0x301);
 
-        let pi_ch = channel_create_unchecked(pi_caller_tid);
-        channel_set_peer(pi_ch, pi_server_tid).expect("Failed to set PI channel peer");
+        // Both endpoints belong to process 2 (the PI caller and server).
+        let pi_ch = channel_create_unchecked(ProcessId(2));
+        channel_set_peer(pi_ch, ProcessId(2)).expect("Failed to set PI channel peer");
         *PI_TEST_CHANNEL.lock() = Some(pi_ch);
 
         // Grant ChannelAccess for PI channel to process 2.
@@ -298,8 +301,9 @@ pub fn init() {
 }
 
 /// Create a channel without capability checks (for init-time setup).
-/// Used when threads don't exist yet so owner_pid lookup would fail.
-pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
+/// Used when threads don't exist yet so owner_pid lookup would fail: the
+/// caller names the process that owns endpoint A.
+pub(crate) fn channel_create_unchecked(owner: ProcessId) -> ChannelId {
     let mut table = CHANNEL_TABLE.lock();
     let idx = table
         .iter()
@@ -309,7 +313,7 @@ pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
     table[idx] = Some(super::Channel::new(id, owner));
     crate::kinfo!(
         Ipc,
-        "Channel {} created (unchecked) by thread {}",
+        "Channel {} created (unchecked) for pid {}",
         idx,
         owner.0
     );
