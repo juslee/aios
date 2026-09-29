@@ -17,6 +17,9 @@
 //!   `irq_handler_el1` and `schedule()` keep the per-CPU IRQ context label
 //!   ([`irq_enter`], [`irq_preempt_check`], [`irq_leave`], [`irq_ctx`],
 //!   [`set_irq_ctx`]).
+//! - CPU ids: [`cpu_here`] reads MPIDR_EL1 Aff0, and [`cpu_tpidr`] the copy
+//!   boot.S puts in TPIDR_EL1, which the IRQ-class lock stamps with.
+//!   [`check_tpidr`] and [`note_dispatch`] count a mismatch (`tpidrbad`).
 //!
 //! # When lines print
 //!
@@ -101,8 +104,9 @@ static DEFERRED_TICKS: AtomicU64 = AtomicU64::new(0);
 /// The `asm!` has none of the `pure`, `nomem` or `readonly` options, so every
 /// call reads the register afresh and is a compiler barrier: the read stays
 /// after an earlier `msr DAIFSet`, and the id cannot come from before an IRQ
-/// mask that pins the thread to this CPU. That also makes it the `cpu()` that
-/// `shared::lock::CpuView` requires (`sync::irq_spin_lock`).
+/// mask that pins the thread to this CPU. The IRQ-class lock's stamps read
+/// the same id from TPIDR_EL1 instead ([`cpu_tpidr`]), which is cheaper under
+/// QEMU TCG.
 #[inline(always)]
 pub(crate) fn cpu_here() -> u8 {
     let mpidr: u64;
@@ -114,6 +118,53 @@ pub(crate) fn cpu_here() -> u8 {
         core::arch::asm!("mrs {}, MPIDR_EL1", out(reg) mpidr, options(nostack, preserves_flags))
     };
     (mpidr & 0xFF) as u8
+}
+
+/// TPIDR_EL1 as it is now.
+///
+/// boot.S writes it once on every CPU, before any Rust code (`_start` and
+/// `_secondary_entry`), with that CPU's MPIDR_EL1 Aff0, and nothing else
+/// writes it: the context switch neither saves nor restores it, so it stays
+/// with the CPU and a thread that moves reads its new CPU's value. The `asm!`
+/// has none of `pure`, `nomem` or `readonly`, as in [`cpu_here`].
+#[inline(always)]
+fn read_tpidr_el1() -> u64 {
+    let tpidr: u64;
+    // SAFETY: TPIDR_EL1 is readable at EL1 and reading it has no side
+    // effects. All kernel code runs at EL1, which the boot path establishes;
+    // at EL0 the read would trap as an undefined instruction and the
+    // exception handler would report it.
+    unsafe {
+        core::arch::asm!("mrs {}, TPIDR_EL1", out(reg) tpidr, options(nostack, preserves_flags))
+    };
+    tpidr
+}
+
+/// This CPU's id as boot.S stored it in TPIDR_EL1: MPIDR_EL1 Aff0.
+///
+/// The CPU id the IRQ-class lock stamps with (`sync::irq_spin_lock`). It has
+/// [`cpu_here`]'s contract, a fresh read and a compiler barrier on every call,
+/// so it is also the `cpu()` that `shared::lock::CpuView` requires. Under QEMU
+/// TCG a TPIDR_EL1 read is one inline load from the CPU state, where an
+/// MPIDR_EL1 read is two helper calls; a lock acquisition reads the CPU id
+/// several times. [`check_tpidr`] and [`note_dispatch`] count a value that
+/// is not this CPU's MPIDR Aff0 (`tpidrbad`), which would make stamps name
+/// the wrong CPU.
+#[inline(always)]
+pub(crate) fn cpu_tpidr() -> u8 {
+    (read_tpidr_el1() & 0xFF) as u8
+}
+
+/// Count `tpidrbad` if TPIDR_EL1 is not this CPU's MPIDR_EL1 Aff0 (the whole
+/// register is compared, so any other writer shows). Count only: it never
+/// panics and changes nothing. `kernel_main` and `secondary_main` call it
+/// first, before their first IRQ-class lock; [`note_dispatch`] repeats the
+/// check at every dispatch. Expected 0.
+#[inline(never)]
+pub fn check_tpidr() {
+    if read_tpidr_el1() != u64::from(cpu_here()) {
+        bump(Key::Tpidrbad, 0);
+    }
 }
 
 /// DAIF as it is now.
@@ -368,7 +419,8 @@ fn store_ctx(cpu: usize, ctx: u8) {
 ///
 /// 1. counts `n4` if this CPU (MPIDR) is not `cpu`, the index the caller
 ///    used for `CURRENT_THREAD` (the switch functions read it before they
-///    mask IRQs, N4);
+///    mask IRQs, N4), and `tpidrbad` if TPIDR_EL1 is not this CPU's MPIDR
+///    Aff0 ([`check_tpidr`]);
 /// 2. bumps this CPU's `SWITCH_GEN`, which ends the generation of the stream
 ///    that was running here;
 /// 3. stores `CURRENT_TID[cpu] = tid`, at the caller's index;
@@ -404,6 +456,9 @@ pub fn note_dispatch(cpu: usize, tid: ThreadId, site: DispatchSite) -> u8 {
     let row = usize::from(here);
     if row != cpu {
         add_row(here, Key::N4, 0, 1);
+    }
+    if read_tpidr_el1() != u64::from(here) {
+        add_row(here, Key::Tpidrbad, 0, 1);
     }
     if let Some(gen) = SWITCH_GEN.get(row) {
         gen.store(

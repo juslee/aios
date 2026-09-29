@@ -91,6 +91,14 @@ impl BenchResult {
         self.avg_ns() / 1000
     }
 
+    /// Whether the benchmark measured at least one iteration and its average
+    /// is below `limit_us`. A run with no successful iteration has no
+    /// average (`avg_ns` reports 0 for it), so it fails rather than passing
+    /// on that 0.
+    fn passes_below_us(&self, limit_us: u64) -> bool {
+        self.iterations > 0 && self.avg_us() < limit_us
+    }
+
     /// Compute p99 latency using in-place insertion sort on the static buffer.
     fn p99_ns(&self) -> u64 {
         if self.sample_count == 0 {
@@ -430,8 +438,10 @@ pub fn bench_main_entry() -> ! {
     );
 
     // --- Gate 1 verdict ---
-    let ipc_pass = ipc_avg_us < 10;
-    let ctx_pass = ctx_avg_us < 20;
+    // A benchmark with no successful iteration fails: its printed avg of 0
+    // is not a measurement.
+    let ipc_pass = ipc_result.passes_below_us(10);
+    let ctx_pass = ctx_result.passes_below_us(20);
 
     let _ = writeln!(
         w,

@@ -42,7 +42,12 @@
 //! - (a) every `restore_context` on CPU c is preceded, on c with IRQs masked,
 //!   by `tripwire::note_dispatch` bumping `SWITCH_GEN[c]`, with c read from
 //!   MPIDR: 5 restores after 4 commit sites (`enter_scheduler`, `schedule()`
-//!   twice, `try_direct_switch`, `try_reply_switch`);
+//!   twice, `try_direct_switch`, `try_reply_switch`). Stamps read c from
+//!   TPIDR_EL1, which boot.S sets to MPIDR Aff0 on every CPU before any Rust
+//!   code and nothing writes again, so both reads name the same CPU;
+//!   `tripwire::check_tpidr` and `note_dispatch` count a breach
+//!   (`tpidrbad`). A CPU whose TPIDR_EL1 named another CPU would stamp with
+//!   that CPU's generation, and its holders could match a waiter there;
 //! - (b) the dispatching stream releases every guard it took after that bump
 //!   before it calls `restore_context`. Those are the `CURRENT_THREAD`
 //!   temporaries after `save_context` and `try_reply_switch`'s
@@ -112,8 +117,8 @@ use shared::tripwire::{
 use crate::arch::aarch64::mmu::{KERNEL_BASE, VIRT_PHYS_OFFSET};
 use crate::arch::aarch64::timer;
 use crate::observability::tripwire::{
-    bump, bump_masked, cpu_here, current_tid, irq_ctx, read_daif, switch_gen, switch_gen_masked,
-    UartSink, DAIF_I,
+    bump, bump_masked, cpu_here, cpu_tpidr, current_tid, irq_ctx, read_daif, switch_gen,
+    switch_gen_masked, UartSink, DAIF_I,
 };
 use crate::smp::{self, MAX_CORES};
 
@@ -387,16 +392,18 @@ impl<T> IrqSpinLock<T> {
 
 /// The running kernel as `shared::lock` sees it.
 ///
-/// `cpu()` is `tripwire::cpu_here`, whose MPIDR `asm!` has none of `pure`,
-/// `nomem` or `readonly`: a fresh read and a compiler barrier on every call.
-/// `switch_gen()` is a fresh `Relaxed` load of `SWITCH_GEN[cpu]`. Both are
-/// what `CpuView` requires.
+/// `cpu()` is `tripwire::cpu_tpidr`, the MPIDR Aff0 copy boot.S keeps in
+/// TPIDR_EL1 (rule (a)). Its `asm!` has none of `pure`, `nomem` or
+/// `readonly`: a fresh read and a compiler barrier on every call. Under QEMU
+/// TCG it is one inline load, where an MPIDR read is two helper calls, and a
+/// stamp reads the CPU id twice per round. `switch_gen()` is a fresh
+/// `Relaxed` load of `SWITCH_GEN[cpu]`. Both are what `CpuView` requires.
 struct KernelView;
 
 impl CpuView for KernelView {
     #[inline(always)]
     fn cpu(&self) -> u8 {
-        cpu_here()
+        cpu_tpidr()
     }
 
     #[inline(always)]
@@ -422,7 +429,7 @@ fn whoami() -> (OwnerStamp, u32) {
     loop {
         let (cpu, gen) = read_stamp(&KernelView);
         let tid = current_tid(cpu);
-        // Keep the second generation load after the slot load. The MPIDR
+        // Keep the second generation load after the slot load. The CPU id
         // read that ends read_stamp already keeps the slot load after the
         // first one.
         compiler_fence(Ordering::Acquire);
@@ -454,11 +461,11 @@ fn kva_of(site: &'static Location<'static>) -> *mut Location<'static> {
 /// `stamp`'s IRQS_ON bit; `stamp` itself if the caller moved during the
 /// reads.
 ///
-/// One round of `read_stamp` without its retry: MPIDR, `SWITCH_GEN[cpu]`,
-/// MPIDR again (each MPIDR `asm!` is a compiler barrier, so the load stays
-/// between them). If both CPU reads agree, the pair is what `read_stamp`
-/// would return, so it names the caller's current generation or one that
-/// had already ended. Otherwise `stamp`, which came from `read_stamp` in
+/// One round of `read_stamp` without its retry: the CPU id, `SWITCH_GEN[cpu]`,
+/// the CPU id again, from TPIDR_EL1 as in [`KernelView`] (each `asm!` is a
+/// compiler barrier, so the load stays between them). If both CPU reads
+/// agree, the pair is what `read_stamp` would return, so it names the
+/// caller's current generation or one that had already ended. Otherwise `stamp`, which came from `read_stamp` in
 /// [`whoami`], has the same property. That is all the re-entry verdict
 /// needs from a holder's word: an ended generation never matches a waiter
 /// that is still in its own, so a stale word can only hide a re-entry,
@@ -471,9 +478,9 @@ fn kva_of(site: &'static Location<'static>) -> *mut Location<'static> {
 /// the choice is hard to predict.
 #[inline(always)]
 fn current_stamp_or(stamp: OwnerStamp) -> OwnerStamp {
-    let cpu = cpu_here();
+    let cpu = cpu_tpidr();
     let gen = switch_gen_masked(cpu);
-    let again = cpu_here();
+    let again = cpu_tpidr();
     core::hint::select_unpredictable(
         cpu == again,
         OwnerStamp::new(cpu, gen, stamp.irqs_on()),

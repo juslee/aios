@@ -42,6 +42,11 @@ core::arch::global_asm!(include_str!("arch/aarch64/context_switch.S"));
 pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     use crate::arch::aarch64::exceptions;
 
+    // Count a TPIDR_EL1 that is not this CPU's MPIDR Aff0 (tpidrbad) before
+    // the first IRQ-class lock (kinfo! try-locks BOOT_LOG), which stamps its
+    // CPU id from it. boot.S wrote it just before branching here.
+    observability::tripwire::check_tpidr();
+
     kinfo!(Boot, "AIOS kernel booting...");
 
     // Initialize boot timing from ARM Generic Timer counter.

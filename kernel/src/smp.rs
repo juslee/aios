@@ -182,6 +182,11 @@ pub fn bring_secondaries_online(dt: &crate::dtb::DeviceTree, gicr_base: usize) -
 /// Entry point for secondary cores (called from boot.S _secondary_entry).
 #[no_mangle]
 pub extern "C" fn secondary_main(core_id: u64) -> ! {
+    // Count a TPIDR_EL1 that is not this CPU's MPIDR Aff0 (tpidrbad) before
+    // this CPU's first IRQ-class lock, which stamps its CPU id from it.
+    // _secondary_entry wrote it just before branching here.
+    crate::observability::tripwire::check_tpidr();
+
     let core_id = core_id as usize;
 
     // Initialize this core's GIC redistributor and CPU interface.

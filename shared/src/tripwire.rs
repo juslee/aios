@@ -400,6 +400,9 @@ pub enum Key {
     /// `restore_context` calls made while the dispatching stream still held
     /// a lock stamped with its own generation. Expected 0.
     Rsthold,
+    /// Checks that found TPIDR_EL1 not equal to this CPU's MPIDR_EL1 Aff0, the
+    /// CPU id the IRQ-class lock stamps with. Expected 0.
+    Tpidrbad,
     // -- Global scalars -----------------------------------------------------
     /// Direct switches to a receiver that last ran on another CPU.
     Xdir,
@@ -516,7 +519,7 @@ pub enum Key {
 
 impl Key {
     /// Number of keys.
-    pub const COUNT: usize = 60;
+    pub const COUNT: usize = 61;
 
     /// Every key, in print order.
     pub const ALL: [Key; Self::COUNT] = [
@@ -529,6 +532,7 @@ impl Key {
         Key::N4,
         Key::Insched,
         Key::Rsthold,
+        Key::Tpidrbad,
         Key::Xdir,
         Key::Xrep,
         Key::Xnever,
@@ -600,6 +604,7 @@ impl Key {
             Key::N4 => "n4",
             Key::Insched => "insched",
             Key::Rsthold => "rsthold",
+            Key::Tpidrbad => "tpidrbad",
             Key::Xdir => "xdir",
             Key::Xrep => "xrep",
             Key::Xnever => "xnever",
@@ -665,7 +670,8 @@ impl Key {
             | Key::Spsrmm
             | Key::N4
             | Key::Insched
-            | Key::Rsthold => Width::Cpu,
+            | Key::Rsthold
+            | Key::Tpidrbad => Width::Cpu,
             Key::N2 => Width::N2,
             Key::Ubrun | Key::Ubrbl | Key::Ubdead | Key::Ubnone | Key::Ubmove => Width::Source,
             Key::Lkph
@@ -2208,6 +2214,7 @@ mod tests {
             "n4",
             "insched",
             "rsthold",
+            "tpidrbad",
             "xdir",
             "xrep",
             "xnever",
@@ -2271,7 +2278,10 @@ mod tests {
         };
         assert_eq!(
             widths(Width::Cpu),
-            ["tick", "irqsw", "irqsw0", "nest", "elrmm", "spsrmm", "n4", "insched", "rsthold"]
+            [
+                "tick", "irqsw", "irqsw0", "nest", "elrmm", "spsrmm", "n4", "insched", "rsthold",
+                "tpidrbad"
+            ]
         );
         assert_eq!(
             widths(Width::Source),
@@ -2331,7 +2341,7 @@ mod tests {
             next += slots;
         }
         assert_eq!(next, SLOTS);
-        assert_eq!(SLOTS, 9 + 12 + 4 + 5 * 15 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3);
+        assert_eq!(SLOTS, 10 + 12 + 4 + 5 * 15 + 8 * 9 + 13 + 4 + 5 + 2 + 3 + 3);
     }
 
     #[test]
@@ -2446,26 +2456,27 @@ mod tests {
     const GOLDEN_FULL: &str =
         "[tripwire] v=1 src=g1 cpu=0 t=12000 ncpu=4 tick=100,101,102,103 irqsw=200,201,202,203 \
          irqsw0=300,301,302,303 nest=400,401,402,403 elrmm=500,501,502,503 spsrmm=600,601,602,603 \
-         n4=700,701,702,703 insched=800,801,802,803 rsthold=900,901,902,903 xdir=1000 xrep=1100 \
-         xnever=1200 n1=1300 pcnull=1400 pcphys=1500 pcother=1600 spbad=1700 latereply=1800 \
-         misrep=1900 ctbusy=2000 badtid=2100 n2=2200,2201,2202,2203 \
-         ubrun=2300,2301,2302,2303,2304,2305,2306,2307,2308,2309,2310,2311,2312,2313,2314 \
-         ubrbl=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411,2412,2413,2414 \
-         ubdead=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511,2512,2513,2514 \
-         ubnone=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614 \
-         ubmove=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711,2712,2713,2714 \
-         lkph=2800,2801,2802,2803,2804,2805,2806,2807,2808 \
-         lkpho=2900,2901,2902,2903,2904,2905,2906,2907,2908 \
-         lkphrun=3000,3001,3002,3003,3004,3005,3006,3007,3008 \
-         lkoxp=3100,3101,3102,3103,3104,3105,3106,3107,3108 \
-         lkself=3200,3201,3202,3203,3204,3205,3206,3207,3208 \
-         lktry=3300,3301,3302,3303,3304,3305,3306,3307,3308 \
-         lktph=3400,3401,3402,3403,3404,3405,3406,3407,3408 \
-         lkstk=3500,3501,3502,3503,3504,3505,3506,3507,3508 scana=3600 skipa=3700 skipaself=3800 \
-         scanb=3900 skipb=4000 scanstall=4100 hbdefer=4200 orphan=4300 nowaker=4400 wakefl=4500 \
-         starved=4600,4601,4602,4603 dupcur=4700 dupq=4800 qbad=4900 orphan_now=5000 \
-         nowaker_now=5100 wakefl_now=5200 scanhold1=5300 scanhold2=5400 lb=5500 enqfull=5600 \
-         badchan=5700,5701,5702 twc=5800 twn=5900 twmax=6000 n=65\n";
+         n4=700,701,702,703 insched=800,801,802,803 rsthold=900,901,902,903 \
+         tpidrbad=1000,1001,1002,1003 xdir=1100 xrep=1200 xnever=1300 n1=1400 pcnull=1500 \
+         pcphys=1600 pcother=1700 spbad=1800 latereply=1900 misrep=2000 ctbusy=2100 badtid=2200 \
+         n2=2300,2301,2302,2303 \
+         ubrun=2400,2401,2402,2403,2404,2405,2406,2407,2408,2409,2410,2411,2412,2413,2414 \
+         ubrbl=2500,2501,2502,2503,2504,2505,2506,2507,2508,2509,2510,2511,2512,2513,2514 \
+         ubdead=2600,2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614 \
+         ubnone=2700,2701,2702,2703,2704,2705,2706,2707,2708,2709,2710,2711,2712,2713,2714 \
+         ubmove=2800,2801,2802,2803,2804,2805,2806,2807,2808,2809,2810,2811,2812,2813,2814 \
+         lkph=2900,2901,2902,2903,2904,2905,2906,2907,2908 \
+         lkpho=3000,3001,3002,3003,3004,3005,3006,3007,3008 \
+         lkphrun=3100,3101,3102,3103,3104,3105,3106,3107,3108 \
+         lkoxp=3200,3201,3202,3203,3204,3205,3206,3207,3208 \
+         lkself=3300,3301,3302,3303,3304,3305,3306,3307,3308 \
+         lktry=3400,3401,3402,3403,3404,3405,3406,3407,3408 \
+         lktph=3500,3501,3502,3503,3504,3505,3506,3507,3508 \
+         lkstk=3600,3601,3602,3603,3604,3605,3606,3607,3608 scana=3700 skipa=3800 skipaself=3900 \
+         scanb=4000 skipb=4100 scanstall=4200 hbdefer=4300 orphan=4400 nowaker=4500 wakefl=4600 \
+         starved=4700,4701,4702,4703 dupcur=4800 dupq=4900 qbad=5000 orphan_now=5100 \
+         nowaker_now=5200 wakefl_now=5300 scanhold1=5400 scanhold2=5500 lb=5600 enqfull=5700 \
+         badchan=5800,5801,5802 twc=5900 twn=6000 twmax=6100 n=66\n";
 
     #[test]
     fn full_line_golden() {

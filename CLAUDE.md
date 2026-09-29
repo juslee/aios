@@ -69,6 +69,11 @@ EL1 IRQ entry frame (1b):     irq_el1_entry pushes 192 B onto the interrupted st
                               It restores the GPRs only. irq_frame_check counts an ELR/SPSR that
                               changed across irq_handler_el1 (elrmm/spsrmm) and restores nothing.
                               SP at both bl's (interrupted SP - 192, - 176) stays 16-byte aligned.
+TPIDR_EL1 (1b):               MPIDR Aff0, written by boot.S on every CPU (_start, _secondary_entry)
+                              before any Rust code, and by nothing else (not saved or restored on a
+                              switch). The IRQ-class lock stamps its CPU id from it (tripwire::cpu_tpidr;
+                              one inline load under TCG, where an MPIDR read is two helper calls).
+                              kernel_main, secondary_main and note_dispatch count a mismatch (tpidrbad).
 
 # MMU strategy (do not get this wrong)
 edk2 state post-EBS:          MMU ON, SCTLR=0x30d0198d, TCR T0SZ=20 (44-bit VA)
