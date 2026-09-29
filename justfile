@@ -145,19 +145,49 @@ soak *args:
 test:
     cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 
-# The binary takes the build's start time: a no-op build is marked fresh for the
-# shim, and a file edited during the build stays newer, so the next call rebuilds.
-# Each build has its own stamp file, so overlapping builds (a background prebuild
-# and a foreground rebuild) never give one binary the other build's start time.
-# Build the host tools binary target/tools/release/aios (run through .claude/hooks/aios)
+# The shim runs target/tools/installed/aios, a copy at a path cargo never writes
+# (cargo removes and re-creates release/aios on its builds). The copy is written
+# under a temporary name and renamed into place, so a concurrent shim call finds
+# the old binary or the new one, never a missing or half-written file (#203).
+# The copy takes the build's start time: a no-op build is marked fresh for the
+# shim, and a file edited during the build stays newer, so the next call
+# rebuilds. Each build has its own start file, so overlapping builds (a
+# background prebuild and a foreground rebuild) never give one binary the other
+# build's start time. Then, only after the binary is in place, the provenance
+# stamp installed/aios.stamp is renamed in beside it: HEAD's tree entries for
+# the build inputs, the installed binary's git hash, and "source dirty" when the
+# inputs have uncommitted changes. The shim treats a missing or mismatched
+# stamp as stale; the inputs list and the format must match the shim's.
+# Build the host tools binary target/tools/installed/aios (run through .claude/hooks/aios)
 tools:
     #!/bin/sh
     set -eu
-    mkdir -p target/tools
-    stamp=$(mktemp target/tools/.build-start.XXXXXX)
-    trap 'rm -f "$stamp"' EXIT
+    mkdir -p target/tools/installed
+    start=$(mktemp target/tools/.build-start.XXXXXX)
+    new=
+    stamp=
+    trap 'rm -f "$start" ${new:+"$new"} ${stamp:+"$stamp"}' EXIT
     cargo build --release -p aios-tools --target-dir target/tools
-    touch -r "$stamp" target/tools/release/aios
+    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml .cargo'
+    src=$(git ls-tree HEAD -- $inputs)
+    changes=$(git status --porcelain --untracked-files=all -- $inputs)
+    if [ -n "$changes" ]; then state=dirty; else state=clean; fi
+    if [ -d target/tools/installed/aios ]; then
+        echo "target/tools/installed/aios is a directory; remove it, then run just tools" >&2
+        exit 1
+    fi
+    new=$(mktemp target/tools/installed/.aios.XXXXXX)
+    cp target/tools/release/aios "$new"
+    chmod 755 "$new"
+    touch -r "$start" "$new"
+    sum=$(git hash-object --no-filters -- "$new")
+    stamp=$(mktemp target/tools/installed/.aios.stamp.XXXXXX)
+    chmod 644 "$stamp"
+    printf 'aios-tools-stamp 1\n%s\nbin %s\nsource %s\n' "$src" "$sum" "$state" >"$stamp"
+    mv -f "$new" target/tools/installed/aios
+    new=
+    mv -f "$stamp" target/tools/installed/aios.stamp
+    stamp=
 
 # Run clippy with deny warnings (kernel and stub targets, plus the host tools crate)
 clippy:

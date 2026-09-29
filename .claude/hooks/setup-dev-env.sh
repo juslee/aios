@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # aios host tools (tools/, `just tools`): start a background build in the main
-# checkout when target/tools/release/aios is missing or stale. Runs in local and
+# checkout when target/tools/installed/aios is missing or stale. Runs in local and
 # remote sessions and returns at once (build log: target/tools/build.log).
 "$(dirname "$0")/aios" --prebuild || true
 

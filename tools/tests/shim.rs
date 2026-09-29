@@ -1,66 +1,108 @@
-//! `.claude/hooks/aios`: freshness, the guard branch, foreground and background
-//! builds, `AIOS_TOOLS_BIN` and linked worktrees (with and without a working
-//! git), exercised with a fake `just`.
+//! `.claude/hooks/aios` and the justfile's `tools` recipe: freshness and the
+//! provenance stamp, the guard branch's fail-closed paths (#203), foreground and
+//! background builds, `AIOS_TOOLS_BIN` and linked worktrees (with and without a
+//! working git). Builds run the real `tools` recipe through `just` with a fake
+//! `cargo`, so the stamp the recipe writes is the one the shim checks.
 
 mod common;
 
 use common::{isolated, unique_dir, TestRepo};
 
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// The PreToolUse decision the shim prints when the binary is missing.
+/// The PreToolUse decision the shim prints when the binary is missing, as R1
+/// shipped it.
 const ASK_JSON: &str = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"aios tools not built; run just tools"}}"#;
 
-/// A `just` that only knows `tools`: it logs the build and writes a binary that
-/// echoes its arguments. `FAKE_JUST_FAIL` makes it fail, `FAKE_JUST_DELAY`
-/// slows it down, `FAKE_EXIT` sets the exit status of the binary it writes.
-const FAKE_JUST: &str = r#"#!/bin/sh
+/// The guard branch's ask reasons, one per path.
+const NOT_BUILT: &str = "aios tools not built; run just tools";
+const STALE: &str = "aios tools are stale or unverified; rebuilding in the background (just tools)";
+const DIRTY: &str = "aios tools were built from uncommitted changes in the main checkout; commit or revert them, then run just tools";
+const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not an executable file";
+const NO_OWN_DIR: &str = "aios shim cannot find its own directory; run just tools";
+const NO_MAIN: &str =
+    "aios shim cannot find the main checkout (git failed); fix git or set AIOS_TOOLS_BIN";
+
+fn failed(status: i32) -> String {
+    format!("aios guard failed (exit {status}); run just tools")
+}
+
+fn ask_json(reason: &str) -> String {
+    format!(
+        "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"{reason}\"}}}}\n"
+    )
+}
+
+/// A `cargo` that only knows the `tools` recipe's build: it logs the build and
+/// writes target/tools/release/aios, by default a binary that echoes its
+/// arguments and exits `FAKE_EXIT`. Its progress line goes to stdout, so the
+/// tests see whether the shim keeps build output off its own stdout.
+/// `FAKE_CARGO_FAIL` makes it fail, `FAKE_CARGO_DELAY` slows it down and
+/// `FAKE_CARGO_SOURCE` names a file to build instead.
+const FAKE_CARGO: &str = r#"#!/bin/sh
 set -u
-if [ "${1:-}" != "tools" ]; then
-    echo "fake just: unexpected recipe ${*}" >&2
+if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
+    echo "fake cargo: unexpected arguments: $*" >&2
     exit 2
 fi
-echo "fake just: building the aios binary"
-printf 'build\n' >> just.log
-if [ -n "${FAKE_JUST_FAIL:-}" ]; then
-    echo "fake just: the build failed" >&2
+echo "fake cargo: building the aios binary"
+printf 'build\n' >> cargo.log
+if [ -n "${FAKE_CARGO_FAIL:-}" ]; then
+    echo "fake cargo: the build failed" >&2
     exit 1
 fi
-sleep "${FAKE_JUST_DELAY:-0}"
+sleep "${FAKE_CARGO_DELAY:-0}"
 mkdir -p target/tools/release
-# Install atomically: the stale-guard branch execs this file while this build
-# runs, and truncating a script in place can leave /bin/sh reading a half-written
-# file. mv within one directory is rename(2), so the running shim keeps the old
-# inode.
-cat > target/tools/release/aios.new <<'BIN'
+# Like cargo's uplift: remove the old file, then write the new one.
+rm -f target/tools/release/aios
+if [ -n "${FAKE_CARGO_SOURCE:-}" ]; then
+    cat "$FAKE_CARGO_SOURCE" > target/tools/release/aios
+else
+    cat > target/tools/release/aios <<'BIN'
 #!/bin/sh
 printf 'fake:%s\n' "$*"
 exit ${FAKE_EXIT:-0}
 BIN
-chmod 755 target/tools/release/aios.new
-mv -f target/tools/release/aios.new target/tools/release/aios
+fi
+chmod 755 target/tools/release/aios
 "#;
 
-/// The same binary the fake `just` writes, installed directly by a test.
-const FAKE_BIN: &str = r#"#!/bin/sh
-printf 'fake:%s\n' "$*"
-exit ${FAKE_EXIT:-0}
+/// A `cp` that leaves the destination half-written for `FAKE_CP_DELAY` seconds,
+/// like a large binary in the middle of a copy, and creates `FAKE_CP_MARK` once
+/// the half is written.
+const SLOW_CP: &str = r#"#!/bin/sh
+if [ -n "${FAKE_CP_DELAY:-}" ] && [ "$#" -eq 2 ]; then
+    head -c 16 "$1" > "$2"
+    : > "$FAKE_CP_MARK"
+    sleep "$FAKE_CP_DELAY"
+    cat "$1" > "$2"
+    exit
+fi
+exec /bin/cp "$@"
 "#;
 
-fn repo_shim() -> PathBuf {
+fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the tools crate has a parent directory")
-        .join(".claude/hooks/aios")
 }
 
-fn shim_source() -> String {
-    let path = repo_shim();
-    std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
+fn repo_shim() -> PathBuf {
+    repo_root().join(".claude/hooks/aios")
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
+}
+
+fn write_executable(path: &Path, content: &str) {
+    std::fs::write(path, content).unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
+    make_executable(path);
 }
 
 fn make_executable(path: &Path) {
@@ -115,7 +157,20 @@ fn code(out: &Output) -> i32 {
     out.status.code().expect("the shim exited normally")
 }
 
-/// A main checkout holding the shim, with a fake `just` first on `PATH`.
+/// The shim exited 0 with exactly one PreToolUse "ask" decision for `reason`.
+fn assert_asks(out: &Output, reason: &str) {
+    assert_eq!(code(out), 0, "stderr: {}", stderr(out));
+    assert_eq!(stdout(out), ask_json(reason));
+    let decision: serde_json::Value =
+        serde_json::from_str(&stdout(out)).expect("the ask decision is JSON");
+    assert_eq!(
+        decision["hookSpecificOutput"]["permissionDecision"], "ask",
+        "{decision}"
+    );
+}
+
+/// A main checkout holding the shim, the real justfile and the binary's build
+/// inputs, with a fake `cargo` first on `PATH`.
 struct Sandbox {
     repo: TestRepo,
     bin_dir: TestRepo,
@@ -124,19 +179,25 @@ struct Sandbox {
 impl Sandbox {
     fn new(label: &str) -> Sandbox {
         let repo = TestRepo::new(label);
-        repo.write(".claude/hooks/aios", &shim_source());
+        repo.write(".claude/hooks/aios", &read(&repo_shim()));
+        make_executable(&repo.path().join(".claude/hooks/aios"));
+        repo.write("justfile", &read(&repo_root().join("justfile")));
+        repo.write(".gitignore", "target/\n*.log\n");
         repo.write(
             "tools/src/lib.rs",
             "// the shim only needs tools/ to exist\n",
         );
-        repo.write("Cargo.lock", "# the shim only needs Cargo.lock to exist\n");
-        make_executable(&repo.path().join(".claude/hooks/aios"));
+        repo.write("Cargo.lock", "# a build input of the aios binary\n");
+        repo.write("Cargo.toml", "# a build input of the aios binary\n");
+        repo.write(
+            "rust-toolchain.toml",
+            "# a build input of the aios binary\n",
+        );
+        repo.write(".cargo/config.toml", "# a build input of the aios binary\n");
         repo.commit("Initial");
 
         let bin_dir = TestRepo::adopt(unique_dir(&format!("{label}-path")));
-        let just = bin_dir.path().join("just");
-        std::fs::write(&just, FAKE_JUST).expect("write the fake just");
-        make_executable(&just);
+        write_executable(&bin_dir.path().join("cargo"), FAKE_CARGO);
 
         Sandbox { repo, bin_dir }
     }
@@ -146,35 +207,79 @@ impl Sandbox {
     }
 
     fn bin(&self) -> PathBuf {
-        self.repo.path().join("target/tools/release/aios")
+        self.repo.path().join("target/tools/installed/aios")
+    }
+
+    fn stamp(&self) -> PathBuf {
+        self.repo.path().join("target/tools/installed/aios.stamp")
     }
 
     fn lock(&self) -> PathBuf {
         self.repo.path().join("target/tools/.building")
     }
 
-    fn just_log(&self) -> PathBuf {
-        self.repo.path().join("just.log")
+    fn cargo_log(&self) -> PathBuf {
+        self.repo.path().join("cargo.log")
+    }
+
+    fn built(&self) -> bool {
+        self.cargo_log().exists()
+    }
+
+    fn path_env(&self) -> String {
+        format!(
+            "{}:{}",
+            self.bin_dir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    }
+
+    /// Runs the real `tools` recipe through `just`, as the shim does.
+    fn just_tools(&self, envs: &[(&str, &str)]) -> Output {
+        let mut cmd = Command::new("just");
+        isolated(&mut cmd);
+        cmd.env("PATH", self.path_env())
+            .current_dir(self.repo.path())
+            .arg("tools");
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
+        cmd.output()
+            .expect("run just (the tests build through the real justfile recipe)")
+    }
+
+    /// Builds `source` (the default fake binary when `None`) through the recipe,
+    /// forgets the build, and moves the binary's mtime after every input
+    /// (fresh) or before them (stale by mtime; the stamp still matches).
+    fn install(&self, source: Option<&str>, fresh: bool) {
+        let source_file = self.bin_dir.path().join("aios-source");
+        let mut envs = Vec::new();
+        if let Some(source) = source {
+            std::fs::write(&source_file, source).expect("write the binary source");
+            envs.push((
+                "FAKE_CARGO_SOURCE",
+                source_file.to_str().expect("a UTF-8 path"),
+            ));
+        }
+        let out = self.just_tools(&envs);
+        assert!(
+            out.status.success(),
+            "just tools failed: {}{}",
+            stdout(&out),
+            stderr(&out)
+        );
+        std::fs::remove_file(self.cargo_log()).expect("remove cargo.log");
+        set_mtime(&self.bin(), if fresh { FRESH_STAMP } else { STALE_STAMP });
     }
 
     fn install_bin(&self, fresh: bool) {
-        let bin = self.bin();
-        std::fs::create_dir_all(bin.parent().expect("the binary has a parent"))
-            .expect("create target/tools/release");
-        std::fs::write(&bin, FAKE_BIN).expect("write the fake binary");
-        make_executable(&bin);
-        set_mtime(&bin, if fresh { FRESH_STAMP } else { STALE_STAMP });
+        self.install(None, fresh);
     }
 
     fn run_at(&self, shim: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
         let mut cmd = Command::new(shim);
         isolated(&mut cmd);
-        let path = format!(
-            "{}:{}",
-            self.bin_dir.path().display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        cmd.env("PATH", path)
+        cmd.env("PATH", self.path_env())
             .current_dir(self.repo.path())
             .args(args);
         for (key, value) in envs {
@@ -189,6 +294,11 @@ impl Sandbox {
 
     fn run_env(&self, args: &[&str], envs: &[(&str, &str)]) -> Output {
         self.run_at(&self.shim(), args, envs)
+    }
+
+    fn wait_for_background_build(&self) {
+        wait_for("the background build to log a line", || self.built());
+        wait_for("the build lock to be released", || !self.lock().exists());
     }
 }
 
@@ -210,12 +320,9 @@ fn the_shim_is_posix_sh() {
 fn guard_without_a_binary_asks_and_does_not_build() {
     let sandbox = Sandbox::new("shim-guard-missing");
     let out = sandbox.run(&["guard", "PreToolUse"]);
-    assert_eq!(code(&out), 0);
-    assert_eq!(stdout(&out), format!("{ASK_JSON}\n"));
-    assert!(
-        !sandbox.just_log().exists(),
-        "the guard branch must not build"
-    );
+    assert_asks(&out, NOT_BUILT);
+    assert_eq!(stdout(&out), format!("{ASK_JSON}\n"), "unchanged since R1");
+    assert!(!sandbox.built(), "the guard branch must not build");
     assert!(!sandbox.bin().exists());
 }
 
@@ -226,20 +333,18 @@ fn a_missing_binary_is_built_then_run() {
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check --json\n");
     assert!(
-        stderr(&out).contains("fake just: building the aios binary"),
+        stderr(&out).contains("fake cargo: building the aios binary"),
         "build output belongs on stderr: {}",
         stderr(&out)
     );
-    assert_eq!(
-        std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
-        "build\n"
-    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
 }
 
 #[test]
 fn a_missing_binary_with_a_failing_build_exits_3() {
     let sandbox = Sandbox::new("shim-build-fails");
-    let out = sandbox.run_env(&["docs-check"], &[("FAKE_JUST_FAIL", "1")]);
+    let out = sandbox.run_env(&["docs-check"], &[("FAKE_CARGO_FAIL", "1")]);
     assert_eq!(code(&out), 3);
     assert!(stderr(&out).contains("run: just tools"), "{}", stderr(&out));
     assert!(stdout(&out).is_empty());
@@ -253,14 +358,16 @@ fn a_fresh_binary_runs_without_building_and_passes_its_status_on() {
     let out = sandbox.run(&["docs-check", "--all"]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check --all\n");
-    assert!(
-        !sandbox.just_log().exists(),
-        "a fresh binary must not build"
-    );
+    assert!(!sandbox.built(), "a fresh binary must not build");
 
     let out = sandbox.run_env(&["docs-check"], &[("FAKE_EXIT", "7")]);
     assert_eq!(code(&out), 7);
-    assert!(!sandbox.just_log().exists());
+    assert!(!sandbox.built());
+
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+    assert!(!sandbox.built());
 }
 
 #[test]
@@ -270,10 +377,7 @@ fn a_stale_binary_is_rebuilt_in_the_foreground() {
     let out = sandbox.run(&["docs-check"]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check\n");
-    assert_eq!(
-        std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
-        "build\n"
-    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
     assert!(!sandbox.lock().exists(), "a foreground build takes no lock");
 }
 
@@ -286,7 +390,7 @@ fn a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
     sandbox.install_bin(false);
     let out = sandbox.run_env(
         &["docs-check", "--json"],
-        &[("FAKE_JUST_FAIL", "1"), ("FAKE_EXIT", "1")],
+        &[("FAKE_CARGO_FAIL", "1"), ("FAKE_EXIT", "1")],
     );
     assert_eq!(code(&out), 1, "the stale binary's own status passes on");
     assert_eq!(stdout(&out), "fake:docs-check --json\n");
@@ -294,43 +398,37 @@ fn a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
     assert!(
         err.lines().any(|line| line.starts_with("aios: rebuilding ")
             && line.ends_with(
-                "/target/tools/release/aios failed; running the stale binary (run: just tools)"
+                "/target/tools/installed/aios failed; running the stale binary (run: just tools)"
             )),
         "missing the stale-binary warning: {err}"
     );
-    assert_eq!(
-        std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
-        "build\n"
-    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
 }
 
 #[test]
-fn a_newer_toolchain_pin_or_workspace_manifest_makes_the_binary_stale() {
-    // A pull that only bumps the pinned nightly (or the workspace manifest)
-    // touches nothing under tools/ and not Cargo.lock, yet changes the build.
+fn a_newer_toolchain_pin_manifest_or_cargo_config_makes_the_binary_stale() {
+    // A pull that only bumps the pinned nightly (or the workspace manifest, or
+    // the cargo config) touches nothing under tools/ and not Cargo.lock, yet
+    // changes the build.
     for (label, input) in [
         ("shim-stale-toolchain", "rust-toolchain.toml"),
         ("shim-stale-manifest", "Cargo.toml"),
+        ("shim-stale-cargo-config", ".cargo/config.toml"),
     ] {
         let sandbox = Sandbox::new(label);
         sandbox.install_bin(true);
-        sandbox
-            .repo
-            .write(input, "# a build input of the aios binary\n");
+        sandbox.repo.write(input, "# an edited build input\n");
 
         let out = sandbox.run(&["docs-check"]);
         assert_eq!(code(&out), 0);
-        assert!(
-            !sandbox.just_log().exists(),
-            "an older {input} must not rebuild"
-        );
+        assert!(!sandbox.built(), "an older {input} must not rebuild");
 
         set_mtime(&sandbox.repo.path().join(input), NEWER_STAMP);
         let out = sandbox.run(&["docs-check"]);
         assert_eq!(code(&out), 0);
         assert_eq!(stdout(&out), "fake:docs-check\n");
         assert_eq!(
-            std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
+            read(&sandbox.cargo_log()),
             "build\n",
             "a {input} newer than the binary must rebuild it"
         );
@@ -338,13 +436,12 @@ fn a_newer_toolchain_pin_or_workspace_manifest_makes_the_binary_stale() {
 }
 
 #[test]
-fn a_stale_guard_runs_at_once_and_rebuilds_in_the_background() {
+fn a_stale_guard_asks_at_once_and_rebuilds_in_the_background() {
     let sandbox = Sandbox::new("shim-stale-guard");
     sandbox.install_bin(false);
     let started = Instant::now();
-    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("FAKE_JUST_DELAY", "3")]);
-    assert_eq!(code(&out), 0);
-    assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("FAKE_CARGO_DELAY", "3")]);
+    assert_asks(&out, STALE);
     assert!(stderr(&out).is_empty(), "{}", stderr(&out));
     assert!(
         started.elapsed() < Duration::from_secs(3),
@@ -354,21 +451,19 @@ fn a_stale_guard_runs_at_once_and_rebuilds_in_the_background() {
         sandbox.lock().exists(),
         "a background build takes the lock before the shim returns"
     );
-    wait_for("the background build to log a line", || {
-        sandbox.just_log().exists()
-    });
-    wait_for("the build lock to be released", || !sandbox.lock().exists());
-    assert_eq!(
-        std::fs::read_to_string(sandbox.just_log()).expect("read just.log"),
-        "build\n"
-    );
+    sandbox.wait_for_background_build();
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n", "rebuilt: fresh");
 }
 
 #[test]
 fn prebuild_returns_at_once_and_builds_in_the_background() {
     let sandbox = Sandbox::new("shim-prebuild");
     let started = Instant::now();
-    let out = sandbox.run_env(&["--prebuild"], &[("FAKE_JUST_DELAY", "3")]);
+    let out = sandbox.run_env(&["--prebuild"], &[("FAKE_CARGO_DELAY", "3")]);
     assert_eq!(code(&out), 0);
     assert!(
         started.elapsed() < Duration::from_secs(3),
@@ -378,26 +473,341 @@ fn prebuild_returns_at_once_and_builds_in_the_background() {
         sandbox.lock().exists(),
         "a background build takes the lock before the shim returns"
     );
-    wait_for("the background build to produce the binary", || {
-        sandbox.bin().exists()
-    });
-    wait_for("the build lock to be released", || !sandbox.lock().exists());
+    sandbox.wait_for_background_build();
+    assert!(sandbox.bin().exists() && sandbox.stamp().exists());
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+}
+
+// #203 path 1: `[ -x ]` alone is true for a directory, which exec cannot run.
+#[test]
+fn a_directory_or_an_empty_file_is_not_a_binary() {
+    let sandbox = Sandbox::new("shim-directory");
+    let dir = sandbox.bin_dir.path().join("a-directory");
+    std::fs::create_dir(&dir).expect("create the directory");
+    let dir = dir.to_str().expect("a UTF-8 path");
+    let empty = sandbox.bin_dir.path().join("empty-aios");
+    write_executable(&empty, "");
+    let empty = empty.to_str().expect("a UTF-8 path");
+
+    for over in [dir, empty] {
+        let out = sandbox.run_env(&["guard", "PreToolUse"], &[("AIOS_TOOLS_BIN", over)]);
+        assert_asks(&out, BAD_OVERRIDE);
+
+        let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", over)]);
+        assert_eq!(code(&out), 3);
+        assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+        assert!(
+            stderr(&out).contains("is not an executable file"),
+            "{}",
+            stderr(&out)
+        );
+    }
+
+    // The same test for the main checkout's binary.
+    std::fs::create_dir_all(sandbox.bin()).expect("create a directory at the binary path");
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_asks(&out, NOT_BUILT);
+    assert!(!sandbox.built());
+}
+
+// #203 path 2, shim side: a guard binary that fails to start (as a vanished or
+// half-written file does) or is killed still ends in a decision.
+#[test]
+fn a_guard_binary_that_cannot_start_or_is_killed_asks() {
+    let sandbox = Sandbox::new("shim-guard-start-fails");
+    // A missing interpreter fails at exec like a missing file: 126 under bash
+    // (macOS /bin/sh), 127 under dash.
+    sandbox.install(Some("#!/nonexistent/interpreter\n"), true);
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(code(&out), 0);
+    assert!(
+        [126, 127]
+            .iter()
+            .any(|n| stdout(&out) == ask_json(&failed(*n))),
+        "{}",
+        stdout(&out)
+    );
+
+    sandbox.install(Some("#!/bin/sh\nprintf 'partial'\nkill -9 $$\n"), true);
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_asks(&out, &failed(137));
+    assert!(!sandbox.built(), "both binaries were fresh");
+}
+
+// #203 path 2: the binary's own exits other than 0 and 2 fail closed too.
+#[test]
+fn guard_passes_on_only_the_binarys_own_0_and_2() {
+    let sandbox = Sandbox::new("shim-guard-exits");
+    sandbox.install_bin(true);
+
+    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("FAKE_EXIT", "2")]);
+    assert_eq!(code(&out), 2, "exit 2 blocks the tool");
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+
+    for status in [1, 3, 101, 126] {
+        let value = status.to_string();
+        let out = sandbox.run_env(&["guard", "PreToolUse"], &[("FAKE_EXIT", &value)]);
+        // The binary's own "fake:" line is dropped: only the ask remains.
+        assert_asks(&out, &failed(status));
+    }
+
+    // The same for an override, which also gets the hook payload on stdin.
+    let echo = sandbox.bin_dir.path().join("echo-aios");
+    write_executable(&echo, "#!/bin/sh\ncat\nexit ${FAKE_EXIT:-0}\n");
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#;
+    for (status, want) in [("0", format!("{payload}\n")), ("1", ask_json(&failed(1)))] {
+        let mut cmd = Command::new(sandbox.shim());
+        isolated(&mut cmd);
+        let mut child = cmd
+            .env("PATH", sandbox.path_env())
+            .env("AIOS_TOOLS_BIN", &echo)
+            .env("FAKE_EXIT", status)
+            .current_dir(sandbox.repo.path())
+            .args(["guard", "PreToolUse"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run the shim");
+        child
+            .stdin
+            .take()
+            .expect("a piped stdin")
+            .write_all(payload.as_bytes())
+            .expect("write the hook payload");
+        let out = child.wait_with_output().expect("wait for the shim");
+        assert_eq!(code(&out), 0);
+        assert_eq!(stdout(&out), want, "binary exit {status}");
+    }
+}
+
+// #203 path 2, build side: `just tools` never leaves the binary missing or
+// half-written, and does not depend on the file cargo rewrites.
+#[test]
+fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
+    let sandbox = Sandbox::new("shim-install");
+    sandbox.install_bin(true);
+    let old = read(&sandbox.bin());
+    let old_stamp = read(&sandbox.stamp());
+
+    // cargo's uplift removes release/aios before it writes the new one.
+    std::fs::remove_file(sandbox.repo.path().join("target/tools/release/aios"))
+        .expect("remove release/aios");
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+
+    // A failed build leaves the installed binary and its stamp alone.
+    let out = sandbox.just_tools(&[("FAKE_CARGO_FAIL", "1")]);
+    assert!(!out.status.success());
+    assert_eq!(read(&sandbox.bin()), old);
+    assert_eq!(read(&sandbox.stamp()), old_stamp);
+
+    // A new version, copied slowly: while the copy is half-written, the shim
+    // still runs the complete old binary.
+    let slow = TestRepo::adopt(unique_dir("shim-install-cp"));
+    write_executable(&slow.path().join("cp"), SLOW_CP);
+    let mark = slow.path().join("half-copied");
+    let v2 = sandbox.bin_dir.path().join("aios-v2");
+    std::fs::write(&v2, "#!/bin/sh\nprintf 'v2:%s\\n' \"$*\"\n").expect("write v2");
+    let mut cmd = Command::new("just");
+    isolated(&mut cmd);
+    let mut build = cmd
+        .env(
+            "PATH",
+            format!("{}:{}", slow.path().display(), sandbox.path_env()),
+        )
+        .env("FAKE_CARGO_SOURCE", &v2)
+        .env("FAKE_CP_DELAY", "2")
+        .env("FAKE_CP_MARK", &mark)
+        .current_dir(sandbox.repo.path())
+        .arg("tools")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("run just tools");
+    wait_for("the recipe's copy to be half-written", || mark.exists());
+    assert_eq!(
+        read(&sandbox.bin()),
+        old,
+        "the installed binary must never be the half-written copy"
+    );
+    let out = sandbox.run(&["docs-check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), "fake:docs-check\n");
+    assert!(build.wait().expect("wait for just tools").success());
+
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(stdout(&out), "v2:guard PreToolUse\n");
+    let installed = sandbox.bin().parent().expect("a parent").to_path_buf();
+    assert!(
+        std::fs::read_dir(&installed)
+            .expect("list installed/")
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".aios.")),
+        "the recipe leaves no temporary files"
+    );
+    assert!(
+        std::fs::read_dir(sandbox.repo.path().join("target/tools"))
+            .expect("list target/tools")
+            .filter_map(Result::ok)
+            .all(|entry| !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".build-start.")),
+        "the recipe removes its start file"
+    );
+}
+
+// #203 path 3: exits before the shim reaches the guard branch.
+#[test]
+fn guard_asks_when_the_shim_cannot_find_its_own_directory() {
+    let sandbox = Sandbox::new("shim-no-own-dir");
+    sandbox.install_bin(true);
+    // `sh -c` sets $0, the path the shim resolves its directory from.
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new("sh");
+        isolated(&mut cmd);
+        cmd.env("PATH", sandbox.path_env())
+            .current_dir(sandbox.repo.path())
+            .arg("-c")
+            .arg(read(&repo_shim()))
+            .arg("/nonexistent/.claude/hooks/aios")
+            .args(args)
+            .output()
+            .expect("run the shim")
+    };
+
+    assert_asks(&run(&["guard", "PreToolUse"]), NO_OWN_DIR);
+
+    let out = run(&["docs-check"]);
+    assert_eq!(code(&out), 3);
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("cannot find the directory of /nonexistent/.claude/hooks/aios"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(&["--prebuild"]);
+    assert_eq!(code(&out), 0);
+    assert!(!sandbox.built());
+}
+
+// #203 path 4: the stamp ties the binary to main's committed inputs.
+#[test]
+fn a_replaced_binary_is_stale_even_when_future_dated() {
+    let sandbox = Sandbox::new("shim-replaced");
+    sandbox.install_bin(true);
+    let replace = || {
+        write_executable(
+            &sandbox.bin(),
+            "#!/bin/sh\nprintf 'replaced:%s\\n' \"$*\"\n",
+        );
+        set_mtime(&sandbox.bin(), NEWER_STAMP);
+    };
+
+    replace();
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_asks(&out, STALE);
+    sandbox.wait_for_background_build();
+    let out = sandbox.run(&["guard", "PreToolUse"]);
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n", "rebuilt");
+
+    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+    replace();
+    let out = sandbox.run(&["docs-check"]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(
+        stdout(&out),
+        "fake:docs-check\n",
+        "rebuilt in the foreground"
+    );
+    assert_eq!(read(&sandbox.cargo_log()), "build\n");
+}
+
+#[test]
+fn a_missing_or_foreign_stamp_is_stale() {
+    let sandbox = Sandbox::new("shim-stamp");
+    sandbox.install_bin(true);
+
+    std::fs::remove_file(sandbox.stamp()).expect("remove the stamp");
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
+
+    // Committed changes to each input, with the binary dated after them so
+    // that only the stamp can tell.
+    for input in [
+        "tools/src/lib.rs",
+        "Cargo.lock",
+        "Cargo.toml",
+        "rust-toolchain.toml",
+        ".cargo/config.toml",
+    ] {
+        std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+        sandbox.repo.write(input, &format!("# changed: {input}\n"));
+        sandbox.repo.commit(&format!("Change {input}"));
+        set_mtime(&sandbox.bin(), FRESH_STAMP);
+
+        assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+        sandbox.wait_for_background_build();
+        assert_eq!(
+            stdout(&sandbox.run(&["guard", "PreToolUse"])),
+            "fake:guard PreToolUse\n",
+            "rebuilt after {input} changed"
+        );
+    }
+}
+
+#[test]
+fn a_build_from_uncommitted_changes_is_dirty() {
+    let sandbox = Sandbox::new("shim-dirty");
+    sandbox
+        .repo
+        .write("tools/src/lib.rs", "// an uncommitted edit\n");
+    sandbox
+        .repo
+        .write("tools/src/new.rs", "// an untracked file\n");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+
+    // guard asks without a rebuild, which could not help.
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+    assert!(!sandbox.lock().exists() && !sandbox.built());
+    // Other subcommands run it, as they would any build of the working tree.
+    let out = sandbox.run(&["docs-check"]);
+    assert_eq!(stdout(&out), "fake:docs-check\n");
+    assert!(!sandbox.built());
+
+    // Committed, the inputs no longer match the stamp's HEAD: rebuild, clean.
+    sandbox.repo.commit("Commit the edits");
+    set_mtime(&sandbox.bin(), FRESH_STAMP);
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
 }
 
 #[test]
 fn an_override_replaces_the_main_checkouts_binary() {
     let sandbox = Sandbox::new("shim-override");
     let other = sandbox.bin_dir.path().join("other-aios");
-    std::fs::write(&other, "#!/bin/sh\nprintf 'override:%s\\n' \"$*\"\n")
-        .expect("write the override binary");
-    make_executable(&other);
-    let out = sandbox.run_env(
-        &["docs-check"],
-        &[("AIOS_TOOLS_BIN", other.to_str().expect("a UTF-8 path"))],
-    );
+    write_executable(&other, "#!/bin/sh\nprintf 'override:%s\\n' \"$*\"\n");
+    let other = other.to_str().expect("a UTF-8 path");
+    let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", other)]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "override:docs-check\n");
-    assert!(!sandbox.just_log().exists(), "an override must not build");
+    let out = sandbox.run_env(&["guard", "PreToolUse"], &[("AIOS_TOOLS_BIN", other)]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "override:guard PreToolUse\n");
+    assert!(!sandbox.built(), "an override must not build");
 }
 
 #[test]
@@ -415,8 +825,7 @@ fn a_missing_override_fails_closed() {
     );
 
     let out = sandbox.run_env(&["guard", "PreToolUse"], &[("AIOS_TOOLS_BIN", missing)]);
-    assert_eq!(code(&out), 0);
-    assert_eq!(stdout(&out), format!("{ASK_JSON}\n"));
+    assert_asks(&out, BAD_OVERRIDE);
 }
 
 #[test]
@@ -431,21 +840,18 @@ fn a_linked_worktree_runs_the_main_checkouts_binary() {
     );
 
     // A different binary inside the worktree must be ignored.
-    let other = worktree.path().join("target/tools/release/aios");
+    let other = worktree.path().join("target/tools/installed/aios");
     std::fs::create_dir_all(other.parent().expect("the binary has a parent"))
         .expect("create the worktree target directory");
-    std::fs::write(&other, "#!/bin/sh\nprintf 'worktree:%s\\n' \"$*\"\n")
-        .expect("write the worktree binary");
-    make_executable(&other);
+    write_executable(&other, "#!/bin/sh\nprintf 'worktree:%s\\n' \"$*\"\n");
 
-    let out = sandbox.run_at(
-        &worktree.path().join(".claude/hooks/aios"),
-        &["docs-check"],
-        &[],
-    );
+    let shim = worktree.path().join(".claude/hooks/aios");
+    let out = sandbox.run_at(&shim, &["docs-check"], &[]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check\n");
-    assert!(!sandbox.just_log().exists(), "the main binary is fresh");
+    let out = sandbox.run_at(&shim, &["guard", "PreToolUse"], &[]);
+    assert_eq!(stdout(&out), "fake:guard PreToolUse\n");
+    assert!(!sandbox.built(), "the main binary is fresh");
 }
 
 #[test]
@@ -458,24 +864,15 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
         sandbox.repo.path(),
         &["worktree", "add", "-q", "--detach", worktree.path_str()],
     );
-    let other = worktree.path().join("target/tools/release/aios");
+    let other = worktree.path().join("target/tools/installed/aios");
     std::fs::create_dir_all(other.parent().expect("the binary has a parent"))
         .expect("create the worktree target directory");
-    std::fs::write(&other, "#!/bin/sh\nprintf 'worktree:%s\\n' \"$*\"\n")
-        .expect("write the worktree binary");
-    make_executable(&other);
+    write_executable(&other, "#!/bin/sh\nprintf 'worktree:%s\\n' \"$*\"\n");
 
-    // A `git` that always fails, first on PATH, ahead of the fake `just`.
+    // A `git` that always fails, first on PATH, ahead of the fake `cargo`.
     let git_dir = TestRepo::adopt(unique_dir("shim-worktree-nogit-git"));
-    let fake_git = git_dir.path().join("git");
-    std::fs::write(&fake_git, "#!/bin/sh\nexit 128\n").expect("write the failing git");
-    make_executable(&fake_git);
-    let path = format!(
-        "{}:{}:{}",
-        git_dir.path().display(),
-        sandbox.bin_dir.path().display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    write_executable(&git_dir.path().join("git"), "#!/bin/sh\nexit 128\n");
+    let path = format!("{}:{}", git_dir.path().display(), sandbox.path_env());
     let shim = worktree.path().join(".claude/hooks/aios");
 
     let out = sandbox.run_at(&shim, &["docs-check"], &[("PATH", &path)]);
@@ -488,8 +885,7 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     );
 
     let out = sandbox.run_at(&shim, &["guard", "PreToolUse"], &[("PATH", &path)]);
-    assert_eq!(code(&out), 0);
-    assert_eq!(stdout(&out), format!("{ASK_JSON}\n"));
+    assert_asks(&out, NO_MAIN);
 
     // A stale worktree binary and a slow build: a shim that took the worktree
     // for the main checkout would hold the worktree's build lock on return.
@@ -497,7 +893,7 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     let out = sandbox.run_at(
         &shim,
         &["--prebuild"],
-        &[("PATH", &path), ("FAKE_JUST_DELAY", "3")],
+        &[("PATH", &path), ("FAKE_CARGO_DELAY", "3")],
     );
     assert_eq!(code(&out), 0);
     assert!(!sandbox.lock().exists());
@@ -518,11 +914,26 @@ fn a_linked_worktree_fails_closed_when_git_cannot_name_the_main_checkout() {
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "worktree:docs-check\n");
 
-    // The main checkout's own shim keeps the fallback: its .git is a directory.
+    // The main checkout's own shim keeps the fallback, since its .git is a
+    // directory, but without git it cannot check the stamp: guard asks, and
+    // the other subcommands' rebuild fails (the recipe needs git too), so they
+    // warn and run the unverified binary.
+    let out = sandbox.run_at(
+        &sandbox.shim(),
+        &["guard", "PreToolUse"],
+        &[("PATH", &path)],
+    );
+    assert_asks(&out, STALE);
+    sandbox.wait_for_background_build();
+    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
     let out = sandbox.run_at(&sandbox.shim(), &["docs-check"], &[("PATH", &path)]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "fake:docs-check\n");
-    assert!(!sandbox.just_log().exists(), "the main binary is fresh");
+    assert!(
+        stderr(&out).contains("failed; running the stale binary"),
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -530,23 +941,24 @@ fn a_bare_override_names_a_file_in_the_current_directory() {
     let sandbox = Sandbox::new("shim-override-bare");
     // The same name in the current directory and on PATH: the shim must run
     // the file its `-x` test checked, not the one exec would find on PATH.
-    let local = sandbox.repo.path().join("bare-aios");
-    std::fs::write(&local, "#!/bin/sh\nprintf 'cwd:%s\\n' \"$*\"\n").expect("write the cwd binary");
-    make_executable(&local);
-    let on_path = sandbox.bin_dir.path().join("bare-aios");
-    std::fs::write(&on_path, "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n")
-        .expect("write the PATH binary");
-    make_executable(&on_path);
+    write_executable(
+        &sandbox.repo.path().join("bare-aios"),
+        "#!/bin/sh\nprintf 'cwd:%s\\n' \"$*\"\n",
+    );
+    write_executable(
+        &sandbox.bin_dir.path().join("bare-aios"),
+        "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n",
+    );
 
     let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", "bare-aios")]);
     assert_eq!(code(&out), 0);
     assert_eq!(stdout(&out), "cwd:docs-check\n");
 
     // A bare name found only on PATH is not an executable file here.
-    let path_only = sandbox.bin_dir.path().join("path-only-aios");
-    std::fs::write(&path_only, "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n")
-        .expect("write the PATH-only binary");
-    make_executable(&path_only);
+    write_executable(
+        &sandbox.bin_dir.path().join("path-only-aios"),
+        "#!/bin/sh\nprintf 'path:%s\\n' \"$*\"\n",
+    );
     let out = sandbox.run_env(&["docs-check"], &[("AIOS_TOOLS_BIN", "path-only-aios")]);
     assert_eq!(code(&out), 3);
     assert!(stdout(&out).is_empty(), "{}", stdout(&out));

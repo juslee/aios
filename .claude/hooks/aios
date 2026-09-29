@@ -3,51 +3,152 @@
 #
 # The binary comes from the MAIN checkout (the parent of git's common dir), so
 # by default hooks, skills and recipes run main's code, not a PR's, even when
-# called from a PR worktree. That binary is an unprotected build artifact: a
-# session that writes the main checkout's target/tools can replace it, and the
-# mtime-only freshness test below does not notice (an R5 open question in
-# docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md). AIOS_TOOLS_BIN
-# overrides it, to test a PR's own build explicitly (a bare name is taken
-# relative to the current directory, not looked up on PATH). When git cannot
-# name the common dir from a linked worktree, the shim fails closed rather than
-# run the worktree's own build: guard asks, --prebuild does nothing, other
-# subcommands exit 3.
+# called from a PR worktree. `just tools` installs it at
+# target/tools/installed/aios, a path cargo never writes, by renaming a complete
+# copy into place, then writes installed/aios.stamp the same way. The stamp
+# records HEAD's tree entries for the build inputs (tools/, Cargo.lock,
+# Cargo.toml, rust-toolchain.toml, .cargo/), the git hash of the installed
+# binary, and whether those inputs had uncommitted changes; the shim recomputes
+# it from the main checkout. AIOS_TOOLS_BIN overrides the binary, to test a
+# PR's own build explicitly (a bare name is taken relative to the current
+# directory, not looked up on PATH); an override has no stamp and no freshness
+# test. When git cannot name the common dir from a linked worktree, the shim
+# fails closed rather than run the worktree's own build.
 #
-# Fresh means newer than every file under the main checkout's tools/ and than
-# its Cargo.lock, Cargo.toml and rust-toolchain.toml, so a pull that only bumps
-# the pinned nightly still rebuilds. `just tools` stamps the binary with the
-# time its build started, so an edit made during a build still counts as newer.
-#   aios guard ...    fresh: run. stale: run it and start one background
-#                     `just tools` (lock dir target/tools/.building). missing:
-#                     fail closed with a PreToolUse "ask" decision, exit 0.
-#   aios <other> ...  fresh: run. stale: rebuild in the foreground, then run
-#                     (a failed rebuild prints a warning and runs the stale
-#                     binary instead, see below). missing: build, then run;
-#                     exit 3 naming `just tools` if the build fails.
+# The main checkout's binary is, in order:
+#   missing  not a non-empty regular executable file.
+#   stale    a build input is newer than the binary (it carries its build's
+#            start time, so an edit made during a build counts, and so do
+#            uncommitted edits), or the stamp is missing or does not match
+#            main's HEAD and the binary: a binary built elsewhere, or
+#            replaced, or future-dated.
+#   dirty    matches, but was built from uncommitted input changes.
+#   fresh    matches, built from committed inputs, nothing newer.
+#
+#   aios guard ...    PreToolUse hook. Runs a fresh binary as a child: its own
+#                     exit 0 (decision on stdout) and 2 (block) pass through,
+#                     any other exit becomes "ask". Claude Code runs the tool on
+#                     a hook exit other than 0 or 2, so every path that does not
+#                     end that way prints a PreToolUse "ask" decision and exits 0
+#                     (#203): missing (no build), stale (and one background
+#                     `just tools`, lock dir target/tools/.building), dirty (no
+#                     build: commit or revert the changes first), an override
+#                     that is not a runnable file, and a shim that cannot find
+#                     the main checkout.
+#   aios <other> ...  fresh or dirty: run. stale: rebuild in the foreground,
+#                     then run (a failed rebuild prints a warning and runs the
+#                     stale binary instead). missing: build, then run; exit 3
+#                     naming `just tools` if the build fails. Exit 3 when the
+#                     shim cannot find the main checkout.
 #   aios --prebuild   (SessionStart) start a background build when the binary
 #                     is missing or stale; always exits 0.
+#
+# The stamp shows that `just tools` installed the binary from main's committed
+# inputs. It is not tamper-proof: a session that can write target/tools can
+# also write a matching stamp, or poison cargo's artifacts there before the
+# next build. Keeping sessions out of target/tools is the permission rules' job
+# (docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md, §2).
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
 # never to stdout, so JSON on stdout stays parseable.
 
 set -u
 
-here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 3
+sub=${1:-}
+
+# Print a PreToolUse "ask" decision with reason $1 and exit 0. Reasons are
+# fixed text plus digits: nothing that needs JSON escaping.
+ask() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$1"
+    exit 0
+}
+
+# Give up without running a binary: guard asks with reason $1, --prebuild exits
+# 0, anything else prints $2 and exits 3.
+stop() {
+    case $sub in
+    guard) ask "$1" ;;
+    --prebuild) exit 0 ;;
+    esac
+    printf 'aios: %s\n' "$2" >&2
+    exit 3
+}
+
+# `[ -x ]` alone is true for a directory, and an empty executable file runs as
+# an empty script that exits 0.
+runnable() {
+    [ -f "$1" ] && [ -x "$1" ] && [ -s "$1" ]
+}
+
+# Run the guard binary $1 as a child rather than exec it, so a start failure
+# (a vanished or half-written file: 126, 127, and under macOS /bin/sh also 1,
+# or 137 when the kernel kills it) still ends in a decision. The binary's own
+# exit 0 (decision on stdout) and 2 (block, reason on stderr) pass through with
+# its stdout. Any other exit, the binary's own included, means the guard did
+# not decide, so it becomes an ask and the binary's stdout is dropped: Claude
+# Code would run the tool on it, and partial output next to the ask would not
+# parse as a decision.
+run_guard() {
+    guard_bin=$1
+    shift
+    out=$("$guard_bin" "$@")
+    status=$?
+    case $status in
+    0 | 2)
+        [ -z "$out" ] || printf '%s\n' "$out"
+        exit "$status"
+        ;;
+    esac
+    ask "aios guard failed (exit $status); run just tools"
+}
+
+if ! dir=$(dirname -- "$0") || ! here=$(CDPATH='' cd -- "$dir" && pwd -P); then
+    stop "aios shim cannot find its own directory; run just tools" \
+        "cannot find the directory of $0"
+fi
 unresolved=
 if common=$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    main=$(dirname -- "$common")
+    main=$(dirname -- "$common") ||
+        stop "aios shim cannot find the main checkout; run just tools" \
+            "cannot find the main checkout from $common"
 else
-    main=$(CDPATH='' cd -- "$here/../.." && pwd -P) || exit 3
+    main=$(CDPATH='' cd -- "$here/../.." && pwd -P) ||
+        stop "aios shim cannot find the main checkout; run just tools" \
+            "cannot find the main checkout above $here"
     # A linked worktree's .git is a `gitdir:` file, and its root is not the
     # main checkout: acted on after the AIOS_TOOLS_BIN override below.
     [ -f "$main/.git" ] && unresolved=1
 fi
-bin="$main/target/tools/release/aios"
+bin="$main/target/tools/installed/aios"
+stamp="$main/target/tools/installed/aios.stamp"
 lock="$main/target/tools/.building"
 log="$main/target/tools/build.log"
-ask='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"aios tools not built; run just tools"}}'
+# The binary's build inputs, relative to the checkout root. The `tools` recipe
+# in the justfile stamps the same list in the same format: change both.
+inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml .cargo'
 
-is_stale() {
-    [ -n "$(find "$main/tools" "$main/Cargo.lock" "$main/Cargo.toml" "$main/rust-toolchain.toml" -newer "$bin" -print 2>/dev/null | head -n 1)" ]
+# Print fresh, dirty or stale for a runnable $bin (see the header).
+verdict() {
+    # shellcheck disable=SC2086 # $inputs is a list of plain relative paths.
+    if [ -n "$(cd "$main" && find $inputs -newer "$bin" -print 2>/dev/null | head -n 1)" ]; then
+        echo stale
+        return
+    fi
+    # shellcheck disable=SC2086
+    if ! src=$(git -C "$main" ls-tree HEAD -- $inputs 2>/dev/null) ||
+        ! sum=$(git -C "$main" hash-object --no-filters -- "$bin" 2>/dev/null) ||
+        ! have=$(cat -- "$stamp" 2>/dev/null); then
+        echo stale
+        return
+    fi
+    want="aios-tools-stamp 1
+$src
+bin $sum
+source"
+    case $have in
+    "$want clean") echo fresh ;;
+    "$want dirty") echo dirty ;;
+    *) echo stale ;;
+    esac
 }
 
 build_fg() {
@@ -68,59 +169,49 @@ build_bg() {
 }
 
 if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
-    [ "${1:-}" = "--prebuild" ] && exit 0
+    [ "$sub" = --prebuild ] && exit 0
     # `[ -x ]` tests a bare name relative to the cwd but exec searches PATH:
     # make both name the same file.
     case $AIOS_TOOLS_BIN in
     */*) ;;
     *) AIOS_TOOLS_BIN=./$AIOS_TOOLS_BIN ;;
     esac
-    [ -x "$AIOS_TOOLS_BIN" ] && exec "$AIOS_TOOLS_BIN" "$@"
-    if [ "${1:-}" = "guard" ]; then
-        printf '%s\n' "$ask"
-        exit 0
-    fi
-    echo "aios: AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not an executable file" >&2
-    exit 3
+    runnable "$AIOS_TOOLS_BIN" ||
+        stop "AIOS_TOOLS_BIN is not an executable file" \
+            "AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not an executable file"
+    [ "$sub" = guard ] && run_guard "$AIOS_TOOLS_BIN" "$@"
+    exec "$AIOS_TOOLS_BIN" "$@"
 fi
 
 if [ -n "$unresolved" ]; then
-    case "${1:-}" in
-    --prebuild) exit 0 ;;
-    guard)
-        printf '%s\n' "$ask"
-        exit 0
-        ;;
-    esac
-    echo "aios: git cannot name the main checkout of the linked worktree $main (git rev-parse --git-common-dir failed); fix git or set AIOS_TOOLS_BIN" >&2
-    exit 3
+    stop "aios shim cannot find the main checkout (git failed); fix git or set AIOS_TOOLS_BIN" \
+        "git cannot name the main checkout of the linked worktree $main (git rev-parse --git-common-dir failed); fix git or set AIOS_TOOLS_BIN"
 fi
 
-case "${1:-}" in
+case $sub in
 --prebuild)
-    if [ ! -x "$bin" ] || is_stale; then
+    if ! runnable "$bin" || [ "$(verdict)" = stale ]; then
         build_bg
     fi
     exit 0
     ;;
 guard)
-    if [ ! -x "$bin" ]; then
-        printf '%s\n' "$ask"
-        exit 0
-    fi
-    if is_stale; then
-        build_bg
-    fi
-    exec "$bin" "$@"
+    runnable "$bin" || ask "aios tools not built; run just tools"
+    case $(verdict) in
+    fresh) run_guard "$bin" "$@" ;;
+    dirty) ask "aios tools were built from uncommitted changes in the main checkout; commit or revert them, then run just tools" ;;
+    esac
+    build_bg
+    ask "aios tools are stale or unverified; rebuilding in the background (just tools)"
     ;;
 esac
 
-if [ ! -x "$bin" ]; then
-    if ! build_fg || [ ! -x "$bin" ]; then
+if ! runnable "$bin"; then
+    if ! build_fg || ! runnable "$bin"; then
         echo "aios: $bin is missing and the build failed; run: just tools" >&2
         exit 3
     fi
-elif is_stale; then
+elif [ "$(verdict)" = stale ]; then
     build_fg || echo "aios: rebuilding $bin failed; running the stale binary (run: just tools)" >&2
 fi
 exec "$bin" "$@"
