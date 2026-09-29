@@ -2,8 +2,9 @@
 //! (`YYYY-MM-DD-initials-short-description.md`), YAML frontmatter keys and
 //! status values, and an empty `plans/` directory.
 //!
-//! `KNOWLEDGE_NAME_RE` is check.py's pattern, compiled with `crate::pyre::compile`,
-//! so its `\d` accepts any Unicode decimal digit, as Python's does.
+//! `KNOWLEDGE_NAME_RE` is check.py's pattern (apart from its `\n?$` ending, below),
+//! compiled with `crate::pyre::compile`, so its `\d` accepts any Unicode decimal
+//! digit, as Python's does.
 //!
 //! `KNOWLEDGE_NAME_RE` ends `\n?$`, mirroring Python's non-MULTILINE `$` (which
 //! also matches just before a final `\n`) per the path-anchor rule the other

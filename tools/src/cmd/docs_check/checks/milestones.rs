@@ -7,10 +7,12 @@
 //! development plan's §8 and §8.1 tables. phase-count compares "N phases" claims
 //! in prose with the number of §8 table rows.
 //!
-//! The patterns are check.py's, compiled with `crate::pyre::compile`, so `\d` and
-//! `\s` are Python's classes; numbers are Python's decimal digits (any Unicode
-//! Nd, through `pystr::parse_uint` and `pystr::int_str`), and check.py's
-//! `str.isdigit()` on a §8 cell (L963, L1000) is `pystr::is_decimal`.
+//! The patterns are check.py's, compiled with `crate::pyre::compile`, except that
+//! `UNCHECKED_RE` drops L951's `(?!~~)` lookahead, which `is_unchecked_task`
+//! applies as code. `\d` and `\s` are Python's classes; numbers are Python's
+//! decimal digits (any Unicode Nd, through `pystr::parse_uint` and
+//! `pystr::int_str`), and check.py's `str.isdigit()` on a §8 cell (L963, L1000) is
+//! `pystr::is_decimal`.
 //!
 //! Accepted divergences from check.py (no tracked file exercises them): `\b`
 //! follows the `regex` crate's Unicode word class; a §8

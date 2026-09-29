@@ -10,7 +10,10 @@
 //!
 //! The patterns are check.py's, compiled with `crate::pyre::compile`, so `\d` and
 //! `\s` are Python's classes: a phase or milestone number written with any Unicode
-//! decimal digit matches and parses (`pystr::parse_uint`) as `int()` does.
+//! decimal digit matches and parses (`pystr::parse_uint`) as `int()` does. Two are
+//! rewritten for the `regex` crate: `PHASE_DOC_RE` ends `\n?$` where L467 ends `$`
+//! (Python's non-MULTILINE `$` also matches before a final `\n`), and `RECIPE_RE`
+//! drops L518's `(?!=)` lookahead, which `recipe_name` applies as code.
 //!
 //! Accepted divergences: `\b` (`MILESTONE_HEADING_RE`, `PRIVATE_ATTR_RE`,
 //! `RECIPE_RE`) uses the `regex` crate's Unicode word class, differing from
