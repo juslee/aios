@@ -1,6 +1,8 @@
-//! Observability types: log levels, subsystem tags, log entry layout.
+//! Observability types and logic shared with host tests: log levels,
+//! subsystem tags, log entry layout, message splitting over a head and
+//! continuation entry, and drain-side reassembly.
 //!
-//! Per observability.md §2.2–2.4.
+//! Per observability.md §2.2–2.4 and §2.7.
 
 /// Log severity levels, ordered from most to least verbose.
 /// Compile-time filtering eliminates levels below the configured minimum.

@@ -319,8 +319,9 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 /// entry left pending by a missing continuation is printed past the limit,
 /// and a ring adds one report line when the drain reaches where it dropped
 /// messages (a second report from that ring needs the ring to fill again
-/// first, far more entries than one call reads). The limit keeps
-/// each call short for the CPU 0 timer tick, which drains every 4th tick.
+/// first, far more entries than one call reads). The limit bounds each
+/// call's cost for the CPU 0 timer tick, which drains every 4th tick; a full
+/// batch still runs well past one 1ms tick (see `timer.rs`).
 /// The boot sequence calls `drain_logs` directly as well, to flush bursts.
 const DRAIN_BATCH_SIZE: usize = 16;
 

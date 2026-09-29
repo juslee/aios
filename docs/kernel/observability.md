@@ -270,7 +270,7 @@ The drain joins a head entry with its continuation into one line. The producer n
 
 Messages dropped because a ring was full are not lost silently either. The drain prints one `[log] core N: K messages dropped (ring full)` line where the loss happened: when its read position in the ring reaches `drop_pos`, after the entries logged before the drop and before those logged after it. The report line has no timestamp of its own; its place in the log gives the gap. If a ring drops messages at more than one position before the drain reaches the first, the one report comes at the latest position and counts them all.
 
-One drain call prints at most 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus an entry left pending by a missing continuation and one dropped-messages line per ring whose drop position it reaches. The bound is on lines per call, which keeps the CPU 0 timer tick short; the UART itself has no lock.
+One drain call prints at most 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus an entry left pending by a missing continuation and one dropped-messages line per ring whose drop position it reaches. The limit on lines per call bounds how long the CPU 0 timer tick spends draining; a full batch still runs well past one 1 ms tick at 115200 baud (see `timer.rs`). The UART itself has no lock.
 
 ### 2.8 Early Boot Fallback
 
@@ -732,7 +732,7 @@ The primary export path during development. The drain function is called from th
 ```rust
 /// Drain the per-core log rings to the UART. One call prints at most
 /// DRAIN_BATCH_SIZE (16) lines across all rings, plus a pending entry and
-/// dropped-messages lines (§2.7), to keep each call short. A head entry and
+/// dropped-messages lines (§2.7), to bound each call. A head entry and
 /// its continuation print as one line.
 pub fn drain_logs() {
     let freq = read_cntfrq();
