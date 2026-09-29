@@ -157,6 +157,7 @@ Triages incoming notifications. Determines urgency based on context, source, and
 pub struct AttentionManager {
     incoming: PriorityQueue<AttentionItem>,
     rules: Vec<AttentionRule>,
+    rule_triage: RuleBasedTriage,   // attention.md §15.2
     context: ContextState,
     digest: Vec<AttentionItem>,     // batched for periodic summary
 }
@@ -168,8 +169,10 @@ impl AttentionManager {
             return urgency;
         }
 
-        // 2. Context-based adjustment
-        let base_urgency = item.declared_urgency;
+        // 2. Context-based adjustment. Agents declare no urgency
+        //    (attention.md §4.3): the base is the Attention Manager's own
+        //    rule-based assessment (attention.md §15.2).
+        let base_urgency = self.rule_triage.assess(&item).urgency;
         let adjusted = match self.context.work_engagement {
             // Deep work: only Interrupt-level notifications get through
             e if e > 0.8 => base_urgency.raise_threshold(Urgency::Interrupt),
