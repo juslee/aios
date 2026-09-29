@@ -86,6 +86,7 @@ Owner decisions, 2026-09-22:
 - The rest of `tools/` is freely editable.
 - R1 verified the rule syntax with headless probes (see Open Questions). The rules use the `**/` form (`Edit` and `Write` on `**/tools/src/cmd/guard/**` and `**/tools/src/cmd/loop/**`), because a leading `/` anchors at the project root of the session's checkout and does not match the same paths under `.claude/worktrees/*/`, where rule 03 puts all work.
 - The ask rules cover the `Edit` and `Write` tools only. An allowed Bash command (`sed`, `awk`, `cp`, `echo` are in the allow list) can still rewrite those sources without a prompt, even headless; an R1 probe confirmed a `sed -i` rewrite. So the ask rules are a speed bump, not the guarantee. **The guarantee is R2's changed-paths gate:** the loop sends any PR whose diff touches `tools/src/cmd/guard/**` or `tools/src/cmd/loop/**` to needs-human instead of merging it, whichever tool made the change (owner decision, 2026-09-28). Those two globs are the minimum. The guard and loop binary is also built from the shared modules in `tools/src/`, `tools/src/main.rs`, `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml`, so a change there can alter guard or loop behaviour without touching either glob. The gate's full path set is an R2 decision (see Open Questions).
+- These rules and the gate protect the sources. The built binary that hooks run is protected separately, by a provenance stamp and permission rules on `target/tools/**` (§2 Invocation, #203).
 
 **What stays out of the crate.** Retro-editable material stays in `scripts/agent/`: prompts, `loop-config.json` and eval cases.
 
@@ -97,22 +98,40 @@ Owner decisions, 2026-09-22:
 cargo build --release -p aios-tools --target-dir target/tools
 ```
 
-The separate target directory means a tools build never waits on a kernel build's lock.
+The separate target directory means a tools build never waits on a kernel build's lock. The recipe then installs the binary and its provenance stamp (next paragraphs, #203).
 
 **Invocation.** Every caller goes through the POSIX `sh` shim `.claude/hooks/aios <subcommand> …`: hooks, skills, `just` recipes and `claude -p` stages.
 
-The shim resolves the binary from the **main checkout**: the parent of `git rev-parse --path-format=absolute --git-common-dir`, plus `/target/tools/release/aios`. This holds even when the caller is in a PR worktree. So by default the guard and the loop run the code merged on main rather than a PR's, which is the same "runs from main" rule as the loop spec. That binary is an unprotected build artifact, not a verified one: a session that writes `<main>/target/tools` (a `cargo build --target-dir`, `cp` or `touch`, all auto-allowed today) can replace it with a build of unreviewed code, and because the freshness test below compares mtimes only, a future-dated replacement survives later pulls. How R5 closes this is an open question (below).
+The shim resolves the binary from the **main checkout**: the parent of `git rev-parse --path-format=absolute --git-common-dir`, plus `/target/tools/installed/aios`. This holds even when the caller is in a PR worktree. So by default the guard and the loop run the code merged on main rather than a PR's, which is the same "runs from main" rule as the loop spec.
 
-- `AIOS_TOOLS_BIN` overrides the binary path, so a PR's own build can be tested explicitly.
+**Install and provenance (#203).** `just tools` copies cargo's `target/tools/release/aios` to a temporary file and renames it to `target/tools/installed/aios`, a path cargo never writes, so a caller never finds that binary missing or half-written. Only after the binary is in place does it rename the provenance stamp `installed/aios.stamp` in beside it. The stamp holds:
+
+- HEAD's tree entries (`git ls-tree HEAD`) for the build inputs: `tools/` (the tree hash `git rev-parse HEAD:tools` prints), `Cargo.lock`, `Cargo.toml`, `rust-toolchain.toml` and `.cargo/`;
+- the git hash of the installed binary;
+- `source dirty` if `git status` showed uncommitted changes to those inputs after the build, otherwise `source clean`.
+
+The shim recomputes the entries and the hash from the main checkout on every call and treats a missing or mismatched stamp as stale (Freshness, below). A binary built from another tree, or replaced after its build, no longer passes as fresh, whatever its mtime.
+
+The stamp is provenance, not tamper-proofing. A session that can write `<main>/target/tools` can write a matching stamp beside its own binary, or poison cargo's intermediate artifacts there (`release/deps/`) so that the next `just tools` installs them with a valid stamp. The build environment is outside the stamp too: `RUSTC_WRAPPER`, `RUSTFLAGS`, or a cargo config above the checkout or in `$CARGO_HOME`. Keeping sessions out of `target/tools` is the job of permission rules in `.claude/settings.json`: a deny for `Edit` and `Write` on `**/target/tools/**`, and asks for the common Bash write commands that name `target/tools/`. The Bash rules are a speed bump, as they are for the guard sources (§1 Protection); a sandbox or filesystem write-deny would be the guarantee.
+
+- `AIOS_TOOLS_BIN` overrides the binary path, so a PR's own build can be tested explicitly. An override has no stamp and no freshness test.
 - CI runs `cargo test` on every PR.
 
-**Freshness.** The binary must be newer than every file under the main checkout's `tools/` and than its `Cargo.lock`, `Cargo.toml` and `rust-toolchain.toml`, so a pull that only bumps the pinned nightly still rebuilds it. The shim checks this with a `find -newer` test, which takes a few milliseconds.
+**Freshness.** The binary is fresh when both checks pass:
+
+- It is newer than every file under the main checkout's `tools/` and than its `Cargo.lock`, `Cargo.toml`, `rust-toolchain.toml` and `.cargo/`, so a pull that only bumps the pinned nightly still rebuilds it. The shim checks this with a `find -newer` test. `just tools` gives the binary its build's start time, so an edit made during a build still counts as newer.
+- Its stamp matches main's HEAD and the binary itself, and says `source clean`. A binary that matches but says `source dirty` is dirty: built from uncommitted input changes.
+
+The stamp does not replace the mtime test, because HEAD's tree entries do not see uncommitted edits. On macOS, with a 3.7 MB binary, the checks take a guard call from about 33 ms (R1's shim) to about 68 ms, mostly for hashing the binary.
 
 | State | `aios guard` (every shell command) | Other subcommands |
 | --- | --- | --- |
-| Fresh | runs | runs |
-| Stale (e.g. just after a pull) | Runs the stale binary, built from an earlier main (unless a session replaced it, see above), and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary |
-| Missing | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Builds in the foreground (a full release build), then runs; exits 3 naming `just tools` if the build fails |
+| Fresh | Runs the binary as a child. Its own exit 0 (decision on stdout) and 2 (block) pass through; any other exit, its own included, becomes an ask | runs |
+| Dirty | **Fails closed**: asks, and starts no build (a rebuild of uncommitted changes cannot fix it) | runs |
+| Stale (e.g. just after a pull, or a replaced binary) | **Fails closed**: asks, and starts one background `just tools` (lock directory `target/tools/.building`, created with `mkdir`) | Rebuilds in the foreground (incremental, seconds), then runs; if the rebuild fails, prints a warning naming `just tools` to stderr and runs the stale binary |
+| Missing (not a non-empty regular executable file) | **Fails closed**: prints a PreToolUse `permissionDecision: "ask"` with the reason "aios tools not built; run just tools", exits 0 | Builds in the foreground (a full release build), then runs; exits 3 naming `just tools` if the build fails |
+
+Every `aios guard` path that does not run a fresh binary prints an ask and exits 0: the states above, an `AIOS_TOOLS_BIN` that is not a runnable file, and a shim that cannot find its own directory or the main checkout. Each ask names its cause in `permissionDecisionReason`.
 
 **R1 deviation (Missing, other subcommands).** The original design exited non-zero, naming `just tools`, without a build. R1's shim builds instead, which the final review accepted because it is friendlier. The cost: a caller such as `scripts/agent/brief.sh` blocks on a full release build on a fresh checkout. SessionStart's `aios --prebuild` (below) is the mitigation.
 
@@ -184,12 +203,22 @@ Apart from that gate, all loop behaviour, prompts, config and evals are unchange
   - Option A widens the gate to all of those inputs. Every tools PR would then need human review, R2-R5 included.
   - Option B keeps the two globs and narrows the claim from "the guarantee" to "a check on direct edits".
 - How R5 protects the main checkout's binary before the guard runs through the shim (§2 Invocation). Nothing stops a session from replacing `<main>/target/tools/release/aios`, and the shim's freshness test compares mtimes only. Candidates, for an owner decision in R5 alongside the guard branch's fail-open exits (next question): a sandbox or filesystem write-deny on `target/tools/**` (Bash-pattern ask rules are easy to get around with `CARGO_TARGET_DIR`, `ln`, `mv` or `install`), or a provenance stamp (`just tools` records `git rev-parse HEAD:tools` and a `Cargo.lock` hash beside the binary, and the shim treats a mismatch as stale or missing).
+  - **#203 answer (2026-09-29; owner decision: both measures):**
+    - The provenance stamp (§2 Install and provenance). `just tools` records HEAD's tree entries for every build input the freshness test covers, plus `.cargo/`; the entry for `tools/` is the `git rev-parse HEAD:tools` tree hash. It also records the installed binary's git hash and whether the inputs had uncommitted changes. The shim treats a missing or mismatched stamp as stale, which for `guard` means an ask and a background rebuild. The binary's own hash is in the stamp because without it a binary replaced after a real build would still match. The mtime test stays, because HEAD's entries do not see uncommitted edits.
+    - Permission rules on `target/tools/**` in `.claude/settings.json`: a deny for `Edit` and `Write`, and asks for the common Bash write commands that name `target/tools/`. Like the Bash side of §1 Protection, these are a speed bump. A command that reaches the path indirectly (through a variable, a `cd`, a script, or a write-capable tool that is not listed) still gets through.
+    - Still open: the stamp cannot tell a session's own stamp from one `just tools` wrote, and it trusts cargo's intermediate artifacts in `target/tools/release/deps/` and the build environment. Only a sandbox or a filesystem write-deny closes these.
 - How R5 closes the shim's `guard` exits that fail open, before `aios guard` is wired as the PreToolUse hook. Claude Code treats a PreToolUse exit other than 0 or 2 as a non-blocking error and runs the tool, so each of these breaks §2's promise that `aios guard` fails closed:
   - **Directory case.** `[ -x ]` is true for a directory, so `AIOS_TOOLS_BIN=<dir> aios guard` passes the test and `exec` exits 126 with empty stdout. The fix is `[ -f ] && [ -x ]`.
   - **Rebuild window.** The stale branch tests `[ -x "$bin" ]`, starts a background `just tools`, and only then runs `exec "$bin"`. Cargo's uplift removes the old `target/tools/release/aios` before it links (Linux) or copies (macOS) the new one. On macOS it does this on every build, a no-op build included, so the file is re-created (a new inode) each time. On Linux the file is a hard link to the deps artifact, which cargo leaves in place when every unit is fresh, so there the window opens only on builds that relink. That includes the build after one that recompiled the `aios_tools` lib, because `just tools`'s `touch -r` also moves the shared inode's mtime back before the lib's rlib. On Linux the link is atomic, so the window only leaves the file missing, never half-written. A guard call in that window finds no binary, or (macOS) a half-written one, at `exec`, and exits with empty stdout: 126 or 127, and under macOS `/bin/sh` (bash 3.2) also 1 (bash's "Undefined error: 0" path) or 137 (SIGKILL from AppleSystemPolicy on a half-written file). On macOS, every guard call made while the shim's own background build runs can hit it; on Linux, only calls made during a build that relinks can. The other subcommands share the window when callers run at the same time; for `docs-check`, an exit 1 with empty stdout reads as new drift.
   - **Pre-dispatch `exit 3`.** The shim exits 3 before it looks at the subcommand when the shell cannot enter the hook's directory, or, when git cannot name the common dir, its parent's parent. This is close to unreachable, but it applies to `guard` too.
 
   Candidates: dispatch on `guard` before those exits and print the ask there; run the binary instead of `exec`ing it and map its failure to the ask, where mapping (or retrying on) 126, 127 or a binary that has vanished does not close exits 1 and 137, because by then the binary exists again, and only treating every exit other than 0 or 2 with empty stdout as the ask does; or have `just tools` install the binary with an atomic rename (a copy to a temporary name, then `mv -f`) to a path cargo never writes, such as `target/tools/bin/aios`, and have the shim run that path, so it never goes missing or half-written. Renaming into `target/tools/release/aios` keeps the window, because cargo re-creates that file on every build.
+  - **#203 answer (2026-09-29):** all three are closed, each with a shim test in `tools/tests/shim.rs`.
+    - Directory case. The shim runs a binary, `AIOS_TOOLS_BIN` or the main checkout's, only if it is a regular, executable, non-empty file (`[ -f ] && [ -x ] && [ -s ]`). It must be non-empty because an empty executable file runs as an empty script and exits 0, which Claude Code reads as no objection.
+    - Rebuild window. Both fixes are in:
+      - `just tools` installs by rename at `target/tools/installed/aios`, so that file is never missing or half-written. The name is `installed/`, not `bin/`, because `cargo install --root target/tools` writes `target/tools/bin/`.
+      - The guard branch runs the binary as a child instead of `exec`. It passes through only the binary's own exit 0 and 2, and turns every other exit into an ask, whatever the stdout. That includes the binary's own other exits, such as 1 for an error or 101 for a panic: the guard did not decide, and passing those exits on would run the tool. A usage error from clap exits 2, so it blocks the tool, which also fails closed.
+    - Pre-dispatch exits. They go through one helper: it prints the ask for `guard`, exits 0 for `--prebuild`, and exits 3 for any other subcommand.
 - Whether R2's `aios loop` subcommands (merge, review) must exit 3 when a stale binary's foreground rebuild fails, instead of running the stale binary (§2 Freshness, Stale row). For `docs-check` the fallback costs only a report from an earlier checker; for the loop it would run an earlier main's merge logic. If yes, R2 changes the shim's stale branch for those subcommands, updates the shim header, and adds a shim test.
 
 ## References
