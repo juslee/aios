@@ -126,13 +126,20 @@ pub enum Syscall {
     /// Each entry specifies either a channel or a notification+mask.
     /// Returns the index of the first ready entry and matched bits
     /// (non-zero only for notification entries).
-    /// See `SelectEntry` and `SelectKind` in `shared/src/ipc.rs`.
+    /// Wire format: an array of `RawSelectEntry` in `shared/src/ipc.rs`,
+    /// `#[repr(C)] { kind: u32, id: u32, mask: u64 }`, 16 bytes each, any
+    /// alignment. kind 0 = channel (`id` is a ChannelId, `mask` ignored),
+    /// kind 1 = notification (`id` is a NotificationId, `mask` its bits).
+    /// The kernel copies the array into a kernel buffer once and decodes it
+    /// into `SelectEntry`/`SelectKind`.
     /// Raw syscall ABI: x0=entries_ptr, x1=entry_count, x2=timeout_ticks (u64::MAX = indefinite)
     /// Returns: x0=ready_index (or negative error), x1=matched_bits (notification bits; 0 for channels)
+    /// EINVAL: entry_count 0 or > 8, an array that is not a valid user
+    /// range (§8.1), or an unknown kind.
     IpcSelect {
-        entries: *const SelectEntry,   // array of SelectEntry
-        entry_count: usize,            // max: MAX_SELECT_ENTRIES (8)
-        timeout_ticks: u64,            // u64::MAX = indefinite wait
+        entries: *const RawSelectEntry, // array of RawSelectEntry
+        entry_count: usize,             // max: MAX_SELECT_ENTRIES (8)
+        timeout_ticks: u64,             // u64::MAX = indefinite wait
     },
 
     // === Channel Management ===

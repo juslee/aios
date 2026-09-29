@@ -679,37 +679,37 @@ fn sys_notification_wait(tf: &TrapFrame) -> i64 {
 /// Wait on multiple channels/notifications. Returns ready index in x0,
 /// matched bits (for notifications) in x1.
 ///
-/// For Phase 3 kernel threads, entries_ptr points to kernel memory.
+/// `entries_ptr` is a user address: an array of `entry_count`
+/// `shared::RawSelectEntry` (16 bytes each, any alignment). EINVAL if
+/// `entry_count` is 0 or above `MAX_SELECT_ENTRIES`, if the array fails
+/// `validate_user_ptr`, or if an entry has an unknown kind. The array is
+/// copied into a kernel buffer once and decoded from there.
 fn sys_ipc_select(tf: &mut TrapFrame) -> i64 {
-    use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
+    use shared::{RawSelectEntry, SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
 
     let entries_ptr = tf.x[0] as usize;
     let entry_count = tf.x[1] as usize;
     let timeout = tf.x[2];
 
-    if entry_count == 0 || entry_count > MAX_SELECT_ENTRIES || entries_ptr == 0 {
+    if entry_count == 0 || entry_count > MAX_SELECT_ENTRIES {
         return IpcError::Einval as i64;
     }
 
-    // For Phase 3, entries are in kernel memory — read directly.
-    // Each entry is a (u32 kind, u32 id, u64 mask) = 16 bytes.
+    let mut wire = [0u8; MAX_SELECT_ENTRIES * RawSelectEntry::SIZE];
+    let wire_len = entry_count * RawSelectEntry::SIZE;
+    if let Err(e) = copy_from_user(&mut wire[..wire_len], entries_ptr) {
+        return e;
+    }
+
     let mut entries = [SelectEntry {
         kind: SelectKind::Channel(shared::ChannelId(0)),
     }; MAX_SELECT_ENTRIES];
-
-    for (i, entry) in entries.iter_mut().enumerate().take(entry_count) {
-        let base = entries_ptr + i * 16;
-        // SAFETY: entries_ptr is kernel memory for Phase 3 kernel threads.
-        let kind = unsafe { core::ptr::read_volatile(base as *const u32) };
-        let id = unsafe { core::ptr::read_volatile((base + 4) as *const u32) };
-        let mask = unsafe { core::ptr::read_volatile((base + 8) as *const u64) };
-
-        *entry = SelectEntry {
-            kind: match kind {
-                0 => SelectKind::Channel(shared::ChannelId(id)),
-                1 => SelectKind::Notification(shared::NotificationId(id), mask),
-                _ => return IpcError::Einval as i64,
-            },
+    // wire_len is a whole number of entries, so there is no remainder.
+    let (chunks, _) = wire[..wire_len].as_chunks::<{ RawSelectEntry::SIZE }>();
+    for (entry, bytes) in entries.iter_mut().zip(chunks) {
+        *entry = match SelectEntry::try_from(RawSelectEntry::from_bytes(bytes)) {
+            Ok(e) => e,
+            Err(e) => return e,
         };
     }
 

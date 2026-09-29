@@ -90,9 +90,95 @@ pub enum SelectKind {
 }
 
 /// A single entry in the IpcSelect wait set.
+///
+/// This is the kernel's decoded form. It wraps a Rust enum and has no fixed
+/// layout, so it never crosses the syscall boundary: EL0 passes
+/// [`RawSelectEntry`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectEntry {
     pub kind: SelectKind,
+}
+
+/// `RawSelectEntry::kind` for a channel entry: `id` is a `ChannelId` and
+/// `mask` is ignored.
+pub const SELECT_KIND_CHANNEL: u32 = 0;
+
+/// `RawSelectEntry::kind` for a notification entry: `id` is a
+/// `NotificationId` and `mask` selects the bits to wait for.
+pub const SELECT_KIND_NOTIFICATION: u32 = 1;
+
+/// One IpcSelect entry as EL0 lays it out in the array that x0 points to
+/// (ipc.md §3.1, `IpcSelect`).
+///
+/// The wire format is this `repr(C)` struct: 16 bytes, `kind` at offset 0,
+/// `id` at 4 and `mask` at 8, in the machine's native byte order (little
+/// endian on AArch64), with no padding. The kernel copies the whole array into
+/// a kernel buffer as bytes, so the user array needs no particular alignment,
+/// then reads each entry with [`RawSelectEntry::from_bytes`] and decodes it
+/// with `SelectEntry::try_from`, which rejects an unknown `kind` with EINVAL.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawSelectEntry {
+    /// `SELECT_KIND_CHANNEL` or `SELECT_KIND_NOTIFICATION`.
+    pub kind: u32,
+    /// Channel or notification id.
+    pub id: u32,
+    /// Notification bit mask; ignored for a channel entry.
+    pub mask: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<RawSelectEntry>() == RawSelectEntry::SIZE);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, kind) == 0);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, id) == 4);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, mask) == 8);
+
+impl RawSelectEntry {
+    /// Size of one entry on the wire, in bytes.
+    pub const SIZE: usize = 16;
+
+    /// Read an entry from its 16 wire bytes (native byte order, the layout
+    /// documented on the type).
+    pub const fn from_bytes(b: &[u8; Self::SIZE]) -> Self {
+        Self {
+            kind: u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
+            id: u32::from_ne_bytes([b[4], b[5], b[6], b[7]]),
+            mask: u64::from_ne_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
+        }
+    }
+}
+
+impl From<SelectEntry> for RawSelectEntry {
+    /// Encode an entry in the wire format (the EL0 side of the ABI).
+    fn from(entry: SelectEntry) -> Self {
+        match entry.kind {
+            SelectKind::Channel(ch) => Self {
+                kind: SELECT_KIND_CHANNEL,
+                id: ch.0,
+                mask: 0,
+            },
+            SelectKind::Notification(n, mask) => Self {
+                kind: SELECT_KIND_NOTIFICATION,
+                id: n.0,
+                mask,
+            },
+        }
+    }
+}
+
+impl TryFrom<RawSelectEntry> for SelectEntry {
+    type Error = i64;
+
+    /// Decode a wire entry. Returns `Err(EINVAL)` for a `kind` other than
+    /// `SELECT_KIND_CHANNEL` or `SELECT_KIND_NOTIFICATION`. Ids are not
+    /// range-checked here; `ipc_select` does that.
+    fn try_from(raw: RawSelectEntry) -> Result<Self, i64> {
+        let kind = match raw.kind {
+            SELECT_KIND_CHANNEL => SelectKind::Channel(ChannelId(raw.id)),
+            SELECT_KIND_NOTIFICATION => SelectKind::Notification(NotificationId(raw.id), raw.mask),
+            _ => return Err(crate::syscall::IpcError::Einval as i64),
+        };
+        Ok(SelectEntry { kind })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +653,88 @@ mod tests {
         };
         let e2 = e;
         assert_eq!(e, e2);
+    }
+
+    // --- RawSelectEntry (IpcSelect wire format) tests ---
+
+    /// Wire bytes built field by field at the documented offsets.
+    fn wire(kind: u32, id: u32, mask: u64) -> [u8; RawSelectEntry::SIZE] {
+        let mut b = [0u8; RawSelectEntry::SIZE];
+        b[0..4].copy_from_slice(&kind.to_ne_bytes());
+        b[4..8].copy_from_slice(&id.to_ne_bytes());
+        b[8..16].copy_from_slice(&mask.to_ne_bytes());
+        b
+    }
+
+    #[test]
+    fn raw_select_entry_is_16_bytes() {
+        assert_eq!(core::mem::size_of::<RawSelectEntry>(), 16);
+        assert_eq!(RawSelectEntry::SIZE, 16);
+    }
+
+    #[test]
+    fn raw_select_entry_from_bytes_reads_documented_offsets() {
+        let raw = RawSelectEntry::from_bytes(&wire(1, 0x0102_0304, 0x1122_3344_5566_7788));
+        assert_eq!(
+            raw,
+            RawSelectEntry {
+                kind: 1,
+                id: 0x0102_0304,
+                mask: 0x1122_3344_5566_7788,
+            }
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_decodes_channel() {
+        let raw = RawSelectEntry::from_bytes(&wire(SELECT_KIND_CHANNEL, 5, 0xFF));
+        // A channel entry ignores its mask.
+        assert_eq!(
+            SelectEntry::try_from(raw),
+            Ok(SelectEntry {
+                kind: SelectKind::Channel(ChannelId(5)),
+            })
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_decodes_notification() {
+        let raw = RawSelectEntry::from_bytes(&wire(SELECT_KIND_NOTIFICATION, 3, 0b1010));
+        assert_eq!(
+            SelectEntry::try_from(raw),
+            Ok(SelectEntry {
+                kind: SelectKind::Notification(NotificationId(3), 0b1010),
+            })
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_unknown_kind_is_einval() {
+        let einval = Err(crate::syscall::IpcError::Einval as i64);
+        for kind in [2, 0x100, u32::MAX] {
+            let raw = RawSelectEntry::from_bytes(&wire(kind, 0, 0));
+            assert_eq!(SelectEntry::try_from(raw), einval, "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn raw_select_entry_round_trip() {
+        let entries = [
+            SelectEntry {
+                kind: SelectKind::Channel(ChannelId(127)),
+            },
+            SelectEntry {
+                kind: SelectKind::Notification(NotificationId(63), u64::MAX),
+            },
+        ];
+        for e in entries {
+            let raw = RawSelectEntry::from(e);
+            let bytes = wire(raw.kind, raw.id, raw.mask);
+            assert_eq!(
+                SelectEntry::try_from(RawSelectEntry::from_bytes(&bytes)),
+                Ok(e)
+            );
+        }
     }
 
     #[test]
