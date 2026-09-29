@@ -715,7 +715,7 @@ pub enum ModalityFallback {
 | Whisper base | 74M | ~74 MB | ~5x realtime | Better speech-to-text |
 | Whisper small | 244M | ~244 MB | ~2x realtime | Good speech-to-text |
 
-**Practical deployment:** On 8 GB devices, a vision-language model cannot coexist with the text model in RAM — one must be evicted. Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
+**Practical deployment:** On 16 GB devices (8 GB model pool), a vision-language model cannot coexist with the 8B text model in RAM — one must be evicted. Below 16 GB the model pool (4 GB or less) is smaller than LLaVA 1.5 7B (~4.5 GB), which is why the summary table (§14.11) gives vision a 16 GB minimum. Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
 
 **GGUF multimodal support:** The GGUF format supports vision-language models (LLaVA adapter + CLIP vision encoder packaged alongside the language model). llama.cpp's `llava` example demonstrates the inference pipeline. Integration requires the image preprocessor (CLIP-style patch encoding) to run before the language model forward pass.
 

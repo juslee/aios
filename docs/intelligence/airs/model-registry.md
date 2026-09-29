@@ -164,14 +164,14 @@ impl QuantizationSelector {
 Multiple models can't fit in RAM simultaneously on low-memory devices. The registry manages loading/unloading:
 
 ```text
-RAM Budget: 4 GB available for models
+RAM Budget: 8 GB available for models (16 GB device)
 
 Loaded models:
   llama-3.1-8b-q4_k_m   (4.5 GB)  ← active (conversation bar)
 
-User opens a vision task → needs vision model (3 GB)
+User opens a vision task → needs llava-1.5-7b-q4 (4.5 GB; 4.5 + 4.5 GB > 8 GB)
   1. llama model is idle → evict from RAM (weights still on disk)
-  2. Load vision model → 3 GB
+  2. Load vision model → 4.5 GB
   3. When conversation bar is used again → evict vision, reload llama
   4. Model weights are memory-mapped — loading is fast (no parsing, just mmap)
 ```
