@@ -386,6 +386,7 @@ fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
 ///
 /// Create a narrower child capability from an existing one.
 /// x3 is required when new_cap_type is ChannelAccess(1) or SharedMemoryAccess(3).
+/// EINVAL for an unknown new_cap_type or an x3 that does not fit in u32.
 fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
     let handle = match id_arg(tf.x[0]) {
         Ok(h) => shared::CapabilityHandle(h),
@@ -415,7 +416,9 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
         },
         4 => shared::Capability::SpawnAgent,
         5 => shared::Capability::DebugPrint,
-        _ => return IpcError::Eperm as i64,
+        // A malformed argument, like an out-of-range x3 above: EINVAL, so a
+        // caller can tell it from a permission denial (EPERM).
+        _ => return IpcError::Einval as i64,
     };
 
     let mut table = crate::task::process::PROCESS_TABLE.lock();
