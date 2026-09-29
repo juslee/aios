@@ -9,7 +9,8 @@
 //! - `differential_against_check_py` runs check.py and aios side by side on every case
 //!   and on the live checkout. R1 deleted check.py, so both tests run the last version
 //!   of it, materialised from git history (`fixture::check_py`: the blob at
-//!   `SNAPSHOT_SHA`), wherever `python3` exists. Without `python3` or that git object (a
+//!   `SNAPSHOT_SHA`), wherever `python3` is on Unicode 16.0 (CPython 3.14; see
+//!   `fixture::ORACLE_UNIDATA_VERSION`). Without such a `python3` or that git object (a
 //!   shallow clone) the differential prints the reason and returns, and
 //!   `goldens_match_aios` alone is the parity gate; `AIOS_REQUIRE_CHECK_PY=1` (set in
 //!   CI's Tools (host) job) turns that skip into a failure, so the oracle cannot go

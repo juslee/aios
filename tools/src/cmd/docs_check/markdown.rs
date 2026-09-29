@@ -10,8 +10,8 @@
 //! `heading_number` (`HEADING_NUM_RE`, L171, a lookahead) and
 //! `has_placeholder_word` (`PLACEHOLDER_WORD_RE`, L534, a lookbehind and a
 //! lookahead). Every other pattern is check.py's text, compiled with
-//! `crate::pyre::compile`, so its `\d` and `\s` match exactly what Python's do
-//! (every Unicode decimal digit; Unicode whitespace plus U+001C..U+001F).
+//! `crate::pyre::compile`, so its `\d` and `\s` match exactly what CPython 3.14's
+//! do (every Unicode 16.0 decimal digit; Unicode whitespace plus U+001C..U+001F).
 //!
 //! Accepted divergences from check.py (no tracked file and no fixture exercises
 //! them; the parity goldens prove the real inputs; verified with python3):

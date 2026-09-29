@@ -2,14 +2,18 @@
 //!
 //! The ported scripts' patterns are Python `str` patterns, whose `\d` and `\s` are
 //! Unicode classes. [`compile`] takes a pattern written in Python's syntax and makes
-//! those two classes match exactly what CPython's `re` matches:
+//! those two classes match exactly what CPython 3.14's `re` matches (Unicode 16.0):
 //!
 //! - `\d` and `\D` pass through. In the `regex` crate's default Unicode mode `\d` is
 //!   `\p{Nd}`, which is Python's `\d` (the `str.isdecimal()` characters). The crate's
 //!   table (regex-syntax 0.8.11, Unicode 16.0) and CPython 3.14's (`unicodedata`
 //!   16.0) hold the same 760 code points; the `digit_class_is_pythons` test pins them,
 //!   so a regex-syntax update to a newer Unicode version fails it rather than drifting
-//!   from CPython silently.
+//!   from CPython silently. Older interpreters differ: CPython 3.12 and 3.13 (Unicode
+//!   15.0 and 15.1) match only 680 of those code points (not, for example, U+1E5F1).
+//!   The CPython side is pinned by the docs-check differential oracle, which accepts
+//!   only an interpreter whose `unicodedata.unidata_version` is 16.0.0
+//!   (`tests/common/fixture.rs`).
 //! - `\s` becomes [`SPACE`] and `\S` becomes [`NON_SPACE`], outside and inside a
 //!   character class (as a nested class, which the crate supports). The crate's `\s`
 //!   is Unicode White_Space; Python's `\s` (the `str.isspace()` characters) also has

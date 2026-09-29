@@ -15,6 +15,13 @@
 //! history (`git cat-file blob <SNAPSHOT_SHA>:scripts/docs/check.py`) into
 //! `CARGO_TARGET_TMPDIR`, and `run_check_py` runs it against any repository.
 //!
+//! The oracle's `re` classes follow its interpreter's Unicode version, so `check_py`
+//! accepts only a `python3` whose `unicodedata.unidata_version` is
+//! `ORACLE_UNIDATA_VERSION` (16.0.0, CPython 3.14), the version `aios_tools::pyre`'s
+//! classes match. CPython 3.12 and 3.13 (Unicode 15.x) lack 80 of the 760 code points
+//! of `\d`, so a test using one of those digits would fail against them although aios
+//! matches 3.14; `check_py` reports such an interpreter as unavailable instead.
+//!
 //! `python3` is often an asdf (or pyenv) shim: under the isolated test `HOME`
 //! (`common::isolated`), such a shim exits 126 before it ever reaches CPython, which
 //! would make the recorder fail outright and the differential silently skip without
@@ -590,12 +597,25 @@ pub fn check_py_object() -> String {
     format!("{SNAPSHOT_SHA}:scripts/docs/check.py")
 }
 
+/// The Unicode version (`unicodedata.unidata_version`) the oracle's interpreter must
+/// have: CPython 3.14's, the version `aios_tools::pyre`'s `\d` and `\s` classes were
+/// pinned against (its `digit_class_is_pythons` and `space_class_is_pythons` tests).
+/// A CPython on another Unicode version disagrees with aios on the digits one version
+/// has and the other lacks, so it is not used as the oracle. When CPython and the
+/// `regex` crate move to a newer Unicode version, update the pinned tables and this
+/// together.
+pub const ORACLE_UNIDATA_VERSION: &str = "16.0.0";
+
+/// Prints the interpreter's version and its `unicodedata` version, space-separated.
+const VERSION_PROBE: &str =
+    "import sys, unicodedata; print(sys.version.split()[0], unicodedata.unidata_version)";
+
 /// The differential oracle: check.py materialised from git history, and the
 /// interpreter that runs it.
 pub struct CheckPy {
     /// The absolute path of the resolved `python3` (see `python3_interpreter`).
     pub interpreter: PathBuf,
-    /// `python3 --version`, for the test log.
+    /// The interpreter's Python and Unicode versions, for the test log.
     pub version: String,
     /// check.py's bytes, written under `CARGO_TARGET_TMPDIR/check-py/`.
     pub script: PathBuf,
@@ -603,8 +623,9 @@ pub struct CheckPy {
 
 /// check.py materialised from `check_py_object()` and a working `python3`, resolved
 /// once per test process. `Err` is the reason the oracle is unavailable, for the caller
-/// to print when it skips: no usable `python3` on `PATH`, or no such git object (a
-/// shallow clone; CI's Tools (host) job checks out with `fetch-depth: 0`).
+/// to print when it skips: no usable `python3` on `PATH`, a `python3` whose Unicode
+/// version is not `ORACLE_UNIDATA_VERSION`, or no such git object (a shallow clone;
+/// CI's Tools (host) job checks out with `fetch-depth: 0` and installs CPython 3.14).
 pub fn check_py() -> Result<&'static CheckPy, &'static str> {
     static ORACLE: OnceLock<Result<CheckPy, String>> = OnceLock::new();
     ORACLE
@@ -617,17 +638,32 @@ fn materialize_check_py() -> Result<CheckPy, String> {
     let interpreter = python3_interpreter()
         .ok_or("python3 is not available (not on PATH, or it does not run)")?
         .clone();
-    let version = isolated(Command::new(&interpreter).arg("--version"))
+    let probe = isolated(Command::new(&interpreter).args(["-c", VERSION_PROBE]))
         .output()
         .ok()
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
         .ok_or_else(|| {
             format!(
-                "{} --version fails in the isolated test environment",
+                "{} cannot report its version in the isolated test environment",
                 interpreter.display()
             )
         })?;
+    let (python, unidata) = probe.split_once(' ').ok_or_else(|| {
+        format!(
+            "{} printed {probe:?} for its version",
+            interpreter.display()
+        )
+    })?;
+    if unidata != ORACLE_UNIDATA_VERSION {
+        return Err(format!(
+            "{} is Python {python} with Unicode {unidata}; the oracle needs Unicode \
+             {ORACLE_UNIDATA_VERSION} (CPython 3.14), the version aios's \\d and \\s \
+             classes match",
+            interpreter.display()
+        ));
+    }
+    let version = format!("Python {python}, Unicode {unidata}");
     let object = check_py_object();
     let out = isolated(Command::new("git").arg("-C").arg(repo_root()).args([
         "cat-file",
