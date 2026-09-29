@@ -58,13 +58,19 @@ impl CacheType {
     }
 
     /// One address per data cache line that overlaps `range`, for issuing a
-    /// by-VA data cache instruction (`DC CVAU`, `DC CVAC`, ...) on each.
+    /// by-VA clean or clean-and-invalidate instruction (`DC CVAU`, `DC CVAC`,
+    /// `DC CIVAC`) on each.
     ///
     /// The first address is `range.start` itself: a by-VA instruction acts on
     /// the whole line that holds its address and needs no alignment. Each later
     /// address is the start of the next line. Every address lies inside
     /// `range`, so all of them are mapped whenever the range is. An empty
     /// range yields nothing.
+    ///
+    /// Not for `DC IVAC`: the first and last lines can extend past `range`,
+    /// and invalidating them would discard dirty data outside it unless the
+    /// caller aligns the range to lines or cleans those edge lines first. Not
+    /// for `DC ZVA` either, whose block size is `DCZID_EL0.BS`, not DminLine.
     pub fn dcache_line_addresses(self, range: Range<u64>) -> impl Iterator<Item = u64> {
         let line_mask = self.dcache_line_bytes - 1;
         let end = range.end;

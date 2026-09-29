@@ -23,14 +23,15 @@ DRAM training, PCI enumeration`"]
 
     LOAD_STUB --> STUB["`AIOS UEFI stub
 (runs in UEFI Boot Services, EL1)`"]
-    STUB --> PARSE["Parse UEFI memory map"]
-    PARSE --> LOAD_ELF["`Locate and load kernel ELF from ESP:
+    STUB --> LOAD_ELF["`Locate and load kernel ELF from ESP:
 allocate each PT_LOAD segment at its physical address,
 copy it, clean its text to PoU, invalidate I-cache`"]
-    LOAD_ELF --> GOP["Acquire framebuffer via GOP"]
+    LOAD_ELF --> BOOTINFO["Allocate and zero the BootInfo page"]
+    BOOTINFO --> GOP["Acquire framebuffer via GOP"]
     GOP --> DTB["Acquire device tree or ACPI tables"]
     DTB --> RNG["Request RNG seed from UEFI for KASLR"]
-    RNG --> EBS["ExitBootServices() -- point of no return"]
+    RNG --> EBS["`ExitBootServices() -- point of no return,
+returns the final memory map, recorded in BootInfo`"]
 
     EBS --> KERNEL["`Jump to kernel entry point
 (all UEFI Boot Services gone)`"]
@@ -102,7 +103,7 @@ pub struct BootInfo {
 }
 ```
 
-The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. The UEFI stub populates all available fields before calling `ExitBootServices()`.
+The BootInfo struct is allocated as **1 page (4 KiB)** by the UEFI stub, though the struct itself is ~160 bytes. The UEFI stub populates every available field except the memory map before calling `ExitBootServices()`, then records the memory map that `ExitBootServices()` returns.
 
 **Memory descriptors** follow the EFI_MEMORY_DESCRIPTOR layout with a 4-byte padding field for alignment:
 
