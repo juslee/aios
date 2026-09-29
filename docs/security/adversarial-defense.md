@@ -98,7 +98,7 @@ Milestone IDs are assigned when the phase doc is written; the rows are in order.
 
 4. **No single detection layer is sufficient.** Research shows adaptive attacks bypass any individual detector. AIOS combines pattern matching, ML classification, behavioral anomaly detection, and semantic analysis — each catching different attack classes.
 
-5. **Screening latency is bounded.** Pattern matching: <1ms (synchronous). ML classification: <10ms (async for non-destructive data). Screening must not bottleneck IPC message delivery.
+5. **Screening latency is bounded.** Pattern matching: <1ms (synchronous). ML classification: <10ms (Tier 2, asynchronous, inbound data only). Screening must not bottleneck IPC message delivery.
 
 6. **No feedback to agents about security decisions.** Agents never learn whether their input was screened, flagged, or sanitized. Hint acceptance is opaque. This prevents adaptive probing where an adversary iteratively refines attacks based on system responses.
 
