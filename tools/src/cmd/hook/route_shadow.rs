@@ -117,8 +117,10 @@ impl Transport for CurlTransport {
         drop(stdin);
         let out = child.wait_with_output().context("cannot wait for curl")?;
         if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let reply = String::from_utf8_lossy(&out.stdout);
+            // Scrub before cutting: a cut inside an echoed key would leave a
+            // fragment that no later scrub recognises.
+            let stderr = scrub(&String::from_utf8_lossy(&out.stderr), api_key);
+            let reply = scrub(&String::from_utf8_lossy(&out.stdout), api_key);
             let mut message = format!("curl failed ({}): {}", out.status, stderr.trim());
             if !reply.trim().is_empty() {
                 message.push_str("; response: ");
@@ -128,6 +130,13 @@ impl Transport for CurlTransport {
         }
         Ok(out.stdout)
     }
+}
+
+/// `text` with every occurrence of `key` replaced. Callers scrub before they cut
+/// text to a length, because a cut inside the key leaves a fragment that no scrub
+/// matches.
+fn scrub(text: &str, key: &str) -> String {
+    text.replace(key, "[redacted]")
 }
 
 /// The `-K -` config line that carries the bearer token. curl reads a quoted value
@@ -297,18 +306,17 @@ fn ask(
     let started = Instant::now();
     let reply = transport.post(&settings.url, key, body.as_bytes(), scratch);
     let latency = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let scrub = |text: String| text.replace(key, "[redacted]");
     let raw = match reply {
         Ok(raw) => raw,
-        Err(err) => return Outcome::failed(scrub(format!("{err:#}")), Some(latency)),
+        Err(err) => return Outcome::failed(scrub(&format!("{err:#}"), key), Some(latency)),
     };
     let parsed: Value = match serde_json::from_slice(&raw) {
         Ok(value) => value,
         Err(err) => {
-            let text = String::from_utf8_lossy(&raw);
+            let text = scrub(&String::from_utf8_lossy(&raw), key);
             let quoted = cut_to_boundary(text.trim(), MAX_QUOTED_BYTES);
             let message = format!("the Jev response is not JSON ({err}): {quoted}");
-            return Outcome::failed(scrub(message), Some(latency));
+            return Outcome::failed(scrub(&message, key), Some(latency));
         }
     };
     match parsed.get("answers") {
@@ -322,10 +330,10 @@ fn ask(
             error: None,
         },
         _ => {
-            let text = parsed.to_string();
+            let text = scrub(&parsed.to_string(), key);
             let quoted = cut_to_boundary(&text, MAX_QUOTED_BYTES);
             let message = format!("the Jev response has no answers object: {quoted}");
-            Outcome::failed(scrub(message), Some(latency))
+            Outcome::failed(scrub(&message, key), Some(latency))
         }
     }
 }
@@ -638,6 +646,28 @@ mod tests {
             assert!(record["error"].is_string(), "{reply}: {record}");
             assert_eq!(record["answers"], Value::Null, "{reply}");
         }
+    }
+
+    #[test]
+    fn a_key_straddling_the_quote_cut_is_scrubbed_before_the_cut() {
+        // The key starts 5 bytes before the 200-byte cut, so cutting first would
+        // leave a fragment that `replace` does not match. After the scrub the
+        // marker itself straddles the cut, which is harmless.
+        let filler = "x".repeat(MAX_QUOTED_BYTES - 5);
+        for reply in [
+            format!("{filler}{KEY}"),
+            format!(r#"{{"error":"{filler}{KEY}"}}"#),
+        ] {
+            let fake = Fake::replying(&reply);
+            let record = shadow(&payload("p"), Some(KEY), &fake);
+            let error = record["error"].as_str().unwrap();
+            assert!(!error.contains(&KEY[..4]), "{error}");
+        }
+    }
+
+    #[test]
+    fn scrub_replaces_every_occurrence() {
+        assert_eq!(scrub("a K b K", "K"), "a [redacted] b [redacted]");
     }
 
     #[test]

@@ -167,6 +167,8 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 
 ## Decisions Made
 
+- Review round 3: `route-shadow` scrubs the API key before it cuts quoted response text to 200 bytes (in `CurlTransport::post` and in both quoting paths of `ask`), keeping the final scrub as a second pass. Why: a cut inside an echoed key leaves a fragment that `replace` no longer matches, so up to key-length minus one bytes reached the log. Both a unit test and a fake-server test put the key across the cut.
+- Review round 3: the `aios hook` help text now says every payload exits 0 and a usage error exits 2, matching the module docs.
 - Review round 2: `path-guard` joins a dangling link's relative target to the canonicalised link directory, not the lexical parent, because the lexical parent may itself be reached through a symlink and a `..` in the target would fold against the wrong directory. The nested case has its own test (`docs/linked -> kernel/src`, `kernel/src/dangling -> ../x.rs`).
 - Review round 2: the hook contract now states the documented matcher rule (plain names are exact, anything else is an unanchored regex). Part 1 registers no matcher, so no code changed; Part 2 can rely on `Edit|Write|MultiEdit|NotebookEdit` and `Agent` matching exactly.
 - Step 2: the subcommand entry functions take the parsed `HookInput` and a `Ctx` (state-dir override and process cwd), and return `Result<Option<String>>`; `hook::run` owns reading stdin, parsing, the error policy and printing. Why: one place enforces the stdout, stderr and exit-0 discipline, and the three subcommands cannot diverge from it.

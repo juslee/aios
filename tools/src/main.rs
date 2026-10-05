@@ -18,7 +18,7 @@ enum Command {
     /// Deterministic docs drift check against scripts/docs/baseline.json (exit 1 on new drift)
     #[command(name = "docs-check", infer_long_args = true, args_override_self = true)]
     DocsCheck(aios_tools::cmd::docs_check::Args),
-    /// Claude Code hook programs: reads one JSON payload on stdin, always exits 0
+    /// Claude Code hook programs: read one JSON payload on stdin; exit 0 on every payload (a usage error exits 2)
     Hook(aios_tools::cmd::hook::Args),
 }
 

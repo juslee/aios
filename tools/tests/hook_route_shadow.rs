@@ -359,6 +359,27 @@ fn a_server_error_is_an_error_record_and_the_key_stays_out() {
 }
 
 #[test]
+fn a_key_echoed_across_the_quote_cut_leaves_no_fragment_in_the_log() {
+    let env = Env::new("http500-cut");
+    // 190 bytes of preamble, so the 200-byte quote cut falls inside the key.
+    let server = Server::start(Reply::Status(
+        500,
+        format!("{}{KEY}{}", "x".repeat(190), "y".repeat(50)),
+    ));
+    env.run(
+        &dispatch("p"),
+        &[("AIOS_JEV_URL", &server.url), ("TYPESAFE_API_KEY", KEY)],
+    );
+    assert_eq!(server.finish().len(), 1);
+    let records = env.records();
+    assert_eq!(records.len(), 1);
+    let error = records[0]["error"].as_str().expect("an error message");
+    assert!(error.contains("[redacted]"), "{error}");
+    let log = std::fs::read_to_string(env.log_path()).expect("the log exists");
+    assert!(!log.contains(&KEY[..6]), "a key fragment leaked: {log}");
+}
+
+#[test]
 fn a_server_that_closes_early_is_an_error_record() {
     let env = Env::new("close");
     let server = Server::start(Reply::Close);
