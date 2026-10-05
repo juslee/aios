@@ -248,9 +248,11 @@ fn decimal_digits_in_history_tables_and_claims() {
                 "# Phase 2: Fullwidth\n\n**Status:** Complete\n\n\
                  ## Milestone ４ — Four\n\n- [x] Done\n",
             ),
+            // Only the range supplies the latest merged milestone, M4: the single
+            // tokens are M2 and M5.
             (
                 "README.md",
-                "# R\n\nStatus: M١–M٤ merged.\n\n\
+                "# R\n\nStatus: M٢–M٥ merged.\n\n\
                  ٣ phases across two tiers.\n\n\
                  Tests: <!-- gen:test-count -->١٢\n",
             ),

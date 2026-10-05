@@ -849,7 +849,7 @@ mod tests {
 
     #[test]
     fn milestone_tokens_expand_short_ranges() {
-        let cases: [(&str, &[u64]); 4] = [
+        let cases: [(&str, &[u64]); 5] = [
             (
                 "M1–M3, M7 and M10-M12; M5-M2 (reversed), M1-M200",
                 &[1, 2, 3, 5, 7, 10, 11, 12, 200],
@@ -857,6 +857,8 @@ mod tests {
             ("M4 - M6", &[4, 5, 6]),
             ("XM3 M03", &[3]),
             ("M1-M2-M3", &[1, 2, 3]),
+            // `\d` is Python's `\p{Nd}`: Arabic-Indic and fullwidth bounds expand too.
+            ("M١–M٣ and M４-M６", &[1, 2, 3, 4, 5, 6]),
         ];
         for (text, want) in cases {
             let got: Vec<u64> = milestone_tokens(text).into_iter().collect();

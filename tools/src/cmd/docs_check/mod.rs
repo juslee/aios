@@ -7,8 +7,9 @@
 //! resolves it from the process working directory, because the binary has no script
 //! directory. `just` runs recipes from the justfile's directory and the shim passes the
 //! caller's working directory through, so both tools check the same checkout in every
-//! supported invocation; the parity goldens run check.py from inside each materialized
-//! repository for the same reason.
+//! supported invocation. The tests' check.py oracle (`run_check_py` in
+//! `tests/common/fixture.rs`) sets check.py's `__file__` to `<root>/check.py` for the
+//! same reason, so that check.py resolves each materialized repository as its root.
 //!
 //! Two more divergences need unusual directory names. check.py decodes
 //! `git rev-parse --show-toplevel` with `text=True` (L1578), whose universal-newline
