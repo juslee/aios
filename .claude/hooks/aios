@@ -9,8 +9,10 @@
 # records HEAD's tree entries for the build inputs (tools/, Cargo.lock,
 # Cargo.toml, rust-toolchain.toml, a legacy rust-toolchain file if there is
 # one, and .cargo/), the git hash of the installed binary, and whether those
-# inputs had uncommitted changes; the shim recomputes it from the main
-# checkout. AIOS_TOOLS_BIN overrides the binary, to test a PR's own build
+# inputs were dirty: changed but not committed, or committed on HEAD but not
+# on origin/main (refs/remotes/origin/main, which only a merged PR moves), or
+# origin/main is missing. The shim recomputes the entries and the hash from the
+# main checkout. AIOS_TOOLS_BIN overrides the binary, to test a PR's own build
 # explicitly (a bare name is taken relative to the current directory, not
 # looked up on PATH); an override has no stamp and no freshness test. When git
 # cannot name the common dir from a linked worktree, the shim fails closed
@@ -21,11 +23,11 @@
 #   stale    a build input is newer than the binary (it carries its build's
 #            start time, so an edit made during a build counts, and so do
 #            uncommitted edits), or the stamp is missing or does not match
-#            main's HEAD and the binary: a binary built elsewhere, or
-#            replaced after its build, even one future-dated to pass the
-#            mtime test.
-#   dirty    matches, but was built from uncommitted input changes.
-#   fresh    matches, built from committed inputs, nothing newer.
+#            the main checkout's HEAD and the binary: a binary built
+#            elsewhere, or replaced after its build, even one future-dated to
+#            pass the mtime test.
+#   dirty    matches, but was built from dirty inputs (above).
+#   fresh    matches, built from inputs merged on origin/main, nothing newer.
 #
 #   aios guard ...    PreToolUse hook. Runs a fresh binary as a child: its own
 #                     exit 0 (decision on stdout) and 2 (block) pass through,
@@ -34,7 +36,7 @@
 #                     end that way prints a PreToolUse "ask" decision and exits 0
 #                     (#203): missing (no build), stale (and one background
 #                     `just tools`, lock dir target/tools/.building), dirty (no
-#                     build: commit or revert the changes first), an override
+#                     build: revert the changes or merge them first), an override
 #                     that is not a runnable file, and a shim that cannot find
 #                     its own directory or the main checkout. A runnable
 #                     override is the exception: it runs as a child like a
@@ -47,10 +49,14 @@
 #   aios --prebuild   (SessionStart) start a background build when the binary
 #                     is missing or stale; always exits 0.
 #
-# The stamp shows that `just tools` installed the binary from main's committed
-# inputs. It is not tamper-proof: a session that can write target/tools can
-# also write a matching stamp, or poison cargo's artifacts there before the
-# next build. Keeping sessions out of target/tools is the permission rules' job
+# The stamp shows that `just tools` installed the binary from inputs merged on
+# origin/main. It is not tamper-proof: a session that can write target/tools
+# can also write a matching stamp, or poison cargo's artifacts there before the
+# next build, and one that can rewrite refs/remotes/origin/main can make
+# unmerged commits look merged. Keeping sessions out of target/tools is the
+# permission rules' job, and they are a speed bump with known gaps: among
+# them, a session started in a worktree is not denied Edit or Write on the main
+# checkout's target/tools, which holds the binary this shim runs
 # (docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md, §2).
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
 # never to stdout, so JSON on stdout stays parseable.
@@ -90,10 +96,13 @@ runnable() {
 # its stdout. Any other exit, the binary's own included, means the guard did
 # not decide, so it becomes an ask and the binary's stdout is dropped: Claude
 # Code would run the tool on it, and partial output next to the ask would not
-# parse as a decision.
+# parse as a decision. $1 names the binary in the ask reason, $2 is the advice
+# that follows it, $3 is the binary and the rest are its arguments.
 run_guard() {
-    guard_bin=$1
-    shift
+    guard_name=$1
+    guard_advice=$2
+    guard_bin=$3
+    shift 3
     out=$("$guard_bin" "$@")
     status=$?
     case $status in
@@ -102,7 +111,7 @@ run_guard() {
         exit "$status"
         ;;
     esac
-    ask "aios guard failed (exit $status); run just tools"
+    ask "$guard_name failed (exit $status); $guard_advice"
 }
 
 if ! dir=$(dirname -- "$0") || ! here=$(CDPATH='' cd -- "$dir" && pwd -P); then
@@ -189,7 +198,8 @@ if [ -n "${AIOS_TOOLS_BIN:-}" ]; then
     runnable "$AIOS_TOOLS_BIN" ||
         stop "AIOS_TOOLS_BIN is not an executable file" \
             "AIOS_TOOLS_BIN=$AIOS_TOOLS_BIN is not an executable file"
-    [ "$sub" = guard ] && run_guard "$AIOS_TOOLS_BIN" "$@"
+    [ "$sub" = guard ] &&
+        run_guard "AIOS_TOOLS_BIN guard" "fix or unset AIOS_TOOLS_BIN" "$AIOS_TOOLS_BIN" "$@"
     exec "$AIOS_TOOLS_BIN" "$@"
 fi
 
@@ -208,8 +218,8 @@ case $sub in
 guard)
     runnable "$bin" || ask "aios tools not built; run just tools"
     case $(verdict) in
-    fresh) run_guard "$bin" "$@" ;;
-    dirty) ask "aios tools were built from uncommitted changes in the main checkout; commit or revert them, then run just tools" ;;
+    fresh) run_guard "aios guard" "run just tools" "$bin" "$@" ;;
+    dirty) ask "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools" ;;
     esac
     build_bg
     ask "aios tools are stale or unverified; rebuilding in the background (just tools)"

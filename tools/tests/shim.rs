@@ -22,7 +22,7 @@ const ASK_JSON: &str = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","p
 /// The guard branch's ask reasons, one per path.
 const NOT_BUILT: &str = "aios tools not built; run just tools";
 const STALE: &str = "aios tools are stale or unverified; rebuilding in the background (just tools)";
-const DIRTY: &str = "aios tools were built from uncommitted changes in the main checkout; commit or revert them, then run just tools";
+const DIRTY: &str = "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools";
 const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not an executable file";
 const NO_OWN_DIR: &str = "aios shim cannot find its own directory; run just tools";
 const NO_MAIN: &str =
@@ -35,6 +35,10 @@ fn failed(status: i32) -> String {
     format!("aios guard failed (exit {status}); run just tools")
 }
 
+fn override_failed(status: i32) -> String {
+    format!("AIOS_TOOLS_BIN guard failed (exit {status}); fix or unset AIOS_TOOLS_BIN")
+}
+
 fn ask_json(reason: &str) -> String {
     format!(
         "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"{reason}\"}}}}\n"
@@ -45,8 +49,11 @@ fn ask_json(reason: &str) -> String {
 /// writes target/tools/release/aios, by default a binary that echoes its
 /// arguments and exits `FAKE_EXIT`. Its progress line goes to stdout, so the
 /// tests see whether the shim keeps build output off its own stdout.
-/// `FAKE_CARGO_FAIL` makes it fail, `FAKE_CARGO_DELAY` slows it down and
-/// `FAKE_CARGO_SOURCE` names a file to build instead.
+/// `FAKE_CARGO_FAIL` makes it fail, `FAKE_CARGO_DELAY` slows it down,
+/// `FAKE_CARGO_NOOP` leaves release/aios alone (a no-op build on Linux) and
+/// `FAKE_CARGO_SOURCE` names a file to build instead. `FAKE_CARGO_WRITE_DELAY`
+/// leaves release/aios half-written for that many seconds, like the uplift of a
+/// large binary, and creates `FAKE_CARGO_MARK` once the half is written.
 const FAKE_CARGO: &str = r#"#!/bin/sh
 set -u
 if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
@@ -60,18 +67,27 @@ if [ -n "${FAKE_CARGO_FAIL:-}" ]; then
     exit 1
 fi
 sleep "${FAKE_CARGO_DELAY:-0}"
+[ -z "${FAKE_CARGO_NOOP:-}" ] || exit 0
 mkdir -p target/tools/release
-# Like cargo's uplift: remove the old file, then write the new one.
-rm -f target/tools/release/aios
 if [ -n "${FAKE_CARGO_SOURCE:-}" ]; then
-    cat "$FAKE_CARGO_SOURCE" > target/tools/release/aios
+    cat "$FAKE_CARGO_SOURCE" > target/tools/aios.next
 else
-    cat > target/tools/release/aios <<'BIN'
+    cat > target/tools/aios.next <<'BIN'
 #!/bin/sh
 printf 'fake:%s\n' "$*"
 exit ${FAKE_EXIT:-0}
 BIN
 fi
+# Like cargo's uplift: remove the old file, then write the new one.
+rm -f target/tools/release/aios
+if [ -n "${FAKE_CARGO_WRITE_DELAY:-}" ]; then
+    head -c 16 target/tools/aios.next > target/tools/release/aios
+    chmod 755 target/tools/release/aios
+    : > "$FAKE_CARGO_MARK"
+    sleep "$FAKE_CARGO_WRITE_DELAY"
+fi
+cat target/tools/aios.next > target/tools/release/aios
+rm -f target/tools/aios.next
 chmod 755 target/tools/release/aios
 "#;
 
@@ -198,6 +214,11 @@ impl Sandbox {
         );
         repo.write(".cargo/config.toml", "# a build input of the aios binary\n");
         repo.commit("Initial");
+        // The initial commit is merged: origin/main points at it.
+        common::git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
 
         let bin_dir = TestRepo::adopt(unique_dir(&format!("{label}-path")));
         write_executable(&bin_dir.path().join("cargo"), FAKE_CARGO);
@@ -219,6 +240,14 @@ impl Sandbox {
 
     fn lock(&self) -> PathBuf {
         self.repo.path().join("target/tools/.building")
+    }
+
+    /// Moves origin/main to HEAD, as merging HEAD through a PR would.
+    fn merge(&self) {
+        common::git(
+            self.repo.path(),
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
     }
 
     fn cargo_log(&self) -> PathBuf {
@@ -575,7 +604,10 @@ fn guard_passes_on_only_the_binarys_own_0_and_2() {
     let echo = sandbox.bin_dir.path().join("echo-aios");
     write_executable(&echo, "#!/bin/sh\ncat\nexit ${FAKE_EXIT:-0}\n");
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#;
-    for (status, want) in [("0", format!("{payload}\n")), ("1", ask_json(&failed(1)))] {
+    for (status, want) in [
+        ("0", format!("{payload}\n")),
+        ("1", ask_json(&override_failed(1))),
+    ] {
         let mut cmd = Command::new(sandbox.shim());
         isolated(&mut cmd);
         let mut child = cmd
@@ -676,6 +708,72 @@ fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
                 .starts_with(".build-start.")),
         "the recipe removes its start file"
     );
+}
+
+// Overlapping recipes run one at a time: a recipe must not copy release/aios
+// while another recipe's cargo build is rewriting it.
+#[test]
+fn overlapping_just_tools_runs_never_install_a_half_written_binary() {
+    let sandbox = Sandbox::new("shim-install-overlap");
+    sandbox.install_bin(true);
+    let install_lock = sandbox.repo.path().join("target/tools/.install");
+
+    // The first recipe's cargo leaves release/aios half-written for 2 s.
+    let mark = sandbox.bin_dir.path().join("half-uplifted");
+    let v2 = sandbox.bin_dir.path().join("aios-v2");
+    std::fs::write(&v2, "#!/bin/sh\nprintf 'v2:%s\\n' \"$*\"\n").expect("write v2");
+    let mut cmd = Command::new("just");
+    isolated(&mut cmd);
+    let mut first = cmd
+        .env("PATH", sandbox.path_env())
+        .env("FAKE_CARGO_SOURCE", &v2)
+        .env("FAKE_CARGO_WRITE_DELAY", "2")
+        .env("FAKE_CARGO_MARK", &mark)
+        .current_dir(sandbox.repo.path())
+        .arg("tools")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("run just tools");
+    wait_for("the first recipe's uplift to be half-written", || {
+        mark.exists()
+    });
+
+    // The second recipe's build is a no-op, so without the lock it would copy
+    // the half-written file at once and install it with a matching stamp. It
+    // waits for the first recipe instead, so when it returns, the complete
+    // binary is in place.
+    let out = sandbox.just_tools(&[("FAKE_CARGO_NOOP", "1")]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&sandbox.bin()), read(&v2), "the complete binary");
+    assert!(
+        stderr(&out).contains("waiting for another just tools to finish"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(first.wait().expect("wait for just tools").success());
+    assert_eq!(read(&sandbox.bin()), read(&v2));
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "v2:guard PreToolUse\n"
+    );
+    assert!(!install_lock.exists(), "the recipe releases its lock");
+
+    // A lock left by a recipe that died is taken over without waiting.
+    let mut dead = Command::new("true").spawn().expect("run true");
+    let pid = dead.id();
+    dead.wait().expect("wait for true");
+    std::fs::create_dir_all(&install_lock).expect("create the lock");
+    std::fs::write(install_lock.join("pid"), format!("{pid}\n")).expect("write the pid");
+    let out = sandbox.just_tools(&[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("waiting for another just tools"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!install_lock.exists());
 }
 
 // #203 path 3: exits before the shim reaches the guard branch.
@@ -880,6 +978,7 @@ fn a_missing_or_foreign_stamp_is_stale() {
         std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
         sandbox.repo.write(input, &format!("# changed: {input}\n"));
         sandbox.repo.commit(&format!("Change {input}"));
+        sandbox.merge();
         set_mtime(&sandbox.bin(), FRESH_STAMP);
 
         assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
@@ -912,16 +1011,76 @@ fn a_build_from_uncommitted_changes_is_dirty() {
     assert_eq!(stdout(&out), "fake:docs-check\n");
     assert!(!sandbox.built());
 
-    // Committed, the inputs no longer match the stamp's HEAD: rebuild, clean.
+    // Committed, the inputs no longer match the stamp's HEAD: a rebuild, but
+    // still dirty, since origin/main lacks the commit.
     sandbox.repo.commit("Commit the edits");
     set_mtime(&sandbox.bin(), FRESH_STAMP);
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
     sandbox.wait_for_background_build();
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+    assert!(sandbox.no_build_started());
+
+    // Merged (origin/main now holds the commit), the next build is clean.
+    sandbox.merge();
+    sandbox.install_bin(true);
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
     assert_eq!(
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
         "fake:guard PreToolUse\n"
     );
+}
+
+// A commit only the main checkout has (not merged through a PR) must not turn
+// a build of it fresh: the stamp is clean only for inputs on origin/main.
+#[test]
+fn a_build_from_inputs_not_on_origin_main_is_dirty() {
+    let sandbox = Sandbox::new("shim-unmerged");
+
+    // A local commit to an input, then a build: dirty, with no rebuild.
+    sandbox
+        .repo
+        .write("tools/src/lib.rs", "// a local, unmerged commit\n");
+    sandbox.repo.commit("Unmerged change");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+    assert!(sandbox.no_build_started());
+
+    // A later commit that touches no input keeps the earlier one dirty.
+    sandbox.repo.write("README.md", "# not a build input\n");
+    sandbox.repo.commit("Docs only");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+
+    // HEAD behind origin/main, or ahead of it only in other files, is clean.
+    sandbox.merge();
+    sandbox.repo.write("tools/src/lib.rs", "// merged later\n");
+    sandbox.repo.commit("Merged later");
+    sandbox.merge();
+    common::git(sandbox.repo.path(), &["reset", "-q", "--hard", "HEAD~1"]);
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    sandbox
+        .repo
+        .write("README.md", "# still not a build input\n");
+    sandbox.repo.commit("Local docs commit");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
+
+    // Without origin/main nothing proves the inputs were merged: dirty.
+    common::git(
+        sandbox.repo.path(),
+        &["update-ref", "-d", "refs/remotes/origin/main"],
+    );
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
 }
 
 #[test]

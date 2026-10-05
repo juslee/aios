@@ -252,7 +252,9 @@
       "Bash(sed *-i*target/tools*)",
       "Bash(sed *--in-place*target/tools*)",
       "Bash(*>*target/tools*)",
-      "Bash(just -*)"
+      "Bash(just -*)",
+      "Bash(git fetch *:*remotes/*)",
+      "Bash(git pull *:*remotes/*)"
     ],
     "deny": [
       "Bash(rm -rf /)",

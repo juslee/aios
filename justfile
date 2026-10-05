@@ -149,29 +149,62 @@ test:
 # (cargo removes and re-creates release/aios on its builds). The copy is written
 # under a temporary name and renamed into place, so a concurrent shim call finds
 # the old binary or the new one, never a missing or half-written file (#203).
-# The copy takes the build's start time: a no-op build is marked fresh for the
-# shim, and a file edited during the build stays newer, so the next call
-# rebuilds. Each build has its own start file, so overlapping builds (a
-# background prebuild and a foreground rebuild) never give one binary the other
-# build's start time. Then, only after the binary is in place, the provenance
-# stamp installed/aios.stamp is renamed in beside it: HEAD's tree entries for
-# the build inputs, the installed binary's git hash, and "source dirty" when the
-# inputs have uncommitted changes. The shim treats a missing or mismatched
-# stamp as stale; the inputs list and the format must match the shim's.
+# Overlapping recipes (a background prebuild and a foreground rebuild) run one
+# at a time, from the build through both renames, under the lock directory
+# target/tools/.install: otherwise one recipe could copy release/aios while the
+# other's cargo build removes and rewrites it. A waiting recipe takes the lock
+# over when the process named in it has exited or the lock is older than 30
+# minutes. The copy takes the build's start time: a no-op build is marked fresh
+# for the shim, and a file edited during the build stays newer, so the next call
+# rebuilds. Then, only after the binary is in place, the provenance stamp
+# installed/aios.stamp is renamed in beside it: HEAD's tree entries for the
+# build inputs, the installed binary's git hash, and "source dirty" when the
+# inputs have uncommitted changes, when HEAD has input changes that
+# origin/main (refs/remotes/origin/main) lacks, or when there is no origin/main,
+# so only inputs merged through a PR stamp "source clean". The shim treats a
+# missing or mismatched stamp as stale; the inputs list and the format must
+# match the shim's.
 # Build the host tools binary target/tools/installed/aios (run through .claude/hooks/aios)
 tools:
     #!/bin/sh
     set -eu
     mkdir -p target/tools/installed
-    start=$(mktemp target/tools/.build-start.XXXXXX)
+    lock=target/tools/.install
+    held=
+    start=
     new=
     stamp=
-    trap 'rm -f "$start" ${new:+"$new"} ${stamp:+"$stamp"}' EXIT
+    trap 'rm -f ${start:+"$start"} ${new:+"$new"} ${stamp:+"$stamp"}; [ -z "$held" ] || rm -rf "$lock"' EXIT
+    trap 'exit 1' HUP INT TERM
+    waiting=
+    until mkdir "$lock" 2>/dev/null; do
+        holder=$(cat "$lock/pid" 2>/dev/null) || holder=
+        if { [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; } ||
+            [ -n "$(find "$lock" -prune -mmin +30 2>/dev/null)" ]; then
+            rm -rf "$lock"
+            continue
+        fi
+        if [ -z "$waiting" ]; then
+            echo "just tools: waiting for another just tools to finish (lock $lock)" >&2
+            waiting=1
+        fi
+        sleep 1
+    done
+    held=1
+    echo "$$" >"$lock/pid"
+    start=$(mktemp target/tools/.build-start.XXXXXX)
     cargo build --release -p aios-tools --target-dir target/tools
     inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo'
     src=$(git ls-tree HEAD -- $inputs)
     changes=$(git status --porcelain --untracked-files=all -- $inputs)
-    if [ -n "$changes" ]; then state=dirty; else state=clean; fi
+    if [ -n "$changes" ]; then
+        state=dirty
+    elif ! base=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
+        ! git diff-tree --quiet -r "$base" HEAD -- $inputs; then
+        state=dirty
+    else
+        state=clean
+    fi
     if [ -d target/tools/installed/aios ]; then
         echo "target/tools/installed/aios is a directory; remove it, then run just tools" >&2
         exit 1
