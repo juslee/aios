@@ -611,19 +611,33 @@ mod tests {
         ring
     }
 
-    /// Drain `ring` with `next_log_line`, as `drain_logs` does, into the
-    /// printed message texts and their statuses.
-    fn drain(ring: Vec<LogEntry>) -> Vec<(String, LogLineStatus)> {
-        let mut entries = ring.into_iter();
-        let mut pending = None;
-        let mut lines = Vec::new();
-        while let Some(line) = next_log_line(&mut pending, || entries.next()) {
-            let mut text = String::new();
-            line.write_message(&mut text).unwrap();
-            lines.push((text, line.status));
+    /// Drain `ring` with `next_log_line` in calls shaped like `drain_logs`:
+    /// each call starts with nothing pending and stops after `limit` lines
+    /// once no entry is pending. Returns each call's printed message texts
+    /// and their statuses.
+    fn drain_calls(ring: Vec<LogEntry>, limit: usize) -> Vec<Vec<(String, LogLineStatus)>> {
+        assert!(limit > 0, "a call that prints nothing never ends the drain");
+        let mut entries = ring.into_iter().peekable();
+        let mut calls = Vec::new();
+        while entries.peek().is_some() {
+            let mut pending = None;
+            let mut lines = Vec::new();
+            while lines.len() < limit || pending.is_some() {
+                let Some(line) = next_log_line(&mut pending, || entries.next()) else {
+                    break;
+                };
+                let mut text = String::new();
+                line.write_message(&mut text).unwrap();
+                lines.push((text, line.status));
+            }
+            calls.push(lines);
         }
-        assert!(pending.is_none(), "an entry was left pending");
-        lines
+        calls
+    }
+
+    /// Drain all of `ring` in one call, with no line limit.
+    fn drain(ring: Vec<LogEntry>) -> Vec<(String, LogLineStatus)> {
+        drain_calls(ring, usize::MAX).concat()
     }
 
     #[test]
@@ -870,6 +884,57 @@ mod tests {
                 ),
                 (ascii(70), LogLineStatus::Whole),
             ]
+        );
+    }
+
+    #[test]
+    fn drain_prints_an_entry_left_pending_past_the_line_limit() {
+        // A head whose continuation was lost is the last line under the
+        // limit; the call has already popped the next message's head, so it
+        // prints that message past the limit rather than drop the head.
+        let mut ring = ring_entries(&ascii(60));
+        ring.pop();
+        ring.extend(ring_entries(&ascii(70)));
+        ring.extend(ring_entries("next"));
+        assert_eq!(
+            drain_calls(ring, 1),
+            [
+                Vec::from([
+                    (
+                        alloc::format!("{}~<lost>", &ascii(60)[..48]),
+                        LogLineStatus::TailLost
+                    ),
+                    (ascii(70), LogLineStatus::Whole),
+                ]),
+                Vec::from([(String::from("next"), LogLineStatus::Whole)]),
+            ]
+        );
+
+        // Each pending head whose continuation is also lost adds a line.
+        let mut ring = Vec::new();
+        for (timestamp, len) in [(77, 60), (78, 70), (79, 80)] {
+            let (head, _) =
+                buffered(&ascii(len)).entries(timestamp, 2, LogLevel::Warn, Subsystem::Ipc);
+            ring.push(head);
+        }
+        ring.extend(ring_entries("next"));
+        assert_eq!(
+            drain_calls(ring, 1),
+            [Vec::from([
+                (
+                    alloc::format!("{}~<lost>", &ascii(60)[..48]),
+                    LogLineStatus::TailLost
+                ),
+                (
+                    alloc::format!("{}~<lost>", &ascii(70)[..48]),
+                    LogLineStatus::TailLost
+                ),
+                (
+                    alloc::format!("{}~<lost>", &ascii(80)[..48]),
+                    LogLineStatus::TailLost
+                ),
+                (String::from("next"), LogLineStatus::Whole),
+            ])]
         );
     }
 

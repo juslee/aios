@@ -169,9 +169,9 @@ pub fn timer_tick_handler() {
     // 2-3. CPU 0 only: increment global tick counter and drain log ring buffers.
     // TICK_COUNT is a system-wide monotonic counter — only one core should advance it.
     // drain_logs() pops from SPSC ring buffers — only safe with a single consumer.
-    // The drain runs every 4th tick. One call prints at most DRAIN_BATCH_SIZE
-    // (16) lines, plus an entry left pending by a missing continuation and one
-    // dropped-messages line per ring (observability/mod.rs). A line joins a
+    // The drain runs every 4th tick. One call prints DRAIN_BATCH_SIZE (16)
+    // lines, plus one dropped-messages line per ring and any entries a missing
+    // continuation left pending (observability/mod.rs). A line joins a
     // head entry with its continuation, so it can reach ~130 characters: ~11ms
     // on a 115200-baud UART, where a full batch holds this handler for well
     // over its 1ms tick interval. That cost of draining from the tick is a

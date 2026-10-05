@@ -190,11 +190,11 @@ impl LogRing {
 // The Release stores and Acquire loads of `head` and `tail` hand each slot
 // from one side to the other, so no slot is read and written at once. A
 // second producer, or two consumers popping one ring at once, would break
-// this and tear, repeat or lose entries. `drain_logs` also has thread-context
-// callers besides the CPU 0 timer tick, and one can overlap the tick's
-// drain: a known gap in this protocol, which shows as lost marks when it
-// splits a pair, and can repeat a drop report or hold it back until the
-// ring's next drop.
+// this and tear, repeat or lose entries. `drain_logs` also has callers
+// besides the CPU 0 timer tick (see `DRAIN_BATCH_SIZE`), and one can overlap
+// the tick's drain: a known gap in this protocol, which shows as lost marks
+// when it splits a pair, and can repeat a drop report or hold it back until
+// the ring's next drop.
 unsafe impl Sync for LogRing {}
 
 /// Global log rings, one per core. BSS-allocated.
@@ -317,21 +317,26 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 // UART drain (observability.md §2.7)
 // ---------------------------------------------------------------------------
 
-/// Maximum log lines printed per `drain_logs` call; a head entry joined with
-/// its continuation counts as one line. A call can print a few more: an
-/// entry left pending by a missing continuation is printed past the limit,
-/// and a ring adds one report line when the drain reaches where it dropped
-/// messages (a second report from that ring needs the ring to fill again
-/// first, far more entries than one call reads). The limit bounds each
-/// call's cost for the CPU 0 timer tick, which drains every 4th tick; a full
-/// batch still runs well past one 1ms tick (see `timer.rs`).
-/// The boot sequence calls `drain_logs` directly as well, to flush bursts.
+/// Log lines a `drain_logs` call prints before it stops; a head entry joined
+/// with its continuation counts as one line. A call can print more. A ring
+/// adds one report line when the drain reaches where it dropped messages (a
+/// second report from that ring needs the ring to fill again first, far more
+/// entries than one call reads). And the call stops only once no entry is
+/// pending: an entry popped while looking for a missing continuation is
+/// printed past the limit, usually one more line, but when that entry is a
+/// head whose continuation is missing too it pops another, so while drains
+/// overlap each such head can add a line, up to what the ring holds. The
+/// limit bounds each call's cost for the CPU 0 timer tick, which drains every
+/// 4th tick; a full batch still runs well past one 1ms tick (see `timer.rs`).
+/// The boot sequence calls `drain_logs` directly as well, to flush bursts,
+/// and so does the scheduler's `pc=0` check before it panics, on any CPU.
 const DRAIN_BATCH_SIZE: usize = 16;
 
-/// Drain the per-core log rings and write formatted entries to UART, at
-/// most DRAIN_BATCH_SIZE lines per call (see there).
+/// Drain the per-core log rings and write formatted entries to UART,
+/// DRAIN_BATCH_SIZE lines per call plus what that doc lists past the limit.
 /// Also captures to BootLogBuffer for GPU text rendering when capture is enabled.
-/// Called from timer tick handler and boot-time flush. Must NOT call klog! (re-entrancy).
+/// Called from the timer tick handler, boot-time flushes and the scheduler's
+/// `pc=0` check. Must NOT call klog! (re-entrancy).
 ///
 /// A head entry and its continuation print as one line. The producer never
 /// splits a pair, so a head without its continuation, or a continuation
