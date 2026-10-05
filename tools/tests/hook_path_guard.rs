@@ -159,6 +159,39 @@ fn a_dangling_link_inside_a_symlinked_directory_resolves_against_the_real_direct
 
 #[cfg(unix)]
 #[test]
+fn dot_dot_after_a_symlink_folds_against_the_link_target() {
+    use std::os::unix::fs::symlink;
+
+    // `docs/linked/..` is `kernel` (the link's target `kernel/src`, one up), not
+    // `docs` (the link's lexical parent): the OS resolves the link first.
+    let dir = repo("symlink-dotdot");
+    symlink(dir.join("kernel/src"), dir.join("docs/linked")).expect("symlink a directory");
+    let run = guard(&[], &edit(&dir, "docs/linked/../x.rs"), &dir);
+    assert!(deny_reason(&run).contains("`kernel/x.rs`"));
+    let path = format!("{}/docs/linked/../x.rs", dir.display());
+    let run = guard(&[], &edit(&dir, &path), &dir);
+    assert!(deny_reason(&run).contains("`kernel/x.rs`"));
+    // A relative link target folds the same way.
+    symlink("../kernel/src", dir.join("docs/rel")).expect("symlink");
+    let run = guard(&[], &edit(&dir, "docs/rel/../y.rs"), &dir);
+    assert!(deny_reason(&run).contains("`kernel/y.rs`"));
+    // The mirror image: a link out of a denied prefix, then `..`, lands outside it.
+    symlink(dir.join("docs"), dir.join("kernel/to-docs")).expect("symlink");
+    assert_no_decision(&guard(&[], &edit(&dir, "kernel/to-docs/../ok.md"), &dir));
+}
+
+#[cfg(unix)]
+#[test]
+fn dot_dot_after_a_missing_component_is_denied() {
+    // The OS fails `new/../kernel/x.rs` with ENOENT when `new` does not exist, so
+    // there is no file to decide on; the guard does not guess one.
+    let dir = repo("missing-dotdot");
+    let run = guard(&[], &edit(&dir, "docs/new/../../kernel/x.rs"), &dir);
+    assert!(deny_reason(&run).contains("`..`"));
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symlink_loop_fails_closed() {
     use std::os::unix::fs::symlink;
 
@@ -479,6 +512,9 @@ fn ambient_git_location_variables_do_not_disable_the_guard() {
     for env in [
         vec![("GIT_DIR", git_dir.to_str().unwrap())],
         vec![("GIT_WORK_TREE", "/")],
+        vec![("GIT_COMMON_DIR", "/nonexistent")],
+        vec![("GIT_OBJECT_DIRECTORY", "/nonexistent")],
+        vec![("GIT_INDEX_FILE", "/nonexistent")],
         vec![
             ("GIT_DIR", git_dir.to_str().unwrap()),
             ("GIT_WORK_TREE", "/"),

@@ -3,8 +3,9 @@
 //! `worker` agent only. Fails closed: an error becomes a deny (see `OnError`).
 //!
 //! The target is resolved before it is compared: a relative path is joined to the
-//! input `cwd`, `.` and `..` are folded lexically, and the longest existing
-//! ancestor is canonicalised so a symlink cannot hide a denied directory. The
+//! input `cwd` and walked component by component, each symlink replaced by its
+//! target before the next component (a `..` included) is applied, as the OS does, so
+//! neither a symlink nor a `..` behind one can hide a denied directory. The
 //! repository root comes from the target, not from `cwd`: worktrees nest inside the
 //! main checkout, so a root taken from `cwd` would see an edit in a nested worktree
 //! as a path under `.claude/worktrees/` and never match `kernel/`. A target that is
@@ -16,8 +17,9 @@
 //! root under it. Bash can still write files, so this is a routing aid, not a
 //! sandbox.
 
+use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
-
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -38,8 +40,8 @@ pub struct Args {
 /// The tools whose target path this hook checks.
 const CHECKED_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 
-/// How many symlinks a dangling-link chain may pass through before the target is
-/// treated as unresolvable (the kernel allows 40 per lookup).
+/// How many symlinks one path may pass through before the target is treated as
+/// unresolvable (the kernel allows 40 per lookup).
 const MAX_LINK_DEPTH: usize = 40;
 
 /// The path a checked tool is about to write: `tool_input.file_path`, or
@@ -229,69 +231,89 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
-/// Fold `.` and `..` out of `path` without touching the filesystem. A `..` at the
-/// root stays at the root.
-fn normalise_lexically(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !matches!(
-                    out.components().next_back(),
-                    None | Some(Component::RootDir | Component::Prefix(_))
-                ) {
-                    out.pop();
-                }
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
+/// One step of a path walk. A symlink target is split into steps and queued ahead of
+/// the rest of the path, so `..` is applied to the directory the walk has really
+/// reached, as the OS does.
+enum Step {
+    Root,
+    Current,
+    Parent,
+    Name(OsString),
 }
 
-/// `path` with `.` and `..` folded and symlinks resolved as far as it exists: the
-/// longest existing ancestor is canonicalised and the components that do not exist
-/// yet are appended. A dangling symlink is followed to where a write would create
-/// the file, up to `depth` links.
-fn resolve(path: &Path, depth: usize) -> Result<PathBuf> {
-    let path = normalise_lexically(path);
+fn steps(path: &Path) -> Vec<Step> {
+    path.components()
+        .map(|component| match component {
+            Component::Prefix(_) | Component::RootDir => Step::Root,
+            Component::CurDir => Step::Current,
+            Component::ParentDir => Step::Parent,
+            Component::Normal(name) => Step::Name(name.to_os_string()),
+        })
+        .collect()
+}
+
+/// `path` resolved the way the OS resolves it for a write: component by component,
+/// each symlink replaced by its target before the next component is applied, so a
+/// `..` that follows a link folds against the directory the link points to, not the
+/// link's lexical parent. Components that do not exist yet are appended, and a
+/// dangling symlink is followed to where a write would create the file. At most
+/// `max_links` symlinks are followed in total. A `..` after a component that does not
+/// exist is an error (the OS fails that lookup with ENOENT), so the guard denies it.
+fn resolve(path: &Path, max_links: usize) -> Result<PathBuf> {
     if !path.is_absolute() {
         bail!("{} is not an absolute path", path.display());
     }
-    let mut base = path.as_path();
-    let mut missing = Vec::new();
-    let mut resolved = loop {
-        match std::fs::canonicalize(base) {
-            Ok(real) => break real,
-            Err(err) => {
-                if std::fs::symlink_metadata(base).is_ok() {
-                    // The entry exists but does not resolve: a dangling or looping
-                    // symlink, or a lookup that is not permitted.
-                    if depth == 0 {
-                        bail!("{} passes through too many symlinks", path.display());
-                    }
-                    let link = std::fs::read_link(base)
-                        .with_context(|| format!("cannot resolve {}: {err}", base.display()))?;
-                    // A relative target is relative to the directory that really
-                    // holds the link, which is the canonical parent: folding a `..`
-                    // against a parent reached through another symlink would land
-                    // somewhere else.
-                    let parent = base.parent().unwrap_or(base);
-                    let parent = std::fs::canonicalize(parent)
-                        .with_context(|| format!("cannot resolve {}", parent.display()))?;
-                    break resolve(&parent.join(link), depth - 1)?;
+    let mut queue: VecDeque<Step> = steps(path).into();
+    let mut resolved = PathBuf::new();
+    let mut missing = false;
+    let mut links = 0;
+    while let Some(step) = queue.pop_front() {
+        match step {
+            Step::Root => {
+                resolved = PathBuf::from("/");
+                missing = false;
+            }
+            Step::Current => {}
+            Step::Parent => {
+                if missing {
+                    bail!(
+                        "{} has a `..` after a component that does not exist",
+                        path.display()
+                    );
                 }
-                let (Some(parent), Some(name)) = (base.parent(), base.file_name()) else {
-                    bail!("cannot resolve {}: {err}", path.display());
-                };
-                missing.push(name);
-                base = parent;
+                resolved.pop();
+            }
+            Step::Name(name) => {
+                let next = resolved.join(&name);
+                if missing {
+                    resolved = next;
+                    continue;
+                }
+                match std::fs::symlink_metadata(&next) {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        if links == max_links {
+                            bail!("{} passes through too many symlinks", path.display());
+                        }
+                        links += 1;
+                        let target = std::fs::read_link(&next)
+                            .with_context(|| format!("cannot resolve {}", next.display()))?;
+                        // A relative target is relative to `resolved`, the directory
+                        // that really holds the link, because the link's own name was
+                        // not appended.
+                        for step in steps(&target).into_iter().rev() {
+                            queue.push_front(step);
+                        }
+                    }
+                    // Canonicalising an entry that is not a link only normalises its
+                    // spelling (a case-insensitive volume reports the stored case).
+                    Ok(_) => resolved = std::fs::canonicalize(&next).unwrap_or(next),
+                    Err(_) => {
+                        missing = true;
+                        resolved = next;
+                    }
+                }
             }
         }
-    };
-    for name in missing.into_iter().rev() {
-        resolved.push(name);
     }
     Ok(resolved)
 }
@@ -356,14 +378,6 @@ mod tests {
             None
         );
         assert_eq!(target(r#"{}"#).unwrap(), None);
-    }
-
-    #[test]
-    fn lexical_normalisation_folds_dots_and_stops_at_the_root() {
-        let n = |p: &str| normalise_lexically(Path::new(p));
-        assert_eq!(n("/r/docs/../kernel/./x.rs"), Path::new("/r/kernel/x.rs"));
-        assert_eq!(n("/../../a"), Path::new("/a"));
-        assert_eq!(n("/a/b/.."), Path::new("/a"));
     }
 
     #[test]
