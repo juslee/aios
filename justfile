@@ -168,7 +168,7 @@ tools:
     stamp=
     trap 'rm -f "$start" ${new:+"$new"} ${stamp:+"$stamp"}' EXIT
     cargo build --release -p aios-tools --target-dir target/tools
-    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml .cargo'
+    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo'
     src=$(git ls-tree HEAD -- $inputs)
     changes=$(git status --porcelain --untracked-files=all -- $inputs)
     if [ -n "$changes" ]; then state=dirty; else state=clean; fi
