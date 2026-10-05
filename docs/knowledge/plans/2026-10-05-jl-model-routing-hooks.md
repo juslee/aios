@@ -16,13 +16,14 @@ The owner wants the agent team to run as: Opus leads, Sonnet agents do routine w
 | `repeat-error` | `PostToolUseFailure` and `PostToolUse`, matcher `Bash` | Notice the same Bash command failing the same way twice and tell the agent to stop retrying and get a review | fail open: no output, exit 0 |
 | `path-guard` | `PreToolUse`, matcher `Edit\|Write\|MultiEdit\|NotebookEdit`, in the frontmatter of the Sonnet `worker` agent only | Deny edits under configured repository prefixes (`kernel/`, `uefi-stub/`, `shared/`) so kernel code stays with `kernel-dev` on Opus | fail closed: deny with the error as the reason |
 | `route-shadow` | `PreToolUse`, matcher for the subagent-dispatch tool | Ask Jev how the dispatch would be routed and log the answer next to what actually happened; never decides anything | fail open: log the error, no output, exit 0 |
+| `route-outcome` | `PostToolUse` and `PostToolUseFailure`, matcher `Agent`; `SubagentStop` | Log what happened to each dispatch (launched agent id, status, model, telemetry, how the subagent ended) so `route-shadow` records can be judged | fail open: no output, exit 0 |
 
 Jev runs in shadow mode only. The 2026-09-22 review-triage evaluation found Jev no better than the base rate when the deciding evidence sat in other files, and "does this task need a stronger model" has the same shape. The log lets the owner check that before Jev decides anything.
 
 The work is split in two because other open branches own the files that wire these programs in:
 
-- **Part 1 (this branch, now):** the three subcommands, their tests and this plan. It touches only new files under `tools/src/cmd/hook/` and `tools/tests/`, plus one `pub mod hook;` line in `tools/src/cmd/mod.rs` and a `Hook` variant with its match arm in `tools/src/main.rs`.
-- **Part 2 (after `claude/harness-team-config` and `claude/tools-203-guard-fail-closed` merge):** wiring. Requirements only, listed under "Part 2 requirements" below.
+- **Part 1 (this branch, now):** the four subcommands, their tests and this plan. It touches only new files under `tools/src/cmd/hook/` and `tools/tests/`, plus one `pub mod hook;` line in `tools/src/cmd/mod.rs` and a `Hook` variant with its match arm in `tools/src/main.rs`. It merges before part 2, because a settings entry that names an `aios hook` subcommand missing from `main` exits 2 (a clap usage error).
+- **Part 2 (owned by the two-team harness PR, built after `claude/harness-team-config` merges; owner decision 2026-10-05):** the agent and settings wiring. Requirements only, listed under "Part 2 requirements" below; that PR designs it.
 
 ## Progress
 
@@ -31,9 +32,13 @@ The work is split in two because other open branches own the files that wire the
 - [x] Step 3: `aios hook repeat-error` plus tests.
 - [x] Step 4: `aios hook path-guard` plus tests.
 - [x] Step 5: `aios hook route-shadow` plus tests, including one against a local fake HTTP server through real `curl`.
-- [ ] Step 6: review loop (correctness, security, conventions, docs) until a clean round.
-- [ ] Step 7: gates: `cargo fmt --check -p aios-tools`, `cargo clippy -p aios-tools --all-targets -- -D warnings`, `cargo test -p aios-tools`, `just docs-check`.
-- [ ] Step 8: one live `route-shadow` call against Jev (owner's key), checked by hand.
+- [x] Step 6: review loop (correctness, security, conventions, docs) until a clean round. Round 5 was clean on all four lenses.
+- [x] Step 7: gates: `cargo fmt --check -p aios-tools`, `cargo clippy -p aios-tools --all-targets -- -D warnings`, `cargo test -p aios-tools` (300 passed), `just docs-check` (one new finding: this working plan, removed at step 12).
+- [x] Step 8: live `route-shadow` calls against Jev (owner's key), checked by hand: two on 2026-10-05 at e2a7daf (662 ms, 428 ms) and two on 2026-10-06 at 38af18e (446 ms, 428 ms). Every record had `jev_model` `jev-1.13.0`, `error` null and all three answers, and the key appeared in no state file. A rename scored complexity 0.03 and a lock/MMU diagnosis 2.0 with `low_level_hazard` 0.99; a pattern-following feature scored 1.0, a read-only search 0.11 classed `read_only_search`.
+- [ ] Step 9: the lead-fix review (path-guard root from the target) continues until a clean round; its third round found issues and its fix (38af18e) is unreviewed.
+- [ ] Step 10: `aios hook route-outcome` plus tests.
+- [ ] Step 11: review loop over the whole branch until a clean round, then the gates.
+- [ ] Step 12: rebase onto `main`, distil this plan into the knowledge hive (a decision note for the hook design, a lesson for the worktree-nesting bypass) and delete it, then the PR.
 
 ## Hook contract
 
@@ -141,18 +146,29 @@ Parse leniently: unknown fields are ignored and every field the code does not st
   The tool call id is what later joins a record to the dispatch's outcome.
 - Never prints a decision. Part 2 registers it with `async: true`, so no dispatch waits for it; curl's `--max-time 4` bounds its own run time (under 5 s including process start).
 
+**`route-outcome`**
+
+- Appends one JSON line per relevant event to `<state dir>/route-outcome.jsonl`, next to `route-shadow.jsonl`, with the same append and file-permission handling as `route-shadow` (share the code in `hook/mod.rs` rather than copy it). Never prints anything to stdout; every payload path exits 0.
+- `PostToolUse` with `tool_name` `Agent`: a `launched` record with `ts`, `session_id`, `caller_agent_id` (the input's `agent_id`, present when a subagent dispatched it), `tool_use_id`, `subagent_type` and the requested `model` from `tool_input`, and from `tool_response`: `agent_id` (`agentId`), `status`, `resolved_model` (`resolvedModel`), and, when present, `models_used`, `total_tokens`, `total_duration_ms`, `total_tool_use_count` (from `modelsUsed`, `totalTokens`, `totalDurationMs`, `totalToolUseCount`, kept as the parsed JSON values; only a `completed` response has them).
+- `PostToolUseFailure` with `tool_name` `Agent`: a `launch_failed` record with `ts`, `session_id`, `caller_agent_id`, `tool_use_id`, `subagent_type`, `is_interrupt`, and `error` cut to 512 bytes on a character boundary.
+- `SubagentStop`: a `stopped` record with `ts`, `session_id`, `agent_id`, `agent_type`, `stop_hook_active`, `agent_transcript_path`, and `last_assistant_message` cut to 4,000 characters with `message_chars` and `message_truncated`. A subagent that a stop gate sends back to work stops again later, so the number of `stopped` records for one `agent_id` is the number of stop attempts; part 2's Fable gate may read it as its block counter instead of keeping its own state.
+- Every other event, and `PostToolUse` or `PostToolUseFailure` for any other tool: no record.
+- Every field is read leniently (absent or wrong-typed means null). Each record carries `kind` (`launched`, `launch_failed`, `stopped`).
+- An internal error after the state directory is known appends an `error` record (`kind` `error`, `event`, `error` text); before that, stderr only.
+- The join for the Jev evaluation: `route-shadow.tool_use_id` = `launched.tool_use_id`; `launched.agent_id` = `stopped.agent_id`.
+
 ## Part 2 requirements
 
-For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guard-fail-closed` merge. Requirements only; the design is that PR's job.
+Owned by the two-team harness PR (owner decision 2026-10-05, 21:33), built after `claude/harness-team-config` merges and after this branch merges. Requirements only; the design is that PR's job. The roster is settled: the owner chose this plan's Opus-lead, Sonnet-worker, Fable-reviewer map over the Build/Ship draft's, and the draft's `tools-dev` agent folds into `worker`. Points marked "reported" came from the harness session on 2026-10-05 and are to be checked by that PR.
 
-- Agent models: team-lead inherits (Opus, high effort); kernel-dev `opus`; a new `worker` agent on `sonnet` for `tools/`, `scripts/`, `docs/` and `.github/` work, with `path-guard` in its frontmatter; verifier and doc-auditor `sonnet`; doc-writer `opus`; code-reviewer `fable`.
-- Fable before "done": a `Stop` hook in kernel-dev's frontmatter (it runs as `SubagentStop` for that agent only), `type: agent`, `model: fable`, reviewing the change and blocking with reasons. `SubagentStop` input carries `stop_hook_active`, and Claude Code caps consecutive continuations at 8 (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), but that count resets whenever the subagent calls a tool, so a review-fix-review cycle is not bounded by it. The gate therefore also counts its own blocks per `agent_id` (state under the hook state directory) and stops blocking after a fixed cap, so it cannot loop.
+- The lead is the session itself, not an agent: `team-lead` is a reserved name in Claude Code 2.1.289 (the Agent tool rejects it, as it does `main`, `user` and `system`, and `SendMessage` to `team-lead` reaches the session's own lead; reported). The lead runs Opus at high effort through its launch (`claude --model opus --effort high`) or `model`/`effortLevel` settings, and `.claude/agents/team-lead.md` is deleted. Teams form only in a terminal `claude` session, not the VS Code panel (reported).
+- Agent models and effort: kernel-dev `opus`/high; `worker` `sonnet`/high for `tools/`, `scripts/`, `docs/` and `.github/` work, with `path-guard --deny kernel/ --deny uefi-stub/ --deny shared/` as a `PreToolUse` hook in its frontmatter (matcher `Edit|Write|MultiEdit|NotebookEdit`; `MultiEdit` survives only as a permission-rule alias, which is harmless in a matcher; reported); doc-writer `opus`/high; code-reviewer `fable`/high; verifier and doc-auditor `sonnet`/medium.
+- Fable before "done": a `Stop` hook in kernel-dev's frontmatter (documented to run as `SubagentStop` for that agent only), `type: agent`, `model: fable`, reviewing the change and blocking with reasons. `SubagentStop` input carries `stop_hook_active`, and Claude Code caps consecutive continuations at 8 (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), but that count resets whenever the subagent calls a tool, so a review-fix-review cycle is not bounded by it. The gate therefore also caps its own blocks per `agent_id`, for example by counting that agent's `stopped` records in `route-outcome.jsonl`, so it cannot loop. Probe both the frontmatter `Stop` to `SubagentStop` mapping and the cap with a real subagent before relying on them.
 - Fable before the plan: in `/implement-phase`, a Fable review of the working plan before the plan commit. Leaving plan mode cannot be hooked.
 - `settings.json`: `repeat-error` on `PostToolUseFailure` and `PostToolUse` for `Bash`; `route-shadow` on `PreToolUse` for the dispatch tool (matcher `Agent`), registered with `async: true`. The hooks reference documents async command hooks as running in the background: they cannot block or decide (decision fields have no effect), `timeout` is not enforced on them, and any `additionalContext` or `systemMessage` in their JSON output is still delivered on the next turn, so `route-shadow` must keep printing nothing. A dispatch never waits for Jev; curl's 4 s cap remains the bound on the hook's own run time. `-p` (headless) sessions kill async hooks still running at teardown, so the record for a session's final dispatch may be missing from the Jev evaluation.
-- Outcome logger, so `route-shadow` records can be judged: a `PostToolUse` hook on `Agent` records `tool_use_id` to `tool_response.agentId`, and a `SubagentStop` hook (it carries `agent_id`, `agent_type` and `last_assistant_message`, which is how the outcome is read; `stop_reason` is not a documented field, and that it fires for background subagents is not documented, so verify both with a real subagent run) records the outcome by `agent_id`. The join is `tool_use_id` (route-shadow record) to `agentId` (PostToolUse) to `agent_id` (SubagentStop).
-- Shim (`.claude/hooks/aios`): `hook` subcommands never rebuild in the foreground (a stale binary runs while a background build starts, as for `guard`); a missing binary means no output for `repeat-error` and `route-shadow`, and a deny for `path-guard`.
+- `route-outcome` (built in part 1): register it with `async: true` on `PostToolUse` and `PostToolUseFailure` (matcher `Agent`) and on `SubagentStop`. That `SubagentStop` fires for background subagents is not documented: verify it with a real background subagent run, since background is the default dispatch.
+- Shim (`.claude/hooks/aios`): `hook` subcommands never rebuild in the foreground (a stale binary runs while a background build starts, as for `guard`); a missing binary means no output for `repeat-error`, `route-shadow` and `route-outcome`, and a deny for `path-guard`.
 - `CLAUDE_CODE_EFFORT_LEVEL` is `"default"` in the project `env` block. The docs list `low`, `medium`, `high`, `xhigh`, `max` and `auto` (`auto` is the documented spelling of "use the model default", which `"default"` presumably meant) and say the variable outranks `effortLevel`; whether it also overrides an agent's frontmatter `effort`, and how an invalid value such as `"default"` is treated, are both undocumented. Remove the variable (or set it to `auto`, knowing it then outranks `effortLevel`), set the main-session effort through `effortLevel`, and verify per-agent effort with a real subagent run (the `effort.level` field in a hook input from inside that subagent shows what applied).
-- Reconcile the agent roster and the per-model assignment above with the Build/Ship two-team draft from the `claude/harness-team-config` session before part 2 starts; the owner decides, not this plan.
 - Docs: the CLAUDE.md agent table and workspace layout, and `docs/project/agent-loop.md`.
 - Jev evaluation: after 200 or more logged dispatches, compare Jev's answers with the outcomes (gates passed first time, Fable blocked, work redone) before Jev routes anything.
 
