@@ -61,7 +61,7 @@
       "Bash(/usr/bin/python3 -m unittest discover -s .claude/hooks/tests)",
       "Bash(bash -n .claude/hooks/setup-dev-env.sh)",
       "Bash(bash -n .claude/hooks/precompact-save.sh)",
-      "Bash(bash -n .claude/hooks/aios)",
+      "Bash(sh -n .claude/hooks/aios)",
       "Bash(bash -n scripts/agent/brief.sh)",
       "Bash(bash -n scripts/agent/checkpoint.sh)",
       "Bash(bash -n scripts/soak-qemu.sh)",
