@@ -1011,7 +1011,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
 | 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~763), `shmem.rs` (~788), `block_engine.rs` (~783), `bench.rs` (~549) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~788), `block_engine.rs` (~783), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1032,9 +1032,9 @@ ipc/
     mod.rs        (757)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (209) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    syscall_args.rs (225) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
     kit_errors.rs (233)  # IPC Kit error variants through KernelIpc (#190) self-test
-  notify.rs       (381)  # Notification objects (signal/wait)
+  notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
   shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```

@@ -374,7 +374,8 @@ pub enum IpcKitError {
     CapabilityDenied { required: Capability },
 
     /// A shared memory operation failed: the region does not exist, the
-    /// caller has no mapping of it, or it is already mapped.
+    /// caller has no mapping of it, it is already mapped, or the calling
+    /// thread has no process.
     /// Recovery: verify the region ID and the mapping state.
     SharedMemoryError { reason: &'static str },
 
@@ -397,9 +398,13 @@ pub enum IpcKitError {
     /// Recovery: none from the agent; the gate is lifted by AIRS or the user.
     Suspended,
 
-    /// An argument is invalid: an out-of-range id, an undefined flag bit,
-    /// a W^X request, a bad buffer or an unknown select entry kind.
-    /// Recovery: fix the call; retrying unchanged fails the same way.
+    /// An argument is invalid (an out-of-range id, an undefined flag bit,
+    /// a W^X request, a bad buffer or an unknown select entry kind), or the
+    /// caller's state does not allow the call: no current thread or
+    /// process, or a reply with no pending call.
+    /// Recovery: for an argument error, fix the call; retrying unchanged
+    /// fails the same way. A reply with no pending call can succeed once a
+    /// call arrives.
     InvalidArgument { reason: &'static str },
 
     /// A table, queue or memory pool is full.

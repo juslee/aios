@@ -42,7 +42,9 @@ pub enum IpcKitError {
     Cancelled,
     /// The caller lacks the required capability.
     CapabilityDenied { required: Capability },
-    /// A shared memory operation failed.
+    /// A shared memory operation failed: the region does not exist, the
+    /// caller has no mapping of it, it is already mapped, or the calling
+    /// thread has no process.
     SharedMemoryError { reason: &'static str },
     /// The message payload exceeds the maximum size.
     MessageTooLarge { size: usize, max: usize },
@@ -55,8 +57,10 @@ pub enum IpcKitError {
     /// The caller's process is SUSPENDED by the behavioral gate
     /// (docs/kernel/ipc.md §9.1). It may still hold every capability.
     Suspended,
-    /// An argument is invalid: an out-of-range id, an undefined flag bit, a
-    /// W^X violation, a bad buffer or an unknown entry kind.
+    /// An argument is invalid (an out-of-range id, an undefined flag bit, a
+    /// W^X violation, a bad buffer or an unknown entry kind), or the caller's
+    /// state does not allow the call: no current thread or process, or a
+    /// reply with no pending call.
     InvalidArgument { reason: &'static str },
     /// A table, queue or memory pool is full.
     ResourceExhausted { reason: &'static str },

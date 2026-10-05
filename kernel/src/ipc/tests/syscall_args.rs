@@ -157,7 +157,10 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     checks[29] = svc(Syscall::MemoryMap, &[65 * PAGE, READ]) == einval;
 
     // A live notification (#188 item 8): NotificationSignal returns 0, and
-    // the bits it set are the ones a non-blocking NotificationWait returns.
+    // the bits it set are the ones a NotificationWait with timeout 0 returns
+    // from its fast path. Timeout 0 is not a poll for notification_wait: if
+    // the bits were not set, the wait would block until the next tick and
+    // time out, so this check fails late rather than at once.
     let id = svc(Syscall::NotificationCreate, &[]);
     if IpcError::try_from(id).is_err() && id >= 0 {
         checks[30] = svc(Syscall::NotificationSignal, &[id as u64, 0b101]) == 0;
