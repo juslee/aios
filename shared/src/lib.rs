@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod boot;
+pub mod cache;
 pub mod cap;
 pub mod collections;
 pub mod compositor;
@@ -28,6 +29,7 @@ pub const BOOTINFO_MAGIC: u64 = 0x41494F53_424F4F54;
 
 // Re-export commonly used types at crate root for ergonomic imports.
 pub use boot::{BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat};
+pub use cache::CacheType;
 pub use cap::{
     Capability, CapabilityHandle, CapabilityTable, CapabilityToken, CapabilityTokenId,
     MAX_CAPS_PER_PROCESS,
