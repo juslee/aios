@@ -17,6 +17,11 @@ name: Soak matrix
 # found if it is reachable from a branch, a tag or a pull request head on
 # origin; GitHub keeps pull request heads after the branch is deleted.
 #
+# Every arm's build scripts run on the runner, so dispatch only arms whose
+# code you have reviewed: a pull request head from a fork is untrusted code.
+# The job therefore keeps no cache (no rust-cache): nothing an arm's build
+# writes can reach a later run.
+#
 # The results are x86 TCG numbers on ubuntu-26.04 and form their own
 # baseline: never pool them with local arm64 soaks, or with runs on another
 # runner image.
@@ -94,8 +99,7 @@ jobs:
       # 60 with 3 and 91 with 2. A larger soak fails here, before any build.
       #
       # First, so the always() steps below have a path even when the plan
-      # refuses the inputs. Outside the checkout's target/, which rust-cache
-      # saves and restores.
+      # refuses the inputs.
       - name: Choose the output directory
         run: echo "MATRIX_OUT=$RUNNER_TEMP/soak-matrix" >> "$GITHUB_ENV"
       - name: Plan the soak
@@ -138,6 +142,7 @@ jobs:
       # Full history of every branch and tag, then every pull request head,
       # so an arm can be any commit reachable from one of them, including
       # commits of a squash-merged pull request whose branch was deleted.
+      # Fork pull request heads are fetched too: see the trust note above.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -149,7 +154,6 @@ jobs:
           toolchain: nightly
           targets: aarch64-unknown-none, aarch64-unknown-uefi
           components: rust-src, llvm-tools
-      - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
       # ipxe-qemu provides efi-virtio.rom, the option ROM virtio-blk-pci needs.
       - name: Install QEMU, edk2 firmware and mtools

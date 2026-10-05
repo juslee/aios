@@ -67,8 +67,8 @@ Options:
                     (default: a new directory under ${TMPDIR:-/tmp})
   --keep-worktrees  keep the arm worktrees at exit (default: removed)
   --allow-mixed-toolchains
-                    run arms whose rust-toolchain.toml channels differ
-                    (default: refused, see below)
+                    run arms whose rust-toolchain.toml channels or
+                    compilers differ (default: refused, see below)
   -h, --help        show this help
 
 Each arm is checked out with `git worktree add --detach` and built there
@@ -85,11 +85,14 @@ execute-never, so an older kernel faults at the jump on every boot there.
 It also brings #192's scripts/soak-qemu.sh (--no-build, and find_timeout,
 the uutils timeout check that Ubuntu 26.04 needs).
 
-The arms must pin the same toolchain channel and boot the same firmware
+The arms must pin the same toolchain channel, build with the same compiler
+(rustc --version, compared after the builds) and boot the same firmware
 (just --evaluate edk2_fw; set AIOS_EDK2_FW to unify it). Arms on different
-channels compare the change plus the compiler, which the crash-fix soak
+compilers compare the change plus the compiler, which the crash-fix soak
 protocol does not accept as a pair; --allow-mixed-toolchains runs them
-anyway and marks the summary. A firmware mismatch is always refused.
+anyway and marks the summary. A rust-toolchain.toml channel that cannot be
+read counts as a mismatch. A firmware mismatch is always refused, and so is
+firmware that does not exist; both are checked before any build.
 
 Every boot runs, from inside the arm's worktree:
   scripts/soak-qemu.sh --no-build --runs 1 --secs T --mode M --report-only
@@ -124,9 +127,10 @@ Exit status: 0 when every round ran, whatever the boot classes (report
 only); 2 on a usage or setup error (a ref that does not resolve, an arm
 without #196, mixed toolchains or firmware, a failed build, a harness error
 on an arm's first boot, or 3 harness errors in a row); 130 on SIGINT, 143
-on SIGTERM. A signal stops the running boot or build at once (the boot's
-harness stops QEMU and removes its scratch files) and marks summary.md
-"stopped".
+on SIGTERM. A signal stops the running build or boot at once (the boot's
+harness stops QEMU and removes its scratch files); once the boots have
+started, it also marks summary.md "stopped". A soak stopped before then
+leaves no summary.md, only the build logs.
 EOF
 }
 
@@ -154,7 +158,29 @@ need_value() {
     [ "$#" -ge 2 ] || die "option $1 needs a value"
 }
 
-# The next three match soak-qemu.sh's helpers of the same name.
+# The next four match soak-qemu.sh's helpers of the same name.
+# find_timeout -- print the first of timeout / gtimeout that accepts
+# `--kill-after=N SECS CMD`, passes through the status of a command that
+# finishes in time, and exits 124 when it had to stop the command. Every
+# arm's harness refuses to boot without one; checking here, before the
+# builds, saves them.
+find_timeout() {
+    local c rc
+    for c in timeout gtimeout; do
+        command -v "$c" >/dev/null 2>&1 || continue
+        rc=0
+        "$c" --kill-after=1 5 sh -c 'exit 3' </dev/null >/dev/null 2>&1 || rc=$?
+        [ "$rc" -eq 3 ] || continue
+        rc=0
+        "$c" --kill-after=1 1 sleep 5 </dev/null >/dev/null 2>&1 || rc=$?
+        if [ "$rc" -eq 124 ]; then
+            echo "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
 loadavg() {
     if [ -r /proc/loadavg ]; then
         cut -d' ' -f1-3 /proc/loadavg
@@ -419,20 +445,20 @@ write_summary() {
 # ---------------------------------------------------------------------------
 # Worktrees and builds
 # ---------------------------------------------------------------------------
-CREATED_WT=0 # arm worktrees created so far: ARM_WT[0 .. CREATED_WT-1]
+# Arm worktrees created or being created: ARM_WT[0 .. CREATED_WT-1]. A path
+# is recorded before `git worktree add` starts, so a signal during the add
+# still removes it.
+CREATED_WT=0
 WT_DIR_CREATED=0
 SUMMARY_READY=0 # set once write_summary has everything it needs
 FINISHED=0
-# The build or boot running in the background, if any. Builds and boots run
-# in the background and are waited for, because bash runs a trap only after
-# the foreground command it waits on has finished, while a trapped signal
-# interrupts `wait` at once.
+# The build step or boot running in the background (run_tracked), if any.
 CHILD_PID=""
 
 cleanup() {
     local i=0
-    # A soak that stops early (setup error after the builds, harness errors,
-    # a signal) still leaves a summary of the boots it finished.
+    # A soak that stops early after the builds (a setup error, harness
+    # errors, a signal) still leaves a summary of the boots it finished.
     if [ "$SUMMARY_READY" -eq 1 ] && [ "$FINISHED" -eq 0 ]; then
         write_summary stopped || true
     fi
@@ -441,8 +467,11 @@ cleanup() {
         return 0
     fi
     while [ "$i" -lt "$CREATED_WT" ]; do
-        git -C "$REPO_ROOT" worktree remove --force "${ARM_WT[$i]}" >/dev/null 2>&1 ||
-            warn "could not remove worktree ${ARM_WT[$i]}; run: git worktree remove --force ${ARM_WT[$i]}"
+        # A path that does not exist is one whose `git worktree add` failed.
+        if [ -e "${ARM_WT[$i]}" ]; then
+            git -C "$REPO_ROOT" worktree remove --force "${ARM_WT[$i]}" >/dev/null 2>&1 ||
+                warn "could not remove worktree ${ARM_WT[$i]}; run: git worktree remove --force ${ARM_WT[$i]}"
+        fi
         i=$((i + 1))
     done
     # Only a directory this script created, and only if nothing else is in it.
@@ -450,16 +479,47 @@ cleanup() {
 }
 
 # on_signal STATUS -- stop the running build or boot, then exit STATUS (the
-# EXIT trap writes the "stopped" summary). SIGTERM, not the signal received:
-# a background job of a non-interactive shell starts with SIGINT ignored, and
-# soak-qemu.sh's TERM trap stops QEMU and removes its scratch directory.
+# EXIT trap writes the "stopped" summary). Each run_tracked command leads its
+# own process group, and the whole group gets SIGTERM: a build's cargo and
+# rustc processes (or a toolchain install) stop with it instead of running
+# on orphaned, and soak-qemu.sh's TERM trap stops QEMU and removes its
+# scratch directory. SIGTERM, not the signal received: a SIGINT from the
+# terminal no longer reaches a command in its own process group. Every
+# background job is signalled, not only CHILD_PID: a signal can arrive
+# between `&` and `CHILD_PID=$!`.
 on_signal() {
-    if [ -n "$CHILD_PID" ]; then
-        kill -TERM "$CHILD_PID" 2>/dev/null || true
-        wait "$CHILD_PID" 2>/dev/null || true
-        CHILD_PID=""
-    fi
+    local pids p
+    pids=$(jobs -p)
+    [ -z "$CHILD_PID" ] || pids="$pids $CHILD_PID"
+    for p in $pids; do
+        # A PID that leads no process group is signalled alone.
+        kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true
+    done
+    [ -z "$pids" ] || wait 2>/dev/null || true
+    CHILD_PID=""
     exit "$1"
+}
+
+# run_tracked LOG DIR CMD [ARG...] -- run CMD in DIR, appending its output to
+# LOG, and return its exit status. It runs as a background job, waited for,
+# because bash runs a trap only after the foreground command it waits on has
+# finished, while a trapped signal interrupts `wait` at once. Job control is
+# on while the job starts, so it gets a process group of its own for
+# on_signal to stop (see there); the subshell execs CMD, so CHILD_PID is
+# CMD itself and leads that group.
+run_tracked() {
+    local log=$1 dir=$2 rc=0
+    shift 2
+    set -m
+    (
+        cd -- "$dir" || exit 2
+        exec "$@"
+    ) >>"$log" 2>&1 </dev/null &
+    CHILD_PID=$!
+    set +m
+    wait "$CHILD_PID" || rc=$?
+    CHILD_PID=""
+    return "$rc"
 }
 
 # prepare_arm I -- create arm I's worktree and read what must match across
@@ -469,10 +529,10 @@ prepare_arm() {
     label=${ARM_LABEL[$i]}
     wt="$WT_DIR/arm-$label"
     [ ! -e "$wt" ] || die "$wt already exists; pass another --worktrees directory or remove it"
-    msg=$(git -C "$REPO_ROOT" worktree add --detach "$wt" "${ARM_SHA[$i]}" 2>&1) ||
-        die "cannot create the worktree $wt for arm $label (${ARM_REF[$i]}): $msg"
     ARM_WT[i]=$wt
     CREATED_WT=$((CREATED_WT + 1))
+    msg=$(git -C "$REPO_ROOT" worktree add --detach "$wt" "${ARM_SHA[$i]}" 2>&1) ||
+        die "cannot create the worktree $wt for arm $label (${ARM_REF[$i]}): $msg"
 
     h="$wt/scripts/soak-qemu.sh"
     if [ ! -f "$h" ] || ! grep -q -- '--no-build' "$h" || ! grep -q '^find_timeout()' "$h"; then
@@ -480,40 +540,43 @@ prepare_arm() {
             "#192's interface (--no-build and find_timeout, the uutils timeout check)"
     fi
     ARM_HSHA[i]=$(sha256_of "$h")
-    ARM_TOOLCHAIN[i]=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' "$wt/rust-toolchain.toml" 2>/dev/null || true)
-    ARM_TOOLCHAIN[i]=${ARM_TOOLCHAIN[$i]:-unpinned}
+    # The channel line, double- or single-quoted, indented or not. A missing
+    # file or a channel this does not read is "unknown", which never counts
+    # as matching another arm's.
+    ARM_TOOLCHAIN[i]=$(sed -n "s/^[[:space:]]*channel[[:space:]]*=[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p" \
+        "$wt/rust-toolchain.toml" 2>/dev/null | sed -n 1p || true)
+    ARM_TOOLCHAIN[i]=${ARM_TOOLCHAIN[$i]:-unknown}
     ARM_FW[i]=$(cd -- "$wt" && just --evaluate edk2_fw 2>/dev/null) ||
         die "arm $label (${ARM_REF[$i]}): \`just --evaluate edk2_fw\` failed in $wt"
 }
 
 # build_arm I -- build arm I's ESP image and record the arm in arms.tsv.
 build_arm() {
-    local i=$1 wt label start rc=0 kernel_rel disk_rel tree
+    local i=$1 wt label log start rc=0 kernel_rel disk_rel tree
+    # Every arm builds with its own toolchain pin into its own target/.
+    local -a env_clean=(env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR)
     label=${ARM_LABEL[$i]}
     wt=${ARM_WT[$i]}
+    log="$OUT/arm-$label/build.log"
     mkdir -p -- "$OUT/arm-$label"
-    note "arm $label: building ${ARM_REF[$i]} (${ARM_SHA[$i]:0:12}) in $wt -> $OUT/arm-$label/build.log"
+    note "arm $label: building ${ARM_REF[$i]} (${ARM_SHA[$i]:0:12}) in $wt -> $log"
     start=$SECONDS
-    (
-        cd -- "$wt" || exit 1
-        unset RUSTUP_TOOLCHAIN CARGO_TARGET_DIR
-        # rustc installs the toolchain pinned in the arm's rust-toolchain.toml
-        # (with its targets and components) if it is not installed yet.
-        echo "+ rustc --version"
-        rustc --version
-        echo "+ rustup show active-toolchain"
-        rustup show active-toolchain 2>&1 || true
-        echo "+ just disk"
-        # exec: on_signal's SIGTERM then reaches the build itself.
-        exec just disk
-    ) >"$OUT/arm-$label/build.log" 2>&1 </dev/null &
-    CHILD_PID=$!
-    wait "$CHILD_PID" || rc=$?
-    CHILD_PID=""
+    # One tracked step per command (env execs it), so a signal stops whichever
+    # is running: rustc installs the toolchain pinned in the arm's
+    # rust-toolchain.toml (with its targets and components) if it is not
+    # installed yet, and that install can take minutes.
+    echo "+ rustc --version" >"$log"
+    run_tracked "$log" "$wt" "${env_clean[@]}" rustc --version || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo "+ rustup show active-toolchain" >>"$log"
+        run_tracked "$log" "$wt" "${env_clean[@]}" rustup show active-toolchain || true
+        echo "+ just disk" >>"$log"
+        run_tracked "$log" "$wt" "${env_clean[@]}" just disk || rc=$?
+    fi
     ARM_BUILD_S[i]=$((SECONDS - start))
     if [ "$rc" -ne 0 ]; then
-        tail -n 30 "$OUT/arm-$label/build.log" >&2
-        die "arm $label (${ARM_REF[$i]}): build failed (exit $rc); full log: $OUT/arm-$label/build.log"
+        tail -n 30 "$log" >&2
+        die "arm $label (${ARM_REF[$i]}): build failed (exit $rc); full log: $log"
     fi
 
     ARM_RUSTC[i]=$(cd -- "$wt" && env -u RUSTUP_TOOLCHAIN rustc --version)
@@ -551,16 +614,10 @@ boot_arm() {
     dir="$OUT/arm-$label/r$rr"
     out="$dir.out"
     load1=$(loadavg | cut -d' ' -f1)
-    # exec: CHILD_PID is the harness itself, so on_signal's SIGTERM reaches
-    # its trap, which stops QEMU.
-    (
-        cd -- "$wt" || exit 2
-        exec bash scripts/soak-qemu.sh --no-build --runs 1 --secs "$SECS" --mode "$MODE" \
-            --report-only --out "$dir"
-    ) >"$out" 2>&1 </dev/null &
-    CHILD_PID=$!
-    wait "$CHILD_PID" || rc=$?
-    CHILD_PID=""
+    # CHILD_PID is the harness itself, so on_signal's SIGTERM reaches its
+    # trap, which stops QEMU.
+    run_tracked "$out" "$wt" bash scripts/soak-qemu.sh --no-build --runs 1 --secs "$SECS" \
+        --mode "$MODE" --report-only --out "$dir" || rc=$?
     case "$rc" in
         130 | 143)
             warn "soak-qemu.sh was interrupted (exit $rc)"
@@ -716,8 +773,10 @@ esac
 for t in git just rustc qemu-system-aarch64 mcopy; do
     command -v "$t" >/dev/null 2>&1 || die "$t not found in PATH"
 done
-command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1 ||
-    die "no timeout or gtimeout in PATH (macOS: brew install coreutils)"
+find_timeout >/dev/null ||
+    die "no usable timeout: need timeout or gtimeout that accepts --kill-after, passes through" \
+        "the exit status of a command that finishes in time, and exits 124 on timeout" \
+        "(macOS: brew install coreutils; Linux: coreutils)"
 
 git -C "$REPO_ROOT" cat-file -e "$MIN_ARM_BASE^{commit}" 2>/dev/null ||
     die "commit ${MIN_ARM_BASE:0:7} (#196) is not in this repository; fetch main's full history"
@@ -796,13 +855,13 @@ done
 FW=${ARM_FW[0]}
 QEMU_VER=$(qemu-system-aarch64 --version | sed -n 1p)
 HARNESS_NOTE="identical in all arms (sha256 \`${ARM_HSHA[0]:0:16}\`)"
-TOOLCHAIN_NOTE="same channel in all arms (\`${ARM_TOOLCHAIN[0]}\`)"
 TC_LIST=""
 mixed_tc=0
 i=0
 while [ "$i" -lt "$N" ]; do
     TC_LIST="$TC_LIST${TC_LIST:+, }${ARM_LABEL[$i]} ${ARM_TOOLCHAIN[$i]}"
-    [ "${ARM_TOOLCHAIN[$i]}" = "${ARM_TOOLCHAIN[0]}" ] || mixed_tc=1
+    { [ "${ARM_TOOLCHAIN[$i]}" != unknown ] && [ "${ARM_TOOLCHAIN[$i]}" = "${ARM_TOOLCHAIN[0]}" ]; } ||
+        mixed_tc=1
     [ "${ARM_FW[$i]}" = "$FW" ] ||
         die "arm ${ARM_LABEL[$i]} boots firmware ${ARM_FW[$i]}, arm A boots $FW;" \
             "set AIOS_EDK2_FW so that every arm boots the same image"
@@ -812,13 +871,15 @@ while [ "$i" -lt "$N" ]; do
     fi
     i=$((i + 1))
 done
+# Every arm's harness checks this too, but only on its first boot, after all
+# the builds.
+[ -f "$FW" ] || die "UEFI firmware not found: $FW (set AIOS_EDK2_FW)"
 if [ "$mixed_tc" -eq 1 ]; then
     [ "$ALLOW_MIXED_TC" -eq 1 ] ||
-        die "the arms pin different toolchain channels ($TC_LIST): a pair would compare the" \
-            "change plus the compiler, which the crash-fix soak protocol refuses;" \
-            "pass --allow-mixed-toolchains to run it anyway"
-    TOOLCHAIN_NOTE="**differs between arms** ($TC_LIST; --allow-mixed-toolchains): a difference between arms on different channels may come from the compiler, not the change"
-    warn "the arms pin different toolchain channels ($TC_LIST)"
+        die "the arms pin different toolchain channels, or a channel in rust-toolchain.toml" \
+            "could not be read ($TC_LIST): a pair would compare the change plus the compiler," \
+            "which the crash-fix soak protocol refuses; pass --allow-mixed-toolchains to run it anyway"
+    warn "the arms pin different toolchain channels, or one could not be read ($TC_LIST)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -830,6 +891,29 @@ while [ "$i" -lt "$N" ]; do
     build_arm "$i"
     i=$((i + 1))
 done
+
+# The same channel string can still build with different compilers (a
+# floating channel such as "nightly"), so compare what each build ran.
+RUSTC_LIST=""
+mixed_rustc=0
+i=0
+while [ "$i" -lt "$N" ]; do
+    RUSTC_LIST="$RUSTC_LIST${RUSTC_LIST:+; }${ARM_LABEL[$i]} ${ARM_RUSTC[$i]}"
+    [ "${ARM_RUSTC[$i]}" = "${ARM_RUSTC[0]}" ] || mixed_rustc=1
+    i=$((i + 1))
+done
+if [ "$mixed_rustc" -eq 1 ]; then
+    [ "$ALLOW_MIXED_TC" -eq 1 ] ||
+        die "the arms built with different compilers ($RUSTC_LIST): a pair would compare the" \
+            "change plus the compiler, which the crash-fix soak protocol refuses;" \
+            "pass --allow-mixed-toolchains to run it anyway"
+    warn "the arms built with different compilers ($RUSTC_LIST)"
+fi
+if [ "$mixed_tc" -eq 1 ] || [ "$mixed_rustc" -eq 1 ]; then
+    TOOLCHAIN_NOTE="**differs between arms** (channels: $TC_LIST; compilers: $RUSTC_LIST; --allow-mixed-toolchains): a difference between these arms may come from the compiler, not the change"
+else
+    TOOLCHAIN_NOTE="same in all arms (channel \`${ARM_TOOLCHAIN[0]}\`, ${ARM_RUSTC[0]})"
+fi
 
 # ---------------------------------------------------------------------------
 # Rounds: round r boots every arm once, starting at arm (r - 1) mod N.
