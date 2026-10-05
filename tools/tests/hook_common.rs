@@ -29,8 +29,12 @@ fn input_with_session(id: &str) -> HookInput {
 #[test]
 fn every_subcommand_exits_zero_on_valid_input_with_no_output() {
     let cwd = unique_dir("valid");
+    // route-shadow logs even a payload it has no use for, so keep its log out of
+    // the repository's real state directory.
+    let state = unique_dir("valid-state");
+    let env = [("AIOS_HOOK_STATE_DIR", state.to_str().expect("UTF-8 path"))];
     for args in SUBCOMMANDS {
-        let run = run_hook(args, br#"{"tool_name":"Read","tool_input":{}}"#, &[], &cwd);
+        let run = run_hook(args, br#"{"tool_name":"Read","tool_input":{}}"#, &env, &cwd);
         assert_eq!(run.code, Some(0), "{args:?}: {}", run.stderr);
         assert_eq!(run.stdout, "", "{args:?}");
         assert_eq!(run.stderr, "", "{args:?}");

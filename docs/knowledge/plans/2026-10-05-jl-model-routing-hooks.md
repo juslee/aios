@@ -30,7 +30,7 @@ The work is split in two because other open branches own the files that wire the
 - [x] Step 2: shared hook plumbing in `tools/src/cmd/hook/mod.rs`, the `aios hook` subcommand group in `main.rs`, and test helpers for running the binary with stdin.
 - [x] Step 3: `aios hook repeat-error` plus tests.
 - [x] Step 4: `aios hook path-guard` plus tests.
-- [ ] Step 5: `aios hook route-shadow` plus tests, including one against a local fake HTTP server through real `curl`.
+- [x] Step 5: `aios hook route-shadow` plus tests, including one against a local fake HTTP server through real `curl`.
 - [ ] Step 6: review loop (correctness, security, conventions, docs) until a clean round.
 - [ ] Step 7: gates: `cargo fmt --check -p aios-tools`, `cargo clippy -p aios-tools --all-targets -- -D warnings`, `cargo test -p aios-tools`, `just docs-check`.
 - [ ] Step 8: one live `route-shadow` call against Jev (owner's key), checked by hand.
@@ -184,6 +184,11 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 - Step 4: a `--deny` value without a trailing `/` gets one, so `kernel` cannot match `kernel-notes/`; an empty or absolute value is an error, which denies every checked call (a registration mistake shows at once rather than guarding nothing). Why: the plan says prefixes end in `/` but does not say what a malformed one does.
 - Step 4: the deny reason names the resolved repository-relative path, so a symlinked edit reports the kernel file it really reaches.
 - Step 4: with no `cwd` in the payload the process working directory is used (as `state_dir` does). The plan does not say; Claude Code always sends `cwd`.
+- Step 5: curl gets `--fail-with-body` in addition to the planned flags. Why: without it an HTTP 500 exits 0 and the body would have to be recognised by shape; with it the status is a curl failure and the body still reaches the error record (cut to 200 bytes). It needs curl 7.76 or newer (macOS 8.7 and Ubuntu 24.04 8.5 are fine).
+- Step 5: the key is also scrubbed from every error text before it is logged, in case a server or curl echoes it back. A key with a control character is refused (it could end the `-K -` config line early), and `\` and `"` in a key are escaped for curl's quoted value.
+- Step 5: `route-shadow` reads `AIOS_ROUTE_SHADOW`, `AIOS_JEV_URL` and `TYPESAFE_API_KEY` itself (a `Settings` struct, values trimmed, empty counts as unset, `off` is case-insensitive) rather than through `Ctx`, so `Ctx` and the other subcommands are unchanged. `run_with` takes the settings and the transport for the unit tests.
+- Step 5: an error record has `jev_model`, `answers` null; `latency_ms` is null when no request was made (missing key) and measured otherwise. A response with no `answers` object, or not JSON, is an error record too. The log keeps `answers` as a parsed `serde_json::Value` (key order preserved by the crate's `preserve_order` feature) because `RawValue` needs a Cargo feature this branch may not add.
+- Step 5: the existing `hook_common.rs` valid-input test now passes `AIOS_HOOK_STATE_DIR`: `route-shadow` logs even a payload it has no use for, and the test would otherwise have written into the real repository's `.git/aios-agent/hooks`. `route-shadow` does not filter on `tool_name`; the part 2 matcher (`Agent`) does that.
 
 ## Lessons Learned
 
