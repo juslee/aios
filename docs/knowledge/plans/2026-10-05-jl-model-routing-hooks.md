@@ -68,7 +68,7 @@ Parse leniently: unknown fields are ignored and every field the code does not st
 **Common (`tools/src/cmd/hook/mod.rs`)**
 
 - `aios hook <name> [options]` reads stdin to the end, capped at 16 MiB. More than that is an input error, handled by the subcommand's error policy in the table above.
-- At most one JSON object goes to stdout. Diagnostics go to stderr. Exit code is 0 on every path, including errors, so a broken hook never blocks or nags the session; `path-guard` expresses its failure as a deny.
+- At most one JSON object goes to stdout. Diagnostics go to stderr. Exit code is 0 on every payload path, including errors, so a broken hook never blocks or nags the session; a clap usage error (a bad registration) exits 2 before any hook code runs. `path-guard` expresses its failure as a deny.
 - State lives under the git common directory, so all worktrees share it: `<git common dir>/aios-agent/hooks/`. Resolve it with `git rev-parse --path-format=absolute --git-common-dir`, run from the input's `cwd` (falling back to the process cwd) through `proc::capture`. `AIOS_HOOK_STATE_DIR` overrides it, for tests.
 - A session id becomes part of a file name only after sanitising: keep `[A-Za-z0-9_-]`, and if anything else was present or the result is empty or longer than 128 bytes, use a fixed-width hex digest of the original instead. A crafted id can never name a path outside the state directory.
 - State files are written to a temporary file in the same directory and renamed over the old one. Two hook processes racing on one file can lose an update; the only effect is a nudge arriving one failure late, which is accepted rather than adding file locking.
@@ -130,7 +130,7 @@ Parse leniently: unknown fields are ignored and every field the code does not st
   - when: `ts` (Unix seconds)
   - identity: `session_id`, the agent id if present, the tool call id
   - the dispatch: `subagent_type`, the requested `model`, `description`, `prompt` (the possibly cut text), `prompt_chars`, `prompt_truncated`
-  - Jev: `jev_model` (from the response), `latency_ms`, `answers` (the response's `answers` object verbatim, as raw JSON)
+  - Jev: `jev_model` (from the response), `latency_ms`, `answers` (the response's `answers` object, parsed and re-serialised with key order kept)
   - `error` (null on success)
 
   The tool call id is what later joins a record to the dispatch's outcome.
@@ -197,6 +197,7 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 - Review round 1: `tests/hook_support` isolates git like `tests/common` (the eight ambient `GIT_*` variables removed, `XDG_CONFIG_HOME` set) for the child processes it spawns. The in-process `Ctx::state_dir` tests run git with the test process's own environment, so `unique_dir` also isolates the process once, removing the same variables and pointing the git configuration at an empty one. Only removals and fixed values are applied, so concurrent tests are unaffected.
 - Review round 1: a `Reply::Hang` fake server (accepts, reads the request, then stays silent until curl closes) and a route-shadow test that the hook returns under 5.5 s with a curl exit 28 timeout record and no body file left. This is the only test of the `--max-time 4` bound through real curl.
 - Review round 1: the plan's Part 1 scope sentence now says one `pub mod hook;` line in `cmd/mod.rs` and a `Hook` variant with its match arm in `main.rs`.
+- Review round 4: the Common rules sentence on exit codes now says a clap usage error exits 2 before any hook code runs (it already said so in the help text and module docs), and the `route-shadow` log description says `answers` is parsed and re-serialised with key order kept, not verbatim raw JSON. Why: a Part 2 author must not register a hook believing a typo cannot block a PreToolUse call, and the Jev evaluation must not assume logged numbers are byte-identical to the reply (`0.50` is logged as `0.5`). The code comment and test name no longer say verbatim, and the test pins the number normalisation.
 
 ## Lessons Learned
 

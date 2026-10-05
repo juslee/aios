@@ -266,7 +266,8 @@ struct Record<'a> {
     prompt_truncated: bool,
     jev_model: Option<String>,
     latency_ms: Option<u64>,
-    /// The response's `answers` object, verbatim.
+    /// The response's `answers` object, parsed and re-serialised with key order kept
+    /// (number formatting is normalised, so `0.50` is logged as `0.5`).
     answers: Option<Value>,
     error: Option<String>,
 }
@@ -565,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn answers_are_stored_verbatim_with_the_dispatch_identity() {
+    fn answers_are_stored_parsed_with_the_dispatch_identity() {
         let reply = r#"{"model":"jev-1.13.0","answers":{"work_kind":{"type":"choice","choice":"other","confidence":0.5,"extra":[1,2]},"complexity":{"type":"score","score":1.5}},"usage":{"input_tokens":1,"output_tokens":2}}"#;
         let fake = Fake::replying(reply);
         let record = shadow(&payload("rename the helper"), Some(KEY), &fake);
@@ -589,6 +590,18 @@ mod tests {
         assert_eq!(record["prompt"], "rename the helper");
         assert_eq!(record["prompt_chars"], 17);
         assert_eq!(record["prompt_truncated"], false);
+    }
+
+    #[test]
+    fn answers_are_reserialised_so_number_formatting_is_normalised() {
+        let reply = r#"{"model":"jev-1.13.0","answers":{"z":{"score":0.50},"a":{"score":1.0}}}"#;
+        let fake = Fake::replying(reply);
+        let record = shadow(&payload("rename the helper"), Some(KEY), &fake);
+        assert_eq!(
+            record["answers"].to_string(),
+            r#"{"z":{"score":0.5},"a":{"score":1.0}}"#,
+            "0.50 is logged as 0.5 and key order is kept"
+        );
     }
 
     #[test]
