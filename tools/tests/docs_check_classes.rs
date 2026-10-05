@@ -9,6 +9,11 @@
 //! again and requires the same bytes, so the expectations cannot drift from Python.
 //! Before #205 (`[0-9]` for `\d`, the crate's plain `\s`), aios's exit code or stdout
 //! differed from check.py's for every one of these repositories.
+//!
+//! A few converted patterns have no input here because none can tell the two classes
+//! apart: the text they capture is stripped or split on whitespace, or only names are
+//! taken from it (`STATUS_RE`, `TOOLS_RE`, `CHAIN_RE`, `FRONTMATTER_KEY_RE`,
+//! `TREE_PREFIX_RE`).
 
 mod common;
 
@@ -79,18 +84,20 @@ New drift since baseline:
 
 /// check.py's stdout for `decimal_digits_in_history_tables_and_claims`.
 const DIGITS_STATUS: &str = "\
-docs-check: 6 findings across 4 checks - 6 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+docs-check: 9 findings across 4 checks - 9 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
 
   check              total   new
-  test-count             1     1
+  test-count             3     3
   lock-order             1     1
   milestone-status       3     3
-  phase-count            1     1
+  phase-count            2     2
 
 New drift since baseline:
 
 [test-count]
  + README.md:7: states 12 tests; shared/src has 0 #[test] functions
+ + README.md:9: states 34 tests; shared/src has 0 #[test] functions
+ + README.md:11: states 7 tests; shared/src has 0 #[test] functions
 
 [lock-order]
  + CLAUDE.md:3: CLAUDE.md orders ALPHA_LOCK before BETA_LOCK, §3.3 ranks them 2 and 1
@@ -101,6 +108,7 @@ New drift since baseline:
  + docs/project/development-plan.md:7: all milestones (M3) are merged but status is 'Planned'
 
 [phase-count]
+ + CLAUDE.md:5: says ٤ phases; development-plan §8 lists 2
  + README.md:5: says ٣ phases; development-plan §8 lists 2
 ";
 
@@ -118,7 +126,7 @@ New drift since baseline:
 [md-links]
  + docs/b.md:7: broken link -> missing-a.md
  + docs/b.md:9: broken link -> missing-r.md
- + docs/b.md:20: broken link -> missing-list.md
+ + docs/b.md:22: broken link -> missing-list.md
 
 [section-refs]
  + docs/b.md:16: no §9 heading in docs/other.md or its hub members
@@ -126,7 +134,7 @@ New drift since baseline:
 
 /// check.py's stdout for `control_separators_in_harness_layout_and_code`.
 const SPACE_HARNESS: &str = "\
-docs-check: 13 findings across 7 checks - 13 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+docs-check: 15 findings across 7 checks - 15 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
 
   check              total   new
   repo-paths             1     1
@@ -134,7 +142,7 @@ docs-check: 13 findings across 7 checks - 13 new, 0 baselined (0 accepted false 
   lock-order             4     4
   layout                 1     1
   harness-tables         3     3
-  pointer-doctor         3     3
+  pointer-doctor         5     5
   knowledge-hygiene      0     0
 
 New drift since baseline:
@@ -163,6 +171,8 @@ New drift since baseline:
  + .claude/agents/worker.md:7: agent bob is not defined in .claude/agents
  + .claude/agents/worker.md:7: points to CLAUDE.md 'Build Matrix', which is not a section of CLAUDE.md
  + .claude/agents/worker.md:7: /nope is not a project skill or built-in command
+ + .claude/agents/worker.md:9: points to CLAUDE.md 'Deploy Table', which is not a section of CLAUDE.md
+ + .claude/agents/worker.md:13: points to CLAUDE.md 'Release Notes', which is not a section of CLAUDE.md
 ";
 
 /// check.py's stdout for `control_separators_in_milestone_status`.
@@ -231,8 +241,9 @@ fn decimal_digits_in_links_paths_and_names() {
 
 /// `\d` and `int()` in the commit subjects, phase doc names and `## Milestone N`
 /// headings, milestone tokens and ranges (README, §8.1), the §8 table (`str.isdigit()`
-/// cells, the phase-count row count and claims), the `gen:test-count` claim and the
-/// lock table's rank cells.
+/// cells, the phase-count row count), both phase-count claim patterns (`N phases
+/// across` in README, `N phases` in CLAUDE.md), all three test-count claim patterns and
+/// the lock table's rank cells.
 #[test]
 fn decimal_digits_in_history_tables_and_claims() {
     let repo = TestRepo::with_files(
@@ -254,7 +265,9 @@ fn decimal_digits_in_history_tables_and_claims() {
                 "README.md",
                 "# R\n\nStatus: M٢–M٥ merged.\n\n\
                  ٣ phases across two tiers.\n\n\
-                 Tests: <!-- gen:test-count -->١٢\n",
+                 Tests: <!-- gen:test-count -->١٢\n\n\
+                 Currently ٣٤ host tests pass.\n\n\
+                 Current test distribution (٧ tests).\n",
             ),
             (
                 "docs/project/development-plan.md",
@@ -282,7 +295,7 @@ fn decimal_digits_in_history_tables_and_claims() {
             ),
             (
                 "CLAUDE.md",
-                "# C\n\nLock ordering: ALPHA_LOCK > BETA_LOCK\n",
+                "# C\n\nLock ordering: ALPHA_LOCK > BETA_LOCK\n\n٤ phases in all.\n",
             ),
         ],
     );
@@ -319,7 +332,8 @@ fn decimal_digits_in_history_tables_and_claims() {
 
 /// `\s` meeting U+001F (inside a line) and U+001C (in raw text) in `FENCE_RE`,
 /// `HEADING_RE`, `INLINE_LINK_RE`, `REF_DEF_RE` (`\S`), `SECTION_REF_RE`, the
-/// `<a name>` pattern, the hub marker `Part of:\s*[...]` and `LIST_ITEM_RE`.
+/// `<a name>` pattern, the hub marker `Part of:\s*[...]`, `LIST_ITEM_RE`, and
+/// `HEADING_NUM_RE`'s `§\s*` and lookahead (§5 and §6 resolve).
 #[test]
 fn control_separators_in_links_and_anchors() {
     let repo = TestRepo::with_files(
@@ -334,10 +348,14 @@ fn control_separators_in_links_and_anchors() {
                  Anchors [h](#control-heading) and [c](#custom-id).\n\n\
                  <a\x1cname=\"custom-id\"></a>\n\n\
                  Refs [o](other.md)\x1f§\x1f9 and [hub](hub.md) §7.\n\n\
+                 Refs [o](other.md) §5 and [o](other.md) §6.\n\n\
                  -\x1fitem\n\n\
                  \x20   [under the list item](missing-list.md)\n",
             ),
-            ("docs/other.md", "# Other\n\n## 1 One\n"),
+            (
+                "docs/other.md",
+                "# Other\n\n## 1 One\n\n## §\x1f5 Five\n\n## 6\x1fSix\n",
+            ),
             ("docs/hub.md", "# Hub\n\n## 1 Intro\n"),
             (
                 "docs/part.md",
@@ -354,8 +372,10 @@ fn control_separators_in_links_and_anchors() {
 }
 
 /// `\s` meeting U+001F and U+001C in the layout tree entries, `REPO_PATH_RE` (`\S`), the
-/// `gen:test-count` claim, `STATIC_RE` and `\bMutex\s*<`, pointer-doctor's agent, skill
-/// and section-name patterns, and the knowledge frontmatter's closing `---\s*`.
+/// `gen:test-count` claim, `STATIC_RE`, `\bMutex\s*<` and the inline test module header
+/// (`TEST_MOD_RE`), pointer-doctor's agent and skill patterns and all three section-name
+/// patterns (`BEFORE_CLAUDE_RE`, `AFTER_CLAUDE_RE`, `LABELLED_ITEM_RE`), and the
+/// knowledge frontmatter's closing `---\s*`.
 #[test]
 fn control_separators_in_harness_layout_and_code() {
     let repo = TestRepo::with_files(
@@ -381,7 +401,10 @@ fn control_separators_in_harness_layout_and_code() {
                 ".claude/agents/worker.md",
                 "---\nname: worker\ntools: Read\n---\n# Worker\n\n\
                  Ask the `bob`\x1fagent, run `/nope\x1fnow`, and follow the \
-                 Build\x1fMatrix in CLAUDE.md.\n",
+                 Build\x1fMatrix in CLAUDE.md.\n\n\
+                 Then read CLAUDE.md:\x1fDeploy\x1fTable for the targets.\n\n\
+                 ## After editing CLAUDE.md\n\n\
+                 1.\x1fUpdate:\x1fRelease\x1fNotes\n",
             ),
             (".claude/skills/build/SKILL.md", "# Build\n"),
             ("kernel/src/main.rs", "fn main() {}\n"),
@@ -389,7 +412,11 @@ fn control_separators_in_harness_layout_and_code() {
             (
                 "kernel/src/sync.rs",
                 "\x1fstatic GAMMA_LOCK: Mutex<()> = Mutex::new(());\n\
-                 static DELTA_LOCK: spin::Mutex\x1f<()> = spin::Mutex::new(());\n",
+                 static DELTA_LOCK: spin::Mutex\x1f<()> = spin::Mutex::new(());\n\
+                 #[cfg(test)]\n\
+                 \x1fmod tests {\n\
+                 static TEST_ONLY_LOCK: Mutex<()> = Mutex::new(());\n\
+                 }\n",
             ),
             (
                 "docs/kernel/deadlock-prevention.md",

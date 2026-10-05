@@ -9,11 +9,12 @@
 //! Python regex features the `regex` crate lacks are rewritten as code:
 //! `heading_number` (`HEADING_NUM_RE`, L171, a lookahead) and
 //! `has_placeholder_word` (`PLACEHOLDER_WORD_RE`, L534, a lookbehind and a
-//! lookahead). Every other pattern is check.py's, compiled with
-//! `crate::pyre::compile` (an item doc names any `re.fullmatch` anchor, inline
-//! flag or escape added inside a class), so its `\d` and `\s` match exactly what
-//! CPython 3.14's do (every Unicode 16.0 decimal digit; Unicode whitespace plus
-//! U+001C..U+001F).
+//! lookahead). `gh_slug` ports the L302 pattern (`[^\w\- ]`) as a character
+//! filter (see its `\w` divergence below). Every other pattern is check.py's,
+//! compiled with `crate::pyre::compile` (an item doc names any `re.fullmatch`
+//! anchor, inline flag or escape added inside a class), so its `\d` and `\s`
+//! match exactly what CPython 3.14's do (every Unicode 16.0 decimal digit;
+//! Unicode whitespace plus U+001C..U+001F).
 //!
 //! Accepted divergences from check.py (no tracked file and no fixture exercises
 //! them; the parity goldens prove the real inputs; verified with python3):
