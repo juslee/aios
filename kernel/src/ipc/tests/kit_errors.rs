@@ -6,7 +6,7 @@ use crate::task::ThreadId;
 use shared::kits::ipc::{ChannelOps, IpcKitError, NotificationOps, SelectOps, SharedMemoryOps};
 use shared::{
     Capability, ChannelId, NotificationId, RawMessage, SelectEntry, SelectKind, MAX_CHANNELS,
-    MAX_NOTIFICATIONS, RING_CAPACITY,
+    MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, RING_CAPACITY,
 };
 
 use super::bad_pid::{revoke_region_access, revoke_token, token_id};
@@ -25,6 +25,12 @@ const USER_BIT: u64 = 0b1000;
 /// override is dropped; or a default the wrapper must keep, such as an empty
 /// poll reading as `WouldBlock` rather than `ChannelFull`.
 ///
+/// Not pinned here: `channel_create`'s EPERM override, which names the same
+/// `ChannelCreate` as the table's placeholder, so no check can tell it from
+/// the default; and the full-table overrides (`channel_create`'s ENOSPC,
+/// `notification_create`'s ENOMEM), which would need the channel or
+/// notification table filled during boot.
+///
 /// Runs in the ipc-timeout thread `my_tid` (process 1), after
 /// `select_cap_test`, on that test's channels: `channels` is its
 /// `(owned_a, denied)`, so this test creates no channel and grants no
@@ -34,7 +40,7 @@ const USER_BIT: u64 = 0b1000;
 /// they grant right after the create, and the region's SharedMemoryAccess
 /// tokens before the unmap that frees it.
 ///
-/// The four `denied` channel cases log the kernel's usual `denied
+/// The five `denied` channel cases log the kernel's usual `denied
 /// ChannelAccess` warnings, and the shared memory cases its denied
 /// SharedMemoryCreate / SharedMemoryAccess and `not mapped` warnings.
 ///
@@ -68,7 +74,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     };
     let bad_id = ChannelId(MAX_CHANNELS as u32);
 
-    let mut checks = [false; 20];
+    let mut checks = [false; 22];
 
     // EPERM on a channel names ChannelAccess(id), not the table's
     // placeholder ChannelCreate. select names the channel the caller lacks.
@@ -76,6 +82,9 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     checks[1] = kit.recv(denied, 0).err() == access_denied(denied);
     checks[2] = kit.call(denied, &msg, 10).err() == access_denied(denied);
     checks[3] = kit.select(&[chan(open), chan(denied)], 10).err() == access_denied(denied);
+    // channel_destroy checks ChannelAccess before it touches the table, so
+    // `denied` survives.
+    checks[20] = kit.channel_destroy(denied).err() == access_denied(denied);
 
     // EINVAL on a channel is InvalidChannel with the real id, not
     // InvalidArgument.
@@ -93,6 +102,18 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
         .map(|i| ChannelId(i as u32));
     checks[19] = gone
         .is_some_and(|id| kit.reply(id, &msg).err() == Some(IpcKitError::InvalidChannel { id }));
+    // A `len` past the inline buffer is the wrapper's MessageTooLarge, found
+    // before any kernel call (slicing the payload by it would panic), so
+    // nothing reaches `open`.
+    let oversized = RawMessage {
+        len: MAX_MESSAGE_SIZE + 1,
+        ..RawMessage::EMPTY
+    };
+    checks[21] = kit.send(open, &oversized).err()
+        == Some(IpcKitError::MessageTooLarge {
+            size: MAX_MESSAGE_SIZE + 1,
+            max: MAX_MESSAGE_SIZE,
+        });
 
     // EAGAIN: an empty poll is WouldBlock, a full ring on send is
     // ChannelFull. A full ring on call is ENOSPC, which the table maps to

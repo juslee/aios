@@ -127,8 +127,9 @@ impl From<IpcError> for IpcKitError {
     ///   channel wrappers override it to `InvalidChannel { id }`.
     /// - EPIPE means the object the call names is gone: a destroyed channel
     ///   or dead endpoint on the channel paths, a missing region on the
-    ///   shared memory paths (SharedMemoryMap, SharedMemoryUnmap,
-    ///   SharedMemoryShare, MemoryUnmap of a shared window address). It maps
+    ///   shared memory paths (SharedMemoryMap, SharedMemoryShare, MemoryUnmap
+    ///   of a shared window address, and the in-kernel shared_memory_unmap
+    ///   behind `shmem_unmap`). It maps
     ///   to `ObjectGone`, which names no id; channel wrappers override it to
     ///   `InvalidChannel { id }`, shared memory wrappers to
     ///   `SharedMemoryError`.
@@ -145,14 +146,15 @@ impl From<IpcError> for IpcKitError {
     ///   IpcReply, NotificationCreate, MemoryMap, MemoryUnmap,
     ///   CapabilityAttenuate, CapabilityRevoke, CapabilityList, ProcessExit,
     ///   ProcessWait, AuditLog and SharedMemoryShare. Some of them also
-    ///   return it for other reasons: SharedMemoryUnmap or MemoryUnmap of a
-    ///   region the caller has not mapped, SharedMemoryShare from a caller
-    ///   that is not the region's creator or to a target pid with no
-    ///   process, and ProcessWait for a child pid with no process or after a
-    ///   wake that finds no exit code. `reply`, `notification_create` and
-    ///   `shmem_unmap` override it; the other syscalls named here have no
-    ///   Kit wrapper, so a plain decode of their EPERM reads as
-    ///   `CapabilityDenied`.
+    ///   return it for other reasons: an unmap of a region the caller has
+    ///   not mapped (MemoryUnmap of a shared window address, or the
+    ///   in-kernel shared_memory_unmap behind `shmem_unmap`),
+    ///   SharedMemoryShare from a caller that is not the region's creator or
+    ///   to a target pid with no process, and ProcessWait for a child pid
+    ///   with no process or after a wake that finds no exit code. `reply`,
+    ///   `notification_create` and `shmem_unmap` override it; the other
+    ///   syscalls named here have no Kit wrapper, so a plain decode of their
+    ///   EPERM reads as `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,

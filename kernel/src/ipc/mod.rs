@@ -255,7 +255,9 @@ use shared::{Capability, SelectEntry, SelectKind};
 /// the real channel id, the capability the kernel actually checked, and what
 /// an errno means for its operation. Where the kernel checks no capability,
 /// no wrapper reports `CapabilityDenied`. The boot self-test
-/// `ipc/tests/kit_errors.rs` checks the overrides.
+/// `ipc/tests/kit_errors.rs` checks every override a boot can reach and a
+/// check can tell from the table's default; its doc comment lists the ones
+/// it leaves out.
 pub struct KernelIpc;
 
 /// Kit error for a failed operation on channel `id`.
