@@ -76,7 +76,7 @@ exit 1
       "key": "repo-paths|.claude/CLAUDE.md|kernel/src/missing.rs",
       "check": "repo-paths",
       "file": ".claude/CLAUDE.md",
-      "line": 45,
+      "line": 44,
       "also": [],
       "count": 1,
       "baseline_count": null,

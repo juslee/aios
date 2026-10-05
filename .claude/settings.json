@@ -266,7 +266,8 @@
     "typesafe-ai": {
       "source": {
         "source": "github",
-        "repo": "typesafe-ai/skills"
+        "repo": "typesafe-ai/skills",
+        "ref": "v0.5.7"
       }
     }
   },

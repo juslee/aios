@@ -1,7 +1,9 @@
 //! milestone-status and phase-count on small committed repositories. The
 //! expected findings were recorded from check.py's `check_milestone_status` and
 //! `check_phase_count` on the same files and history (production order, before
-//! merging by key).
+//! merging by key). check.py read the project memory at the root `CLAUDE.md`;
+//! these files place it at `CLAUDE_MD`, so the expectations are check.py's with
+//! that path substituted.
 
 mod common;
 

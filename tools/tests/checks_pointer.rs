@@ -1,7 +1,9 @@
 //! pointer-doctor and knowledge-hygiene on small committed repositories. The
 //! expected findings were recorded from check.py's `check_pointer_doctor` and
 //! `check_knowledge_hygiene` on the same files (production order, before
-//! merging by key: "claude-md:Build Matrix" appears on two lines).
+//! merging by key: "claude-md:Build Matrix" appears on two lines). check.py read
+//! the project memory at the root `CLAUDE.md`; these files place the same text at
+//! `CLAUDE_MD`, where docs-check reads it now.
 
 mod common;
 

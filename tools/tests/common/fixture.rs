@@ -10,24 +10,15 @@
 //! throwaway git repository (removed when the returned `TestRepo` drops).
 //!
 //! The parity half adds the real-repository snapshot at `SNAPSHOT_SHA` (plus
-//! `SNAPSHOT_MIGRATION`), the case list replayed by `tests/docs_check_parity.rs`, the
-//! golden file paths, and helpers that run scripts/docs/check.py while it still exists.
-//!
-//! `python3` is often an asdf (or pyenv) shim: under the isolated test `HOME`
-//! (`common::isolated`), such a shim exits 126 before it ever reaches CPython, which
-//! would make the recorder fail outright and the differential silently skip without
-//! comparing anything. So the interpreter's absolute path is resolved once from the
-//! ambient environment (`python3 -c "import sys; print(sys.executable)"`, run outside
-//! `isolated()`), cached, and only that resolved absolute path is ever run inside
-//! `isolated()`.
+//! `SNAPSHOT_MIGRATION`), the case list replayed by `tests/docs_check_parity.rs`, and
+//! the golden file paths.
 
-use super::{git, isolated, unique_dir, Run, TestRepo};
+use super::{git, isolated, unique_dir, TestRepo};
 use aios_tools::cmd::docs_check::model::CHECK_ORDER;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
 
 /// One bundle directive with its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +47,9 @@ pub struct Variant {
 
 /// Every variant, verified against scripts/docs/check.py: the base repository, one
 /// single-drift variant per check (in CHECK_ORDER), then line-shift, skip and grown.
+/// check.py read the project memory at the root `CLAUDE.md`; the bundles now place it
+/// at `.claude/CLAUDE.md`, so these keys and the layout, harness-tables and repo-paths
+/// goldens carry that path where check.py's carried `CLAUDE.md`.
 pub const VARIANTS: &[Variant] = &[
     Variant {
         name: "base",
@@ -312,9 +306,9 @@ pub const SNAPSHOT_SHA: &str = "33c6b3deabb36055d26d57fb2a60db233c4d3f6f";
 /// `tests/fixtures/docs-check/<this>`: a patch against `SNAPSHOT_SHA` that moves its
 /// root `CLAUDE.md` to `.claude/CLAUDE.md`, the only place docs-check reads it now, and
 /// updates the links into and out of it and the one baseline entry keyed by its path.
-/// The real-repository goldens recorded from check.py differ from its output only in
-/// that path (`CLAUDE.md` became `.claude/CLAUDE.md`). check.py read the root file, so
-/// it cannot replay the migrated snapshot; it has been deleted anyway.
+/// The real-repository goldens were recorded from check.py on the unmigrated snapshot
+/// and differ from its output only in that path (`CLAUDE.md` became
+/// `.claude/CLAUDE.md`).
 pub const SNAPSHOT_MIGRATION: &str = "snapshot-claude-md.patch";
 
 /// The repository that contains `tools/` (the checkout or worktree under test).
@@ -349,17 +343,16 @@ impl Source {
     }
 }
 
-/// One golden case: `aios docs-check <args>` (or `check.py <args>`) in a fresh copy of
-/// `source`.
+/// One golden case: `aios docs-check <args>` in a fresh copy of `source`.
 #[derive(Clone, Debug)]
 pub struct Case {
     pub source: Source,
     pub name: String,
     /// docs-check flags only; `docs-check` itself is prepended for aios.
     pub args: Vec<String>,
-    /// Where the tool runs, relative to the repository root; `None` is the root. Both
-    /// tools find the same repository from anywhere inside it, but `--baseline` is
-    /// resolved against this directory (check.py L1611-1613).
+    /// Where aios runs, relative to the repository root; `None` is the root. aios finds
+    /// the same repository from anywhere inside it, but `--baseline` is resolved against
+    /// this directory (as check.py L1611-1613 did).
     pub cwd: Option<&'static str>,
     /// The baseline this case writes, relative to the repository root. Only read when
     /// `writes_baseline`.
@@ -390,11 +383,6 @@ impl Case {
             Some(rel) => repo.join(rel),
             None => repo.to_path_buf(),
         }
-    }
-
-    /// The flags, for check.py.
-    pub fn flag_args(&self) -> Vec<&str> {
-        self.args.iter().map(String::as_str).collect()
     }
 
     /// `docs-check` plus the flags, for aios.
@@ -590,107 +578,5 @@ pub fn materialize(source: Source) -> TestRepo {
     match source {
         Source::Real => snapshot_real(),
         Source::Fixture(variant) => materialize_fixture(variant),
-    }
-}
-
-/// `materialize`, plus (for fixtures) this repository's scripts/docs/check.py copied to
-/// `scripts/docs/check.py` and listed in `.git/info/exclude`, so that
-/// `git ls-files --others --exclude-standard` never sees it. The real snapshot tracks
-/// its own check.py.
-pub fn materialize_with_check_py(source: Source) -> TestRepo {
-    let repo = materialize(source);
-    if let Source::Fixture(_) = source {
-        let script = check_py_source().expect("scripts/docs/check.py exists in this repository");
-        let dest = repo.path().join("scripts/docs/check.py");
-        fs::create_dir_all(dest.parent().expect("scripts/docs has a parent"))
-            .expect("create scripts/docs");
-        fs::copy(&script, &dest).unwrap_or_else(|e| panic!("cannot copy check.py: {e}"));
-        let info = repo.path().join(".git/info");
-        fs::create_dir_all(&info).expect("create .git/info");
-        let mut exclude = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(info.join("exclude"))
-            .expect("open .git/info/exclude");
-        exclude
-            .write_all(b"\nscripts/docs/check.py\n")
-            .expect("exclude check.py");
-    }
-    repo
-}
-
-/// This repository's scripts/docs/check.py, while it exists (it is deleted by the
-/// switch-over; the goldens keep parity afterwards).
-pub fn check_py_source() -> Option<PathBuf> {
-    let path = repo_root().join("scripts/docs/check.py");
-    path.is_file().then_some(path)
-}
-
-/// The absolute path of the ambient `python3` interpreter, resolved once outside
-/// `isolated()` (see the module doc: a version-manager shim breaks under the isolated
-/// `HOME`). `None` when `python3` is not on `PATH`, does not run, or does not print a
-/// usable path.
-fn python3_interpreter() -> Option<&'static PathBuf> {
-    static INTERPRETER: OnceLock<Option<PathBuf>> = OnceLock::new();
-    INTERPRETER
-        .get_or_init(|| {
-            // Deliberately NOT isolated(): resolving the shim to CPython's own
-            // absolute path needs the developer's ambient HOME/PATH (asdf, pyenv,
-            // etc.). Only the resolved absolute path is ever run under isolated().
-            let out = Command::new("python3")
-                .arg("-c")
-                .arg("import sys; print(sys.executable)")
-                .output()
-                .ok()?;
-            if !out.status.success() {
-                return None;
-            }
-            let stdout = String::from_utf8(out.stdout).ok()?;
-            let path = stdout.trim();
-            if path.is_empty() {
-                return None;
-            }
-            Some(PathBuf::from(path))
-        })
-        .as_ref()
-}
-
-/// The resolved interpreter runs `--version` under the isolated environment.
-pub fn python3_available() -> bool {
-    let Some(interpreter) = python3_interpreter() else {
-        return false;
-    };
-    isolated(Command::new(interpreter).arg("--version"))
-        .output()
-        .is_ok_and(|out| out.status.success())
-}
-
-/// `<resolved python3> <root>/scripts/docs/check.py <args>` with `cwd` as the working
-/// directory (isolated environment; the interpreter itself is the absolute path
-/// resolved by `python3_interpreter`, not the ambient `python3` shim). check.py finds
-/// its repository from the script's own directory, so `root` must contain the script;
-/// `cwd` only changes the paths check.py resolves itself, such as a relative
-/// `--baseline`.
-pub fn run_check_py(root: &Path, cwd: &Path, args: &[&str]) -> Run {
-    let interpreter = python3_interpreter()
-        .unwrap_or_else(|| panic!("python3 could not be resolved to an absolute path"));
-    let out = isolated(
-        Command::new(interpreter)
-            .arg(root.join("scripts/docs/check.py"))
-            .args(args)
-            .current_dir(cwd),
-    )
-    .output()
-    .unwrap_or_else(|e| {
-        panic!(
-            "cannot run {} in {}: {e}",
-            interpreter.display(),
-            cwd.display()
-        )
-    });
-    Run {
-        code: out.status.code().unwrap_or(-1),
-        stdout: out.stdout,
-        stderr: out.stderr,
     }
 }

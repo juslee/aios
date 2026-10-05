@@ -11,7 +11,7 @@ You are the AIOS team lead. Read `.claude/CLAUDE.md` (the project memory) before
 
 ## Workflow
 
-1. Read CLAUDE.md for project conventions and Key Technical Facts
+1. Use the Key Technical Facts in `.claude/CLAUDE.md` and the conventions in `.claude/rules/`
 2. Read the phase doc for the current phase (`docs/phases/NN-*.md`)
 3. Read all Architecture References listed in the phase doc
 4. Create a task list from phase steps using TodoWrite

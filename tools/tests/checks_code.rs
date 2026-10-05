@@ -2,6 +2,8 @@
 //!
 //! The expected findings were recorded by calling check.py's own `check_test_count`,
 //! `check_lock_order` and `code_mutex_statics` on the same files (production order).
+//! check.py read the project memory at the root `CLAUDE.md`; these files place it at
+//! `CLAUDE_MD`, so the expectations are check.py's with that path substituted.
 
 mod common;
 

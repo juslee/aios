@@ -8,7 +8,7 @@
 
 **Related**:
 
-- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [developer-guide.md](./developer-guide.md) -- Human-readable kernel developer guide
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules
 
@@ -21,11 +21,11 @@ Before writing code for any phase step, read these documents in order:
 ### Mandatory (every task)
 
 1. **Phase doc** (`docs/phases/NN-phase-name.md`) -- Read the specific step you are implementing. Note the acceptance criteria -- this is your done condition.
-2. **CLAUDE.md** -- Read these sections:
-   - Code Conventions (Rust, Assembly, Architecture-Specific)
-   - Unsafe Documentation Standard (three-line SAFETY format)
-   - Key Technical Facts (addresses, offsets, constants)
-   - File Placement (where to put new files)
+2. **`.claude/rules/` and `.claude/CLAUDE.md`** -- Read:
+   - Code conventions (Rust, Assembly, Architecture-Specific): `.claude/rules/01-code-conventions.md`
+   - Unsafe documentation standard (three-line SAFETY format): `.claude/rules/06-unsafe-documentation.md`
+   - Key Technical Facts (addresses, offsets, constants): `.claude/CLAUDE.md`
+   - File placement (where to put new files): `.claude/rules/05-file-placement.md`
 3. **Developer guide §2** ([developer-guide.md §2](./developer-guide.md#2-aios-kernel-patterns)) -- The four unsafe patterns (MMIO, page tables, SPSC rings, system registers) and three error handling patterns.
 4. **Developer guide §4** ([developer-guide.md §4](./developer-guide.md#4-common-pitfalls)) -- All seven pitfalls. These represent real bugs discovered during Phases 1-3.
 5. **Deadlock prevention** ([deadlock-prevention.md](../kernel/deadlock-prevention.md)) -- Lock ordering rules. Violating lock order causes deadlocks that are extremely difficult to debug.
@@ -108,7 +108,7 @@ RIGHT: Read from architecture doc
 const GICD_CTLR: usize = 0x000;
 ```
 
-If you don't know a register offset, address, or constant -- read the architecture doc or `CLAUDE.md` Key Technical Facts. Never guess.
+If you don't know a register offset, address, or constant -- read the architecture doc or `.claude/CLAUDE.md` Key Technical Facts. Never guess.
 
 ### Never use spin::Mutex on Non-Cacheable memory
 
@@ -123,7 +123,7 @@ AIOS convention: no TODO comments in code. If a feature is incomplete, either:
 
 ### Never create files in wrong directories
 
-Follow CLAUDE.md File Placement rules exactly:
+Follow the file placement rules in `.claude/rules/05-file-placement.md` exactly:
 
 - aarch64-specific code → `kernel/src/arch/aarch64/`
 - Memory management → `kernel/src/mm/`

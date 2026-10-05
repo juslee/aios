@@ -1,6 +1,6 @@
 # Architecture Document Map
 
-Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `CLAUDE.md`).
+Topic-to-document index for AIOS architecture docs. Loaded on demand (not in `.claude/CLAUDE.md`).
 
 | Topic | Document | Key Sections |
 | --- | --- | --- |

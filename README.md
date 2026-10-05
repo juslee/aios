@@ -74,8 +74,9 @@ aios/
 │   ├── kernel/           # Kernel subsystem specifications
 │   └── phases/           # Per-phase implementation guides (00-, 01-, ...)
 ├── .claude/
-│   ├── CLAUDE.md         # Project memory for Claude Code: conventions, technical facts, layout
+│   ├── CLAUDE.md         # Project memory for Claude Code: technical facts, workspace layout, agent and skill tables
 │   ├── agents/           # Claude agent definitions
+│   ├── rules/            # Project rules and conventions (auto-loaded)
 │   └── skills/           # Reusable skill scripts
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
@@ -139,6 +140,6 @@ No GPL dependencies. All third-party crates must be BSD, MIT, Apache-2.0, or ISC
 
 ## Contributing
 
-This project follows conventions documented in [.claude/CLAUDE.md](.claude/CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+This project follows conventions documented in [.claude/rules/](.claude/rules/) and [CONTRIBUTING.md](CONTRIBUTING.md); technical facts are in [.claude/CLAUDE.md](.claude/CLAUDE.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
 
 Development runs through Claude Code sessions; [docs/project/agent-loop.md](docs/project/agent-loop.md) describes the `/justin:start` session skills, pausing and resuming, and the merge policy.

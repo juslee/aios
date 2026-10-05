@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash
 memory: project
 ---
 
-You review AIOS code. Read `.claude/CLAUDE.md` (the project memory) for conventions and quality gates.
+You review AIOS code. Conventions and quality gates are in `.claude/rules/` (01-code-conventions, 02-quality-gates, 06-unsafe-documentation); technical facts are in `.claude/CLAUDE.md`.
 
 ## Review Checklist
 

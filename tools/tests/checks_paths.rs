@@ -2,6 +2,9 @@
 //!
 //! The expected findings were recorded by calling check.py's own `check_doc_map`,
 //! `check_repo_paths` and `check_just_recipes` on the same files (production order).
+//! check.py read the project memory at the root `CLAUDE.md`; these files place it at
+//! `CLAUDE_MD`, so the expectations are check.py's with that path substituted and
+//! re-sorted by path.
 
 mod common;
 

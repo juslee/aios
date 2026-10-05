@@ -1,21 +1,17 @@
-//! docs-check parity with scripts/docs/check.py (R1 parity: goldens and parity tests).
+//! docs-check parity with scripts/docs/check.py (R1 parity: the goldens).
 //!
-//! - `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
-//!   main at `SNAPSHOT_SHA` plus `SNAPSHOT_MIGRATION`, 48 on the fixture repository)
-//!   and compares `exit N\n` plus stdout, and the written baseline, byte for byte with
-//!   `tests/golden/docs-check/`.
-//!   `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios instead (for an intentional
-//!   output change; review the diff).
-//! - `record_goldens_from_check_py` (ignored) recorded those goldens from check.py
-//!   before the switch-over deleted it.
-//! - `differential_against_check_py` runs check.py and aios side by side on every case
-//!   and on the live checkout while check.py exists, and returns early once it is gone
-//!   (R1 deletes it when `just docs-check` switches to aios). That early return is
-//!   deliberate, not a gap: once check.py is gone, `goldens_match_aios` against the
-//!   goldens recorded here is the parity gate.
-//!   R2-R5 (the ports of the other host scripts) are expected to reuse this same
-//!   pattern — a differential against their own script while it still exists, goldens
-//!   recorded from it, then a golden-only gate after that script is deleted in turn.
+//! `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
+//! main at `SNAPSHOT_SHA` plus `SNAPSHOT_MIGRATION`, 48 on the fixture repository) and
+//! compares `exit N\n` plus stdout, and the written baseline, byte for byte with
+//! `tests/golden/docs-check/`. It is the only parity gate: the goldens were recorded
+//! from check.py at `SNAPSHOT_SHA` (33c6b3d), before R1 deleted it, and later adapted
+//! for the project memory's move to `.claude/CLAUDE.md` (see `SNAPSHOT_MIGRATION`).
+//! `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios instead (for an intentional
+//! output change; review the diff).
+//!
+//! R2-R5 (the ports of the other host scripts) can recover the recorder and the
+//! side-by-side differential against a script that still exists from git history
+//! (#207), then gate on goldens alone once that script is deleted in turn.
 
 mod common;
 
@@ -25,14 +21,6 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Read-only modes compared on the live checkout by the differential test.
-const LIVE_CASES: [(&str, &[&str]); 4] = [
-    ("default", &[]),
-    ("all", &["--all"]),
-    ("json-all", &["--json", "--all"]),
-    ("markdown", &["--markdown"]),
-];
 
 /// What a run produced: `exit <code>\n` + stdout, and the written baseline for
 /// `--update-baseline` cases.
@@ -50,19 +38,9 @@ impl Outcome {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Tool {
-    Aios,
-    CheckPy,
-}
-
-/// Run one case in `repo` with `tool`.
-fn run_case(tool: Tool, repo: &TestRepo, case: &Case) -> Outcome {
-    let dir = case.run_dir(repo.path());
-    let run = match tool {
-        Tool::Aios => run_aios(&dir, &case.aios_args()),
-        Tool::CheckPy => fixture::run_check_py(repo.path(), &dir, &case.flag_args()),
-    };
+/// Run one case in `repo` with aios.
+fn run_case(repo: &TestRepo, case: &Case) -> Outcome {
+    let run = run_aios(&case.run_dir(repo.path()), &case.aios_args());
     let baseline = case.writes_baseline.then(|| {
         let path = repo.path().join(case.baseline_rel);
         fs::read(&path)
@@ -107,14 +85,6 @@ fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
     done.into_iter().map(|(_, r)| r).collect()
 }
 
-fn materialize(source: Source, with_check_py: bool) -> TestRepo {
-    if with_check_py {
-        fixture::materialize_with_check_py(source)
-    } else {
-        fixture::materialize(source)
-    }
-}
-
 /// One read-only materialization per source, shared by every case that does not
 /// write the baseline; the directories are removed when this drops.
 struct Shared {
@@ -122,7 +92,7 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(cases: &[Case], with_check_py: bool) -> Shared {
+    fn new(cases: &[Case]) -> Shared {
         let mut seen = BTreeSet::new();
         let sources: Vec<Source> = cases
             .iter()
@@ -130,7 +100,7 @@ impl Shared {
             .map(|case| case.source)
             .filter(|source| seen.insert(source.key()))
             .collect();
-        let repos = parallel_map(&sources, |source| materialize(*source, with_check_py));
+        let repos = parallel_map(&sources, |source| fixture::materialize(*source));
         Shared {
             repos: sources
                 .iter()
@@ -147,16 +117,15 @@ impl Shared {
     }
 }
 
-/// Run every case with `tool`: `--update-baseline` cases in a fresh materialization,
-/// the others in the shared one.
-fn run_cases(cases: &[Case], tool: Tool, with_check_py: bool) -> Vec<Outcome> {
-    let shared = Shared::new(cases, with_check_py);
+/// Run every case: `--update-baseline` cases in a fresh materialization, the others in
+/// the shared one.
+fn run_cases(cases: &[Case]) -> Vec<Outcome> {
+    let shared = Shared::new(cases);
     parallel_map(cases, |case| {
         if case.writes_baseline {
-            let fresh = materialize(case.source, with_check_py);
-            run_case(tool, &fresh, case)
+            run_case(&fixture::materialize(case.source), case)
         } else {
-            run_case(tool, shared.get(case.source), case)
+            run_case(shared.get(case.source), case)
         }
     })
 }
@@ -290,7 +259,7 @@ fn write_goldens(cases: &[Case], outcomes: &[Outcome]) {
 #[test]
 fn goldens_match_aios() {
     let cases = fixture::cases();
-    let outcomes = run_cases(&cases, Tool::Aios, false);
+    let outcomes = run_cases(&cases);
     if std::env::var("AIOS_BLESS_GOLDENS").as_deref() == Ok("1") {
         write_goldens(&cases, &outcomes);
         return;
@@ -306,71 +275,6 @@ fn goldens_match_aios() {
     assert!(
         failures.is_empty(),
         "{} golden mismatch(es):\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
-}
-
-#[test]
-#[ignore = "records the goldens from scripts/docs/check.py; run once, before check.py is deleted"]
-fn record_goldens_from_check_py() {
-    assert!(
-        fixture::python3_available(),
-        "python3 is required to record the goldens"
-    );
-    assert!(
-        fixture::check_py_source().is_some(),
-        "scripts/docs/check.py is required to record the goldens"
-    );
-    let cases = fixture::cases();
-    let outcomes = run_cases(&cases, Tool::CheckPy, true);
-    write_goldens(&cases, &outcomes);
-}
-
-#[test]
-fn differential_against_check_py() {
-    if !fixture::python3_available() {
-        eprintln!("differential_against_check_py: skipped, python3 is not available");
-        return;
-    }
-    if fixture::check_py_source().is_none() {
-        eprintln!("differential_against_check_py: skipped, scripts/docs/check.py is gone (the goldens carry parity)");
-        return;
-    }
-    let cases = fixture::cases();
-    let shared = Shared::new(&cases, true);
-    let mut failures: Vec<String> = parallel_map(&cases, |case| {
-        let (want, got) = if case.writes_baseline {
-            let for_python = fixture::materialize_with_check_py(case.source);
-            let for_aios = fixture::materialize(case.source);
-            (
-                run_case(Tool::CheckPy, &for_python, case),
-                run_case(Tool::Aios, &for_aios, case),
-            )
-        } else {
-            let repo = shared.get(case.source);
-            (
-                run_case(Tool::CheckPy, repo, case),
-                run_case(Tool::Aios, repo, case),
-            )
-        };
-        differences(&case.label(), &want, &got)
-    })
-    .into_iter()
-    .flatten()
-    .collect();
-    let root = fixture::repo_root();
-    for (name, flags) in LIVE_CASES {
-        let want = Outcome::of(&fixture::run_check_py(&root, &root, flags), None);
-        let got = Outcome::of(
-            &run_aios(&root, &[&["docs-check"][..], flags].concat()),
-            None,
-        );
-        failures.extend(differences(&format!("live/{name}"), &want, &got));
-    }
-    assert!(
-        failures.is_empty(),
-        "{} difference(s) between check.py and aios:\n{}",
         failures.len(),
         failures.join("\n")
     );

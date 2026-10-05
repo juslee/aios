@@ -1,7 +1,7 @@
 //! `lock-order`, ported from check.py `code_mutex_statics` and `check_lock_order`
 //! (L813-925): production `Mutex` statics in `kernel/src` versus the lock table of
 //! `docs/kernel/deadlock-prevention.md` sections 3.3-3.4, the `Lock ordering` chain in
-//! `CLAUDE.md`, and `lock ordering` comment blocks in kernel code.
+//! [`CLAUDE_MD`], and `lock ordering` comment blocks in kernel code.
 //!
 //! `split_outside_braces` replaces check.py's `re.split(r">(?![^{]*})", ...)` (the regex
 //! crate has no lookaround). Accepted divergences: a rank cell counts only when it is ASCII

@@ -1,6 +1,8 @@
 //! layout and harness-tables on small committed repositories. The expected
 //! findings were recorded from check.py's `check_layout` and
-//! `check_harness_tables` on the same files (production order).
+//! `check_harness_tables` on the same files (production order). check.py read the
+//! project memory at the root `CLAUDE.md`; these files place it at `CLAUDE_MD`, so
+//! the expectations are check.py's with that path substituted.
 
 mod common;
 
@@ -176,9 +178,53 @@ kernel/src/                    Entry
     ),
 ];
 
-/// A repository without CLAUDE.md: every table is empty and the layout lists
-/// are absent, so only the table comparisons report.
+/// A project memory that lists everything in `BARE_FILES`: at `CLAUDE_MD` it
+/// leaves layout and harness-tables nothing to report.
+const COMPLETE_MEMORY: &str = r#"# Project
+
+## Workspace Layout
+
+```text
+proj/
+├── .claude/
+│   ├── agents/           solo
+│   └── skills/           only
+├── kernel/src/           kernel
+│   └── (top-level)       main.rs
+├── shared/src/           shared types
+└── uefi-stub/src/        stub
+```
+
+## Team
+
+**Agents** (defined in `.claude/agents/`):
+
+| Agent | Role |
+| --- | --- |
+| `solo` | Works |
+
+**Skills** (defined in `.claude/skills/`):
+
+| Skill | Purpose |
+| --- | --- |
+| `/only` | Runs |
+"#;
+
+/// A repository without [`CLAUDE_MD`]: every table is empty and the layout lists
+/// are absent, so only the table comparisons report. Its root `CLAUDE.md` holds
+/// `COMPLETE_MEMORY`, which docs-check never reads (there is no fallback to the
+/// root file), so it changes nothing.
 const BARE_FILES: &[(&str, &str)] = &[
+    ("CLAUDE.md", COMPLETE_MEMORY),
+    ("kernel/src/main.rs", "fn main() {}\n"),
+    (".claude/agents/solo.md", "# Solo\n"),
+    (".claude/skills/only/SKILL.md", "# Only\n"),
+];
+
+/// `BARE_FILES` with `COMPLETE_MEMORY` at [`CLAUDE_MD`] instead of the root: the
+/// control that shows the root file would have silenced every finding.
+const MEMORY_FILES: &[(&str, &str)] = &[
+    (CLAUDE_MD, COMPLETE_MEMORY),
     ("kernel/src/main.rs", "fn main() {}\n"),
     (".claude/agents/solo.md", "# Solo\n"),
     (".claude/skills/only/SKILL.md", "# Only\n"),
@@ -282,6 +328,14 @@ fn layout_without_claude_md_lists_every_module_as_missing() {
         0,
     )];
     assert_eq!(found, expected);
+
+    let control = TestRepo::with_files("layout-memory", MEMORY_FILES);
+    let found = Layout.run(&open(&control)).expect("layout runs");
+    assert_eq!(
+        found,
+        Vec::new(),
+        "COMPLETE_MEMORY at CLAUDE_MD lists main.rs"
+    );
 }
 
 #[test]
@@ -388,4 +442,14 @@ fn harness_tables_without_claude_md_skips_the_layout_lists() {
         ),
     ];
     assert_eq!(found, expected);
+
+    let control = TestRepo::with_files("harness-memory", MEMORY_FILES);
+    let found = HarnessTables
+        .run(&open(&control))
+        .expect("harness-tables runs");
+    assert_eq!(
+        found,
+        Vec::new(),
+        "COMPLETE_MEMORY at CLAUDE_MD lists solo and only"
+    );
 }

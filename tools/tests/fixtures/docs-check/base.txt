@@ -9,7 +9,6 @@
 ```text
 fixture/
 ├── .claude/
-│   ├── CLAUDE.md         project memory (this file)
 │   ├── agents/           worker
 │   └── skills/           build, team:start
 ├── kernel/src/           fixture kernel
