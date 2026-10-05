@@ -37,6 +37,11 @@ MAX_ARMS=4
 KNOWN_CLASSES="CLEAN WEDGE PANIC PCZERO EXCEPTION INCONCLUSIVE"
 # Harness errors in a row (after round 1) that end the soak early.
 MAX_ERROR_STREAK=3
+# Every arm must contain this commit (#196: kernel segments loaded executable
+# for strict-NX edk2; it also brings #192's harness). See --help.
+MIN_ARM_BASE=7167d408f6a43ca9859fb6238f608ca6bdee37d6
+# soak-qemu.sh's default --stall-secs; it refuses a --secs that is not larger.
+HARNESS_STALL_SECS=15
 
 usage() {
     cat <<'EOF'
@@ -52,20 +57,39 @@ two identical arms drift apart by chance.
 
 Options:
   --runs N          rounds, i.e. boots per arm (default 30)
-  --secs T          wall-clock seconds per boot (default 90)
+  --secs T          wall-clock seconds per boot (default 90); must be more
+                    than 15, the harness's --stall-secs
   --mode text|gpu   QEMU device set, as soak-qemu.sh --mode (default text)
   --out DIR         output directory; must be new or empty
                     (default target/soak-matrix/<timestamp>-<mode>)
   --worktrees DIR   create the arm worktrees as DIR/arm-A, DIR/arm-B, ...;
-                    none of them may exist yet (default: OUT.worktrees)
+                    none of them may exist yet, and DIR must not be --out
+                    (default: a new directory under ${TMPDIR:-/tmp})
   --keep-worktrees  keep the arm worktrees at exit (default: removed)
+  --allow-mixed-toolchains
+                    run arms whose rust-toolchain.toml channels differ
+                    (default: refused, see below)
   -h, --help        show this help
 
 Each arm is checked out with `git worktree add --detach` and built there
 with `just disk`, which uses the arm's own rust-toolchain.toml (rustup
-installs a missing pinned toolchain on first use). Every arm needs a
-scripts/soak-qemu.sh with --no-build and find_timeout (#192, the uutils
-timeout check that Ubuntu 26.04 needs), i.e. main as of 2026-09-24 or later.
+installs a missing pinned toolchain on first use). Keep the worktrees
+outside any checkout: Cargo also reads the .cargo/config.toml of every
+parent directory, so a worktree inside a checkout builds with that
+checkout's configuration as well as its own.
+
+Every arm must contain 7167d40 (#196, main as of 2026-09-24 15:41 +0800 or
+later). That commit loads the kernel segments executable: strict-NX edk2
+(Ubuntu 26.04, the CI runner; upstream ArmVirt) maps EfiLoaderData
+execute-never, so an older kernel faults at the jump on every boot there.
+It also brings #192's scripts/soak-qemu.sh (--no-build, and find_timeout,
+the uutils timeout check that Ubuntu 26.04 needs).
+
+The arms must pin the same toolchain channel and boot the same firmware
+(just --evaluate edk2_fw; set AIOS_EDK2_FW to unify it). Arms on different
+channels compare the change plus the compiler, which the crash-fix soak
+protocol does not accept as a pair; --allow-mixed-toolchains runs them
+anyway and marks the summary. A firmware mismatch is always refused.
 
 Every boot runs, from inside the arm's worktree:
   scripts/soak-qemu.sh --no-build --runs 1 --secs T --mode M --report-only
@@ -74,8 +98,10 @@ Every boot runs, from inside the arm's worktree:
 Output directory:
   summary.md     settings, the arms, per-arm class counts, CLEAN rate with a
                  95% Wilson interval over conclusive boots, IPC round-trip
-                 medians, pairwise two-sided Fisher exact tests (CLEAN vs not
-                 CLEAN), and every non-CLEAN boot; rewritten after each boot
+                 medians, pairwise Fisher exact tests of CLEAN vs not CLEAN
+                 (one-sided toward the arm with the lower CLEAN rate, as the
+                 crash-fix regression guard reads it, and two-sided), and
+                 every non-CLEAN boot; rewritten after each boot
   arms.tsv       one row per arm: ref, commit, toolchain, rustc, kernel ELF
                  and ESP image sha256, harness sha256, tree state, build time
   boots.tsv      one row per boot in boot order: round, position in the
@@ -96,8 +122,11 @@ builds with its own toolchain pin into its own target/.
 
 Exit status: 0 when every round ran, whatever the boot classes (report
 only); 2 on a usage or setup error (a ref that does not resolve, an arm
-without a usable harness, a failed build, a harness error on an arm's first
-boot, or 3 harness errors in a row); 130 on SIGINT, 143 on SIGTERM.
+without #196, mixed toolchains or firmware, a failed build, a harness error
+on an arm's first boot, or 3 harness errors in a row); 130 on SIGINT, 143
+on SIGTERM. A signal stops the running boot or build at once (the boot's
+harness stops QEMU and removes its scratch files) and marks summary.md
+"stopped".
 EOF
 }
 
@@ -232,6 +261,16 @@ function fisher(a, b, c, d,   r1, r2, c1, n, lo, hi, x, p0, p, s) {
     }
     return (s > 1) ? 1 : s
 }
+# One-sided Fisher exact test on [[a, b], [c, d]] toward a low top-left cell:
+# the probability, given the margins, that the first row has a or fewer
+# successes (the alternative being that row 1's rate is the lower one).
+function fisher_low(a, b, c, d,   r1, r2, c1, n, lo, x, s) {
+    r1 = a + b; r2 = c + d; c1 = a + c; n = r1 + r2
+    lo = c1 - r2; if (lo < 0) lo = 0
+    s = 0
+    for (x = lo; x <= a; x++) s += hyp(x, r1, r2, c1, n)
+    return (s > 1) ? 1 : s
+}
 # Median of V[a, 1..n].
 function median(V, a, n,   i, j, t, v) {
     if (n == 0) return "-"
@@ -304,7 +343,7 @@ END {
         row = row " | " median(AV, a, nav[a] + 0) " (n=" (nav[a] + 0) ")"
         row = row " | " median(MN, a, nmn[a] + 0) " (n=" (nmn[a] + 0) ")"
         row = row " | " (ln[a] ? sprintf("%.2f / %.2f", lsum[a] / ln[a], lmax[a]) : "-")
-        row = row " | " (badimg[a] ? badimg[a] " of " nb[a] " boots not ok (see boots.tsv)" : "ok") " |"
+        row = row " | " (nb[a] == 0 ? "no boots" : (badimg[a] ? badimg[a] " of " nb[a] " boots not ok (see boots.tsv)" : "ok")) " |"
         print row
     }
     print ""
@@ -312,19 +351,25 @@ END {
     print ""
     if (na >= 2) {
         npairs = na * (na - 1) / 2
-        print "### CLEAN vs not CLEAN, two-sided Fisher exact test"
+        print "### CLEAN vs not CLEAN, Fisher exact test"
         print ""
-        print "| Pair | CLEAN / conclusive | p |"
-        print "|---|---|---:|"
+        print "| Pair | CLEAN / conclusive | Lower CLEAN rate | p one-sided (toward the lower arm) | p two-sided |"
+        print "|---|---|---|---:|---:|"
         for (a = 1; a < na; a++) for (b = a + 1; b <= na; b++) {
             ca = count(a, "CLEAN"); cb = count(b, "CLEAN")
-            if (conc[a] == 0 || conc[b] == 0) p = "n/a"
-            else p = sprintf("%.3g", fisher(ca, conc[a] - ca, cb, conc[b] - cb))
-            printf "| %s vs %s | %d/%d vs %d/%d | %s |\n", L[a], L[b], ca, conc[a], cb, conc[b], p
+            if (conc[a] == 0 || conc[b] == 0) { low = "-"; p1 = "n/a"; p2 = "n/a" }
+            else {
+                p2 = sprintf("%.3g", fisher(ca, conc[a] - ca, cb, conc[b] - cb))
+                if (ca * conc[b] < cb * conc[a]) { low = L[a]; p1 = sprintf("%.3g", fisher_low(ca, conc[a] - ca, cb, conc[b] - cb)) }
+                else if (cb * conc[a] < ca * conc[b]) { low = L[b]; p1 = sprintf("%.3g", fisher_low(cb, conc[b] - cb, ca, conc[a] - ca)) }
+                else { low = "equal"; p1 = "-" }
+            }
+            printf "| %s vs %s | %d/%d vs %d/%d | %s | %s | %s |\n", L[a], L[b], ca, conc[a], cb, conc[b], low, p1, p2
         }
         print ""
         line = "Conclusive boots only (INCONCLUSIVE" (nerr ? " and ERROR" : "") " left out). A small p says the CLEAN rates differ; it says nothing about which failure class moved, so read the class counts too."
-        if (npairs > 1) line = line sprintf(" %d pairs are tested with no correction: for any single pair use p < %.3g (Bonferroni, 0.05/%d).", npairs, 0.05 / npairs, npairs)
+        line = line " The crash-fix soak protocol (ADR 2026-09-22) gates a planned pair (previous step vs new step) on the one-sided p: the new arm fails its regression guard when it is the lower arm with p < 0.05."
+        if (npairs > 1) line = line sprintf(" Read only the planned pairs that way: %d pairs are listed with no correction, so a pair picked after seeing the table needs p < %.3g (Bonferroni, 0.05/%d).", npairs, 0.05 / npairs, npairs)
         print line
         print ""
     }
@@ -355,9 +400,10 @@ write_summary() {
         echo "| Progress | $1: $BOOTS_DONE of $((N * RUNS)) boots, $ROUNDS_DONE of $RUNS rounds complete |"
         echo "| Boot | ${SECS}s each: \`scripts/soak-qemu.sh --no-build --runs 1 --report-only\` of the arm, run in the arm's worktree |"
         echo "| Harness | $HARNESS_NOTE |"
+        echo "| Toolchain | $TOOLCHAIN_NOTE |"
         echo "| Host | $(uname -srm), $(host_cpus) CPUs |"
         echo "| QEMU | $QEMU_VER |"
-        echo "| Firmware | \`$FW\` |"
+        echo "| Firmware | \`$FW\` (all arms) |"
         echo "| Started | $STARTED |"
         echo "| Output | \`$OUT\` |"
         echo
@@ -377,6 +423,11 @@ CREATED_WT=0 # arm worktrees created so far: ARM_WT[0 .. CREATED_WT-1]
 WT_DIR_CREATED=0
 SUMMARY_READY=0 # set once write_summary has everything it needs
 FINISHED=0
+# The build or boot running in the background, if any. Builds and boots run
+# in the background and are waited for, because bash runs a trap only after
+# the foreground command it waits on has finished, while a trapped signal
+# interrupts `wait` at once.
+CHILD_PID=""
 
 cleanup() {
     local i=0
@@ -398,10 +449,23 @@ cleanup() {
     [ "$WT_DIR_CREATED" -eq 0 ] || rmdir -- "$WT_DIR" 2>/dev/null || true
 }
 
-# setup_arm I -- create arm I's worktree, check its harness, build its ESP
-# image and record it in arms.tsv.
-setup_arm() {
-    local i=$1 wt label h start rc=0 kernel_rel disk_rel tree msg
+# on_signal STATUS -- stop the running build or boot, then exit STATUS (the
+# EXIT trap writes the "stopped" summary). SIGTERM, not the signal received:
+# a background job of a non-interactive shell starts with SIGINT ignored, and
+# soak-qemu.sh's TERM trap stops QEMU and removes its scratch directory.
+on_signal() {
+    if [ -n "$CHILD_PID" ]; then
+        kill -TERM "$CHILD_PID" 2>/dev/null || true
+        wait "$CHILD_PID" 2>/dev/null || true
+        CHILD_PID=""
+    fi
+    exit "$1"
+}
+
+# prepare_arm I -- create arm I's worktree and read what must match across
+# the arms (harness, toolchain channel, firmware path) without building.
+prepare_arm() {
+    local i=$1 wt label h msg
     label=${ARM_LABEL[$i]}
     wt="$WT_DIR/arm-$label"
     [ ! -e "$wt" ] || die "$wt already exists; pass another --worktrees directory or remove it"
@@ -412,11 +476,21 @@ setup_arm() {
 
     h="$wt/scripts/soak-qemu.sh"
     if [ ! -f "$h" ] || ! grep -q -- '--no-build' "$h" || ! grep -q '^find_timeout()' "$h"; then
-        die "arm $label (${ARM_REF[$i]}): its scripts/soak-qemu.sh is missing or predates" \
-            "#192 (needs --no-build and find_timeout, the uutils timeout check); use a" \
-            "revision that contains main as of 2026-09-24 or later"
+        die "arm $label (${ARM_REF[$i]}): its scripts/soak-qemu.sh is missing or lacks" \
+            "#192's interface (--no-build and find_timeout, the uutils timeout check)"
     fi
+    ARM_HSHA[i]=$(sha256_of "$h")
+    ARM_TOOLCHAIN[i]=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' "$wt/rust-toolchain.toml" 2>/dev/null || true)
+    ARM_TOOLCHAIN[i]=${ARM_TOOLCHAIN[$i]:-unpinned}
+    ARM_FW[i]=$(cd -- "$wt" && just --evaluate edk2_fw 2>/dev/null) ||
+        die "arm $label (${ARM_REF[$i]}): \`just --evaluate edk2_fw\` failed in $wt"
+}
 
+# build_arm I -- build arm I's ESP image and record the arm in arms.tsv.
+build_arm() {
+    local i=$1 wt label start rc=0 kernel_rel disk_rel tree
+    label=${ARM_LABEL[$i]}
+    wt=${ARM_WT[$i]}
     mkdir -p -- "$OUT/arm-$label"
     note "arm $label: building ${ARM_REF[$i]} (${ARM_SHA[$i]:0:12}) in $wt -> $OUT/arm-$label/build.log"
     start=$SECONDS
@@ -430,16 +504,18 @@ setup_arm() {
         echo "+ rustup show active-toolchain"
         rustup show active-toolchain 2>&1 || true
         echo "+ just disk"
-        just disk
-    ) >"$OUT/arm-$label/build.log" 2>&1 || rc=$?
+        # exec: on_signal's SIGTERM then reaches the build itself.
+        exec just disk
+    ) >"$OUT/arm-$label/build.log" 2>&1 </dev/null &
+    CHILD_PID=$!
+    wait "$CHILD_PID" || rc=$?
+    CHILD_PID=""
     ARM_BUILD_S[i]=$((SECONDS - start))
     if [ "$rc" -ne 0 ]; then
         tail -n 30 "$OUT/arm-$label/build.log" >&2
         die "arm $label (${ARM_REF[$i]}): build failed (exit $rc); full log: $OUT/arm-$label/build.log"
     fi
 
-    ARM_TOOLCHAIN[i]=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' "$wt/rust-toolchain.toml" 2>/dev/null || true)
-    ARM_TOOLCHAIN[i]=${ARM_TOOLCHAIN[$i]:-unpinned}
     ARM_RUSTC[i]=$(cd -- "$wt" && env -u RUSTUP_TOOLCHAIN rustc --version)
     kernel_rel=$(cd -- "$wt" && just --evaluate kernel_elf)
     disk_rel=$(cd -- "$wt" && just --evaluate disk_img)
@@ -447,7 +523,6 @@ setup_arm() {
         die "arm $label: build left no $kernel_rel or $disk_rel in $wt"
     ARM_KSHA[i]=$(sha256_of "$wt/$kernel_rel")
     ARM_ESPSHA[i]=$(sha256_of "$wt/$disk_rel")
-    ARM_HSHA[i]=$(sha256_of "$h")
     tree=clean
     if [ -n "$(git -C "$wt" status --porcelain --untracked-files=no)" ]; then
         tree=dirty
@@ -476,11 +551,16 @@ boot_arm() {
     dir="$OUT/arm-$label/r$rr"
     out="$dir.out"
     load1=$(loadavg | cut -d' ' -f1)
+    # exec: CHILD_PID is the harness itself, so on_signal's SIGTERM reaches
+    # its trap, which stops QEMU.
     (
         cd -- "$wt" || exit 2
-        bash scripts/soak-qemu.sh --no-build --runs 1 --secs "$SECS" --mode "$MODE" \
+        exec bash scripts/soak-qemu.sh --no-build --runs 1 --secs "$SECS" --mode "$MODE" \
             --report-only --out "$dir"
-    ) >"$out" 2>&1 || rc=$?
+    ) >"$out" 2>&1 </dev/null &
+    CHILD_PID=$!
+    wait "$CHILD_PID" || rc=$?
+    CHILD_PID=""
     case "$rc" in
         130 | 143)
             warn "soak-qemu.sh was interrupted (exit $rc)"
@@ -565,6 +645,8 @@ boot_arm() {
         "$SEQ" "$r" "$pos" "$label" "$(cell "${ARM_REF[$i]}")" "${ARM_SHA[$i]:0:12}" "$class" "$rc" \
         "$(cell "$load1")" "$avg" "$mn" "$image" "$(cell "$rev")" "$(cell "$ksha")" \
         "$(cell "$tick")" "$(cell "$elapsed")" "$(cell "$qrc")" "$(cell "$detail")" "arm-$label/r$rr" >>"$BOOTS_TSV"
+    # Counted with its row, so a summary written on the way out below agrees.
+    BOOTS_DONE=$((BOOTS_DONE + 1))
 
     printf 'soak-matrix: round %s/%s  %s  %-12s load1=%-5s %-12s tick=%-6s ipc avg=%sus min=%sns image=%s%s\n' \
         "$rr" "$RUNS" "$label" "${ARM_SHA[$i]:0:12}" "$load1" "$class" "$tick" "$avg" "$mn" "$image" \
@@ -583,6 +665,7 @@ MODE=text
 OUT=""
 WT_DIR=""
 KEEP_WT=0
+ALLOW_MIXED_TC=0
 N=0
 
 while [ "$#" -gt 0 ]; do
@@ -598,6 +681,7 @@ while [ "$#" -gt 0 ]; do
         --worktrees) need_value "$@"; WT_DIR=$2; shift 2 ;;
         --worktrees=*) WT_DIR=${1#*=}; shift ;;
         --keep-worktrees) KEEP_WT=1; shift ;;
+        --allow-mixed-toolchains) ALLOW_MIXED_TC=1; shift ;;
         -h | --help) usage; exit 0 ;;
         --)
             shift
@@ -618,10 +702,13 @@ done
 
 [ "$N" -ge 2 ] && [ "$N" -le "$MAX_ARMS" ] || die "give 2-$MAX_ARMS refs, got $N (see --help)"
 is_uint "$RUNS" && [ "$RUNS" -ge 1 ] || die "--runs must be a positive integer"
-is_uint "$SECS" && [ "$SECS" -ge 1 ] || die "--secs must be a positive integer"
+is_uint "$SECS" || die "--secs must be a positive integer"
 # Decimal even with a leading zero ($(( )) reads 030 as octal).
 RUNS=$((10#$RUNS))
 SECS=$((10#$SECS))
+# Checked here, before any build: every arm's harness refuses it on round 1.
+[ "$SECS" -gt "$HARNESS_STALL_SECS" ] ||
+    die "--secs must be more than $HARNESS_STALL_SECS (soak-qemu.sh's --stall-secs), got $SECS"
 case "$MODE" in
     text | gpu) ;;
     *) die "--mode must be text or gpu, got '$MODE'" ;;
@@ -632,12 +719,17 @@ done
 command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1 ||
     die "no timeout or gtimeout in PATH (macOS: brew install coreutils)"
 
+git -C "$REPO_ROOT" cat-file -e "$MIN_ARM_BASE^{commit}" 2>/dev/null ||
+    die "commit ${MIN_ARM_BASE:0:7} (#196) is not in this repository; fetch main's full history"
 i=0
 ARM_LIST=""
 while [ "$i" -lt "$N" ]; do
     ARM_LABEL[i]=${LETTERS:$i:1}
     ARM_SHA[i]=$(resolve_ref "${ARM_REF[$i]}") ||
         die "ref '${ARM_REF[$i]}' does not name a commit (tried it and origin/${ARM_REF[$i]}; is the history fetched?)"
+    git -C "$REPO_ROOT" merge-base --is-ancestor "$MIN_ARM_BASE" "${ARM_SHA[$i]}" ||
+        die "ref '${ARM_REF[$i]}' (${ARM_SHA[$i]:0:12}) does not contain ${MIN_ARM_BASE:0:7} (#196);" \
+            "on strict-NX edk2 (Ubuntu 26.04) its kernel faults at the jump on every boot (see --help)"
     ARM_LIST="$ARM_LIST${ARM_LIST:+, }${ARM_LABEL[$i]} = ${ARM_REF[$i]}"
     i=$((i + 1))
 done
@@ -653,14 +745,35 @@ OUT=$(cd -- "$OUT" && pwd -P)
 [ "$OUT" != "$REPO_ROOT" ] || die "--out must not be the repository root"
 [ -z "$(ls -A -- "$OUT")" ] || die "--out $OUT is not empty; choose a new or empty directory"
 
-[ -n "$WT_DIR" ] || WT_DIR="$OUT.worktrees"
-[ -d "$WT_DIR" ] || WT_DIR_CREATED=1
-mkdir -p -- "$WT_DIR" || die "cannot create worktree directory $WT_DIR"
-WT_DIR=$(cd -- "$WT_DIR" && pwd -P)
-
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+
+# The default worktree directory is outside the checkout (see --help).
+if [ -z "$WT_DIR" ]; then
+    WT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/soak-matrix.XXXXXX") ||
+        die "cannot create a worktree directory under ${TMPDIR:-/tmp}"
+    WT_DIR_CREATED=1
+else
+    [ -d "$WT_DIR" ] || WT_DIR_CREATED=1
+    mkdir -p -- "$WT_DIR" || die "cannot create worktree directory $WT_DIR"
+fi
+WT_DIR=$(cd -- "$WT_DIR" && pwd -P)
+# The arm worktrees would be the arm-X result directories, and removing them
+# at exit would delete the logs.
+[ "$WT_DIR" != "$OUT" ] || die "--worktrees must not be the --out directory"
+# Cargo merges the .cargo/config.toml of every parent directory into each
+# arm's build ($CARGO_HOME's is read anyway, wherever the build runs).
+d=$WT_DIR
+while [ "$d" != / ] && [ -n "$d" ]; do
+    if [ "$d/.cargo" != "${CARGO_HOME:-$HOME/.cargo}" ] &&
+        { [ -f "$d/.cargo/config.toml" ] || [ -f "$d/.cargo/config" ]; }; then
+        warn "$d/.cargo/config.toml applies to every arm's build as well as the arm's own;" \
+            "pass a --worktrees directory outside any checkout"
+        break
+    fi
+    d=$(dirname -- "$d")
+done
 
 ARMS_TSV="$OUT/arms.tsv"
 BOOTS_TSV="$OUT/boots.tsv"
@@ -672,24 +785,49 @@ note "$N arms ($ARM_LIST); runs=$RUNS secs=$SECS mode=$MODE"
 note "output in $OUT, worktrees under $WT_DIR"
 
 # ---------------------------------------------------------------------------
+# Check out every arm and compare what must match before any build.
+# ---------------------------------------------------------------------------
+i=0
+while [ "$i" -lt "$N" ]; do
+    prepare_arm "$i"
+    i=$((i + 1))
+done
+
+FW=${ARM_FW[0]}
+QEMU_VER=$(qemu-system-aarch64 --version | sed -n 1p)
+HARNESS_NOTE="identical in all arms (sha256 \`${ARM_HSHA[0]:0:16}\`)"
+TOOLCHAIN_NOTE="same channel in all arms (\`${ARM_TOOLCHAIN[0]}\`)"
+TC_LIST=""
+mixed_tc=0
+i=0
+while [ "$i" -lt "$N" ]; do
+    TC_LIST="$TC_LIST${TC_LIST:+, }${ARM_LABEL[$i]} ${ARM_TOOLCHAIN[$i]}"
+    [ "${ARM_TOOLCHAIN[$i]}" = "${ARM_TOOLCHAIN[0]}" ] || mixed_tc=1
+    [ "${ARM_FW[$i]}" = "$FW" ] ||
+        die "arm ${ARM_LABEL[$i]} boots firmware ${ARM_FW[$i]}, arm A boots $FW;" \
+            "set AIOS_EDK2_FW so that every arm boots the same image"
+    if [ "${ARM_HSHA[$i]}" != "${ARM_HSHA[0]}" ]; then
+        HARNESS_NOTE="**differs between arms** (see arms.tsv): the classifiers may differ, so compare the class counts with care"
+        warn "the arms' scripts/soak-qemu.sh differ; their classifications may not be comparable"
+    fi
+    i=$((i + 1))
+done
+if [ "$mixed_tc" -eq 1 ]; then
+    [ "$ALLOW_MIXED_TC" -eq 1 ] ||
+        die "the arms pin different toolchain channels ($TC_LIST): a pair would compare the" \
+            "change plus the compiler, which the crash-fix soak protocol refuses;" \
+            "pass --allow-mixed-toolchains to run it anyway"
+    TOOLCHAIN_NOTE="**differs between arms** ($TC_LIST; --allow-mixed-toolchains): a difference between arms on different channels may come from the compiler, not the change"
+    warn "the arms pin different toolchain channels ($TC_LIST)"
+fi
+
+# ---------------------------------------------------------------------------
 # Build every arm before the first boot: a build failure stops the soak
 # before any boot time is spent, and no build competes with a boot for CPU.
 # ---------------------------------------------------------------------------
 i=0
 while [ "$i" -lt "$N" ]; do
-    setup_arm "$i"
-    i=$((i + 1))
-done
-
-FW=$(cd -- "${ARM_WT[0]}" && just --evaluate edk2_fw)
-QEMU_VER=$(qemu-system-aarch64 --version | sed -n 1p)
-HARNESS_NOTE="identical in all arms (sha256 \`${ARM_HSHA[0]:0:16}\`)"
-i=1
-while [ "$i" -lt "$N" ]; do
-    if [ "${ARM_HSHA[$i]}" != "${ARM_HSHA[0]}" ]; then
-        HARNESS_NOTE="**differs between arms** (see arms.tsv): the classifiers may differ, so compare the class counts with care"
-        warn "the arms' scripts/soak-qemu.sh differ; their classifications may not be comparable"
-    fi
+    build_arm "$i"
     i=$((i + 1))
 done
 
@@ -709,7 +847,6 @@ while [ "$r" -le "$RUNS" ]; do
     k=0
     while [ "$k" -lt "$N" ]; do
         boot_arm $(((first + k) % N)) "$r" $((k + 1))
-        BOOTS_DONE=$((BOOTS_DONE + 1))
         write_summary running
         k=$((k + 1))
     done

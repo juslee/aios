@@ -4,9 +4,18 @@ name: Soak matrix
 # revisions, then boots them in rounds -- one boot per arm per round, the arm
 # order rotated every round -- all on ONE runner, so every arm shares that
 # runner's conditions. Arms are never split across jobs. Dispatch only;
-# report-only, like the qemu-soak job in ci.yml.
+# report-only like the qemu-soak job in ci.yml: the run fails only when the
+# soak could not run or was cut short, never because of the boot classes.
 #
-#   gh workflow run soak-matrix.yml -f refs="c1ce1a2 43fc8d5 64957ca" -f runs=30
+#   gh workflow run soak-matrix.yml -f runs=30 \
+#     -f refs="c1ce1a2 43fc8d5 claude/crash-fix-step-1b-tripwires"
+#
+# Every arm must contain 7167d40 (#196): the runner's strict-NX edk2 maps
+# EfiLoaderData execute-never, so an older kernel faults at the jump on every
+# boot. The arms must also pin the same toolchain channel unless
+# allow_mixed_toolchains is set (scripts/soak-matrix.sh --help). An arm is
+# found if it is reachable from a branch, a tag or a pull request head on
+# origin; GitHub keeps pull request heads after the branch is deleted.
 #
 # The results are x86 TCG numbers on ubuntu-26.04 and form their own
 # baseline: never pool them with local arm64 soaks, or with runs on another
@@ -16,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       refs:
-        description: "2-4 space-separated commit SHAs or branch names, one arm each (A, B, C, D in order)"
+        description: "2-4 space-separated commit SHAs or branch names, one arm each (A, B, C, D in order); each must contain 7167d40 (#196)"
         required: true
         type: string
       runs:
@@ -25,7 +34,7 @@ on:
         default: 30
         type: number
       secs:
-        description: "Seconds per boot (x86 TCG is slower than the arm64 dev hosts)"
+        description: "Seconds per boot, more than 15 (x86 TCG is slower than the arm64 dev hosts)"
         required: false
         default: 90
         type: number
@@ -37,6 +46,11 @@ on:
         options:
           - text
           - gpu
+      allow_mixed_toolchains:
+        description: "Run arms whose rust-toolchain.toml channels differ (the crash-fix soak protocol refuses such a pair)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -51,7 +65,6 @@ jobs:
     # results are only comparable across runs on the same image. Same image
     # and setup as ci.yml's qemu-soak job.
     runs-on: ubuntu-26.04
-    continue-on-error: true
     # GitHub's job limit. The soak step gets a tighter limit computed from the
     # inputs (see "Plan the soak"), so a soak that overruns is stopped with
     # time left for the summary and the artifact upload.
@@ -64,6 +77,7 @@ jobs:
       RUNS: ${{ inputs.runs }}
       SECS: ${{ inputs.secs }}
       MODE: ${{ inputs.mode }}
+      ALLOW_MIXED_TOOLCHAINS: ${{ inputs.allow_mixed_toolchains }}
     steps:
       # Step time limit, in minutes:
       #   boots   ceil(arms x runs x (secs + 15) / 60)
@@ -78,6 +92,12 @@ jobs:
       # The limit must stay <= 340, leaving 20 min of the 360 for setup,
       # summary and upload: at secs=90 that is at most 44 runs with 4 arms,
       # 60 with 3 and 91 with 2. A larger soak fails here, before any build.
+      #
+      # First, so the always() steps below have a path even when the plan
+      # refuses the inputs. Outside the checkout's target/, which rust-cache
+      # saves and restores.
+      - name: Choose the output directory
+        run: echo "MATRIX_OUT=$RUNNER_TEMP/soak-matrix" >> "$GITHUB_ENV"
       - name: Plan the soak
         id: plan
         run: |
@@ -98,8 +118,13 @@ jobs:
           # 10#: decimal even with a leading zero (bash reads 030 as octal).
           runs=$((10#$RUNS))
           secs=$((10#$SECS))
-          if [ "$runs" -lt 1 ] || [ "$secs" -lt 1 ]; then
-            echo "::error::runs and secs must be positive integers"
+          if [ "$runs" -lt 1 ]; then
+            echo "::error::runs must be a positive integer"
+            exit 1
+          fi
+          # soak-qemu.sh refuses a --secs that is not above its --stall-secs (15).
+          if [ "$secs" -le 15 ]; then
+            echo "::error::secs must be more than 15 (the harness's stall limit)"
             exit 1
           fi
           boot_min=$(( (arms * runs * (secs + 15) + 59) / 60 ))
@@ -110,14 +135,15 @@ jobs:
             exit 1
           fi
           echo "soak_minutes=$soak_min" >> "$GITHUB_OUTPUT"
-      # Outside the checkout's target/, which rust-cache saves and restores.
-      - name: Choose the output directory
-        run: echo "MATRIX_OUT=$RUNNER_TEMP/soak-matrix" >> "$GITHUB_ENV"
-      # Full history: the arms can be any commit or branch.
+      # Full history of every branch and tag, then every pull request head,
+      # so an arm can be any commit reachable from one of them, including
+      # commits of a squash-merged pull request whose branch was deleted.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Fetch pull request heads
+        run: git fetch --no-tags --quiet origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -143,7 +169,13 @@ jobs:
           # shellcheck disable=SC2086 # split the refs into words, no globbing
           set -- $REFS
           set +f
-          bash scripts/soak-matrix.sh --runs "$RUNS" --secs "$SECS" --mode "$MODE" \
+          mixed=""
+          [ "$ALLOW_MIXED_TOOLCHAINS" != true ] || mixed=--allow-mixed-toolchains
+          # exec: the runner's SIGINT/SIGTERM on a timeout or cancel reach the
+          # soak itself, which stops the running boot and marks summary.md
+          # "stopped" before the steps below read it.
+          # shellcheck disable=SC2086 # $mixed is one flag or nothing
+          exec bash scripts/soak-matrix.sh --runs "$RUNS" --secs "$SECS" --mode "$MODE" $mixed \
             --out "$MATRIX_OUT" --worktrees "$RUNNER_TEMP" --keep-worktrees -- "$@"
       - name: Publish summary
         if: always()
