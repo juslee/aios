@@ -12,8 +12,9 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 static PROCESS_ISOLATED: Once = Once::new();
 
 /// Ambient git variables that would make a git call act on another repository or
-/// read another configuration; the same list as `tests/common::isolated`.
-const GIT_AMBIENT: [&str; 8] = [
+/// read another configuration or stop discovery early; `tests/common::isolated`'s
+/// list plus `GIT_DISCOVERY_ACROSS_FILESYSTEM`.
+const GIT_AMBIENT: [&str; 9] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",
@@ -22,6 +23,7 @@ const GIT_AMBIENT: [&str; 8] = [
     "GIT_CONFIG_PARAMETERS",
     "GIT_CONFIG_COUNT",
     "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ];
 
 fn isolated_home() -> PathBuf {
@@ -63,6 +65,30 @@ pub fn unique_dir(label: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create the test directory");
     std::fs::canonicalize(&dir).expect("canonicalize the test directory")
+}
+
+/// A fresh empty directory under the system temporary directory, canonical, that
+/// is in no git repository: `unique_dir` sits inside this checkout's `target/`, so
+/// it cannot stand in for "no repository". Panics if a `.git` entry exists above
+/// it (a `TMPDIR` inside a checkout), because the test would then prove nothing.
+pub fn outside_dir(label: &str) -> PathBuf {
+    isolate_process();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("aios-hook-{label}-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the test directory");
+    let dir = std::fs::canonicalize(&dir).expect("canonicalize the test directory");
+    if let Some(found) = dir
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").symlink_metadata().is_ok())
+    {
+        panic!(
+            "{} has a .git entry above {}: set TMPDIR to a directory outside any repository",
+            found.display(),
+            dir.display()
+        );
+    }
+    dir
 }
 
 /// Strip the ambient git configuration and repository variables so a test never

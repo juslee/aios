@@ -5,7 +5,7 @@ mod hook_support;
 
 use std::path::{Path, PathBuf};
 
-use hook_support::{git, make_git_repo, run_hook, unique_dir, Run};
+use hook_support::{git, make_git_repo, outside_dir, run_hook, unique_dir, Run};
 use serde_json::{json, Value};
 
 /// A git repository with `kernel/src/` and `docs/` directories.
@@ -201,18 +201,19 @@ fn a_directory_that_merely_starts_with_the_prefix_name_is_allowed() {
 #[test]
 fn a_path_outside_the_repo_gets_no_decision() {
     let dir = repo("inside");
-    let outside = unique_dir("outside");
+    let outside = outside_dir("outside");
     std::fs::create_dir_all(outside.join("kernel")).expect("create kernel");
-    // `outside` sits under this checkout's target directory, so git is told to stop
-    // at its parent: the directory is then really in no repository.
-    let ceiling = outside.parent().unwrap();
     let path = outside.join("kernel/x.rs");
-    let payload = edit(&dir, path.to_str().unwrap());
-    assert_no_decision(&guard_with_ceiling(&payload, &dir, ceiling));
-    // Even when the outside path is reached by climbing out of the repo.
-    let up = format!("{}/../{}/kernel/x.rs", dir.display(), "elsewhere");
-    let payload = edit(&dir, &up);
-    assert_no_decision(&guard_with_ceiling(&payload, &dir, ceiling));
+    assert_no_decision(&guard(&[], &edit(&dir, path.to_str().unwrap()), &dir));
+    // Even when the outside path is reached by climbing out of the repo: enough
+    // `..` to reach the filesystem root, then down to the outside directory.
+    let ups = "../".repeat(dir.components().count());
+    let up = format!(
+        "{}/{ups}{}/kernel/x.rs",
+        dir.display(),
+        outside.strip_prefix("/").unwrap().display()
+    );
+    assert_no_decision(&guard(&[], &edit(&dir, &up), &dir));
 }
 
 #[test]
@@ -327,19 +328,6 @@ fn a_checked_tool_without_a_path_is_denied() {
     assert!(deny_reason(&guard(&[], &payload, &dir)).contains("file_path"));
 }
 
-/// Run the guard with git told not to look above `ceiling`, so a directory under
-/// `CARGO_TARGET_TMPDIR` (inside this checkout) behaves as if it were in no repository.
-fn guard_with_ceiling(payload: &Value, cwd: &Path, ceiling: &Path) -> Run {
-    let run = run_hook(
-        &["path-guard", "--deny", "kernel/"],
-        payload.to_string().as_bytes(),
-        &[("GIT_CEILING_DIRECTORIES", ceiling.to_str().unwrap())],
-        cwd,
-    );
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    run
-}
-
 /// A main checkout with a linked worktree at `<main>/.claude/worktrees/x`, the
 /// layout AIOS uses. Returns `(main, worktree)`, both canonical.
 fn repo_with_nested_worktree(label: &str) -> (PathBuf, PathBuf) {
@@ -365,24 +353,34 @@ fn repo_with_nested_worktree(label: &str) -> (PathBuf, PathBuf) {
 #[test]
 fn a_target_in_no_repository_gets_no_decision() {
     // A plain directory with a `kernel/` in it and no repository around it.
-    let plain = unique_dir("no-repo");
+    let plain = outside_dir("no-repo");
     std::fs::create_dir_all(plain.join("kernel")).expect("create kernel");
-    let ceiling = plain.parent().unwrap();
-    let relative = edit(&plain, "kernel/x.rs");
-    assert_no_decision(&guard_with_ceiling(&relative, &plain, ceiling));
+    assert_no_decision(&guard(&[], &edit(&plain, "kernel/x.rs"), &plain));
     // Absolute, and in a directory that does not exist yet.
     let path = plain.join("kernel/new/dir/x.rs");
-    let absolute = edit(&plain, path.to_str().unwrap());
-    assert_no_decision(&guard_with_ceiling(&absolute, &plain, ceiling));
+    assert_no_decision(&guard(&[], &edit(&plain, path.to_str().unwrap()), &plain));
+}
+
+#[test]
+fn a_dot_git_entry_git_cannot_use_denies_instead_of_skipping() {
+    // An empty `.git` directory is not a repository, so git climbs past it and
+    // reports "not a git repository"; the filesystem still shows a `.git` entry, so
+    // the answer is not trusted.
+    let plain = outside_dir("bad-dot-git");
+    std::fs::create_dir_all(plain.join(".git")).expect("create an empty .git");
+    std::fs::create_dir_all(plain.join("kernel")).expect("create kernel");
+    let run = guard(&[], &edit(&plain, "kernel/x.rs"), &plain);
+    let reason = deny_reason(&run);
+    assert!(reason.contains("no repository"), "{reason}");
+    assert!(reason.contains(".git"), "{reason}");
 }
 
 #[test]
 fn a_git_failure_other_than_no_repository_is_denied() {
     // `.git` that is not a valid gitfile: git fails, but not with "not a git repository".
-    let broken = unique_dir("broken-gitfile");
+    let broken = outside_dir("broken-gitfile");
     std::fs::write(broken.join(".git"), "garbage\n").expect("write the gitfile");
-    let payload = edit(&broken, "kernel/x.rs");
-    let run = guard_with_ceiling(&payload, &broken, broken.parent().unwrap());
+    let run = guard(&[], &edit(&broken, "kernel/x.rs"), &broken);
     assert!(
         deny_reason(&run).contains("git rev-parse"),
         "{}",
@@ -394,13 +392,40 @@ fn a_git_failure_other_than_no_repository_is_denied() {
 fn a_pruned_worktree_is_denied_not_skipped() {
     let (main, wt) = repo_with_nested_worktree("pruned");
     std::fs::remove_dir_all(main.join(".git/worktrees")).expect("remove the worktree admin dir");
-    let payload = edit(&main, wt.join("kernel/src/lib.rs").to_str().unwrap());
-    let run = guard_with_ceiling(&payload, &main, main.parent().unwrap());
+    let run = guard(
+        &[],
+        &edit(&main, wt.join("kernel/src/lib.rs").to_str().unwrap()),
+        &main,
+    );
     assert!(
         deny_reason(&run).contains("git rev-parse"),
         "{}",
         run.stdout
     );
+}
+
+#[test]
+fn an_inherited_git_ceiling_does_not_disable_the_guard() {
+    // A ceiling at the repository root makes git say "not a git repository" for
+    // every directory inside it; the guard clears it, so the edit is still denied.
+    let main = repo("ceiling");
+    let payload = edit(&main, "kernel/src/lib.rs");
+    let args = ["path-guard", "--deny", "kernel/"];
+    let root = main.to_str().unwrap();
+    let parent = main.join("kernel").to_str().unwrap().to_string();
+    for env in [
+        vec![("GIT_CEILING_DIRECTORIES", root)],
+        vec![("GIT_CEILING_DIRECTORIES", parent.as_str())],
+        vec![
+            ("GIT_CEILING_DIRECTORIES", root),
+            ("GIT_DISCOVERY_ACROSS_FILESYSTEM", "0"),
+        ],
+    ] {
+        let run = run_hook(&args, payload.to_string().as_bytes(), &env, &main);
+        assert_eq!(run.code, Some(0), "{env:?}: {}", run.stderr);
+        let reason = deny_reason(&run);
+        assert!(reason.contains("`kernel/src/lib.rs`"), "{env:?}: {reason}");
+    }
 }
 
 #[test]
@@ -509,6 +534,38 @@ fn git_metadata_is_denied_for_the_edit_tools() {
     }
     // A name that only starts with `.git` is an ordinary file.
     assert_no_decision(&guard(&[], &edit(&main, ".gitignore"), &main));
+    assert_no_decision(&guard(&[], &edit(&main, "docs/.gitkeep"), &main));
+}
+
+#[test]
+fn a_dot_git_below_a_multi_component_prefix_cannot_move_the_root() {
+    // With `--deny kernel/arch/`, a gitfile planted at `kernel/.git` would make git
+    // report `kernel/` as the root, so `kernel/arch/boot.S` would become `arch/boot.S`
+    // and match nothing. Writing the gitfile is what is denied.
+    let main = repo("nested-gitfile");
+    std::fs::create_dir_all(main.join("kernel/arch")).expect("create kernel/arch");
+    let args = ["path-guard", "--deny", "kernel/arch/"];
+    let git_dir = main.join(".git");
+    let run = |payload: &Value| {
+        let out = run_hook(&args, payload.to_string().as_bytes(), &[], &main);
+        assert_eq!(out.code, Some(0), "{}", out.stderr);
+        out
+    };
+    let write = json!({
+        "cwd": main,
+        "tool_name": "Write",
+        "tool_input": { "file_path": "kernel/.git", "content": format!("gitdir: {}\n", git_dir.display()) },
+    });
+    let reason = deny_reason(&run(&write));
+    assert!(reason.contains("`kernel/.git`"), "{reason}");
+    assert!(reason.contains("git metadata"), "{reason}");
+    // A `.git` directory deeper down is denied by its component too.
+    let deeper = edit(&main, "docs/sub/.git/config");
+    assert!(deny_reason(&run(&deeper)).contains("git metadata"));
+    // Nested-prefix behaviour is unchanged.
+    let arch = edit(&main, "kernel/arch/boot.S");
+    assert!(deny_reason(&run(&arch)).contains("`kernel/arch/`"));
+    assert_no_decision(&run(&edit(&main, "kernel/other.rs")));
 }
 
 #[test]

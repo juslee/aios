@@ -8,10 +8,12 @@
 //! repository root comes from the target, not from `cwd`: worktrees nest inside the
 //! main checkout, so a root taken from `cwd` would see an edit in a nested worktree
 //! as a path under `.claude/worktrees/` and never match `kernel/`. A target that is
-//! in no repository gets no decision. Git's answer is not taken on trust: the root
-//! must be the nearest ancestor of the target that holds a `.git` entry, so a
-//! `core.worktree` or a rewritten gitfile cannot move it, and anything under `.git`
-//! is denied outright. Bash can still write files, so this is a routing aid, not a
+//! in no repository gets no decision, but only when no `.git` entry exists above it
+//! either. Git's answer is not taken on trust: the root must be the nearest ancestor
+//! of the target that holds a `.git` entry, so a `core.worktree` or a rewritten
+//! gitfile cannot move it, and a path with a `.git` component anywhere is denied
+//! outright, so no edit tool can plant a gitfile below a deny prefix to move the
+//! root under it. Bash can still write files, so this is a routing aid, not a
 //! sandbox.
 
 use std::path::{Component, Path, PathBuf};
@@ -101,9 +103,11 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
         )
     })?;
     let folded = relative.to_ascii_lowercase();
-    let mut reason = if folded == ".git" || folded.starts_with(".git/") {
-        // The gitfile of a linked worktree and the git directory decide where git
-        // puts the repository root, so no agent task has a reason to write them.
+    let mut reason = if folded.split('/').any(|part| part == ".git") {
+        // A `.git` entry at any depth decides where git puts the repository root:
+        // the gitfile of a linked worktree, the git directory, or a gitfile planted
+        // in a subdirectory so the root lands below a multi-component deny prefix.
+        // No agent task has a reason to write one.
         format!(
             "`{relative}` is part of the repository's git metadata, which this agent may not \
              edit."
@@ -154,17 +158,23 @@ fn existing_dir(path: &Path) -> PathBuf {
 }
 
 /// The canonical top level of the work tree that contains `dir`, or `None` when
-/// `dir` is in no git work tree. Only git's own "not a git repository" answer for a
-/// directory search counts as that: every other failure (a broken worktree link, a
-/// bare repository, the `.git` directory itself, git missing) is an error, so the
-/// guard fails closed. So is a top level that is not the nearest ancestor of `dir`
-/// holding a `.git` entry: `core.worktree`, or a gitfile rewritten to point at a
-/// fabricated git directory, could otherwise move the root above the real one.
+/// `dir` is in no git work tree. That needs both git's own "not a git repository"
+/// answer for a directory search and a filesystem with no `.git` entry anywhere
+/// above `dir`: anything that makes discovery stop early (a ceiling, a mount
+/// boundary, an unreadable `.git`) must not turn a real repository into an allow.
+/// Every other failure (a broken worktree link, a bare repository, the `.git`
+/// directory itself, git missing) is an error, so the guard fails closed. So is a
+/// top level that is not the nearest ancestor of `dir` holding a `.git` entry:
+/// `core.worktree`, or a gitfile rewritten to point at a fabricated git directory,
+/// could otherwise move the root above the real one.
 fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
     // The message is matched below, so ask git for its untranslated text. The
-    // variables that name a repository are removed so discovery always starts from
-    // `dir`, whatever the hook process inherited (a session started from a git hook
-    // has them set).
+    // variables that name a repository or limit its discovery are removed so
+    // discovery always starts from `dir` and climbs as far as it needs, whatever the
+    // hook process inherited (a session started from a git hook has them set).
+    let marked = dir
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").symlink_metadata().is_ok());
     let out = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(dir)
@@ -174,6 +184,8 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
         .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_CEILING_DIRECTORIES")
+        .env_remove("GIT_DISCOVERY_ACROSS_FILESYSTEM")
         .output()
         .with_context(|| format!("cannot run git in {}", dir.display()))?;
     if !out.status.success() {
@@ -182,7 +194,14 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
             && stderr.contains("parent")
             && out.status.code() == Some(128)
         {
-            return Ok(None);
+            return match marked {
+                None => Ok(None),
+                Some(marked) => bail!(
+                    "git reports {} as in no repository, but {} exists",
+                    dir.display(),
+                    marked.join(".git").display()
+                ),
+            };
         }
         bail!(
             "git rev-parse --show-toplevel failed in {}: {}",
@@ -196,9 +215,6 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
         bail!("git printed no repository root in {}", dir.display());
     }
     let top = resolve(Path::new(top), MAX_LINK_DEPTH)?;
-    let marked = dir
-        .ancestors()
-        .find(|ancestor| ancestor.join(".git").symlink_metadata().is_ok());
     match marked {
         Some(marked) if relative_to(marked, &top).as_deref() == Some("") => Ok(Some(top)),
         _ => bail!(
