@@ -204,6 +204,30 @@ fn a_symlink_loop_fails_closed() {
 
 #[cfg(unix)]
 #[test]
+fn the_symlink_budget_is_forty_links_in_total_per_path() {
+    use std::os::unix::fs::symlink;
+
+    // `docs/l1 -> l2 -> ... -> l40 -> kernel/src`: a path through the whole chain
+    // passes 40 links, which is the budget. A per-link budget that restarts at each
+    // target, or a boundary at 39, would deny it; one at 41 would let `l0` through.
+    let dir = repo("link-budget");
+    for n in 1..40 {
+        symlink(format!("l{}", n + 1), dir.join(format!("docs/l{n}"))).expect("symlink");
+    }
+    symlink(dir.join("kernel/src"), dir.join("docs/l40")).expect("symlink");
+    let run = guard(&[], &edit(&dir, "docs/l1/new.rs"), &dir);
+    assert!(deny_reason(&run).contains("`kernel/src/new.rs`"));
+    // One more link in front makes 41 on the same path.
+    symlink("l1", dir.join("docs/l0")).expect("symlink");
+    let run = guard(&[], &edit(&dir, "docs/l0/new.rs"), &dir);
+    assert!(deny_reason(&run).contains("too many symlinks"));
+    // The budget is per path, not shared: the 40-link path is still fine.
+    let run = guard(&[], &edit(&dir, "docs/l1/other.rs"), &dir);
+    assert!(deny_reason(&run).contains("`kernel/src/other.rs`"));
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symlink_out_of_a_denied_prefix_is_allowed() {
     use std::os::unix::fs::symlink;
 
@@ -422,6 +446,39 @@ fn a_git_failure_other_than_no_repository_is_denied() {
 }
 
 #[test]
+fn a_bare_repository_is_denied_not_skipped() {
+    // git has no work tree to report for a bare repository ("this operation must be
+    // run in a work tree"), which is neither "no repository" nor a root.
+    let bare = outside_dir("bare");
+    git(&bare, &["init", "-q", "--bare"]);
+    let path = bare.join("kernel/x.rs");
+    let run = guard(&[], &edit(&bare, path.to_str().unwrap()), &bare);
+    let reason = deny_reason(&run);
+    assert!(reason.contains("git rev-parse"), "{reason}");
+    assert!(reason.contains("work tree"), "{reason}");
+}
+
+#[test]
+fn a_missing_git_binary_is_denied_not_skipped() {
+    // With no git to ask, "no repository" cannot be told from "unknown", and the
+    // shim's promise is that a missing binary denies.
+    let dir = repo("no-git");
+    let empty = unique_dir("empty-path");
+    let payload = edit(&dir, "kernel/src/lib.rs");
+    for path in [empty.to_str().unwrap(), "/nonexistent"] {
+        let run = run_hook(
+            &["path-guard", "--deny", "kernel/"],
+            payload.to_string().as_bytes(),
+            &[("PATH", path)],
+            &dir,
+        );
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        let reason = deny_reason(&run);
+        assert!(reason.contains("cannot run git"), "{path}: {reason}");
+    }
+}
+
+#[test]
 fn a_pruned_worktree_is_denied_not_skipped() {
     let (main, wt) = repo_with_nested_worktree("pruned");
     std::fs::remove_dir_all(main.join(".git/worktrees")).expect("remove the worktree admin dir");
@@ -505,6 +562,12 @@ fn a_new_file_in_a_missing_directory_of_a_nested_worktree_is_denied() {
 
 #[test]
 fn ambient_git_location_variables_do_not_disable_the_guard() {
+    // Not every row can fail: `rev-parse --show-toplevel` never reads the index, so
+    // the `GIT_INDEX_FILE` row passes whether or not the guard removes it (it is
+    // there to document the scrub list). The other rows were checked by dropping
+    // each `env_remove` in turn: each makes this test fail. (`GIT_DISCOVERY_ACROSS_FILESYSTEM`
+    // only matters at a mount boundary, which a test cannot make portably, so no
+    // test covers it.)
     let main = repo("ambient-git");
     let git_dir = main.join(".git");
     let payload = edit(&main, "kernel/src/lib.rs");
