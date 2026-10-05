@@ -20,7 +20,7 @@ You verify AIOS builds run correctly on QEMU.
 
 ## Key Facts
 
-The addresses and boot level come from the Key Technical Facts in `.claude/CLAUDE.md`; the QEMU flags come from the `justfile` run recipes.
+The addresses and boot level come from the Key Technical Facts in `.claude/CLAUDE.md`; the QEMU flags come from the `justfile` QEMU recipes (`-serial stdio` from `run-display`/`run-gpu`/`run-input`, `-gdb tcp::1234` from `debug`).
 
 - QEMU serial flag: `-serial stdio` (explicit)
 - QEMU GDB flag: `-gdb tcp::1234` (not `-s`)
