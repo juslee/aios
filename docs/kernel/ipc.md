@@ -350,12 +350,12 @@ pub enum Syscall {
 #[repr(i64)]
 pub enum IpcError {
     Etimedout    = -1,  // IpcCall timeout elapsed
-    Epipe        = -2,  // peer endpoint is dead
+    Epipe        = -2,  // the named channel, endpoint or region is gone
     Eagain       = -3,  // queue full (IpcSend) or would block
     Ecanceled    = -4,  // IpcCancel aborted the call
     Eacces       = -5,  // behavioral gate SUSPENDED
     Eperm        = -6,  // missing capability or right (§3.2)
-    Enospc       = -7,  // subscriber list full
+    Enospc       = -7,  // table, ring or list full, or a payload above a fixed limit (Kit doc §6)
     Eproto       = -8,  // message_type not in channel protocol
     Enotsup      = -9,  // operation not available (e.g., AIRS offline)
     EcapDormant  = -10, // capability exists but is dormant
