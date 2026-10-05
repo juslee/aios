@@ -446,6 +446,72 @@ fn a_new_file_in_a_missing_directory_of_a_nested_worktree_is_denied() {
 }
 
 #[test]
+fn ambient_git_location_variables_do_not_disable_the_guard() {
+    let main = repo("ambient-git");
+    let git_dir = main.join(".git");
+    let payload = edit(&main, "kernel/src/lib.rs");
+    let args = ["path-guard", "--deny", "kernel/"];
+    for env in [
+        vec![("GIT_DIR", git_dir.to_str().unwrap())],
+        vec![("GIT_WORK_TREE", "/")],
+        vec![
+            ("GIT_DIR", git_dir.to_str().unwrap()),
+            ("GIT_WORK_TREE", "/"),
+        ],
+    ] {
+        let run = run_hook(&args, payload.to_string().as_bytes(), &env, &main);
+        assert_eq!(run.code, Some(0), "{env:?}: {}", run.stderr);
+        let reason = deny_reason(&run);
+        assert!(reason.contains("`kernel/src/lib.rs`"), "{env:?}: {reason}");
+    }
+}
+
+#[test]
+fn a_gitfile_rewritten_to_move_the_root_up_is_denied() {
+    // The worktree's `.git` file points at a fabricated git directory whose config
+    // sets `core.worktree` to the main checkout: git then reports the main checkout
+    // as the root, and the worktree's `kernel/` edit would match no prefix.
+    let (main, wt) = repo_with_nested_worktree("gitfile-attack");
+    let fake = wt.join("docs/fake.git");
+    for dir in ["objects", "refs"] {
+        std::fs::create_dir_all(fake.join(dir)).expect("create the fake git dir");
+    }
+    std::fs::write(fake.join("HEAD"), "ref: refs/heads/main\n").expect("write HEAD");
+    std::fs::write(
+        fake.join("config"),
+        format!(
+            "[core]\n\trepositoryformatversion = 0\n\tworktree = {}\n",
+            main.display()
+        ),
+    )
+    .expect("write the fake config");
+    std::fs::write(wt.join(".git"), format!("gitdir: {}\n", fake.display()))
+        .expect("rewrite the gitfile");
+    let path = wt.join("kernel/src/lib.rs");
+    let run = guard(&[], &edit(&wt, path.to_str().unwrap()), &wt);
+    let reason = deny_reason(&run);
+    assert!(reason.contains("root"), "{reason}");
+    assert!(reason.contains("git"), "{reason}");
+}
+
+#[test]
+fn git_metadata_is_denied_for_the_edit_tools() {
+    let (main, wt) = repo_with_nested_worktree("git-metadata");
+    // The gitfile of a linked worktree is named as git metadata.
+    let run = guard(&[], &edit(&wt, ".git"), &wt);
+    let reason = deny_reason(&run);
+    assert!(reason.contains("`.git`"), "{reason}");
+    assert!(reason.contains("git metadata"), "{reason}");
+    // The git directory of the main checkout is denied too: by name where git can
+    // be asked about its parent, and as an error where git refuses to run inside it.
+    for path in [".git/config", ".GIT/hooks/pre-commit"] {
+        deny_reason(&guard(&[], &edit(&main, path), &main));
+    }
+    // A name that only starts with `.git` is an ordinary file.
+    assert_no_decision(&guard(&[], &edit(&main, ".gitignore"), &main));
+}
+
+#[test]
 fn a_sibling_worktree_outside_the_cwd_repository_is_guarded() {
     let main = repo("sibling-main");
     git(&main, &["add", "."]);

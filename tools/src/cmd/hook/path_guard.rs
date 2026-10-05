@@ -8,9 +8,11 @@
 //! repository root comes from the target, not from `cwd`: worktrees nest inside the
 //! main checkout, so a root taken from `cwd` would see an edit in a nested worktree
 //! as a path under `.claude/worktrees/` and never match `kernel/`. A target that is
-//! in no repository gets no decision, and a root that does not contain the target
-//! (git's answer contradicting the filesystem) is an error. Bash can still write files, so this is a
-//! routing aid, not a sandbox.
+//! in no repository gets no decision. Git's answer is not taken on trust: the root
+//! must be the nearest ancestor of the target that holds a `.git` entry, so a
+//! `core.worktree` or a rewritten gitfile cannot move it, and anything under `.git`
+//! is denied outright. Bash can still write files, so this is a routing aid, not a
+//! sandbox.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -89,9 +91,8 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
     let Some(root) = repo_root(&existing_dir(&resolved))? else {
         return Ok(None);
     };
-    // The root was found from the target's own directory, so it can only fail to
-    // contain the target when git's answer is inconsistent with the filesystem
-    // (`core.worktree`, `GIT_WORK_TREE`): that is an error, not an allow.
+    // `repo_root` only returns an ancestor of the target, so a failure here means
+    // the filesystem changed underneath the check: an error, not an allow.
     let relative = relative_to(&resolved, &root).with_context(|| {
         format!(
             "{} is not inside the repository root {} git reported for it",
@@ -100,16 +101,24 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
         )
     })?;
     let folded = relative.to_ascii_lowercase();
-    let Some(prefix) = prefixes
+    let mut reason = if folded == ".git" || folded.starts_with(".git/") {
+        // The gitfile of a linked worktree and the git directory decide where git
+        // puts the repository root, so no agent task has a reason to write them.
+        format!(
+            "`{relative}` is part of the repository's git metadata, which this agent may not \
+             edit."
+        )
+    } else if let Some(prefix) = prefixes
         .iter()
         .find(|prefix| folded.starts_with(&prefix.to_ascii_lowercase()))
-    else {
+    {
+        format!(
+            "`{relative}` is under `{prefix}`, which this agent may not edit: kernel, UEFI stub \
+             and shared code goes to kernel-dev. Hand this change back to your caller."
+        )
+    } else {
         return Ok(None);
     };
-    let mut reason = format!(
-        "`{relative}` is under `{prefix}`, which this agent may not edit: kernel, UEFI stub and \
-         shared code goes to kernel-dev. Hand this change back to your caller."
-    );
     if let Some(extra) = args.reason.as_deref().filter(|extra| !extra.is_empty()) {
         reason.push(' ');
         reason.push_str(extra);
@@ -148,13 +157,23 @@ fn existing_dir(path: &Path) -> PathBuf {
 /// `dir` is in no git work tree. Only git's own "not a git repository" answer for a
 /// directory search counts as that: every other failure (a broken worktree link, a
 /// bare repository, the `.git` directory itself, git missing) is an error, so the
-/// guard fails closed.
+/// guard fails closed. So is a top level that is not the nearest ancestor of `dir`
+/// holding a `.git` entry: `core.worktree`, or a gitfile rewritten to point at a
+/// fabricated git directory, could otherwise move the root above the real one.
 fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
-    // The message is matched below, so ask git for its untranslated text.
+    // The message is matched below, so ask git for its untranslated text. The
+    // variables that name a repository are removed so discovery always starts from
+    // `dir`, whatever the hook process inherited (a session started from a git hook
+    // has them set).
     let out = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(dir)
         .env("LC_ALL", "C")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
         .output()
         .with_context(|| format!("cannot run git in {}", dir.display()))?;
     if !out.status.success() {
@@ -176,7 +195,22 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
     if top.is_empty() {
         bail!("git printed no repository root in {}", dir.display());
     }
-    resolve(Path::new(top), MAX_LINK_DEPTH).map(Some)
+    let top = resolve(Path::new(top), MAX_LINK_DEPTH)?;
+    let marked = dir
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").symlink_metadata().is_ok());
+    match marked {
+        Some(marked) if relative_to(marked, &top).as_deref() == Some("") => Ok(Some(top)),
+        _ => bail!(
+            "git reports {} as the repository root for {}, but the nearest .git entry is {}",
+            top.display(),
+            dir.display(),
+            marked.map_or("absent".to_string(), |m| m
+                .join(".git")
+                .display()
+                .to_string())
+        ),
+    }
 }
 
 /// Fold `.` and `..` out of `path` without touching the filesystem. A `..` at the
