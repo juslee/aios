@@ -16,7 +16,7 @@ use anyhow::Result;
 use clap::Args as ClapArgs;
 use serde_json::{json, Map, Value};
 
-use super::{append_jsonl, cut_to_boundary, unix_seconds, Ctx, HookInput};
+use super::{append_line, cut_to_boundary, unix_seconds, Ctx, HookInput};
 
 /// The dispatch tool's name in hook input.
 const DISPATCH_TOOL: &str = "Agent";
@@ -178,18 +178,31 @@ pub fn run(_args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>>
         return Ok(None);
     };
     let dir = ctx.state_dir(input)?;
-    log_record(&dir.join(LOG_FILE), kind, input)?;
+    log_record(&dir.join(LOG_FILE), kind, input, append_line)?;
     Ok(None)
 }
 
-/// Append the record of `kind`. When that fails the failure is appended as an
-/// error record, so it is in the log; only when that fails too is the original
-/// error returned, for stderr.
-fn log_record(path: &Path, kind: Kind, input: &HookInput) -> Result<()> {
+/// Append the record of `kind` through `append`, which writes one text to the log.
+/// When that fails the failure is appended as an error record, so it is in the log;
+/// only when that fails too is the original error returned, for stderr.
+///
+/// The error record starts with a newline: a failed append may have written part of
+/// its line (a short write on a full volume), and the newline ends that fragment
+/// instead of gluing the error record onto it. Readers skip blank lines and lines
+/// that are not JSON; the fragment is lost either way, the error record is not.
+fn log_record(
+    path: &Path,
+    kind: Kind,
+    input: &HookInput,
+    append: impl Fn(&Path, &str) -> Result<()>,
+) -> Result<()> {
     let ts = unix_seconds();
-    match append_jsonl(path, &record(kind, ts, input)) {
+    match append(path, &format!("{}\n", record(kind, ts, input))) {
         Ok(()) => Ok(()),
-        Err(err) => append_jsonl(path, &error_record(ts, input, &err)).map_err(|_| err),
+        Err(err) => {
+            let text = format!("\n{}\n", error_record(ts, input, &err));
+            append(path, &text).map_err(|_| err)
+        }
     }
 }
 
@@ -246,32 +259,105 @@ mod tests {
         assert_eq!(rec["message_truncated"], true);
     }
 
-    #[test]
-    fn the_error_record_names_the_event_and_the_error() {
-        let dir = std::env::temp_dir().join(format!("aios-route-outcome-{}", std::process::id()));
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("aios-route-outcome-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let payload = json!({"hook_event_name":"PostToolUseFailure","tool_name":"Agent"});
-        let hook_input = input(&payload);
-        let err = anyhow::anyhow!("disk is on fire");
-        append_jsonl(&dir.join(LOG_FILE), &error_record(7, &hook_input, &err)).unwrap();
-        let log = std::fs::read_to_string(dir.join(LOG_FILE)).unwrap();
-        let rec: Value = serde_json::from_str(log.trim_end()).unwrap();
+        dir
+    }
+
+    /// An appender that fails its first call and passes the rest to `append_line`.
+    fn failing_once(
+        calls: &std::cell::RefCell<Vec<String>>,
+    ) -> impl Fn(&Path, &str) -> Result<()> + '_ {
+        move |path, text| {
+            calls.borrow_mut().push(text.to_string());
+            if calls.borrow().len() == 1 {
+                anyhow::bail!("disk is on fire");
+            }
+            append_line(path, text)
+        }
+    }
+
+    #[test]
+    fn a_failed_append_is_logged_as_an_error_record() {
+        let dir = scratch_dir("fallback");
+        let log = dir.join(LOG_FILE);
+        let payload = json!({"hook_event_name":"SubagentStop","agent_id":"a1"});
+        let calls = std::cell::RefCell::new(Vec::new());
+        log_record(&log, Kind::Stopped, &input(&payload), failing_once(&calls)).unwrap();
+
+        let calls = calls.into_inner();
+        assert_eq!(calls.len(), 2);
+        let first: Value = serde_json::from_str(calls[0].trim_end()).unwrap();
+        assert_eq!(first["kind"], "stopped");
+        assert!(
+            calls[1].starts_with('\n'),
+            "the error record ends a partial line"
+        );
+        let text = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 1, "only the error record reached the file");
+        let rec: Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(rec["kind"], "error");
-        assert_eq!(rec["event"], "PostToolUseFailure");
+        assert_eq!(rec["event"], "SubagentStop");
         assert_eq!(rec["error"], "disk is on fire");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn an_unwritable_log_returns_the_original_error() {
-        let dir =
-            std::env::temp_dir().join(format!("aios-route-outcome-dir-{}", std::process::id()));
+    fn the_error_record_does_not_extend_a_partial_line() {
+        let dir = scratch_dir("partial");
+        let log = dir.join(LOG_FILE);
+        // What a short write leaves behind: a line without its newline.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &log,
+            "{\"kind\":\"stopped\",\"last_assistant_message\":\"trunc",
+        )
+        .unwrap();
+        let payload = json!({"hook_event_name":"SubagentStop"});
+        let calls = std::cell::RefCell::new(Vec::new());
+        log_record(&log, Kind::Stopped, &input(&payload), failing_once(&calls)).unwrap();
+
+        let text = std::fs::read_to_string(&log).unwrap();
+        let parsed: Vec<Option<Value>> = text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(parsed.len(), 2, "{text}");
+        assert!(parsed[0].is_none(), "the fragment stays a line of its own");
+        assert_eq!(parsed[1].as_ref().unwrap()["kind"], "error");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_successful_append_writes_no_error_record() {
+        let dir = scratch_dir("ok");
+        let log = dir.join(LOG_FILE);
+        let payload = json!({"hook_event_name":"SubagentStop"});
+        log_record(&log, Kind::Stopped, &input(&payload), append_line).unwrap();
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.starts_with("{\"kind\":\"stopped\""), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unwritable_log_returns_the_original_error() {
+        let dir = scratch_dir("dir");
         // The log path is a directory, so neither the record nor the error record
         // can be appended.
         std::fs::create_dir_all(dir.join(LOG_FILE)).unwrap();
         let payload = json!({"hook_event_name":"SubagentStop"});
-        let err = log_record(&dir.join(LOG_FILE), Kind::Stopped, &input(&payload)).unwrap_err();
+        let err = log_record(
+            &dir.join(LOG_FILE),
+            Kind::Stopped,
+            &input(&payload),
+            append_line,
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("cannot append to"), "{err:#}");
         let _ = std::fs::remove_dir_all(&dir);
     }

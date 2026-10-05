@@ -313,6 +313,12 @@ pub fn unix_seconds() -> u64 {
 pub fn append_jsonl(path: &Path, record: &impl Serialize) -> Result<()> {
     let mut line = serde_json::to_string(record).context("cannot encode the log record")?;
     line.push('\n');
+    append_line(path, &line)
+}
+
+/// Append `text`, which ends in a newline, to the file at `path` in one write,
+/// creating the file and its directory.
+pub fn append_line(path: &Path, text: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     }
@@ -320,7 +326,7 @@ pub fn append_jsonl(path: &Path, record: &impl Serialize) -> Result<()> {
         .append(true)
         .create(true)
         .open(path)
-        .and_then(|mut file| file.write_all(line.as_bytes()))
+        .and_then(|mut file| file.write_all(text.as_bytes()))
         .with_context(|| format!("cannot append to {}", path.display()))
 }
 

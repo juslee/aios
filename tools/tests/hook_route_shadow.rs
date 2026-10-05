@@ -407,8 +407,9 @@ fn a_server_that_never_answers_is_cut_off_by_the_time_limit() {
         &[("AIOS_JEV_URL", &server.url), ("TYPESAFE_API_KEY", KEY)],
     );
     let elapsed = started.elapsed();
-    // The plan registers the hook with a 6 s timeout; curl's `--max-time 4` is
-    // what keeps a stalled server inside it.
+    // The hook is registered `async: true`, where Claude Code enforces no
+    // timeout, so curl's `--max-time 4` is the only bound; 5.5 s allows for
+    // process start.
     assert!(
         elapsed < Duration::from_millis(5500),
         "the hook took {elapsed:?}"

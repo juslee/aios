@@ -27,7 +27,8 @@ const JEV_MODEL: &str = "jev-1.13.0";
 const DEFAULT_URL: &str = "https://api.typesafe.ai/v1/systemone";
 /// The prompt sent to Jev and logged is cut to this many characters.
 const MAX_PROMPT_CHARS: usize = 8000;
-/// curl's whole-request limit in seconds; part 2 registers the hook with 6.
+/// curl's whole-request limit in seconds. The hook is registered `async: true`,
+/// where Claude Code enforces no timeout, so this is the only bound on its run time.
 const CURL_MAX_TIME: &str = "4";
 /// A response body quoted in an error record is cut to this many bytes.
 const MAX_QUOTED_BYTES: usize = 200;

@@ -9,7 +9,7 @@ status: in-progress
 
 ## Approach
 
-The owner wants the agent team to run as: Opus leads, Sonnet agents do routine work, Fable reviews at fixed points, and Jev (TypeSafe) is tried as a router for subagent dispatches. Claude Code supplies most of this through configuration: a `model:` and `effort:` per agent definition, and hooks, including `type: agent` hooks that run on a chosen model. What it does not supply is three small deterministic programs, which this plan adds to the `aios` host binary as `aios hook <name>`:
+The owner wants the agent team to run as: Opus leads, Sonnet agents do routine work, Fable reviews at fixed points, and Jev (TypeSafe) is tried as a router for subagent dispatches. Claude Code supplies most of this through configuration: a `model:` and `effort:` per agent definition, and hooks, including `type: agent` hooks that run on a chosen model. What it does not supply is four small deterministic programs, which this plan adds to the `aios` host binary as `aios hook <name>`:
 
 | Subcommand | Event (registered in part 2) | Job | On internal error |
 |---|---|---|---|
@@ -36,7 +36,7 @@ The work is split in two because other open branches own the files that wire the
 - [x] Step 7: gates: `cargo fmt --check -p aios-tools`, `cargo clippy -p aios-tools --all-targets -- -D warnings`, `cargo test -p aios-tools` (300 passed), `just docs-check` (one new finding: this working plan, removed at step 12).
 - [x] Step 8: live `route-shadow` calls against Jev (owner's key), checked by hand: two on 2026-10-05 at e2a7daf (662 ms, 428 ms) and two on 2026-10-06 at 38af18e (446 ms, 428 ms). Every record had `jev_model` `jev-1.13.0`, `error` null and all three answers, and the key appeared in no state file. A rename scored complexity 0.03 and a lock/MMU diagnosis 2.0 with `low_level_hazard` 0.99; a pattern-following feature scored 1.0, a read-only search 0.11 classed `read_only_search`.
 - [ ] Step 9: the lead-fix review (path-guard root from the target) continues until a clean round; the fourth round found only stale plan bookkeeping, fixed here, and the latest code fix (fe8cb44, round 3) is unreviewed.
-- [x] Step 10: `aios hook route-outcome` plus tests (14 integration tests in `tools/tests/hook_route_outcome.rs`, 4 unit tests).
+- [x] Step 10: `aios hook route-outcome` plus tests (14 integration tests in `tools/tests/hook_route_outcome.rs`, 6 unit tests).
 - [ ] Step 11: review loop over the whole branch until a clean round, then the gates.
 - [ ] Step 12: rebase onto `main`, distil this plan into the knowledge hive (a decision note for the hook design, a lesson for the worktree-nesting bypass) and delete it, then the PR.
 
@@ -153,7 +153,7 @@ Parse leniently: unknown fields are ignored and every field the code does not st
 - `SubagentStop`: a `stopped` record with `ts`, `session_id`, `agent_id`, `agent_type`, `stop_hook_active`, `agent_transcript_path`, and `last_assistant_message` cut to 4,000 characters with `message_chars` and `message_truncated`. A subagent that a stop gate sends back to work stops again later, so the number of `stopped` records for one `agent_id` is the number of stop attempts; part 2's Fable gate may read it as its block counter instead of keeping its own state.
 - Every other event, and `PostToolUse` or `PostToolUseFailure` for any other tool: no record.
 - Every field is read leniently (absent or wrong-typed means null). Each record carries `kind` (`launched`, `launch_failed`, `stopped`).
-- An internal error after the state directory is known appends an `error` record (`kind` `error`, `event`, `error` text); before that, stderr only.
+- An internal error after the state directory is known appends an `error` record (`kind` `error`, `event`, `error` text), written with a leading newline so a partial line left by a short write is ended, not extended; readers skip blank and non-JSON lines. Before the state directory is known, stderr only. The retry goes to the same file, so it covers transient failures (and a short write that left a fragment), not a log that cannot be written at all.
 - The join for the Jev evaluation: `route-shadow.tool_use_id` = `launched.tool_use_id`; `launched.agent_id` = `stopped.agent_id`.
 
 ## Part 2 requirements
@@ -232,7 +232,10 @@ Owned by the two-team harness PR (owner decision 2026-10-05, 21:33), built after
 - Lead-review round 4: plan bookkeeping only. Step 9 names the latest code fix under review, and the round 3 decision moved from Lessons Learned to this list. Why: the Step 12 distillation reads Decisions Made, and a decision filed under the lessons placeholder is lost when that section is rewritten.
 - Step 10: telemetry fields of a `launched` record (`models_used`, `total_tokens`, `total_duration_ms`, `total_tool_use_count`) are left out when `tool_response` lacks the key and otherwise kept as the parsed JSON value of any type, and `caller_agent_id` is left out when the input has no string `agent_id`; every other field is null when absent or wrong-typed. Why: the plan says "when present" and "present only when", and the docs do not give the type of `modelsUsed`, so coercing it would invent a schema. A reader treats a missing key and null alike.
 - Step 10: `HookInput` gained `tool_response`, `agent_transcript_path`, `last_assistant_message` and `stop_hook_active`, read leniently like the rest. `append_jsonl` and `unix_seconds` moved into `hook/mod.rs` and `route-shadow` calls them; its records and tests are unchanged. The append keeps the default file mode, as `route-shadow` had; only its request body file is 0600.
-- Step 10: the state directory is resolved only for an event that gets a record, so a `Bash` `PostToolUse` or a stray event costs no `git` call. When appending a record fails, the failure is appended as an `error` record (`kind`, `ts`, `event`, `error`) and the hook is silent; only when that append fails too does the original error go to stderr. An absent `last_assistant_message` gives null `message_chars` and `message_truncated`.
+- Step 10: the state directory is resolved only for an event that gets a record, so a `Bash` `PostToolUse` or a stray event costs no `git` call. When appending a record fails, the failure is appended as an `error` record (`kind`, `ts`, `event`, `error`) and the hook is silent; only when that append fails too does the original error go to stderr. The error record is written with a leading newline (see the model-routing review round 1 decision). An absent `last_assistant_message` gives null `message_chars` and `message_truncated`.
+
+- Model-routing review round 1: `route-outcome`'s `log_record` takes the appender as a parameter (`append_line`, new in `hook/mod.rs`, which `append_jsonl` now calls), and the fallback error record starts with a newline. Why: the fallback retried the same file with no test reaching it, and after a short write on a full volume the error record would have been glued onto the fragment, leaving a line that is neither record. The injectable appender lets tests fail the first append and assert the error record lands, alone on its line, after a fragment. The retry stays on the same file and the plan now says it covers transient failures, rather than inventing a second log location.
+- Model-routing review round 1: the `CURL_MAX_TIME` and `hook_route_shadow.rs` comments no longer say part 2 registers a 6 s timeout. The hook is `async: true`, where Claude Code enforces no timeout, so curl's `--max-time 4` is the only bound; the 5.5 s test limit is process-start allowance. The Approach says four programs (the table already listed four).
 
 ## Lessons Learned
 
