@@ -24,7 +24,9 @@ const NOT_BUILT: &str = "aios tools not built; run just tools";
 const STALE: &str = "aios tools are stale or unverified; rebuilding in the background (just tools)";
 const DIRTY: &str = "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools";
 const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not an executable file";
-const NO_OWN_DIR: &str = "aios shim cannot find its own directory; run just tools";
+const NO_ORIGIN: &str = "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools";
+const NO_OWN_DIR: &str =
+    "aios shim cannot find its own directory; check that .claude/hooks exists and is accessible";
 const NO_MAIN: &str =
     "aios shim cannot find the main checkout (git failed); fix git or set AIOS_TOOLS_BIN";
 const NO_MAIN_DIRNAME: &str =
@@ -54,6 +56,9 @@ fn ask_json(reason: &str) -> String {
 /// `FAKE_CARGO_SOURCE` names a file to build instead. `FAKE_CARGO_WRITE_DELAY`
 /// leaves release/aios half-written for that many seconds, like the uplift of a
 /// large binary, and creates `FAKE_CARGO_MARK` once the half is written.
+/// `FAKE_CARGO_PIDS` names a file to write the recipe's pid and its own to.
+/// `FAKE_CARGO_EXCLUSIVE` logs `overlap` to overlap.log when another build is
+/// running at the same time.
 const FAKE_CARGO: &str = r#"#!/bin/sh
 set -u
 if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
@@ -62,6 +67,11 @@ if [ "$*" != "build --release -p aios-tools --target-dir target/tools" ]; then
 fi
 echo "fake cargo: building the aios binary"
 printf 'build\n' >> cargo.log
+[ -z "${FAKE_CARGO_PIDS:-}" ] || echo "$PPID $$" > "$FAKE_CARGO_PIDS"
+if [ -n "${FAKE_CARGO_EXCLUSIVE:-}" ]; then
+    mkdir target/tools/.fake-cargo-busy 2>/dev/null || printf 'overlap\n' >> overlap.log
+    trap 'rmdir target/tools/.fake-cargo-busy 2>/dev/null' EXIT
+fi
 if [ -n "${FAKE_CARGO_FAIL:-}" ]; then
     echo "fake cargo: the build failed" >&2
     exit 1
@@ -716,7 +726,6 @@ fn just_tools_installs_by_rename_at_a_path_cargo_never_writes() {
 fn overlapping_just_tools_runs_never_install_a_half_written_binary() {
     let sandbox = Sandbox::new("shim-install-overlap");
     sandbox.install_bin(true);
-    let install_lock = sandbox.repo.path().join("target/tools/.install");
 
     // The first recipe's cargo leaves release/aios half-written for 2 s.
     let mark = sandbox.bin_dir.path().join("half-uplifted");
@@ -758,22 +767,94 @@ fn overlapping_just_tools_runs_never_install_a_half_written_binary() {
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
         "v2:guard PreToolUse\n"
     );
-    assert!(!install_lock.exists(), "the recipe releases its lock");
+}
 
-    // A lock left by a recipe that died is taken over without waiting.
-    let mut dead = Command::new("true").spawn().expect("run true");
-    let pid = dead.id();
-    dead.wait().expect("wait for true");
-    std::fs::create_dir_all(&install_lock).expect("create the lock");
-    std::fs::write(install_lock.join("pid"), format!("{pid}\n")).expect("write the pid");
-    let out = sandbox.just_tools(&[]);
-    assert!(out.status.success(), "{}", stderr(&out));
+// The lock is a kernel file lock, so recipes never take one over: three
+// recipes started together each build alone, and a lock file a recipe killed
+// with SIGKILL leaves behind does not hold up the next one.
+#[test]
+fn concurrent_and_killed_just_tools_runs_never_overlap() {
+    let sandbox = Sandbox::new("shim-install-race");
+    sandbox.install_bin(true);
+
+    // A recipe killed mid-build, with its cargo, leaves the lock file behind.
+    let pids = sandbox.bin_dir.path().join("pids");
+    let mut cmd = Command::new("just");
+    isolated(&mut cmd);
+    let mut killed = cmd
+        .env("PATH", sandbox.path_env())
+        .env("FAKE_CARGO_DELAY", "30")
+        .env("FAKE_CARGO_PIDS", &pids)
+        .current_dir(sandbox.repo.path())
+        .arg("tools")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("run just tools");
+    wait_for("the recipe's cargo to start", || {
+        std::fs::read_to_string(&pids).is_ok_and(|text| text.ends_with('\n'))
+    });
+    for pid in read(&pids).split_whitespace() {
+        let status = Command::new("kill")
+            .args(["-KILL", pid])
+            .status()
+            .expect("run kill");
+        assert!(status.success(), "kill -KILL {pid}");
+    }
+    killed.wait().expect("wait for the killed just tools");
+    assert!(sandbox
+        .repo
+        .path()
+        .join("target/tools/.install.lock")
+        .exists());
+
+    // Three recipes at once: none waits on the dead recipe's lock for long,
+    // and their builds never overlap.
+    let spawn = || {
+        let mut cmd = Command::new("just");
+        isolated(&mut cmd);
+        cmd.env("PATH", sandbox.path_env())
+            .env("FAKE_CARGO_DELAY", "1")
+            .env("FAKE_CARGO_EXCLUSIVE", "1")
+            .current_dir(sandbox.repo.path())
+            .arg("tools")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run just tools")
+    };
+    let started = Instant::now();
+    let recipes: Vec<_> = (0..3).map(|_| spawn()).collect();
+    let outputs: Vec<Output> = recipes
+        .into_iter()
+        .map(|child| child.wait_with_output().expect("wait for just tools"))
+        .collect();
+    for out in &outputs {
+        assert!(out.status.success(), "{}", stderr(out));
+    }
     assert!(
-        !stderr(&out).contains("waiting for another just tools"),
-        "{}",
-        stderr(&out)
+        started.elapsed() < Duration::from_secs(20),
+        "the killed recipe's lock held the others up"
     );
-    assert!(!install_lock.exists());
+    assert_eq!(
+        read(&sandbox.cargo_log()).lines().count(),
+        4,
+        "four builds ran"
+    );
+    assert!(
+        !sandbox.repo.path().join("overlap.log").exists(),
+        "two builds ran at the same time"
+    );
+    let waited = outputs
+        .iter()
+        .filter(|out| stderr(out).contains("waiting for another just tools to finish"))
+        .count();
+    assert!(waited >= 1, "at least one recipe waited for another");
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
 }
 
 // #203 path 3: exits before the shim reaches the guard branch.
@@ -1073,14 +1154,25 @@ fn a_build_from_inputs_not_on_origin_main_is_dirty() {
         "fake:guard PreToolUse\n"
     );
 
-    // Without origin/main nothing proves the inputs were merged: dirty.
+    // Without origin/main nothing proves the inputs were merged: dirty, with
+    // its own reason, since no revert or merge can fix that.
     common::git(
         sandbox.repo.path(),
         &["update-ref", "-d", "refs/remotes/origin/main"],
     );
     sandbox.install_bin(true);
     assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
-    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), NO_ORIGIN);
+    assert!(sandbox.no_build_started());
+
+    // Fetched again, a rebuild is clean.
+    sandbox.merge();
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
+    assert_eq!(
+        stdout(&sandbox.run(&["guard", "PreToolUse"])),
+        "fake:guard PreToolUse\n"
+    );
 }
 
 #[test]

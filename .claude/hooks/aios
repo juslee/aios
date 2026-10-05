@@ -36,7 +36,8 @@
 #                     end that way prints a PreToolUse "ask" decision and exits 0
 #                     (#203): missing (no build), stale (and one background
 #                     `just tools`, lock dir target/tools/.building), dirty (no
-#                     build: revert the changes or merge them first), an override
+#                     build: revert the changes or merge them first, or fetch
+#                     origin/main when there is none), an override
 #                     that is not a runnable file, and a shim that cannot find
 #                     its own directory or the main checkout. A runnable
 #                     override is the exception: it runs as a child like a
@@ -57,7 +58,13 @@
 # permission rules' job, and they are a speed bump with known gaps: among
 # them, a session started in a worktree is not denied Edit or Write on the main
 # checkout's target/tools, which holds the binary this shim runs
-# (docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md, §2).
+# (docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md, §2). Nor is
+# the main checkout itself pinned: git's common-dir resolution reads files a
+# session can rewrite with allowed commands (the main checkout's
+# .git/commondir, a linked worktree's .git gitdir file and its
+# .git/worktrees/<name>/commondir), and no rule covers them. Pointed at a
+# repository the session controls, they make this shim run that repository's
+# binary, stamped clean by its own `just tools` against its own origin/main.
 # POSIX sh (macOS /bin/sh, dash). Build output goes to stderr or the build log,
 # never to stdout, so JSON on stdout stays parseable.
 
@@ -115,7 +122,7 @@ run_guard() {
 }
 
 if ! dir=$(dirname -- "$0") || ! here=$(CDPATH='' cd -- "$dir" && pwd -P); then
-    stop "aios shim cannot find its own directory; run just tools" \
+    stop "aios shim cannot find its own directory; check that .claude/hooks exists and is accessible" \
         "cannot find the directory of $0"
 fi
 # These stops, like the one above, come before the AIOS_TOOLS_BIN override, so
@@ -219,7 +226,13 @@ guard)
     runnable "$bin" || ask "aios tools not built; run just tools"
     case $(verdict) in
     fresh) run_guard "aios guard" "run just tools" "$bin" "$@" ;;
-    dirty) ask "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools" ;;
+    dirty)
+        # The recipe also stamps dirty when it has no origin/main to check the
+        # inputs against, which no revert or merge can fix.
+        git -C "$main" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1 ||
+            ask "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools"
+        ask "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools"
+        ;;
     esac
     build_bg
     ask "aios tools are stale or unverified; rebuilding in the background (just tools)"

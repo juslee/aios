@@ -150,13 +150,17 @@ test:
 # under a temporary name and renamed into place, so a concurrent shim call finds
 # the old binary or the new one, never a missing or half-written file (#203).
 # Overlapping recipes (a background prebuild and a foreground rebuild) run one
-# at a time, from the build through both renames, under the lock directory
-# target/tools/.install: otherwise one recipe could copy release/aios while the
-# other's cargo build removes and rewrites it. A waiting recipe takes the lock
-# over when the process named in it has exited or the lock is older than 30
-# minutes. The copy takes the build's start time: a no-op build is marked fresh
-# for the shim, and a file edited during the build stays newer, so the next call
-# rebuilds. Then, only after the binary is in place, the provenance stamp
+# at a time, from the build through both renames, under a kernel file lock
+# (flock(2), taken through flock(1) or the BSD and macOS lockf(1)) on
+# target/tools/.install.lock: otherwise one recipe could copy release/aios while
+# the other's cargo build removes and rewrites it. The kernel drops the lock when
+# the recipe exits, however it dies, so no recipe ever judges a lock dead and
+# takes it over. cargo runs without the lock's descriptor, so a daemon it starts
+# (a compiler cache server) cannot keep the lock; an orphaned build left by a
+# killed recipe holds cargo's own build-directory lock, which the next recipe's
+# cargo waits for. The copy takes the build's start time: a no-op build is
+# marked fresh for the shim, and a file edited during the build stays newer, so
+# the next call rebuilds. Then, only after the binary is in place, the provenance stamp
 # installed/aios.stamp is renamed in beside it: HEAD's tree entries for the
 # build inputs, the installed binary's git hash, and "source dirty" when the
 # inputs have uncommitted changes, when HEAD has input changes that
@@ -169,31 +173,29 @@ tools:
     #!/bin/sh
     set -eu
     mkdir -p target/tools/installed
-    lock=target/tools/.install
-    held=
+    lock=target/tools/.install.lock
     start=
     new=
     stamp=
-    trap 'rm -f ${start:+"$start"} ${new:+"$new"} ${stamp:+"$stamp"}; [ -z "$held" ] || rm -rf "$lock"' EXIT
+    trap 'rm -f ${start:+"$start"} ${new:+"$new"} ${stamp:+"$stamp"}' EXIT
     trap 'exit 1' HUP INT TERM
-    waiting=
-    until mkdir "$lock" 2>/dev/null; do
-        holder=$(cat "$lock/pid" 2>/dev/null) || holder=
-        if { [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; } ||
-            [ -n "$(find "$lock" -prune -mmin +30 2>/dev/null)" ]; then
-            rm -rf "$lock"
-            continue
-        fi
-        if [ -z "$waiting" ]; then
-            echo "just tools: waiting for another just tools to finish (lock $lock)" >&2
-            waiting=1
-        fi
-        sleep 1
-    done
-    held=1
-    echo "$$" >"$lock/pid"
+    # The lock stays held on descriptor 9 until this script exits. take_lock
+    # waits for it; take_lock -n fails at once when another recipe holds it.
+    exec 9>>"$lock"
+    if command -v flock >/dev/null 2>&1; then
+        take_lock() { flock ${1:+"$1"} 9; }
+    elif command -v lockf >/dev/null 2>&1; then
+        take_lock() { lockf -s ${1:+-t 0} 9; }
+    else
+        echo "just tools: needs flock(1) or lockf(1) to keep recipes from overlapping" >&2
+        exit 1
+    fi
+    if ! take_lock -n; then
+        echo "just tools: waiting for another just tools to finish (lock $lock)" >&2
+        take_lock
+    fi
     start=$(mktemp target/tools/.build-start.XXXXXX)
-    cargo build --release -p aios-tools --target-dir target/tools
+    cargo build --release -p aios-tools --target-dir target/tools 9>&-
     inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo'
     src=$(git ls-tree HEAD -- $inputs)
     changes=$(git status --porcelain --untracked-files=all -- $inputs)
