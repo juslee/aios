@@ -451,9 +451,9 @@ unsafe impl Sync for LogRing {}
 
 - **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array, and there is exactly one writer per ring. That holds because `log_impl` reads the core ID and pushes inside `with_irqs_masked`: an IRQ-context log call on the same core (such as the load balancer's, crash-fix ADR N6) would otherwise be a second producer, and a thread could migrate between reading its core ID and pushing.
 
-- **Drop-on-full**: When the ring has no room for a message (one entry, or two for a head and its continuation), the message is dropped and counted, and its position (`head` at the drop) is kept. `drain_logs` prints the count when its read position reaches that point, so the report sits between the entries logged before the drop and those logged after it. Dropping instead of overwriting keeps the producer off `tail` and off slots the drain may be reading, and logging still never blocks kernel execution.
+- **Drop-on-full**: When the ring has no room for a message (one entry, or two for a head and its continuation), the message is dropped and counted, and its position (`head` at the drop) is kept. `drain_logs` prints the count when its read position reaches that point, so the report sits between the entries logged before the drop and those logged after it. Dropping instead of overwriting keeps the producer off `tail` and off slots a single drain may be reading, and logging still never blocks kernel execution. Two overlapping `drain_logs` calls break this: one can store `tail` past a slot the other is still reading, and a push can then tear the entry the slower drain reads.
 
-- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`, so the entries written before the head advance are visible to the consumer when it reads the new head value. `tail.store(Release)` in `pop` pairs with `tail.load(Acquire)` in `push`, so the producer reuses a slot only after the consumer has finished reading it. `dropped.store(Release)` in `push` pairs with `dropped.load(Acquire)` in `pop`, so the drain sees a `drop_pos` at least as new as the count it reports.
+- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`, so the entries written before the head advance are visible to the consumer when it reads the new head value. `tail.store(Release)` in `pop` pairs with `tail.load(Acquire)` in `push`, so the producer reuses a slot only after the consumer has finished reading it (with one drain at a time; see Drop-on-full). `dropped.store(Release)` in `push` pairs with `dropped.load(Acquire)` in `pop`, so the drain sees a `drop_pos` at least as new as the count it reports.
 
 - **No lock needed**: The SPSC invariant (one producer, one consumer) eliminates the need for a mutex. Contrast this with `MessageRing` in `ipc/mod.rs`, which uses `spin::Mutex` because multiple threads may send to the same channel.
 
@@ -1022,7 +1022,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~405), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~431), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
 | 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~648), `block_engine.rs` (~783), `bench.rs` (~546) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 

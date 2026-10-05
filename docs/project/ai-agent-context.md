@@ -65,7 +65,7 @@ When implementing kernel code, use these established patterns:
 | Write ARM system register | `asm!("msr REG, {}",  in(reg) val)` + ISB if needed | `arch/aarch64/timer.rs:51-58` |
 | New static shared across cores | `AtomicT` with appropriate ordering | `smp.rs:34` (PRINT_TURN) |
 | Write-once boot-time static | `UnsafeCell` + `unsafe impl Sync` | `arch/aarch64/mmu.rs:32-39` |
-| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:198` (LOG_RINGS) |
+| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:201` (LOG_RINGS) |
 | New module in kernel | `pub mod name;` in parent + file with `//!` doc comment | `arch/aarch64/mod.rs` |
 | Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:18` |
 | Error from syscall handler | Return `Err(IpcError::Variant as i64)` | `ipc/mod.rs` (channel_create) |
