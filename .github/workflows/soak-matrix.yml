@@ -1,0 +1,162 @@
+name: Soak matrix
+
+# Interleaved A/B/C boot soak (scripts/soak-matrix.sh): builds 2-4 kernel
+# revisions, then boots them in rounds -- one boot per arm per round, the arm
+# order rotated every round -- all on ONE runner, so every arm shares that
+# runner's conditions. Arms are never split across jobs. Dispatch only;
+# report-only, like the qemu-soak job in ci.yml.
+#
+#   gh workflow run soak-matrix.yml -f refs="c1ce1a2 43fc8d5 64957ca" -f runs=30
+#
+# The results are x86 TCG numbers on ubuntu-26.04 and form their own
+# baseline: never pool them with local arm64 soaks, or with runs on another
+# runner image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: "2-4 space-separated commit SHAs or branch names, one arm each (A, B, C, D in order)"
+        required: true
+        type: string
+      runs:
+        description: "Rounds, i.e. boots per arm"
+        required: false
+        default: 30
+        type: number
+      secs:
+        description: "Seconds per boot (x86 TCG is slower than the arm64 dev hosts)"
+        required: false
+        default: 90
+        type: number
+      mode:
+        description: "QEMU device set"
+        required: false
+        default: text
+        type: choice
+        options:
+          - text
+          - gpu
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  soak-matrix:
+    name: Interleaved boot soak (report-only)
+    # Pinned: the QEMU and edk2 versions come from the runner image, and soak
+    # results are only comparable across runs on the same image. Same image
+    # and setup as ci.yml's qemu-soak job.
+    runs-on: ubuntu-26.04
+    continue-on-error: true
+    # GitHub's job limit. The soak step gets a tighter limit computed from the
+    # inputs (see "Plan the soak"), so a soak that overruns is stopped with
+    # time left for the summary and the artifact upload.
+    timeout-minutes: 360
+    env:
+      AIOS_EDK2_FW: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+      # Inputs reach the scripts as environment variables, never as ${{ }}
+      # text inside a script.
+      REFS: ${{ inputs.refs }}
+      RUNS: ${{ inputs.runs }}
+      SECS: ${{ inputs.secs }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      # Step time limit, in minutes:
+      #   boots   ceil(arms x runs x (secs + 15) / 60)
+      #           15 s per boot covers the harness start (timeout check, ESP
+      #           snapshot) and QEMU's exit after the timeout's SIGTERM (up to
+      #           10 s with --kill-after)
+      #   builds  5 x arms: toolchain install plus a cold debug build of
+      #           kernel and stub (the qemu-soak job's warm `just disk` takes
+      #           about 20 s)
+      #   margin  10
+      # Defaults, 3 arms: 158 + 15 + 10 = 183 min; 4 arms: 210 + 20 + 10 = 240.
+      # The limit must stay <= 340, leaving 20 min of the 360 for setup,
+      # summary and upload: at secs=90 that is at most 44 runs with 4 arms,
+      # 60 with 3 and 91 with 2. A larger soak fails here, before any build.
+      - name: Plan the soak
+        id: plan
+        run: |
+          set -f
+          # shellcheck disable=SC2086 # split the refs into words, no globbing
+          set -- $REFS
+          set +f
+          arms=$#
+          if [ "$arms" -lt 2 ] || [ "$arms" -gt 4 ]; then
+            echo "::error::refs must name 2-4 revisions (got $arms)"
+            exit 1
+          fi
+          for v in "$RUNS" "$SECS"; do
+            case "$v" in
+              '' | *[!0-9]*) echo "::error::runs and secs must be positive integers"; exit 1 ;;
+            esac
+          done
+          # 10#: decimal even with a leading zero (bash reads 030 as octal).
+          runs=$((10#$RUNS))
+          secs=$((10#$SECS))
+          if [ "$runs" -lt 1 ] || [ "$secs" -lt 1 ]; then
+            echo "::error::runs and secs must be positive integers"
+            exit 1
+          fi
+          boot_min=$(( (arms * runs * (secs + 15) + 59) / 60 ))
+          soak_min=$(( boot_min + 5 * arms + 10 ))
+          echo "Plan: $arms arms x $runs rounds x ($secs s + 15 s) = $boot_min min of boots; soak step limit $soak_min min"
+          if [ "$soak_min" -gt 340 ]; then
+            echo "::error::the soak needs about $soak_min min, over the 340 min this job can give it; lower runs or secs, or split the arms over two dispatches"
+            exit 1
+          fi
+          echo "soak_minutes=$soak_min" >> "$GITHUB_OUTPUT"
+      # Outside the checkout's target/, which rust-cache saves and restores.
+      - name: Choose the output directory
+        run: echo "MATRIX_OUT=$RUNNER_TEMP/soak-matrix" >> "$GITHUB_ENV"
+      # Full history: the arms can be any commit or branch.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: aarch64-unknown-none, aarch64-unknown-uefi
+          components: rust-src, llvm-tools
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      # ipxe-qemu provides efi-virtio.rom, the option ROM virtio-blk-pci needs.
+      - name: Install QEMU, edk2 firmware and mtools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64 ipxe-qemu mtools
+          qemu-system-aarch64 --version
+          dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
+          test -f "$AIOS_EDK2_FW"
+      # Each arm is built in its own worktree, $RUNNER_TEMP/arm-A and so on,
+      # with that arm's rust-toolchain.toml: rustup installs a pinned nightly
+      # the runner does not have yet on first use.
+      - name: Soak (${{ inputs.runs }} rounds x ${{ inputs.secs }} s, ${{ inputs.mode }})
+        timeout-minutes: ${{ fromJSON(steps.plan.outputs.soak_minutes) }}
+        run: |
+          set -f
+          # shellcheck disable=SC2086 # split the refs into words, no globbing
+          set -- $REFS
+          set +f
+          bash scripts/soak-matrix.sh --runs "$RUNS" --secs "$SECS" --mode "$MODE" \
+            --out "$MATRIX_OUT" --worktrees "$RUNNER_TEMP" --keep-worktrees -- "$@"
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "$MATRIX_OUT/summary.md" ]; then
+            cat "$MATRIX_OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The soak matrix produced no summary; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload soak logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-matrix-logs
+          path: ${{ env.MATRIX_OUT }}
+          if-no-files-found: warn
