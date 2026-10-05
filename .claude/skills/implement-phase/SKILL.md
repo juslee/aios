@@ -94,7 +94,7 @@ cd .claude/worktrees/phase-$ARGUMENTS
 
 ### Phase 3: Planning
 
-Check whether a **plan already exists from a prior plan-mode session**. Look for the system plan file (the path from the earlier plan mode session, typically `~/.claude/plans/*.md`). Also check if context from the Planning Path is available in the current conversation.
+Check whether a **plan already exists from a prior plan-mode session**. Look for the system plan file (the path from the earlier plan mode session, typically `${CLAUDE_CONFIG_DIR:-~/.claude}/plans/*.md`). Also check if context from the Planning Path is available in the current conversation.
 
 **If a plan exists from plan mode:**
 

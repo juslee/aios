@@ -58,7 +58,7 @@ Work, loop, retro and setup skills belong to later stages and do not exist yet.
 | Working plans | `docs/knowledge/plans/` on the PR branch; distilled into lessons/decisions and deleted before the PR is ready | git |
 | Lessons and decisions | `docs/knowledge/lessons/`, `docs/knowledge/decisions/` | git |
 | Session handoff | `.remember/remember.md` and `.remember/now.md` in the main checkout (gitignored in every checkout; pause never commits `.remember/`) | this Mac |
-| Personal auto-memory | `~/.claude/projects/<repo>/memory/MEMORY.md` | this Mac |
+| Personal auto-memory | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<repo-slug>/memory/MEMORY.md` (this repo's untracked `.envrc` may set `CLAUDE_CONFIG_DIR`) | this Mac |
 | Accepted docs drift | [scripts/docs/baseline.json](../../scripts/docs/baseline.json) | git |
 | Boot soak results | `summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in a run directory under `target/soak/` (`<timestamp>-<mode>` by default; `out=target/soak/167/main-text-r1` nests it deeper; runs that `out=` puts outside `target/soak/` are not read by `/justin:brief`) in whichever worktree ran the soak harness | this Mac |
 

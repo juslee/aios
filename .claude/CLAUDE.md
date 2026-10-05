@@ -243,6 +243,4 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 **Existing skills reused** (not recreated):
 
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
-- `engineering-workflow-skills:pr`, `commit-commands:commit`
-- `sc:implement`, `sc:test`, `sc:build`, `sc:analyze`
 - `pr-review-toolkit:review-pr`
