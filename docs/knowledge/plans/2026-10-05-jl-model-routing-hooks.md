@@ -28,7 +28,7 @@ The work is split in two because other open branches own the files that wire the
 
 - [x] Step 1: hook contract. Fetch the current Claude Code hooks reference and record the exact input fields and output shapes the subcommands rely on, in "Hook contract" below.
 - [x] Step 2: shared hook plumbing in `tools/src/cmd/hook/mod.rs`, the `aios hook` subcommand group in `main.rs`, and test helpers for running the binary with stdin.
-- [ ] Step 3: `aios hook repeat-error` plus tests.
+- [x] Step 3: `aios hook repeat-error` plus tests.
 - [ ] Step 4: `aios hook path-guard` plus tests.
 - [ ] Step 5: `aios hook route-shadow` plus tests, including one against a local fake HTTP server through real `curl`.
 - [ ] Step 6: review loop (correctness, security, conventions, docs) until a clean round.
@@ -174,6 +174,11 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 - Step 2: `state_dir` takes the override from `AIOS_HOOK_STATE_DIR` as the state directory itself (not a parent of `aios-agent/hooks`), and an empty value counts as unset. The per-hook subdirectories (`repeat-error/`) are created by the subcommands through `write_atomic`, which creates missing parent directories.
 - Step 2: the missing-session case: `state_key` hashes an absent or empty `session_id` like any unsafe id, so state still lands in one stable file. `<session>-<agent>` can in theory collide with a plain session id that contains a hyphen; ids are UUIDs and a collision only merges two failure counters.
 - Step 2: `additional_context` cuts its text to 10,000 bytes on a character boundary (the documented cap is characters, so this is the safe side).
+- Step 3: the state file is `{"entries":[{"command","error","count"}]}`, oldest first, with the normalised command and error stored separately instead of one combined signature string. Why: a success drops "every signature with the same normalised command", which is a field match rather than a string-prefix guess. A repeated pair moves to the newest end, so eviction removes the pair seen longest ago.
+- Step 3: an interrupted failure (`is_interrupt` true) produces no output and no state. The plan does not mention it; a user interrupt or a timeout kill is not the command failing the same way, and counting it would nudge after two Ctrl-C presses.
+- Step 3: a `PostToolUse` success writes nothing unless a failure of that command is on record. Why: nearly every Bash call succeeds, and the plan's cleanup runs "when the subcommand next writes state", so successes would otherwise create a file per session and agent for no reason.
+- Step 3: the normalisation is exactly as planned, so a four-digit run is masked (`E0425` and `E0432` both become `E#`), while two-digit parts of a clock time (`12:34:56`) are not. Two failures that differ only in the seconds of an ISO time therefore do not match; epoch timestamps do. Left as specified, since widening the mask would also merge distinct short numbers such as exit codes and line numbers.
+- Step 3: the nudge text states what happened and what the project expects (subagent: stop and report back to its caller; main session: ask the code-reviewer agent to diagnose it), as the hook contract asks. The command is the normalised one, cut to 200 bytes with `...` appended when cut.
 
 ## Lessons Learned
 
