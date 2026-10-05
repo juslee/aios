@@ -1655,7 +1655,7 @@ Decision tree for pre-AIRS urgency classification:
 6. Default: Digest (confidence: 0.50)
 ```
 
-The tree keeps the §18.3 ceiling: no agent can force an Interrupt. Only system agents may post a security alert (§18.5), and the agent category comes from the agent registry, not from the item. Any agent may post an Error, so an Error interrupts only when a system agent posts it, as in the §15.2 rule-based triage.
+The tree keeps the §18.3 ceiling: no agent can force an Interrupt. Only system agents may post a security alert (§18.5), and the agent category comes from the agent registry, not from the item. Any agent may post an Error, so an Error interrupts only when a system agent posts it. For Errors the tree is stricter than the §15.2 rule-based triage, whose score can reach Interrupt for a non-system agent's Error (for example a Communication agent's Error with an urgent keyword).
 
 This decision tree augments the rule-based triage in §15.2. On first boot (no engagement data), the rule-based triage from §15.2 is used. Once sufficient engagement data accumulates, this decision tree is trained offline and deployed as a static lookup table, replacing the rule-based heuristics. It is retrained weekly from updated engagement data.
 

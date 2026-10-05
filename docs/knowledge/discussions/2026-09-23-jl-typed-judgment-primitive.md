@@ -113,7 +113,7 @@ Adopt first where the evidence is in the state and the call can be asynchronous.
 | 12 | Intent Verifier LLM path | `intent-verifier/pipeline.md:262-280` | A rule-paragraph prompt and a parsed verdict | Noul: would this task need this action? Asynchronous only | 20 |
 | 13 | Manifest description check | `intent-verifier/specification.md:275` | "LLM-checked" | One Noul per declared purpose | 20 |
 | 14 | Browser phishing content | `applications/browser/intelligence.md:99` | "AIRS classifies urgency language, credential requests, suspicious forms" | Nouls feeding `content_score`; an asynchronous warning only | 35 |
-| 15 | Adversarial screening Tier 2 | `security/adversarial-defense/intelligence.md:315-336` | A prompt returning `injection_probability` and `confidence` | Noul, on inbound data only; Tier 2 is always asynchronous and never holds a message (`adversarial-defense/screening.md:214-217`) | none in §8 |
+| 15 | Adversarial screening Tier 2 | `security/adversarial-defense/intelligence.md:315-336` | A prompt returning `injection_probability` and `confidence` | Noul, on inbound data only; Tier 2 is always asynchronous and never holds a message (`adversarial-defense/screening.md:215-218`) | none in §8 |
 | 16 | Tool ranking | `tool-manager/intelligence.md:57` | `semantic_match` from embedding cosine | Choice over the candidate tools, feeding `semantic_match` | none in §8 |
 
 **Across all 129 sites:**
@@ -168,7 +168,7 @@ The tiers below follow the architecture docs. The implemented pool sizing gives 
    - 15–20 s for a cold question prefix;
    - about 3.2 GB resident.
 
-   None of these meets the latency budgets the docs set for ranked consumers: < 50 ms for one attention item (`intelligence/attention.md:1146`) and < 500 ms for a batch of 50 (`:1752`), < 500 ms for a semantic query (`storage/spaces/query-engine.md:152`), < 10 ms for screening Tier 2, an asynchronous stage that can defer (`adversarial-defense/screening.md:281`), and the Intent Verifier's < 10 ms LLM target, which assumes an NPU and expects 50–100 ms on CPU-only hardware, with more actions routed to asynchronous verification (`intent-verifier/pipeline.md:456`). Row 5 in particular needs its batch budget revised. Measure on the Gate 2 target hardware, a Pi 4 (4GB) (`development-plan.md:255`), and on a Pi 5, before judgment criteria are added to Gate 2.
+   None of these meets the latency budgets the docs set for ranked consumers: < 50 ms for one attention item (`intelligence/attention.md:1146`) and < 500 ms for a batch of 50 (`:1757`), < 500 ms for a semantic query (`storage/spaces/query-engine.md:152`), < 10 ms for screening Tier 2, an asynchronous stage that can defer (`adversarial-defense/screening.md:281`), and the Intent Verifier's < 10 ms LLM target, which assumes an NPU and expects 50–100 ms on CPU-only hardware, with more actions routed to asynchronous verification (`intent-verifier/pipeline.md:456`). Row 5 in particular needs its batch budget revised. Measure on the Gate 2 target hardware, a Pi 4 (4GB) (`development-plan.md:255`), and on a Pi 5, before judgment criteria are added to Gate 2.
 6. **Calibration.** No AIOS labels exist yet.
    - decider-2b v10 reports ECE 0.037 in-task and 0.084 held-out.
    - On the hard tier of JevBench, as reported by the Decider authors, ECE is 0.30 for decider-2b, 0.29 for decider-4b and 0.15 for decider-35b-a3b.

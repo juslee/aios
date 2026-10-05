@@ -351,9 +351,10 @@ fn assess_urgency(
     airs_available: bool,
 ) -> Urgency {
     if !airs_available {
-        // Fallback: use category-based heuristics. Any agent can choose the
+        // Fallback: category-based heuristics, a simplification of the
+        // rule-based triage in attention.md §15.2. Any agent can choose the
         // category, so only a system agent's critical alert interrupts:
-        // no agent can force an Interrupt (attention.md §15.2, §18.3).
+        // no agent can force an Interrupt (attention.md §18.3).
         return match &content.category {
             AttentionCategory::Alert { severity: AlertSeverity::Critical } if from_system_agent => {
                 Urgency::Interrupt
@@ -445,15 +446,17 @@ The Attention Kit operates in two modes depending on AIRS availability:
 
 **Without AIRS (heuristic fallback):**
 
-- Category-based urgency: `Alert(Critical)` from a system agent maps to
-  `Urgency::Interrupt`. Other alerts, critical alerts from other agents included,
-  and reminders map to `Urgency::NextBreak`, and messages, progress and social items
-  default to `Urgency::Digest`. An agent cannot force an Interrupt by choosing a
+- Category-based urgency, a simplification of the rule-based triage in
+  [attention.md](../../intelligence/attention.md) §15.2: `Alert(Critical)` from a
+  system agent maps to `Urgency::Interrupt`. Other alerts, critical alerts from other
+  agents included, and reminders map to `Urgency::NextBreak`, and messages, progress
+  and social items default to `Urgency::Digest`. An agent cannot force an Interrupt by choosing a
   category ([attention.md](../../intelligence/attention.md) §18.3).
 - Simple grouping: items from the same agent with the same category are grouped by
   count. No AI summarization.
 - No relationship scoring: all senders are treated equally.
-- No content analysis: urgency is derived from category alone.
+- No content analysis: urgency comes from the item category and the source agent's
+  registry category.
 
 **Feature detection:**
 

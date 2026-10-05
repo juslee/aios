@@ -297,10 +297,6 @@ pub struct ComputeScheduler {
     /// Scheduling policy configuration.
     policy: SchedulingPolicy,
 
-    /// The AIRS model registry (model-registry.md §4.1). Device scoring reads
-    /// the requested model's `ModelEntry` for its quantization format.
-    models: ModelRegistryHandle,
-
     /// Device scoring cache — refreshed every scheduling cycle.
     /// Avoids repeated registry queries within a single scheduling decision.
     device_scores: Vec<(ComputeDeviceId, DeviceScore)>,
@@ -391,18 +387,18 @@ pub struct ScoreComponents {
 impl ComputeScheduler {
     /// Score a device for a given inference request. `device` is one of the
     /// entries a ComputeRegistry query returns (compute/registry.md §5.3).
+    /// `model` is the requested model's `ModelEntry` (model-registry.md §4.1),
+    /// which the caller looks up before scoring; it is the default model's
+    /// entry when `request.model` is None.
     fn score_device(
         &self,
         device: &ComputeDeviceEntry,
         request: &InferenceRequest,
+        model: &ModelEntry,
     ) -> DeviceScore {
-        // The requested model's format, from its registry entry
-        // (`request.model` is None for the default model).
-        let quant = self.models.resolve(request.model).quantization;
-        let format_support = if device.capabilities.quant_formats.contains(QuantFormatSet::from(quant)) {
-            1.0
-        } else {
-            0.0  // Hard disqualification
+        let format_support = match Self::quant_format_bit(model.quantization) {
+            Some(bit) if device.capabilities.quant_formats.contains(bit) => 1.0,
+            _ => 0.0,  // Hard disqualification
         };
 
         let availability = 1.0 - device.utilization;
@@ -433,6 +429,22 @@ impl ComputeScheduler {
                 format_support, availability, thermal,
                 memory_fit, throughput, latency,
             },
+        }
+    }
+
+    /// The kernel `QuantFormatSet` bit (compute/classification.md §4.2) for a
+    /// model's `QuantFormat`. Formats with no bit, such as Q3_K_S and Q4_K_S,
+    /// return None, so no device supports them and `format_support` is 0.0.
+    fn quant_format_bit(format: QuantFormat) -> Option<QuantFormatSet> {
+        match format {
+            QuantFormat::Q4_0 => Some(QuantFormatSet::Q4_0),
+            QuantFormat::Q4_K_M => Some(QuantFormatSet::Q4_K_M),
+            QuantFormat::Q5_K_M => Some(QuantFormatSet::Q5_K_M),
+            QuantFormat::Q6_K => Some(QuantFormatSet::Q6_K),
+            QuantFormat::Q8_0 => Some(QuantFormatSet::Q8_0),
+            QuantFormat::F16 => Some(QuantFormatSet::F16),
+            QuantFormat::F32 => Some(QuantFormatSet::F32),
+            _ => None,
         }
     }
 
