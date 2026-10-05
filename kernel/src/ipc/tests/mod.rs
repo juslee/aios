@@ -5,6 +5,7 @@
 //! Called from main.rs after sched::init() but before enter_scheduler().
 
 mod bad_pid;
+mod kit_errors;
 mod select_cap;
 mod syscall_args;
 
@@ -446,9 +447,10 @@ fn ipc_caller_entry() -> ! {
 /// (expects ETIMEDOUT). It then checks EPIPE after channel destroy, EINVAL
 /// for out-of-range channel ids, EINVAL for out-of-range pids on the
 /// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
-/// check (`select_cap_test`), EINVAL for hostile syscall arguments and
-/// MemoryUnmap ownership, and the shared memory EINVAL/EPERM split
-/// (`syscall_args_test`).
+/// check (`select_cap_test`), EINVAL for hostile syscall arguments,
+/// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
+/// (`syscall_args_test`), and the IPC Kit's error variants through
+/// `KernelIpc` (`kit_errors_test`, on `select_cap_test`'s channels).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
@@ -534,8 +536,9 @@ fn ipc_timeout_entry() -> ! {
     }
 
     bad_pid::shm_bad_pid_test(caller_tid);
-    select_cap::select_cap_test(caller_tid);
+    let select_channels = select_cap::select_cap_test(caller_tid);
     syscall_args::syscall_args_test(caller_tid);
+    kit_errors::kit_errors_test(caller_tid, select_channels);
 
     loop {
         sched::thread_yield();

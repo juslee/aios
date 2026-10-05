@@ -3,6 +3,8 @@
 //! These are ABI-stable values shared between kernel and user space.
 //! Per ipc.md §3.1–3.2.
 
+use crate::cap::{CapabilityHandle, MAX_CAPS_PER_PROCESS};
+
 /// Syscall numbers matching the IPC architecture spec.
 ///
 /// Convention: x8 = syscall number, x0-x5 = args, return in x0.
@@ -108,8 +110,9 @@ impl TryFrom<i64> for IpcError {
     }
 }
 
-/// Decode a 32-bit id (channel, region, notification, process, capability
-/// handle) from a 64-bit syscall argument register.
+/// Decode a 32-bit id (channel, region, notification, process) from a 64-bit
+/// syscall argument register. Capability handles go through
+/// [`cap_handle_arg`] instead.
 ///
 /// Returns `Err(IpcError::Einval as i64)` when `reg` does not fit in `u32`.
 /// Always decode ids through this function, never through `reg as u32`: the
@@ -118,6 +121,24 @@ impl TryFrom<i64> for IpcError {
 pub const fn id_arg(reg: u64) -> Result<u32, i64> {
     if reg <= u32::MAX as u64 {
         Ok(reg as u32)
+    } else {
+        Err(IpcError::Einval as i64)
+    }
+}
+
+/// Decode a capability handle (x0 of CapabilityAttenuate and
+/// CapabilityRevoke) from a 64-bit syscall argument register.
+///
+/// A handle is a slot of the caller's capability table, so a value at or
+/// above [`MAX_CAPS_PER_PROCESS`] names a slot no process has: it is
+/// `Err(IpcError::Einval as i64)`, like any other out-of-range id
+/// (ipc.md §3.2). An in-range handle whose slot is empty or revoked is
+/// checked by the handler against the caller's table: that is EPERM, a
+/// capability the caller does not hold.
+#[inline]
+pub const fn cap_handle_arg(reg: u64) -> Result<CapabilityHandle, i64> {
+    if reg < MAX_CAPS_PER_PROCESS as u64 {
+        Ok(CapabilityHandle(reg as u32))
     } else {
         Err(IpcError::Einval as i64)
     }
@@ -345,6 +366,28 @@ mod tests {
     #[test]
     fn id_arg_u64_max_is_einval() {
         assert_eq!(id_arg(u64::MAX), Err(IpcError::Einval as i64));
+    }
+
+    // --- cap_handle_arg tests ---
+
+    #[test]
+    fn cap_handle_arg_accepts_every_table_slot() {
+        assert_eq!(cap_handle_arg(0), Ok(CapabilityHandle(0)));
+        let last = (MAX_CAPS_PER_PROCESS - 1) as u64;
+        assert_eq!(cap_handle_arg(last), Ok(CapabilityHandle(last as u32)));
+    }
+
+    #[test]
+    fn cap_handle_arg_past_the_table_is_einval() {
+        // No process has these slots, so the handle is malformed, not a
+        // capability the caller lacks (EPERM).
+        let einval = Err(IpcError::Einval as i64);
+        assert_eq!(cap_handle_arg(MAX_CAPS_PER_PROCESS as u64), einval);
+        assert_eq!(cap_handle_arg(1000), einval);
+        assert_eq!(cap_handle_arg(u32::MAX as u64), einval);
+        // Bit 32 set above slot 5: a truncating decode would name slot 5.
+        assert_eq!(cap_handle_arg((1 << 32) | 5), einval);
+        assert_eq!(cap_handle_arg(u64::MAX), einval);
     }
 
     // --- flags_arg tests ---

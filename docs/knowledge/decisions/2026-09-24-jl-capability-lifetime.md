@@ -317,7 +317,7 @@ Crash-fix step 1b counts "`unblock` skipping a Running or Runnable target, by ca
 
 ### Self-test and log changes
 
-- `denied ChannelAccess` falls from 6 to 3 lines per boot (select_cap only). `Timeout test: ETIMEDOUT as expected` replaces `unexpected result -6` and prints after every other ipc-timeout test line. `Destroy test: EPIPE as expected` replaces `unexpected result Err(-6)`.
+- `denied ChannelAccess` falls from 10 to 7 lines per boot (select_cap's 3 and the Kit-error test's 4; #190's Kit-error self-test, which runs on select_cap's channels, added 4 to both counts). `Timeout test: ETIMEDOUT as expected` replaces `unexpected result -6` and prints after every other ipc-timeout test line. `Destroy test: EPIPE as expected` replaces `unexpected result Err(-6)`.
 - New lines: `Stale-id test`, `Stale-shm test`, `Shm-cascade test`, `Create-ABI test`, `Share test`, `Dead test`, `Wake-token test`, seven `Lifecycle:` lines, and `Notify-loop`, `Select-loop`, `Sleep-loop`, `Recv-loop` and `Call-loop test: as expected`. Region logs: `shm_cascade: pid=N destroyed K regions`, `shm: region S.G draining (B borrows)`, `shm: region S.G drained` and `shm_destroy: region S.G`. Ids print as `slot.generation`. Every line stays under 48 bytes (#191). The plan lists the exact lines and counts.
 - No soak classifier matches self-test lines, so the soak adds an expected-line tally.
 

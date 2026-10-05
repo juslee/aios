@@ -42,9 +42,9 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// missing capability.
 ///
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
-/// no state and grant nothing. Checks 0-20 and 26 (#188) log no warning;
-/// checks 21-25 (#190) log the kernel's usual W^X, max_flags and
-/// denied-capability warnings. The one MemoryMap allocation is freed by the
+/// no state and grant nothing. Checks 0-20 and 26-29 log no warning; checks
+/// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
+/// warnings. The one MemoryMap allocation is freed by the
 /// test's own exact unmap, and the one shared region by its unmap once the
 /// test has revoked every capability it granted.
 ///
@@ -94,7 +94,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
         .position(Option::is_none)
         .unwrap_or(MAX_NOTIFICATIONS) as u64;
 
-    let mut checks = [false; 27];
+    let mut checks = [false; 30];
 
     // User pointers: null, page 0 and kernel addresses are EINVAL.
     checks[0] = svc(Syscall::DebugPrint, &[0, 4]) == einval;
@@ -123,7 +123,9 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     checks[15] = mapped;
     if mapped {
         let va = va as u64;
-        checks[16] = svc(Syscall::MemoryUnmap, &[va + PAGE, 2 * PAGE]) == einval;
+        // An address inside the allocation, with its full size: only the
+        // exact base names it.
+        checks[16] = svc(Syscall::MemoryUnmap, &[va + PAGE, 3 * PAGE]) == einval;
         checks[17] = svc(Syscall::MemoryUnmap, &[va, PAGE]) == einval;
         checks[18] = shmem::memory_unmap(ProcessId(TEST_PID.0 + 1), va as usize, 3 * PAGE as usize)
             == Err(einval);
@@ -141,6 +143,14 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     checks[24] = mapped;
     checks[25] = denied;
     checks[26] = oversize;
+
+    // A capability handle past the table is malformed, not a missing
+    // capability: EINVAL, before any table lookup. A MemoryMap above 64
+    // pages is EINVAL too: no caller can allocate it.
+    let past_table = shared::MAX_CAPS_PER_PROCESS as u64;
+    checks[27] = svc(Syscall::CapabilityRevoke, &[past_table]) == einval;
+    checks[28] = svc(Syscall::CapabilityAttenuate, &[past_table, 0, 0, 0]) == einval;
+    checks[29] = svc(Syscall::MemoryMap, &[65 * PAGE, READ]) == einval;
 
     let failed = checks
         .iter()

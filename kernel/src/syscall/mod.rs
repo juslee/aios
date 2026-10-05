@@ -6,7 +6,7 @@
 mod user;
 
 use crate::arch::aarch64::trap::TrapFrame;
-use shared::syscall::id_arg;
+use shared::syscall::{cap_handle_arg, id_arg};
 use user::{copy_from_user, copy_to_user, validate_user_ptr};
 
 // Re-export ABI types from shared crate.
@@ -22,9 +22,11 @@ pub use shared::{Syscall, SYSCALL_COUNT};
 ///
 /// Convention: x8 = syscall number, x0-x5 = args, return in x0.
 ///
-/// Id arguments (channel, shared memory region, notification, process,
-/// capability handle) are decoded with `id_arg`: a register value that does
-/// not fit in `u32` returns `EINVAL` rather than being truncated.
+/// Id arguments (channel, shared memory region, notification, process) are
+/// decoded with `id_arg`: a register value that does not fit in `u32` returns
+/// `EINVAL` rather than being truncated. Capability handles are decoded with
+/// `cap_handle_arg`: a handle at or above `MAX_CAPS_PER_PROCESS` returns
+/// `EINVAL`.
 ///
 /// User buffers are range-checked with `validate_user_ptr` and read or written
 /// only through `copy_from_user` / `copy_to_user`: a null, page-0, kernel or
@@ -329,10 +331,13 @@ fn sys_capability_transfer(_tf: &mut TrapFrame) -> i64 {
 ///
 /// Create a narrower child capability from an existing one.
 /// x3 is required when new_cap_type is ChannelAccess(1) or SharedMemoryAccess(3).
-/// EINVAL for an unknown new_cap_type or an x3 that does not fit in u32.
+/// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, an unknown
+/// new_cap_type or an x3 that does not fit in u32; EPERM for an in-range
+/// handle whose slot is empty or revoked, or a type the parent cannot
+/// attenuate to.
 fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
-    let handle = match id_arg(tf.x[0]) {
-        Ok(h) => shared::CapabilityHandle(h),
+    let handle = match cap_handle_arg(tf.x[0]) {
+        Ok(h) => h,
         Err(e) => return e,
     };
     let new_cap_type = tf.x[1];
@@ -384,9 +389,12 @@ fn sys_capability_attenuate(tf: &mut TrapFrame) -> i64 {
 ///
 /// Revoke a capability and cascade to all children. Destroys channels
 /// created under the revoked capability.
+///
+/// EINVAL for a handle at or above MAX_CAPS_PER_PROCESS, a slot no process
+/// has; EPERM for an in-range handle whose slot is empty or revoked.
 fn sys_capability_revoke(tf: &mut TrapFrame) -> i64 {
-    let handle = match id_arg(tf.x[0]) {
-        Ok(h) => shared::CapabilityHandle(h),
+    let handle = match cap_handle_arg(tf.x[0]) {
+        Ok(h) => h,
         Err(e) => return e,
     };
 

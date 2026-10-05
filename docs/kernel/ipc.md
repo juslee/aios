@@ -212,13 +212,20 @@ pub enum Syscall {
         capability: CapabilityTokenId,
     },
 
-    /// Create a new attenuated capability from an existing one
+    /// Create a new attenuated capability from an existing one.
+    /// Raw syscall ABI: x0=capability handle (a slot of the caller's table,
+    /// below MAX_CAPS_PER_PROCESS = 256), x1=type (0=ChannelCreate,
+    /// 1=ChannelAccess(x3), 2=SharedMemoryCreate, 3=SharedMemoryAccess(x3),
+    /// 4=SpawnAgent, 5=DebugPrint), x2=expiry tick (0 = none), x3=resource
+    /// id. Returns: x0=new handle or negative error. The source/restrictions
+    /// form below is the target design.
     CapabilityAttenuate {
         source: CapabilityTokenId,
         restrictions: AttenuationSpec,
     },
 
-    /// Revoke a capability
+    /// Revoke a capability.
+    /// Raw syscall ABI: x0=capability handle (below MAX_CAPS_PER_PROCESS).
     CapabilityRevoke {
         capability: CapabilityTokenId,
     },
@@ -264,7 +271,11 @@ pub enum Syscall {
         flags: MemoryFlags,            // must be a subset of the region's maximum
     },
 
-    /// Transfer shared memory access to another agent via IPC
+    /// Transfer shared memory access to another agent via IPC.
+    /// Raw syscall ABI: x0=region, x1=target pid. The caller must be the
+    /// region's creator; the target process is granted
+    /// SharedMemoryAccess(region). The channel/flags form below is the
+    /// target design.
     SharedMemoryShare {
         region: SharedMemoryId,
         channel: ChannelId,
@@ -397,17 +408,18 @@ Syscall convention (aarch64):
 
 **Argument decoding.** Ids, flags, pointers and lengths are decoded from the full 64-bit register, never by truncation:
 
-- Ids (channel, region, notification, process, capability handle) go through `shared::syscall::id_arg`: a value above `u32::MAX` is `EINVAL`.
+- Ids (channel, region, notification, process) go through `shared::syscall::id_arg`: a value above `u32::MAX` is `EINVAL`.
+- A capability handle (x0 of `CapabilityAttenuate` and `CapabilityRevoke`) is a slot of the caller's capability table and goes through `shared::syscall::cap_handle_arg`: a value at or above `MAX_CAPS_PER_PROCESS` (256) names a slot no process has and is `EINVAL`, before any table lookup. An in-range slot that is empty or revoked is a capability the caller does not hold: `EPERM`.
 - Memory flags (`MemoryMap`, `SharedMemoryCreate` and `SharedMemoryMap`, all in x1) go through `shared::syscall::flags_arg` and `VmFlags::from_caller_bits`. The caller may set only READ (bit 0), WRITE (bit 1) and EXECUTE (bit 2), `MEMORY_FLAGS_MASK`; any other bit, bits 32-63 included, is `EINVAL`. `VmFlags::USER` (bit 3) is not caller-settable: every user mapping is user-accessible, so the kernel adds USER itself. WRITE together with EXECUTE is a W^X violation and is also `EINVAL`.
 - User buffers are checked with `validate_user_va` (§8.1) and copied through `copy_from_user` / `copy_to_user` in `kernel/src/syscall/user.rs`, with no lock held. A null, page-0, kernel-half or overflowing range is `EINVAL`. The check alone does not make the copy safe on today's TTBR0 (§8.1).
 - `ProcessExit` is the one exception: its exit code is `x0 as i32`, so bits 32-63 are ignored, not rejected (`ProcessExit(0x1_0000_0000)` exits with code 0). Exit-code handling belongs to the process-lifecycle work (#189).
 
-**Errno policy: `EINVAL` versus `EPERM`.** `EPERM` means the caller lacks a right the request needs; `EINVAL` means the request is malformed for every caller. The IPC Kit decodes `EPERM` as `CapabilityDenied` (Kit doc §6), so a malformed request must never return it. One `EPERM` is not a missing right: a target pid whose slot holds no process (the `SharedMemoryShare` target, the `ProcessWait` child) gets `EPERM` from the process accessors (`process_mut`, `process_ref` in `kernel/src/task/process.rs`), which report an empty slot that way today; the process-lifecycle work (#185/#189) reworks those accessors. Neither syscall has a Kit wrapper. A wrapper for either must override that `EPERM` rather than report `CapabilityDenied`, which is what a plain `IpcKitError::from_code` decode gives.
+**Errno policy: `EINVAL` versus `EPERM`.** `EPERM` means the caller lacks a right the request needs; `EINVAL` means the request is malformed for every caller. The IPC Kit decodes `EPERM` as `CapabilityDenied` (Kit doc §6), so a malformed request must never return it. Two `EPERM`s are not a missing right. A target pid whose slot holds no process (the `SharedMemoryShare` target, the `ProcessWait` child) gets `EPERM` from the process accessors (`process_mut`, `process_ref` in `kernel/src/task/process.rs`), which report an empty slot that way today. `ProcessWait` also returns `EPERM` when its wake finds no exit code recorded for the child. The process-lifecycle work (#185/#189) reworks both. Neither syscall has a Kit wrapper. A wrapper for either must override those `EPERM`s rather than report `CapabilityDenied`, which is what a plain `IpcKitError::from_code` decode gives.
 
 | Code | Returned for |
 |---|---|
-| `EINVAL` | An id out of range or above `u32::MAX`; an undefined flag bit, USER included; WRITE together with EXECUTE (W^X) in `MemoryMap`, `SharedMemoryCreate` or `SharedMemoryMap`; `SharedMemoryMap` flags beyond the region's `max_flags`; a `SharedMemoryCreate` size above 4 MiB (§4.7); a bad user buffer; an unknown `CapabilityAttenuate` type or `IpcSelect` entry kind; a `MemoryUnmap` address that is not exactly one of the caller's `MemoryMap` allocations (§4.7); a notification that does not exist |
-| `EPERM` | A missing capability (`ChannelCreate`, `ChannelAccess`, `SharedMemoryCreate`, `SharedMemoryAccess`); a caller with no process; a target pid whose slot holds no process (not a missing right, see above); a `SharedMemoryShare` caller that is not the region's creator; a `SharedMemoryUnmap`/`MemoryUnmap` of a region the caller has not mapped (holding the mapping is the right to remove it) |
+| `EINVAL` | An id out of range or above `u32::MAX`; a capability handle at or above `MAX_CAPS_PER_PROCESS`; an undefined flag bit, USER included; WRITE together with EXECUTE (W^X) in `MemoryMap`, `SharedMemoryCreate` or `SharedMemoryMap`; `SharedMemoryMap` flags beyond the region's `max_flags`; a `SharedMemoryCreate` size above 4 MiB or a `MemoryMap` size above 64 pages (§4.7); a bad user buffer; an unknown `CapabilityAttenuate` type or `IpcSelect` entry kind; a `MemoryUnmap` address that is not exactly one of the caller's `MemoryMap` allocations (§4.7); a notification that does not exist |
+| `EPERM` | A missing capability (`ChannelCreate`, `ChannelAccess`, `SharedMemoryCreate`, `SharedMemoryAccess`); an in-range capability handle whose slot is empty or revoked, or whose capability cannot attenuate to the requested type; a caller with no current thread or no process, except that `IpcSelect` and `NotificationWait` with no current thread (in-kernel callers only) return `EINVAL`; a target pid whose slot holds no process, and a `ProcessWait` whose wake finds no exit code (neither a missing right, see above); a `SharedMemoryShare` caller that is not the region's creator; a `SharedMemoryUnmap`/`MemoryUnmap` of a region the caller has not mapped (holding the mapping is the right to remove it) |
 | `EACCES` | Reserved for the behavioral gate's SUSPENDED state (§9.1); no kernel path returns it yet |
 
 ### 3.3 Kernel Resource Limits
@@ -720,11 +732,11 @@ fn transfer_capability(channel: ChannelId, cap: CapabilityTokenId) -> Result<()>
 
 `MemoryMap` allocates memory private to the calling process; `MemoryUnmap` gives it back. As implemented in `kernel/src/ipc/shmem.rs`:
 
-- **Allocation.** `size` is rounded up to whole pages (at least one, at most `MAX_PRIVATE_PAGES` = 64, otherwise `ENOSPC`) and allocated as **one physically contiguous buddy block** from `Pool::User` (order `order_for_pages(pages)`), zeroed. `ENOMEM` if the pool has no free block of that order. WRITE together with EXECUTE is `EINVAL` (W^X, §3.2).
+- **Allocation.** `size` is rounded up to whole pages (at least one, at most `MAX_PRIVATE_PAGES` = 64, otherwise `EINVAL`: no caller can allocate more, so `MemoryMap`'s `ENOSPC` keeps one meaning, a full table) and allocated as **one physically contiguous buddy block** from `Pool::User` (order `order_for_pages(pages)`), zeroed. `ENOMEM` if the pool has no free block of that order. WRITE together with EXECUTE is `EINVAL` (W^X, §3.2).
 - **Record.** Each allocation is recorded in a slot of `PRIVATE_ALLOC_TABLE` (`MAX_PRIVATE_ALLOCATIONS` = 64 slots system-wide, `ENOSPC` when full) as owner pid, physical base, buddy order and requested page count. The table is a leaf lock: blocks are allocated before it is taken and freed after it is released.
 - **Address returned.** No process has a user address space yet (every process has `address_space: None`), and `SharedMemoryMap` returns its region's window VA (§4.5) without mapping it. That window starts at `USER_HEAP_BASE` and gives region *r* the slot at *r* × 4 MiB, the largest block the buddy allocator hands out (`MAX_ORDER`), so every region fits its slot. `MemoryMap` follows the same model. Slot *i* has a fixed address in the **private VA window** that follows the shared memory window: `PRIVATE_VA_BASE` = `USER_HEAP_BASE` + 64 × 4 MiB (256 MiB), plus *i* × 256 KiB (`MAX_PRIVATE_PAGES` pages). `MemoryMap` returns that user address and maps nothing into TTBR0. The address stands for the whole allocation: it is the key `MemoryUnmap` takes, and because the block is contiguous, `[addr, addr + size)` will map onto it as one range when processes get address spaces. EL1 code would reach the block through the direct map (`DIRECT_MAP_BASE` + base); no EL1 code uses the memory `MemoryMap` allocates (the #188 boot self-test only maps and unmaps it). It never returns the direct-map address: that would disclose a physical address to the caller, and as an `i64` in x0 it is negative, so it would read as an error. The slots are shared by all processes and `MemoryMap` takes the lowest free one, so the address a caller receives shows that the slots below it are in use. This layout is interim and deviates from [memory/virtual.md §3.1](./memory/virtual.md), which puts shared memory at `0x1_0000_0000`, above the agent heap at `USER_HEAP_BASE`: both windows, 256 MiB for shared memory and 16 MiB for private allocations, lie in the range §3.1 gives the heap. They move when processes get user address spaces.
 - **Free.** `MemoryUnmap(addr, size)` with `addr` in the shared memory window unmaps that region (`size` unused). Otherwise it frees only an allocation that matches exactly: `addr` is a slot's base address in the private window, the slot belongs to the caller, and `size` rounds up to the same page count. Anything else returns `EINVAL` and frees nothing: another process's allocation (the address names an allocation only for the process it was returned to, so for any other caller it is like any address that is not one of its allocations), an address inside or past an allocation, and any direct-map or other kernel address. `MemoryUnmap` can therefore never return a page it did not hand out, such as a kernel page or a region's frames, to the buddy allocator.
-- **Limits.** One allocation is at most 256 KiB, and only a whole allocation can be freed. The POSIX translation ([posix.md](../platform/posix.md) §7.6 and §10.4) sends 2 MiB pthread stacks and every anonymous or private file-backed (`MAP_PRIVATE`) `mmap`, of any length, to `MemoryMap`, and any `munmap` range to `MemoryUnmap`. Until `MemoryMap` can allocate more than one block and defines what a partial unmap does, such a stack, any of those mappings above 256 KiB and a partial `munmap` return `ENOSPC` or `EINVAL`. A shared memory region is likewise one buddy block, so `SharedMemoryCreate` rejects a size above 4 MiB (`2^MAX_ORDER` pages) with `EINVAL`, before the capability check: no caller can create a larger region, and `SharedMemoryCreate`'s `ENOSPC` keeps its one meaning, a full region table.
+- **Limits.** One allocation is at most 256 KiB, and only a whole allocation can be freed. The POSIX translation ([posix.md](../platform/posix.md) §7.6 and §10.4) sends 2 MiB pthread stacks and every anonymous or private file-backed (`MAP_PRIVATE`) `mmap`, of any length, to `MemoryMap`, and any `munmap` range to `MemoryUnmap`. Until `MemoryMap` can allocate more than one block and defines what a partial unmap does, such a stack, any of those mappings above 256 KiB and a partial `munmap` return `EINVAL`. A shared memory region is likewise one buddy block, so `SharedMemoryCreate` rejects a size above 4 MiB (`2^MAX_ORDER` pages) with `EINVAL`, before the capability check: no caller can create a larger region, and `SharedMemoryCreate`'s `ENOSPC` keeps its one meaning, a full region table.
 - **Not yet.** Process exit does not free a process's private allocations. `process_exit` (`kernel/src/task/process.rs`) calls `process_cleanup_shared_memory`, which removes only the process's region mappings and frees a region when that was its last mapping; a region the process created but never mapped is not freed. The process lifecycle work frees both.
 
 -----

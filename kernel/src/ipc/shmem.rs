@@ -11,10 +11,11 @@
 //!
 //! Errno policy (ipc.md §3.2): EINVAL for a request that no caller could
 //! make (an out-of-range id, WRITE | EXECUTE, flags beyond the region's
-//! `max_flags`, a region size above 4 MiB, a private address that is not
-//! the caller's allocation); EPERM when the caller lacks a right the request
-//! needs (a capability, a mapping of the region, being its creator); EPIPE
-//! when the region is gone. One EPERM is not a missing right: a
+//! `max_flags`, a region size above 4 MiB, a MemoryMap above 64 pages, a
+//! private address that is not the caller's allocation); ENOSPC only for a
+//! full table; EPERM when the caller lacks a right the request needs (a
+//! capability, a mapping of the region, being its creator); EPIPE when the
+//! region is gone. One EPERM here is not a missing right: a
 //! SharedMemoryShare target pid whose slot holds no process, which the
 //! process accessors report as EPERM today (ipc.md §3.2).
 
@@ -567,7 +568,7 @@ pub fn process_cleanup_shared_memory(pid: ProcessId) {
 // Private memory (MemoryMap / MemoryUnmap)
 // ---------------------------------------------------------------------------
 
-/// Largest MemoryMap request, in pages (256 KiB).
+/// Largest MemoryMap request, in pages (256 KiB). A larger size is EINVAL.
 const MAX_PRIVATE_PAGES: usize = 64;
 
 /// Maximum live MemoryMap allocations system-wide.
@@ -628,18 +629,21 @@ static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCA
 /// `base_phys`); no EL1 code uses the memory MemoryMap allocates (the #188
 /// boot self-test only maps and unmaps it). ipc.md §4.7.
 ///
-/// Errors: EINVAL for W^X (WRITE | EXECUTE); ENOSPC above `MAX_PRIVATE_PAGES`
-/// pages or when `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has
-/// no free block of the needed order.
+/// Errors: EINVAL for W^X (WRITE | EXECUTE) and for a size above
+/// `MAX_PRIVATE_PAGES` pages, which no caller can allocate; ENOSPC when
+/// `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has no free block of
+/// the needed order.
 pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, i64> {
     // W^X enforcement (EINVAL, as in shared_memory_create).
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
         return Err(IpcError::Einval as i64);
     }
 
+    // The fixed per-allocation limit, like SharedMemoryCreate's 4 MiB bound:
+    // EINVAL, so that ENOSPC keeps its one meaning, a full table.
     let pages = size.div_ceil(PAGE_SIZE).max(1);
     if pages > MAX_PRIVATE_PAGES {
-        return Err(IpcError::Enospc as i64);
+        return Err(IpcError::Einval as i64);
     }
     let order = order_for_pages(pages);
 

@@ -25,11 +25,11 @@ pub use crate::ipc::{
 ///
 /// `From<IpcError>` (and [`IpcKitError::from_code`], which decodes a raw
 /// code first) maps each errno to the least specific variant that is correct
-/// for every kernel path returning it, except EPERM, EPIPE and ENOSPC, for
-/// which no variant is correct on every path, and EPROTO, whose default is
-/// kept by choice (see `From<IpcError>`). A Kit wrapper that knows more, the
-/// channel id, which capability the kernel checked, or what an errno means
-/// for its operation, overrides that default (docs/kits/kernel/ipc.md §6).
+/// for every kernel path returning it, except EPERM and ENOSPC, for which no
+/// variant is correct on every path, and EPROTO, whose default is kept by
+/// choice (see `From<IpcError>`). A Kit wrapper that knows more, the channel
+/// id, which capability the kernel checked, or what an errno means for its
+/// operation, overrides that default (docs/kits/kernel/ipc.md §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcKitError {
     /// The channel does not exist or has been destroyed.
@@ -62,6 +62,9 @@ pub enum IpcKitError {
     ResourceExhausted { reason: &'static str },
     /// The operation is not available.
     Unsupported,
+    /// The channel or shared memory region the call names is gone: it was
+    /// never created or has been destroyed, or a channel endpoint is dead.
+    ObjectGone,
 }
 
 impl IpcKitError {
@@ -101,6 +104,7 @@ impl From<IpcKitError> for IpcError {
             IpcKitError::InvalidArgument { .. } => IpcError::Einval,
             IpcKitError::ResourceExhausted { .. } => IpcError::Enomem,
             IpcKitError::Unsupported => IpcError::Enotsup,
+            IpcKitError::ObjectGone => IpcError::Epipe,
         }
     }
 }
@@ -108,8 +112,9 @@ impl From<IpcKitError> for IpcError {
 impl From<IpcError> for IpcKitError {
     /// Convert a syscall-level `IpcError` into an `IpcKitError`.
     ///
-    /// **Note:** Field values (e.g. `id`, `required`, `elapsed_ticks`) are
-    /// placeholders — only the error *kind* survives the conversion.
+    /// **Note:** Field values (e.g. `required`, `elapsed_ticks`) are
+    /// placeholders — only the error *kind* survives the conversion. No code
+    /// decodes to a variant that carries a channel id.
     ///
     /// Each errno maps to the least specific variant that is correct for
     /// every kernel path that returns it:
@@ -120,36 +125,38 @@ impl From<IpcError> for IpcKitError {
     ///   maps to `WouldBlock`; `send` overrides it to `ChannelFull`.
     /// - EINVAL comes from every subsystem, so it maps to `InvalidArgument`;
     ///   channel wrappers override it to `InvalidChannel { id }`.
+    /// - EPIPE means the object the call names is gone: a destroyed channel
+    ///   or dead endpoint on the channel paths, a missing region on the
+    ///   shared memory paths (SharedMemoryMap, SharedMemoryUnmap,
+    ///   SharedMemoryShare, MemoryUnmap of a shared window address). It maps
+    ///   to `ObjectGone`, which names no id; channel wrappers override it to
+    ///   `InvalidChannel { id }`, shared memory wrappers to
+    ///   `SharedMemoryError`.
     /// - EEXIST maps to `SharedMemoryError`: among IPC Kit paths only
     ///   `shared_memory_map` returns it.
     ///
-    /// Three codes have no variant that is correct for every path, so the
+    /// Two codes have no variant that is correct for every path, so the
     /// table's variant is wrong for some paths, and wrappers for those paths
     /// must override it:
     /// - EPERM maps to `CapabilityDenied`, since every capability check
     ///   returns it (docs/kernel/ipc.md §3.2), but some EPERMs are not a
     ///   missing capability: IpcReply with no current thread,
     ///   NotificationCreate with no process, SharedMemoryUnmap or MemoryUnmap
-    ///   of a region the caller has not mapped, and SharedMemoryShare from a
+    ///   of a region the caller has not mapped, SharedMemoryShare from a
     ///   caller that is not the region's creator or to a target pid with no
-    ///   process. `reply`, `notification_create` and `shmem_unmap` override
-    ///   it; SharedMemoryShare and MemoryUnmap have no Kit wrapper, so a
-    ///   plain decode of their EPERM reads as `CapabilityDenied`.
-    /// - EPIPE maps to `InvalidChannel`, but the shared memory paths
-    ///   (SharedMemoryMap, SharedMemoryUnmap, SharedMemoryShare, and
-    ///   MemoryUnmap of a shared window address) return it for a missing
-    ///   region. The shared memory wrappers override it to
-    ///   `SharedMemoryError`; SharedMemoryShare has no Kit wrapper, so a
-    ///   plain decode of its EPIPE reads as `InvalidChannel`.
+    ///   process, and ProcessWait for a child pid with no process or after a
+    ///   wake that finds no exit code. `reply`, `notification_create` and
+    ///   `shmem_unmap` override it; SharedMemoryShare, MemoryUnmap and
+    ///   ProcessWait have no Kit wrapper, so a plain decode of their EPERM
+    ///   reads as `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
     ///   IpcReply), an IpcCall or IpcRecv receive length above it, a
-    ///   MemoryMap above 64 pages, a DebugPrint above 256 bytes and an
-    ///   AuditLog event above 48 bytes. Kit wrappers reject an oversized
-    ///   payload as `MessageTooLarge` before the call and never pass a longer
-    ///   receive length; MemoryMap, DebugPrint and AuditLog have no Kit
-    ///   wrapper, so a plain decode of their ENOSPC reads as
+    ///   DebugPrint above 256 bytes and an AuditLog event above 48 bytes. Kit
+    ///   wrappers reject an oversized payload as `MessageTooLarge` before the
+    ///   call and never pass a longer receive length; DebugPrint and AuditLog
+    ///   have no Kit wrapper, so a plain decode of their ENOSPC reads as
     ///   `ResourceExhausted`.
     ///
     /// EPROTO is kept as `NoReply` by choice. Its only kernel path today is
@@ -160,7 +167,7 @@ impl From<IpcError> for IpcKitError {
     fn from(e: IpcError) -> IpcKitError {
         match e {
             IpcError::Etimedout => IpcKitError::Timeout { elapsed_ticks: 0 },
-            IpcError::Epipe => IpcKitError::InvalidChannel { id: ChannelId(0) },
+            IpcError::Epipe => IpcKitError::ObjectGone,
             IpcError::Eagain => IpcKitError::WouldBlock,
             IpcError::Ecanceled => IpcKitError::Cancelled,
             IpcError::Eacces => IpcKitError::Suspended,
@@ -286,7 +293,7 @@ mod tests {
     // -- IpcKitError --
 
     /// One value of every variant.
-    fn all_variants() -> [IpcKitError; 13] {
+    fn all_variants() -> [IpcKitError; 14] {
         [
             IpcKitError::InvalidChannel { id: ChannelId(0) },
             IpcKitError::ChannelFull {
@@ -311,6 +318,7 @@ mod tests {
             IpcKitError::InvalidArgument { reason: "test" },
             IpcKitError::ResourceExhausted { reason: "test" },
             IpcKitError::Unsupported,
+            IpcKitError::ObjectGone,
         ]
     }
 
@@ -338,6 +346,7 @@ mod tests {
             IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(5) }),
             IpcError::Epipe
         );
+        assert_eq!(IpcError::from(IpcKitError::ObjectGone), IpcError::Epipe);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
                 id: ChannelId(0),
@@ -393,10 +402,8 @@ mod tests {
             IpcKitError::from(IpcError::Etimedout),
             IpcKitError::Timeout { .. }
         ));
-        assert!(matches!(
-            IpcKitError::from(IpcError::Epipe),
-            IpcKitError::InvalidChannel { .. }
-        ));
+        // EPIPE names no channel id: a region path returns it too.
+        assert_eq!(IpcKitError::from(IpcError::Epipe), IpcKitError::ObjectGone);
         assert!(matches!(
             IpcKitError::from(IpcError::Eagain),
             IpcKitError::WouldBlock
@@ -478,11 +485,12 @@ mod tests {
     #[test]
     fn ipc_kit_error_round_trip_preserves_variant_kind() {
         // Only variants whose errno maps back to them survive the round trip.
-        // Lossy (tested below): ChannelFull -> Eagain -> WouldBlock,
+        // Lossy (tested below): InvalidChannel -> Epipe -> ObjectGone,
+        // ChannelFull -> Eagain -> WouldBlock,
         // MessageTooLarge -> Enospc -> ResourceExhausted,
         // SharedMemoryError -> Einval -> InvalidArgument.
         let survivors = [
-            IpcKitError::InvalidChannel { id: ChannelId(42) },
+            IpcKitError::ObjectGone,
             IpcKitError::Timeout {
                 elapsed_ticks: 5000,
             },
@@ -512,6 +520,10 @@ mod tests {
         // Each of these shares its errno with a less specific variant, which
         // is what the errno decodes to. A wrapper with context restores them.
         let back = |v: IpcKitError| IpcKitError::from(IpcError::from(v));
+        assert_eq!(
+            back(IpcKitError::InvalidChannel { id: ChannelId(42) }),
+            IpcKitError::ObjectGone
+        );
         assert!(matches!(
             back(IpcKitError::ChannelFull {
                 id: ChannelId(7),
@@ -573,6 +585,7 @@ mod tests {
             IpcError::from(IpcKitError::InvalidChannel { id: ChannelId(0) }) as i64,
             -2
         );
+        assert_eq!(IpcError::from(IpcKitError::ObjectGone) as i64, -2);
         assert_eq!(
             IpcError::from(IpcKitError::ChannelFull {
                 id: ChannelId(0),

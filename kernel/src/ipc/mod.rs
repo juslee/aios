@@ -254,8 +254,8 @@ use shared::{Capability, SelectEntry, SelectKind};
 /// wrapper then overrides what it knows better (docs/kits/kernel/ipc.md §6):
 /// the real channel id, the capability the kernel actually checked, and what
 /// an errno means for its operation. Where the kernel checks no capability,
-/// no wrapper reports `CapabilityDenied`.
-#[allow(dead_code)]
+/// no wrapper reports `CapabilityDenied`. The boot self-test
+/// `ipc/tests/kit_errors.rs` checks the overrides.
 pub struct KernelIpc;
 
 /// Kit error for a failed operation on channel `id`.
@@ -265,7 +265,6 @@ pub struct KernelIpc;
 /// names that capability; EINVAL (an out-of-range id) and EPIPE (destroyed or
 /// dead) both mean channel `id` does not exist. Everything else, EAGAIN
 /// included (`WouldBlock`), comes from the errno table.
-#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
 fn channel_kit_err(id: ChannelId, code: i64) -> IpcKitError {
     match IpcError::try_from(code) {
         Ok(IpcError::Eperm) => IpcKitError::CapabilityDenied {
@@ -282,7 +281,6 @@ fn channel_kit_err(id: ChannelId, code: i64) -> IpcKitError {
 /// `None` for `shared_memory_unmap`, which checks none: there EPERM means the
 /// caller has no mapping of the region. EPIPE means the region does not
 /// exist, not a channel.
-#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
 fn shm_kit_err(code: i64, checked: Option<Capability>) -> IpcKitError {
     match IpcError::try_from(code) {
         Ok(IpcError::Eperm) => match checked {
@@ -300,7 +298,6 @@ fn shm_kit_err(code: i64, checked: Option<Capability>) -> IpcKitError {
 
 /// The payload of `msg`, or `MessageTooLarge` if its `len` exceeds the
 /// inline limit (slicing `data` by such a `len` would panic).
-#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
 fn msg_payload(msg: &RawMessage) -> Result<&[u8], IpcKitError> {
     msg.data.get(..msg.len).ok_or(IpcKitError::MessageTooLarge {
         size: msg.len,
@@ -311,7 +308,6 @@ fn msg_payload(msg: &RawMessage) -> Result<&[u8], IpcKitError> {
 /// The first channel entry in `entries` whose `ChannelAccess` the calling
 /// thread's process does not hold, looked up without logging a denial (the
 /// `ipc_select` call that failed already logged it).
-#[allow(dead_code)] // used only by KernelIpc, which nothing constructs yet
 fn first_denied_channel(entries: &[SelectEntry]) -> Option<ChannelId> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     let pid = crate::cap::current_process_id();

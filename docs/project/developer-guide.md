@@ -1011,7 +1011,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
 | 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~757), `shmem.rs` (~784), `block_engine.rs` (~783), `bench.rs` (~549) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~763), `shmem.rs` (~788), `block_engine.rs` (~783), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1024,18 +1024,19 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (567)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  mod.rs          (563)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (754)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (757)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (163)  # IpcSelect capability self-test
-    syscall_args.rs (199) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    select_cap.rs (168)  # IpcSelect capability self-test
+    syscall_args.rs (209) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (192)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (381)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (784)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
+  shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1578,7 +1579,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 592+ host-side tests pass |
+| **Test** | `just test` | All 594+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1630,7 +1631,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 592 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 594 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1723,7 +1724,7 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (592 tests):**
+**Current test distribution (594 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
@@ -1737,7 +1738,7 @@ mod tests {
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 29 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg` and `flags_arg` register decoding |
+| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
 | `observability` | 18 | Log level ordering, subsystem tags |
 | `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
