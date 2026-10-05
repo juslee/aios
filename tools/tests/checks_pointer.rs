@@ -9,12 +9,12 @@ use aios_tools::cmd::docs_check::checks::knowledge::KnowledgeHygiene;
 use aios_tools::cmd::docs_check::checks::pointer_doctor::PointerDoctor;
 use aios_tools::cmd::docs_check::checks::Check;
 use aios_tools::cmd::docs_check::model::Finding;
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 
 const POINTER_FILES: &[(&str, &str)] = &[
     (
-        "CLAUDE.md",
+        CLAUDE_MD,
         r#"# Project
 
 ## Project Identity

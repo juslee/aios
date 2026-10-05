@@ -37,7 +37,9 @@ use crate::cmd::docs_check::repo::Repo;
 use crate::pystr::{split_ws, splitlines, strip};
 
 const CHECK: &str = "pointer-doctor";
-const CLAUDE_MD: &str = "CLAUDE.md";
+/// How harness prose names the project memory file, wherever it lives
+/// ([`Repo::claude_md`]): the token that marks a line as pointing into it.
+const CLAUDE_MD_NAME: &str = "CLAUDE.md";
 const HARNESS_PREFIXES: [&str; 3] = [".claude/agents/", ".claude/skills/", ".claude/rules/"];
 
 /// Claude Code tool names accepted in agent `tools:` frontmatter (check.py
@@ -243,10 +245,11 @@ pub fn norm_section(name: &str) -> String {
 /// A stub has at most two non-blank, non-`---` body lines and says where the
 /// content lives now. Later headings with the same key win.
 fn claude_sections(repo: &Repo) -> HashMap<String, (String, bool)> {
-    let text = repo.text(CLAUDE_MD);
+    let claude_md = repo.claude_md();
+    let text = repo.text(claude_md);
     let lines = splitlines(&text);
     let mut out = HashMap::new();
-    for heading in repo.headings(CLAUDE_MD).iter() {
+    for heading in repo.headings(claude_md).iter() {
         if heading.level != 2 {
             continue;
         }
@@ -538,10 +541,11 @@ impl Check for PointerDoctor {
             for (lineno, line) in prose_lines(&text) {
                 let heading = HEADING_RE.captures(line);
                 if let Some(caps) = &heading {
-                    under_claude_heading =
-                        caps.get(2).is_some_and(|m| m.as_str().contains(CLAUDE_MD));
+                    under_claude_heading = caps
+                        .get(2)
+                        .is_some_and(|m| m.as_str().contains(CLAUDE_MD_NAME));
                 }
-                let mut phrases = if line.contains(CLAUDE_MD) {
+                let mut phrases = if line.contains(CLAUDE_MD_NAME) {
                     section_candidates(line)
                 } else {
                     Vec::new()

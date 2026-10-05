@@ -1,7 +1,7 @@
 @@@ commit Phase 0 M1: Step 1 — boot stub
 @@@ commit Phase 0 M2: Step 2 — uart console
 @@@ commit Phase 1 M3: Step 1 — buddy allocator
-@@@ file CLAUDE.md
+@@@ file .claude/CLAUDE.md
 # Fixture Project
 
 ## Workspace Layout
@@ -9,6 +9,7 @@
 ```text
 fixture/
 ├── .claude/
+│   ├── CLAUDE.md         project memory (this file)
 │   ├── agents/           worker
 │   └── skills/           build, team:start
 ├── kernel/src/           fixture kernel

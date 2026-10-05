@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash
 memory: project
 ---
 
-You review AIOS code. Read CLAUDE.md at the repo root for conventions and quality gates.
+You review AIOS code. Read `.claude/CLAUDE.md` (the project memory) for conventions and quality gates.
 
 ## Review Checklist
 

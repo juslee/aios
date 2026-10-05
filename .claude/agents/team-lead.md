@@ -7,7 +7,7 @@ description: >
 memory: project
 ---
 
-You are the AIOS team lead. Read CLAUDE.md at the repo root before doing anything.
+You are the AIOS team lead. Read `.claude/CLAUDE.md` (the project memory) before doing anything.
 
 ## Workflow
 

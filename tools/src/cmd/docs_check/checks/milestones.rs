@@ -45,7 +45,6 @@ const PHASE_COUNT: &str = "phase-count";
 const PLAN: &str = "docs/project/development-plan.md";
 const README: &str = "README.md";
 const RULE_07: &str = ".claude/rules/07-milestone-numbering.md";
-const CLAUDE_MD: &str = "CLAUDE.md";
 
 /// check.py L940.
 static STATUS_RE: LazyLock<Regex> =
@@ -282,7 +281,7 @@ impl Check for PhaseCount {
         phase_claims(repo, PLAN, &PHASES_ACROSS_RE, actual, &mut out);
         phase_claims(repo, README, &PHASES_ACROSS_RE, actual, &mut out);
         phase_claims(repo, RULE_07, &PHASES_RE, actual, &mut out);
-        phase_claims(repo, CLAUDE_MD, &PHASES_RE, actual, &mut out);
+        phase_claims(repo, repo.claude_md(), &PHASES_RE, actual, &mut out);
         Ok(out)
     }
 }

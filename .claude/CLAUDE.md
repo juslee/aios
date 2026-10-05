@@ -160,6 +160,7 @@ aios/
 ├── rust-toolchain.toml   pinned nightly (aarch64-unknown-none + aarch64-unknown-uefi)
 ├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
 ├── .claude/
+│   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
 │   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
 │   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
@@ -235,7 +236,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 | `/merge-and-cleanup [PR]` | User only, after PR approval | Squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
 
-**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
+**Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 

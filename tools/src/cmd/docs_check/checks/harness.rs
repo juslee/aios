@@ -34,7 +34,6 @@ use crate::cmd::docs_check::repo::Repo;
 use crate::pystr::{lstrip, strip};
 
 const CHECK: &str = "harness-tables";
-const CLAUDE_MD: &str = "CLAUDE.md";
 
 /// check.py `SKILL_NAME` (L1086): a skill as a slash command without the slash:
 /// `name` or `plugin:name`.
@@ -122,10 +121,10 @@ pub fn project_agents(repo: &Repo) -> BTreeSet<String> {
 
 /// check.py L1089-1097: group 1 of `rx` (anchored at the cell start) on the
 /// first cell of each table row between the line containing `marker` and the
-/// next `**` label or `## ` heading of CLAUDE.md.
+/// next `**` label or `## ` heading of CLAUDE.md ([`Repo::claude_md`]).
 pub fn claude_table_names(repo: &Repo, marker: &str, rx: &Regex) -> BTreeSet<String> {
     let start = Regex::new(&regex::escape(marker)).expect("an escaped literal is a valid regex");
-    let text = repo.text(CLAUDE_MD);
+    let text = repo.text(repo.claude_md());
     let mut names = BTreeSet::new();
     for (_, line) in section_body(&text, &start, &TABLE_STOP_RE) {
         if !lstrip(line).starts_with('|') {
@@ -187,6 +186,7 @@ impl Check for HarnessTables {
         let agents = project_agents(repo);
         let table_skills = claude_table_names(repo, "**Skills**", &SKILL_CELL_RE);
         let table_agents = claude_table_names(repo, "**Agents**", &AGENT_CELL_RE);
+        let claude_md = repo.claude_md();
         let block = layout_block(repo);
         let comparisons = [
             ("skill", &skills, Some(table_skills), "skills-table"),
@@ -212,7 +212,7 @@ impl Check for HarnessTables {
             for name in actual.difference(&listed) {
                 out.push(Finding::new(
                     CHECK,
-                    CLAUDE_MD,
+                    claude_md,
                     format!("{place}-missing:{name}"),
                     format!("CLAUDE.md {place} omits {kind} {name}"),
                     0,
@@ -221,7 +221,7 @@ impl Check for HarnessTables {
             for name in listed.difference(actual) {
                 out.push(Finding::new(
                     CHECK,
-                    CLAUDE_MD,
+                    claude_md,
                     format!("{place}-stale:{name}"),
                     format!("CLAUDE.md {place} lists {kind} {name}, which is not in .claude/"),
                     0,

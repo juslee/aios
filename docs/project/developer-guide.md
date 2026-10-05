@@ -6,7 +6,7 @@
 
 **Related documents**:
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Code conventions, quality gates, technical facts
 - [hal.md](../kernel/hal.md) -- Hardware Abstraction Layer and platform porting (SS7)
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
 - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
@@ -2250,7 +2250,7 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
 | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
-| **Code conventions** | [CLAUDE.md](../../CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
+| **Code conventions** | [.claude/CLAUDE.md](../../.claude/CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
 
 ---
 
@@ -2276,7 +2276,7 @@ This is purely optional — all docs are plain markdown readable in any editor o
 
 AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
 
-The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
+The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
 
 ### Agents
 
@@ -2395,7 +2395,7 @@ OUTER LOOP:
 
 **Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
+The audit loop is **mandatory before any PR** — see [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Phase Implementation Workflow.
 
 ### Knowledge Hive Integration
 
@@ -2420,7 +2420,7 @@ Agent teams and skills are configured in:
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
-- **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
+- **`.claude/CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
 
 ---
 

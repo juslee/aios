@@ -8,7 +8,7 @@
 
 **Related**:
 
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Code conventions, quality gates, technical facts
 - [developer-guide.md](./developer-guide.md) -- Human-readable kernel developer guide
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules
 

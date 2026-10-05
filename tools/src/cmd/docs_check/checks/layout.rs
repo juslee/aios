@@ -18,7 +18,6 @@ use crate::cmd::docs_check::repo::Repo;
 use crate::paths::basename;
 
 const CHECK: &str = "layout";
-const CLAUDE_MD: &str = "CLAUDE.md";
 const RULE_05: &str = ".claude/rules/05-file-placement.md";
 /// A tree entry line (`├── `, `└── `) contains this box-drawing run.
 const TREE_MARK: &str = "──";
@@ -46,10 +45,10 @@ static RULE_DIR_RE: LazyLock<Regex> =
 /// kernel/src and shared/src modules vs CLAUDE.md layout and rule 05.
 pub struct Layout;
 
-/// check.py L1020-1022: the lines of CLAUDE.md's `## Workspace Layout` section
-/// (fences included), without line numbers.
+/// check.py L1020-1022: the lines of CLAUDE.md's ([`Repo::claude_md`])
+/// `## Workspace Layout` section (fences included), without line numbers.
 pub fn layout_block(repo: &Repo) -> Vec<String> {
-    let text = repo.text(CLAUDE_MD);
+    let text = repo.text(repo.claude_md());
     section_body(&text, &LAYOUT_START_RE, &LAYOUT_STOP_RE)
         .into_iter()
         .map(|(_, line)| line.to_string())
@@ -134,6 +133,7 @@ impl Check for Layout {
         let kmods = source_modules(files, "kernel/src/");
         let sdirs = source_dirs(files, "shared/src/");
         let smods = source_modules(files, "shared/src/");
+        let claude_md = repo.claude_md();
         let block = layout_block(repo);
         let (ldirs, lmods) = tree_entries(&block, "kernel/src/", "shared/src/");
         let (sd, sm) = tree_entries(&block, "shared/src/", "uefi-stub/");
@@ -149,7 +149,7 @@ impl Check for Layout {
                 let path = format!("{prefix}{name}{suffix}");
                 out.push(Finding::new(
                     CHECK,
-                    CLAUDE_MD,
+                    claude_md,
                     format!("missing:{path}"),
                     format!("Workspace Layout does not list {label} {path}"),
                     0,
@@ -159,7 +159,7 @@ impl Check for Layout {
                 let path = format!("{prefix}{name}{suffix}");
                 out.push(Finding::new(
                     CHECK,
-                    CLAUDE_MD,
+                    claude_md,
                     format!("stale:{path}"),
                     format!("Workspace Layout lists {path}, which does not exist"),
                     0,

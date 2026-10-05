@@ -8,7 +8,7 @@ use aios_tools::cmd::docs_check::checks::harness::{project_agents, project_skill
 use aios_tools::cmd::docs_check::checks::layout::{layout_block, tree_entries, Layout};
 use aios_tools::cmd::docs_check::checks::Check;
 use aios_tools::cmd::docs_check::model::Finding;
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD, ROOT_CLAUDE_MD};
 use common::TestRepo;
 use std::collections::BTreeSet;
 
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 /// single tracked path that names the skill.
 const FILES: &[(&str, &str)] = &[
     (
-        "CLAUDE.md",
+        CLAUDE_MD,
         r#"# Project
 
 ## Workspace Layout
@@ -219,35 +219,35 @@ fn layout_matches_check_py() {
     let expected = vec![
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "missing:kernel/src/sched/",
             "Workspace Layout does not list kernel dir kernel/src/sched/",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "stale:kernel/src/ipc/",
             "Workspace Layout lists kernel/src/ipc/, which does not exist",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "stale:kernel/src/dtb.rs",
             "Workspace Layout lists kernel/src/dtb.rs, which does not exist",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "missing:shared/src/ipc/",
             "Workspace Layout does not list shared dir shared/src/ipc/",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "stale:shared/src/cap.rs",
             "Workspace Layout lists shared/src/cap.rs, which does not exist",
             0,
@@ -276,7 +276,7 @@ fn layout_without_claude_md_lists_every_module_as_missing() {
     let found = Layout.run(&open(&repo)).expect("layout runs");
     let expected = vec![Finding::new(
         "layout",
-        "CLAUDE.md",
+        CLAUDE_MD,
         "missing:kernel/src/main.rs",
         "Workspace Layout does not list kernel module kernel/src/main.rs",
         0,
@@ -307,62 +307,105 @@ fn harness_tables_matches_check_py() {
     let expected = vec![
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:bad:run",
             "CLAUDE.md skills-table omits skill bad:run",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:linked",
             "CLAUDE.md skills-table omits skill linked",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:unnamed:x",
             "CLAUDE.md skills-table omits skill unnamed:x",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-stale:stale-skill",
             "CLAUDE.md skills-table lists skill stale-skill, which is not in .claude/",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "agents-table-missing:helper",
             "CLAUDE.md agents-table omits agent helper",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "agents-table-stale:ghost-agent",
             "CLAUDE.md agents-table lists agent ghost-agent, which is not in .claude/",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "layout-skills-missing:unnamed:x",
             "CLAUDE.md layout-skills omits skill unnamed:x",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "layout-skills-stale:retired",
             "CLAUDE.md layout-skills lists skill retired, which is not in .claude/",
             0,
         ),
     ];
     assert_eq!(found, expected);
+}
+
+/// A tree from before the move (the real-snapshot goldens replay one) keeps
+/// CLAUDE.md at the repository root: with no `.claude/CLAUDE.md`, layout and
+/// harness-tables read the root file and report the same findings against it.
+#[test]
+fn a_root_claude_md_is_read_when_dot_claude_has_none() {
+    let at_root: Vec<(&str, &str)> = FILES
+        .iter()
+        .map(|&(rel, text)| match rel {
+            CLAUDE_MD => (ROOT_CLAUDE_MD, text),
+            _ => (rel, text),
+        })
+        .collect();
+    let moved = open(&TestRepo::with_files("claude-md-moved", FILES));
+    let root = open(&TestRepo::with_files("claude-md-root", &at_root));
+    assert_eq!(moved.claude_md(), CLAUDE_MD);
+    assert_eq!(root.claude_md(), ROOT_CLAUDE_MD);
+    let checks: [&dyn Check; 2] = [&Layout, &HarnessTables];
+    for check in checks {
+        let want: Vec<Finding> = check
+            .run(&moved)
+            .expect("the check runs")
+            .into_iter()
+            .map(|mut f| {
+                if f.file == CLAUDE_MD {
+                    f.file = ROOT_CLAUDE_MD.to_string();
+                }
+                f
+            })
+            .collect();
+        assert!(
+            want.iter().any(|f| f.file == ROOT_CLAUDE_MD),
+            "{} reports against CLAUDE.md",
+            check.name()
+        );
+        assert_eq!(
+            check.run(&root).expect("the check runs"),
+            want,
+            "{}",
+            check.name()
+        );
+    }
 }
 
 #[test]
@@ -374,14 +417,14 @@ fn harness_tables_without_claude_md_skips_the_layout_lists() {
     let expected = vec![
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:only",
             "CLAUDE.md skills-table omits skill only",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "agents-table-missing:solo",
             "CLAUDE.md agents-table omits agent solo",
             0,

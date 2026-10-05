@@ -8,7 +8,7 @@ isolation: worktree
 memory: project
 ---
 
-You implement AIOS kernel code. Read CLAUDE.md at the repo root before writing any code.
+You implement AIOS kernel code. Read `.claude/CLAUDE.md` (the project memory) before writing any code.
 
 ## Rules
 

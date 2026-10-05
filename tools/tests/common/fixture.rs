@@ -83,7 +83,7 @@ pub const VARIANTS: &[Variant] = &[
     },
     Variant {
         name: "repo-paths",
-        expect_new: &["repo-paths|CLAUDE.md|kernel/src/missing.rs"],
+        expect_new: &["repo-paths|.claude/CLAUDE.md|kernel/src/missing.rs"],
     },
     Variant {
         name: "just-recipes",
@@ -107,11 +107,11 @@ pub const VARIANTS: &[Variant] = &[
     },
     Variant {
         name: "layout",
-        expect_new: &["layout|CLAUDE.md|missing:kernel/src/extra.rs"],
+        expect_new: &["layout|.claude/CLAUDE.md|missing:kernel/src/extra.rs"],
     },
     Variant {
         name: "harness-tables",
-        expect_new: &["harness-tables|CLAUDE.md|skills-table-stale:ghost"],
+        expect_new: &["harness-tables|.claude/CLAUDE.md|skills-table-stale:ghost"],
     },
     Variant {
         name: "pointer-doctor",

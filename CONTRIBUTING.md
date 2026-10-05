@@ -6,7 +6,7 @@ Every change lives inside a phase. Read the phase doc (`docs/phases/NN-*.md`) fo
 
 ## Code Conventions
 
-All conventions are defined in [CLAUDE.md](CLAUDE.md). Key points:
+All conventions are defined in [.claude/CLAUDE.md](.claude/CLAUDE.md). Key points:
 
 - `#![no_std]` in kernel/ and shared/
 - Every `unsafe` block requires a `// SAFETY:` comment documenting the invariant, who maintains it, and what happens if violated

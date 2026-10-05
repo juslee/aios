@@ -73,10 +73,10 @@ exit 1
   },
   "findings": [
     {
-      "key": "repo-paths|CLAUDE.md|kernel/src/missing.rs",
+      "key": "repo-paths|.claude/CLAUDE.md|kernel/src/missing.rs",
       "check": "repo-paths",
-      "file": "CLAUDE.md",
-      "line": 44,
+      "file": ".claude/CLAUDE.md",
+      "line": 45,
       "also": [],
       "count": 1,
       "baseline_count": null,
