@@ -29,7 +29,7 @@ The work is split in two because other open branches own the files that wire the
 - [x] Step 1: hook contract. Fetch the current Claude Code hooks reference and record the exact input fields and output shapes the subcommands rely on, in "Hook contract" below.
 - [x] Step 2: shared hook plumbing in `tools/src/cmd/hook/mod.rs`, the `aios hook` subcommand group in `main.rs`, and test helpers for running the binary with stdin.
 - [x] Step 3: `aios hook repeat-error` plus tests.
-- [ ] Step 4: `aios hook path-guard` plus tests.
+- [x] Step 4: `aios hook path-guard` plus tests.
 - [ ] Step 5: `aios hook route-shadow` plus tests, including one against a local fake HTTP server through real `curl`.
 - [ ] Step 6: review loop (correctness, security, conventions, docs) until a clean round.
 - [ ] Step 7: gates: `cargo fmt --check -p aios-tools`, `cargo clippy -p aios-tools --all-targets -- -D warnings`, `cargo test -p aios-tools`, `just docs-check`.
@@ -179,6 +179,11 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 - Step 3: a `PostToolUse` success writes nothing unless a failure of that command is on record. Why: nearly every Bash call succeeds, and the plan's cleanup runs "when the subcommand next writes state", so successes would otherwise create a file per session and agent for no reason.
 - Step 3: the normalisation is exactly as planned, so a four-digit run is masked (`E0425` and `E0432` both become `E#`), while two-digit parts of a clock time (`12:34:56`) are not. Two failures that differ only in the seconds of an ISO time therefore do not match; epoch timestamps do. Left as specified, since widening the mask would also merge distinct short numbers such as exit codes and line numbers.
 - Step 3: the nudge text states what happened and what the project expects (subagent: stop and report back to its caller; main session: ask the code-reviewer agent to diagnose it), as the hook contract asks. The command is the normalised one, cut to 200 bytes with `...` appended when cut.
+- Step 4: a dangling or looping symlink is followed explicitly (up to 40 links) instead of being treated as a missing path component. Why: plain "canonicalise the longest existing ancestor" fails on a dangling link and would append the link's own name, so `docs/link` pointing at a not-yet-created `kernel/x.rs` would slip through while a write through it creates the kernel file. A chain deeper than 40 links fails closed.
+- Step 4: the repository-root comparison is component-wise and ASCII case-insensitive, like the prefix match. Why: on a case-insensitive macOS volume a path spelled `/Users/x/AIOS/...` is inside the repository, and a case-sensitive root comparison would let it through with no decision. The cost is that on Linux a path differing from the root only in case is treated as inside, which can only add a deny.
+- Step 4: a `--deny` value without a trailing `/` gets one, so `kernel` cannot match `kernel-notes/`; an empty or absolute value is an error, which denies every checked call (a registration mistake shows at once rather than guarding nothing). Why: the plan says prefixes end in `/` but does not say what a malformed one does.
+- Step 4: the deny reason names the resolved repository-relative path, so a symlinked edit reports the kernel file it really reaches.
+- Step 4: with no `cwd` in the payload the process working directory is used (as `state_dir` does). The plan does not say; Claude Code always sends `cwd`.
 
 ## Lessons Learned
 
