@@ -8,7 +8,8 @@
 //! repository root comes from the target, not from `cwd`: worktrees nest inside the
 //! main checkout, so a root taken from `cwd` would see an edit in a nested worktree
 //! as a path under `.claude/worktrees/` and never match `kernel/`. A target that is
-//! in no repository gets no decision. Bash can still write files, so this is a
+//! in no repository gets no decision, and a root that does not contain the target
+//! (git's answer contradicting the filesystem) is an error. Bash can still write files, so this is a
 //! routing aid, not a sandbox.
 
 use std::path::{Component, Path, PathBuf};
@@ -88,9 +89,16 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
     let Some(root) = repo_root(&existing_dir(&resolved))? else {
         return Ok(None);
     };
-    let Some(relative) = relative_to(&resolved, &root) else {
-        return Ok(None);
-    };
+    // The root was found from the target's own directory, so it can only fail to
+    // contain the target when git's answer is inconsistent with the filesystem
+    // (`core.worktree`, `GIT_WORK_TREE`): that is an error, not an allow.
+    let relative = relative_to(&resolved, &root).with_context(|| {
+        format!(
+            "{} is not inside the repository root {} git reported for it",
+            resolved.display(),
+            root.display()
+        )
+    })?;
     let folded = relative.to_ascii_lowercase();
     let Some(prefix) = prefixes
         .iter()

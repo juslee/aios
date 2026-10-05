@@ -203,11 +203,31 @@ fn a_path_outside_the_repo_gets_no_decision() {
     let dir = repo("inside");
     let outside = unique_dir("outside");
     std::fs::create_dir_all(outside.join("kernel")).expect("create kernel");
+    // `outside` sits under this checkout's target directory, so git is told to stop
+    // at its parent: the directory is then really in no repository.
+    let ceiling = outside.parent().unwrap();
     let path = outside.join("kernel/x.rs");
-    assert_no_decision(&guard(&[], &edit(&dir, path.to_str().unwrap()), &dir));
+    let payload = edit(&dir, path.to_str().unwrap());
+    assert_no_decision(&guard_with_ceiling(&payload, &dir, ceiling));
     // Even when the outside path is reached by climbing out of the repo.
     let up = format!("{}/../{}/kernel/x.rs", dir.display(), "elsewhere");
-    assert_no_decision(&guard(&[], &edit(&dir, &up), &dir));
+    let payload = edit(&dir, &up);
+    assert_no_decision(&guard_with_ceiling(&payload, &dir, ceiling));
+}
+
+#[test]
+fn a_root_that_does_not_contain_the_target_is_denied() {
+    // `core.worktree` points git's answer at a directory the target is not in.
+    let dir = repo("foreign-worktree");
+    let elsewhere = unique_dir("foreign-root");
+    git(
+        &dir,
+        &["config", "core.worktree", elsewhere.to_str().unwrap()],
+    );
+    let run = guard(&[], &edit(&dir, "kernel/src/lib.rs"), &dir);
+    let reason = deny_reason(&run);
+    assert!(reason.contains("root"), "{reason}");
+    assert!(reason.contains("git"), "{reason}");
 }
 
 #[test]

@@ -135,7 +135,7 @@ Parse leniently: unknown fields are ignored and every field the code does not st
   - `error` (null on success)
 
   The tool call id is what later joins a record to the dispatch's outcome.
-- Never prints a decision. Total wall time stays under 5 s, because part 2 registers it with a 6 s timeout.
+- Never prints a decision. Part 2 registers it with `async: true`, so no dispatch waits for it; curl's `--max-time 4` bounds its own run time (under 5 s including process start).
 
 ## Part 2 requirements
 
