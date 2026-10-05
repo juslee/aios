@@ -26,7 +26,7 @@ The work is split in two because other open branches own the files that wire the
 
 ## Progress
 
-- [ ] Step 1: hook contract. Fetch the current Claude Code hooks reference and record the exact input fields and output shapes the subcommands rely on, in "Hook contract" below.
+- [x] Step 1: hook contract. Fetch the current Claude Code hooks reference and record the exact input fields and output shapes the subcommands rely on, in "Hook contract" below.
 - [ ] Step 2: shared hook plumbing in `tools/src/cmd/hook/mod.rs`, the `aios hook` subcommand group in `main.rs`, and test helpers for running the binary with stdin.
 - [ ] Step 3: `aios hook repeat-error` plus tests.
 - [ ] Step 4: `aios hook path-guard` plus tests.
@@ -37,12 +37,29 @@ The work is split in two because other open branches own the files that wire the
 
 ## Hook contract
 
-Filled in by step 1, with the docs URL and the date read. Until then, the assumptions below come from a docs reading on 2026-10-05:
+Source: https://code.claude.com/docs/en/hooks.md (and https://code.claude.com/docs/en/sub-agents.md for the dispatch tool name), read 2026-10-05. Anything marked "not documented" is not in those pages.
 
-- Every hook gets one JSON object on stdin with at least `session_id`, `transcript_path`, `cwd`, `hook_event_name`. Tool events add `tool_name`, `tool_input`, and an id for the tool call. `PostToolUse` adds the tool's result. `PostToolUseFailure` adds `error`, a string that carries a Bash exit code in its text, for example `Command exited with code 1: ...`. Hooks running inside a subagent may also carry agent fields (for example `agent_id`, `agent_type`).
-- `PreToolUse` denies with `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}` on stdout and exit 0. No output means no decision.
-- `PostToolUse` and `PostToolUseFailure` add context for the model with `{"hookSpecificOutput":{"hookEventName":"<event>","additionalContext":"..."}}`.
-- Exit 2 is a blocking error that feeds stderr to the model; the subcommands never use it. Any other non-zero exit is a non-blocking error shown to the user.
+**Input (every event).** One JSON object on stdin. Common fields: `session_id` (string), `prompt_id` (string, UUID, absent until the first user input), `transcript_path` (string), `cwd` (string), `scratchpad_dir` (string, may be absent), `permission_mode` (string, not on every event), `effort` (object with `level`, on tool-context events), `hook_event_name` (string). The docs example lists them as `session_id`, `prompt_id`, `transcript_path`, `cwd`, `scratchpad_dir`, `permission_mode`, `hook_event_name`.
+
+**Subagent fields.** "When running with `--agent` or inside a subagent, two additional fields are included": `agent_id` (string, "Present only when the hook fires inside a subagent call"; absent in the main thread) and `agent_type` (string, the agent name; present when the session uses `--agent` or the hook fires inside a subagent). Hooks from settings, managed policy and plugins also run inside subagents, so tool events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, ...) carry both fields there. Agent-frontmatter hooks fire when the agent runs as a subagent or as the main session via `--agent`.
+
+**PreToolUse.** Adds `tool_name` (string), `tool_input` (object), `tool_use_id` (string, for example `toolu_01ABC123...`). Matches any tool name except `EndConversation`.
+- Bash `tool_input`: `command`, `description`, `timeout`, `run_in_background`.
+- `Write`: `file_path`, `content`. `Edit`: `file_path`, `old_string`, `new_string`, `replace_all`. For `Write`, `Edit` and `Read`, "`tool_input.file_path` is always absolute" (`~` and relative paths are expanded before hooks run).
+- `NotebookEdit`: listed as a tool in the tools reference, but its `tool_input` field names are not documented. `MultiEdit`: not documented anywhere in the two pages (not a listed tool). `path-guard` must therefore accept `file_path` and `notebook_path` as optional alternatives and fail closed when a checked tool has neither.
+- Dispatch tool: `tool_name` is `Agent` ("In version 2.1.63, the Task tool was renamed to Agent. Existing `Task(...)` references ... still work as aliases"). Hook input uses `Agent`; matching `Task` is not documented for hooks. Its `tool_input`: `prompt` (string), `description` (string), `subagent_type` (string, for example `Explore`), `model` (optional string alias, for example `sonnet`).
+
+**PostToolUse.** Fires "after a tool has already executed successfully". Adds `tool_input`, `tool_response` (the result, schema depends on the tool), `tool_use_id`, optional `duration_ms`. Bash `tool_response` is an object with `stdout`, `stderr`, `interrupted`, `isImage` (documented as the shape `updatedToolOutput` must match; `bashEditDiff` may also appear). For `Agent`, `tool_response` carries `status` (`completed` or `async_launched`; background is the default), `agentId`, `content`, `resolvedModel`.
+
+**PostToolUseFailure.** Fires when a tool that started executing fails. Adds `tool_name`, `tool_input`, `tool_use_id`, `error` (string), optional `is_interrupt` (boolean), optional `duration_ms`. It does not fire for calls rejected before execution (unknown tool, schema validation failure, permission denial). For Bash and PowerShell, "a command that ran and exited produces a first line `Exit code N`, then any output the command produced as one block with stdout and stderr interleaved", for example `"Exit code 1\nError: Cannot find module 'express'"`. So a non-zero Bash exit is a PostToolUseFailure, not a PostToolUse (the docs define PostToolUse as success only and give a Bash exit as the failure example; there is no sentence saying a non-zero exit never reaches PostToolUse). A payload may carry a bare message with no exit-code line when the shell could not start, and long strings are middle-truncated around a `... [N characters truncated] ...` marker, with lines such as `Command timed out after 2m 0s` inserted. The docs say to key on `tool_name`, `is_interrupt` and the `Exit code N` first line and to treat the rest as display text, not a stable format.
+
+**Output.**
+- PreToolUse deny: `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}`; the reason is shown to Claude. Other decisions: `allow`, `ask`, `defer`; optional `updatedInput`, `additionalContext`. Precedence across hooks: deny > defer > ask > allow.
+- PostToolUse and PostToolUseFailure context: `{"hookSpecificOutput":{"hookEventName":"<event>","additionalContext":"..."}}`. The string is added "next to the tool result" inside a system reminder. Each string is capped at 10,000 characters (over the cap it becomes a file path plus a 2,000-character preview).
+- Exit 0: success, the intended code for JSON output. Stdout that starts with `{` and ends with `}` (ignoring whitespace) is parsed as JSON; "Your hook's stdout must contain only the JSON object". Parseable JSON that fails schema validation, or output that starts with `{` and fails to parse, is a non-blocking error and the action proceeds. Plain text or empty stdout on PreToolUse, PostToolUse and PostToolUseFailure adds nothing. Stderr on exit 0 goes to the debug log only; Claude never sees it.
+- Exit 2: blocking error. PreToolUse: blocks the call, stderr (or the JSON reason) goes to Claude. PostToolUse and PostToolUseFailure: cannot block, stderr is shown to Claude. Exit 2 beats a JSON `allow`.
+- Any other exit: non-blocking. With a valid JSON object on stdout the exit code is ignored and the JSON decides, with no error reported. Without it, the transcript shows `<hook name> hook error` with `Failed with non-blocking status code:` and the first line of stderr. "Exit code 1 ... is a non-blocking error and proceeds", so only exit 2 or a JSON deny blocks.
+- Timeout: a timed-out `command` hook on PreToolUse does not block the call; it proceeds through the normal permission flow. A stalled `path-guard` therefore fails open; this is outside the hook's control.
 
 Parse leniently: unknown fields are ignored and every field the code does not strictly need is optional, so a Claude Code release that adds fields changes nothing.
 
@@ -74,7 +91,7 @@ Parse leniently: unknown fields are ignored and every field the code does not st
 **`path-guard`**
 
 - Options: `--deny <prefix>` (repeatable, at least one; a repository-relative directory prefix ending in `/`) and optional `--reason <text>` appended to the deny reason.
-- Only `Edit`, `Write`, `MultiEdit` (`tool_input.file_path`) and `NotebookEdit` (`tool_input.notebook_path`) are checked; any other tool gets no output.
+- Only `Edit`, `Write`, `MultiEdit` and `NotebookEdit` are checked; any other tool gets no output. The path is `tool_input.file_path`, or `tool_input.notebook_path` when `file_path` is absent (the docs name only `file_path`, for `Write` and `Edit`, and give it as absolute).
 - Resolving the target:
   1. Join a relative path to the input `cwd`.
   2. Normalise `.` and `..` lexically.
@@ -140,7 +157,11 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 
 ## Issues Encountered
 
-(to be filled during implementation)
+- Step 1 (hook contract): the plan assumed a Bash `error` text like `Command exited with code 1: ...`. The live docs say the first line is `Exit code N`, then output, and call the rest display text. `repeat-error` never parses the exit code (it normalises the whole `error` string into the signature), so no decision changes; tests use `Exit code N` fixtures.
+- Step 1: the dispatch tool is `Agent` in hook input. Part 2 must register `route-shadow` with matcher `Agent`. `tool_input.model` is an optional alias such as `sonnet`.
+- Step 1: the tool-call id field is `tool_use_id`. The `route-shadow` log field keeps the name "tool call id" in the plan text and is stored as `tool_use_id`.
+- Step 1: the docs name `file_path` for `Write` and `Edit` only. `NotebookEdit` field names are not documented and `MultiEdit` is not a documented tool, so `path-guard` reads `file_path` or, failing that, `notebook_path`, and denies when a checked tool has neither (already the fail-closed rule). Decision text adjusted below.
+- Step 1: `path-guard` fails open on a hook timeout (documented, not changeable); the plan's "fail closed" covers errors the process reports, not a stall. Stderr diagnostics at exit 0 reach only the debug log.
 
 ## Decisions Made
 
