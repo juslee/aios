@@ -7,7 +7,8 @@
 //! `TITLE_WORD`, `TITLE_LIST`, `BEFORE_CLAUDE_RE`, `AFTER_CLAUDE_RE` and
 //! `LABELLED_ITEM_RE` (L1206-1215); the `regex` crate's leftmost-first semantics
 //! give the same matches and captures as Python's backtracking for them. Every
-//! pattern is compiled with `crate::pyre::compile`, so `\s` includes U+001C..U+001F
+//! pattern except L1171's `[^a-z0-9 ]` (a character filter in `norm_section`, with no
+//! `\s` or `\d`) is compiled with `crate::pyre::compile`, so `\s` includes U+001C..U+001F
 //! and `\d` (`LABELLED_ITEM_RE`, L1215; `RULE_REF_RE`, L1317) takes any Unicode
 //! decimal digit, as in Python. Accepted divergences: `\b` uses the crate's Unicode
 //! word definition (no tracked harness file contains the difference); `STUB_RE`'s

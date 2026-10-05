@@ -134,7 +134,7 @@ New drift since baseline:
 
 /// check.py's stdout for `control_separators_in_harness_layout_and_code`.
 const SPACE_HARNESS: &str = "\
-docs-check: 15 findings across 7 checks - 15 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+docs-check: 17 findings across 7 checks - 17 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
 
   check              total   new
   repo-paths             1     1
@@ -142,7 +142,7 @@ docs-check: 15 findings across 7 checks - 15 new, 0 baselined (0 accepted false 
   lock-order             4     4
   layout                 1     1
   harness-tables         3     3
-  pointer-doctor         5     5
+  pointer-doctor         7     7
   knowledge-hygiene      0     0
 
 New drift since baseline:
@@ -173,6 +173,8 @@ New drift since baseline:
  + .claude/agents/worker.md:7: /nope is not a project skill or built-in command
  + .claude/agents/worker.md:9: points to CLAUDE.md 'Deploy Table', which is not a section of CLAUDE.md
  + .claude/agents/worker.md:13: points to CLAUDE.md 'Release Notes', which is not a section of CLAUDE.md
+ + .claude/agents/worker.md:14: points to CLAUDE.md 'Ship Log', which is not a section of CLAUDE.md
+ + .claude/agents/worker.md:15: rule file ٠١-x.md does not exist
 ";
 
 /// check.py's stdout for `control_separators_in_milestone_status`.
@@ -375,7 +377,8 @@ fn control_separators_in_links_and_anchors() {
 /// `gen:test-count` claim, `STATIC_RE`, `\bMutex\s*<` and the inline test module header
 /// (`TEST_MOD_RE`), pointer-doctor's agent and skill patterns and all three section-name
 /// patterns (`BEFORE_CLAUDE_RE`, `AFTER_CLAUDE_RE`, `LABELLED_ITEM_RE`), and the
-/// knowledge frontmatter's closing `---\s*`.
+/// knowledge frontmatter's closing `---\s*`; and `\d` meeting Arabic-Indic digits in
+/// `LABELLED_ITEM_RE`'s item number and `RULE_REF_RE`'s `\d\d` (worker.md lines 14-15).
 #[test]
 fn control_separators_in_harness_layout_and_code() {
     let repo = TestRepo::with_files(
@@ -404,7 +407,9 @@ fn control_separators_in_harness_layout_and_code() {
                  Build\x1fMatrix in CLAUDE.md.\n\n\
                  Then read CLAUDE.md:\x1fDeploy\x1fTable for the targets.\n\n\
                  ## After editing CLAUDE.md\n\n\
-                 1.\x1fUpdate:\x1fRelease\x1fNotes\n",
+                 1.\x1fUpdate:\x1fRelease\x1fNotes\n\
+                 ٢. Update: Ship Log\n\
+                 Also follow rules/٠١-x.md here.\n",
             ),
             (".claude/skills/build/SKILL.md", "# Build\n"),
             ("kernel/src/main.rs", "fn main() {}\n"),
