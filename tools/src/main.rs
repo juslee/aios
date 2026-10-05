@@ -18,11 +18,24 @@ enum Command {
     /// Deterministic docs drift check against scripts/docs/baseline.json (exit 1 on new drift)
     #[command(name = "docs-check", infer_long_args = true, args_override_self = true)]
     DocsCheck(aios_tools::cmd::docs_check::Args),
+    /// Claude Code hook programs: reads one JSON payload on stdin, always exits 0
+    Hook(aios_tools::cmd::hook::Args),
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Hook(args) => {
+            let ctx = aios_tools::cmd::hook::Ctx::from_env();
+            aios_tools::cmd::hook::run(
+                &args,
+                &ctx,
+                std::io::stdin().lock(),
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            );
+            ExitCode::SUCCESS
+        }
         Command::DocsCheck(args) => {
             let cwd = match std::env::current_dir() {
                 Ok(dir) => dir,

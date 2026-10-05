@@ -27,7 +27,7 @@ The work is split in two because other open branches own the files that wire the
 ## Progress
 
 - [x] Step 1: hook contract. Fetch the current Claude Code hooks reference and record the exact input fields and output shapes the subcommands rely on, in "Hook contract" below.
-- [ ] Step 2: shared hook plumbing in `tools/src/cmd/hook/mod.rs`, the `aios hook` subcommand group in `main.rs`, and test helpers for running the binary with stdin.
+- [x] Step 2: shared hook plumbing in `tools/src/cmd/hook/mod.rs`, the `aios hook` subcommand group in `main.rs`, and test helpers for running the binary with stdin.
 - [ ] Step 3: `aios hook repeat-error` plus tests.
 - [ ] Step 4: `aios hook path-guard` plus tests.
 - [ ] Step 5: `aios hook route-shadow` plus tests, including one against a local fake HTTP server through real `curl`.
@@ -167,7 +167,13 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 
 ## Decisions Made
 
-(to be filled during implementation)
+- Step 2: the subcommand entry functions take the parsed `HookInput` and a `Ctx` (state-dir override and process cwd), and return `Result<Option<String>>`; `hook::run` owns reading stdin, parsing, the error policy and printing. Why: one place enforces the stdout, stderr and exit-0 discipline, and the three subcommands cannot diverge from it.
+- Step 2: an input error (unreadable, over the cap, not a JSON object) is handled by `hook::run` before the subcommand runs, so `route-shadow` reports it on stderr only. The plan says it logs errors to its jsonl; that needs the state dir, which needs the payload's `cwd`, which an unparseable payload does not give. Errors after a successful parse are still logged by the subcommand in step 5.
+- Step 2: a clap usage error (for example `path-guard` without `--deny`) exits 2, not 0. It is a registration mistake rather than a payload, and for `path-guard` exit 2 blocks the call, which is fail closed. Every payload path exits 0.
+- Step 2: `HookInput` reads a field of the wrong type as absent (not as an input error); a payload that is valid JSON but not an object is an input error. Why: "parse leniently" in the contract, while an array or string cannot be a hook payload.
+- Step 2: `state_dir` takes the override from `AIOS_HOOK_STATE_DIR` as the state directory itself (not a parent of `aios-agent/hooks`), and an empty value counts as unset. The per-hook subdirectories (`repeat-error/`) are created by the subcommands through `write_atomic`, which creates missing parent directories.
+- Step 2: the missing-session case: `state_key` hashes an absent or empty `session_id` like any unsafe id, so state still lands in one stable file. `<session>-<agent>` can in theory collide with a plain session id that contains a hyphen; ids are UUIDs and a collision only merges two failure counters.
+- Step 2: `additional_context` cuts its text to 10,000 bytes on a character boundary (the documented cap is characters, so this is the safe side).
 
 ## Lessons Learned
 
