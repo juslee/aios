@@ -2273,7 +2273,7 @@ Agents are specialist sub-processes spawned by the team-lead orchestrator. Each 
 | Agent | Role | Spawned by | Key capabilities |
 | --- | --- | --- | --- |
 | `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
-| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, MultiEdit, Bash, Grep, Glob |
+| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, Bash, Grep, Glob |
 | `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
 | `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
 | `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |

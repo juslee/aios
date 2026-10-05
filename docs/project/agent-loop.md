@@ -80,9 +80,9 @@ Later (not enabled): GitHub auto-merge behind required status checks on a `main`
 
 | Doc class | Who changes it | When |
 |---|---|---|
-| Status docs: README status, phase-doc checkboxes and Status, development-plan §8.1, CLAUDE.md fact tables, doc-map | agent | in the same PR as the change |
+| Status docs: README status, phase-doc checkboxes and Status, development-plan §8.1, `.claude/CLAUDE.md` fact tables, doc-map | agent | in the same PR as the change |
 | Architecture docs | owner approval only | separate, owner-approved PR |
-| CLAUDE.md policy prose, `.claude/rules/`, skills, agents | retro or harness PR | the human merges |
+| `.claude/CLAUDE.md` policy prose, `.claude/rules/`, skills, agents | retro or harness PR | the human merges |
 
 `just docs-check` compares the findings of `aios docs-check` ([source](../../tools/src/cmd/docs_check/)) with the baseline and reports only new drift (exit 1). A finding is new when its key is not in the baseline or it now occurs on more lines than the baselined `count`. CI runs it through the shim directly (`.claude/hooks/aios docs-check`, not `just`) on every PR that targets `main` and on every push to `main` (the Docs workflow). It is report-only: drift never fails the check; new drift goes to the job summary and a warning annotation, and the brief reports drift in its own section. The check fails only when the checker itself errors: `aios docs-check` exiting with anything other than 0 (no new drift) or 1 (new drift): 2 for a usage, git or internal error, 101 for a panic, or, outside CI, 3 from the `.claude/hooks/aios` shim when it cannot build or find the binary. In CI a tools build failure instead fails the separate `Build aios tools` step (`docs.yml`) before the check ever runs, not the check itself with exit 3. Either way, a failing Docs job counts against `merge-ready` like any other failing check. Accept drift you do not fix with `just docs-check --update-baseline` in the same PR, and say why in the PR body.
 

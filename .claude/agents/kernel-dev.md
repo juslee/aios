@@ -3,7 +3,7 @@ name: kernel-dev
 description: >
   Implements Rust kernel code, assembly, linker scripts, and build configuration
   for AIOS phases. Use for code implementation tasks assigned by team-lead.
-tools: Read, Write, Edit, MultiEdit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob
 isolation: worktree
 memory: project
 ---

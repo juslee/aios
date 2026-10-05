@@ -76,6 +76,7 @@ aios/
 ├── .claude/
 │   ├── CLAUDE.md         # Project memory for Claude Code: technical facts, workspace layout, agent and skill tables
 │   ├── agents/           # Claude agent definitions
+│   ├── hooks/            # Session hooks: push guard, setup, pre-compact save, aios tools shim
 │   ├── rules/            # Project rules and conventions (auto-loaded)
 │   └── skills/           # Reusable skill scripts
 ├── kernel/               # Kernel source (aarch64-unknown-none)

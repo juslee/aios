@@ -178,8 +178,8 @@ kernel/src/                    Entry
     ),
 ];
 
-/// A project memory that lists everything in `BARE_FILES`: at `CLAUDE_MD` it
-/// leaves layout and harness-tables nothing to report.
+/// A project memory that lists everything in `ROOT_MEMORY_FILES`: at `CLAUDE_MD`
+/// it leaves layout and harness-tables nothing to report.
 const COMPLETE_MEMORY: &str = r#"# Project
 
 ## Workspace Layout
@@ -210,19 +210,20 @@ proj/
 | `/only` | Runs |
 "#;
 
-/// A repository without [`CLAUDE_MD`]: every table is empty and the layout lists
-/// are absent, so only the table comparisons report. Its root `CLAUDE.md` holds
-/// `COMPLETE_MEMORY`, which docs-check never reads (there is no fallback to the
-/// root file), so it changes nothing.
-const BARE_FILES: &[(&str, &str)] = &[
+/// A repository whose only project memory is a root `CLAUDE.md` holding
+/// `COMPLETE_MEMORY`. docs-check reads [`CLAUDE_MD`] alone (there is no fallback
+/// to the root file), so to it every table is empty and the layout lists are
+/// absent, and only the table comparisons report.
+const ROOT_MEMORY_FILES: &[(&str, &str)] = &[
     ("CLAUDE.md", COMPLETE_MEMORY),
     ("kernel/src/main.rs", "fn main() {}\n"),
     (".claude/agents/solo.md", "# Solo\n"),
     (".claude/skills/only/SKILL.md", "# Only\n"),
 ];
 
-/// `BARE_FILES` with `COMPLETE_MEMORY` at [`CLAUDE_MD`] instead of the root: the
-/// control that shows the root file would have silenced every finding.
+/// `ROOT_MEMORY_FILES` with `COMPLETE_MEMORY` at [`CLAUDE_MD`] instead of the
+/// root: the control that shows the same memory, where docs-check reads it,
+/// silences every finding.
 const MEMORY_FILES: &[(&str, &str)] = &[
     (CLAUDE_MD, COMPLETE_MEMORY),
     ("kernel/src/main.rs", "fn main() {}\n"),
@@ -317,8 +318,8 @@ fn layout_matches_check_py() {
 }
 
 #[test]
-fn layout_without_claude_md_lists_every_module_as_missing() {
-    let repo = TestRepo::with_files("layout-bare", BARE_FILES);
+fn layout_ignores_a_root_claude_md_and_lists_every_module_as_missing() {
+    let repo = TestRepo::with_files("layout-root-memory", ROOT_MEMORY_FILES);
     let found = Layout.run(&open(&repo)).expect("layout runs");
     let expected = vec![Finding::new(
         "layout",
@@ -328,9 +329,12 @@ fn layout_without_claude_md_lists_every_module_as_missing() {
         0,
     )];
     assert_eq!(found, expected);
+}
 
-    let control = TestRepo::with_files("layout-memory", MEMORY_FILES);
-    let found = Layout.run(&open(&control)).expect("layout runs");
+#[test]
+fn layout_reads_the_workspace_layout_from_the_claude_dir_memory() {
+    let repo = TestRepo::with_files("layout-memory", MEMORY_FILES);
+    let found = Layout.run(&open(&repo)).expect("layout runs");
     assert_eq!(
         found,
         Vec::new(),
@@ -420,8 +424,8 @@ fn harness_tables_matches_check_py() {
 }
 
 #[test]
-fn harness_tables_without_claude_md_skips_the_layout_lists() {
-    let repo = TestRepo::with_files("harness-bare", BARE_FILES);
+fn harness_tables_ignore_a_root_claude_md_and_skip_the_layout_lists() {
+    let repo = TestRepo::with_files("harness-root-memory", ROOT_MEMORY_FILES);
     let found = HarnessTables
         .run(&open(&repo))
         .expect("harness-tables runs");
@@ -442,10 +446,13 @@ fn harness_tables_without_claude_md_skips_the_layout_lists() {
         ),
     ];
     assert_eq!(found, expected);
+}
 
-    let control = TestRepo::with_files("harness-memory", MEMORY_FILES);
+#[test]
+fn harness_tables_read_the_tables_from_the_claude_dir_memory() {
+    let repo = TestRepo::with_files("harness-memory", MEMORY_FILES);
     let found = HarnessTables
-        .run(&open(&control))
+        .run(&open(&repo))
         .expect("harness-tables runs");
     assert_eq!(
         found,

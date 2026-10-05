@@ -11,7 +11,7 @@
     "milestone-status": 5,
     "phase-count": 1,
     "layout": 3,
-    "pointer-doctor": 11,
+    "pointer-doctor": 1,
     "knowledge-hygiene": 2
   },
   "findings": [
@@ -424,77 +424,6 @@
       "file": ".claude/rules/05-file-placement.md",
       "target": "missing:kernel/src/input/",
       "message": "rule 05 does not list kernel/src/input/"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/doc-writer.md|claude-md:Architecture Document Map",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/doc-writer.md",
-      "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/doc-writer.md|claude-md:Milestone Numbering",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/doc-writer.md",
-      "target": "claude-md:Milestone Numbering",
-      "message": "points to CLAUDE.md 'Milestone Numbering', which is not a section of CLAUDE.md"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/kernel-dev.md|tool:MultiEdit",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/kernel-dev.md",
-      "target": "tool:MultiEdit",
-      "message": "tools: lists unknown tool MultiEdit"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/team-lead.md|claude-md:Architecture Document Map",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/team-lead.md",
-      "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/verifier.md|claude-md:Key Facts",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/verifier.md",
-      "target": "claude-md:Key Facts",
-      "message": "points to CLAUDE.md 'Key Facts', which is not a section of CLAUDE.md"
-    },
-    {
-      "key": "pointer-doctor|.claude/rules/04-phase-workflow.md|claude-md:Architecture Document Map",
-      "check": "pointer-doctor",
-      "file": ".claude/rules/04-phase-workflow.md",
-      "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/rules/08-knowledge-hive.md|claude-md:Architecture Document Map",
-      "check": "pointer-doctor",
-      "file": ".claude/rules/08-knowledge-hive.md",
-      "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/skills/generate-phase-doc/SKILL.md|claude-md:Architecture Document Map",
-      "check": "pointer-doctor",
-      "file": ".claude/skills/generate-phase-doc/SKILL.md",
-      "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/skills/verify-phase/SKILL.md|claude-md:Quality Gates",
-      "check": "pointer-doctor",
-      "file": ".claude/skills/verify-phase/SKILL.md",
-      "target": "claude-md:Quality Gates",
-      "message": "points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md"
-    },
-    {
-      "key": "pointer-doctor|.claude/skills/write-arch-doc/SKILL.md|claude-md:Architecture Document Map",
-      "check": "pointer-doctor",
-      "file": ".claude/skills/write-arch-doc/SKILL.md",
-      "target": "claude-md:Architecture Document Map",
-      "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now",
-      "count": 3
     },
     {
       "key": "pointer-doctor|.claude/skills/write-arch-doc/SKILL.md|path:docs/security/security.md",

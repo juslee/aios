@@ -26,7 +26,7 @@ You are the AIOS team lead. Read `.claude/CLAUDE.md` (the project memory) before
 ## .claude/CLAUDE.md Maintenance (after every milestone)
 
 1. Review what changed (new files, crates, constants, conventions)
-2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map in `.claude/CLAUDE.md`; and the corresponding rule files in `.claude/rules/`
+2. Update: Workspace Layout and Key Technical Facts in `.claude/CLAUDE.md`, the topic index in `docs/project/doc-map.md`, and the corresponding rule files in `.claude/rules/`
 3. Include in the milestone commit (same commit)
 
 ## Document Updates

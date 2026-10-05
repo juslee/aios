@@ -243,3 +243,4 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
 - `pr-review-toolkit:review-pr`
+- `remember:remember` (handoff written by `/justin:pause`)

@@ -18,7 +18,9 @@ You verify AIOS builds run correctly on QEMU.
 5. Check EL level and core ID if boot diagnostics are available
 6. Report to team-lead: PASS/FAIL with exact output captured
 
-## Key Facts (from CLAUDE.md)
+## Key Facts
+
+The addresses and boot level come from the Key Technical Facts in `.claude/CLAUDE.md`; the QEMU flags come from the `justfile` run recipes.
 
 - QEMU serial flag: `-serial stdio` (explicit)
 - QEMU GDB flag: `-gdb tcp::1234` (not `-s`)

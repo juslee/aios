@@ -80,7 +80,7 @@ When implementing kernel code, use these established patterns:
 
 | Task | Pattern | Reference File |
 |---|---|---|
-| Lock ordering enforcement | Acquire in order per `.claude/CLAUDE.md`: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
+| Lock ordering enforcement | Acquire in the order of the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
 | Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
@@ -158,12 +158,7 @@ W^X policy: pages are writable OR executable, never both. See developer-guide.md
 
 ### Never acquire locks out of order
 
-The full lock ordering is defined in `.claude/CLAUDE.md` Key Technical Facts. The canonical order is:
-
-```text
-PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE
-  > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK
-```
+The canonical lock ordering is the Lock ordering entry in `.claude/CLAUDE.md` Key Technical Facts. Read it there rather than from a copy: it grows with each milestone that adds a lock.
 
 Violating this causes deadlocks under contention. When you need two locks, always acquire the earlier one first. See [deadlock-prevention.md](../kernel/deadlock-prevention.md).
 

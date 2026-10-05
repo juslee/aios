@@ -14,14 +14,14 @@ Use the TeamCreate tool to create team "aios-dev". If TeamCreate fails, report t
 ## Step 2: Spawn team-lead
 
 Use the Agent tool to spawn a `team-lead` agent (subagent_type: `team-lead`) with this prompt:
-> "You are the AIOS team lead. Read `.claude/CLAUDE.md` (project state) and `.claude/rules/` (conventions), find the current phase, then determine what work is next."
+> "You are the AIOS team lead. Read `.claude/CLAUDE.md` (technical facts, workspace layout, agents and skills) and `.claude/rules/` (conventions), find the current phase from `docs/phases/`, then determine what work is next."
 
 Verify the agent was spawned by checking for a response.
 
 ## Step 3: Team-lead gathers context
 
 The team-lead should:
-1. Read `.claude/CLAUDE.md` — understand workspace layout, technical facts, completed phases
+1. Read `.claude/CLAUDE.md` — understand workspace layout, technical facts
 2. Search the knowledge hive for relevant context:
     - Grep `docs/knowledge/lessons/` and `docs/knowledge/decisions/` for keywords related to current work
     - Read `docs/knowledge/plans/` for any in-progress working plans (Glob for `docs/knowledge/plans/*.md`)
