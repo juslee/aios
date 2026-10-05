@@ -30,7 +30,7 @@ use crate::cmd::docs_check::checks::layout::{layout_block, TREE_PREFIX_RE};
 use crate::cmd::docs_check::checks::Check;
 use crate::cmd::docs_check::markdown::section_body;
 use crate::cmd::docs_check::model::Finding;
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::pystr::{lstrip, strip};
 
 const CHECK: &str = "harness-tables";
@@ -121,10 +121,10 @@ pub fn project_agents(repo: &Repo) -> BTreeSet<String> {
 
 /// check.py L1089-1097: group 1 of `rx` (anchored at the cell start) on the
 /// first cell of each table row between the line containing `marker` and the
-/// next `**` label or `## ` heading of CLAUDE.md ([`Repo::claude_md`]).
+/// next `**` label or `## ` heading of [`CLAUDE_MD`].
 pub fn claude_table_names(repo: &Repo, marker: &str, rx: &Regex) -> BTreeSet<String> {
     let start = Regex::new(&regex::escape(marker)).expect("an escaped literal is a valid regex");
-    let text = repo.text(repo.claude_md());
+    let text = repo.text(CLAUDE_MD);
     let mut names = BTreeSet::new();
     for (_, line) in section_body(&text, &start, &TABLE_STOP_RE) {
         if !lstrip(line).starts_with('|') {
@@ -186,7 +186,6 @@ impl Check for HarnessTables {
         let agents = project_agents(repo);
         let table_skills = claude_table_names(repo, "**Skills**", &SKILL_CELL_RE);
         let table_agents = claude_table_names(repo, "**Agents**", &AGENT_CELL_RE);
-        let claude_md = repo.claude_md();
         let block = layout_block(repo);
         let comparisons = [
             ("skill", &skills, Some(table_skills), "skills-table"),
@@ -212,7 +211,7 @@ impl Check for HarnessTables {
             for name in actual.difference(&listed) {
                 out.push(Finding::new(
                     CHECK,
-                    claude_md,
+                    CLAUDE_MD,
                     format!("{place}-missing:{name}"),
                     format!("CLAUDE.md {place} omits {kind} {name}"),
                     0,
@@ -221,7 +220,7 @@ impl Check for HarnessTables {
             for name in listed.difference(actual) {
                 out.push(Finding::new(
                     CHECK,
-                    claude_md,
+                    CLAUDE_MD,
                     format!("{place}-stale:{name}"),
                     format!("CLAUDE.md {place} lists {kind} {name}, which is not in .claude/"),
                     0,

@@ -74,6 +74,7 @@ aios/
 │   ├── kernel/           # Kernel subsystem specifications
 │   └── phases/           # Per-phase implementation guides (00-, 01-, ...)
 ├── .claude/
+│   ├── CLAUDE.md         # Project memory for Claude Code: conventions, technical facts, layout
 │   ├── agents/           # Claude agent definitions
 │   └── skills/           # Reusable skill scripts
 ├── kernel/               # Kernel source (aarch64-unknown-none)

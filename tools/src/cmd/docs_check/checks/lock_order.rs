@@ -23,7 +23,7 @@ use regex::Regex;
 use super::Check;
 use crate::cmd::docs_check::markdown::{section_body, table_rows};
 use crate::cmd::docs_check::model::{Finding, Skip};
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::{paths, pystr};
 
 /// Test-only locks named as excluded in deadlock-prevention.md section 3.3.
@@ -186,16 +186,14 @@ impl Check for LockOrder {
     }
 }
 
-/// The first `Lock ordering ...:` line of CLAUDE.md ([`Repo::claude_md`]) and its
-/// continuation lines (check.py L864-897): unknown names, then pairs of groups ranked
-/// in the wrong order.
+/// The first `Lock ordering ...:` line of [`CLAUDE_MD`] and its continuation lines
+/// (check.py L864-897): unknown names, then pairs of groups ranked in the wrong order.
 fn chain_findings(
     repo: &Repo,
     statics: &BTreeMap<String, (String, usize)>,
     ranks: &HashMap<String, u64>,
 ) -> Vec<Finding> {
-    let claude_md = repo.claude_md();
-    let text = repo.text(claude_md);
+    let text = repo.text(CLAUDE_MD);
     let lines = pystr::splitlines(&text);
     let Some((first, head)) = lines.iter().copied().enumerate().find_map(|(i, line)| {
         CHAIN_RE
@@ -244,7 +242,7 @@ fn chain_findings(
             if !statics.contains_key(name) {
                 out.push(Finding::new(
                     "lock-order",
-                    claude_md,
+                    CLAUDE_MD,
                     format!("unknown:{name}"),
                     format!(
                         "lock ordering names {name}, which is not a Mutex static in kernel/src"
@@ -264,7 +262,7 @@ fn chain_findings(
                     if rank_a > rank_b {
                         out.push(Finding::new(
                             "lock-order",
-                            claude_md,
+                            CLAUDE_MD,
                             format!("order:{a}>{b}"),
                             format!(
                                 "CLAUDE.md orders {a} before {b}, §3.3 ranks them \

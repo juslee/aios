@@ -8,7 +8,7 @@ use aios_tools::cmd::docs_check::checks::harness::{project_agents, project_skill
 use aios_tools::cmd::docs_check::checks::layout::{layout_block, tree_entries, Layout};
 use aios_tools::cmd::docs_check::checks::Check;
 use aios_tools::cmd::docs_check::model::Finding;
-use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD, ROOT_CLAUDE_MD};
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 use std::collections::BTreeSet;
 
@@ -363,49 +363,6 @@ fn harness_tables_matches_check_py() {
         ),
     ];
     assert_eq!(found, expected);
-}
-
-/// A tree from before the move (the real-snapshot goldens replay one) keeps
-/// CLAUDE.md at the repository root: with no `.claude/CLAUDE.md`, layout and
-/// harness-tables read the root file and report the same findings against it.
-#[test]
-fn a_root_claude_md_is_read_when_dot_claude_has_none() {
-    let at_root: Vec<(&str, &str)> = FILES
-        .iter()
-        .map(|&(rel, text)| match rel {
-            CLAUDE_MD => (ROOT_CLAUDE_MD, text),
-            _ => (rel, text),
-        })
-        .collect();
-    let moved = open(&TestRepo::with_files("claude-md-moved", FILES));
-    let root = open(&TestRepo::with_files("claude-md-root", &at_root));
-    assert_eq!(moved.claude_md(), CLAUDE_MD);
-    assert_eq!(root.claude_md(), ROOT_CLAUDE_MD);
-    let checks: [&dyn Check; 2] = [&Layout, &HarnessTables];
-    for check in checks {
-        let want: Vec<Finding> = check
-            .run(&moved)
-            .expect("the check runs")
-            .into_iter()
-            .map(|mut f| {
-                if f.file == CLAUDE_MD {
-                    f.file = ROOT_CLAUDE_MD.to_string();
-                }
-                f
-            })
-            .collect();
-        assert!(
-            want.iter().any(|f| f.file == ROOT_CLAUDE_MD),
-            "{} reports against CLAUDE.md",
-            check.name()
-        );
-        assert_eq!(
-            check.run(&root).expect("the check runs"),
-            want,
-            "{}",
-            check.name()
-        );
-    }
 }
 
 #[test]

@@ -43,19 +43,15 @@ use crate::cmd::docs_check::markdown::{self, Heading};
 use crate::cmd::docs_check::model::Skip;
 use crate::{paths, proc, pystr};
 
-/// Where this repository keeps Claude Code's project memory. Claude Code loads
-/// `./.claude/CLAUDE.md` exactly like `./CLAUDE.md`; [`Repo::claude_md`] picks
-/// the file a run reads.
+/// Claude Code's project memory, which the CLAUDE.md checks read and report
+/// against. Claude Code loads `./.claude/CLAUDE.md` exactly like `./CLAUDE.md`;
+/// check.py read the root file, which moved here.
 pub const CLAUDE_MD: &str = ".claude/CLAUDE.md";
-/// The project memory at the repository root, the only place check.py read it.
-/// Trees from before the move keep it there: the parity snapshot at 33c6b3d,
-/// and older branches checked by main's binary through the shim.
-pub const ROOT_CLAUDE_MD: &str = "CLAUDE.md";
 
-/// Docs that describe the current state of the repository (check.py L52-58).
-/// [`CLAUDE_MD`] needs no entry: [`CURRENT_STATE_PREFIX`] covers it.
-pub const CURRENT_STATE_DOCS: [&str; 5] = [
-    ROOT_CLAUDE_MD,
+/// Docs that describe the current state of the repository (check.py L52-58,
+/// whose root `CLAUDE.md` entry is now [`CLAUDE_MD`], covered by
+/// [`CURRENT_STATE_PREFIX`]).
+pub const CURRENT_STATE_DOCS: [&str; 4] = [
     "README.md",
     "CONTRIBUTING.md",
     "docs/project/developer-guide.md",
@@ -216,18 +212,6 @@ impl Repo {
     /// `rel in file_set`.
     pub fn is_file(&self, rel: &str) -> bool {
         self.file_set.contains(rel)
-    }
-
-    /// The project memory file the CLAUDE.md checks read and report against:
-    /// [`CLAUDE_MD`] when it is listed, else [`ROOT_CLAUDE_MD`] when that is,
-    /// else [`CLAUDE_MD`] (absent, so it reads as ""). With both listed only
-    /// [`CLAUDE_MD`] is checked; [`ROOT_CLAUDE_MD`] is still a current-state doc.
-    pub fn claude_md(&self) -> &'static str {
-        if !self.is_file(CLAUDE_MD) && self.is_file(ROOT_CLAUDE_MD) {
-            ROOT_CLAUDE_MD
-        } else {
-            CLAUDE_MD
-        }
     }
 
     /// check.py `Repo.git(..., check=True)` (L396-400).

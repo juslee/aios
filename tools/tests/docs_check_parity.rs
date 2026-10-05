@@ -1,8 +1,9 @@
 //! docs-check parity with scripts/docs/check.py (R1 parity: goldens and parity tests).
 //!
 //! - `goldens_match_aios` replays every case of `fixture::cases()` (22 on a snapshot of
-//!   main at `SNAPSHOT_SHA`, 48 on the fixture repository) and compares `exit N\n` plus
-//!   stdout, and the written baseline, byte for byte with `tests/golden/docs-check/`.
+//!   main at `SNAPSHOT_SHA` plus `SNAPSHOT_MIGRATION`, 48 on the fixture repository)
+//!   and compares `exit N\n` plus stdout, and the written baseline, byte for byte with
+//!   `tests/golden/docs-check/`.
 //!   `AIOS_BLESS_GOLDENS=1` rewrites the goldens from aios instead (for an intentional
 //!   output change; review the diff).
 //! - `record_goldens_from_check_py` (ignored) recorded those goldens from check.py

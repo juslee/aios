@@ -37,7 +37,7 @@ use regex::Regex;
 use super::Check;
 use crate::cmd::docs_check::markdown::{milestone_tokens, prose_lines, section_body, table_rows};
 use crate::cmd::docs_check::model::{Finding, Skip};
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::pystr::{int_str, is_ascii_digits, parse_uint, splitlines, strip};
 
 const MILESTONE_STATUS: &str = "milestone-status";
@@ -281,7 +281,7 @@ impl Check for PhaseCount {
         phase_claims(repo, PLAN, &PHASES_ACROSS_RE, actual, &mut out);
         phase_claims(repo, README, &PHASES_ACROSS_RE, actual, &mut out);
         phase_claims(repo, RULE_07, &PHASES_RE, actual, &mut out);
-        phase_claims(repo, repo.claude_md(), &PHASES_RE, actual, &mut out);
+        phase_claims(repo, CLAUDE_MD, &PHASES_RE, actual, &mut out);
         Ok(out)
     }
 }

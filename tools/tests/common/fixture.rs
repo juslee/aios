@@ -9,9 +9,9 @@
 //! `.claude/` or `.rs` files. `materialize_fixture` turns base plus one variant into a
 //! throwaway git repository (removed when the returned `TestRepo` drops).
 //!
-//! The parity half adds the real-repository snapshot at `SNAPSHOT_SHA`, the case list
-//! replayed by `tests/docs_check_parity.rs`, the golden file paths, and helpers that
-//! run scripts/docs/check.py while it still exists.
+//! The parity half adds the real-repository snapshot at `SNAPSHOT_SHA` (plus
+//! `SNAPSHOT_MIGRATION`), the case list replayed by `tests/docs_check_parity.rs`, the
+//! golden file paths, and helpers that run scripts/docs/check.py while it still exists.
 //!
 //! `python3` is often an asdf (or pyenv) shim: under the isolated test `HOME`
 //! (`common::isolated`), such a shim exits 126 before it ever reaches CPython, which
@@ -305,8 +305,17 @@ fn apply(repo: &TestRepo, op: &Op) {
 }
 
 /// main at the branch point of PR R1. Its scripts/docs/check.py and docs produced the
-/// real-repository goldens; the snapshot replays exactly this commit.
+/// real-repository goldens; the snapshot replays this commit with `SNAPSHOT_MIGRATION`
+/// applied.
 pub const SNAPSHOT_SHA: &str = "33c6b3deabb36055d26d57fb2a60db233c4d3f6f";
+
+/// `tests/fixtures/docs-check/<this>`: a patch against `SNAPSHOT_SHA` that moves its
+/// root `CLAUDE.md` to `.claude/CLAUDE.md`, the only place docs-check reads it now, and
+/// updates the links into and out of it and the one baseline entry keyed by its path.
+/// The real-repository goldens recorded from check.py differ from its output only in
+/// that path (`CLAUDE.md` became `.claude/CLAUDE.md`). check.py read the root file, so
+/// it cannot replay the migrated snapshot; it has been deleted anyway.
+pub const SNAPSHOT_MIGRATION: &str = "snapshot-claude-md.patch";
 
 /// The repository that contains `tools/` (the checkout or worktree under test).
 pub fn repo_root() -> PathBuf {
@@ -511,8 +520,9 @@ pub fn cases() -> Vec<Case> {
     out
 }
 
-/// A clone of this repository at `SNAPSHOT_SHA` with every ref deleted, so that
-/// docs-check's history base (merge-base with origin/main or main) falls back to HEAD.
+/// A clone of this repository at `SNAPSHOT_SHA` with `SNAPSHOT_MIGRATION` applied to the
+/// index and working tree (not committed) and every ref deleted, so that docs-check's
+/// history base (merge-base with origin/main or main) falls back to HEAD.
 pub fn snapshot_real() -> TestRepo {
     let source = repo_root();
     let commit = format!("{SNAPSHOT_SHA}^{{commit}}");
@@ -541,6 +551,9 @@ pub fn snapshot_real() -> TestRepo {
         ],
     );
     git(repo.path(), &["checkout", "-q", "--detach", SNAPSHOT_SHA]);
+    let migration = fixtures_dir().join(SNAPSHOT_MIGRATION);
+    let migration = migration.to_str().expect("fixture path is UTF-8");
+    git(repo.path(), &["apply", "--index", migration]);
     // A clone does not inherit the source repository's config (see `TestRepo::new`).
     git(repo.path(), &["config", "core.excludesFile", "/dev/null"]);
     let deletions = git(repo.path(), &["for-each-ref", "--format=delete %(refname)"]);
