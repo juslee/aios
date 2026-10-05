@@ -118,15 +118,18 @@ impl LogRing {
 
         // SAFETY: `idx` is masked to LOG_RING_SIZE, so the slot is in
         // bounds. `push` passes only positions from `head` up to before
-        // `tail + LOG_RING_SIZE`, and drops the message otherwise, so the
-        // drain is not reading the slot: it reads only positions before
-        // `head`, and it finished its last read of this slot before the
-        // Release store of `tail` that `push` loaded with Acquire. `log_impl`
-        // keeps this core the ring's only writer: it pushes only to its own
-        // core's ring and masks IRQs for the whole push. UnsafeCell provides
-        // the interior mutability. A second writer on the ring (an unmasked
-        // IRQ producer, or a thread that migrated mid-push) would tear or
-        // lose entries.
+        // `tail + LOG_RING_SIZE`, and drops the message otherwise, so a
+        // single drain is not reading the slot: it reads only positions
+        // before `head`, and it finished its last read of this slot before
+        // its Release store of `tail` that `push` loaded with Acquire.
+        // `log_impl` keeps this core the ring's only writer: it pushes only
+        // to its own core's ring and masks IRQs for the whole push.
+        // UnsafeCell provides the interior mutability. A second writer on the
+        // ring (an unmasked IRQ producer, or a thread that migrated mid-push)
+        // would tear or lose entries. Two overlapping `drain_logs` calls (the
+        // known gap in `unsafe impl Sync` below) also break this: one can
+        // store `tail` past a slot the other is still reading, and this write
+        // can then tear the entry that drain reads.
         unsafe {
             let slot = (*self.entries.get()).as_mut_ptr().add(idx);
             core::ptr::write(slot, entry);
