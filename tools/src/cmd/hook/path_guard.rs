@@ -159,6 +159,16 @@ fn existing_dir(path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
+/// Whether a failed `git rev-parse` says the directory is in no repository: exit 128
+/// with git's "not a git repository (or any of the parent directories)" text, or its
+/// mount-point variant "not a git repository (or any parent up to mount point ...)".
+/// A pruned worktree says "not a git repository: <path>", which is neither.
+fn is_no_repository(stderr: &str, code: Option<i32>) -> bool {
+    code == Some(128)
+        && stderr.contains("not a git repository (or any")
+        && stderr.contains("parent")
+}
+
 /// The canonical top level of the work tree that contains `dir`, or `None` when
 /// `dir` is in no git work tree. That needs both git's own "not a git repository"
 /// answer for a directory search and a filesystem with no `.git` entry anywhere
@@ -192,10 +202,7 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
         .with_context(|| format!("cannot run git in {}", dir.display()))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        if stderr.contains("not a git repository (or any")
-            && stderr.contains("parent")
-            && out.status.code() == Some(128)
-        {
+        if is_no_repository(&stderr, out.status.code()) {
             return match marked {
                 None => Ok(None),
                 Some(marked) => bail!(
@@ -346,6 +353,19 @@ mod tests {
     fn target(json: &str) -> Result<Option<String>> {
         let input = parse_input(json.as_bytes()).unwrap();
         target_path(&input).map(|path| path.map(str::to_string))
+    }
+
+    #[test]
+    fn both_no_repository_wordings_are_recognised() {
+        let parents = "fatal: not a git repository (or any of the parent directories): .git\n";
+        let mount = "fatal: not a git repository (or any parent up to mount point /mnt/x)\n\
+                     Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n";
+        let pruned = "fatal: not a git repository: '/r/.git/worktrees/gone'\n";
+        assert!(is_no_repository(parents, Some(128)));
+        assert!(is_no_repository(mount, Some(128)));
+        assert!(!is_no_repository(pruned, Some(128)));
+        assert!(!is_no_repository(parents, Some(1)));
+        assert!(!is_no_repository(parents, None));
     }
 
     #[test]

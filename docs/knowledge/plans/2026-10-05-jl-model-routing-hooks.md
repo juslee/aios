@@ -232,3 +232,4 @@ Owned by the two-team harness PR (owner decision 2026-10-05, 21:33), built after
 ## Lessons Learned
 
 (to be filled during implementation)
+- Lead-review round 3: the "no repository" classification is a pure function, `is_no_repository(stderr, code)`, with a unit test over both documented wordings (parent directories, and the mount-point variant with its "Stopping at filesystem boundary" line) and the pruned-worktree text, which must not match. Why: the mount-point wording cannot be produced portably in an integration test, so tightening the match to one wording would have stayed green.
