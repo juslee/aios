@@ -20,7 +20,8 @@ pub fn unique_dir(label: &str) -> PathBuf {
     dir
 }
 
-/// Strip the ambient git environment so a test never depends on the developer's
+/// Strip the ambient git environment, point HOME and XDG_CONFIG_HOME at a private
+/// directory, and drop AIOS_TOOLS_BIN, so a test never depends on the developer's
 /// configuration.
 pub fn isolated(cmd: &mut Command) -> &mut Command {
     let home = Path::new(env!("CARGO_TARGET_TMPDIR")).join("home");

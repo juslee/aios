@@ -1,6 +1,6 @@
 # Harness Mechanics
 
-Claude Code behaviour that breaks edits and tool calls, whatever user config dir or account the session runs under.
+Claude Code behavior that breaks edits and tool calls, whatever user config dir or account the session runs under.
 
 ## Read-State Resets
 
