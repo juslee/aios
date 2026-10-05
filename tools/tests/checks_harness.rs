@@ -2,7 +2,11 @@
 //! findings were recorded from check.py's `check_layout` and
 //! `check_harness_tables` on the same files (production order). check.py read the
 //! project memory at the root `CLAUDE.md`; these files place it at `CLAUDE_MD`, so
-//! the expectations are check.py's with that path substituted.
+//! the expectations are check.py's with that path substituted. The exceptions are
+//! the two `ROOT_MEMORY_FILES` tests (`layout_ignores_a_root_claude_md_…` and
+//! `harness_tables_ignore_a_root_claude_md_…`): their expectations are check.py's
+//! for the same files without that root `CLAUDE.md`, and the `*_claude_dir_memory`
+//! tests are their controls.
 
 mod common;
 

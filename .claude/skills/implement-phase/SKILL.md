@@ -145,7 +145,7 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
     g. Mark the TodoWrite item as completed
     h. **Update the working plan doc**: record any issues encountered, decisions made, or lessons learned in the corresponding sections — do this as you go, not at the end
     After all steps in milestone complete:
-    i. Update `.claude/CLAUDE.md`, README.md, developer guide, phase doc (check off completed tasks)
+    i. Update `.claude/CLAUDE.md`, `docs/project/doc-map.md` (new or moved architecture docs), README.md, developer guide, phase doc (check off completed tasks)
     j. Dead code cleanup: Grep for `#[allow(dead_code)]` across `kernel/src/` and `shared/src/`. Remove the item if truly unused, or remove just the attribute if now used.
     k. Run `/audit-loop` — recursive triple audit (doc, code review, security/bug review) until 0 issues. Fix all issues found.
     l. Commit and push: `Phase $ARGUMENTS MN: update docs`

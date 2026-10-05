@@ -26,7 +26,7 @@ Rust's ownership model eliminates the three most common vulnerability classes fo
 - Raw pointer manipulation (page table walks, physical-to-virtual conversions)
 - FFI boundaries (if any external code is linked)
 
-Every `unsafe` block in AIOS follows the documentation standard defined in `CLAUDE.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary audit surface and the highest-priority fuzz targets.
+Every `unsafe` block in AIOS follows the documentation standard defined in `.claude/rules/06-unsafe-documentation.md`: a `// SAFETY:` comment stating the invariant, who maintains it, and what happens if violated. These blocks are the primary audit surface and the highest-priority fuzz targets.
 
 **Rust kernel fuzzing is still essential.** Research confirms that Rust kernel code is not immune to bugs — Check Point Research (2025) found vulnerabilities in Windows kernel Rust components through targeted fuzzing. The `unsafe` blocks required for hardware interaction, plus logic errors in safe code (integer overflow, infinite loops, deadlocks), make fuzzing indispensable even in a Rust kernel.
 
