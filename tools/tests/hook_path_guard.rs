@@ -326,6 +326,26 @@ fn a_cwd_that_does_not_exist_is_denied() {
 }
 
 #[test]
+fn a_deny_prefix_that_could_match_nothing_denies_every_checked_call() {
+    let dir = repo("badprefix");
+    let payload = edit(&dir, "docs/a.md");
+    for prefix in ["kernel//", "./kernel/./", "docs/../kernel/"] {
+        let run = run_hook(
+            &["path-guard", "--deny", prefix],
+            payload.to_string().as_bytes(),
+            &[],
+            &dir,
+        );
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(
+            deny_reason(&run).contains("--deny"),
+            "{prefix}: {}",
+            run.stdout
+        );
+    }
+}
+
+#[test]
 fn at_least_one_deny_is_required() {
     let dir = repo("usage");
     let run = run_hook(&["path-guard"], b"{}", &[], &dir);

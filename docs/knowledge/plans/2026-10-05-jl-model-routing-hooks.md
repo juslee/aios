@@ -21,7 +21,7 @@ Jev runs in shadow mode only. The 2026-09-22 review-triage evaluation found Jev 
 
 The work is split in two because other open branches own the files that wire these programs in:
 
-- **Part 1 (this branch, now):** the three subcommands, their tests and this plan. It touches only new files under `tools/src/cmd/hook/` and `tools/tests/`, plus one line each in `tools/src/cmd/mod.rs` and `tools/src/main.rs`.
+- **Part 1 (this branch, now):** the three subcommands, their tests and this plan. It touches only new files under `tools/src/cmd/hook/` and `tools/tests/`, plus one `pub mod hook;` line in `tools/src/cmd/mod.rs` and a `Hook` variant with its match arm in `tools/src/main.rs`.
 - **Part 2 (after `claude/harness-team-config` and `claude/tools-203-guard-fail-closed` merge):** wiring. Requirements only, listed under "Part 2 requirements" below.
 
 ## Progress
@@ -189,6 +189,10 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 - Step 5: `route-shadow` reads `AIOS_ROUTE_SHADOW`, `AIOS_JEV_URL` and `TYPESAFE_API_KEY` itself (a `Settings` struct, values trimmed, empty counts as unset, `off` is case-insensitive) rather than through `Ctx`, so `Ctx` and the other subcommands are unchanged. `run_with` takes the settings and the transport for the unit tests.
 - Step 5: an error record has `jev_model`, `answers` null; `latency_ms` is null when no request was made (missing key) and measured otherwise. A response with no `answers` object, or not JSON, is an error record too. The log keeps `answers` as a parsed `serde_json::Value` (key order preserved by the crate's `preserve_order` feature) because `RawValue` needs a Cargo feature this branch may not add.
 - Step 5: the existing `hook_common.rs` valid-input test now passes `AIOS_HOOK_STATE_DIR`: `route-shadow` logs even a payload it has no use for, and the test would otherwise have written into the real repository's `.git/aios-agent/hooks`. `route-shadow` does not filter on `tool_name`; the part 2 matcher (`Agent`) does that.
+- Review round 1: `normalise_prefix` rejects a `--deny` value with an empty, `.` or `..` component (`kernel//`, `kernel/./`, `docs/../kernel/`) after the leading `./` strip, instead of folding it. Why: a resolved relative path never contains such components, so the prefix would guard nothing; rejecting keeps the step 4 rule that a registration mistake shows at once (every checked call is denied with the error as the reason). Folding would silently accept a prefix that is not what the author wrote.
+- Review round 1: `tests/hook_support` isolates git like `tests/common` (the eight ambient `GIT_*` variables removed, `XDG_CONFIG_HOME` set) for the child processes it spawns. The in-process `Ctx::state_dir` tests run git with the test process's own environment, so `unique_dir` also isolates the process once, removing the same variables and pointing the git configuration at an empty one. Only removals and fixed values are applied, so concurrent tests are unaffected.
+- Review round 1: a `Reply::Hang` fake server (accepts, reads the request, then stays silent until curl closes) and a route-shadow test that the hook returns under 5.5 s with a curl exit 28 timeout record and no body file left. This is the only test of the `--max-time 4` bound through real curl.
+- Review round 1: the plan's Part 1 scope sentence now says one `pub mod hook;` line in `cmd/mod.rs` and a `Hook` variant with its match arm in `main.rs`.
 
 ## Lessons Learned
 

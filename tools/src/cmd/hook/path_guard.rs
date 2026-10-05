@@ -91,18 +91,20 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
 }
 
 /// A `--deny` value as a directory prefix: a missing trailing `/` is added, so
-/// `kernel` cannot match `kernel-notes/`. An empty or absolute prefix is a
-/// registration mistake and an error, which denies every call rather than none.
+/// `kernel` cannot match `kernel-notes/`. An empty or absolute prefix, or one with
+/// an empty, `.` or `..` component (`kernel//`, `kernel/./`, `docs/../kernel/`), is
+/// a registration mistake and an error, which denies every call rather than none:
+/// a resolved path never has such components, so the prefix would match nothing.
 fn normalise_prefix(raw: &str) -> Result<String> {
     let trimmed = raw.trim_start_matches("./");
     if trimmed.is_empty() || trimmed.starts_with('/') {
         bail!("--deny {raw:?} is not a repository-relative directory prefix");
     }
-    Ok(if trimmed.ends_with('/') {
-        trimmed.to_string()
-    } else {
-        format!("{trimmed}/")
-    })
+    let dir = trimmed.strip_suffix('/').unwrap_or(trimmed);
+    if dir.split('/').any(|part| matches!(part, "" | "." | "..")) {
+        bail!("--deny {raw:?} has an empty, `.` or `..` component and would match no path");
+    }
+    Ok(format!("{dir}/"))
 }
 
 /// The canonical top level of the repository that contains `cwd`.
@@ -272,5 +274,17 @@ mod tests {
         assert_eq!(normalise_prefix("./kernel").unwrap(), "kernel/");
         assert!(normalise_prefix("").is_err());
         assert!(normalise_prefix("/kernel/").is_err());
+        assert_eq!(normalise_prefix("kernel/arch").unwrap(), "kernel/arch/");
+        for bad in [
+            "kernel//",
+            "kernel/./",
+            "docs/../kernel/",
+            "kernel/..",
+            ".",
+            "./.",
+            "//",
+        ] {
+            assert!(normalise_prefix(bad).is_err(), "{bad}");
+        }
     }
 }

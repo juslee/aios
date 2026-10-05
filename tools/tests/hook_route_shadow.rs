@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hook_support::{run_hook, unique_dir, Run};
 use serde_json::{json, Value};
@@ -42,6 +42,8 @@ enum Reply {
     Status(u16, String),
     /// Read the request, then close without a response.
     Close,
+    /// Read the request, then say nothing until the client gives up (or 8 s pass).
+    Hang,
 }
 
 /// A one-thread HTTP server on 127.0.0.1 that answers every request the same way.
@@ -141,6 +143,16 @@ fn serve(mut stream: TcpStream, reply: &Reply) -> Option<Seen> {
     let (status, text) = match reply {
         Reply::Ok(text) => (200, text.as_str()),
         Reply::Status(code, text) => (*code, text.as_str()),
+        Reply::Hang => {
+            // A read returns 0 as soon as curl closes its end after `--max-time`.
+            stream.set_read_timeout(Some(Duration::from_secs(8))).ok()?;
+            let _ = stream.read(&mut chunk);
+            return Some(Seen {
+                request_line,
+                headers,
+                body,
+            });
+        }
         Reply::Close => {
             let _ = stream.shutdown(std::net::Shutdown::Both);
             return Some(Seen {
@@ -360,6 +372,35 @@ fn a_server_that_closes_early_is_an_error_record() {
     assert!(records[0]["error"].is_string(), "{}", records[0]);
     assert_eq!(records[0]["answers"], Value::Null);
     assert!(records[0]["latency_ms"].is_u64());
+    env.assert_key_not_in_log();
+    assert_eq!(env.state_entries(), ["route-shadow.jsonl"]);
+}
+
+#[test]
+fn a_server_that_never_answers_is_cut_off_by_the_time_limit() {
+    let env = Env::new("hang");
+    let server = Server::start(Reply::Hang);
+    let started = Instant::now();
+    env.run(
+        &dispatch("p"),
+        &[("AIOS_JEV_URL", &server.url), ("TYPESAFE_API_KEY", KEY)],
+    );
+    let elapsed = started.elapsed();
+    // The plan registers the hook with a 6 s timeout; curl's `--max-time 4` is
+    // what keeps a stalled server inside it.
+    assert!(
+        elapsed < Duration::from_millis(5500),
+        "the hook took {elapsed:?}"
+    );
+    assert_eq!(server.finish().len(), 1, "the request reached the server");
+    let records = env.records();
+    assert_eq!(records.len(), 1);
+    let error = records[0]["error"].as_str().expect("an error message");
+    assert!(
+        error.contains("(28)") && error.to_ascii_lowercase().contains("timed out"),
+        "{error}"
+    );
+    assert_eq!(records[0]["answers"], Value::Null);
     env.assert_key_not_in_log();
     assert_eq!(env.state_entries(), ["route-shadow.jsonl"]);
 }
