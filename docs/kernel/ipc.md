@@ -356,7 +356,7 @@ pub enum IpcError {
     Eacces       = -5,  // behavioral gate SUSPENDED
     Eperm        = -6,  // missing capability or right (§3.2)
     Enospc       = -7,  // table, ring or list full, or a payload above a fixed limit (Kit doc §6)
-    Eproto       = -8,  // message_type not in channel protocol
+    Eproto       = -8,  // message_type not in channel protocol (target design); today only IpcReply with no pending call (Kit doc §6)
     Enotsup      = -9,  // operation not available (e.g., AIRS offline)
     EcapDormant  = -10, // capability exists but is dormant
     Eexist       = -11, // resource already exists
@@ -679,7 +679,7 @@ pub struct SharedMemoryRegion {
     id: SharedMemoryId,
     physical_pages: PageRange,
     /// Reference count: incremented on SharedMemoryMap, decremented on
-    /// SharedMemoryUnmap or process death. When it reaches 0, the
+    /// MemoryUnmap of the region's window address (§4.7) or process death. When it reaches 0, the
     /// physical pages are freed.
     ref_count: AtomicU32,
     /// The process that created the region. Only the creator (or

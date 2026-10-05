@@ -57,10 +57,12 @@ pub enum IpcKitError {
     /// The caller's process is SUSPENDED by the behavioral gate
     /// (docs/kernel/ipc.md §9.1). It may still hold every capability.
     Suspended,
-    /// An argument is invalid (an out-of-range id, an undefined flag bit, a
-    /// W^X violation, a bad buffer or an unknown entry kind), or the caller's
-    /// state does not allow the call: no current thread or process, or a
-    /// reply with no pending call.
+    /// An argument is invalid (an out-of-range id or a missing notification,
+    /// an undefined flag bit, a W^X request or flags beyond a region's
+    /// maximum, a size above a fixed limit, a bad buffer, or an empty,
+    /// oversized or unknown-kind select set; the full list is the EINVAL row
+    /// of docs/kernel/ipc.md §3.2), or the caller's state does not allow the
+    /// call: no current thread or process, or a reply with no pending call.
     InvalidArgument { reason: &'static str },
     /// A table, queue or memory pool is full.
     ResourceExhausted { reason: &'static str },
