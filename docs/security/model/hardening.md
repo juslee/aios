@@ -234,7 +234,7 @@ No memory page is ever both writable and executable simultaneously. This is the 
 **Kernel enforcement:**
 - Page table entries (PTEs) have separate `AP` (access permission) and `XN` (execute never) bits
 - The kernel's `MemoryMap` syscall enforces: if `flags` contains `Write`, `Execute` is forbidden. If `flags` contains `Execute`, `Write` is forbidden.
-- Attempting to map with both `Write` and `Execute` (`MemoryMap`, `SharedMemoryCreate`, `SharedMemoryMap`) returns `EINVAL`: the request is invalid for every caller. `EPERM` is reserved for a missing capability or right, apart from the one exception the errno policy names ([ipc.md §3.2](../../kernel/ipc.md), errno policy)
+- Attempting to map with both `Write` and `Execute` (`MemoryMap`, `SharedMemoryCreate`, `SharedMemoryMap`) returns `EINVAL`: the request is invalid for every caller. `EPERM` is reserved for a missing capability or right, apart from the two exceptions the errno policy names ([ipc.md §3.2](../../kernel/ipc.md), errno policy)
 
 **JIT workflow (for JavaScript in browser tab agents):**
 

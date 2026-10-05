@@ -1033,7 +1033,7 @@ ipc/
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (168)  # IpcSelect capability self-test
     syscall_args.rs (209) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (192)  # IPC Kit error variants through KernelIpc (#190) self-test
+    kit_errors.rs (199)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (381)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
   shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)

@@ -68,7 +68,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     };
     let bad_id = ChannelId(MAX_CHANNELS as u32);
 
-    let mut checks = [false; 18];
+    let mut checks = [false; 19];
 
     // EPERM on a channel names ChannelAccess(id), not the table's
     // placeholder ChannelCreate. select names the channel the caller lacks.
@@ -82,21 +82,25 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     checks[4] = kit.recv(bad_id, 0).err() == Some(IpcKitError::InvalidChannel { id: bad_id });
 
     // EAGAIN: an empty poll is WouldBlock, a full ring on send is
-    // ChannelFull. Every message sent is received again.
+    // ChannelFull. A full ring on call is ENOSPC, which the table maps to
+    // ResourceExhausted; the call wrapper reports ChannelFull. ipc_call
+    // returns ENOSPC before it registers as the pending caller, so the call
+    // neither blocks nor leaves state behind for the drain. Every message
+    // sent is received again.
+    let full = Some(IpcKitError::ChannelFull {
+        id: open,
+        capacity: RING_CAPACITY,
+    });
     checks[5] = kit.recv(open, 0).err() == Some(IpcKitError::WouldBlock);
     let filled = (0..RING_CAPACITY).all(|_| kit.send(open, &msg).is_ok());
-    checks[6] = filled
-        && kit.send(open, &msg).err()
-            == Some(IpcKitError::ChannelFull {
-                id: open,
-                capacity: RING_CAPACITY,
-            });
+    checks[6] = filled && kit.send(open, &msg).err() == full;
+    checks[7] = filled && kit.call(open, &msg, 10).err() == full;
     let drained = (0..RING_CAPACITY).all(|_| kit.recv(open, 0).is_ok());
-    checks[7] = drained && kit.recv(open, 0).err() == Some(IpcKitError::WouldBlock);
+    checks[8] = drained && kit.recv(open, 0).err() == Some(IpcKitError::WouldBlock);
 
     // ipc_reply with no pending call returns EPROTO: the replier's mistake,
     // not the table's NoReply.
-    checks[8] = kit.reply(open, &msg).err()
+    checks[9] = kit.reply(open, &msg).err()
         == Some(IpcKitError::InvalidArgument {
             reason: "no pending call",
         });
@@ -104,17 +108,17 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     // A notification id out of range is EINVAL: InvalidArgument, not
     // InvalidChannel.
     let no_notification = NotificationId(MAX_NOTIFICATIONS as u32);
-    checks[9] = matches!(
+    checks[10] = matches!(
         kit.signal(no_notification, 1),
         Err(IpcKitError::InvalidArgument { .. })
     );
-    checks[10] = matches!(
+    checks[11] = matches!(
         kit.wait(no_notification, 1, 0),
         Err(IpcKitError::InvalidArgument { .. })
     );
 
     let shm = shm_kit_checks(pid, &mut kit);
-    checks[11..].copy_from_slice(&shm);
+    checks[12..].copy_from_slice(&shm);
 
     let failed = checks
         .iter()
@@ -130,21 +134,23 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
 }
 
 /// The shared memory wrappers, on a READ-only region process `pid` (the
-/// calling thread's process) creates through the Kit. Returns checks 11-17
+/// calling thread's process) creates through the Kit. Returns checks 12-18
 /// of `kit_errors_test`, all false from the first one that cannot run.
 fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
     let mut checks = [false; 7];
 
     // Without SharedMemoryCreate: CapabilityDenied naming it. An undefined
-    // flag bit is InvalidArgument, before the capability check.
+    // flag bit is the wrapper's own decode error, before the capability
+    // check. The exact reason pins the decoder: no kernel EINVAL decodes to
+    // "undefined flag bits".
+    let undefined_bits = Some(IpcKitError::InvalidArgument {
+        reason: "undefined flag bits",
+    });
     checks[0] = kit.shmem_create(PAGE, READ).err()
         == Some(IpcKitError::CapabilityDenied {
             required: Capability::SharedMemoryCreate,
         });
-    checks[1] = matches!(
-        kit.shmem_create(PAGE, USER_BIT),
-        Err(IpcKitError::InvalidArgument { .. })
-    );
+    checks[1] = kit.shmem_create(PAGE, USER_BIT).err() == undefined_bits;
 
     let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
         .ok()
@@ -164,16 +170,17 @@ fn shm_kit_checks(pid: ProcessId, kit: &mut KernelIpc) -> [bool; 7] {
         == Some(IpcKitError::SharedMemoryError {
             reason: "not mapped",
         });
-    checks[3] = matches!(
-        kit.shmem_map(region, 0, USER_BIT),
-        Err(IpcKitError::InvalidArgument { .. })
-    );
     let mapped = kit.shmem_map(region, 0, READ).is_ok();
     // The creator's SharedMemoryAccess grant is revoked before the unmap
     // that frees the region, as in the other shared memory self-tests. The
     // capability is checked before the duplicate-mapping check, so the
     // repeated map fails for the missing right, naming this region.
     revoke_region_access(pid, region);
+    // USER is an undefined flag bit for shmem_map too, rejected before the
+    // capability check: without the decoder this map would be
+    // CapabilityDenied, and with the grant still held it would be the
+    // max_flags EINVAL, which decodes to a different reason.
+    checks[3] = kit.shmem_map(region, 0, USER_BIT).err() == undefined_bits;
     checks[4] = mapped
         && kit.shmem_map(region, 0, READ).err()
             == Some(IpcKitError::CapabilityDenied {
