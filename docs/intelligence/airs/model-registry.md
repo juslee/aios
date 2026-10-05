@@ -161,7 +161,7 @@ impl QuantizationSelector {
 
 ### 4.4 LRU Model Eviction
 
-The model pool is 8 GB at most (§4.3), so it cannot hold the primary model and a full-size (7B) vision model such as LLaVA 1.5 7B at once on any device, even one of 16 GB or more. Smaller vision models (around 3B) can fit beside the primary model in an 8 GB pool. The registry manages loading/unloading:
+The model pool is 8 GB at most (§4.3), so it cannot hold the primary model and a full-size (7B) vision model such as LLaVA 1.5 7B at once on any device, even one of 16 GB or more. A smaller (~3B, ~2 GB) vision model fits beside the ~5.5 GB primary model only by giving up most of the quarter of the pool that §4.3 and §4.6 reserve for KV caches (5.5 + 2 + 0.1 GB for the embedding model leaves ~0.4 GB of an 8 GB pool). The registry manages loading/unloading:
 
 ```text
 RAM Budget: 8 GB available for models (16 GB device)
