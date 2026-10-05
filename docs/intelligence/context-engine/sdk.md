@@ -121,7 +121,7 @@ while let Some(update) = context_stream.next().await {
 |------------------------|---------------------|--------------------------------------|
 | Read current context   | `ContextRead`       | Read-only, most agents should have   |
 | Subscribe to changes   | `ContextRead`       | Same capability, streaming variant   |
-| Post attention item    | `AttentionPost`     | AIRS re-assesses urgency             |
+| Post attention item    | `AttentionPost`     | AIRS assesses urgency                |
 | Create override        | Not available to agents | User-only via Conversation Bar   |
 
 Agents cannot create overrides. Only the user (through the Conversation Bar, keyboard shortcuts, or calendar events) can override the inferred context. This prevents agents from manipulating the context to get more resources or bypass notification filtering.

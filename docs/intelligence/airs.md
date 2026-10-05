@@ -100,7 +100,7 @@ flowchart TD
 
 ### 2.1 Why a Single Service (Monolith Now, Structured Split Later)
 
-AIRS is a single process containing the inference engine, model registry, all intelligence services, and the resource orchestrator. This is deliberate — the inference engine is the scarce resource, and seven subsystems all share one model in RAM. Splitting into separate processes adds IPC overhead without creating more inference capacity.
+AIRS is a single process containing the inference engine, model registry, all intelligence services, and the resource orchestrator. This is deliberate — the inference engine is the scarce resource, and the intelligence services that run on the LLM all share one model in RAM ([inference.md §3](./airs/inference.md)). Splitting into separate processes adds IPC overhead without creating more inference capacity.
 
 On 8 GB hardware with one 4.5 GB model, splitting KV cache memory across processes halves the practical context window for both security checks and conversation. The monolith does not compromise security — the kernel monitors AIRS externally (§10.3), enforces capabilities regardless of internal structure, and can disable resource orchestration while keeping security active.
 

@@ -121,7 +121,7 @@ pub enum AttentionCategory {
 
 /// AI-assessed urgency (set by AIRS, never by the posting agent). The
 /// urgency is also how the Attention Manager delivers the item to the user
-/// (attention.md §3.1).
+/// (intelligence/attention.md §3.1).
 pub enum Urgency {
     /// Show immediately as an interrupt overlay. Reserved for critical items.
     Interrupt,
@@ -129,7 +129,7 @@ pub enum Urgency {
     NextBreak,
     /// Batch into a digest summary delivered at context transitions.
     Digest,
-    /// Log silently. Visible in the Attention Panel but no notification.
+    /// Log only, never shown: telemetry, routine confirmations.
     Silent,
 }
 
@@ -439,8 +439,9 @@ The Attention Kit operates in two modes depending on AIRS availability:
 
 **Without AIRS (heuristic fallback):**
 
-- Category-based urgency: `Alert(Critical)` maps to `Urgency::Interrupt`, messages
-  default to `Urgency::NextBreak`, social items default to `Urgency::Digest`.
+- Category-based urgency: `Alert(Critical)` maps to `Urgency::Interrupt`, other alerts
+  and reminders to `Urgency::NextBreak`, and messages, progress and social items
+  default to `Urgency::Digest`.
 - Simple grouping: items from the same agent with the same category are grouped by
   count. No AI summarization.
 - No relationship scoring: all senders are treated equally.

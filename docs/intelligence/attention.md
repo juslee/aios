@@ -285,10 +285,14 @@ impl AttentionManager {
                 markers: analysis.urgency_markers,
             });
         }
-        signals.push(UrgencySignal::SentimentAnalysis {
-            sentiment: analysis.sentiment,
-            confidence: analysis.confidence,
-        });
+        // Only a distressed or emergency sentiment is an urgency signal; a calm
+        // message adds nothing, however confident the classifier is.
+        if analysis.sentiment.indicates_distress() {
+            signals.push(UrgencySignal::SentimentAnalysis {
+                sentiment: analysis.sentiment,
+                confidence: analysis.confidence,
+            });
+        }
 
         // 3. Historical engagement patterns
         let history = self.audit_log.engagement_stats(&item.source).await;
@@ -350,7 +354,8 @@ impl AttentionManager {
             .map(|signal| {
                 let weight = model.signal_weights.get(&signal.kind()).copied().unwrap_or(0.0);
                 // intensity(): the signal's strength in 0.0–1.0 (trust level, marker
-                // count, sentiment confidence, deadline proximity, event severity)
+                // count, confidence of the distress sentiment, deadline proximity,
+                // event severity)
                 weight * signal.intensity()
             })
             .sum();

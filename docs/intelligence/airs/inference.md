@@ -10,7 +10,7 @@ Part of: [airs.md](../airs.md) — AI Runtime Service
 
 The inference engine runs local LLM inference. No cloud dependency. All inference happens on-device. It manages the complete lifecycle from session creation through token generation to completion, coordinating compute resources, memory, and streaming output across heterogeneous hardware.
 
-The engine is the scarce resource at the center of AIRS — seven intelligence services (Space Indexer, Context Engine, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager) all share one model in RAM on memory-constrained hardware. The inference engine's scheduler, metering, and session management determine who gets inference capacity and when.
+The engine is the scarce resource at the center of AIRS — six intelligence services (Space Indexer, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager) all share one model in RAM on memory-constrained hardware. The Context Engine is not one of them: it runs a small classifier, not the LLM ([context-engine/inference.md](../context-engine/inference.md) §4.1). The inference engine's scheduler, metering, and session management determine who gets inference capacity and when.
 
 ### 3.1 Inference Runtime (candle default)
 
@@ -284,7 +284,7 @@ pub struct ComputeScheduler {
     /// Reference to the kernel's centralized compute device registry.
     /// AIRS queries this for device capabilities, utilization, and
     /// thermal state — it does not maintain a separate device list.
-    /// See compute/classification.md §3 for ComputeDevice trait.
+    /// Queries return ComputeDeviceEntry values (compute/registry.md §5).
     registry: ComputeRegistryHandle,
 
     /// Priority queue of pending inference requests.
@@ -373,7 +373,7 @@ pub struct ScoreComponents {
     /// 0.0 = unsupported (disqualified), 1.0 = native support.
     pub format_support: f32,
     /// Available capacity (0.0 = fully loaded = worst, 1.0 = idle = best).
-    /// Computed as `1.0 - device.utilization()`.
+    /// Computed as `1.0 - device.utilization`.
     pub availability: f32,
     /// Thermal headroom (0.0 = critical = worst, 1.0 = cool = best).
     pub thermal: f32,
@@ -389,23 +389,24 @@ pub struct ScoreComponents {
 }
 
 impl ComputeScheduler {
-    /// Score a device for a given inference request.
+    /// Score a device for a given inference request. `device` is one of the
+    /// entries a ComputeRegistry query returns (compute/registry.md §5.3).
     fn score_device(
         &self,
-        device: &dyn ComputeDevice,
+        device: &ComputeDeviceEntry,
         request: &InferenceRequest,
     ) -> DeviceScore {
         // The requested model's format, from its registry entry
         // (`request.model` is None for the default model).
         let quant = self.models.resolve(request.model).quantization;
-        let format_support = if device.capabilities().quant_formats.contains(QuantFormatSet::from(quant)) {
+        let format_support = if device.capabilities.quant_formats.contains(QuantFormatSet::from(quant)) {
             1.0
         } else {
             0.0  // Hard disqualification
         };
 
-        let availability = 1.0 - device.utilization();
-        let thermal = Self::thermal_headroom(device.thermal_state());
+        let availability = 1.0 - device.utilization;
+        let thermal = Self::thermal_headroom(device.thermal_state);
         let memory_fit = self.compute_memory_fit(device, request);
         let throughput = self.estimate_throughput(device, request);
         let latency = self.estimate_latency(device, request);
@@ -436,7 +437,8 @@ impl ComputeScheduler {
     }
 
     /// Thermal headroom for scoring (1.0 = cool, 0.0 = critical), from the
-    /// kernel thermal state the device reports (`ComputeDevice::thermal_state`).
+    /// kernel thermal state in the device's registry entry
+    /// (`ComputeDeviceEntry::thermal_state`).
     fn thermal_headroom(state: ThermalState) -> f32 {
         match state {
             ThermalState::Normal => 1.0,
@@ -672,12 +674,12 @@ Session B (Behavioral Mon):   [shared system prompt KV | session-specific KV]
 
 The shared prefix is identified by hashing the system prompt tokens. When a new session starts with a known prefix, the engine points its KV cache to the shared blocks (read-only) and only allocates new blocks for session-specific tokens. This is coordinated with the kernel's SharedPrefix mechanism ([memory/ai.md](../../kernel/memory/ai.md) §6.3).
 
-**Memory savings example (8 GB device, 8B Q4 model):**
+**Memory savings example (8 GB device, 8B Q4 model, Q8 KV cache at 64 KB per token as in [memory/ai.md](../../kernel/memory/ai.md) §6.3):**
 
 ```text
-Without prefix sharing:  7 intelligence services × 2048 system prompt tokens × 1 MB = 7 MB
-With prefix sharing:     1 shared prefix × 2048 tokens × 1 MB + 7 × session-specific = 1 MB + variable
-Savings:                 ~6 MB (significant when KV budget is 500 MB–1 GB)
+Without prefix sharing:  6 intelligence services × 2048 system prompt tokens × 64 KB = 768 MB
+With prefix sharing:     1 shared prefix × 2048 tokens × 64 KB + 6 × session-specific = 128 MB + variable
+Savings:                 ~640 MB (unshared, the system prompts alone would overflow a 500 MB KV budget and fill most of a 1 GB one)
 ```
 
 #### 3.3.5 Context Window Management

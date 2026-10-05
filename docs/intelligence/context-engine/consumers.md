@@ -92,12 +92,11 @@ Agent posts AttentionItem
 Attention Manager receives item
   │
   ▼
-Step 1: AIRS re-assesses urgency
-  │  Agent says "Interrupt" — but is it really?
+Step 1: AIRS assesses urgency
+  │  The agent declares no urgency (attention.md §4.3).
   │  AIRS examines content, sender context, user context.
-  │  A Slack message from a bot is not Interrupt, even if the
-  │  agent declared it so. A message from the user's manager
-  │  during a meeting might be.
+  │  A Slack message from a bot is not Interrupt. A message
+  │  from the user's manager during a meeting might be.
   │
   ▼
 Step 2: Filter against notification_threshold from ContextState
@@ -161,7 +160,7 @@ pub struct AttentionItem {
 
 impl AttentionManager {
     pub async fn process(&mut self, mut item: AttentionItem) {
-        // Step 1: AIRS re-assessment
+        // Step 1: AIRS assessment
         if let Some(ref model) = self.model.classifier {
             item.urgency = model.assess_urgency(&item, &self.context).await;
             item.relevance = model.assess_relevance(&item, &self.context).await;
