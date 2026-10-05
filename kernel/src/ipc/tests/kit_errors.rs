@@ -68,7 +68,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     };
     let bad_id = ChannelId(MAX_CHANNELS as u32);
 
-    let mut checks = [false; 19];
+    let mut checks = [false; 20];
 
     // EPERM on a channel names ChannelAccess(id), not the table's
     // placeholder ChannelCreate. select names the channel the caller lacks.
@@ -80,6 +80,19 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     // EINVAL on a channel is InvalidChannel with the real id, not
     // InvalidArgument.
     checks[4] = kit.recv(bad_id, 0).err() == Some(IpcKitError::InvalidChannel { id: bad_id });
+    // EPIPE on a channel is InvalidChannel with the real id too, not the
+    // table's ObjectGone, which names no id. ipc_reply checks no capability,
+    // so a reply to an in-range slot that holds no channel reaches
+    // channel_mut's EPIPE and logs no denial. The highest free slot is used:
+    // channel_create fills the lowest, so another thread's new channel is
+    // unlikely to land there between the lookup and the reply.
+    let gone = crate::ipc::CHANNEL_TABLE
+        .lock()
+        .iter()
+        .rposition(Option::is_none)
+        .map(|i| ChannelId(i as u32));
+    checks[19] = gone
+        .is_some_and(|id| kit.reply(id, &msg).err() == Some(IpcKitError::InvalidChannel { id }));
 
     // EAGAIN: an empty poll is WouldBlock, a full ring on send is
     // ChannelFull. A full ring on call is ENOSPC, which the table maps to
@@ -118,7 +131,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     );
 
     let shm = shm_kit_checks(pid, &mut kit);
-    checks[12..].copy_from_slice(&shm);
+    checks[12..19].copy_from_slice(&shm);
 
     let failed = checks
         .iter()

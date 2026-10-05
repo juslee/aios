@@ -279,10 +279,14 @@ impl RawMessage {
 // User VA validation
 // ---------------------------------------------------------------------------
 
-/// Upper bound of the user virtual address space (exclusive).
+/// Exclusive upper bound of the addresses `validate_user_va` accepts (2^47).
 ///
-/// AArch64 convention: addresses below 0x0000_8000_0000_0000 belong to user
-/// space (TTBR0), addresses at or above belong to kernel space (TTBR1).
+/// The bound keeps a user range out of the TTBR1 half; it is not the TTBR0
+/// boundary. With the T0SZ=20 that `boot.S` keeps from edk2, TTBR0
+/// translates only `[0, 2^44)`, so an address from 2^44 up to this bound is
+/// in neither half and takes a translation fault. Addresses from this bound
+/// up to the TTBR1 base 0xFFFF_0000_0000_0000 (T1SZ=16) are in neither half
+/// either. See `kernel/src/syscall/user.rs`.
 pub const USER_VA_LIMIT: usize = 0x0000_8000_0000_0000;
 
 /// Lowest address a user buffer may start at (inclusive).

@@ -140,15 +140,19 @@ impl From<IpcError> for IpcKitError {
     /// must override it:
     /// - EPERM maps to `CapabilityDenied`, since every capability check
     ///   returns it (docs/kernel/ipc.md §3.2), but some EPERMs are not a
-    ///   missing capability: IpcReply with no current thread,
-    ///   NotificationCreate with no process, SharedMemoryUnmap or MemoryUnmap
-    ///   of a region the caller has not mapped, SharedMemoryShare from a
-    ///   caller that is not the region's creator or to a target pid with no
+    ///   missing capability. Every syscall that checks no capability returns
+    ///   EPERM when the caller has no current thread or no process:
+    ///   IpcReply, NotificationCreate, MemoryMap, MemoryUnmap,
+    ///   CapabilityAttenuate, CapabilityRevoke, CapabilityList, ProcessExit,
+    ///   ProcessWait, AuditLog and SharedMemoryShare. Some of them also
+    ///   return it for other reasons: SharedMemoryUnmap or MemoryUnmap of a
+    ///   region the caller has not mapped, SharedMemoryShare from a caller
+    ///   that is not the region's creator or to a target pid with no
     ///   process, and ProcessWait for a child pid with no process or after a
     ///   wake that finds no exit code. `reply`, `notification_create` and
-    ///   `shmem_unmap` override it; SharedMemoryShare, MemoryUnmap and
-    ///   ProcessWait have no Kit wrapper, so a plain decode of their EPERM
-    ///   reads as `CapabilityDenied`.
+    ///   `shmem_unmap` override it; the other syscalls named here have no
+    ///   Kit wrapper, so a plain decode of their EPERM reads as
+    ///   `CapabilityDenied`.
     /// - ENOSPC maps to `ResourceExhausted`, but several paths return it for
     ///   a request above a fixed limit, which releasing objects or retrying
     ///   cannot fix: a payload above `MAX_MESSAGE_SIZE` (IpcSend, IpcCall,
