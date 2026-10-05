@@ -3,7 +3,10 @@
 //! `check_knowledge_hygiene` on the same files (production order, before
 //! merging by key: "claude-md:Build Matrix" appears on two lines). check.py read
 //! the project memory at the root `CLAUDE.md`; these files place the same text at
-//! `CLAUDE_MD`, where docs-check reads it now.
+//! `CLAUDE_MD`, where docs-check reads it now. The one expectation check.py did not
+//! produce is dev.md line 32, whose pointers name the memory by its `.claude/CLAUDE.md`
+//! path, a form check.py's `BEFORE_CLAUDE_RE` did not match (see the pointer_doctor
+//! module doc).
 
 mod common;
 
@@ -100,6 +103,7 @@ Rules live in rules/03-git.md and `.claude/rules/01-code-conventions.md`.
 Docs: `docs/missing/guide.md:12`, `docs/phases/NN-name.md`, `docs/project/doc-map.md`.
 Skills: `/alpha`, `/help`, `/ghost`, `/other:thing`, `/kit:nope`, `/alpha --flag`.
 Ask the `worker` agent, the `ghost` subagent, subagent_type: `Explore` or subagent_type: nobody.
+Use the Key Technical Facts in `.claude/CLAUDE.md` and the Bogus Facts from .claude/CLAUDE.md.
 "#,
     ),
     (
@@ -260,6 +264,7 @@ fn pointer_doctor_matches_check_py() {
         Finding::new("pointer-doctor", ".claude/agents/dev.md", "skill:/kit:nope", "/kit:nope is not a project skill or built-in command", 30),
         Finding::new("pointer-doctor", ".claude/agents/dev.md", "agent:ghost", "agent ghost is not defined in .claude/agents", 31),
         Finding::new("pointer-doctor", ".claude/agents/dev.md", "agent:nobody", "agent nobody is not defined in .claude/agents", 31),
+        Finding::new("pointer-doctor", ".claude/agents/dev.md", "claude-md:Bogus Facts", "points to CLAUDE.md 'Bogus Facts', which is not a section of CLAUDE.md", 32),
         Finding::new("pointer-doctor", ".claude/skills/pack/skills/go/SKILL.md", "skill:/kit:stop", "/kit:stop is not a project skill or built-in command", 8),
     ];
     assert_eq!(found, expected);

@@ -11,7 +11,7 @@
     "milestone-status": 5,
     "phase-count": 1,
     "layout": 3,
-    "pointer-doctor": 17,
+    "pointer-doctor": 11,
     "knowledge-hygiene": 2
   },
   "findings": [
@@ -426,13 +426,6 @@
       "message": "rule 05 does not list kernel/src/input/"
     },
     {
-      "key": "pointer-doctor|.claude/agents/code-reviewer.md|claude-md:Quality Gates",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/code-reviewer.md",
-      "target": "claude-md:Quality Gates",
-      "message": "points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md"
-    },
-    {
       "key": "pointer-doctor|.claude/agents/doc-writer.md|claude-md:Architecture Document Map",
       "check": "pointer-doctor",
       "file": ".claude/agents/doc-writer.md",
@@ -447,13 +440,6 @@
       "message": "points to CLAUDE.md 'Milestone Numbering', which is not a section of CLAUDE.md"
     },
     {
-      "key": "pointer-doctor|.claude/agents/kernel-dev.md|claude-md:Code Conventions",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/kernel-dev.md",
-      "target": "claude-md:Code Conventions",
-      "message": "points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md"
-    },
-    {
       "key": "pointer-doctor|.claude/agents/kernel-dev.md|tool:MultiEdit",
       "check": "pointer-doctor",
       "file": ".claude/agents/kernel-dev.md",
@@ -466,20 +452,6 @@
       "file": ".claude/agents/team-lead.md",
       "target": "claude-md:Architecture Document Map",
       "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/team-lead.md|claude-md:Code Conventions",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/team-lead.md",
-      "target": "claude-md:Code Conventions",
-      "message": "points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md"
-    },
-    {
-      "key": "pointer-doctor|.claude/agents/team-lead.md|claude-md:Quality Gates",
-      "check": "pointer-doctor",
-      "file": ".claude/agents/team-lead.md",
-      "target": "claude-md:Quality Gates",
-      "message": "points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md"
     },
     {
       "key": "pointer-doctor|.claude/agents/verifier.md|claude-md:Key Facts",
@@ -508,22 +480,6 @@
       "file": ".claude/skills/generate-phase-doc/SKILL.md",
       "target": "claude-md:Architecture Document Map",
       "message": "points to CLAUDE.md 'Architecture Document Map', which is only a pointer stub now"
-    },
-    {
-      "key": "pointer-doctor|.claude/skills/implement-phase/SKILL.md|claude-md:Code Conventions",
-      "check": "pointer-doctor",
-      "file": ".claude/skills/implement-phase/SKILL.md",
-      "target": "claude-md:Code Conventions",
-      "message": "points to CLAUDE.md 'Code Conventions', which now lives in .claude/rules/01-code-conventions.md",
-      "count": 2
-    },
-    {
-      "key": "pointer-doctor|.claude/skills/implement-phase/SKILL.md|claude-md:Quality Gates",
-      "check": "pointer-doctor",
-      "file": ".claude/skills/implement-phase/SKILL.md",
-      "target": "claude-md:Quality Gates",
-      "message": "points to CLAUDE.md 'Quality Gates', which now lives in .claude/rules/02-quality-gates.md",
-      "count": 2
     },
     {
       "key": "pointer-doctor|.claude/skills/verify-phase/SKILL.md|claude-md:Quality Gates",

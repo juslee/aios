@@ -2268,7 +2268,7 @@ The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md]
 
 ### Agents
 
-Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows CLAUDE.md conventions.
+Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows the conventions in `.claude/rules/` (technical facts in `.claude/CLAUDE.md`).
 
 | Agent | Role | Spawned by | Key capabilities |
 | --- | --- | --- | --- |

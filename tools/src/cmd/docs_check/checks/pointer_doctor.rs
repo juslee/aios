@@ -21,6 +21,12 @@
 //! contains a capital assigned after Unicode 16 (e.g. U+A7CE) is skipped as a
 //! placeholder by `is_path_placeholder` here, where check.py reports it (listed in the
 //! `markdown` module doc).
+//!
+//! One deliberate extension: check.py read the project memory at the root `CLAUDE.md`,
+//! so its `BEFORE_CLAUDE_RE` needs `CLAUDE.md` right after "in"/"from". The memory now
+//! lives at [`CLAUDE_MD`] and harness prose names it by that path, so `BEFORE_CLAUDE_RE`
+//! also accepts the `.claude/` prefix ("Key Technical Facts in `.claude/CLAUDE.md`").
+//! `AFTER_CLAUDE_RE` and the heading test already find `CLAUDE.md` inside the path.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -141,14 +147,15 @@ fn title_list() -> String {
     .concat()
 }
 
-/// check.py `BEFORE_CLAUDE_RE` (L1210-1212): `<Title Words> in CLAUDE.md`.
+/// check.py `BEFORE_CLAUDE_RE` (L1210-1212): `<Title Words> in CLAUDE.md`, with the
+/// optional `.claude/` prefix of [`CLAUDE_MD`] (see the module doc).
 static BEFORE_CLAUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = [
         "((?:",
         TITLE_WORD,
         r"\s+){0,6}",
         TITLE_WORD,
-        r#")["'”*]*\s*\(?\s*(?:in|from)\s+`?CLAUDE\.md\b"#,
+        r#")["'”*]*\s*\(?\s*(?:in|from)\s+`?(?:\.claude/)?CLAUDE\.md\b"#,
     ]
     .concat();
     Regex::new(&pattern).expect("valid regex")
@@ -645,6 +652,22 @@ mod tests {
                 after(&["Code", "Conventions"]),
                 after(&["Quality", "Gates"])
             ]
+        );
+    }
+
+    #[test]
+    fn section_candidates_accept_the_claude_dir_path() {
+        assert_eq!(
+            section_candidates("Use the Key Technical Facts in `.claude/CLAUDE.md` today."),
+            vec![before(&["Key", "Technical", "Facts"])]
+        );
+        assert_eq!(
+            section_candidates("Read the Workspace Layout from .claude/CLAUDE.md first."),
+            vec![before(&["Workspace", "Layout"])]
+        );
+        assert_eq!(
+            section_candidates("Check `.claude/CLAUDE.md`: Workspace Layout and Build Matrix."),
+            vec![after(&["Workspace", "Layout"]), after(&["Build", "Matrix"])]
         );
     }
 

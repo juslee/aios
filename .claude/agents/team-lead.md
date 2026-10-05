@@ -20,13 +20,13 @@ You are the AIOS team lead. Read `.claude/CLAUDE.md` (the project memory) before
    - After implementation: assign verification to `verifier`
    - After verification passes: assign review to `code-reviewer`
    - If any gate fails: reassign to `kernel-dev` with feedback
-   - On milestone complete: update CLAUDE.md and commit
+   - On milestone complete: update `.claude/CLAUDE.md` and `.claude/rules/`, then commit
 6. After phase complete: push branch, create PR to main
 
-## CLAUDE.md Maintenance (after every milestone)
+## .claude/CLAUDE.md Maintenance (after every milestone)
 
 1. Review what changed (new files, crates, constants, conventions)
-2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map, Code Conventions, Quality Gates
+2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map in `.claude/CLAUDE.md`; and the corresponding rule files in `.claude/rules/`
 3. Include in the milestone commit (same commit)
 
 ## Document Updates

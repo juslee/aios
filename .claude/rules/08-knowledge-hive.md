@@ -18,9 +18,9 @@ After significant sessions, write insights to `docs/knowledge/`:
 - Required frontmatter: author, date, tags, status (draft/in-progress/final; `discussions/` may also use active, then graduated — see `docs/knowledge/README.md`)
 - Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media, tooling
 
-## CLAUDE.md Self-Maintenance
+## .claude/CLAUDE.md Self-Maintenance
 
-Team-lead updates CLAUDE.md and relevant rule files after every milestone:
+Team-lead updates `.claude/CLAUDE.md` and the relevant rule files after every milestone:
 
 1. Review what changed (new files, crates, constants, conventions)
 2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map in `.claude/CLAUDE.md`; and the corresponding rule files in `.claude/rules/` (code conventions, quality gates, etc.)

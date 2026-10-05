@@ -80,7 +80,7 @@ When implementing kernel code, use these established patterns:
 
 | Task | Pattern | Reference File |
 |---|---|---|
-| Lock ordering enforcement | Acquire in order per CLAUDE.md: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
+| Lock ordering enforcement | Acquire in order per `.claude/CLAUDE.md`: PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE > SELECT_WAITERS > BLOCK_ENGINE > VIRTIO_BLK | `docs/kernel/deadlock-prevention.md` |
 | IRQ masking before spinlock | `asm!("msr DAIFSet, #0x2")` → lock → work → unlock → unmask | `sched/scheduler.rs:67-76` |
 | Direct IPC (kernel threads) | Call `ipc_call()` directly -- NOT via SVC (SVC is for future EL0) | `ipc/channel.rs:1-5` (module doc) |
 | Capability check before op | `check_channel_create(pid)` / `check_channel_access(pid, ch)` | `cap/mod.rs:68-114` |
@@ -158,7 +158,7 @@ W^X policy: pages are writable OR executable, never both. See developer-guide.md
 
 ### Never acquire locks out of order
 
-The full lock ordering is defined in CLAUDE.md Key Technical Facts. The canonical order is:
+The full lock ordering is defined in `.claude/CLAUDE.md` Key Technical Facts. The canonical order is:
 
 ```text
 PROCESS_TABLE > SHARED_REGION_TABLE > NOTIFICATION_TABLE > CHANNEL_TABLE
@@ -239,8 +239,8 @@ Before marking any step complete, verify ALL of these:
 - [ ] All MMIO access uses volatile read/write
 - [ ] ISB after all MSR writes to instruction-affecting registers
 - [ ] Correct TLB invalidation strategy (local-only during boot, broadcast after all cores online)
-- [ ] Addresses and offsets match CLAUDE.md Key Technical Facts
-- [ ] Lock acquisition follows CLAUDE.md lock ordering
+- [ ] Addresses and offsets match `.claude/CLAUDE.md` Key Technical Facts
+- [ ] Lock acquisition follows the `.claude/CLAUDE.md` lock ordering
 - [ ] Capability checks precede all privileged operations (IPC, shmem, channel create)
 - [ ] No allocation in interrupt context (timer tick, GIC IRQ handler)
 - [ ] PhysAddr/VirtAddr types used correctly (no raw usize for addresses crossing domains)

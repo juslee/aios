@@ -327,7 +327,8 @@ pub fn golden_root() -> PathBuf {
 /// Where a case's input repository comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// A snapshot of this repository at `SNAPSHOT_SHA`.
+    /// A snapshot of this repository at `SNAPSHOT_SHA` with `SNAPSHOT_MIGRATION`
+    /// applied (`snapshot_real`).
     Real,
     /// `materialize_fixture(<variant>)`.
     Fixture(&'static str),
