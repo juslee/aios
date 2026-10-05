@@ -307,26 +307,147 @@ fn a_checked_tool_without_a_path_is_denied() {
     assert!(deny_reason(&guard(&[], &payload, &dir)).contains("file_path"));
 }
 
-#[test]
-fn a_git_failure_is_denied() {
-    // A directory with no repository around it.
-    let bare = unique_dir("no-repo");
-    let payload = edit(&bare, "docs/a.md");
+/// Run the guard with git told not to look above `ceiling`, so a directory under
+/// `CARGO_TARGET_TMPDIR` (inside this checkout) behaves as if it were in no repository.
+fn guard_with_ceiling(payload: &Value, cwd: &Path, ceiling: &Path) -> Run {
     let run = run_hook(
         &["path-guard", "--deny", "kernel/"],
         payload.to_string().as_bytes(),
-        &[(
-            "GIT_CEILING_DIRECTORIES",
-            bare.parent().unwrap().to_str().unwrap(),
-        )],
-        &bare,
+        &[("GIT_CEILING_DIRECTORIES", ceiling.to_str().unwrap())],
+        cwd,
     );
-    assert_eq!(run.code, Some(0));
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    run
+}
+
+/// A main checkout with a linked worktree at `<main>/.claude/worktrees/x`, the
+/// layout AIOS uses. Returns `(main, worktree)`, both canonical.
+fn repo_with_nested_worktree(label: &str) -> (PathBuf, PathBuf) {
+    let main = repo(label);
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-q", "-m", "tree"]);
+    let wt = main.join(".claude/worktrees/x");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "nested",
+            wt.to_str().unwrap(),
+        ],
+    );
+    let wt = std::fs::canonicalize(&wt).expect("canonicalize the worktree");
+    (main, wt)
+}
+
+#[test]
+fn a_target_in_no_repository_gets_no_decision() {
+    // A plain directory with a `kernel/` in it and no repository around it.
+    let plain = unique_dir("no-repo");
+    std::fs::create_dir_all(plain.join("kernel")).expect("create kernel");
+    let ceiling = plain.parent().unwrap();
+    let relative = edit(&plain, "kernel/x.rs");
+    assert_no_decision(&guard_with_ceiling(&relative, &plain, ceiling));
+    // Absolute, and in a directory that does not exist yet.
+    let path = plain.join("kernel/new/dir/x.rs");
+    let absolute = edit(&plain, path.to_str().unwrap());
+    assert_no_decision(&guard_with_ceiling(&absolute, &plain, ceiling));
+}
+
+#[test]
+fn a_git_failure_other_than_no_repository_is_denied() {
+    // `.git` that is not a valid gitfile: git fails, but not with "not a git repository".
+    let broken = unique_dir("broken-gitfile");
+    std::fs::write(broken.join(".git"), "garbage\n").expect("write the gitfile");
+    let payload = edit(&broken, "kernel/x.rs");
+    let run = guard_with_ceiling(&payload, &broken, broken.parent().unwrap());
     assert!(
         deny_reason(&run).contains("git rev-parse"),
         "{}",
         run.stdout
     );
+}
+
+#[test]
+fn a_pruned_worktree_is_denied_not_skipped() {
+    let (main, wt) = repo_with_nested_worktree("pruned");
+    std::fs::remove_dir_all(main.join(".git/worktrees")).expect("remove the worktree admin dir");
+    let payload = edit(&main, wt.join("kernel/src/lib.rs").to_str().unwrap());
+    let run = guard_with_ceiling(&payload, &main, main.parent().unwrap());
+    assert!(
+        deny_reason(&run).contains("git rev-parse"),
+        "{}",
+        run.stdout
+    );
+}
+
+#[test]
+fn a_nested_worktree_is_guarded_from_the_main_checkout_cwd() {
+    // Worktrees live inside the main checkout, so with cwd at the main checkout
+    // the root must come from the target for `kernel/` to match.
+    let (main, wt) = repo_with_nested_worktree("nested");
+    let path = wt.join("kernel/src/lib.rs");
+    let run = guard(&[], &edit(&main, path.to_str().unwrap()), &main);
+    let reason = deny_reason(&run);
+    assert!(reason.contains("`kernel/src/lib.rs`"), "{reason}");
+    assert!(!reason.contains(".claude"), "{reason}");
+    // The same file in the main checkout is denied by the same rule.
+    let run = guard(&[], &edit(&main, "kernel/src/lib.rs"), &main);
+    assert!(deny_reason(&run).contains("`kernel/src/lib.rs`"));
+    // A path the worktree allows stays allowed.
+    let path = wt.join("docs/a.md");
+    assert_no_decision(&guard(&[], &edit(&main, path.to_str().unwrap()), &main));
+}
+
+#[test]
+fn a_nested_worktree_is_guarded_from_its_own_cwd_and_relative_paths() {
+    let (main, wt) = repo_with_nested_worktree("nested-own");
+    let run = guard(&[], &edit(&wt, "kernel/src/lib.rs"), &wt);
+    assert!(deny_reason(&run).contains("`kernel/src/lib.rs`"));
+    // A relative path from the main checkout reaches into the worktree.
+    let run = guard(
+        &[],
+        &edit(&main, ".claude/worktrees/x/kernel/src/lib.rs"),
+        &main,
+    );
+    assert!(deny_reason(&run).contains("`kernel/src/lib.rs`"));
+}
+
+#[test]
+fn a_new_file_in_a_missing_directory_of_a_nested_worktree_is_denied() {
+    let (main, wt) = repo_with_nested_worktree("nested-new");
+    let path = wt.join("kernel/newdir/sub/x.rs");
+    let run = guard(&[], &edit(&main, path.to_str().unwrap()), &main);
+    assert!(deny_reason(&run).contains("`kernel/newdir/sub/x.rs`"));
+    let path = wt.join("docs/newdir/x.md");
+    assert_no_decision(&guard(&[], &edit(&main, path.to_str().unwrap()), &main));
+}
+
+#[test]
+fn a_sibling_worktree_outside_the_cwd_repository_is_guarded() {
+    let main = repo("sibling-main");
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-q", "-m", "tree"]);
+    let elsewhere = unique_dir("sibling-linked").join("wt");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "sibling",
+            elsewhere.to_str().unwrap(),
+        ],
+    );
+    let elsewhere = std::fs::canonicalize(&elsewhere).expect("canonicalize the worktree");
+    // cwd is another, unrelated repository.
+    let unrelated = repo("sibling-unrelated");
+    let path = elsewhere.join("kernel/src/lib.rs");
+    let run = guard(&[], &edit(&unrelated, path.to_str().unwrap()), &unrelated);
+    assert!(deny_reason(&run).contains("`kernel/src/lib.rs`"));
 }
 
 #[test]

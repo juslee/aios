@@ -4,17 +4,21 @@
 //!
 //! The target is resolved before it is compared: a relative path is joined to the
 //! input `cwd`, `.` and `..` are folded lexically, and the longest existing
-//! ancestor is canonicalised so a symlink cannot hide a denied directory. A target
-//! outside the repository gets no decision. Bash can still write files, so this is
-//! a routing aid, not a sandbox.
+//! ancestor is canonicalised so a symlink cannot hide a denied directory. The
+//! repository root comes from the target, not from `cwd`: worktrees nest inside the
+//! main checkout, so a root taken from `cwd` would see an edit in a nested worktree
+//! as a path under `.claude/worktrees/` and never match `kernel/`. A target that is
+//! in no repository gets no decision. Bash can still write files, so this is a
+//! routing aid, not a sandbox.
 
 use std::path::{Component, Path, PathBuf};
+
+use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 
 use super::{pre_tool_use_deny, Ctx, HookInput};
-use crate::proc;
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -67,8 +71,23 @@ pub fn run(args: &Args, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> 
         .map(PathBuf::from)
         .or_else(|| ctx.process_cwd.clone())
         .context("the hook input has no cwd and the process has no working directory")?;
-    let root = repo_root(&cwd)?;
-    let resolved = resolve(&cwd.join(target), MAX_LINK_DEPTH)?;
+    let target = Path::new(target);
+    let joined = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        if !cwd.is_dir() {
+            bail!(
+                "{} is relative and the input cwd {} is not a directory",
+                target.display(),
+                cwd.display()
+            );
+        }
+        cwd.join(target)
+    };
+    let resolved = resolve(&joined, MAX_LINK_DEPTH)?;
+    let Some(root) = repo_root(&existing_dir(&resolved))? else {
+        return Ok(None);
+    };
     let Some(relative) = relative_to(&resolved, &root) else {
         return Ok(None);
     };
@@ -107,22 +126,49 @@ fn normalise_prefix(raw: &str) -> Result<String> {
     Ok(format!("{dir}/"))
 }
 
-/// The canonical top level of the repository that contains `cwd`.
-fn repo_root(cwd: &Path) -> Result<PathBuf> {
-    let out = proc::capture("git", &["rev-parse", "--show-toplevel"], cwd)?;
+/// The longest ancestor of `path` (itself included) that is an existing directory.
+/// `path` is already resolved, so this is where a write would start creating
+/// missing directories.
+fn existing_dir(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find(|ancestor| ancestor.is_dir())
+        .unwrap_or(Path::new("/"))
+        .to_path_buf()
+}
+
+/// The canonical top level of the work tree that contains `dir`, or `None` when
+/// `dir` is in no git work tree. Only git's own "not a git repository" answer for a
+/// directory search counts as that: every other failure (a broken worktree link, a
+/// bare repository, the `.git` directory itself, git missing) is an error, so the
+/// guard fails closed.
+fn repo_root(dir: &Path) -> Result<Option<PathBuf>> {
+    // The message is matched below, so ask git for its untranslated text.
+    let out = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(dir)
+        .env("LC_ALL", "C")
+        .output()
+        .with_context(|| format!("cannot run git in {}", dir.display()))?;
     if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if stderr.contains("not a git repository (or any")
+            && stderr.contains("parent")
+            && out.status.code() == Some(128)
+        {
+            return Ok(None);
+        }
         bail!(
             "git rev-parse --show-toplevel failed in {}: {}",
-            cwd.display(),
-            String::from_utf8_lossy(&out.stderr).trim_end()
+            dir.display(),
+            stderr.trim_end()
         );
     }
     let top = String::from_utf8(out.stdout).context("the repository root is not valid UTF-8")?;
     let top = top.trim_end_matches(['\n', '\r']);
     if top.is_empty() {
-        bail!("git printed no repository root in {}", cwd.display());
+        bail!("git printed no repository root in {}", dir.display());
     }
-    resolve(Path::new(top), MAX_LINK_DEPTH)
+    resolve(Path::new(top), MAX_LINK_DEPTH).map(Some)
 }
 
 /// Fold `.` and `..` out of `path` without touching the filesystem. A `..` at the

@@ -93,13 +93,14 @@ Parse leniently: unknown fields are ignored and every field the code does not st
 - Options: `--deny <prefix>` (repeatable, at least one; a repository-relative directory prefix ending in `/`) and optional `--reason <text>` appended to the deny reason.
 - Only `Edit`, `Write`, `MultiEdit` and `NotebookEdit` are checked; any other tool gets no output. The path is `tool_input.file_path`, or `tool_input.notebook_path` when `file_path` is absent (the docs name only `file_path`, for `Write` and `Edit`, and give it as absolute).
 - Resolving the target:
-  1. Join a relative path to the input `cwd`.
+  1. Join a relative path to the input `cwd` (the only use of `cwd`; a relative path with a `cwd` that is not a directory is an error).
   2. Normalise `.` and `..` lexically.
   3. Canonicalise the longest existing ancestor (symlinks resolved) and append the remaining components.
-- The repository root is `git rev-parse --show-toplevel` run from the input `cwd`, canonicalised the same way. A target outside the root gets no decision: this hook guards the repository, not the filesystem.
+- The repository root comes from the target, not from `cwd`: `git rev-parse --show-toplevel` run (with `LC_ALL=C`) from the resolved target's longest existing ancestor directory, then canonicalised the same way. Why: every AIOS worktree lives inside the main checkout under `.claude/worktrees/<name>/`, so a root taken from a `cwd` at the main checkout makes an edit to `<main>/.claude/worktrees/x/kernel/src/main.rs` the relative path `.claude/worktrees/x/kernel/src/main.rs`, which matches no `kernel/` prefix. The same holds for a sibling worktree outside the `cwd` repository.
+- When that directory is in no git work tree (git exits 128 with "not a git repository (or any of the parent directories)" or the mount-point variant), the target gets no decision: this hook guards repositories, not the filesystem. Every other git failure (a broken or pruned worktree link, a bare repository, git missing) is an error and denies.
 - Comparison is ASCII case-insensitive, because macOS volumes are case-insensitive by default (`Kernel/src/x.rs` is `kernel/src/x.rs`).
 - Deny reason: "`<relative path>` is under `<prefix>`, which this agent may not edit: kernel, UEFI stub and shared code goes to kernel-dev. Hand this change back to your caller." followed by the `--reason` text if given.
-- Fail closed: unparseable input, a missing path field on a checked tool, or a git failure produces a deny whose reason names the error.
+- Fail closed: unparseable input, a missing path field on a checked tool, or a git failure other than "not a git repository" produces a deny whose reason names the error.
 - Known limit: Bash can still write files (`sed -i`, redirection). The guard stops the agent's normal edit tools; it is a routing aid, not a sandbox.
 
 **`route-shadow`**
@@ -108,10 +109,10 @@ Parse leniently: unknown fields are ignored and every field the code does not st
 - Reads `tool_input.subagent_type`, `description`, `prompt` and `model` (all optional).
 - Jev request: `POST https://api.typesafe.ai/v1/systemone`, overridable with `AIOS_JEV_URL` for tests, with the model pinned to `jev-1.13.0`, since thresholds are tuned per version.
 - The request `state` holds `subagent_type`, `description`, and `prompt` cut to 8,000 characters; the log records whether it was cut. Three questions:
-  - `complexity` (score), "How much reasoning does carrying out `prompt` need?", with levels:
-    1. "Mechanical: a lookup, a search with a clear target, a rename, formatting, or wording."
-    2. "Routine: a change or check that follows an existing pattern in one area."
-    3. "Hard: debugging with an unclear cause, a change across interacting parts, or a choice between designs."
+  - `complexity` (score), "How much reasoning does carrying out `prompt` need?", with three levels. The scale the live call returned on 2026-10-05 is 0 to 2, not 1 to 3: `score` is in [0, 2], `legend` has the keys "0", "1", "2" and `probabilities` is keyed the same way, so the levels below are 0, 1, 2 in that order and later analysis must read them so:
+    0. "Mechanical: a lookup, a search with a clear target, a rename, formatting, or wording."
+    1. "Routine: a change or check that follows an existing pattern in one area."
+    2. "Hard: debugging with an unclear cause, a change across interacting parts, or a choice between designs."
   - `low_level_hazard` (noul): "Does `prompt` ask for changes to, or diagnosis of, code that involves concurrency, memory ordering, page tables or the MMU, interrupt or exception handling, lock ordering, or boot sequencing?"
   - `work_kind` (choice): "What kind of work does `prompt` ask for?" Options:
     - `read_only_search`: find or read code or docs without changing them
@@ -141,11 +142,13 @@ Parse leniently: unknown fields are ignored and every field the code does not st
 For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guard-fail-closed` merge. Requirements only; the design is that PR's job.
 
 - Agent models: team-lead inherits (Opus, high effort); kernel-dev `opus`; a new `worker` agent on `sonnet` for `tools/`, `scripts/`, `docs/` and `.github/` work, with `path-guard` in its frontmatter; verifier and doc-auditor `sonnet`; doc-writer `opus`; code-reviewer `fable`.
-- Fable before "done": a `Stop` hook in kernel-dev's frontmatter (it runs as `SubagentStop` for that agent only), `type: agent`, `model: fable`, reviewing the change and blocking with reasons, with a cap so it cannot loop.
+- Fable before "done": a `Stop` hook in kernel-dev's frontmatter (it runs as `SubagentStop` for that agent only), `type: agent`, `model: fable`, reviewing the change and blocking with reasons. No `stop_hook_active` loop guard is documented, so the gate counts its own blocks per `agent_id` (state under the hook state directory) and stops blocking after a fixed cap, so it cannot loop.
 - Fable before the plan: in `/implement-phase`, a Fable review of the working plan before the plan commit. Leaving plan mode cannot be hooked.
-- `settings.json`: `repeat-error` on `PostToolUseFailure` and `PostToolUse` for `Bash`; `route-shadow` on `PreToolUse` for the dispatch tool, timeout 6 s.
+- `settings.json`: `repeat-error` on `PostToolUseFailure` and `PostToolUse` for `Bash`; `route-shadow` on `PreToolUse` for the dispatch tool (matcher `Agent`), registered with `async: true`. The hooks reference documents async command hooks as running in the background with exit code and output ignored and no enforced timeout, so a dispatch never waits for Jev; curl's 4 s cap remains the bound on the hook's own run time.
+- Outcome logger, so `route-shadow` records can be judged: a `PostToolUse` hook on `Agent` records `tool_use_id` to `tool_response.agentId`, and a `SubagentStop` hook (it fires for background subagents too, and carries `agent_id`, `agent_type`, `last_assistant_message` and `stop_reason`) records the outcome by `agent_id`. The join is `tool_use_id` (route-shadow record) to `agentId` (PostToolUse) to `agent_id` (SubagentStop).
 - Shim (`.claude/hooks/aios`): `hook` subcommands never rebuild in the foreground (a stale binary runs while a background build starts, as for `guard`); a missing binary means no output for `repeat-error` and `route-shadow`, and a deny for `path-guard`.
-- `CLAUDE_CODE_EFFORT_LEVEL` is `"default"` in the project `env` block; the docs list only `low`, `medium`, `high`, `xhigh`, and the variable outranks `effortLevel`. Fix it with the main-session effort setting.
+- `CLAUDE_CODE_EFFORT_LEVEL` is `"default"` in the project `env` block. The docs list only `low`, `medium`, `high`, `xhigh` and say the variable outranks `effortLevel`; whether it also overrides an agent's frontmatter `effort`, and how an invalid value such as `"default"` is treated, are both undocumented. Remove the variable, set the main-session effort through `effortLevel`, and verify per-agent effort with a real subagent run (the `effort.level` field in a hook input from inside that subagent shows what applied).
+- Reconcile the agent roster and the per-model assignment above with the Build/Ship two-team draft from the `claude/harness-team-config` session before part 2 starts; the owner decides, not this plan.
 - Docs: the CLAUDE.md agent table and workspace layout, and `docs/project/agent-loop.md`.
 - Jev evaluation: after 200 or more logged dispatches, compare Jev's answers with the outcomes (gates passed first time, Fable blocked, work redone) before Jev routes anything.
 
@@ -167,6 +170,7 @@ For the wiring PR, after `claude/harness-team-config` and `claude/tools-203-guar
 
 ## Decisions Made
 
+- Lead: repository root comes from the target, not the cwd, because worktrees nest inside the main checkout. Reproduction (built binary, 2026-10-05): input `cwd` at the main checkout `<main>`, `Edit` of `<main>/.claude/worktrees/<name>/kernel/src/main.rs` with `--deny kernel/`. The old code took the root from `cwd`, got `<main>`, computed the relative path `.claude/worktrees/<name>/kernel/src/main.rs`, matched no prefix and gave no decision, so the Sonnet `worker` could edit kernel code in any worktree. A sibling worktree outside the `cwd` repository had no decision either. Now the root is `git rev-parse --show-toplevel` from the target's longest existing ancestor directory, so the same call is denied as `kernel/src/main.rs`. A target in no git work tree gets no decision, told apart from every other git failure (which still denies) by git's "not a git repository (or any ..." message under `LC_ALL=C` with exit 128; a pruned worktree says "not a git repository: <path>" or "gitfile does not point to a valid repository" and so denies. `path-guard` therefore runs `git` itself with that environment instead of through `proc::capture`, which cannot set one. The old `a_git_failure_is_denied` test (a bare directory) became a no-decision test; the deny cases are now a broken gitfile and a pruned linked worktree. A relative target with a `cwd` that is not a directory still denies, as before.
 - Review round 3: `route-shadow` scrubs the API key before it cuts quoted response text to 200 bytes (in `CurlTransport::post` and in both quoting paths of `ask`), keeping the final scrub as a second pass. Why: a cut inside an echoed key leaves a fragment that `replace` no longer matches, so up to key-length minus one bytes reached the log. Both a unit test and a fake-server test put the key across the cut.
 - Review round 3: the `aios hook` help text now says every payload exits 0 and a usage error exits 2, matching the module docs.
 - Review round 2: `path-guard` joins a dangling link's relative target to the canonicalised link directory, not the lexical parent, because the lexical parent may itself be reached through a symlink and a `..` in the target would fold against the wrong directory. The nested case has its own test (`docs/linked -> kernel/src`, `kernel/src/dangling -> ../x.rs`).
