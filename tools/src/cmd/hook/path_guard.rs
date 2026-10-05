@@ -169,7 +169,13 @@ fn resolve(path: &Path, depth: usize) -> Result<PathBuf> {
                     }
                     let link = std::fs::read_link(base)
                         .with_context(|| format!("cannot resolve {}: {err}", base.display()))?;
+                    // A relative target is relative to the directory that really
+                    // holds the link, which is the canonical parent: folding a `..`
+                    // against a parent reached through another symlink would land
+                    // somewhere else.
                     let parent = base.parent().unwrap_or(base);
+                    let parent = std::fs::canonicalize(parent)
+                        .with_context(|| format!("cannot resolve {}", parent.display()))?;
                     break resolve(&parent.join(link), depth - 1)?;
                 }
                 let (Some(parent), Some(name)) = (base.parent(), base.file_name()) else {

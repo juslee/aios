@@ -146,6 +146,19 @@ fn a_dangling_symlink_into_a_denied_prefix_is_denied() {
 
 #[cfg(unix)]
 #[test]
+fn a_dangling_link_inside_a_symlinked_directory_resolves_against_the_real_directory() {
+    use std::os::unix::fs::symlink;
+
+    let dir = repo("dangling-nested");
+    symlink(dir.join("kernel/src"), dir.join("docs/linked")).expect("symlink a directory");
+    // The link physically lives in kernel/src, so `../x.rs` is kernel/x.rs.
+    symlink("../x.rs", dir.join("kernel/src/dangling")).expect("symlink");
+    let run = guard(&[], &edit(&dir, "docs/linked/dangling"), &dir);
+    assert!(deny_reason(&run).contains("`kernel/x.rs`"));
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symlink_loop_fails_closed() {
     use std::os::unix::fs::symlink;
 
