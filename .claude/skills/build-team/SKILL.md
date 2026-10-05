@@ -23,7 +23,7 @@ Verify the agent was spawned by checking for a response.
 The team-lead should:
 1. Read CLAUDE.md — understand workspace layout, technical facts, completed phases
 2. Search the knowledge hive for relevant context:
-    - Use Obsidian MCP search_notes for lessons and decisions related to current work
+    - Grep `docs/knowledge/lessons/` and `docs/knowledge/decisions/` for keywords related to current work
     - Read `docs/knowledge/plans/` for any in-progress working plans (Glob for `docs/knowledge/plans/*.md`)
 3. Check current phase progress:
     - Read the latest phase doc (Glob for `docs/phases/*.md`, sort by name, read the last one)

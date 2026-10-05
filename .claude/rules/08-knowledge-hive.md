@@ -1,6 +1,6 @@
 # Knowledge Hive Rules
 
-The `docs/` directory is an Obsidian vault with MCP integration.
+`docs/knowledge/` is the project knowledge base: plain Markdown, searched with Grep (lessons and decisions by keyword). Locate architecture docs through `docs/project/doc-map.md`.
 
 ## Writing Knowledge
 

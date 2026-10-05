@@ -16,7 +16,7 @@ Follow the Phase Doc Generation Workflow from CLAUDE.md:
 2. Identify relevant architecture docs using the Architecture Document Map in CLAUDE.md
 3. Read those architecture docs fully — these are the source of truth for what this phase implements
 4. Search the knowledge hive for relevant decisions and discussions that may affect phase planning:
-    - Use Obsidian MCP search_notes with subsystem keywords
+    - Grep `docs/knowledge/` (lessons, decisions) for subsystem keywords
     - Review `docs/knowledge/decisions/` for prior architectural choices
     - Review `docs/knowledge/discussions/` for in-progress design explorations that may have graduated to architecture docs
     - Factor findings into milestone structure

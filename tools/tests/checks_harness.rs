@@ -13,7 +13,7 @@ use common::TestRepo;
 use std::collections::BTreeSet;
 
 /// `.claude/skills/linked` is a plain file standing in for a tracked symlink
-/// (the real repository tracks `.claude/skills/obsidian` as one); both are a
+/// (the real repository tracked `.claude/skills/obsidian` as one at 33c6b3d); both are a
 /// single tracked path that names the skill.
 const FILES: &[(&str, &str)] = &[
     (

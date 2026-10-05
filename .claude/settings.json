@@ -49,15 +49,6 @@
             "if": "Edit(**/docs/**/*.md)"
           }
         ]
-      },
-      {
-        "matcher": "mcp__obsidian__write_note|mcp__obsidian__patch_note",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'doc-audit-needed'"
-          }
-        ]
       }
     ]
   },
@@ -271,9 +262,6 @@
       "mcp__*__delete_repository"
     ]
   },
-  "enabledMcpjsonServers": [
-    "obsidian"
-  ],
   "extraKnownMarketplaces": {
     "typesafe-ai": {
       "source": {

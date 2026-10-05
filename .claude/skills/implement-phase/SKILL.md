@@ -29,7 +29,7 @@ When plan mode is active, you can only read files and write to the system-assign
 2. Read all Architecture References listed in the phase doc
 3. Read CLAUDE.md Code Conventions (`.claude/rules/`) and Quality Gates
 4. Search the knowledge hive for relevant lessons and decisions:
-    - Use Obsidian MCP search_notes with keywords from the phase doc
+    - Grep `docs/knowledge/` (lessons, decisions) for keywords from the phase doc
     - Review any matching `docs/knowledge/lessons/` and `docs/knowledge/decisions/`
     - Factor known pitfalls into implementation approach
 5. Read `docs/knowledge/plans/_template.md` — use its structure as the skeleton for the plan
@@ -108,7 +108,7 @@ Check whether a **plan already exists from a prior plan-mode session**. Look for
 5. Read all Architecture References listed in the phase doc
 6. Read CLAUDE.md Code Conventions and Quality Gates
 7. Search the knowledge hive for relevant lessons and decisions:
-    - Use Obsidian MCP search_notes with keywords from the phase doc
+    - Grep `docs/knowledge/` (lessons, decisions) for keywords from the phase doc
     - Review any matching docs/knowledge/lessons/ and docs/knowledge/decisions/
     - Factor known pitfalls into implementation approach
 8. Write a working plan doc using the Write tool, based on the existing template:

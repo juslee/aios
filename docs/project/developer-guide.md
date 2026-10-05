@@ -2254,19 +2254,9 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 
 ---
 
-## 8b. Obsidian Desktop Setup (Optional)
+## 8b. Browsing docs/ in Obsidian (Optional)
 
-The AIOS knowledge hive is accessible via Claude Code automatically (MCP configured in `.mcp.json`). For visual exploration with graph view and backlinks, you can optionally install the Obsidian desktop app:
-
-1. Download Obsidian from https://obsidian.md
-2. Open `docs/` as a vault (File → Open folder as vault → select `docs/`)
-3. The `.obsidian/` config folder is gitignored — your personal settings stay local
-
-This gives you:
-- **Graph view**: See how 80+ architecture docs connect to each other
-- **Backlinks**: See which docs reference the current doc
-- **Tag search**: Filter by domain (kernel, platform, security, etc.)
-- **Quick switcher**: Cmd+O to jump to any doc by name
+`docs/` is plain Markdown; you can optionally open it as a vault in the [Obsidian](https://obsidian.md) app (its `.obsidian/` config folder is gitignored).
 
 This is purely optional — all docs are plain markdown readable in any editor or on GitHub.
 
@@ -2399,7 +2389,7 @@ The audit loop is **mandatory before any PR** — see [.claude/CLAUDE.md](../../
 
 ### Knowledge Hive Integration
 
-Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across sessions:
+Agents use the knowledge hive (`docs/knowledge/`, searched with Grep) for persistent memory across sessions:
 
 | Directory | Persistence | Purpose |
 |---|---|---|

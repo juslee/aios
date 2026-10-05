@@ -16,7 +16,7 @@ and production systems.
 ## Step 0: Search Knowledge Hive
 
 Before creating or updating, search the knowledge hive for relevant context:
-- Use Obsidian MCP search_notes with subsystem keywords from $ARGUMENTS
+- Grep `docs/knowledge/` (lessons, decisions) for subsystem keywords from $ARGUMENTS
 - Review docs/knowledge/research/ for prior research on the topic
 - Review docs/knowledge/decisions/ for related architectural choices
 - Factor findings into the document content

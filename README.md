@@ -126,7 +126,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 
 ## Knowledge Hive
 
-The `docs/` directory doubles as an [Obsidian](https://obsidian.md) vault with a shared knowledge base in `docs/knowledge/`. Claude Code instances automatically connect via the Obsidian MCP server (configured in `.mcp.json`). See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions.
+`docs/knowledge/` is a shared knowledge base of plain Markdown (lessons, decisions, research, discussions, plans) that agents search with Grep. See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions. `docs/` can optionally be opened as an [Obsidian](https://obsidian.md) vault.
 
 ## License
 
