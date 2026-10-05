@@ -3,14 +3,15 @@
 
 use crate::arch::aarch64::mmu::DIRECT_MAP_BASE;
 use crate::arch::aarch64::trap::TrapFrame;
-use crate::ipc::notify::NOTIFICATION_TABLE;
+use crate::ipc::notify::{self, NOTIFICATION_TABLE};
 use crate::ipc::shmem;
 use crate::mm::pgtable::VmFlags;
 use crate::syscall::IpcError;
 use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use shared::{
-    Capability, ChannelId, RawSelectEntry, SelectEntry, SelectKind, Syscall, MAX_NOTIFICATIONS,
+    Capability, ChannelId, NotificationId, RawSelectEntry, SelectEntry, SelectKind, Syscall,
+    MAX_NOTIFICATIONS,
 };
 
 use super::bad_pid::{revoke_region_access, revoke_token, token_id};
@@ -39,14 +40,17 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// Hostile syscall arguments are rejected with EINVAL before they touch
 /// memory, MemoryUnmap frees only the caller's exact allocation, and the
 /// shared memory calls return EINVAL for a malformed request but EPERM for a
-/// missing capability.
+/// missing capability. NotificationSignal on a live notification succeeds and
+/// sets the bits a NotificationWait then returns, so a fix that rejected
+/// every id cannot pass checks 13-14 alone.
 ///
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
-/// no state and grant nothing. Checks 0-20 and 26-29 log no warning; checks
+/// no state and grant nothing. Checks 0-20 and 26-31 log no warning; checks
 /// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
 /// warnings. The one MemoryMap allocation is freed by the
-/// test's own exact unmap, and the one shared region by its unmap once the
-/// test has revoked every capability it granted.
+/// test's own exact unmap, the one shared region by its unmap once the
+/// test has revoked every capability it granted, and the one notification by
+/// `notification_destroy`.
 ///
 /// DebugPrint, IpcSelect and CapabilityList get this thread's stack buffers
 /// as kernel addresses. Before #188 IpcSelect accepted them and read them
@@ -94,7 +98,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
         .position(Option::is_none)
         .unwrap_or(MAX_NOTIFICATIONS) as u64;
 
-    let mut checks = [false; 30];
+    let mut checks = [false; 32];
 
     // User pointers: null, page 0 and kernel addresses are EINVAL.
     checks[0] = svc(Syscall::DebugPrint, &[0, 4]) == einval;
@@ -151,6 +155,15 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     checks[27] = svc(Syscall::CapabilityRevoke, &[past_table]) == einval;
     checks[28] = svc(Syscall::CapabilityAttenuate, &[past_table, 0, 0, 0]) == einval;
     checks[29] = svc(Syscall::MemoryMap, &[65 * PAGE, READ]) == einval;
+
+    // A live notification (#188 item 8): NotificationSignal returns 0, and
+    // the bits it set are the ones a non-blocking NotificationWait returns.
+    let id = svc(Syscall::NotificationCreate, &[]);
+    if IpcError::try_from(id).is_err() && id >= 0 {
+        checks[30] = svc(Syscall::NotificationSignal, &[id as u64, 0b101]) == 0;
+        checks[31] = svc(Syscall::NotificationWait, &[id as u64, u64::MAX, 0]) == 0b101;
+        notify::notification_destroy(NotificationId(id as u32));
+    }
 
     let failed = checks
         .iter()

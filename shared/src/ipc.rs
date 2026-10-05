@@ -297,13 +297,17 @@ pub const USER_VA_LIMIT: usize = 0x0000_8000_0000_0000;
 /// `core::slice::from_raw_parts`, which require a non-null pointer.
 pub const USER_VA_MIN: usize = 0x1000;
 
-/// Validate that a (ptr, len) range lies entirely within user VA space.
+/// Validate that a (ptr, len) range lies entirely within
+/// `[USER_VA_MIN, USER_VA_LIMIT)`.
 ///
 /// Returns false if:
 /// - `ptr` is in page 0 (`ptr < USER_VA_MIN`), null included, at any `len`
 /// - `ptr + len` overflows
-/// - `ptr` is in kernel space (>= USER_VA_LIMIT)
-/// - `ptr + len` extends into kernel space (> USER_VA_LIMIT)
+/// - `ptr >= USER_VA_LIMIT` (at or above 2^47)
+/// - `ptr + len > USER_VA_LIMIT`
+///
+/// Passing does not mean the range is mapped or translatable by TTBR0; see
+/// `USER_VA_LIMIT`.
 ///
 /// A zero-length range at a user address outside page 0 is valid.
 pub fn validate_user_va(ptr: usize, len: usize) -> bool {

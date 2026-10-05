@@ -240,12 +240,14 @@ No memory page is ever both writable and executable simultaneously. This is the 
 
 ```text
 1. JIT compiler generates code into a WRITABLE, non-executable buffer
-2. JIT calls MemoryMap to remap the buffer as EXECUTABLE, non-writable
+2. JIT calls MemProtect to change the buffer to EXECUTABLE, non-writable
    (kernel flushes instruction cache, sets PTE flags)
 3. Code runs from the executable mapping
-4. To modify JIT code: remap as writable, modify, remap as executable
+4. To modify JIT code: MemProtect to writable, modify, MemProtect to executable
 5. At no point is the same page both writable and executable
 ```
+
+`MemProtect` is target design (the `mprotect` translation in [syscall-translation.md](../../platform/linux-compat/syscall-translation.md)); no such syscall exists yet. `MemoryMap` cannot do this step: it takes no address and always allocates new memory ([ipc.md §4.7](../../kernel/ipc.md)).
 
 ### 5.6 KASLR (Kernel Address Space Layout Randomization)
 

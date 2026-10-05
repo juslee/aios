@@ -260,7 +260,6 @@ pub fn notification_wait(id: NotificationId, mask: u64, timeout_ticks: u64) -> R
 }
 
 /// Destroy a notification: wake all waiters with error, remove from table.
-#[allow(dead_code)]
 pub fn notification_destroy(id: NotificationId) {
     if id.0 as usize >= MAX_NOTIFICATIONS {
         return;
