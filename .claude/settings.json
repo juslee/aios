@@ -274,12 +274,25 @@
   "enabledMcpjsonServers": [
     "obsidian"
   ],
+  "extraKnownMarketplaces": {
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills"
+      }
+    }
+  },
   "enabledPlugins": {
     "railway@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": false,
     "gitkraken@claude-plugins-official": false,
     "gitkraken-hooks@gitkraken": false,
     "manage-worktrees-skill@claude-skills-engineering": false,
-    "typesafe@typesafe-ai": true
+    "typesafe@typesafe-ai": true,
+    "superpowers@claude-plugins-official": true,
+    "remember@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true
   }
 }
