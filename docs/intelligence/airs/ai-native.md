@@ -705,7 +705,7 @@ pub enum ModalityFallback {
 }
 ```
 
-**Model sizes and performance on ARM64:**
+**Model sizes and performance on ARM64** (speeds are pre-benchmark estimates; the AIRS text-model throughput targets are in [inference.md §3.8.2](./inference.md)):
 
 | Model | Parameters | RAM (Q4) | ARM CPU Speed | Use Case |
 |---|---|---|---|---|
@@ -714,7 +714,7 @@ pub enum ModalityFallback {
 | Whisper base | 74M | ~74 MB | ~5x realtime | Better speech-to-text |
 | Whisper small | 244M | ~244 MB | ~2x realtime | Good speech-to-text |
 
-**Practical deployment:** The model pool is 8 GB at most: every device of 16 GB or more gets an 8 GB pool ([model-registry.md §4.3](./model-registry.md)). On every device, then, a vision-language model cannot coexist with the 8B text model in RAM — one must be evicted. Below 16 GB the model pool (4 GB or less) is smaller than LLaVA 1.5 7B (~4.5 GB), which is why the summary table (§14.11) gives vision a 16 GB minimum. Keeping vision resident beside the primary model needs a pool larger than today's 8 GB cap, such as the 16 GB pool that [scaling.md §11.1](./scaling.md) projects for 32 GB devices, or the dynamic model pool ([reclamation.md §12.2](../../kernel/memory/reclamation.md)). Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
+**Practical deployment:** The model pool is 8 GB at most: every device of 16 GB or more gets an 8 GB pool ([model-registry.md §4.3](./model-registry.md)). On every device, then, a full-size vision-language model such as LLaVA 1.5 7B cannot coexist with the 8B text model in RAM — one must be evicted. A smaller (~3B) vision model can fit beside it in an 8 GB pool. Below 16 GB the model pool (4 GB or less) is smaller than LLaVA 1.5 7B (~4.5 GB), which is why the summary table (§14.11) gives vision a 16 GB minimum. Keeping LLaVA 1.5 7B resident beside the primary model needs a pool larger than today's 8 GB cap, such as the 16 GB pool that [scaling.md §11.1](./scaling.md) projects for 32 GB devices, or the dynamic model pool ([reclamation.md §12.2](../../kernel/memory/reclamation.md)). Whisper tiny/base can coexist as companions (~40-75 MB). Voice commands would use Whisper for transcription, then route the text to the primary model for understanding.
 
 **GGUF multimodal support:** The GGUF format supports vision-language models (LLaVA adapter + CLIP vision encoder packaged alongside the language model). llama.cpp's `llava` example demonstrates the inference pipeline. Integration requires the image preprocessor (CLIP-style patch encoding) to run before the language model forward pass.
 

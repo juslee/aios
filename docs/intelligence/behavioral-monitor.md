@@ -214,10 +214,10 @@ The Behavioral Monitor spans multiple development phases, reflecting its depende
 
 | Phase | Deliverable |
 |---|---|
-| **12** (AIRS Intelligence Services) | Core Behavioral Monitor: `BehavioralMonitor` struct, `BehavioralBaseline`, `BehavioralPolicy`, hard limits, z-score detection, basic escalation, audit logging. Tier 1 fully operational. |
+| **12** (AIRS Intelligence Services) | Core Behavioral Monitor: `BehavioralMonitor` struct, `BehavioralBaseline`, `BehavioralPolicy`, observation collection and profile construction ([profiling.md §8.2–§8.3](./behavioral-monitor/profiling.md)), hard limits, z-score detection, basic escalation, audit logging. Tier 1 fully operational. |
 | **21** (Security Architecture) | Security integration: behavioral state byte in IPC fast path (§3.6, §6.4), zero trust behavioral gate, AIRS self-monitoring (§10), provenance chain integration (§7). |
 | **34** (Secure Boot & Updates) | Formal verification of hard limit invariants ("hard limits are always enforced", "escalation terminates"). |
-| **46** (AIRS Capability Intelligence) | Agent profiling pipeline: observation collection, predicted vs. observed comparison (§8), cold start via Agent Capability Intelligence priors. Until then, Agent Framework (Phase 10) agents start under hard limits and trust-level defaults ([detection.md §5.4](./behavioral-monitor/detection.md)). |
+| **46** (AIRS Capability Intelligence) | Agent profiling pipeline: predicted vs. observed comparison (§8.1, §8.4), cold start via Agent Capability Intelligence priors. Until then, Agent Framework (Phase 10) agents start under hard limits and trust-level defaults ([detection.md §5.4](./behavioral-monitor/detection.md)). |
 | **46** (AIRS Capability Intelligence) | AIRS-dependent intelligence: semantic sequence analysis (§13.1), RAG behavioral lookup (§13.2), LoRA fine-tuning (§13.3), cross-agent correlation (§13.4). Full Tier 2 operational. |
 
 ### Dependencies
@@ -225,7 +225,7 @@ The Behavioral Monitor spans multiple development phases, reflecting its depende
 ```text
 Phase 11 (AIRS Inference Engine) ──► Phase 12 (AIRS Intelligence Services: Behavioral Monitor core)
 Phase 12 ──► Phase 21 (Security Architecture: security integration)
-Phase 12 + Phase 46 (AIRS Capability Intelligence: behavioral predictions) ──► agent profiling
+Phase 12 + Phase 46 (AIRS Capability Intelligence: behavioral predictions) ──► predicted vs. observed profiling
 Phase 11 + Phase 46 (AIRS Capability Intelligence) ──► Tier 2 intelligence
 ```
 

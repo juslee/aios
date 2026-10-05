@@ -105,7 +105,7 @@ Different hardware tiers require different model quantization levels. AIRS selec
 RAM Tier            Model Pool   Quantization   Model Size    Quality       Notes
 ─────────────────   ──────────   ────────────   ──────────    ────────      ─────
 < 2 GB Degraded        0 MB      N/A            N/A          Cloud-only    No local inference
-2-4 GB Minimal         0 MB      N/A            N/A          Cloud-only    As < 2 GB: no model pool below 4 GiB
+2-4 GB Minimal         0 MB      N/A            N/A          None          No model pool below 4 GiB
 4-8 GB Constrained     2 GB      Q4_K_M         3B params    Basic         Limited reasoning
 8-16 GB Recommended    4 GB      Q4_K_M         8B params    Good          Target experience
 ≥ 16 GB Comfortable    8 GB      Q5_K_M         8B params    High          Best local quality
@@ -161,15 +161,15 @@ impl QuantizationSelector {
 
 ### 4.4 LRU Model Eviction
 
-The model pool is 8 GB at most (§4.3), so it cannot hold the primary model and a vision model at once on any device, even one of 16 GB or more. The registry manages loading/unloading:
+The model pool is 8 GB at most (§4.3), so it cannot hold the primary model and a full-size (7B) vision model such as LLaVA 1.5 7B at once on any device, even one of 16 GB or more. Smaller vision models (around 3B) can fit beside the primary model in an 8 GB pool. The registry manages loading/unloading:
 
 ```text
 RAM Budget: 8 GB available for models (16 GB device)
 
 Loaded models:
-  llama-3.1-8b-q4_k_m   (4.5 GB)  ← active (conversation bar)
+  llama-3.1-8b-q5_k_m   (~5.5 GB) ← active (conversation bar; the ≥ 16 GB tier's Q5_K_M, §4.3)
 
-User opens a vision task → needs llava-1.5-7b-q4 (4.5 GB; 4.5 + 4.5 GB > 8 GB)
+User opens a vision task → needs llava-1.5-7b-q4 (4.5 GB; 5.5 + 4.5 GB > 8 GB)
   1. llama model is idle → evict from RAM (weights still on disk)
   2. Load vision model → 4.5 GB
   3. When conversation bar is used again → evict vision, reload llama
@@ -220,11 +220,11 @@ Ideal model: embedding-model (loaded as companion)
   → Route to companion. No switch needed.
 
 Task: "Classify this image" (user request)
-Ideal model: vision-model (not loaded)
+Ideal model: llava-1.5-7b vision model (not loaded)
 Primary model: llama-8b (loaded, no vision capability)
   → Cannot route to primary. Must switch.
   → Check: any queued vision tasks? Batch them.
-  → Evict the primary model: no model pool holds it beside the vision
+  → Evict the primary model: no model pool holds it beside a 7B vision
     model (§4.4). This is an InteractiveTaskNeeds eviction, so it waits
     until the primary model has no active sessions.
   → Load vision model, process all queued vision tasks.
@@ -251,12 +251,10 @@ Available RAM        Model Pool Alloc    Default Model Selection
                                           that require inference are disabled.
                                           Rule-based fallbacks active.
 
-2 GB – 3.9 GB        0 MB                As < 2 GB: there is no model pool
-                                          below 4 GiB, so there is no local model.
-                                          AIRS starts in cloud-only mode.
-                                          Intelligence services that require
-                                          inference are disabled. Rule-based
-                                          fallbacks active.
+2 GB – 3.9 GB        0 MB                No local model: there is no model
+                                          pool below 4 GiB. Intelligence
+                                          services that require inference are
+                                          disabled. Rule-based fallbacks active.
 
 4 GB – 7.9 GB        2 GB                3B parameter model, Q4_K_M quantization.
                                           ~1.7 GB on disk, ~2 GB in RAM.
@@ -272,9 +270,9 @@ Available RAM        Model Pool Alloc    Default Model Selection
 ≥ 16 GB              8 GB                8B parameter model, Q5_K_M or Q6_K.
                                           Higher quantization = better quality.
                                           Room for small specialist models
-                                          alongside the primary model. A vision
-                                          model (~4.5 GB) still swaps with the
-                                          primary model (§4.4).
+                                          alongside the primary model. A 7B
+                                          vision model (~4.5 GB) still swaps
+                                          with the primary model (§4.4).
 ```
 
 ```rust

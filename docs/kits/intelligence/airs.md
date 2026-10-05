@@ -295,22 +295,23 @@ for result in results {
 
 **AIRS Kit + Context Kit -- activity classification:**
 
+The Context Engine behind the Context Kit feeds its fixed-length signal feature vector to
+the AIRS classifier model (`TaskProfile::Classifier`;
+[context-engine/inference.md](../../intelligence/context-engine/inference.md) §4.1). The
+classifier is not generative: no prompt is built and no tokens are decoded, and it outputs a
+typed `ContextState`. Agents read that state; they do not call `infer` to classify context.
+
 ```rust
-use aios_airs::{AirsKit, InferenceRequest, TaskProfile};
-use aios_context::{ContextKit, ContextSignal};
+use aios_context::{ActivityType, ContextKit, ContextState};
 
-// Context Kit collects signals and uses AIRS for classification
-let signals = ContextKit::current_signals()?;
-let feature_vector = signals.to_feature_vector();
+// Classified by the AIRS classifier model (or the rule-based fallback when AIRS is down)
+let state: ContextState = ContextKit::current_state()?;
 
-let result = AirsKit::engine()?.infer(InferenceRequest {
-    prompt: format!("Classify activity: {:?}", feature_vector),
-    profile: TaskProfile::Classifier,
-    max_tokens: 16,
-    ..Default::default()
-})?;
-
-// Result: "deep_work" / "browsing" / "communication" / "media" / "idle"
+match state.activity {
+    ActivityType::DeepWork | ActivityType::Meeting => { /* defer non-urgent work */ }
+    ActivityType::Idle => { /* run background indexing */ }
+    _ => {}
+}
 ```
 
 **AIRS Kit + Capability Kit -- scoped inference access:**

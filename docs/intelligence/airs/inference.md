@@ -10,7 +10,7 @@ Part of: [airs.md](../airs.md) — AI Runtime Service
 
 The inference engine runs local LLM inference. No cloud dependency. All inference happens on-device. It manages the complete lifecycle from session creation through token generation to completion, coordinating compute resources, memory, and streaming output across heterogeneous hardware.
 
-The engine is the scarce resource at the center of AIRS — six intelligence services (Space Indexer, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager) all share one model in RAM on memory-constrained hardware. The Context Engine is not one of them: it runs a small classifier, not the LLM ([context-engine/inference.md](../context-engine/inference.md) §4.1). The inference engine's scheduler, metering, and session management determine who gets inference capacity and when.
+The engine is the scarce resource at the center of AIRS — six intelligence services (Space Indexer, Attention Manager, Intent Verifier, Behavioral Monitor, Adversarial Defense, Tool Manager) all share one model in RAM on memory-constrained hardware. The Context Engine's context classifier is not one of them: it is a small classifier, not the LLM ([context-engine/inference.md](../context-engine/inference.md) §4.1). Only its optional Tier 3 narration ([context-engine/learning.md](../context-engine/learning.md) §13.6) uses the shared model. The inference engine's scheduler, metering, and session management determine who gets inference capacity and when.
 
 ### 3.1 Inference Runtime (candle default)
 
@@ -1492,7 +1492,7 @@ pub struct InferenceMetrics {
 
 #### 3.8.2 Performance Targets by Hardware Tier
 
-These are pre-benchmark estimates for single-session inference with the model named in each row (3B to 70B). They are derived from published GGML (llama.cpp) figures for comparable hardware, not measured with candle, which may run 5-15% slower on ARM (§3.9.1). Phase 11 (AIRS Inference Engine) measures them with the benchmark suite (§3.8.3) and replaces these estimates. This is the only AIRS throughput table; other docs refer to it.
+These are pre-benchmark estimates for single-session inference with the model named in each row (3B to 70B). They are derived from published GGML (llama.cpp) figures for comparable hardware, not measured with candle, which may run 5-15% slower on ARM (§3.9.1). Phase 11 (AIRS Inference Engine) measures them with the benchmark suite (§3.8.3) and replaces these estimates. This is the only table of AIRS text-model throughput targets; other docs refer to it.
 
 ```text
 Hardware Tier        Model     Quant     TTFT      tok/s     Context    Memory

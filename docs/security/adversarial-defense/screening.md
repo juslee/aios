@@ -40,9 +40,9 @@ flowchart LR
     D -->|no match| E["Tier 1 ML\n(kernel, frozen)"]
     D -->|match| R
     E -->|safe| F["Deliver\nto agent"]
-    E -->|suspicious| G["Tier 2 ML\n(AIRS, async)"]
-    G -->|safe| F
-    G -->|injection| R
+    E -->|"suspicious\n(provisional)"| F
+    F -.->|"async: Tier 1 suspicious\nor External source"| G["Tier 2 ML\n(AIRS, async)"]
+    G -->|"injection\n(containment event)"| R
     R --> X2["Sanitize / Block\n/ Flag / LogOnly"]
 ```
 
@@ -68,10 +68,11 @@ kernel-internal compute budget.
 
 **Stage 5 — Tier 2 ML classification.** Invoked asynchronously when Tier 1 returns
 `Suspicious` or when the message originates from an External trust-level source. AIRS
-provides semantic injection analysis with context awareness (§5.3). For non-destructive
-inbound data (reads, tool outputs), Tier 2 can complete after provisional delivery to the
-agent. For agent-initiated writes and network-bound sends, the OutputValidator (§6) handles
-gating independently — Stage 5 applies only to data flowing into the agent.
+provides semantic injection analysis with context awareness (§5.3). All inbound data is
+delivered provisionally, and Tier 2 completes after delivery; if it returns `Injection`, the
+response subsystem issues a containment event. For agent-initiated writes and network-bound
+sends, the OutputValidator (§6) handles gating independently — Stage 5 applies only to data
+flowing into the agent.
 
 **Stage 6 — Response.** The response policy (§5.4) selects a `ScreeningResponse` based on
 the highest severity signal from any stage and the agent's declared policy.
