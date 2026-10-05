@@ -1640,17 +1640,22 @@ A decision tree trained offline on population engagement data, compiled to a fix
 ```text
 Decision tree for pre-AIRS urgency classification:
 
-1. Is content type SystemEvent with SecurityAlert or Error?
+1. Is content type SystemEvent with SecurityAlert?
    → YES: Interrupt (confidence: 0.95)
-2. Is sender in user's top-5 contacts (by response frequency)?
+2. Is content type SystemEvent with Error?
+   → YES and agent category System? → Interrupt (confidence: 0.90)
+   → YES and any other category?   → NextBreak (confidence: 0.80)
+3. Is sender in user's top-5 contacts (by response frequency)?
    → YES: NextBreak (confidence: 0.80)
-3. Is agent category System or Communication?
+4. Is agent category System or Communication?
    → YES and content contains urgency keywords? → NextBreak (0.70)
    → YES and no urgency keywords? → Digest (0.60)
-4. Is item time-sensitive (< 10 minutes to deadline)?
+5. Is item time-sensitive (< 10 minutes to deadline)?
    → YES: NextBreak (confidence: 0.75)
-5. Default: Digest (confidence: 0.50)
+6. Default: Digest (confidence: 0.50)
 ```
+
+The tree keeps the §18.3 ceiling: no agent can force an Interrupt. Only system agents may post a security alert (§18.5), and the agent category comes from the agent registry, not from the item. Any agent may post an Error, so an Error interrupts only when a system agent posts it, as in the §15.2 rule-based triage.
 
 This decision tree augments the rule-based triage in §15.2. On first boot (no engagement data), the rule-based triage from §15.2 is used. Once sufficient engagement data accumulates, this decision tree is trained offline and deployed as a static lookup table, replacing the rule-based heuristics. It is retrained weekly from updated engagement data.
 

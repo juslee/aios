@@ -79,8 +79,8 @@ Future SBCs increasingly include Neural Processing Units (NPUs) and dedicated ML
 
 ```text
 Current (Pi 5):       CPU (NEON SIMD) — see inference.md §3.8.2 (pre-benchmark)
-Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s
-Future:               CPU + NPU + GPU compute — 40-100+ tok/s
+Near future:          CPU + NPU (Rockchip RK3588: 6 TOPS) — 15-30 tok/s (projection)
+Future:               CPU + NPU + GPU compute — 40-100+ tok/s (projection)
 ```
 
 The `ComputeDeviceClass` enum (§3.2 in [inference.md](./inference.md)) includes NPU and DSP as variants. When NPU drivers are available through the subsystem framework, the compute scheduler routes small models and embedding generation to the NPU (where fixed-point arithmetic excels) and keeps large model inference on CPU/GPU.

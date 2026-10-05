@@ -72,7 +72,7 @@ pub enum InferencePriority {
     /// User is waiting for a response (conversation bar).
     /// Preempts all other priorities. Target: <500ms time-to-first-token.
     Interactive,
-    /// System service needs inference (intent verification, context engine).
+    /// System service needs inference (intent verification, behavioral monitoring).
     /// Second priority. May preempt background work.
     System,
     /// Background task (Space indexing, metadata generation).
@@ -1492,7 +1492,7 @@ pub struct InferenceMetrics {
 
 #### 3.8.2 Performance Targets by Hardware Tier
 
-These are pre-benchmark estimates for single-session inference with the model named in each row (3B to 70B). They are derived from published GGML (llama.cpp) figures for comparable hardware, not measured with candle, which may run 5-15% slower on ARM (§3.9.1). Phase 11 (AIRS Inference Engine) measures them with the benchmark suite (§3.8.3) and replaces these estimates. This is the only table of AIRS text-model throughput targets; other docs refer to it.
+These are pre-benchmark estimates for single-session inference with the model named in each row (3B to 70B). They are derived from published GGML (llama.cpp) figures for comparable hardware, not measured with candle, which may run 5-15% slower on ARM (§3.9.1). Phase 11 (AIRS Inference Engine) measures them with the benchmark suite (§3.8.3) and replaces these estimates. This is the only table of per-platform AIRS text-model throughput estimates: other docs that give figures for current hardware refer to it, and the accelerator figures in [scaling.md](./scaling.md) §11.4 are projections. Gate 2 in [development-plan.md](../../project/development-plan.md) §5 sets a go/no-go criterion (a 7B model at > 5 tok/s on Pi 4 (4 GB)) above these estimates; the Phase 11 measurements decide it.
 
 ```text
 Hardware Tier        Model     Quant     TTFT      tok/s     Context    Memory

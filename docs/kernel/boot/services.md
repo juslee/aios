@@ -412,7 +412,7 @@ Apple M1 (8 GB):    8192 - ~2 (kernel) = ~8190 MB available
                      → selects 8B Q4_K_M (~4.5 GB)
                      (unified memory — AGX GPU shares with CPU, no reservation)
 Apple M1 (16 GB):   16384 - ~2 (kernel) = ~16382 MB available
-                     → selects 8B Q5_K_M (~4.5 GB, higher quality)
+                     → selects 8B Q5_K_M (~5.5 GB, higher quality)
 QEMU (default 4 GB): no GPU reservation (VirtIO-GPU uses host memory)
                      → selects 3B Q4_K_M (~2.0 GB)
 ```
@@ -438,10 +438,10 @@ AIRS startup:
   1. Read model registry from system/models/ space
   2. Select default model based on available RAM
      (see airs.md §4.6 for full thresholds):
-     >= 16 GB RAM: load 8B Q5_K_M  (~4.5 GB, higher quality)
+     >= 16 GB RAM: load 8B Q5_K_M  (~5.5 GB, higher quality)
      >= 8 GB RAM:  load 8B Q4_K_M  (~4.5 GB)
      >= 4 GB RAM:  load 3B Q4_K_M  (~2.0 GB)
-     >= 2 GB RAM:  no local model (no model pool below 4 GiB; as < 2 GB)
+     >= 2 GB RAM:  no local model (no model pool below 4 GiB; rule-based fallbacks)
       < 2 GB RAM:  no local model (cloud-only or degraded)
   3. Memory-map model weights (mmap, lazy page-in)
   4. Initialize candle runtime + NEON SIMD

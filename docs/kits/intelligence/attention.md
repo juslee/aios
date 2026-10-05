@@ -346,12 +346,18 @@ use aios_attention::{AttentionContent, Urgency, AttentionCategory};
 fn assess_urgency(
     content: &AttentionContent,
     context: &ContextState,
+    // Looked up in the agent registry, never declared by the posting agent.
+    from_system_agent: bool,
     airs_available: bool,
 ) -> Urgency {
     if !airs_available {
-        // Fallback: use category-based heuristics
+        // Fallback: use category-based heuristics. Any agent can choose the
+        // category, so only a system agent's critical alert interrupts:
+        // no agent can force an Interrupt (attention.md §15.2, §18.3).
         return match &content.category {
-            AttentionCategory::Alert { severity: AlertSeverity::Critical } => Urgency::Interrupt,
+            AttentionCategory::Alert { severity: AlertSeverity::Critical } if from_system_agent => {
+                Urgency::Interrupt
+            }
             AttentionCategory::Alert { .. } => Urgency::NextBreak,
             AttentionCategory::Reminder { .. } => Urgency::NextBreak,
             _ => Urgency::Digest,
@@ -439,9 +445,11 @@ The Attention Kit operates in two modes depending on AIRS availability:
 
 **Without AIRS (heuristic fallback):**
 
-- Category-based urgency: `Alert(Critical)` maps to `Urgency::Interrupt`, other alerts
-  and reminders to `Urgency::NextBreak`, and messages, progress and social items
-  default to `Urgency::Digest`.
+- Category-based urgency: `Alert(Critical)` from a system agent maps to
+  `Urgency::Interrupt`. Other alerts, critical alerts from other agents included,
+  and reminders map to `Urgency::NextBreak`, and messages, progress and social items
+  default to `Urgency::Digest`. An agent cannot force an Interrupt by choosing a
+  category ([attention.md](../../intelligence/attention.md) §18.3).
 - Simple grouping: items from the same agent with the same category are grouped by
   count. No AI summarization.
 - No relationship scoring: all senders are treated equally.

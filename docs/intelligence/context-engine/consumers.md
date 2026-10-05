@@ -95,6 +95,7 @@ Attention Manager receives item
 Step 1: AIRS assesses urgency
   │  The agent declares no urgency (attention.md §4.3).
   │  AIRS examines content, sender context, user context.
+  │  Without AIRS, rule-based triage assigns it (attention.md §15.2).
   │  A Slack message from a bot is not Interrupt. A message
   │  from the user's manager during a meeting might be.
   │
@@ -134,6 +135,7 @@ Step 5: Auto-action
 pub struct AttentionManager {
     incoming: PriorityQueue<AttentionItem>,
     model: AttentionModel,
+    rule_triage: RuleBasedTriage,           // attention.md §15.2
     context: ContextState,
     digest_queue: Vec<AttentionItem>,
     groups: HashMap<GroupId, Vec<AttentionItem>>,
@@ -160,10 +162,14 @@ pub struct AttentionItem {
 
 impl AttentionManager {
     pub async fn process(&mut self, mut item: AttentionItem) {
-        // Step 1: AIRS assessment
+        // Step 1: AIRS assessment. Agents declare no urgency (attention.md
+        // §4.3), so without AIRS the urgency comes from the Attention
+        // Manager's own rule-based triage (attention.md §15.2).
         if let Some(ref model) = self.model.classifier {
             item.urgency = model.assess_urgency(&item, &self.context).await;
             item.relevance = model.assess_relevance(&item, &self.context).await;
+        } else {
+            item.urgency = self.rule_triage.assess(&item).urgency;
         }
 
         // Step 2: Filter against threshold

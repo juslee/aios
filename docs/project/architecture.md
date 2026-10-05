@@ -1875,10 +1875,10 @@ Year    Phone       Tablet      Laptop (base)    Laptop (power)
 | RAM Available | Models That Fit | Experience |
 |---|---|---|
 | < 2 GB | No local model | Cloud-only or degraded — no local inference |
-| 2-4 GB | No local model (no model pool below 4 GiB) | As < 2 GB: cloud-only or degraded — no local inference |
+| 2-4 GB | No local model (no model pool below 4 GiB) | AI features that need inference disabled; rule-based fallbacks active |
 | 4-8 GB | 3B Q4_K_M (~2.0 GB) | Basic — simple queries, summarization |
 | 8-16 GB | 8B Q4_K_M (~4.5 GB) | Good — conversational AI, search |
-| ≥ 16 GB | 8B Q5_K_M (~4.5 GB, default) or Q6_K | Great — higher quality, room for small specialist models (a 7B vision model still swaps with the primary) |
+| ≥ 16 GB | 8B Q5_K_M (~5.5 GB, default) or Q6_K | Great — higher quality, room for small specialist models (a 7B vision model still swaps with the primary) |
 | 32 GB+ | 13B Q6_K or 70B Q4_K_M | Excellent — near-cloud quality locally |
 | 64 GB+ | 70B Q6_K or multiple models loaded | Outstanding — full model library in RAM |
 
