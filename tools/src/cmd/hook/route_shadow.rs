@@ -13,14 +13,14 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::{cut_to_boundary, Ctx, HookInput};
+use super::{append_jsonl, cut_to_boundary, unix_seconds, Ctx, HookInput};
 
 /// The Jev model is pinned: its answer thresholds are tuned per version.
 const JEV_MODEL: &str = "jev-1.13.0";
@@ -358,9 +358,7 @@ pub fn run_with(
     let request = build_request(&dispatch);
     let outcome = ask(transport, settings, &request, &dir);
     let record = Record {
-        ts: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs()),
+        ts: unix_seconds(),
         session_id: input.session_id.as_deref(),
         agent_id: input.agent_id.as_deref(),
         tool_use_id: input.tool_use_id.as_deref(),
@@ -375,24 +373,8 @@ pub fn run_with(
         answers: outcome.answers,
         error: outcome.error,
     };
-    append_record(&dir.join(LOG_FILE), &record)?;
+    append_jsonl(&dir.join(LOG_FILE), &record)?;
     Ok(None)
-}
-
-/// Append one line to the log in a single write, so records of concurrent
-/// dispatches do not interleave.
-fn append_record(path: &Path, record: &Record) -> Result<()> {
-    let mut line = serde_json::to_string(record).context("cannot encode the log record")?;
-    line.push('\n');
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
-    }
-    OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .and_then(|mut file| file.write_all(line.as_bytes()))
-        .with_context(|| format!("cannot append to {}", path.display()))
 }
 
 #[cfg(test)]

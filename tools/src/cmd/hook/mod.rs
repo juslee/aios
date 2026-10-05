@@ -13,16 +13,19 @@
 
 pub mod path_guard;
 pub mod repeat_error;
+pub mod route_outcome;
 pub mod route_shadow;
 
 use std::ffi::OsString;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::proc;
@@ -52,6 +55,8 @@ pub enum Cmd {
     PathGuard(path_guard::Args),
     /// PreToolUse for the dispatch tool: log how Jev would route it, never decide
     RouteShadow(route_shadow::Args),
+    /// PostToolUse and PostToolUseFailure for the dispatch tool, and SubagentStop: log what happened to each dispatch
+    RouteOutcome(route_outcome::Args),
 }
 
 /// What a subcommand does when it cannot do its job.
@@ -69,13 +74,14 @@ impl Cmd {
             Cmd::RepeatError(_) => "repeat-error",
             Cmd::PathGuard(_) => "path-guard",
             Cmd::RouteShadow(_) => "route-shadow",
+            Cmd::RouteOutcome(_) => "route-outcome",
         }
     }
 
     pub fn on_error(&self) -> OnError {
         match self {
             Cmd::PathGuard(_) => OnError::Deny,
-            Cmd::RepeatError(_) | Cmd::RouteShadow(_) => OnError::Open,
+            Cmd::RepeatError(_) | Cmd::RouteShadow(_) | Cmd::RouteOutcome(_) => OnError::Open,
         }
     }
 }
@@ -107,6 +113,18 @@ pub struct HookInput {
     pub is_interrupt: Option<bool>,
     #[serde(default)]
     pub tool_input: Value,
+    /// PostToolUse only: the tool's result, whose shape depends on the tool.
+    #[serde(default)]
+    pub tool_response: Value,
+    /// SubagentStop only.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub agent_transcript_path: Option<String>,
+    /// SubagentStop only: how the subagent ended.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub last_assistant_message: Option<String>,
+    /// SubagentStop only: true while the subagent continues after a block.
+    #[serde(default, deserialize_with = "lenient_bool")]
+    pub stop_hook_active: Option<bool>,
 }
 
 impl HookInput {
@@ -282,6 +300,30 @@ pub fn state_key(input: &HookInput) -> String {
     }
 }
 
+/// Seconds since the Unix epoch, 0 if the clock is before it.
+pub fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Append `record` as one JSON line to the log at `path`, creating the file and its
+/// directory. The line goes out in a single write, so records of concurrent hooks
+/// do not interleave.
+pub fn append_jsonl(path: &Path, record: &impl Serialize) -> Result<()> {
+    let mut line = serde_json::to_string(record).context("cannot encode the log record")?;
+    line.push('\n');
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    }
+    OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(line.as_bytes()))
+        .with_context(|| format!("cannot append to {}", path.display()))
+}
+
 /// Write `bytes` to `path` through a temporary file in the same directory and a
 /// rename, creating the directory if needed. A reader sees the old or the new
 /// content, never a partial file. Two writers racing on one path can lose an
@@ -352,6 +394,7 @@ fn dispatch(cmd: &Cmd, input: &HookInput, ctx: &Ctx) -> Result<Option<String>> {
         Cmd::RepeatError(args) => repeat_error::run(args, input, ctx),
         Cmd::PathGuard(args) => path_guard::run(args, input, ctx),
         Cmd::RouteShadow(args) => route_shadow::run(args, input, ctx),
+        Cmd::RouteOutcome(args) => route_outcome::run(args, input, ctx),
     }
 }
 

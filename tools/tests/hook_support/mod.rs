@@ -170,9 +170,10 @@ pub fn make_git_repo(label: &str) -> PathBuf {
     dir
 }
 
-/// The three subcommands with the arguments each needs to start.
-pub const SUBCOMMANDS: [&[&str]; 3] = [
+/// The four subcommands with the arguments each needs to start.
+pub const SUBCOMMANDS: [&[&str]; 4] = [
     &["repeat-error"],
     &["path-guard", "--deny", "kernel/"],
     &["route-shadow"],
+    &["route-outcome"],
 ];
