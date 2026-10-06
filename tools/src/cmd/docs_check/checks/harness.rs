@@ -54,7 +54,7 @@ static TABLE_STOP_RE: LazyLock<Regex> =
     LazyLock::new(|| pyre::compile(r"^\*\*|^## ").expect("valid regex"));
 /// check.py L1126. `\n?$` matches Python's non-MULTILINE `$` on a tracked path
 /// ending in a trailing newline; same for the three regexes below (L1135, L1139,
-/// L1147).
+/// L1147; `AGENT_FILE_RE` also ports L1278, pointer-doctor's agent set).
 static PLUGIN_JSON_RE: LazyLock<Regex> = LazyLock::new(|| {
     pyre::compile(r"^\.claude/skills/([^/]+)/\.claude-plugin/plugin\.json\n?$")
         .expect("valid regex")
@@ -113,7 +113,7 @@ fn plugin_name(text: &str) -> Option<String> {
     }
 }
 
-/// check.py L1147: `.claude/agents/<name>.md` names.
+/// check.py L1147 and L1278: `.claude/agents/<name>.md` names.
 pub fn project_agents(repo: &Repo) -> BTreeSet<String> {
     repo.files()
         .iter()
