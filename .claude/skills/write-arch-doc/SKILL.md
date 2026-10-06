@@ -16,7 +16,7 @@ and production systems.
 ## Step 0: Search Knowledge Hive
 
 Before creating or updating, search the knowledge hive for relevant context:
-- Use Obsidian MCP search_notes with subsystem keywords from $ARGUMENTS
+- Grep `docs/knowledge/` (lessons, decisions) for subsystem keywords from $ARGUMENTS
 - Review docs/knowledge/research/ for prior research on the topic
 - Review docs/knowledge/decisions/ for related architectural choices
 - Factor findings into the document content
@@ -41,7 +41,7 @@ Phase docs (`docs/phases/`) track what has been implemented.
 
 Determine whether this is a CREATE or MAINTAIN operation:
 
-1. Search CLAUDE.md Architecture Document Map for `$ARGUMENTS`
+1. Search `docs/project/doc-map.md` for `$ARGUMENTS`
 2. Glob for matching files: `docs/**/*$ARGUMENTS*.md`
 
 **If a doc exists** → MAINTAIN mode:
@@ -251,7 +251,7 @@ If a hub name would match the parent directory, rename the hub to avoid redundan
 ### Execution
 - Create the subfolder (if needed) and sub-documents in parallel (independent files — use background agents)
 - Group related sections together (e.g., physical memory + heap, virtual memory + shared memory)
-- Update CLAUDE.md Architecture Document Map to point to specific sub-files
+- Update `docs/project/doc-map.md` to point to specific sub-files
 - Run bare code fence check on all new files (agents often create bare ``` fences)
 - External docs linking to the hub still work — readers land on navigation page
 
@@ -261,7 +261,7 @@ If a hub name would match the parent directory, rename the hub to avoid redundan
 
 ## Step 7: Cross-reference Updates
 
-1. Add or update the entry in CLAUDE.md Architecture Document Map
+1. Add or update the entry in `docs/project/doc-map.md`
 2. Update any existing docs that should reference this new/updated doc
 3. Ensure phase docs that reference this subsystem have correct pointers
 4. If `docs/project/developer-guide.md` exists, check its cross-reference index
@@ -358,7 +358,7 @@ Create these todo items at the start:
 4. Present outline / change plan for approval
 5. Research state-of-the-art improvements (recursive + AI-focused)
 6. Write / update document (section by section)
-7. Update cross-references (CLAUDE.md, related docs)
+7. Update cross-references (`docs/project/doc-map.md`, related docs)
 8. Run doc-auditor loop until clean
 9. Update this skill with lessons learned
 10. Commit, push, and create PR

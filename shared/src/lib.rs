@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod boot;
+pub mod cache;
 pub mod cap;
 pub mod collections;
 pub mod compositor;
@@ -30,17 +31,18 @@ pub const BOOTINFO_MAGIC: u64 = 0x41494F53_424F4F54;
 
 // Re-export commonly used types at crate root for ergonomic imports.
 pub use boot::{BootInfo, EarlyBootPhase, MemoryDescriptor, MemoryType, PixelFormat};
+pub use cache::CacheType;
 pub use cap::{
     Capability, CapabilityHandle, CapabilityTable, CapabilityToken, CapabilityTokenId,
     MAX_CAPS_PER_PROCESS,
 };
 pub use collections::{FixedQueue, RingBuffer};
 pub use ipc::{
-    validate_user_va, ChannelId, EndpointState, NotificationId, RawMessage, SelectEntry,
-    SelectKind, ServiceName, ServiceState, SharedMemoryId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS,
-    MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES, MAX_SERVICES,
-    MAX_SERVICE_NAME_LEN, MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS, MAX_WAITERS_PER_NOTIFICATION,
-    RING_CAPACITY, USER_VA_LIMIT,
+    validate_user_va, ChannelId, EndpointState, NotificationId, RawMessage, RawSelectEntry,
+    SelectEntry, SelectKind, ServiceName, ServiceState, SharedMemoryId, DEFAULT_TIMEOUT_TICKS,
+    MAX_CHANNELS, MAX_INHERITANCE_DEPTH, MAX_MESSAGE_SIZE, MAX_NOTIFICATIONS, MAX_SELECT_ENTRIES,
+    MAX_SERVICES, MAX_SERVICE_NAME_LEN, MAX_SHARED_MAPPINGS, MAX_SHARED_REGIONS,
+    MAX_WAITERS_PER_NOTIFICATION, RING_CAPACITY, USER_VA_LIMIT, USER_VA_MIN,
 };
 pub use kaslr::{compute_slide_from_entropy, KaslrConfig};
 pub use memory::{

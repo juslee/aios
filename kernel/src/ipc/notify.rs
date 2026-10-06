@@ -94,9 +94,12 @@ pub fn notification_create(pid: crate::task::process::ProcessId) -> Result<Notif
 
 /// Signal a notification: atomically OR `bits` into the word, then wake any
 /// waiters whose mask intersects the new value.
-pub fn notification_signal(id: NotificationId, bits: u64) {
+///
+/// Returns `Err(EINVAL)`, and signals nothing, for an id `>= MAX_NOTIFICATIONS`
+/// or an empty slot, the same errors `notification_wait` returns.
+pub fn notification_signal(id: NotificationId, bits: u64) -> Result<(), i64> {
     if id.0 as usize >= MAX_NOTIFICATIONS {
-        return;
+        return Err(crate::syscall::IpcError::Einval as i64);
     }
 
     // OR the bits in first (before acquiring the table lock).
@@ -108,7 +111,7 @@ pub fn notification_signal(id: NotificationId, bits: u64) {
     let mut table = NOTIFICATION_TABLE.lock();
     let notif = match &mut table[id.0 as usize] {
         Some(n) => n,
-        None => return,
+        None => return Err(crate::syscall::IpcError::Einval as i64),
     };
 
     // Atomic OR — visible to concurrent readers even under lock.
@@ -157,6 +160,8 @@ pub fn notification_signal(id: NotificationId, bits: u64) {
 
     #[cfg(feature = "kernel-metrics")]
     METRICS.notify_signal.inc();
+
+    Ok(())
 }
 
 /// Wait on a notification: if any bits matching `mask` are set, return+clear
@@ -262,7 +267,6 @@ pub fn notification_wait(id: NotificationId, mask: u64, timeout_ticks: u64) -> R
 }
 
 /// Destroy a notification: wake all waiters with error, remove from table.
-#[allow(dead_code)]
 pub fn notification_destroy(id: NotificationId) {
     if id.0 as usize >= MAX_NOTIFICATIONS {
         return;

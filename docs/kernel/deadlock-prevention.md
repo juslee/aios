@@ -94,9 +94,9 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 **Code evidence** for the ordering:
 
-- `shmem.rs:9` — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
-- `shmem.rs:158-159` — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
-- `shmem.rs:438` — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
+- `shmem.rs:10` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
+- `shmem.rs:192-193` (`shared_memory_create`) — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
+- `shmem.rs:489` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
 - `process.rs:147` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
@@ -134,6 +134,7 @@ graph TD
 | `ECHO_CHANNEL` | `service/mod.rs` | Test infrastructure, leaf |
 | `SAMPLE_BUF` | `bench.rs` | Benchmark data collection, leaf |
 | `ASID_ALLOC` | `mm/uspace.rs` | ASID allocation, leaf |
+| `PRIVATE_ALLOC_TABLE` | `ipc/shmem.rs` | MemoryMap allocation records, leaf: blocks are allocated before and freed after the hold |
 | `RUN_QUEUES[N]` | `sched/mod.rs` | Per-CPU, ascending CPU ID order (§3.2) |
 
 **IRQ-class locks (crash-fix step 1b).** The timer IRQ path shares 9 lock statics with thread code: `THREAD_TABLE`, `CURRENT_THREAD[N]`, `RUN_QUEUES[N]`, `WAKEUP_ERRORS`, `TIMEOUT_QUEUE`, `NOTIFY_DEADLINES`, `NOTIFICATION_TABLE`, `SELECT_WAITERS` and `BOOT_LOG`. They are `IrqSpinLock` (`kernel/src/sync/irq_spin_lock.rs`), not `spin::Mutex`. It is a detect-only type: it excludes exactly as `spin::Mutex` does and keeps every position and rule above. Its lock word is the holder's owner stamp (CPU and per-CPU switch generation, `shared::lock`). A `lock()` whose word holds its own stream's stamp can never succeed; for example, a timer IRQ that takes `THREAD_TABLE` while the thread it interrupted holds it with IRQs on. Such a `lock()` panics with a one-line `lock re-entry:` message instead of spinning forever. Other contention is counted in the tripwire's per-lock `lk*` keys (see [observability.md](./observability.md) §6.5). The type reports this same-CPU deadlock; it does not prevent it. A thread that holds one of these locks with IRQs on can still meet its own CPU's timer IRQ. Masking IRQs around such holds is a later crash-fix step.

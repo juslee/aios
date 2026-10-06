@@ -6,7 +6,7 @@
 
 **Related documents**:
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [hal.md](../kernel/hal.md) -- Hardware Abstraction Layer and platform porting (SS7)
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
 - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
@@ -1010,8 +1010,8 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~783), `bench.rs` (~549) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~788), `block_engine.rs` (~783), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1024,17 +1024,19 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  mod.rs          (565)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (702)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (757)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (163)  # IpcSelect capability self-test
-  notify.rs       (376)  # Notification objects (signal/wait)
+    select_cap.rs (168)  # IpcSelect capability self-test
+    syscall_args.rs (225) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (233)  # IPC Kit error variants through KernelIpc (#190) self-test
+  notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (651)  # Shared memory regions
+  shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1536,8 +1538,9 @@ AIOS uses [just](https://just.systems/) as its build system wrapper. All recipes
 | `just run-direct` | Phase 0 mode: direct `-kernel` boot, no UEFI (quick debugging) |
 | `just debug` | Launch QEMU paused with GDB server on `tcp::1234` |
 | `just soak` | Boot N times in a row and classify each boot (PCZERO/PANIC/EXCEPTION/WEDGE/INCONCLUSIVE/CLEAN); see §5.6 |
-| `just test` | Run host-side unit tests (shared crate) |
-| `just clippy` | Run clippy on kernel and stub targets with `-D warnings` |
+| `just test` | Run host-side unit tests (shared crate only; excludes the tools crate, which is tested separately with `cargo test -p aios-tools`, CI's Tools (host) job) |
+| `just tools` | Build the host tools binary `target/tools/release/aios` (`cargo build --release -p aios-tools --target-dir target/tools`); `.claude/hooks/aios` runs it (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios`) |
+| `just clippy` | Run clippy on kernel and stub targets with `-D warnings`, plus host clippy on the tools crate |
 | `just fmt` | Format code with `cargo fmt` |
 | `just fmt-check` | Check formatting without modifying files (CI mode) |
 | `just check` | **CI gate**: `fmt-check` + `clippy` + `build` + `build-stub` |
@@ -1576,7 +1579,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 559+ host-side tests pass |
+| **Test** | `just test` | All 594+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1618,17 +1621,17 @@ Match the string patterns (literal text), not exact hex addresses (which may var
 
 ### 5.4 Host-Side Tests
 
-The kernel crate is `no_std` and cannot run host tests directly. All testable logic lives in the `shared` crate, which compiles for both the kernel target and the host:
+The kernel crate is `no_std` and cannot run host tests directly. All testable logic lives in the `shared` crate, which compiles for both the kernel target and the host. The host-only tools crate is tested separately with `cargo test -p aios-tools` (CI's Tools (host) job, which needs full git history):
 
 ```bash
 # Run all shared crate tests
 just test
 
 # Equivalent manual command:
-cargo test --workspace --exclude kernel --exclude uefi-stub --target-dir target/host-tests
+cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 559 tests across: `boot`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 594 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1721,23 +1724,24 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (559 tests):**
+**Current test distribution (594 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
-| `ipc` | 53 | Channel IDs and `ChannelId::index`, message validation, select entries, service names, user VA checks |
+| `ipc` | 61 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected) |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `kits` | 40 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips, memory PagePermissions W^X validation, compute surface types, storage re-exports |
+| `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 21 | Syscall numbering, IpcError codes, `id_arg` register decoding |
+| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
 | `observability` | 18 | Log level ordering, subsystem tags |
+| `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
 ### 5.6 Boot Soak Testing (`just soak`)
@@ -1789,7 +1793,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The script warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
-**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`) and the edk2 noise before the stub do not affect classification.
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
 **Re-classifying saved logs.** `scripts/soak-qemu.sh --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
 
@@ -2042,7 +2046,7 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 | Cause | Diagnosis | Fix |
 |---|---|---|
 | Missing VBAR_EL1 setup | First exception causes jump to address 0x0 | Set VBAR_EL1 in boot.S before any Rust code runs |
-| Stack pointer misaligned | SP not 16-byte aligned causes fault | Ensure `.balign 16` on stack symbols in linker script |
+| Stack pointer misaligned | SP not 16-byte aligned causes fault | Keep `ALIGN(16)` on the `.stack` output section in `linker.ld` (boot.S loads `__stack_top` from it) |
 | FPU not enabled | First NEON instruction faults | Enable FPU in boot.S: `orr x1, x1, #(3 << 20); msr CPACR_EL1, x1; isb` |
 
 **QEMU prints exception info then halts:**
@@ -2066,10 +2070,10 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 
 Claude Code has LSP (Language Server Protocol) integration with `rust-analyzer` for semantic code intelligence. **Always prefer LSP over manual searching** when navigating the codebase.
 
-**Configuration** (already set up in `.claude/`):
+**Configuration** (already set up):
 
-- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section
-- `.claude/.lsp.json` — maps `.rs` files to `rust-analyzer`
+- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section, and `rust-analyzer-lsp@claude-plugins-official` in `enabledPlugins` (the plugin registers `rust-analyzer` for `.rs` files and runs it from `PATH`)
+- `rust-toolchain.toml` — `rust-analyzer` in `components`, so rustup installs the server that matches the pinned nightly
 
 **Available LSP operations:**
 
@@ -2249,42 +2253,30 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
 | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
-| **Code conventions** | [CLAUDE.md](../../CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
+| **Code conventions** | [.claude/rules/](../../.claude/rules/) | 01-code-conventions, 06-unsafe-documentation |
 
 ---
 
-## 8b. Obsidian Desktop Setup (Optional)
+## 8b. Browsing `docs/` in Obsidian (Optional)
 
-The AIOS knowledge hive is accessible via Claude Code automatically (MCP configured in `.mcp.json`). For visual exploration with graph view and backlinks, you can optionally install the Obsidian desktop app:
-
-1. Download Obsidian from https://obsidian.md
-2. Open `docs/` as a vault (File → Open folder as vault → select `docs/`)
-3. The `.obsidian/` config folder is gitignored — your personal settings stay local
-
-This gives you:
-- **Graph view**: See how 80+ architecture docs connect to each other
-- **Backlinks**: See which docs reference the current doc
-- **Tag search**: Filter by domain (kernel, platform, security, etc.)
-- **Quick switcher**: Cmd+O to jump to any doc by name
-
-This is purely optional — all docs are plain markdown readable in any editor or on GitHub.
+`docs/` is plain Markdown, readable in any editor or on GitHub; you can optionally open it as a vault in the [Obsidian](https://obsidian.md) app (its `.obsidian/` config folder is gitignored).
 
 ---
 
 ## 8c. Claude Code Agents, Skills & Worktrees
 
-AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and twelve slash-command skills (eight project skills plus the four `/justin:*` session skills) automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
 
-The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
+The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
 
 ### Agents
 
-Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows CLAUDE.md conventions.
+Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows the conventions in `.claude/rules/` (technical facts in `.claude/CLAUDE.md`).
 
 | Agent | Role | Spawned by | Key capabilities |
 | --- | --- | --- | --- |
 | `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
-| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, MultiEdit, Bash, Grep, Glob |
+| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, Bash, Grep, Glob |
 | `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
 | `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
 | `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
@@ -2394,11 +2386,11 @@ OUTER LOOP:
 
 **Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
+The audit loop is **mandatory before any PR** — see [rule 04](../../.claude/rules/04-phase-workflow.md) (Phase Implementation Workflow).
 
 ### Knowledge Hive Integration
 
-Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across sessions:
+Agents use the knowledge hive (`docs/knowledge/`, searched with Grep) for persistent memory across sessions:
 
 | Directory | Persistence | Purpose |
 |---|---|---|
@@ -2414,12 +2406,13 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 
 Agent teams and skills are configured in:
 
-- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables
-- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`) and `precompact-save.sh` (flushes Remember memory before compaction). They live under `.claude/` so edits to them are never auto-approved
+- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables, the plugins it enables (`enabledPlugins`: superpowers, remember, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
+- **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/release/aios` from the main checkout). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
+- **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `10-harness-mechanics`)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
-- **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
+- **`.claude/CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
 
 ---
 

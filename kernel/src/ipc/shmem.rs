@@ -1,12 +1,23 @@
-//! Shared memory lifecycle — create, map, share, unmap.
+//! Shared memory lifecycle — create, map, share, unmap — and private memory
+//! (MemoryMap / MemoryUnmap).
 //!
 //! Provides zero-copy data transfer between processes via shared physical pages.
 //! Regions are reference-counted and capability-gated. W^X is enforced at both
 //! creation and mapping time.
 //!
-//! Per ipc.md §4.4–4.6, memory/virtual.md §7.
+//! Per ipc.md §4.4–4.7, memory/virtual.md §7.
 //!
 //! Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE.
+//!
+//! Errno policy (ipc.md §3.2): EINVAL for a request that no caller could
+//! make (an out-of-range id, WRITE | EXECUTE, flags beyond the region's
+//! `max_flags`, a region size above 4 MiB, a MemoryMap above 64 pages, a
+//! private address that is not the caller's allocation); ENOSPC only for a
+//! full table; EPERM when the caller lacks a right the request needs (a
+//! capability, a mapping of the region, being its creator); EPIPE when the
+//! region is gone. One EPERM here is not a missing right: a
+//! SharedMemoryShare target pid whose slot holds no process, which the
+//! process accessors report as EPERM today (ipc.md §3.2).
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -26,10 +37,23 @@ const PAGE_SIZE: usize = 4096;
 
 /// User heap base — shared memory regions are mapped starting here.
 /// Each region gets a unique VA slot to avoid collisions.
+///
+/// Interim layout: memory/virtual.md §3.1 puts shared memory at
+/// `0x1_0000_0000` and the agent heap here. The shared memory and private
+/// windows move when processes get user address spaces (ipc.md §4.7).
 const SHM_VA_BASE: usize = crate::mm::uspace::USER_HEAP_BASE;
 
-/// Spacing between shared memory region VA slots (1 MiB).
-const SHM_VA_STRIDE: usize = 0x0010_0000; // 1 MiB
+/// Largest SharedMemoryCreate request, in pages: the largest buddy block
+/// (`2^MAX_ORDER` pages, 4 MiB). A region is one buddy block, so a larger
+/// size could never be allocated or fit its VA slot; it is EINVAL.
+const MAX_SHARED_REGION_PAGES: usize = 1 << crate::mm::buddy::MAX_ORDER;
+
+/// Spacing between shared memory region VA slots: the largest region
+/// (`MAX_SHARED_REGION_PAGES`, 4 MiB). Every region fits its slot and the
+/// shared memory window,
+/// `[SHM_VA_BASE, SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE)`, holds
+/// them all without reaching the private window above it.
+const SHM_VA_STRIDE: usize = MAX_SHARED_REGION_PAGES * PAGE_SIZE;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -92,23 +116,33 @@ pub static SHARED_REGION_TABLE: Mutex<[Option<SharedMemoryRegion>; MAX_SHARED_RE
 /// Allocates physically contiguous pages from Pool::User, enforces W^X on
 /// `flags`, and records the region in the global table.
 ///
-/// Returns the region ID on success.
+/// Returns the region ID on success. Errors: EINVAL for WRITE | EXECUTE or
+/// a size above `MAX_SHARED_REGION_PAGES` pages (4 MiB); EPERM without
+/// `SharedMemoryCreate`; ENOMEM when Pool::User has no block of the needed
+/// order; ENOSPC when the region table is full.
 pub fn shared_memory_create(
     pid: ProcessId,
     size: usize,
     flags: VmFlags,
 ) -> Result<SharedMemoryId, i64> {
-    // W^X enforcement: reject WRITE+EXECUTE.
+    // W^X enforcement: reject WRITE+EXECUTE. No caller may ask for it, so
+    // it is a malformed request (EINVAL), not a permission denial.
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
         crate::kwarn!(Mm, "shm_create: W^X violation (pid={})", pid.0);
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
+    }
+
+    // Round size up to page granularity. `size` comes straight from x0, so
+    // bound it before the capability check and the allocation: a region
+    // above MAX_SHARED_REGION_PAGES can never be created (EINVAL, like
+    // W^X), and the bound keeps `order` at or below MAX_ORDER.
+    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
+    if size_pages > MAX_SHARED_REGION_PAGES {
+        return Err(IpcError::Einval as i64);
     }
 
     // Capability check (requires SharedMemoryCreate).
     let cap_token = crate::cap::check_shared_memory_create(pid)?;
-
-    // Round size up to page granularity.
-    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
 
     // Compute buddy order: smallest 2^order >= size_pages.
     let order = order_for_pages(size_pages);
@@ -118,7 +152,7 @@ pub fn shared_memory_create(
         crate::kwarn!(
             Mm,
             "shm_create: OOM allocating {} pages (pid={})",
-            1 << order,
+            1usize << order,
             pid.0
         );
         IpcError::Enomem as i64
@@ -181,7 +215,7 @@ pub fn shared_memory_create(
         "shm_create: id={} size={:#x} pages={} order={} phys={:#x} pid={}",
         idx,
         size_pages * PAGE_SIZE,
-        1 << order,
+        1usize << order,
         order,
         base_phys,
         pid.0
@@ -198,6 +232,11 @@ pub fn shared_memory_create(
 ///
 /// `flags` must be a subset of the region's `max_flags`. Returns the
 /// virtual address where the region was mapped.
+///
+/// Errors: EINVAL for an out-of-range id, WRITE | EXECUTE, or flags beyond
+/// the region's `max_flags`; EPERM without `SharedMemoryAccess(id)`; EPIPE if
+/// the region does not exist; EEXIST if `pid` already maps it; ENOSPC if the
+/// region has `MAX_SHARED_MAPPINGS` mappings.
 pub fn shared_memory_map(
     pid: ProcessId,
     region_id: SharedMemoryId,
@@ -207,9 +246,9 @@ pub fn shared_memory_map(
         return Err(IpcError::Einval as i64);
     }
 
-    // W^X enforcement.
+    // W^X enforcement (EINVAL, as in shared_memory_create).
     if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
     }
 
     // Capability check (SharedMemoryAccess).
@@ -220,7 +259,8 @@ pub fn shared_memory_map(
         .as_mut()
         .ok_or(IpcError::Epipe as i64)?;
 
-    // Verify flags are a subset of max_flags.
+    // Verify flags are a subset of max_flags. The limit belongs to the
+    // region, not to the caller, so asking for more is EINVAL for everyone.
     if !region.max_flags.contains(flags) {
         crate::kwarn!(
             Mm,
@@ -228,7 +268,7 @@ pub fn shared_memory_map(
             pid.0,
             region_id.0
         );
-        return Err(IpcError::Eperm as i64);
+        return Err(IpcError::Einval as i64);
     }
 
     // Check for duplicate mapping.
@@ -301,6 +341,11 @@ pub fn shared_memory_map(
 ///
 /// Decrements the reference count. If ref_count reaches 0, frees the
 /// backing pages.
+///
+/// Errors: EINVAL for an out-of-range id (or a ref_count already 0); EPIPE
+/// if the region does not exist; EPERM if `pid` has no mapping of it, a
+/// right the caller lacks, like a missing capability. No capability is
+/// checked: holding the mapping is the authority to remove it.
 pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<(), i64> {
     if region_id.0 as usize >= MAX_SHARED_REGIONS {
         return Err(IpcError::Einval as i64);
@@ -401,7 +446,13 @@ pub fn shared_memory_unmap(pid: ProcessId, region_id: SharedMemoryId) -> Result<
 /// a capability that lets them call `shared_memory_map`.
 ///
 /// Returns `Err(EINVAL)` for a region id `>= MAX_SHARED_REGIONS` or a
-/// `target_pid >= MAX_PROCESSES`, before taking any lock.
+/// `target_pid >= MAX_PROCESSES`, before taking any lock; EPIPE if the
+/// region does not exist; EPERM if `pid` is not the region's creator (a
+/// right the caller lacks) or the target process does not exist. The
+/// second EPERM is not a missing right: it is the empty-slot code of the
+/// process accessors (`process_mut`) today (ipc.md §3.2). SharedMemoryShare
+/// has no Kit wrapper, so a plain `IpcKitError::from_code` decode of either
+/// EPERM reads as `CapabilityDenied`, which fits neither.
 pub fn shared_memory_share(
     pid: ProcessId,
     region_id: SharedMemoryId,
@@ -460,7 +511,6 @@ pub fn shared_memory_share(
 // ---------------------------------------------------------------------------
 
 /// Clean up all shared memory mappings for a process (called on process exit).
-#[allow(dead_code)]
 pub fn process_cleanup_shared_memory(pid: ProcessId) {
     let mut table = SHARED_REGION_TABLE.lock();
 
@@ -515,70 +565,151 @@ pub fn process_cleanup_shared_memory(pid: ProcessId) {
 }
 
 // ---------------------------------------------------------------------------
-// Memory map (private allocation for user heap)
+// Private memory (MemoryMap / MemoryUnmap)
 // ---------------------------------------------------------------------------
 
-/// MemoryMap: allocate private pages for a process (user heap growth).
-///
-/// Allocates from Pool::User, maps into the caller's address space at the
-/// next available VA in the USER_HEAP_BASE region.
-pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, i64> {
-    // W^X enforcement.
-    if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
-        return Err(IpcError::Eperm as i64);
-    }
+/// Largest MemoryMap request, in pages (256 KiB). A larger size is EINVAL.
+const MAX_PRIVATE_PAGES: usize = 64;
 
-    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
+/// Maximum live MemoryMap allocations system-wide.
+const MAX_PRIVATE_ALLOCATIONS: usize = 64;
 
-    // For Phase 3 kernel threads, we allocate pages and return the direct-map VA.
-    // Full user-space VA management comes in Phase 4.
-    let mut allocated: [usize; 64] = [0; 64];
-    if size_pages > 64 {
-        return Err(IpcError::Enospc as i64);
-    }
+/// Base of the private-memory VA window, directly after the shared memory
+/// window (`SHM_VA_BASE` + 64 regions × 4 MiB). Slot `i` of
+/// `PRIVATE_ALLOC_TABLE` owns `[PRIVATE_VA_BASE + i * PRIVATE_VA_STRIDE, +stride)`.
+const PRIVATE_VA_BASE: usize = SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE;
 
-    for i in 0..size_pages {
-        match crate::mm::frame::alloc_user_page() {
-            Some(pa) => {
-                // Zero the page.
-                let dmap_va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + pa;
-                // SAFETY: pa is a freshly allocated page, direct map covers all RAM.
-                unsafe {
-                    core::ptr::write_bytes(dmap_va as *mut u8, 0, PAGE_SIZE);
-                }
-                allocated[i] = pa;
-            }
-            None => {
-                // OOM — free what we allocated so far.
-                for &pa in &allocated[..i] {
-                    // SAFETY: pa was allocated by alloc_user_page above.
-                    unsafe { crate::mm::frame::free_user_page(pa) };
-                }
-                return Err(IpcError::Enospc as i64);
-            }
-        }
-    }
+/// VA spacing between private allocation slots: room for the largest request.
+const PRIVATE_VA_STRIDE: usize = MAX_PRIVATE_PAGES * PAGE_SIZE;
 
-    // For kernel threads: return base PA accessible via direct map.
-    let va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + allocated[0];
+// Both windows end below the user stack.
+const _: () = assert!(
+    PRIVATE_VA_BASE + MAX_PRIVATE_ALLOCATIONS * PRIVATE_VA_STRIDE
+        <= crate::mm::uspace::USER_STACK_BASE
+);
 
-    crate::kinfo!(
-        Mm,
-        "memory_map: {} pages at va={:#x} pid={}",
-        size_pages,
-        va,
-        pid.0
-    );
-
-    Ok(va)
+/// One MemoryMap allocation: a physically contiguous buddy block from
+/// Pool::User, owned by one process.
+#[derive(Clone, Copy)]
+struct PrivateAllocation {
+    /// Process that called MemoryMap; only it may unmap the block.
+    owner: ProcessId,
+    /// Physical base of the `2^order`-page block.
+    base_phys: usize,
+    /// Buddy order the block was allocated with.
+    order: usize,
+    /// Pages the caller asked for (`<= 2^order`); MemoryUnmap must match it.
+    pages: usize,
 }
 
-/// MemoryUnmap: free private pages.
+/// Every live MemoryMap allocation, indexed by VA slot. MemoryUnmap frees
+/// only an entry that matches exactly and belongs to the caller, so it can
+/// never return a page it did not hand out (a kernel page, a region's frames,
+/// another process's block) to the buddy allocator.
 ///
-/// For Phase 3: accepts a direct-map VA, converts to physical, frees.
-pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
-    let size_pages = size.div_ceil(PAGE_SIZE).max(1);
+/// Leaf lock: nothing else is taken while it is held. Blocks are allocated
+/// before it is taken and freed after it is released.
+static PRIVATE_ALLOC_TABLE: Mutex<[Option<PrivateAllocation>; MAX_PRIVATE_ALLOCATIONS]> =
+    Mutex::new([None; MAX_PRIVATE_ALLOCATIONS]);
 
+/// MemoryMap: allocate private memory for process `pid`.
+///
+/// Rounds `size` up to whole pages (at least one) and allocates them as one
+/// physically contiguous buddy block from Pool::User, zeroes the block, and
+/// records it for `pid` in a free slot of `PRIVATE_ALLOC_TABLE`. Returns the
+/// slot's address in the private VA window, a user address that stands for
+/// the whole allocation: it is the key MemoryUnmap takes, and because the
+/// block is contiguous, `[va, va + pages * PAGE_SIZE)` maps onto it with one
+/// range.
+///
+/// This follows `shared_memory_map`, which returns its region's window VA:
+/// no process has a user address space yet (every process has
+/// `address_space: None`), so nothing is mapped into TTBR0 here either. EL1
+/// code would reach the block through the direct map (`DIRECT_MAP_BASE` +
+/// `base_phys`); no EL1 code uses the memory MemoryMap allocates (the #188
+/// boot self-test only maps and unmaps it). ipc.md §4.7.
+///
+/// Errors: EINVAL for W^X (WRITE | EXECUTE) and for a size above
+/// `MAX_PRIVATE_PAGES` pages, which no caller can allocate; ENOSPC when
+/// `PRIVATE_ALLOC_TABLE` is full; ENOMEM when Pool::User has no free block of
+/// the needed order.
+pub fn memory_map(pid: ProcessId, size: usize, flags: VmFlags) -> Result<usize, i64> {
+    // W^X enforcement (EINVAL, as in shared_memory_create).
+    if flags.contains(VmFlags::WRITE | VmFlags::EXECUTE) {
+        return Err(IpcError::Einval as i64);
+    }
+
+    // The fixed per-allocation limit, like SharedMemoryCreate's 4 MiB bound:
+    // EINVAL, so that ENOSPC keeps its one meaning, a full table.
+    let pages = size.div_ceil(PAGE_SIZE).max(1);
+    if pages > MAX_PRIVATE_PAGES {
+        return Err(IpcError::Einval as i64);
+    }
+    let order = order_for_pages(pages);
+
+    let base_phys = crate::mm::frame::alloc_user_pages(order).ok_or(IpcError::Enomem as i64)?;
+    let dmap_va = crate::arch::aarch64::mmu::DIRECT_MAP_BASE + base_phys;
+
+    // SAFETY: base_phys is a block of 2^order pages that alloc_user_pages has
+    // just handed out, so nothing else references it, and the direct map
+    // covers all RAM read-write, so [dmap_va, dmap_va + 2^order pages) is valid.
+    // The buddy allocator hands each block out once; kmap.rs maintains the
+    // direct map.
+    // A write past the block would corrupt a neighbouring allocation; an
+    // unmapped VA would take an EL1 data abort and halt the CPU.
+    unsafe { core::ptr::write_bytes(dmap_va as *mut u8, 0, (1 << order) * PAGE_SIZE) };
+
+    let slot_idx = {
+        let mut table = PRIVATE_ALLOC_TABLE.lock();
+        let idx = table.iter().position(|slot| slot.is_none());
+        if let Some(i) = idx {
+            table[i] = Some(PrivateAllocation {
+                owner: pid,
+                base_phys,
+                order,
+                pages,
+            });
+        }
+        idx
+    };
+    let Some(slot_idx) = slot_idx else {
+        // SAFETY: base_phys was allocated above with this order and was never
+        // recorded or returned, so this is its only free.
+        // This function owns the block until it is recorded.
+        // A second free of the block would corrupt the buddy free lists.
+        unsafe { crate::mm::frame::free_user_pages(base_phys, order) };
+        crate::kwarn!(Mm, "memory_map: table full pid={}", pid.0);
+        return Err(IpcError::Enospc as i64);
+    };
+
+    crate::kinfo!(Mm, "memory_map: pid={} pages={}", pid.0, pages);
+    Ok(PRIVATE_VA_BASE + slot_idx * PRIVATE_VA_STRIDE)
+}
+
+/// Slot index of `va` in the private VA window, if `va` is exactly a slot's
+/// base address.
+fn private_slot(va: usize) -> Option<usize> {
+    let offset = va.checked_sub(PRIVATE_VA_BASE)?;
+    let idx = offset / PRIVATE_VA_STRIDE;
+    (offset % PRIVATE_VA_STRIDE == 0 && idx < MAX_PRIVATE_ALLOCATIONS).then_some(idx)
+}
+
+/// MemoryUnmap: release memory that process `pid` mapped.
+///
+/// An address in the shared memory window unmaps that region through
+/// `shared_memory_unmap`; `size` is not used there.
+///
+/// Any other address must be exactly an address MemoryMap returned to `pid`,
+/// with a `size` that rounds up to the same page count; that allocation is
+/// removed from `PRIVATE_ALLOC_TABLE` and its block freed. Anything else
+/// returns EINVAL and frees nothing: another process's allocation, an address
+/// inside or past an allocation, a different size, a direct-map or other
+/// kernel address. Another process's allocation is EINVAL, not EPERM: a
+/// private address names an allocation only for the process MemoryMap
+/// returned it to, so for any other caller it is like any address that is not
+/// one of its allocations. (It is not hidden: slots are system-wide, so
+/// MemoryMap's own result shows which lower slots are in use.)
+pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
     // Check if this VA belongs to a shared region.
     if (SHM_VA_BASE..SHM_VA_BASE + MAX_SHARED_REGIONS * SHM_VA_STRIDE).contains(&va) {
         let region_idx = (va - SHM_VA_BASE) / SHM_VA_STRIDE;
@@ -587,26 +718,32 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
         }
     }
 
-    // Private unmap — convert direct-map VA to physical.
-    let dmap_base = crate::arch::aarch64::mmu::DIRECT_MAP_BASE;
-    if va < dmap_base {
-        return Err(IpcError::Eperm as i64);
-    }
-    let base_pa = va - dmap_base;
+    // Private unmap: the caller's exact allocation in that slot, or nothing.
+    let pages = size.div_ceil(PAGE_SIZE).max(1);
+    let alloc = private_slot(va).and_then(|idx| {
+        let mut table = PRIVATE_ALLOC_TABLE.lock();
+        let slot = &mut table[idx];
+        if slot.is_some_and(|a| a.owner == pid && a.pages == pages) {
+            slot.take()
+        } else {
+            None
+        }
+    });
+    let Some(alloc) = alloc else {
+        return Err(IpcError::Einval as i64);
+    };
 
-    for i in 0..size_pages {
-        let pa = base_pa + i * PAGE_SIZE;
-        // SAFETY: pa was allocated by memory_map via alloc_user_page.
-        unsafe { crate::mm::frame::free_user_page(pa) };
-    }
+    // SAFETY: alloc was recorded by memory_map for a block that
+    // alloc_user_pages returned at base_phys with this order, and it has just
+    // been taken out of PRIVATE_ALLOC_TABLE under its lock, so this is the
+    // block's only free.
+    // memory_map and memory_unmap are the only code that inserts or removes
+    // table entries.
+    // Freeing a block twice, or one the allocator never handed out, would
+    // corrupt the buddy free lists and hand out pages still in use.
+    unsafe { crate::mm::frame::free_user_pages(alloc.base_phys, alloc.order) };
 
-    crate::kinfo!(
-        Mm,
-        "memory_unmap: {} pages at va={:#x} pid={}",
-        size_pages,
-        va,
-        pid.0
-    );
+    crate::kinfo!(Mm, "memory_unmap: pid={} pages={}", pid.0, alloc.pages);
 
     Ok(())
 }

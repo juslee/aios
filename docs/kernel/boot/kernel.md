@@ -106,7 +106,7 @@ mov  x19, x0                // save BootInfo pointer (callee-saved)
 
 **boot.S Step 3: Park secondary cores.** Read `MPIDR_EL1[7:0]` to get the core ID. If non-zero, branch to a `wfe` parking loop. Only core 0 (the boot CPU) continues.
 
-**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top` (128 KiB stack at end of BSS, defined in linker.ld).
+**boot.S Step 4: Set stack pointer.** Load SP from `__stack_top`, the end of the 128 KiB boot stack. linker.ld places the stack in its own `.stack (NOLOAD)` output section right after `.bss`, so it lies inside the RW PT_LOAD segment: the UEFI stub allocates it with `.data`/`.bss`, and `BootInfo.kernel_size` covers it. Step 5 does not zero it (it lies past `__bss_end`); the stub zero-fills the whole segment.
 
 **boot.S Step 5: Zero BSS.** Loop from `__bss_start` to `__bss_end`, writing zero in 8-byte strides.
 

@@ -1,6 +1,6 @@
 # File Placement Rules
 
-```
+```text
 kernel/src/arch/aarch64/       aarch64-specific code (uart, exceptions, gic, timer, mmu, psci, trap, boot.S, linker.ld)
 kernel/src/platform/           Platform trait + per-board implementations (qemu.rs)
 kernel/src/mm/                 Memory management (bump, buddy, slab, pools, frame, pgtable, kmap, etc.)
@@ -17,6 +17,7 @@ kernel/src/sync/               Synchronisation primitives (IrqSpinLock)
 kernel/src/                    Platform-agnostic kernel logic
 shared/src/                    Types crossing kernel/stub boundary
 uefi-stub/src/                 UEFI stub code
+tools/                         Host tooling crate aios-tools (binary aios): src/cmd/<subcommand>/, tests/ (goldens, fixtures)
 docs/phases/                   Phase implementation docs (NN-name.md, flat, no subdirs)
 docs/knowledge/decisions/      Architecture Decision Records
 docs/knowledge/lessons/        Hard-won lessons and gotchas

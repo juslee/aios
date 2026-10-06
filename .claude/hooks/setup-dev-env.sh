@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# aios host tools (tools/, `just tools`): start a background build in the main
+# checkout when target/tools/release/aios is missing or stale. Runs in local and
+# remote sessions and returns at once (build log: target/tools/build.log).
+"$(dirname "$0")/aios" --prebuild || true
+
 # Only run in remote/web environments
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ] && [ -z "${FORCE_SETUP:-}" ]; then
     echo "[setup] Local environment detected, skipping. Set FORCE_SETUP=1 to override."
@@ -105,18 +110,6 @@ if [ ! -f "$EDK2_FW" ]; then
     else
         echo "[setup] WARNING: Could not install qemu-efi-aarch64."
     fi
-fi
-
-# ─── Tier 5: Obsidian MCP + Skill (for Claude Code docs integration) ───
-
-if command -v node &> /dev/null; then
-    echo "[setup] Node.js found — Obsidian MCP will auto-configure via .mcp.json"
-    if command -v npx &> /dev/null; then
-        echo "[setup] Installing mcpvault skill..."
-        npx -y skills add -y bitbonsai/mcpvault 2>/dev/null || echo "[setup] Warning: mcpvault skill install failed (non-critical)"
-    fi
-else
-    echo "[setup] Optional: Install Node.js for Obsidian MCP docs search"
 fi
 
 # ─── Verify Rust toolchain ───

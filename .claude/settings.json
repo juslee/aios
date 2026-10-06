@@ -49,15 +49,6 @@
             "if": "Edit(**/docs/**/*.md)"
           }
         ]
-      },
-      {
-        "matcher": "mcp__obsidian__write_note|mcp__obsidian__patch_note",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'doc-audit-needed'"
-          }
-        ]
       }
     ]
   },
@@ -66,6 +57,15 @@
       "Bash(cargo *)",
       "Bash(rustup *)",
       "Bash(just *)",
+      "Bash(AIOS_TOOLS_BIN=target/tools/release/aios just docs-check)",
+      "Bash(/usr/bin/python3 -m unittest discover -s .claude/hooks/tests)",
+      "Bash(bash -n .claude/hooks/setup-dev-env.sh)",
+      "Bash(bash -n .claude/hooks/precompact-save.sh)",
+      "Bash(sh -n .claude/hooks/aios)",
+      "Bash(bash -n scripts/agent/brief.sh)",
+      "Bash(bash -n scripts/agent/checkpoint.sh)",
+      "Bash(bash -n scripts/soak-qemu.sh)",
+      "Bash(.claude/hooks/aios *)",
       "Bash(objdump *)",
       "Bash(qemu-system-aarch64 *)",
       "Bash(brew *)",
@@ -235,7 +235,11 @@
       "mcp__*__create_or_update_file",
       "mcp__*__delete_file",
       "mcp__*__git_push",
-      "mcp__plugin_gitkraken_gitkraken__app_tool_box"
+      "mcp__plugin_gitkraken_gitkraken__app_tool_box",
+      "Edit(**/tools/src/cmd/guard/**)",
+      "Write(**/tools/src/cmd/guard/**)",
+      "Edit(**/tools/src/cmd/loop/**)",
+      "Write(**/tools/src/cmd/loop/**)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -266,15 +270,26 @@
       "mcp__*__delete_repository"
     ]
   },
-  "enabledMcpjsonServers": [
-    "obsidian"
-  ],
+  "extraKnownMarketplaces": {
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills",
+        "ref": "v0.5.7"
+      }
+    }
+  },
   "enabledPlugins": {
     "railway@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": false,
     "gitkraken@claude-plugins-official": false,
     "gitkraken-hooks@gitkraken": false,
     "manage-worktrees-skill@claude-skills-engineering": false,
-    "typesafe@typesafe-ai": true
+    "typesafe@typesafe-ai": true,
+    "superpowers@claude-plugins-official": true,
+    "remember@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true
   }
 }

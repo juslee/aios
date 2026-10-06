@@ -105,7 +105,9 @@ _start:
     cbnz    x1, .Lpark
 
     // Step 4: Set stack pointer
-    // Stack grows downward; __stack_top defined in linker.ld, 16-byte aligned.
+    // Stack grows downward; __stack_top is the 16-byte-aligned end of
+    // linker.ld's .stack section, which lies in the RW PT_LOAD segment,
+    // so the loader (the UEFI stub) has reserved it with .data/.bss.
     // ADRP+ADD resolves to physical address (PC is physical).
     adrp    x1, __stack_top
     add     x1, x1, :lo12:__stack_top
@@ -253,8 +255,9 @@ _start:
     add     x2, x2, x3                      // x2 = virtual addr of kernel_main
 
     // Convert SP from physical to virtual — x3 still has VIRT_PHYS_OFFSET.
-    // The boot TTBR1 covers the stack region (within first 2MB block at
-    // PA 0x40000000 → VA 0xFFFF_0000_0000_0000). Without this, any stack
+    // The boot TTBR1's 4 × 2MB blocks (PA 0x40000000–0x40800000 →
+    // VA 0xFFFF_0000_0000_0000) cover the whole image, stack included;
+    // linker.ld ASSERTs that at link time. Without this, any stack
     // access after TTBR0 is switched to a user PGD would fault.
     add     sp, sp, x3
 

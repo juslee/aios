@@ -23,7 +23,7 @@ Phases 0–6 and Phase 7 milestones M23–M24 are complete. The kernel boots via
 
 ## Architecture
 
-```
+```text
 Experience Layer:  Workspace, Conversation Bar, Browser, Settings, Agents
 Services Layer:    AIRS (inference, context, agents), Storage, Compositor, Networking
 Subsystem Layer:   Universal hardware abstraction with capability gates
@@ -67,18 +67,22 @@ just run
 
 ## Project Structure
 
-```
+```text
 aios/
 ├── docs/
 │   ├── project/          # Vision, architecture, development plan
 │   ├── kernel/           # Kernel subsystem specifications
 │   └── phases/           # Per-phase implementation guides (00-, 01-, ...)
 ├── .claude/
+│   ├── CLAUDE.md         # Project memory for Claude Code: technical facts, workspace layout, agent and skill tables
 │   ├── agents/           # Claude agent definitions
+│   ├── hooks/            # Session hooks: push guard, setup, pre-compact save, aios tools shim
+│   ├── rules/            # Project rules and conventions (auto-loaded)
 │   └── skills/           # Reusable skill scripts
 ├── kernel/               # Kernel source (aarch64-unknown-none)
 ├── shared/               # Shared types (BootInfo, IPC, capabilities, scheduler, etc.)
-└── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
+├── uefi-stub/            # UEFI boot stub (aarch64-unknown-uefi)
+└── tools/                # Host tools crate: the aios binary (docs-check), built with just tools
 ```
 
 ---
@@ -117,6 +121,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 | `just soak` | Boot repeatedly under QEMU and classify each boot (`runs=N secs=T mode=text\|gpu`; logs in `target/soak/`) |
 | `just check` | Run format check, clippy, and build (both targets) |
 | `just test` | Run unit tests |
+| `just tools` | Build the host tools binary `aios` (`target/tools/release/aios`), which `.claude/hooks/aios` runs (in a worktree, the shim runs the main checkout's build; to test a branch's own build, set `AIOS_TOOLS_BIN=$PWD/target/tools/release/aios`) |
 | `just docs-check` | Report docs drift not in `scripts/docs/baseline.json` (`--all` lists every finding, `--update-baseline` accepts the current ones) |
 | `just docs-check-all` | List every docs drift finding, baselined and new |
 
@@ -124,7 +129,7 @@ See [docs/project/development-plan.md](docs/project/development-plan.md) for the
 
 ## Knowledge Hive
 
-The `docs/` directory doubles as an [Obsidian](https://obsidian.md) vault with a shared knowledge base in `docs/knowledge/`. Claude Code instances automatically connect via the Obsidian MCP server (configured in `.mcp.json`). See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions.
+`docs/knowledge/` is a shared knowledge base of plain Markdown (lessons, decisions, research, discussions, plans) that agents search with Grep. See [docs/knowledge/README.md](docs/knowledge/README.md) for conventions. `docs/` can optionally be opened as an [Obsidian](https://obsidian.md) vault.
 
 ## License
 
@@ -136,6 +141,6 @@ No GPL dependencies. All third-party crates must be BSD, MIT, Apache-2.0, or ISC
 
 ## Contributing
 
-This project follows conventions documented in [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
+This project follows conventions documented in [.claude/rules/](.claude/rules/) and [CONTRIBUTING.md](CONTRIBUTING.md); technical facts are in [.claude/CLAUDE.md](.claude/CLAUDE.md). Read those files before opening a pull request — they cover branch workflow, commit style, documentation standards, and phase doc structure.
 
 Development runs through Claude Code sessions; [docs/project/agent-loop.md](docs/project/agent-loop.md) describes the `/justin:start` session skills, pausing and resuming, and the merge policy.

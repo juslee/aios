@@ -18,7 +18,7 @@ For each pass:
    - Broken markdown links: verify all `[text](path)` resolve to existing files
    - Section references: verify `§N` references exist in target doc
    - Architecture References tables: verify doc paths and section names exist
-   - Technical accuracy: addresses, offsets, frequencies match Key Technical Facts in CLAUDE.md
+   - Technical accuracy: addresses, offsets, frequencies match Key Technical Facts in `.claude/CLAUDE.md`
    - Terminology: consistent naming (e.g., "Space" not "space", "BootInfo" not "boot_info")
    - Formatting: consistent header levels, table styles, code block languages
    - Phase doc template: matches Phase 0/1 structure

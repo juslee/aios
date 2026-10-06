@@ -2,7 +2,7 @@
 
 **Audience:** the owner, returning after a break
 **Current stage:** Stage 0 (no autonomy: Claude works only inside a session you are attending)
-**Last updated:** 2026-09-22
+**Last updated:** 2026-10-05
 
 -----
 
@@ -13,8 +13,8 @@ Four skills in the `justin` plugin, one per job. The plugin is a project-scope s
 | Command | What happens | Writes | Who invokes |
 |---|---|---|---|
 | `/justin:start` | Runs `/justin:brief`, then proposes exactly one next action from a fixed priority list and waits for you | as `/justin:brief` | you only |
-| `/justin:brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq, python3; no LLM) and summarises it; proposes nothing | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs | you or Claude (read-only) |
-| `/justin:doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing | you or Claude (read-only) |
+| `/justin:brief` | Runs [brief.sh](../../scripts/agent/brief.sh) (git, gh, jq and the `aios` tools binary; no LLM) and summarises it; proposes nothing | a timestamp in `$(git rev-parse --git-common-dir)/aios-agent/last-brief`; `git fetch --prune origin` updates remote refs; when the main checkout's `aios` binary is missing or stale, a foreground `just tools` build of `target/tools/` in the main checkout | you or Claude (read-only) |
+| `/justin:doctor` | Runs `just docs-check --all` plus the pointer-doctor and harness-tables checks, then groups the problems by who fixes them | nothing, except that foreground `just tools` build of `target/tools/` in the main checkout when the `aios` binary is missing or stale | you or Claude (read-only) |
 | `/justin:pause` | Saves the `.remember` handoff, then runs [checkpoint.sh](../../scripts/agent/checkpoint.sh): a `wip:` commit on the current `claude/*` branch and a push of anything not on origin (never `main`, never forced), then a checkpoint line | `.remember/`, at most one `wip:` commit | you only |
 
 A bare name such as `/pause` also resolves while no other skill or command shares it, but a built-in command wins a clash (bare `/doctor` is Claude Code's own health check) and another installed plugin can make a bare name ambiguous. Use the `/justin:` names.
@@ -58,7 +58,7 @@ Work, loop, retro and setup skills belong to later stages and do not exist yet.
 | Working plans | `docs/knowledge/plans/` on the PR branch; distilled into lessons/decisions and deleted before the PR is ready | git |
 | Lessons and decisions | `docs/knowledge/lessons/`, `docs/knowledge/decisions/` | git |
 | Session handoff | `.remember/remember.md` and `.remember/now.md` in the main checkout (gitignored in every checkout; pause never commits `.remember/`) | this Mac |
-| Personal auto-memory | `~/.claude/projects/<repo>/memory/MEMORY.md` | this Mac |
+| Personal auto-memory | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<repo-slug>/memory/MEMORY.md` (this repo's untracked `.envrc` may set `CLAUDE_CONFIG_DIR`) | this Mac |
 | Accepted docs drift | [scripts/docs/baseline.json](../../scripts/docs/baseline.json) | git |
 | Boot soak results | `summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in a run directory under `target/soak/` (`<timestamp>-<mode>` by default; `out=target/soak/167/main-text-r1` nests it deeper; runs that `out=` puts outside `target/soak/` are not read by `/justin:brief`) in whichever worktree ran the soak harness | this Mac |
 
@@ -80,11 +80,13 @@ Later (not enabled): GitHub auto-merge behind required status checks on a `main`
 
 | Doc class | Who changes it | When |
 |---|---|---|
-| Status docs: README status, phase-doc checkboxes and Status, development-plan §8.1, CLAUDE.md fact tables, doc-map | agent | in the same PR as the change |
+| Status docs: README status, phase-doc checkboxes and Status, development-plan §8.1, `.claude/CLAUDE.md` fact tables, doc-map | agent | in the same PR as the change |
 | Architecture docs | owner approval only | separate, owner-approved PR |
-| CLAUDE.md policy prose, `.claude/rules/`, skills, agents | retro or harness PR | the human merges |
+| `.claude/CLAUDE.md` policy prose, `.claude/rules/`, skills, agents | retro or harness PR | the human merges |
 
-`just docs-check` compares [check.py](../../scripts/docs/check.py) findings with the baseline and reports only new drift (exit 1). A finding is new when its key is not in the baseline or it now occurs on more lines than the baselined `count`. CI runs it on every PR that targets `main` and on every push to `main` (the Docs workflow). It is report-only: drift never fails the check; new drift goes to the job summary and a warning annotation, and the brief reports drift in its own section. The check fails only when check.py itself errors (exit 2), and a failing Docs check then counts against `merge-ready` like any other failing check. Accept drift you do not fix with `just docs-check --update-baseline` in the same PR, and say why in the PR body.
+**The project memory sits under a protected path.** Claude Code treats `.claude/` as protected, so an edit to `.claude/CLAUDE.md` (like one to `.claude/rules/`) goes through a permission prompt, or the classifier in auto mode, instead of being auto-approved; where nobody can answer a prompt (`-p` or background runs) it is refused. A later stage that updates the `.claude/CLAUDE.md` fact tables unattended has to resolve this first.
+
+`just docs-check` compares the findings of `aios docs-check` ([source](../../tools/src/cmd/docs_check/)) with the baseline and reports only new drift (exit 1). A finding is new when its key is not in the baseline or it now occurs on more lines than the baselined `count`. CI runs it through the shim directly (`.claude/hooks/aios docs-check`, not `just`) on every PR that targets `main` and on every push to `main` (the Docs workflow). It is report-only: drift never fails the check; new drift goes to the job summary and a warning annotation, and the brief reports drift in its own section. The check fails only when the checker itself errors: `aios docs-check` exiting with anything other than 0 (no new drift) or 1 (new drift): 2 for a usage, git or internal error, 101 for a panic, or, outside CI, 3 from the `.claude/hooks/aios` shim when it cannot build or find the binary. In CI a tools build failure instead fails the separate `Build aios tools` step (`docs.yml`) before the check ever runs, not the check itself with exit 3. Either way, a failing Docs job counts against `merge-ready` like any other failing check. Accept drift you do not fix with `just docs-check --update-baseline` in the same PR, and say why in the PR body.
 
 - **New means not in the baseline, not introduced by this branch.** Drift that reaches `main` without a baseline update (for example a merged milestone whose status docs were not updated) shows as new on every later branch. Fix or baseline it in a dedicated docs PR; do not fold it into unrelated work.
 - **Confirmed false positives** get a `reason` field on their baseline entry. They are marked `~` in `--all` output, the reason survives `--update-baseline`, and backlog PRs must not "fix" them.
@@ -93,7 +95,7 @@ Later (not enabled): GitHub auto-merge behind required status checks on a `main`
 
 ## Stop
 
-Press Esc to interrupt the current turn; close the terminal to end the session. Stage 0 runs nothing in the background (no `/loop`, no scheduled routines, no launchd job), so those two stop everything. A stop file and a label-based kill switch come with the loops.
+Press Esc to interrupt the current turn; close the terminal to end the session. Stage 0 runs no agent work in the background (no `/loop`, no scheduled routines, no launchd job), so those two stop everything Claude does. The one background process is the `just tools` build of the `aios` binary, which the SessionStart hook starts when the binary is missing or stale. It can outlive Esc, ends on its own and logs to `target/tools/build.log`. A stop file and a label-based kill switch come with the loops.
 
 -----
 

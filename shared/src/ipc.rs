@@ -90,9 +90,95 @@ pub enum SelectKind {
 }
 
 /// A single entry in the IpcSelect wait set.
+///
+/// This is the kernel's decoded form. It wraps a Rust enum and has no fixed
+/// layout, so it never crosses the syscall boundary: EL0 passes
+/// [`RawSelectEntry`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectEntry {
     pub kind: SelectKind,
+}
+
+/// `RawSelectEntry::kind` for a channel entry: `id` is a `ChannelId` and
+/// `mask` is ignored.
+pub const SELECT_KIND_CHANNEL: u32 = 0;
+
+/// `RawSelectEntry::kind` for a notification entry: `id` is a
+/// `NotificationId` and `mask` selects the bits to wait for.
+pub const SELECT_KIND_NOTIFICATION: u32 = 1;
+
+/// One IpcSelect entry as EL0 lays it out in the array that x0 points to
+/// (ipc.md §3.1, `IpcSelect`).
+///
+/// The wire format is this `repr(C)` struct: 16 bytes, `kind` at offset 0,
+/// `id` at 4 and `mask` at 8, in the machine's native byte order (little
+/// endian on AArch64), with no padding. The kernel copies the whole array into
+/// a kernel buffer as bytes, so the user array needs no particular alignment,
+/// then reads each entry with [`RawSelectEntry::from_bytes`] and decodes it
+/// with `SelectEntry::try_from`, which rejects an unknown `kind` with EINVAL.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawSelectEntry {
+    /// `SELECT_KIND_CHANNEL` or `SELECT_KIND_NOTIFICATION`.
+    pub kind: u32,
+    /// Channel or notification id.
+    pub id: u32,
+    /// Notification bit mask; ignored for a channel entry.
+    pub mask: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<RawSelectEntry>() == RawSelectEntry::SIZE);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, kind) == 0);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, id) == 4);
+const _: () = assert!(core::mem::offset_of!(RawSelectEntry, mask) == 8);
+
+impl RawSelectEntry {
+    /// Size of one entry on the wire, in bytes.
+    pub const SIZE: usize = 16;
+
+    /// Read an entry from its 16 wire bytes (native byte order, the layout
+    /// documented on the type).
+    pub const fn from_bytes(b: &[u8; Self::SIZE]) -> Self {
+        Self {
+            kind: u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
+            id: u32::from_ne_bytes([b[4], b[5], b[6], b[7]]),
+            mask: u64::from_ne_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
+        }
+    }
+}
+
+impl From<SelectEntry> for RawSelectEntry {
+    /// Encode an entry in the wire format (the EL0 side of the ABI).
+    fn from(entry: SelectEntry) -> Self {
+        match entry.kind {
+            SelectKind::Channel(ch) => Self {
+                kind: SELECT_KIND_CHANNEL,
+                id: ch.0,
+                mask: 0,
+            },
+            SelectKind::Notification(n, mask) => Self {
+                kind: SELECT_KIND_NOTIFICATION,
+                id: n.0,
+                mask,
+            },
+        }
+    }
+}
+
+impl TryFrom<RawSelectEntry> for SelectEntry {
+    type Error = i64;
+
+    /// Decode a wire entry. Returns `Err(EINVAL)` for a `kind` other than
+    /// `SELECT_KIND_CHANNEL` or `SELECT_KIND_NOTIFICATION`. Ids are not
+    /// range-checked here; `ipc_select` does that.
+    fn try_from(raw: RawSelectEntry) -> Result<Self, i64> {
+        let kind = match raw.kind {
+            SELECT_KIND_CHANNEL => SelectKind::Channel(ChannelId(raw.id)),
+            SELECT_KIND_NOTIFICATION => SelectKind::Notification(NotificationId(raw.id), raw.mask),
+            _ => return Err(crate::syscall::IpcError::Einval as i64),
+        };
+        Ok(SelectEntry { kind })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,24 +279,43 @@ impl RawMessage {
 // User VA validation
 // ---------------------------------------------------------------------------
 
-/// Upper bound of the user virtual address space (exclusive).
+/// Exclusive upper bound of the addresses `validate_user_va` accepts (2^47).
 ///
-/// AArch64 convention: addresses below 0x0000_8000_0000_0000 belong to user
-/// space (TTBR0), addresses at or above belong to kernel space (TTBR1).
+/// The bound keeps a user range out of the TTBR1 half; it is not the TTBR0
+/// boundary. With the T0SZ=20 that `boot.S` keeps from edk2, TTBR0
+/// translates only `[0, 2^44)`, so an address from 2^44 up to this bound is
+/// in neither half and takes a translation fault. Addresses from this bound
+/// up to the TTBR1 base 0xFFFF_0000_0000_0000 (T1SZ=16) are in neither half
+/// either. See `kernel/src/syscall/user.rs`.
 pub const USER_VA_LIMIT: usize = 0x0000_8000_0000_0000;
 
-/// Validate that a (ptr, len) range lies entirely within user VA space.
+/// Lowest address a user buffer may start at (inclusive).
+///
+/// Page 0 is never mapped in a user address space, so a pointer into it,
+/// null included, is always a caller error. Rejecting it here also keeps a
+/// null pointer away from `core::ptr::copy_nonoverlapping` and
+/// `core::slice::from_raw_parts`, which require a non-null pointer.
+pub const USER_VA_MIN: usize = 0x1000;
+
+/// Validate that a (ptr, len) range lies entirely within
+/// `[USER_VA_MIN, USER_VA_LIMIT)`.
 ///
 /// Returns false if:
+/// - `ptr` is in page 0 (`ptr < USER_VA_MIN`), null included, at any `len`
 /// - `ptr + len` overflows
-/// - `ptr` is in kernel space (>= USER_VA_LIMIT)
-/// - `ptr + len` extends into kernel space (> USER_VA_LIMIT)
+/// - `ptr >= USER_VA_LIMIT` (at or above 2^47)
+/// - `ptr + len > USER_VA_LIMIT`
+///
+/// Passing does not mean the range is mapped or translatable by TTBR0; see
+/// `USER_VA_LIMIT`.
+///
+/// A zero-length range at a user address outside page 0 is valid.
 pub fn validate_user_va(ptr: usize, len: usize) -> bool {
     let end = match ptr.checked_add(len) {
         Some(e) => e,
         None => return false,
     };
-    ptr < USER_VA_LIMIT && end <= USER_VA_LIMIT
+    (USER_VA_MIN..USER_VA_LIMIT).contains(&ptr) && end <= USER_VA_LIMIT
 }
 
 #[cfg(test)]
@@ -453,15 +558,32 @@ mod tests {
     #[test]
     fn user_va_valid_range() {
         assert!(validate_user_va(0x400000, 4096));
-        assert!(validate_user_va(0, 256));
+        assert!(validate_user_va(USER_VA_MIN, 256));
         assert!(validate_user_va(USER_VA_LIMIT - 1, 1));
     }
 
     #[test]
     fn user_va_zero_len() {
-        assert!(validate_user_va(0, 0));
-        assert!(validate_user_va(0x1000, 0));
+        assert!(validate_user_va(USER_VA_MIN, 0));
+        assert!(validate_user_va(0x40_0000, 0));
         assert!(validate_user_va(USER_VA_LIMIT - 1, 0));
+    }
+
+    #[test]
+    fn user_va_null_is_rejected_at_any_len() {
+        assert!(!validate_user_va(0, 0));
+        assert!(!validate_user_va(0, 1));
+        assert!(!validate_user_va(0, 256));
+        assert!(!validate_user_va(0, USER_VA_LIMIT));
+    }
+
+    #[test]
+    fn user_va_page_zero_is_rejected() {
+        assert!(!validate_user_va(1, 0));
+        assert!(!validate_user_va(USER_VA_MIN - 1, 1));
+        assert!(!validate_user_va(USER_VA_MIN - 1, 2));
+        // The first byte of page 1 is the lowest valid start.
+        assert!(validate_user_va(USER_VA_MIN, 1));
     }
 
     #[test]
@@ -487,12 +609,24 @@ mod tests {
         assert!(!validate_user_va(usize::MAX, 1));
         assert!(!validate_user_va(usize::MAX - 10, 100));
         assert!(!validate_user_va(1, usize::MAX));
+        // A valid start whose end wraps: only the overflow check rejects
+        // these. A wrapped end (0xFFF, 0x3F_EFFF) would pass the limit test.
+        assert!(!validate_user_va(USER_VA_MIN, usize::MAX));
+        assert!(!validate_user_va(0x40_0000, usize::MAX - 0x1000));
     }
 
     #[test]
     fn user_va_large_valid() {
-        assert!(validate_user_va(0, USER_VA_LIMIT));
-        assert!(validate_user_va(0, USER_VA_LIMIT - 1));
+        // The whole user range above page 0 is one valid buffer.
+        assert!(validate_user_va(USER_VA_MIN, USER_VA_LIMIT - USER_VA_MIN));
+        assert!(validate_user_va(
+            USER_VA_MIN,
+            USER_VA_LIMIT - USER_VA_MIN - 1
+        ));
+        assert!(!validate_user_va(
+            USER_VA_MIN,
+            USER_VA_LIMIT - USER_VA_MIN + 1
+        ));
     }
 
     // --- SelectKind / SelectEntry tests ---
@@ -531,6 +665,88 @@ mod tests {
         };
         let e2 = e;
         assert_eq!(e, e2);
+    }
+
+    // --- RawSelectEntry (IpcSelect wire format) tests ---
+
+    /// Wire bytes built field by field at the documented offsets.
+    fn wire(kind: u32, id: u32, mask: u64) -> [u8; RawSelectEntry::SIZE] {
+        let mut b = [0u8; RawSelectEntry::SIZE];
+        b[0..4].copy_from_slice(&kind.to_ne_bytes());
+        b[4..8].copy_from_slice(&id.to_ne_bytes());
+        b[8..16].copy_from_slice(&mask.to_ne_bytes());
+        b
+    }
+
+    #[test]
+    fn raw_select_entry_is_16_bytes() {
+        assert_eq!(core::mem::size_of::<RawSelectEntry>(), 16);
+        assert_eq!(RawSelectEntry::SIZE, 16);
+    }
+
+    #[test]
+    fn raw_select_entry_from_bytes_reads_documented_offsets() {
+        let raw = RawSelectEntry::from_bytes(&wire(1, 0x0102_0304, 0x1122_3344_5566_7788));
+        assert_eq!(
+            raw,
+            RawSelectEntry {
+                kind: 1,
+                id: 0x0102_0304,
+                mask: 0x1122_3344_5566_7788,
+            }
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_decodes_channel() {
+        let raw = RawSelectEntry::from_bytes(&wire(SELECT_KIND_CHANNEL, 5, 0xFF));
+        // A channel entry ignores its mask.
+        assert_eq!(
+            SelectEntry::try_from(raw),
+            Ok(SelectEntry {
+                kind: SelectKind::Channel(ChannelId(5)),
+            })
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_decodes_notification() {
+        let raw = RawSelectEntry::from_bytes(&wire(SELECT_KIND_NOTIFICATION, 3, 0b1010));
+        assert_eq!(
+            SelectEntry::try_from(raw),
+            Ok(SelectEntry {
+                kind: SelectKind::Notification(NotificationId(3), 0b1010),
+            })
+        );
+    }
+
+    #[test]
+    fn raw_select_entry_unknown_kind_is_einval() {
+        let einval = Err(crate::syscall::IpcError::Einval as i64);
+        for kind in [2, 0x100, u32::MAX] {
+            let raw = RawSelectEntry::from_bytes(&wire(kind, 0, 0));
+            assert_eq!(SelectEntry::try_from(raw), einval, "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn raw_select_entry_round_trip() {
+        let entries = [
+            SelectEntry {
+                kind: SelectKind::Channel(ChannelId(127)),
+            },
+            SelectEntry {
+                kind: SelectKind::Notification(NotificationId(63), u64::MAX),
+            },
+        ];
+        for e in entries {
+            let raw = RawSelectEntry::from(e);
+            let bytes = wire(raw.kind, raw.id, raw.mask);
+            assert_eq!(
+                SelectEntry::try_from(RawSelectEntry::from_bytes(&bytes)),
+                Ok(e)
+            );
+        }
     }
 
     #[test]
