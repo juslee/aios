@@ -31,7 +31,7 @@ messaging (use IPC channels) or for persistent data storage (use the
 use aios_attention::{
     AttentionManager, AttentionItem, AttentionContent,
     NotificationFilter, FocusSession, AttentionBudget,
-    Urgency,
+    Urgency, UrgencyThreshold,
 };
 use aios_capability::CapabilityHandle;
 
@@ -75,9 +75,11 @@ pub trait AttentionManager {
         cap: &CapabilityHandle,
     ) -> Result<(), AttentionError>;
 
-    /// Query the delivery mode (urgency) that would be applied to a
-    /// hypothetical item. Useful for deciding whether to post at all.
-    fn current_delivery_mode(&self) -> Urgency;
+    /// Query the urgency threshold the user's current context applies
+    /// (intelligence/attention.md §5.1). Useful for deciding whether to post
+    /// at all: under `InterruptOnly`, anything below Interrupt goes to the
+    /// digest instead of being shown now.
+    fn current_threshold(&self) -> UrgencyThreshold;
 
     /// Query whether the user is currently in a focus session.
     fn is_focus_active(&self) -> bool;
@@ -119,9 +121,9 @@ pub enum AttentionCategory {
     Social { interaction_type: String },
 }
 
-/// AI-assessed urgency (set by AIRS, never by the posting agent). The
-/// urgency is also how the Attention Manager delivers the item to the user
-/// (intelligence/attention.md §3.1).
+/// AI-assessed urgency (set by AIRS, never by the posting agent;
+/// intelligence/attention.md §3.1). Urgency alone does not fix delivery: the
+/// context filter (§5.1) then applies the current `UrgencyThreshold`.
 pub enum Urgency {
     /// Show immediately as an interrupt overlay. Reserved for critical items.
     Interrupt,
@@ -131,6 +133,16 @@ pub enum Urgency {
     Digest,
     /// Log only, never shown: telemetry, routine confirmations.
     Silent,
+}
+
+/// The lowest urgency the user's current context shows without deferral
+/// (intelligence/attention.md §5.1). Items below it are deferred, not
+/// dropped: a NextBreak item under `InterruptOnly` goes to the digest.
+pub enum UrgencyThreshold {
+    /// Work context: NextBreak items show at the user's next break.
+    NextBreak,
+    /// Focus, Leisure and Gaming contexts: only Interrupt shows now.
+    InterruptOnly,
 }
 
 /// Per-agent and system-wide notification filter rules.
@@ -253,20 +265,23 @@ fn notify_new_message(
 ### Checking focus state before posting
 
 ```rust
-use aios_attention::{AttentionManager, Urgency};
+use aios_attention::{AttentionManager, UrgencyThreshold};
 
+/// Post a low-importance update (e.g., a sync-progress tick) only when the
+/// user's context could show it before the next digest.
 fn post_if_appropriate(
     attention: &dyn AttentionManager,
     cap: &CapabilityHandle,
     content: AttentionContent,
 ) -> Result<Option<AttentionId>, AttentionError> {
-    // Check if notifications would even be shown right now
-    match attention.current_delivery_mode() {
-        Urgency::Silent => {
-            // User is in deep focus -- skip low-importance items entirely
+    match attention.current_threshold() {
+        UrgencyThreshold::InterruptOnly => {
+            // Focus, Leisure or Gaming context: anything below Interrupt
+            // goes to the digest (intelligence/attention.md §5.1). A
+            // progress tick is stale by then, so skip it.
             Ok(None)
         }
-        _ => {
+        UrgencyThreshold::NextBreak => {
             // Post the item; the Attention Manager handles delivery timing
             let id = attention.post(content, cap)?;
             Ok(Some(id))
@@ -339,23 +354,24 @@ fn auto_focus_on_deep_work(
 ### Attention Kit + AIRS Kit: urgency assessment pipeline
 
 ```rust
-use aios_attention::{AttentionContent, Urgency, AttentionCategory};
+use aios_attention::{AttentionItem, Urgency};
 
 // This is internal to the Attention Manager, shown for illustration.
 // Agents do not call AIRS directly for urgency assessment.
 fn assess_urgency(
-    content: &AttentionContent,
+    item: &AttentionItem,
     context: &ContextState,
+    rule_triage: &RuleBasedTriage,
     airs_available: bool,
 ) -> Urgency {
     if !airs_available {
-        // Fallback: use category-based heuristics
-        return match &content.category {
-            AttentionCategory::Alert { severity: AlertSeverity::Critical } => Urgency::Interrupt,
-            AttentionCategory::Alert { .. } => Urgency::NextBreak,
-            AttentionCategory::Reminder { .. } => Urgency::NextBreak,
-            _ => Urgency::Digest,
-        };
+        // Fallback: the Attention Manager's rule-based triage
+        // (intelligence/attention.md §15.2). It scores the source agent's
+        // category from the agent registry, a keyword scan of the text and
+        // the sender's relationship boost, and maps the total onto score
+        // thresholds. The category the agent declares never sets urgency
+        // by itself, so an agent cannot force Interrupt (§18.3).
+        return rule_triage.assess(item).urgency;
     }
 
     // With AIRS: semantic analysis of content, relationship scoring,
@@ -437,28 +453,31 @@ The Attention Kit operates in two modes depending on AIRS availability:
 - Content relevance: items related to the current task score higher.
 - Learned patterns: AIRS learns which items the user acts on vs. dismisses.
 
-**Without AIRS (heuristic fallback):**
+**Without AIRS (rule-based fallback, intelligence/attention.md §15.2):**
 
-- Category-based urgency: `Alert(Critical)` maps to `Urgency::Interrupt`, other alerts
-  and reminders map to `Urgency::NextBreak`, and messages, progress and social items
-  default to `Urgency::Digest`.
+- Rule-based urgency: a score adds a baseline for the source agent's category (looked
+  up in the agent registry, not taken from the item), a keyword scan of the item text
+  ("urgent", "down", "outage"), the sender's relationship boost when the identity
+  service is up, and a content-type baseline. Above 0.8 is `Urgency::Interrupt`, above
+  0.5 `NextBreak`, above 0.2 `Digest`, and anything lower `Silent`. The category the
+  agent declares never sets urgency by itself.
 - Simple grouping: items from the same agent with the same category are grouped by
   count. No AI summarization.
-- No relationship scoring: all senders are treated equally.
-- No content analysis: urgency is derived from category alone.
+- No learned relationship model: only the static relationship boosts apply.
+- No content understanding: the keyword scan cannot tell "server is down" from
+  "server is back up", and every rule-based assessment carries low confidence.
 
 **Feature detection:**
 
 ```rust
 use aios_attention::AttentionManager;
 
-fn has_ai_triage(attention: &dyn AttentionManager) -> bool {
-    // When AIRS is available, delivery mode decisions are more nuanced.
-    // Without AIRS, the manager falls back to category-based heuristics.
-    // There is no explicit API to check; agents should always post and
-    // let the Attention Manager decide. This check is informational only.
-    attention.current_delivery_mode() != Urgency::Silent
-        || attention.is_focus_active()
+// There is no API to ask whether AIRS triage is active, and the context
+// threshold and focus state read the same with rule-based triage. Agents
+// always post and let the Attention Manager decide; what they can query is
+// the delivery context.
+fn user_in_focus(attention: &dyn AttentionManager) -> bool {
+    attention.is_focus_active()
 }
 ```
 
