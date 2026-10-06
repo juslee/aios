@@ -3,3 +3,4 @@
 
 pub mod awk;
 pub mod classify;
+pub mod report;
