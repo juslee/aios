@@ -42,7 +42,7 @@ Step 1b of the [boot-crash fix ADR](../decisions/2026-09-22-jl-crash-fix-preempt
 - [ ] V1: V-register listing: differential gate over the IRQ call graph (no repository file)
 - [ ] D1: Docs sweep and ADR errata
 - [ ] B1: Single-arm N2 baseline soak on the final 1b head (owner gate; host-exclusive, coordinated with aios-b9)
-  - **Owner decision before B1 (K5 review 2):** accept the K5 lock's cost for B1 and the A/B soak (the Gate 1 IPC round trip about doubles, and Gate 1's `IPC < 10 us` fails in most boots), or first cut the stamp reads that cause it. Evidence and the measured split: Issues Encountered, K5 (review 2).
+  - **Owner decision before B1 (K5 review 2):** accept the K5 lock's cost for B1 and the A/B soak (the Gate 1 IPC round trip about doubles, and Gate 1's `IPC < 10 us` fails in most boots), or first cut the stamp reads that cause it. Evidence and the measured split: Issues Encountered, K5 (review 2). **Decided 2026-10-06 (owner): accept the cost.** B1 measures the N2 counters, not IPC, and both A/B arms carry the same lock.
 
 Every task: one commit `Crash fix step 1b: <description>`, `just check` with zero warnings, `just test`, and for kernel tasks one text and one gpu boot (`just soak runs=1 secs=75 report_only=1`, then `mode=gpu`) with the task's boot acceptance from Design §3.
 
@@ -1054,6 +1054,9 @@ Whether the user merges before or after the soak is their call through `/merge-a
 
 ## Decisions Made
 
+- Owner, 2026-10-06:
+  - **K5 lock cost:** accepted for B1 and the A/B soak; the remaining stamp reads are not cut first. B1 measures the N2 counters, not IPC, and both A/B arms carry the same lock.
+  - **Merge gate:** the lock-word PC (EC=0x22, PC equal to a lock word) stays recorded as *inferred*, because its log was lost, and 1b's merge does not wait for a reproduction. 1b is detect-only instrumentation that would capture a recurrence; H1 already stands on run-08's TIMEOUT_QUEUE holder (log kept); the H1 fix step's interleaved A/B soak is the real test. (This was the assistant's recommendation on 2026-09-29; the owner confirmed it on 2026-10-06.)
 - Owner, 2026-09-29, after the K5 deep dive:
   - Apply variant T (task K5b) and the Gate 1 zero-iteration guard, then continue K6–K10 as planned, scans included; no extra H1 tripwires.
   - The lock-word PC signature (EC=0x22 with ELR equal to an `IrqSpinLock` word, log lost) is explained by inference: H1 resumes a thread at a foreign ELR and a stale epilogue slot holding a lock-word copy becomes the return address. The PR and the ADR errata record it as inferred; merge does not wait for a reproduction. D1 adds a decoding note so a recurrence is recognised on sight (HELD bit, IRQS_ON bit, CPU, generation).
