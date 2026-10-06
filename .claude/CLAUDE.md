@@ -198,8 +198,8 @@ aios/
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
-│                         src/cmd/docs_check/ (docs drift checker), tests/ (goldens, fixtures)
-├── scripts/              soak-qemu.sh (`just soak` boot soak harness), agent/ (brief, checkpoint),
+│                         src/cmd/docs_check/ (docs drift checker), src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
+├── scripts/              agent/ (brief, checkpoint),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
 ```

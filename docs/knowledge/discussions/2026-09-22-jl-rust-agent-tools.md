@@ -57,7 +57,8 @@ Owner decisions, 2026-09-22:
   - `anyhow`
   - `serde`, `serde_json`
   - `regex`
-  - `time`
+  - `signal-hook` (R4; owner-approved 2026-09-29: catching SIGINT, SIGTERM and SIGHUP needs it under `forbid(unsafe_code)`)
+  - `time` (still unused: R4 runs `date`)
 
 **Subcommands, and what each replaces:**
 
@@ -139,6 +140,8 @@ Each port proves parity, records the old tool's output as golden files, switches
 | R4 | soak | Classifier parity on committed fixtures: the 63 synthetic cases plus a curated set of real logs. Checked fields: class, markers, first fatal line, and the `summary.tsv`/`summary.md` formats. Process handling (timeout, kill-after, process group) is tested with a fake QEMU, then one real 2-boot soak | `soak-qemu.sh` is deleted; there is no external `timeout` dependency, and the CI baseline is re-measured on the new image |
 | R5 | guard | The 55 unit tests ported as table tests. A committed adversarial corpus whose decisions must equal the Python guard's. The 3,502-command history replay is local-only, because raw transcript commands can contain secrets | **Shadow mode:** Python decides, Rust runs in parallel, and disagreements go to `.git/aios-agent/guard-shadow.jsonl` |
 | R5b | guard switch | 1,000 real calls with 0 disagreements | The Rust guard decides; the Python guard and its tests are deleted |
+
+R4 as built: 108 synthetic cases (real logs are verified locally, not committed); the oracle is the script's blob at `212df62`, read from git history, so the differentials outlive the deletion.
 
 **Porting inputs.** The fixtures and corpora are preserved outside the repository in `$(git rev-parse --git-common-dir)/aios-agent/port-inputs/`:
 

@@ -301,7 +301,7 @@ fi
 
 # Soak ------------------------------------------------------------------------
 #
-# scripts/soak-qemu.sh writes summary.tsv row by row and summary.md (with the
+# aios soak (just soak) writes summary.tsv row by row and summary.md (with the
 # commit, "<sha>" or "<sha>-dirty") when the run finishes. A run counts as a
 # main soak only when it finished and its commit is on origin/main with no
 # uncommitted changes; everything else (branch commits, dirty trees, runs still
@@ -376,7 +376,7 @@ other_dir="" other_wt="" other_m=0
 while IFS= read -r wt; do
     [ -n "$wt" ] && [ -d "$wt/target/soak" ] || continue
     # A run is any directory under target/soak holding a summary: the default
-    # is target/soak/<timestamp>-<mode>/, but soak-qemu.sh's out= can nest
+    # is target/soak/<timestamp>-<mode>/, but just soak's out= can nest
     # runs deeper (e.g. target/soak/167/main-text-r1/).
     find "$wt/target/soak" -type f \( -name summary.md -o -name summary.tsv \) 2>/dev/null |
         sed 's|/[^/]*$||' | sort -u >"$TMP/soak-dirs"
