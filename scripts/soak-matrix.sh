@@ -52,8 +52,11 @@ interleaved under QEMU: RUNS rounds, one boot per arm per round, the arm
 order rotated by one every round (round 1: A B C, round 2: B C A, round 3:
 C A B, ...), so every arm sees the same host conditions. A REF is a commit
 SHA or a branch name; a name that does not resolve locally is looked up as
-origin/NAME. The same ref given twice is an A/A control: it shows how far
-two identical arms drift apart by chance.
+origin/NAME. A REF of 4-40 hex digits must resolve to a commit whose SHA
+starts with it: a branch or tag of that name that points elsewhere is
+refused (pass the full SHA, or refs/heads/... or refs/tags/... for the
+ref). The same ref given twice is an A/A control: it shows how far two
+identical arms drift apart by chance.
 
 Options:
   --runs N          rounds, i.e. boots per arm (default 30)
@@ -82,8 +85,8 @@ Every arm must contain 7167d40 (#196, main as of 2026-09-24 15:41 +0800 or
 later). That commit loads the kernel segments executable: strict-NX edk2
 (Ubuntu 26.04, the CI runner; upstream ArmVirt) maps EfiLoaderData
 execute-never, so an older kernel faults at the jump on every boot there.
-It also brings #192's scripts/soak-qemu.sh (--no-build, and find_timeout,
-the uutils timeout check that Ubuntu 26.04 needs).
+It also brings #192's find_timeout (the uutils timeout check that Ubuntu
+26.04 needs) on top of the --no-build option from #168.
 
 The arms must pin the same toolchain channel, build with the same compiler
 (rustc --version, compared after the builds) and boot the same firmware
@@ -92,7 +95,9 @@ compilers compare the change plus the compiler, which the crash-fix soak
 protocol does not accept as a pair; --allow-mixed-toolchains runs them
 anyway and marks the summary. A rust-toolchain.toml channel that cannot be
 read counts as a mismatch. A firmware mismatch is always refused, and so is
-firmware that does not exist; both are checked before any build.
+firmware that is not an absolute path (each arm's harness would resolve it
+inside that arm's worktree) or does not exist; all are checked before any
+build.
 
 Every boot runs, from inside the arm's worktree:
   scripts/soak-qemu.sh --no-build --runs 1 --secs T --mode M --report-only
@@ -213,12 +218,25 @@ cell() {
 }
 
 # resolve_ref REF -- print the full commit SHA of REF, or of origin/REF.
+# Returns 1 if neither names a commit, and 3 if REF looks like a short SHA
+# (4-40 hex digits) but resolves to a commit whose SHA does not start with
+# it: git tries ref names before abbreviated object names, so a branch or tag
+# named like a short SHA would silently stand in for that commit.
 resolve_ref() {
     local sha
     case "$1" in -*) return 1 ;; esac
     sha=$(git -C "$REPO_ROOT" rev-parse --verify --quiet "$1^{commit}") ||
         sha=$(git -C "$REPO_ROOT" rev-parse --verify --quiet "origin/$1^{commit}") ||
         return 1
+    case "$1" in
+    *[!0-9a-fA-F]* | ? | ?? | ???) ;;
+    *)
+        [ "${#1}" -gt 40 ] || case "$sha" in
+        "$(printf '%s' "$1" | tr 'A-F' 'a-f')"*) ;;
+        *) return 3 ;;
+        esac
+        ;;
+    esac
     printf '%s\n' "$sha"
 }
 
@@ -537,7 +555,7 @@ prepare_arm() {
     h="$wt/scripts/soak-qemu.sh"
     if [ ! -f "$h" ] || ! grep -q -- '--no-build' "$h" || ! grep -q '^find_timeout()' "$h"; then
         die "arm $label (${ARM_REF[$i]}): its scripts/soak-qemu.sh is missing or lacks" \
-            "#192's interface (--no-build and find_timeout, the uutils timeout check)"
+            "--no-build (#168) or find_timeout (#192, the uutils timeout check)"
     fi
     ARM_HSHA[i]=$(sha256_of "$h")
     # The channel line, double- or single-quoted, indented or not. A missing
@@ -784,7 +802,12 @@ i=0
 ARM_LIST=""
 while [ "$i" -lt "$N" ]; do
     ARM_LABEL[i]=${LETTERS:$i:1}
-    ARM_SHA[i]=$(resolve_ref "${ARM_REF[$i]}") ||
+    rc=0
+    ARM_SHA[i]=$(resolve_ref "${ARM_REF[$i]}") || rc=$?
+    [ "$rc" -ne 3 ] ||
+        die "ref '${ARM_REF[$i]}' looks like a short SHA but names a branch or tag that points at another" \
+            "commit; pass the full SHA, or refs/heads/... or refs/tags/... to mean the ref"
+    [ "$rc" -eq 0 ] ||
         die "ref '${ARM_REF[$i]}' does not name a commit (tried it and origin/${ARM_REF[$i]}; is the history fetched?)"
     git -C "$REPO_ROOT" merge-base --is-ancestor "$MIN_ARM_BASE" "${ARM_SHA[$i]}" ||
         die "ref '${ARM_REF[$i]}' (${ARM_SHA[$i]:0:12}) does not contain ${MIN_ARM_BASE:0:7} (#196);" \
@@ -872,7 +895,11 @@ while [ "$i" -lt "$N" ]; do
     i=$((i + 1))
 done
 # Every arm's harness checks this too, but only on its first boot, after all
-# the builds.
+# the builds, and resolves a relative path inside its own worktree.
+case "$FW" in
+/*) ;;
+*) die "UEFI firmware path $FW is not absolute; set AIOS_EDK2_FW to an absolute path" ;;
+esac
 [ -f "$FW" ] || die "UEFI firmware not found: $FW (set AIOS_EDK2_FW)"
 if [ "$mixed_tc" -eq 1 ]; then
     [ "$ALLOW_MIXED_TC" -eq 1 ] ||

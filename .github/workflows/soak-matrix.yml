@@ -12,15 +12,21 @@ name: Soak matrix
 #
 # Every arm must contain 7167d40 (#196): the runner's strict-NX edk2 maps
 # EfiLoaderData execute-never, so an older kernel faults at the jump on every
-# boot. The arms must also pin the same toolchain channel unless
-# allow_mixed_toolchains is set (scripts/soak-matrix.sh --help). An arm is
-# found if it is reachable from a branch, a tag or a pull request head on
-# origin; GitHub keeps pull request heads after the branch is deleted.
+# boot. The arms must also pin the same toolchain channel and build with the
+# same compiler (rustc --version, compared after the builds) unless
+# allow_mixed_toolchains is set, which overrides both checks
+# (scripts/soak-matrix.sh --help). An arm is found if it is reachable from a
+# branch or a tag on origin, or from the head of a pull request whose branch
+# is in this repository; GitHub keeps pull request heads after the branch is
+# deleted.
 #
-# Every arm's build scripts run on the runner, so dispatch only arms whose
-# code you have reviewed: a pull request head from a fork is untrusted code.
-# The job therefore keeps no cache (no rust-cache): nothing an arm's build
-# writes can reach a later run.
+# Every arm's build scripts run on the runner, and code running in this job
+# can write to the Actions cache of the dispatching ref whether or not the
+# job uses one: a dispatch from main can plant entries that ci.yml's
+# rust-cache jobs restore later. So dispatch only arms whose code you have
+# reviewed, and the job fetches no pull request head from a fork, so a fork
+# commit cannot resolve as an arm. Not using rust-cache here only keeps one
+# arm's build from reaching another's through target/.
 #
 # The results are x86 TCG numbers on ubuntu-26.04 and form their own
 # baseline: never pool them with local arm64 soaks, or with runs on another
@@ -52,13 +58,15 @@ on:
           - text
           - gpu
       allow_mixed_toolchains:
-        description: "Run arms whose rust-toolchain.toml channels differ (the crash-fix soak protocol refuses such a pair)"
+        description: "Run arms whose rust-toolchain.toml channels or compilers (rustc --version) differ (the crash-fix soak protocol refuses such a pair)"
         required: false
         default: false
         type: boolean
 
 permissions:
   contents: read
+  # Read-only: lists the pull requests to fetch only this repository's heads.
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -67,8 +75,9 @@ jobs:
   soak-matrix:
     name: Interleaved boot soak (report-only)
     # Pinned: the QEMU and edk2 versions come from the runner image, and soak
-    # results are only comparable across runs on the same image. Same image
-    # and setup as ci.yml's qemu-soak job.
+    # results are only comparable across runs on the same image. Same runner
+    # image, QEMU/edk2/mtools install and AIOS_EDK2_FW as ci.yml's qemu-soak
+    # job (but no rust-cache, and a full-history checkout; see above).
     runs-on: ubuntu-26.04
     # GitHub's job limit. The soak step gets a tighter limit computed from the
     # inputs (see "Plan the soak"), so a soak that overruns is stopped with
@@ -139,16 +148,29 @@ jobs:
             exit 1
           fi
           echo "soak_minutes=$soak_min" >> "$GITHUB_OUTPUT"
-      # Full history of every branch and tag, then every pull request head,
-      # so an arm can be any commit reachable from one of them, including
-      # commits of a squash-merged pull request whose branch was deleted.
-      # Fork pull request heads are fetched too: see the trust note above.
+      # Full history of every branch and tag, then the head of every pull
+      # request whose branch is in this repository, so an arm can be any
+      # commit reachable from one of them, including commits of a
+      # squash-merged pull request whose branch was deleted.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Fetch pull request heads
-        run: git fetch --no-tags --quiet origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
+      # Fail closed: a pull request is fetched only when the API names this
+      # repository as its head repository. A fork's head, or one whose fork
+      # was deleted (no head repository), is never fetched, so its commits do
+      # not resolve as arms (see the trust note above).
+      - name: Fetch this repository's pull request heads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=all&per_page=100" \
+            --jq '.[] | "\(.number) \(.head.repo.id // "none")"' >"$RUNNER_TEMP/pulls.txt"
+          awk -v id="$GITHUB_REPOSITORY_ID" '$2 == id { print "+refs/pull/" $1 "/head:refs/remotes/origin/pr/" $1 }' \
+            "$RUNNER_TEMP/pulls.txt" >"$RUNNER_TEMP/pull-refspecs.txt"
+          echo "Fetching $(wc -l <"$RUNNER_TEMP/pull-refspecs.txt") of $(wc -l <"$RUNNER_TEMP/pulls.txt") pull request heads (this repository's only)"
+          xargs -r -n 100 git fetch --no-tags --quiet origin <"$RUNNER_TEMP/pull-refspecs.txt"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -176,8 +198,10 @@ jobs:
           mixed=""
           [ "$ALLOW_MIXED_TOOLCHAINS" != true ] || mixed=--allow-mixed-toolchains
           # exec: the runner's SIGINT/SIGTERM on a timeout or cancel reach the
-          # soak itself, which stops the running boot and marks summary.md
-          # "stopped" before the steps below read it.
+          # soak itself, which stops the running build or boot. Once the
+          # boots have started, it also marks summary.md "stopped" before the
+          # steps below read it; a soak stopped during the builds leaves only
+          # the build logs.
           # shellcheck disable=SC2086 # $mixed is one flag or nothing
           exec bash scripts/soak-matrix.sh --runs "$RUNS" --secs "$SECS" --mode "$MODE" $mixed \
             --out "$MATRIX_OUT" --worktrees "$RUNNER_TEMP" --keep-worktrees -- "$@"
