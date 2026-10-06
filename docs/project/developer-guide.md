@@ -1772,7 +1772,7 @@ scripts/soak-qemu.sh --help                # all options
 
 Each boot runs under `timeout` (or `gtimeout`, from Homebrew coreutils on macOS) in its own process group, so only that boot's QEMU is ever killed. The harness picks the first one that accepts `--kill-after`, passes through the exit status of a command that finishes in time, and exits 124 when it stops the command (checked by running it, not by its version string), so GNU coreutils and uutils (the default on Ubuntu 26.04) both work. Each boot gets a freshly zeroed, sparse 256 MiB data disk (`--reuse-data` switches to the shared `data.img`, as `just run` uses). The ESP is snapshotted so rebuilding during a soak does not change the bits under test, and `summary.md` records the sha256 of the kernel ELF inside that snapshot (with a warning if it differs from `target/`, e.g. a stale `aios.img` under `--no-build`). The snapshot and the fresh data disks live in a private `.scratch.*` directory inside the output directory, removed on exit. The firmware comes from `AIOS_EDK2_FW` or the justfile default.
 
-Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root.
+Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which must be new or empty and must not be the repository root, so the harness never overwrites or deletes files it did not create. `just soak` runs in the directory you invoke `just` from, so a relative `out=` (or `--classify` path) resolves there, not at the repository root. Results in a PR worktree are ignored files that git deletes with the worktree; `/merge-and-cleanup` copies them to the main checkout as `target/soak/pr<number>-<run>` before merging.
 
 | File | Contents |
 |---|---|
@@ -2314,7 +2314,7 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main. Other skills stop at a hand-off instead of merging |
+| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Preserves the PR worktree's soak results and agent memory → squash merges PR (gh deletes the remote+local branch and removes the worktree) → verifies removal → fast-forwards main. Other skills stop at a hand-off instead of merging |
 
 #### Skill usage examples
 
@@ -2353,7 +2353,8 @@ Many skills use **git worktrees** to isolate work from the main branch. This pre
 
 ```text
 create worktree → work on branch → commit → push → create PR
-    → review → merge → remove worktree → delete local branch → update main
+    → review → preserve soak results and agent memory
+    → squash merge (gh removes worktree + local branch) → verify → fast-forward main
 ```
 
 **Manual commands** (if not using skills):
@@ -2366,14 +2367,20 @@ git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 cd .claude/worktrees/docs-memory
 # ... edit files, commit, push, create PR ...
 
-# After PR merges, clean up (from main repo root)
+# Before the PR merges, from the main checkout: copy out what git ignores,
+# because removing the worktree deletes ignored files without asking
 cd /path/to/aios
-git worktree remove .claude/worktrees/docs-memory
-git branch -d claude/docs-update-memory
-git checkout main && git pull origin main
+mkdir -p target/soak && [ ! -e "target/soak/pr<number>-<run>" ] &&
+  cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<number>-<run>"   # per soak run
+# ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
+
+# Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
+gh pr merge <number> --squash --delete-branch
+git worktree list
+git fetch --prune origin && git merge --ff-only origin/main
 ```
 
-The `/merge-and-cleanup` skill automates the entire cleanup sequence.
+The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions). After a merge on GitHub, run it to preserve and clean up.
 
 ### Audit Loop Pattern
 
