@@ -236,6 +236,9 @@ impl LogRing {
         entries: UnsafeCell::new([LogEntry::ZERO; LOG_RING_SIZE]),
         head: AtomicU32::new(0),
         tail: AtomicU32::new(0),
+        dropped: AtomicU32::new(0),
+        drop_pos: AtomicU32::new(0),
+        dropped_reported: AtomicU32::new(0),
     };
 }
 
@@ -279,7 +282,7 @@ Understanding what AIOS does *not* use helps set expectations:
 - **`std::` anything** -- No filesystem, no networking, no threads library, no `println!`. The kernel provides these services; it cannot depend on them. (This restriction applies to *kernel code only*; application developers will have full `std` access via AIOS runtimes in later phases.)
 - **`async`/`await`** -- The kernel scheduler is cooperative/preemptive at the thread level, not at the Rust async task level. There is no executor.
 - **Dynamic dispatch (mostly)** -- Outside the `Platform` trait, AIOS uses monomorphization (generics) rather than trait objects. This avoids vtable indirection on hot paths.
-- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `MsgBuf` with a 48-byte stack buffer).
+- **`String` and `Vec` on hot paths** -- Heap allocation in interrupt handlers or the scheduler is forbidden. Fixed-size arrays and stack buffers are used instead (e.g., `FixedQueue<T, N>`, `LogMessageBuf` with a 96-byte stack buffer).
 - **`#[derive(Debug)]` on kernel structs** -- Debug formatting pulls in formatting machinery that increases binary size. Kernel structs implement display manually where needed.
 
 ### Recommended Reading
@@ -396,52 +399,61 @@ const PTE_UXN: u64 = 1 << 54;        // Unprivileged execute-never
 
 ### 2.3 Unsafe Pattern: Lock-free SPSC Rings
 
-Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking:
+Per-core logging uses a Single-Producer Single-Consumer (SPSC) ring buffer with no locking. Abridged from `kernel/src/observability/mod.rs`, which has the full `// SAFETY:` comments:
 
 ```rust
 pub struct LogRing {
     entries: UnsafeCell<[LogEntry; LOG_RING_SIZE]>,
     head: AtomicU32,
     tail: AtomicU32,
+    dropped: AtomicU32,          // producer only
+    drop_pos: AtomicU32,         // producer only: `head` at the latest drop
+    dropped_reported: AtomicU32, // consumer only
 }
 
 impl LogRing {
-    fn push(&self, entry: LogEntry) {
+    /// Push a head entry and, for a message longer than one entry, its
+    /// continuation. `log_impl` calls this inside `with_irqs_masked`.
+    fn push(&self, entry: LogEntry, continuation: Option<LogEntry>) {
+        let count = if continuation.is_some() { 2 } else { 1 };
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = head.wrapping_add(1);
+        let next_head = head.wrapping_add(count);
 
-        // If the ring is full, advance tail to discard the oldest entry.
-        let tail = self.tail.load(Ordering::Relaxed);
+        // Acquire pairs with the Release store of `tail` in `pop`.
+        let tail = self.tail.load(Ordering::Acquire);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+            // Full: drop the message, record where, and count it; never
+            // overwrite. The Release store publishes `drop_pos` with the count.
+            self.drop_pos.store(head, Ordering::Relaxed);
+            let dropped = self.dropped.load(Ordering::Relaxed);
+            self.dropped.store(dropped.wrapping_add(1), Ordering::Release);
+            return;
         }
 
-        let idx = (head & LOG_RING_MASK) as usize;
-
-        // SAFETY: Single producer (owning core). UnsafeCell provides interior
-        // mutability. No concurrent writes to this index because head is only
-        // advanced by the owning core.
-        unsafe {
-            let slot = (*self.entries.get()).as_mut_ptr().add(idx);
-            core::ptr::write(slot, entry);
+        // write_slot is the unsafe slot write (SAFETY comment in the source).
+        self.write_slot(head, entry);
+        if let Some(continuation) = continuation {
+            self.write_slot(head.wrapping_add(1), continuation);
         }
 
+        // One Release store publishes the head entry and its continuation.
         self.head.store(next_head, Ordering::Release);
     }
 }
 
-// SAFETY: LogRing is accessed per-core (producer) and by drain (consumer).
-// The SPSC protocol ensures no data races.
+// SAFETY (abridged): each field has one writer. The producer (`log_impl` on
+// the owning core, IRQs masked) writes `head`, `dropped`, `drop_pos` and the
+// free slots; the consumer (`drain_logs`) writes `tail` and `dropped_reported`.
 unsafe impl Sync for LogRing {}
 ```
 
 **Key design decisions:**
 
-- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array. The producer (logging code on the owning core) never races with other producers -- there is exactly one writer per ring.
+- **Per-core ownership**: Each CPU has its own `LogRing` in the `LOG_RINGS` array, and there is exactly one writer per ring. That holds because `log_impl` reads the core ID and pushes inside `with_irqs_masked`: an IRQ-context log call on the same core (such as the load balancer's, crash-fix ADR N6) would otherwise be a second producer, and a thread could migrate between reading its core ID and pushing.
 
-- **Overwrite-on-full**: When the ring fills, the oldest entry is discarded (tail advanced). This prevents logging from blocking kernel execution. Losing old log entries is acceptable; blocking the scheduler is not.
+- **Drop-on-full**: When the ring has no room for a message (one entry, or two for a head and its continuation), the message is dropped and counted, and its position (`head` at the drop) is kept. `drain_logs` prints the count when its read position reaches that point, so the report sits between the entries logged before the drop and those logged after it. Dropping instead of overwriting keeps the producer off `tail` and off slots a single drain may be reading, and logging still never blocks kernel execution. Two overlapping `drain_logs` calls break this: one can store `tail` past a slot the other is still reading, and a push can then tear the entry the slower drain reads.
 
-- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`. This guarantees the entry data written before the head advance is visible to the consumer when it reads the new head value.
+- **Release/Acquire pairing**: `head.store(Release)` in `push` pairs with `head.load(Acquire)` in `pop`, so the entries written before the head advance are visible to the consumer when it reads the new head value. `tail.store(Release)` in `pop` pairs with `tail.load(Acquire)` in `push`, so the producer reuses a slot only after the consumer has finished reading it (with one drain at a time; see Drop-on-full). `dropped.store(Release)` in `push` pairs with `dropped.load(Acquire)` in `pop`, so the drain sees a `drop_pos` at least as new as the count it reports.
 
 - **No lock needed**: The SPSC invariant (one producer, one consumer) eliminates the need for a mutex. Contrast this with `MessageRing` in `ipc/mod.rs`, which uses `spin::Mutex` because multiple threads may send to the same channel.
 
@@ -747,7 +759,7 @@ macro_rules! kinfo {
 Key design decisions:
 
 - The `const _LEVEL` binding makes the level comparison a compile-time constant. When `MIN_LOG_LEVEL` is `Info` and the call is `kdebug!(...)`, the entire macro expands to nothing -- zero runtime cost.
-- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 48-byte stack buffer inside `log_impl()`.
+- `format_args!()` is used instead of `format!()` because it does not allocate. The formatting happens into a fixed 96-byte stack buffer (`LogMessageBuf`) inside `log_impl()`, which fills the 48-byte message of one `LogEntry`, or a head entry and a continuation for a longer message (observability.md §2.4).
 - `#[macro_export]` places the macro at the crate root, so it is invoked as `crate::kinfo!()` from within the kernel crate.
 
 **Feature-gated trace macro** (from `observability/trace.rs`):
@@ -1009,10 +1021,10 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 | Range | Interpretation | Examples |
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
-| 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~788), `block_engine.rs` (~783), `bench.rs` (~549) |
-| > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
+| 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~219), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~431), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~786), `block_engine.rs` (~783), `bench.rs` (~546) |
+| > 800 lines | Must split into submodules | `storage/mod.rs` (~885 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
 
@@ -1024,19 +1036,19 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (565)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  mod.rs          (570)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (757)  # Test initialization, thread entries, test-only helpers
-    bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
+    mod.rs        (762)  # Test initialization, thread entries, test-only helpers
+    bad_pid.rs    (159)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (225) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (233)  # IPC Kit error variants through KernelIpc (#190) self-test
+    syscall_args.rs (226) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (234)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
+  shmem.rs        (786)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1054,6 +1066,7 @@ sched/
 
 ```rust
 // From kernel/src/arch/aarch64/mod.rs
+pub mod daif;
 pub mod exceptions;
 pub mod gic;
 pub mod mmu;
@@ -1121,7 +1134,7 @@ Driver modules follow a flat structure: `mod.rs` contains a `//!` doc comment an
 
 ```text
 kernel/src/storage/
-  mod.rs            (~866) # init(), run_self_tests() (11 test categories), re-exports
+  mod.rs            (~885) # init(), run_self_tests() (11 test categories), re-exports
   block_engine.rs   (~740) # BlockEngine, Superblock, LZ4 compression, encryption integration
   wal.rs            (~199) # Wal struct, circular buffer, append/commit (WalEntry in shared crate)
   lsm.rs              (~4) # Re-export: MemTable/ObjectIndex/SpaceTable in shared/src/storage.rs
@@ -1579,7 +1592,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 594+ host-side tests pass |
+| **Test** | `just test` | All 612+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1631,7 +1644,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 594 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 612 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1724,23 +1737,23 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (594 tests):**
+**Current test distribution (612 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
-| `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `ipc` | 61 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected) |
-| `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
+| `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
 | `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
+| `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
+| `observability` | 36 | Log level ordering, subsystem tags, log message splitting over a head and continuation entry, drain-side joining, lost-entry marks and the drain line limit |
+| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
-| `observability` | 18 | Log level ordering, subsystem tags |
 | `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
 | `kaslr` | 11 | KASLR slide computation, alignment, bounds |
 
@@ -1832,7 +1845,7 @@ kdebug!(Sched, "Context switch: {} -> {}", from_tid, to_tid);
 
 **Available log levels:** `Trace`, `Debug`, `Info`, `Warn`, `Error`. In debug builds, all levels from `Debug` up are emitted. In release builds, only `Info` and above.
 
-**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by the timer tick handler every 1 ms. This means early boot messages appear immediately, while later messages may be slightly delayed.
+**Early boot behavior:** Before the `LogRingsReady` boot phase is reached, `klog!` writes directly to the UART (synchronous, immediate output). After `LogRingsReady`, it writes to per-core ring buffers that are drained by CPU 0's timer tick handler every 4th 1 ms tick (and by boot-time flushes). This means early boot messages appear immediately, while later messages may be slightly delayed.
 
 **Exception handler note:** Exception vector stubs use direct `putc()` calls, not `klog!`. This prevents recursive faults when TTBR0 is switched away from the identity map (which would make the logging format string inaccessible).
 
