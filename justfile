@@ -162,11 +162,14 @@ test:
 # marked fresh for the shim, and a file edited during the build stays newer, so
 # the next call rebuilds. Then, only after the binary is in place, the provenance stamp
 # installed/aios.stamp is renamed in beside it: HEAD's tree entries for the
-# build inputs, the installed binary's git hash, and "source dirty" when the
-# inputs have uncommitted changes, when HEAD has input changes that
-# origin/main (refs/remotes/origin/main) lacks, or when there is no origin/main,
-# so only inputs merged through a PR stamp "source clean". The shim treats a
-# missing or mismatched stamp as stale; the inputs list and the format must
+# build inputs (this justfile among them, since its recipe writes the stamp),
+# the installed binary's git hash, and "source dirty" when the inputs have
+# uncommitted changes (untracked and gitignored files count: an ignored
+# tools/build.rs or .cargo/config still changes the build), when HEAD has input
+# changes that origin/main (refs/remotes/origin/main) lacks, or when there is
+# no origin/main, so only inputs merged through a PR stamp "source clean". The
+# shim treats a missing or mismatched stamp as stale, and repeats the dirty
+# test on a dirty stamp; the inputs list, the dirty test and the format must
 # match the shim's.
 # Build the host tools binary target/tools/installed/aios (run through .claude/hooks/aios)
 tools:
@@ -196,9 +199,9 @@ tools:
     fi
     start=$(mktemp target/tools/.build-start.XXXXXX)
     cargo build --release -p aios-tools --target-dir target/tools 9>&-
-    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo'
+    inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
     src=$(git ls-tree HEAD -- $inputs)
-    changes=$(git status --porcelain --untracked-files=all -- $inputs)
+    changes=$(git status --porcelain --untracked-files=all --ignored=matching -- $inputs)
     if [ -n "$changes" ]; then
         state=dirty
     elif ! base=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
@@ -207,10 +210,12 @@ tools:
     else
         state=clean
     fi
-    if [ -d target/tools/installed/aios ]; then
-        echo "target/tools/installed/aios is a directory; remove it, then run just tools" >&2
-        exit 1
-    fi
+    for f in target/tools/installed/aios target/tools/installed/aios.stamp; do
+        if [ -d "$f" ]; then
+            echo "$f is a directory; remove it, then run just tools" >&2
+            exit 1
+        fi
+    done
     new=$(mktemp target/tools/installed/.aios.XXXXXX)
     cp target/tools/release/aios "$new"
     chmod 755 "$new"

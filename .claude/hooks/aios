@@ -8,11 +8,13 @@
 # copy into place, then writes installed/aios.stamp the same way. The stamp
 # records HEAD's tree entries for the build inputs (tools/, Cargo.lock,
 # Cargo.toml, rust-toolchain.toml, a legacy rust-toolchain file if there is
-# one, and .cargo/), the git hash of the installed binary, and whether those
-# inputs were dirty: changed but not committed, or committed on HEAD but not
-# on origin/main (refs/remotes/origin/main, which only a merged PR moves), or
-# origin/main is missing. The shim recomputes the entries and the hash from the
-# main checkout. AIOS_TOOLS_BIN overrides the binary, to test a PR's own build
+# one, .cargo/, and the justfile, whose recipe writes the stamp), the git hash
+# of the installed binary, and whether those inputs were dirty: changed but not
+# committed (untracked and gitignored files included), or committed on HEAD but
+# not on origin/main (refs/remotes/origin/main, which a plain fetch moves only
+# to what was merged on GitHub), or origin/main is missing. The shim recomputes
+# the entries and the hash from the main checkout, and on a dirty stamp repeats
+# the dirty test. AIOS_TOOLS_BIN overrides the binary, to test a PR's own build
 # explicitly (a bare name is taken relative to the current directory, not
 # looked up on PATH); an override has no stamp and no freshness test. When git
 # cannot name the common dir from a linked worktree, the shim fails closed
@@ -25,8 +27,11 @@
 #            uncommitted edits), or the stamp is missing or does not match
 #            the main checkout's HEAD and the binary: a binary built
 #            elsewhere, or replaced after its build, even one future-dated to
-#            pass the mtime test.
-#   dirty    matches, but was built from dirty inputs (above).
+#            pass the mtime test. Also a dirty stamp whose cause is gone
+#            (origin/main fetched, or the input commits merged and fetched,
+#            since the build): a rebuild stamps it clean.
+#   dirty    matches, but was built from dirty inputs (above), and they are
+#            still dirty.
 #   fresh    matches, built from inputs merged on origin/main, nothing newer.
 #
 #   aios guard ...    PreToolUse hook. Runs a fresh binary as a child: its own
@@ -36,8 +41,9 @@
 #                     end that way prints a PreToolUse "ask" decision and exits 0
 #                     (#203): missing (no build), stale (and one background
 #                     `just tools`, lock dir target/tools/.building), dirty (no
-#                     build: revert the changes or merge them first, or fetch
-#                     origin/main when there is none), an override
+#                     build; the reason names the cause the dirty test finds
+#                     now: uncommitted, untracked or ignored input files, input
+#                     commits origin/main lacks, or no origin/main), an override
 #                     that is not a runnable file, and a shim that cannot find
 #                     its own directory or the main checkout. A runnable
 #                     override is the exception: it runs as a child like a
@@ -53,11 +59,14 @@
 # The stamp shows that `just tools` installed the binary from inputs merged on
 # origin/main. It is not tamper-proof: a session that can write target/tools
 # can also write a matching stamp, or poison cargo's artifacts there before the
-# next build, and one that can rewrite refs/remotes/origin/main can make
-# unmerged commits look merged. Keeping sessions out of target/tools is the
-# permission rules' job, and they are a speed bump with known gaps: among
-# them, a session started in a worktree is not denied Edit or Write on the main
-# checkout's target/tools, which holds the binary this shim runs
+# next build; one that edits the justfile's `tools` recipe to write its own
+# clean stamp has forged one too (the recipe runs before it stamps, and a
+# background rebuild here runs it); and one that can rewrite
+# refs/remotes/origin/main can make unmerged commits look merged. Keeping
+# sessions out of target/tools is the permission rules' job, and they are a
+# speed bump with known gaps: among them, a session started in a worktree is
+# not denied Edit or Write on the main checkout's target/tools, which holds the
+# binary this shim runs
 # (docs/knowledge/discussions/2026-09-22-jl-rust-agent-tools.md, §2). Nor is
 # the main checkout itself pinned: git's common-dir resolution reads files a
 # session can rewrite with allowed commands (the main checkout's
@@ -145,14 +154,35 @@ stamp="$main/target/tools/installed/aios.stamp"
 lock="$main/target/tools/.building"
 log="$main/target/tools/build.log"
 # The binary's build inputs, relative to the checkout root. The `tools` recipe
-# in the justfile stamps the same list in the same format: change both. The
-# legacy rust-toolchain file is not in the repository, but rustup prefers it to
-# rust-toolchain.toml when both exist, so an untracked one must count as an
-# input (and make a build dirty). A missing path is harmless to find (its error
-# is discarded), git ls-tree and git status.
-inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo'
+# in the justfile stamps the same list in the same format, with the same dirty
+# test: change both. The legacy rust-toolchain file is not in the repository,
+# but rustup prefers it to rust-toolchain.toml when both exist, so an untracked
+# one must count as an input (and make a build dirty). The justfile counts
+# because its `tools` recipe builds the binary and writes the stamp. A missing
+# path is harmless to find (its error is discarded), git ls-tree and git status.
+inputs='tools Cargo.lock Cargo.toml rust-toolchain.toml rust-toolchain .cargo justfile'
 
-# Print fresh, dirty or stale for a runnable $bin (see the header).
+# Print why the main checkout's inputs are dirty now, by the `tools` recipe's
+# test: changes (uncommitted, untracked or gitignored input files: an ignored
+# tools/build.rs or .cargo/config still changes the build), no-origin, or
+# unmerged (HEAD has input changes that origin/main lacks). Print nothing when
+# they are clean. A failing git status counts as changes, so it never starts
+# a build.
+dirty_cause() {
+    # shellcheck disable=SC2086
+    if ! changes=$(git --no-optional-locks -C "$main" status --porcelain --untracked-files=all --ignored=matching -- $inputs 2>/dev/null) ||
+        [ -n "$changes" ]; then
+        echo changes
+    elif ! git -C "$main" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1; then
+        echo no-origin
+    elif ! base=$(git -C "$main" merge-base HEAD refs/remotes/origin/main 2>/dev/null) ||
+        ! git -C "$main" diff-tree --quiet -r "$base" HEAD -- $inputs >/dev/null 2>&1; then
+        echo unmerged
+    fi
+}
+
+# Print fresh, stale, or dirty-<cause> (see dirty_cause) for a runnable $bin
+# (see the header).
 verdict() {
     # shellcheck disable=SC2086 # $inputs is a list of plain relative paths.
     if [ -n "$(cd "$main" && find $inputs -newer "$bin" -print 2>/dev/null | head -n 1)" ]; then
@@ -172,7 +202,17 @@ bin $sum
 source"
     case $have in
     "$want clean") echo fresh ;;
-    "$want dirty") echo dirty ;;
+    "$want dirty")
+        # The stamp records only that the build was dirty. Its cause may be
+        # gone since (a fetch of origin/main, or of the merged input commits,
+        # rewrites no input file): then a rebuild stamps it clean.
+        cause=$(dirty_cause)
+        if [ -n "$cause" ]; then
+            echo "dirty-$cause"
+        else
+            echo stale
+        fi
+        ;;
     *) echo stale ;;
     esac
 }
@@ -226,11 +266,13 @@ guard)
     runnable "$bin" || ask "aios tools not built; run just tools"
     case $(verdict) in
     fresh) run_guard "aios guard" "run just tools" "$bin" "$@" ;;
-    dirty)
-        # The recipe also stamps dirty when it has no origin/main to check the
-        # inputs against, which no revert or merge can fix.
-        git -C "$main" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1 ||
-            ask "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools"
+    dirty-changes)
+        ask "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; remove them, or commit them and merge them through a PR, then run just tools"
+        ;;
+    dirty-no-origin)
+        ask "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools"
+        ;;
+    dirty-unmerged)
         ask "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools"
         ;;
     esac

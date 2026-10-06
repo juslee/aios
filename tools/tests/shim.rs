@@ -22,6 +22,7 @@ const ASK_JSON: &str = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","p
 /// The guard branch's ask reasons, one per path.
 const NOT_BUILT: &str = "aios tools not built; run just tools";
 const STALE: &str = "aios tools are stale or unverified; rebuilding in the background (just tools)";
+const UNCOMMITTED: &str = "aios tools were built from uncommitted, untracked or gitignored input files in the main checkout; remove them, or commit them and merge them through a PR, then run just tools";
 const DIRTY: &str = "aios tools were built from input changes in the main checkout that are not on origin/main; revert them or merge them through a PR, then run just tools";
 const BAD_OVERRIDE: &str = "AIOS_TOOLS_BIN is not an executable file";
 const NO_ORIGIN: &str = "aios tools were built with no origin/main to check their inputs against; fetch main from origin into refs/remotes/origin/main, then run just tools";
@@ -140,6 +141,17 @@ fn make_executable(path: &Path) {
         .permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(path, perms).expect("chmod 755");
+}
+
+/// `input` with an edit marked by `note`. The justfile keeps its recipes, since
+/// the next build runs them.
+fn edited(input: &str, note: &str) -> String {
+    let edit = format!("# {note}: {input}\n");
+    if input == "justfile" {
+        read(&repo_root().join("justfile")) + &edit
+    } else {
+        edit
+    }
 }
 
 /// A `touch -t` stamp newer than every file a test repository holds.
@@ -458,20 +470,23 @@ fn a_stale_binary_whose_rebuild_fails_warns_and_runs_it() {
 }
 
 #[test]
-fn a_newer_toolchain_pin_manifest_or_cargo_config_makes_the_binary_stale() {
-    // A pull that only bumps the pinned nightly (or the workspace manifest, or
-    // the cargo config) touches nothing under tools/ and not Cargo.lock, yet
-    // changes the build. A legacy rust-toolchain file, which rustup prefers
+fn a_newer_toolchain_pin_manifest_cargo_config_or_justfile_makes_the_binary_stale() {
+    // A pull that only bumps the pinned nightly (or the workspace manifest, the
+    // cargo config, or the justfile whose recipe builds and stamps the binary)
+    // touches nothing under tools/ and not Cargo.lock, yet changes the build. A legacy rust-toolchain file, which rustup prefers
     // to rust-toolchain.toml, changes it too, even untracked.
     for (label, input) in [
         ("shim-stale-toolchain", "rust-toolchain.toml"),
         ("shim-stale-legacy-toolchain", "rust-toolchain"),
         ("shim-stale-manifest", "Cargo.toml"),
         ("shim-stale-cargo-config", ".cargo/config.toml"),
+        ("shim-stale-justfile", "justfile"),
     ] {
         let sandbox = Sandbox::new(label);
         sandbox.install_bin(true);
-        sandbox.repo.write(input, "# an edited build input\n");
+        sandbox
+            .repo
+            .write(input, &edited(input, "an edited build input"));
 
         let out = sandbox.run(&["docs-check"]);
         assert_eq!(code(&out), 0);
@@ -1055,9 +1070,10 @@ fn a_missing_or_foreign_stamp_is_stale() {
         "rust-toolchain.toml",
         "rust-toolchain",
         ".cargo/config.toml",
+        "justfile",
     ] {
         std::fs::remove_file(sandbox.cargo_log()).expect("remove cargo.log");
-        sandbox.repo.write(input, &format!("# changed: {input}\n"));
+        sandbox.repo.write(input, &edited(input, "changed"));
         sandbox.repo.commit(&format!("Change {input}"));
         sandbox.merge();
         set_mtime(&sandbox.bin(), FRESH_STAMP);
@@ -1084,8 +1100,8 @@ fn a_build_from_uncommitted_changes_is_dirty() {
     sandbox.install_bin(true);
     assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
 
-    // guard asks without a rebuild, which could not help.
-    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
+    // guard asks without a rebuild, which would stamp it dirty again.
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), UNCOMMITTED);
     assert!(sandbox.no_build_started());
     // Other subcommands run it, as they would any build of the working tree.
     let out = sandbox.run(&["docs-check"]);
@@ -1103,14 +1119,69 @@ fn a_build_from_uncommitted_changes_is_dirty() {
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), DIRTY);
     assert!(sandbox.no_build_started());
 
-    // Merged (origin/main now holds the commit), the next build is clean.
+    // Merged and fetched (origin/main now holds the commit), which rewrites
+    // no input file: the dirty stamp's cause is gone, so guard treats the
+    // binary as stale and rebuilds it, and the rebuild is clean.
     sandbox.merge();
-    sandbox.install_bin(true);
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
     assert_eq!(
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
         "fake:guard PreToolUse\n"
     );
+}
+
+// Gitignored files under the inputs change the build as much as untracked
+// ones: cargo runs an ignored tools/build.rs, and rustup prefers an excluded
+// rust-toolchain to rust-toolchain.toml.
+#[test]
+fn a_build_with_ignored_input_files_is_dirty() {
+    let sandbox = Sandbox::new("shim-ignored-build-script");
+    sandbox
+        .repo
+        .write("tools/build.rs", "fn main() { /* any code */ }\n");
+    sandbox
+        .repo
+        .write("tools/.gitignore", "/build.rs\n/.gitignore\n");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), UNCOMMITTED);
+    assert!(sandbox.no_build_started());
+
+    let sandbox = Sandbox::new("shim-excluded-toolchain");
+    sandbox.repo.write("rust-toolchain", "nightly-2000-01-01\n");
+    let exclude = sandbox.repo.path().join(".git/info/exclude");
+    let mut excluded = std::fs::read_to_string(&exclude).unwrap_or_default();
+    excluded.push_str("rust-toolchain\n");
+    std::fs::write(&exclude, excluded).expect("write .git/info/exclude");
+    sandbox.install_bin(true);
+    assert!(read(&sandbox.stamp()).ends_with("\nsource dirty\n"));
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), UNCOMMITTED);
+    assert!(sandbox.no_build_started());
+}
+
+// A directory at either install path fails the recipe with a message, rather
+// than `mv -f` moving the new file into it and reporting success.
+#[test]
+fn a_directory_at_an_install_path_fails_just_tools() {
+    for (label, path) in [
+        ("shim-install-dir-bin", "target/tools/installed/aios"),
+        (
+            "shim-install-dir-stamp",
+            "target/tools/installed/aios.stamp",
+        ),
+    ] {
+        let sandbox = Sandbox::new(label);
+        std::fs::create_dir_all(sandbox.repo.path().join(path)).expect("create the directory");
+        let out = sandbox.just_tools(&[]);
+        assert!(!out.status.success(), "{path}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!("{path} is a directory")),
+            "{}",
+            stderr(&out)
+        );
+    }
 }
 
 // A commit only the main checkout has (not merged through a PR) must not turn
@@ -1165,9 +1236,11 @@ fn a_build_from_inputs_not_on_origin_main_is_dirty() {
     assert_asks(&sandbox.run(&["guard", "PreToolUse"]), NO_ORIGIN);
     assert!(sandbox.no_build_started());
 
-    // Fetched again, a rebuild is clean.
+    // Fetched again, the dirty stamp's cause is gone: guard treats the binary
+    // as stale, and the background rebuild is clean.
     sandbox.merge();
-    sandbox.install_bin(true);
+    assert_asks(&sandbox.run(&["guard", "PreToolUse"]), STALE);
+    sandbox.wait_for_background_build();
     assert!(read(&sandbox.stamp()).ends_with("\nsource clean\n"));
     assert_eq!(
         stdout(&sandbox.run(&["guard", "PreToolUse"])),
