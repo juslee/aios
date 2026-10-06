@@ -30,6 +30,12 @@
 //! or inaccessible user page takes an EL1 data abort, which halts the CPU
 //! (the current-EL synchronous vector in `arch/aarch64/exceptions.rs` ends in
 //! `b .`). Fault recovery, when it exists, belongs in these two functions.
+//!
+//! The copies also need no other thread to access the user range while they
+//! run. No EL0 thread exists today; once a process has several, one may
+//! write the range from another CPU mid-copy, which is undefined behaviour
+//! for `copy_nonoverlapping`. The work that adds fault recovery must replace
+//! it with an asm byte copy before the first EL0 process runs.
 
 use super::IpcError;
 

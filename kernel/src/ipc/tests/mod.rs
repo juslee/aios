@@ -449,8 +449,9 @@ fn ipc_caller_entry() -> ! {
 /// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
 /// check (`select_cap_test`), EINVAL for hostile syscall arguments,
 /// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
-/// (`syscall_args_test`), and the IPC Kit's error variants through
-/// `KernelIpc` (`kit_errors_test`, on `select_cap_test`'s channels).
+/// (`syscall_args_test`, whose bad-buffer checks use `select_cap_test`'s
+/// `owned_a`), and the IPC Kit's error variants through `KernelIpc`
+/// (`kit_errors_test`, on both of `select_cap_test`'s channels).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
     // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no

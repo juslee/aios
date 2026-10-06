@@ -152,8 +152,9 @@ impl From<IpcError> for IpcKitError {
     ///   IpcReply, NotificationCreate, MemoryMap, MemoryUnmap,
     ///   CapabilityAttenuate, CapabilityRevoke, CapabilityList, ProcessExit,
     ///   ProcessWait, AuditLog and SharedMemoryShare. (NotificationSignal,
-    ///   DebugPrint, TimeGet and TimeSleep look up no thread or process, and
-    ///   NotificationWait returns EINVAL without one.) Some of them also
+    ///   DebugPrint and TimeGet look up no thread or process, TimeSleep with
+    ///   no current thread returns 0 without sleeping, and NotificationWait
+    ///   returns EINVAL without one.) Some of them also
     ///   return it for other reasons: an unmap of a region the caller has
     ///   not mapped (MemoryUnmap of a shared window address, or the
     ///   in-kernel shared_memory_unmap behind `shmem_unmap`),

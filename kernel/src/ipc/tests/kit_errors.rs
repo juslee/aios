@@ -74,7 +74,7 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     };
     let bad_id = ChannelId(MAX_CHANNELS as u32);
 
-    let mut checks = [false; 22];
+    let mut checks = [false; 24];
 
     // EPERM on a channel names ChannelAccess(id), not the table's
     // placeholder ChannelCreate. select names the channel the caller lacks.
@@ -82,6 +82,16 @@ pub(super) fn kit_errors_test(my_tid: ThreadId, channels: Option<(ChannelId, Cha
     checks[1] = kit.recv(denied, 0).err() == access_denied(denied);
     checks[2] = kit.call(denied, &msg, 10).err() == access_denied(denied);
     checks[3] = kit.select(&[chan(open), chan(denied)], 10).err() == access_denied(denied);
+    // select's fallback, which no test can reach through the race behind
+    // it, so the lookup is called directly: with every channel entry held
+    // (a grant landed after ipc_select's check) it names the first channel
+    // entry, past any notification entry, and a set with no channel entry
+    // gives None.
+    let notification = SelectEntry {
+        kind: SelectKind::Notification(NotificationId(0), 1),
+    };
+    checks[22] = crate::ipc::first_denied_channel(&[notification, chan(open)]) == Some(open);
+    checks[23] = crate::ipc::first_denied_channel(&[notification]).is_none();
     // channel_destroy checks ChannelAccess before it touches the table, so
     // `denied` survives.
     checks[20] = kit.channel_destroy(denied).err() == access_denied(denied);

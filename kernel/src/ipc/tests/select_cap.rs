@@ -36,8 +36,10 @@ const SELECT_TIMEOUT_TICKS: u64 = 10;
 /// warning from the capability check.
 ///
 /// Returns `(owned_a, denied)` once the channels exist and the grants
-/// succeeded, for `kit_errors_test`: `owned_a` is accessible to process 1
-/// and left empty, `denied` is not accessible. `None` if setup failed.
+/// succeeded: `owned_a` is accessible to process 1 and left empty, `denied`
+/// is not accessible. `syscall_args_test` uses `owned_a` for its bad-buffer
+/// checks (32-36) and leaves it empty again, then `kit_errors_test` uses
+/// both. `None` if setup failed.
 pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<(ChannelId, ChannelId)> {
     // `my_tid` comes from current_thread_id(), which can name another CPU's
     // thread if this one migrates mid-read: grant nothing unless it resolves

@@ -1029,11 +1029,11 @@ ipc/
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (757)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (758)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (296) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
-    kit_errors.rs (233)  # IPC Kit error variants through KernelIpc (#190) self-test
+    select_cap.rs (170)  # IpcSelect capability self-test
+    syscall_args.rs (305) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (243)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
   shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)

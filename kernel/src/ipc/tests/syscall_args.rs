@@ -237,14 +237,15 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64) -> [bool; 5] {
     result
 }
 
-/// On a READ-only region that process `pid` (the calling thread's process)
-/// creates: SharedMemoryMap with WRITE, beyond the region's `max_flags`, is
-/// EINVAL; SharedMemoryMap with READ plus bit 32, or with the undefined bit
-/// 3, is EINVAL while SharedMemoryAccess is held (a masking decode would map
-/// the region there); a READ map succeeds; and once SharedMemoryAccess is revoked
-/// the same map is EPERM. While SharedMemoryCreate is held, a
-/// SharedMemoryCreate of 2^50 bytes, above the largest region (4 MiB), is
-/// EINVAL.
+/// On a region with `max_flags` READ | USER that process `pid` (the calling
+/// thread's process) creates: SharedMemoryMap with WRITE, beyond the
+/// region's `max_flags`, is EINVAL; SharedMemoryMap with READ plus bit 32,
+/// or with READ plus USER (bit 3), is EINVAL while SharedMemoryAccess is
+/// held (a decode that masked or passed the bit would map the region there,
+/// and the test then still unmaps it); a READ map succeeds; and once
+/// SharedMemoryAccess is revoked the same map is EPERM. While
+/// SharedMemoryCreate is held, a SharedMemoryCreate of 2^50 bytes, above the
+/// largest region (4 MiB), is EINVAL.
 ///
 /// Returns `[beyond_max, mapped, denied, oversize, high_bits,
 /// undefined_bit]`, one flag per check, all false if the grant fails and
@@ -262,7 +263,10 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // The size is checked before the capability, but with the capability
     // held a missing bound would reach the allocation and its warning.
     let oversize = svc(Syscall::SharedMemoryCreate, &[1 << 50, READ]) == IpcError::Einval as i64;
-    let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ);
+    // Created in-kernel with USER in `max_flags`, which no syscall can ask
+    // for, so the `max_flags` check passes a READ | USER map and only the
+    // syscall's flag decode can reject it.
+    let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ | VmFlags::USER);
     revoke_token(pid, create_token);
     let Ok(region) = created else {
         return [false, false, false, oversize, false, false];
@@ -272,9 +276,14 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // The region's limit, not the caller's rights: EINVAL.
     let beyond_max = map(READ_WRITE) == IpcError::Einval as i64;
     // Undefined bits are EINVAL even with the right held: bit 32 above READ,
-    // and bit 3 (USER), which no caller may set.
-    let high_bits = map(0x1_0000_0001) == IpcError::Einval as i64;
-    let undefined_bit = map(0b1000) == IpcError::Einval as i64;
+    // and bit 3 (USER) with READ, which no caller may set.
+    let high_bits_result = map(0x1_0000_0001);
+    let undefined_bit_result = map(0b1001);
+    let high_bits = high_bits_result == IpcError::Einval as i64;
+    let undefined_bit = undefined_bit_result == IpcError::Einval as i64;
+    // A probe that regressed and mapped the region makes this map EEXIST;
+    // the region must still be unmapped below.
+    let probe_mapped = high_bits_result > 0 || undefined_bit_result > 0;
     // The creator holds SharedMemoryAccess(region), so READ maps.
     let mapped = map(READ) > 0;
     revoke_region_access(pid, region);
@@ -282,7 +291,7 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     // repeated map fails for the missing right: EPERM, not EEXIST.
     let denied = map(READ) == IpcError::Eperm as i64;
 
-    if mapped {
+    if mapped || probe_mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
     [
