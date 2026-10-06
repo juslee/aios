@@ -81,7 +81,8 @@ pub enum TaskType {
     MetadataGeneration,
     /// Prompt injection detection
     AdversarialDetection,
-    /// Context inference (work/leisure)
+    /// Context inference (work/leisure). Routed to the Context Engine's
+    /// classifier companion model, not to the general-purpose model
     ContextInference,
     /// Attention urgency assessment
     AttentionTriage,
@@ -92,8 +93,9 @@ pub enum TaskType {
 
 **Default model strategy:**
 
-- Ship one general-purpose model (7-8B, Q4_K_M, ~4.5 GB) for all tasks
+- Ship one general-purpose model (7-8B, Q4_K_M, ~4.5 GB) for all tasks except embeddings and context inference
 - Ship one small embedding model (~100 MB) for Space Indexer
+- Ship the Context Engine's context classifier (~2 MB, not an LLM; [context-engine/inference.md](../context-engine/inference.md) §4.1) for context inference
 - Users can download larger/specialized models from the model registry
 - System intelligently routes tasks to the best available model
 
@@ -255,6 +257,10 @@ Available RAM        Model Pool Alloc    Default Model Selection
                                           pool below 4 GiB. Intelligence
                                           services that require inference are
                                           disabled. Rule-based fallbacks active.
+                                          The boot selector returns the same
+                                          `CloudOnly` decision as below 2 GB;
+                                          whether this tier gets cloud
+                                          inference is not yet designed.
 
 4 GB – 7.9 GB        2 GB                3B parameter model, Q4_K_M quantization.
                                           ~1.7 GB on disk, ~2 GB in RAM.

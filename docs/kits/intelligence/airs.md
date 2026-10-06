@@ -298,8 +298,8 @@ for result in results {
 The Context Engine behind the Context Kit feeds its fixed-length signal feature vector to
 the AIRS classifier model (`TaskProfile::Classifier`;
 [context-engine/inference.md](../../intelligence/context-engine/inference.md) §4.1). The
-classifier is not generative and outputs engagement scores, not an `activity`. Agents read the
-Context Kit's `ContextState`, derived by the Kit from the engine's state; they do not call `infer` for it.
+classifier is not generative. Agents read the Context Kit's `ContextState`
+([context.md](./context.md)); they do not call `infer` for it.
 
 ```rust
 use aios_context::{ActivityType, ContextConsumer, ContextError};

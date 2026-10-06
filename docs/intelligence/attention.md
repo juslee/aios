@@ -234,7 +234,6 @@ pub struct AttentionModel {
     /// Decay factor for historical engagement influence
     pub engagement_decay: f32,
     /// Maximum number of interrupts per hour before auto-dampening
-    /// (security alerts are exempt, §4.2)
     pub interrupt_rate_limit: u32,
 }
 
@@ -335,20 +334,13 @@ impl AttentionManager {
         UrgencyAssessment { urgency, confidence, signals }
     }
 
-    /// Security alerts always interrupt. Every other item, system errors included,
-    /// is scored with the per-user `AttentionModel` (§4.1.1), and the total is
-    /// mapped onto its thresholds. Sentiment and agent trust count like any other
-    /// signal, through their learned weights.
+    /// Every item without an inherent-urgency signal is scored with the per-user
+    /// `AttentionModel` (§4.1.1), and the total is mapped onto its thresholds.
+    /// Sentiment and agent trust count like any other signal, through their
+    /// learned weights.
     fn compute_urgency(&self, signals: &[UrgencySignal]) -> Urgency {
-        // A security alert is never scored or dampened, so another agent's
-        // interrupts cannot use up the hourly budget and push it back to
-        // NextBreak (§18.1). Content screening lets only system agents post
-        // security alerts (§18.5). Any agent may post a SystemEventType::Error,
-        // so its InherentUrgency signal is weighted and dampened like the rest:
-        // no agent can force an Interrupt (§18.3).
-        if signals.iter().any(|s| matches!(s, UrgencySignal::InherentUrgency {
-            event_type: SystemEventType::SecurityAlert,
-        })) {
+        // Any inherent urgency signal → Interrupt
+        if signals.iter().any(|s| matches!(s, UrgencySignal::InherentUrgency { .. })) {
             return Urgency::Interrupt;
         }
 
@@ -1640,22 +1632,17 @@ A decision tree trained offline on population engagement data, compiled to a fix
 ```text
 Decision tree for pre-AIRS urgency classification:
 
-1. Is content type SystemEvent with SecurityAlert?
+1. Is content type SystemEvent with SecurityAlert or Error?
    → YES: Interrupt (confidence: 0.95)
-2. Is content type SystemEvent with Error?
-   → YES and agent category System? → Interrupt (confidence: 0.90)
-   → YES and any other category?   → NextBreak (confidence: 0.80)
-3. Is sender in user's top-5 contacts (by response frequency)?
+2. Is sender in user's top-5 contacts (by response frequency)?
    → YES: NextBreak (confidence: 0.80)
-4. Is agent category System or Communication?
+3. Is agent category System or Communication?
    → YES and content contains urgency keywords? → NextBreak (0.70)
    → YES and no urgency keywords? → Digest (0.60)
-5. Is item time-sensitive (< 10 minutes to deadline)?
+4. Is item time-sensitive (< 10 minutes to deadline)?
    → YES: NextBreak (confidence: 0.75)
-6. Default: Digest (confidence: 0.50)
+5. Default: Digest (confidence: 0.50)
 ```
-
-The tree keeps the §18.3 ceiling: no agent can force an Interrupt. Only system agents may post a security alert (§18.5), and the agent category comes from the agent registry, not from the item. Any agent may post an Error, so an Error interrupts only when a system agent posts it. For Errors the tree is stricter than the §15.2 rule-based triage, whose score can reach Interrupt for a non-system agent's Error (for example a Communication agent's Error with an urgent keyword).
 
 This decision tree augments the rule-based triage in §15.2. On first boot (no engagement data), the rule-based triage from §15.2 is used. Once sufficient engagement data accumulates, this decision tree is trained offline and deployed as a static lookup table, replacing the rule-based heuristics. It is retrained weekly from updated engagement data.
 
@@ -1724,7 +1711,7 @@ If the user acts on 90% of build failure notifications but only 5% of newsletter
 
 | Component | Test category | Key assertions |
 | --- | --- | --- |
-| `UrgencyAssessment` | Signal scoring | Weighted score ≥ `interrupt_threshold` → Interrupt; at `interrupt_rate_limit` interrupts in the last hour → NextBreak instead; InherentUrgency for a SecurityAlert → Interrupt at any score, even past `interrupt_rate_limit`; InherentUrgency for an Error is weighted and dampened like any other signal; score between `digest_threshold` and `next_break_threshold` → Digest; below `digest_threshold` → Silent |
+| `UrgencyAssessment` | Signal scoring | InherentUrgency always → Interrupt; weighted score ≥ `interrupt_threshold` → Interrupt; at `interrupt_rate_limit` interrupts in the last hour → NextBreak instead; score between `digest_threshold` and `next_break_threshold` → Digest; below `digest_threshold` → Silent |
 | `ContextFilter` | Threshold logic | Focus mode blocks NextBreak; Work mode passes NextBreak; suppress_all blocks Interrupt |
 | `AttentionGroup` | Grouping keys | Same channel → one group; same agent → one group; mixed → separate groups |
 | `RateLimiter` | Token bucket | At limit → Throttled; after window reset → Allowed; burst within window → partial accept |

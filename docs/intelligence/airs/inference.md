@@ -433,11 +433,13 @@ impl ComputeScheduler {
     }
 
     /// The kernel `QuantFormatSet` bit (compute/classification.md §4.2) for a
-    /// model's `QuantFormat`. Formats with no bit, such as Q3_K_S and Q4_K_S,
-    /// return None, so no device supports them and `format_support` is 0.0.
+    /// model's `QuantFormat`. A format with no bit returns None, so no device
+    /// supports it and `format_support` is 0.0.
     fn quant_format_bit(format: QuantFormat) -> Option<QuantFormatSet> {
         match format {
             QuantFormat::Q4_0 => Some(QuantFormatSet::Q4_0),
+            QuantFormat::Q3_K_S => Some(QuantFormatSet::Q3_K_S),
+            QuantFormat::Q4_K_S => Some(QuantFormatSet::Q4_K_S),
             QuantFormat::Q4_K_M => Some(QuantFormatSet::Q4_K_M),
             QuantFormat::Q5_K_M => Some(QuantFormatSet::Q5_K_M),
             QuantFormat::Q6_K => Some(QuantFormatSet::Q6_K),
@@ -1511,13 +1513,13 @@ Hardware Tier        Model     Quant     TTFT      tok/s     Context    Memory
 ─────────────────    ──────    ──────    ──────    ──────    ────────   ──────
 QEMU (emulated)      3B       Q4_K_M    ~5s       ~1        2K         2 GB
 Pi 4 (4 GB)          3B       Q4_0      ~2s       ~3-4      4K         2 GB
-Pi 5 (8 GB)          8B       Q4_K_M    ~800ms    ~6-8      8K         4 GB
+Pi 5 (8 GB)          8B       Q4_K_M    ~800ms    ~3-4      8K         4 GB
 Apple M1 (16 GB)     8B       Q5_K_M    ~200ms    ~25-35    32K        8 GB
 Apple M2 (32 GB)     13B      Q4_K_M    ~300ms    ~20-30    32K        16 GB
 Apple M3+ (64 GB)    70B      Q4_K_M    ~500ms    ~15-25    128K       32 GB
 ```
 
-The Pi 5 row is above the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md) (~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s), so Phase 11 checks it first.
+The Pi 5 decode rate is capped at the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md) (~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s); the published figures for comparable hardware are above it, so Phase 11 checks this row first.
 
 **Target invariants:**
 

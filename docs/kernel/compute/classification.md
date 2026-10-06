@@ -279,6 +279,8 @@ bitflags! {
         const Q8_0     = 0b0001_0000;
         const F16      = 0b0010_0000;
         const F32      = 0b0100_0000;
+        const Q4_K_S   = 0b1000_0000;
+        const Q3_K_S   = 0b1_0000_0000;
     }
 }
 ```
