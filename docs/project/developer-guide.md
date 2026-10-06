@@ -2313,7 +2313,7 @@ Skills are reusable multi-step workflows invoked via slash commands. They encode
 | `/justin:pause` | Before a break or `/clear` (user only) | `.remember` handoff, then `scripts/agent/checkpoint.sh`: wip commit + push on the current `claude/*` branch (a flagged secret path needs `--allow` after you confirm it); other worktrees with unsaved work are listed, never touched |
 | `/review-pr-comments` | After PR creation | Polls for reviewer comments (up to 5 min) → categorizes → fixes code → replies → resolves threads via GraphQL |
 | `/write-arch-doc <topic>` | Architecture doc create/update | Interactive: scope discussion → 5+ round recursive web research → section-by-section writing with user feedback → audit loop → PR |
-| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Squash merges PR → deletes remote+local branch → removes worktree if applicable → updates main. Other skills stop at a hand-off instead of merging |
+| `/merge-and-cleanup [PR]` | User only, after PR approval (`disable-model-invocation: true`) | Preserves the PR worktree's soak results and agent memory → squash merges PR (gh deletes the remote+local branch and removes the worktree) → verifies removal → fast-forwards main. Other skills stop at a hand-off instead of merging |
 
 #### Skill usage examples
 
@@ -2352,7 +2352,8 @@ Many skills use **git worktrees** to isolate work from the main branch. This pre
 
 ```text
 create worktree → work on branch → commit → push → create PR
-    → review → merge → remove worktree → delete local branch → update main
+    → review → preserve soak results and agent memory
+    → squash merge (gh removes worktree + local branch) → verify → fast-forward main
 ```
 
 **Manual commands** (if not using skills):
@@ -2365,14 +2366,19 @@ git worktree add .claude/worktrees/docs-memory -b claude/docs-update-memory main
 cd .claude/worktrees/docs-memory
 # ... edit files, commit, push, create PR ...
 
-# After PR merges, clean up (from main repo root)
+# Before the PR merges, from the main checkout: copy out what git ignores,
+# because removing the worktree deletes ignored files without asking
 cd /path/to/aios
-git worktree remove .claude/worktrees/docs-memory
-git branch -d claude/docs-update-memory
-git checkout main && git pull origin main
+cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<N>-<run>"   # per soak run
+# ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
+
+# Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
+gh pr merge <N> --squash --delete-branch
+git worktree list
+git fetch --prune origin && git merge --ff-only origin/main
 ```
 
-The `/merge-and-cleanup` skill automates the entire cleanup sequence.
+The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions), and is the way to merge.
 
 ### Audit Loop Pattern
 

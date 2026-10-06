@@ -197,5 +197,5 @@ EOF
 20. Run `/review-pr-comments`: wait 3-7 minutes for Copilot/reviewer comments, then fix issues, reply, and resolve every conversation. Push fixes.
 21. Hand off and stop. Merging is user-only (`/merge-and-cleanup` has `disable-model-invocation: true`; see `.claude/rules/03-git-workflow.md`):
     - Report the PR URL and the output of `gh pr checks <number>`
-    - Ask the user to run `/merge-and-cleanup` once they approve; it squash merges, deletes the branches, removes the worktree and fast-forwards main
+    - Ask the user to run `/merge-and-cleanup` once they approve; it preserves soak results and agent memory, squash merges, deletes the branches, removes the worktree and fast-forwards main
     - Do not merge, push to `main`, or repeat those steps another way

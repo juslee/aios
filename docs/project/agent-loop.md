@@ -60,7 +60,8 @@ Work, loop, retro and setup skills belong to later stages and do not exist yet.
 | Session handoff | `.remember/remember.md` and `.remember/now.md` in the main checkout (gitignored in every checkout; pause never commits `.remember/`) | this Mac |
 | Personal auto-memory | `~/.claude/projects/<repo>/memory/MEMORY.md` | this Mac |
 | Accepted docs drift | [scripts/docs/baseline.json](../../scripts/docs/baseline.json) | git |
-| Boot soak results | `summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in a run directory under `target/soak/` (`<timestamp>-<mode>` by default; `out=target/soak/167/main-text-r1` nests it deeper; runs that `out=` puts outside `target/soak/` are not read by `/justin:brief`) in whichever worktree ran the soak harness | this Mac |
+| Boot soak results | `summary.tsv` (one row per boot, written as it runs) and `summary.md` (with the commit, written when the run finishes) in a run directory under `target/soak/` (`<timestamp>-<mode>` by default; `out=target/soak/167/main-text-r1` nests it deeper; runs that `out=` puts outside `target/soak/` are not read by `/justin:brief`) in whichever worktree ran the soak harness; before merging a PR, `/merge-and-cleanup` copies its worktree's runs to the main checkout as `target/soak/pr<number>-<run>` | this Mac |
+| Agent memory | `.claude/agent-memory/<agent>/` (gitignored) in the checkout the session started in, read and written by the `memory: project` agents in `.claude/agents/`; before merging a PR, `/merge-and-cleanup` merges its worktree's notes into the main checkout's copy | this Mac |
 
 GitHub labels: `needs-human` (waiting for an owner decision; agents do not claim it or change the files it names), `agent-ready` (owner-approved and claimable; only the owner applies it), `agent-working` (claimed by an agent session), `agent` (opened by an agent, so agent work can be counted).
 
