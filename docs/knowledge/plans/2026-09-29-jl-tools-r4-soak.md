@@ -33,6 +33,12 @@ status: in-progress
 - Add `signal-hook` 0.4.4 (MIT OR Apache-2.0). It is the only safe way to catch SIGINT, SIGTERM and SIGHUP under `#![forbid(unsafe_code)]`.
 - Commit **synthetic logs only**. Real soak logs are used in an uncommitted verification run (Task 8) and never committed.
 
+**Owner (2026-10-06):**
+
+- Execution is **subagent-driven** (superpowers:subagent-driven-development): a fresh implementer and a task review per task, then a whole-branch review and the audit loop.
+- The seven controller rulings below are **accepted** as written. For the `.gitattributes` that Task 1 shares with #206, whichever of R4 and #205/#206 merges second drops the duplicate.
+- origin/main (c6f5511: #210, #211, #218) was merged into this branch before Task 1, not before Task 7; the prototype patch still applies cleanly to the merged tree.
+
 **Controller rulings (recorded here for review):**
 
 1. **No `time` crate.** The default output directory's timestamp comes from `date +%Y%m%d-%H%M%S`, as in the script.
