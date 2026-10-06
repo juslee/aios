@@ -1,14 +1,16 @@
 //! milestone-status and phase-count on small committed repositories. The
 //! expected findings were recorded from check.py's `check_milestone_status` and
 //! `check_phase_count` on the same files and history (production order, before
-//! merging by key).
+//! merging by key). check.py read the project memory at the root `CLAUDE.md`;
+//! these files place it at `CLAUDE_MD`, so the expectations are check.py's with
+//! that path substituted.
 
 mod common;
 
 use aios_tools::cmd::docs_check::checks::milestones::{MilestoneStatus, PhaseCount};
 use aios_tools::cmd::docs_check::checks::Check;
 use aios_tools::cmd::docs_check::model::{Finding, Skip};
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 
 const STATUS_FILES: &[(&str, &str)] = &[
@@ -155,7 +157,7 @@ We plan 5 phases across 2 tiers and v2 phases across none.
 "#,
     ),
     (
-        "CLAUDE.md",
+        CLAUDE_MD,
         r#"# Project
 
 Plan: 3 phases, then 12 phases later.
@@ -363,7 +365,7 @@ fn phase_count_matches_check_py() {
         ),
         Finding::new(
             "phase-count",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "claimed:12",
             "says 12 phases; development-plan §8 lists 3",
             3,

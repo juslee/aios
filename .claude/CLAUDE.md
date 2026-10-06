@@ -14,7 +14,7 @@ Build system:   just + cargo
 License:        BSD-2-Clause
 Toolchain:      Rust nightly (updated to latest at session start, pinned in rust-toolchain.toml)
 Workspace:      resolver = "2", edition = "2021"
-Linker script:  emitted via build.rs (not .cargo/config.toml)
+Linker script:  emitted via build.rs (not .cargo/config.toml), with --orphan-handling=error
 Relocation:     static (relocation-model=static throughout all phases)
 QEMU machine:   virt, cpu=cortex-a72, -smp 4 -m 2G
 UART:           PL011 at 0x0900_0000 (QEMU); DTB-sourced Phase 1+
@@ -62,6 +62,9 @@ Vector table:                 ALIGN(2048) in linker.ld + .balign 128 per entry i
 PSCI CPU_ON (64-bit):         0xC400_0003 — hvc on QEMU, smc on Pi 4/5
 PSCI entry phys conversion:   smp.rs converts virtual _secondary_entry to physical before CPU_ON.
 Boot CPU SP virt conversion:  boot.S adds VIRT_PHYS_OFFSET to SP before branching to virtual kernel_main.
+Boot stack:                   128 KiB `.stack (NOLOAD)` section after .bss, inside the RW PT_LOAD segment.
+                              The stub reserves only each PT_LOAD's [p_paddr, p_paddr + memsz), rounded up to pages.
+                              A bare `. +=` after a segment's last output section is in no PT_LOAD: never reserved.
 Syscall ABI:                  SVC #0 from EL0; x8 = number, x0-x5 = args, x0 = return.
                               Phase 3 threads run at EL1 → IPC is a direct call, NOT SVC. SVC path wired for future EL0.
 
@@ -71,6 +74,9 @@ edk2 MAIR:                    0xffbb4400 (Attr0=Device, Attr1=NC, Attr2=WT, Attr
 Kernel image UEFI type:       PF_X segment = EfiLoaderCode, other segments = EfiLoaderData (uefi-stub elf.rs).
                               Strict-NX edk2 (upstream ArmVirt, Ubuntu 26.04) maps LoaderData execute-never in
                               the TTBR0 map boot.S runs on; Homebrew/QEMU builds do not, so local boots miss it.
+Kernel text cache sync:       stub cleans the PF_X segment to PoU only (DC CVAU, IC IALLUIS; per CTR_EL0.IDC/DIC).
+                              Nothing reaches PoC, so code or data read with the MMU off (_secondary_entry)
+                              is not covered. QEMU TCG models no caches, so missing maintenance never shows there.
 Phase 1 MMU strategy:         TTBR0-only swap, reuse edk2 MAIR/TCR.
                               Changing MAIR/TCR while MMU on is CONSTRAINED UNPREDICTABLE — do not.
 Phase 1 identity map:         3×1GB blocks (device@0, RAM@0x40M, RAM@0x80M) via L0→L1.
@@ -157,13 +163,14 @@ aios/
 ├── rust-toolchain.toml   pinned nightly (aarch64-unknown-none + aarch64-unknown-uefi)
 ├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
 ├── .claude/
+│   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
 │   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
 │   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
-│   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
+│   ├── rules/            01-code-conventions … 10-harness-mechanics (auto-loaded)
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
 │                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup,
-│                         obsidian, justin:start, justin:brief, justin:doctor, justin:pause
+│                         justin:start, justin:brief, justin:doctor, justin:pause
 │                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
 │   ├── arch/aarch64/     boot.S, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
@@ -187,9 +194,9 @@ aios/
 │   └── (top-level)       main.rs, boot_phase, dtb, smp, framebuffer, bench
 ├── shared/src/           types crossing kernel/stub boundary (no_std)
 │   ├── (top-level)       boot, cap, ipc, sched, memory, storage, gpu, input, compositor, syscall,
-│   │                     kaslr, observability, collections, lib
+│   │                     kaslr, cache, observability, collections, lib
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
-├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, ExitBootServices, kernel jump
+├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
 │                         src/cmd/docs_check/ (docs drift checker), tests/ (goldens, fixtures)
 ├── scripts/              soak-qemu.sh (`just soak` boot soak harness), agent/ (brief, checkpoint),
@@ -227,18 +234,16 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
 | `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
-| `/obsidian` | Knowledge-hive vault operations | Routes note, tag and frontmatter work across Obsidian MCP, app, and git |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 | `/merge-and-cleanup [PR]` | User only, after PR approval | Squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
 
-**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
+**Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
 **Existing skills reused** (not recreated):
 
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
-- `engineering-workflow-skills:pr`, `commit-commands:commit`
-- `sc:implement`, `sc:test`, `sc:build`, `sc:analyze`
 - `pr-review-toolkit:review-pr`
+- `remember:remember` (handoff written by `/justin:pause`)

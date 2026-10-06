@@ -94,9 +94,9 @@ Beyond per-CPU ordering, the kernel maintains a **global lock hierarchy** for su
 
 **Code evidence** for the ordering:
 
-- `shmem.rs:9` — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
-- `shmem.rs:158-159` — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
-- `shmem.rs:438` — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
+- `shmem.rs:10` (module doc) — *"Lock ordering: PROCESS_TABLE > SHARED_REGION_TABLE > CHANNEL_TABLE."*
+- `shmem.rs:192-193` (`shared_memory_create`) — *"PROCESS_TABLE must not be acquired while SHARED_REGION_TABLE is held."*
+- `shmem.rs:489` (`shared_memory_share`) — *"SHARED_REGION_TABLE lock released before acquiring PROCESS_TABLE (lock ordering)."*
 - `process.rs:147` — *"Lock ordering: THREAD_TABLE before CHANNEL_TABLE."*
 - `notify.rs:55-56` — *"Lock ordering: after SHARED_REGION_TABLE, before CHANNEL_TABLE."*
 - `select.rs:30-31` — *"Lock ordering: after NOTIFICATION_TABLE, after CHANNEL_TABLE."*
@@ -134,6 +134,7 @@ graph TD
 | `ECHO_CHANNEL` | `service/mod.rs` | Test infrastructure, leaf |
 | `SAMPLE_BUF` | `bench.rs` | Benchmark data collection, leaf |
 | `ASID_ALLOC` | `mm/uspace.rs` | ASID allocation, leaf |
+| `PRIVATE_ALLOC_TABLE` | `ipc/shmem.rs` | MemoryMap allocation records, leaf: blocks are allocated before and freed after the hold |
 | `RUN_QUEUES[N]` | `sched/mod.rs` | Per-CPU, ascending CPU ID order (§3.2) |
 
 ### 3.4 Memory Allocator Locks

@@ -1,6 +1,12 @@
 //! layout and harness-tables on small committed repositories. The expected
 //! findings were recorded from check.py's `check_layout` and
-//! `check_harness_tables` on the same files (production order).
+//! `check_harness_tables` on the same files (production order). check.py read the
+//! project memory at the root `CLAUDE.md`; these files place it at `CLAUDE_MD`, so
+//! the expectations are check.py's with that path substituted. The exceptions are
+//! the two `ROOT_MEMORY_FILES` tests (`layout_ignores_a_root_claude_md_…` and
+//! `harness_tables_ignore_a_root_claude_md_…`): their expectations are check.py's
+//! for the same files without that root `CLAUDE.md`, and the `*_claude_dir_memory`
+//! tests are their controls.
 
 mod common;
 
@@ -8,16 +14,16 @@ use aios_tools::cmd::docs_check::checks::harness::{project_agents, project_skill
 use aios_tools::cmd::docs_check::checks::layout::{layout_block, tree_entries, Layout};
 use aios_tools::cmd::docs_check::checks::Check;
 use aios_tools::cmd::docs_check::model::Finding;
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 use std::collections::BTreeSet;
 
 /// `.claude/skills/linked` is a plain file standing in for a tracked symlink
-/// (the real repository tracks `.claude/skills/obsidian` as one); both are a
+/// (the real repository tracked `.claude/skills/obsidian` as one at 33c6b3d); both are a
 /// single tracked path that names the skill.
 const FILES: &[(&str, &str)] = &[
     (
-        "CLAUDE.md",
+        CLAUDE_MD,
         r#"# Project
 
 ## Workspace Layout
@@ -176,9 +182,54 @@ kernel/src/                    Entry
     ),
 ];
 
-/// A repository without CLAUDE.md: every table is empty and the layout lists
-/// are absent, so only the table comparisons report.
-const BARE_FILES: &[(&str, &str)] = &[
+/// A project memory that lists everything in `ROOT_MEMORY_FILES`: at `CLAUDE_MD`
+/// it leaves layout and harness-tables nothing to report.
+const COMPLETE_MEMORY: &str = r#"# Project
+
+## Workspace Layout
+
+```text
+proj/
+├── .claude/
+│   ├── agents/           solo
+│   └── skills/           only
+├── kernel/src/           kernel
+│   └── (top-level)       main.rs
+├── shared/src/           shared types
+└── uefi-stub/src/        stub
+```
+
+## Team
+
+**Agents** (defined in `.claude/agents/`):
+
+| Agent | Role |
+| --- | --- |
+| `solo` | Works |
+
+**Skills** (defined in `.claude/skills/`):
+
+| Skill | Purpose |
+| --- | --- |
+| `/only` | Runs |
+"#;
+
+/// A repository whose only project memory is a root `CLAUDE.md` holding
+/// `COMPLETE_MEMORY`. docs-check reads [`CLAUDE_MD`] alone (there is no fallback
+/// to the root file), so to it every table is empty and the layout lists are
+/// absent, and only the table comparisons report.
+const ROOT_MEMORY_FILES: &[(&str, &str)] = &[
+    ("CLAUDE.md", COMPLETE_MEMORY),
+    ("kernel/src/main.rs", "fn main() {}\n"),
+    (".claude/agents/solo.md", "# Solo\n"),
+    (".claude/skills/only/SKILL.md", "# Only\n"),
+];
+
+/// `ROOT_MEMORY_FILES` with `COMPLETE_MEMORY` at [`CLAUDE_MD`] instead of the
+/// root: the control that shows the same memory, where docs-check reads it,
+/// silences every finding.
+const MEMORY_FILES: &[(&str, &str)] = &[
+    (CLAUDE_MD, COMPLETE_MEMORY),
     ("kernel/src/main.rs", "fn main() {}\n"),
     (".claude/agents/solo.md", "# Solo\n"),
     (".claude/skills/only/SKILL.md", "# Only\n"),
@@ -219,35 +270,35 @@ fn layout_matches_check_py() {
     let expected = vec![
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "missing:kernel/src/sched/",
             "Workspace Layout does not list kernel dir kernel/src/sched/",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "stale:kernel/src/ipc/",
             "Workspace Layout lists kernel/src/ipc/, which does not exist",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "stale:kernel/src/dtb.rs",
             "Workspace Layout lists kernel/src/dtb.rs, which does not exist",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "missing:shared/src/ipc/",
             "Workspace Layout does not list shared dir shared/src/ipc/",
             0,
         ),
         Finding::new(
             "layout",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "stale:shared/src/cap.rs",
             "Workspace Layout lists shared/src/cap.rs, which does not exist",
             0,
@@ -271,17 +322,28 @@ fn layout_matches_check_py() {
 }
 
 #[test]
-fn layout_without_claude_md_lists_every_module_as_missing() {
-    let repo = TestRepo::with_files("layout-bare", BARE_FILES);
+fn layout_ignores_a_root_claude_md_and_lists_every_module_as_missing() {
+    let repo = TestRepo::with_files("layout-root-memory", ROOT_MEMORY_FILES);
     let found = Layout.run(&open(&repo)).expect("layout runs");
     let expected = vec![Finding::new(
         "layout",
-        "CLAUDE.md",
+        CLAUDE_MD,
         "missing:kernel/src/main.rs",
         "Workspace Layout does not list kernel module kernel/src/main.rs",
         0,
     )];
     assert_eq!(found, expected);
+}
+
+#[test]
+fn layout_reads_the_workspace_layout_from_the_claude_dir_memory() {
+    let repo = TestRepo::with_files("layout-memory", MEMORY_FILES);
+    let found = Layout.run(&open(&repo)).expect("layout runs");
+    assert_eq!(
+        found,
+        Vec::new(),
+        "COMPLETE_MEMORY at CLAUDE_MD lists main.rs"
+    );
 }
 
 #[test]
@@ -307,56 +369,56 @@ fn harness_tables_matches_check_py() {
     let expected = vec![
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:bad:run",
             "CLAUDE.md skills-table omits skill bad:run",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:linked",
             "CLAUDE.md skills-table omits skill linked",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:unnamed:x",
             "CLAUDE.md skills-table omits skill unnamed:x",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-stale:stale-skill",
             "CLAUDE.md skills-table lists skill stale-skill, which is not in .claude/",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "agents-table-missing:helper",
             "CLAUDE.md agents-table omits agent helper",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "agents-table-stale:ghost-agent",
             "CLAUDE.md agents-table lists agent ghost-agent, which is not in .claude/",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "layout-skills-missing:unnamed:x",
             "CLAUDE.md layout-skills omits skill unnamed:x",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "layout-skills-stale:retired",
             "CLAUDE.md layout-skills lists skill retired, which is not in .claude/",
             0,
@@ -366,26 +428,39 @@ fn harness_tables_matches_check_py() {
 }
 
 #[test]
-fn harness_tables_without_claude_md_skips_the_layout_lists() {
-    let repo = TestRepo::with_files("harness-bare", BARE_FILES);
+fn harness_tables_ignore_a_root_claude_md_and_skip_the_layout_lists() {
+    let repo = TestRepo::with_files("harness-root-memory", ROOT_MEMORY_FILES);
     let found = HarnessTables
         .run(&open(&repo))
         .expect("harness-tables runs");
     let expected = vec![
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "skills-table-missing:only",
             "CLAUDE.md skills-table omits skill only",
             0,
         ),
         Finding::new(
             "harness-tables",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "agents-table-missing:solo",
             "CLAUDE.md agents-table omits agent solo",
             0,
         ),
     ];
     assert_eq!(found, expected);
+}
+
+#[test]
+fn harness_tables_read_the_tables_from_the_claude_dir_memory() {
+    let repo = TestRepo::with_files("harness-memory", MEMORY_FILES);
+    let found = HarnessTables
+        .run(&open(&repo))
+        .expect("harness-tables runs");
+    assert_eq!(
+        found,
+        Vec::new(),
+        "COMPLETE_MEMORY at CLAUDE_MD lists solo and only"
+    );
 }
