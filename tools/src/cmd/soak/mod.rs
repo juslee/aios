@@ -3,5 +3,7 @@
 
 pub mod awk;
 pub mod classify;
+pub mod host;
 pub mod report;
+pub mod runner;
 pub mod signals;
