@@ -71,7 +71,7 @@ GitHub labels: `needs-human` (waiting for an owner decision; agents do not claim
 
 ## Merge policy
 
-You merge. Claude pushes `claude/*` branches, opens PRs, and stops. Merge after review with `/merge-and-cleanup <PR>` in a session you are attending, or on GitHub.
+You merge. Claude pushes `claude/*` branches, opens PRs, and stops. Merge after review with `/merge-and-cleanup <PR>` in a session you are attending, or on GitHub. After a GitHub merge, run `/merge-and-cleanup <PR>` to copy the worktree's soak runs and agent memory and to remove the worktree and branch.
 
 Later (not enabled): GitHub auto-merge behind required status checks on a `main` ruleset, starting with milestones after the boot-crash fix.
 
