@@ -5,10 +5,13 @@
 //! Called from main.rs after sched::init() but before enter_scheduler().
 
 mod bad_pid;
+mod kit_errors;
 mod select_cap;
+mod syscall_args;
 
 use crate::sched;
 use crate::syscall::IpcError;
+use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use shared::{ChannelId, DEFAULT_TIMEOUT_TICKS, MAX_CHANNELS, MAX_MESSAGE_SIZE};
 use spin::Mutex;
@@ -41,7 +44,7 @@ const TEST_PID: shared::ProcessId = shared::ProcessId(1);
 /// - Process 3 ("cap-test-denied"): NO ChannelCreate cap (for enforcement test)
 pub fn init() {
     use crate::cap;
-    use crate::task::process::{KernelResourceLimits, ProcessControl, ProcessId, PROCESS_TABLE};
+    use crate::task::process::{KernelResourceLimits, ProcessControl, PROCESS_TABLE};
     use crate::task::{CpuSet, SchedulerClass, Thread, THREAD_TABLE};
 
     // --- Create processes ---
@@ -139,8 +142,9 @@ pub fn init() {
     let caller_tid = ThreadId(0x200);
     let server_tid = ThreadId(0x201);
 
-    let ch = channel_create_unchecked(caller_tid);
-    channel_set_peer(ch, server_tid).expect("Failed to set IPC channel peer");
+    // Both endpoints belong to process 1 (the caller and server threads).
+    let ch = channel_create_unchecked(ProcessId(1));
+    channel_set_peer(ch, ProcessId(1)).expect("Failed to set IPC channel peer");
     *TEST_CHANNEL.lock() = Some(ch);
 
     // Grant ChannelAccess for the test channel to process 1.
@@ -214,8 +218,9 @@ pub fn init() {
         let pi_caller_tid = ThreadId(0x300);
         let pi_server_tid = ThreadId(0x301);
 
-        let pi_ch = channel_create_unchecked(pi_caller_tid);
-        channel_set_peer(pi_ch, pi_server_tid).expect("Failed to set PI channel peer");
+        // Both endpoints belong to process 2 (the PI caller and server).
+        let pi_ch = channel_create_unchecked(ProcessId(2));
+        channel_set_peer(pi_ch, ProcessId(2)).expect("Failed to set PI channel peer");
         *PI_TEST_CHANNEL.lock() = Some(pi_ch);
 
         // Grant ChannelAccess for PI channel to process 2.
@@ -298,8 +303,9 @@ pub fn init() {
 }
 
 /// Create a channel without capability checks (for init-time setup).
-/// Used when threads don't exist yet so owner_pid lookup would fail.
-pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
+/// Used when threads don't exist yet so owner_pid lookup would fail: the
+/// caller names the process that owns endpoint A.
+pub(crate) fn channel_create_unchecked(owner: ProcessId) -> ChannelId {
     let mut table = CHANNEL_TABLE.lock();
     let idx = table
         .iter()
@@ -309,7 +315,7 @@ pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
     table[idx] = Some(super::Channel::new(id, owner));
     crate::kinfo!(
         Ipc,
-        "Channel {} created (unchecked) by thread {}",
+        "Channel {} created (unchecked) for pid {}",
         idx,
         owner.0
     );
@@ -323,7 +329,15 @@ pub(crate) fn channel_create_unchecked(owner: ThreadId) -> ChannelId {
 /// IPC server thread: receives requests and sends replies.
 fn ipc_server_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
@@ -375,7 +389,15 @@ fn ipc_server_entry() -> ! {
 /// IPC caller thread: sends requests and receives replies.
 fn ipc_caller_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
@@ -428,11 +450,22 @@ fn ipc_caller_entry() -> ! {
 /// IPC timeout test thread: calls IpcCall on a channel with no receiver
 /// (expects ETIMEDOUT). It then checks EPIPE after channel destroy, EINVAL
 /// for out-of-range channel ids, EINVAL for out-of-range pids on the
-/// SharedMemoryShare path (`shm_bad_pid_test`), and the IpcSelect capability
-/// check (`select_cap_test`).
+/// SharedMemoryShare path (`shm_bad_pid_test`), the IpcSelect capability
+/// check (`select_cap_test`), EINVAL for hostile syscall arguments,
+/// MemoryUnmap ownership and the shared memory EINVAL/EPERM split
+/// (`syscall_args_test`), and the IPC Kit's error variants through
+/// `KernelIpc` (`kit_errors_test`, on `select_cap_test`'s channels).
 fn ipc_timeout_entry() -> ! {
     // Unmask IRQs — enter_scheduler left them masked when it dispatched us.
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     // Create a channel with no server — timeout is guaranteed.
@@ -489,7 +522,8 @@ fn ipc_timeout_entry() -> ! {
     // Out-of-range channel id → EINVAL, not an index-out-of-bounds panic.
     // recv and send are rejected by check_channel_access. reply has no
     // capability check, so it exercises the CHANNEL_TABLE lookup itself.
-    // Log messages are cut at 48 bytes, so keep them short.
+    // A log message keeps at most 96 bytes (two ring entries); longer text
+    // is cut and marked with `~`, so keep these lines short.
     let einval = IpcError::Einval as i64;
     let recv_result = ipc_recv(ChannelId(MAX_CHANNELS as u32), &mut buf, 0);
     let send_result = ipc_send(ChannelId(MAX_CHANNELS as u32), b"BAD_ID");
@@ -507,7 +541,9 @@ fn ipc_timeout_entry() -> ! {
     }
 
     bad_pid::shm_bad_pid_test(caller_tid);
-    select_cap::select_cap_test(caller_tid);
+    let select_channels = select_cap::select_cap_test(caller_tid);
+    syscall_args::syscall_args_test(caller_tid);
+    kit_errors::kit_errors_test(caller_tid, select_channels);
 
     loop {
         sched::thread_yield();
@@ -521,7 +557,15 @@ fn ipc_timeout_entry() -> ! {
 /// PI server: Normal-class server that checks if it was elevated to
 /// Interactive during request processing (via priority inheritance).
 fn pi_server_entry() -> ! {
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {
@@ -613,7 +657,15 @@ fn pi_server_entry() -> ! {
 /// Capability enforcement test: thread in process 3 (no ChannelCreate cap)
 /// attempts to create a channel. Should get EPERM.
 fn cap_denied_entry() -> ! {
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     // Small delay to let other threads initialize.
@@ -634,15 +686,15 @@ fn cap_denied_entry() -> ! {
         Ok(ch) => {
             crate::kwarn!(
                 Cap,
-                "Cap: UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
+                "UNEXPECTED: unauthorized ChannelCreate succeeded (ch={})",
                 ch.0
             );
         }
         Err(e) if e == crate::syscall::IpcError::Eperm as i64 => {
-            crate::kinfo!(Cap, "Cap: unauthorized ChannelCreate -> EPERM (expected)");
+            crate::kinfo!(Cap, "unauthorized ChannelCreate -> EPERM (expected)");
         }
         Err(e) => {
-            crate::kwarn!(Cap, "Cap: unexpected error {} on ChannelCreate", e);
+            crate::kwarn!(Cap, "unexpected error {} on ChannelCreate", e);
         }
     }
 
@@ -653,7 +705,15 @@ fn cap_denied_entry() -> ! {
 
 /// PI caller: Interactive-class caller that exercises priority inheritance.
 fn pi_caller_entry() -> ! {
-    // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
+    // SAFETY: Clearing DAIF.I unmasks IRQs on this CPU only and touches no
+    // memory. This thread holds no lock yet, and VBAR_EL1 on this CPU already
+    // points at the Rust vector table, so an IRQ reaches irq_el1_entry.
+    // kernel_main (CPU 0) and _secondary_entry in boot.S (CPUs 1-3) install
+    // the vectors before any thread runs; the scheduler starts this thread
+    // with IRQs masked.
+    // Unmasking before the vectors were installed would send the next IRQ to
+    // a stale vector and halt the CPU; unmasking while holding a lock that the
+    // IRQ path takes could deadlock this CPU.
     unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
 
     let ch = loop {

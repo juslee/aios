@@ -558,9 +558,9 @@ exit 0
       "accepted": null
     },
     {
-      "key": "lock-order|CLAUDE.md|unknown:VIRTIO_INPUT",
+      "key": "lock-order|.claude/CLAUDE.md|unknown:VIRTIO_INPUT",
       "check": "lock-order",
-      "file": "CLAUDE.md",
+      "file": ".claude/CLAUDE.md",
       "line": 100,
       "also": [],
       "count": 1,

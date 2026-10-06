@@ -34,7 +34,11 @@ const SELECT_TIMEOUT_TICKS: u64 = 10;
 ///
 /// The three EPERM cases each log one expected `denied ChannelAccess`
 /// warning from the capability check.
-pub(super) fn select_cap_test(my_tid: ThreadId) {
+///
+/// Returns `(owned_a, denied)` once the channels exist and the grants
+/// succeeded, for `kit_errors_test`: `owned_a` is accessible to process 1
+/// and left empty, `denied` is not accessible. `None` if setup failed.
+pub(super) fn select_cap_test(my_tid: ThreadId) -> Option<(ChannelId, ChannelId)> {
     // `my_tid` comes from current_thread_id(), which can name another CPU's
     // thread if this one migrates mid-read: grant nothing unless it resolves
     // to the ipc-test process.
@@ -42,17 +46,17 @@ pub(super) fn select_cap_test(my_tid: ThreadId) {
         Some(p) if p == TEST_PID => p,
         other => {
             crate::kwarn!(Ipc, "Select-cap test: wrong owner {:?}", other.map(|p| p.0));
-            return;
+            return None;
         }
     };
 
-    let owned_a = channel_create_unchecked(my_tid);
-    let owned_b = channel_create_unchecked(my_tid);
-    let denied = channel_create_unchecked(my_tid);
+    let owned_a = channel_create_unchecked(pid);
+    let owned_b = channel_create_unchecked(pid);
+    let denied = channel_create_unchecked(pid);
     for ch in [owned_a, owned_b] {
         if crate::cap::grant_to_process(pid, Capability::ChannelAccess(ch), false).is_err() {
             crate::kwarn!(Ipc, "Select-cap test: grant failed");
-            return;
+            return None;
         }
     }
 
@@ -160,4 +164,5 @@ pub(super) fn select_cap_test(my_tid: ThreadId) {
     if passed {
         crate::kinfo!(Ipc, "Select-cap test: EPERM/EINVAL as expected");
     }
+    Some((owned_a, denied))
 }

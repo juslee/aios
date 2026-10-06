@@ -3,9 +3,11 @@
  * VMA: kernel code/data lives at virtual addresses starting near KERNEL_VIRT.
  * LMA: physical load address remains at KERNEL_PHYS (set by AT clause).
  *
- * The VMA is offset by the intra-2MB position of KERNEL_PHYS so that
- * boot.S can use a single 2MB block descriptor to map the kernel:
- *   L2[0] → PA 0x40000000 (2MB-aligned), covering the kernel image.
+ * The VMA is offset by the intra-2MB position of KERNEL_PHYS, which keeps
+ * the VMA-LMA delta 2MB-aligned so that boot.S can map the kernel with
+ * 2MB block descriptors:
+ *   L2[0..3] → PA 0x40000000-0x40800000 (8 MiB), covering the kernel image.
+ * The ASSERT after __kernel_end enforces the fit.
  *
  * PC-relative ADRP+ADD instructions resolve correctly in both physical
  * execution (before TTBR1) and virtual execution (after TTBR1) because
@@ -67,16 +69,60 @@ SECTIONS
     /* Boot stack: 128 KiB, 16-byte aligned (ABI requirement).
        ipc::init() alone uses ~62 KiB (ProcessControl temporaries +
        Thread construction) and nested calls (channel_create ~4.5 KiB)
-       push total past 64 KiB. 128 KiB gives ample headroom. */
-    . = ALIGN(16);
-    __stack_bottom = .;
-    . += 131072;
-    __stack_top = .;
+       push total past 64 KiB. 128 KiB gives ample headroom.
+
+       The stack is an output section, not a bare location-counter
+       advance, so it falls inside the RW PT_LOAD segment's memsz. The
+       UEFI stub allocates pages per PT_LOAD segment and derives
+       BootInfo.kernel_size from them; a stack outside every segment
+       would sit on pages the firmware still reports free (#198).
+       NOLOAD makes it SHT_NOBITS: no file bytes. The stub zero-fills
+       the segment; boot.S does not zero it (it lies past __bss_end). */
+    .stack (NOLOAD) : ALIGN(16) {
+        __stack_bottom = .;
+        . += 131072;
+        __stack_top = .;
+    }
 
     . = ALIGN(4096);
     __data_end = .;
 
     __kernel_end = .;
+
+    /* Until kmap.rs installs the full TTBR1, boot.S's minimal TTBR1 maps
+       only VA [KERNEL_VIRT, KERNEL_VIRT + 8 MiB) (4 x 2 MiB L2 blocks at
+       PA 0x40000000). kernel_main runs on the boot stack through that
+       map, so the whole image, stack included, must fit inside it.
+       The ASSERT sees only the sections named above. lld places a
+       section this script does not name (an orphan) by heuristics, and
+       an allocatable one can land past __kernel_end, outside the check.
+       build.rs therefore passes --orphan-handling=error: a new section
+       fails the link until this script names it, an allocatable one
+       before __kernel_end. */
+    ASSERT(__kernel_end <= KERNEL_VIRT + 0x800000,
+           "kernel image (incl. boot stack) exceeds boot.S's 8 MiB TTBR1 map")
+
+    /* ── Non-allocated sections (no VA, not loaded) ──
+       Named only so that --orphan-handling=error accepts them: the
+       DWARF 4 and DWARF 5 sections rustc emits, then the linker's own
+       symbol tables. A debug section a later toolchain adds fails the
+       link the same way; list it here. */
+    .debug_abbrev      0 : { *(.debug_abbrev) }
+    .debug_info        0 : { *(.debug_info) }
+    .debug_aranges     0 : { *(.debug_aranges) }
+    .debug_line        0 : { *(.debug_line) }
+    .debug_line_str    0 : { *(.debug_line_str) }
+    .debug_str         0 : { *(.debug_str) }
+    .debug_str_offsets 0 : { *(.debug_str_offsets) }
+    .debug_addr        0 : { *(.debug_addr) }
+    .debug_loc         0 : { *(.debug_loc) }
+    .debug_loclists    0 : { *(.debug_loclists) }
+    .debug_ranges      0 : { *(.debug_ranges) }
+    .debug_rnglists    0 : { *(.debug_rnglists) }
+    .debug_names       0 : { *(.debug_names) }
+    .symtab            0 : { *(.symtab) }
+    .strtab            0 : { *(.strtab) }
+    .shstrtab          0 : { *(.shstrtab) }
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

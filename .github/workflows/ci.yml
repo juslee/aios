@@ -62,7 +62,7 @@ jobs:
     # tools/tests/shim.rs reject bashisms; under bash those tests still pass but
     # no longer prove the shim is POSIX. The shim tests build through the real
     # justfile `tools` recipe (with a fake cargo), so they need `just`.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
         with:

@@ -73,9 +73,9 @@ exit 1
   },
   "findings": [
     {
-      "key": "harness-tables|CLAUDE.md|skills-table-stale:ghost",
+      "key": "harness-tables|.claude/CLAUDE.md|skills-table-stale:ghost",
       "check": "harness-tables",
-      "file": "CLAUDE.md",
+      "file": ".claude/CLAUDE.md",
       "line": 0,
       "also": [],
       "count": 1,

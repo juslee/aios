@@ -11,7 +11,8 @@ When implementing Phase N:
 7. **VERIFY**: Run acceptance criteria commands after each step
 8. **COMMIT + PUSH**: After each step passes verification (not batched)
 9. **UPDATE DOCS** after each milestone:
-   - CLAUDE.md: Workspace Layout, Key Technical Facts, Architecture Doc Map
+   - `.claude/CLAUDE.md`: Workspace Layout, Key Technical Facts
+   - `docs/project/doc-map.md`: topic index entries for new or moved architecture docs
    - README.md: Project Structure, Build Commands, status text
    - Phase doc: Check off completed tasks, update Status field
    - Developer guide: file sizes, test counts, new patterns
