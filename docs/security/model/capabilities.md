@@ -106,8 +106,10 @@ impl CapabilityTable {
     /// O(1) lookup by handle
     pub fn get(&self, handle: CapabilityHandle) -> Result<&CapabilityToken> {
         if handle.0 as usize >= MAX_CAPS_PER_PROCESS {
+            // Out of range names a slot no process has: malformed for every
+            // caller, so EINVAL, not EPERM (ipc.md §3.2 errno policy).
             audit_log(self.agent, "INVALID_HANDLE", handle);
-            return Err(Error::EPERM);
+            return Err(Error::EINVAL);
         }
         match &self.tokens[handle.0 as usize] {
             Some(token) if !token.revoked => Ok(token),

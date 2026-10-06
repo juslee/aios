@@ -1010,8 +1010,8 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 |---|---|---|
 | < 100 lines | Small, focused utility | `bump.rs` (~44), `budget.rs` (~55), `heap.rs` (~68), `boot_phase.rs` (~68), `lsm.rs` (~4) |
 | 100--300 lines | Typical module | `uart.rs` (~153), `timer.rs` (~216), `smp.rs` (~220), `wal.rs` (~187), `space.rs` (~196), `object_store.rs` (~256) |
-| 300--500 lines | Larger subsystem | `pgtable.rs` (~436), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
-| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~723), `shmem.rs` (~651), `block_engine.rs` (~783), `bench.rs` (~549) |
+| 300--500 lines | Larger subsystem | `pgtable.rs` (~455), `slab.rs` (~493), `cap/mod.rs` (~395), `service/mod.rs` (~403), `sched/scheduler.rs` (~432), `virtio_blk.rs` (~420), `posix_bridge.rs` (~423) |
+| 500--800 lines | Complex module; consider splitting | `buddy.rs` (~680), `syscall/mod.rs` (~765), `shmem.rs` (~788), `block_engine.rs` (~783), `bench.rs` (~549) |
 | > 800 lines | Must split into submodules | `storage/mod.rs` (~866 — self-tests inflate; consider extracting tests) |
 
 **Guidelines:**
@@ -1024,17 +1024,19 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (504)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports
+  mod.rs          (565)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
   tests/
-    mod.rs        (702)  # Test initialization, thread entries, test-only helpers
+    mod.rs        (757)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
-    select_cap.rs (163)  # IpcSelect capability self-test
-  notify.rs       (376)  # Notification objects (signal/wait)
+    select_cap.rs (168)  # IpcSelect capability self-test
+    syscall_args.rs (225) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    kit_errors.rs (233)  # IPC Kit error variants through KernelIpc (#190) self-test
+  notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
-  shmem.rs        (651)  # Shared memory regions
+  shmem.rs        (788)  # Shared memory regions, private memory (MemoryMap/MemoryUnmap)
 ```
 
 **Scheduler as a split example:** The 840-line `sched/mod.rs` was split into:
@@ -1577,7 +1579,7 @@ Every milestone must pass these gates before it can be considered complete:
 |---|---|---|
 | **Compile** | `cargo build --target aarch64-unknown-none` | Zero warnings |
 | **Check** | `just check` | Zero warnings, zero errors |
-| **Test** | `just test` | All 573+ host-side tests pass |
+| **Test** | `just test` | All 594+ host-side tests pass |
 | **QEMU** | `just run` | UART output matches phase acceptance criteria |
 | **CI** | Push to GitHub | All CI jobs pass |
 | **Objdump** | `cargo objdump -- -h` | Sections at expected VMA/LMA addresses |
@@ -1629,7 +1631,7 @@ just test
 cargo test --workspace --exclude kernel --exclude uefi-stub --exclude aios-tools --target-dir target/host-tests
 ```
 
-Currently 573 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
+Currently 594 tests across: `boot`, `cache`, `cap`, `collections`, `compositor`, `gpu`, `input`, `ipc`, `kaslr`, `kits`, `memory`, `observability`, `sched`, `storage`, `syscall`.
 
 **Adding a new test:**
 
@@ -1722,21 +1724,21 @@ mod tests {
 
 **`no_std` test constraints:** The `shared` crate is `no_std` with `extern crate alloc`, so tests can use `Vec` and heap-backed data structures (the host test runner provides an allocator). Fixed-size arrays are preferred where practical, but `alloc` types are fine for data structures that need dynamic sizing (e.g., `MemTable`, `ObjectIndex`). The `#[cfg(test)]` module inherits the parent's `no_std` setting but `cargo test` links the standard library, so `assert_eq!` and `#[should_panic]` work normally.
 
-**Current test distribution (573 tests):**
+**Current test distribution (594 tests):**
 
 | Module | Tests | Coverage |
 |---|---|---|
 | `storage` | 122 | Content types, block locations, VirtIO constants, struct sizes, WAL entry, CRC-32C, MemTable, ObjectIndex, SpaceTable, POSIX types, compression, budget, pressure levels, space quotas |
 | `cap` | 69 | Capability permissions, token lifecycle, table grant/revoke/cascade/attenuate/list |
 | `compositor` | 56 | Surface state machine, Z-order, damage tracking, focus history, hit zones, input routing, title truncation, command/event wire format |
-| `ipc` | 53 | Channel IDs and `ChannelId::index`, message validation, select entries, service names, user VA checks |
+| `ipc` | 61 | Channel IDs and `ChannelId::index`, message validation, select entries and the `RawSelectEntry` wire format, service names, user VA checks (page 0 rejected) |
 | `memory` | 41 | Buddy math, pool config, order_for_pages, ticks_to_ns, BenchStats |
-| `kits` | 40 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips, memory PagePermissions W^X validation, compute surface types, storage re-exports |
+| `kits` | 43 | Kit trait dyn-compatibility, capability/IPC error i64 conversions and round trips (`IpcKitError::from_code`), memory PagePermissions W^X validation, compute surface types, storage re-exports |
 | `input` | 37 | evdev constants, keycode and keymap translation, modifiers, absolute-to-display scaling, VirtIO input struct layout |
 | `gpu` | 28 | GPU command/response wire format and sizes, fence tracker, pixel formats, error status mapping |
 | `sched` | 23 | Thread state, scheduler class, CpuSet, resource limits, priority, `ProcessId::index` |
 | `boot` | 22 | BootInfo validation, EarlyBootPhase ordering, memory descriptors |
-| `syscall` | 21 | Syscall numbering, IpcError codes, `id_arg` register decoding |
+| `syscall` | 31 | Syscall numbering, IpcError codes and `TryFrom<i64>`, `id_arg`, `cap_handle_arg` and `flags_arg` register decoding |
 | `collections` | 18 | FixedQueue, RingBuffer edge cases |
 | `observability` | 18 | Log level ordering, subsystem tags |
 | `cache` | 14 | `CTR_EL0` decode (DminLine, IDC, DIC), per-cache-line address walk over a range |
@@ -1791,7 +1793,7 @@ Results go to `target/soak/<timestamp>-<mode>/`. Override with `out=DIR`, which 
 
 **Wedge or cut short.** A boot that misses rule 1, 2 or 3 is a `WEDGE` only if it had more than `stall_secs` to get there, measured to the planned end of the boot from its last progress: the last heartbeat advance for rules 1 and 2 (before any heartbeat: the kernel start, or failing that QEMU start), and the bench header for rule 3 (before the header: the first heartbeat). Otherwise it is `INCONCLUSIVE`, for example a kernel that started late on a loaded host. Missing gpu markers (rule 4) are always a `WEDGE`, since they only matter once the bench has completed. The script warns when `secs` is less than `stall_secs` + 20 s, because QEMU start to the bench takes about 6–8 s. A wedge that starts within the last `stall_secs` of a boot goes unnoticed, so the effective observation window is roughly `secs − boot time − stall_secs`.
 
-**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`) and the edk2 noise before the stub do not affect classification.
+**Per-boot diagnostics.** Each boot records the last heartbeat tick, the markers it reached (`EL1`, `BOOT` = "Boot sequence complete", `G1PASS`, `G1DONE`, and in gpu mode `GPU`, `INPUT`, `HANDOFF`), the first fatal line, and the last three kernel INFO lines before the failure. It also records `lb_last`, which says whether the last of those lines was a `Load balance: migrated` message. Treat the INFO lines and `lb_last` as hints only: CPU 0 drains INFO lines from per-CPU rings asynchronously, so lines logged just before a fatal report can appear after it (or never), and `lb_last` is not recorded for `CLEAN` boots, so it has no baseline rate. The footer's `hb_max_gap` traces CPU 0 stalls that recovered after the bench completed, which the class does not capture; when it exceeds `stall_secs` the detail says "heartbeat paused Ns after the bench completed". It has the harness's 1 s polling resolution. The deterministic self-test warnings (`denied ChannelAccess`, `Timeout test: unexpected result -6`, `Destroy test: unexpected result Err(-6)`, and from the #188/#190 syscall-argument and Kit errno self-tests `denied SharedMemoryCreate`, `denied SharedMemoryAccess(N)`, `shm_create: W^X violation`, `shm_map: flags not subset of max_flags` and `shm_unmap: not mapped`) and the edk2 noise before the stub do not affect classification.
 
 **Re-classifying saved logs.** `scripts/soak-qemu.sh --classify LOG...` runs the same classifier on existing logs. Logs written by the harness carry their timing in the `[soak] meta` line (footers from before `kstart`/`hb_first`/`bench_start` existed fall back to `WEDGE` where those times would be needed). Any other serial log is classified from its content alone, which cannot detect a heartbeat that stops after `tick=0` or tell a cut-short boot from a wedge.
 
