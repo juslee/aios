@@ -23,7 +23,8 @@
 //! kernel buffer being copied included. The scheduler's per-thread TTBR0
 //! switch must establish the precondition before the first EL0 process runs.
 //! No EL0 process exists today, and the kernel self-tests that call
-//! `syscall_dispatch` pass only ranges the check rejects.
+//! `syscall_dispatch` pass only ranges the check rejects, or a zero-length
+//! one, which the copies never touch.
 //!
 //! Nothing recovers from a fault yet, and PAN is not configured: an unmapped
 //! or inaccessible user page takes an EL1 data abort, which halts the CPU
@@ -65,6 +66,16 @@ pub(super) fn copy_from_user(dst: &mut [u8], src: usize) -> Result<(), i64> {
     // frame included, so an EL0 caller could copy out kernel memory; an
     // unmapped page, or an address TTBR0 does not translate, takes an EL1
     // data abort and halts the CPU.
+    // Concurrency: the copy also needs no other thread to write the source
+    // range while it runs. That holds today because no EL0 thread exists and
+    // the kernel self-tests pass only ranges the check rejects or empty
+    // ones. Once a process has several EL0 threads, one may write the range
+    // from another CPU mid-copy; callers then see a torn snapshot, which is
+    // harmless to them because they decode and check only `dst` and never
+    // re-read the user bytes, but a non-atomic read racing a write is still
+    // undefined behaviour for `copy_nonoverlapping`. The work that adds
+    // fault recovery here must replace it with an asm byte copy before the
+    // first EL0 process runs.
     unsafe { core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len()) };
     Ok(())
 }
@@ -93,6 +104,15 @@ pub(super) fn copy_to_user(dst: usize, src: &[u8]) -> Result<(), i64> {
     // frame included, so an EL0 caller could overwrite kernel memory; an
     // unmapped or read-only page, or an address TTBR0 does not translate,
     // takes an EL1 data abort and halts the CPU.
+    // Concurrency: the copy also needs no other thread to read or write the
+    // destination range while it runs. That holds today because no EL0
+    // thread exists and the kernel self-tests pass only ranges the check
+    // rejects or empty ones. Once a process has several EL0 threads, one may
+    // access the range from another CPU mid-copy; it then sees torn bytes,
+    // which is its own race since the kernel never reads the range back, but
+    // a non-atomic write racing another access is still undefined behaviour
+    // for `copy_nonoverlapping`. The work that adds fault recovery here must
+    // replace it with an asm byte copy before the first EL0 process runs.
     unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len()) };
     Ok(())
 }

@@ -537,7 +537,7 @@ fn ipc_timeout_entry() -> ! {
 
     bad_pid::shm_bad_pid_test(caller_tid);
     let select_channels = select_cap::select_cap_test(caller_tid);
-    syscall_args::syscall_args_test(caller_tid);
+    syscall_args::syscall_args_test(caller_tid, select_channels.map(|(open, _)| open));
     kit_errors::kit_errors_test(caller_tid, select_channels);
 
     loop {

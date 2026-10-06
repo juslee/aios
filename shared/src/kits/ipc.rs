@@ -147,11 +147,13 @@ impl From<IpcError> for IpcKitError {
     /// must override it:
     /// - EPERM maps to `CapabilityDenied`, since every capability check
     ///   returns it (docs/kernel/ipc.md §3.2), but some EPERMs are not a
-    ///   missing capability. Every syscall that checks no capability returns
+    ///   missing capability. These syscalls check no capability but return
     ///   EPERM when the caller has no current thread or no process:
     ///   IpcReply, NotificationCreate, MemoryMap, MemoryUnmap,
     ///   CapabilityAttenuate, CapabilityRevoke, CapabilityList, ProcessExit,
-    ///   ProcessWait, AuditLog and SharedMemoryShare. Some of them also
+    ///   ProcessWait, AuditLog and SharedMemoryShare. (NotificationSignal,
+    ///   DebugPrint, TimeGet and TimeSleep look up no thread or process, and
+    ///   NotificationWait returns EINVAL without one.) Some of them also
     ///   return it for other reasons: an unmap of a region the caller has
     ///   not mapped (MemoryUnmap of a shared window address, or the
     ///   in-kernel shared_memory_unmap behind `shmem_unmap`),

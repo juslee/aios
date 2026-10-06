@@ -310,22 +310,31 @@ fn msg_payload(msg: &RawMessage) -> Result<&[u8], IpcKitError> {
 /// The first channel entry in `entries` whose `ChannelAccess` the calling
 /// thread's process does not hold, looked up without logging a denial (the
 /// `ipc_select` call that failed already logged it).
+///
+/// The lookup runs after `ipc_select` has returned, so a `ChannelAccess`
+/// grant can land in between and leave every channel entry held. The result
+/// is then the first channel entry: `ipc_select` returns EPERM only for a set
+/// with at least one channel entry (`select::check_channel_entries`), and the
+/// caller lacked one of them when it checked. `None` means the set has no
+/// channel entry at all.
 fn first_denied_channel(entries: &[SelectEntry]) -> Option<ChannelId> {
     let now = crate::arch::aarch64::timer::TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     let pid = crate::cap::current_process_id();
     let table = crate::task::process::PROCESS_TABLE.lock();
     let proc = pid.and_then(|p| crate::task::process::process_ref(&table, p).ok());
-    entries.iter().find_map(|entry| match entry.kind {
-        SelectKind::Channel(ch)
-            if !proc.is_some_and(|p| {
+    let mut channels = entries.iter().filter_map(|entry| match entry.kind {
+        SelectKind::Channel(ch) => Some(ch),
+        SelectKind::Notification(..) => None,
+    });
+    let first = channels.clone().next();
+    channels
+        .find(|&ch| {
+            !proc.is_some_and(|p| {
                 p.cap_table
                     .has_capability(&Capability::ChannelAccess(ch), now)
-            }) =>
-        {
-            Some(ch)
-        }
-        _ => None,
-    })
+            })
+        })
+        .or(first)
 }
 
 impl ipc_kit::ChannelOps for KernelIpc {
@@ -469,7 +478,12 @@ impl ipc_kit::SelectOps for KernelIpc {
                 Some(ch) => IpcKitError::CapabilityDenied {
                     required: Capability::ChannelAccess(ch),
                 },
-                None => IpcKitError::from_code(code),
+                // ipc_select checks no capability for a set without channel
+                // entries, so its EPERM always comes with a channel entry and
+                // this arm is not reached; it must not claim a capability.
+                None => IpcKitError::InvalidArgument {
+                    reason: "select set has no channel entry",
+                },
             },
             _ => IpcKitError::from_code(code),
         })

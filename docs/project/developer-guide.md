@@ -1024,7 +1024,7 @@ AIOS kernel files follow standard Rust community size expectations, adjusted for
 
 ```text
 ipc/
-  mod.rs          (565)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
+  mod.rs          (579)  # Channel struct, CHANNEL_TABLE, create/destroy, re-exports, IPC Kit impl
   channel.rs      (501)  # ipc_call, ipc_recv, ipc_reply, ipc_send, ipc_cancel
   timeout.rs      (185)  # Timeout queue, sleep helpers, wakeup error delivery
   direct.rs       (320)  # Direct switch fast path, priority inheritance, reply switch
@@ -1032,7 +1032,7 @@ ipc/
     mod.rs        (757)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (168)  # IpcSelect capability self-test
-    syscall_args.rs (225) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    syscall_args.rs (296) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
     kit_errors.rs (233)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)

@@ -11,7 +11,7 @@ use crate::task::process::ProcessId;
 use crate::task::ThreadId;
 use shared::{
     Capability, ChannelId, NotificationId, RawSelectEntry, SelectEntry, SelectKind, Syscall,
-    MAX_NOTIFICATIONS,
+    MAX_NOTIFICATIONS, USER_VA_MIN,
 };
 
 use super::bad_pid::{revoke_region_access, revoke_token, token_id};
@@ -45,7 +45,7 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// every id cannot pass checks 13-14 alone.
 ///
 /// Runs in the ipc-timeout thread `my_tid` (process 1). Rejected calls change
-/// no state and grant nothing. Checks 0-20 and 26-31 log no warning; checks
+/// no state and grant nothing. Checks 0-20 and 26-38 log no warning; checks
 /// 21-25 (#190) log the kernel's usual W^X, max_flags and denied-capability
 /// warnings. The one MemoryMap allocation is freed by the
 /// test's own exact unmap, the one shared region by its unmap once the
@@ -60,6 +60,17 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// out-of-memory warning overflowed a shift and panicked the kernel in a
 /// build with overflow checks.
 ///
+/// IpcRecv and IpcCall validate their buffers before the call (checks
+/// 32-36), on `open`, a channel process 1 can access and that is empty
+/// (`select_cap_test`'s `owned_a`): a later copy-out would also return
+/// EINVAL, but only after the receive had consumed a message or the call had
+/// sent one. IpcRecv gets a bad buffer while one message is queued, which a
+/// later in-kernel receive must still find; IpcCall gets an empty send
+/// buffer at `USER_VA_MIN` (valid at length 0) and a page-0 or null reply
+/// buffer, and the ring must stay empty. A late check would make IpcCall
+/// time out after one tick instead. `open` is left empty for
+/// `kit_errors_test`. The checks fail if `open` is `None`.
+///
 /// MemoryUnmap, which freed direct-map addresses before #188, gets the
 /// direct-map address of physical page 0 instead of a stack buffer: that
 /// page is in no allocator pool, so a regression that freed it would reach
@@ -68,7 +79,7 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 ///
 /// Logs one line: the success text, or the bitmask of failed checks (bit n
 /// is check n below).
-pub(super) fn syscall_args_test(my_tid: ThreadId) {
+pub(super) fn syscall_args_test(my_tid: ThreadId, open: Option<ChannelId>) {
     match crate::cap::process_of_thread(my_tid) {
         Some(p) if p == TEST_PID => {}
         other => {
@@ -98,7 +109,7 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
         .position(Option::is_none)
         .unwrap_or(MAX_NOTIFICATIONS) as u64;
 
-    let mut checks = [false; 32];
+    let mut checks = [false; 39];
 
     // User pointers: null, page 0 and kernel addresses are EINVAL.
     checks[0] = svc(Syscall::DebugPrint, &[0, 4]) == einval;
@@ -142,11 +153,14 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     // SharedMemoryCreate and for SharedMemoryMap of any in-range id.
     checks[21] = svc(Syscall::SharedMemoryCreate, &[PAGE, WRITE_EXECUTE]) == einval;
     checks[22] = svc(Syscall::SharedMemoryMap, &[0, WRITE_EXECUTE]) == einval;
-    let [beyond_max, mapped, denied, oversize] = shm_rights_checks(TEST_PID);
+    let [beyond_max, mapped, denied, oversize, high_bits, undefined_bit] =
+        shm_rights_checks(TEST_PID);
     checks[23] = beyond_max;
     checks[24] = mapped;
     checks[25] = denied;
     checks[26] = oversize;
+    checks[37] = high_bits;
+    checks[38] = undefined_bit;
 
     // A capability handle past the table is malformed, not a missing
     // capability: EINVAL, before any table lookup. A MemoryMap above 64
@@ -168,11 +182,21 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
         notify::notification_destroy(NotificationId(id as u32));
     }
 
+    if let Some(open) = open {
+        let [recv_null, recv_page_zero, kept, call_rejected, nothing_sent] =
+            bad_buffer_checks(open, page_zero);
+        checks[32] = recv_null;
+        checks[33] = recv_page_zero;
+        checks[34] = kept;
+        checks[35] = call_rejected;
+        checks[36] = nothing_sent;
+    }
+
     let failed = checks
         .iter()
         .enumerate()
         .filter(|(_, ok)| !**ok)
-        .fold(0u32, |mask, (i, _)| mask | 1 << i);
+        .fold(0u64, |mask, (i, _)| mask | 1 << i);
     // Log messages are cut at 48 bytes, so keep them short.
     if failed == 0 {
         crate::kinfo!(Ipc, "Syscall-arg test: errnos as expected");
@@ -181,23 +205,59 @@ pub(super) fn syscall_args_test(my_tid: ThreadId) {
     }
 }
 
+/// IpcRecv and IpcCall on `open` with bad buffers (checks 32-36 of
+/// `syscall_args_test`). Returns `[recv_null, recv_page_zero, kept,
+/// call_rejected, nothing_sent]`, with `kept` and `nothing_sent` false if the
+/// message could not be queued. Drains `open` before it returns, whatever
+/// the results.
+fn bad_buffer_checks(open: ChannelId, page_zero: u64) -> [bool; 5] {
+    let einval = IpcError::Einval as i64;
+    let channel = open.0 as u64;
+    let mut buf = [0u8; 4];
+    let mut result = [false; 5];
+
+    let queued = crate::ipc::ipc_send(open, b"TEST") == 0;
+    result[0] = svc(Syscall::IpcRecv, &[channel, 0, 4, 0]) == einval;
+    result[1] = svc(Syscall::IpcRecv, &[channel, page_zero, 4, 0]) == einval;
+    // The message is still queued: neither rejected receive consumed it.
+    result[2] = queued && crate::ipc::ipc_recv(open, &mut buf, 0).map(|(n, _)| n) == Ok(4);
+
+    // A valid empty send buffer and a bad reply buffer: EINVAL before the
+    // call sends anything, so the ring stays empty.
+    let user_va_min = USER_VA_MIN as u64;
+    result[3] = svc(
+        Syscall::IpcCall,
+        &[channel, user_va_min, 0, page_zero, 4, 1],
+    ) == einval
+        && svc(Syscall::IpcCall, &[channel, user_va_min, 0, 0, 4, 1]) == einval;
+    result[4] = queued && crate::ipc::ipc_recv(open, &mut buf, 0) == Err(IpcError::Eagain as i64);
+
+    // Leave `open` empty for kit_errors_test even after a failed check.
+    while crate::ipc::ipc_recv(open, &mut buf, 0).is_ok() {}
+    result
+}
+
 /// On a READ-only region that process `pid` (the calling thread's process)
 /// creates: SharedMemoryMap with WRITE, beyond the region's `max_flags`, is
-/// EINVAL; a READ map succeeds; and once SharedMemoryAccess is revoked the
-/// same map is EPERM. While SharedMemoryCreate is held, a SharedMemoryCreate
-/// of 2^50 bytes, above the largest region (4 MiB), is EINVAL.
+/// EINVAL; SharedMemoryMap with READ plus bit 32, or with the undefined bit
+/// 3, is EINVAL while SharedMemoryAccess is held (a masking decode would map
+/// the region there); a READ map succeeds; and once SharedMemoryAccess is revoked
+/// the same map is EPERM. While SharedMemoryCreate is held, a
+/// SharedMemoryCreate of 2^50 bytes, above the largest region (4 MiB), is
+/// EINVAL.
 ///
-/// Returns `[beyond_max, mapped, denied, oversize]`, one flag per check, all
-/// false if the grant fails and the first three false if the region could
-/// not be created. Like `shm_bad_pid_test`, it revokes the
-/// SharedMemoryCreate token it granted right after the create, and every
-/// SharedMemoryAccess token of the region before the unmap that frees it.
-fn shm_rights_checks(pid: ProcessId) -> [bool; 4] {
+/// Returns `[beyond_max, mapped, denied, oversize, high_bits,
+/// undefined_bit]`, one flag per check, all false if the grant fails and
+/// all but `oversize` false if the region could not be created. Like
+/// `shm_bad_pid_test`, it revokes the SharedMemoryCreate token it granted
+/// right after the create, and every SharedMemoryAccess token of the region
+/// before the unmap that frees it.
+fn shm_rights_checks(pid: ProcessId) -> [bool; 6] {
     let create_token = crate::cap::grant_to_process(pid, Capability::SharedMemoryCreate, false)
         .ok()
         .and_then(|handle| token_id(pid, handle));
     let Some(create_token) = create_token else {
-        return [false; 4];
+        return [false; 6];
     };
     // The size is checked before the capability, but with the capability
     // held a missing bound would reach the allocation and its warning.
@@ -205,12 +265,16 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 4] {
     let created = shmem::shared_memory_create(pid, PAGE as usize, VmFlags::READ);
     revoke_token(pid, create_token);
     let Ok(region) = created else {
-        return [false, false, false, oversize];
+        return [false, false, false, oversize, false, false];
     };
 
     let map = |flags: u64| svc(Syscall::SharedMemoryMap, &[region.0 as u64, flags]);
     // The region's limit, not the caller's rights: EINVAL.
     let beyond_max = map(READ_WRITE) == IpcError::Einval as i64;
+    // Undefined bits are EINVAL even with the right held: bit 32 above READ,
+    // and bit 3 (USER), which no caller may set.
+    let high_bits = map(0x1_0000_0001) == IpcError::Einval as i64;
+    let undefined_bit = map(0b1000) == IpcError::Einval as i64;
     // The creator holds SharedMemoryAccess(region), so READ maps.
     let mapped = map(READ) > 0;
     revoke_region_access(pid, region);
@@ -221,5 +285,12 @@ fn shm_rights_checks(pid: ProcessId) -> [bool; 4] {
     if mapped {
         let _ = shmem::shared_memory_unmap(pid, region);
     }
-    [beyond_max, mapped, denied, oversize]
+    [
+        beyond_max,
+        mapped,
+        denied,
+        oversize,
+        high_bits,
+        undefined_bit,
+    ]
 }
