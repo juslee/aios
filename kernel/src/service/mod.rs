@@ -326,6 +326,15 @@ fn echo_server_entry() -> ! {
     }
 }
 
+/// Endpoint states (A, B) of `channel`, or `None` if the channel is gone.
+fn channel_endpoint_states(channel: ChannelId) -> Option<(ipc::EndpointState, ipc::EndpointState)> {
+    let table = ipc::CHANNEL_TABLE.lock();
+    channel
+        .index()
+        .and_then(|idx| table[idx].as_ref())
+        .map(|ch| (ch.state_a, ch.state_b))
+}
+
 /// Echo client test thread: sends "hello" to echo service, expects "ECHO:hello" back.
 /// Then demonstrates service death by calling process_exit.
 fn echo_client_entry() -> ! {
@@ -367,6 +376,15 @@ fn echo_client_entry() -> ! {
         crate::kwarn!(Ipc, "Echo client: ipc_call failed with {}", result);
     }
 
+    // Probe channels for the process_exit endpoint walk. The echo channel has
+    // pid 7 on both endpoints, so it cannot tell an endpoint-A match from an
+    // endpoint-B match. `peer_ch` has pid 7 only on endpoint B; `other_ch`
+    // has no endpoint owned by pid 7 and must stay Active.
+    let peer_ch = ipc::channel_create_unchecked(ProcessId(0));
+    let other_ch = ipc::channel_create_unchecked(ProcessId(0));
+    let peer_set = ipc::channel_set_peer(peer_ch, ProcessId(7)).is_ok()
+        && ipc::channel_set_peer(other_ch, ProcessId(0)).is_ok();
+
     // Demonstrate service death: exit process 7.
     crate::kinfo!(Ipc, "Echo client: triggering process_exit for pid=7");
     crate::task::process::process_exit(ProcessId(7), 0);
@@ -374,15 +392,36 @@ fn echo_client_entry() -> ! {
     // process_exit marks both endpoints of the echo channel Dead: process 7
     // owns them. Check the state directly, so the result does not depend on
     // whether the echo server thread ever ran.
-    let endpoints_dead = {
-        let table = ipc::CHANNEL_TABLE.lock();
-        svc_ch
-            .index()
-            .and_then(|idx| table[idx].as_ref())
-            .map(|ch| {
-                ch.state_a == ipc::EndpointState::Dead && ch.state_b == ipc::EndpointState::Dead
-            })
-    };
+    let dead = (ipc::EndpointState::Dead, ipc::EndpointState::Dead);
+    let active = (ipc::EndpointState::Active, ipc::EndpointState::Active);
+    let peer_states = channel_endpoint_states(peer_ch);
+    let other_states = channel_endpoint_states(other_ch);
+    if peer_set && peer_states == Some(dead) && other_states == Some(active) {
+        crate::kinfo!(
+            Ipc,
+            "Echo client: process_exit matched endpoint B, spared other pid (expected)"
+        );
+    } else {
+        crate::kwarn!(
+            Ipc,
+            "Echo client: process_exit endpoint walk wrong (peer set {}, B-owned {:?}, other {:?})",
+            peer_set,
+            peer_states,
+            other_states
+        );
+    }
+    for probe in [peer_ch, other_ch] {
+        if let Err(e) = ipc::channel_destroy_unchecked(probe) {
+            crate::kwarn!(
+                Ipc,
+                "Echo client: probe channel {} destroy failed: {}",
+                probe.0,
+                e
+            );
+        }
+    }
+
+    let endpoints_dead = channel_endpoint_states(svc_ch).map(|states| states == dead);
     match endpoints_dead {
         Some(true) => crate::kinfo!(
             Ipc,
