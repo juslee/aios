@@ -6,9 +6,12 @@
 //! One JSON line per relevant event goes to `route-outcome.jsonl`, next to
 //! `route-shadow.jsonl`. The join for the evaluation is
 //! `route-shadow.tool_use_id = launched.tool_use_id` and
-//! `launched.agent_id = stopped.agent_id`. A subagent that a stop gate sends back
-//! to work stops again, so the `stopped` records of one `agent_id` count its stop
-//! attempts.
+//! `launched.agent_id = stopped.agent_id`. The second equality is not documented
+//! (`tool_response.agentId` and the `SubagentStop` `agent_id` are never said to be
+//! one value), so it holds only once a real dispatch shows both fields equal; both
+//! are stored as given. A subagent that a stop gate sends back to work stops
+//! again, so the `stopped` records of one `agent_id` count its stop attempts; that
+//! count uses `SubagentStop`'s own field and does not depend on the join.
 
 use std::path::Path;
 
