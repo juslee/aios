@@ -59,9 +59,10 @@ jobs:
     # tests, including the docs-check parity goldens. The real-repository goldens
     # replay a pinned main commit, so the checkout needs full history. The same
     # history holds the deleted scripts/docs/check.py, which the differential
-    # test runs with CPython 3.14 from setup-python: the image's python3 is 3.12
-    # (Unicode 15.0), whose \d lacks 80 of the 760 digits aios's \d matches
-    # (Unicode 16.0), and the test accepts only an interpreter on Unicode 16.0.0.
+    # test runs with CPython 3.14 from setup-python, whatever the image's own
+    # python3 is: the test accepts only an interpreter on Unicode 16.0.0, the
+    # version aios's \d matches (CPython 3.12 and 3.13, on Unicode 15.x, lack
+    # 80 of its 760 digits).
     # AIOS_REQUIRE_CHECK_PY makes that test fail rather than skip if python3,
     # its Unicode version or the history is ever wrong or missing here.
     # Pinned: /bin/sh is dash on this image, so `sh -n` and `#!/bin/sh` in

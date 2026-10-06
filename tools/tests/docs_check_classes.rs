@@ -62,11 +62,11 @@ fn assert_like_check_py(repo: &TestRepo, args: &[&str], code: i32, stdout: &str)
 
 /// check.py's stdout for `decimal_digits_in_links_paths_and_names`.
 const DIGITS_LINKS: &str = "\
-docs-check: 3 findings across 4 checks - 3 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
+docs-check: 4 findings across 4 checks - 4 new, 0 baselined (0 accepted false positives), 0 resolved (baseline scripts/docs/baseline.json)
 
   check              total   new
   md-links               1     1
-  section-refs           1     1
+  section-refs           2     2
   repo-paths             1     1
   knowledge-hygiene      0     0
 
@@ -76,6 +76,7 @@ New drift since baseline:
  + docs/a.md:7: broken link -> missing-list.md
 
 [section-refs]
+ + docs/a.md:3: no §1.٥ heading in docs/other.md or its hub members
  + docs/a.md:3: no §٤ heading in docs/other.md or its hub members
 
 [repo-paths]
@@ -201,8 +202,10 @@ No new drift since baseline.
 ";
 
 /// `\d` in `SECTION_REF_RE` (§٤ is reported, §٣ and §３.٢ resolve through
-/// `HEADING_NUM_RE`), `LIST_ITEM_RE` (after `١.` an indented line is a list continuation,
-/// not code), `LINE_SUFFIX_RE` (`:١٢` is a line suffix) and `KNOWLEDGE_NAME_RE`.
+/// `HEADING_NUM_RE`, and §1.٥ is reported whole, not resolved as §1, which pins the
+/// fractional `\.\d+`), `LIST_ITEM_RE` (after `١.` an indented line is a list
+/// continuation, not code), every `\d` of `LINE_SUFFIX_RE` (`:١٢`, the range end in
+/// `:1-١٢` and the comma list in `:1,٣` are line suffixes) and `KNOWLEDGE_NAME_RE`.
 #[test]
 fn decimal_digits_in_links_paths_and_names() {
     let repo = TestRepo::with_files(
@@ -211,17 +214,19 @@ fn decimal_digits_in_links_paths_and_names() {
             (
                 "docs/a.md",
                 "# A\n\n\
-                 See [o](other.md) §٣, [o](other.md) §٤ and [o](other.md) §３.٢.\n\n\
+                 See [o](other.md) §٣, [o](other.md) §٤, [o](other.md) §３.٢ and \
+                 [o](other.md) §1.٥.\n\n\
                  ١. A numbered item\n\n\
                  \x20   [under the list item](missing-list.md)\n",
             ),
             (
                 "docs/other.md",
-                "# Other\n\n## ٣ Arabic three\n\n### ３.٢ Mixed\n",
+                "# Other\n\n## 1 One\n\n## ٣ Arabic three\n\n### ３.٢ Mixed\n",
             ),
             (
                 "CLAUDE.md",
-                "# C\n\nCode in `kernel/src/main.rs:١٢` and `kernel/src/gone.rs:٣`.\n",
+                "# C\n\nCode in `kernel/src/main.rs:١٢`, `kernel/src/main.rs:1-١٢`, \
+                 `kernel/src/main.rs:1,٣` and `kernel/src/gone.rs:٣`.\n",
             ),
             ("kernel/src/main.rs", "fn main() {}\n"),
             (

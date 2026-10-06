@@ -606,6 +606,15 @@ pub fn check_py_object() -> String {
 /// together.
 pub const ORACLE_UNIDATA_VERSION: &str = "16.0.0";
 
+/// The flags every oracle interpreter run starts with. `-E` ignores every `PYTHON*`
+/// variable, so the developer's `PYTHONPATH` (a `sitecustomize.py`, or a module
+/// shadowing `re` or `unicodedata`), `PYTHONHOME`, `PYTHONSTARTUP` or
+/// `PYTHONIOENCODING` cannot change what the pinned interpreter running the pinned
+/// script prints. It also ignores the `PYTHONUTF8` and `PYTHONDONTWRITEBYTECODE` that
+/// `isolated()` sets, so `-X utf8` and `-B` restate them. Not `-I`: it would also change
+/// `sys.path[0]`, which `CHECK_PY_BOOTSTRAP` sets itself.
+const ORACLE_FLAGS: [&str; 4] = ["-E", "-X", "utf8", "-B"];
+
 /// Prints the interpreter's version and its `unicodedata` version, space-separated.
 const VERSION_PROBE: &str =
     "import sys, unicodedata; print(sys.version.split()[0], unicodedata.unidata_version)";
@@ -638,17 +647,21 @@ fn materialize_check_py() -> Result<CheckPy, String> {
     let interpreter = python3_interpreter()
         .ok_or("python3 is not available (not on PATH, or it does not run)")?
         .clone();
-    let probe = isolated(Command::new(&interpreter).args(["-c", VERSION_PROBE]))
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .ok_or_else(|| {
-            format!(
-                "{} cannot report its version in the isolated test environment",
-                interpreter.display()
-            )
-        })?;
+    let probe = isolated(
+        Command::new(&interpreter)
+            .args(ORACLE_FLAGS)
+            .args(["-c", VERSION_PROBE]),
+    )
+    .output()
+    .ok()
+    .filter(|out| out.status.success())
+    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    .ok_or_else(|| {
+        format!(
+            "{} cannot report its version in the isolated test environment",
+            interpreter.display()
+        )
+    })?;
     let (python, unidata) = probe.split_once(' ').ok_or_else(|| {
         format!(
             "{} printed {probe:?} for its version",
@@ -756,6 +769,7 @@ pub fn run_check_py(root: &Path, cwd: &Path, args: &[&str]) -> Run {
     let oracle = check_py().unwrap_or_else(|reason| panic!("check.py is unavailable: {reason}"));
     let out = isolated(
         Command::new(&oracle.interpreter)
+            .args(ORACLE_FLAGS)
             .arg("-c")
             .arg(CHECK_PY_BOOTSTRAP)
             .arg(&oracle.script)
