@@ -1032,7 +1032,7 @@ ipc/
     mod.rs        (758)  # Test initialization, thread entries, test-only helpers
     bad_pid.rs    (158)  # Out-of-range pid self-test on the SharedMemoryShare path
     select_cap.rs (170)  # IpcSelect capability self-test
-    syscall_args.rs (305) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
+    syscall_args.rs (332) # Syscall argument hardening (#188) and shared memory errno (#190) self-test
     kit_errors.rs (243)  # IPC Kit error variants through KernelIpc (#190) self-test
   notify.rs       (380)  # Notification objects (signal/wait)
   select.rs       (359)  # IPC select (multi-wait)
