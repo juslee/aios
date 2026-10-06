@@ -46,6 +46,10 @@ pub extern "C" fn kernel_main(boot_info_ptr: u64) -> ! {
     // the first IRQ-class lock (kinfo! try-locks BOOT_LOG), which stamps its
     // CPU id from it. boot.S wrote it just before branching here.
     observability::tripwire::check_tpidr();
+    // The kernel text bounds for the restore-site checks, as virtual
+    // addresses: taken here, at VA on CPU 0, before smp starts the
+    // secondaries, whose IRQ path runs at physical-alias PCs.
+    observability::tripwire::capture_text_layout();
 
     kinfo!(Boot, "AIOS kernel booting...");
 

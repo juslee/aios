@@ -25,6 +25,10 @@
 //!   [`note_send_wake`], [`note_reply_switch`]): the N2 counters. Wakers mark
 //!   a wake in flight ([`mark_wake_pending`]) when they take a thread's last
 //!   waiter reference.
+//! - Restore-site checks (N5): [`check_restore`] counts a saved PC outside
+//!   the kernel text (`pcnull`, `pcphys`, `pcother`) or a saved SP outside
+//!   the thread's stack (`spbad`) before each `restore_context`, against the
+//!   text bounds `kernel_main` captured ([`capture_text_layout`]).
 //! - CPU ids: [`cpu_here`] reads MPIDR_EL1 Aff0, and [`cpu_tpidr`] the copy
 //!   boot.S puts in TPIDR_EL1, which the IRQ-class lock stamps with.
 //!   [`check_tpidr`] and [`note_dispatch`] count a mismatch (`tpidrbad`).
@@ -55,7 +59,8 @@
 //! instructions to them. The dispatch and IRQ-context functions follow the
 //! same rules: `schedule()` and `irq_handler_el1` call them in the timer IRQ.
 //! So do [`note_unblock`], [`note_unblock_target`], [`mark_wake_pending`] and
-//! [`clear_wake_pending`], which the timeout scans reach from the timer IRQ.
+//! [`clear_wake_pending`], which the timeout scans reach from the timer IRQ,
+//! and [`check_restore`], which `schedule()` calls.
 //! The counters use `Relaxed` load and store only: each CPU writes only its
 //! own row, with IRQs masked, so no atomic read-modify-write is needed. The
 //! flags, the per-CPU dispatch state and the per-thread stamps are plain
@@ -67,14 +72,15 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use shared::lock::TID_NONE;
 use shared::tripwire::{
-    self, ClearResult, CpuCounters, Key, LineMode, LineSrc, Sink, UnblockKind, UnblockOutcome,
-    WakeSource, IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE,
+    self, ClearResult, CpuCounters, Key, LineMode, LineSrc, Sink, TextLayout, UnblockKind,
+    UnblockOutcome, WakeSource, IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE,
     PHASE_PUBLISHED,
 };
 
-use crate::arch::aarch64::{timer, uart};
+use crate::arch::aarch64::{mmu, timer, uart};
+use crate::sched::STACK_SIZE;
 use crate::smp::{self, MAX_CORES};
-use crate::task::{ThreadId, ThreadState, MAX_THREADS};
+use crate::task::{ThreadContext, ThreadId, ThreadState, MAX_THREADS, NEW_KERNEL_SP_OFFSET};
 
 const _: () = assert!(tripwire::MAX_CPUS == MAX_CORES);
 const _: () = assert!(tripwire::MASK_TIDS as usize == MAX_THREADS);
@@ -548,6 +554,93 @@ pub fn reset_thread_stamps(slot: usize) {
         if let Some(chan) = chans.get(slot) {
             chan.store(0, Ordering::Relaxed);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Restore-site checks (N5)
+// ---------------------------------------------------------------------------
+
+/// `__text_start` as a kernel virtual address, or 0 before
+/// [`capture_text_layout`].
+static TEXT_LO: AtomicU64 = AtomicU64::new(0);
+
+/// `__text_end` (exclusive) as a kernel virtual address, or 0 before
+/// [`capture_text_layout`].
+static TEXT_HI: AtomicU64 = AtomicU64::new(0);
+
+// Linker-defined bounds of the kernel text (linker.ld). Only their addresses
+// are taken, never their contents.
+extern "C" {
+    static __text_start: u8;
+    static __text_end: u8;
+}
+
+/// Capture the kernel text bounds for [`check_restore`], as virtual
+/// addresses.
+///
+/// `kernel_main` calls it on CPU 0 at thread level, before `smp` starts the
+/// secondaries, and it runs at its link-time virtual address there, so the
+/// `adrp`-based symbol addresses are VAs (as in `kmap`). The restore sites
+/// must not compute them: on CPUs 1-3 the IRQ path, and with it
+/// `schedule()`, runs at physical-alias PCs, where the same symbols give
+/// physical addresses (Design §2.11). The secondaries are started after this
+/// store, so their loads see it.
+pub fn capture_text_layout() {
+    let lo = (&raw const __text_start).addr() as u64;
+    let hi = (&raw const __text_end).addr() as u64;
+    TEXT_LO.store(lo, Ordering::Relaxed);
+    TEXT_HI.store(hi, Ordering::Relaxed);
+}
+
+/// Check the context `restore_context` is about to load (N5), count only.
+///
+/// Called right before each of the 5 `restore_context` calls (after the
+/// dispatch's THREAD_TABLE guard is dropped), with IRQs masked:
+///
+/// - the saved PC: `pcnull` for 0, `pcphys` for the physical alias of the
+///   kernel text, `pcother` for anything else outside the text or
+///   misaligned (`shared::tripwire::classify_pc`, against the bounds
+///   [`capture_text_layout`] took);
+/// - the saved SP: `spbad` unless it lies in
+///   `[phys_to_virt(stack_phys), phys_to_virt(stack_phys) + STACK_SIZE]`.
+///   A context dispatched for the first time (`old_last_cpu` is
+///   [`LAST_CPU_NEVER`], the value [`note_dispatch`] returned) is exempt
+///   while its SP is still [`Thread::new_kernel`]'s physical default,
+///   `stack_phys + NEW_KERNEL_SP_OFFSET`.
+///
+/// It never panics and changes nothing: the restore goes ahead whatever it
+/// finds. All arithmetic wraps, so a corrupt `stack_phys` cannot overflow.
+///
+/// [`Thread::new_kernel`]: crate::task::Thread::new_kernel
+#[inline(never)]
+pub fn check_restore(ctx: *const ThreadContext, stack_phys: usize, old_last_cpu: u8) {
+    debug_assert!(read_daif() & DAIF_I != 0);
+    // SAFETY: every caller passes a pointer to the `context` of a thread slot
+    // in THREAD_TABLE, which is a static, so it is valid and aligned. The
+    // thread was just made Running and current on this CPU, so no other
+    // stream writes its context until restore_context has loaded it; the
+    // caller reads the same fields next (assert_valid_ctx, restore_context).
+    // A dangling pointer would be read here instead of in restore_context,
+    // which would fault the same way an instant later.
+    let (pc, sp) = unsafe { ((*ctx).pc, (*ctx).sp) };
+    let here = cpu_here();
+
+    let text = TextLayout {
+        lo: TEXT_LO.load(Ordering::Relaxed),
+        hi: TEXT_HI.load(Ordering::Relaxed),
+    };
+    if let Some(key) = tripwire::classify_pc(pc, text, mmu::VIRT_PHYS_OFFSET).key() {
+        add_row(here, key, 0, 1);
+    }
+
+    let phys = stack_phys as u64;
+    let base = phys.wrapping_add(mmu::DIRECT_MAP_BASE as u64);
+    let top = base.wrapping_add(STACK_SIZE as u64);
+    let first_default =
+        old_last_cpu == LAST_CPU_NEVER && sp == phys.wrapping_add(NEW_KERNEL_SP_OFFSET as u64);
+    if !first_default && !(base..=top).contains(&sp) {
+        add_row(here, Key::Spbad, 0, 1);
     }
 }
 

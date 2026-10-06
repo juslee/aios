@@ -129,6 +129,13 @@ const _: () = assert!(core::mem::size_of::<FpContext>() == 528);
 /// Maximum threads system-wide.
 pub const MAX_THREADS: usize = 64;
 
+/// The offset from a thread's physical stack base at which
+/// [`Thread::new_kernel`] puts its initial, physical `sp`. Every kernel thread
+/// creator then replaces that `sp` with the stack's virtual top; the
+/// tripwire's restore-site check exempts a never-dispatched context that
+/// still has this default (`observability::tripwire::check_restore`).
+pub const NEW_KERNEL_SP_OFFSET: usize = 4 * PAGE_SIZE;
+
 /// A kernel or user thread.
 #[allow(dead_code)]
 pub struct Thread {
@@ -154,8 +161,9 @@ impl Thread {
     /// Create a new kernel thread.
     ///
     /// Sets up the context so that when this thread is first switched to,
-    /// execution begins at `entry_fn` with the stack at `stack_phys + 4*PAGE_SIZE`
-    /// (top of a 16 KiB stack, growing downward).
+    /// execution begins at `entry_fn` with `sp` at the physical address
+    /// `stack_phys + NEW_KERNEL_SP_OFFSET`. Callers replace `sp` with the
+    /// virtual top of the stack before the thread first runs.
     ///
     /// PSTATE = 0x3C5: EL1h, DAIF all masked (the thread unmasks as needed).
     /// TTBR0 = 0 (kernel threads don't have a user address space).
@@ -183,7 +191,7 @@ impl Thread {
             },
             context: ThreadContext {
                 gp_regs: [0; 31],
-                sp: (stack_phys + 4 * PAGE_SIZE) as u64,
+                sp: (stack_phys + NEW_KERNEL_SP_OFFSET) as u64,
                 pc: entry_fn as u64,
                 pstate: 0x3C5, // EL1h, DAIF masked
                 ttbr0: 0,

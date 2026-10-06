@@ -85,10 +85,13 @@ pub fn enter_scheduler() -> ! {
                 thread.sched.state = ThreadState::Running;
                 // Set this thread as current on this CPU.
                 *CURRENT_THREAD[cpu].lock() = Some(tid);
-                tripwire::note_dispatch(cpu, tid, DispatchSite::Enter);
+                let last_cpu = tripwire::note_dispatch(cpu, tid, DispatchSite::Enter);
                 let ctx_ptr = &thread.context as *const ThreadContext;
+                let stack_phys = thread.stack_phys;
                 drop(table);
 
+                // Count a saved PC or SP outside kernel text or the stack (N5).
+                tripwire::check_restore(ctx_ptr, stack_phys, last_cpu);
                 assert_valid_ctx(ctx_ptr, tid);
                 // Count rsthold if this stream still holds a lock stamped
                 // with the generation note_dispatch just started.
@@ -268,9 +271,10 @@ pub fn schedule(origin: Origin) {
         };
 
         // Set next thread as running.
-        let next_ctx_ptr = if let Some(thread) = &mut table[next_tid.0 as usize] {
+        let (next_ctx_ptr, next_stack_phys) = if let Some(thread) = &mut table[next_tid.0 as usize]
+        {
             thread.sched.state = ThreadState::Running;
-            &thread.context as *const ThreadContext
+            (&thread.context as *const ThreadContext, thread.stack_phys)
         } else {
             IN_SCHEDULER[cpu].store(false, Ordering::Release);
             return;
@@ -278,7 +282,7 @@ pub fn schedule(origin: Origin) {
 
         // Update current thread tracking.
         *CURRENT_THREAD[cpu].lock() = Some(next_tid);
-        tripwire::note_dispatch(cpu, next_tid, DispatchSite::Schedule);
+        let next_last_cpu = tripwire::note_dispatch(cpu, next_tid, DispatchSite::Schedule);
         if origin == Origin::Irq {
             // A switch from the IRQ return path; irqsw0 when this CPU had no
             // current thread to save.
@@ -324,6 +328,7 @@ pub fn schedule(origin: Origin) {
             // SAFETY: next_ctx_ptr points to the next thread's ThreadContext.
             // restore_context loads callee-saved regs, SP, and branches to
             // the saved PC. This never returns.
+            tripwire::check_restore(next_ctx_ptr, next_stack_phys, next_last_cpu);
             assert_valid_ctx(next_ctx_ptr, next_tid);
             crate::sync::note_restore();
             unsafe { restore_context(next_ctx_ptr) };
@@ -331,6 +336,7 @@ pub fn schedule(origin: Origin) {
             // No current thread (first schedule on this CPU).
             IN_SCHEDULER[cpu].store(false, Ordering::Release);
             // SAFETY: next_ctx_ptr is valid (checked above).
+            tripwire::check_restore(next_ctx_ptr, next_stack_phys, next_last_cpu);
             assert_valid_ctx(next_ctx_ptr, next_tid);
             crate::sync::note_restore();
             unsafe { restore_context(next_ctx_ptr) };
