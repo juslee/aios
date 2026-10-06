@@ -42,6 +42,11 @@ MAX_ERROR_STREAK=3
 MIN_ARM_BASE=7167d408f6a43ca9859fb6238f608ca6bdee37d6
 # soak-qemu.sh's default --stall-secs; it refuses a --secs that is not larger.
 HARNESS_STALL_SECS=15
+# Upper bounds for --runs and --secs. They keep every product of the two
+# well inside the shell's 64-bit arithmetic (4 arms x 1000 x 3600 s is 160
+# days of boots), so no size computed from them can wrap.
+MAX_RUNS=1000
+MAX_SECS=3600
 
 usage() {
     cat <<'EOF'
@@ -61,9 +66,9 @@ is an A/A control: it shows how far two identical arms drift apart by
 chance.
 
 Options:
-  --runs N          rounds, i.e. boots per arm (default 30)
-  --secs T          wall-clock seconds per boot (default 90); must be more
-                    than 15, the harness's --stall-secs
+  --runs N          rounds, i.e. boots per arm, 1-1000 (default 30)
+  --secs T          wall-clock seconds per boot, 16-3600 (default 90); must
+                    be more than 15, the harness's --stall-secs
   --mode text|gpu   QEMU device set, as soak-qemu.sh --mode (default text)
   --out DIR         output directory; must be new or empty
                     (default target/soak-matrix/<timestamp>-<mode>)
@@ -155,11 +160,20 @@ note() {
     printf 'soak-matrix: %s\n' "$*"
 }
 
-is_uint() {
-    case "$1" in
+# uint_in_range VALUE MIN MAX -- print VALUE as a plain decimal and succeed
+# when it is a whole number from MIN to MAX. Leading zeros are dropped first
+# (so 030 is 30, not octal 24), and a VALUE with more digits than MAX is
+# refused before any arithmetic, so a huge VALUE cannot wrap the shell's
+# 64-bit integers into range.
+uint_in_range() {
+    local v=$1
+    case "$v" in
         '' | *[!0-9]*) return 1 ;;
-        *) return 0 ;;
     esac
+    v=${v#"${v%%[!0]*}"}
+    [ -n "$v" ] || v=0
+    [ "${#v}" -le "${#3}" ] && [ "$v" -ge "$2" ] && [ "$v" -le "$3" ] || return 1
+    printf '%s\n' "$v"
 }
 
 need_value() {
@@ -801,14 +815,14 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$N" -ge 2 ] && [ "$N" -le "$MAX_ARMS" ] || die "give 2-$MAX_ARMS refs, got $N (see --help)"
-is_uint "$RUNS" && [ "$RUNS" -ge 1 ] || die "--runs must be a positive integer"
-is_uint "$SECS" || die "--secs must be a positive integer"
-# Decimal even with a leading zero ($(( )) reads 030 as octal).
-RUNS=$((10#$RUNS))
-SECS=$((10#$SECS))
-# Checked here, before any build: every arm's harness refuses it on round 1.
-[ "$SECS" -gt "$HARNESS_STALL_SECS" ] ||
-    die "--secs must be more than $HARNESS_STALL_SECS (soak-qemu.sh's --stall-secs), got $SECS"
+v=$(uint_in_range "$RUNS" 1 "$MAX_RUNS") ||
+    die "--runs must be a whole number from 1 to $MAX_RUNS, got '$RUNS'"
+RUNS=$v
+# The lower bound is checked here, before any build: every arm's harness
+# refuses a --secs that is not above its --stall-secs on round 1.
+v=$(uint_in_range "$SECS" $((HARNESS_STALL_SECS + 1)) "$MAX_SECS") ||
+    die "--secs must be a whole number from $((HARNESS_STALL_SECS + 1)) (above soak-qemu.sh's --stall-secs) to $MAX_SECS, got '$SECS'"
+SECS=$v
 case "$MODE" in
     text | gpu) ;;
     *) die "--mode must be text or gpu, got '$MODE'" ;;

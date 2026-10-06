@@ -46,12 +46,12 @@ on:
         required: true
         type: string
       runs:
-        description: "Rounds, i.e. boots per arm"
+        description: "Rounds, i.e. boots per arm (1-1000)"
         required: false
         default: 30
         type: number
       secs:
-        description: "Seconds per boot, more than 15 (x86 TCG is slower than the arm64 dev hosts)"
+        description: "Seconds per boot, 16-3600 (x86 TCG is slower than the arm64 dev hosts)"
         required: false
         default: 90
         type: number
@@ -143,28 +143,39 @@ jobs:
               exit 1
             fi
           done
+          # Whole numbers only, leading zeros dropped (bash would read 030
+          # as octal), and at most 4 digits before any arithmetic, so a huge
+          # value cannot wrap the 64-bit products below into range.
           for v in "$RUNS" "$SECS"; do
             case "$v" in
-              '' | *[!0-9]*) echo "::error::runs and secs must be positive integers"; exit 1 ;;
+              '' | *[!0-9]*) echo "::error::runs and secs must be whole numbers (got '$v')"; exit 1 ;;
             esac
+            v=${v#"${v%%[!0]*}"}
+            if [ "${#v}" -gt 4 ]; then
+              echo "::error::runs and secs must be at most 1000 and 3600 (got $v)"
+              exit 1
+            fi
           done
-          # 10#: decimal even with a leading zero (bash reads 030 as octal).
           runs=$((10#$RUNS))
           secs=$((10#$SECS))
-          if [ "$runs" -lt 1 ]; then
-            echo "::error::runs must be a positive integer"
+          # soak-matrix.sh's own bounds (--runs 1-1000, --secs 16-3600).
+          if [ "$runs" -lt 1 ] || [ "$runs" -gt 1000 ]; then
+            echo "::error::runs must be from 1 to 1000 (got $runs)"
             exit 1
           fi
           # soak-qemu.sh refuses a --secs that is not above its --stall-secs (15).
-          if [ "$secs" -le 15 ]; then
-            echo "::error::secs must be more than 15 (the harness's stall limit)"
+          if [ "$secs" -le 15 ] || [ "$secs" -gt 3600 ]; then
+            echo "::error::secs must be more than 15 (the harness's stall limit) and at most 3600 (got $secs)"
             exit 1
           fi
           boot_min=$(( (arms * runs * (secs + 15) + 59) / 60 ))
           soak_min=$(( boot_min + 5 * arms + 10 ))
           echo "Plan: $arms arms x $runs rounds x ($secs s + 15 s) = $boot_min min of boots; soak step limit $soak_min min"
+          # Arms are compared only within one dispatch (one runner), so a
+          # soak that does not fit is made smaller, never split across
+          # dispatches.
           if [ "$soak_min" -gt 340 ]; then
-            echo "::error::the soak needs about $soak_min min, over the 340 min this job can give it; lower runs or secs, or split the arms over two dispatches"
+            echo "::error::the soak needs about $soak_min min, over the 340 min this job can give it; lower runs or secs, or dispatch fewer arms (keep both arms of each compared pair in the same dispatch: arms from different dispatches ran on different runners and must never be compared)"
             exit 1
           fi
           echo "soak_minutes=$soak_min" >> "$GITHUB_OUTPUT"
