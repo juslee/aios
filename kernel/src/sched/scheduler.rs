@@ -5,7 +5,7 @@
 
 use core::sync::atomic::Ordering;
 
-use shared::tripwire::Key;
+use shared::tripwire::{Key, UnblockOutcome, WakeSource};
 
 use crate::arch::aarch64::exceptions;
 use crate::arch::aarch64::timer::NEED_RESCHED;
@@ -405,7 +405,14 @@ pub fn block_current(new_state: ThreadState) {
 ///
 /// Saves and restores DAIF state to avoid unmasking IRQs when called from
 /// IRQ context (e.g., check_timeouts → wake_with_error → unblock).
-pub fn unblock(tid: ThreadId) {
+///
+/// `src` names the caller for the tripwire counters (`ubrun`, `ubrbl`,
+/// `ubdead`, `ubnone`, `ubmove` by source). The returned outcome is what
+/// `unblock` did, with the target's call or receive phase for the reply,
+/// send and call wakers; it is instrumentation only, and callers that do not
+/// classify a wake ignore it. An out-of-range `tid` counts `badtid` and
+/// `ubnone` and returns, like an empty slot.
+pub fn unblock(tid: ThreadId, src: WakeSource) -> UnblockOutcome {
     // Save current DAIF state so we can restore it on exit.
     // SAFETY: Reading DAIF is a pure register read with no side effects.
     let daif: u64;
@@ -419,30 +426,41 @@ pub fn unblock(tid: ThreadId) {
     unsafe { core::arch::asm!("msr DAIFSet, #0x2") };
 
     let mut table = THREAD_TABLE.lock();
-    let (class, affinity) = if let Some(thread) = &mut table[tid.0 as usize] {
-        // Guard: only unblock threads that are actually blocked.
-        // Prevents double-enqueue if a thread is already Running/Runnable.
-        match thread.sched.state {
-            ThreadState::Running | ThreadState::Runnable => {
-                drop(table);
-                if !irqs_were_masked {
-                    // SAFETY: Restore IRQ state. Safe at EL1.
-                    unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+    // Count the outcome by source and snapshot the target's phase under this
+    // hold, so the phase is read at the same instant as the state decided on.
+    let outcome = tripwire::note_unblock(
+        tid,
+        src,
+        table
+            .get(tid.0 as usize)
+            .and_then(Option::as_ref)
+            .map(|thread| &thread.sched.state),
+    );
+    let (class, affinity) =
+        if let Some(thread) = table.get_mut(tid.0 as usize).and_then(Option::as_mut) {
+            // Guard: only unblock threads that are actually blocked.
+            // Prevents double-enqueue if a thread is already Running/Runnable.
+            match thread.sched.state {
+                ThreadState::Running | ThreadState::Runnable => {
+                    drop(table);
+                    if !irqs_were_masked {
+                        // SAFETY: Restore IRQ state. Safe at EL1.
+                        unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+                    }
+                    return outcome;
                 }
-                return;
+                _ => {}
             }
-            _ => {}
-        }
-        thread.sched.state = ThreadState::Runnable;
-        thread.sched.time_slice_remaining = default_slice(thread.sched.effective_class);
-        (thread.sched.effective_class, thread.sched.affinity)
-    } else {
-        if !irqs_were_masked {
-            // SAFETY: Restore IRQ state. Safe at EL1.
-            unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
-        }
-        return;
-    };
+            thread.sched.state = ThreadState::Runnable;
+            thread.sched.time_slice_remaining = default_slice(thread.sched.effective_class);
+            (thread.sched.effective_class, thread.sched.affinity)
+        } else {
+            if !irqs_were_masked {
+                // SAFETY: Restore IRQ state. Safe at EL1.
+                unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
+            }
+            return outcome;
+        };
     drop(table);
 
     // Find a suitable CPU (prefer current CPU if allowed).
@@ -453,6 +471,7 @@ pub fn unblock(tid: ThreadId) {
         // Find first allowed CPU.
         (0..MAX_CORES).find(|&c| affinity.contains(c)).unwrap_or(0)
     };
+    tripwire::note_unblock_target(tid, src, target);
 
     RUN_QUEUES[target].lock().enqueue(tid, class);
 
@@ -462,6 +481,7 @@ pub fn unblock(tid: ThreadId) {
         // SAFETY: DAIFClr #0x2 clears the IRQ mask bit. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
     }
+    outcome
 }
 
 // ---------------------------------------------------------------------------

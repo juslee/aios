@@ -25,6 +25,8 @@ use crate::arch::aarch64::exceptions;
 use crate::observability::metrics::METRICS;
 use crate::observability::tripwire::{self, DispatchSite};
 use crate::task::{ThreadContext, ThreadId, ThreadState, CURRENT_THREAD, THREAD_TABLE};
+use shared::tripwire::{ClearResult, Key};
+use shared::ChannelId;
 
 // Re-export from shared crate so kernel code can use `direct::MAX_INHERITANCE_DEPTH`.
 pub use shared::MAX_INHERITANCE_DEPTH;
@@ -67,6 +69,7 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
 
     // Bounds check.
     if sender_idx >= table.len() || receiver_idx >= table.len() {
+        tripwire::bump_masked(Key::Badtid, 0);
         drop(table);
         // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -209,7 +212,17 @@ pub fn try_direct_switch(sender_tid: ThreadId, receiver_tid: ThreadId) -> bool {
 ///
 /// This function also restores the replier's original scheduling priority
 /// (undoing the priority inheritance from the call path).
-pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
+///
+/// `channel` and `clear` (the reply's own `clear_timeout` result for the
+/// caller) are instrumentation only: once the caller is validated, the
+/// tripwire classifies the wake against the caller's call phase and counts
+/// `misrep` if the caller was not waiting in a call on `channel`.
+pub fn try_reply_switch(
+    replier_tid: ThreadId,
+    caller_tid: ThreadId,
+    channel: ChannelId,
+    clear: ClearResult,
+) -> bool {
     let cpu = exceptions::core_id() as usize;
 
     // Mask IRQs for context switch.
@@ -222,6 +235,7 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
     let caller_idx = caller_tid.0 as usize;
 
     if replier_idx >= table.len() || caller_idx >= table.len() {
+        tripwire::bump_masked(Key::Badtid, 0);
         drop(table);
         // SAFETY: DAIFClr #0x2 clears the IRQ mask bit, restoring interrupts. Safe at EL1.
         unsafe { core::arch::asm!("msr DAIFClr, #0x2") };
@@ -248,6 +262,10 @@ pub fn try_reply_switch(replier_tid: ThreadId, caller_tid: ThreadId) -> bool {
             }
         }
     }
+
+    // The switch will happen: classify the reply's wake of the caller (the
+    // caller is blocked, so its call phase is stable under THREAD_TABLE).
+    tripwire::note_reply_switch(caller_tid, u64::from(channel.0), clear);
 
     // --- Restore replier's original priority (undo inheritance) ---
     {

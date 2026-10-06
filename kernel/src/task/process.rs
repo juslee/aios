@@ -11,7 +11,9 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use super::{ThreadId, ThreadState, THREAD_TABLE};
 use crate::cap::CapabilityTable;
 use crate::mm::uspace::UserAddressSpace;
+use crate::observability::tripwire;
 use crate::syscall::IpcError;
+use shared::tripwire::WakeSource;
 use spin::Mutex;
 
 // Re-export shared types.
@@ -159,16 +161,20 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
                 ch.state_a = shared::EndpointState::Dead;
                 ch.state_b = shared::EndpointState::Dead;
                 // Collect threads to wake outside the lock.
+                // A collected thread's wake is in flight until
+                // wake_with_error reaches unblock.
                 if let Some(tid) = ch.waiting_receiver.take() {
                     if epipe_count < epipe_wakeups.len() {
                         epipe_wakeups[epipe_count] = Some(tid);
                         epipe_count += 1;
+                        tripwire::mark_wake_pending(tid, WakeSource::PExit);
                     }
                 }
                 if let Some(tid) = ch.pending_caller.take() {
                     if epipe_count < epipe_wakeups.len() {
                         epipe_wakeups[epipe_count] = Some(tid);
                         epipe_count += 1;
+                        tripwire::mark_wake_pending(tid, WakeSource::PExit);
                     }
                 }
             }
@@ -178,7 +184,11 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
     // Deliver EPIPE wakeups outside the channel lock.
     for wakeup in epipe_wakeups.iter().take(epipe_count) {
         if let Some(tid) = *wakeup {
-            crate::ipc::wake_with_error(tid, crate::syscall::IpcError::Epipe as i64);
+            crate::ipc::wake_with_error(
+                tid,
+                crate::syscall::IpcError::Epipe as i64,
+                WakeSource::PExit,
+            );
         }
     }
 
@@ -192,7 +202,7 @@ pub fn process_exit(pid: ProcessId, exit_code: i32) {
     {
         let mut waiters = PROCESS_WAITERS.lock();
         if let Some(waiter_tid) = waiters[idx].take() {
-            crate::sched::unblock(waiter_tid);
+            crate::sched::unblock(waiter_tid, WakeSource::PWait);
         }
     }
 }

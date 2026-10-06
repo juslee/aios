@@ -9,6 +9,7 @@ use crate::sched;
 use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 use shared::lock::LockClass;
+use shared::tripwire::{BadchanSite, Key, WakeSource};
 use shared::{SelectEntry, SelectKind, MAX_SELECT_ENTRIES};
 
 /// Per-thread select registration: what sources a BlockedSelect thread is
@@ -67,6 +68,7 @@ pub fn ipc_select(entries: &[SelectEntry], timeout_ticks: u64) -> Result<(usize,
         match entry.kind {
             SelectKind::Channel(ch_id) => {
                 if ch_id.index().is_none() {
+                    crate::observability::tripwire::bump(Key::Badchan, BadchanSite::Select.index());
                     return Err(IpcError::Einval as i64);
                 }
             }
@@ -292,8 +294,9 @@ fn unregister_from_sources(tid: ThreadId, entries: &[SelectEntry]) {
 /// and from notification_signal when bits match.
 ///
 /// Returns true if the thread was select-woken (caller should NOT do
-/// separate unblock).
-pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64) -> bool {
+/// separate unblock). `src` names the caller for the tripwire's per-source
+/// `unblock` counters.
+pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64, src: WakeSource) -> bool {
     // Check thread state first (cheap — avoids SELECT_WAITERS lock if not select-blocked).
     let is_select = {
         let table = crate::task::THREAD_TABLE.lock();
@@ -326,7 +329,7 @@ pub fn try_wake_select(tid: ThreadId, source_kind: SelectKind, bits: u64) -> boo
                 sw.ready_index = Some(i);
                 sw.ready_bits = bits;
                 drop(waiters);
-                sched::unblock(tid);
+                sched::unblock(tid, src);
                 return true;
             }
         }

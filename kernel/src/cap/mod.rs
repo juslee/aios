@@ -96,6 +96,10 @@ pub fn check_channel_create(pid: ProcessId) -> Result<CapabilityTokenId, i64> {
 /// the id up in CHANNEL_TABLE.
 pub fn check_channel_access(pid: ProcessId, channel: shared::ChannelId) -> Result<(), i64> {
     if channel.index().is_none() {
+        crate::observability::tripwire::bump(
+            shared::tripwire::Key::Badchan,
+            shared::tripwire::BadchanSite::Cap.index(),
+        );
         return Err(IpcError::Einval as i64);
     }
 

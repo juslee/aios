@@ -7,10 +7,12 @@
 use core::sync::atomic::Ordering;
 
 use crate::arch::aarch64::timer::TICK_COUNT;
+use crate::observability::tripwire;
 use crate::sched;
 use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 use shared::lock::LockClass;
+use shared::tripwire::{ClearResult, Key, WakeSource};
 use spin::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,9 @@ pub fn check_timeouts() {
             if now >= te.wake_at_tick {
                 expired[count] = (te.tid, te.error_code);
                 count += 1;
+                // The entry was the thread's timeout waker: its wake is in
+                // flight until wake_with_error reaches unblock.
+                tripwire::mark_wake_pending(te.tid, WakeSource::To);
                 *entry = None;
             }
         }
@@ -114,7 +119,7 @@ pub fn check_timeouts() {
 
     // Wake expired threads outside the lock.
     for &(tid, error) in expired[..count].iter() {
-        wake_with_error(tid, error);
+        wake_with_error(tid, error, WakeSource::To);
     }
 
     // Also check notification/select deadlines (separate table).
@@ -139,7 +144,9 @@ pub fn current_thread_id() -> Option<ThreadId> {
 /// We store the error code in a per-thread wakeup error slot so the
 /// thread can check it after being unblocked. Also clears any pending
 /// timeout entry to prevent stale timeouts from firing later.
-pub(crate) fn wake_with_error(tid: ThreadId, error: i64) {
+///
+/// `src` names the caller for the tripwire's per-source `unblock` counters.
+pub(crate) fn wake_with_error(tid: ThreadId, error: i64, src: WakeSource) {
     // Store error in the wakeup error slot.
     {
         let mut errors = WAKEUP_ERRORS.lock();
@@ -149,7 +156,7 @@ pub(crate) fn wake_with_error(tid: ThreadId, error: i64) {
     // different reason (cancel, destroy, etc.), so the timeout must
     // not fire later and overwrite this error code.
     clear_timeout(tid);
-    sched::unblock(tid);
+    sched::unblock(tid, src);
 }
 
 /// Get and clear the wakeup error for a thread. Returns 0 if no error.
@@ -163,13 +170,26 @@ pub(super) fn get_wakeup_error(tid: ThreadId) -> i64 {
 /// Clear any pending timeout entry for a thread.
 /// Called when a thread is woken by a non-timeout path (reply, send,
 /// cancel, destroy) to prevent stale timeouts from firing later.
-pub(super) fn clear_timeout(tid: ThreadId) {
+///
+/// Returns what it found, for the tripwire's N2 classification: the reply,
+/// send and call wakers pass their own result to it. A busy TIMEOUT_QUEUE
+/// leaves the entry and counts `ctbusy`.
+pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
     if let Some(mut tq) = TIMEOUT_QUEUE.try_lock() {
-        tq[tid.0 as usize] = None;
+        let entry = &mut tq[tid.0 as usize];
+        let found = entry.is_some();
+        *entry = None;
+        return if found {
+            ClearResult::Removed
+        } else {
+            ClearResult::Absent
+        };
     }
     // If the lock is contended (IRQ handler running check_timeouts),
     // skip — the timeout handler will see the thread is already awake
     // and the wakeup error slot is already set, so it's benign.
+    tripwire::bump(Key::Ctbusy, 0);
+    ClearResult::Busy
 }
 
 /// Sleep the current thread for the given number of ticks.

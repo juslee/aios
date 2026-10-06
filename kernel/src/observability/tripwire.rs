@@ -17,6 +17,14 @@
 //!   `irq_handler_el1` and `schedule()` keep the per-CPU IRQ context label
 //!   ([`irq_enter`], [`irq_preempt_check`], [`irq_leave`], [`irq_ctx`],
 //!   [`set_irq_ctx`]).
+//! - Wake attribution: `unblock` reports each wake by source
+//!   ([`note_unblock`], [`note_unblock_target`]). The IPC wait paths store
+//!   their call and receive phases ([`wait_published`], [`wait_armed`],
+//!   [`wait_ended`]), and the reply, send and call wakers classify a skipped
+//!   or misdirected wake against them ([`note_reply_wake`],
+//!   [`note_send_wake`], [`note_reply_switch`]): the N2 counters. Wakers mark
+//!   a wake in flight ([`mark_wake_pending`]) when they take a thread's last
+//!   waiter reference.
 //! - CPU ids: [`cpu_here`] reads MPIDR_EL1 Aff0, and [`cpu_tpidr`] the copy
 //!   boot.S puts in TPIDR_EL1, which the IRQ-class lock stamps with.
 //!   [`check_tpidr`] and [`note_dispatch`] count a mismatch (`tpidrbad`).
@@ -46,6 +54,8 @@
 //! and they are `#[inline(never)]`, so a disassembly attributes their
 //! instructions to them. The dispatch and IRQ-context functions follow the
 //! same rules: `schedule()` and `irq_handler_el1` call them in the timer IRQ.
+//! So do [`note_unblock`], [`note_unblock_target`], [`mark_wake_pending`] and
+//! [`clear_wake_pending`], which the timeout scans reach from the timer IRQ.
 //! The counters use `Relaxed` load and store only: each CPU writes only its
 //! own row, with IRQs masked, so no atomic read-modify-write is needed. The
 //! flags, the per-CPU dispatch state and the per-thread stamps are plain
@@ -57,12 +67,14 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use shared::lock::TID_NONE;
 use shared::tripwire::{
-    self, CpuCounters, Key, LineMode, LineSrc, Sink, IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD,
+    self, ClearResult, CpuCounters, Key, LineMode, LineSrc, Sink, UnblockKind, UnblockOutcome,
+    WakeSource, IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE,
+    PHASE_PUBLISHED,
 };
 
 use crate::arch::aarch64::{timer, uart};
 use crate::smp::{self, MAX_CORES};
-use crate::task::{ThreadId, MAX_THREADS};
+use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 
 const _: () = assert!(tripwire::MAX_CPUS == MAX_CORES);
 const _: () = assert!(tripwire::MASK_TIDS as usize == MAX_THREADS);
@@ -355,7 +367,9 @@ static LAST_RUN: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_TH
 
 /// Per thread slot: a waker has taken the thread's last waiter reference and
 /// has not yet run `unblock` (the source's `WakeSource::marker`), or 0.
-/// Cleared when the thread is dispatched.
+/// Set by [`mark_wake_pending`]; cleared by `unblock` ([`note_unblock`]), by
+/// a dispatch of the thread, and where a marked wake is abandoned
+/// ([`clear_wake_pending`]).
 static WAKE_PENDING: [AtomicU8; MAX_THREADS] = [const { AtomicU8::new(0) }; MAX_THREADS];
 
 /// Per thread slot: `TICK_COUNT` when `WAKE_PENDING` was last set.
@@ -510,7 +524,8 @@ pub fn note_repick(tid: ThreadId) {
 }
 
 /// Reset the per-thread stamps of thread slot `slot` for a new thread:
-/// `LAST_CPU` never, `LAST_RUN` now, no wake in flight. `allocate_thread`
+/// `LAST_CPU` never, `LAST_RUN` now, no wake in flight, no call or receive
+/// phase. `allocate_thread`
 /// calls it with THREAD_TABLE held, before it fills the slot.
 pub fn reset_thread_stamps(slot: usize) {
     if let Some(last_cpu) = LAST_CPU.get(slot) {
@@ -524,6 +539,237 @@ pub fn reset_thread_stamps(slot: usize) {
     }
     if let Some(wake_at) = WAKE_AT.get(slot) {
         wake_at.store(0, Ordering::Relaxed);
+    }
+    for side in [WaitSide::Call, WaitSide::Recv] {
+        let (phases, chans) = wait_slots(side);
+        if let Some(phase) = phases.get(slot) {
+            phase.store(PHASE_IDLE, Ordering::Relaxed);
+        }
+        if let Some(chan) = chans.get(slot) {
+            chan.store(0, Ordering::Relaxed);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wake attribution and the N2 phases
+// ---------------------------------------------------------------------------
+
+/// Per thread slot: where the thread is in an `ipc_call` (`CALL_PHASE`):
+/// [`PHASE_IDLE`], or a [`tripwire::wait_phase`] value. Only the thread
+/// itself writes its slot.
+static CALL_PHASE: [AtomicU8; MAX_THREADS] = [const { AtomicU8::new(PHASE_IDLE) }; MAX_THREADS];
+
+/// Per thread slot: the channel of the thread's current or last `ipc_call`.
+static CALL_CHAN: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_THREADS];
+
+/// Per thread slot: where the thread is in an `ipc_recv` (`RECV_PHASE`), as
+/// [`CALL_PHASE`].
+static RECV_PHASE: [AtomicU8; MAX_THREADS] = [const { AtomicU8::new(PHASE_IDLE) }; MAX_THREADS];
+
+/// Per thread slot: the channel of the thread's current or last `ipc_recv`.
+static RECV_CHAN: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_THREADS];
+
+/// Which wait a phase store describes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WaitSide {
+    /// `ipc_call` waiting for its reply (`CALL_PHASE`, `CALL_CHAN`).
+    Call,
+    /// `ipc_recv` waiting for a message (`RECV_PHASE`, `RECV_CHAN`).
+    Recv,
+}
+
+/// The phase and channel arrays of `side`.
+#[inline(always)]
+fn wait_slots(
+    side: WaitSide,
+) -> (
+    &'static [AtomicU8; MAX_THREADS],
+    &'static [AtomicU64; MAX_THREADS],
+) {
+    match side {
+        WaitSide::Call => (&CALL_PHASE, &CALL_CHAN),
+        WaitSide::Recv => (&RECV_PHASE, &RECV_CHAN),
+    }
+}
+
+/// The calling thread `tid` has just published itself as the channel's
+/// pending caller or waiting receiver: store the channel, then
+/// [`PHASE_PUBLISHED`] (flagged untimed if `timed` is false). Thread context;
+/// the thread writes only its own slot. An out-of-range `tid` counts
+/// `badtid`.
+#[inline(never)]
+pub fn wait_published(side: WaitSide, tid: ThreadId, channel: u64, timed: bool) {
+    let (phases, chans) = wait_slots(side);
+    let slot = tid.0 as usize;
+    match (phases.get(slot), chans.get(slot)) {
+        (Some(phase), Some(chan)) => {
+            chan.store(channel, Ordering::Relaxed);
+            phase.store(
+                tripwire::wait_phase(PHASE_PUBLISHED, timed),
+                Ordering::Release,
+            );
+        }
+        _ => bump(Key::Badtid, 0),
+    }
+}
+
+/// The calling thread `tid` has registered its timeout: store
+/// [`PHASE_ARMED`]. A timed wait calls it inside the TIMEOUT_QUEUE critical
+/// section that registers the entry, so a waker whose `clear_timeout` took
+/// the lock later sees it; an untimed wait calls it at the point where it
+/// would register. Thread context.
+#[inline(never)]
+pub fn wait_armed(side: WaitSide, tid: ThreadId, timed: bool) {
+    let (phases, _) = wait_slots(side);
+    match phases.get(tid.0 as usize) {
+        Some(phase) => phase.store(tripwire::wait_phase(PHASE_ARMED, timed), Ordering::Release),
+        None => bump(Key::Badtid, 0),
+    }
+}
+
+/// The calling thread `tid` has woken from its wait: store [`PHASE_IDLE`].
+/// Thread context.
+#[inline(never)]
+pub fn wait_ended(side: WaitSide, tid: ThreadId) {
+    let (phases, _) = wait_slots(side);
+    match phases.get(tid.0 as usize) {
+        Some(phase) => phase.store(PHASE_IDLE, Ordering::Release),
+        None => bump(Key::Badtid, 0),
+    }
+}
+
+/// `tid`'s phase and channel on `side`: the phase loaded first (`Acquire`),
+/// then the channel. `(PHASE_IDLE, 0)` for an out-of-range `tid`.
+#[inline(always)]
+fn wait_snapshot(side: WaitSide, tid: ThreadId) -> (u8, u64) {
+    let (phases, chans) = wait_slots(side);
+    let slot = tid.0 as usize;
+    match (phases.get(slot), chans.get(slot)) {
+        (Some(phase), Some(chan)) => (phase.load(Ordering::Acquire), chan.load(Ordering::Relaxed)),
+        _ => (PHASE_IDLE, 0),
+    }
+}
+
+/// A waker has taken `tid`'s last waiter reference (a channel's pending
+/// caller or waiting receiver, a timeout entry, a notification waiter slot
+/// or deadline, a process-exit wakeup) and has not yet run `unblock`: store
+/// `WAKE_AT[tid] = TICK_COUNT`, then `WAKE_PENDING[tid] = src.marker()`.
+/// `unblock` and [`note_dispatch`] clear it. Plain stores; any context. An
+/// out-of-range `tid` counts `badtid`.
+#[inline(never)]
+pub fn mark_wake_pending(tid: ThreadId, src: WakeSource) {
+    let slot = tid.0 as usize;
+    match (WAKE_PENDING.get(slot), WAKE_AT.get(slot)) {
+        (Some(pending), Some(wake_at)) => {
+            wake_at.store(timer::TICK_COUNT.load(Ordering::Relaxed), Ordering::Relaxed);
+            pending.store(src.marker(), Ordering::Release);
+        }
+        _ => bump(Key::Badtid, 0),
+    }
+}
+
+/// The wake marked by [`mark_wake_pending`] was abandoned without an
+/// `unblock` (the notification deadline scan gave it up): clear
+/// `WAKE_PENDING[tid]`, so that the thread does not look as if a wake were
+/// in flight forever. Any context.
+#[inline(never)]
+pub fn clear_wake_pending(tid: ThreadId) {
+    if let Some(pending) = WAKE_PENDING.get(tid.0 as usize) {
+        pending.store(0, Ordering::Release);
+    }
+}
+
+/// `unblock`'s bookkeeping, called with THREAD_TABLE held and IRQs masked,
+/// after it has read the target's slot and before it acts on it.
+///
+/// `state` is the target's state (`None` for an empty slot or an
+/// out-of-range `tid`). The function:
+///
+/// 1. decides the outcome kind the way `unblock` does
+///    ([`UnblockKind::of`]) and counts `ubrun`, `ubrbl`, `ubdead` or
+///    `ubnone` for `src`; an out-of-range `tid` also counts `badtid`;
+/// 2. for [`WakeSource::Reply`] snapshots the target's `CALL_PHASE` and
+///    `CALL_CHAN`, and for [`WakeSource::Call`] and [`WakeSource::Send`] its
+///    `RECV_PHASE` and `RECV_CHAN`, under the same lock hold that decided the
+///    outcome;
+/// 3. clears `WAKE_PENDING[tid]`: the wake has landed, whatever it did.
+///
+/// Returns the outcome, which the reply, send and call wakers classify
+/// ([`note_reply_wake`], [`note_send_wake`]).
+#[inline(never)]
+pub fn note_unblock(tid: ThreadId, src: WakeSource, state: Option<&ThreadState>) -> UnblockOutcome {
+    debug_assert!(read_daif() & DAIF_I != 0);
+    let here = cpu_here();
+    let kind = UnblockKind::of(state);
+    if let Some(key) = kind.key() {
+        add_row(here, key, src.index(), 1);
+    }
+    let (phase, chan) = match src {
+        WakeSource::Reply => wait_snapshot(WaitSide::Call, tid),
+        WakeSource::Call | WakeSource::Send => wait_snapshot(WaitSide::Recv, tid),
+        _ => (PHASE_IDLE, 0),
+    };
+    match WAKE_PENDING.get(tid.0 as usize) {
+        Some(pending) => pending.store(0, Ordering::Relaxed),
+        None => add_row(here, Key::Badtid, 0, 1),
+    }
+    UnblockOutcome { kind, phase, chan }
+}
+
+/// `unblock` queues `tid` on CPU `target`: count `ubmove` for `src` if the
+/// thread last ran on another CPU (a thread never dispatched does not
+/// count). IRQs masked.
+#[inline(never)]
+pub fn note_unblock_target(tid: ThreadId, src: WakeSource, target: usize) {
+    debug_assert!(read_daif() & DAIF_I != 0);
+    if let Some(last_cpu) = LAST_CPU.get(tid.0 as usize) {
+        let last = last_cpu.load(Ordering::Relaxed);
+        if last != LAST_CPU_NEVER && usize::from(last) != target {
+            add_row(cpu_here(), Key::Ubmove, src.index(), 1);
+        }
+    }
+}
+
+/// Count the N2-table verdict ([`tripwire::classify_reply`]) on
+/// `ipc_reply`'s `unblock` fallback: `outcome` is that `unblock`'s result,
+/// `channel` the reply's channel and `clear` the reply's own
+/// `clear_timeout` result for the caller. Thread context.
+#[inline(never)]
+pub fn note_reply_wake(outcome: UnblockOutcome, channel: u64, clear: ClearResult) {
+    if let Some((key, idx)) = tripwire::classify_reply(outcome, channel, clear).key() {
+        bump(key, idx);
+    }
+}
+
+/// Count the N2-table verdict ([`tripwire::classify_send`]) on the
+/// `unblock` fallback of `ipc_send` or `ipc_call` waking the waiting
+/// receiver: `clear` is the waker's own `clear_timeout` result for the
+/// receiver. Thread context.
+#[inline(never)]
+pub fn note_send_wake(outcome: UnblockOutcome, channel: u64, clear: ClearResult) {
+    if let Some((key, idx)) = tripwire::classify_send(outcome, channel, clear).key() {
+        bump(key, idx);
+    }
+}
+
+/// `try_reply_switch` has validated the caller (BlockedIpc) and will switch
+/// to it: classify the wake as a reply that woke the caller
+/// ([`UnblockKind::Woke`] with the caller's `CALL_PHASE`/`CALL_CHAN`), which
+/// counts `misrep` when the caller was not armed in a call on `channel`.
+/// THREAD_TABLE held (the caller is blocked, so its phase is stable), IRQs
+/// masked.
+#[inline(never)]
+pub fn note_reply_switch(caller: ThreadId, channel: u64, clear: ClearResult) {
+    debug_assert!(read_daif() & DAIF_I != 0);
+    let (phase, chan) = wait_snapshot(WaitSide::Call, caller);
+    let outcome = UnblockOutcome {
+        kind: UnblockKind::Woke,
+        phase,
+        chan,
+    };
+    if let Some((key, idx)) = tripwire::classify_reply(outcome, channel, clear).key() {
+        add_row(cpu_here(), key, idx, 1);
     }
 }
 

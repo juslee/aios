@@ -53,13 +53,18 @@ impl RunQueue {
         }
     }
 
+    /// Queue `tid` in its class's queue. A full queue drops it, which the
+    /// tripwire counts (`enqfull`).
     pub(crate) fn enqueue(&mut self, tid: ThreadId, class: SchedulerClass) {
-        match class {
+        let queued = match class {
             SchedulerClass::RealTime => self.rt.push_back(tid),
             SchedulerClass::Interactive => self.interactive.push_back(tid),
             SchedulerClass::Normal => self.normal.push_back(tid),
             SchedulerClass::Idle => self.idle.push_back(tid),
         };
+        if !queued {
+            crate::observability::tripwire::bump(shared::tripwire::Key::Enqfull, 0);
+        }
     }
 
     /// Pick next thread: RT → Interactive → Normal → Idle.
