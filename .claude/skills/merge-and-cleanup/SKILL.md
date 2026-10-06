@@ -4,6 +4,7 @@ description: >
   Squash merge a PR, preserve its worktree's soak results and agent memory,
   delete the remote and local branch, remove the worktree, and update main.
   Run by the user after PR approval; agents hand off instead of merging.
+argument-hint: "[PR]"
 disable-model-invocation: true
 ---
 
@@ -13,7 +14,7 @@ Squash merge a PR, keep what only its worktree holds, clean up the branch and wo
 
 `gh pr merge --delete-branch` (gh 2.99 and later, cli/cli#14007) runs `git worktree remove` without `--force` on the linked worktree that has the PR branch checked out, then deletes the local branch with `git branch -D`. Git refuses that removal when the worktree has modified or untracked files, and gh then warns and keeps both the worktree and the branch. Git deletes **ignored** files without asking. Soak logs (`target/soak/`) and agent memory (`.claude/agent-memory/`) are gitignored, so Step 3 must copy them out **before** Step 4 merges. On 2026-10-06 PR #211 lost its soak logs because the copy ran after the merge.
 
-Run the skill from the main checkout. Each Bash call starts a new shell and keeps no variables, so every block below recomputes what it needs from `<number>` and `<branch-name>`. Substitute both from Step 1 before running a block.
+Run the skill from the main checkout. Each Bash call starts a new shell and keeps no variables, so every block below recomputes what it needs from `<number>` and `<branch-name>`. Substitute both from Step 1 before running a block. Commands quoted in the prose use `<main-checkout>`, `<worktree>`, `<path>` and `<pr-head-sha>`: fill them in from the output of the earlier blocks.
 
 ## Step 1: Resolve the PR
 
@@ -23,9 +24,17 @@ With a PR number as the argument:
 gh pr view <number> --json number,url,headRefName,headRefOid,state --jq '"\(.number) \(.state) \(.headRefName) \(.headRefOid) \(.url)"'
 ```
 
-Without an argument, run the same command without `<number>` to detect the PR from the current branch. If that fails (for example, in the main checkout on `main`), ask the user for the PR number.
+Without an argument, list the open PRs and ask the user which one to merge (the main checkout is on `main`, so there is no current branch to detect it from):
 
-Record the number and the branch name (`headRefName`). If the state is not `OPEN`, report it and stop.
+```bash
+gh pr list --state open --json number,headRefName,title --jq '.[] | "\(.number) \(.headRefName) \(.title)"'
+```
+
+Record the number and the branch name (`headRefName`). Then, by state:
+
+- `OPEN`: continue with Step 2.
+- `MERGED`: an earlier run stopped after the merge, or the PR was merged elsewhere. Report it and skip Steps 2 and 4: run Step 3 if a worktree still has the branch checked out (its copies skip what an earlier run already copied), then Steps 5 to 8.
+- `CLOSED`: report it and stop.
 
 ## Step 2: Pre-merge check
 
@@ -48,24 +57,29 @@ WORKTREE_PATH="$(git -C "${MAIN_REPO:?}" worktree list --porcelain | awk -v b="b
 echo "main checkout: $MAIN_REPO"
 echo "PR worktree:   ${WORKTREE_PATH:-none}"
 git -C "$MAIN_REPO" worktree list
+[ "$(printf '%s' "$WORKTREE_PATH" | grep -c '')" -le 1 ] || { echo "more than one worktree has $BRANCH checked out"; exit 1; }
 ```
 
+If the block reports more than one worktree, show the list and stop: gh removes only the first, and the user decides what happens to the others.
+
 - **No worktree** (`none`): show the worktree list to the user and ask them to confirm that no worktree holds this PR's work (a worktree on a detached HEAD or another branch does not match). Then run check 2 only and go to Step 4.
-- **The main checkout itself** (the two paths are equal): there is no linked worktree, and gh deletes nothing. It checks out `main` there and fast-forwards it. Run check 2 only and go to Step 4.
+- **The main checkout itself** (the two paths are equal): there is no linked worktree to remove. gh checks out `main` there, fast-forwards it (`git pull --ff-only`) and deletes the local branch with `git branch -D`. Uncommitted edits either move onto `main` with the checkout or make it fail after the PR is already merged. Run checks 1 and 2, then go to Step 4.
 - **A linked worktree**: run checks 1 to 3, then copies 4 and 5.
 
-1. **Uncommitted work.** Modified or untracked files are not lost: they make git refuse the removal, and gh then keeps the worktree and the local branch. They may still be work the PR is missing:
+1. **Uncommitted work.** In a linked worktree, modified or untracked files are not lost: they make git refuse the removal, and gh then keeps the worktree and the local branch. In the main checkout they ride along onto `main` or block gh's checkout. Either way they may be work the PR is missing:
 
    ```bash
    BRANCH='<branch-name>'
    MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
    WORKTREE_PATH="$(git -C "${MAIN_REPO:?}" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w}')"
-   git -C "${WORKTREE_PATH:?}" status --porcelain
+   [ -d "${WORKTREE_PATH:?}" ] || { echo "worktree path not found: $WORKTREE_PATH"; exit 2; }
+   ST="$(git -C "$WORKTREE_PATH" status --porcelain)" || { echo "git status failed"; exit 2; }
+   if [ -z "$ST" ]; then echo "no uncommitted work"; else printf '%s\n' "$ST"; exit 1; fi
    ```
 
-   If the output is not empty, show it and ask whether it belongs in the PR. Stop until the user decides.
+   On `no uncommitted work`, continue. On a list, show it and ask whether it belongs in the PR, and stop until the user decides. On any other ending, report it and stop.
 
-2. **Commits that are not in the PR.** gh deletes the local branch with `git branch -D`, so a local commit that was never pushed is lost:
+2. **The local branch must equal the PR head.** gh deletes the local branch with `git branch -D`, so a local commit that was never pushed is lost. Step 4 refuses to merge until the local branch equals the PR head or does not exist:
 
    ```bash
    PR=<number>; BRANCH='<branch-name>'
@@ -73,31 +87,47 @@ git -C "$MAIN_REPO" worktree list
    LOCAL="$(git -C "${MAIN_REPO:?}" rev-parse --verify --quiet "refs/heads/$BRANCH")"
    HEAD_OID="$(gh pr view "$PR" --json headRefOid --jq .headRefOid)"
    echo "local: ${LOCAL:-none}  PR head: ${HEAD_OID:?}"
-   [ -z "$LOCAL" ] || [ "$LOCAL" = "$HEAD_OID" ]
+   if [ -n "$LOCAL" ] && [ "$LOCAL" != "$HEAD_OID" ]; then
+     git -C "$MAIN_REPO" fetch --quiet origin "$BRANCH" || { echo "fetch failed"; exit 2; }
+     echo "local commits not in the PR:"; git -C "$MAIN_REPO" log --oneline "$HEAD_OID..$LOCAL"
+     echo "PR commits not in the local branch:"; git -C "$MAIN_REPO" log --oneline "$LOCAL..$HEAD_OID"
+     exit 1
+   fi
    ```
 
-   A non-zero exit means the local branch and the PR head differ. Show `git -C "$MAIN_REPO" log --oneline "$HEAD_OID..$BRANCH"` (after `git -C "$MAIN_REPO" fetch origin` if the PR head is not local) and stop until the user pushes the commits or confirms they can go.
+   Exit 0 means they match (or there is no local branch). Otherwise show both lists and stop until the user picks one of these, then re-run the check:
 
-3. **Ignored files the merge deletes.** List every ignored path except those this step copies (`target/soak/` within `target/`, `.claude/agent-memory/`) and the disk images and `esp/` that `just disk` rebuilds:
+   - **Local commits only** (the branch is ahead): the user pushes them with `git -C <worktree> push -u origin <branch-name>`. The PR head moves, so CI runs again: go back to Step 2.
+   - **PR commits only** (the branch is behind): fast-forward it to the PR head the block just fetched, with `git -C <worktree> merge --ff-only <pr-head-sha>`, or `git -C <main-checkout> branch -f <branch-name> <pr-head-sha>` when no worktree has the branch checked out.
+   - **Local commits the user wants to drop** (ahead or diverged): the user keeps them on a backup branch with `git -C <main-checkout> branch <backup-name> <branch-name>`, then resets the branch to the PR head with `git -C <worktree> reset --keep <pr-head-sha>` (or `git -C <main-checkout> branch -f <branch-name> <pr-head-sha>` without a worktree).
+
+3. **Ignored files the merge deletes.** List every ignored path except those this step copies (`target/soak/` within `target/`, `.claude/agent-memory/`), `aios.img` (which `just disk` rebuilds), `data.img` (which `just create-data-disk` recreates empty, so any storage state on it is dropped), and files tools regenerate (`.DS_Store`, `__pycache__/`, editor swap and backup files):
 
    ```bash
    BRANCH='<branch-name>'
    MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
    WORKTREE_PATH="$(git -C "${MAIN_REPO:?}" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w}')"
-   git -C "${WORKTREE_PATH:?}" status --porcelain --ignored=matching | grep '^!!' \
-     | grep -v -e '^!! target/$' -e '^!! \.claude/agent-memory/' -e '^!! "\{0,1\}[^/]*\.img"\{0,1\}$' -e '^!! esp/$'
+   [ -d "${WORKTREE_PATH:?}" ] || { echo "worktree path not found: $WORKTREE_PATH"; exit 2; }
+   IGN="$(git -C "$WORKTREE_PATH" status --porcelain --ignored=matching)" || { echo "git status failed"; exit 2; }
+   printf '%s\n' "$IGN" | grep '^!! ' | grep -Ev -e '^!! target/$' -e '^!! \.claude/agent-memory/' \
+     -e '^!! (aios|data)\.img$' -e '^!! "?(.*/)?\.DS_Store"?$' -e '^!! "?(.*/)?__pycache__/"?$' \
+     -e '\.sw[po]"?$' -e '~"?$'
    ```
 
-   No output (exit 1) means nothing else is at risk. Otherwise show the list and stop until the user says what to keep. A `.remember/` here is the remember plugin's fallback handoff; its section belongs in the main checkout's `.remember/remember.md`. Soak runs that `out=` wrote outside `target/soak/` sit under `target/` and are not listed: ask the user whether there are any.
+   No output means nothing else is at risk. A list of `!!` paths: show it and stop until the user says what to keep. Any other output is a failure: report it and stop. A `.remember/` here is the remember plugin's fallback handoff; its section belongs in the main checkout's `.remember/remember.md`. Soak runs that `out=` wrote outside `target/soak/` sit under `target/` and are not listed: ask the user whether there are any.
 
-4. **Soak results.** Copy each entry of the worktree's `target/soak/` to the main checkout as `pr<number>-<name>`, the convention of `target/soak/pr209-fix-198`. An existing copy that matches is skipped; one that differs stops the block:
+4. **Soak results.** Copy each entry of the worktree's `target/soak/` to the main checkout as `target/soak/pr<number>-<run>`, the convention of `target/soak/pr209-fix-198`. The block refuses while any run holds a `.scratch.*` directory, which `scripts/soak-qemu.sh` removes when a run ends. An existing copy that matches is skipped; one that differs stops the block:
 
    ```bash
    PR=<number>; BRANCH='<branch-name>'
    MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
    WORKTREE_PATH="$(git -C "${MAIN_REPO:?}" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w}')"
-   SRC_DIR="${WORKTREE_PATH:?}/target/soak"; DST_DIR="$MAIN_REPO/target/soak"
+   [ "${WORKTREE_PATH:?}" != "$MAIN_REPO" ] || { echo "PR branch is in the main checkout: nothing to copy"; exit 0; }
+   [ -d "$WORKTREE_PATH" ] || { echo "worktree path not found: $WORKTREE_PATH"; exit 1; }
+   SRC_DIR="$WORKTREE_PATH/target/soak"; DST_DIR="$MAIN_REPO/target/soak"
    if [ -d "$SRC_DIR" ]; then
+     ACTIVE="$(find "$SRC_DIR" -name '.scratch.*' -prune -print)"
+     [ -z "$ACTIVE" ] || { printf 'soak running or killed:\n%s\n' "$ACTIVE"; exit 1; }
      mkdir -p "$DST_DIR" &&
      find "$SRC_DIR" -mindepth 1 -maxdepth 1 -print0 | while IFS= read -r -d '' src; do
        dst="$DST_DIR/pr$PR-${src##*/}"
@@ -114,7 +144,10 @@ git -C "$MAIN_REPO" worktree list
    fi
    ```
 
-   The block ends with `soak results preserved` or `no target/soak in the worktree`. Any other ending is a failure: report it and stop.
+   The block ends with `soak results preserved`, `no target/soak in the worktree` or `PR branch is in the main checkout: nothing to copy`. Any other ending is a failure: report it and stop.
+
+   - `soak running or killed`: a soak still running would lose every log it writes after the copy. Ask the user to let it finish. A `.scratch.*` left by a killed run holds only disk images: the user removes it, then re-run the block.
+   - `copy failed`: the partial copy stays in the main checkout, and re-runs report it as `exists and differs`. Show it, remove that `target/soak/pr<number>-<run>` after the user confirms, and re-run the block.
 
 5. **Agent memory.** Merge the worktree's `.claude/agent-memory/` into the main checkout's. That is where the `memory: project` agents (`.claude/agents/*.md`) read and write notes when a session starts in the main checkout, as rule 03 recommends. A new worktree starts without them, because `git worktree add` copies no ignored files. New files are copied; a file that exists in both and differs is listed, never overwritten:
 
@@ -122,7 +155,9 @@ git -C "$MAIN_REPO" worktree list
    BRANCH='<branch-name>'
    MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
    WORKTREE_PATH="$(git -C "${MAIN_REPO:?}" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w}')"
-   SRC_DIR="${WORKTREE_PATH:?}/.claude/agent-memory"; DST_DIR="$MAIN_REPO/.claude/agent-memory"
+   [ "${WORKTREE_PATH:?}" != "$MAIN_REPO" ] || { echo "PR branch is in the main checkout: nothing to copy"; exit 0; }
+   [ -d "$WORKTREE_PATH" ] || { echo "worktree path not found: $WORKTREE_PATH"; exit 1; }
+   SRC_DIR="$WORKTREE_PATH/.claude/agent-memory"; DST_DIR="$MAIN_REPO/.claude/agent-memory"
    if [ -d "$SRC_DIR" ]; then
      (cd "$SRC_DIR" && find . -type f -print0) | while IFS= read -r -d '' rel; do
        rel="${rel#./}"; src="$SRC_DIR/$rel"; dst="$DST_DIR/$rel"
@@ -138,7 +173,7 @@ git -C "$MAIN_REPO" worktree list
    fi
    ```
 
-   The block ends with `agent memory merged` or `no agent memory in the worktree`; any other ending is a failure. For each `differs:` file, show `diff` between the main checkout's copy and the worktree's, and merge the worktree's notes into the main checkout's file before Step 4 (keep every note from both, and ask the user where two notes contradict). The merge deletes the worktree's copy. A file already merged by hand still shows as `differs:` on a re-run.
+   The block ends with `agent memory merged`, `no agent memory in the worktree` or `PR branch is in the main checkout: nothing to copy`; any other ending is a failure. For each `differs:` file, show `diff` between the main checkout's copy and the worktree's, and merge the worktree's notes into the main checkout's file before Step 4 (keep every note from both, and ask the user where two notes contradict). The merge deletes the worktree's copy. A file already merged by hand still shows as `differs:` on a re-run.
 
 ## Step 4: Squash merge
 
@@ -158,9 +193,12 @@ gh pr merge "$PR" --squash --delete-branch --match-head-commit "${HEAD_OID:?}"
 
 Without `--subject`/`--body-file`, GitHub builds the squash message from the repository settings (title from the PR or its single commit, body from the concatenated commit messages). If the user gives a squash message, add `--subject "<title>" --body-file <file>`.
 
-This merges the PR as a single squash commit and deletes the remote branch. When the PR worktree has no modified or untracked files, gh also removes it and deletes the local branch; otherwise gh warns and leaves both, and Steps 5 and 7 handle them.
+This merges the PR as a single squash commit, then cleans up locally and deletes the remote branch. For a linked worktree with no modified or untracked files, gh removes it and deletes the local branch; otherwise gh warns, leaves both and still exits 0. In the main-checkout case it checks out `main` and deletes the local branch.
 
-If the merge fails (merge conflicts, failing checks, a moved head), report the error and stop.
+If gh exits non-zero, check the PR state with `gh pr view <number> --json state --jq .state`:
+
+- `OPEN`: the merge failed (merge conflicts, failing checks, a moved head). Report the error and stop.
+- `MERGED`: the merge succeeded and gh's local cleanup failed, for example because uncommitted edits blocked its checkout of `main`. gh then skips deleting the remote branch as well. Report the error and continue with Step 5; Steps 5 and 7 finish the cleanup.
 
 ## Step 5: Verify the worktree is gone
 
@@ -168,16 +206,15 @@ If the merge fails (merge conflicts, failing checks, a moved head), report the e
 BRANCH='<branch-name>'
 MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
 git -C "${MAIN_REPO:?}" worktree prune
-if git -C "$MAIN_REPO" worktree list --porcelain | grep -Fx "branch refs/heads/$BRANCH"; then
-  echo "worktree still present"
-else
-  echo "worktree removed"
-fi
+WORKTREE_PATH="$(git -C "$MAIN_REPO" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w}')"
+if [ -z "$WORKTREE_PATH" ]; then echo "no worktree has $BRANCH checked out"
+elif [ "$WORKTREE_PATH" = "$MAIN_REPO" ]; then echo "main checkout is still on $BRANCH"
+else echo "worktree still present: $WORKTREE_PATH"; fi
 ```
 
-gh leaves the worktree when gh is older than 2.99, when the worktree has modified or untracked files (git refused, and gh printed a warning but still exited 0), or when the merge ran from inside it. A retry with `git worktree remove` without `--force` fails for the same reason. Re-run Step 3's checks 1 and 3 on it, show the result, and let the user decide: commit or move the files, or run `git -C "$MAIN_REPO" worktree remove --force <path>` after the user confirms. Step 3 already copied the soak results and agent memory. Step 7 cannot delete the branch while this worktree has it checked out.
-
-In the main-checkout case (Step 3), the main checkout is on `main` now and nothing is removed.
+- `no worktree has <branch-name> checked out`: gh removed the linked worktree, or, in the main-checkout case, switched the main checkout to `main` without removing anything.
+- `main checkout is still on <branch-name>`: gh's checkout of `main` failed (Step 4). Run Step 3 check 1, let the user commit or move the edits, then run `git -C <main-checkout> checkout main`.
+- `worktree still present: <path>`: gh is older than 2.99, the worktree has modified or untracked files (git refused, and gh printed a warning but exited 0), or the PR was merged without this skill (Step 1, `MERGED`). Run Step 3's checks 1 and 3 on it, and its copies 4 and 5 if they have not run. If both checks come back clean, remove it with `git -C <main-checkout> worktree remove <path>`. Otherwise show the result and let the user decide: commit or move the files, or run `git -C <main-checkout> worktree remove --force <path>` after the user confirms. Step 7 cannot delete the branch while a worktree has it checked out.
 
 ## Step 6: Update main
 
@@ -191,33 +228,38 @@ git -C "$MAIN_REPO" fetch --prune origin && git -C "$MAIN_REPO" merge --ff-only 
 
 `--prune` drops the deleted PR branch's `origin/<branch-name>` ref. A fast-forward works even when the main checkout has unrelated local edits, where `git pull` with rebase refuses. If the main checkout is not on `main`, or the merge refuses (local `main` has diverged from `origin/main`, or local edits touch files the update changes), report the message as is and stop.
 
-## Step 7: Delete the local branch
+## Step 7: Delete the remaining branches
 
-gh normally deletes it in Step 4. Check whether it remains:
+gh normally deletes the local and the remote branch in Step 4. Check whether either remains:
 
 ```bash
 PR=<number>; BRANCH='<branch-name>'
 MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
-echo "local: $(git -C "${MAIN_REPO:?}" rev-parse --verify --quiet "refs/heads/$BRANCH" || echo deleted)"
-gh pr view "$PR" --json state,headRefOid --jq '"PR: \(.state) \(.headRefOid)"'
+echo "local:  $(git -C "${MAIN_REPO:?}" rev-parse --verify --quiet "refs/heads/$BRANCH" || echo deleted)"
+REMOTE="$(git -C "$MAIN_REPO" ls-remote --heads origin "refs/heads/$BRANCH")" || { echo "ls-remote failed"; exit 1; }
+echo "remote: $(printf '%s' "$REMOTE" | cut -f1 | grep . || echo deleted)"
+gh pr view "$PR" --json state,headRefOid --jq '"PR:     \(.state) \(.headRefOid)"'
 ```
 
-If it remains, delete it only when the PR state is `MERGED` and the local SHA equals the PR head SHA, after the user confirms:
+Delete a remaining branch only when the PR state is `MERGED` and the branch's SHA equals the PR head SHA, after the user confirms:
 
 ```bash
 BRANCH='<branch-name>'
 MAIN_REPO="$(git worktree list --porcelain | awk 'NR==1{print substr($0,10); exit}')"
-git -C "${MAIN_REPO:?}" branch -D "$BRANCH"
+git -C "${MAIN_REPO:?}" branch -D "$BRANCH"            # local, when it remains
+git -C "$MAIN_REPO" push origin --delete "$BRANCH"    # remote, when it remains
 ```
 
-`git branch -d` refuses after a squash merge (the squash commit on main has a different SHA from the branch commits), so the SHA check is what makes `-D` safe. If the SHAs differ, the local branch has commits that are not in the merged PR: show them and leave the branch. Never force-delete a branch whose PR is not merged.
+Run only the line for the branch that remains. The push guard asks before the remote delete; that confirmation is the user's.
+
+`git branch -d` refuses after a squash merge (the squash commit on main has a different SHA from the branch commits), so the SHA check is what makes `-D` safe. If the SHAs differ, the branch has commits that are not in the merged PR: show them and leave the branch. Never delete a branch whose PR is not merged.
 
 ## Step 8: Report
 
 Print a summary of what was done:
 
-- PR number and URL, and the squash commit (`git log -1 --oneline origin/main`)
-- Soak results copied (each `target/soak/pr<number>-<name>`) and agent-memory files added or merged by hand, or that there were none
-- Whether the worktree was removed (and its path)
-- Whether the local branch was deleted
-- Current HEAD on main
+- PR number and URL, and the squash commit: `git -C <main-checkout> log -1 --oneline "$(gh pr view <number> --json mergeCommit --jq .mergeCommit.oid)"`
+- Soak results copied (each `target/soak/pr<number>-<run>`) and agent-memory files added or merged by hand, or that there were none
+- Whether the worktree was removed (and its path), or that the PR branch was in the main checkout and no worktree was removed
+- Whether the local and remote branches were deleted
+- Current HEAD on main (`git -C <main-checkout> log -1 --oneline`), which is newer than the squash commit when other PRs merged since

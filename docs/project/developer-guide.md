@@ -2369,11 +2369,12 @@ cd .claude/worktrees/docs-memory
 # Before the PR merges, from the main checkout: copy out what git ignores,
 # because removing the worktree deletes ignored files without asking
 cd /path/to/aios
-cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<N>-<run>"   # per soak run
+mkdir -p target/soak && [ ! -e "target/soak/pr<number>-<run>" ] &&
+  cp -Rp ".claude/worktrees/docs-memory/target/soak/<run>" "target/soak/pr<number>-<run>"   # per soak run
 # ...and copy new .claude/worktrees/docs-memory/.claude/agent-memory/ files into .claude/agent-memory/
 
 # Merge (gh 2.99+ removes the worktree and deletes the local branch), then confirm and fast-forward main
-gh pr merge <N> --squash --delete-branch
+gh pr merge <number> --squash --delete-branch
 git worktree list
 git fetch --prune origin && git merge --ff-only origin/main
 ```
