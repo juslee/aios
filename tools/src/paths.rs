@@ -1,8 +1,8 @@
 //! `posixpath` semantics used by check.py: `normpath`, `join`, `dirname`,
 //! `basename` and `splitext` (L386-389, L431-433, L636-641, L678, L822,
 //! L1056-1058, L1355), `relpath` (L425, L1612) and non-strict `realpath`
-//! (L422-425, which resolves through the repository's tracked
-//! `.claude/skills/obsidian` symlink).
+//! (L422-425, which resolves through tracked symlinks such as the
+//! `.claude/skills/obsidian` skill at 33c6b3d).
 //!
 //! Every function works on `/`-separated strings, never on `std::path`
 //! components, because check.py's paths are repository-relative POSIX paths.

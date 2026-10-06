@@ -7,8 +7,8 @@
 //! resolves it from the process working directory, because the binary has no script
 //! directory. `just` runs recipes from the justfile's directory and the shim passes the
 //! caller's working directory through, so both tools check the same checkout in every
-//! supported invocation; the parity goldens run check.py from inside each materialized
-//! repository for the same reason.
+//! supported invocation; the parity goldens were recorded by running check.py from
+//! inside each materialized repository for the same reason.
 //!
 //! Two more divergences need unusual directory names. check.py decodes
 //! `git rev-parse --show-toplevel` with `text=True` (L1578), whose universal-newline
@@ -29,7 +29,7 @@
 //! `git ls-files`, so links and paths that name those files can be reported as broken;
 //! it writes locale-encoded bytes (`§` as 0xA7); and it exits 2 with
 //! `UnicodeEncodeError` on an output character the locale cannot encode. The goldens
-//! and the differential test run check.py with `PYTHONUTF8=1` (`tests/common/mod.rs`).
+//! were recorded from check.py with `PYTHONUTF8=1`.
 //!
 //! CLI parsing divergences (argparse vs clap; verified against check.py at 33c6b3d): a
 //! trailing bare `--` is a usage error in check.py (`unrecognized arguments: --`, exit 2),

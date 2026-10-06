@@ -6,7 +6,7 @@
 
 **Related documents**:
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- PR process, commit style, branching
-- [CLAUDE.md](../../CLAUDE.md) -- Code conventions, quality gates, technical facts
+- [.claude/CLAUDE.md](../../.claude/CLAUDE.md) -- Technical facts, workspace layout, agent/skill tables (conventions and quality gates are in [.claude/rules/](../../.claude/rules/))
 - [hal.md](../kernel/hal.md) -- Hardware Abstraction Layer and platform porting (SS7)
 - [deadlock-prevention.md](../kernel/deadlock-prevention.md) -- Lock ordering rules (SS12)
 - [memory.md](../kernel/memory.md) -- Memory management architecture and APIs (SS4)
@@ -2070,10 +2070,10 @@ These are failure patterns encountered during AIOS development (Phases 0--3), wi
 
 Claude Code has LSP (Language Server Protocol) integration with `rust-analyzer` for semantic code intelligence. **Always prefer LSP over manual searching** when navigating the codebase.
 
-**Configuration** (already set up in `.claude/`):
+**Configuration** (already set up):
 
-- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section
-- `.claude/.lsp.json` — maps `.rs` files to `rust-analyzer`
+- `.claude/settings.json` — `"ENABLE_LSP_TOOL": "1"` in the `env` section, and `rust-analyzer-lsp@claude-plugins-official` in `enabledPlugins` (the plugin registers `rust-analyzer` for `.rs` files and runs it from `PATH`)
+- `rust-toolchain.toml` — `rust-analyzer` in `components`, so rustup installs the server that matches the pinned nightly
 
 **Available LSP operations:**
 
@@ -2253,42 +2253,30 @@ This guide covers Rust patterns and development workflow. For deeper topics on s
 | **System architecture** | [architecture.md](./architecture.md) | All (system overview) |
 | **Development plan** | [development-plan.md](./development-plan.md) | SS8 (phase table) |
 | **PR process** | [CONTRIBUTING.md](../../CONTRIBUTING.md) | All (branch naming, commit style, review) |
-| **Code conventions** | [CLAUDE.md](../../CLAUDE.md) | Code Conventions, Unsafe Documentation Standard |
+| **Code conventions** | [.claude/rules/](../../.claude/rules/) | 01-code-conventions, 06-unsafe-documentation |
 
 ---
 
-## 8b. Obsidian Desktop Setup (Optional)
+## 8b. Browsing `docs/` in Obsidian (Optional)
 
-The AIOS knowledge hive is accessible via Claude Code automatically (MCP configured in `.mcp.json`). For visual exploration with graph view and backlinks, you can optionally install the Obsidian desktop app:
-
-1. Download Obsidian from https://obsidian.md
-2. Open `docs/` as a vault (File → Open folder as vault → select `docs/`)
-3. The `.obsidian/` config folder is gitignored — your personal settings stay local
-
-This gives you:
-- **Graph view**: See how 80+ architecture docs connect to each other
-- **Backlinks**: See which docs reference the current doc
-- **Tag search**: Filter by domain (kernel, platform, security, etc.)
-- **Quick switcher**: Cmd+O to jump to any doc by name
-
-This is purely optional — all docs are plain markdown readable in any editor or on GitHub.
+`docs/` is plain Markdown, readable in any editor or on GitHub; you can optionally open it as a vault in the [Obsidian](https://obsidian.md) app (its `.obsidian/` config folder is gitignored).
 
 ---
 
 ## 8c. Claude Code Agents, Skills & Worktrees
 
-AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and seven slash-command skills automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
+AIOS development is accelerated by Claude Code's agent teams and custom skills. Six specialist agents handle different aspects of the development workflow, and twelve slash-command skills (eight project skills plus the four `/justin:*` session skills) automate common multi-step operations. All agent and skill definitions live in `.claude/agents/` and `.claude/skills/` respectively.
 
-The authoritative reference for agent/skill configuration is [CLAUDE.md](../../CLAUDE.md) § Team & Agent Architecture.
+The authoritative reference for agent/skill configuration is [.claude/CLAUDE.md](../../.claude/CLAUDE.md) § Team & Agent Architecture.
 
 ### Agents
 
-Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows CLAUDE.md conventions.
+Agents are specialist sub-processes spawned by the team-lead orchestrator. Each has project-scoped memory and follows the conventions in `.claude/rules/` (technical facts in `.claude/CLAUDE.md`).
 
 | Agent | Role | Spawned by | Key capabilities |
 | --- | --- | --- | --- |
 | `team-lead` | Orchestrates phase implementation, manages tasks, commits per milestone, creates PRs | User or `/build-team` | Full tool access, delegates to all other agents |
-| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, MultiEdit, Bash, Grep, Glob |
+| `kernel-dev` | Implements Rust kernel code, assembly, linker scripts per phase doc steps | team-lead | Read, Write, Edit, Bash, Grep, Glob |
 | `doc-writer` | Generates phase implementation docs from architecture docs using Phase 0/1 template | team-lead | Read, Write, Edit, Grep, Glob |
 | `code-reviewer` | Runs all 5 quality gates, audits unsafe blocks, checks convention compliance | team-lead | Read, Grep, Glob, Bash |
 | `verifier` | Boots QEMU, captures UART output, verifies against acceptance criteria | team-lead | Read, Bash, Grep, Glob |
@@ -2398,11 +2386,11 @@ OUTER LOOP:
 
 **Example**: Round 1 (4 issues) → Round 2 (2 issues) → Round 3 (0 → restart) → Round 4 (2 issues) → Round 5 (0 → restart) → Round 6 (0 → **done**). Maximum 10 rounds.
 
-The audit loop is **mandatory before any PR** — see [CLAUDE.md](../../CLAUDE.md) § Phase Implementation Workflow.
+The audit loop is **mandatory before any PR** — see [rule 04](../../.claude/rules/04-phase-workflow.md) (Phase Implementation Workflow).
 
 ### Knowledge Hive Integration
 
-Agents use the Obsidian knowledge hive (`docs/`) for persistent memory across sessions:
+Agents use the knowledge hive (`docs/knowledge/`, searched with Grep) for persistent memory across sessions:
 
 | Directory | Persistence | Purpose |
 |---|---|---|
@@ -2418,12 +2406,13 @@ Naming convention: `YYYY-MM-DD-initials-short-description.md` with frontmatter (
 
 Agent teams and skills are configured in:
 
-- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables
+- **`.claude/settings.json`** — hooks (SessionStart, PreToolUse, PreCompact, PostToolUse), permissions, environment variables, the plugins it enables (`enabledPlugins`: superpowers, remember, rust-analyzer-lsp, pr-review-toolkit, security-guidance, railway, typesafe) and the third-party marketplace typesafe comes from (`extraKnownMarketplaces`: typesafe-ai, pinned to a release tag)
 - **`.claude/hooks/`** — hook scripts: `git-push-guard.py` (PreToolUse on Bash and Monitor, run with `/usr/bin/python3`: denies pushes that update or delete `main`, plain force pushes, mirror pushes and `gh pr merge --admin`; asks for branch deletes, non-`claude/*` lease pushes, workflow changes, git options that run commands or discard work in any abbreviation git accepts (`rebase --exe`, `fetch --upload-pa`, `checkout --forc`, `add -f`, ...), gh posts to other repositories or from files outside the repository, and gh api writes other than routine review replies; it fails closed; tests in `tests/`, run with `/usr/bin/python3 -m unittest discover -s .claude/hooks/tests`), `precompact-save.sh` (flushes Remember memory before compaction), `setup-dev-env.sh` (SessionStart: installs tools in web sessions and starts a background `just tools` build when the `aios` binary is missing or stale) and `aios` (the POSIX sh shim that runs `target/tools/release/aios` from the main checkout). They live under `.claude/` so edits to them are never auto-approved
 - **`.claude/agents/*.md`** — individual agent definitions (role, tools, instructions)
+- **`.claude/rules/*.md`** — project rules Claude Code auto-loads (`01-code-conventions` … `10-harness-mechanics`)
 - **`.claude/skills/*/SKILL.md`** — skill definitions (frontmatter + step-by-step instructions)
 - **`.claude/skills/justin/`** — the `justin` skills-dir plugin (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`). Claude Code loads it in place as `justin@skills-dir` in a trusted workspace (no marketplace or install step) and its skills run as `/justin:<name>`; `claude plugin list` shows it
-- **`CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
+- **`.claude/CLAUDE.md`** § Team & Agent Architecture — authoritative summary of all agents and skills
 
 ---
 

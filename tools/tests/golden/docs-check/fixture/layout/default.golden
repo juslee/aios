@@ -21,7 +21,7 @@ docs-check: 4 findings across 15 checks - 1 new, 3 baselined (1 accepted false p
 New drift since baseline:
 
 [layout]
- + CLAUDE.md: Workspace Layout does not list kernel module kernel/src/extra.rs
+ + .claude/CLAUDE.md: Workspace Layout does not list kernel module kernel/src/extra.rs
 
 2 baselined finding(s) no longer occur or occur less often; prune them with `just docs-check --update-baseline`:
   - anchors|docs/kernel/alpha.md|#gone

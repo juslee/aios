@@ -2,6 +2,9 @@
 //!
 //! The expected findings were recorded by calling check.py's own `check_doc_map`,
 //! `check_repo_paths` and `check_just_recipes` on the same files (production order).
+//! check.py read the project memory at the root `CLAUDE.md`; these files place it at
+//! `CLAUDE_MD`, so the expectations are check.py's with that path substituted and
+//! re-sorted by path.
 
 mod common;
 
@@ -12,7 +15,7 @@ use aios_tools::cmd::docs_check::checks::just_recipes::{documented_recipes, Just
 use aios_tools::cmd::docs_check::checks::repo_paths::RepoPaths;
 use aios_tools::cmd::docs_check::checks::{registry, Check};
 use aios_tools::cmd::docs_check::model::{Finding, Skip};
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 
 const DOC_MAP_README_MD: &str = r#"# Readme
@@ -272,7 +275,7 @@ fn repo_paths_reports_missing_paths_in_current_state_regions() {
     let t = TestRepo::with_files(
         "repo-paths",
         &[
-            ("CLAUDE.md", PATHS_CLAUDE_MD),
+            (CLAUDE_MD, PATHS_CLAUDE_MD),
             (".claude/agents/reader.md", PATHS__CLAUDE_AGENTS_READER_MD),
             ("docs/other.md", PATHS_DOCS_OTHER_MD),
             (
@@ -293,45 +296,45 @@ fn repo_paths_reports_missing_paths_in_current_state_regions() {
     let want = vec![
         finding(
             "repo-paths",
-            ".claude/agents/reader.md",
-            "kernel/src/agent-missing.rs",
-            "path does not exist: kernel/src/agent-missing.rs",
-            3,
-        ),
-        finding(
-            "repo-paths",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "kernel/src/gone.rs",
             "path does not exist: kernel/src/gone.rs",
             3,
         ),
         finding(
             "repo-paths",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "kernel/src/missing/",
             "path does not exist: kernel/src/missing/",
             4,
         ),
         finding(
             "repo-paths",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "kernel/src/gone2.rs",
             "path does not exist: kernel/src/gone2.rs",
             6,
         ),
         finding(
             "repo-paths",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "kernel/src/in-comment.rs",
             "path does not exist: kernel/src/in-comment.rs",
             7,
         ),
         finding(
             "repo-paths",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "kernel/src/double.rs",
             "path does not exist: kernel/src/double.rs",
             7,
+        ),
+        finding(
+            "repo-paths",
+            ".claude/agents/reader.md",
+            "kernel/src/agent-missing.rs",
+            "path does not exist: kernel/src/agent-missing.rs",
+            3,
         ),
         finding(
             "repo-paths",

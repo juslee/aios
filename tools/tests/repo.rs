@@ -9,7 +9,7 @@ use std::os::unix::fs::symlink;
 
 use aios_tools::cmd::docs_check::markdown::Heading;
 use aios_tools::cmd::docs_check::model::Skip;
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 
 fn open(repo: &TestRepo) -> Repo {
@@ -289,7 +289,7 @@ fn phase_docs_sections_and_current_state_regions() {
     let repo = TestRepo::with_files(
         "repo-regions",
         &[
-            ("CLAUDE.md", "# C\n"),
+            (CLAUDE_MD, "# C\n"),
             ("README.md", "# R\n"),
             (".claude/rules/01-x.md", "# X\n"),
             (".claude/notes.txt", "n\n"),
@@ -328,8 +328,8 @@ fn phase_docs_sections_and_current_state_regions() {
     assert_eq!(
         r.current_state_regions().expect("regions"),
         [
+            whole(CLAUDE_MD),
             whole(".claude/rules/01-x.md"),
-            whole("CLAUDE.md"),
             whole("README.md"),
             whole("docs/project/agent-loop.md"),
             whole("docs/project/developer-guide.md"),

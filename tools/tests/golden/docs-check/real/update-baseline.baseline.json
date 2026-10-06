@@ -260,9 +260,9 @@
       "count": 2
     },
     {
-      "key": "lock-order|CLAUDE.md|unknown:VIRTIO_INPUT",
+      "key": "lock-order|.claude/CLAUDE.md|unknown:VIRTIO_INPUT",
       "check": "lock-order",
-      "file": "CLAUDE.md",
+      "file": ".claude/CLAUDE.md",
       "target": "unknown:VIRTIO_INPUT",
       "message": "lock ordering names VIRTIO_INPUT, which is not a Mutex static in kernel/src"
     },
