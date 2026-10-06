@@ -184,6 +184,34 @@ fn telemetry_is_kept_only_in_its_documented_type() {
         None,
         "an array that holds a non-string is not an array of model names"
     );
+
+    let env = Env::new("telemetry-too-many");
+    let mut payload = completed();
+    payload["tool_response"]["modelsUsed"] = json!(vec!["m"; 17]);
+    assert_eq!(
+        env.one(&payload).get("models_used"),
+        None,
+        "an array over the entry cap is left out"
+    );
+
+    let env = Env::new("telemetry-long-name");
+    let mut payload = completed();
+    payload["tool_response"]["modelsUsed"] = json!(["x".repeat(129)]);
+    assert_eq!(
+        env.one(&payload).get("models_used"),
+        None,
+        "a model name over the byte cap is left out"
+    );
+
+    let env = Env::new("telemetry-at-cap");
+    let mut payload = completed();
+    payload["tool_response"]["modelsUsed"] = json!(vec!["x".repeat(128); 16]);
+    let expected = payload["tool_response"]["modelsUsed"].clone();
+    assert_eq!(
+        env.one(&payload)["models_used"],
+        expected,
+        "an array exactly at both caps is kept"
+    );
 }
 
 #[test]

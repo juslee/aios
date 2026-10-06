@@ -27,7 +27,7 @@ All four are fixed:
 
 ## Why it happened
 
-- **Each hole was in the spec, not just the code.** The first plan took the root from `cwd` and normalised `.` and `..` lexically before resolving symlinks. Its first revision denied only a `.git` as the first path component, and gave no decision whenever git said "not a git repository". Code that followed each version exactly carried its holes.
+- **Each hole was in the spec, not just the code.** The first plan took the root from `cwd` and normalised `.` and `..` lexically before resolving symlinks. Its first revision did not deny `.git` paths at all; the second denied only a `.git` as the first path component. Both gave no decision whenever git said "not a git repository". Code that followed each version exactly carried its holes.
 - **Verifiers judged the code against the plan.** Adversarial verifiers reproduced some of these bypasses and then rejected their own findings, as "matches the plan" or as "design creep" (asking for more than the spec). A reproduced bypass was filed as a non-finding because the spec allowed it.
 - **One platform answer was second-hand and wrong.** A helper agent answered a Claude Code docs question for the hook contract, and the plan took its answer. It said `SubagentStop` input carries a `stop_reason`; the hooks reference has that name only as a `-p` process-exit field. It also said `SubagentStop` fires for background subagents, which the docs do not say. No code had used either claim yet. Only reviewers who read the live docs themselves caught it, in review round 5.
 

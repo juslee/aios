@@ -25,6 +25,10 @@ use super::{append_line, cut_to_boundary, unix_seconds, Ctx, HookInput};
 const DISPATCH_TOOL: &str = "Agent";
 /// A failure text is cut to this many bytes.
 const MAX_ERROR_BYTES: usize = 512;
+/// Most entries `modelsUsed` may hold and the longest model name in it, in bytes;
+/// a field outside these bounds is left out like an absent key.
+const MAX_MODELS_USED: usize = 16;
+const MAX_MODEL_NAME_BYTES: usize = 128;
 /// A subagent's last message is cut to this many characters.
 const MAX_MESSAGE_CHARS: usize = 4000;
 const LOG_FILE: &str = "route-outcome.jsonl";
@@ -107,14 +111,14 @@ fn launched(ts: u64, input: &HookInput) -> Value {
         response_str(input, "resolvedModel"),
     );
     // Only a completed (foreground) response carries run telemetry. Each field is
-    // kept only in its documented type (`modelsUsed` an array of model names, the
-    // three totals numbers), so no telemetry value can put unbounded content into
-    // the log; anything else is left out like an absent key.
+    // kept only in its documented type and size (`modelsUsed` a short array of
+    // short model names, the three totals numbers), so no telemetry value can put
+    // unbounded content into the log; anything else is left out like an absent key.
     for (field, key, documented) in [
         (
             "models_used",
             "modelsUsed",
-            is_string_array as fn(&Value) -> bool,
+            is_model_names as fn(&Value) -> bool,
         ),
         ("total_tokens", "totalTokens", Value::is_number),
         ("total_duration_ms", "totalDurationMs", Value::is_number),
@@ -131,10 +135,14 @@ fn launched(ts: u64, input: &HookInput) -> Value {
     Value::Object(record)
 }
 
-fn is_string_array(value: &Value) -> bool {
-    value
-        .as_array()
-        .is_some_and(|items| items.iter().all(Value::is_string))
+fn is_model_names(value: &Value) -> bool {
+    value.as_array().is_some_and(|items| {
+        items.len() <= MAX_MODELS_USED
+            && items.iter().all(|v| {
+                v.as_str()
+                    .is_some_and(|name| name.len() <= MAX_MODEL_NAME_BYTES)
+            })
+    })
 }
 
 fn launch_failed(ts: u64, input: &HookInput) -> Value {
