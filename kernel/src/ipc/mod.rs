@@ -10,6 +10,7 @@
 mod channel;
 pub mod direct;
 pub mod notify;
+mod scan;
 pub mod select;
 pub mod shmem;
 mod tests;
@@ -29,6 +30,7 @@ pub use shared::{
 
 // Re-export channel operations so callers see the same public API.
 pub use channel::{ipc_call, ipc_cancel, ipc_recv, ipc_reply, ipc_send};
+pub(crate) use scan::scan_wakers;
 pub(crate) use tests::channel_create_unchecked;
 pub use tests::init;
 pub(crate) use timeout::wake_with_error;

@@ -266,10 +266,6 @@ impl<T> IrqSpinLock<T> {
 
     /// [`Self::try_lock`] without the failure counters, for the heartbeat
     /// scans, which would otherwise count their own probes.
-    #[expect(
-        dead_code,
-        reason = "the heartbeat scans (step-1b task K8) are the callers"
-    )]
     #[inline(always)]
     #[track_caller]
     pub fn try_lock_quiet(&self) -> Option<IrqSpinLockGuard<'_, T>> {
@@ -837,13 +833,28 @@ pub fn held_by_stream(cpu: u8) -> bool {
     let gen = switch_gen(cpu);
     let mut held = false;
     for_each_lock_word(|word| {
-        if let Some(stamp) = OwnerStamp::from_word(word) {
-            if stamp.cpu() == cpu && stamp.gen_matches(gen) {
-                held = true;
-            }
+        if is_stream_stamp(word, cpu, gen) {
+            held = true;
         }
     });
     held
+}
+
+/// Whether lock word `word` is stamped by the stream now running on `cpu`
+/// (generation `gen`, that CPU's `SWITCH_GEN`).
+#[inline(always)]
+fn is_stream_stamp(word: u64, cpu: u8, gen: u64) -> bool {
+    OwnerStamp::from_word(word).is_some_and(|stamp| stamp.cpu() == cpu && stamp.gen_matches(gen))
+}
+
+/// Whether `word`, a lock word a failed `try_lock_quiet` just met, is stamped
+/// by the stream now running on this CPU: the heartbeat scans count such a
+/// skip apart (`skipaself`). Diagnostic only: the word may have changed
+/// since the failure. IRQs masked, so the generation cannot move.
+#[inline(never)]
+pub fn held_by_own_stream(word: u64) -> bool {
+    let cpu = cpu_here();
+    is_stream_stamp(word, cpu, switch_gen(cpu))
 }
 
 /// Called right before each of the 5 `restore_context` calls, with IRQs

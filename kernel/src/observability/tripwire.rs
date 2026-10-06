@@ -29,6 +29,17 @@
 //!   the kernel text (`pcnull`, `pcphys`, `pcother`) or a saved SP outside
 //!   the thread's stack (`spbad`) before each `restore_context`, against the
 //!   text bounds `kernel_main` captured ([`capture_text_layout`]).
+//! - Heartbeat scans (Design §2.6), right before each `src=hb` line: scan A
+//!   holds every run queue and THREAD_TABLE (`sched::scan_snapshot`) and
+//!   finds orphans (Runnable, not queued, not current), starved threads
+//!   (queued, not run for over 1000 ticks, by class) and the `dupq`,
+//!   `dupcur` and `qbad` checks; scan B try-locks each waker table alone
+//!   (`ipc::scan_wakers`) and splits threads blocked with no waker into
+//!   `nowaker` and `wakefl` (a wake in flight). Two strikes per kind
+//!   (`shared::tripwire::TwoStrike`) confirm a flag, and edge counting
+//!   (`EdgeCounter`) counts each thread once per entry into the confirmed
+//!   set, with the `*_now` gauges holding its size. The scans only try-lock
+//!   (`try_lock_quiet`), so they never wait and never panic.
 //! - CPU ids: [`cpu_here`] reads MPIDR_EL1 Aff0, and [`cpu_tpidr`] the copy
 //!   boot.S puts in TPIDR_EL1, which the IRQ-class lock stamps with.
 //!   [`check_tpidr`] and [`note_dispatch`] count a mismatch (`tpidrbad`).
@@ -60,7 +71,11 @@
 //! same rules: `schedule()` and `irq_handler_el1` call them in the timer IRQ.
 //! So do [`note_unblock`], [`note_unblock_target`], [`mark_wake_pending`] and
 //! [`clear_wake_pending`], which the timeout scans reach from the timer IRQ,
-//! and [`check_restore`], which `schedule()` calls.
+//! and [`check_restore`], which `schedule()` calls. The scan functions
+//! ([`scan_note_queued`], [`scan_note_slot`], [`scan_note_waker`] and the
+//! private scan drivers) run in CPU 0's timer IRQ too; their masks are
+//! static accumulators, and the thread counts use `count_tids`, never
+//! `count_ones` (NEON `cnt`).
 //! The counters use `Relaxed` load and store only: each CPU writes only its
 //! own row, with IRQs masked, so no atomic read-modify-write is needed. The
 //! flags, the per-CPU dispatch state and the per-thread stamps are plain
@@ -72,15 +87,18 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use shared::lock::TID_NONE;
 use shared::tripwire::{
-    self, ClearResult, CpuCounters, Key, LineMode, LineSrc, Sink, TextLayout, UnblockKind,
-    UnblockOutcome, WakeSource, IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE,
-    PHASE_PUBLISHED,
+    self, classify_slot, count_tids, mask_bit, mask_set, mask_test, pop_lowest, ClearResult,
+    CpuCounters, EdgeCounter, Key, LineMode, LineSrc, MaskSet, Sink, SlotFlags, SlotState,
+    SlotVerdict, TextLayout, TwoStrike, UnblockKind, UnblockOutcome, WakeSource, CLASS_COUNT,
+    IRQ_CTX_EXIT, IRQ_CTX_IRQ, IRQ_CTX_THREAD, PHASE_ARMED, PHASE_IDLE, PHASE_PUBLISHED,
 };
 
 use crate::arch::aarch64::{mmu, timer, uart};
 use crate::sched::STACK_SIZE;
 use crate::smp::{self, MAX_CORES};
-use crate::task::{ThreadContext, ThreadId, ThreadState, MAX_THREADS, NEW_KERNEL_SP_OFFSET};
+use crate::task::{
+    SchedulerClass, ThreadContext, ThreadId, ThreadState, MAX_THREADS, NEW_KERNEL_SP_OFFSET,
+};
 
 const _: () = assert!(tripwire::MAX_CPUS == MAX_CORES);
 const _: () = assert!(tripwire::MASK_TIDS as usize == MAX_THREADS);
@@ -309,7 +327,8 @@ pub fn set_console_busy(busy: bool) {
 }
 
 /// CPU 0's last step in each timer tick: print a pending line, unless it must
-/// wait and has waited fewer than [`MAX_DEFER_TICKS`] ticks. It waits while
+/// wait and has waited fewer than [`MAX_DEFER_TICKS`] ticks. The heartbeat
+/// scans run right before the `src=hb` line, under the same rule. It waits while
 /// the console is busy, or while CPU 0's interrupted stream holds one of the
 /// IRQ-class locks (`sync::held_by_stream`): the other CPUs may be spinning
 /// on that lock, and the print would hold them for its whole length. Prints
@@ -331,11 +350,422 @@ pub fn end_of_tick() {
     DEFERRED_TICKS.store(0, Ordering::Relaxed);
     if hb {
         HB_PENDING.store(false, Ordering::Relaxed);
+        run_scans();
         print_line(LineSrc::Hb, LineMode::NonZero);
     } else {
         G1_PENDING.store(false, Ordering::Relaxed);
         print_line(LineSrc::G1, LineMode::Full);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat scans
+// ---------------------------------------------------------------------------
+//
+// Accumulators: thread masks (bit t = thread slot t), written and read only
+// by CPU 0's timer IRQ, with `Relaxed` load and store. They live in statics,
+// not in a stack struct or closure-captured locals, so the scan copies no
+// aggregate (IRQ-path rules). Each scan zeroes its own masks first.
+
+/// Scan A: threads queued in a run queue.
+static SCAN_QUEUED: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads queued more than once (`dupq`).
+static SCAN_DUPQ: AtomicU64 = AtomicU64::new(0);
+/// Scan A: queued threads by the class of the queue they are in.
+static SCAN_CLASS: [AtomicU64; CLASS_COUNT] = [const { AtomicU64::new(0) }; CLASS_COUNT];
+/// Scan A: threads current on an online CPU (`CURRENT_TID`).
+static SCAN_CURRENT: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads current on two CPUs at once (`dupcur`).
+static SCAN_DUPCUR: AtomicU64 = AtomicU64::new(0);
+/// Scan A: Runnable threads neither queued nor current (first strikes and
+/// confirmations come from [`STRIKE_ORPHAN`]).
+static SCAN_ORPHAN: AtomicU64 = AtomicU64::new(0);
+/// Scan A: queued Runnable threads not run for over `STARVE_TICKS`.
+static SCAN_STARVED: AtomicU64 = AtomicU64::new(0);
+/// Scan A: queued threads that are not Runnable (`qbad`).
+static SCAN_QBAD: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads in `BlockedIpc` (including sleep), scan B's candidates.
+static SCAN_BLOCKED_IPC: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads in `BlockedNotification`, scan B's candidates.
+static SCAN_BLOCKED_NOTIF: AtomicU64 = AtomicU64::new(0);
+/// Scan A: threads in `BlockedSelect`, scan B's candidates.
+static SCAN_BLOCKED_SELECT: AtomicU64 = AtomicU64::new(0);
+/// Scan B: threads with a TIMEOUT_QUEUE entry.
+static SCAN_TIMEOUT: AtomicU64 = AtomicU64::new(0);
+/// Scan B: threads a channel names as pending caller or waiting receiver.
+static SCAN_CHANREF: AtomicU64 = AtomicU64::new(0);
+/// Scan B: threads with a NOTIFY_DEADLINES deadline.
+static SCAN_NDL: AtomicU64 = AtomicU64::new(0);
+/// Scan B: threads a notification lists as a waiter.
+static SCAN_NOTIF: AtomicU64 = AtomicU64::new(0);
+
+/// Two strikes, one history per kind (A-orphan, A-starved, B-nowaker,
+/// B-wakefl), each updated only when its own scan completes.
+static STRIKE_ORPHAN: TwoStrike<MAX_CORES> = TwoStrike::new();
+static STRIKE_STARVED: TwoStrike<MAX_CORES> = TwoStrike::new();
+static STRIKE_NOWAKER: TwoStrike<MAX_CORES> = TwoStrike::new();
+static STRIKE_WAKEFL: TwoStrike<MAX_CORES> = TwoStrike::new();
+
+/// The confirmed set of each kind, for edge counting: a thread counts once
+/// when it enters the set, again only after it left and came back.
+static EDGE_ORPHAN: EdgeCounter = EdgeCounter::new();
+static EDGE_STARVED: EdgeCounter = EdgeCounter::new();
+static EDGE_NOWAKER: EdgeCounter = EdgeCounter::new();
+static EDGE_WAKEFL: EdgeCounter = EdgeCounter::new();
+
+/// How a scan's try-lock sequence ended.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ScanLock {
+    /// Every lock was taken and the snapshot recorded.
+    Done,
+    /// A lock was busy (`skipa`).
+    Busy,
+    /// A lock was held by CPU 0's own interrupted stream (`skipaself`).
+    OwnStream,
+}
+
+/// Which scan-B mask a waker reference goes to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ScanWaker {
+    /// A TIMEOUT_QUEUE entry (`timeout`).
+    Timeout,
+    /// A channel's pending caller or waiting receiver (`chan_ref`).
+    ChanRef,
+    /// A NOTIFY_DEADLINES deadline (`ndl`).
+    Deadline,
+    /// A notification's waiter (`notif_ref`).
+    NotifRef,
+}
+
+/// Set `tid`'s bit in the accumulator `mask` ([`tripwire::mask_set`]).
+#[inline(always)]
+fn mask_add(mask: &AtomicU64, tid: u32) -> MaskSet {
+    let mut bits = mask.load(Ordering::Relaxed);
+    let result = mask_set(&mut bits, tid);
+    if result == MaskSet::New {
+        mask.store(bits, Ordering::Relaxed);
+    }
+    result
+}
+
+/// `LAST_RUN[tid]`, or 0 for an out-of-range `tid`.
+#[inline(always)]
+fn last_run_of(tid: u32) -> u64 {
+    LAST_RUN
+        .get(tid as usize)
+        .map_or(0, |last_run| last_run.load(Ordering::Relaxed))
+}
+
+/// CPU `cpu`'s `tick` counter (its own timer IRQs).
+#[inline(always)]
+fn tick_of(cpu: usize) -> u64 {
+    Key::Tick.slot(0).map_or(0, |slot| COUNTERS.get(cpu, slot))
+}
+
+/// A scan try-lock failed on the lock whose word is `word`: [`ScanLock::OwnStream`]
+/// if CPU 0's interrupted stream holds it, else [`ScanLock::Busy`].
+#[inline(never)]
+pub fn scan_lock_busy(word: u64) -> ScanLock {
+    if crate::sync::held_by_own_stream(word) {
+        ScanLock::OwnStream
+    } else {
+        ScanLock::Busy
+    }
+}
+
+/// Scan A, under every run queue: `tid` is queued in its `class` queue.
+/// A second sighting is a duplicate (`dupq`); an id outside the masks counts
+/// `badtid`.
+#[inline(never)]
+pub fn scan_note_queued(tid: ThreadId, class: SchedulerClass) {
+    match mask_add(&SCAN_QUEUED, tid.0) {
+        MaskSet::New => {}
+        MaskSet::Dup => {
+            let _ = mask_add(&SCAN_DUPQ, tid.0);
+        }
+        MaskSet::BadTid => {
+            bump_masked(Key::Badtid, 0);
+            return;
+        }
+    }
+    if let Some(mask) = SCAN_CLASS.get(class as usize) {
+        let _ = mask_add(mask, tid.0);
+    }
+}
+
+/// Scan A, under THREAD_TABLE: record `CURRENT_TID[k]` of the `ncpu` online
+/// CPUs (equal to `CURRENT_THREAD[k]` while THREAD_TABLE is held, see
+/// [`note_dispatch`]). [`TID_NONE`] means no current thread; an id current
+/// on two CPUs is a duplicate (`dupcur`).
+#[inline(never)]
+pub fn scan_note_currents(ncpu: usize) {
+    for current in CURRENT_TID.iter().take(ncpu) {
+        let tid = current.load(Ordering::Relaxed);
+        if tid == TID_NONE {
+            continue;
+        }
+        match mask_add(&SCAN_CURRENT, tid) {
+            MaskSet::New => {}
+            MaskSet::Dup => {
+                let _ = mask_add(&SCAN_DUPCUR, tid);
+            }
+            MaskSet::BadTid => bump_masked(Key::Badtid, 0),
+        }
+    }
+}
+
+/// Scan A, under THREAD_TABLE, after the queues and the current threads:
+/// classify thread slot `slot` in `state` ([`classify_slot`]) as an orphan
+/// candidate, a starved candidate or a queued non-Runnable thread, and
+/// record a blocked thread as a scan-B candidate.
+#[inline(never)]
+pub fn scan_note_slot(slot: u32, state: SlotState) {
+    let flags = SlotFlags::NONE
+        .with_if(
+            SlotFlags::QUEUED,
+            mask_test(SCAN_QUEUED.load(Ordering::Relaxed), slot),
+        )
+        .with_if(
+            SlotFlags::CURRENT,
+            mask_test(SCAN_CURRENT.load(Ordering::Relaxed), slot),
+        );
+    let now = timer::TICK_COUNT.load(Ordering::Relaxed);
+    let verdict = classify_slot(state, flags, now, last_run_of(slot));
+    let flagged = match verdict {
+        SlotVerdict::Orphan => Some(&SCAN_ORPHAN),
+        SlotVerdict::Starved => Some(&SCAN_STARVED),
+        SlotVerdict::QueuedBad => Some(&SCAN_QBAD),
+        SlotVerdict::Clear | SlotVerdict::NoWaker | SlotVerdict::WakeInFlight => None,
+    };
+    if let Some(mask) = flagged {
+        let _ = mask_add(mask, slot);
+    }
+    let blocked = match state {
+        SlotState::BlockedIpc => Some(&SCAN_BLOCKED_IPC),
+        SlotState::BlockedNotification => Some(&SCAN_BLOCKED_NOTIF),
+        SlotState::BlockedSelect => Some(&SCAN_BLOCKED_SELECT),
+        _ => None,
+    };
+    if let Some(mask) = blocked {
+        let _ = mask_add(mask, slot);
+    }
+}
+
+/// Scan B, under one waker table: `tid` has a waker of kind `kind`. An id
+/// outside the masks counts `badtid`.
+#[inline(never)]
+pub fn scan_note_waker(kind: ScanWaker, tid: u32) {
+    let mask = match kind {
+        ScanWaker::Timeout => &SCAN_TIMEOUT,
+        ScanWaker::ChanRef => &SCAN_CHANREF,
+        ScanWaker::Deadline => &SCAN_NDL,
+        ScanWaker::NotifRef => &SCAN_NOTIF,
+    };
+    if mask_add(mask, tid) == MaskSet::BadTid {
+        bump_masked(Key::Badtid, 0);
+    }
+}
+
+/// Scan B: one waker table was held for `spent` CNTVCT ticks. Raises the
+/// `scanhold2` gauge.
+#[inline(never)]
+pub fn note_scan_hold2(spent: u64) {
+    if let Some(slot) = Key::Scanhold2.slot(0) {
+        COUNTERS.store_max(usize::from(cpu_here()), slot, spent);
+    }
+}
+
+/// The heartbeat scans, CPU 0's timer IRQ, right before the `src=hb` line
+/// (Design §2.6). Scan A (orphans, starvation and the queue and current-thread
+/// checks) runs first; scan B (no-waker threads) needs scan A's thread states
+/// and runs only after scan A completed in the same heartbeat.
+#[inline(never)]
+fn run_scans() {
+    let ncpu = smp::online_cpus();
+    if scan_a(ncpu) {
+        scan_b(ncpu);
+    }
+}
+
+/// Scan A: snapshot the run queues and thread table
+/// (`sched::scan_snapshot`), then confirm orphans and starved threads with
+/// two strikes and count the single-scan checks. Returns whether it
+/// completed.
+#[inline(never)]
+fn scan_a(ncpu: usize) -> bool {
+    SCAN_QUEUED.store(0, Ordering::Relaxed);
+    SCAN_DUPQ.store(0, Ordering::Relaxed);
+    for mask in SCAN_CLASS.iter() {
+        mask.store(0, Ordering::Relaxed);
+    }
+    SCAN_CURRENT.store(0, Ordering::Relaxed);
+    SCAN_DUPCUR.store(0, Ordering::Relaxed);
+    SCAN_ORPHAN.store(0, Ordering::Relaxed);
+    SCAN_STARVED.store(0, Ordering::Relaxed);
+    SCAN_QBAD.store(0, Ordering::Relaxed);
+    SCAN_BLOCKED_IPC.store(0, Ordering::Relaxed);
+    SCAN_BLOCKED_NOTIF.store(0, Ordering::Relaxed);
+    SCAN_BLOCKED_SELECT.store(0, Ordering::Relaxed);
+
+    let start = timer::read_counter();
+    let result = crate::sched::scan_snapshot(ncpu);
+    let hold = timer::read_counter().wrapping_sub(start);
+    let here = cpu_here();
+    match result {
+        ScanLock::Done => {}
+        ScanLock::Busy => {
+            add_row(here, Key::Skipa, 0, 1);
+            return false;
+        }
+        ScanLock::OwnStream => {
+            add_row(here, Key::Skipaself, 0, 1);
+            return false;
+        }
+    }
+    if let Some(slot) = Key::Scanhold1.slot(0) {
+        COUNTERS.store_max(usize::from(here), slot, hold);
+    }
+    add_row(here, Key::Scana, 0, 1);
+    add_row(
+        here,
+        Key::Dupq,
+        0,
+        count_tids(SCAN_DUPQ.load(Ordering::Relaxed)),
+    );
+    add_row(
+        here,
+        Key::Dupcur,
+        0,
+        count_tids(SCAN_DUPCUR.load(Ordering::Relaxed)),
+    );
+    add_row(
+        here,
+        Key::Qbad,
+        0,
+        count_tids(SCAN_QBAD.load(Ordering::Relaxed)),
+    );
+
+    let entered = confirm(
+        &STRIKE_ORPHAN,
+        &EDGE_ORPHAN,
+        SCAN_ORPHAN.load(Ordering::Relaxed),
+        ncpu,
+        Some(Key::OrphanNow),
+    );
+    add_row(here, Key::Orphan, 0, count_tids(entered));
+    let entered = confirm(
+        &STRIKE_STARVED,
+        &EDGE_STARVED,
+        SCAN_STARVED.load(Ordering::Relaxed),
+        ncpu,
+        None,
+    );
+    for class in 0..CLASS_COUNT {
+        let queued = SCAN_CLASS
+            .get(class)
+            .map_or(0, |mask| mask.load(Ordering::Relaxed));
+        add_row(here, Key::Starved, class, count_tids(entered & queued));
+    }
+    true
+}
+
+/// Scan B: collect every waker reference (`ipc::scan_wakers`), then classify
+/// each thread scan A saw blocked as no-waker or wake-in-flight, and confirm
+/// both with two strikes.
+#[inline(never)]
+fn scan_b(ncpu: usize) {
+    SCAN_TIMEOUT.store(0, Ordering::Relaxed);
+    SCAN_CHANREF.store(0, Ordering::Relaxed);
+    SCAN_NDL.store(0, Ordering::Relaxed);
+    SCAN_NOTIF.store(0, Ordering::Relaxed);
+    let ipc = SCAN_BLOCKED_IPC.load(Ordering::Relaxed);
+    let notif = SCAN_BLOCKED_NOTIF.load(Ordering::Relaxed);
+    let select = SCAN_BLOCKED_SELECT.load(Ordering::Relaxed);
+    let here = cpu_here();
+    if !crate::ipc::scan_wakers(notif | select != 0) {
+        add_row(here, Key::Skipb, 0, 1);
+        return;
+    }
+    add_row(here, Key::Scanb, 0, 1);
+
+    let current = SCAN_CURRENT.load(Ordering::Relaxed);
+    let timeout = SCAN_TIMEOUT.load(Ordering::Relaxed);
+    let chan_ref = SCAN_CHANREF.load(Ordering::Relaxed);
+    let ndl = SCAN_NDL.load(Ordering::Relaxed);
+    let notif_ref = SCAN_NOTIF.load(Ordering::Relaxed);
+    let mut nowaker = 0u64;
+    let mut wakefl = 0u64;
+    let mut rest = ipc | notif | select;
+    while let Some(tid) = pop_lowest(&mut rest) {
+        let state = if mask_test(ipc, tid) {
+            SlotState::BlockedIpc
+        } else if mask_test(notif, tid) {
+            SlotState::BlockedNotification
+        } else {
+            SlotState::BlockedSelect
+        };
+        // Read after the tables: a waker marks the thread after it takes
+        // the reference the tables no longer show.
+        let pending = WAKE_PENDING
+            .get(tid as usize)
+            .is_some_and(|marker| marker.load(Ordering::Acquire) != 0);
+        let flags = SlotFlags::NONE
+            .with_if(SlotFlags::CURRENT, mask_test(current, tid))
+            .with_if(SlotFlags::TIMEOUT, mask_test(timeout, tid))
+            .with_if(SlotFlags::CHAN_REF, mask_test(chan_ref, tid))
+            .with_if(SlotFlags::NDL, mask_test(ndl, tid))
+            .with_if(SlotFlags::NOTIF_REF, mask_test(notif_ref, tid))
+            .with_if(SlotFlags::WAKE_PENDING, pending);
+        let bit = mask_bit(tid).unwrap_or(0);
+        match classify_slot(state, flags, 0, 0) {
+            SlotVerdict::NoWaker => nowaker |= bit,
+            SlotVerdict::WakeInFlight => wakefl |= bit,
+            _ => {}
+        }
+    }
+
+    let entered = confirm(
+        &STRIKE_NOWAKER,
+        &EDGE_NOWAKER,
+        nowaker,
+        ncpu,
+        Some(Key::NowakerNow),
+    );
+    add_row(here, Key::Nowaker, 0, count_tids(entered));
+    let entered = confirm(
+        &STRIKE_WAKEFL,
+        &EDGE_WAKEFL,
+        wakefl,
+        ncpu,
+        Some(Key::WakeflNow),
+    );
+    add_row(here, Key::Wakefl, 0, count_tids(entered));
+}
+
+/// Two strikes and edge counting for one completed scan of one kind: record
+/// `flagged` in `strike`, and on a confirmation update `edge` and the kind's
+/// `*_now` gauge (`gauge`, if it has one). Returns the threads that entered
+/// the confirmed set, for the kind's event key. A stall (the tick-advance
+/// gate withheld confirmation) counts `scanstall`, leaves `edge` and the
+/// gauge as they are, and returns 0.
+#[inline(never)]
+fn confirm(
+    strike: &TwoStrike<MAX_CORES>,
+    edge: &EdgeCounter,
+    flagged: u64,
+    ncpu: usize,
+    gauge: Option<Key>,
+) -> u64 {
+    let result = strike.scan(flagged, ncpu, last_run_of, tick_of);
+    if result.stalled {
+        bump_masked(Key::Scanstall, 0);
+        return 0;
+    }
+    let update = edge.update(result.confirmed);
+    if let Some(slot) = gauge.and_then(|key| key.slot(0)) {
+        COUNTERS.store(usize::from(cpu_here()), slot, update.gauge());
+    }
+    update.entered
 }
 
 // ---------------------------------------------------------------------------

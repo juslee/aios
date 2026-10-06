@@ -311,8 +311,9 @@ pub fn notification_destroy(id: NotificationId) {
 
 /// Deadline storage for notification waits (indexed by tid).
 /// The timeout checker in the timer tick handler reads this, so it is an
-/// IRQ-class lock (`sync::IrqSpinLock`).
-static NOTIFY_DEADLINES: IrqSpinLock<[u64; MAX_THREADS]> =
+/// IRQ-class lock (`sync::IrqSpinLock`). The heartbeat scan (`ipc::scan`)
+/// try-locks it too.
+pub(super) static NOTIFY_DEADLINES: IrqSpinLock<[u64; MAX_THREADS]> =
     IrqSpinLock::new(LockClass::NotifyDeadlines, [u64::MAX; MAX_THREADS]);
 
 /// Visit the lock words of NOTIFY_DEADLINES and NOTIFICATION_TABLE, for

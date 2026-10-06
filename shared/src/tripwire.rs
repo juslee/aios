@@ -95,8 +95,9 @@ pub const MAX_REENTRY_MSG_LEN: usize = 160;
 /// this many ticks.
 pub const STARVE_TICKS: u64 = 1000;
 
-/// [`TwoStrike`] confirms a flag only when every online CPU's `tick` has
-/// advanced at least this much since the previous scan of that kind.
+/// [`TwoStrike`] confirms a flag only when every online CPU whose `tick` has
+/// ever advanced has advanced at least this much since the previous scan of
+/// that kind.
 pub const STRIKE_TICK_ADVANCE: u64 = 100;
 
 /// `IRQ_CTX[cpu]` value: thread context.
@@ -1644,15 +1645,19 @@ pub struct StrikeResult {
 /// B-nowaker or B-wakefl), kept in atomics so that it can live in a static.
 ///
 /// A thread is confirmed when two consecutive completed scans of this kind
-/// flag it, its `LAST_RUN` is the same at both, and every online CPU's `tick`
-/// advanced by at least [`STRIKE_TICK_ADVANCE`] in between. Each kind keeps
-/// its own history, updated only when its own scan completes, so a scan of
-/// another kind in between changes nothing here.
+/// flag it, its `LAST_RUN` is the same at both, and every online CPU whose
+/// `tick` has ever advanced (reads non-zero now) advanced by at least
+/// [`STRIKE_TICK_ADVANCE`] in between. Each kind keeps its own history,
+/// updated only when its own scan completes, so a scan of another kind in
+/// between changes nothing here.
 ///
-/// If some online CPU's tick has not advanced enough and a confirmation is
+/// If such a CPU's tick has not advanced enough and a confirmation is
 /// pending, the scan is a stall: nothing changes, and the first strikes are
 /// kept for the next scan. A stalled vCPU therefore never lets a thread in
-/// transit on it be confirmed.
+/// transit on it be confirmed. A CPU whose `tick` is still 0 takes no timer
+/// IRQs (CPUs 1-3 on a kernel whose secondaries leave the timer PPI in
+/// Group 0, #200) and does not gate; that it might be stalled is not
+/// detected (owner decision, 2026-09-28).
 ///
 /// Only CPU 0's scan uses an instance, so `Relaxed` load and store suffice.
 pub struct TwoStrike<const CPUS: usize> {
@@ -1693,9 +1698,17 @@ impl<const CPUS: usize> TwoStrike<CPUS> {
     ) -> StrikeResult {
         let online = ncpu.min(CPUS);
         let candidates = flagged & self.armed.load(Ordering::Relaxed);
+        // Ranges with `get`, not `enumerate()`, whose counter carries an
+        // overflow-check panic in a dev build: this runs in the timer IRQ.
         if candidates != 0 {
-            for (cpu, before) in self.ticks.iter().enumerate().take(online) {
-                if tick(cpu).wrapping_sub(before.load(Ordering::Relaxed)) < STRIKE_TICK_ADVANCE {
+            for cpu in 0..online {
+                let Some(before) = self.ticks.get(cpu) else {
+                    break;
+                };
+                let now = tick(cpu);
+                if now != 0
+                    && now.wrapping_sub(before.load(Ordering::Relaxed)) < STRIKE_TICK_ADVANCE
+                {
                     return StrikeResult {
                         confirmed: 0,
                         stalled: true,
@@ -1716,8 +1729,10 @@ impl<const CPUS: usize> TwoStrike<CPUS> {
             snap.store(now, Ordering::Relaxed);
         }
         self.armed.store(flagged, Ordering::Relaxed);
-        for (cpu, snap) in self.ticks.iter().enumerate().take(online) {
-            snap.store(tick(cpu), Ordering::Relaxed);
+        for cpu in 0..online {
+            if let Some(snap) = self.ticks.get(cpu) {
+                snap.store(tick(cpu), Ordering::Relaxed);
+            }
         }
         StrikeResult {
             confirmed,
@@ -3269,11 +3284,39 @@ mod tests {
     #[test]
     fn two_strike_gate_only_applies_to_pending_confirmations() {
         let ts = TwoStrike::<4>::new();
-        let m = Machine::new(); // no CPU ever ticks
+        let mut m = Machine::new();
+        m.run(1000);
         assert_eq!(scan(&ts, &m, T5), ok(0));
         assert_eq!(scan(&ts, &m, T2), ok(0), "no candidate, so no stall");
         assert_eq!(ts.armed(), T2);
         assert!(scan(&ts, &m, T2).stalled);
+    }
+
+    #[test]
+    fn two_strike_gate_skips_cpus_that_never_ticked() {
+        // CPUs 1-3 take no timer IRQs (#200): only CPU 0's tick advances.
+        let ts = TwoStrike::<4>::new();
+        let mut m = Machine::new();
+        m.ticks[0] = 1000;
+        assert_eq!(scan(&ts, &m, T5), ok(0));
+        m.ticks[0] += 1000;
+        assert_eq!(scan(&ts, &m, T5), ok(T5), "CPUs at 0 do not gate");
+        // A CPU that starts ticking gates from then on: CPU 2 at 5 has not
+        // advanced 100 since the last scan's snapshot (0).
+        m.ticks[0] += 1000;
+        m.ticks[2] = 5;
+        assert!(scan(&ts, &m, T5).stalled, "CPU 2 ticked, but only 5");
+        m.ticks[0] += 1000;
+        m.ticks[2] += 95;
+        assert_eq!(scan(&ts, &m, T5), ok(T5));
+        // A CPU that ticked once and then stopped keeps gating.
+        m.ticks[0] += 1000;
+        assert!(scan(&ts, &m, T5).stalled, "CPU 2 stopped at 100");
+        // With no CPU ticking at all, nothing gates.
+        let fresh = TwoStrike::<4>::new();
+        let still = Machine::new();
+        assert_eq!(scan(&fresh, &still, T1), ok(0));
+        assert_eq!(scan(&fresh, &still, T1), ok(T1));
     }
 
     #[test]

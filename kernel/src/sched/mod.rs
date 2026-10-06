@@ -10,10 +10,12 @@ mod scheduler;
 use core::sync::atomic::AtomicBool;
 
 use crate::mm::buddy::PAGE_SIZE;
+use crate::observability::tripwire::{self, ScanLock};
 use crate::smp::MAX_CORES;
 use crate::sync::IrqSpinLock;
 use crate::task::{SchedulerClass, Thread, ThreadId, MAX_THREADS};
 use shared::lock::LockClass;
+use shared::tripwire::SlotState;
 use shared::FixedQueue;
 
 // Re-export public API from submodules.
@@ -63,7 +65,7 @@ impl RunQueue {
             SchedulerClass::Idle => self.idle.push_back(tid),
         };
         if !queued {
-            crate::observability::tripwire::bump(shared::tripwire::Key::Enqfull, 0);
+            tripwire::bump(shared::tripwire::Key::Enqfull, 0);
         }
     }
 
@@ -83,6 +85,25 @@ impl RunQueue {
 
     pub(crate) fn total_depth(&self) -> usize {
         self.rt.len() + self.interactive.len() + self.normal.len() + self.idle.len()
+    }
+
+    /// Visit every queued thread with the class of the queue it is in, in
+    /// `pick_next` order (RT, Interactive, Normal, Idle; front to back),
+    /// without changing any queue. For the heartbeat scan, under the lock.
+    #[inline(always)]
+    pub(crate) fn for_each(&self, mut f: impl FnMut(ThreadId, SchedulerClass)) {
+        for tid in self.rt.iter() {
+            f(tid, SchedulerClass::RealTime);
+        }
+        for tid in self.interactive.iter() {
+            f(tid, SchedulerClass::Interactive);
+        }
+        for tid in self.normal.iter() {
+            f(tid, SchedulerClass::Normal);
+        }
+        for tid in self.idle.iter() {
+            f(tid, SchedulerClass::Idle);
+        }
     }
 }
 
@@ -108,6 +129,74 @@ pub(crate) fn irq_lock_words(f: &mut impl FnMut(u64)) {
     for queue in RUN_QUEUES.iter() {
         f(queue.owner_word());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat scan A: run queues and the thread table (crash-fix step 1b)
+// ---------------------------------------------------------------------------
+
+/// Phase 1 of the heartbeat scans (`observability::tripwire`): snapshot the
+/// run queues, the current threads and every thread slot in one consistent
+/// hold, and hand them to the tripwire's scan-A accumulators.
+///
+/// Takes all [`MAX_CORES`] run queues in ascending CPU order and then
+/// THREAD_TABLE, the only order the scheduler and the balancer use, and
+/// holds them all together: the balancer moves a thread while it holds both
+/// of its queues, so a queue-by-queue walk could miss it or see it twice.
+/// Every lock is taken with `try_lock_quiet`, so the scan never waits, never
+/// panics and counts nothing in the lock keys. The first busy lock ends the
+/// scan with every guard released ([`ScanLock::Busy`], or
+/// [`ScanLock::OwnStream`] when CPU 0's interrupted stream holds it).
+///
+/// Under THREAD_TABLE it reads `CURRENT_TID[k]` for the `ncpu` online CPUs
+/// instead of locking `CURRENT_THREAD[k]`: `note_dispatch` writes it only
+/// under THREAD_TABLE, so the two are equal here.
+///
+/// CPU 0's timer IRQ only (IRQs masked). Holds stay short: the tripwire
+/// records the longest in `scanhold1`.
+#[inline(never)]
+#[deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+pub(crate) fn scan_snapshot(ncpu: usize) -> ScanLock {
+    scan_queue_level(0, ncpu)
+}
+
+/// Hold run queue `cpu`, record its threads, and recurse to the next queue
+/// (THREAD_TABLE after the last). The guard is dropped only after the deeper
+/// levels return, so all locks are held together, and released in reverse
+/// order of acquisition.
+#[inline(never)]
+#[deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+fn scan_queue_level(cpu: usize, ncpu: usize) -> ScanLock {
+    let Some(queue) = RUN_QUEUES.get(cpu) else {
+        return scan_thread_table(ncpu);
+    };
+    let Some(guard) = queue.try_lock_quiet() else {
+        return tripwire::scan_lock_busy(queue.owner_word());
+    };
+    guard.for_each(tripwire::scan_note_queued);
+    let result = scan_queue_level(cpu.wrapping_add(1), ncpu);
+    drop(guard);
+    result
+}
+
+/// The innermost level of [`scan_snapshot`]: with every run queue held, hold
+/// THREAD_TABLE and record the current threads and each slot's state.
+#[inline(never)]
+#[deny(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+fn scan_thread_table(ncpu: usize) -> ScanLock {
+    let Some(table) = crate::task::THREAD_TABLE.try_lock_quiet() else {
+        return tripwire::scan_lock_busy(crate::task::THREAD_TABLE.owner_word());
+    };
+    tripwire::scan_note_currents(ncpu);
+    // A range, not `enumerate()`, whose counter carries an overflow-check
+    // panic in the dev build.
+    for slot in 0..MAX_THREADS {
+        let thread = table.get(slot).and_then(Option::as_ref);
+        let state = SlotState::of(thread.map(|t| &t.sched.state));
+        tripwire::scan_note_slot(slot as u32, state);
+    }
+    drop(table);
+    ScanLock::Done
 }
 
 /// Enqueue a thread on a specific CPU's run queue.
@@ -139,7 +228,7 @@ pub fn allocate_thread(thread: Thread) -> Option<usize> {
     let mut table = crate::task::THREAD_TABLE.lock();
     for (i, slot) in table.iter_mut().enumerate() {
         if slot.is_none() {
-            crate::observability::tripwire::reset_thread_stamps(i);
+            tripwire::reset_thread_stamps(i);
             *slot = Some(thread);
             return Some(i);
         }

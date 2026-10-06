@@ -224,8 +224,11 @@ pub fn try_load_balance() {
         }
     }
 
-    // Only migrate if difference > 1.
-    if max_depth <= min_depth + 1 || max_cpu == min_cpu {
+    // Only migrate if difference > 1. `saturating_add`: when every try_lock
+    // above failed (the heartbeat scan holds all the queues), min_depth is
+    // still usize::MAX and `+ 1` would overflow; this returns instead. With
+    // any queue read, the result is the same as `+ 1`.
+    if max_depth <= min_depth.saturating_add(1) || max_cpu == min_cpu {
         return;
     }
 
