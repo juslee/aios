@@ -52,11 +52,13 @@ interleaved under QEMU: RUNS rounds, one boot per arm per round, the arm
 order rotated by one every round (round 1: A B C, round 2: B C A, round 3:
 C A B, ...), so every arm sees the same host conditions. A REF is a commit
 SHA or a branch name; a name that does not resolve locally is looked up as
-origin/NAME. A REF of 4-40 hex digits must resolve to a commit whose SHA
-starts with it: a branch or tag of that name that points elsewhere is
-refused (pass the full SHA, or refs/heads/... or refs/tags/... for the
-ref). The same ref given twice is an A/A control: it shows how far two
-identical arms drift apart by chance.
+origin/NAME. A REF of 4-40 hex digits, or such a name before a suffix
+like ~1 or ^, must resolve to a commit whose SHA starts with it: a branch
+or tag of that name that points elsewhere is refused (pass the full SHA,
+or name the ref as origin/NAME for a branch, refs/heads/NAME for a
+local-only branch or refs/tags/NAME for a tag). The same ref given twice
+is an A/A control: it shows how far two identical arms drift apart by
+chance.
 
 Options:
   --runs N          rounds, i.e. boots per arm (default 30)
@@ -131,11 +133,12 @@ builds with its own toolchain pin into its own target/.
 Exit status: 0 when every round ran, whatever the boot classes (report
 only); 2 on a usage or setup error (a ref that does not resolve, an arm
 without #196, mixed toolchains or firmware, a failed build, a harness error
-on an arm's first boot, or 3 harness errors in a row); 130 on SIGINT, 143
-on SIGTERM. A signal stops the running build or boot at once (the boot's
-harness stops QEMU and removes its scratch files); once the boots have
-started, it also marks summary.md "stopped". A soak stopped before then
-leaves no summary.md, only the build logs.
+on an arm's first boot, or 3 harness errors in a row); 129, 130, 131 and
+143 on SIGHUP, SIGINT, SIGQUIT and SIGTERM. A signal stops the running
+build or boot at once (the boot's harness stops QEMU and removes its
+scratch files), as does any other early exit; once the boots have started,
+it also marks summary.md "stopped". A soak stopped before then leaves no
+summary.md, only the build logs.
 EOF
 }
 
@@ -217,24 +220,36 @@ cell() {
     printf '%s' "${s:--}"
 }
 
+# commit_of REV -- print the full commit SHA of REV, or of origin/REV;
+# return 1 if neither names a commit.
+commit_of() {
+    git -C "$REPO_ROOT" rev-parse --verify --quiet "$1^{commit}" ||
+        git -C "$REPO_ROOT" rev-parse --verify --quiet "origin/$1^{commit}"
+}
+
 # resolve_ref REF -- print the full commit SHA of REF, or of origin/REF.
-# Returns 1 if neither names a commit, and 3 if REF looks like a short SHA
-# (4-40 hex digits) but resolves to a commit whose SHA does not start with
-# it: git tries ref names before abbreviated object names, so a branch or tag
-# named like a short SHA would silently stand in for that commit.
+# Returns 1 if neither names a commit, and 3 if REF's leading name (all of
+# REF, or the part before its first ~ ^ @ : or {, as in 43fc8d5~1) looks
+# like a short SHA (4-40 hex digits) but resolves to a commit whose SHA does
+# not start with it: git tries ref names before abbreviated object names, so
+# a branch or tag named like a short SHA would silently stand in for that
+# commit.
 resolve_ref() {
-    local sha
+    local sha base bsha
     case "$1" in -*) return 1 ;; esac
-    sha=$(git -C "$REPO_ROOT" rev-parse --verify --quiet "$1^{commit}") ||
-        sha=$(git -C "$REPO_ROOT" rev-parse --verify --quiet "origin/$1^{commit}") ||
-        return 1
-    case "$1" in
-    *[!0-9a-fA-F]* | ? | ?? | ???) ;;
+    sha=$(commit_of "$1") || return 1
+    base=${1%%[~^@:\{]*}
+    case "$base" in
+    '' | *[!0-9a-fA-F]* | ? | ?? | ???) ;;
     *)
-        [ "${#1}" -gt 40 ] || case "$sha" in
-        "$(printf '%s' "$1" | tr 'A-F' 'a-f')"*) ;;
-        *) return 3 ;;
-        esac
+        if [ "${#base}" -le 40 ]; then
+            bsha=$sha
+            [ "$base" = "$1" ] || bsha=$(commit_of "$base") || return 3
+            case "$bsha" in
+            "$(printf '%s' "$base" | tr 'A-F' 'a-f')"*) ;;
+            *) return 3 ;;
+            esac
+        fi
         ;;
     esac
     printf '%s\n' "$sha"
@@ -475,6 +490,11 @@ CHILD_PID=""
 
 cleanup() {
     local i=0
+    # Every exit path stops the running build or boot first, including a
+    # fatal signal the script does not trap (SIGPIPE, say): its command runs
+    # in its own process group, which such a signal never reaches, and its
+    # worktree is about to be removed.
+    stop_children
     # A soak that stops early after the builds (a setup error, harness
     # errors, a signal) still leaves a summary of the boots it finished.
     if [ "$SUMMARY_READY" -eq 1 ] && [ "$FINISHED" -eq 0 ]; then
@@ -496,16 +516,15 @@ cleanup() {
     [ "$WT_DIR_CREATED" -eq 0 ] || rmdir -- "$WT_DIR" 2>/dev/null || true
 }
 
-# on_signal STATUS -- stop the running build or boot, then exit STATUS (the
-# EXIT trap writes the "stopped" summary). Each run_tracked command leads its
-# own process group, and the whole group gets SIGTERM: a build's cargo and
-# rustc processes (or a toolchain install) stop with it instead of running
-# on orphaned, and soak-qemu.sh's TERM trap stops QEMU and removes its
-# scratch directory. SIGTERM, not the signal received: a SIGINT from the
-# terminal no longer reaches a command in its own process group. Every
-# background job is signalled, not only CHILD_PID: a signal can arrive
-# between `&` and `CHILD_PID=$!`.
-on_signal() {
+# stop_children -- stop the running build or boot, if any, and wait for it.
+# Each run_tracked command leads its own process group, and the whole group
+# gets SIGTERM: a build's cargo and rustc processes (or a toolchain install)
+# stop with it instead of running on orphaned, and soak-qemu.sh's TERM trap
+# stops QEMU and removes its scratch directory. SIGTERM, not the signal the
+# script received: a SIGINT or SIGHUP from the terminal never reaches a
+# command in its own process group. Every background job is signalled, not
+# only CHILD_PID: a signal can arrive between `&` and `CHILD_PID=$!`.
+stop_children() {
     local pids p
     pids=$(jobs -p)
     [ -z "$CHILD_PID" ] || pids="$pids $CHILD_PID"
@@ -515,6 +534,12 @@ on_signal() {
     done
     [ -z "$pids" ] || wait 2>/dev/null || true
     CHILD_PID=""
+}
+
+# on_signal STATUS -- stop the running build or boot, then exit STATUS (the
+# EXIT trap writes the "stopped" summary).
+on_signal() {
+    stop_children
     exit "$1"
 }
 
@@ -637,7 +662,7 @@ boot_arm() {
     run_tracked "$out" "$wt" bash scripts/soak-qemu.sh --no-build --runs 1 --secs "$SECS" \
         --mode "$MODE" --report-only --out "$dir" || rc=$?
     case "$rc" in
-        130 | 143)
+        129 | 130 | 131 | 143)
             warn "soak-qemu.sh was interrupted (exit $rc)"
             exit "$rc"
             ;;
@@ -805,8 +830,9 @@ while [ "$i" -lt "$N" ]; do
     rc=0
     ARM_SHA[i]=$(resolve_ref "${ARM_REF[$i]}") || rc=$?
     [ "$rc" -ne 3 ] ||
-        die "ref '${ARM_REF[$i]}' looks like a short SHA but names a branch or tag that points at another" \
-            "commit; pass the full SHA, or refs/heads/... or refs/tags/... to mean the ref"
+        die "ref '${ARM_REF[$i]}' is or starts with what looks like a short SHA, but that name is a branch" \
+            "or tag that points at another commit; pass the full SHA, or name the ref as origin/NAME (a branch)," \
+            "refs/heads/NAME (a local-only branch) or refs/tags/NAME (a tag)"
     [ "$rc" -eq 0 ] ||
         die "ref '${ARM_REF[$i]}' does not name a commit (tried it and origin/${ARM_REF[$i]}; is the history fetched?)"
     git -C "$REPO_ROOT" merge-base --is-ancestor "$MIN_ARM_BASE" "${ARM_SHA[$i]}" ||
@@ -828,7 +854,9 @@ OUT=$(cd -- "$OUT" && pwd -P)
 [ -z "$(ls -A -- "$OUT")" ] || die "--out $OUT is not empty; choose a new or empty directory"
 
 trap cleanup EXIT
+trap 'on_signal 129' HUP
 trap 'on_signal 130' INT
+trap 'on_signal 131' QUIT
 trap 'on_signal 143' TERM
 
 # The default worktree directory is outside the checkout (see --help).

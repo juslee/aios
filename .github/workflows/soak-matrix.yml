@@ -7,8 +7,7 @@ name: Soak matrix
 # report-only like the qemu-soak job in ci.yml: the run fails only when the
 # soak could not run or was cut short, never because of the boot classes.
 #
-#   gh workflow run soak-matrix.yml -f runs=30 \
-#     -f refs="c1ce1a2 43fc8d5 claude/crash-fix-step-1b-tripwires"
+#   gh workflow run soak-matrix.yml -f runs=30 -f refs="c1ce1a2 43fc8d5"
 #
 # Every arm must contain 7167d40 (#196): the runner's strict-NX edk2 maps
 # EfiLoaderData execute-never, so an older kernel faults at the jump on every
@@ -25,8 +24,15 @@ name: Soak matrix
 # job uses one: a dispatch from main can plant entries that ci.yml's
 # rust-cache jobs restore later. So dispatch only arms whose code you have
 # reviewed, and the job fetches no pull request head from a fork, so a fork
-# commit cannot resolve as an arm. Not using rust-cache here only keeps one
-# arm's build from reaching another's through target/.
+# commit cannot resolve as an arm. An arm must be a commit SHA (7-40 hex
+# digits), never a branch name: a branch resolves only when the job runs, so
+# a push after the review, or while the job is queued, would build code
+# nobody reviewed.
+#
+# Each arm builds into its own worktree's target/, so arms never share build
+# output. The job uses no rust-cache: it cached nothing the soak uses, and
+# its post-job save would carry files an arm's build scripts write under
+# ~/.cargo into later dispatches of this workflow.
 #
 # The results are x86 TCG numbers on ubuntu-26.04 and form their own
 # baseline: never pool them with local arm64 soaks, or with runs on another
@@ -36,7 +42,7 @@ on:
   workflow_dispatch:
     inputs:
       refs:
-        description: "2-4 space-separated commit SHAs or branch names, one arm each (A, B, C, D in order); each must contain 7167d40 (#196)"
+        description: "2-4 space-separated commit SHAs (7-40 hex digits; no branch names), one arm each (A, B, C, D in order); each must contain 7167d40 (#196)"
         required: true
         type: string
       runs:
@@ -123,6 +129,20 @@ jobs:
             echo "::error::refs must name 2-4 revisions (got $arms)"
             exit 1
           fi
+          # A branch name would resolve to whatever it points at when the
+          # job runs, not to the reviewed commit (see the trust note above).
+          for ref in "$@"; do
+            case "$ref" in
+              *[!0-9a-fA-F]* | '' | ? | ?? | ??? | ???? | ????? | ??????)
+                echo "::error::'$ref' is not a commit SHA; give each arm as the 7-40 hex digit SHA of the commit you reviewed, never a branch name"
+                exit 1
+                ;;
+            esac
+            if [ "${#ref}" -gt 40 ]; then
+              echo "::error::'$ref' is longer than a SHA (40 hex digits)"
+              exit 1
+            fi
+          done
           for v in "$RUNS" "$SECS"; do
             case "$v" in
               '' | *[!0-9]*) echo "::error::runs and secs must be positive integers"; exit 1 ;;
