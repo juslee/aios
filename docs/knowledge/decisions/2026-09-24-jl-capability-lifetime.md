@@ -317,7 +317,7 @@ Crash-fix step 1b counts "`unblock` skipping a Running or Runnable target, by ca
 
 ### Self-test and log changes
 
-- `denied ChannelAccess` falls from 6 to 3 lines per boot (select_cap only). `Timeout test: ETIMEDOUT as expected` replaces `unexpected result -6` and prints after every other ipc-timeout test line. `Destroy test: EPIPE as expected` replaces `unexpected result Err(-6)`.
+- `denied ChannelAccess` falls from 11 to 8 lines per boot (select_cap's 3 and the Kit-error test's 5; #190's Kit-error self-test, which runs on select_cap's channels, added 5 to both counts). `Timeout test: ETIMEDOUT as expected` replaces `unexpected result -6` and prints after every other ipc-timeout test line. `Destroy test: EPIPE as expected` replaces `unexpected result Err(-6)`.
 - New lines: `Stale-id test`, `Stale-shm test`, `Shm-cascade test`, `Create-ABI test`, `Share test`, `Dead test`, `Wake-token test`, seven `Lifecycle:` lines, and `Notify-loop`, `Select-loop`, `Sleep-loop`, `Recv-loop` and `Call-loop test: as expected`. Region logs: `shm_cascade: pid=N destroyed K regions`, `shm: region S.G draining (B borrows)`, `shm: region S.G drained` and `shm_destroy: region S.G`. Ids print as `slot.generation`. Every line stays under 48 bytes (#191). The plan lists the exact lines and counts.
 - No soak classifier matches self-test lines, so the soak adds an expected-line tally.
 
@@ -344,7 +344,7 @@ The crash-fix ADR is amended in the docs PR that carries this ADR, not in step 1
 - Reply-slot reuse, and a stale ECANCELED delivered after the caller's next call has been claimed. Both need a per-call sequence in `pending_caller` and `ReplySlot`.
 - A thread switched off as Dead inside owed work (§7) leaves a peer with no waker, or leaks what it allocated or detached, until crash-fix step 8 meets §7's owed-work requirement. One instance, a replier killed between taking `pending_caller` and writing `done`, which leaves its caller waiting with no deadline, is pre-existing when the replier is running on CPU 0 at the kill (on any CPU from #200's fix step).
 - Killed borrowers' frames drain for the rest of the boot. Releasing them needs per-mapping borrow counts, because borrows are counted per region, as well as knowing that no killed borrower is on a CPU, which crash-fix step 8's off-CPU wait (§7) gives. Reaping while a self-exiting caller is still on its CPU (§6), and address-space teardown.
-- EL0 force-unmap (§5). `MemoryUnmap`'s private path can free region frames, which the last unmap, the cascade or the last release then frees again; #188 item 1's per-process allocation records must refuse any page inside a live or draining region. Mappers get no `MemoryRevoked` event.
+- EL0 force-unmap (§5). Mappers get no `MemoryRevoked` event. (This bullet also named a double free, `MemoryUnmap`'s private path freeing region frames that the last unmap, the cascade or the last release then frees again. #188's fix closed it: `MemoryUnmap` frees only an exact `MemoryMap` allocation record, and `MemoryMap` never records region frames; see `docs/kernel/ipc.md` §4.7.)
 - Kernel channels never cascade (#191). No `ProcessWait` timeout. POSIX `pthread_join` and `waitpid(-1)`.
 - The exit safe point and its owed-work mechanism, until crash-fix step 8 (§7).
 
@@ -370,7 +370,7 @@ One PR on `claude/cap-lifetime`, one commit per step, named `Cap lifetime step N
 | 2 | Per-slot generations, identity checks, `region_mut`, select propagates lookup errors; stale-id tests | `just run` prints `Stale-id test: EPIPE as expected` and `Stale-shm test: EPIPE as expected` |
 | 3 | `mint_child`, `free_slots`, `is_revoked`, `revoke_all`, `clear`; the three arms removed; expiry checks; Kit `grant` refusal | `just test`: the three denial tests, the expiry tests and the minting tests pass |
 | 4 | ipc-timeout thread pinned to CPU 2; Timeout test moved last | `just run`: step-3 lines unchanged and the Timeout-last check passes |
-| 5 | `create_with_access`; minting for channels and regions; x1 ABI; channel cascade; Create-ABI test | `just run` prints `Create-ABI test: x0/x1 as expected`, `Destroy test: EPIPE as expected` and `Timeout test: ETIMEDOUT as expected`; `grep -c 'denied ChannelAccess'` is 3 |
+| 5 | `create_with_access`; minting for channels and regions; x1 ABI; channel cascade; Create-ABI test | `just run` prints `Create-ABI test: x0/x1 as expected`, `Destroy test: EPIPE as expected` and `Timeout test: ETIMEDOUT as expected`; `grep -c 'denied ChannelAccess'` is 8 (select_cap's 3 and the Kit-error test's 5) |
 | 6 | Region cascade, `region_detach`, `RegionBorrow`, deferred free; Shm-cascade test | `rg -n -e region_dmap_addr -e region_size kernel/src` prints nothing; `just run` prints `Shm-cascade test: EPIPE as expected`, and `grep -c 'shm_cascade: pid=1 destroyed 1'` is 3 |
 | 7 | Share as delegation; map in one hold; Kit destroy; compositor attach check; Share test | `just run` prints `Share test: delegation as expected`; `rg -n 'cap_table\.revoke\(' kernel/src` lists only `cap/mod.rs` |
 | 8 | `may_become`, Dead guards, `exit_current`, `kill_process_threads`, `thread_probe`; Dead test | `just run` prints `Dead test: terminal as expected`; DAIF counts `scheduler.rs:9` and `direct.rs:8` |

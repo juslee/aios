@@ -149,7 +149,8 @@ pub struct CapabilityTable {
 
 /// Opaque handle that agents use to reference tokens.
 /// The handle is an index into the kernel's CapabilityTable.
-/// Invalid handle → EPERM + audit log entry.
+/// Out-of-range handle (>= MAX_CAPS_PER_PROCESS) → EINVAL: malformed for
+/// every caller (ipc.md §3.2). Empty, revoked or expired slot → EPERM + audit.
 pub struct CapabilityHandle(u32);
 
 pub struct CapabilityToken {
@@ -180,7 +181,7 @@ pub struct CapabilityToken {
 ```mermaid
 flowchart TD
     A["Agent issues syscall with CapabilityHandle"] --> B{"1. Handle bounds check\nhandle < table.tokens.len?"}
-    B -- NO --> B_deny["EPERM + audit"]
+    B -- NO --> B_deny["EINVAL + audit\n(malformed, ipc.md §3.2)"]
     B -- YES --> C{"2. Slot occupied?\ntable.tokens[handle].is_some?"}
     C -- NO --> C_deny["EPERM + audit"]
     C -- YES --> D{"3. Token revoked?\ntoken.revoked?"}
