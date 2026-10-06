@@ -170,8 +170,12 @@ impl LogRing {
         // SAFETY: The entry at `idx` was fully written before `head` moved
         // past it (Release/Acquire pairing), and the producer does not write
         // it again until the Release store of `tail` below moves past it.
-        // `drain_logs` is the only consumer; a second consumer popping this
-        // ring at the same time breaks this (see `unsafe impl Sync` below).
+        // `drain_logs` is the only consumer. If the producer wrote this slot
+        // before `tail` moved past it, this read would return a torn entry.
+        // A second consumer popping this ring at the same time could read
+        // the same slot twice, so the entry would print twice, or store a
+        // `tail` that skips entries (the known overlapping-drain gap in
+        // `unsafe impl Sync` below).
         let entry = unsafe {
             let slot = (*self.entries.get()).as_ptr().add(idx);
             core::ptr::read(slot)
