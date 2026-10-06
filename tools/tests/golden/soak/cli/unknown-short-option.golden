@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+soak: error: unknown option: -x (see --help)

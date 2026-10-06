@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+cases/stall-override-wedge.txt  WEDGE        tick=1000   stall=10s   [-]  lb_last=-  heartbeat stopped at tick 1000, silent 10s before the end (limit 5s)
+    first fatal: -
+    last INFO:   -
+                 -
+                 -
+--- stderr
