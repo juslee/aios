@@ -1,0 +1,79 @@
+exit 2
+--- stdout
+soak: building ESP image (just disk) -> <ROOT>/repo/out/build.log
+--- stderr
+soak: warning: --secs 30 leaves under 20s beyond --stall-secs 15 for the boot itself (about 6-8 s to the Gate 1 bench); late boots will be INCONCLUSIVE, and a wedge in the last 15s of a boot is never seen
+build line 11
+build line 12
+build line 13
+build line 14
+build line 15
+build line 16
+build line 17
+build line 18
+build line 19
+build line 20
+build line 21
+build line 22
+build line 23
+build line 24
+build line 25
+build line 26
+build line 27
+build line 28
+build line 29
+build line 30
+build line 31
+build line 32
+build line 33
+build line 34
+build line 35
+build line 36
+build line 37
+build line 38
+build line 39
+build line 40
+soak: error: build failed (just disk); full log: <ROOT>/repo/out/build.log
+--- out: build.log
+--- file build.log
+build line 1
+build line 2
+build line 3
+build line 4
+build line 5
+build line 6
+build line 7
+build line 8
+build line 9
+build line 10
+build line 11
+build line 12
+build line 13
+build line 14
+build line 15
+build line 16
+build line 17
+build line 18
+build line 19
+build line 20
+build line 21
+build line 22
+build line 23
+build line 24
+build line 25
+build line 26
+build line 27
+build line 28
+build line 29
+build line 30
+build line 31
+build line 32
+build line 33
+build line 34
+build line 35
+build line 36
+build line 37
+build line 38
+build line 39
+build line 40
+--- still running: -
