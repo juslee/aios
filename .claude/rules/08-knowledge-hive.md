@@ -1,6 +1,6 @@
 # Knowledge Hive Rules
 
-The `docs/` directory is an Obsidian vault with MCP integration.
+`docs/knowledge/` is the project knowledge base: plain Markdown, searched with Grep (lessons and decisions by keyword). Locate architecture docs through `docs/project/doc-map.md`.
 
 ## Writing Knowledge
 
@@ -18,10 +18,12 @@ After significant sessions, write insights to `docs/knowledge/`:
 - Required frontmatter: author, date, tags, status (draft/in-progress/final; `discussions/` may also use active, then graduated — see `docs/knowledge/README.md`)
 - Tags: kernel, memory, ipc, sched, storage, platform, security, intelligence, boot, mmu, smp, drivers, compositor, gpu, audio, usb, networking, input, wireless, camera, media, tooling
 
-## CLAUDE.md Self-Maintenance
+## .claude/CLAUDE.md Self-Maintenance
 
-Team-lead updates CLAUDE.md and relevant rule files after every milestone:
+Team-lead updates `.claude/CLAUDE.md` and the relevant rule files after every milestone:
 
 1. Review what changed (new files, crates, constants, conventions)
-2. Update: Workspace Layout, Key Technical Facts, Architecture Doc Map in `CLAUDE.md`; and the corresponding rule files in `.claude/rules/` (code conventions, quality gates, etc.)
+2. Update: Workspace Layout and Key Technical Facts in `.claude/CLAUDE.md`, the topic index in `docs/project/doc-map.md`, and the corresponding rule files in `.claude/rules/` (code conventions, quality gates, etc.)
 3. Commit as part of the milestone commit (same commit)
+
+`.claude/CLAUDE.md` and `.claude/rules/` sit under Claude Code's protected `.claude/` path: these edits go through a permission prompt (or the auto-mode classifier) instead of being auto-approved, so an unattended run where nobody can answer a prompt is refused them (docs policy in `docs/project/agent-loop.md`).

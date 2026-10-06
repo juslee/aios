@@ -163,13 +163,14 @@ aios/
 ├── rust-toolchain.toml   pinned nightly (aarch64-unknown-none + aarch64-unknown-uefi)
 ├── justfile              build / build-stub / disk / run* / soak / check / test / tools / docs-check / clean
 ├── .claude/
+│   ├── CLAUDE.md         project memory (this file; Claude Code loads it like a root CLAUDE.md)
 │   ├── agents/           team-lead, kernel-dev, doc-writer, code-reviewer, verifier, doc-auditor
 │   ├── hooks/            git-push-guard.py (PreToolUse), precompact-save.sh (PreCompact),
 │   │                     setup-dev-env.sh (SessionStart), aios (shim for the tools binary), tests/
-│   ├── rules/            01-code-conventions … 09-tool-priority (auto-loaded)
+│   ├── rules/            01-code-conventions … 10-harness-mechanics (auto-loaded)
 │   └── skills/           build-team, generate-phase-doc, implement-phase, review-pr-comments,
 │                         verify-phase, write-arch-doc, audit-loop, merge-and-cleanup,
-│                         obsidian, justin:start, justin:brief, justin:doctor, justin:pause
+│                         justin:start, justin:brief, justin:doctor, justin:pause
 │                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
 │   ├── arch/aarch64/     boot.S, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
@@ -233,18 +234,16 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/generate-phase-doc N` | Phase doc request | Generates phase doc from arch docs |
 | `/verify-phase N` | After implementation | Runs all quality gates |
 | `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
-| `/obsidian` | Knowledge-hive vault operations | Routes note, tag and frontmatter work across Obsidian MCP, app, and git |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
 | `/merge-and-cleanup [PR]` | User only, after PR approval | Preserve soak results and agent memory, squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
 
-**Runbook**: [docs/project/agent-loop.md](docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
+**Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 
 **Document Lifecycle**: All doc changes go to `claude/*` branches with PRs. Doc-auditor loops (audit → fix → re-audit) until zero issues, max 10 passes.
 
 **Existing skills reused** (not recreated):
 
 - `superpowers:writing-plans`, `superpowers:verification-before-completion`
-- `engineering-workflow-skills:pr`, `commit-commands:commit`
-- `sc:implement`, `sc:test`, `sc:build`, `sc:analyze`
 - `pr-review-toolkit:review-pr`
+- `remember:remember` (handoff written by `/justin:pause`)
