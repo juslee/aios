@@ -186,12 +186,16 @@ pub fn timer_tick_handler() {
     // 2-3. CPU 0 only: advance the system tick counter, drain the log rings
     // and print the heartbeat. TICK_COUNT is system-wide, so only one core
     // advances it. The log rings have a single consumer, so the tick drains
-    // them on CPU 0 only. Draining runs on every 4th tick and prints up to
-    // DRAIN_BATCH_SIZE (16) entries per call, straight to the UART with IRQs
-    // masked. A full batch takes longer than one tick (on a real 115200-baud
-    // PL011 an 80-character line alone takes about 7 ms), so a log burst
-    // delays CPU 0's following ticks; the rate limit bounds how often that
-    // happens, not how long one drain takes.
+    // them on CPU 0 only. Draining runs on every 4th tick, straight to the
+    // UART with IRQs masked. One call prints DRAIN_BATCH_SIZE (16) lines,
+    // plus one dropped-messages line per ring and any entries a missing
+    // continuation left pending (observability/mod.rs). A line joins a head
+    // entry with its continuation, so it can reach ~130 characters: ~11 ms on
+    // a 115200-baud PL011, so a full batch holds this handler for well over
+    // its 1 ms tick interval and a log burst delays CPU 0's following ticks.
+    // That cost is a known limit: the rate limit bounds how often a drain
+    // runs and the batch size how much one call prints; neither fits a full
+    // batch in one tick.
     let cpu = crate::observability::current_core_id().min(crate::smp::MAX_CORES - 1);
     if cpu == 0 {
         let tick = TICK_COUNT.fetch_add(1, Ordering::Relaxed);

@@ -65,9 +65,9 @@ When implementing kernel code, use these established patterns:
 | Write ARM system register | `asm!("msr REG, {}",  in(reg) val)` + ISB if needed | `arch/aarch64/timer.rs:51-58` |
 | New static shared across cores | `AtomicT` with appropriate ordering | `smp.rs:34` (PRINT_TURN) |
 | Write-once boot-time static | `UnsafeCell` + `unsafe impl Sync` | `arch/aarch64/mmu.rs:32-39` |
-| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:101` (LOG_RINGS) |
+| Per-core data structure | Array indexed by `current_core_id()` | `observability/mod.rs:201` (LOG_RINGS) |
 | New module in kernel | `pub mod name;` in parent + file with `//!` doc comment | `arch/aarch64/mod.rs` |
-| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:16` |
+| Shared type (kernel + stub) | Define in `shared/src/`, import in kernel with `pub use shared::` | `observability/mod.rs:18` |
 | Error from syscall handler | Return `Err(IpcError::Variant as i64)` | `ipc/mod.rs` (channel_create) |
 | Unrecoverable error | `kerror!(Subsys, "msg"); halt()` OR `panic!("msg")` | `main.rs:53-64` |
 | Feature-gated code | `#[cfg(feature = "feature-name")] { ... }` | `observability/trace.rs:6` |
@@ -364,7 +364,7 @@ pub fn ipc_send(
 // Create a new IPC channel. Requires ChannelCreate capability.
 pub fn channel_create(
     creator: ThreadId,
-) -> Result<ChannelId, i64>              // ipc/mod.rs:177
+) -> Result<ChannelId, i64>              // ipc/mod.rs:182
 
 // Multi-wait on channels + notifications (select/poll).
 pub fn ipc_select(
@@ -449,7 +449,7 @@ pub fn revoke_in_process(
 
 - **Cascade revocation lock ordering** (cap/mod.rs:199-208): `revoke_in_process()` first locks PROCESS_TABLE to mark tokens revoked, then *drops* PROCESS_TABLE, then locks CHANNEL_TABLE to destroy channels. This lock-drop-relock pattern is deliberate to maintain the PROCESS_TABLE > CHANNEL_TABLE ordering.
 
-- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints of every channel its threads own Dead (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
+- **Process exit does not revoke** (cap/mod.rs:54-66, 73): All cap checks require an occupied PROCESS_TABLE slot for the pid (`deny_missing_process` otherwise). `process_exit()` (task/process.rs) marks the process's threads Dead, marks both endpoints Dead on every channel with an endpoint owned by the process (waking blocked threads with EPIPE) and cleans up its shared memory, but it never clears the slot or its `cap_table`. The exited process has no thread left to use its capabilities, but for a kernel caller that passes its pid, the process lookup in `check_*` and `grant_to_process()` still succeeds.
 
 - **CapabilityTable is per-process, max 256** (shared/src/cap.rs): Each process has `[Option<CapabilityToken>; 256]`. Handle allocation is O(n) scan for `None` slot. Don't assume constant-time allocation.
 

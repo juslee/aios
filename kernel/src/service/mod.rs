@@ -206,8 +206,9 @@ pub fn init() {
     let echo_server_tid = ThreadId(0x700);
     let echo_client_tid = ThreadId(0x701);
 
-    let ch = ipc::channel_create_unchecked(echo_server_tid);
-    ipc::channel_set_peer(ch, echo_client_tid).expect("Failed to set echo channel peer");
+    // Both endpoints belong to process 7 (the echo server and client).
+    let ch = ipc::channel_create_unchecked(ProcessId(7));
+    ipc::channel_set_peer(ch, ProcessId(7)).expect("Failed to set echo channel peer");
     *ECHO_CHANNEL.lock() = Some(ch);
 
     // Grant ChannelAccess for the echo channel to process 7.
@@ -370,19 +371,46 @@ fn echo_client_entry() -> ! {
     crate::kinfo!(Ipc, "Echo client: triggering process_exit for pid=7");
     crate::task::process::process_exit(ProcessId(7), 0);
 
-    // After process exit, try the channel — it should fail or return stale data.
+    // process_exit marks both endpoints of the echo channel Dead: process 7
+    // owns them. Check the state directly, so the result does not depend on
+    // whether the echo server thread ever ran.
+    let endpoints_dead = {
+        let table = ipc::CHANNEL_TABLE.lock();
+        svc_ch
+            .index()
+            .and_then(|idx| table[idx].as_ref())
+            .map(|ch| {
+                ch.state_a == ipc::EndpointState::Dead && ch.state_b == ipc::EndpointState::Dead
+            })
+    };
+    match endpoints_dead {
+        Some(true) => crate::kinfo!(
+            Ipc,
+            "Echo client: both endpoints Dead after service death (expected)"
+        ),
+        Some(false) => crate::kwarn!(
+            Ipc,
+            "Echo client: channel endpoint still Active after service death"
+        ),
+        None => crate::kwarn!(Ipc, "Echo client: channel gone after service death"),
+    }
+
+    // Then try the channel: the Dead endpoints make the call return EPIPE.
+    // Any other error (ETIMEDOUT means the channel stayed Active) is a failure.
     let mut buf = [0u8; 64];
     let result2 = ipc::ipc_call(svc_ch, b"dead", &mut buf, 100);
-    if result2 < 0 {
-        crate::kinfo!(
+    if result2 == crate::syscall::IpcError::Epipe as i64 {
+        crate::kinfo!(Ipc, "Echo client: EPIPE after service death (expected)");
+    } else if result2 < 0 {
+        crate::kwarn!(
             Ipc,
-            "Echo client: error {} after service death (EPIPE expected)",
+            "Echo client: error {} after service death (expected EPIPE)",
             result2
         );
     } else {
-        crate::kinfo!(
+        crate::kwarn!(
             Ipc,
-            "Echo client: stale reply ({} bytes) after death, channel draining",
+            "Echo client: unexpected reply ({} bytes) after service death",
             result2
         );
     }

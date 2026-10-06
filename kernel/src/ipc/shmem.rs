@@ -212,10 +212,9 @@ pub fn shared_memory_create(
 
     crate::kinfo!(
         Mm,
-        "shm_create: id={} size={:#x} pages={} order={} phys={:#x} pid={}",
+        "shm_create: id={} size={:#x} order={} phys={:#x} pid={}",
         idx,
         size_pages * PAGE_SIZE,
-        1usize << order,
         order,
         base_phys,
         pid.0
@@ -756,7 +755,6 @@ pub fn memory_unmap(pid: ProcessId, va: usize, size: usize) -> Result<(), i64> {
 ///
 /// For Phase 3 kernel threads, this is how processes access shared memory
 /// (no user address space to map into).
-#[allow(dead_code)]
 pub fn region_dmap_addr(region_id: SharedMemoryId) -> Option<usize> {
     if region_id.0 as usize >= MAX_SHARED_REGIONS {
         return None;

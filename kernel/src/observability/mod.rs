@@ -11,9 +11,11 @@ use core::cell::UnsafeCell;
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::arch::aarch64::daif::with_irqs_masked;
 use crate::smp::MAX_CORES;
 use crate::sync::IrqSpinLock;
 use shared::lock::LockClass;
+use shared::observability::{next_log_line, LogMessageBuf};
 
 // Re-export observability types from shared crate.
 pub use shared::{LogEntry, LogLevel, Subsystem};
@@ -32,13 +34,34 @@ const LOG_RING_SIZE: usize = 256;
 const LOG_RING_MASK: u32 = (LOG_RING_SIZE as u32) - 1;
 
 /// Lock-free per-core log ring buffer.
-/// Single-producer (owning core) / single-consumer (drain function).
+/// Single-producer (owning core) / single-consumer (drain function). The
+/// producer writes `head`, `dropped`, `drop_pos` and the free slots; the
+/// consumer writes `tail` and `dropped_reported`. A message that does not fit
+/// is dropped and counted rather than overwriting entries the drain may be
+/// reading, and the drain reports the count where the loss happened (`pop`).
 /// Uses `UnsafeCell` for interior mutability of entries (required by Rust's
 /// aliasing rules — `&self` methods that write need `UnsafeCell`).
 pub struct LogRing {
     entries: UnsafeCell<[LogEntry; LOG_RING_SIZE]>,
     head: AtomicU32,
     tail: AtomicU32,
+    /// Messages dropped because the ring was full. Producer only.
+    dropped: AtomicU32,
+    /// Ring position of the latest drop: the value of `head` when it
+    /// happened, so the entries before it were logged before the drop.
+    /// Producer only.
+    drop_pos: AtomicU32,
+    /// Value of `dropped` at the drain's last report. Consumer only.
+    dropped_reported: AtomicU32,
+}
+
+/// What the drain reads next from a ring (`LogRing::pop`).
+enum RingItem {
+    /// The next entry.
+    Entry(LogEntry),
+    /// This many messages were dropped at the drain's position: after the
+    /// entries it has read and before the next one.
+    Dropped(u32),
 }
 
 impl LogRing {
@@ -47,36 +70,99 @@ impl LogRing {
         entries: UnsafeCell::new([LogEntry::ZERO; LOG_RING_SIZE]),
         head: AtomicU32::new(0),
         tail: AtomicU32::new(0),
+        dropped: AtomicU32::new(0),
+        drop_pos: AtomicU32::new(0),
+        dropped_reported: AtomicU32::new(0),
     };
 
-    /// Push a log entry. Overwrites oldest on full (advances tail).
-    fn push(&self, entry: LogEntry) {
+    /// Push one message: a head entry and, when the message is longer than
+    /// one entry, its continuation. When the ring has no room for the whole
+    /// message, the message is dropped, counted in `dropped` and its ring
+    /// position kept in `drop_pos`; entries already in the ring are never
+    /// overwritten.
+    ///
+    /// Both entries are written before `head` moves, and `head` moves past
+    /// both with one Release store, so the drain sees the pair whole or not
+    /// at all. The caller masks IRQs (`log_impl`), so no other producer on
+    /// this core runs between the two writes.
+    fn push(&self, entry: LogEntry, continuation: Option<LogEntry>) {
+        let count = if continuation.is_some() { 2 } else { 1 };
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = head.wrapping_add(1);
+        let next_head = head.wrapping_add(count);
 
-        // If the ring is full, advance tail to discard the oldest entry.
-        let tail = self.tail.load(Ordering::Relaxed);
+        // Acquire pairs with the Release store of `tail` in `pop`: the drain
+        // has finished reading every slot before `tail`, so those slots can
+        // be written again.
+        let tail = self.tail.load(Ordering::Acquire);
         if next_head.wrapping_sub(tail) > LOG_RING_SIZE as u32 {
-            self.tail.store(tail.wrapping_add(1), Ordering::Relaxed);
+            // Full. Record where the message was lost, then count it. Only
+            // this producer writes `drop_pos` and `dropped`, so a load and a
+            // store count the drop without an atomic read-modify-write. The
+            // Release store of `dropped` publishes `drop_pos` with it.
+            self.drop_pos.store(head, Ordering::Relaxed);
+            let dropped = self.dropped.load(Ordering::Relaxed);
+            self.dropped
+                .store(dropped.wrapping_add(1), Ordering::Release);
+            return;
         }
 
-        let idx = (head & LOG_RING_MASK) as usize;
-
-        // SAFETY: Single producer (owning core). UnsafeCell provides interior
-        // mutability. No concurrent writes to this index because head is only
-        // advanced by the owning core.
-        unsafe {
-            let slot = (*self.entries.get()).as_mut_ptr().add(idx);
-            core::ptr::write(slot, entry);
+        self.write_slot(head, entry);
+        if let Some(continuation) = continuation {
+            self.write_slot(head.wrapping_add(1), continuation);
         }
 
         self.head.store(next_head, Ordering::Release);
     }
 
-    /// Pop the next entry for the drain consumer. Returns None if empty.
-    fn pop(&self) -> Option<LogEntry> {
+    /// Write `entry` into the slot for ring position `pos`. Producer only:
+    /// `pos` is at or after `head` and before `tail + LOG_RING_SIZE`.
+    fn write_slot(&self, pos: u32, entry: LogEntry) {
+        let idx = (pos & LOG_RING_MASK) as usize;
+
+        // SAFETY: `idx` is masked to LOG_RING_SIZE, so the slot is in
+        // bounds. `push` passes only positions from `head` up to before
+        // `tail + LOG_RING_SIZE`, and drops the message otherwise, so a
+        // single drain is not reading the slot: it reads only positions
+        // before `head`, and it finished its last read of this slot before
+        // its Release store of `tail` that `push` loaded with Acquire.
+        // `log_impl` keeps this core the ring's only writer: it pushes only
+        // to its own core's ring and masks IRQs for the whole push.
+        // UnsafeCell provides the interior mutability. A second writer on the
+        // ring (an unmasked IRQ producer, or a thread that migrated mid-push)
+        // would tear or lose entries. Two overlapping `drain_logs` calls (the
+        // known gap in `unsafe impl Sync` below) also break this: one can
+        // store `tail` past a slot the other is still reading, and this write
+        // can then tear the entry that drain reads.
+        unsafe {
+            let slot = (*self.entries.get()).as_mut_ptr().add(idx);
+            core::ptr::write(slot, entry);
+        }
+    }
+
+    /// Pop the next item for the drain consumer, or None if the ring is
+    /// empty. Messages dropped at the drain's position come first, as one
+    /// `Dropped` count, so the drain reports them after the entries logged
+    /// before them and before the entries logged after them. If the ring
+    /// drops messages at more than one position before the drain reaches the
+    /// first, the one count comes at the latest position and covers them all.
+    fn pop(&self) -> Option<RingItem> {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
+
+        // A message dropped at `tail` was dropped before the entry at `tail`
+        // was pushed. If that entry is published, the Acquire load of `head`
+        // above makes the drop visible here, so it is reported before the
+        // entry; if the ring is empty, a later call sees it, still at `tail`.
+        // The Acquire load of `dropped` pairs with its Release store in
+        // `push`, so `drop_pos` is at least as new as the count: every drop
+        // counted happened at or before `drop_pos`, and the count is never
+        // reported ahead of an entry logged before one of its drops.
+        let dropped = self.dropped.load(Ordering::Acquire);
+        let reported = self.dropped_reported.load(Ordering::Relaxed);
+        if dropped != reported && self.drop_pos.load(Ordering::Relaxed) == tail {
+            self.dropped_reported.store(dropped, Ordering::Relaxed);
+            return Some(RingItem::Dropped(dropped.wrapping_sub(reported)));
+        }
 
         if tail == head {
             return None;
@@ -84,20 +170,38 @@ impl LogRing {
 
         let idx = (tail & LOG_RING_MASK) as usize;
 
-        // SAFETY: Single consumer (drain function). The entry at `idx` was
-        // fully written before head was advanced (Release/Acquire pairing).
+        // SAFETY: The entry at `idx` was fully written before `head` moved
+        // past it (Release/Acquire pairing), and the producer does not write
+        // it again until the Release store of `tail` below moves past it.
+        // `drain_logs` is the only consumer. If the producer wrote this slot
+        // before `tail` moved past it, this read would return a torn entry.
+        // A second consumer popping this ring at the same time could read
+        // the same slot twice, so the entry would print twice, or store a
+        // `tail` that skips entries (the known overlapping-drain gap in
+        // `unsafe impl Sync` below).
         let entry = unsafe {
             let slot = (*self.entries.get()).as_ptr().add(idx);
             core::ptr::read(slot)
         };
 
         self.tail.store(tail.wrapping_add(1), Ordering::Release);
-        Some(entry)
+        Some(RingItem::Entry(entry))
     }
 }
 
-// SAFETY: LogRing is accessed per-core (producer) and by drain (consumer).
-// The SPSC protocol ensures no data races.
+// SAFETY: Each field of a ring has one writer. The producer is `log_impl` on
+// the owning core, with IRQs masked for the whole push: it writes `head`,
+// `dropped`, `drop_pos` and the slots from `head` up to before
+// `tail + LOG_RING_SIZE`. The consumer is `drain_logs`: it writes `tail` and
+// `dropped_reported` and reads the slots from `tail` up to before `head`.
+// The Release stores and Acquire loads of `head` and `tail` hand each slot
+// from one side to the other, so no slot is read and written at once. A
+// second producer, or two consumers popping one ring at once, would break
+// this and tear, repeat or lose entries. `drain_logs` also has callers
+// besides the CPU 0 timer tick (see `DRAIN_BATCH_SIZE`), and one can overlap
+// the tick's drain: a known gap in this protocol, which shows as lost marks
+// when it splits a pair, and can repeat a drop report or hold it back until
+// the ring's next drop.
 unsafe impl Sync for LogRing {}
 
 /// Global log rings, one per core. BSS-allocated.
@@ -136,36 +240,13 @@ pub fn current_core_id() -> usize {
     (mpidr & 0xFF) as usize
 }
 
-/// Helper that formats into a fixed 48-byte buffer.
-struct MsgBuf {
-    buf: [u8; 48],
-    pos: usize,
-}
-
-impl MsgBuf {
-    fn new() -> Self {
-        Self {
-            buf: [0; 48],
-            pos: 0,
-        }
-    }
-}
-
-impl fmt::Write for MsgBuf {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let bytes = s.as_bytes();
-        let avail = 48 - self.pos;
-        let copy_len = bytes.len().min(avail);
-        self.buf[self.pos..self.pos + copy_len].copy_from_slice(&bytes[..copy_len]);
-        self.pos += copy_len;
-        Ok(())
-    }
-}
-
 /// Core logging function. Called by klog! macro.
 ///
 /// Before LogRingsReady: writes directly to UART (synchronous).
-/// After LogRingsReady: writes to per-core ring buffer (non-blocking).
+/// After LogRingsReady: writes to per-core ring buffer (non-blocking). A
+/// message longer than one entry takes a head entry and a continuation, and
+/// text past two entries is dropped and marked (observability.md §2.4). A
+/// message that does not fit in the ring is dropped and counted (§2.5).
 pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
     use crate::boot_phase::{current_boot_phase, EarlyBootPhase};
 
@@ -178,25 +259,22 @@ pub fn log_impl(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
         return;
     }
 
-    // Write to per-core ring buffer.
-    let core = current_core_id().min(MAX_CORES - 1);
     let timestamp = read_cntvct();
 
-    let mut msg = MsgBuf::new();
+    // Format before masking IRQs: formatting is the slow part.
+    let mut msg = LogMessageBuf::new();
     let _ = fmt::write(&mut msg, args);
 
-    let entry = LogEntry {
-        timestamp,
-        core_id: core as u8,
-        level,
-        subsystem,
-        flags: 0,
-        msg_len: msg.pos as u8,
-        _reserved: [0; 3],
-        message: msg.buf,
-    };
-
-    LOG_RINGS[core].push(entry);
+    // Pick the ring and push with IRQs masked. An IRQ-context producer on
+    // this core (the load balancer, crash-fix ADR N6) then cannot run
+    // between the head entry and its continuation or tear either one, and
+    // the thread cannot migrate between reading the core id and pushing to
+    // that core's ring.
+    with_irqs_masked(|| {
+        let core = current_core_id().min(MAX_CORES - 1);
+        let (entry, continuation) = msg.entries(timestamp, core as u8, level, subsystem);
+        LOG_RINGS[core].push(entry, continuation);
+    });
 }
 
 /// Early boot log: format directly to UART, synchronous.
@@ -246,17 +324,34 @@ fn early_boot_log(level: LogLevel, subsystem: Subsystem, args: fmt::Arguments) {
 // UART drain (observability.md §2.7)
 // ---------------------------------------------------------------------------
 
-/// Maximum entries to drain per call (bounds UART hold time).
-/// Maximum log entries drained per call. Kept small so timer_tick_handler
-/// completes within the 1ms tick budget at 115200 baud (~7ms per log line).
-/// With drain every 4th tick (4ms) and 1 entry/call, effective throughput
-/// is ~1 entry/4ms which keeps the handler fast. Burst draining happens
-/// from explicit drain_logs() calls in kernel_main (boot sequence).
+/// Log lines a `drain_logs` call prints before it stops; a head entry joined
+/// with its continuation counts as one line. A call can print more. A ring
+/// adds one report line when the drain reaches where it dropped messages (a
+/// second report from that ring needs the ring to fill again first, far more
+/// entries than one call reads). And the call stops only once no entry is
+/// pending: an entry popped while looking for a missing continuation is
+/// printed past the limit, usually one more line, but when that entry is a
+/// head whose continuation is missing too it pops another, so while drains
+/// overlap each such head can add a line, up to what the ring holds. The
+/// limit bounds each call's cost for the CPU 0 timer tick, which drains every
+/// 4th tick; a full batch still runs well past one 1ms tick (see `timer.rs`).
+/// The boot sequence calls `drain_logs` directly as well, to flush bursts,
+/// and so does the scheduler's `pc=0` check before it panics, on any CPU.
 const DRAIN_BATCH_SIZE: usize = 16;
 
-/// Drain all per-core log rings and write formatted entries to UART.
+/// Drain the per-core log rings and write formatted entries to UART,
+/// DRAIN_BATCH_SIZE lines per call plus what that doc lists past the limit.
 /// Also captures to BootLogBuffer for GPU text rendering when capture is enabled.
-/// Called from timer tick handler and boot-time flush. Must NOT call klog! (re-entrancy).
+/// Called from the timer tick handler, boot-time flushes and the scheduler's
+/// `pc=0` check. Must NOT call klog! (re-entrancy).
+///
+/// A head entry and its continuation print as one line. The producer never
+/// splits a pair, so a head without its continuation, or a continuation
+/// without its head, means another consumer popped part of the pair; those
+/// print with LOG_LOST_TAIL_MARK or LOG_LOST_HEAD_MARK (see `next_log_line`).
+/// Messages a full ring dropped are reported where they were lost, as one
+/// `[log] core N: K messages dropped (ring full)` line between the entries
+/// logged before the drop and those logged after it (`LogRing::pop`).
 pub fn drain_logs() {
     use crate::arch::aarch64::uart::UartWriter;
     use core::fmt::Write;
@@ -266,49 +361,82 @@ pub fn drain_logs() {
     let mut drained = 0;
 
     // Round-robin across all cores.
-    for ring in LOG_RINGS.iter() {
-        while drained < DRAIN_BATCH_SIZE {
-            if let Some(entry) = ring.pop() {
-                let (secs, micros) = shared::timestamp_to_secs_micros(entry.timestamp, freq);
-
-                let msg_len = (entry.msg_len as usize).min(48);
-                let msg = core::str::from_utf8(&entry.message[..msg_len]).unwrap_or("<invalid>");
-
-                // Format to stack buffer for dual output (UART + boot log capture).
-                let mut line_storage = [0u8; MAX_LINE_LEN];
-                let mut lb = LineBuf::new(&mut line_storage);
-                let _ = write!(
-                    lb,
-                    "[{:4}.{:06}] [{}] {} {} {}",
-                    secs,
-                    micros,
-                    entry.core_id,
-                    entry.level.name(),
-                    entry.subsystem.name(),
-                    msg,
-                );
-                let line_len = lb.len();
-
-                // Write to UART. Use valid_up_to() on truncated UTF-8.
-                let line_str = match core::str::from_utf8(&line_storage[..line_len]) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // SAFETY: valid_up_to() is on a UTF-8 boundary per Utf8Error contract.
-                        unsafe { core::str::from_utf8_unchecked(&line_storage[..e.valid_up_to()]) }
-                    }
-                };
-                let _ = w.write_str(line_str);
-                let _ = w.write_str("\n");
-
-                // Capture to boot log buffer.
-                capture_to_boot_log(&line_storage[..line_len]);
-
-                drained += 1;
-            } else {
+    for (core, ring) in LOG_RINGS.iter().enumerate() {
+        // An entry popped while looking for a continuation that was not
+        // there. It is printed next, even past the batch limit, because it
+        // cannot be put back.
+        let mut pending = None;
+        while drained < DRAIN_BATCH_SIZE || pending.is_some() {
+            let Some(line) = next_log_line(&mut pending, || pop_entry(ring, core)) else {
                 break;
-            }
+            };
+            let entry = &line.first;
+            let (secs, micros) = shared::timestamp_to_secs_micros(entry.timestamp, freq);
+
+            // Format to stack buffer for dual output (UART + boot log capture).
+            let mut line_storage = [0u8; MAX_LINE_LEN];
+            let mut lb = LineBuf::new(&mut line_storage);
+            let _ = write!(
+                lb,
+                "[{:4}.{:06}] [{}] {} {} ",
+                secs,
+                micros,
+                entry.core_id,
+                entry.level.name(),
+                entry.subsystem.name(),
+            );
+            let _ = line.write_message(&mut lb);
+            let line_len = lb.len();
+            emit_drained_line(&mut w, &line_storage[..line_len]);
+
+            drained += 1;
         }
     }
+}
+
+/// Pop the next entry of `ring`, the ring of core `core`. When the ring
+/// dropped messages at this point, their count comes first and is printed
+/// here, before the entry, where the loss happened in the log.
+fn pop_entry(ring: &LogRing, core: usize) -> Option<LogEntry> {
+    loop {
+        match ring.pop()? {
+            RingItem::Entry(entry) => return Some(entry),
+            RingItem::Dropped(count) => report_dropped(core, count),
+        }
+    }
+}
+
+/// Print the `[log] core N: K messages dropped (ring full)` line.
+fn report_dropped(core: usize, count: u32) {
+    use core::fmt::Write;
+
+    let mut line_storage = [0u8; MAX_LINE_LEN];
+    let mut lb = LineBuf::new(&mut line_storage);
+    let _ = write!(
+        lb,
+        "[log] core {}: {} messages dropped (ring full)",
+        core, count
+    );
+    let line_len = lb.len();
+    emit_drained_line(
+        &mut crate::arch::aarch64::uart::UartWriter,
+        &line_storage[..line_len],
+    );
+}
+
+/// Write one formatted drain line to the UART, then capture it to the boot
+/// log buffer. A line cut at MAX_LINE_LEN inside a character prints up to
+/// the last whole character.
+fn emit_drained_line(w: &mut crate::arch::aarch64::uart::UartWriter, line: &[u8]) {
+    use core::fmt::Write;
+
+    let line_str = match core::str::from_utf8(line) {
+        Ok(s) => s,
+        Err(e) => core::str::from_utf8(&line[..e.valid_up_to()]).unwrap_or_default(),
+    };
+    let _ = w.write_str(line_str);
+    let _ = w.write_str("\n");
+    capture_to_boot_log(line);
 }
 
 // ---------------------------------------------------------------------------

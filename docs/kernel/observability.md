@@ -163,14 +163,16 @@ pub struct LogEntry {
     pub level: LogLevel,         // 1 byte
     /// Originating subsystem.
     pub subsystem: Subsystem,    // 1 byte
-    /// Flags: bit 0 = continuation (message truncated, next entry continues it).
+    /// Flags: bit 0 = continued (the next entry of the same ring continues
+    /// this message); bit 1 = continuation (this entry continues the
+    /// message of the entry before it).
     pub flags: u8,               // 1 byte
     /// Length of valid bytes in `message` (0..=48).
     pub msg_len: u8,             // 1 byte
     /// Reserved for future use.
     pub _reserved: [u8; 3],      // 3 bytes
-    /// Inline message buffer. Messages longer than 48 bytes are truncated
-    /// (with the continuation flag set if a second entry follows).
+    /// Inline message buffer. A message longer than 48 bytes continues in a
+    /// second entry (bits 0 and 1 of `flags`).
     /// UTF-8 encoded. Not null-terminated.
     pub message: [u8; 48],       // 48 bytes
 }                                // Total: 64 bytes
@@ -178,7 +180,13 @@ pub struct LogEntry {
 const _: () = assert!(core::mem::size_of::<LogEntry>() == 64);
 ```
 
-The 48-byte inline message covers the vast majority of kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 35 bytes. For the rare longer message, the continuation flag allows chaining two entries (96 bytes of message), which is sufficient for any kernel diagnostic.
+The 48-byte inline message covers most kernel log messages. A typical line like `"Pool init: 32768 pages in Kernel"` is 32 bytes. A longer message takes two entries, 96 bytes of message in all:
+
+- The **head** entry has flags bit 0 set and holds the first 48 bytes. The **continuation** entry, the next entry of the same ring, has bit 1 set, holds the rest, and repeats the head's timestamp, core, level and subsystem.
+- Each part ends on a UTF-8 character boundary. A character that would straddle byte 48 moves whole into the continuation, so the head can hold fewer than 48 bytes.
+- A message longer than two entries keeps the first 95 bytes or fewer (again cut on a character boundary) and ends with `~`, which marks the dropped text.
+
+The splitting and joining logic is host-tested in `shared/src/observability.rs`: `LogMessageBuf` formats a message and builds its entries, and `next_log_line` joins them again on the drain side (§2.7).
 
 ### 2.5 Per-Core Ring Buffer
 
@@ -186,9 +194,10 @@ The 48-byte inline message covers the vast majority of kernel log messages. A ty
 /// Lock-free per-core log ring buffer.
 ///
 /// One instance per CPU core, indexed by core ID. The owning core is the
-/// sole producer (writes to `head`). The UART drain function is the sole
-/// consumer (reads from `tail`). This single-producer/single-consumer
-/// design requires no locks or atomic RMW — only Release/Acquire ordering.
+/// sole producer (writes to `head`), with IRQs masked for the whole push.
+/// The UART drain function is the sole consumer (reads from `tail`). This
+/// single-producer/single-consumer design requires no locks or atomic RMW —
+/// only Release/Acquire ordering.
 pub struct LogRing {
     /// Fixed-size entry array. Power-of-2 count for efficient masking.
     entries: [LogEntry; 256],       // 256 * 64 = 16 KiB per core
@@ -196,6 +205,12 @@ pub struct LogRing {
     head: AtomicU32,
     /// Next read position (consumer, drain task only).
     tail: AtomicU32,
+    /// Messages dropped because the ring was full (producer only).
+    dropped: AtomicU32,
+    /// Ring position of the latest drop: `head` when it happened (producer only).
+    drop_pos: AtomicU32,
+    /// `dropped` as of the drain's last report (consumer only).
+    dropped_reported: AtomicU32,
 }
 
 /// Global log rings, one per core. BSS-allocated (zero-initialized at boot).
@@ -203,7 +218,9 @@ pub struct LogRing {
 static LOG_RINGS: [LogRing; MAX_CORES] = [const { LogRing::INIT }; MAX_CORES];
 ```
 
-When the ring is full (head catches tail), new entries **overwrite** the oldest entries. This is intentional — log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock).
+When the ring has no room for a new message (one entry, or two for a head and its continuation), the new message is **dropped**, counted in `dropped`, and its position (the current `head`) kept in `drop_pos`; the entries already in the ring are kept. Log loss under pressure is preferable to blocking the producer (which could be in an interrupt handler or holding a lock). Dropping rather than overwriting the oldest entries keeps the single-producer/single-consumer split: the producer never writes `tail`, and it never writes a slot a single drain may be reading, because it loads `tail` with Acquire (pairing with the drain's Release store) and writes only slots that drain has finished with. Two overlapping `drain_logs` calls (§2.7) break this: one can store `tail` past a slot the other is still reading, and a push can then tear the entry the slower drain reads. The drain prints the count (§2.7).
+
+`log_impl` formats the message before masking IRQs, in whatever IRQ state its caller has, then masks IRQs (saving and restoring DAIF, so a caller that is already masked stays masked) while it reads the core ID and pushes to that core's ring. Masking keeps the owning core the only producer: an IRQ-context log call on the same core, such as the load balancer's, cannot run in the middle of a push, and the thread cannot migrate between reading the core ID and pushing. A head entry and its continuation are written first and then published together by one Release store of `head`, so the drain sees both or neither, and a full ring drops the whole message, never half of it.
 
 ### 2.6 Logging Macros
 
@@ -237,7 +254,7 @@ macro_rules! ktrace { ($subsys:ident, $($arg:tt)*) => { klog!(Trace, $subsys, $(
 
 ### 2.7 UART Drain
 
-A drain function, called periodically from the timer tick handler or idle loop, reads all per-core rings and writes formatted entries to the UART:
+A drain function, called from the CPU 0 timer tick handler (every 4th 1 ms tick), from the boot sequence, and from the scheduler's `pc=0` check before it panics (on any CPU), reads all per-core rings and writes formatted entries to the UART:
 
 ```text
 [   0.003142] [0] INFO  Mm   Pool init: 32768 pages in Kernel
@@ -249,7 +266,11 @@ A drain function, called periodically from the timer tick handler or idle loop, 
 
 The format is: `[seconds.micros] [core] LEVEL Subsys Message`. The timestamp is converted from CNTVCT_EL0 ticks to seconds using the timer frequency (62.5 MHz on QEMU).
 
-The drain function holds the UART lock for the duration of one batch (up to 16 entries per drain call). This bounds the maximum time the UART is held, preventing log storms from blocking other cores.
+The drain joins a head entry with its continuation into one line. The producer never splits a pair, but a second drain call popping the same ring at the same time can take part of one (`drain_logs` has callers besides the CPU 0 timer tick, listed above). If the entry after a head is not its continuation (same timestamp and core, bit 1 set), the drain prints the head followed by `~<lost>` and then prints the other entry on its own. A continuation read without its head prints as `<lost>~` followed by its text.
+
+Messages dropped because a ring was full are not lost silently either. The drain prints one `[log] core N: K messages dropped (ring full)` line where the loss happened: when its read position in the ring reaches `drop_pos`, after the entries logged before the drop and before those logged after it. The report line has no timestamp of its own; its place in the log gives the gap. If a ring drops messages at more than one position before the drain reaches the first, the one report comes at the latest position and counts them all.
+
+One drain call prints up to 16 lines (`DRAIN_BATCH_SIZE`; a joined pair counts as one line), plus one dropped-messages line per ring whose drop position it reaches, and then stops once no entry is pending. An entry popped while looking for a missing continuation cannot be put back, so the call prints it even past the limit, usually as one more line. When that pending entry is itself a head whose continuation is also missing, printing it pops another entry, so while drains overlap each such head can add one more line, up to what the ring holds. The limit on lines per call bounds how long the CPU 0 timer tick spends draining; a full batch still runs well past one 1 ms tick at 115200 baud (see `timer.rs`). The UART itself has no lock.
 
 ### 2.8 Early Boot Fallback
 
@@ -706,27 +727,44 @@ These two streams share the same **access interface** (`AuditRead` syscall, capa
 
 ### 6.2 UART Drain (Phase 3)
 
-The primary export path during development. The drain function is called from the timer tick handler (every 1 ms) or the idle loop:
+The primary export path during development. The drain function is called from the CPU 0 timer tick handler (every 4th 1 ms tick), from the boot sequence to flush bursts, and from the scheduler's `pc=0` check before it panics (on any CPU). Abridged from `drain_logs` in `kernel/src/observability/mod.rs`:
 
 ```rust
-/// Drain log entries from all per-core rings to the UART.
-/// Reads up to `max_entries` per call to bound UART hold time.
-pub fn drain_logs_to_uart(max_entries: usize) {
-    for core in 0..core_count() {
-        let ring = &LOG_RINGS[core];
-        let mut drained = 0;
-        while let Some(entry) = ring.try_read() {
-            uart_format_entry(&entry);
-            drained += 1;
-            if drained >= max_entries {
+/// Drain the per-core log rings to the UART. One call prints
+/// DRAIN_BATCH_SIZE (16) lines across all rings, plus entries left pending
+/// and dropped-messages lines (§2.7), to bound each call. A head entry and
+/// its continuation print as one line.
+pub fn drain_logs() {
+    let freq = read_cntfrq();
+    let mut w = UartWriter;
+    let mut drained = 0;
+    for (core, ring) in LOG_RINGS.iter().enumerate() {
+        // An entry popped while looking for a continuation that was not
+        // there. It cannot be put back, so it prints next, even past the limit.
+        let mut pending = None;
+        while drained < DRAIN_BATCH_SIZE || pending.is_some() {
+            // pop_entry prints the `[log] core N: K messages dropped` line
+            // first when the read position reaches the ring's drop_pos.
+            let Some(line) = next_log_line(&mut pending, || pop_entry(ring, core)) else {
                 break;
-            }
+            };
+            let entry = &line.first;
+            let (secs, micros) = timestamp_to_secs_micros(entry.timestamp, freq);
+            let mut line_storage = [0u8; MAX_LINE_LEN];
+            let mut lb = LineBuf::new(&mut line_storage);
+            let _ = write!(lb, "[{:4}.{:06}] [{}] {} {} ", secs, micros,
+                entry.core_id, entry.level.name(), entry.subsystem.name());
+            // Joined text, with `~<lost>` / `<lost>~` for a missing half.
+            let _ = line.write_message(&mut lb);
+            let line_len = lb.len();
+            emit_drained_line(&mut w, &line_storage[..line_len]);
+            drained += 1;
         }
     }
 }
 ```
 
-The drain function formats each entry as a human-readable line (see §2.7) and writes it to the UART. Under normal load, the drain keeps up with log production. Under burst load, the ring buffer absorbs the burst and the drain catches up over subsequent ticks.
+The drain function formats each message (a single entry, or a head entry joined with its continuation) as a human-readable line (see §2.7) and writes it to the UART. Under normal load, the drain keeps up with log production. Under burst load, the ring buffer absorbs the burst and the drain catches up over subsequent ticks; a burst larger than the ring is dropped and counted (§2.5).
 
 ### 6.3 Kernel Info Page (Phase 3)
 
@@ -965,7 +1003,7 @@ Phase 3 is the natural landing point for most infrastructure because the schedul
 | Decision | Options Considered | Chosen | Rationale |
 |---|---|---|---|
 | **Log ring topology** | (a) Global ring with spinlock; (b) Per-core lock-free rings | Per-core lock-free | No contention on hot path. UART drain reads all cores sequentially — latency is bounded by drain batch size, not ring contention. |
-| **Log message format** | (a) Binary structured fields; (b) Inline string in fixed-size entry | Inline string (48 bytes) in 64-byte entry | Strings are human-readable on UART without a decoder. Fixed-size entries avoid heap allocation and allow simple ring buffer indexing. 48 bytes covers 95%+ of kernel messages. |
+| **Log message format** | (a) Binary structured fields; (b) Inline string in fixed-size entry | Inline string (48 bytes) in 64-byte entry, with one continuation entry for longer messages | Strings are human-readable on UART without a decoder. Fixed-size entries avoid heap allocation and allow simple ring buffer indexing. 48 bytes covers most kernel messages; the continuation carries the rest up to 96 bytes. |
 | **Metric sharding** | (a) Single atomic per counter (contention under SMP); (b) Per-core sharded atomics | Per-core sharded for Counters; single atomic for Gauges | Counters are write-heavy (every alloc increments). Per-core sharding eliminates cache-line bouncing. Gauges are write-infrequent and represent a single system-wide value, so sharding adds complexity without benefit. |
 | **Trace record size** | (a) 16 bytes (minimal); (b) 32 bytes (comfortable); (c) 64 bytes (rich) | 32 bytes | Two per cache line. Enough for 8-byte timestamp + 1-byte core ID + 17-byte event payload + 6 bytes padding. 4096 entries per core = 128 KiB, fits comfortably alongside the 16 KiB log ring. |
 | **Userspace export** | (a) Syscall per metric read; (b) Shared memory page with seqlock | Shared memory page | Zero-syscall reads for Inspector. Kernel updates on timer tick (1 ms). Inspector polls at UI rate (1 Hz). The seqlock pattern is proven (Linux vDSO) and requires no kernel entry on the read path. |
@@ -1062,13 +1100,13 @@ When the anomaly resolves (metrics return to baseline), trace verbosity automati
 
 ### 10.6 Semantic Log Compression
 
-**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, important log entries are overwritten within seconds. The log ring treats all entries as equally important — a routine "timer tick" entry displaces a diagnostic "IPC timeout on channel 7" entry.
+**Problem.** Per-core log rings (§2) hold 256 entries each (64 bytes per entry = 16 KiB per core). Under high event rates, the ring fills within seconds and important log entries are dropped. The log ring treats all entries as equally important — a routine "timer tick" entry takes the slot that a later diagnostic "IPC timeout on channel 7" entry needed.
 
 **AI solution.** AIRS learns normal log patterns from historical data. Common sequences — such as "IPC blocked on channel X" followed by "IPC unblocked on channel X" — are compressed to a single summary entry. Deviations from learned patterns are flagged and preserved at higher priority: "IPC blocked on channel 7 but unblocked by TIMEOUT instead of reply" is more informative than the two routine entries it replaces.
 
 **Effect.** 10× more effective use of fixed-size log rings. The ring holds 10× as many semantically distinct events because routine patterns are compressed. Anomalous entries are never displaced by routine entries.
 
-**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, overwrite-on-full, no pattern awareness.
+**Safety and fallback.** Compression is lossy for routine events but lossless for anomalies. A configurable fraction of ring entries (default: 25%) is always reserved for uncompressed entries, ensuring raw data remains available. If AIRS is unavailable, log rings operate in their current mode (§2) — fixed 256 entries/core, drop-on-full, no pattern awareness.
 
 **Research.** KernelAGI [R6] proposes pattern-aware kernel logging as part of its ML subsystem. eBPF [R10] enables in-kernel log filtering and aggregation, which AIOS extends with learned pattern recognition.
 

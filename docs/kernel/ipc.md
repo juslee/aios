@@ -466,22 +466,29 @@ IPC channels are the communication primitive. A channel is a bidirectional pipe 
 
 ```rust
 /// Channel as implemented in `kernel/src/ipc/mod.rs`.
-/// Channels are thread-owned (not process-owned) in the current kernel —
-/// ThreadId is used for endpoint ownership because IPC operations
-/// (call, recv, reply) operate at thread granularity with direct switch.
+/// Endpoints are owned by processes. IPC operations (call, recv, reply)
+/// still work at thread granularity with direct switch, through
+/// `waiting_receiver` and `pending_caller` below.
 pub struct Channel {
     id: ChannelId,
-    /// State of each endpoint. When a process dies, the kernel sets its
-    /// endpoint to Dead. Any IpcCall/IpcSend/IpcRecv on the peer endpoint
-    /// returns EPIPE. Any blocked IpcCall on the peer unblocks with EPIPE.
+    /// State of each endpoint. When a process dies, `process_exit` sets
+    /// both endpoints of each channel it owns an endpoint of to Dead, and
+    /// wakes the channel's blocked receiver and pending caller with EPIPE.
+    /// Any later IpcCall/IpcSend/IpcRecv on the channel returns EPIPE.
     /// This is the IPC equivalent of TCP RST — immediate, unambiguous.
     state_a: EndpointState,
     state_b: EndpointState,
-    /// Thread that owns endpoint A (creator). ThreadId rather than ProcessId
-    /// because IPC direct switch operates at thread granularity.
-    owner_a: ThreadId,
-    /// Thread that owns endpoint B (connected peer). None until connected.
-    owner_b: Option<ThreadId>,
+    /// Process that owns endpoint A (creator), recorded at creation:
+    /// the creator thread's process for `channel_create`, the named process
+    /// for kernel-internal `channel_create_unchecked`. On `process_exit`,
+    /// every channel with an endpoint owned by the exiting process has both
+    /// endpoints set Dead. A ProcessId rather than a ThreadId because kernel
+    /// services create channels for label thread ids (such as 0x700) that
+    /// are not thread-table slots and so cannot be mapped to a process.
+    owner_a: ProcessId,
+    /// Process that owns endpoint B (connected peer), set by
+    /// `channel_set_peer`. None until connected.
+    owner_b: Option<ProcessId>,
     /// Fixed-capacity ring buffer for async message queuing (IpcSend).
     /// Capacity: RING_CAPACITY (16) messages.
     ring: MessageRing,
