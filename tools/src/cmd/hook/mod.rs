@@ -41,6 +41,12 @@ pub const MAX_CONTEXT_BYTES: usize = 10_000;
 /// The longest session-id file-name part kept as is; longer ids are hashed.
 const MAX_ID_BYTES: usize = 128;
 
+/// The longest state-file stem kept as is; a longer `<session>-<agent>` is hashed
+/// as a whole. With `.json` and the `.<name>.<pid>.<n>.tmp` wrapper that
+/// `write_atomic` adds, 200 bytes stays under the 255-byte file-name limit of
+/// ext4 and APFS.
+const MAX_KEY_BYTES: usize = 200;
+
 #[derive(Parser)]
 pub struct Args {
     #[command(subcommand)]
@@ -291,12 +297,19 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 /// The per-session, per-agent state-file stem: `<session>` in the main session,
-/// `<session>-<agent>` inside a subagent. Both parts are sanitised.
+/// `<session>-<agent>` inside a subagent. Both parts are sanitised, and a joined
+/// stem longer than `MAX_KEY_BYTES` becomes the digest of the whole, so two legal
+/// 128-byte ids cannot push the file name past the file-system limit.
 pub fn state_key(input: &HookInput) -> String {
     let session = sanitize_id(input.session_id.as_deref().unwrap_or(""));
-    match input.agent_id.as_deref() {
+    let key = match input.agent_id.as_deref() {
         Some(agent) => format!("{session}-{}", sanitize_id(agent)),
         None => session,
+    };
+    if key.len() > MAX_KEY_BYTES {
+        format!("{:016x}", fnv1a64(key.as_bytes()))
+    } else {
+        key
     }
 }
 
@@ -423,6 +436,50 @@ mod tests {
         assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
+    }
+
+    fn keyed(session: &str, agent: Option<&str>) -> String {
+        let mut payload = json!({"session_id": session});
+        if let Some(agent) = agent {
+            payload["agent_id"] = json!(agent);
+        }
+        state_key(&parse_input(payload.to_string().as_bytes()).expect("the payload parses"))
+    }
+
+    #[test]
+    fn a_state_file_name_stays_under_the_file_system_limit() {
+        let session = "s".repeat(MAX_ID_BYTES);
+        let agent = "a".repeat(MAX_ID_BYTES);
+        let key = keyed(&session, Some(&agent));
+        assert_eq!(key.len(), 16, "two 128-byte ids join into a digest");
+        // The longest name write_atomic creates: dot, `<key>.json`, then
+        // `.<pid>.<counter>.tmp` with a u32 pid and a u64 counter.
+        let temp = format!(".{key}.json.{}.{}.tmp", u32::MAX, u64::MAX);
+        assert!(temp.len() <= 255, "{} bytes", temp.len());
+        // The unhashed worst case still fits at the budget.
+        let at_budget = format!(
+            ".{}.json.{}.{}.tmp",
+            "k".repeat(MAX_KEY_BYTES),
+            u32::MAX,
+            u64::MAX
+        );
+        assert!(at_budget.len() <= 255, "{} bytes", at_budget.len());
+        // Distinct long pairs keep distinct keys, and the digest is stable.
+        assert_ne!(key, keyed(&session, Some(&"b".repeat(MAX_ID_BYTES))));
+        assert_eq!(key, keyed(&session, Some(&agent)));
+    }
+
+    #[test]
+    fn a_joined_key_within_the_budget_is_kept_as_is() {
+        let session = "s".repeat(MAX_ID_BYTES);
+        let agent = "a".repeat(MAX_KEY_BYTES - MAX_ID_BYTES - 1);
+        assert_eq!(
+            keyed(&session, Some(&agent)),
+            format!("{session}-{agent}"),
+            "exactly at the budget"
+        );
+        assert_eq!(keyed("abc", Some("def")), "abc-def");
+        assert_eq!(keyed("abc", None), "abc");
     }
 
     #[test]

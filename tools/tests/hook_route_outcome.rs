@@ -154,6 +154,39 @@ fn an_async_launched_dispatch_has_no_telemetry() {
 }
 
 #[test]
+fn telemetry_is_kept_only_in_its_documented_type() {
+    let env = Env::new("telemetry-types");
+    let mut payload = completed();
+    payload["tool_response"]["modelsUsed"] = json!("claude-sonnet-4-5");
+    payload["tool_response"]["totalTokens"] = json!("1234");
+    payload["tool_response"]["totalDurationMs"] = json!({"huge": "x".repeat(10_000)});
+    payload["tool_response"]["totalToolUseCount"] = json!([9]);
+    let rec = env.one(&payload);
+    for key in [
+        "models_used",
+        "total_tokens",
+        "total_duration_ms",
+        "total_tool_use_count",
+    ] {
+        assert_eq!(
+            rec.get(key),
+            None,
+            "{key} has the wrong type and is left out"
+        );
+    }
+    assert_eq!(rec["agent_id"], "a42", "the rest of the record is intact");
+
+    let env = Env::new("telemetry-array");
+    let mut payload = completed();
+    payload["tool_response"]["modelsUsed"] = json!(["a", 7]);
+    assert_eq!(
+        env.one(&payload).get("models_used"),
+        None,
+        "an array that holds a non-string is not an array of model names"
+    );
+}
+
+#[test]
 fn caller_agent_id_is_present_only_when_a_subagent_dispatched() {
     let env = Env::new("caller");
     let mut payload = completed();
@@ -454,12 +487,24 @@ fn the_log_is_appended_across_runs() {
 
 #[test]
 fn the_join_from_shadow_to_launch_to_stop_holds() {
-    // One state directory, as in a real session: route-shadow logs the dispatch
-    // (here a fixture line with the fields the join uses), route-outcome the rest.
+    // One state directory, as in a real session: the real route-shadow logs the
+    // dispatch (no key, so an error record with no request: only the fields the
+    // join uses matter), route-outcome the rest.
     let env = Env::new("join");
-    let shadow =
-        json!({"ts": 1, "session_id": "s1", "tool_use_id": "toolu_77", "subagent_type": "worker"});
-    std::fs::write(env.state.join("route-shadow.jsonl"), format!("{shadow}\n")).unwrap();
+    let dispatch = json!({
+        "session_id": "s1",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_77",
+        "tool_input": {"subagent_type": "worker", "description": "d", "prompt": "p"},
+    });
+    let shadow_run = run_hook(
+        &["route-shadow"],
+        dispatch.to_string().as_bytes(),
+        &[("AIOS_HOOK_STATE_DIR", env.state.to_str().unwrap())],
+        &env.cwd,
+    );
+    assert_eq!(shadow_run.code, Some(0), "{}", shadow_run.stderr);
     env.run(&completed());
     env.run(&stop("a42", &json!("first try")));
     env.run(&stop("a42", &json!("after the gate")));
@@ -474,10 +519,16 @@ fn the_join_from_shadow_to_launch_to_stop_holds() {
             .collect()
     };
     let shadows = read("route-shadow.jsonl");
+    assert_eq!(shadows.len(), 1);
+    assert_eq!(shadows[0]["error"], "TYPESAFE_API_KEY is not set");
     let outcomes = read(LOG);
     let launched = outcomes
         .iter()
-        .find(|r| r["kind"] == "launched" && r["tool_use_id"] == shadows[0]["tool_use_id"])
+        .find(|r| {
+            r["kind"] == "launched"
+                && !shadows[0]["tool_use_id"].is_null()
+                && r["tool_use_id"] == shadows[0]["tool_use_id"]
+        })
         .expect("the dispatch's launched record");
     let stops: Vec<&Value> = outcomes
         .iter()

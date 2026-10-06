@@ -106,19 +106,35 @@ fn launched(ts: u64, input: &HookInput) -> Value {
         "resolved_model".into(),
         response_str(input, "resolvedModel"),
     );
-    // Only a completed (foreground) response carries run telemetry; it is kept as
-    // the parsed JSON value, whatever its type.
-    for (field, key) in [
-        ("models_used", "modelsUsed"),
-        ("total_tokens", "totalTokens"),
-        ("total_duration_ms", "totalDurationMs"),
-        ("total_tool_use_count", "totalToolUseCount"),
+    // Only a completed (foreground) response carries run telemetry. Each field is
+    // kept only in its documented type (`modelsUsed` an array of model names, the
+    // three totals numbers), so no telemetry value can put unbounded content into
+    // the log; anything else is left out like an absent key.
+    for (field, key, documented) in [
+        (
+            "models_used",
+            "modelsUsed",
+            is_string_array as fn(&Value) -> bool,
+        ),
+        ("total_tokens", "totalTokens", Value::is_number),
+        ("total_duration_ms", "totalDurationMs", Value::is_number),
+        (
+            "total_tool_use_count",
+            "totalToolUseCount",
+            Value::is_number,
+        ),
     ] {
-        if let Some(value) = input.tool_response.get(key) {
+        if let Some(value) = input.tool_response.get(key).filter(|v| documented(v)) {
             record.insert(field.into(), value.clone());
         }
     }
     Value::Object(record)
+}
+
+fn is_string_array(value: &Value) -> bool {
+    value
+        .as_array()
+        .is_some_and(|items| items.iter().all(Value::is_string))
 }
 
 fn launch_failed(ts: u64, input: &HookInput) -> Value {
