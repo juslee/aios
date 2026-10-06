@@ -540,7 +540,7 @@ These capabilities are in active research or standardization and are planned for
 
 **AI-driven audio description**: automatic generation of audio descriptions for visual content, targeting accessibility for visually impaired users. AIRS classifies video scenes and generates natural language descriptions with a multimodal model run by the AIRS inference engine ([ai-native.md](../../intelligence/airs/ai-native.md) §14.10). Descriptions are queued ahead of the corresponding video timestamp to provide anticipatory narration. Cross-reference: [camera.md](../camera.md) §13 (future AI directions).
 
-**Language-guided video search**: natural language queries over locally stored video content using AIRS's context engine and embedding model. A query such as "find the part where they discuss the budget" is converted to an embedding and matched against per-scene embeddings stored during recording. The result is a ranked list of timestamps. This requires the recording pipeline to generate scene embeddings at record time — an opt-in feature due to the storage cost of embedding vectors.
+**Language-guided video search**: natural language queries over locally stored video content using the AIRS embedding model. A query such as "find the part where they discuss the budget" is converted to an embedding and matched against per-scene embeddings stored during recording. The result is a ranked list of timestamps. This requires the recording pipeline to generate scene embeddings at record time — an opt-in feature due to the storage cost of embedding vectors.
 
 -----
 

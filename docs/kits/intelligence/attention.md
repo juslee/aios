@@ -467,8 +467,8 @@ The Attention Kit operates in two modes depending on AIRS availability:
 - Simple grouping: items from the same agent with the same category are grouped by
   count. No AI summarization.
 - No learned relationship model: only the static relationship boosts apply.
-- No content understanding: the keyword scan cannot tell "server is down" from
-  "server is back up", and every rule-based assessment carries low confidence.
+- No content understanding: the keyword scan cannot tell "server is on fire" from
+  "server deployed successfully", and every rule-based assessment carries low confidence.
 
 **Feature detection:**
 
