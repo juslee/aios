@@ -64,7 +64,6 @@
       "Bash(sh -n .claude/hooks/aios)",
       "Bash(bash -n scripts/agent/brief.sh)",
       "Bash(bash -n scripts/agent/checkpoint.sh)",
-      "Bash(bash -n scripts/soak-qemu.sh)",
       "Bash(.claude/hooks/aios *)",
       "Bash(objdump *)",
       "Bash(qemu-system-aarch64 *)",
