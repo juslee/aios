@@ -1,0 +1,958 @@
+@@@ case clean-text
+UEFI firmware (version edk2-stable202408)
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[   6.100000] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+[bench] === Gate 1 Benchmark ===
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+[   7.000000] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
+[heartbeat] tick=2000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=3 hb_last_advance=74 hb_max_gap=2 stall_limit=15 load1=1.50
+@@@ case clean-text-log-only
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+Gate 1: IPC < 10 us: PASS
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+@@@ case clean-gpu
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[   0.300000] [0] INFO  Gpu   GpuReady
+[   0.310000] [0] INFO  Input InputReady
+[   0.320000] [0] INFO  Gpu   display handoff complete
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=gpu secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=70 hb_max_gap=1 stall_limit=15 load1=2.00
+@@@ case gpu-markers-missing
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[   0.300000] [0] INFO  Gpu   GpuReady
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=gpu secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=70 hb_max_gap=1 stall_limit=15 load1=2.00
+@@@ case gpu-markers-missing-log-only
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+@@@ case pczero-elr-inline
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+[   3.000000] [1] INFO  Sched switch to tid 9
+EXCEPTION[CPU 1]: Synchronous ESR=0x86000006 EC=0x21 FAR=0x0000000000000000 ELR=0x0000000000000000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=2 hb_last_advance=3 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case pczero-split-elr
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 2]: Synchronous exception
+[   2.500000] [0] INFO  Ipc   interleaved output from CPU 0
+  ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+@@@ case pczero-ec20-far0
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 0]: Synchronous ESR=0x82000006 EC=0x20 FAR=0x0000000000000000
+@@@ case pczero-inst-abort-line
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+Instruction Abort at 0x0000000000000000
+@@@ case pczero-window-inst-abort
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 3]: Synchronous
+Instruction Abort at 0x0000000000000000
+@@@ case exception-window-elr-nonzero
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 3]: Synchronous exception
+[   2.500000] [0] INFO  Ipc   interleaved
+  ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+@@@ case panic-with-message
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+[   2.000000] [0] INFO  Mm    frame allocator ready
+PANIC: panicked at kernel/src/sched/mod.rs:120:9:
+
+assertion failed: thread.state == Ready
+@@@ case panic-last-line
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+PANIC: panicked at kernel/src/mm/slab.rs:40:5:
+@@@ case panic-then-meta
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+PANIC: panicked at kernel/src/ipc/mod.rs:88:13:
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=1 hb_last_advance=1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case exception-el1
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[   6.600000] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+Data Abort at 0x0000000000000519
+@@@ case exception-el0-data
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+DATA ABORT (EL0): FAR=0x0000000000001000 ELR=0x0000000000400100
+@@@ case exception-el0-inst
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+INST ABORT (EL0): FAR=0x0000000000000040
+@@@ case exception-el0-unknown
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+UNKNOWN EXCEPTION (EL0) EC=0x3f
+@@@ case edk2-after-stub
+AIOS UEFI stub v0.1.0
+Synchronous Exception at 0x00000000BF7A1234
+@@@ case edk2-before-stub
+UEFI firmware (version edk2-stable202408)
+Synchronous Exception at 0x00000000BFE01234
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case split-prefix-fields
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+cpu0 noise ESR=0x96000045 EC=0x25 FAR=0x10 ELR=0xffff0000000812a4
+@@@ case el0-fields-only
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+garbled (EL0): FAR=0x0000000000001234
+@@@ case data-abort-no-report
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+[   3.000000] [0] INFO  Ipc   one
+[   3.100000] [0] INFO  Ipc   two
+Data Abort at 0x0000000000000519
+@@@ case data-abort-after-report
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 1]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+[   2.500000] [0] INFO  Ipc   one
+[   2.600000] [0] INFO  Ipc   two
+[   2.700000] [0] INFO  Ipc   three
+Data Abort at 0x0000000000000519
+@@@ case multiple-fatal
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+PANIC: panicked at kernel/src/cap/mod.rs:39:5:
+lock re-entry
+EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+@@@ case fatal-before-heartbeat
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+@@@ case stub-never-ran-rc0
+qemu-system-aarch64: -drive file=esp.img: Could not open 'esp.img'
+
+[soak] meta mode=text secs=75 elapsed=0 qemu_rc=1 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case stub-never-ran-empty
+@@@ case signaled
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=30 qemu_rc=139 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=2 hb_last_advance=29 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case rc137-before-limit
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+
+[soak] meta mode=text secs=75 elapsed=40 qemu_rc=137 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=1 hb_last_advance=1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case rc137-at-limit-clean
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=85 qemu_rc=137 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=74 hb_max_gap=3 stall_limit=15 load1=1.00
+@@@ case early-exit-rc1
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=40 qemu_rc=1 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=39 hb_max_gap=3 stall_limit=15 load1=1.00
+@@@ case early-exit-rc0-clean
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=70 qemu_rc=0 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=69 hb_max_gap=3 stall_limit=15 load1=1.00
+@@@ case nohb-boot-complete
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case nohb-boot-incomplete
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[   0.100000] [0] INFO  Mm    frame allocator ready
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case nohb-kernel-never-started
+AIOS UEFI stub v0.1.0
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case nohb-cut-short-kstart
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=70 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case nohb-cut-short-qemu-start
+AIOS UEFI stub v0.1.0
+
+[soak] meta mode=text secs=10 elapsed=10 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case nohb-log-only
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+@@@ case tick0-after-bench
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+  Boot EL: 1
+[   0.200000] [0] INFO  Boot  Boot sequence complete
+[heartbeat] tick=0
+[   6.613544] [0] INFO  Ipc   Bench main: server ready, starting IPC benchmark
+[bench] === Gate 1 Benchmark ===
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=6 hb_max_gap=-1 stall_limit=15 load1=34.89
+@@@ case tick0-never-advanced
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=1 hb_last_advance=1 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case tick0-cut-short
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=66 hb_first=66 bench_start=-1 g1done=-1 hb_count=1 hb_last_advance=66 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case tick0-log-only-lb-yes
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[   5.901378] [0] INFO  Sched Load balance: migrated tid=8 from CPU 0 to CPU 1
+@@@ case hb-stopped
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[   9.000000] [0] INFO  Sched idle
+[bench] === Gate 1 Benchmark ===
+=== Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=3 hb_last_advance=40 hb_max_gap=3 stall_limit=15 load1=1.00
+@@@ case bench-never-completed
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=-1 hb_count=3 hb_last_advance=74 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case bench-never-started
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=2 hb_last_advance=74 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case bench-cut-short
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=60 hb_first=60 bench_start=65 g1done=-1 hb_count=2 hb_last_advance=74 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case bench-never-started-cut-short
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=69 hb_first=70 bench_start=-1 g1done=-1 hb_count=2 hb_last_advance=74 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case bench-never-completed-log-only
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+@@@ case hb-max-gap-note
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=74 hb_max_gap=20 stall_limit=15 load1=1.00
+@@@ case booted-twice
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=4 hb_last_advance=74 hb_max_gap=2 stall_limit=15 load1=1.00
+@@@ case wedge-lb-no
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[   6.613322] [0] INFO  Ipc   Channel 6 created (unchecked) by thread 18
+[bench] === Gate 1 Benchmark ===
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=6 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case exception-no-info
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234
+@@@ case info-frozen-at-fatal
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[   1.000000] [0] INFO  Mm    one
+[   2.000000] [0] INFO  Mm    two
+[   3.000000] [0] INFO  Mm    three
+[   4.000000] [0] INFO  Sched Load balance: migrated tid=4 from CPU 0 to CPU 2
+PANIC: panicked at kernel/src/sched/mod.rs:1:1:
+boom
+[   5.000000] [0] INFO  Mm    after the panic
+@@@ case ansi-escapes
+<ESC>[1;32mAIOS UEFI stub v0.1.0<ESC>[0m
+AIOS kernel booting
+<ESC>[33m[heartbeat] tick=0<ESC>[0m
+<ESC>[2J=== Gate 1 Complete ===
+[heartbeat] tick=<ESC>[0m1000
+@@@ case nul-cr-bytes
+AIOS UEFI stub v0.1.0<CR>
+AIOS kernel<NUL> booting<CR>
+[heartbeat] tick=0<CR>
+=== Gate 1 Complete ===<CR>
+[heartbeat] tick=1000<CR>
+@@@ case clip-first-200
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+EXCEPTION[CPU 0]: Synchronous ESR=0x96000045 EC=0x25 FAR=0x519 ELR=0xffff000000081234 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+@@@ case clip-multibyte
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+PANIC: panicked at kernel/src/x.rs:1:1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé tail after the cut
+@@@ case clip-info-160
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[   1.000000] [0] INFO  Mm    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+[bench] === Gate 1 Benchmark ===
+@@@ case tabs-in-fatal
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+PANIC: panicked at	kernel/src/y.rs:2:2:	with	tabs
+@@@ case stall-override-wedge stall=5
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=2 hb_last_advance=65 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case stall-override-default
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=-1 g1done=-1 hb_count=2 hb_last_advance=65 hb_max_gap=-1 stall_limit=15 load1=1.00
+@@@ case older-footer
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 hb_count=2 stall_limit=15
+@@@ case footer-odd-fields
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text =ignored noequals secs=75 elapsed=75 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=74 hb_max_gap=2 stall_limit=15 load1=1.00 extra=value
+@@@ case heartbeat-inline
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+cpu2 noise [heartbeat] tick=0 trailing
+garbage[heartbeat] tick=12345xyz
+=== Gate 1 Complete ===
+@@@ case window-priority
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+EXCEPTION[CPU 1]: Synchronous exception
+EXCEPTION[CPU 2]: Synchronous exception
+  ESR=0x86000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000
+@@@ case rc-empty
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=75 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=74 hb_max_gap=2 stall_limit=15 load1=1.00
+@@@ case elapsed-over-secs
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+[heartbeat] tick=0
+=== Gate 1 Complete ===
+[heartbeat] tick=1000
+
+[soak] meta mode=text secs=75 elapsed=78 qemu_rc=124 kstart=1 hb_first=1 bench_start=2 g1done=2 hb_count=2 hb_last_advance=77 hb_max_gap=2 stall_limit=15 load1=1.00
+@@@ case boot-el-spacing
+AIOS UEFI stub v0.1.0
+AIOS kernel booting
+Boot   EL: 1
+BootEL: 1
+@@@ case gate1-pass-spacing
+AIOS UEFI stub v0.1.0
+Gate 1: IPC < 10 us:PASS
+Gate 1: IPC < 10 us:     PASS
+@@@ case pr168-n01-nostub-rc124
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+Shell> 
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n02-nostub-rc137
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+Shell> 
+
+[soak] meta mode=text secs=75 elapsed=86 qemu_rc=137 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n03-nostub-rc0-early
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+
+[soak] meta mode=text secs=75 elapsed=3 qemu_rc=0 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n04-nostub-edk2-exc
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+Synchronous Exception at 0x00000000BF5A1234
+PC 0x0000BF5A1234
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n05-nostub-logonly
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+Shell> 
+@@@ case pr168-n06-stub-no-kernel
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n07-stub-panic
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+[PANIC]: panicked at uefi-stub/src/main.rs:127:14:
+Kernel path is not a regular file
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n08-stub-edk2-exc
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+Synchronous Exception at 0x00000000BF5A1234
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=-1 hb_first=-1 bench_start=-1 g1done=-1 hb_count=0 hb_last_advance=-1 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n09-killafter-stall5
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=85 qemu_rc=137 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=5 load1=5
+@@@ case pr168-n10-stall-eq-limit
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=55 hb_last_advance=60 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n11-stall-over-limit
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=54 hb_last_advance=59 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n12-adv-after-secs
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=77 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=72 hb_last_advance=77 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n13-rc137-early
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=40 qemu_rc=137 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=34 hb_last_advance=40 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n14-rc134-abort
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=30 qemu_rc=134 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=24 hb_last_advance=30 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n15-rc139-after-exc
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+  Data Abort at 0x0000000000000519
+
+[soak] meta mode=text secs=75 elapsed=30 qemu_rc=139 kstart=6 hb_first=6 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=6 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n16-rc1-early-kernel
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=30 qemu_rc=1 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=24 hb_last_advance=30 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n17-rc124-short-elapsed
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=75 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n18-split-prefix-pc0
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEP[heartbeat] tick=1000
+TION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+  Instruction Abort at 0x0000000000000000
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n19-split-mid-esr
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTION[CPU 2]: ES[heartbeat] tick=1000
+R=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+  Data Abort at 0x0000000000000519
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n20-orphan-iabort-pc0
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTI[heartbeat] tick=1000
+ON[CPU 1]: E[   8.1] [0] INFO  Sched  Load balance: migrated 1
+SR=0x0000000086000006 EC=0x000000000000
+0021 FA[heartbeat] tick=2000
+R=0x0000000000000000 ELR=0x0000000000000000
+  Instruction Abort at 0x0000000000000000
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n21-orphan-dabort
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+  Data Abort at 0x0000000000000519
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n22-full-report-single
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTION[CPU 0]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+[heartbeat] tick=1000
+  Data Abort at 0x0000000000000519
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=-1 hb_count=2 hb_last_advance=7 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n23-prefix-cut-tail-next
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTION[CPU 1]: [heartbeat] tick=1000
+ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000 ELR=0x0000000000000000
+  Instruction Abort at 0x0000000000000000
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n24-el0-split
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+DATA AB[heartbeat] tick=4000
+ORT (EL0): FAR=0x0000000000001000 ELR=0x0000000000400123
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=1 stall_limit=15 load1=5
+@@@ case pr168-n25-two-cpus-interleaved
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTION[CPU 1]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 ELR=0xffff00000008ad58
+EXCEPTION[CPU 2]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000520 ELR=0xffff00000008ad58
+  Data Abort at 0x0000000000000519
+  Data Abort at 0x0000000000000520
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=-1 hb_count=1 hb_last_advance=6 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-n26-midrun-gap
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=50 hb_last_advance=75 hb_max_gap=40 stall_limit=15 load1=5
+@@@ case pr168-n27-small-gap
+UEFI firmware (version x)
+BdsDxe: starting Boot0002
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+AIOS UEFI stub: ExitBootServices OK, jumping to kernel at 0x0000000040080000
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.6] [0] INFO  Boot  EL: 1
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+[heartbeat] tick=1000
+[heartbeat] tick=2000
+[heartbeat] tick=3000
+[bench] Gate 1: IPC < 10 us:           PASS
+[bench] === Gate 1 Complete ===
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=9 hb_count=70 hb_last_advance=75 hb_max_gap=3 stall_limit=15 load1=5
+@@@ case pr168-n28-two-heads-first-window
+UEFI firmware (version x)
+[ INFO]: uefi-stub/src/main.rs@032: AIOS UEFI stub
+[   5.6] [0] INFO  Boot  AIOS kernel booting...
+[   5.7] [0] INFO  Boot  Boot sequence complete, entering scheduler
+[heartbeat] tick=0
+[bench] === Gate 1 Benchmark ===
+EXCEPTION[CPU 1]: ESR=0x0000000086000006 EC=0x0000000000000021 FA[heartbeat] tick=1000
+EXCEPTION[CPU 2]: ESR=0x0000000096000006 EC=0x0000000000000025 FAR=0x0000000000000519 EL[heartbeat] tick=1000
+R=0x0000000000000000 ELR=0x0000000000000000
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 kstart=6 hb_first=6 bench_start=7 g1done=-1 hb_count=2 hb_last_advance=8 hb_max_gap=-1 stall_limit=15 load1=5
+@@@ case pr168-s01-interleaved-pc0
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+[bench] === Gate 1 Complete ===<CR>
+[heartbeat] tick=1000<CR>
+EXCEPTION[CPU 2]: ESR=0x0000000086000006 EC=0x0000000000000021 FAR=0x0000000000000000[heartbeat] tick=2000<CR>
+ ELR=0x0000000000000000<CR>
+[heartbeat] tick=3000<CR>
+@@@ case pr168-s02-ansi
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+[bench] === Gate 1 Complete ===<CR>
+<ESC>[0m<ESC>[1;31m[heartbeat] tick=1000<ESC>[0m<CR>
+<ESC>[31mEXCEPTION[CPU 0]: ESR=0x0000000086000006 EC=0x21 FAR=0x0 ELR=0x0000000000000000<ESC>[0m<CR>
+@@@ case pr168-s03-panic-footer
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+[bench] === Gate 1 Complete ===<CR>
+[heartbeat] tick=1000<CR>
+PANIC: panicked at kernel/src/x.rs:1:1:<CR>
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=2 hb_last_advance=8 stall_limit=15 load1=1
+@@@ case pr168-s04-killed-before-kernel
+UEFI firmware (version ...)<CR>
+BdsDxe: loading Boot0001<CR>
+
+[soak] meta mode=text secs=10 elapsed=11 qemu_rc=124 hb_count=0 hb_last_advance=-1 stall_limit=5 load1=1
+@@@ case pr168-s05-edk2-exception
+Synchronous Exception at 0x00000000BF5A1234<CR>
+PC 0x0000BF5A1234<CR>
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=0 hb_last_advance=-1 stall_limit=15 load1=1
+@@@ case pr168-s06-nul
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+[bench] === Gate 1 Complete ===<CR>
+[heart<NUL>beat] tick=1<NUL>00<CR>
+EXCEP<NUL>TION[CPU 1]: ESR=0x96000006 EC=0x25 FAR=0x320 ELR=0xffff00000009e0dc<CR>
+@@@ case pr168-s07-stall-boundary
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+[bench] === Gate 1 Complete ===<CR>
+[heartbeat] tick=1000<CR>
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=2 hb_last_advance=61 stall_limit=15 load1=1
+@@@ case pr168-s08-silent-nofooter
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+[bench] === Gate 1 Complete ===<CR>
+[heartbeat] tick=1000<CR>
+[heartbeat] tick=2000<CR>
+@@@ case pr168-s09-late-start-tick0
+AIOS kernel booting...<CR>
+[   1.1] [0] INFO  Boot  Boot sequence complete, entering scheduler<CR>
+[heartbeat] tick=0<CR>
+
+[bench] === Gate 1 Benchmark ===<CR>
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=1 hb_last_advance=73 stall_limit=15 load1=30
+@@@ case pr168-s10-late-start-nohb
+AIOS kernel booting...<CR>
+[   1.0] [0] INFO  Boot  EL: 1<CR>
+
+[soak] meta mode=text secs=75 elapsed=76 qemu_rc=124 hb_count=0 hb_last_advance=-1 stall_limit=15 load1=30
