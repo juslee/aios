@@ -1,4 +1,5 @@
 //! The `aios` subcommands.
 
 pub mod docs_check;
+pub mod hook;
 pub mod soak;

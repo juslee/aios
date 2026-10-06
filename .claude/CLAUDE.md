@@ -173,7 +173,7 @@ aios/
 │                         justin:start, justin:brief, justin:doctor, justin:pause
 │                         (justin:* = skills-dir plugin in skills/justin/, loaded as justin@skills-dir)
 ├── kernel/src/           bare-metal aarch64 kernel (no_std, no_main)
-│   ├── arch/aarch64/     boot.S, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
+│   ├── arch/aarch64/     boot.S, daif, exceptions, gic, timer, mmu, psci, trap, uart, linker.ld
 │   ├── platform/         Platform trait + per-board (qemu)
 │   ├── mm/               buddy / slab / pools / page tables / kmap / kaslr / asid / tlb / heap / uspace
 │   ├── sched/            scheduler, run queues, load balancer
@@ -198,7 +198,8 @@ aios/
 │   └── kits/             Kit traits: memory, capability, ipc, storage, compute
 ├── uefi-stub/src/        UEFI stub: BootInfo assembly, ELF loader, I/D cache sync, ExitBootServices, kernel jump
 ├── tools/                host-only std crate aios-tools, binary aios (`just tools`):
-│                         src/cmd/docs_check/ (docs drift checker), src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
+│                         src/cmd/docs_check/ (docs drift checker), src/cmd/hook/ (Claude Code hook programs),
+│                         src/cmd/soak/ (boot soak harness, just soak), tests/ (goldens, fixtures)
 ├── scripts/              agent/ (brief, checkpoint),
 │                         docs/baseline.json (accepted docs drift)
 └── docs/                 architecture, phase, knowledge docs
@@ -236,7 +237,7 @@ Single team lead + specialist agents. Fully autonomous — human reviews async v
 | `/audit-loop` | Before creating a PR | Recursive doc / code / security audit until a clean round |
 | `/review-pr-comments` | After PR creation | Wait for reviewer comments, fix, reply, resolve |
 | `/write-arch-doc <topic-or-path>` | Architecture doc request | Interactive create/update architecture docs with research |
-| `/merge-and-cleanup [PR]` | User only, after PR approval | Squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
+| `/merge-and-cleanup [PR]` | User only, after PR approval | Preserve soak results and agent memory, squash merge, delete branch, remove worktree, update main. Agents never merge or push to `main`; they hand off (rule 03) |
 
 **Runbook**: [docs/project/agent-loop.md](../docs/project/agent-loop.md) — current autonomy stage, the `/justin:*` session skills, pause/resume, where state lives, merge policy, staged rollout.
 

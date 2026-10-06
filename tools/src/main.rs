@@ -1,5 +1,5 @@
-//! `aios`: AIOS host tooling. R1 ships `aios docs-check` and R4 `aios soak`;
-//! later PRs add subcommands.
+//! `aios`: AIOS host tooling: `aios docs-check` (R1), `aios hook` (model
+//! routing) and `aios soak` (R4); later PRs add subcommands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -20,6 +20,8 @@ enum Command {
     /// Deterministic docs drift check against scripts/docs/baseline.json (exit 1 on new drift)
     #[command(name = "docs-check", infer_long_args = true, args_override_self = true)]
     DocsCheck(aios_tools::cmd::docs_check::Args),
+    /// Claude Code hook programs: read one JSON payload on stdin; exit 0 on every payload (a usage error exits 2)
+    Hook(aios_tools::cmd::hook::Args),
     /// Boot AIOS repeatedly under QEMU and classify every boot (see `aios soak --help`)
     #[command(name = "soak", disable_help_flag = true)]
     Soak(aios_tools::cmd::soak::Args),
@@ -28,6 +30,17 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Hook(args) => {
+            let ctx = aios_tools::cmd::hook::Ctx::from_env();
+            aios_tools::cmd::hook::run(
+                &args,
+                &ctx,
+                std::io::stdin().lock(),
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            );
+            ExitCode::SUCCESS
+        }
         Command::DocsCheck(args) => {
             let cwd = match std::env::current_dir() {
                 Ok(dir) => dir,
