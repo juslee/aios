@@ -6,7 +6,7 @@ mod hook_support;
 
 use std::path::PathBuf;
 
-use hook_support::{run_hook, unique_dir, Run};
+use hook_support::{outside_dir, run_hook, unique_dir, Run};
 use serde_json::{json, Value};
 
 const LOG: &str = "route-outcome.jsonl";
@@ -274,6 +274,61 @@ fn other_tools_and_events_leave_no_record() {
     }
     assert!(env.records().is_empty());
     assert!(!env.state.join(LOG).exists(), "no event, no file");
+}
+
+#[test]
+fn an_event_without_a_record_never_resolves_the_state_dir() {
+    // No `AIOS_HOOK_STATE_DIR`, and a cwd in no repository: resolving the state
+    // directory would run `git rev-parse` and write a diagnostic. An event that
+    // gets no record must not reach it, so the run stays silent.
+    let cwd = outside_dir("ignored-no-git");
+    for payload in [
+        json!({"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}),
+        json!({"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"prompt":"p"}}),
+        json!({"hook_event_name":"SessionStart"}),
+    ] {
+        let mut payload = payload;
+        payload["cwd"] = json!(cwd.to_str().unwrap());
+        let run = run_hook(
+            &["route-outcome"],
+            payload.to_string().as_bytes(),
+            &[],
+            &cwd,
+        );
+        assert_eq!(run.code, Some(0), "{payload}: {}", run.stderr);
+        assert_eq!(run.stdout, "", "{payload}");
+        assert_eq!(run.stderr, "", "{payload}");
+    }
+}
+
+#[test]
+fn an_unknown_state_dir_reports_on_stderr_only() {
+    // A `.git` file pointing nowhere makes `git rev-parse` fail wherever the test
+    // runs. The state directory is then unknown, so there is no log to write to:
+    // the error goes to stderr, nothing to stdout, and the exit code stays 0.
+    let cwd = unique_dir("unknown-state");
+    std::fs::write(cwd.join(".git"), "gitdir: /nonexistent/aios-hook-test\n").unwrap();
+    let mut payload = completed();
+    payload["cwd"] = json!(cwd.to_str().unwrap());
+    let run = run_hook(
+        &["route-outcome"],
+        payload.to_string().as_bytes(),
+        &[],
+        &cwd,
+    );
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(run.stdout, "");
+    assert!(run.stderr.contains("route-outcome"), "{}", run.stderr);
+    assert!(run.stderr.contains("git rev-parse"), "{}", run.stderr);
+    let written: Vec<_> = std::fs::read_dir(&cwd)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        written,
+        vec![std::ffi::OsString::from(".git")],
+        "no log was guessed"
+    );
 }
 
 #[test]
