@@ -2367,7 +2367,7 @@ git worktree list
 git fetch --prune origin && git merge --ff-only origin/main
 ```
 
-The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions), and is the way to merge.
+The `/merge-and-cleanup` skill runs this sequence with its safety checks (uncommitted work, unpushed commits, other ignored files, copy collisions). After a merge on GitHub, run it to preserve and clean up.
 
 ### Audit Loop Pattern
 
