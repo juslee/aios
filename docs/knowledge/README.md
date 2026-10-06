@@ -5,7 +5,7 @@ type: guide
 
 # Knowledge Hive
 
-Shared knowledge base for the AIOS project. Every developer's Claude Code instance can read, search, and contribute here via the Obsidian MCP server (configured in `.mcp.json`).
+Shared knowledge base for the AIOS project: plain Markdown that every developer's Claude Code instance reads, searches and contributes to with its ordinary file tools.
 
 ## Structure
 
@@ -88,13 +88,4 @@ When implementing a phase or milestone:
 
 ## Searching
 
-Via Claude Code (Obsidian MCP tools):
-
-- `search_notes("query")` — full-text search across all docs
-- `read_note("path")` — read any note
-- `manage_tags` — browse by domain tags
-
-Via Obsidian desktop app (optional):
-
-- Graph view, backlinks, tag search, quick switcher
-- Open `docs/` as vault (File → Open folder as vault)
+Grep `docs/knowledge/` (for example `lessons/` and `decisions/`) by keyword or tag, and find architecture docs through `docs/project/doc-map.md`. `docs/` can optionally be opened as a vault in the Obsidian app.

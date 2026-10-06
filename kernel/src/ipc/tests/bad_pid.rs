@@ -124,14 +124,14 @@ pub(super) fn shm_bad_pid_test(my_tid: ThreadId) {
 }
 
 /// Id of the live token behind `handle` in `pid`'s capability table.
-fn token_id(pid: ProcessId, handle: CapabilityHandle) -> Option<CapabilityTokenId> {
+pub(super) fn token_id(pid: ProcessId, handle: CapabilityHandle) -> Option<CapabilityTokenId> {
     let table = PROCESS_TABLE.lock();
     let proc = process_ref(&table, pid).ok()?;
     proc.cap_table.get(handle).map(|t| t.id)
 }
 
 /// Revoke the token `token_id` in `pid`'s capability table.
-fn revoke_token(pid: ProcessId, token_id: CapabilityTokenId) {
+pub(super) fn revoke_token(pid: ProcessId, token_id: CapabilityTokenId) {
     let mut table = PROCESS_TABLE.lock();
     if let Ok(proc) = process_mut(&mut table, pid) {
         proc.cap_table.revoke(token_id);
@@ -140,8 +140,8 @@ fn revoke_token(pid: ProcessId, token_id: CapabilityTokenId) {
 
 /// Revoke every live SharedMemoryAccess(`region`) token in `pid`'s capability
 /// table. Process 1 holds no other shared memory capability and `region` was
-/// created by this test, so every such token was granted during the test.
-fn revoke_region_access(pid: ProcessId, region: SharedMemoryId) {
+/// created by the calling test, so every such token was granted during it.
+pub(super) fn revoke_region_access(pid: ProcessId, region: SharedMemoryId) {
     let access = Capability::SharedMemoryAccess(region.0);
     let mut table = PROCESS_TABLE.lock();
     if let Ok(proc) = process_mut(&mut table, pid) {

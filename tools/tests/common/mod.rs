@@ -20,8 +20,9 @@ pub fn unique_dir(label: &str) -> PathBuf {
     dir
 }
 
-/// Strip the ambient git and Python environment so a test never depends on the
-/// developer's configuration.
+/// Strip the ambient git environment, point HOME and XDG_CONFIG_HOME at a private
+/// directory, and drop AIOS_TOOLS_BIN, so a test never depends on the developer's
+/// configuration.
 pub fn isolated(cmd: &mut Command) -> &mut Command {
     let home = Path::new(env!("CARGO_TARGET_TMPDIR")).join("home");
     std::fs::create_dir_all(&home).expect("create the isolated HOME");
@@ -29,8 +30,6 @@ pub fn isolated(cmd: &mut Command) -> &mut Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &home)
-        .env("PYTHONUTF8", "1")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")

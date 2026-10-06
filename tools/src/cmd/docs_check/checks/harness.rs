@@ -30,11 +30,10 @@ use crate::cmd::docs_check::checks::layout::{layout_block, TREE_PREFIX_RE};
 use crate::cmd::docs_check::checks::Check;
 use crate::cmd::docs_check::markdown::section_body;
 use crate::cmd::docs_check::model::Finding;
-use crate::cmd::docs_check::repo::Repo;
+use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use crate::pystr::{lstrip, strip};
 
 const CHECK: &str = "harness-tables";
-const CLAUDE_MD: &str = "CLAUDE.md";
 
 /// check.py `SKILL_NAME` (L1086): a skill as a slash command without the slash:
 /// `name` or `plugin:name`.
@@ -122,7 +121,7 @@ pub fn project_agents(repo: &Repo) -> BTreeSet<String> {
 
 /// check.py L1089-1097: group 1 of `rx` (anchored at the cell start) on the
 /// first cell of each table row between the line containing `marker` and the
-/// next `**` label or `## ` heading of CLAUDE.md.
+/// next `**` label or `## ` heading of [`CLAUDE_MD`].
 pub fn claude_table_names(repo: &Repo, marker: &str, rx: &Regex) -> BTreeSet<String> {
     let start = Regex::new(&regex::escape(marker)).expect("an escaped literal is a valid regex");
     let text = repo.text(CLAUDE_MD);

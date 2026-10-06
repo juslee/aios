@@ -2,6 +2,8 @@
 //!
 //! The expected findings were recorded by calling check.py's own `check_test_count`,
 //! `check_lock_order` and `code_mutex_statics` on the same files (production order).
+//! check.py read the project memory at the root `CLAUDE.md`; these files place it at
+//! `CLAUDE_MD`, so the expectations are check.py's with that path substituted.
 
 mod common;
 
@@ -11,7 +13,7 @@ use aios_tools::cmd::docs_check::checks::lock_order::{code_mutex_statics, LockOr
 use aios_tools::cmd::docs_check::checks::test_count::TestCount;
 use aios_tools::cmd::docs_check::checks::{registry, Check};
 use aios_tools::cmd::docs_check::model::{Finding, Skip};
-use aios_tools::cmd::docs_check::repo::Repo;
+use aios_tools::cmd::docs_check::repo::{Repo, CLAUDE_MD};
 use common::TestRepo;
 
 const COUNT_SHARED_SRC_LIB_RS: &str = r#"//! Shared.
@@ -170,7 +172,7 @@ fn lock_repo(label: &str) -> TestRepo {
                 "kernel/src/tests/helpers.rs",
                 LOCK_KERNEL_SRC_TESTS_HELPERS_RS,
             ),
-            ("CLAUDE.md", LOCK_CLAUDE_MD),
+            (CLAUDE_MD, LOCK_CLAUDE_MD),
         ],
     )
 }
@@ -282,42 +284,42 @@ fn lock_order_reports_table_chain_and_comment_drift() {
         ),
         finding(
             "lock-order",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "unknown:GHOST_LOCK",
             "lock ordering names GHOST_LOCK, which is not a Mutex static in kernel/src",
             6,
         ),
         finding(
             "lock-order",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "unknown:TEST_CHANNEL",
             "lock ordering names TEST_CHANNEL, which is not a Mutex static in kernel/src",
             7,
         ),
         finding(
             "lock-order",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "order:GAMMA_LOCK>BETA_LOCK",
             "CLAUDE.md orders GAMMA_LOCK before BETA_LOCK, §3.3 ranks them 3 and 2",
             7,
         ),
         finding(
             "lock-order",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "order:GAMMA_LOCK>ALPHA_LOCK",
             "CLAUDE.md orders GAMMA_LOCK before ALPHA_LOCK, §3.3 ranks them 3 and 1",
             6,
         ),
         finding(
             "lock-order",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "order:DELTA_LOCK>ALPHA_LOCK",
             "CLAUDE.md orders DELTA_LOCK before ALPHA_LOCK, §3.3 ranks them 4 and 1",
             6,
         ),
         finding(
             "lock-order",
-            "CLAUDE.md",
+            CLAUDE_MD,
             "order:BETA_LOCK>ALPHA_LOCK",
             "CLAUDE.md orders BETA_LOCK before ALPHA_LOCK, §3.3 ranks them 2 and 1",
             6,
