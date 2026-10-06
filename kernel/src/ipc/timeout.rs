@@ -12,7 +12,7 @@ use crate::sched;
 use crate::sync::IrqSpinLock;
 use crate::task::{ThreadId, ThreadState, MAX_THREADS};
 use shared::lock::LockClass;
-use shared::tripwire::{ClearResult, Key, WakeSource};
+use shared::tripwire::{ClearResult, WakeSource};
 use spin::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -154,8 +154,13 @@ pub(crate) fn wake_with_error(tid: ThreadId, error: i64, src: WakeSource) {
     }
     // Clear any pending timeout — the thread is being woken for a
     // different reason (cancel, destroy, etc.), so the timeout must
-    // not fire later and overwrite this error code.
-    clear_timeout(tid);
+    // not fire later and overwrite this error code. The timeout's own
+    // wake (`check_timeouts`) has already taken the entry, so a busy clear
+    // there leaves nothing behind and is not a `ctbusy`.
+    let clear = clear_timeout(tid);
+    if !matches!(src, WakeSource::To) {
+        tripwire::note_clear(clear);
+    }
     sched::unblock(tid, src);
 }
 
@@ -173,7 +178,8 @@ pub(super) fn get_wakeup_error(tid: ThreadId) -> i64 {
 ///
 /// Returns what it found, for the tripwire's N2 classification: the reply,
 /// send and call wakers pass their own result to it. A busy TIMEOUT_QUEUE
-/// leaves the entry and counts `ctbusy`.
+/// leaves the entry; the callers whose entry that can be count `ctbusy`
+/// with [`tripwire::note_clear`].
 pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
     if let Some(mut tq) = TIMEOUT_QUEUE.try_lock() {
         let entry = &mut tq[tid.0 as usize];
@@ -188,7 +194,6 @@ pub(super) fn clear_timeout(tid: ThreadId) -> ClearResult {
     // If the lock is contended (IRQ handler running check_timeouts),
     // skip — the timeout handler will see the thread is already awake
     // and the wakeup error slot is already set, so it's benign.
-    tripwire::bump(Key::Ctbusy, 0);
     ClearResult::Busy
 }
 

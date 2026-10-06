@@ -112,6 +112,7 @@ pub fn ipc_call(
             // The result stays with this wake until its unblock fallback
             // classifies it (tripwire N2 counters).
             let recv_clear = clear_timeout(recv_tid);
+            tripwire::note_clear(recv_clear);
             // If the receiver is select-blocked, set the ready metadata so it knows
             // which source fired when it resumes from ipc_select.
             super::select::set_select_ready(recv_tid, SelectKind::Channel(channel), 0);
@@ -437,6 +438,7 @@ pub fn ipc_reply(channel: ChannelId, reply_buf: &[u8]) -> i64 {
     // stays with this wake until the reply switch or the unblock fallback
     // classifies it (tripwire N2 counters).
     let clear = clear_timeout(caller_tid);
+    tripwire::note_clear(clear);
 
     // Try direct switch back to caller (fast path).
     // This bypasses the scheduler — replier switches directly to caller.
@@ -507,6 +509,7 @@ pub fn ipc_send(channel: ChannelId, send_buf: &[u8]) -> i64 {
         // The result stays with this wake until its unblock fallback
         // classifies it (tripwire N2 counters).
         let clear = clear_timeout(recv_tid);
+        tripwire::note_clear(clear);
         // If the receiver is select-blocked, wake via select path (sets ready_index).
         if !super::select::try_wake_select(
             recv_tid,

@@ -426,7 +426,9 @@ pub enum Key {
     Latereply,
     /// Replies that woke a thread not blocked in that call.
     Misrep,
-    /// `clear_timeout` calls that found TIMEOUT_QUEUE busy and left the entry.
+    /// Wakes whose `clear_timeout` found TIMEOUT_QUEUE busy and left the
+    /// waiter's entry: reply, send, call and `wake_with_error` wakes, not
+    /// the timeout's own (its entry is already gone).
     Ctbusy,
     /// Out-of-range thread ids met by the instrumentation.
     Badtid,

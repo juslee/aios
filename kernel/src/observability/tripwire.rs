@@ -731,6 +731,18 @@ pub fn note_unblock_target(tid: ThreadId, src: WakeSource, target: usize) {
     }
 }
 
+/// Count `ctbusy` when a waker's own `clear_timeout` found TIMEOUT_QUEUE
+/// busy ([`ClearResult::Busy`]), which leaves the waiter's entry, if any,
+/// registered. Called by the reply, send and call wakers and by
+/// `wake_with_error` for every source except the timeout itself, whose
+/// entry `check_timeouts` has already taken. Thread or IRQ context.
+#[inline(never)]
+pub fn note_clear(clear: ClearResult) {
+    if matches!(clear, ClearResult::Busy) {
+        bump(Key::Ctbusy, 0);
+    }
+}
+
 /// Count the N2-table verdict ([`tripwire::classify_reply`]) on
 /// `ipc_reply`'s `unblock` fallback: `outcome` is that `unblock`'s result,
 /// `channel` the reply's channel and `clear` the reply's own
