@@ -21,7 +21,7 @@ Questions over one state run as parallel branches and cannot see each other's an
 
 **Why decide this before Phase 11.** The Phase 11 doc (AIRS Inference Engine, `development-plan.md:428`) will freeze four things: the session state machine, the metering model, the result type and the AIRS Kit trait. A typed judgment touches all four. The spec already has most of the parts:
 
-- `forward` returns logits (`airs/inference.md:1621-1627`), and sampling computes `Softmax → probs` before it draws a token (`:753-754`). The probabilities exist and are thrown away.
+- `forward` returns logits (`airs/inference.md:1623-1629`), and sampling computes `Softmax → probs` before it draws a token (`:753-754`). The probabilities exist and are thrown away.
 - `OutputConstraint::Choice` "precomputes token prefixes for each option" (`airs/inference.md:940-944`), but it returns only the sampled string.
 - No API exposes a probability. Every confidence in the AIRS spec is either written by the model inside its generated output or computed by hand. For example, the Intent Verifier parses the model's verdict and falls back to `Suspicious` at 0.5 when parsing fails (`intent-verifier/pipeline.md:300`).
 - Consumers call AIRS methods that are defined nowhere: `batch_assess_urgency` (`intelligence/attention.md:1164`), `analyze_urgency` (`intelligence/attention.md:281`) and `interpret_preference` (`preferences/resolution.md:207`). `InferenceResult` is used (`kits/intelligence/airs.md:44`, `:212`) but never defined.
@@ -48,13 +48,13 @@ The mechanism works on any causal language model. A model trained for judgments 
 
 | Layer | Change | Today |
 | --- | --- | --- |
-| `InferenceRuntime` | No signature change when each option is one token. Options longer than one token need teacher-forced `forward` calls on a forked cache. New requirement: fork session state that is not a KV block (Open Question 2). | `forward` returns next-position logits (`airs/inference.md:1621-1627`). The KV cache is PagedAttention blocks with copy-on-write prefix sharing (`kernel/memory/ai.md:142`, `:185-196`). |
+| `InferenceRuntime` | No signature change when each option is one token. Options longer than one token need teacher-forced `forward` calls on a forked cache. New requirement: fork session state that is not a KV block (Open Question 2). | `forward` returns next-position logits (`airs/inference.md:1623-1629`). The KV cache is PagedAttention blocks with copy-on-write prefix sharing (`kernel/memory/ai.md:142`, `:185-196`). |
 | Engine session | Add a readout mode to `SessionConfig`, in which `max_tokens` is 0. Add a `Ready → Completed` transition. Reuse the `Choice` prefix tables and read `probs` without sampling. | `SessionConfig` is at `airs/inference.md:58-69`. `Ready` leads only to `Generating` (`:1176-1185`). |
 | Prefix sharing | Key shared prefixes on the state and the question set, not only the system prompt. Share only within one trust domain. | Keyed on "hashing the system prompt tokens" (`airs/inference.md:689`). |
 | Metering | Check prefill tokens before a session starts, not only predicted completion. Prompt tokens are counted after the fact. The admission check charges only a predicted completion length, and prompt length is just one input to that prediction, so a judgment's prefill is never checked against the budget before it runs. | `TokenUsage` counts "Cumulative prompt tokens processed" (`airs/inference.md:1034-1036`), and `TokenBudget` covers "prompt + completion" (`:1046-1047`). But the pre-session check charges an estimated completion length (`:1276-1279`), predicted from prompt length and other features (`:1137`, `:1151`), and usage updates "On each token" (`:1126`). The kernel compute budget (`:1281-1282`) tracks device time and power, not tokens (`kernel/compute/budget.md:17-20`), and covers only work on a "non-CPU device" (`kernel/compute/budget.md:10`). `InferenceBudget.max_tokens` is "Maximum tokens to generate" (`kits/kernel/compute.md:142-143`). |
 | AIRS Kit | Add `judge` and `judge_batch` beside `infer` and `embed`, gated on `InferenceAccess`. Define `InferenceResult`. | The trait is at `kits/intelligence/airs.md:42-57` and the capability table at `:339-343`. |
 | Principles | Add an explicit exception to "Streaming always… No blocking calls". A judgment has nothing to stream. | `intelligence/airs.md:142` |
-| Model registry | Add a judgment task type. Allow a second resident model only on devices with 8 GB or more (nominal RAM; the implemented sizing differs, see Key Idea 5). | `TaskType` is at `airs/model-registry.md:71-91`. Specialists fit alongside the primary model at 8 GB (`:215`) and at 16 GB and above (`:278-279`). |
+| Model registry | Add a judgment task type. Allow a second resident model only on devices with 8 GB or more (nominal RAM; the implemented sizing differs, see Key Idea 5). | `TaskType` is at `airs/model-registry.md:71-92`. Specialists fit alongside the primary model at 8 GB (`:216`) and at 16 GB and above (`:279-280`). |
 | Gate 2 and benchmarks | Add criteria for judgment latency and calibration. | Gate 2 measures throughput, first-token latency and memory (`development-plan.md:253-257`). Its "If NO" branch already says "Focus on embedding/classification" (`:259`). |
 
 **Ownership.** Phase 11 owns the runtime, the engine session and the Kit method; its row in the plan names "AIRS Kit (inference)" (`development-plan.md:428`). Phase 12, "AIRS Kit (services)" (`development-plan.md:429`), defines the service calls built on it. Each consumer phase owns its questions, thresholds and labelled calibration set.
@@ -144,7 +144,7 @@ The tiers below follow the architecture docs. The implemented pool sizing gives 
 - **AIRS down:** the rule-based fallbacks stay (`intelligence/airs.md:143`).
 - **Under 4 GiB:** there is no local model (`kernel/memory/ai.md:33-35`, `:422`; `airs/model-registry.md` §4.6), so there are no judgments unless the cloud question is settled (Open Question 8).
 - **4 GB:** the model pool is 2 GB (`kernel/memory/ai.md:24`). "Only one small model (1-3B at Q4) fits at a time" (`kernel/memory/ai.md:424`). There is no second resident model, so judgments use the primary model's readout at its zero-shot calibration.
-- **8 GB:** a 1–2B specialist of "~500 MB-1 GB" may stay loaded (`airs/model-registry.md:215`). decider-0.8b does not suit that slot as released:
+- **8 GB:** a 1–2B specialist of "~500 MB-1 GB" may stay loaded (`airs/model-registry.md:216`). decider-0.8b does not suit that slot as released:
   - It is 1.4–1.5 GB in bf16.
   - It is a v1 recipe, with held-out accuracy 0.707 and ECE 0.096.
 
@@ -179,7 +179,7 @@ The tiers below follow the architecture docs. The implemented pool sizing gives 
 8. **Cloud.** Still undecided, and the docs conflict:
    - `intelligence/airs.md:141` says there is no cloud dependency.
    - `development-plan.md:261` plans a hybrid of local and cloud.
-   - `airs/model-registry.md:251-254` has a cloud-only mode below 2 GB.
+   - `airs/model-registry.md:252-255` has a cloud-only mode below 2 GB.
 
    The request shape (a state plus typed questions, returning distributions) matches TypeSafe's hosted `/v1/systemone`. So it commits to nothing about where inference runs. Add no remote backend until this is decided.
 9. **Provenance.** Decider's author publishes safetensors only. The GGUF conversions are third-party, and none is validated for reading the answers, which needs a logits shim. AIOS would convert, measure and sign its own build into a `ModelManifest` (`secure-boot/intelligence.md:31`).

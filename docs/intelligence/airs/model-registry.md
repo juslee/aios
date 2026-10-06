@@ -81,8 +81,9 @@ pub enum TaskType {
     MetadataGeneration,
     /// Prompt injection detection
     AdversarialDetection,
-    /// Context inference (work/leisure). Routed to the Context Engine's
-    /// classifier companion model, not to the general-purpose model
+    /// Context inference (work/leisure). Routed to the Context Engine's own
+    /// ~2 MB context classifier (context-engine/inference.md §4.1), not to
+    /// the general-purpose model
     ContextInference,
     /// Attention urgency assessment
     AttentionTriage,

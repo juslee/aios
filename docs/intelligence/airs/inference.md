@@ -1513,13 +1513,15 @@ Hardware Tier        Model     Quant     TTFT      tok/s     Context    Memory
 ─────────────────    ──────    ──────    ──────    ──────    ────────   ──────
 QEMU (emulated)      3B       Q4_K_M    ~5s       ~1        2K         2 GB
 Pi 4 (4 GB)          3B       Q4_0      ~2s       ~3-4      4K         2 GB
-Pi 5 (8 GB)          8B       Q4_K_M    ~800ms    ~3-4      8K         4 GB
+Pi 5 (8 GB)          8B       Q4_K_M    ~800ms    ~6-8      8K         4 GB
 Apple M1 (16 GB)     8B       Q5_K_M    ~200ms    ~25-35    32K        8 GB
 Apple M2 (32 GB)     13B      Q4_K_M    ~300ms    ~20-30    32K        16 GB
 Apple M3+ (64 GB)    70B      Q4_K_M    ~500ms    ~15-25    128K       32 GB
 ```
 
-The Pi 5 decode rate is capped at the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md) (~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s); the published figures for comparable hardware are above it, so Phase 11 checks this row first.
+Decode rate is bounded by the memory-bandwidth roofline in [ai-native.md §13.1](./ai-native.md): bandwidth ÷ model size. The published figures in the Pi 5 and Apple rows are above that bound for the bandwidths in [compute/classification.md](../../kernel/compute/classification.md) §4.3: ~18 GB/s ÷ ~4.5 GB ≈ 4 tok/s for the Pi 5 row, and at ~100 GB/s about 18 tok/s for 8B Q5_K_M (~5.5 GB), 13 tok/s for 13B Q4_K_M (~7.6 GB) and 2-3 tok/s for 70B Q4_K_M (~40 GB). These rows are unverified, so Phase 11 checks them against the roofline first.
+
+The Apple M2 (32 GB) and Apple M3+ (64 GB) rows are projected tiers, like the 32 GB and 64 GB rows in [scaling.md](./scaling.md) §11.1: their Memory column assumes a model pool larger than today's 8 GB cap ([model-registry.md](./model-registry.md) §4.3), so no device runs these models today.
 
 **Target invariants:**
 

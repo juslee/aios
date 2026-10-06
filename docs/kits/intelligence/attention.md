@@ -77,8 +77,8 @@ pub trait AttentionManager {
 
     /// Query the urgency threshold the user's current context applies
     /// (intelligence/attention.md §5.1). Useful for deciding whether to post
-    /// at all: under `InterruptOnly`, anything below Interrupt goes to the
-    /// digest instead of being shown now.
+    /// at all: under `InterruptOnly`, NextBreak and Digest items go to the
+    /// digest instead of being shown now, and Silent items are only logged.
     fn current_threshold(&self) -> UrgencyThreshold;
 
     /// Query whether the user is currently in a focus session.
@@ -123,7 +123,8 @@ pub enum AttentionCategory {
 
 /// AI-assessed urgency (set by AIRS, never by the posting agent;
 /// intelligence/attention.md §3.1). Urgency alone does not fix delivery: the
-/// context filter (§5.1) then applies the current `UrgencyThreshold`.
+/// context filter (intelligence/attention.md §5.1) then applies the current
+/// `UrgencyThreshold`.
 pub enum Urgency {
     /// Show immediately as an interrupt overlay. Reserved for critical items.
     Interrupt,
@@ -276,9 +277,10 @@ fn post_if_appropriate(
 ) -> Result<Option<AttentionId>, AttentionError> {
     match attention.current_threshold() {
         UrgencyThreshold::InterruptOnly => {
-            // Focus, Leisure or Gaming context: anything below Interrupt
-            // goes to the digest (intelligence/attention.md §5.1). A
-            // progress tick is stale by then, so skip it.
+            // Focus, Leisure or Gaming context: NextBreak and Digest items
+            // go to the digest and Silent items are only logged
+            // (intelligence/attention.md §5.1). A progress tick is stale by
+            // then, so skip it.
             Ok(None)
         }
         UrgencyThreshold::NextBreak => {
@@ -370,7 +372,8 @@ fn assess_urgency(
         // category from the agent registry, a keyword scan of the text and
         // the sender's relationship boost, and maps the total onto score
         // thresholds. The category the agent declares never sets urgency
-        // by itself, so an agent cannot force Interrupt (§18.3).
+        // by itself, so an agent cannot force Interrupt
+        // (intelligence/attention.md §18.3).
         return rule_triage.assess(item).urgency;
     }
 
