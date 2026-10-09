@@ -6,11 +6,12 @@
 //! comment counts too. Claims are matched on the raw prose line (code spans included). A
 //! claimed number is compared and printed as Python's `int()` would (`pystr::int_str`: leading
 //! zeros dropped, deferring to that helper's own note on CPython 3.11+'s 4300-digit limit).
-//! Accepted divergences: `[0-9]` replaces Python's `\d`; the `gen:test-count` pattern's `\s`
-//! (used three times) lacks U+001C..U+001F, which Python's `\s` has; `splitlines()` breaks at
-//! U+001C..U+001E, so only U+001F can appear inside a prose line and reach this pattern; the
-//! regex crate's `\b` follows Unicode word characters that differ slightly from Python's; and
-//! the case-insensitive `(?i)` claim patterns do not fold `ı` (U+0131) or `İ` (U+0130) to `i`,
+//! The claim patterns are check.py's, compiled with `crate::pyre::compile`: `\d` takes any
+//! Unicode decimal digit (the claim prints through `int_str` in ASCII, as `int()` would), and
+//! `\s` includes U+001C..U+001F (only U+001F can sit inside a prose line, because
+//! `splitlines()` breaks at U+001C..U+001E).
+//! Accepted divergences: the regex crate's `\b` follows Unicode word characters that differ
+//! slightly from Python's; and the case-insensitive `(?i)` claim patterns do not fold `ı` (U+0131) or `İ` (U+0130) to `i`,
 //! as Python's `re.IGNORECASE` does, so a claim spelled with one of those characters (e.g.
 //! "unıt tests") is not reported.
 
@@ -23,17 +24,17 @@ use super::Check;
 use crate::cmd::docs_check::markdown::prose_lines;
 use crate::cmd::docs_check::model::Finding;
 use crate::cmd::docs_check::repo::Repo;
-use crate::pystr;
+use crate::{pyre, pystr};
 
 /// The three claim patterns of check.py L792-796 (`claim_res`), tried in this order on every line.
 static CLAIM_RES: LazyLock<[Regex; 3]> = LazyLock::new(|| {
     [
-        Regex::new(r"<!--\s*gen:test-count\s*-->\s*([0-9]+)").expect("valid regex"),
-        Regex::new(
-            r"(?i)\bcurrent(?:ly)?\b[^\n]{0,60}?\b([0-9]{2,5}) (?:host(?:-side)? |unit )?tests\b",
+        pyre::compile(r"<!--\s*gen:test-count\s*-->\s*(\d+)").expect("valid regex"),
+        pyre::compile(
+            r"(?i)\bcurrent(?:ly)?\b[^\n]{0,60}?\b(\d{2,5}) (?:host(?:-side)? |unit )?tests\b",
         )
         .expect("valid regex"),
-        Regex::new(r"(?i)\bcurrent test distribution \(([0-9]+) tests\)").expect("valid regex"),
+        pyre::compile(r"(?i)\bcurrent test distribution \((\d+) tests\)").expect("valid regex"),
     ]
 });
 
@@ -90,7 +91,7 @@ mod tests {
 
     #[test]
     fn regexes_compile() {
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         LazyLock::force(&CLAIM_RES);
     }
@@ -133,14 +134,21 @@ mod tests {
     }
 
     #[test]
-    fn gen_test_count_pattern_does_not_reach_the_control_separators() {
-        // check.py's \s matches U+001C..U+001F, so
-        // "<!--\x1fgen:test-count-->12" reports a drifted claim there; the regex
-        // crate's \s does not, so this claim goes unmatched (accepted divergence,
-        // documented above).
+    fn claim_patterns_use_pythons_digit_and_space_classes() {
+        // check.py's \s matches U+001F and its \d every Unicode decimal digit
+        // (run against check.py at 33c6b3d): both claims below are matched there,
+        // and the claimed number prints through int() as ASCII.
         let first = |i: usize, line: &str| -> Option<String> {
             CLAIM_RES[i].captures(line).map(|caps| caps[1].to_string())
         };
-        assert_eq!(first(0, "<!--\u{1f}gen:test-count-->12"), None);
+        assert_eq!(
+            first(0, "<!--\u{1f}gen:test-count-->12").as_deref(),
+            Some("12")
+        );
+        assert_eq!(
+            first(0, "<!-- gen:test-count -->\u{1f}١٢").as_deref(),
+            Some("١٢")
+        );
+        assert_eq!(pystr::int_str("١٢"), "12");
     }
 }

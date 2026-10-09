@@ -4,16 +4,18 @@
 //! [`CLAUDE_MD`], and `lock ordering` comment blocks in kernel code.
 //!
 //! `split_outside_braces` replaces check.py's `re.split(r">(?![^{]*})", ...)` (the regex
-//! crate has no lookaround). Accepted divergences: a rank cell counts only when it is ASCII
-//! digits that fit `u64`; Python's `isdigit()` (check.py L854) and `int()` (L855) also accept
-//! other Unicode decimal digits and values too large for `u64`, but for a cell where
-//! `isdigit()` is true and `int()` raises (for example `²`, or more digits than CPython
-//! 3.11+'s 4300-digit `int()` limit; see `pystr`), check.py's `int(cells[0])` (L855) raises
-//! `ValueError`; `run_checks` catches only `Skip`, so it reaches check.py's `__main__` guard
-//! (L1665-1670), which prints a traceback and exits 2, while aios leaves the lock unranked,
-//! unless the cell is ASCII digits whose value fits `u64` once its leading zeros are dropped
-//! (for example 4400 zeros then `2`), in which case aios ranks the lock with that value.
-//! `\b`/`\w`/`\s` follow the regex crate's Unicode classes.
+//! crate has no lookaround). The patterns are check.py's, compiled with
+//! `crate::pyre::compile`, so `\s` is Python's class; a rank cell (check.py L854-855) counts
+//! when it is Unicode decimal digits (`pystr::is_decimal`), valued as `int()` values them.
+//! Accepted divergences: a rank cell must also fit `u64`, where Python's `int()` takes any
+//! size; for a cell where `isdigit()` is true and `int()` raises (for example `²`, which is
+//! a digit but not decimal, or more digits than CPython 3.11+'s 4300-digit `int()` limit;
+//! see `pystr`), check.py's `int(cells[0])` (L855) raises `ValueError`; `run_checks` catches
+//! only `Skip`, so it reaches check.py's `__main__` guard (L1665-1670), which prints a
+//! traceback and exits 2, while aios leaves the lock unranked, unless the cell is decimal
+//! digits whose value fits `u64` once its leading zeros are dropped (for example 4400 zeros
+//! then `2`), in which case aios ranks the lock with that value. `\b`/`\w` follow the regex
+//! crate's Unicode word class.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -24,7 +26,7 @@ use super::Check;
 use crate::cmd::docs_check::markdown::{section_body, table_rows};
 use crate::cmd::docs_check::model::{Finding, Skip};
 use crate::cmd::docs_check::repo::{Repo, CLAUDE_MD};
-use crate::{paths, pystr};
+use crate::{paths, pyre, pystr};
 
 /// Test-only locks named as excluded in deadlock-prevention.md section 3.3.
 pub const TEST_LOCKS: [&str; 2] = ["TEST_CHANNEL", "PI_TEST_CHANNEL"];
@@ -33,30 +35,30 @@ const DEADLOCK_DOC: &str = "docs/kernel/deadlock-prevention.md";
 
 /// check.py `LOCK_NAME_RE` (L813), used with `findall`.
 static LOCK_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b").expect("valid regex"));
 /// check.py `STATIC_RE` (L814), applied with `re.match`.
 static STATIC_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z][A-Z0-9_]*)\s*:\s*(.*)$")
+    pyre::compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z][A-Z0-9_]*)\s*:\s*(.*)$")
         .expect("valid regex")
 });
 /// check.py L828 (`re.match`): an inline test module header.
 static TEST_MOD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{").expect("valid regex")
+    pyre::compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{").expect("valid regex")
 });
 /// check.py L831 (`re.search` on the static's type).
 static MUTEX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bMutex\s*<").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"\bMutex\s*<").expect("valid regex"));
 /// check.py L841: the section 3.3-3.4 body of the deadlock doc.
 static TABLE_START: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^### 3\.3 ").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^### 3\.3 ").expect("valid regex"));
 static TABLE_STOP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^### 3\.5 |^## 4\.").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^### 3\.5 |^## 4\.").expect("valid regex"));
 /// check.py L847 (`re.fullmatch` on a table cell).
 static LOCK_CELL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^`([A-Z][A-Z0-9_]*)(?:\[[^\]]*\])?`$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^`([A-Z][A-Z0-9_]*)(?:\[[^\]]*\])?`$").expect("valid regex"));
 /// check.py L869 (`re.match` on each CLAUDE.md line).
 static CHAIN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^Lock ordering[^:]*:\s*(.*)$").expect("valid regex"));
+    LazyLock::new(|| pyre::compile(r"^Lock ordering[^:]*:\s*(.*)$").expect("valid regex"));
 
 /// Split at every `>` that is not inside `{...}`: check.py's `re.split(r">(?![^{]*})", s)`.
 /// The lookahead fails exactly when a `}` comes before any `{` after the `>`, i.e. the `>`
@@ -146,7 +148,7 @@ impl Check for LockOrder {
             let rank = cells
                 .first()
                 .map(String::as_str)
-                .filter(|c| pystr::is_ascii_digits(c))
+                .filter(|c| pystr::is_decimal(c))
                 .and_then(pystr::parse_uint);
             if let Some(rank) = rank {
                 ranks.insert(name, rank);
@@ -349,7 +351,7 @@ mod tests {
             &LOCK_CELL_RE,
             &CHAIN_RE,
         ];
-        // Forcing each LazyLock runs its Regex::new(...).expect("valid regex"): a
+        // Forcing each LazyLock runs its pyre::compile(...).expect("valid regex"): a
         // bad pattern panics here, at test time, rather than in production.
         for rx in all {
             LazyLock::force(rx);
