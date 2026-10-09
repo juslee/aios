@@ -71,8 +71,11 @@ fn svc(nr: Syscall, args: &[u64]) -> i64 {
 /// empty send buffer at `USER_VA_MIN` and a page-0 or null reply buffer,
 /// and the ring must stay empty. A late check would make IpcCall time out
 /// after one tick instead. A null buffer is EINVAL even at length 0 (checks
-/// 41-42), so a handler that skipped the check for an empty buffer fails
-/// them. Checks 39-40 show the handlers accept empty buffers at
+/// 41-42). An IpcCall handler that skipped the check for an empty buffer
+/// fails check 42: the call times out. An IpcRecv handler that skipped it
+/// still passes check 41, because its copy-out rejects null at any length,
+/// but only after the receive has consumed the queued message, so check 34
+/// fails instead. Checks 39-40 show the handlers accept empty buffers at
 /// `USER_VA_MIN`, so a fix that rejected every buffer cannot pass checks
 /// 32-36 and 41-42 alone, and that the EINVAL of checks 35 and 42 comes from
 /// the reply buffer. With the ring filled, so that nothing blocks, an
@@ -222,7 +225,8 @@ fn bad_buffer_checks(open: ChannelId, page_zero: u64, checks: &mut [bool; CHECKS
     let queued = crate::ipc::ipc_send(open, b"TEST") == 0;
     checks[32] = svc(Syscall::IpcRecv, &[channel, 0, 4, 0]) == einval;
     checks[33] = svc(Syscall::IpcRecv, &[channel, page_zero, 4, 0]) == einval;
-    // Null is EINVAL even for an empty buffer.
+    // Null is EINVAL even for an empty buffer. The copy-out rejects null
+    // too, so a late check still passes here; check 34 catches it.
     checks[41] = svc(Syscall::IpcRecv, &[channel, 0, 0, 0]) == einval;
     // The message is still queued: no rejected receive consumed it.
     checks[34] = queued && crate::ipc::ipc_recv(open, &mut buf, 0).map(|(n, _)| n) == Ok(4);
