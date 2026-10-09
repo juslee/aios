@@ -41,6 +41,11 @@ name: Soak matrix
 # The results are x86 TCG numbers on ubuntu-26.04 and form their own
 # baseline: never pool them with local arm64 soaks, or with runs on another
 # runner image.
+#
+# Every boot runs the arm's own harness: scripts/soak-qemu.sh for an arm
+# from before Tools R4 (1a5c363), `just soak` (the arm's own aios soak) for
+# one from R4 on; one dispatch may mix the two. summary.md names each arm's
+# harness.
 
 on:
   workflow_dispatch:
@@ -105,12 +110,15 @@ jobs:
     steps:
       # Step time limit, in minutes:
       #   boots   ceil(arms x runs x (secs + 15) / 60)
-      #           15 s per boot covers the harness start (timeout check, ESP
-      #           snapshot) and QEMU's exit after the timeout's SIGTERM (up to
-      #           10 s with --kill-after)
+      #           15 s per boot covers the harness start (soak-qemu.sh's
+      #           timeout check, or `just soak`'s no-op rebuild check of the
+      #           arm's aios; the ESP snapshot) and QEMU's exit after the
+      #           harness's SIGTERM at the time limit (up to 10 s before
+      #           SIGKILL)
       #   builds  5 x arms: toolchain install plus a cold debug build of
       #           kernel and stub (the qemu-soak job's warm `just disk` takes
-      #           about 20 s)
+      #           about 20 s), and for an aios soak arm a cold release build
+      #           of its aios (`just tools`)
       #   margin  10
       # Defaults, 3 arms: 158 + 15 + 10 = 183 min; 4 arms: 210 + 20 + 10 = 240.
       # The limit must stay <= 340, leaving 20 min of the 360 for setup,
@@ -166,7 +174,8 @@ jobs:
             echo "::error::runs must be from 1 to 1000 (got $runs)"
             exit 1
           fi
-          # soak-qemu.sh refuses a --secs that is not above its --stall-secs (15).
+          # Both harnesses (soak-qemu.sh and aios soak) refuse a --secs that
+          # is not above their --stall-secs (15).
           if [ "$secs" -le 15 ] || [ "$secs" -gt 3600 ]; then
             echo "::error::secs must be more than 15 (the harness's stall limit) and at most 3600 (got $secs)"
             exit 1
@@ -220,8 +229,10 @@ jobs:
           dpkg -L qemu-efi-aarch64 | grep -E '\.fd$'
           test -f "$AIOS_EDK2_FW"
       # Each arm is built in its own worktree, $RUNNER_TEMP/arm-A and so on,
-      # with that arm's rust-toolchain.toml: rustup installs a pinned nightly
-      # the runner does not have yet on first use.
+      # with that arm's rust-toolchain.toml: soak-matrix.sh first runs
+      # `rustup toolchain install` there, which installs the pinned nightly
+      # with the file's components and targets if the runner lacks it, so
+      # the soak never relies on rustup's auto-install.
       - name: Soak (${{ inputs.runs }} rounds x ${{ inputs.secs }} s, ${{ inputs.mode }})
         timeout-minutes: ${{ fromJSON(steps.plan.outputs.soak_minutes) }}
         run: |
