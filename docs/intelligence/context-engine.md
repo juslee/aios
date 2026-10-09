@@ -117,7 +117,7 @@ Dev Phase 12: AIRS Classifier Integration
 
 Dev Phase 12: Attention Manager Integration
   ├── AttentionItem processing pipeline
-  ├── AIRS urgency re-assessment
+  ├── AIRS urgency assessment
   ├── Notification threshold filtering
   ├── Grouping and digest batching
   ├── Compositor notification routing
@@ -136,7 +136,6 @@ Dev Phase 22a: AI-Native Context Intelligence (§13)
   ├── Dempster-Shafer evidential signal fusion
   ├── Kalman filter context state smoothing
   ├── GRU proactive context prediction
-  ├── DistilBERT notification triage (quantized)
   ├── Breakpoint detection (Horvitz/Iqbal)
   ├── Cross-device context sync (BLE + CRDTs)
   └── LLM-powered context narration
@@ -163,7 +162,7 @@ Dev Phase 28: Power-Aware Context
 - Context Engine requires Compositor (dev phase 6) — ActiveSpace and InputPattern signals come from the compositor.
 - Context Engine requires Agent Runtime (dev phase 7) — RunningAgents signal comes from the Agent Runtime.
 - AIRS classifier requires AIRS inference engine (dev phase 9) — the classifier runs on AIRS.
-- Attention Manager requires AIRS (dev phase 9) — urgency re-assessment needs inference.
+- Attention Manager requires AIRS (dev phase 9) — urgency assessment needs inference.
 - Learning requires History Store in spaces (dev phase 4) — patterns stored in `system/context/` space.
 - AI-Native Context Intelligence (§13) requires AIRS Core (dev phase 9) — learned classifiers, evidential fusion, and prediction models run on AIRS.
 - Cross-device context sync (§13.5) requires Networking (dev phase 8) and Multi-device pairing (dev phase 37).
@@ -219,7 +218,7 @@ Quick lookup for commonly referenced sections across the context engine sub-docu
 | §8.2 Fallback Quality | [learning.md](./context-engine/learning.md) | AIRS vs rule-based comparison |
 | §8.3 Boot-Time Context Behavior | [learning.md](./context-engine/learning.md) | Context during early boot, Semantic Resume |
 | §9.1 Reading Context (for agents) | [sdk.md](./context-engine/sdk.md) | AgentContext trait, ContextRead capability |
-| §9.2 Posting Attention Items | [sdk.md](./context-engine/sdk.md) | AttentionItem posting, AIRS re-assessment |
+| §9.2 Posting Attention Items | [sdk.md](./context-engine/sdk.md) | AttentionItem posting, AIRS urgency assessment |
 | §9.3 Subscribing to Context Changes | [sdk.md](./context-engine/sdk.md) | Context update stream for agents |
 | §9.4 Capability Requirements | [sdk.md](./context-engine/sdk.md) | ContextRead, AttentionPost, no agent overrides |
 | §10.1 Inspector View | [sdk.md](./context-engine/sdk.md) | Full signal breakdown, transitions, stats |
@@ -227,7 +226,7 @@ Quick lookup for commonly referenced sections across the context engine sub-docu
 | §13.1 Learned Context Classification | [learning.md](./context-engine/learning.md) | TCN/TinyHAR models, LoRA, Prototypical Networks |
 | §13.2 Evidential Signal Fusion | [learning.md](./context-engine/learning.md) | Dempster-Shafer, Kalman filter |
 | §13.3 Proactive Context Prediction | [learning.md](./context-engine/learning.md) | GRU sequence model, ultradian rhythms |
-| §13.4 Intelligent Notification Triage | [learning.md](./context-engine/learning.md) | Content-aware urgency, attention budget, breakpoint detection |
+| §13.4 Intelligent Notification Triage | [learning.md](./context-engine/learning.md) | Attention budget, breakpoint detection; content-aware urgency belongs to the Attention Manager |
 | §13.5 Cross-Device Context Sync | [learning.md](./context-engine/learning.md) | BLE discovery, CRDTs, context quality |
 | §13.6 LLM-Powered Context Narration | [learning.md](./context-engine/learning.md) | Semantic matching, conversational queries |
 | §13.7 Summary | [learning.md](./context-engine/learning.md) | Feature/tier/latency/model-size table |

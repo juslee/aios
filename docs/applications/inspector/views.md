@@ -140,7 +140,7 @@ The Agent View includes an intent gap section that compares what the agent's man
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The gap analysis draws on the principle that security policies should match actual behavior — over-provisioned agents carry unnecessary risk, and under-provisioned agents generate noise from repeated denials. AIRS refines these observations over time, distinguishing between "agent hasn't needed it yet" and "agent will never need it" via behavioral profiling (see [§5.7 AIRS Analysis View](#57-airs-analysis-view-phase-41) and [../../intelligence/behavioral-monitor.md](../../intelligence/behavioral-monitor.md)).
+The gap analysis draws on the principle that security policies should match actual behavior — over-provisioned agents carry unnecessary risk, and under-provisioned agents generate noise from repeated denials. AIRS refines these observations over time, distinguishing between "agent hasn't needed it yet" and "agent will never need it" via behavioral profiling (see [§5.7 AIRS Analysis View](#57-airs-analysis-view-phase-46) and [../../intelligence/behavioral-monitor.md](../../intelligence/behavioral-monitor.md)).
 
 #### Execution Flow Graph
 
@@ -445,7 +445,7 @@ A toggle switches between concrete and raw display. The concrete descriptions ar
 
 -----
 
-### 5.6 Profile View (Phase 41+)
+### 5.6 Profile View (Phase 45+)
 
 Capability profile management. Shows how profiles compose into resolved capability sets.
 
@@ -517,7 +517,7 @@ Dry-run mode replays recent provenance records against the hypothetical capabili
 
 -----
 
-### 5.7 AIRS Analysis View (Phase 42+)
+### 5.7 AIRS Analysis View (Phase 46+)
 
 Displays AIRS capability intelligence results for installed agents.
 

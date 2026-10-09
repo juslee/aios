@@ -50,20 +50,30 @@ if context.work_engagement > 0.8 {
 
 ### 9.2 Posting Attention Items
 
-Agents post attention items through the Attention Manager. The agent declares the content and an initial urgency hint. AIRS always determines the final urgency — the agent's hint is advisory only and may be overridden based on actual content analysis and current context (see [attention.md](../attention.md) for the authoritative urgency assignment model).
+Agents post attention items through the Attention Manager with the same `AttentionRequest` as [attention.md](../attention.md) §9.1. The agent describes the content only; it has no way to declare urgency. The Attention Manager assesses urgency from the content, sender, context and history (attention.md §4.3 is the authoritative urgency assignment model).
 
 ```rust
-ctx.attention().post(AttentionItem {
-    content: AttentionContent::text("Meeting in 5 minutes: Team Standup"),
-    urgency: Urgency::NextBreak,  // hint only; AIRS determines final urgency
-    relevance: 0.8,
-    auto_actionable: Some(ProposedAction::OpenCalendar),
-    group: Some(GroupId::from("calendar-reminders")),
-    ..Default::default()
+let standup = SystemTime::now() + Duration::from_secs(5 * 60);
+ctx.attention().post(AttentionRequest {
+    content: AttentionContent::Schedule {
+        event_name: "Team Standup".into(),
+        time: standup,
+        change: None,
+    },
+    // No urgency field: the Attention Manager assesses urgency (attention.md §4.3)
+    expiry: Some(standup),
+    auto_action: Some(ProposedAction {
+        description: "Open Team Standup in Calendar".into(),
+        action: ActionType::Open {
+            target: OpenTarget::Space("calendar/team-standup".into()),
+        },
+        required_capabilities: vec![],
+        reversible: true,
+    }),
 }).await?;
 ```
 
-The agent's declared `urgency` is a hint. AIRS may upgrade or downgrade it. An email agent that declares every message as `Interrupt` will find its messages consistently downgraded to `Digest` by AIRS. An agent that accurately declares urgency builds a better track record and its declarations are trusted more over time.
+Because the post carries no urgency, an agent cannot inflate its own priority. An email agent that wants every message to interrupt the user cannot ask for that; each message is assessed on its content, and the agent never learns which urgency was assigned.
 
 ### 9.3 Subscribing to Context Changes
 
@@ -111,7 +121,7 @@ while let Some(update) = context_stream.next().await {
 |------------------------|---------------------|--------------------------------------|
 | Read current context   | `ContextRead`       | Read-only, most agents should have   |
 | Subscribe to changes   | `ContextRead`       | Same capability, streaming variant   |
-| Post attention item    | `AttentionPost`     | AIRS re-assesses urgency             |
+| Post attention item    | `AttentionPost`     | AIRS assesses urgency                |
 | Create override        | Not available to agents | User-only via Conversation Bar   |
 
 Agents cannot create overrides. Only the user (through the Conversation Bar, keyboard shortcuts, or calendar events) can override the inferred context. This prevents agents from manipulating the context to get more resources or bypass notification filtering.

@@ -83,7 +83,7 @@ The kernel-internal ML classifier (§10) and AIRS Tier 2 classifier (§11) are e
 | F1 score | >0.90 | Harmonic mean of precision and recall |
 | Evasion resistance | >70% on evasion corpus | Run GCG/encoding bypass suite |
 | Latency, kernel-internal ML | <1ms p99 | Benchmark on target hardware (cortex-a72) |
-| Latency, AIRS Tier 2 | <50ms p99 | Benchmark with AIRS running on device |
+| Latency, AIRS Tier 2 | <10ms p99 (asynchronous; screening.md §5.5) | Benchmark with AIRS running on device |
 
 The evasion resistance target is 70%, not 100%. This is intentional. The architecture accounts for classifier bypass through Layers 2–8 — capability enforcement, behavioral monitoring, security zones, output validation, and blast radius containment all operate independently of the Layer 5 classifier. The classifier's role is to catch most attacks early; the remaining layers handle the rest. Setting an achievable target avoids false confidence from overfitting to the evasion corpus.
 

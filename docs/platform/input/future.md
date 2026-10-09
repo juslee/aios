@@ -62,7 +62,7 @@ PCM stream ────────────► VAD (voice activity detection
 
 - **Voice Activity Detection (VAD):** Lightweight kernel-internal model (~100KB) for always-on wake word detection. Only activates the full ASR pipeline when speech is detected.
 - **ASR pipeline:** AIRS-dependent (requires inference engine with audio encoder model). Produces `TextEvent::Commit` events indistinguishable from keyboard input.
-- **Voice commands:** AIRS Context Engine interprets spoken commands as semantic `InputEvent::Command` events (e.g., "undo" → Command::Undo).
+- **Voice commands:** The AIRS inference engine transcribes speech with a Whisper model and routes the text to the primary model, which interprets it as a semantic `InputEvent::Command` event (e.g., "undo" → Command::Undo) ([ai-native.md](../../intelligence/airs/ai-native.md) §14.10). The Context Engine supplies only the active application context, as for gestures ([ai.md](./ai.md) §10.3); it never sees the spoken content.
 - **Privacy:** Wake word detection runs locally. Full ASR can run locally (on-device model) or via network (user choice). Capability model: `AudioCapture` + `InputInject` for the voice agent.
 
 #### Multimodal Fusion

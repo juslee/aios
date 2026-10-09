@@ -137,8 +137,10 @@ flowchart TD
 
 Development plan phases (see [development-plan.md](../project/development-plan.md)):
 
+Phase 18 (Behavioral intelligence) and Phase 30 (Full NLU coverage) have no row in development-plan.md §8 yet; their numbers predate it. In §8, Phase 18 is the Conversation Manager and Phase 30 the WiFi Stack.
+
 ```text
-Phase 6:   Preference System (basic)
+Phase 15:  Preference System (basic)
            ├── Preference data model (PreferenceId, PreferenceValue, PreferenceSource)
            ├── Schema registry and validation
            ├── Preference Store (get/set/persist in user/preferences/ space)
@@ -147,8 +149,9 @@ Phase 6:   Preference System (basic)
            ├── Capability gate (PreferenceRead, PreferenceSystemWrite, PreferenceAgentWrite)
            └── Audit logging (Changed, AccessDenied events)
 
-Phase 13:  Conversational preferences
-           ├── NLU resolver (Conversation Bar → preference changes)
+Phase 15:  Conversational preferences (Preference System)
+           ├── NLU resolver (Conversation Bar → preference changes; the Conversation Bar
+           │   hookup follows Phase 18, Conversation Manager)
            ├── Preference history (change records, explain(), undo)
            ├── Conflict resolution (source precedence, tradeoff dialogs)
            ├── Enterprise policy (EnterpriseLocked/Recommended, signature verification)
@@ -161,11 +164,12 @@ Phase 18:  Behavioral intelligence
            ├── Agent preferences (manifest declaration, scoped storage)
            └── Rate limiting and anomaly detection
 
-Phase 24:  Context and Settings UI
+Phase 34:  Context and Settings UI (Interface Kit)
            ├── Context Rule Engine (time-of-day, location, activity, device-presence)
            ├── Conversational rule creation ("dark mode after sunset")
            ├── Settings UI (visual preference browser, enterprise indicators)
-           ├── Cross-device sync (universal vs per-device, Space Mesh integration)
+           ├── Cross-device sync (universal vs per-device, Space Mesh integration;
+           │   follows Phase 42, Multi-Device Sync & Pairing)
            └── Preference analytics (usage patterns, recommendation engine)
 
 Phase 30:  Full NLU coverage
@@ -174,7 +178,7 @@ Phase 30:  Full NLU coverage
            ├── Cross-preference dependency suggestions (AIRS §16.3)
            └── Contextual bandits for preference learning (§16.1)
 
-Phase 34:  Accessibility preferences
+Phase 38:  Accessibility preferences (Accessibility & Internationalization)
            ├── Screen reader integration
            ├── High contrast mode
            ├── Reduced motion
