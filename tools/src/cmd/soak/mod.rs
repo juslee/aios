@@ -156,7 +156,10 @@ exit 2 even with --report-only. 130 on SIGINT, 143 on SIGTERM, 129 on SIGHUP,
 killed by it leaves the running QEMU behind until it is killed by hand, so
 stop a soak with one of the four signals above. Likewise SIGSTOP, or SIGTTIN
 or SIGTTOU stopping a background soak, stops only the harness: QEMU runs on
-past its time limit until the harness is continued.
+past its time limit until the harness is continued. A signal ignored when
+the soak started is caught all the same: nohup, or a background job of a
+non-interactive shell, does not protect a soak from SIGHUP, SIGINT or
+SIGQUIT, so run long soaks under setsid, tmux or screen.
 "#;
 
 /// What the command line asks for.

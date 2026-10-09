@@ -4,7 +4,11 @@
 //! terminal signals that end a process. Either would otherwise end the harness
 //! and leave QEMU, in its own process group, running with nothing left to stop
 //! it at the time limit. SIGKILL cannot be caught: a harness killed by it leaves
-//! the current boot's QEMU running until it is killed by hand.
+//! the current boot's QEMU running until it is killed by hand. A signal that
+//! was ignored when the harness started is caught too (unlike bash, which keeps
+//! an ignored signal ignored): reading the old disposition needs `sigaction`,
+//! which `forbid(unsafe_code)` rules out, so `nohup` does not protect a soak,
+//! as the help text says.
 //!
 //! SIGTSTP (Ctrl-Z) suspends the harness as usual, but while a boot's QEMU runs
 //! the harness first stops QEMU's group too, which the terminal's SIGTSTP never
